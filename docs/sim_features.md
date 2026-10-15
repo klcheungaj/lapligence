@@ -2276,9 +2276,30 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
 - ⬜ **Checkers** — Checker execution and checker bind are not implemented;
   module/interface structural bind and ordinary assertion instances do not imply
   checker support. SV **[SV-2009]**.
-- ⬜ **Functional coverage** — Covergroups, coverpoints, bins, crosses and their
-  sampling/query/control/database services are not implemented. `cover` assertions
-  and waveform/VPI observation are separate capabilities. SV **[SV-2005]**.
+- 🟨 **Functional coverage** (SIM-044) — Covergroup declarations in modules,
+  interfaces, packages and classes (embedded, constructed only by the class
+  `new`), instances created by `new` with `input` (integral, real, string and
+  class handle) and `ref` arguments, and sampling by explicit `sample()`, a
+  clocking event on module-level storage, `with function sample(...)` and
+  `@@(begin/end f)` on a delay-free task or function. Coverpoints of at most
+  64 bits with automatic bins (enum cardinality, `auto_bin_max`, numeric order
+  for signed values, decision S44-D2), explicit single-value and range bins
+  resolved by 19.5.6 with its warnings, and `iff` guards. Instance options
+  `weight`, `goal`, `at_least` and `auto_bin_max` set in the declaration;
+  `type_option.weight`. `get_coverage()` (type, per source declaration,
+  S44-D1), `get_inst_coverage()`, `start()`, `stop()`, `set_inst_name()` (no
+  report) and `$get_coverage()` follow 19.11. Instances outlive their last
+  handle (S44-D3). Counters are dense up to 4096 bins and sparse beyond;
+  sampling is O(coverpoints) with no allocation after the first hit of a
+  sparse bin. Rejected with located diagnostics: crosses, transition,
+  wildcard, default, array, `illegal_bins`/`ignore_bins` and guarded bins,
+  bins values depending on arguments, `strobe`, `merge_instances`,
+  `detect_overlap` (SIM-045); options set through an instance and the
+  two-argument queries (SIM-046); sampling events reading a covergroup
+  argument or owner property, coverpoints over 64 bits and `@@(end f)` on a
+  subroutine that can `return` early. Coverage databases are not written.
+  `cover` assertions and waveform/VPI observation are separate capabilities.
+  SV 19 **[SV-2005]**.
 - 🟨 **Constrained randomization** — `rand` and `randc` packed integral and
   enum class properties (instance and static, inherited, with virtual
   `randomize()`), one-dimensional random fixed arrays, dynamic arrays and

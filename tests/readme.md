@@ -307,6 +307,16 @@ runs with and without `--vpi`. Decisions S43-D1-D9 are in
 run the set with `LLG_CC=gcc LLG_CFLAGS='-fsanitize=address,undefined
 -DLLG_CO_DEBUG'`.
 
+SIM-044's covergroup fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_044::)'`. Positive cases run in
+both optimizer modes on every value backend with hand-derived percentages
+(fixture readme); `embedded` runs under `LLG_GC_STRESS=1` to prove the owner
+and handle arguments of covergroup objects stay reachable, and `storage` keeps
+variables read only by coverpoints, guards and sampling events. Decisions
+S44-D1-D4 are in `sim_lrm_decisions`; the runtime store probe is
+`runtime_coverage` in the `runtime` binary, and the capture unit test is
+`core::db::database::coverage::tests`.
+
 SIM-037's sequence-composition fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_037::)'`. `exhaustive` compares
 36 sequences on all 1024 two-signal traces of length 5 with the test-side

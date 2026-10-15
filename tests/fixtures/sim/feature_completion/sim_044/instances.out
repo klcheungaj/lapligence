@@ -1,0 +1,7 @@
+before type=0.00 total=100.00
+unsampled a=0.00 b=0.00 c=0.00 type=0.00
+a=12.50 b=0.00
+a=12.50 b=50.00
+type=40.625 via-instance=40.625 point=20.833
+a=25.00 b=50.00 point=25.00
+type=43.75 total=43.75
