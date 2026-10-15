@@ -520,11 +520,7 @@ impl<'a> Codegen<'a> {
                 (
                     self.rand_receiver_for(owner)
                         .or_else(|| self.class_init_receiver.clone())
-                        .or_else(|| {
-                            self.func
-                                .as_ref()
-                                .and_then(|function| function.class_receiver.clone())
-                        }),
+                        .or_else(|| self.method_receiver()),
                     None,
                 )
             } else {

@@ -1799,11 +1799,10 @@ impl<'a> Codegen<'a> {
                         }
                     ) && self.node(method).parent == owner_class
                 });
-            let receiver = self.class_init_receiver.clone().or_else(|| {
-                self.func
-                    .as_ref()
-                    .and_then(|function| function.class_receiver.clone())
-            });
+            let receiver = self
+                .class_init_receiver
+                .clone()
+                .or_else(|| self.method_receiver());
             match (in_constructor, receiver) {
                 (true, Some(receiver)) => Some((owner_field, receiver)),
                 _ => {

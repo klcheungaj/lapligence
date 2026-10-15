@@ -375,8 +375,7 @@ impl Codegen<'_> {
                 self.node(*target).name == "this"
                     && matches!(self.kind(*target), NodeKind::Var { ty } if is_handle_kind(&ty.kind))
             })
-            .and(self.func.as_ref())
-            .and_then(|function| function.class_receiver.clone())
+            .and_then(|_| self.method_receiver())
         {
             return Ok(receiver);
         }

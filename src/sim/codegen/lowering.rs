@@ -1260,6 +1260,11 @@ struct Codegen<'a> {
     /// Receiver used while lowering a class property's default expression or
     /// constructor body during a fresh allocation.
     class_init_receiver: Option<IrChandleExpr>,
+    /// Receiver of the method whose `fork ... join_none` branch is being
+    /// lowered when the branch is detached from the function's activation
+    /// (a function or constructor branch runs with no subroutine context);
+    /// the branch reads the handle it captured. See [`Codegen::method_receiver`].
+    fork_branch_receiver: Option<IrChandleExpr>,
     /// Constructed covergroup declaration → its lowering (SIM-044).
     covergroups: HashMap<NodeId, coverage::CovergroupLowering>,
     /// Covergroup declaration identity → `model.coverage_types` index.
@@ -1775,6 +1780,7 @@ impl<'a> Codegen<'a> {
             initializer_random_scopes: HashMap::new(),
             mailbox_object_initializers: Vec::new(),
             class_init_receiver: None,
+            fork_branch_receiver: None,
             covergroups: HashMap::new(),
             coverage_types: HashMap::new(),
             coverage_block_events: HashMap::new(),

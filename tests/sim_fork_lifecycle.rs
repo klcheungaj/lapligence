@@ -35,3 +35,16 @@ fn detached_captures_and_persistent_delayed_nba_survive_creator_exit() {
         &[],
     );
 }
+
+#[test]
+fn detached_branches_of_constructors_and_functions_keep_their_receiver() {
+    // A function or constructor branch runs with no subroutine context; it
+    // formerly lost `this` ("class method call has no receiver").
+    sim_cli::run_case(
+        "fork_lifecycle",
+        "method_receivers",
+        include_str!("fixtures/sim/fork_lifecycle/method_receivers.out"),
+        "llg: $finish at time 20000 at tb:66:9\n",
+        &[],
+    );
+}

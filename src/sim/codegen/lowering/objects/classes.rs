@@ -152,11 +152,7 @@ impl Codegen<'_> {
         }
         self.class_init_receiver
             .clone()
-            .or_else(|| {
-                self.func
-                    .as_ref()
-                    .and_then(|function| function.class_receiver.clone())
-            })
+            .or_else(|| self.method_receiver())
             .map(Some)
             .ok_or_else(|| "class method call has no receiver".to_owned())
     }
@@ -245,11 +241,7 @@ impl Codegen<'_> {
         }
         self.class_init_receiver
             .clone()
-            .or_else(|| {
-                self.func
-                    .as_ref()
-                    .and_then(|function| function.class_receiver.clone())
-            })
+            .or_else(|| self.method_receiver())
             .ok_or_else(|| {
                 format!(
                     "class property `{}` has no receiver in `{path}`",
@@ -586,11 +578,7 @@ impl Codegen<'_> {
             // A bare declaration has only the implicit `this` receiver.
             NodeKind::Var { .. }
                 if self.class_fields.contains_key(&node)
-                    && (self.class_init_receiver.is_some()
-                        || self
-                            .func
-                            .as_ref()
-                            .is_some_and(|function| function.class_receiver.is_some())) =>
+                    && (self.class_init_receiver.is_some() || self.method_receiver().is_some()) =>
             {
                 (node, Vec::new())
             }
@@ -843,9 +831,7 @@ impl Codegen<'_> {
     ) -> Result<IrChandleExpr, String> {
         if is_super_class {
             return self
-                .func
-                .as_ref()
-                .and_then(|function| function.class_receiver.clone())
+                .method_receiver()
                 .or_else(|| self.class_init_receiver.clone())
                 .ok_or_else(|| format!("super constructor has no receiver in `{path}"));
         }

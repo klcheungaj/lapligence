@@ -1011,6 +1011,17 @@ impl<'a> Codegen<'a> {
         Ok(id)
     }
 
+    /// The implicit `this` of the code being lowered: the enclosing method's
+    /// receiver, or, outside any subroutine context, the one a detached fork
+    /// branch of a method captured. A subroutine body never inherits a
+    /// branch's receiver.
+    pub(in super::super) fn method_receiver(&self) -> Option<IrChandleExpr> {
+        match &self.func {
+            Some(function) => function.class_receiver.clone(),
+            None => self.fork_branch_receiver.clone(),
+        }
+    }
+
     pub(in super::super) fn capture_binding(&self, node: NodeId) -> Option<&CaptureBinding> {
         self.capture_locals.get(&node)
     }
