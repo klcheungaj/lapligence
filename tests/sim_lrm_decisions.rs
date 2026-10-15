@@ -2037,3 +2037,43 @@ fn s47_d11_dump_open_error() {
         );
     });
 }
+
+#[test]
+fn s44_d5_instance_event_waiter() {
+    run_decision(
+        "S44-D5_instance_event_waiter",
+        include_str!("fixtures/sim/lrm_decisions/S44-D5_instance_event_waiter.out"),
+    );
+}
+
+#[test]
+fn s44_d6_waiter_starts_after_new() {
+    run_decision(
+        "S44-D6_waiter_starts_after_new",
+        include_str!("fixtures/sim/lrm_decisions/S44-D6_waiter_starts_after_new.out"),
+    );
+}
+
+#[test]
+fn s44_d7_end_event_after_return() {
+    run_decision(
+        "S44-D7_end_event_after_return",
+        include_str!("fixtures/sim/lrm_decisions/S44-D7_end_event_after_return.out"),
+    );
+}
+
+#[test]
+fn s44_d8_named_block_jump_out() {
+    run_decision(
+        "S44-D8_named_block_jump_out",
+        include_str!("fixtures/sim/lrm_decisions/S44-D8_named_block_jump_out.out"),
+    );
+}
+
+#[test]
+fn s44_d9_strobe_block_event() {
+    run_decision(
+        "S44-D9_strobe_block_event",
+        include_str!("fixtures/sim/lrm_decisions/S44-D9_strobe_block_event.out"),
+    );
+}

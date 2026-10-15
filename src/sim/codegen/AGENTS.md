@@ -696,11 +696,20 @@ covergroup object and `coverage_ref_actuals` maps each `ref` formal to the
 variable bound by that variant; the owner is the method receiver, so owner
 properties lower as ordinary class fields. Bins are resolved here (19.5.6 on
 the operand of the frontend's conversion to the coverpoint type) into sorted
-disjoint key segments; signed keys flip the sign bit. A clocking event lowers
-to one sampler process spawned before user processes; an event reading an
-argument or owner property is rejected. Block events are injected into the
-named subroutine body in `collection/function_bodies.rs`;
-`check_coverage_block_events` rejects any target that never reached it.
+disjoint key segments; signed keys flip the sign bit. A clocking event on static
+storage lowers to one sampler process spawned before user processes. An event
+reading an argument or owner property becomes a waiter per instance
+(`emit_covergroup_waiter`): a `CapturedBranch` helper of the sample method
+whose only capture (slot 0) is the covergroup object, lowered with that object
+as `coverage_scope` and the owner field as class receiver, and started by
+`IrCoverageStmt::Watch` in `new`; `ref`-variant events dispatch on the bind
+field. `type_option.strobe` turns the sample into a Postponed request.
+Block events are injected into the named subroutine body in
+`collection/function_bodies.rs` (a `return` there becomes a store and a jump
+to the label before the end samples, `EmitCtx::coverage_end_exit`) and into
+named blocks in `statements/dispatch.rs` (the event names the block's label
+scope, resolved by `named_block_statement`); `check_coverage_block_events`
+rejects any target that never reached either.
 Diagnostics must stay located (`coverage_error`), and every coverpoint read
 must stay an IR operand so `opt/passes/storage.rs` sees it.
 

@@ -36,6 +36,7 @@ struct llg_cov_inst {
     int64_t auto_bin_max;
     uint8_t stopped;
     uint8_t ready;
+    uint8_t strobe_pending;  // a Postponed sample is queued for this slot
     llg_cov_point_state_t points[];
 };
 
@@ -222,15 +223,15 @@ void llg_cov_ready(void* record) {
     }
 }
 
-void llg_cov_hit(void* record, uint32_t point_index, sv4_t value) {
+void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst || inst->stopped || point_index >= inst->group->n_points) return;
     llg_cov_point_state_t* state = &inst->points[point_index];
     if (state->stopped || !state->n_bins) return;
     // Bins only hold 2-state values (19.5.2, 19.5.6).
-    if (sv4_is_unknown(value)) return;
+    if (sv4_is_unknown(*value)) return;
     const llg_cov_point_t* point = &inst->group->points[point_index];
-    uint64_t key = llg_cov_key(point, sv4_to_u64(value));
+    uint64_t key = llg_cov_key(point, sv4_to_u64(*value));
     switch (point->kind) {
     case LLG_COV_POINT_AUTO:
         llg_cov_count(state, llg_cov_auto_bin(point, state->n_bins, key));
@@ -293,6 +294,73 @@ size_t llg_cov_registered(const llg_cov_group_t* group) {
 
 void* llg_cov_registered_at(const llg_cov_group_t* group, size_t index) {
     return index < group->n_registered ? group->registry[index] : NULL;
+}
+
+int llg_cov_sampling(const void* record) {
+    const llg_cov_inst_t* inst = (const llg_cov_inst_t*)record;
+    return inst && !inst->stopped;
+}
+
+// Strobe requests of the current time slot, flushed by one Postponed region
+// callback in request order (19.7.1). An entry without an instance stands
+// for a pass over its group's registry. Objects stay reachable through the
+// registry pin or the waiter's capture frame.
+typedef struct {
+    llg_cov_group_t* group;
+    llg_cov_inst_t* inst;
+    void* object;
+} llg_cov_strobe_request_t;
+static llg_cov_strobe_request_t* llg_cov_strobes;
+static size_t llg_cov_n_strobes;
+static size_t llg_cov_strobe_capacity;
+static uint8_t llg_cov_strobe_scheduled;
+
+static void llg_cov_strobe_flush(void* data) {
+    (void)data;
+    llg_cov_strobe_scheduled = 0;
+    // Requests made while flushing belong to no slot of this one; the
+    // Postponed region cannot trigger a clocking event.
+    for (size_t i = 0; i < llg_cov_n_strobes; ++i) {
+        llg_cov_strobe_request_t request = llg_cov_strobes[i];
+        if (request.inst) {
+            request.inst->strobe_pending = 0;
+            request.group->strobe_sample(request.object);
+            continue;
+        }
+        request.group->strobe_pending = 0;
+        for (size_t k = 0; k < request.group->n_registered; ++k)
+            request.group->strobe_sample(request.group->registry[k]);
+    }
+    llg_cov_n_strobes = 0;
+}
+
+static void llg_cov_strobe_queue(llg_cov_group_t* group, llg_cov_inst_t* inst, void* object) {
+    if (llg_cov_n_strobes == llg_cov_strobe_capacity) {
+        size_t capacity = llg_cov_strobe_capacity ? llg_cov_strobe_capacity * 2u : 8u;
+        llg_cov_strobes = (llg_cov_strobe_request_t*)llg_cov_grow(
+            llg_cov_strobes, capacity, sizeof(*llg_cov_strobes), "covergroup strobe requests");
+        llg_cov_strobe_capacity = capacity;
+    }
+    llg_cov_strobes[llg_cov_n_strobes++] = (llg_cov_strobe_request_t){group, inst, object};
+    if (!llg_cov_strobe_scheduled) {
+        // A refused schedule (the run is ending) leaves the requests for
+        // the next request to retry.
+        llg_cov_strobe_scheduled = (uint8_t)llg_schedule_region_callback(
+            LLG_REGION_POSTPONED, llg_cov_strobe_flush, NULL);
+    }
+}
+
+void llg_cov_strobe(llg_cov_group_t* group, void* record, void* object) {
+    llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
+    if (!group->strobe_sample || !inst || !object || inst->strobe_pending) return;
+    inst->strobe_pending = 1;
+    llg_cov_strobe_queue(group, inst, object);
+}
+
+void llg_cov_strobe_registered(llg_cov_group_t* group) {
+    if (!group->strobe_sample || group->strobe_pending || !group->n_registered) return;
+    group->strobe_pending = 1;
+    llg_cov_strobe_queue(group, NULL, NULL);
 }
 
 // Covered and defined bins of one coverpoint (19.11.1). A defined bin with no
@@ -398,6 +466,10 @@ double llg_cov_total_coverage(void) {
 }
 
 void llg_cov_release_all(void) {
+    free(llg_cov_strobes);
+    llg_cov_strobes = NULL;
+    llg_cov_n_strobes = llg_cov_strobe_capacity = 0;
+    llg_cov_strobe_scheduled = 0;
     while (llg_cov_types_used) {
         llg_cov_type_t* type = llg_cov_types_used;
         llg_cov_types_used = type->next_used;
@@ -424,6 +496,7 @@ void llg_cov_release_all(void) {
         group->registry = NULL;
         group->n_registered = group->registry_capacity = 0;
         group->registered = 0;
+        group->strobe_pending = 0;
         group->next_registered = NULL;
     }
 }

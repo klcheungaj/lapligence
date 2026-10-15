@@ -1,0 +1,4 @@
+called=100.00
+event lo=100.00 hi=0.00
+strobe lo=0.00 hi=100.00 twice=0.00
+box four=0.00 six=100.00

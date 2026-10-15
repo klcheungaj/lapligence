@@ -14,12 +14,14 @@
 //! Declarations never constructed produce nothing, so a model without
 //! covergroup instances pays nothing.
 use super::*;
-use crate::core::db::{CoverageBinKind, CoverageEvent, CovergroupInfo, CoverpointInfo, TypeId};
+use crate::core::db::{
+    CoverageBinKind, CoverageEvent, CovergroupInfo, CoverpointInfo, EventSpec, TypeId,
+};
 use crate::sim::ir::{
-    IrClass, IrClassField, IrClassFieldType, IrCoverBins, IrCoverSegment, IrCoverageOption,
-    IrCoverageQuery, IrCoverageSample, IrCoverageStmt, IrCoverageType, IrCovergroup, IrCoverpoint,
-    IrFormal, IrFunc, IrNativeAccessKind, IrObjectQuery, IrPreFn, IrProcess, IrShape,
-    IrUniquePriorityCheck,
+    IrCapture, IrClass, IrClassField, IrClassFieldType, IrCoverBins, IrCoverSegment,
+    IrCoverageOption, IrCoverageQuery, IrCoverageSample, IrCoverageStmt, IrCoverageType,
+    IrCovergroup, IrCoverpoint, IrFormal, IrFunc, IrNativeAccessKind, IrObjectQuery, IrPreFn,
+    IrProcess, IrShape, IrUniquePriorityCheck,
 };
 
 /// Lowering state of one constructed covergroup declaration.
@@ -41,8 +43,18 @@ pub(super) struct CovergroupLowering {
     variant_of_new: HashMap<NodeId, u32>,
     /// Coverpoint declaration -> coverpoint index.
     points: HashMap<NodeId, u32>,
-    /// Instances are sampled by a clocking or block event.
+    /// Instances are sampled through the group registry: a block event, or
+    /// a clocking event on static storage.
     registered: bool,
+    /// The clocking event reads storage of one instance (a covergroup
+    /// argument or a property of the owner): every instance gets its own
+    /// waiter process (see [`Codegen::emit_covergroup_waiter`]).
+    instance_event: bool,
+    /// `type_option.strobe` with a clocking event (19.7.1).
+    strobe: bool,
+    /// Captured helper of the sample method that waits for one instance's
+    /// clocking event, started by every `new`.
+    waiter: Option<String>,
 }
 
 /// Declaration identity of a covergroup type: every elaboration of one
@@ -334,11 +346,28 @@ impl<'a> Codegen<'a> {
             self.check_group_option(&name, *setter)?;
         }
         let coverage_type = self.coverage_type_index(group);
+        let clocking = matches!(info.event, Some(CoverageEvent::Clocking { .. }));
+        let instance_event = match &info.event {
+            Some(CoverageEvent::Clocking { specs, .. }) => {
+                let mut nodes = Vec::new();
+                for spec in specs {
+                    spec.referenced_nodes(&mut nodes);
+                }
+                nodes
+                    .iter()
+                    .any(|node| self.coverage_event_reads_instance(&info, *node).is_some())
+            }
+            _ => false,
+        };
+        // 19.3: the strobe option only schedules samples a clocking event
+        // triggers; block events and `sample()` calls are unaffected.
+        let strobe = clocking && self.covergroup_strobe(&info);
         let ir = self.model.covergroups.len();
         self.model.covergroups.push(IrCovergroup {
             name: name.clone(),
             coverage_type,
             points,
+            strobe: None,
         });
         // The `sample` prototype: a method of the instance class whose formals
         // are the `with function sample` arguments (19.8.1).
@@ -383,7 +412,10 @@ impl<'a> Codegen<'a> {
             reason: format!("sample method of covergroup {}", self.node(group).full_name),
         };
         self.model.funcs.push(function);
-        let registered = info.event.is_some();
+        if strobe {
+            self.model.covergroups[ir].strobe = Some(sample);
+        }
+        let registered = info.event.is_some() && !instance_event;
         self.covergroups.insert(
             group,
             CovergroupLowering {
@@ -397,9 +429,24 @@ impl<'a> Codegen<'a> {
                 variant_of_new,
                 points: point_indices,
                 registered,
+                instance_event,
+                strobe,
+                waiter: None,
             },
         );
         Ok(())
+    }
+
+    /// Whether the group sets `type_option.strobe` to a nonzero constant.
+    fn covergroup_strobe(&self, info: &CovergroupInfo) -> bool {
+        info.options.iter().any(|setter| {
+            self.coverage_option_parts(*setter)
+                .is_some_and(|(scope, member, value)| {
+                    scope == "type_option"
+                        && member == "strobe"
+                        && self.eval_bound_i128(value).is_ok_and(|value| value != 0)
+                })
+        })
     }
 
     fn coverage_field_type(
@@ -580,10 +627,13 @@ impl<'a> Codegen<'a> {
                 Ok(())
             }
             ("type_option", "goal" | "comment") => Ok(()),
-            ("type_option", "strobe") if group_level && constant_zero() => Ok(()),
-            ("type_option", "strobe") => {
-                unsupported("(Postponed-region sampling) is not supported yet (SIM-045)")
+            ("type_option", "strobe") if !group_level => {
+                unsupported("can only be set for a covergroup (IEEE 1800-2009 Table 19-4)")
             }
+            ("type_option", "strobe") if self.eval_bound_i128(value).is_err() => {
+                unsupported("must be a constant expression (IEEE 1800-2009 19.7.1)")
+            }
+            ("type_option", "strobe") => Ok(()),
             ("type_option", "merge_instances") if group_level && constant_zero() => Ok(()),
             ("type_option", "merge_instances") => {
                 unsupported("(merged type coverage) is not supported yet (SIM-045)")
@@ -969,31 +1019,13 @@ impl<'a> Codegen<'a> {
                 },
             );
         }
-        let func = FuncCtx {
-            name: format!("{}::sample", self.covergroup_name(group)),
-            is_task: false,
-            class_receiver: owner,
-            ret: None,
-            arg_read,
-            arg_ir,
-            event_args: HashMap::new(),
-            arg_dependencies: HashMap::new(),
-            arg_write: HashMap::new(),
-            arg_lhs: HashMap::new(),
-            const_refs: HashSet::new(),
-            const_ref_lhs: HashMap::new(),
-            persistent: HashMap::new(),
-            chandle_read: HashMap::new(),
-            chandle_write: HashMap::new(),
-            process_read: HashMap::new(),
-            process_write: HashMap::new(),
-            string_read: HashMap::new(),
-            string_write: HashMap::new(),
-            string_addr: HashMap::new(),
-            locals: HashMap::new(),
-            ret_node: None,
-            def_node: None,
-        };
+        let mut func = Self::coverage_func_ctx(
+            format!("{}::sample", self.covergroup_name(group)),
+            false,
+            owner,
+        );
+        func.arg_read = arg_read;
+        func.arg_ir = arg_ir;
         let saved_scope = self.coverage_scope.replace((lowering.class, this.clone()));
         let result = (|| -> Result<(Vec<IrStmt>, Vec<IrPreFn>), String> {
             let mut ctx = EmitCtx::new(self, path.clone(), inst, "depth + 1", Some(func), false);
@@ -1081,6 +1113,164 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    /// A [`FuncCtx`] for code that runs on behalf of one covergroup object;
+    /// owner properties read through `owner`.
+    fn coverage_func_ctx(name: String, is_task: bool, owner: Option<IrChandleExpr>) -> FuncCtx {
+        FuncCtx {
+            name,
+            is_task,
+            class_receiver: owner,
+            ret: None,
+            arg_read: HashMap::new(),
+            arg_ir: HashMap::new(),
+            event_args: HashMap::new(),
+            arg_dependencies: HashMap::new(),
+            arg_write: HashMap::new(),
+            arg_lhs: HashMap::new(),
+            const_refs: HashSet::new(),
+            const_ref_lhs: HashMap::new(),
+            persistent: HashMap::new(),
+            chandle_read: HashMap::new(),
+            chandle_write: HashMap::new(),
+            process_read: HashMap::new(),
+            process_write: HashMap::new(),
+            string_read: HashMap::new(),
+            string_write: HashMap::new(),
+            string_addr: HashMap::new(),
+            locals: HashMap::new(),
+            ret_node: None,
+            def_node: None,
+        }
+    }
+
+    /// A clocking event that reads one instance's storage (a covergroup
+    /// argument or an owner property, 19.3) becomes a waiter per instance:
+    /// a captured helper of the sample method whose only capture is the
+    /// covergroup object, started by every `new` as a runtime-owned process
+    /// (decision S44-D5). It loops on the event and samples its instance;
+    /// the capture keeps the instance, and through it the owner and the
+    /// arguments, reachable for the rest of the run (S44-D3).
+    fn emit_covergroup_waiter(
+        &mut self,
+        group: NodeId,
+        timing: NodeId,
+        specs: &[EventSpec],
+    ) -> Result<(), String> {
+        let lowering = self.covergroups[&group].clone();
+        let name = self.covergroup_name(group);
+        let path = self.covergroup_path(group);
+        let inst = self.covergroup_inst(group);
+        let frame = self.new_frame_id()?;
+        let storage = StorageRef::new(
+            frame,
+            0,
+            StorageLifetime::Automatic,
+            StorageOwnership::Owned,
+        )
+        .with_kind(StorageKind::Opaque);
+        let object = IrChandleExpr::LocalRead(Codegen::capture_local_name(storage));
+        self.cur_fn_ir = Some(lowering.sample);
+        let field = |cg: &mut Codegen<'_>, field: usize| {
+            cg.native_access_symbol(
+                object.clone(),
+                IrNativeAccessKind::ClassField {
+                    class: lowering.class,
+                    field,
+                },
+            )
+        };
+        let record = IrChandleExpr::LocalRead(field(self, lowering.record_field));
+        let owner = lowering
+            .owner_field
+            .map(|owner| IrChandleExpr::LocalRead(field(self, owner)));
+        let bind = lowering.bind_field.map(|bind| field(self, bind));
+        let func = Self::coverage_func_ctx(format!("{name}::sample event"), true, owner);
+        let saved_scope = self
+            .coverage_scope
+            .replace((lowering.class, object.clone()));
+        let result = (|| -> Result<(Vec<Vec<IrStmt>>, Vec<IrPreFn>), String> {
+            let mut ctx = EmitCtx::new(self, path.clone(), inst, "0", Some(func), false);
+            let mut waits = Vec::with_capacity(lowering.variants.len());
+            for binding in &lowering.variants {
+                ctx.cg.coverage_ref_actuals = binding.clone();
+                let wait = ctx.lower_sampling_event(timing, specs);
+                ctx.cg.coverage_ref_actuals.clear();
+                waits.push(wait?);
+            }
+            Ok((waits, std::mem::take(&mut ctx.pre_fns)))
+        })();
+        self.coverage_scope = saved_scope;
+        self.func = None;
+        self.cur_fn_ir = None;
+        let (waits, mut pre_fns) = result.map_err(|error| {
+            self.coverage_error(
+                timing,
+                format!("sampling event of covergroup `{name}`: {error}"),
+            )
+        })?;
+        let mut body = match &bind {
+            None => waits.into_iter().next().unwrap_or_default(),
+            Some(bind) => {
+                // The `ref` binding variant of the instance selects the
+                // variables its event waits on.
+                let selector = IrExpr::new(IrExprKind::LocalRead(bind.clone()), 32, false, None);
+                let mut chain: Option<Vec<IrStmt>> = None;
+                for (variant, wait) in waits.into_iter().enumerate().rev() {
+                    let condition = IrExpr::new(
+                        IrExprKind::Bin {
+                            op: IrBinOp::Eq,
+                            a: Box::new(selector.clone()),
+                            b: Box::new(lhs_integer_expr(variant as i128)),
+                        },
+                        1,
+                        false,
+                        None,
+                    );
+                    chain = Some(vec![IrStmt::If {
+                        cond: condition,
+                        then_: wait,
+                        els: chain,
+                        check: IrUniquePriorityCheck::None,
+                    }]);
+                }
+                chain.unwrap_or_default()
+            }
+        };
+        body.push(IrStmt::Coverage(Box::new(IrCoverageStmt::SampleInstance {
+            group: lowering.ir,
+            record,
+            object,
+            function: lowering.sample,
+            depth: parse_depth("0"),
+            strobe: lowering.strobe,
+        })));
+        let c_name = self.new_fn_name(&path, &format!("cov_{}_waiter", ident(&name)));
+        // The publisher (`Watch`) fills slot 0 with the new object; the
+        // initializer only types the slot for the helper's prologue.
+        let captures = vec![IrCapture::new(
+            storage,
+            IrExpr::new(
+                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::HandleCapture(
+                    IrChandleExpr::LocalRead("_this".to_owned()),
+                ))),
+                1,
+                false,
+                None,
+            ),
+        )];
+        pre_fns.push(IrPreFn::CapturedBranch {
+            c_name: c_name.clone(),
+            frame,
+            captures,
+            body: vec![IrStmt::Forever { body }],
+        });
+        self.model.funcs[lowering.sample].pre_fns.extend(pre_fns);
+        if let Some(lowering) = self.covergroups.get_mut(&group) {
+            lowering.waiter = Some(c_name);
+        }
+        Ok(())
+    }
+
     /// Whether an event expression reads storage of one instance (a
     /// covergroup argument or a property of the owning object).
     fn coverage_event_reads_instance(&self, info: &CovergroupInfo, node: NodeId) -> Option<NodeId> {
@@ -1122,17 +1312,22 @@ impl<'a> Codegen<'a> {
             None => Ok(()),
             Some(CoverageEvent::Block { events, .. }) => {
                 for event in events {
-                    if !matches!(self.kind(event.target), NodeKind::FuncTask { .. }) {
+                    let target = self
+                        .named_block_statement(event.target)
+                        .unwrap_or(event.target);
+                    if target == event.target
+                        && !matches!(self.kind(event.target), NodeKind::FuncTask { .. })
+                    {
                         return Err(self.coverage_error(
                             group,
                             format!(
-                                "block event of covergroup `{name}` names `{}`, which is not a task or function; named-block events are not supported yet",
+                                "block event of covergroup `{name}` names `{}`, which is not a named block, task, function or method",
                                 self.node(event.target).name
                             ),
                         ));
                     }
                     self.coverage_block_events
-                        .entry(event.target)
+                        .entry(target)
                         .or_default()
                         .push((group, event.begin));
                 }
@@ -1143,17 +1338,8 @@ impl<'a> Codegen<'a> {
                 for spec in specs {
                     spec.referenced_nodes(&mut nodes);
                 }
-                if let Some(target) = nodes
-                    .iter()
-                    .find_map(|node| self.coverage_event_reads_instance(&info, *node))
-                {
-                    return Err(self.coverage_error(
-                        *timing,
-                        format!(
-                            "the sampling event of covergroup `{name}` reads `{}` of one instance; events on covergroup arguments or class properties are not supported yet",
-                            self.node(target).name
-                        ),
-                    ));
+                if lowering.instance_event {
+                    return self.emit_covergroup_waiter(group, *timing, specs);
                 }
                 let path = self.covergroup_path(group);
                 let inst = self.covergroup_inst(group);
@@ -1179,6 +1365,7 @@ impl<'a> Codegen<'a> {
                         group: lowering.ir,
                         function: lowering.sample,
                         depth: IrDepth::PROC,
+                        strobe: lowering.strobe,
                     })),
                 ];
                 self.model.processes.push(IrProcess::new_with_origin(
@@ -1199,12 +1386,31 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// The named block statement a block event names. The reference names
+    /// the block's label scope: an empty named block that the statement
+    /// with the same name lists among its children.
+    fn named_block_statement(&self, target: NodeId) -> Option<NodeId> {
+        let is_begin = |node: NodeId| matches!(self.kind(node), NodeKind::Stmt(StmtKind::Begin));
+        let name = &self.node(target).name;
+        if !is_begin(target) || name.is_empty() {
+            return None;
+        }
+        if !self.node(target).children.is_empty() {
+            return Some(target);
+        }
+        self.db.node_ids().find(|statement| {
+            *statement != target
+                && is_begin(*statement)
+                && self.node(*statement).name == *name
+                && self.node(*statement).children.contains(&target)
+        })
+    }
+
     /// Statements sampling every registered instance of the groups whose
     /// block event names subroutine `target` at its start (`begin`) or end.
     pub(in super::super) fn coverage_block_samples(
         &mut self,
         target: NodeId,
-        body: NodeId,
         begin: bool,
     ) -> Result<Vec<IrStmt>, String> {
         let Some(events) = self.coverage_block_events.get(&target).cloned() else {
@@ -1217,16 +1423,6 @@ impl<'a> Codegen<'a> {
             if event_begin != begin {
                 continue;
             }
-            if !begin && self.node_contains_return(body) {
-                return Err(self.coverage_error(
-                    group,
-                    format!(
-                        "the `end` block event of covergroup `{}` names `{}`, whose `return` statement would leave before its last statement; this is not supported",
-                        self.covergroup_name(group),
-                        self.node(target).name
-                    ),
-                ));
-            }
             let Some(lowering) = self.covergroups.get(&group) else {
                 continue;
             };
@@ -1235,21 +1431,11 @@ impl<'a> Codegen<'a> {
                     group: lowering.ir,
                     function: lowering.sample,
                     depth,
+                    strobe: false,
                 },
             )));
         }
         Ok(statements)
-    }
-
-    fn node_contains_return(&self, root: NodeId) -> bool {
-        let mut pending = vec![root];
-        while let Some(node) = pending.pop() {
-            if matches!(self.kind(node), NodeKind::Stmt(StmtKind::Return { .. })) {
-                return true;
-            }
-            pending.extend(self.node(node).children.iter().copied());
-        }
-        false
     }
 
     /// Every block event must have been attached to its subroutine body.
@@ -1266,7 +1452,7 @@ impl<'a> Codegen<'a> {
             Some(target) => Err(self.coverage_error(
                 *target,
                 format!(
-                    "the covergroup block event on `{}` is not supported for this subroutine (a task that waits or a subroutine without its own body)",
+                    "the covergroup block event on `{}` is not supported for this subroutine (an imported or extern subroutine without its own body)",
                     self.node(*target).name
                 ),
             )),
@@ -1463,6 +1649,17 @@ impl<'a> Codegen<'a> {
         })))
     }
 
+    /// The actual a `ref` formal names while a covergroup body or waiter
+    /// lowers, for an expression that is exactly a read of that formal.
+    pub(in super::super) fn coverage_ref_actual(&self, expression: NodeId) -> Option<NodeId> {
+        match self.kind(expression) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(target),
+            }) => self.coverage_ref_actuals.get(target).copied(),
+            _ => None,
+        }
+    }
+
     /// A read of a `ref` formal while a covergroup body lowers: the variable
     /// the current binding variant names.
     fn coverage_ref_read(&mut self, path: &str, node: NodeId) -> Result<Option<IrExpr>, String> {
@@ -1500,7 +1697,7 @@ impl<'a> Codegen<'a> {
             }
             CoverageMethod::SetInstName => {
                 // The instance name only labels coverage reports, which llg
-                // does not write (decision S44-D5); the receiver must still
+                // does not write; the receiver must still
                 // be a valid instance.
                 let object = self.coverage_receiver(path, node, None)?;
                 Ok(Some(IrStmt::Object(Box::new(
@@ -1803,6 +2000,15 @@ impl<'a> Codegen<'a> {
             body.push(IrStmt::Coverage(Box::new(IrCoverageStmt::Register {
                 group: lowering.ir,
                 object: object.clone(),
+            })));
+        }
+        if let Some(waiter) = lowering.waiter.clone() {
+            // The waiter belongs to the instance, not to the constructing
+            // process (decision S44-D5).
+            body.push(IrStmt::Coverage(Box::new(IrCoverageStmt::Watch {
+                object: object.clone(),
+                waiter,
+                label: format!("{}.{name}.sample", self.source_path(path)),
             })));
         }
         let index = self.model.class_allocations.len();

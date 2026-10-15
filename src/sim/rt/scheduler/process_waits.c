@@ -1,7 +1,8 @@
 
-static llg_proc_t* spawn_in_region(const llg_co_desc_t* desc,
-                                   const char* name, llg_region_t region,
-                                   llg_program_t* program, int is_initial) {
+static llg_proc_t* spawn_process(const llg_co_desc_t* desc,
+                                 const char* name, llg_region_t region,
+                                 llg_program_t* program, int is_initial,
+                                 int runtime_owned) {
     if (g.config_error || !desc || !desc->fn || !region_valid(region)) return NULL;
     if (!callback_region_allowed(region, 0)) return NULL;
     if (desc->frame_size < sizeof(llg_co_frame_t) ||
@@ -28,7 +29,12 @@ static llg_proc_t* spawn_in_region(const llg_co_desc_t* desc,
     }
     p->handle = process_handle_new(p);
     p->status = LLG_PROCESS_RUNNING;
-    rng_seed_static(p);
+    if (runtime_owned) {
+        // Derived, not drawn: creating one never shifts another stream.
+        llg_rng_state_derive(&p->rng, &g.rng_root, ++g.owned_spawns);
+    } else {
+        rng_seed_static(p);
+    }
     p->budget_time = g.now;
     p->region = region;
     register_proc(p);
@@ -36,9 +42,25 @@ static llg_proc_t* spawn_in_region(const llg_co_desc_t* desc,
     return p;
 }
 
+static llg_proc_t* spawn_in_region(const llg_co_desc_t* desc,
+                                   const char* name, llg_region_t region,
+                                   llg_program_t* program, int is_initial) {
+    return spawn_process(desc, name, region, program, is_initial, 0);
+}
+
 llg_proc_t* llg_spawn_in_region(const llg_co_desc_t* desc,
                                 const char* name, llg_region_t region) {
     return spawn_in_region(desc, name, region, NULL, 0);
+}
+
+llg_proc_t* llg_spawn_owned_with_frame(const llg_co_desc_t* desc,
+                                       const char* name,
+                                       llg_frame_t* frame) {
+    llg_proc_t* p = spawn_process(desc, name, LLG_REGION_ACTIVE, NULL, 0, 1);
+    if (!p) return NULL;
+    p->frame = frame;
+    llg_frame_retain(frame);
+    return p;
 }
 
 llg_proc_t* llg_spawn_program_in_region(const llg_co_desc_t* desc,

@@ -2684,6 +2684,13 @@ struct EmitCtx<'c, 'a> {
     /// Replaces the `%m` scope of a hidden host process: the text plus the
     /// node whose named blocks extend it (`None` when no block can lie below).
     display_scope: Option<(String, Option<NodeId>)>,
+    /// Label just before the `end` block-event samples of the subroutine
+    /// being lowered (19.3): a `return` stores its value and jumps there,
+    /// so leaving early still samples.
+    coverage_end_exit: Option<String>,
+    /// A `return` jumped to [`EmitCtx::coverage_end_exit`], so its label is
+    /// emitted (an unused C label is a warning).
+    coverage_end_exit_used: bool,
 }
 
 /// Shape of an image-represented fixed array `with` operand.

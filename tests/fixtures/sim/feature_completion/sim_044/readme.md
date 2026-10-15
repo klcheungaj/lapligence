@@ -6,7 +6,7 @@ compact/GMP value backends; negative cases run in both optimizer modes. Line
 numbers refer to the `pdftotext -layout` extraction
 `SystemVerilog-1800-2009.txt` (SV). The interpretations that needed a choice
 are the register decisions
-[S44-D1 to S44-D4](../../../../../docs/lrm_decisions.md#covergroups-instances-and-sampling-sim-044).
+[S44-D1 to S44-D9](../../../../../docs/lrm_decisions.md#covergroups-instances-and-sampling-sim-044).
 
 ## Clauses relied on
 
@@ -17,8 +17,24 @@ are the register decisions
   sampled by each instance of a covergroup. Input arguments will not track the
   value of their arguments; they will use the value passed to the new
   operator."
-- 19.3, L32092: "If a clocking event is specified, it defines the event at
-  which coverage points are sampled."
+- 19.3, L32092-32093: "If a clocking event is specified, it defines the
+  event at which coverage points are sampled. Because it is in the scope of
+  the covergroup, the clocking event can be based on ref arguments of the
+  covergroup."
+- 19.3, L32105-32109: "The strobe option (see 19.7.1) can be used to specify
+  that coverage points are sampled in the Postponed region, thereby filtering
+  multiple clocking events so that only one sample per time slot is taken. The
+  strobe option only applies to the scheduling of samples triggered by a
+  clocking event. It shall have no effect on procedural calls to the built-in
+  sample() method."
+- 4.4.2.9, L3212-3214: "No new value changes are allowed to happen in the
+  current time slot once the Postponed region is reached."
+- 19.7.1, L33423-33424 (Table 19-3): strobe "When true, all samples happen at
+  the end of the time slot, like the $strobe system task."; L33534 (Table
+  19-4): `strobe` can be set for a covergroup ("Yes"), not for a coverpoint or
+  cross ("No").
+- 19.8, Table 19-5, L33562-33566: start() "Starts collecting coverage
+  information"; stop() "Stops collecting coverage information".
 - 19.3, L32102-32104: "When the strobe option is not set (the default), a
   coverage point is sampled the instant the clocking event takes place, as if
   the process triggering the event were to call the built-in sample() method."
@@ -145,6 +161,49 @@ and its guard: the first edge samples 2 (guard 1), the second edge is guarded
 off: 1/4 = 25.00. `only_sample` (9) reaches the group as a sample argument:
 1/16 = 6.25.
 
+`instance_events.sv` (A02): each instance waits on its own event; `wait
+fork` in the constructing process returns at once (S44-D5). Three rising
+edges at times 1, 3 and 5 see `b0.data`, `va` = 0, 1, 2 and `src.val` = 0, 2,
+0 (each is updated after the edge's negative half).
+
+- `m0` (owner property `vif` = `b0`): {0, 1, 2} of 4 = 75.00; `m1` (`b1`) sees
+  one edge with `b1.data` = 0: 25.00.
+- `ra` (`ref` clock `ca`, value `va`): 75.00; `rb` (`ref` `cb`, `vb`, the
+  second binding variant) one edge with 0: 25.00.
+- `h` (input handle `src`): {0, 2} = 50.00.
+- `m0.cg.stop()`: the edge with data 3 counts nothing (75.00); after
+  `start()` the next edge samples 3: 100.00. Type: (100 + 25) / 2 = 62.50.
+
+`dropped_waiters.sv` (A02, under `LLG_GC_STRESS=1`): `keep` sees the four
+edges with values 0-3: 100.00. Iteration k constructs a monitor and drops its
+only handle before edge k; it still samples edges k..3: 100, 75, 50, 25. Type:
+(100 + 100 + 75 + 50 + 25) / 5 = 70.00.
+
+`strobe.sv` (A02): in slot 1, `v` = 1 and two rising edges of `clk` happen
+before the nonblocking update `v <= v + 4` sets 5 (each edge schedules it
+from `v` = 1).
+
+- `called` (strobe, no event): `p.sample()` counts `v` = 1 at once, 100.00
+  before the slot ends (strobe does not delay `sample()`).
+- `at_event` (`at_least` 2): two immediate samples of 1: `lo` 100.00, `hi`
+  0.00.
+- `strobed`: one Postponed sample of 5: `lo` 0.00, `hi` 100.00;
+  `strobed_twice` (`at_least` 2) has one sample only: 0.00.
+- `Box` (per-instance strobe): the edge of `c` comes with `x` = 4, then `x`
+  becomes 6 in the same slot; the Postponed sample sees 6: `four` 0.00, `six`
+  100.00.
+
+`block_returns.sv` (A02):
+
+- `f(2)` returns early with `n` = 2 and result 20: the end sample counts `two`
+  (1 of 3, 33.33, S44-D7). `f(0)` runs to the end with `n` = 100: 66.67.
+- `t(5)` returns early with `n` = 5 (50.00); `t(6)` ends with 7: 100.00.
+- `pause(3)` waits 1 time unit, then returns early with `n` = 3: 50.00 at time
+  1 (a task that waits).
+- `blk` runs three times with `n` = 0, 1, 2 at entry: the begin event covers
+  all three bins (100.00). Only the first run reaches its end (`n` = 30); the
+  second is disabled and the third leaves by `break` (S44-D8): 1 of 3, 33.33.
+
 `null_sample.sv`: `c` was never constructed; `c.sample()` is a null handle
 access and stops the run after `before`.
 
@@ -155,12 +214,11 @@ access and stops the run after `before`.
 | `neg_cross` | cross coverage | SIM-045 |
 | `neg_illegal_bins`, `neg_transition_bins` | non-value bins forms | SIM-045 |
 | `neg_argument_bins` | bins values that depend on covergroup arguments | SIM-045 |
-| `neg_strobe` | `type_option.strobe = 1` | SIM-045 |
+| `neg_strobe` | `type_option.strobe` in a coverpoint (Table 19-4) | frontend |
 | `neg_merge_instances` | `type_option.merge_instances = 1` | SIM-045 |
 | `neg_option_access` | `c.option.weight = 2` after instantiation | SIM-046 |
 | `neg_two_arg_query` | `get_inst_coverage(covered, total)` | SIM-046 |
-| `neg_instance_event` | a sampling event on a property of the owning object | llg limit |
 | `neg_wide_point` | an 80-bit coverpoint | llg limit (64 bits) |
-| `neg_end_return` | `@@(end f)` where `f` can `return` early | llg limit |
+| `neg_import_event` | a block event on an imported function, which has no body | llg limit |
 | `neg_embedded_outside_new` | embedded `new` outside the class `new` (19.4) | frontend |
 | `neg_sample_arguments` | `sample()` without its declared argument (19.8.1) | frontend |

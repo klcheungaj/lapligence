@@ -349,7 +349,8 @@ class handle across a safe point must be enumerated: add it to
 handle cells tagged by `llg_gc_handle_cell_drop`, captured frames, native
 roots, mailboxes, suspended coroutine frames through registered frame maps) or
 register a root producer/payload tracer (`llg_gc_register_*`). Covergroup
-objects sampled by a coverage event are pinned by `llg_cov_register`. Addresses that may point into object storage
+objects sampled by a static coverage event are pinned by `llg_cov_register`;
+a per-instance event waiter holds its object in its captured frame. Addresses that may point into object storage
 are reported with `llg_gc_visit_interior`.
 
 Finalizers release fields only and never follow handles, so cycles and order
@@ -378,7 +379,20 @@ which resolves group defaults and sizes counters: dense `uint64_t` arrays up to
 (`llg_cov_hit`) is O(1) for automatic bins, O(log n) for enum and explicit
 bins, and allocates only when a sparse table grows. Coverage percentages are
 computed on demand (19.11; type coverage with `merge_instances = 0`). Keep the
-store free of scheduler state so a model without covergroups never touches it.
+store free of process state so a model without covergroups never touches it.
+`llg_cov_hit` reads its value through a `const sv4_t*` only during the call,
+so generated code passes a plain variable's storage without a copy.
+
+A clocking event on instance storage runs one waiter per instance, started by
+`llg_spawn_owned_with_frame` (`scheduler/process_waits.c`): a runtime-owned
+Active process with no parent, fork group or program origin, callable during
+initialization, whose random stream is derived from the root by ordinal
+without drawing from any stream. It skips its sample while
+`llg_cov_sampling` is false. `type_option.strobe` requests
+(`llg_cov_strobe`, `llg_cov_strobe_registered`) are merged per instance or
+registry per time slot and flushed by one Postponed region callback, which
+calls the group's `strobe_sample` trampoline with each object; the sample
+method then only reads design state.
 
 ## Stop, synchronization and assertions
 

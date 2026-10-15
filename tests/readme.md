@@ -310,10 +310,11 @@ run the set with `LLG_CC=gcc LLG_CFLAGS='-fsanitize=address,undefined
 SIM-044's covergroup fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_044::)'`. Positive cases run in
 both optimizer modes on every value backend with hand-derived percentages
-(fixture readme); `embedded` runs under `LLG_GC_STRESS=1` to prove the owner
-and handle arguments of covergroup objects stay reachable, and `storage` keeps
-variables read only by coverpoints, guards and sampling events. Decisions
-S44-D1-D4 are in `sim_lrm_decisions`; the runtime store probe is
+(fixture readme); `embedded` and `dropped_waiters` run under
+`LLG_GC_STRESS=1` to prove the owner and handle arguments of covergroup
+objects, and the per-instance event waiters that hold them, stay reachable,
+and `storage` keeps variables read only by coverpoints, guards and sampling
+events. Decisions S44-D1-D9 are in `sim_lrm_decisions`; the runtime store probe is
 `runtime_coverage` in the `runtime` binary, and the capture unit test is
 `core::db::database::coverage::tests`.
 

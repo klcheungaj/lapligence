@@ -31,7 +31,7 @@ static int failed;
 
 static void hit(void* inst, uint32_t point, int64_t value, uint32_t width) {
     sv4_t v = sv4_from_i64(value, width);
-    llg_cov_hit(inst, point, v);
+    llg_cov_hit(inst, point, &v);
     sv4_destroy(&v);
 }
 
@@ -107,7 +107,7 @@ int main(void) {
     hit(a, 4, 2, 4);
     NEAR(llg_cov_inst_coverage(a, 4), 100.0);
     sv4_t unknown = sv4_from_masks(2u, 1u, 0u, 2u, 0);
-    llg_cov_hit(a, 0, unknown);
+    llg_cov_hit(a, 0, &unknown);
     sv4_destroy(&unknown);
     NEAR(llg_cov_inst_coverage(a, 0), 50.0);
     hit(a, 5, 3, 16);

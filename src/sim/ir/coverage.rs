@@ -22,6 +22,10 @@ pub struct IrCovergroup {
     pub(in crate::sim) name: String,
     pub(in crate::sim) coverage_type: usize,
     pub(in crate::sim) points: Vec<IrCoverpoint>,
+    /// `type_option.strobe` (19.7.1): the sample method (no formals) that a
+    /// Postponed-region flush calls for each instance its clocking event
+    /// requested in the time slot.
+    pub(in crate::sim) strobe: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -116,11 +120,35 @@ pub enum IrCoverageStmt {
         start: bool,
     },
     /// Call sample method `function` (no formals) once per registered object
-    /// of `group`, in registration order, with the object as receiver.
+    /// of `group`, in registration order, with the object as receiver. With
+    /// `strobe`, request one such pass in the Postponed region of the
+    /// current time slot instead (19.7.1).
     SampleRegistered {
         group: usize,
         function: usize,
         depth: IrDepth,
+        strobe: bool,
+    },
+    /// Start the per-instance sampling-event waiter of a new covergroup
+    /// `object`: the captured branch `waiter` (a helper of the group's
+    /// sample method whose only capture, slot 0, is the object) as a
+    /// runtime-owned process that no process owns.
+    Watch {
+        object: IrChandleExpr,
+        waiter: String,
+        label: String,
+    },
+    /// One instance's clocking event occurred: call sample method
+    /// `function` (no formals) on `object` unless `record` is stopped, or,
+    /// with `strobe`, request one such call in the Postponed region of the
+    /// current time slot (19.7.1).
+    SampleInstance {
+        group: usize,
+        record: IrChandleExpr,
+        object: IrChandleExpr,
+        function: usize,
+        depth: IrDepth,
+        strobe: bool,
     },
 }
 
@@ -188,7 +216,9 @@ impl IrCoverageStmt {
             | Self::Ready { .. }
             | Self::Register { .. }
             | Self::Control { .. }
-            | Self::SampleRegistered { .. } => Vec::new(),
+            | Self::SampleRegistered { .. }
+            | Self::Watch { .. }
+            | Self::SampleInstance { .. } => Vec::new(),
         }
     }
 
@@ -208,7 +238,9 @@ impl IrCoverageStmt {
             | Self::Ready { .. }
             | Self::Register { .. }
             | Self::Control { .. }
-            | Self::SampleRegistered { .. } => Vec::new(),
+            | Self::SampleRegistered { .. }
+            | Self::Watch { .. }
+            | Self::SampleInstance { .. } => Vec::new(),
         }
     }
 
@@ -218,7 +250,8 @@ impl IrCoverageStmt {
             | Self::Ready { record }
             | Self::Sample { record, .. }
             | Self::Control { record, .. } => vec![record],
-            Self::Register { object, .. } => vec![object],
+            Self::Register { object, .. } | Self::Watch { object, .. } => vec![object],
+            Self::SampleInstance { record, object, .. } => vec![record, object],
             Self::Create { .. } | Self::SampleRegistered { .. } => Vec::new(),
         }
     }
@@ -229,15 +262,19 @@ impl IrCoverageStmt {
             | Self::Ready { record }
             | Self::Sample { record, .. }
             | Self::Control { record, .. } => vec![record],
-            Self::Register { object, .. } => vec![object],
+            Self::Register { object, .. } | Self::Watch { object, .. } => vec![object],
+            Self::SampleInstance { record, object, .. } => vec![record, object],
             Self::Create { .. } | Self::SampleRegistered { .. } => Vec::new(),
         }
     }
 
-    /// The sample method this statement calls for every registered object.
+    /// The sample method this statement calls (for every registered object,
+    /// or for one instance).
     pub(in crate::sim) fn called_function(&self) -> Option<usize> {
         match self {
-            Self::SampleRegistered { function, .. } => Some(*function),
+            Self::SampleRegistered { function, .. } | Self::SampleInstance { function, .. } => {
+                Some(*function)
+            }
             _ => None,
         }
     }

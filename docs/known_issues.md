@@ -1884,19 +1884,14 @@ sampling; these legal forms remain outside it.
 
 These covergroups reject with located diagnostics:
 
-- a sampling event that reads a covergroup argument (including a `ref`
-  argument) or a property of the owning object, for example
-  `covergroup cg @(posedge vif.clk)` in a class: "the sampling event of
-  covergroup ... reads ... of one instance";
 - crosses, transition, wildcard, default, array, `illegal_bins`,
   `ignore_bins` and `iff`-guarded bins, bins values that depend on covergroup
-  arguments, `type_option.strobe`, `type_option.merge_instances` and
+  arguments, `type_option.merge_instances` and
   `option.detect_overlap` (SIM-045);
 - options read or written through an instance or type
   (`c.option.weight = 2`) and `get_coverage(covered, total)` (SIM-046);
 - a coverpoint wider than 64 bits;
-- `@@(end f)` where `f` can `return` before its last statement, and a block
-  event on a named block or a task that waits;
+- a block event on an imported or extern subroutine, which has no body;
 - a `ref` argument whose actual is not a whole static variable or net.
 
 `set_inst_name`, `option.name`, `option.comment`, `option.per_instance` and
@@ -1905,17 +1900,16 @@ coverage report or database.
 
 ### Cause
 
-A static clocking event lowers to one sampler process per covergroup that
-samples every registered instance; an event that depends on the instance needs
-one waiter per instance, which needs process creation from a constructor. `ref`
-arguments are bound statically per distinct actual tuple. Bin classification
-beyond value sets and the coverage database are later items.
+`ref` arguments are bound statically per distinct actual tuple. Bin
+classification beyond value sets and the coverage database are later items.
+Instances, and the per-instance event waiters that hold them, live until the
+end of simulation (S44-D3, S44-D5), so memory grows with every covergroup
+object created.
 
 ### Intended direction
 
-Spawn one sampler per instance for instance-dependent events; SIM-045 for the
-remaining bins forms, crosses and type options; SIM-046 for the query, control
-and database services.
+SIM-045 for the remaining bins forms, crosses and type options; SIM-046 for
+the query, control and database services.
 
 ### Reproduce
 

@@ -788,6 +788,66 @@ impl EmitCtx<'_, '_> {
     /// Lower a `return` statement.  In a non-void function the value becomes
     /// the `_ret` conversion + C return (rendered); in a void function/task it
     /// is a bare return.
+    ///
+    /// Rewrite a lowered `return` of a subroutine with `end` block events:
+    /// store the value as the return statement would, then jump to `exit`,
+    /// which precedes the end samples and falls through to the epilogue.
+    pub(super) fn return_to_coverage_exit(
+        &mut self,
+        statement: IrStmt,
+        exit: &str,
+    ) -> Result<IrStmt, String> {
+        Ok(match statement {
+            IrStmt::Return { value: None } => IrStmt::Goto(exit.to_owned()),
+            IrStmt::Return { value: Some(value) } => {
+                let ret = self
+                    .func
+                    .as_ref()
+                    .and_then(|function| function.ret.clone())
+                    .ok_or("value return in a subroutine without a result")?;
+                let value = *value;
+                let rhs = if ret.width == 0 {
+                    if value.is_real() {
+                        value
+                    } else {
+                        IrExpr::new(
+                            IrExprKind::CastToReal {
+                                a: Box::new(value),
+                                shortreal: ret.shortreal,
+                            },
+                            REAL_EXPR_WIDTH,
+                            true,
+                            None,
+                        )
+                    }
+                } else {
+                    ir_to_storage(value, ret.width, ret.signed, ret.two_state)?
+                };
+                IrStmt::Block(vec![
+                    IrStmt::Assign {
+                        lhs: IrLhs::WholeRef {
+                            addr: format!("&{}", ret.c_name),
+                            width: ret.width,
+                            signed: ret.signed,
+                            two_state: ret.two_state,
+                            shortreal: ret.shortreal,
+                        },
+                        rhs,
+                        nba: false,
+                    },
+                    IrStmt::Goto(exit.to_owned()),
+                ])
+            }
+            IrStmt::Block(statements) => IrStmt::Block(
+                statements
+                    .into_iter()
+                    .map(|statement| self.return_to_coverage_exit(statement, exit))
+                    .collect::<Result<_, _>>()?,
+            ),
+            statement => statement,
+        })
+    }
+
     pub(super) fn lower_return(&mut self, value: Option<NodeId>) -> Result<IrStmt, String> {
         if let Some(result) = self
             .func

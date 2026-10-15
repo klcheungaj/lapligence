@@ -105,6 +105,44 @@ fn coverpoint_only_reads_keep_their_storage() {
 }
 
 #[test]
+fn instance_events_wait_per_instance_independently_of_their_creator() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_044/instance_events.out");
+    sim_cli::run_case_checked_matrix(SUITE, "instance_events", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+    });
+}
+
+#[test]
+fn dropped_instances_keep_their_waiters() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_044/dropped_waiters.out");
+    // A collection at every allocation proves the waiter's capture keeps
+    // the instance and its owner reachable.
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "dropped_waiters",
+        &[],
+        &[("LLG_GC_STRESS", "1")],
+        &|label, output| assert_stdout(label, output, expected),
+    );
+}
+
+#[test]
+fn strobe_samples_once_per_slot_in_the_postponed_region() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_044/strobe.out");
+    sim_cli::run_case_checked_matrix(SUITE, "strobe", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+    });
+}
+
+#[test]
+fn end_events_follow_returns_and_named_blocks() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_044/block_returns.out");
+    sim_cli::run_case_checked_matrix(SUITE, "block_returns", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+    });
+}
+
+#[test]
 fn null_covergroup_handle_is_a_runtime_error() {
     sim_cli::run_case_checked_matrix(SUITE, "null_sample", &[], &|label, output| {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -151,17 +189,12 @@ fn unsupported_coverage_forms_are_located_errors() {
     sim_cli::reject_case(
         SUITE,
         "neg_strobe",
-        "neg_strobe.sv:7:5: type_option.strobe in covergroup `g` (Postponed-region sampling) is not supported yet (SIM-045)",
+        "neg_strobe.sv:8:19 no member named 'strobe'",
     );
     sim_cli::reject_case(
         SUITE,
         "neg_merge_instances",
         "neg_merge_instances.sv:6:5: type_option.merge_instances in covergroup `g` (merged type coverage) is not supported yet (SIM-045)",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_instance_event",
-        "neg_instance_event.sv:7:20: the sampling event of covergroup `g` reads `tick` of one instance",
     );
     sim_cli::reject_case(
         SUITE,
@@ -175,8 +208,8 @@ fn unsupported_coverage_forms_are_located_errors() {
     );
     sim_cli::reject_case(
         SUITE,
-        "neg_end_return",
-        "neg_end_return.sv:10:14: the `end` block event of covergroup `g` names `f`",
+        "neg_import_event",
+        "neg_import_event.sv:5:31: the covergroup block event on `c_value` is not supported for this subroutine",
     );
     sim_cli::reject_case(
         SUITE,
