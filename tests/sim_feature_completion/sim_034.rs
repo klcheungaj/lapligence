@@ -47,7 +47,7 @@ fn virtual_interface_drives_stay_on_the_instance_named_at_issue() {
     after_db_drop(
         "vif_drives",
         expected,
-        "llg: $finish at time 35000 at tb:82:9\n",
+        "llg: $finish at time 35 at tb:82:9\n",
     );
 }
 

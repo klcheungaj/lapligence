@@ -44,7 +44,7 @@ fn detached_branches_of_constructors_and_functions_keep_their_receiver() {
         "fork_lifecycle",
         "method_receivers",
         include_str!("fixtures/sim/fork_lifecycle/method_receivers.out"),
-        "llg: $finish at time 20000 at tb:66:9\n",
+        "llg: $finish at time 20 at tb:66:9\n",
         &[],
     );
 }
