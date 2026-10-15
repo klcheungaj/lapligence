@@ -636,12 +636,33 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             }
             collect_stmts_rw(body, model, rw);
         }
-        IrStmt::WaitEventTriggered { body, .. } => collect_stmts_rw(body, model, rw),
+        IrStmt::WaitEventTriggered { event, body } => {
+            collect_event_reads(event, model, rw);
+            collect_stmts_rw(body, model, rw);
+        }
         IrStmt::WaitOrder {
-            success, failure, ..
+            events,
+            success,
+            failure,
         } => {
+            for event in events {
+                collect_event_reads(event, model, rw);
+            }
             collect_stmts_rw(success, model, rw);
             collect_stmts_rw(failure, model, rw);
+        }
+        // An event-array index or handle expression is evaluated where the
+        // operation is issued.
+        IrStmt::EventTrigger { ev }
+        | IrStmt::ClockingEventTrigger { ev }
+        | IrStmt::NonblockingEventTrigger { ev, .. }
+        | IrStmt::NonblockingEventTriggerWhen { ev, .. }
+        | IrStmt::EventCapture { source: ev, .. } => collect_event_reads(ev, model, rw),
+        IrStmt::EventAssign { target, source } => {
+            collect_event_reads(target, model, rw);
+            if let Some(source) = source {
+                collect_event_reads(source, model, rw);
+            }
         }
         // Event-control and combinational wait sources are reads of the
         // named signal globals (lowering emits their addresses into the wait
@@ -817,6 +838,10 @@ fn collect_mailbox_target_rw(
     }
 }
 
+fn collect_event_reads(event: &crate::sim::ir::IrEventRef, model: &IrModel, rw: &mut Rw) {
+    event.expressions(&mut |child| collect_expr_reads(child, model, rw));
+}
+
 fn collect_stream_selector_reads(selector: &IrStreamSelector, model: &IrModel, rw: &mut Rw) {
     match selector {
         IrStreamSelector::Index(index) => collect_expr_reads(index, model, rw),
@@ -920,14 +945,15 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
                     collect_expr_reads(value, model, rw);
                 }
             }
+            IrCallArg::EventVal(event) | IrCallArg::EventAddr(event) => {
+                collect_event_reads(event, model, rw)
+            }
             IrCallArg::ChandleVal(_)
             | IrCallArg::FixedArray(_)
             | IrCallArg::RealArray(_)
             | IrCallArg::NativeValue(_)
             | IrCallArg::NativeRefBound
             | IrCallArg::Container(_)
-            | IrCallArg::EventVal(_)
-            | IrCallArg::EventAddr(_)
             | IrCallArg::ChandleAddr(_)
             | IrCallArg::ChandleRefAddr(_) => {}
         }
@@ -1200,6 +1226,7 @@ fn collect_children_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
                 collect_expr_reads(value, model, rw);
             }
         }
+        IrExprKind::EventTriggered(event) => collect_event_reads(event, model, rw),
         IrExprKind::PartSel { base, .. } => collect_expr_reads(base, model, rw),
         IrExprKind::IdxPartSel {
             base,
@@ -1442,14 +1469,15 @@ fn collect_call_rw_readonly(function: usize, args: &[IrCallArg], model: &IrModel
                     collect_expr_reads(value, model, rw);
                 }
             }
+            IrCallArg::EventVal(event) | IrCallArg::EventAddr(event) => {
+                collect_event_reads(event, model, rw)
+            }
             IrCallArg::ChandleVal(_)
             | IrCallArg::FixedArray(_)
             | IrCallArg::RealArray(_)
             | IrCallArg::NativeValue(_)
             | IrCallArg::NativeRefBound
             | IrCallArg::Container(_)
-            | IrCallArg::EventVal(_)
-            | IrCallArg::EventAddr(_)
             | IrCallArg::ChandleAddr(_)
             | IrCallArg::ChandleRefAddr(_) => {}
         }

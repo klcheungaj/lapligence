@@ -404,7 +404,19 @@ impl IrCallArg {
                     argument.expressions(visit);
                 }
             }
-            _ => {}
+            // An event-array index or handle expression is evaluated at the
+            // call site.
+            Self::EventVal(event) | Self::EventAddr(event) => event.expressions(visit),
+            Self::FixedArray(_)
+            | Self::NativeValue(_)
+            | Self::NativeRefBound
+            | Self::Container(_)
+            | Self::RealArray(_)
+            | Self::ChandleAddr(_)
+            | Self::ChandleRefAddr(_)
+            | Self::StringOutAddr(_)
+            | Self::StringRefAddr { .. }
+            | Self::OutAddr(_) => {}
         }
     }
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
@@ -467,7 +479,17 @@ impl IrCallArg {
                     argument.expressions_mut(visit);
                 }
             }
-            _ => {}
+            Self::EventVal(event) | Self::EventAddr(event) => event.expressions_mut(visit),
+            Self::FixedArray(_)
+            | Self::NativeValue(_)
+            | Self::NativeRefBound
+            | Self::Container(_)
+            | Self::RealArray(_)
+            | Self::ChandleAddr(_)
+            | Self::ChandleRefAddr(_)
+            | Self::StringOutAddr(_)
+            | Self::StringRefAddr { .. }
+            | Self::OutAddr(_) => {}
         }
     }
 }
