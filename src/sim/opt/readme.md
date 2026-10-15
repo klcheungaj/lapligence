@@ -19,4 +19,10 @@ recompute wake behavior. Key folding boundaries are:
   still normalize to one-bit truth. Walkers inspect every potential clause;
   prefix folding never weakens lowering-time wake dependencies.
 
+`unused_storage` omits a signal only when no construct references it. Its
+walk (`passes/storage.rs`) has no wildcard arms, so a new IR kind must be
+classified before it compiles; nested payloads go through the IR-owned
+`expressions()` visitors. `opt_storage_differential` compares every fixture
+with the pass on and off.
+
 See the [pipeline](../readme.md) and [source map](../../../docs/source_layout.md).

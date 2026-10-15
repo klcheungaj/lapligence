@@ -48,8 +48,10 @@ arithmetic. Shape-guard identities. Prune only proven branches/cases: never pass
 an unknown item or select default until all items are proven unmatched. Omit
 unused storage without renumbering indices.
 
-Read collection includes processes, functions, initialization, spawns, monitors,
-links, force targets, display, waits, triggers and task temporaries. `Predicate`
+Unused-storage collection matches every IR enum and the model and call records
+without a wildcard arm or rest pattern: classify a new kind there, including
+references that are not expression reads (wait sources, event-handle indices,
+call receivers, C-address actuals, runtime registrations). `Predicate`
 retains ordered true-only evaluation, not logical-AND identities; drop suffixes
 only when unreachable without discarding reached effects. Singleton concat still
 forces unsigned/self-determined semantics. Array/structure conditionals retain

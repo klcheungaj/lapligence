@@ -32,6 +32,7 @@ mod lint_config_cli;
 mod llg_config_cli;
 mod lsp_stdio;
 mod model_tests;
+mod opt_storage_differential;
 mod parse_only;
 mod probe_bindings;
 mod property_elab;
