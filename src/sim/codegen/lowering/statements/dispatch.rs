@@ -215,6 +215,9 @@ impl EmitCtx<'_, '_> {
                     activation_exit = Some(exit.clone());
                     self.ctrl.push(CtrlScope::Block);
                 }
+                // Covergroup block events on this named block (19.3): the
+                // `begin` samples precede its first statement.
+                body.extend(self.cg.coverage_block_samples(h, true)?);
                 for s in &children {
                     // Local variable declarations inside the block are hoisted
                     // by the function-local collection; skip them here.
@@ -241,6 +244,9 @@ impl EmitCtx<'_, '_> {
                     }
                     body.extend(self.lower_stmt(*s)?);
                 }
+                // The `end` samples follow its last statement; a disable or
+                // a jump out of the block skips them (decision S44-D8).
+                body.extend(self.cg.coverage_block_samples(h, false)?);
                 if named {
                     match self.ctrl.pop() {
                         Some(CtrlScope::Block) => {}
@@ -555,7 +561,13 @@ impl EmitCtx<'_, '_> {
                 self.lower_variable_decl(*declaration)
             }
             NodeKind::Stmt(StmtKind::Empty) => Ok(vec![IrStmt::Nop]),
-            NodeKind::Stmt(StmtKind::Return { value }) => Ok(vec![self.lower_return(*value)?]),
+            NodeKind::Stmt(StmtKind::Return { value }) => {
+                let statement = self.lower_return(*value)?;
+                match self.coverage_end_exit.clone() {
+                    Some(exit) => Ok(vec![self.return_to_coverage_exit(statement, &exit)?]),
+                    None => Ok(vec![statement]),
+                }
+            }
             NodeKind::Stmt(StmtKind::Fork {
                 target,
                 join_kind,

@@ -1082,9 +1082,21 @@ impl<'a> Codegen<'a> {
             }
             // Covergroup block events (19.3): `begin` samples before the
             // first statement, `end` after the last one; a disable skips it.
-            body_stmts.extend(ctx.cg.coverage_block_samples(ft, body, true)?);
-            body_stmts.extend(ctx.lower_stmt(body)?);
-            body_stmts.extend(ctx.cg.coverage_block_samples(ft, body, false)?);
+            body_stmts.extend(ctx.cg.coverage_block_samples(ft, true)?);
+            let end_samples = ctx.cg.coverage_block_samples(ft, false)?;
+            if end_samples.is_empty() {
+                body_stmts.extend(ctx.lower_stmt(body)?);
+            } else {
+                // A `return` ends the subroutine normally and samples too
+                // (decision S44-D7).
+                let exit = ctx.cg.new_fn_name(path, "cov_end");
+                ctx.coverage_end_exit = Some(exit.clone());
+                let lowered = ctx.lower_stmt(body);
+                ctx.coverage_end_exit = None;
+                body_stmts.extend(lowered?);
+                body_stmts.push(IrStmt::Label(exit));
+                body_stmts.extend(end_samples);
+            }
             let pre_fns = std::mem::take(&mut ctx.pre_fns);
             (body_stmts, pre_fns)
         };

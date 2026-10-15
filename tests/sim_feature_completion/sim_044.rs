@@ -135,6 +135,14 @@ fn strobe_samples_once_per_slot_in_the_postponed_region() {
 }
 
 #[test]
+fn end_events_follow_returns_and_named_blocks() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_044/block_returns.out");
+    sim_cli::run_case_checked_matrix(SUITE, "block_returns", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+    });
+}
+
+#[test]
 fn null_covergroup_handle_is_a_runtime_error() {
     sim_cli::run_case_checked_matrix(SUITE, "null_sample", &[], &|label, output| {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -200,8 +208,8 @@ fn unsupported_coverage_forms_are_located_errors() {
     );
     sim_cli::reject_case(
         SUITE,
-        "neg_end_return",
-        "neg_end_return.sv:10:14: the `end` block event of covergroup `g` names `f`",
+        "neg_import_event",
+        "neg_import_event.sv:5:31: the covergroup block event on `c_value` is not supported for this subroutine",
     );
     sim_cli::reject_case(
         SUITE,

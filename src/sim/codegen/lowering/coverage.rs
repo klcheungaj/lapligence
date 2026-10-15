@@ -1312,17 +1312,22 @@ impl<'a> Codegen<'a> {
             None => Ok(()),
             Some(CoverageEvent::Block { events, .. }) => {
                 for event in events {
-                    if !matches!(self.kind(event.target), NodeKind::FuncTask { .. }) {
+                    let target = self
+                        .named_block_statement(event.target)
+                        .unwrap_or(event.target);
+                    if target == event.target
+                        && !matches!(self.kind(event.target), NodeKind::FuncTask { .. })
+                    {
                         return Err(self.coverage_error(
                             group,
                             format!(
-                                "block event of covergroup `{name}` names `{}`, which is not a task or function; named-block events are not supported yet",
+                                "block event of covergroup `{name}` names `{}`, which is not a named block, task, function or method",
                                 self.node(event.target).name
                             ),
                         ));
                     }
                     self.coverage_block_events
-                        .entry(event.target)
+                        .entry(target)
                         .or_default()
                         .push((group, event.begin));
                 }
@@ -1381,12 +1386,31 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// The named block statement a block event names. The reference names
+    /// the block's label scope: an empty named block that the statement
+    /// with the same name lists among its children.
+    fn named_block_statement(&self, target: NodeId) -> Option<NodeId> {
+        let is_begin = |node: NodeId| matches!(self.kind(node), NodeKind::Stmt(StmtKind::Begin));
+        let name = &self.node(target).name;
+        if !is_begin(target) || name.is_empty() {
+            return None;
+        }
+        if !self.node(target).children.is_empty() {
+            return Some(target);
+        }
+        self.db.node_ids().find(|statement| {
+            *statement != target
+                && is_begin(*statement)
+                && self.node(*statement).name == *name
+                && self.node(*statement).children.contains(&target)
+        })
+    }
+
     /// Statements sampling every registered instance of the groups whose
     /// block event names subroutine `target` at its start (`begin`) or end.
     pub(in super::super) fn coverage_block_samples(
         &mut self,
         target: NodeId,
-        body: NodeId,
         begin: bool,
     ) -> Result<Vec<IrStmt>, String> {
         let Some(events) = self.coverage_block_events.get(&target).cloned() else {
@@ -1398,16 +1422,6 @@ impl<'a> Codegen<'a> {
         for (group, event_begin) in events {
             if event_begin != begin {
                 continue;
-            }
-            if !begin && self.node_contains_return(body) {
-                return Err(self.coverage_error(
-                    group,
-                    format!(
-                        "the `end` block event of covergroup `{}` names `{}`, whose `return` statement would leave before its last statement; this is not supported",
-                        self.covergroup_name(group),
-                        self.node(target).name
-                    ),
-                ));
             }
             let Some(lowering) = self.covergroups.get(&group) else {
                 continue;
@@ -1424,17 +1438,6 @@ impl<'a> Codegen<'a> {
         Ok(statements)
     }
 
-    fn node_contains_return(&self, root: NodeId) -> bool {
-        let mut pending = vec![root];
-        while let Some(node) = pending.pop() {
-            if matches!(self.kind(node), NodeKind::Stmt(StmtKind::Return { .. })) {
-                return true;
-            }
-            pending.extend(self.node(node).children.iter().copied());
-        }
-        false
-    }
-
     /// Every block event must have been attached to its subroutine body.
     pub(in super::super) fn check_coverage_block_events(&self) -> Result<(), String> {
         let mut targets = self
@@ -1449,7 +1452,7 @@ impl<'a> Codegen<'a> {
             Some(target) => Err(self.coverage_error(
                 *target,
                 format!(
-                    "the covergroup block event on `{}` is not supported for this subroutine (a task that waits or a subroutine without its own body)",
+                    "the covergroup block event on `{}` is not supported for this subroutine (an imported or extern subroutine without its own body)",
                     self.node(*target).name
                 ),
             )),
