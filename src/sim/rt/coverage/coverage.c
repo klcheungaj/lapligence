@@ -1684,7 +1684,8 @@ static void llg_cov_report_overlaps(const llg_cov_inst_t* inst, uint32_t index) 
                 n_pairs++;
             }
     }
-    qsort(pairs, n_pairs, sizeof(*pairs), llg_cov_pair_order);
+    // `pairs` is NULL when no bins overlap; qsort needs a valid pointer.
+    if (n_pairs > 1u) qsort(pairs, n_pairs, sizeof(*pairs), llg_cov_pair_order);
     for (size_t i = 0; i < n_pairs; ++i) {
         if (i && pairs[i][0] == pairs[i - 1u][0] && pairs[i][1] == pairs[i - 1u][1]) continue;
         llg_cov_overlap_warning(inst, point, point->bins[pairs[i][0]].name,
