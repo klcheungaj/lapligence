@@ -240,7 +240,7 @@ static void cr_scratch_free(cr_scratch_t* x) {
     free(x->conj.data); free(x->stack.data); free(x->support.data); free(x->calls.data);
     free(x->layer_conj.data); free(x->comp_vars.data); free(x->comp_conj.data);
     free(x->conj_rep.data); free(x->comp_stack.data); free(x->key.data);
-    free(x->bits); free(x->limbs);
+    free(x->level_bits); free(x->limbs);
     memset(x, 0, sizeof(*x));
 }
 
@@ -599,10 +599,11 @@ static void cr_assign_from_levels(llg_cr_session_t* s, const uint8_t* bits, uint
 static void cr_sample_exact(cr_solve_t* st, const cr_exact_t* e, const uint32_t* level_var,
                             const uint32_t* level_bit) {
     cr_scratch_t* x = &st->s->scratch;
-    x->bits = (uint8_t*)cr_grow(x->bits, &x->bits_cap, e->levels ? e->levels : 1u, 1u);
+    x->level_bits = (uint8_t*)cr_grow(x->level_bits, &x->level_bits_cap,
+                                      e->levels ? e->levels : 1u, 1u);
     x->limbs = (uint64_t*)cr_grow(x->limbs, &x->limbs_cap, 3u * (size_t)e->limbs, sizeof(uint64_t));
-    cr_exact_sample(e, st->rng, x->bits, x->limbs);
-    cr_assign_from_levels(st->s, x->bits, e->levels, level_var, level_bit);
+    cr_exact_sample(e, st->rng, x->level_bits, x->limbs);
+    cr_assign_from_levels(st->s, x->level_bits, e->levels, level_var, level_bit);
 }
 
 /* Evaluate the cone with the candidate values in `sol`: the component's

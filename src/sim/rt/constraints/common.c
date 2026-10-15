@@ -145,8 +145,8 @@ typedef struct {
     cr_u32vec_t conj, stack, support, calls, layer_conj, comp_vars, comp_conj, conj_rep;
     cr_u32vec_t comp_stack;     /* cr_solve_component's traversal stack */
     cr_u64vec_t key;            /* exact-cache key of the current component */
-    uint8_t* bits;              /* sampled level values */
-    size_t bits_cap;
+    uint8_t* level_bits;        /* sampled level values */
+    size_t level_bits_cap;
     uint64_t* limbs;            /* sampling big-integer temporaries */
     size_t limbs_cap;
 } cr_scratch_t;
