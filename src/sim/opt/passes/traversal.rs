@@ -832,6 +832,7 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         | IrStmt::Fork { .. }
         | IrStmt::DisableTarget { .. }
         | IrStmt::DeferredAssertionDisable { .. }
+        | IrStmt::QueueProceduralAssertion { .. }
         | IrStmt::WaitFork
         | IrStmt::DisableFork
         | IrStmt::Expect { .. }

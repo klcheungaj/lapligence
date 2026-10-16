@@ -405,8 +405,29 @@ impl Validator<'_> {
         }
 
         let mut next_endpoint = 0u32;
+        let mut next_procedural = 0u32;
         for (idx, assertion) in self.model.assertions.iter().enumerate() {
             let path = format!("assertions[{idx}]");
+            if let Some(index) = assertion.procedural {
+                // Procedural assertions number themselves in table order and
+                // exclude the other attempt-start policies.
+                if index != next_procedural {
+                    return self.fail(
+                        format!("{path}.procedural"),
+                        "procedural assertions must be numbered in assertion-table order",
+                    );
+                }
+                next_procedural += 1;
+                if assertion.single_attempt
+                    || assertion.endpoint.is_some()
+                    || matches!(assertion.kind, IrConcurrentAssertionKind::Expect)
+                {
+                    return self.fail(
+                        format!("{path}.procedural"),
+                        "a procedural assertion is a queued assert, assume or cover",
+                    );
+                }
+            }
             if let Some(endpoint) = &assertion.endpoint {
                 // Endpoints number themselves in table order, and are covers
                 // of every match with no actions (see IrAssertionEndpoint).

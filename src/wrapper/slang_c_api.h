@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 25u
+#define LLG_SLANG_ABI_VERSION 26u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -636,6 +636,13 @@ enum {
 /* New-class expression qualifiers carried in auxiliary. */
 enum {
   LLG_SLANG_NEW_CLASS_SUPER = 1ull << 0
+};
+
+/* Conversion expression qualifiers carried in auxiliary. CONST marks a
+ * `const'(expr)` cast (IEEE 1800-2009 6.24.1), which a procedural concurrent
+ * assertion evaluates when it is queued rather than sampling (16.15.6.1). */
+enum {
+  LLG_SLANG_CONVERSION_CONST = 1ull << 0
 };
 
 /* Subroutine-call qualifiers carried in auxiliary. */

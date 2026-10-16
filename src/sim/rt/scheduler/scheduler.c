@@ -197,7 +197,9 @@ static int run_design_set(void) {
 // assertion clock edge produced by the reactive set, or a queued Observed
 // process/callback.
 static int observed_pending(void) {
-    if (g.assertion_edges_pending) return 1;
+    // A pending procedural concurrent assertion instance matures only in
+    // Observed (SV 16.15.6), also when a reactive process queued it.
+    if (g.assertion_edges_pending || g.procedural_pending_live) return 1;
     for (llg_region_t region = LLG_REGION_PRE_OBSERVED_PLI;
          region <= LLG_REGION_POST_OBSERVED_PLI; region++) {
         if (region_pending(region)) return 1;
@@ -236,7 +238,8 @@ static int drain_reactive_set(void) {
         // A deferred assertion can itself be evaluated by a Reactive
         // callback. Keep that newly coalesced report in the same Reactive
         // fixed-point pass, after the current queue has drained.
-        if (g.deferred_pending.count) {
+        if (g.deferred_pending_live > g.procedural_pending_live ||
+            (g.deferred_pending.count && !g.procedural_pending_live)) {
             flush_deferred_assertions();
             if (g.finish) return 0;
             continue;

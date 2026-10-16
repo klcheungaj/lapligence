@@ -69,6 +69,9 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   (WEIGHT, RAND_JOIN). Production formals are exported as automatic
   variables; only a DECLARATION (non-input formal bits) and a RULE
   (`LLG_SLANG_PRODUCTION_RULE_RAND_JOIN`) carry auxiliary bits.
+- ABI v26 marks a `const'(expr)` conversion expression with auxiliary bit
+  `LLG_SLANG_CONVERSION_CONST` (`Db::is_const_cast`), so a procedural
+  concurrent assertion can tell it from an ordinary cast (16.15.6.1).
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

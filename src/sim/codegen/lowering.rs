@@ -1643,6 +1643,13 @@ struct Codegen<'a> {
     /// Leading clock of the concurrent assertion being lowered, with its
     /// `iff` gate; nested sequence clocks are checked against it.
     assertion_leading_clock: Option<SampledClock>,
+    /// Body of the procedure being lowered, whose inferred clock (IEEE
+    /// 1800-2009 16.15.6) leads its procedural concurrent assertions that
+    /// have no clock of their own, ahead of default clocking.
+    procedure_body: Option<NodeId>,
+    /// Procedural concurrent assertions registered so far, which is the
+    /// index of the next one ([`IrAssertion::procedural`]).
+    procedural_assertions: u32,
     /// Interned sampled-value clocks and histories (`IrModel::sampled_clocks`
     /// and `sampled_domains`), keyed by their lowered identity so every call
     /// that reads one expression on one clock and gate shares one history.
@@ -1927,6 +1934,8 @@ impl<'a> Codegen<'a> {
             sampled_clock: None,
             expect_action_clock: None,
             assertion_leading_clock: None,
+            procedure_body: None,
+            procedural_assertions: 0,
             sampled_clock_keys: HashMap::new(),
             sampled_domain_keys: HashMap::new(),
             sampled_event_clocks: Vec::new(),

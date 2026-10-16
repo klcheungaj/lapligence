@@ -269,6 +269,8 @@ pub struct Db {
     /// Randomize calls (18.6.1, 18.12) and their inline constraint blocks.
     randomize_calls: HashMap<NodeId, RandomizeCall>,
     method_calls_with_clause: HashSet<NodeId>,
+    /// `const'(expr)` cast expressions (IEEE 1800-2009 6.24.1).
+    const_casts: HashSet<NodeId>,
     /// Method-call node → the frontend-owned iterator declaration used by its
     /// `with` expression.  Slang visits the expression itself as a structural
     /// child, but the implicit iterator variable is not an argument edge.
@@ -383,6 +385,7 @@ impl Db {
             rand_qualifiers: HashMap::new(),
             randomize_calls: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
+            const_casts: HashSet::new(),
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
@@ -460,6 +463,7 @@ impl Db {
             rand_qualifiers: HashMap::new(),
             randomize_calls: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
+            const_casts: HashSet::new(),
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
@@ -896,6 +900,13 @@ impl Db {
         self.const_variables.contains(&id)
     }
 
+    /// Whether expression `id` is a `const'(expr)` cast (IEEE 1800-2009
+    /// 6.24.1). A procedural concurrent assertion evaluates it when the
+    /// assertion is queued instead of sampling it (16.15.6.1).
+    pub fn is_const_cast(&self, id: NodeId) -> bool {
+        self.const_casts.contains(&id)
+    }
+
     /// Random qualifier of a class property (IEEE 1800-2009 18.4).
     pub fn rand_qualifier(&self, id: NodeId) -> RandQualifier {
         self.rand_qualifiers
@@ -932,6 +943,10 @@ impl Db {
 
     pub(crate) fn method_calls_with_clause_nodes(&self) -> &HashSet<NodeId> {
         &self.method_calls_with_clause
+    }
+
+    pub(crate) fn const_cast_nodes(&self) -> &HashSet<NodeId> {
+        &self.const_casts
     }
 
     pub(crate) fn method_call_iterator_nodes(&self) -> &HashMap<NodeId, NodeId> {

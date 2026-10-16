@@ -310,6 +310,13 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
     if model
         .assertions()
         .iter()
+        .any(|assertion| assertion.procedural().is_some())
+    {
+        return Err("procedural concurrent assertions require the owned model emitter".to_owned());
+    }
+    if model
+        .assertions()
+        .iter()
         .any(|assertion| assertion.endpoint().is_some())
     {
         return Err("sequence endpoints require the owned model emitter".to_owned());

@@ -179,7 +179,13 @@ impl Codegen<'_> {
         origin: NodeId,
         strong_default: bool,
     ) -> Result<PropertyProgram, String> {
+        // 16.15.6: a procedural assertion takes its procedure's inferred
+        // clock before default clocking.
         let clock = match self.infer_leading_assertion_clock(path, root)? {
+            Some(clock) => Some(clock),
+            None => self.procedure_assertion_clock(path, origin)?,
+        };
+        let clock = match clock {
             Some(clock) => clock,
             // 16.17 a): the default clocking event acts as the leading one.
             None => self.lower_default_sampled_clock(path)?.ok_or_else(|| {

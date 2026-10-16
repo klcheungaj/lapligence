@@ -731,6 +731,11 @@ pub struct IrAssertion {
     /// queued instance begins a single evaluation attempt at the first
     /// leading clock event (IEEE 1800-2009 16.15.6, F.5.3.1).
     pub(in crate::sim) single_attempt: bool,
+    /// Index of a procedural concurrent assertion (IEEE 1800-2009 16.15.6),
+    /// dense from zero in assertion-table order: its attempts begin only for
+    /// instances that [`super::IrStmt::QueueProceduralAssertion`] queued and
+    /// that matured, never on a leading clock event alone.
+    pub(in crate::sim) procedural: Option<u32>,
     pub(in crate::sim) pass_action: Option<String>,
     pub(in crate::sim) fail_action: Option<String>,
     /// Present when this entry is a sequence endpoint rather than an
@@ -823,6 +828,7 @@ impl IrAssertion {
             abort_condition: None,
             clock_gate: None,
             single_attempt: false,
+            procedural: None,
             abort_reject: false,
             abort_sync: false,
             pass_action,
@@ -865,6 +871,7 @@ impl IrAssertion {
             abort_condition: None,
             clock_gate: None,
             single_attempt: false,
+            procedural: None,
             abort_reject: false,
             abort_sync: false,
             pass_action,
@@ -906,6 +913,7 @@ impl IrAssertion {
             abort_condition: None,
             clock_gate: None,
             single_attempt: false,
+            procedural: None,
             abort_reject: false,
             abort_sync: false,
             pass_action,
@@ -1010,6 +1018,12 @@ impl IrAssertion {
 
     pub fn single_attempt(&self) -> bool {
         self.single_attempt
+    }
+
+    /// The procedural assertion index, when this is a procedural concurrent
+    /// assertion (IEEE 1800-2009 16.15.6).
+    pub fn procedural(&self) -> Option<u32> {
+        self.procedural
     }
 
     pub fn endpoint(&self) -> Option<&IrAssertionEndpoint> {

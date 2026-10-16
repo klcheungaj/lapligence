@@ -846,6 +846,7 @@ fn collect_effects(
             IrStmt::DisableFork
             | IrStmt::DisableTarget { .. }
             | IrStmt::DeferredAssertionDisable { .. }
+            | IrStmt::QueueProceduralAssertion { .. }
             | IrStmt::ActivationScope { .. } => {
                 effects.push(ExecutionEffect::RuntimeService);
                 if matches!(statement, IrStmt::DisableTarget { .. }) {

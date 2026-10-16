@@ -406,7 +406,8 @@ static void assertion_kill_deferred(uint64_t types, uint64_t directives,
     if (!g.deferred_pending_live) return;
     for (uint32_t i = 0; i < g.deferred_pending.count; i++) {
         llg_deferred_assertion_report_t* report = &g.deferred_pending.items[i];
-        if (report->live &&
+        // Procedural concurrent instances are killed with their assertion.
+        if (report->live && report->kind != LLG_DEFERRED_PROCEDURAL &&
             immediate_selected(LLG_ASSERTION_TYPE_DEFERRED, report->kind, report->label,
                                report->scope, types, directives, scopes, count)) {
             // A killed pending check is an attempt that was killed (40.5.3).
@@ -490,6 +491,13 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
                 assertion_kill_actions(assertion);
                 end_assertion_attempts(assertion, 1);
                 assertion->edge_pending = 0;
+                // Pending procedural instances are flushed (20.11); matured
+                // ones that have not begun are discarded with them (llg
+                // decision S99-D3).
+                if (assertion->procedural) {
+                    procedural_cancel_pending(assertion);
+                    assertion->procedural_matured = 0;
+                }
                 if (assertion->kind == LLG_ASSERTION_EXPECT &&
                     assertion->expect_active) {
                     assertion->expect_active = 0;

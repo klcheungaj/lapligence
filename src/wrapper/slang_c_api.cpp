@@ -2791,6 +2791,8 @@ public:
         result.flags |= LLG_SLANG_SEMANTIC_IMPLICIT_CONVERSION;
       if (expression.conversionKind == ConversionKind::Propagated)
         result.flags |= LLG_SLANG_SEMANTIC_PROPAGATED_CONVERSION;
+      if (expression.isConstCast)
+        result.auxiliary |= LLG_SLANG_CONVERSION_CONST;
     }
     if constexpr (std::same_as<T, RangeSelectExpression>) {
       if (expression.getSelectionKind() == RangeSelectionKind::IndexedUp)

@@ -355,6 +355,55 @@ fn virtual_interface_formal_writes() {
     );
 }
 
+/// G5 / IEEE 1800-2009 16.15.6: a concurrent assertion reached in
+/// procedural code queues one instance per execution on its process; the
+/// queue is flushed when the process resumes from an event control and by a
+/// disable, and matured instances begin at their leading clock (at once when
+/// it ticked in the time step). Lines of one time step compare as a set.
+#[test]
+fn procedural_concurrent_assertions_queue_flush_and_mature() {
+    let expected = time_step_sets(include_str!(
+        "../fixtures/sim/feature_completion/sim_099/procedural_assertions.out"
+    ));
+    sim_cli::run_case_checked_matrix(SUITE, "procedural_assertions", &[], &|label, output| {
+        assert!(output.status.success(), "{label}: {output:?}");
+        assert_eq!(
+            time_step_sets(&String::from_utf8_lossy(&output.stdout)),
+            expected,
+            "{label}"
+        );
+    });
+}
+
+/// G5 / IEEE 1800-2009 16.15.6.1: llg keeps no values with a queued
+/// instance, so const casts and automatic variables in a procedural
+/// concurrent assertion stop compilation at their position, and so does an
+/// inferred `edge` clock.
+#[test]
+fn procedural_assertion_forms_without_exact_semantics_are_rejected() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_procedural_automatic",
+        "neg_procedural_automatic.sv:9:47: automatic variable `i` in a procedural concurrent \
+         assertion takes its value when the assertion is queued (IEEE 1800-2009 16.15.6.1); llg \
+         does not capture queued values",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_procedural_const",
+        "neg_procedural_const.sv:9:45: a const cast in a procedural concurrent assertion takes \
+         its value when the assertion is queued (IEEE 1800-2009 16.15.6.1); llg does not capture \
+         queued values",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_procedural_edge",
+        "neg_procedural_edge.sv:8:5: the clock inferred from the procedure (`edge` of the \
+         expression at line 6, column 17) cannot clock a concurrent assertion in llg; give the \
+         assertion a posedge or negedge clock (IEEE 1800-2009 16.15.6)",
+    );
+}
+
 /// A01: the built-ins no other fixture called.
 #[test]
 fn remaining_builtins_execute() {

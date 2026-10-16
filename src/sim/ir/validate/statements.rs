@@ -1642,6 +1642,19 @@ impl Validator<'_> {
                     self.validate_expr(value, formals, &format!("{path}.value"))?;
                 }
             }
+            IrStmt::QueueProceduralAssertion { index } => {
+                if !self
+                    .model
+                    .assertions
+                    .iter()
+                    .any(|assertion| assertion.procedural == Some(*index))
+                {
+                    return self.fail(
+                        format!("{path}.index"),
+                        "queued procedural assertion index names no procedural assertion",
+                    );
+                }
+            }
             IrStmt::Delay { .. }
             | IrStmt::WaitAny { .. }
             | IrStmt::WaitFork

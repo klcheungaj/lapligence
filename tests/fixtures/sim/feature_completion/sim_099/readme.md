@@ -251,6 +251,86 @@ collector setting instead of comparing it with a fixed value.
   Annex D is informative (D.1 L69791: "for informative purposes only and are not
   part of this standard").
 
+## Procedural concurrent assertions (`procedural_assertions.sv`, gate item G5)
+
+Eight modules under `tb`, finishing at 46; `clk` rises at 5, 15, 25, 35 and 45
+in every module. Lines of one time step are compared as a set, because 16.15.1
+runs all actions of a step in the Reactive region in no stated order.
+Decisions S99-D1 to S99-D5 in [the register](../../../../../docs/lrm_decisions.md)
+have portable cases for the rules used here.
+
+Clauses used:
+
+- SV 16.15.6 L26748-26751: "a procedural concurrent assertion is not
+  immediately evaluated when reached in procedural code. Instead, the assertion
+  and the current values of all constant and automatic expressions appearing in
+  its assertion arguments (see 16.15.6.1) are placed in a procedural assertion
+  queue associated with the currently executing process."
+- SV 16.15.6 L26757-26765: "In the Observed region of each simulation time step,
+  each pending procedural assertion instance that is currently present in a
+  procedural assertion queue shall mature ... if the current time step is one
+  that corresponds to that assertion instance's leading clocking event, an
+  evaluation attempt of the assertion begins immediately within the Observed
+  region. If the assertion's leading clocking event has not occurred in this time
+  step, the matured instance shall be placed on the matured assertion queue,
+  which will cause the assertion to begin an evaluation attempt upon the next
+  clocking event".
+- SV 16.15.6 L26782-26798: the clock is inferred from the procedure before
+  default clocking when there is no blocking timing control, exactly one event
+  control and exactly one `edge_identifier expression1 [ iff expression2 ]`
+  event expression, and "No term in expression1 appears anywhere else in the
+  body of the procedure."
+- SV 16.15.6.2 L27017-27023: a flush point is reached when "The process, having
+  been suspended earlier due to reaching an event control or wait statement,
+  resumes execution", on an `always_comb`/`always_latch` re-run, and when "The
+  outermost scope of the process is disabled". L27061-27063 (the `b1` example):
+  "an Observed region will always be reached after the queueing of a2 and before
+  a flush point. Thus a2 will always mature. For a3, during time steps where
+  either a or b changes after it has been queued, the assertion will always be
+  flushed".
+- SV 16.15.6.4 L27134-27140: "A specific procedural concurrent assertion may be
+  disabled. Any pending procedural instances of that assertion are cleared from
+  the queue." and the outermost-scope disable "flushed and all pending assertion
+  instances on the queue are cleared."
+- SV 24.3 L43229-43231: the simulation "shall terminate by means of an implicit
+  call to the $finish system task" once every program's initial procedures have
+  ended, so `prg` waits past the end of `tb`.
+
+Derivation:
+
+- `inferred`: `clk2` rises at 3, 9, 15, 21, 27, 33, 39, 45; `a` is 1 from 12
+  (sampled 1 from 15). `i1` infers `posedge clk`: 5 fail, then 15, 25, 35, 45
+  pass. `i2` infers `posedge clk iff en` (`en` 1 from 12 to 22): one instance,
+  15 pass. `i3`'s procedure reads `clk`, so default clocking `posedge clk2`
+  applies: the instance from 5 begins at 9 (fail), from 15 at 15, from 25 at 27,
+  from 35 at 39, from 45 at 45 (pass).
+- `queued`: `en` is 1 from 12 to 32, so `q1` (`b` = 0) fails at 15 and 25 and the
+  loop queues `q2` twice there (two passes each). `q3` is queued at every rise of
+  `clk` and waits for `clk2` (rises at 10, 30): one pass at 10 (from 5) and two at
+  30 (from 15 and 25); those from 35 and 45 would begin at 50.
+- `flushed` (the LRM `b1` example, default clocking `posedge clk`): at 12 `f2` is
+  queued and matures, at 13 `f3`; both begin at 15 with `a`=1, `b`=0 (fail). At
+  32/33 likewise, passing at 35. At 42 `f2` is queued (it matures at 42); at 43
+  `f3` is queued, then the nonblocking `b <= 0` resumes `b1`, which flushes `f3`
+  and queues `f2` again; at 44 `f3` is queued. At 45 `a` = `b` = 0: `f2` passes
+  twice and `f3` once.
+- `disabled` (16.15.6.4): at 12 `d1` is queued and passes at 15; at 22 it is
+  queued and then cleared by `disable d1` (no line at 25). At 32 `d2` is queued
+  and passes at 35; at 42 it is queued and then `disable b2` (from the
+  nonblocking `clear <= 1`) clears `b2`'s queue (no line at 45).
+- `engines`: one instance of each assertion is queued at 15 (`en` is 1 from 12
+  to 22, `a` is 1 at 15 and 0 at 25): `e2` (`s_eventually a`) passes and `e4`
+  covers at 15; `e1` (`a ##1 !a`) and `e3` (`a |=> !a`) pass at 25.
+- `late`: `@(cb)` and the program's `@(posedge clk)` resume after the Observed
+  region of the clock's step; their instances mature when the Observed region
+  is reached again in that step and begin at that tick (S99-D4): `l1` fails at 5
+  and passes at 15, 25, 35, 45; `l2` fails at 5 and passes at 15.
+- `once`: the `initial` queues `o1` at 7, which begins at 15 (pass); the fork
+  branches queue `o2` at 11 (pass at 15) and `o3` at 21 (fail at 25).
+- `locals`: sequence and property local variables belong to the attempt and
+  are not rejected as automatic variables; `d` counts the clocks, so `v1` and
+  `v2` pass one clock after each attempt begins: 15, 25, 35, 45.
+
 ## Rejections
 
 | Fixture | Diagnostic | Why |
@@ -261,6 +341,9 @@ collector setting instead of comparing it with a fixed value.
 | `neg_view_input_select.sv` | `:12:15 cannot assign to input port 'data'` | SV 25.5 L43860: modports declare directions; a select of an input member through the view is still a write to it (frontend diagnostic). |
 | `neg_unregistered_annex_task.sv` | `llg: VPI error: no VPI registration for `$sreadmemh` (called at <path>:7)` | No lowering and no application: the run stops at startup naming the call, never a no-op. |
 | `neg_unregistered_annex_function.sv` | `... `$reset_count` (called at <path>:7)` | Same for a function. |
+| `neg_procedural_automatic.sv` | `:9:47: automatic variable `i` in a procedural concurrent assertion takes its value when the assertion is queued (IEEE 1800-2009 16.15.6.1); llg does not capture queued values` | SV 16.15.6.1 L26882-26884: a procedural concurrent assertion "shall not sample any const expression or automatic variable, but shall instead save the value of the expression or variable at the time the assertion evaluation attempt is added to the procedural assertion queue"; llg keeps no values with a queued instance. |
+| `neg_procedural_const.sv` | `:9:45: a const cast in a procedural concurrent assertion takes its value when the assertion is queued ...` | The same rule for a `const'` cast. |
+| `neg_procedural_edge.sv` | `:8:5: the clock inferred from the procedure (`edge` of the expression at line 6, column 17) cannot clock a concurrent assertion in llg ...` | SV 16.15.6 c) infers `edge clk`; llg assertion clocks are a posedge or a negedge. |
 
 ## Built-in inventory (`builtin_inventory.tsv`)
 

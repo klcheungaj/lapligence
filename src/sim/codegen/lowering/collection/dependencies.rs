@@ -1288,6 +1288,18 @@ impl<'a> Codegen<'a> {
         include_function_bodies: bool,
         bindings: &HashMap<NodeId, IrDependency>,
     ) -> Result<(), String> {
+        // Reaching a procedural concurrent assertion only queues it (IEEE
+        // 1800-2009 16.15.6): its arguments are sampled at its clock and its
+        // actions run in their own processes, so the procedure reads none of
+        // them (llg decision S99-D2). Lowering rejects the const-cast and
+        // automatic arguments that would be evaluated here.
+        if matches!(
+            self.kind(node),
+            NodeKind::Stmt(StmtKind::ConcurrentAssertion { kind, .. })
+                if *kind != ConcurrentAssertionKind::Expect
+        ) {
+            return Ok(());
+        }
         if let Some(expression) = self.modport_expression_target(node) {
             return self.walk_read_signals_bound(
                 scope_path,

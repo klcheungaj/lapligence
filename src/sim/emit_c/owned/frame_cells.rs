@@ -348,6 +348,7 @@ impl CellEligibility {
             | IrStmt::StopControl { .. }
             | IrStmt::DisableTarget { .. }
             | IrStmt::DeferredAssertionDisable { .. }
+            | IrStmt::QueueProceduralAssertion { .. }
             | IrStmt::DisableFork
             | IrStmt::WaitFork
             | IrStmt::ProgramExit

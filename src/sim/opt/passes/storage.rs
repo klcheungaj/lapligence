@@ -892,6 +892,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         | IrStmt::Fork { .. }
         | IrStmt::DisableTarget { .. }
         | IrStmt::DeferredAssertionDisable { .. }
+        | IrStmt::QueueProceduralAssertion { .. }
         | IrStmt::WaitFork
         | IrStmt::DisableFork
         | IrStmt::Expect { .. }

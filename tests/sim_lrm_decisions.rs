@@ -2545,3 +2545,43 @@ fn s16_d9_draw_is_urandom_range() {
         include_str!("fixtures/sim/lrm_decisions/S16-D9_draw_is_urandom_range.out"),
     );
 }
+
+#[test]
+fn s99_d1_procedural_queue() {
+    run_decision(
+        "S99-D1_procedural_queue",
+        include_str!("fixtures/sim/lrm_decisions/S99-D1_procedural_queue.out"),
+    );
+}
+
+#[test]
+fn s99_d2_comb_sensitivity() {
+    run_decision(
+        "S99-D2_comb_sensitivity",
+        include_str!("fixtures/sim/lrm_decisions/S99-D2_comb_sensitivity.out"),
+    );
+}
+
+#[test]
+fn s99_d3_assertion_controls() {
+    run_decision(
+        "S99-D3_assertion_controls",
+        include_str!("fixtures/sim/lrm_decisions/S99-D3_assertion_controls.out"),
+    );
+}
+
+#[test]
+fn s99_d4_late_maturation() {
+    run_decision(
+        "S99-D4_late_maturation",
+        include_str!("fixtures/sim/lrm_decisions/S99-D4_late_maturation.out"),
+    );
+}
+
+#[test]
+fn s99_d5_inferred_clock() {
+    run_decision(
+        "S99-D5_inferred_clock",
+        include_str!("fixtures/sim/lrm_decisions/S99-D5_inferred_clock.out"),
+    );
+}

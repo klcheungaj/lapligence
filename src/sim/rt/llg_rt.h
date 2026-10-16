@@ -2359,6 +2359,16 @@ int llg_sampled_clock_register_edge(uint64_t clock, sv4_t* signal, int edge,
 // first leading clock event (an assertion that is the whole body of an
 // initial procedure, IEEE 1800-2009 16.15.6).
 int llg_assertion_single_attempt(uint64_t identity);
+// Make the last registered assertion `identity` procedural concurrent
+// assertion `index` (dense from 0 in registration order, IEEE 1800-2009
+// 16.15.6): a leading clock event begins one attempt per matured instance of
+// it, never one on its own. Call after the registration, before run.
+int llg_assertion_procedural(uint64_t identity, uint32_t index);
+// Queue one pending instance of procedural assertion `index` on the current
+// process. Flush points and `disable` clear pending instances like pending
+// deferred assertion reports (16.15.6.2, 16.15.6.4); the Observed region
+// matures the rest.
+void llg_assertion_queue(uint32_t index);
 int llg_assertion_gate_clock(uint64_t identity, llg_sampled_gate_fn gate);
 int llg_sampled_clock_register_event(uint64_t clock, llg_sampled_gate_fn gate,
                                      void* data);

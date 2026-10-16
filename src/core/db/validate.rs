@@ -440,6 +440,16 @@ impl Validator<'_> {
             }
         }
 
+        for cast in self.db.const_cast_nodes() {
+            let node = self.node(*cast, &format!("const_casts[{}]", cast.0))?;
+            if !matches!(node.kind, NodeKind::Expr(ExprKind::Cast { .. })) {
+                return self.fail(
+                    format!("const_casts[{}]", cast.0),
+                    "const-cast metadata key is not a cast expression",
+                );
+            }
+        }
+
         for (call, iterator) in self.db.method_call_iterator_nodes() {
             let node = self.node(*call, &format!("method_call_iterators[{}]", call.0))?;
             if !matches!(node.kind, NodeKind::MethodCall { .. }) {

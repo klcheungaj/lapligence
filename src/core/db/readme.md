@@ -60,6 +60,8 @@ its block scope but not that scope's children, so a tree walk visits each code
 block once.
 Modport expression ports `.p(expr)` keep their port expression in a side
 table (`Db::modport_port_expression`); references still target the port.
+`Db::is_const_cast` marks `const'(expr)` casts (6.24.1), which are otherwise
+ordinary `ExprKind::Cast` nodes.
 Typed references distinguish subroutine
 bodies, indexed pattern keys, event qualifiers and ordered conditional clauses.
 Concrete loop-generate blocks use the array name and source index as one

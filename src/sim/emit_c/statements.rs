@@ -956,6 +956,12 @@ fn render_stmt_scoped(
         IrStmt::DeferredAssertionDisable { .. } => {
             return Err("deferred assertion disable requires whole-model ownership emission".to_owned())
         }
+        IrStmt::QueueProceduralAssertion { .. } => {
+            return Err(
+                "procedural concurrent assertions require whole-model ownership emission"
+                    .to_owned(),
+            )
+        }
         IrStmt::ActivationScope { target, exit, body } => {
             let activation = format!("_llg_act_{}", exit);
             let child = RCtx {

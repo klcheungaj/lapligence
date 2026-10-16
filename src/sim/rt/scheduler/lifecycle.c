@@ -217,6 +217,9 @@ static void free_assertions(void) {
     free(g.sequence_endpoints);
     g.sequence_endpoints = NULL;
     g.sequence_endpoint_count = 0;
+    free(g.procedural_assertions);
+    g.procedural_assertions = NULL;
+    g.procedural_assertion_count = 0;
 }
 
 static void free_clocking_edges(void) {

@@ -285,6 +285,7 @@ impl Db {
         let mut rand_qualifiers = HashMap::new();
         let mut randomize_calls = HashMap::new();
         let mut method_calls_with_clause = HashSet::new();
+        let mut const_casts = HashSet::new();
         let mut method_call_iterators = HashMap::new();
         let mut packed_members = HashMap::new();
         let mut aggregate_layouts = HashMap::new();
@@ -526,6 +527,12 @@ impl Db {
                         },
                     );
                 }
+            }
+            if semantic.kind == SemanticKind::Expression
+                && semantic.subkind == 72
+                && semantic.auxiliary & crate::ffi::slang::CONVERSION_CONST != 0
+            {
+                const_casts.insert(id);
             }
             if semantic.kind == SemanticKind::MethodCall && semantic.method_with_clause() {
                 method_calls_with_clause.insert(id);
@@ -1259,6 +1266,7 @@ impl Db {
             rand_qualifiers,
             randomize_calls,
             method_calls_with_clause,
+            const_casts,
             method_call_iterators,
             packed_members,
             aggregate_layouts,

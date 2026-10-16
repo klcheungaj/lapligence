@@ -764,6 +764,9 @@ impl Frame<'_, '_> {
                     ));
                 }
             }
+            IrStmt::QueueProceduralAssertion { index } => {
+                self.line(format!("llg_assertion_queue({index}u);"));
+            }
             IrStmt::WaitFork => {
                 self.await_arm(SuspensionOperation::WaitFork, "llg_arm_wait_fork(self)")?
             }

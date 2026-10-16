@@ -256,6 +256,12 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
                 assertion.identity(),
             ));
         }
+        if let Some(index) = assertion.procedural() {
+            out.push_str(&format!(
+                "    if (!llg_assertion_procedural({}ULL, {index}u)) return 0;\n",
+                assertion.identity(),
+            ));
+        }
     }
     out.push_str("    return !llg_rt_failed();\n}\n\n");
     Ok(out)

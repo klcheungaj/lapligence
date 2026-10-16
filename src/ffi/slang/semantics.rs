@@ -487,6 +487,8 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         (3, _, _) => node.auxiliary & !(CLASS_ABSTRACT | CLASS_FINAL | CLASS_INTERFACE) == 0,
         (19, 87, _) => node.auxiliary & !NEW_CLASS_SUPER == 0,
         (19, super::SEMANTIC_EXPR_DIST, _) => node.auxiliary & !super::DIST_DEFAULT == 0,
+        // A conversion marks a `const'` cast.
+        (19, 72, _) => node.auxiliary & !super::CONVERSION_CONST == 0,
         // A foreach constraint counts its loop-variable slots like the
         // statement form.
         (30, super::SEMANTIC_CONSTRAINT_FOREACH, _) => node.auxiliary <= 4096,

@@ -732,3 +732,37 @@ fn consuming_generation_matches_borrowing_generation_in_both_optimizer_modes() {
         }
     }
 }
+
+/// IEEE 1800-2009 6.24.1, 16.15.6.1: the database marks `const'` casts, and
+/// only those, so procedural concurrent assertions can tell them from
+/// ordinary casts.
+#[test]
+fn const_casts_are_distinguished_from_ordinary_casts() {
+    let compiled = compile::compile_checked(&compile::CompileOpts {
+        sources: vec![compile::OwnedSource::compilation_unit(
+            "const_casts.sv",
+            "module tb; int j = 1, k;
+                initial begin k = const'(j); k = int'(j) + signed'(j); end
+             endmodule",
+        )],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    })
+    .expect("valid casts");
+    let database = db::Db::from_slang(&compiled.snapshot).expect("owned database");
+    let casts: Vec<bool> = database
+        .node_ids()
+        .filter(|id| {
+            matches!(
+                database.node(*id).kind,
+                db::NodeKind::Expr(db::ExprKind::Cast { .. })
+            )
+        })
+        .map(|id| database.is_const_cast(id))
+        .collect();
+    assert_eq!(casts.iter().filter(|constant| **constant).count(), 1);
+    assert!(
+        casts.len() >= 2,
+        "ordinary casts are captured too: {casts:?}"
+    );
+}

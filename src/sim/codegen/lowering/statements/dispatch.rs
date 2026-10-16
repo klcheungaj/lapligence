@@ -292,12 +292,15 @@ impl EmitCtx<'_, '_> {
                     }
                 }
                 let path = self.path.clone();
-                self.cg.emit_concurrent_assertion(self.inst, &path, h)?;
-                if matches!(kind, ConcurrentAssertionKind::Expect) {
-                    self.lower_expect_actions(h.index() as u64, if_true, if_false)
-                } else {
-                    Ok(Vec::new())
+                if !matches!(kind, ConcurrentAssertionKind::Expect) {
+                    // 16.15.6: reaching the statement queues an instance.
+                    let queue = self
+                        .cg
+                        .emit_procedural_concurrent_assertion(self.inst, &path, h)?;
+                    return Ok(vec![queue]);
                 }
+                self.cg.emit_concurrent_assertion(self.inst, &path, h)?;
+                self.lower_expect_actions(h.index() as u64, if_true, if_false)
             }
             NodeKind::Stmt(StmtKind::IfElse {
                 predicate,

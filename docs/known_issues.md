@@ -1633,12 +1633,11 @@ Reproduce with
 
 ### Symptom
 
-- A concurrent assertion inside procedural code that also holds other
-  statements, conditions or loops is treated as a static assertion: llg does
-  not keep the 16.15.6 procedural assertion queue, its enabling conditions or
-  flush points. Only a procedure made only of concurrent assertions (labeled
-  or not, in any nesting of `begin`-`end` blocks) has its exact meaning (each
-  assertion of an `initial` one starts a single attempt).
+- A procedural concurrent assertion (16.15.6) whose assertion or action
+  blocks read an automatic variable or a `const'` cast stops compilation at
+  that reference: llg queues instances without the values 16.15.6.1 saves at
+  queue time. A procedure whose inferred clock is `edge expr` is rejected the
+  same way.
 - An `expect` property that reads an automatic variable (16.18 allows it, as
   in the LRM's `wait_for` example) is rejected ("unsupported sampled ...
   expression"); static variables work and the action block may assign
@@ -1659,22 +1658,26 @@ Reproduce with
 ### Cause
 
 The property engine (`src/sim/rt/scheduler/properties.c`) evaluates one
-leading clock per assertion and has no per-process procedural queue; the
-expect property is lowered once per assertion instance, where automatic
-storage has no static location; asynchronous aborts are driven from the
-signal-write hook.
+leading clock per assertion. The per-process procedural assertion queue
+(`llg_assertion_queue`, kept with the deferred report queue) holds only the
+assertion of each pending instance, not values; the expect property is
+lowered once per assertion instance, where automatic storage has no static
+location; asynchronous aborts are driven from the signal-write hook.
 
 ### Intended direction
 
-Model the procedural assertion queue per process (with captured automatic and
-constant arguments, which would also serve `expect`), add multiclock property
+Give each pending procedural instance (and `expect`) a frame of captured
+automatic and constant arguments read by its attempt, add multiclock property
 sequencing on top of the multiclock sequence boundaries, and drive the
 asynchronous abort check from the scheduler's time-step entry.
 
 ### Reproduce
 
 `neg_multiclock_property.sv` and `neg_recursive_property.sv` in
-[sim_038](../tests/fixtures/sim/feature_completion/sim_038/readme.md); the
+[sim_038](../tests/fixtures/sim/feature_completion/sim_038/readme.md);
+`neg_procedural_automatic.sv`, `neg_procedural_const.sv` and
+`neg_procedural_edge.sv` in
+[sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md); the
 other items need small hand-written cases.
 
 ## DPI-C import limits (SIM-040)

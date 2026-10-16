@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 25;
+const ABI_VERSION: u32 = 26;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -876,6 +876,9 @@ pub const SEMANTIC_EXPR_COPY_CLASS: u32 = 94;
 pub const SEMANTIC_EXPR_DIST: u32 = 95;
 /// A later-edition `default` dist weight (auxiliary of a dist expression).
 pub(crate) const DIST_DEFAULT: u64 = 1 << 0;
+/// A `const'(expr)` cast (auxiliary of a conversion expression, IEEE
+/// 1800-2009 6.24.1).
+pub(crate) const CONVERSION_CONST: u64 = 1 << 0;
 
 /// Immediate assertion metadata carried in [`SemanticNode::auxiliary`].
 pub const SEMANTIC_ASSERTION_DEFERRED: u64 = 1 << 0;

@@ -17,6 +17,7 @@ mod endpoints;
 mod locals;
 mod match_calls;
 pub(super) use locals::local_assignment;
+mod procedural;
 mod property;
 use crate::core::db::{
     AssertionBinaryOp, AssertionExprKind, AssertionRange, AssertionRepetition,
@@ -763,6 +764,13 @@ impl Codegen<'_> {
         if clock.is_none() {
             clock = self
                 .infer_leading_assertion_clock(path, current)?
+                .map(|clock| (clock.signal, clock.posedge, clock.gate));
+        }
+        if clock.is_none() {
+            // 16.15.6: a procedural assertion takes its procedure's inferred
+            // clock before default clocking.
+            clock = self
+                .procedure_assertion_clock(path, origin)?
                 .map(|clock| (clock.signal, clock.posedge, clock.gate));
         }
         if clock.is_none() {

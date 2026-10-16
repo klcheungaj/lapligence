@@ -833,7 +833,15 @@ leading one (16.14) and recursive instances are rejected. A non-signal
 synthetic process and shared per instance and condition node. `expect` action
 blocks lower inline in the calling process after `IrStmt::Expect`, branching on
 `IrRuntimeQuery::ExpectOutcome`; other action blocks are spawned processes
-that may contain timing controls. Deferred
+that may contain timing controls. A concurrent assertion reached in procedural
+code (`assertions/procedural.rs`, SV 16.15.6) registers as an ordinary
+assertion with a dense `IrAssertion::procedural` index and lowers to
+`IrStmt::QueueProceduralAssertion`; without a clock of its own it takes
+`infer_procedure_clock` of `Codegen::procedure_body` before default clocking.
+`const'` casts, procedure automatics and an inferred `edge` clock are located
+rejections (no queued values are kept), and its operands are not implicit
+sensitivities (S99-D2). Assertion-only `initial` and timing-free `always`
+procedures keep the static path. Deferred
 assertions retain issue-time values (packed, real, string, chandle/class handle
 and method receiver captures) and Reactive actions under the single-call
 contract in process, subroutine, class-method and final contexts, rejecting

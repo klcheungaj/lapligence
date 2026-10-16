@@ -136,7 +136,10 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         let target = target
             .ok_or_else(|| format!("cannot resolve the target of `disable` in `{}`", self.path))?;
         let activation = self.cg.activation_target(target)?;
-        let assertion = self.cg.deferred_assertion_of_label(target);
+        let assertion = self
+            .cg
+            .deferred_assertion_of_label(target)
+            .or_else(|| self.cg.procedural_assertion_of_label(target));
         let flush_scope = self.cg.is_outermost_procedure_scope(target);
         let mut lowered = Vec::with_capacity(2);
         if assertion.is_some() || flush_scope {
@@ -164,6 +167,29 @@ impl Codegen<'_> {
             match self.kind(*child) {
                 NodeKind::Stmt(StmtKind::ImmediateAssertion { deferred: true, .. })
                     if found.is_none() =>
+                {
+                    found = Some(child.index() as u64)
+                }
+                NodeKind::Stmt(StmtKind::Begin) if self.node(*child).children.is_empty() => {}
+                _ => return None,
+            }
+        }
+        found
+    }
+
+    /// The identity of the procedural concurrent assertion a `disable`
+    /// target names: disabling it clears its pending instances from every
+    /// procedural assertion queue (SV 16.15.6.4). Slang wraps a labeled
+    /// assertion in a named block like a deferred one.
+    pub(in super::super) fn procedural_assertion_of_label(&self, target: NodeId) -> Option<u64> {
+        if !matches!(self.kind(target), NodeKind::Stmt(StmtKind::Begin)) {
+            return None;
+        }
+        let mut found = None;
+        for child in &self.node(target).children {
+            match self.kind(*child) {
+                NodeKind::Stmt(StmtKind::ConcurrentAssertion { kind, .. })
+                    if found.is_none() && *kind != ConcurrentAssertionKind::Expect =>
                 {
                     found = Some(child.index() as u64)
                 }

@@ -553,7 +553,19 @@ static void run_property_assertion(llg_concurrent_assertion_t* assertion,
         if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active) return;
         if (g.finish) return;
     }
-    if (!root_event || !assertion_attempt_starts(assertion)) return;
+    for (uint64_t starts = root_event ? assertion_root_starts(assertion) : 0; starts;
+         starts--) {
+        property_attempt_begin(assertion, event);
+        if (g.finish) return;
+        if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active) return;
+    }
+}
+
+/* Begin one attempt of a property assertion at leading-clock `event`. */
+static void property_attempt_begin(llg_concurrent_assertion_t* assertion,
+                                   const llg_assertion_clock_event_t* event) {
+    llg_property_ctx_t ctx = {assertion, assertion->property, *event};
+    g.sequence_current = assertion;
     llg_property_inst_t* attempt =
         property_inst_new(assertion->property, assertion->property->root, 0, NULL);
     property_tick(&ctx, attempt);

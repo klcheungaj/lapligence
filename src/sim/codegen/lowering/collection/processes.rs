@@ -1863,8 +1863,17 @@ impl<'a> Codegen<'a> {
         // A user procedure made only of such assertions is handled the same
         // way, labeled or not and however its blocks nest, so that an
         // `initial` one starts a single attempt below.
+        // Any other procedure, including an always_comb or always_latch made
+        // only of assertions, queues them as procedural concurrent
+        // assertions (16.15.6) through its ordinary body.
         let mut concurrent_assertions = Vec::new();
-        let assertion_only_body = self.assertion_only_body(stmt, &mut concurrent_assertions)
+        let assertion_only_body = matches!(
+            kind,
+            ProcessKind::Initial
+                | ProcessKind::Always {
+                    always_type: AlwaysKind::Always
+                }
+        ) && self.assertion_only_body(stmt, &mut concurrent_assertions)
             && !concurrent_assertions.is_empty();
         if assertion_only_body {
             let first = self.model.assertions.len();
@@ -1934,6 +1943,9 @@ impl<'a> Codegen<'a> {
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
+        // 16.15.6: procedural concurrent assertions without a clock of their
+        // own take the clock this procedure infers.
+        self.procedure_body = Some(stmt);
         let (body_stmts, mut pre_fns, shape) = {
             let mut ctx = EmitCtx::new(self, path.to_string(), inst, "0", None, is_final);
             ctx.process_kind = always_type;
@@ -1986,6 +1998,7 @@ impl<'a> Codegen<'a> {
             };
             (body_stmts, pre_fns, shape)
         };
+        self.procedure_body = None;
         pre_fns.extend(std::mem::take(&mut self.pending_container_pre_fns));
         let kind_label = if is_initial {
             "initial"

@@ -96,6 +96,10 @@ typedef struct llg_deferred_assertion_report {
     // Queued only to count assertion coverage: no report or action runs.
     uint8_t count_only;
     llg_acov_item_t* acov; // assertion coverage item, or NULL
+    // A pending procedural concurrent assertion instance (SV 16.15.6, kind
+    // LLG_DEFERRED_PROCEDURAL) shares this queue and its flush points; it
+    // names the assertion it starts when it matures, NULL otherwise.
+    struct llg_concurrent_assertion* procedural;
 } llg_deferred_assertion_report_t;
 
 // Growable report array; capacity is retained across time steps so a steady
@@ -393,6 +397,20 @@ typedef struct llg_concurrent_assertion {
     /* An initial-procedure assertion starts one attempt (16.15.6). */
     int single_attempt;
     int single_attempt_started;
+    /* A procedural concurrent assertion (16.15.6): a leading clock event
+     * begins one attempt per matured instance, never one on its own. */
+    int procedural;
+    /* Matured instances that begin at the next leading clock event. */
+    uint64_t procedural_matured;
+    /* g.now + 1 of the time step whose leading clock event the assertion
+     * last processed (0: none), with that event and its sequence cycle, so
+     * an instance maturing later in the same step begins at that event;
+     * and of the step whose leading clock event arrived while disable iff
+     * held, so an instance maturing then begins disabled. */
+    uint64_t procedural_tick;
+    llg_assertion_clock_event_t procedural_event;
+    uint64_t procedural_cycle;
+    uint64_t procedural_disabled_tick;
     /* Result of the last expect evaluation for its caller's inline action
      * block: 0 none, 1 success, 2 failure. */
     int expect_outcome;
@@ -634,6 +652,12 @@ typedef struct {
     llg_deferred_report_queue_t deferred_pending;
     llg_deferred_report_queue_t deferred_matured;
     uint32_t deferred_pending_live;
+    // Live pending procedural concurrent assertion instances among
+    // `deferred_pending_live`, and the procedural assertions by their
+    // model index (llg_assertion_procedural, llg_assertion_queue).
+    uint32_t procedural_pending_live;
+    uint32_t procedural_assertion_count;
+    llg_concurrent_assertion_t** procedural_assertions;
     uint32_t deferred_matured_next;
     int deferred_matured_scheduled;
     uint64_t next_process_identity;

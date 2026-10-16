@@ -532,6 +532,19 @@ reports. Observed matures reports into a retained array run by one Reactive
 callback in issue order. OFF prevents new checks but does not cancel pending
 actions; KILL flushes only unmatured reports. Drain actions before cleanup and
 after each final procedure. These fields fit existing `llg_proc_t` padding.
+Procedural concurrent assertions (SV 16.15.6) share that pending array and its
+flush points: `llg_assertion_queue(index)` appends a value-free
+`LLG_DEFERRED_PROCEDURAL` record (none while the assertion is off) for the
+dense index registered by `llg_assertion_procedural`, and
+`g.procedural_pending_live` counts the live ones so the deferred paths stay
+untouched without them. `run_concurrent_assertions` first matures them
+(`procedural_assertions_mature`): each instance adds one to the assertion's
+`procedural_matured`, or begins at once when the leading clock ticked earlier
+in the time step (the saved `procedural_event`/`procedural_cycle`, decision
+S99-D4). Each root clock event takes all matured instances as attempts;
+matured instances begin even while the assertion is off; KILL drops pending
+and matured instances (S99-D3). Procedural assertions are never
+single-attempt, end points or `expect`.
 `llg_sequence_match_call` appends a sequence match-item call (SV 16.11) with
 its owned argument frame directly to the matured array (kind
 `LLG_DEFERRED_MATCH_CALL`): it runs in the Reactive region in queue order with
