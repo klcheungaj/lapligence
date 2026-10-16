@@ -1839,14 +1839,22 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   design and stop the run with `unsupported: system task `$scope` (legacy
   driver and scope inspection tasks) is not supported by llg`. V Annex C; SV
   Annex D **[1995]**.
-- ❌ **Unimplemented legacy system services** — No built-in paths were found
+- ❌ **Unimplemented legacy system services** — No built-in paths exist
   for `$list/$input/$key/$nokey/$log/$nolog`, or
   `$save/$incsave/$restart/$reset/$reset_count/$reset_value`. Their presence in
   the [edition allowlist](../src/core/compile/editions.rs) is not implementation
-  evidence. An admitted call can reach generic VPI dispatch; without a matching
-  plugin, the [runtime bridge](../src/sim/rt/llg_vpi.c) reports an unresolved or
-  unregistered call. Other contexts may reject earlier. This is distinct from
-  the implemented numeric conversions, file I/O, `$stop` policy and VPI API.
+  evidence. A call reaches generic VPI dispatch, so a registered VPI
+  application provides it (SV §36.3.2); without one the
+  [runtime bridge](../src/sim/rt/llg_vpi.c) stops the run at startup with
+  `llg: VPI error: no VPI registration for `$reset_count` (called at
+  <file>:<line>)`, never a no-op. A `string`-typed formal (such as `$input`'s
+  file name) or a scope argument (`$sdf_annotate`) is rejected at compile time
+  instead, naming the argument's position. Pinned, with
+  [`builtin_inventory.tsv`](../tests/fixtures/sim/feature_completion/sim_099/builtin_inventory.tsv)
+  classifying every built-in no fixture calls, by
+  [sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md). This
+  is distinct from the implemented numeric conversions, file I/O, `$stop`
+  policy and VPI API.
 
 ### Waveforms
 
@@ -1992,6 +2000,14 @@ These are bounded implementations, not full verification-infrastructure support.
   to the instance the handle names when the drive executes; rebinding never
   redirects a pending drive
   ([sim_034](../tests/fixtures/sim/feature_completion/sim_034/readme.md)).
+  Blocking and nonblocking procedural writes of whole members and of bit,
+  part and indexed part selects through a handle (class property or
+  automatic task formal) wake exactly the waiters, continuous assignments and
+  VPI value-change callbacks whose value changed, and a view's input member
+  stays read-only for selects
+  ([sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md)).
+  Unpacked array members read or written through a handle
+  (`v.mem[i]`) are rejected at compile time.
   Modport expression ports and broader polymorphic/capture forms reject.
   SV §§25.5, 25.7, 25.9–25.10 **[SV-2009]**.
 - 🟨 **Programs** — Named, nested (implicitly instantiated) and bound
@@ -2163,8 +2179,13 @@ queues and unpacked element selections are explicit unsupported rejections
 Future global functions are legal in SV2009 property/sequence contexts under
 §16.9.4, with global clocking, nonnesting and match-item restrictions and
 delayed assertion actions; their rejection is an implementation gap (ADV-014).
-Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
-20.13 **[SV-2005]**.
+Procedural and action-block uses remain illegal. `$global_clock` used as a
+clocking event (`@($global_clock)`, §14.14) and `$inferred_clock`/
+`$inferred_disable` property or sequence formal defaults (§16.15.7) are not
+lowered: the run stops with `<file>:<line>:<col>: built-in system subroutine
+`$global_clock` (IEEE 1800-2009 14.14) is not implemented by llg`
+([sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md)).
+SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
 
 ### Foreign interfaces and missing infrastructure
 
@@ -2286,6 +2307,15 @@ Procedural and action-block uses remain illegal. SV §§16.9.3–16.9.4,
   their coverage counters and the coverage operations of `vpi_control`
   (SIM-046) are described under the coverage control API; other assertion
   objects and assertion callbacks (SV 39.4, 39.5) are not implemented.
+  A system function in a void cast (SV §13.4.1) is called as a function: a
+  built-in runs its own lowering (a `$random(seed)` still updates `seed`) and
+  a registered VPI function its calltf; only a discarded `string` result of a
+  built-in is rejected at its position. A call nobody registered stops the run
+  at startup naming its source file and line. A registration under the name
+  of a built-in llg implements is not used: llg's built-in runs (SV §36.3.2
+  override is a [known issue](known_issues.md#vpi-object-model-limits-sim-042)); the
+  built-ins llg does not implement are provided by such a registration
+  ([sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md)).
   SV ch.36-38, V ch.20–27 **[1995/2001]**.
 - ⬜ **Checkers** — Checker execution and checker bind are not implemented;
   module/interface structural bind and ordinary assertion instances do not imply

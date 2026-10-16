@@ -1501,6 +1501,20 @@ matched last.
 Reproduce with `property p; logic [7:0] v = d; always (a |-> d == v);
 endproperty`.
 
+## Unpacked array members through virtual interfaces (SIM-099)
+
+**Status:** open; gate failure recorded by SIM-099.
+
+Reading or writing an element of an unpacked array member of an interface
+through a virtual interface handle or view (`v.mem[2] = 8'h5a;`,
+`$display("%h", v.mem[2])`) fails to compile with "cannot resolve array base
+of select `mem` in `c`", without a source position. Packed members and their
+bit, part and indexed part selects work (blocking and nonblocking). The
+virtual-interface member path resolves packed storage only; an unpacked member
+needs the bound instance's array descriptor at run time, like the
+array-element drives that SIM-034 dispatches. Reproduce with an interface
+declaring `logic [7:0] mem [0:3];` and a class task writing `v.mem[2]`.
+
 ## Modport expression ports through virtual interfaces
 
 **Status:** open (RTL-102 deferral).
@@ -1907,6 +1921,21 @@ of a handle or value:
 - user VPI system functions in read-only evaluators other than
   `$strobe`/`$monitor` arguments (evaluated event controls, force
   re-evaluation, functions called from those evaluators).
+
+System task and function registrations are also limited (SIM-099):
+
+- a `vpi_register_systf` under the name of a built-in llg implements (the
+  LRM's example is `$random`) is accepted but never called: the built-in
+  runs, without a diagnostic, although SV 36.3.2 says the application "shall
+  override the built-in system task or system function". Built-ins llg does
+  not implement (the Annex D services, `$sreadmemb/$sreadmemh`,
+  `$sdf_annotate`) are dispatched to such a registration;
+- a call whose built-in signature has a `string` formal (`$input`, `$log`,
+  `$sdf_annotate`'s file names, or a `--define-system-task` `string` formal)
+  fails to compile with `<file>:<line>:<col>: argument of VPI system task
+  `$input`: cast with unsized target type `string``, and a scope argument
+  (`$sdf_annotate(file, tb)`) with `unsupported executable node
+  `ArbitrarySymbol``.
 
 A model built without `--vpi`, `--dpi-lib` or a user system task call site
 has no object catalog: an application loaded with `LLG_VPI_PLUGIN` gets
