@@ -1144,7 +1144,13 @@ impl<'a> Codegen<'a> {
             blocking: false, ..
         }) = self.kind(node)
         {
-            if let Some(lhs) = self.node(node).children.first().copied() {
+            if let Some(lhs) = self
+                .node(node)
+                .children
+                .first()
+                .copied()
+                .filter(|lhs| !self.writes_through_virtual_interface(*lhs))
+            {
                 let target = self.assignment_storage_root(lhs);
                 let declaration = target.or_else(|| {
                     let name = self
@@ -1451,6 +1457,30 @@ impl<'a> Codegen<'a> {
             || function.arg_write.contains_key(&target)
             || function.ret_node == Some(target))
         .then_some(target)
+    }
+
+    /// Whether assignment target `node` (or the value it selects from) is a
+    /// member reached through a virtual-interface handle (`v.data`,
+    /// `v.data[3]`): its storage belongs to the bound interface instance,
+    /// whatever the lifetime of the handle variable.
+    fn writes_through_virtual_interface(&self, node: NodeId) -> bool {
+        match self.kind(node) {
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. }
+                | ExprKind::ArraySelect { base, .. },
+            ) => self.writes_through_virtual_interface(*base),
+            NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+                refs.split_last().is_some_and(|(_, prefix)| {
+                    prefix
+                        .iter()
+                        .flatten()
+                        .any(|target| self.virtual_interface_spelling(*target).is_some())
+                })
+            }
+            _ => false,
+        }
     }
 
     /// Return the storage declaration before any packed members/selectors.
