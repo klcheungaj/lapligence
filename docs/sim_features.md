@@ -1376,10 +1376,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   [ADV-002 fixtures](../tests/fixtures/sim/feature_completion/adv_002/readme.md)
   run both editions, optimizer modes and value backends. A net-array
   declaration delay is the net delay of every element, including elements
-  reached through inout ports and aliases. Aliased nets with different net
-  delays reject (S2-D8), as do delayed pattern members that are
-  descriptor-backed variable rows; dynamic driver-delay expressions and
-  unsupported terminals remain restricted.
+  reached through inout ports and aliases. SystemVerilog runtime-valued
+  driver, gate and net delays use the values current when an update is
+  scheduled or the net changes (S2-D9); Verilog-2001 rejects them (V §7.14.1).
+  Aliased nets with different net delays reject (S2-D8), as do a runtime net
+  delay with another declared delay on its net and delayed pattern members
+  that are descriptor-backed variable rows; unsupported terminals remain
+  restricted.
   V §§4.3, 6.1.3, 7.14; SV §§10.3.3, 11.12, 28.16 **[1995]**.
 - 🟦 **Logic and pull gates** — `and/nand/or/nor/xor/xnor/buf/not/pullup/pulldown`
   use typed terminals and independent output drivers. Pullup/pulldown values

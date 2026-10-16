@@ -115,7 +115,8 @@ pub use statements::{
 mod events;
 pub use events::{
     IrCapture, IrCapturedBranch, IrDeferredAction, IrDelay, IrEdge, IrEvent, IrEventCapture,
-    IrEventContext, IrEventRef, IrJoinKind, IrTransitionDelay, IrWaitSrc,
+    IrEventContext, IrEventRef, IrInertialDelay, IrJoinKind, IrRuntimeTransitionDelay,
+    IrTransitionDelay, IrWaitSrc,
 };
 mod assertions;
 pub use assertions::{

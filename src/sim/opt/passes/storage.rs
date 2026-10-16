@@ -451,7 +451,7 @@ fn collect_stmts_rw(stmts: &[IrStmt], model: &IrModel, rw: &mut Rw) {
 }
 
 fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
-    if let Some(value) = s.delay_expression() {
+    for value in s.delay_expressions() {
         collect_expr_reads(value, model, rw);
     }
     match s.unlocated() {
@@ -909,6 +909,8 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         | IrStmt::Return { value: None }
         | IrStmt::Label(_)
         | IrStmt::Goto(_)
+        // Its delay expressions are read with every statement's.
+        | IrStmt::SetNetDelay { .. }
         | IrStmt::Nop => {}
         // `$dumpvars` names scopes; waveform models keep every HDL-visible
         // signal (`model.waveform`).

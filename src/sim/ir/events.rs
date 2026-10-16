@@ -154,6 +154,77 @@ impl IrTransitionDelay {
     }
 }
 
+/// Propagation delays of one inertial driver site.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrInertialDelay {
+    /// Constant delays, already in design-precision ticks.
+    Constant(IrTransitionDelay),
+    /// Delays with a runtime-valued expression (IEEE 1800-2009 28.16.1:
+    /// "These can be any three expressions"), evaluated in the driver each
+    /// time it schedules an update.
+    Runtime(Box<IrRuntimeTransitionDelay>),
+}
+
+/// Source delay values of a runtime-valued driver delay. One value serves
+/// every transition; with two, turn-off is the smaller of rise and fall, as
+/// for [`IrTransitionDelay`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrRuntimeTransitionDelay {
+    pub rise: IrDelay,
+    pub fall: Option<IrDelay>,
+    pub turn_off: Option<IrDelay>,
+}
+
+impl IrRuntimeTransitionDelay {
+    /// The delay values, in rise, fall, turn-off order.
+    pub(in crate::sim) fn values(&self) -> impl Iterator<Item = &IrDelay> {
+        [Some(&self.rise), self.fall.as_ref(), self.turn_off.as_ref()]
+            .into_iter()
+            .flatten()
+    }
+
+    pub(in crate::sim) fn expressions(&self) -> Vec<&IrExpr> {
+        self.values().filter_map(IrDelay::expression).collect()
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self) -> Vec<&mut IrExpr> {
+        [
+            Some(&mut self.rise),
+            self.fall.as_mut(),
+            self.turn_off.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter_map(IrDelay::expression_mut)
+        .collect()
+    }
+}
+
+impl IrInertialDelay {
+    /// The constant delays, when no value is runtime-valued.
+    pub(in crate::sim) fn constant(&self) -> Option<IrTransitionDelay> {
+        match self {
+            Self::Constant(delay) => Some(*delay),
+            Self::Runtime(_) => None,
+        }
+    }
+
+    /// Runtime delay expressions, in rise, fall, turn-off order.
+    pub(in crate::sim) fn expressions(&self) -> Vec<&IrExpr> {
+        match self {
+            Self::Constant(_) => Vec::new(),
+            Self::Runtime(delay) => delay.expressions(),
+        }
+    }
+
+    pub(in crate::sim) fn expressions_mut(&mut self) -> Vec<&mut IrExpr> {
+        match self {
+            Self::Constant(_) => Vec::new(),
+            Self::Runtime(delay) => delay.expressions_mut(),
+        }
+    }
+}
+
 impl IrDelay {
     pub(in crate::sim) fn expression(&self) -> Option<&IrExpr> {
         match self {

@@ -26,7 +26,7 @@ impl<'a> Codegen<'a> {
         path: &str,
         source: NodeId,
         value: IrExpr,
-        delay: IrTransitionDelay,
+        delay: IrInertialDelay,
         scatter: impl FnOnce(IrExpr) -> Vec<IrStmt>,
     ) -> Result<IrStmt, String> {
         if value.is_real() || value.width() == 0 || value.width() == LLG_MAX_WIDTH {
@@ -218,6 +218,73 @@ impl<'a> Codegen<'a> {
             )
         })?;
         round_time_literal(value, source, scale, self.timescale_of_node(node))
+    }
+
+    /// Delays of a continuous assignment, gate or UDP instance. Constant
+    /// values convert to ticks once. SystemVerilog allows runtime-valued
+    /// expressions (IEEE 1800-2009 28.16.1: "These can be any three
+    /// expressions"); the driver evaluates them each time it schedules an
+    /// update, not when only a delay operand changes (decision S2-D9).
+    /// IEEE 1364-2001 7.14.1 requires constant expressions.
+    /// Whether any value of a driver or net delay is runtime-valued.
+    pub(super) fn driver_delay_is_runtime(&mut self, delay: DriverDelay) -> bool {
+        let values = match delay {
+            DriverDelay::Single(value) => vec![value],
+            DriverDelay::RiseFall(rise, fall) => vec![rise, fall],
+            DriverDelay::RiseFallTurnOff(rise, fall, turn_off) => vec![rise, fall, turn_off],
+        };
+        values
+            .into_iter()
+            .any(|value| self.eval_decl_value(value).is_err())
+    }
+
+    pub(super) fn driver_delay(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        delay: DriverDelay,
+    ) -> Result<IrInertialDelay, String> {
+        let values = match delay {
+            DriverDelay::Single(value) => vec![value],
+            DriverDelay::RiseFall(rise, fall) => vec![rise, fall],
+            DriverDelay::RiseFallTurnOff(rise, fall, turn_off) => vec![rise, fall, turn_off],
+        };
+        let runtime = values
+            .iter()
+            .map(|value| self.eval_decl_value(*value).is_err())
+            .collect::<Vec<_>>();
+        if !runtime.contains(&true) {
+            return self
+                .driver_delay_ticks(node, delay)
+                .map(IrInertialDelay::Constant);
+        }
+        if self.db.edition() != LanguageEdition::SystemVerilog2009 {
+            return Err(
+                "the delay is runtime-valued or uses an unsupported constant expression; \
+                 IEEE 1364-2001 7.14.1 requires constant delay expressions on continuous \
+                 assignments, gates and nets"
+                    .to_owned(),
+            );
+        }
+        let mut lowered = Vec::with_capacity(values.len());
+        for (value, runtime) in values.into_iter().zip(runtime) {
+            lowered.push(if runtime {
+                self.lower_procedural_delay(path, node, value)?
+            } else {
+                IrDelay::Constant(self.procedural_delay_ticks(node, value)?)
+            });
+        }
+        let mut lowered = lowered.into_iter();
+        let rise = lowered
+            .next()
+            .ok_or_else(|| "driver delay has no value".to_owned())?;
+        Ok(IrInertialDelay::Runtime(Box::new(
+            crate::sim::ir::IrRuntimeTransitionDelay {
+                rise,
+                fall: lowered.next(),
+                turn_off: lowered.next(),
+            },
+        )))
     }
 
     pub(super) fn driver_delay_ticks(

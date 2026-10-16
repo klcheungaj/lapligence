@@ -94,12 +94,29 @@ impl Validator<'_> {
                 }
             }
         }
+        let mut delays: Vec<&IrDelay> = Vec::new();
         if let IrStmt::Delay { ticks }
         | IrStmt::DelayedAssign { ticks, .. }
         | IrStmt::ClockingDrive { ticks, .. }
         | IrStmt::DelayedStringAssign { ticks, .. }
         | IrStmt::DelayedChandleAssign { ticks, .. } = stmt
         {
+            delays.push(ticks);
+        }
+        if let IrStmt::InertialAssign {
+            delay: crate::sim::ir::IrInertialDelay::Runtime(delay),
+            ..
+        }
+        | IrStmt::SetNetDelay { delay, .. } = stmt
+        {
+            delays.extend(delay.values());
+        }
+        if let IrStmt::SetNetDelay { group, .. } = stmt {
+            if *group >= self.model.net_groups.len() {
+                return self.fail(path, "net delay update names no net group");
+            }
+        }
+        for ticks in delays {
             if let IrDelay::Runtime {
                 value,
                 unit_ticks,
@@ -1661,6 +1678,8 @@ impl Validator<'_> {
             | IrStmt::StopControl { .. }
             | IrStmt::Label(_)
             | IrStmt::Goto(_)
+            // Checked with the other delays before this match.
+            | IrStmt::SetNetDelay { .. }
             | IrStmt::Nop => {}
         }
         Ok(())

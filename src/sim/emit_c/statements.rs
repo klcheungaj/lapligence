@@ -27,6 +27,7 @@ mod events;
 use events::activation_guard;
 use events::display_dependency_pointer;
 pub(super) use events::event_ref_code;
+pub(super) use events::render_delay as render_runtime_delay;
 use events::{
     clocking_cycle_wait_text, event_capture_code, format_frame_capture,
     nonblocking_event_assignment_when_text, nonblocking_event_trigger_when_text, render_delay,
@@ -412,8 +413,11 @@ fn render_stmt_scoped(
             )
         }
         IrStmt::ClockingCycleWait { count, specs } => clocking_cycle_wait_text(ctx, count, specs)?,
+        IrStmt::SetNetDelay { group, delay } => {
+            super::assignments::render_set_net_delay(ctx, *group, delay)?
+        }
         IrStmt::InertialAssign { lhs, rhs, delay } => {
-            super::assignments::render_inertial(ctx, lhs, rhs, *delay)?
+            super::assignments::render_inertial(ctx, lhs, rhs, delay)?
         }
         IrStmt::Assign { lhs, rhs, nba } => {
             format!("    {}\n", render_assign(ctx, lhs, rhs, *nba)?)

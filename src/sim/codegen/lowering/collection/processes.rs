@@ -19,7 +19,7 @@ struct PatternContinuousRemap<'l> {
     /// later selected leaf erase an earlier one.
     terminals: HashMap<usize, usize>,
     /// The site's transition delay: each leaf is its own delayed driver.
-    delay: Option<IrTransitionDelay>,
+    delay: Option<IrInertialDelay>,
     /// Instance path for diagnostics and hidden delayed-driver processes.
     path: &'l str,
 }
@@ -438,7 +438,7 @@ impl<'a> Codegen<'a> {
         let scaled_delay = match self.kind(ca) {
             NodeKind::ContAssign {
                 delay: Some(de), ..
-            } => Some(self.driver_delay_ticks(ca, *de).map_err(|error| {
+            } => Some(self.driver_delay(path, ca, *de).map_err(|error| {
                 format!(
                     "continuous assignment delay in `{path}` at {}: {error}",
                     self.source_location(ca)
@@ -469,7 +469,7 @@ impl<'a> Codegen<'a> {
                 captures: 0,
                 local_arrays: HashSet::new(),
                 terminals: HashMap::new(),
-                delay: scaled_delay,
+                delay: scaled_delay.clone(),
                 path,
             };
             self.remap_pattern_continuous_targets(&mut pattern_body, ca, &mut remap)?;
@@ -575,8 +575,15 @@ impl<'a> Codegen<'a> {
                 None,
             );
             let assignments = self.alias_driver_assignments(ca, &bindings, &rhs_value, |_| 0)?;
-            self.publish_alias_drivers(path, ca, rhs_name, rhs_ir, assignments, scaled_delay)?
-        } else if let Some(delay) = scaled_delay {
+            self.publish_alias_drivers(
+                path,
+                ca,
+                rhs_name,
+                rhs_ir,
+                assignments,
+                scaled_delay.clone(),
+            )?
+        } else if let Some(delay) = scaled_delay.clone() {
             self.initialize_delayed_lhs(&lh)?;
             if matches!(lh, IrLhs::Stream { .. }) {
                 // A concatenation is one vector target (6.1.3): one delay
@@ -638,14 +645,14 @@ impl<'a> Codegen<'a> {
     /// split over several slots is one delayed vector driver
     /// ([`Self::delayed_shadow_driver`]), so the alias split neither
     /// changes the delay choice nor applies the delay twice.
-    fn publish_alias_drivers(
+    pub(super) fn publish_alias_drivers(
         &mut self,
         path: &str,
         source: NodeId,
         name: String,
         value: IrExpr,
         assignments: Vec<(usize, IrExpr)>,
-        delay: Option<IrTransitionDelay>,
+        delay: Option<IrInertialDelay>,
     ) -> Result<Vec<IrStmt>, String> {
         let capture = |init: IrExpr| IrStmt::DeclLocal {
             name: name.clone(),
@@ -853,7 +860,7 @@ impl<'a> Codegen<'a> {
                         name,
                         rhs.clone(),
                         assignments,
-                        remap.delay,
+                        remap.delay.clone(),
                     )?;
                     *statement = IrStmt::Block(block);
                     return Ok(());
@@ -892,7 +899,7 @@ impl<'a> Codegen<'a> {
                 );
                 // Each leaf is its own delayed driver: the pattern targets
                 // separate nets, not one vector.
-                if let Some(delay) = remap.delay {
+                if let Some(delay) = remap.delay.clone() {
                     self.initialize_delayed_lhs(lhs)?;
                     let target = lhs.clone();
                     let value = rhs.clone();

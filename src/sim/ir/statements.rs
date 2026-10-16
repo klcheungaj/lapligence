@@ -568,11 +568,18 @@ pub enum IrStmt {
         rhs: IrExpr,
         ticks: IrDelay,
     },
+    /// Set the propagation delays of net group `group` from runtime-valued
+    /// net delay expressions (IEEE 1800-2009 28.16.1). Later value changes of
+    /// the net use them; pending propagation events keep their times.
+    SetNetDelay {
+        group: usize,
+        delay: Box<IrRuntimeTransitionDelay>,
+    },
     /// Capture a continuous-driver value and replace its pending active-region update.
     InertialAssign {
         lhs: IrLhs,
         rhs: IrExpr,
-        delay: IrTransitionDelay,
+        delay: IrInertialDelay,
     },
     /// Blocking (`nba == false`) or nonblocking assignment, including reals.
     Assign {
@@ -1089,7 +1096,9 @@ impl IrStmt {
         }
     }
 
-    pub(in crate::sim) fn delay_expression(&self) -> Option<&IrExpr> {
+    /// Delay expressions this statement evaluates: a procedural or
+    /// nonblocking delay, or the runtime-valued delays of an inertial driver.
+    pub(in crate::sim) fn delay_expressions(&self) -> Vec<&IrExpr> {
         match self.unlocated() {
             Self::Delay { ticks }
             | Self::DelayedAssign { ticks, .. }
@@ -1098,12 +1107,14 @@ impl IrStmt {
             | Self::DelayedChandleAssign { ticks, .. }
             | Self::NonblockingEventTrigger {
                 ticks: Some(ticks), ..
-            } => ticks.expression(),
-            _ => None,
+            } => ticks.expression().into_iter().collect(),
+            Self::InertialAssign { delay, .. } => delay.expressions(),
+            Self::SetNetDelay { delay, .. } => delay.expressions(),
+            _ => Vec::new(),
         }
     }
 
-    pub(in crate::sim) fn delay_expression_mut(&mut self) -> Option<&mut IrExpr> {
+    pub(in crate::sim) fn delay_expressions_mut(&mut self) -> Vec<&mut IrExpr> {
         match self.unlocated_mut() {
             Self::Delay { ticks }
             | Self::DelayedAssign { ticks, .. }
@@ -1112,9 +1123,10 @@ impl IrStmt {
             | Self::DelayedChandleAssign { ticks, .. }
             | Self::NonblockingEventTrigger {
                 ticks: Some(ticks), ..
-            } => ticks.expression_mut(),
-            Self::NonblockingEventTrigger { ticks: None, .. } => None,
-            _ => None,
+            } => ticks.expression_mut().into_iter().collect(),
+            Self::InertialAssign { delay, .. } => delay.expressions_mut(),
+            Self::SetNetDelay { delay, .. } => delay.expressions_mut(),
+            _ => Vec::new(),
         }
     }
 }

@@ -73,6 +73,10 @@ Line numbers are those of the `pdftotext -layout` extractions
   have a bit-stream data type that is assignment compatible with and has the
   same number of bits as the corresponding element in the data type of the
   assignment pattern expression."
+- Runtime-valued delays, SV 28.16.1 L48462-48466: "The minimum, typical, and
+  maximum values for each delay shall be specified as expressions separated
+  by colons. ... These can be any three expressions." V 7.14.1 L7548-7552
+  requires "constant expressions separated by colons" instead.
 - Aliases, SV 10.11 L13981: "An alias statement declares multiple names for
   the same physical net, or bits within a net."
 - Net initialization, V 3.6 L2631-2632 (SV 6.7 L5199-5200): "The default
@@ -121,3 +125,14 @@ Line numbers are those of the `pdftotext -layout` extractions
 - `neg_net_delay_negative`: a negative real net delay is rejected as a net
   propagation delay; a declaration assignment's negative delay is rejected
   as that driver's delay (`tests/sim_net_decl.rs`).
+- `runtime_driver_delays` (SystemVerilog): integer, two-value, real,
+  min:typ:max and X-valued continuous-assignment delays and runtime gate
+  delays use the values current when the driver schedules; changing only a
+  delay operand schedules nothing; X is zero (S2-D9).
+- `runtime_net_delays` (SystemVerilog): a runtime net delay uses its value at
+  each net change, per bit on a vector net (S2-D3, S2-D9).
+- `neg_runtime_delays_v2001`, `neg_runtime_gate_delay_v2001`,
+  `neg_runtime_net_delay_v2001`: with `--edition v2001` runtime-valued
+  continuous-assignment, gate and net delays are rejected (V 7.14.1).
+- `neg_runtime_net_delay_conflict` (SystemVerilog): a runtime net delay
+  aliased to a net with another declared delay is rejected (S2-D8).

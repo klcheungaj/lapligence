@@ -259,12 +259,12 @@ use crate::sim::ir::{
     IrConst, IrContainer, IrContainerExpr, IrContainerKind, IrContainerStmt, IrDeferredAction,
     IrDelay, IrDependency, IrDepth, IrDisplayRadix, IrEdge, IrElemSel, IrEvent, IrEventCapture,
     IrEventContext, IrEventRef, IrExpr, IrExprKind, IrFormal, IrImmediateAssertionKind,
-    IrInitPhase, IrInitTarget, IrInitialization, IrJoinKind, IrLhs, IrMemoryAddressingPolicy,
-    IrMemoryRadix, IrMemoryView, IrModel, IrNetAliasBinding, IrProcess, IrProcessKind, IrRealBinOp,
-    IrRealUnOp, IrSeverityLevel, IrShape, IrSignal, IrStmt, IrStochasticStmt, IrStreamDirection,
-    IrStreamTarget, IrSysFunc, IrTimeKind, IrTransitionDelay, IrType, IrUnOp,
-    IrUniquePriorityCheck, IrWaitSrc, StorageKind, StorageLifetime, StorageOwnership, StorageRef,
-    LLG_MAX_NET_DRIVERS,
+    IrInertialDelay, IrInitPhase, IrInitTarget, IrInitialization, IrJoinKind, IrLhs,
+    IrMemoryAddressingPolicy, IrMemoryRadix, IrMemoryView, IrModel, IrNetAliasBinding, IrProcess,
+    IrProcessKind, IrRealBinOp, IrRealUnOp, IrSeverityLevel, IrShape, IrSignal, IrStmt,
+    IrStochasticStmt, IrStreamDirection, IrStreamTarget, IrSysFunc, IrTimeKind, IrTransitionDelay,
+    IrType, IrUnOp, IrUniquePriorityCheck, IrWaitSrc, StorageKind, StorageLifetime,
+    StorageOwnership, StorageRef, LLG_MAX_NET_DRIVERS,
 };
 
 fn sorted_node_ids<T>(map: &HashMap<NodeId, T>) -> Vec<NodeId> {
@@ -568,6 +568,8 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
     // Three passes over the instance tree so every comb process, then every
     // link, then every always/initial process runs at t=0 in that order;
     // push order equals spawn order.
+    // Runtime-valued net delays are set before any driver first runs.
+    cg.emit_runtime_net_delay_updaters()?;
     for top in &tops {
         cg.emit_pass(*top, Pass::Comb)?;
     }
@@ -1406,6 +1408,9 @@ struct Codegen<'a> {
     net_inits: Vec<(String, usize, IrConst)>,
     /// Initial contributions of delayed drivers, applied after storage defaults.
     delayed_driver_inits: Vec<crate::sim::ir::IrInitStep>,
+    /// Runtime-valued net delays: (net group, declaring net, its delay).
+    /// Each gets an updater process before any driver process.
+    runtime_net_delays: Vec<(usize, NodeId, DriverDelay)>,
     /// All lowered arrays, in collection order (deterministic emission).
     arrays: Vec<ArrayInfo>,
     /// Array arena node → lowered array info.
@@ -1851,6 +1856,7 @@ impl<'a> Codegen<'a> {
             capture_locals: HashMap::new(),
             net_inits: Vec::new(),
             delayed_driver_inits: Vec::new(),
+            runtime_net_delays: Vec::new(),
             arrays: Vec::new(),
             array_globals: HashMap::new(),
             container_globals: HashMap::new(),

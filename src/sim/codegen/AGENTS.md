@@ -333,7 +333,11 @@ net-array cells start X on their own bits (`initialize_delayed_lhs`). A delayed
 concatenation or alias-split target is one vector driver: one inertial driver
 on a hidden packed signal plus a zero-delay scatter process
 (`delayed_shadow_driver`), never one delay per part; pattern members are
-separate drivers. Every min:typ:max expression, folded
+separate drivers. A SystemVerilog runtime-valued driver delay
+(`driver_delay`, `IrInertialDelay::Runtime`) is evaluated by the driver when it
+schedules; a runtime net delay registers one `SetNetDelay` updater process,
+emitted before every Comb process and sensitive to its operands. Verilog-2001
+rejects both (V §7.14.1). Every min:typ:max expression, folded
 or lowered, selects through `min_typ_max_operand`.
 Force overlays visible storage while ordinary writes/driver slots remain live;
 release retains variable value or recomputes current net resolution. Releasing a

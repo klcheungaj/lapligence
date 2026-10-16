@@ -407,7 +407,7 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
 /// Visit every expression slot of one statement (recursively).
 fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
     let s = s.unlocated_mut();
-    if let Some(value) = s.delay_expression_mut() {
+    for value in s.delay_expressions_mut() {
         walk_expr_mut(value, f);
     }
     match s {
@@ -850,6 +850,8 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         | IrStmt::Label(_)
         | IrStmt::Goto(_)
         | IrStmt::Nop
+        // Its delay expressions are walked with every statement's.
+        | IrStmt::SetNetDelay { .. }
         | IrStmt::System(None)
         | IrStmt::DeclLocal { init: None, .. }
         | IrStmt::SharedLocal { init: None, .. }

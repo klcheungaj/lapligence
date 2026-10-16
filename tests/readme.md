@@ -344,7 +344,7 @@ ADV-002's delay fixtures use
 run in both editions, both optimizer modes and on every value backend, with
 outputs hand-derived from V §§4.3, 6.1.3, 7.14 and SV §§10.3.3, 11.12, 28.16
 (fixture readme); SystemVerilog-only sources (aliases, patterns) run in
-sv2009. Decisions S2-D1-D8 are in `sim_lrm_decisions` (`-E 'test(/s2_d/)'`).
+sv2009. Decisions S2-D1-D9 are in `sim_lrm_decisions` (`-E 'test(/s2_d/)'`).
 
 ADV-016's randsequence fixtures use
 `-E 'binary(sim_feature_completion) & test(adv_016::)'`. Positives run in both

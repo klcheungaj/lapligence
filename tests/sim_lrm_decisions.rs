@@ -2603,6 +2603,14 @@ fn s2_d7_pattern_leaf_delays() {
 }
 
 #[test]
+fn s2_d9_runtime_delay_evaluation() {
+    run_decision(
+        "S2-D9_runtime_delay_evaluation",
+        include_str!("fixtures/sim/lrm_decisions/S2-D9_runtime_delay_evaluation.out"),
+    );
+}
+
+#[test]
 fn s2_d8_alias_conflicting_net_delays() {
     // Negative case: the expected stdout is empty because compilation fails.
     assert!(

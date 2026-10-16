@@ -55,30 +55,49 @@ impl<'a> Codegen<'a> {
     /// Groups with anything the runtime cannot resolve (non-net members,
     /// mixed widths, unsupported net types, dynamic/NBA/task-actual writes)
     /// reject code generation rather than disconnecting the net group.
+    /// The propagation delay of the net group `group` (None for a net that
+    /// gets no group because it never transitions). A runtime-valued delay
+    /// (SystemVerilog, IEEE 1800-2009 28.16.1) is registered for an updater
+    /// process and starts at zero; it must be the group's only declared delay.
     pub(super) fn net_propagation_delay_for_members(
         &mut self,
         members: &[NodeId],
         shown: &str,
+        group: Option<usize>,
     ) -> Result<Option<crate::sim::ir::IrTransitionDelay>, String> {
         let mut selected = None;
+        let mut runtime = None;
+        let mut declared = 0usize;
         for &member in members {
             let Some(delay) = self.db.net_delay(member) else {
                 continue;
             };
+            declared += 1;
             let previous_inst = self.inst;
             if let Some(instance) = self.owning_inst(member) {
                 self.inst = instance;
             }
-            let result = self.driver_delay_ticks(member, delay);
+            let result = if self.driver_delay_is_runtime(delay) {
+                let path = self.instance_path_of(self.inst);
+                self.driver_delay(&path, member, delay).map(|_| {
+                    runtime = Some((member, delay));
+                    None
+                })
+            } else {
+                self.driver_delay_ticks(member, delay).map(Some)
+            };
             self.inst = previous_inst;
-            let converted = result.map_err(|error| {
+            let Some(converted) = result.map_err(|error| {
                 format!(
                     "net propagation delay for `{shown}` at {}:{}:{}: {error}",
                     self.node(member).file.as_deref().unwrap_or("<unknown>"),
                     self.node(member).line,
                     self.node(member).col,
                 )
-            })?;
+            })?
+            else {
+                continue;
+            };
             if let Some(existing) = selected {
                 if existing != converted {
                     return Err(format!(
@@ -92,7 +111,86 @@ impl<'a> Codegen<'a> {
                 selected = Some(converted);
             }
         }
+        if let Some((member, delay)) = runtime {
+            if declared > 1 {
+                return Err(format!(
+                    "net propagation delay for `{shown}` combines a runtime-valued delay with \
+                     another declared net delay at {}:{}:{}",
+                    self.node(member).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(member).line,
+                    self.node(member).col,
+                ));
+            }
+            let Some(group) = group else {
+                return Ok(None);
+            };
+            self.runtime_net_delays.push((group, member, delay));
+            return Ok(Some(crate::sim::ir::IrTransitionDelay::uniform(0)));
+        }
         Ok(selected)
+    }
+
+    /// One process per runtime-valued net delay that stores the delay in
+    /// its net, evaluated at time zero before any driver and again whenever
+    /// a delay operand changes; each later net value change uses the delay
+    /// current at that time (decision S2-D9).
+    pub(in super::super) fn emit_runtime_net_delay_updaters(&mut self) -> Result<(), String> {
+        for (group, member, delay) in std::mem::take(&mut self.runtime_net_delays) {
+            let previous_inst = self.inst;
+            if let Some(instance) = self.owning_inst(member) {
+                self.inst = instance;
+            }
+            let path = self.instance_path_of(self.inst);
+            let lowered = self.driver_delay(&path, member, delay);
+            let mut reads = Vec::new();
+            let values = match delay {
+                DriverDelay::Single(value) => vec![value],
+                DriverDelay::RiseFall(rise, fall) => vec![rise, fall],
+                DriverDelay::RiseFallTurnOff(rise, fall, turn_off) => vec![rise, fall, turn_off],
+            };
+            let mut read_error = None;
+            for value in values {
+                match self.collect_read_signals(&path, value) {
+                    Ok(signals) => reads.extend(signals),
+                    Err(error) => read_error = Some(error),
+                }
+            }
+            self.inst = previous_inst;
+            let location = format!(
+                "{}:{}:{}",
+                self.node(member).file.as_deref().unwrap_or("<unknown>"),
+                self.node(member).line,
+                self.node(member).col,
+            );
+            if let Some(error) = read_error {
+                return Err(format!("net propagation delay at {location}: {error}"));
+            }
+            let IrInertialDelay::Runtime(delay) =
+                lowered.map_err(|error| format!("net propagation delay at {location}: {error}"))?
+            else {
+                return Err(format!(
+                    "net propagation delay at {location} lost its runtime value"
+                ));
+            };
+            reads.sort_by_key(|dependency| self.dependency_sort_key(dependency));
+            reads.dedup();
+            let shape = if reads.is_empty() {
+                IrShape::RunOnce
+            } else {
+                IrShape::SensLoop { reads }
+            };
+            let name = self.new_fn_name(&path, "net_delay");
+            let origin = self.origin(member);
+            self.model.processes.push(IrProcess::new_with_origin(
+                name,
+                format!("{}.net_delay", self.source_path(&path)),
+                shape,
+                Vec::new(),
+                vec![IrStmt::SetNetDelay { group, delay }],
+                origin,
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn alias_error(&self, alias: NodeId, message: &str) -> String {
@@ -1528,8 +1626,11 @@ impl<'a> Codegen<'a> {
                 _ => format!("g_net_{}", self.model.net_groups.len()),
             };
             let gidx = self.model.net_groups.len();
-            let propagation_delay =
-                self.net_propagation_delay_for_members(&resolved_type.delay_members, &shown)?;
+            let propagation_delay = self.net_propagation_delay_for_members(
+                &resolved_type.delay_members,
+                &shown,
+                Some(gidx),
+            )?;
             self.model.net_groups.push(crate::sim::ir::IrNetGroup {
                 c_name: name.clone(),
                 width,
@@ -1702,8 +1803,11 @@ impl<'a> Codegen<'a> {
                     self.node(members[0]).col,
                 ));
             }
-            let propagation_delay =
-                self.net_propagation_delay_for_members(&resolved_type.delay_members, &joined)?;
+            let propagation_delay = self.net_propagation_delay_for_members(
+                &resolved_type.delay_members,
+                &joined,
+                Some(self.model.net_groups.len()),
+            )?;
 
             // Group is valid: assign one driver slot per member (NodeId
             // order) and redirect every member's storage to the resolved cell.
@@ -2478,8 +2582,11 @@ impl<'a> Codegen<'a> {
             if info.real {
                 return Err(format!("real-valued wired net `{shown}` is not supported"));
             }
-            let propagation_delay =
-                self.net_propagation_delay_for_members(std::slice::from_ref(&net), &shown)?;
+            let propagation_delay = self.net_propagation_delay_for_members(
+                std::slice::from_ref(&net),
+                &shown,
+                Some(self.model.net_groups.len()),
+            )?;
             let name = format!("g_net_{}", self.model.net_groups.len());
             let group = self.model.net_groups.len();
             let initial_drivers = usize::from(sites.is_empty());

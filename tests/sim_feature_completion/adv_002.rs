@@ -155,3 +155,37 @@ fn neg_negative_net_delay() {
         );
     }
 }
+
+#[test]
+fn runtime_driver_delays_are_evaluated_when_scheduled() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/adv_002/runtime_driver_delays.out");
+    sim_cli::run_case_backend_parity(SUITE, "runtime_driver_delays", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "runtime_driver_delays", expected);
+}
+
+#[test]
+fn runtime_net_delays_apply_the_current_value() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/adv_002/runtime_net_delays.out");
+    sim_cli::run_case_backend_parity(SUITE, "runtime_net_delays", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "runtime_net_delays", expected);
+}
+
+#[test]
+fn neg_runtime_delays_in_verilog_2001() {
+    const CONSTANT: &str = "IEEE 1364-2001 7.14.1 requires constant delay expressions";
+    const V2001: &[&str] = &["--edition", "v2001"];
+    sim_cli::reject_case_with_args(SUITE, "neg_runtime_delays_v2001.v", CONSTANT, V2001);
+    sim_cli::reject_case_with_args(SUITE, "neg_runtime_gate_delay_v2001.v", CONSTANT, V2001);
+    sim_cli::reject_case_with_args(SUITE, "neg_runtime_net_delay_v2001.v", CONSTANT, V2001);
+}
+
+#[test]
+fn neg_runtime_net_delay_with_another_declared_delay() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_runtime_net_delay_conflict",
+        "combines a runtime-valued delay with another declared net delay",
+    );
+}

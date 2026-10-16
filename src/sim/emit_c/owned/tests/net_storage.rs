@@ -249,11 +249,11 @@ fn contribution_model(count: usize, delayed: bool) -> IrModel {
             IrStmt::InertialAssign {
                 lhs: IrLhs::Whole(target),
                 rhs,
-                delay: IrTransitionDelay {
+                delay: crate::sim::ir::IrInertialDelay::Constant(IrTransitionDelay {
                     rise: 2,
                     fall: 3,
                     turn_off: 4,
-                },
+                }),
             }
         } else {
             IrStmt::Assign {
