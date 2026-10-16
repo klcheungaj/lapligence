@@ -1173,12 +1173,7 @@ impl<'a> Codegen<'a> {
                 let arg_nodes = args;
                 let mut args = Vec::with_capacity(arg_nodes.len());
                 for arg in &arg_nodes {
-                    let value = self.lower_expr(scope_path, *arg).map_err(|error| {
-                        format!(
-                            "{}: argument of VPI system function `{name}`: {error}",
-                            self.source_location(*arg)
-                        )
-                    })?;
+                    let value = self.lower_vpi_argument(scope_path, name, "function", *arg)?;
                     args.push(value);
                 }
                 if let Some((index, _)) = args

@@ -34,6 +34,12 @@ diagnostic labels remain separate from C symbols. The
   `unimplemented_builtin_reference`. A system function in statement position
   (void cast) is a function call, never a VPI task. Keep
   `tests/fixtures/sim/feature_completion/sim_099/builtin_inventory.tsv` in step.
+- VPI call actuals go through `lower_vpi_argument`: a `string`-formal string
+  literal passes its packed image (a `vpiConstant`), a scope operand of
+  `$sdf_annotate`/`$list` (admitted as metadata by `semantic.rs`) passes its
+  catalog object with a placeholder value, and string variables are located
+  errors. Every `$` built-in lowered natively is listed for the startup
+  override check (`populate_vpi_builtin_calls`, decision S99-D6).
 - Preserve imported fill operations. Unbased fills expand in context-determined
   arithmetic, comparisons, conditionals, assignments and arguments; self-determined
   concat/replication positions stay one bit. Ordinary case uses common width/sign.

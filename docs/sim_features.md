@@ -2324,6 +2324,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   is a [known issue](known_issues.md#vpi-object-model-limits-sim-042)); the
   built-ins llg does not implement are provided by such a registration
   ([sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md)).
+  String literal actuals of `string` formals reach the application as string
+  constants and the scope operands of `$sdf_annotate` and `$list` as module
+  handles; string variables passed to VPI are a located compile error.
   SV ch.36-38, V ch.20–27 **[1995/2001]**.
 - ⬜ **Checkers** — Checker execution and checker bind are not implemented;
   module/interface structural bind and ordinary assertion instances do not imply

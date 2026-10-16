@@ -444,6 +444,71 @@ impl Codegen<'_> {
         site
     }
 
+    /// Lower one actual of a VPI system task or function call (`routine` is
+    /// "task" or "function"). A scope actual (`$sdf_annotate(file, tb)`)
+    /// passes its catalog object, so the value is a placeholder; a string
+    /// literal converted to a `string` formal (`$input("cmds")`) passes its
+    /// packed image, which `vpi_get_value(vpiStringVal)` reads as the text.
+    /// A string variable or expression has no fixed-width image and stays a
+    /// located error.
+    pub(in super::super) fn lower_vpi_argument(
+        &mut self,
+        path: &str,
+        name: &str,
+        routine: &str,
+        arg: NodeId,
+    ) -> Result<IrExpr, String> {
+        let located = |this: &Self, error: String| {
+            format!(
+                "{}: argument of VPI system {routine} `{name}`: {error}",
+                this.source_location(arg)
+            )
+        };
+        if let NodeKind::Expr(ExprKind::ScopeRef { target }) = self.kind(arg) {
+            let target = *target;
+            if self.vpi_scope_object(target) {
+                return Ok(const_zero_expr(1));
+            }
+            return Err(located(
+                self,
+                format!(
+                    "scope `{}` has no VPI object; llg passes module, interface and named \
+                     generate scopes",
+                    self.node(target).name
+                ),
+            ));
+        }
+        let string_typed = self
+            .query_descriptor(arg)
+            .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::String));
+        if string_typed {
+            let literal = self.vpi_strip_conversions(arg);
+            if literal != arg {
+                return self
+                    .lower_expr(path, literal)
+                    .map_err(|error| located(self, error));
+            }
+            return Err(located(
+                self,
+                format!(
+                    "a string variable or expression is not supported (only string literals \
+                     reach VPI applications) in `{path}`"
+                ),
+            ));
+        }
+        self.lower_expr(path, arg)
+            .map_err(|error| located(self, error))
+    }
+
+    /// Whether scope `target` is a catalog object a VPI argument can name.
+    fn vpi_scope_object(&self, target: NodeId) -> bool {
+        match self.kind(target) {
+            NodeKind::ModuleInst { .. } => true,
+            NodeKind::GenScope => !self.node(target).name.is_empty(),
+            _ => false,
+        }
+    }
+
     /// Classify one VPI call argument by the source expression it names.
     /// Only selections fixed at elaboration become object references; any
     /// other expression is a read-only snapshot, as for a C caller of a
@@ -456,6 +521,9 @@ impl Codegen<'_> {
     ) -> IrVpiArgRef {
         let node = self.vpi_strip_conversions(node);
         match self.kind(node) {
+            NodeKind::Expr(ExprKind::ScopeRef { target }) => {
+                IrVpiArgRef::Object(self.vpi_full_name(*target))
+            }
             NodeKind::Expr(ExprKind::Constant {
                 const_type, source, ..
             }) => IrVpiArgRef::Constant(vpi_const_type(*const_type, source)),

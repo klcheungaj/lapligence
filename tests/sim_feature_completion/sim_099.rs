@@ -445,6 +445,43 @@ fn virtual_interface_array_member_limits_are_located() {
     );
 }
 
+/// G4 / IEEE 1800-2009 32.9, D.4, D.7: string literals of `string` formals
+/// reach a VPI application as string constants and scope actuals as module
+/// handles, for built-ins without a lowering and user system tasks alike; a
+/// string variable stops compilation at its position.
+#[test]
+fn vpi_string_and_scope_arguments() {
+    let directory = sim_harness::TempDir::new("sim099-vpi-args").expect("temporary directory");
+    let vpi = archive(&directory, "vpi_string_scope_args");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "vpi_string_scope_args",
+        &[
+            "--define-system-task",
+            "task $show(string s, logic [7:0] b)",
+            "--dpi-lib",
+            &vpi,
+        ],
+        &|label, output| {
+            assert_run(
+                label,
+                output,
+                include_str!(
+                    "../fixtures/sim/feature_completion/sim_099/vpi_string_scope_args.out"
+                ),
+                &[],
+            )
+        },
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_vpi_string_variable",
+        "neg_vpi_string_variable.sv:5:18: argument of VPI system task `$input`: a string \
+         variable or expression is not supported (only string literals reach VPI applications) \
+         in `tb`",
+    );
+}
+
 /// A01: the built-ins no other fixture called.
 #[test]
 fn remaining_builtins_execute() {

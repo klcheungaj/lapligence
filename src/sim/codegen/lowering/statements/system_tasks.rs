@@ -728,12 +728,7 @@ impl EmitCtx<'_, '_> {
                 let arg_nodes = args;
                 let mut args = Vec::with_capacity(arg_nodes.len());
                 for arg in &arg_nodes {
-                    let value = self.cg.lower_expr(&self.path, *arg).map_err(|error| {
-                        format!(
-                            "{}: argument of VPI system task `{name}`: {error}",
-                            self.cg.source_location(*arg)
-                        )
-                    })?;
+                    let value = self.cg.lower_vpi_argument(&self.path, name, "task", *arg)?;
                     args.push(value);
                 }
                 if let Some((index, _)) = args

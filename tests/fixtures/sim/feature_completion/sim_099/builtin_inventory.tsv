@@ -11,14 +11,14 @@
 # Every built-in llg lowers runs natively: a VPI registration under the name
 # of one the design calls stops the run at startup naming the call
 # (IEEE 1800-2009 36.3.2, decision S99-D6); only vpi-only names reach it.
+# String literal and scope actuals reach the application (vpi_string_scope_args.sv
+# calls $input, $log and $sdf_annotate); string variables are a located error.
 # name	status	reference
 $global_clock	not-implemented	IEEE 1800-2009 14.14
 $inferred_clock	not-implemented	IEEE 1800-2009 16.15.7
 $inferred_disable	not-implemented	IEEE 1800-2009 16.15.7
-$input	vpi-only	IEEE 1800-2009 D.4 (informative; a VPI application may provide it, 36.3.2)
 $key	vpi-only	IEEE 1800-2009 D.5 (informative; a VPI application may provide it, 36.3.2)
 $nokey	vpi-only	IEEE 1800-2009 D.5 (informative; a VPI application may provide it, 36.3.2)
-$log	vpi-only	IEEE 1800-2009 D.7 (informative; a VPI application may provide it, 36.3.2)
 $nolog	vpi-only	IEEE 1800-2009 D.7 (informative; a VPI application may provide it, 36.3.2)
 $reset	vpi-only	IEEE 1800-2009 D.8 (informative; a VPI application may provide it, 36.3.2)
 $reset_value	vpi-only	IEEE 1800-2009 D.8 (informative; a VPI application may provide it, 36.3.2)
@@ -27,7 +27,6 @@ $restart	vpi-only	IEEE 1800-2009 D.9 (informative; a VPI application may provide
 $incsave	vpi-only	IEEE 1800-2009 D.9 (informative; a VPI application may provide it, 36.3.2)
 $sreadmemb	vpi-only	IEEE 1800-2009 D.14 (informative; a VPI application may provide it, 36.3.2)
 $sreadmemh	vpi-only	IEEE 1800-2009 D.14 (informative; a VPI application may provide it, 36.3.2)
-$sdf_annotate	vpi-only	IEEE 1800-2009 32.9 (a VPI application may provide it, 36.3.2)
 $rising_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4
 $falling_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4
 $steady_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4

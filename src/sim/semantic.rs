@@ -903,6 +903,17 @@ fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target
                 && (matches!(db.node_kind(target), NodeKind::ModuleInst { .. })
                     || db.semantic_detail(target) == Some("CompilationUnit"))
         }
+        NodeKind::SysCall { name } if name == "$sdf_annotate" || name == "$list" => {
+            // The scope operand of these VPI-provided services (SV 32.9
+            // `module_instance`, informative D.6) reaches the application as
+            // its catalog object; its value is never read.
+            let position = usize::from(name == "$sdf_annotate");
+            owner_node.children().get(position) == Some(&reference)
+                && matches!(
+                    db.node_kind(target),
+                    NodeKind::ModuleInst { .. } | NodeKind::GenScope
+                )
+        }
         NodeKind::SysCall { name } if name == "$dumpvars" => {
             // The first argument is a depth expression, not a selection.
             owner_node.children().first() != Some(&reference)

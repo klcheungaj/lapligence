@@ -1921,12 +1921,14 @@ System task and function registrations are also limited (SIM-099):
   accepted. Built-ins llg does not implement (the Annex D services,
   `$sreadmemb/$sreadmemh`, `$sdf_annotate`) are dispatched to such a
   registration;
-- a call whose built-in signature has a `string` formal (`$input`, `$log`,
-  `$sdf_annotate`'s file names, or a `--define-system-task` `string` formal)
-  fails to compile with `<file>:<line>:<col>: argument of VPI system task
-  `$input`: cast with unsized target type `string``, and a scope argument
-  (`$sdf_annotate(file, tb)`) with `unsupported executable node
-  `ArbitrarySymbol``.
+- a `string` formal (`$input`, `$log`, `$sdf_annotate`'s file names, or a
+  `--define-system-task` `string` formal) accepts only a string literal, which
+  the application reads as a `vpiConstant` string; a string variable or
+  expression fails to compile with `<file>:<line>:<col>: argument of VPI
+  system task `$input`: a string variable or expression is not supported`,
+  because a string has no fixed-width argument image. Scope actuals reach the
+  application as module (or named generate scope) handles only for
+  `$sdf_annotate` and `$list`.
 
 A model built without `--vpi`, `--dpi-lib` or a user system task call site
 has no object catalog: an application loaded with `LLG_VPI_PLUGIN` gets
