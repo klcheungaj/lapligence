@@ -135,6 +135,17 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
                     format!("{}__overlap_scratch", g.c_name),
                 )
             };
+        // A delayed vector net keeps one inertial handle per bit; undelayed
+        // and scalar nets leave the field zero-initialized.
+        let propagation_bits = if g.propagation_delay.is_some() && g.width > 1 {
+            out.push_str(&format!(
+                "static llg_inertial_t* {}__propagation_bits[{}];\n",
+                g.c_name, g.width
+            ));
+            format!(".propagation_bits = {}__propagation_bits, ", g.c_name)
+        } else {
+            String::new()
+        };
         let strength_view = g
             .strength_view
             .and_then(|view| model.signals.get(view))
@@ -148,7 +159,7 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
              .overlap_scratch = {scratch_ptr}, .index_root = -1, \
              .propagation_enabled = {}, .propagation = NULL, \
              .propagation_rise = {}, .propagation_fall = {}, \
-             .propagation_turn_off = {}, .aliases = NULL, \
+             .propagation_turn_off = {}, {propagation_bits}.aliases = NULL, \
              .strength = {strength_view} }};\n",
             g.c_name,
             g.width,

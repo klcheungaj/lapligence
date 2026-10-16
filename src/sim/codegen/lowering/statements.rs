@@ -333,7 +333,7 @@ fn force_constant_index(expr: &IrExpr) -> bool {
 /// The integer value of a lowered net selector. Lowering normalizes declared
 /// ranges with conversions and `+`/`-`/`*` of constants; the frontend has
 /// already required the source selector to be a constant expression.
-fn force_constant_i64(expr: &IrExpr) -> Option<i64> {
+pub(super) fn force_constant_i64(expr: &IrExpr) -> Option<i64> {
     let value = match expr.kind() {
         IrExprKind::Const(value) => {
             if value.real_value().is_some()

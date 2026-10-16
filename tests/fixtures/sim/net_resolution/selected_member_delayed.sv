@@ -10,7 +10,10 @@ module tb;
     initial begin
         en = 0;
         #1 en = 1;
-        #1 if (bus[0] !== 1'bz || bus[7:1] !== 7'bzzzzzzz) $display("FAIL before_delay=%b", bus);
+        // A delayed driver's own bits start X (IEEE 1364-2001 3.6: a driven
+        // net assumes its driver's output); the time-0 Z update was
+        // descheduled by the change at time 1 (6.1.3 b).
+        #1 if (bus[0] !== 1'bx || bus[7:1] !== 7'bzzzzzzz) $display("FAIL before_delay=%b", bus);
         #1 if (bus[0] !== 1'b1 || bus[7:1] !== 7'bzzzzzzz) $display("FAIL after_rise=%b", bus);
         en = 0;
         #1 if (bus[0] !== 1'b1 || bus[7:1] !== 7'bzzzzzzz) $display("FAIL before_fall=%b", bus);

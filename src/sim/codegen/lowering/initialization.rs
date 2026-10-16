@@ -331,6 +331,49 @@ impl<'a> Codegen<'a> {
         self.initialize_delayed_driver_with_initial(index, false)
     }
 
+    /// Start the bits a delayed driver site drives at X. A whole target is
+    /// [`Self::initialize_delayed_driver`]; a constant selection of a net
+    /// driver slot (a selected continuous assignment or a gate-array
+    /// instance output) marks only its own bits, leaving the rest of its
+    /// contribution high impedance. Variable targets keep their storage
+    /// initialization.
+    pub(super) fn initialize_delayed_lhs(&mut self, lhs: &IrLhs) -> Result<(), String> {
+        let (index, high, low) = match lhs {
+            IrLhs::Whole(index) => return self.initialize_delayed_driver(*index),
+            IrLhs::Part(index, left, right, _) => (*index, *left, *right),
+            IrLhs::Bit(index, bit, _) => match super::statements::force_constant_i64(bit) {
+                Some(bit) => (*index, bit, bit),
+                None => return Ok(()),
+            },
+            _ => return Ok(()),
+        };
+        use crate::sim::ir::IrInitStep;
+        let signal = self.model.signal(index);
+        let Some((group, slot)) = signal.net_driver else {
+            return Ok(());
+        };
+        let width = signal.ty.width();
+        if low < 0 || high < low || high >= i64::from(width) {
+            return Ok(());
+        }
+        let limbs = (width as usize).div_ceil(64);
+        let mut x = vec![0u64; limbs];
+        let mut z = vec![0u64; limbs];
+        for bit in 0..width {
+            let (limb, offset) = ((bit / 64) as usize, bit % 64);
+            if (low..=high).contains(&i64::from(bit)) {
+                x[limb] |= 1 << offset;
+            } else {
+                z[limb] |= 1 << offset;
+            }
+        }
+        let value = IrConst::packed(vec![0; limbs], x, z, width, signal.ty.signed(), None)
+            .map_err(|error| error.to_string())?;
+        self.delayed_driver_inits
+            .push(IrInitStep::WriteNet { group, slot, value });
+        Ok(())
+    }
+
     /// A delayed fixed net-array element remains high impedance until its
     /// first continuous-assignment update arrives. Scalar delayed drivers and
     /// gate outputs retain their all-X initial value.

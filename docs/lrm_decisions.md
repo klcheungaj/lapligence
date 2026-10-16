@@ -336,6 +336,16 @@ case.
 | S31-D6 | **Every weight is evaluated once, in source order.** All weight expressions run top to bottom exactly once per execution, including those of branches that are not chosen, and equal expressions are not cached. | 18.16 L31347-31349 | `S31-D6_weight_evaluation_order` | llg choice (the clause allows any order and caching of identical expressions) |
 | S31-D7 | **One draw, equal to `$urandom_range(sum - 1, 0)`.** A `randcase` consumes exactly one value of the calling thread's stream, the value `$urandom_range(sum - 1, 0)` would return at that point; the first branch whose running total exceeds it is taken. A sum above 32 bits combines more 32-bit draws. | 18.16 L31353-31359 | `S31-D7_draw_is_urandom_range` | llg policy ("the range 0 to the sum" and the number of draws are open; only the equality of the two forms is compared, never a value) |
 
+## Continuous, gate and net delays (ADV-002)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S2-D1 | **min:typ:max selects the typical value.** Without a tool option every min:typ:max expression uses its middle value: driver, gate, net and procedural delays, constant or variable, and inside larger expressions. llg previously folded integer constants and lowered runtime expressions to the minimum. | 11.12 L16642-16651; 28.16.1 L48462-48466 | `S2-D1_mintypmax_typical` | llg choice (the selection is left to the tool) |
+| S2-D2 | **Vector targets take one whole-value delay.** A delayed continuous assignment wider than one bit (vector, part-select, concatenation) schedules one update: nonzero to all-zero falls (X and Z bits count as nonzero), a change to all-Z turns off, every other change rises. A one-bit target follows Table 28-9, so a change to X takes the smallest delay. llg previously used the smallest delay of the changed bits. | 10.3.3 L12894-12903; 28.16 L48383 | `S2-D2_vector_delay_rule` | LRM text; X/Z bits as nonzero and partly-Z values as "other cases" are an llg choice |
+| S2-D3 | **A vector net delay applies per bit.** Each bit of a delayed vector net takes its own transition delay and keeps, replaces or cancels its own pending update. llg previously scheduled one whole-net update at the smallest changed-bit delay. | 10.3.3 L12911-12915; 28.16 L48369-48370 | `S2-D3_net_delay_per_bit` | llg choice (implied by the contrast with declaration assignments, not stated) |
+| S2-D4 | **Delayed drivers start X.** Before its first delayed update a driver drives X on the bits it drives, including part- and bit-selects and each gate-array instance output; other bits stay Z. llg previously started selected drivers and gate-array outputs at Z. | 6.7 L5199-5200 | `S2-D4_delayed_driver_initial_x` | llg choice (a driver's output before its first propagation is not stated) |
+| S2-D5 | **A declaration assignment's delay is its own.** `wire #d w = e;` delays only that driver; other drivers of `w` are undelayed, and on a vector the delay is one whole-value delay. llg previously treated it as a net delay. | 10.3.3 L12912-12915 | `S2-D5_declaration_assignment_delay` | LRM text |
+
 ## Random sequence generation (ADV-016)
 
 | ID | Decision | Clause (SV) | Case | Kind |

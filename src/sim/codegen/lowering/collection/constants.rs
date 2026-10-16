@@ -319,7 +319,7 @@ impl<'a> Codegen<'a> {
             NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => {
                 super::super::validate_operation_arity(*op, operands.len(), "constant expression")?;
                 if *op == Operation::MinTypMax {
-                    return self.eval_decl_value(operands[1]);
+                    return self.eval_decl_value(operands[self.min_typ_max_operand()]);
                 }
                 if *op == Operation::Conditional {
                     let condition = self.eval_bits(operands[0])?;
@@ -557,7 +557,7 @@ impl<'a> Codegen<'a> {
             Operation::BitwiseXor => Ok(elab::bit_xor(&b!(0), &b!(1))),
             Operation::BitwiseXnor => Ok(elab::bit_xnor(&b!(0), &b!(1))),
             Operation::Conditional => Ok(elab::cond(&b!(0), &b!(1), &b!(2))),
-            Operation::MinTypMax => Ok(b!(0)),
+            Operation::MinTypMax => Ok(b!(self.min_typ_max_operand())),
             Operation::Concat => {
                 let mut parts = Vec::with_capacity(operands.len());
                 for i in 0..operands.len() {

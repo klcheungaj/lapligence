@@ -2545,3 +2545,43 @@ fn s16_d9_draw_is_urandom_range() {
         include_str!("fixtures/sim/lrm_decisions/S16-D9_draw_is_urandom_range.out"),
     );
 }
+
+#[test]
+fn s2_d1_mintypmax_typical() {
+    run_decision(
+        "S2-D1_mintypmax_typical",
+        include_str!("fixtures/sim/lrm_decisions/S2-D1_mintypmax_typical.out"),
+    );
+}
+
+#[test]
+fn s2_d2_vector_delay_rule() {
+    run_decision(
+        "S2-D2_vector_delay_rule",
+        include_str!("fixtures/sim/lrm_decisions/S2-D2_vector_delay_rule.out"),
+    );
+}
+
+#[test]
+fn s2_d3_net_delay_per_bit() {
+    run_decision(
+        "S2-D3_net_delay_per_bit",
+        include_str!("fixtures/sim/lrm_decisions/S2-D3_net_delay_per_bit.out"),
+    );
+}
+
+#[test]
+fn s2_d4_delayed_driver_initial_x() {
+    run_decision(
+        "S2-D4_delayed_driver_initial_x",
+        include_str!("fixtures/sim/lrm_decisions/S2-D4_delayed_driver_initial_x.out"),
+    );
+}
+
+#[test]
+fn s2_d5_declaration_assignment_delay() {
+    run_decision(
+        "S2-D5_declaration_assignment_delay",
+        include_str!("fixtures/sim/lrm_decisions/S2-D5_declaration_assignment_delay.out"),
+    );
+}

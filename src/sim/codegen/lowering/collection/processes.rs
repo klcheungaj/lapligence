@@ -551,9 +551,10 @@ impl<'a> Codegen<'a> {
         let rhs_ir = self.lower_expr(path, rhs)?;
         let rhs_ir = apply_lhs_assignment_context(&self.model, &lh, rhs_ir);
         // Driver evaluation must keep watching its inputs while a captured
-        // propagation event is pending (IEEE 1364-2001 6.1.3).
+        // propagation event is pending (IEEE 1364-2001 6.1.3). A net
+        // declaration assignment's delay is this driver's delay, not a net
+        // delay (the frontend capture gives it only to the assignment).
         let scaled_delay = match self.kind(ca) {
-            NodeKind::ContAssign { net_decl: true, .. } => None,
             NodeKind::ContAssign {
                 delay: Some(de), ..
             } => Some(self.driver_delay_ticks(ca, *de)?),
@@ -599,9 +600,7 @@ impl<'a> Codegen<'a> {
             }
             body
         } else if let Some(delay) = scaled_delay {
-            if let IrLhs::Whole(index) = &lh {
-                self.initialize_delayed_driver(*index)?;
-            }
+            self.initialize_delayed_lhs(&lh)?;
             vec![IrStmt::InertialAssign {
                 lhs: lh,
                 rhs: rhs_ir,

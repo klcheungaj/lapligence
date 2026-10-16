@@ -1356,13 +1356,20 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   runtime selects, hierarchical (cross-scope) references and unmapped writes
   reject. Delayed alias drivers belong to ADV-002. SV §10.11 **[SV-2005]**.
 - 🟨 **Continuous, gate and net delays** — Constant single/rise-fall/turn-off
-  delays schedule captured Active-region inertial updates for admitted whole,
-  constant-selected and fixed-array-element drivers. Changed pending results
-  cancel; unchanged results retain deadlines; returning to the current value
-  cancels without replacement. Net propagation delays apply after resolution.
-  Conflicting selected true-alias delays, dynamic driver-delay expressions,
-  net-array declaration delays and unsupported terminals remain restricted.
-  V §§6.1.3, 7.14 **[1995]**.
+  delays, with min:typ:max values selecting the typical value (S2-D1),
+  schedule captured Active-region inertial updates for admitted whole,
+  constant-selected and fixed-array-element drivers. A one-bit target follows
+  the from/to table; a wider target takes one delay for its whole value
+  (S2-D2). Net propagation delays apply after resolution, per bit on a vector
+  (S2-D3); a declaration assignment's delay is that driver's own (S2-D5).
+  Delayed drivers start X on the bits they drive (S2-D4). Changed pending
+  results cancel; unchanged results retain deadlines; returning to the current
+  value cancels without replacement. The
+  [ADV-002 fixtures](../tests/fixtures/sim/feature_completion/adv_002/readme.md)
+  run both editions, optimizer modes and value backends. Conflicting selected
+  true-alias delays, dynamic driver-delay expressions, net-array declaration
+  delays and unsupported terminals remain restricted.
+  V §§4.3, 6.1.3, 7.14; SV §§10.3.3, 11.12, 28.16 **[1995]**.
 - 🟦 **Logic and pull gates** — `and/nand/or/nor/xor/xnor/buf/not/pullup/pulldown`
   use typed terminals and independent output drivers. Pullup/pulldown values
   and an undriven Z net have a dual-edition public-CLI witness in both modes.

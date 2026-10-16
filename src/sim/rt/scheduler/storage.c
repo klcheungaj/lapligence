@@ -127,6 +127,8 @@ struct llg_inertial {
     sv4_t* target;
     llg_net_t* net;
     llg_net_t* publication_net; // net-delay commit, not a driver contribution
+    uint32_t publication_bit;   // the bit a per-bit net delay commits
+    int8_t bit_publication;     // commits publication_bit of publication_net
     int slot;
     int pending;
     uint64_t time;

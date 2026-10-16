@@ -523,9 +523,7 @@ impl<'a> Codegen<'a> {
                 }
                 body
             } else if let Some(delay) = scaled_delay {
-                if let IrLhs::Whole(index) = &lhs {
-                    self.initialize_delayed_driver(*index)?;
-                }
+                self.initialize_delayed_lhs(&lhs)?;
                 vec![IrStmt::InertialAssign {
                     lhs,
                     rhs: value,

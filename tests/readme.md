@@ -339,6 +339,13 @@ in `src/sim/rt/coverage/database.c`; `vpi_coverage` loads a VPI application
 from `LLG_VPI_PLUGIN`. Decisions S46-D1-D12 are in `sim_lrm_decisions`
 (`-E 'test(/s46_d/)'`).
 
+ADV-002's delay fixtures use
+`-E 'binary(sim_feature_completion) & test(adv_002::)'`. The Verilog sources
+run in both editions, both optimizer modes and on every value backend, with
+outputs hand-derived from V §§4.3, 6.1.3, 7.14 and SV §§10.3.3, 11.12, 28.16
+(fixture readme). Decisions S2-D1-D5 are in `sim_lrm_decisions`
+(`-E 'test(/s2_d/)'`).
+
 ADV-016's randsequence fixtures use
 `-E 'binary(sim_feature_completion) & test(adv_016::)'`. Positives run in both
 optimizer modes on every backend with oracles from SV 18.17 (fixture readme):

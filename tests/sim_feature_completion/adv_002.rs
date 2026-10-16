@@ -1,0 +1,96 @@
+//! ADV-002: distributed continuous-assignment, gate, UDP and net delays.
+//! Oracles are hand-derived from IEEE 1364-2001 4.3, 6.1.3 and 7.14 (Table
+//! 39) and IEEE 1800-2009 10.3.3, 11.12 and 28.16 (Table 28-9), as quoted in
+//! the fixture readme. Verilog sources run in both editions; every positive
+//! case runs both optimizer modes on every value backend.
+use super::sim_cli;
+
+const SUITE: &str = "feature_completion/adv_002";
+const BOTH: &[&str] = &["v2001", "sv2009"];
+
+#[test]
+fn min_typ_max_expressions_select_the_typical_value() {
+    let expected = include_str!("../fixtures/sim/feature_completion/adv_002/mintypmax_select.out");
+    for edition in BOTH {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "mintypmax_select.v",
+            expected,
+            &["--edition", edition],
+            &[],
+        );
+    }
+}
+
+#[test]
+fn vector_targets_take_one_delay_for_the_whole_value() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/adv_002/vector_transitions.out");
+    for edition in BOTH {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "vector_transitions.v",
+            expected,
+            &["--edition", edition],
+            &[],
+        );
+    }
+}
+
+#[test]
+fn vector_net_delays_apply_to_each_bit() {
+    let expected = include_str!("../fixtures/sim/feature_completion/adv_002/net_delay_bits.out");
+    for edition in BOTH {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "net_delay_bits.v",
+            expected,
+            &["--edition", edition],
+            &[],
+        );
+    }
+    sim_cli::run_case_after_db_drop(SUITE, "net_delay_bits.v", expected);
+}
+
+#[test]
+fn declaration_assignment_delays_belong_to_their_driver() {
+    let expected = include_str!("../fixtures/sim/feature_completion/adv_002/decl_assign_delay.out");
+    for edition in BOTH {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "decl_assign_delay.v",
+            expected,
+            &["--edition", edition],
+            &[],
+        );
+    }
+}
+
+#[test]
+fn inertial_pulses_below_the_delay_are_suppressed() {
+    let expected = include_str!("../fixtures/sim/feature_completion/adv_002/pulse_widths.out");
+    for edition in BOTH {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "pulse_widths.v",
+            expected,
+            &["--edition", edition],
+            &[],
+        );
+    }
+}
+
+#[test]
+fn gate_delays_follow_the_transition_table() {
+    let expected = include_str!("../fixtures/sim/feature_completion/adv_002/gate_forms.out");
+    for edition in BOTH {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "gate_forms.v",
+            expected,
+            &["--edition", edition],
+            &[],
+        );
+    }
+    sim_cli::run_case_after_db_drop(SUITE, "gate_forms.v", expected);
+}
