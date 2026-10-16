@@ -330,6 +330,9 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
+        if let Some(write) = self.lower_virtual_interface_array_write(lhs, rhs, op, blocking)? {
+            return Ok(write);
+        }
         if let Some(aggregate_assignment) = self
             .cg
             .lower_unpacked_aggregate_assignment(&self.path, lhs, rhs, !blocking, op)?
@@ -366,6 +369,74 @@ impl EmitCtx<'_, '_> {
             rhs: rhs_ir,
             nba: !blocking,
         })
+    }
+
+    /// `v.mem[i] = e` or `v.mem[i] <= e` through a virtual-interface handle
+    /// (SV 25.9): one assignment per instance the handle can bind, chosen by
+    /// the instance bound when the statement executes (an invalid handle
+    /// reports at the access and writes nothing). The right-hand side and
+    /// indices are lowered once per arm and evaluated once.
+    fn lower_virtual_interface_array_write(
+        &mut self,
+        lhs: NodeId,
+        rhs: NodeId,
+        op: Operation,
+        blocking: bool,
+    ) -> Result<Option<IrStmt>, String> {
+        let Some(element) = self
+            .cg
+            .virtual_interface_array_element(&self.path, lhs, true)?
+        else {
+            return Ok(None);
+        };
+        if op != Operation::Assignment {
+            return Err(format!(
+                "{}: a compound assignment to an element of an unpacked array member through \
+                 a virtual interface is not supported in `{}`; use `=` or `<=`",
+                self.cg.source_location(lhs),
+                self.path
+            ));
+        }
+        let indices = element
+            .indices
+            .iter()
+            .map(|index| self.cg.lower_expr(&self.path, *index))
+            .collect::<Result<Vec<_>, _>>()?;
+        let (elem_sel, _) = self
+            .cg
+            .virtual_interface_element_select(&self.path, &element)?;
+        let mut value: Option<IrExpr> = None;
+        let mut items = Vec::with_capacity(element.arrays.len());
+        for (instance, array) in element.arrays.iter().enumerate() {
+            let lh = IrLhs::ArrayElem {
+                arr: self.cg.reference_array(array.ir),
+                indices: indices.clone(),
+                elem_sel: elem_sel.clone(),
+            };
+            let rhs_ir = match &value {
+                Some(value) => value.clone(),
+                None => {
+                    let lowered = self.lower_assignment_rhs(lhs, rhs, op, &lh)?;
+                    let lowered = apply_lhs_assignment_context(&self.cg.model, &lh, lowered);
+                    value = Some(lowered.clone());
+                    lowered
+                }
+            };
+            items.push(IrCaseItem::new(
+                vec![lhs_integer_expr(instance as i128)],
+                vec![IrStmt::Assign {
+                    lhs: lh,
+                    rhs: rhs_ir,
+                    nba: !blocking,
+                }],
+            ));
+        }
+        Ok(Some(IrStmt::Case {
+            sel: Codegen::virtual_interface_instance_query(&element),
+            kind: IrCaseKind::Exact,
+            items,
+            check: IrUniquePriorityCheck::None,
+        }))
     }
 
     /// `lhs = <overloaded update>` (IEEE 1800-2009 11.11) whose target is a

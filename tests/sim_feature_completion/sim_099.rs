@@ -404,6 +404,47 @@ fn procedural_assertion_forms_without_exact_semantics_are_rejected() {
     );
 }
 
+/// G1 / IEEE 1800-2009 25.9: elements of unpacked array members read and
+/// written (blocking and nonblocking, whole or through a packed select)
+/// through virtual-interface handles reach the array of the instance bound
+/// when the access executes.
+#[test]
+fn virtual_interface_array_members() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "vif_array_members",
+        include_str!("../fixtures/sim/feature_completion/sim_099/vif_array_members.out"),
+        &[],
+        &[],
+    );
+}
+
+/// G1: the array-member forms not dispatched on the bound instance stop
+/// compilation at their position.
+#[test]
+fn virtual_interface_array_member_limits_are_located() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_vif_array_whole",
+        "neg_vif_array_whole.sv:11:12: unpacked array member `mem` of virtual interface \
+         `bus_if` is supported only through element selects (`mem[i]`, `mem[i][b]`) that are \
+         read or assigned with `=` or `<=`; a whole-array or slice use, or a use in an event \
+         control or wait, is not supported in `tb`",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_vif_array_update",
+        "neg_vif_array_update.sv:10:5: a compound assignment to an element of an unpacked array \
+         member through a virtual interface is not supported in `tb`; use `=` or `<=`",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_vif_array_increment",
+        "neg_vif_array_increment.sv:10:5: this write to an element of an unpacked array member \
+         through a virtual interface is not supported in `tb`; assign it with `=` or `<=`",
+    );
+}
+
 /// A01: the built-ins no other fixture called.
 #[test]
 fn remaining_builtins_execute() {

@@ -446,7 +446,12 @@ process plan. always_comb/always_latch add nothing for a class property path or
 class method call, not even the handle variable (§9.2.2.2.1;
 `comb_excludes_class_references`); `@*` adds the handle identifier `h` of `h.x`
 (§9.4.2.2: every identifier in the statement). Neither adds class (§9.2.2.2.1) or
-virtual-interface (§25.9) storage; chandle event expressions reject (§6.14). Copy supported automatic evaluator captures and
+virtual-interface (§25.9) storage; chandle event expressions reject (§6.14).
+An element of an unpacked array member through a virtual interface
+(`objects/virtual_interfaces.rs`, `v.mem[i]`) has no member slot: reads are a
+`Mux` chain and `=`/`<=` writes an `IrStmt::Case` over
+`IrObjectQuery::VirtualInterfaceInstance`, one arm per bound instance's array,
+like the SIM-034 drives; other uses are located rejections. Copy supported automatic evaluator captures and
 transitively reject disallowed callback effects/captures. Named/mixed events retain
 identity and atomic registration. `->>` captures delay at issue and queues NBA;
 event/repeat timing uses an independent detached waiter, whose final trigger is

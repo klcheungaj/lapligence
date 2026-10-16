@@ -1501,20 +1501,6 @@ matched last.
 Reproduce with `property p; logic [7:0] v = d; always (a |-> d == v);
 endproperty`.
 
-## Unpacked array members through virtual interfaces (SIM-099)
-
-**Status:** open; gate failure recorded by SIM-099.
-
-Reading or writing an element of an unpacked array member of an interface
-through a virtual interface handle or view (`v.mem[2] = 8'h5a;`,
-`$display("%h", v.mem[2])`) fails to compile with "cannot resolve array base
-of select `mem` in `c`", without a source position. Packed members and their
-bit, part and indexed part selects work (blocking and nonblocking). The
-virtual-interface member path resolves packed storage only; an unpacked member
-needs the bound instance's array descriptor at run time, like the
-array-element drives that SIM-034 dispatches. Reproduce with an interface
-declaring `logic [7:0] mem [0:3];` and a class task writing `v.mem[2]`.
-
 ## Modport expression ports through virtual interfaces
 
 **Status:** open (RTL-102 deferral).

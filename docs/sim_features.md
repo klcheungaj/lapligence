@@ -2006,8 +2006,12 @@ These are bounded implementations, not full verification-infrastructure support.
   VPI value-change callbacks whose value changed, and a view's input member
   stays read-only for selects
   ([sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md)).
-  Unpacked array members read or written through a handle
-  (`v.mem[i]`) are rejected at compile time.
+  Elements of unpacked array members (`v.mem[i]`, `v.grid[i][j]`, and their
+  bit, part and indexed part selects) are read and written with `=` or `<=`
+  through a handle on the array of the instance bound when the access
+  executes; whole-array, slice, compound, increment, output-argument,
+  event-control and wait uses of such a member are located compile-time
+  errors.
   Modport expression ports and broader polymorphic/capture forms reject.
   SV §§25.5, 25.7, 25.9–25.10 **[SV-2009]**.
 - 🟨 **Programs** — Named, nested (implicitly instantiated) and bound

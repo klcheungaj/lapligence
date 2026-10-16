@@ -250,6 +250,14 @@ collector setting instead of comparing it with a fixed value.
   have no llg lowering; the registered applications return 2 and print one line.
   Annex D is informative (D.1 L69791: "for informative purposes only and are not
   part of this standard").
+- `vif_array_members.sv` (gate item G1): SV 25.9 L44930-44931 (above). At 0 the
+  driver bound to `a` writes `mem[0]` = 50 at once and schedules `mem[1]` <= 60,
+  so the display shows `xx` for `mem[1]` until 1; `grid[1][0]` = a0, `flags[1]`
+  = c and `mem[0][3:0]` = 0. At 1 it rebinds to `b` (`mem[2]` = 52, `mem[3]` <= 62
+  at 2). In the module, `mv` = `a`: `mem[3]` = 50 + 60 = b0; `mem[2]` = 0f, then
+  `[7:4]` = 9 and bit 1 = 0 give 9d, whose bit 2 is 1, bit 1 is 0, `[7:4]` is 9
+  and `[2 +: 3]` is 111 = 7. At 2 `mv` = `b` writes `grid[0][1]` = 33 and `nv`
+  schedules its `[0 +: 2]` <= 00, so `b.grid[0][1]` is 30 at 3.
 - `builtin_override.sv` + `builtin_override.c` (gate item G3): the application
   registers `$random`, the example of SV 36.3.2 L56427-56431 ("a user could
   write a random number generator as a PLI application and then associate the
@@ -348,6 +356,9 @@ Derivation:
 | `neg_view_input_select.sv` | `:12:15 cannot assign to input port 'data'` | SV 25.5 L43860: modports declare directions; a select of an input member through the view is still a write to it (frontend diagnostic). |
 | `neg_unregistered_annex_task.sv` | `llg: VPI error: no VPI registration for `$sreadmemh` (called at <path>:7)` | No lowering and no application: the run stops at startup naming the call, never a no-op. |
 | `neg_unregistered_annex_function.sv` | `... `$reset_count` (called at <path>:7)` | Same for a function. |
+| `neg_vif_array_whole.sv` | `:11:12: unpacked array member `mem` of virtual interface `bus_if` is supported only through element selects ...` | A whole array member has no per-instance value in llg; only elements are dispatched on the bound instance. |
+| `neg_vif_array_update.sv` | `:10:5: a compound assignment to an element of an unpacked array member through a virtual interface is not supported ...` | Only `=` and `<=` dispatch on the bound instance. |
+| `neg_vif_array_increment.sv` | `:10:5: this write to an element of an unpacked array member through a virtual interface is not supported ...` | The same for increments, decrements and output arguments. |
 | `neg_builtin_override.sv` (with `builtin_override.c` linked by `--dpi-lib` or loaded by `LLG_VPI_PLUGIN`) | `llg: VPI error: a VPI application registers `$random`, which llg implements as a built-in (called at <path>:6); llg does not support overriding built-in system tasks and functions (IEEE 1800-2009 36.3.2)` | SV 36.3.2 requires the override, which llg does not support; the run stops at startup instead of silently running the built-in (S99-D6). |
 | `neg_procedural_automatic.sv` | `:9:47: automatic variable `i` in a procedural concurrent assertion takes its value when the assertion is queued (IEEE 1800-2009 16.15.6.1); llg does not capture queued values` | SV 16.15.6.1 L26882-26884: a procedural concurrent assertion "shall not sample any const expression or automatic variable, but shall instead save the value of the expression or variable at the time the assertion evaluation attempt is added to the procedural assertion queue"; llg keeps no values with a queued instance. |
 | `neg_procedural_const.sv` | `:9:45: a const cast in a procedural concurrent assertion takes its value when the assertion is queued ...` | The same rule for a `const'` cast. |

@@ -400,6 +400,18 @@ impl<'a> Codegen<'a> {
         if let Some(target) = self.virtual_interface_select_lhs(path, lhs)? {
             return Ok(Lhs::Canonical(target));
         }
+        // Only `=` and `<=` statements dispatch an element of a
+        // virtual-interface array member on the bound instance.
+        if self
+            .virtual_interface_array_element(path, lhs, true)?
+            .is_some()
+        {
+            return Err(format!(
+                "{}: this write to an element of an unpacked array member through a \
+                 virtual interface is not supported in `{path}`; assign it with `=` or `<=`",
+                self.source_location(lhs)
+            ));
+        }
         if self.packed_element_member_select(lhs).is_some() {
             if let Some(target) = self.packed_value_lhs(path, lhs)? {
                 return Ok(target);
