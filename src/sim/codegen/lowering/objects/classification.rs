@@ -453,8 +453,14 @@ impl Codegen<'_> {
         {
             return true;
         }
-        // So does a semaphore member of a native record (SIM-016).
-        if self.native_leaf_kind(node).is_some()
+        // So does a semaphore member of a native record (SIM-016) and a
+        // semaphore property selected through a class handle (`h.s`), which
+        // the handle chain reads like any other class-handle property.
+        if (self.native_leaf_kind(node).is_some()
+            || matches!(
+                self.kind(node),
+                NodeKind::Expr(ExprKind::MemberSelect { .. } | ExprKind::HierPath { .. })
+            ))
             && self.query_descriptor(node).is_some_and(|descriptor| {
                 matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Class")
                     && descriptor.name == "semaphore"
