@@ -239,7 +239,13 @@ impl Validator<'_> {
         for (net, delay) in self.db.net_delays() {
             let path = format!("net_delays[{}]", net.0);
             let node = self.node(*net, &path)?;
-            if !matches!(node.kind, NodeKind::Net { .. }) {
+            // A net array's declaration delay applies to each of its nets.
+            let net_array = matches!(node.kind, NodeKind::Array { .. })
+                && self
+                    .db
+                    .array_meta(*net)
+                    .is_some_and(|meta| meta.net_type().is_some());
+            if !matches!(node.kind, NodeKind::Net { .. }) && !net_array {
                 return self.fail(path, "metadata key is not a net node");
             }
             let mut refs = Vec::new();

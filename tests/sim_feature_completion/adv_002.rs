@@ -94,3 +94,20 @@ fn gate_delays_follow_the_transition_table() {
     }
     sim_cli::run_case_after_db_drop(SUITE, "gate_forms.v", expected);
 }
+
+#[test]
+fn net_array_declaration_delays_apply_to_every_element() {
+    let expected = include_str!("../fixtures/sim/feature_completion/adv_002/net_array_delays.out");
+    for edition in BOTH {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "net_array_delays.v",
+            expected,
+            &["--edition", edition],
+            &[],
+        );
+    }
+    sim_cli::run_case_after_db_drop(SUITE, "net_array_delays.v", expected);
+    let ports = include_str!("../fixtures/sim/feature_completion/adv_002/net_array_ports.out");
+    sim_cli::run_case_backend_parity(SUITE, "net_array_ports", ports, &[], &[]);
+}

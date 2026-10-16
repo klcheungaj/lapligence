@@ -88,3 +88,9 @@ Line numbers are those of the `pdftotext -layout` extractions
 - `gate_forms`: one, two and three gate delays (`and` instance array, `not`,
   `bufif0`, `notif1`), turn-off and to-X choices; each gate-array instance
   output starts X.
+- `net_array_delays`: a declaration delay on a one- and a two-dimensional net
+  array delays every driven element after resolution, adds to a delayed
+  driver's own delay, filters a 1 ns pulse and applies per bit to vector
+  elements, including one driven through a bit-select.
+- `net_array_ports` (SystemVerilog): the delayed element reached through an
+  inout port and through an `alias` of one element is delayed once.

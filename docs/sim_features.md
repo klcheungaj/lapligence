@@ -1312,8 +1312,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   variable). Overlapping continuous, ordinary procedural or declaration-
   initializer writers reject; force/release/deassign are not ordinary writers.
   [Continuous-process lowering](../src/sim/codegen/lowering/collection/processes.rs)
-  rejects delayed positional-pattern drivers, which with net-array declaration
-  delays belong to ADV-002. Dynamic topology remains restricted.
+  rejects delayed positional-pattern drivers, which belong to ADV-002.
+  Net-array declaration delays apply to every element (ADV-002). Dynamic
+  topology remains restricted.
   SV §§6.5–6.7, 7.6, 10.3 **[SV-2005]**.
 - 🟨 **Resolution and strengths** — Continuous, gate, port and admitted
   hierarchical/fixed-array drivers retain independent contributions. `wire/tri`,
@@ -1342,8 +1343,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   same-depth warning-only tie selects the first in Table 23-1 column order with
   a located warning. A uwire actual, concatenated uwire actual or `inout
   uwire` formal collapses with one driver per bit (SV §6.6.2). `trireg` (unsupported by
-  design), pass switches (ADV-005) and net-array declaration delays (ADV-002)
-  remain unsupported; oversized net arrays still expand per cell (known issue).
+  design) and pass switches (ADV-005) remain unsupported; a net-array
+  declaration delay follows the same winning-declaration rule. Oversized net
+  arrays still expand per cell (known issue).
   V §12.3.10 / Table 45; SV §§23.3.3.6–23.3.3.7 / Table 23-1 **[1995]**.
 - 🟨 **True aliases** — Same-declared-net-type packed networks, fully indexed
   fixed net-array elements, multidimensional/static indexed projections and
@@ -1366,9 +1368,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   results cancel; unchanged results retain deadlines; returning to the current
   value cancels without replacement. The
   [ADV-002 fixtures](../tests/fixtures/sim/feature_completion/adv_002/readme.md)
-  run both editions, optimizer modes and value backends. Conflicting selected
-  true-alias delays, dynamic driver-delay expressions, net-array declaration
-  delays and unsupported terminals remain restricted.
+  run both editions, optimizer modes and value backends. A net-array
+  declaration delay is the net delay of every element, including elements
+  reached through inout ports and aliases. Conflicting selected true-alias
+  delays, dynamic driver-delay expressions and unsupported terminals remain
+  restricted.
   V §§4.3, 6.1.3, 7.14; SV §§10.3.3, 11.12, 28.16 **[1995]**.
 - 🟦 **Logic and pull gates** — `and/nand/or/nor/xor/xnor/buf/not/pullup/pulldown`
   use typed terminals and independent output drivers. Pullup/pulldown values
