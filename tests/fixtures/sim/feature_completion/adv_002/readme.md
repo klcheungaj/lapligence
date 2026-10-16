@@ -62,6 +62,19 @@ Line numbers are those of the `pdftotext -layout` extractions
   three values each for the rising, falling, and turn-off delays. The minimum,
   typical, and maximum values for each delay shall be specified as constant
   expressions separated by colons."
+- Concatenation and pattern targets, V 6.1 Table 30 L5395-5399: continuous
+  assignment left-hand sides are a "Net (vector or scalar)", constant bit,
+  part and indexed part selects of a vector net, and a "Concatenation of any
+  of the above four LHS". SV 11.4.12 L15235-15236: "The concatenation is
+  treated as a packed vector of bits. It can be used on the left-hand side of
+  an assignment or in an expression." SV 10.9 L13617-13619: "When an
+  assignment pattern expression is used in a left-hand expression, the
+  positional notation shall be required; and each member expression shall
+  have a bit-stream data type that is assignment compatible with and has the
+  same number of bits as the corresponding element in the data type of the
+  assignment pattern expression."
+- Aliases, SV 10.11 L13981: "An alias statement declares multiple names for
+  the same physical net, or bits within a net."
 - Net initialization, V 3.6 L2631-2632 (SV 6.7 L5199-5200): "The default
   initialization value for a net shall be the value z. Nets with drivers shall
   assume the output value of their drivers."
@@ -94,3 +107,17 @@ Line numbers are those of the `pdftotext -layout` extractions
   elements, including one driven through a bit-select.
 - `net_array_ports` (SystemVerilog): the delayed element reached through an
   inout port and through an `alias` of one element is delayed once.
+- `concat_targets`: a delayed concatenation is one vector driver (S2-D6): a
+  nonzero-to-nonzero change rises in every part, a change to all-Z turns
+  off, a newer value replaces the pending one as a whole, and a part with its
+  own net delay adds it after the driver delay.
+- `pattern_alias_targets` (SystemVerilog): each assignment-pattern member,
+  including a net-array element, is its own delayed driver (S2-D7); a member
+  and a whole target split over alias groups change together with one delay
+  (S2-D6); a pulse narrower than the delay is filtered per member.
+- `neg_delayed_descriptor_pattern` (SystemVerilog): a delayed pattern member
+  that is a 65,537-cell variable row is rejected; such a row has no packed
+  driver value.
+- `neg_net_delay_negative`: a negative real net delay is rejected as a net
+  propagation delay; a declaration assignment's negative delay is rejected
+  as that driver's delay (`tests/sim_net_decl.rs`).

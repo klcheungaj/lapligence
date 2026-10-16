@@ -12,6 +12,71 @@ impl<'a> Codegen<'a> {
         1
     }
 
+    /// Lower a delayed continuous driver whose target is not one packed
+    /// driver (a concatenation or a selection split across alias groups).
+    /// The LRM computes one delay from the whole left-hand-side value
+    /// (IEEE 1364-2001 6.1.3, IEEE 1800-2009 10.3.3), so the value goes
+    /// through one inertial driver on a hidden packed signal; a zero-delay
+    /// process sensitive to that signal performs `scatter`, the undelayed
+    /// writes of its value, at the propagation time. The hidden signal
+    /// starts X like every pending delayed driver. Returns the statement
+    /// that schedules the hidden driver; the scatter process is pushed.
+    pub(super) fn delayed_shadow_driver(
+        &mut self,
+        path: &str,
+        source: NodeId,
+        value: IrExpr,
+        delay: IrTransitionDelay,
+        scatter: impl FnOnce(IrExpr) -> Vec<IrStmt>,
+    ) -> Result<IrStmt, String> {
+        if value.is_real() || value.width() == 0 || value.width() == LLG_MAX_WIDTH {
+            return Err(format!(
+                "delayed continuous assignment in `{path}` needs a fixed-width packed value"
+            ));
+        }
+        let shadow = self.model.signals.len();
+        let c_name = format!("llg_delay_shadow_{shadow}");
+        self.model.signals.push(IrSignal {
+            fixed_default: None,
+            c_name: c_name.clone(),
+            hdl_name: None,
+            ty: IrType::Packed {
+                width: value.width(),
+                signed: value.signed(),
+                two_state: false,
+            },
+            net_driver: None,
+            net_alias: Vec::new(),
+            alias: None,
+            omit: false,
+        });
+        self.initialize_delayed_driver(shadow)?;
+        let read = IrExpr::new(
+            IrExprKind::SigRead(shadow),
+            value.width(),
+            value.signed(),
+            None,
+        );
+        let body = scatter(read);
+        let fn_name = self.new_fn_name(path, "ca");
+        let origin = self.origin(source);
+        self.model.processes.push(IrProcess::new_with_origin(
+            fn_name,
+            format!("{}.assign", self.source_path(path)),
+            IrShape::SensLoop {
+                reads: vec![IrDependency::Scalar(c_name)],
+            },
+            Vec::new(),
+            body,
+            origin,
+        ));
+        Ok(IrStmt::InertialAssign {
+            lhs: IrLhs::Whole(shadow),
+            rhs: value,
+            delay,
+        })
+    }
+
     pub(super) fn lower_procedural_delay(
         &mut self,
         path: &str,

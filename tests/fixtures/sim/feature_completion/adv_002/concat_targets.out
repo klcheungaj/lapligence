@@ -1,0 +1,14 @@
+0 p=x v=xxxz q=x n=z
+2 p=x v=xxxz q=x n=x
+4 p=x v=1xxz q=x n=x
+6 p=x v=1xxz q=x n=0
+10 p=0 v=100z q=1 n=0
+24 p=0 v=000z q=1 n=0
+30 p=1 v=000z q=0 n=0
+45 p=0 v=000z q=0 n=0
+63 p=z v=0zzz q=z n=0
+64 p=z v=zzzz q=z n=0
+66 p=z v=zzzz q=z n=z
+86 p=z v=1zzz q=z n=z
+88 p=z v=1zzz q=z n=1
+92 p=0 v=111z q=1 n=1

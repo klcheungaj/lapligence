@@ -327,16 +327,40 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// Start a whole delayed driver at X: its output is unknown until its
+    /// first propagation event matures. Net-array cells, gate outputs and
+    /// scalar drivers alike (decision S2-D4).
     pub(super) fn initialize_delayed_driver(&mut self, index: usize) -> Result<(), String> {
-        self.initialize_delayed_driver_with_initial(index, false)
+        use crate::sim::ir::IrInitStep;
+        let signal = self.model.signal(index);
+        let width = signal.ty.width();
+        let limbs = (width as usize).div_ceil(64);
+        let mut x = vec![u64::MAX; limbs];
+        if !width.is_multiple_of(64) {
+            x[limbs - 1] = (1u64 << (width % 64)) - 1;
+        }
+        let value = IrConst::packed(
+            vec![0; limbs],
+            x,
+            vec![0; limbs],
+            width,
+            signal.ty.signed(),
+            None,
+        )
+        .map_err(|error| error.to_string())?;
+        self.delayed_driver_inits.push(match signal.net_driver {
+            Some((group, slot)) => IrInitStep::WriteNet { group, slot, value },
+            None => IrInitStep::SetScalar { sig: index, value },
+        });
+        Ok(())
     }
 
     /// Start the bits a delayed driver site drives at X. A whole target is
     /// [`Self::initialize_delayed_driver`]; a constant selection of a net
     /// driver slot (a selected continuous assignment or a gate-array
     /// instance output) marks only its own bits, leaving the rest of its
-    /// contribution high impedance. Variable targets keep their storage
-    /// initialization.
+    /// contribution high impedance, and each concatenation part is marked
+    /// on its own. Variable targets keep their storage initialization.
     pub(super) fn initialize_delayed_lhs(&mut self, lhs: &IrLhs) -> Result<(), String> {
         let (index, high, low) = match lhs {
             IrLhs::Whole(index) => return self.initialize_delayed_driver(*index),
@@ -345,6 +369,12 @@ impl<'a> Codegen<'a> {
                 Some(bit) => (*index, bit, bit),
                 None => return Ok(()),
             },
+            IrLhs::Stream { parts, .. } => {
+                for (part, _) in parts {
+                    self.initialize_delayed_lhs(part)?;
+                }
+                return Ok(());
+            }
             _ => return Ok(()),
         };
         use crate::sim::ir::IrInitStep;
@@ -371,40 +401,6 @@ impl<'a> Codegen<'a> {
             .map_err(|error| error.to_string())?;
         self.delayed_driver_inits
             .push(IrInitStep::WriteNet { group, slot, value });
-        Ok(())
-    }
-
-    /// A delayed fixed net-array element remains high impedance until its
-    /// first continuous-assignment update arrives. Scalar delayed drivers and
-    /// gate outputs retain their all-X initial value.
-    pub(super) fn initialize_delayed_driver_as_z(&mut self, index: usize) -> Result<(), String> {
-        self.initialize_delayed_driver_with_initial(index, true)
-    }
-
-    fn initialize_delayed_driver_with_initial(
-        &mut self,
-        index: usize,
-        high_impedance: bool,
-    ) -> Result<(), String> {
-        use crate::sim::ir::IrInitStep;
-        let signal = self.model.signal(index);
-        let width = signal.ty.width();
-        let limbs = (width as usize).div_ceil(64);
-        let mut state = vec![u64::MAX; limbs];
-        if !width.is_multiple_of(64) {
-            state[limbs - 1] = (1u64 << (width % 64)) - 1;
-        }
-        let (x, z) = if high_impedance {
-            (vec![0; limbs], state)
-        } else {
-            (state, vec![0; limbs])
-        };
-        let value = IrConst::packed(vec![0; limbs], x, z, width, signal.ty.signed(), None)
-            .map_err(|error| error.to_string())?;
-        self.delayed_driver_inits.push(match signal.net_driver {
-            Some((group, slot)) => IrInitStep::WriteNet { group, slot, value },
-            None => IrInitStep::SetScalar { sig: index, value },
-        });
         Ok(())
     }
 }

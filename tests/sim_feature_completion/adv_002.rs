@@ -111,3 +111,47 @@ fn net_array_declaration_delays_apply_to_every_element() {
     let ports = include_str!("../fixtures/sim/feature_completion/adv_002/net_array_ports.out");
     sim_cli::run_case_backend_parity(SUITE, "net_array_ports", ports, &[], &[]);
 }
+
+#[test]
+fn concatenation_targets_are_one_vector_driver() {
+    let expected = include_str!("../fixtures/sim/feature_completion/adv_002/concat_targets.out");
+    for edition in BOTH {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "concat_targets.v",
+            expected,
+            &["--edition", edition],
+            &[],
+        );
+    }
+    sim_cli::run_case_after_db_drop(SUITE, "concat_targets.v", expected);
+}
+
+#[test]
+fn pattern_members_are_separate_drivers_and_alias_splits_delay_once() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/adv_002/pattern_alias_targets.out");
+    sim_cli::run_case_backend_parity(SUITE, "pattern_alias_targets", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "pattern_alias_targets", expected);
+}
+
+#[test]
+fn neg_delayed_descriptor_pattern_member() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_delayed_descriptor_pattern",
+        "delayed continuous assignment-pattern leaf in `tb` targets a descriptor-backed array row",
+    );
+}
+
+#[test]
+fn neg_negative_net_delay() {
+    for edition in BOTH {
+        sim_cli::reject_case_with_args(
+            SUITE,
+            "neg_net_delay_negative.v",
+            "net propagation delay for `bad`",
+            &["--edition", edition],
+        );
+    }
+}

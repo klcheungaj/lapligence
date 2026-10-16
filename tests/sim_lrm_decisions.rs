@@ -2585,3 +2585,33 @@ fn s2_d5_declaration_assignment_delay() {
         include_str!("fixtures/sim/lrm_decisions/S2-D5_declaration_assignment_delay.out"),
     );
 }
+
+#[test]
+fn s2_d6_concatenation_one_vector() {
+    run_decision(
+        "S2-D6_concatenation_one_vector",
+        include_str!("fixtures/sim/lrm_decisions/S2-D6_concatenation_one_vector.out"),
+    );
+}
+
+#[test]
+fn s2_d7_pattern_leaf_delays() {
+    run_decision(
+        "S2-D7_pattern_leaf_delays",
+        include_str!("fixtures/sim/lrm_decisions/S2-D7_pattern_leaf_delays.out"),
+    );
+}
+
+#[test]
+fn s2_d8_alias_conflicting_net_delays() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S2-D8_alias_conflicting_net_delays.out")
+            .is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "S2-D8_alias_conflicting_net_delays",
+        "has conflicting member delays",
+    );
+}

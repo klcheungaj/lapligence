@@ -118,7 +118,9 @@ fn net_declaration_propagation_is_after_resolution_and_not_double_delayed() {
     sim_cli::run_case_with_args(
         "partial_features",
         "net_declaration_propagation",
-        "t2 z z x z x\nt3 1 1 1 x x\n",
+        // A declaration assignment's delay is that driver's own (decision
+        // S2-D5), so `declared_init` matches `driver_only`.
+        "t2 x z x z x\nt3 1 1 1 x x\n",
         "",
         &[],
         &["--edition", "sv2009"],
@@ -138,14 +140,15 @@ fn net_declaration_delay_keeps_transition_tuple_and_real_edges() {
 
 #[test]
 fn net_declaration_delay_rejects_negative_and_overflow_values() {
+    // The delay of a declaration assignment belongs to that driver (S2-D5).
     sim_cli::reject_case(
         "partial_features",
         "net_declaration_negative",
-        "net propagation delay",
+        "continuous assignment delay in `tb`",
     );
     sim_cli::reject_case(
         "partial_features",
         "net_declaration_overflow",
-        "net propagation delay",
+        "continuous assignment delay in `tb`",
     );
 }
