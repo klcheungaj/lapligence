@@ -1,0 +1,21 @@
+[1] data[3] -> 0
+[1] data -> 00
+[1] vpi tb.low=0
+[1] vpi tb.seen=00
+[2] vpi tb.seen=08
+[2] vpi tb.low=8
+[2] data -> 08
+[2] data[3] -> 1
+[3] data -> a8
+[3] vpi tb.seen=a8
+[5] vpi tb.seen=ae
+[5] data -> ae
+[5] vpi tb.low=e
+[6] vpi tb.low=f
+[6] data -> af
+[6] vpi tb.seen=af
+[7] vpi tb.seen=5f
+[7] data -> 5f
+[8] data -> 0f
+[8] vpi tb.seen=0f
+[9] final data=0f low=f

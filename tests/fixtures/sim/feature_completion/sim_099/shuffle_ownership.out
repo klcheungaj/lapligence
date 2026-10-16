@@ -1,0 +1,4 @@
+object stream ignores thread shuffles: 1
+thread stream ignores object randomize: 1
+post_randomize shuffles from the caller: 1
+object seed does not reach the shuffle: 1

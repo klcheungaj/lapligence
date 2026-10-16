@@ -1,0 +1,6 @@
+[2] user took two keys
+[4] user took the nested key
+[6] try_get on empty: 0
+[6] try_get after put: 1
+[6] try_get of three: 0
+[6] try_get of two: 1
