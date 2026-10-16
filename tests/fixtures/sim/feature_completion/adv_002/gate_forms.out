@@ -1,0 +1,11 @@
+0 y=xx n1=x b3=x nf=x
+3 y=xx n1=1 b3=x nf=z
+4 y=00 n1=1 b3=x nf=z
+7 y=00 n1=1 b3=0 nf=z
+12 y=11 n1=1 b3=0 nf=z
+24 y=01 n1=1 b3=0 nf=z
+33 y=01 n1=1 b3=z nf=z
+35 y=01 n1=1 b3=z nf=1
+43 y=01 n1=1 b3=x nf=x
+53 y=01 n1=0 b3=x nf=z
+55 y=01 n1=0 b3=1 nf=z

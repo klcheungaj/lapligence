@@ -1045,7 +1045,7 @@ fn collect_statement_expression_effects(
     visited_calls: &mut CallVisits,
 ) {
     let statement = statement.unlocated();
-    if let Some(value) = statement.delay_expression() {
+    for value in statement.delay_expressions() {
         collect_expression_effects(ir, value, effects, visited_calls);
     }
     match statement {
@@ -2878,7 +2878,9 @@ mod tests {
                 IrStmt::InertialAssign {
                     lhs: IrLhs::Whole(0),
                     rhs,
-                    delay: crate::sim::ir::IrTransitionDelay::uniform(3),
+                    delay: crate::sim::ir::IrInertialDelay::Constant(
+                        crate::sim::ir::IrTransitionDelay::uniform(3),
+                    ),
                 },
             ],
         );

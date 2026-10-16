@@ -2,7 +2,7 @@
 static sv4_t llg_net_compute(llg_net_t* net);
 static void force_recompute_target(sv4_t* target, llg_net_t* net);
 static void llg_net_alias_refresh_all(llg_net_t* net);
-static void inertial_unlink_pending(llg_inertial_t* driver);
+static void llg_net_cancel_propagation(llg_net_t* net);
 static void llg_net_strength_publish(llg_net_t* net);
 
 // Grow one live-binding table to hold at least `needed` entries. The grown copy
@@ -189,7 +189,7 @@ static llg_net_t* force_net_for_target(sv4_t* target, llg_net_t* fallback) {
 
 static void force_recompute_target(sv4_t* target, llg_net_t* net) {
     net = force_net_for_target(target, net);
-    if (net && net->propagation) inertial_unlink_pending(net->propagation);
+    if (net) llg_net_cancel_propagation(net);
     llg_value_scope_t* scope = llg_value_scope_begin(1);
     sv4_t* value = llg_value_scope_values(scope);
     if (net) {

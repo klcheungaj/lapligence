@@ -330,7 +330,8 @@ impl Frame<'_, '_> {
                 init,
                 two_state,
             } => self.shared_local(name, *width, *signed, *two_state, init.as_deref())?,
-            IrStmt::InertialAssign { lhs, rhs, delay } => self.inertial_assign(lhs, rhs, *delay)?,
+            IrStmt::InertialAssign { lhs, rhs, delay } => self.inertial_assign(lhs, rhs, delay)?,
+            IrStmt::SetNetDelay { group, delay } => self.set_net_delay(*group, delay)?,
             IrStmt::Force {
                 lhs,
                 eval,

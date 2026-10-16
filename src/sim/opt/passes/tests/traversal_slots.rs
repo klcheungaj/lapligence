@@ -113,3 +113,33 @@ fn string_and_handle_delayed_assignments_expose_their_delay_expression() {
     ];
     assert_eq!(visited_reads(body), [1, 1]);
 }
+
+#[test]
+fn runtime_driver_and_net_delays_expose_their_delay_expressions() {
+    let ticks = |index| IrDelay::Runtime {
+        value: Box::new(sig_read(index)),
+        unit_ticks: 1,
+        precision_ticks: 1,
+    };
+    let delay = |rise, fall| {
+        Box::new(crate::sim::ir::IrRuntimeTransitionDelay {
+            rise: ticks(rise),
+            fall: Some(ticks(fall)),
+            turn_off: Some(IrDelay::Constant(4)),
+        })
+    };
+    let body = vec![
+        IrStmt::InertialAssign {
+            lhs: IrLhs::Whole(0),
+            rhs: sig_read(1),
+            delay: crate::sim::ir::IrInertialDelay::Runtime(delay(2, 3)),
+        },
+        IrStmt::SetNetDelay {
+            group: 0,
+            delay: delay(3, 2),
+        },
+    ];
+    let mut reads = visited_reads(body);
+    reads.sort_unstable();
+    assert_eq!(reads, [1, 2, 2, 3, 3]);
+}

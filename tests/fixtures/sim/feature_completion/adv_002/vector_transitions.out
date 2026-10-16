@@ -1,0 +1,17 @@
+0 v2=xxxx v3=xxxx part=xx bit=x
+10 v2=0001 v3=0001 part=01 bit=1
+26 v2=0001 v3=0001 part=01 bit=0
+30 v2=0010 v3=0010 part=10 bit=0
+45 v2=0000 v3=0010 part=10 bit=0
+46 v2=0000 v3=0000 part=00 bit=0
+70 v2=00x0 v3=00x0 part=x0 bit=0
+82 v2=00x0 v3=zzzz part=zz bit=z
+85 v2=zzzz v3=zzzz part=zz bit=z
+106 v2=zzzz v3=zzzz part=zz bit=0
+110 v2=z0z0 v3=z0z0 part=z0 bit=0
+125 v2=0000 v3=z0z0 part=z0 bit=0
+126 v2=0000 v3=0000 part=00 bit=0
+142 v2=0000 v3=0000 part=00 bit=x
+150 v2=xxxx v3=xxxx part=xx bit=x
+165 v2=0000 v3=xxxx part=xx bit=x
+166 v2=0000 v3=0000 part=00 bit=0

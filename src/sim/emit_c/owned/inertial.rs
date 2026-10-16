@@ -6,7 +6,7 @@ impl Frame<'_, '_> {
         &mut self,
         lhs: &IrLhs,
         rhs: &IrExpr,
-        delay: IrTransitionDelay,
+        delay: &IrInertialDelay,
     ) -> Result<(), String> {
         if !matches!(
             lhs,
@@ -52,10 +52,26 @@ impl Frame<'_, '_> {
             self.line(format!("static llg_inertial_t* {driver} = NULL;"));
             format!("&{driver}")
         };
-        let delays = format!(
-            "{}ULL, {}ULL, {}ULL",
-            delay.rise, delay.fall, delay.turn_off
-        );
+        let delays = match delay {
+            IrInertialDelay::Constant(delay) => format!(
+                "{}ULL, {}ULL, {}ULL",
+                delay.rise, delay.fall, delay.turn_off
+            ),
+            // Runtime values are evaluated each time the site schedules.
+            IrInertialDelay::Runtime(delay) => {
+                let rise = self.delay(&delay.rise)?;
+                let fall = match &delay.fall {
+                    Some(fall) => self.delay(fall)?,
+                    None => rise.clone(),
+                };
+                let turn_off = match (&delay.turn_off, &delay.fall) {
+                    (Some(turn_off), _) => self.delay(turn_off)?,
+                    (None, Some(_)) => format!("({rise} < {fall} ? {rise} : {fall})"),
+                    (None, None) => rise.clone(),
+                };
+                format!("{rise}, {fall}, {turn_off}")
+            }
+        };
         self.line(format!("if ({}) {{", target.valid));
         if let Some(selection) = &target.selection {
             let updated = self.value(
@@ -105,6 +121,30 @@ impl Frame<'_, '_> {
         self.line("}");
         self.discard(value);
         self.release_target(target);
+        Ok(())
+    }
+
+    /// Store a runtime-valued net delay in the net's propagation fields;
+    /// the net's later value changes use it.
+    pub(super) fn set_net_delay(
+        &mut self,
+        group: usize,
+        delay: &IrRuntimeTransitionDelay,
+    ) -> Result<(), String> {
+        let rise = self.delay(&delay.rise)?;
+        let fall = match &delay.fall {
+            Some(fall) => self.delay(fall)?,
+            None => rise.clone(),
+        };
+        let turn_off = match (&delay.turn_off, &delay.fall) {
+            (Some(turn_off), _) => self.delay(turn_off)?,
+            (None, Some(_)) => format!("({rise} < {fall} ? {rise} : {fall})"),
+            (None, None) => rise.clone(),
+        };
+        let net = self.ctx.model.net_group(group).c_name.clone();
+        self.line(format!("{net}.propagation_rise = {rise};"));
+        self.line(format!("{net}.propagation_fall = {fall};"));
+        self.line(format!("{net}.propagation_turn_off = {turn_off};"));
         Ok(())
     }
 }

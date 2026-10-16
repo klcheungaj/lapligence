@@ -336,9 +336,19 @@ static sv4_t llg_net_strength_levels(llg_net_t* net) {
 // Publish the strength view after the value. Unchanged strengths are not
 // rewritten, so only a real strength change wakes `%v` monitors. A pending
 // net propagation delay publishes the view with the delayed value instead.
+static int llg_net_propagation_pending(const llg_net_t* net) {
+    if (net->propagation && net->propagation->pending) return 1;
+    if (!net->propagation_bits) return 0;
+    for (uint32_t bit = 0; bit < net->width; bit++) {
+        if (net->propagation_bits[bit] && net->propagation_bits[bit]->pending)
+            return 1;
+    }
+    return 0;
+}
+
 static void llg_net_strength_publish(llg_net_t* net) {
     if (!net || !net->strength) return;
-    if (net->propagation && net->propagation->pending) return;
+    if (llg_net_propagation_pending(net)) return;
     llg_value_scope_t* scope = llg_value_scope_begin(1);
     sv4_t* owned = llg_value_scope_values(scope);
     sv4_replace(&owned[0], llg_net_strength_levels(net));
@@ -352,15 +362,20 @@ void llg_net_strength_reset(llg_net_t* net) {
     sv4_replace(net->strength, llg_net_strength_levels(net));
 }
 
+static void llg_net_propagate_bits(llg_net_t* net, sv4_t resolved);
+
 static void llg_net_publish(llg_net_t* net, sv4_t resolved) {
-    if (net->propagation_enabled) {
+    // An undelayed net pays one flag test.
+    if (!net->propagation_enabled) {
+        sig_write(&net->resolved, resolved);
+        llg_net_alias_refresh_all(net);
+    } else if (net->propagation_bits) {
+        llg_net_propagate_bits(net, resolved);
+    } else {
         llg_inertial_assign(&net->propagation, &net->resolved, resolved,
                             net->propagation_rise, net->propagation_fall,
                             net->propagation_turn_off);
         if (net->propagation) net->propagation->publication_net = net;
-    } else {
-        sig_write(&net->resolved, resolved);
-        llg_net_alias_refresh_all(net);
     }
 }
 
@@ -670,37 +685,53 @@ static int inertial_transition(int old_state, int new_state) {
     return INERTIAL_NO_TRANSITION;
 }
 
+// Delay of one driver update. A one-bit target (a scalar net, a bit select,
+// a gate or UDP output) follows the per-transition table of IEEE 1364-2001
+// 7.14 Table 39 / IEEE 1800-2009 28.16 Table 28-9, so a transition to X takes
+// the smallest applicable delay. A wider target is a vector and takes one
+// delay for the whole value (1364-2001 6.1.3, 1800-2009 10.3.3): nonzero to
+// zero falls, a transition to all-Z turns off, every other change rises.
 static uint64_t inertial_transition_ticks(const sv4_t* old_value,
                                            const sv4_t* new_value,
                                            const sv4_t* mask, uint64_t rise,
                                            uint64_t fall, uint64_t turn_off) {
-    uint64_t selected = UINT64_MAX;
-    int has_transition = 0;
     uint32_t width = llg_sv4_width(*old_value) < llg_sv4_width(*new_value)
                          ? llg_sv4_width(*old_value)
                          : llg_sv4_width(*new_value);
+    uint32_t driven = 0;
+    uint32_t last = 0;
+    int old_zero = 1;
+    int new_zero = 1;
+    int new_z = 1;
+    int changed = 0;
     for (uint32_t bit = 0; bit < width; bit++) {
         if (mask && inertial_bit(mask, bit) != 1) continue;
-        int transition = inertial_transition(
-            inertial_bit(old_value, bit), inertial_bit(new_value, bit));
-        uint64_t ticks;
-        switch (transition) {
-        case INERTIAL_RISE: ticks = rise; break;
-        case INERTIAL_FALL: ticks = fall; break;
-        case INERTIAL_TURN_OFF: ticks = turn_off; break;
-        case INERTIAL_RISE_OR_FALL:
-            ticks = rise < fall ? rise : fall;
-            if (turn_off < ticks) ticks = turn_off;
-            break;
-        default: continue;
-        }
-        // UINT64_MAX is a valid delay. Track whether a transition was found
-        // separately so the maximum delay is not mistaken for "no transition"
-        // and silently converted to zero.
-        if (!has_transition || ticks < selected) selected = ticks;
-        has_transition = 1;
+        int old_state = inertial_bit(old_value, bit);
+        int new_state = inertial_bit(new_value, bit);
+        driven++;
+        last = bit;
+        old_zero &= old_state == 0;
+        new_zero &= new_state == 0;
+        new_z &= new_state == 3;
+        changed |= old_state != new_state;
     }
-    return has_transition ? selected : 0;
+    if (!changed) return 0;
+    if (driven == 1) {
+        switch (inertial_transition(inertial_bit(old_value, last),
+                                    inertial_bit(new_value, last))) {
+        case INERTIAL_RISE: return rise;
+        case INERTIAL_FALL: return fall;
+        case INERTIAL_TURN_OFF: return turn_off;
+        case INERTIAL_RISE_OR_FALL: {
+            uint64_t ticks = rise < fall ? rise : fall;
+            return turn_off < ticks ? turn_off : ticks;
+        }
+        default: return 0;
+        }
+    }
+    if (new_z) return turn_off;
+    if (new_zero && !old_zero) return fall;
+    return rise;
 }
 
 static void inertial_unlink_pending(llg_inertial_t* driver) {
@@ -746,10 +777,14 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
     driver->region = region_is_reactive(g.current_region)
                          ? LLG_REGION_REACTIVE
                          : LLG_REGION_ACTIVE;
-    value = sv4_resize(value, llg_sv4_width(*target), llg_sv4_signed(*target));
+    // A per-bit net-delay record has no target cell; its width is that of
+    // the bit it publishes.
+    uint32_t target_width = target ? llg_sv4_width(*target)
+                                   : llg_sv4_width(driver->current);
+    value = sv4_resize(value, target_width, target && llg_sv4_signed(*target));
     sv4_t selected_mask = SV4_EMPTY;
     if (mask) {
-        selected_mask = sv4_resize(*mask, llg_sv4_width(*target), 0);
+        selected_mask = sv4_resize(*mask, target_width, 0);
     }
     const sv4_t* effective_mask = mask ? &selected_mask : NULL;
     uint64_t ticks;
@@ -824,6 +859,43 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
                     fall, turn_off);
 }
 
+// Each bit of a delayed vector net is its own inertial object: a bit
+// schedules, keeps or cancels its update independently of its neighbours and
+// takes its delay from its own transition.
+static void llg_net_propagate_bits(llg_net_t* net, sv4_t resolved) {
+    if (!region_can_mutate("inertial scheduling")) return;
+    for (uint32_t bit = 0; bit < net->width; bit++) {
+        llg_inertial_t** handle = &net->propagation_bits[bit];
+        if (!*handle) {
+            llg_inertial_t* driver =
+                llg_checked_calloc(1, sizeof(*driver), "inertial driver");
+            driver->handle = handle;
+            driver->publication_net = net;
+            driver->publication_bit = bit;
+            driver->bit_publication = 1;
+            driver->current = sv4_bit_select(net->resolved, bit);
+            driver->next_all = g.inertial_drivers;
+            g.inertial_drivers = driver;
+            *handle = driver;
+        }
+        sv4_t value = sv4_bit_select(resolved, bit);
+        inertial_update(handle, NULL, NULL, 0, value, NULL,
+                        net->propagation_rise, net->propagation_fall,
+                        net->propagation_turn_off);
+        sv4_destroy(&value);
+    }
+}
+
+// A force publishes directly; it drops every pending net-delay update.
+static void llg_net_cancel_propagation(llg_net_t* net) {
+    if (net->propagation) inertial_unlink_pending(net->propagation);
+    if (!net->propagation_bits) return;
+    for (uint32_t bit = 0; bit < net->width; bit++) {
+        if (net->propagation_bits[bit])
+            inertial_unlink_pending(net->propagation_bits[bit]);
+    }
+}
+
 static int inertial_ready(llg_region_t region) {
     for (llg_inertial_t* driver = g.inertial_pending; driver;
          driver = driver->next_pending) {
@@ -854,6 +926,18 @@ static void commit_inertial(llg_region_t region) {
         sv4_t merged = sv4_clone(driver->target);
         inertial_merge(&merged, &value, &mask);
         sv4_move(&value, &merged);
+    }
+    if (driver->bit_publication) {
+        sv4_copy(&driver->current, &value);
+        // Like the whole-net commit (`llg_ba`), a forced net keeps its value.
+        if (!llg_is_forced(&publication_net->resolved) &&
+            sig_write_range(&publication_net->resolved, driver->publication_bit,
+                            value))
+            llg_net_alias_refresh_all(publication_net);
+        llg_net_strength_publish(publication_net);
+        sv4_destroy(&mask);
+        sv4_destroy(&value);
+        return;
     }
     uint32_t range_offset = 0;
     uint32_t range_width = 0;

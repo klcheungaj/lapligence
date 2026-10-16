@@ -283,7 +283,14 @@ advance time without a process waiter. Masked writes merge into current storage.
 Tagged-member NBAs own a copy of their tag checks and re-check the target's tags
 at commit; a mismatch reports a runtime error and stores nothing.
 Inertial sites own pending Active events: changed pending values cancel, unchanged
-values retain deadlines, return-to-current cancels without replacement. Reset
+values retain deadlines, return-to-current cancels without replacement. A
+one-bit update takes its delay from the from/to table, a wider one from the
+whole-value vector rule (`inertial_transition_ticks`). A delayed vector net
+keeps one record per bit (`llg_net_t.propagation_bits`, emitted only for such
+nets), so each bit schedules, keeps and cancels its update on its own. A
+runtime-valued net delay is the generated updater's store into
+`propagation_rise/fall/turn_off`; each later publication reads those fields and
+pending records keep their times. Reset
 model handles before freeing driver storage; reinitialization discards pending
 events. Zero-delay drivers drain Active. Generated nets provide exact-size
 driver interval nodes and overlap scratch storage. Selected writes replace their

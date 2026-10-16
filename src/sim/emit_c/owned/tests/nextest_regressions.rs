@@ -161,11 +161,11 @@ fn inertial_statement_compiles_and_commits_after_its_delay() {
         IrStmt::InertialAssign {
             lhs: IrLhs::Whole(0),
             rhs: number(42, 65),
-            delay: IrTransitionDelay {
+            delay: crate::sim::ir::IrInertialDelay::Constant(IrTransitionDelay {
                 rise: 2,
                 fall: 2,
                 turn_off: 2,
-            },
+            }),
         },
         IrStmt::Delay {
             ticks: IrDelay::Constant(1),

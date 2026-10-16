@@ -18,6 +18,10 @@ struct PatternContinuousRemap<'l> {
     /// separate electrical contributions; sharing one slot would make a
     /// later selected leaf erase an earlier one.
     terminals: HashMap<usize, usize>,
+    /// The site's transition delay: each leaf is its own delayed driver.
+    delay: Option<IrInertialDelay>,
+    /// Instance path for diagnostics and hidden delayed-driver processes.
+    path: &'l str,
 }
 
 /// Whether a lowered pattern statement only writes locals or activation
@@ -418,9 +422,6 @@ impl<'a> Codegen<'a> {
         // Callee resolution in the RHS and elaborated alias bounds needs the
         // owning instance.
         self.inst = inst;
-        let array_net_target = self
-            .array_net_target_parts(lhs)
-            .is_some_and(|(array, _)| array.is_net);
         let alias_bindings = self.alias_lvalue_bindings(ca, lhs)?;
         let has_structural_driver = self.has_structural_driver(ca);
         if has_structural_driver && !self.net_lvalue_selects_are_constant(lhs) {
@@ -430,6 +431,21 @@ impl<'a> Codegen<'a> {
                  supported"
             ));
         }
+        // Driver evaluation must keep watching its inputs while a captured
+        // propagation event is pending (IEEE 1364-2001 6.1.3). A net
+        // declaration assignment's delay is this driver's delay, not a net
+        // delay (the frontend capture gives it only to the assignment).
+        let scaled_delay = match self.kind(ca) {
+            NodeKind::ContAssign {
+                delay: Some(de), ..
+            } => Some(self.driver_delay(path, ca, *de).map_err(|error| {
+                format!(
+                    "continuous assignment delay in `{path}` at {}: {error}",
+                    self.source_location(ca)
+                )
+            })?),
+            _ => None,
+        };
         if let Some(mut pattern_body) = self.lower_p30_pattern_lvalue_assignment(
             path,
             lhs,
@@ -437,13 +453,6 @@ impl<'a> Codegen<'a> {
             PatternAssignmentKind::Continuous,
             Operation::Assignment,
         )? {
-            // Transition delays on pattern leaves need per-leaf inertial
-            // driver state; distributed delays are owned by ADV-002.
-            if matches!(self.kind(ca), NodeKind::ContAssign { delay: Some(_), .. }) {
-                return Err(format!(
-                    "delayed continuous assignment to a positional assignment-pattern LHS in `{path}` is not supported"
-                ));
-            }
             // Continuous targets are static (IEEE 1800-2009 Table 10-1): a
             // runtime leaf selector would need retargeting, not a fixed driver.
             if !self.net_lvalue_selects_are_constant(lhs) {
@@ -460,6 +469,8 @@ impl<'a> Codegen<'a> {
                 captures: 0,
                 local_arrays: HashSet::new(),
                 terminals: HashMap::new(),
+                delay: scaled_delay.clone(),
+                path,
             };
             self.remap_pattern_continuous_targets(&mut pattern_body, ca, &mut remap)?;
             if remap.next_leaf != leaves.len() {
@@ -470,7 +481,12 @@ impl<'a> Codegen<'a> {
             let fn_name = self.new_fn_name(path, "ca");
             self.reject_process_status_wait(path, rhs)?;
             let sigs = self.collect_read_signals(path, rhs)?;
-            let body = self.wrap_continuous_self_feedback(ca, lhs, &sigs, vec![pattern_body])?;
+            // Delayed leaves publish in a later event, like any delayed driver.
+            let body = if scaled_delay.is_none() {
+                self.wrap_continuous_self_feedback(ca, lhs, &sigs, vec![pattern_body])?
+            } else {
+                vec![pattern_body]
+            };
             let shape = if sigs.is_empty() {
                 IrShape::RunOnce
             } else {
@@ -550,15 +566,6 @@ impl<'a> Codegen<'a> {
         }
         let rhs_ir = self.lower_expr(path, rhs)?;
         let rhs_ir = apply_lhs_assignment_context(&self.model, &lh, rhs_ir);
-        // Driver evaluation must keep watching its inputs while a captured
-        // propagation event is pending (IEEE 1364-2001 6.1.3).
-        let scaled_delay = match self.kind(ca) {
-            NodeKind::ContAssign { net_decl: true, .. } => None,
-            NodeKind::ContAssign {
-                delay: Some(de), ..
-            } => Some(self.driver_delay_ticks(ca, *de)?),
-            _ => None,
-        };
         let body = if let Some(bindings) = alias_bindings {
             let rhs_name = format!("_alias_rhs_{}", ca.index());
             let rhs_value = IrExpr::new(
@@ -567,46 +574,36 @@ impl<'a> Codegen<'a> {
                 rhs_ir.signed(),
                 None,
             );
-            let mut body = vec![IrStmt::DeclLocal {
-                name: rhs_name,
-                width: rhs_ir.width(),
-                signed: rhs_ir.signed(),
-                init: Some(Box::new(rhs_ir)),
-                two_state: false,
-            }];
-            for (driver, value) in
-                self.alias_driver_assignments(ca, &bindings, &rhs_value, |_| 0)?
-            {
-                let lhs = IrLhs::Whole(driver);
-                if let Some(delay) = scaled_delay {
-                    if array_net_target {
-                        self.initialize_delayed_driver_as_z(driver)?;
-                    } else {
-                        self.initialize_delayed_driver(driver)?;
-                    }
-                    body.push(IrStmt::InertialAssign {
-                        lhs,
-                        rhs: value,
-                        delay,
-                    });
-                } else {
-                    body.push(IrStmt::Assign {
-                        lhs,
-                        rhs: value,
-                        nba: false,
-                    });
-                }
+            let assignments = self.alias_driver_assignments(ca, &bindings, &rhs_value, |_| 0)?;
+            self.publish_alias_drivers(
+                path,
+                ca,
+                rhs_name,
+                rhs_ir,
+                assignments,
+                scaled_delay.clone(),
+            )?
+        } else if let Some(delay) = scaled_delay.clone() {
+            self.initialize_delayed_lhs(&lh)?;
+            if matches!(lh, IrLhs::Stream { .. }) {
+                // A concatenation is one vector target (6.1.3): one delay
+                // from the whole value, then every part at once.
+                vec![
+                    self.delayed_shadow_driver(path, ca, rhs_ir, delay, |shadow| {
+                        vec![IrStmt::Assign {
+                            lhs: lh,
+                            rhs: shadow,
+                            nba: false,
+                        }]
+                    })?,
+                ]
+            } else {
+                vec![IrStmt::InertialAssign {
+                    lhs: lh,
+                    rhs: rhs_ir,
+                    delay,
+                }]
             }
-            body
-        } else if let Some(delay) = scaled_delay {
-            if let IrLhs::Whole(index) = &lh {
-                self.initialize_delayed_driver(*index)?;
-            }
-            vec![IrStmt::InertialAssign {
-                lhs: lh,
-                rhs: rhs_ir,
-                delay,
-            }]
         } else {
             vec![IrStmt::Assign {
                 lhs: lh,
@@ -640,6 +637,62 @@ impl<'a> Codegen<'a> {
             origin,
         ));
         Ok(())
+    }
+
+    /// Statements that drive alias or net-array driver slots with `value`,
+    /// captured once in the local `name` that `assignments` read. A delayed
+    /// site touching one slot gives that slot an inertial driver; a site
+    /// split over several slots is one delayed vector driver
+    /// ([`Self::delayed_shadow_driver`]), so the alias split neither
+    /// changes the delay choice nor applies the delay twice.
+    pub(super) fn publish_alias_drivers(
+        &mut self,
+        path: &str,
+        source: NodeId,
+        name: String,
+        value: IrExpr,
+        assignments: Vec<(usize, IrExpr)>,
+        delay: Option<IrInertialDelay>,
+    ) -> Result<Vec<IrStmt>, String> {
+        let capture = |init: IrExpr| IrStmt::DeclLocal {
+            name: name.clone(),
+            width: init.width(),
+            signed: init.signed(),
+            init: Some(Box::new(init)),
+            two_state: false,
+        };
+        let Some(delay) = delay else {
+            let mut body = vec![capture(value)];
+            body.extend(assignments.into_iter().map(|(driver, rhs)| IrStmt::Assign {
+                lhs: IrLhs::Whole(driver),
+                rhs,
+                nba: false,
+            }));
+            return Ok(body);
+        };
+        for (driver, _) in &assignments {
+            self.initialize_delayed_driver(*driver)?;
+        }
+        if let [(driver, rhs)] = assignments.as_slice() {
+            return Ok(vec![
+                capture(value),
+                IrStmt::InertialAssign {
+                    lhs: IrLhs::Whole(*driver),
+                    rhs: rhs.clone(),
+                    delay,
+                },
+            ]);
+        }
+        let scheduled = self.delayed_shadow_driver(path, source, value, delay, |shadow| {
+            let mut body = vec![capture(shadow)];
+            body.extend(assignments.into_iter().map(|(driver, rhs)| IrStmt::Assign {
+                lhs: IrLhs::Whole(driver),
+                rhs,
+                nba: false,
+            }));
+            body
+        })?;
+        Ok(vec![scheduled])
     }
 
     /// Reads that re-evaluate a continuous assignment: the RHS operands and
@@ -756,12 +809,14 @@ impl<'a> Codegen<'a> {
             IrStmt::FixedValueAssign {
                 dst, nba: false, ..
             } if !self.model.arrays[dst.array].is_net() => {
+                Self::reject_delayed_descriptor_leaf(remap)?;
                 remap.next_leaf += 1;
                 Ok(())
             }
             // A dense variable row receives a descriptor row by one copy loop
             // (`dense_row_scatter`); like a descriptor row it is one leaf.
             IrStmt::For { .. } if dense_loop => {
+                Self::reject_delayed_descriptor_leaf(remap)?;
                 remap.next_leaf += 1;
                 Ok(())
             }
@@ -783,13 +838,6 @@ impl<'a> Codegen<'a> {
                         rhs.signed(),
                         None,
                     );
-                    let mut block = vec![IrStmt::DeclLocal {
-                        name,
-                        width: rhs.width(),
-                        signed: rhs.signed(),
-                        init: Some(Box::new(rhs.clone())),
-                        two_state: false,
-                    }];
                     let mut groups = bindings
                         .iter()
                         .map(|(binding, _)| binding.group())
@@ -802,17 +850,18 @@ impl<'a> Codegen<'a> {
                         self.ensure_structural_driver_terminal(source, group, terminal)?;
                         alias_terminals.insert(group, terminal);
                     }
-                    for (driver, value) in
+                    let assignments =
                         self.alias_driver_assignments(source, &bindings, &value, |group| {
                             alias_terminals[&group]
-                        })?
-                    {
-                        block.push(IrStmt::Assign {
-                            lhs: IrLhs::Whole(driver),
-                            rhs: value,
-                            nba: false,
-                        });
-                    }
+                        })?;
+                    let block = self.publish_alias_drivers(
+                        remap.path,
+                        source,
+                        name,
+                        rhs.clone(),
+                        assignments,
+                        remap.delay.clone(),
+                    )?;
                     *statement = IrStmt::Block(block);
                     return Ok(());
                 }
@@ -848,6 +897,28 @@ impl<'a> Codegen<'a> {
                     source,
                     &selected_terminals,
                 );
+                // Each leaf is its own delayed driver: the pattern targets
+                // separate nets, not one vector.
+                if let Some(delay) = remap.delay.clone() {
+                    self.initialize_delayed_lhs(lhs)?;
+                    let target = lhs.clone();
+                    let value = rhs.clone();
+                    *statement = if matches!(target, IrLhs::Stream { .. }) {
+                        self.delayed_shadow_driver(remap.path, source, value, delay, |shadow| {
+                            vec![IrStmt::Assign {
+                                lhs: target,
+                                rhs: shadow,
+                                nba: false,
+                            }]
+                        })?
+                    } else {
+                        IrStmt::InertialAssign {
+                            lhs: target,
+                            rhs: value,
+                            delay,
+                        }
+                    };
+                }
                 Ok(())
             }
             _ => Err(
@@ -855,6 +926,19 @@ impl<'a> Codegen<'a> {
                     .to_string(),
             ),
         }
+    }
+
+    /// A descriptor-backed variable row has no packed driver value, so it
+    /// cannot carry a transition delay.
+    fn reject_delayed_descriptor_leaf(remap: &PatternContinuousRemap<'_>) -> Result<(), String> {
+        if remap.delay.is_some() {
+            return Err(format!(
+                "delayed continuous assignment-pattern leaf in `{}` targets a descriptor-backed \
+                 array row; only packed leaves can carry a transition delay",
+                remap.path
+            ));
+        }
+        Ok(())
     }
 
     fn remap_continuous_targets(&mut self, lhs: IrLhs, source: NodeId) -> Result<IrLhs, String> {

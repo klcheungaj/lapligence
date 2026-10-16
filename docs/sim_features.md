@@ -1312,8 +1312,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   variable). Overlapping continuous, ordinary procedural or declaration-
   initializer writers reject; force/release/deassign are not ordinary writers.
   [Continuous-process lowering](../src/sim/codegen/lowering/collection/processes.rs)
-  rejects delayed positional-pattern drivers, which with net-array declaration
-  delays belong to ADV-002. Dynamic topology remains restricted.
+  delays each positional-pattern member as its own driver (S2-D7); a
+  descriptor-backed member row cannot carry a delay and rejects.
+  Net-array declaration delays apply to every element (ADV-002). Dynamic
+  topology remains restricted.
   SV §§6.5–6.7, 7.6, 10.3 **[SV-2005]**.
 - 🟨 **Resolution and strengths** — Continuous, gate, port and admitted
   hierarchical/fixed-array drivers retain independent contributions. `wire/tri`,
@@ -1342,8 +1344,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   same-depth warning-only tie selects the first in Table 23-1 column order with
   a located warning. A uwire actual, concatenated uwire actual or `inout
   uwire` formal collapses with one driver per bit (SV §6.6.2). `trireg` (unsupported by
-  design), pass switches (ADV-005) and net-array declaration delays (ADV-002)
-  remain unsupported; oversized net arrays still expand per cell (known issue).
+  design) and pass switches (ADV-005) remain unsupported; a net-array
+  declaration delay follows the same winning-declaration rule. Oversized net
+  arrays still expand per cell (known issue).
   V §12.3.10 / Table 45; SV §§23.3.3.6–23.3.3.7 / Table 23-1 **[1995]**.
 - 🟨 **True aliases** — Same-declared-net-type packed networks, fully indexed
   fixed net-array elements, multidimensional/static indexed projections and
@@ -1354,15 +1357,33 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   pairing. Dissimilar port rules do not relax alias type rules.
   Self/duplicate/overlapping/variable/incompatible/width-mismatched aliases,
   runtime selects, hierarchical (cross-scope) references and unmapped writes
-  reject. Delayed alias drivers belong to ADV-002. SV §10.11 **[SV-2005]**.
+  reject. A delayed driver split over alias groups is one vector driver
+  (S2-D6); aliased nets with different net delays reject (S2-D8).
+  SV §10.11 **[SV-2005]**.
 - 🟨 **Continuous, gate and net delays** — Constant single/rise-fall/turn-off
-  delays schedule captured Active-region inertial updates for admitted whole,
-  constant-selected and fixed-array-element drivers. Changed pending results
-  cancel; unchanged results retain deadlines; returning to the current value
-  cancels without replacement. Net propagation delays apply after resolution.
-  Conflicting selected true-alias delays, dynamic driver-delay expressions,
-  net-array declaration delays and unsupported terminals remain restricted.
-  V §§6.1.3, 7.14 **[1995]**.
+  delays, with min:typ:max values selecting the typical value (S2-D1),
+  schedule captured Active-region inertial updates for admitted whole,
+  constant-selected and fixed-array-element drivers. A one-bit target follows
+  the from/to table; a wider target takes one delay for its whole value
+  (S2-D2). A concatenation, or a target split over alias groups, is one
+  vector driver with its delay applied once (S2-D6); each assignment-pattern
+  member is its own delayed driver (S2-D7). Net propagation delays apply after
+  resolution, per bit on a vector (S2-D3); a declaration assignment's delay is
+  that driver's own (S2-D5). Delayed drivers, net-array elements included,
+  start X on the bits they drive (S2-D4). Changed pending
+  results cancel; unchanged results retain deadlines; returning to the current
+  value cancels without replacement. The
+  [ADV-002 fixtures](../tests/fixtures/sim/feature_completion/adv_002/readme.md)
+  run both editions, optimizer modes and value backends. A net-array
+  declaration delay is the net delay of every element, including elements
+  reached through inout ports and aliases. SystemVerilog runtime-valued
+  driver, gate and net delays use the values current when an update is
+  scheduled or the net changes (S2-D9); Verilog-2001 rejects them (V §7.14.1).
+  Aliased nets with different net delays reject (S2-D8), as do a runtime net
+  delay with another declared delay on its net and delayed pattern members
+  that are descriptor-backed variable rows; unsupported terminals remain
+  restricted.
+  V §§4.3, 6.1.3, 7.14; SV §§10.3.3, 11.12, 28.16 **[1995]**.
 - 🟦 **Logic and pull gates** — `and/nand/or/nor/xor/xnor/buf/not/pullup/pulldown`
   use typed terminals and independent output drivers. Pullup/pulldown values
   and an undriven Z net have a dual-edition public-CLI witness in both modes.

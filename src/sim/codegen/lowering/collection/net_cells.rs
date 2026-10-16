@@ -394,7 +394,7 @@ impl Codegen<'_> {
             }
             // An undriven net never transitions; the delay is still checked
             // so conflicting collapsed declarations reject as before.
-            self.net_propagation_delay_for_members(&resolved.delay_members, &shown)?;
+            self.net_propagation_delay_for_members(&resolved.delay_members, &shown, None)?;
             kinds.insert(representative, kind);
         }
         for array in &plan.arrays {

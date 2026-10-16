@@ -4302,7 +4302,10 @@ private:
             capture.semanticRole(assignId, delay, LLG_SLANG_EDGE_DELAY);
         }
       }
-      if (const TimingControl* delay = symbol.getDelay())
+      // A declaration assignment's delay belongs to that continuous
+      // assignment and is not a net delay (IEEE 1364-2001 6.1.3, IEEE
+      // 1800-2009 10.3.3), so it never delays the net's other drivers.
+      else if (const TimingControl* delay = symbol.getDelay())
         capture.semanticRole(id, delay, LLG_SLANG_EDGE_DELAY);
     }
     if constexpr (std::same_as<T, FormalArgumentSymbol>) {

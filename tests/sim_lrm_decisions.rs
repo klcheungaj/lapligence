@@ -1660,25 +1660,6 @@ fn run_vpi_decision(case: &str, prototypes: &[&str], expected: &str) {
 }
 
 #[test]
-fn s99_d6_builtin_override() {
-    // Negative case: llg stops at startup, so the expected stdout is empty.
-    assert!(include_str!("fixtures/sim/lrm_decisions/S99-D6_builtin_override.out").is_empty());
-    let case = "S99-D6_builtin_override";
-    let directory = crate::sim_harness::TempDir::new("lrm-s99").expect("temporary directory");
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source = root.join(format!("tests/fixtures/sim/lrm_decisions/{case}.c"));
-    let archive = crate::c_compiler::static_archive(&source, directory.path(), case, &[])
-        .unwrap_or_else(|error| panic!("{case}: {error}"));
-    let archive = archive.to_string_lossy().into_owned();
-    sim_cli::reject_case_with_args(
-        SUITE,
-        case,
-        "a VPI application registers `$random`, which llg implements as a built-in",
-        &["--dpi-lib", &archive],
-    );
-}
-
-#[test]
 fn s42_d1_put_value_returns_null() {
     run_vpi_decision(
         "S42-D1_put_value_returns_null",
@@ -2566,6 +2547,84 @@ fn s16_d9_draw_is_urandom_range() {
 }
 
 #[test]
+fn s2_d1_mintypmax_typical() {
+    run_decision(
+        "S2-D1_mintypmax_typical",
+        include_str!("fixtures/sim/lrm_decisions/S2-D1_mintypmax_typical.out"),
+    );
+}
+
+#[test]
+fn s2_d2_vector_delay_rule() {
+    run_decision(
+        "S2-D2_vector_delay_rule",
+        include_str!("fixtures/sim/lrm_decisions/S2-D2_vector_delay_rule.out"),
+    );
+}
+
+#[test]
+fn s2_d3_net_delay_per_bit() {
+    run_decision(
+        "S2-D3_net_delay_per_bit",
+        include_str!("fixtures/sim/lrm_decisions/S2-D3_net_delay_per_bit.out"),
+    );
+}
+
+#[test]
+fn s2_d4_delayed_driver_initial_x() {
+    run_decision(
+        "S2-D4_delayed_driver_initial_x",
+        include_str!("fixtures/sim/lrm_decisions/S2-D4_delayed_driver_initial_x.out"),
+    );
+}
+
+#[test]
+fn s2_d5_declaration_assignment_delay() {
+    run_decision(
+        "S2-D5_declaration_assignment_delay",
+        include_str!("fixtures/sim/lrm_decisions/S2-D5_declaration_assignment_delay.out"),
+    );
+}
+
+#[test]
+fn s2_d6_concatenation_one_vector() {
+    run_decision(
+        "S2-D6_concatenation_one_vector",
+        include_str!("fixtures/sim/lrm_decisions/S2-D6_concatenation_one_vector.out"),
+    );
+}
+
+#[test]
+fn s2_d7_pattern_leaf_delays() {
+    run_decision(
+        "S2-D7_pattern_leaf_delays",
+        include_str!("fixtures/sim/lrm_decisions/S2-D7_pattern_leaf_delays.out"),
+    );
+}
+
+#[test]
+fn s2_d9_runtime_delay_evaluation() {
+    run_decision(
+        "S2-D9_runtime_delay_evaluation",
+        include_str!("fixtures/sim/lrm_decisions/S2-D9_runtime_delay_evaluation.out"),
+    );
+}
+
+#[test]
+fn s2_d8_alias_conflicting_net_delays() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S2-D8_alias_conflicting_net_delays.out")
+            .is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "S2-D8_alias_conflicting_net_delays",
+        "has conflicting member delays",
+    );
+}
+
+#[test]
 fn s99_d1_procedural_queue() {
     run_decision(
         "S99-D1_procedural_queue",
@@ -2602,5 +2661,24 @@ fn s99_d5_inferred_clock() {
     run_decision(
         "S99-D5_inferred_clock",
         include_str!("fixtures/sim/lrm_decisions/S99-D5_inferred_clock.out"),
+    );
+}
+
+#[test]
+fn s99_d6_builtin_override() {
+    // Negative case: llg stops at startup, so the expected stdout is empty.
+    assert!(include_str!("fixtures/sim/lrm_decisions/S99-D6_builtin_override.out").is_empty());
+    let case = "S99-D6_builtin_override";
+    let directory = crate::sim_harness::TempDir::new("lrm-s99").expect("temporary directory");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = root.join(format!("tests/fixtures/sim/lrm_decisions/{case}.c"));
+    let archive = crate::c_compiler::static_archive(&source, directory.path(), case, &[])
+        .unwrap_or_else(|error| panic!("{case}: {error}"));
+    let archive = archive.to_string_lossy().into_owned();
+    sim_cli::reject_case_with_args(
+        SUITE,
+        case,
+        "a VPI application registers `$random`, which llg implements as a built-in",
+        &["--dpi-lib", &archive],
     );
 }

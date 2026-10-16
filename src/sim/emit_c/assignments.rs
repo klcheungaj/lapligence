@@ -4,8 +4,8 @@ use super::constants::round_shortreal;
 use super::context::{RCtx, RenderedExpr};
 use super::expressions::{array_guard, coerce_two_state, render_expr_impl};
 use crate::sim::ir::{
-    IrEdge, IrElemSel, IrExpr, IrExprKind, IrLhs, IrStreamDirection, IrTransitionDelay, IrType,
-    IrWaitSrc,
+    IrEdge, IrElemSel, IrExpr, IrExprKind, IrInertialDelay, IrLhs, IrRuntimeTransitionDelay,
+    IrStreamDirection, IrType, IrWaitSrc,
 };
 
 enum Select {
@@ -32,18 +32,81 @@ pub(super) fn render_inertial(
     ctx: &RCtx<'_>,
     lhs: &IrLhs,
     rhs: &IrExpr,
-    delay: IrTransitionDelay,
+    delay: &IrInertialDelay,
 ) -> Result<String, String> {
     let rendered = render_expr_impl(ctx, rhs)?;
-    let delays = format!(
-        "{}ULL, {}ULL, {}ULL",
-        delay.rise, delay.fall, delay.turn_off
-    );
+    let (prefix, delays) = match delay {
+        IrInertialDelay::Constant(delay) => (
+            String::new(),
+            format!(
+                "{}ULL, {}ULL, {}ULL",
+                delay.rise, delay.fall, delay.turn_off
+            ),
+        ),
+        // Runtime values are evaluated each time the site schedules.
+        IrInertialDelay::Runtime(delay) => {
+            let rise = super::statements::render_runtime_delay(ctx, &delay.rise)?;
+            let fall = match &delay.fall {
+                Some(fall) => super::statements::render_runtime_delay(ctx, fall)?,
+                None => "_llg_rise".to_owned(),
+            };
+            let turn_off = match (&delay.turn_off, &delay.fall) {
+                (Some(turn_off), _) => super::statements::render_runtime_delay(ctx, turn_off)?,
+                (None, Some(_)) => "(_llg_rise < _llg_fall ? _llg_rise : _llg_fall)".to_owned(),
+                (None, None) => "_llg_rise".to_owned(),
+            };
+            (
+                format!(
+                    "uint64_t _llg_rise = {rise}; uint64_t _llg_fall = {fall}; \
+                     uint64_t _llg_turn_off = {turn_off}; "
+                ),
+                "_llg_rise, _llg_fall, _llg_turn_off".to_owned(),
+            )
+        }
+    };
+    let body = render_inertial_with(ctx, lhs, &rendered, &delays)?;
+    Ok(if prefix.is_empty() {
+        body
+    } else {
+        format!("{{ {prefix}{body}}}\n")
+    })
+}
+
+/// Store a runtime-valued net delay in the net's propagation fields.
+pub(super) fn render_set_net_delay(
+    ctx: &RCtx<'_>,
+    group: usize,
+    delay: &IrRuntimeTransitionDelay,
+) -> Result<String, String> {
+    let net = &ctx.model.net_group(group).c_name;
+    let rise = super::statements::render_runtime_delay(ctx, &delay.rise)?;
+    let fall = match &delay.fall {
+        Some(fall) => super::statements::render_runtime_delay(ctx, fall)?,
+        None => "_llg_rise".to_owned(),
+    };
+    let turn_off = match (&delay.turn_off, &delay.fall) {
+        (Some(turn_off), _) => super::statements::render_runtime_delay(ctx, turn_off)?,
+        (None, Some(_)) => "(_llg_rise < _llg_fall ? _llg_rise : _llg_fall)".to_owned(),
+        (None, None) => "_llg_rise".to_owned(),
+    };
+    Ok(format!(
+        "    {{ uint64_t _llg_rise = {rise}; uint64_t _llg_fall = {fall}; \
+         uint64_t _llg_turn_off = {turn_off}; {net}.propagation_rise = _llg_rise; \
+         {net}.propagation_fall = _llg_fall; {net}.propagation_turn_off = _llg_turn_off; }}\n"
+    ))
+}
+
+fn render_inertial_with(
+    ctx: &RCtx<'_>,
+    lhs: &IrLhs,
+    rendered: &RenderedExpr,
+    delays: &str,
+) -> Result<String, String> {
     match lhs {
         IrLhs::Whole(index) => {
             let signal = ctx.model.signal(*index);
             let value = packed_value(
-                &rendered,
+                rendered,
                 signal.ty.width(),
                 signal.ty.signed(),
                 signal.ty.two_state(),
@@ -62,9 +125,9 @@ pub(super) fn render_inertial(
         IrLhs::Bit(index, _, selected_two_state)
         | IrLhs::Part(index, _, _, selected_two_state)
         | IrLhs::IdxPart(index, _, _, _, _, selected_two_state) => {
-            render_selected_signal(ctx, *index, lhs, &rendered, &delays, *selected_two_state)
+            render_selected_signal(ctx, *index, lhs, rendered, delays, *selected_two_state)
         }
-        IrLhs::ArrayElem { .. } => render_selected_array(ctx, lhs, &rendered, &delays),
+        IrLhs::ArrayElem { .. } => render_selected_array(ctx, lhs, rendered, delays),
         _ => Err("inertial update requires a persistent packed target".into()),
     }
 }

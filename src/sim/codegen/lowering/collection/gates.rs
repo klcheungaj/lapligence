@@ -249,7 +249,12 @@ impl<'a> Codegen<'a> {
         }
 
         let scaled_delay = match delay {
-            Some(de) => Some(self.driver_delay_ticks(g, de)?),
+            Some(de) => Some(self.driver_delay(path, g, de).map_err(|error| {
+                format!(
+                    "delay of `{shown}` in `{path}` at {}: {error}",
+                    self.source_location(g)
+                )
+            })?),
             None => None,
         };
 
@@ -493,39 +498,20 @@ impl<'a> Codegen<'a> {
                     value.signed(),
                     None,
                 );
-                let mut body = vec![IrStmt::DeclLocal {
-                    name: value_name,
-                    width: value.width(),
-                    signed: value.signed(),
-                    init: Some(Box::new(value)),
-                    two_state: false,
-                }];
-                for (driver, value) in
+                let assignments =
                     self.alias_driver_assignments(g, &bindings, &value_read, |group| {
                         alias_terminals.get(&group).copied().unwrap_or(0)
-                    })?
-                {
-                    let lhs = IrLhs::Whole(driver);
-                    if let Some(delay) = scaled_delay {
-                        self.initialize_delayed_driver(driver)?;
-                        body.push(IrStmt::InertialAssign {
-                            lhs,
-                            rhs: value,
-                            delay,
-                        });
-                    } else {
-                        body.push(IrStmt::Assign {
-                            lhs,
-                            rhs: value,
-                            nba: false,
-                        });
-                    }
-                }
-                body
-            } else if let Some(delay) = scaled_delay {
-                if let IrLhs::Whole(index) = &lhs {
-                    self.initialize_delayed_driver(*index)?;
-                }
+                    })?;
+                self.publish_alias_drivers(
+                    path,
+                    g,
+                    value_name,
+                    value,
+                    assignments,
+                    scaled_delay.clone(),
+                )?
+            } else if let Some(delay) = scaled_delay.clone() {
+                self.initialize_delayed_lhs(&lhs)?;
                 vec![IrStmt::InertialAssign {
                     lhs,
                     rhs: value,

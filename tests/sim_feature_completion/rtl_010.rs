@@ -162,10 +162,8 @@ fn neg_runtime_pattern_leaf() {
 }
 
 #[test]
-fn delayed_pattern_driver_remains_assigned_to_adv_002() {
-    sim_cli::reject_case(
-        SUITE,
-        "boundary_delayed_pattern",
-        "delayed continuous assignment to a positional assignment-pattern LHS",
-    );
+fn delayed_pattern_driver_delays_every_leaf() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_010/boundary_delayed_pattern.out");
+    sim_cli::run_case_backend_parity(SUITE, "boundary_delayed_pattern", expected, &[], &[]);
 }

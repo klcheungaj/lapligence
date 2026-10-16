@@ -1,0 +1,14 @@
+0 assign=x gate=x bufif=x net=z param=x sum=x
+3 assign=x gate=x bufif=x net=0 param=x sum=x
+4 assign=0 gate=x bufif=x net=0 param=x sum=x
+5 assign=0 gate=x bufif=0 net=0 param=0 sum=x
+6 assign=0 gate=0 bufif=0 net=0 param=0 sum=x
+7 assign=0 gate=0 bufif=0 net=0 param=0 sum=0
+22 assign=0 gate=1 bufif=1 net=0 param=0 sum=0
+23 assign=0 gate=1 bufif=1 net=1 param=0 sum=0
+24 assign=1 gate=1 bufif=1 net=1 param=0 sum=0
+25 assign=1 gate=1 bufif=1 net=1 param=1 sum=0
+27 assign=1 gate=1 bufif=1 net=1 param=1 sum=1
+48 assign=1 gate=1 bufif=z net=1 param=1 sum=1
+63 runtime
+65 constant

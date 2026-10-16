@@ -3,6 +3,80 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    /// The operand of every `min:typ:max` expression that the simulation
+    /// uses (IEEE 1364-2001 4.3, IEEE 1800-2009 11.12). Constant folding,
+    /// runtime lowering and driver/net delays all select through this one
+    /// choice, which matches the frontend's own (typical) selection for
+    /// elaborated parameters.
+    pub(super) fn min_typ_max_operand(&self) -> usize {
+        1
+    }
+
+    /// Lower a delayed continuous driver whose target is not one packed
+    /// driver (a concatenation or a selection split across alias groups).
+    /// The LRM computes one delay from the whole left-hand-side value
+    /// (IEEE 1364-2001 6.1.3, IEEE 1800-2009 10.3.3), so the value goes
+    /// through one inertial driver on a hidden packed signal; a zero-delay
+    /// process sensitive to that signal performs `scatter`, the undelayed
+    /// writes of its value, at the propagation time. The hidden signal
+    /// starts X like every pending delayed driver. Returns the statement
+    /// that schedules the hidden driver; the scatter process is pushed.
+    pub(super) fn delayed_shadow_driver(
+        &mut self,
+        path: &str,
+        source: NodeId,
+        value: IrExpr,
+        delay: IrInertialDelay,
+        scatter: impl FnOnce(IrExpr) -> Vec<IrStmt>,
+    ) -> Result<IrStmt, String> {
+        if value.is_real() || value.width() == 0 || value.width() == LLG_MAX_WIDTH {
+            return Err(format!(
+                "delayed continuous assignment in `{path}` needs a fixed-width packed value"
+            ));
+        }
+        let shadow = self.model.signals.len();
+        let c_name = format!("llg_delay_shadow_{shadow}");
+        self.model.signals.push(IrSignal {
+            fixed_default: None,
+            c_name: c_name.clone(),
+            hdl_name: None,
+            ty: IrType::Packed {
+                width: value.width(),
+                signed: value.signed(),
+                two_state: false,
+            },
+            net_driver: None,
+            net_alias: Vec::new(),
+            alias: None,
+            omit: false,
+        });
+        self.initialize_delayed_driver(shadow)?;
+        let read = IrExpr::new(
+            IrExprKind::SigRead(shadow),
+            value.width(),
+            value.signed(),
+            None,
+        );
+        let body = scatter(read);
+        let fn_name = self.new_fn_name(path, "ca");
+        let origin = self.origin(source);
+        self.model.processes.push(IrProcess::new_with_origin(
+            fn_name,
+            format!("{}.assign", self.source_path(path)),
+            IrShape::SensLoop {
+                reads: vec![IrDependency::Scalar(c_name)],
+            },
+            Vec::new(),
+            body,
+            origin,
+        ));
+        Ok(IrStmt::InertialAssign {
+            lhs: IrLhs::Whole(shadow),
+            rhs: value,
+            delay,
+        })
+    }
+
     pub(super) fn lower_procedural_delay(
         &mut self,
         path: &str,
@@ -144,6 +218,73 @@ impl<'a> Codegen<'a> {
             )
         })?;
         round_time_literal(value, source, scale, self.timescale_of_node(node))
+    }
+
+    /// Delays of a continuous assignment, gate or UDP instance. Constant
+    /// values convert to ticks once. SystemVerilog allows runtime-valued
+    /// expressions (IEEE 1800-2009 28.16.1: "These can be any three
+    /// expressions"); the driver evaluates them each time it schedules an
+    /// update, not when only a delay operand changes (decision S2-D9).
+    /// IEEE 1364-2001 7.14.1 requires constant expressions.
+    /// Whether any value of a driver or net delay is runtime-valued.
+    pub(super) fn driver_delay_is_runtime(&mut self, delay: DriverDelay) -> bool {
+        let values = match delay {
+            DriverDelay::Single(value) => vec![value],
+            DriverDelay::RiseFall(rise, fall) => vec![rise, fall],
+            DriverDelay::RiseFallTurnOff(rise, fall, turn_off) => vec![rise, fall, turn_off],
+        };
+        values
+            .into_iter()
+            .any(|value| self.eval_decl_value(value).is_err())
+    }
+
+    pub(super) fn driver_delay(
+        &mut self,
+        path: &str,
+        node: NodeId,
+        delay: DriverDelay,
+    ) -> Result<IrInertialDelay, String> {
+        let values = match delay {
+            DriverDelay::Single(value) => vec![value],
+            DriverDelay::RiseFall(rise, fall) => vec![rise, fall],
+            DriverDelay::RiseFallTurnOff(rise, fall, turn_off) => vec![rise, fall, turn_off],
+        };
+        let runtime = values
+            .iter()
+            .map(|value| self.eval_decl_value(*value).is_err())
+            .collect::<Vec<_>>();
+        if !runtime.contains(&true) {
+            return self
+                .driver_delay_ticks(node, delay)
+                .map(IrInertialDelay::Constant);
+        }
+        if self.db.edition() != LanguageEdition::SystemVerilog2009 {
+            return Err(
+                "the delay is runtime-valued or uses an unsupported constant expression; \
+                 IEEE 1364-2001 7.14.1 requires constant delay expressions on continuous \
+                 assignments, gates and nets"
+                    .to_owned(),
+            );
+        }
+        let mut lowered = Vec::with_capacity(values.len());
+        for (value, runtime) in values.into_iter().zip(runtime) {
+            lowered.push(if runtime {
+                self.lower_procedural_delay(path, node, value)?
+            } else {
+                IrDelay::Constant(self.procedural_delay_ticks(node, value)?)
+            });
+        }
+        let mut lowered = lowered.into_iter();
+        let rise = lowered
+            .next()
+            .ok_or_else(|| "driver delay has no value".to_owned())?;
+        Ok(IrInertialDelay::Runtime(Box::new(
+            crate::sim::ir::IrRuntimeTransitionDelay {
+                rise,
+                fall: lowered.next(),
+                turn_off: lowered.next(),
+            },
+        )))
     }
 
     pub(super) fn driver_delay_ticks(

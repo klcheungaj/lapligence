@@ -329,8 +329,22 @@ Delayed contributions start X; genuinely driverless nets start Z. Inertial updat
 own one Active event per site/array element without suspending their evaluator.
 Compare pending contribution values, not resolved nets; unchanged values keep
 original deadlines, changed values cancel, return to current value cancels without
-replacement. Preserve full single/rise-fall/three-way delays and choose each
-changed bit's delay, taking minimum applicable endpoints for ambiguous transitions.
+replacement. Preserve full single/rise-fall/three-way delays. A one-bit target
+follows the from/to table (a change to X takes the smallest delay); a wider
+target takes one delay for its whole value (nonzero to zero falls, all-Z turns
+off, else rises; V §6.1.3), and a vector net delay applies per bit. A net
+declaration assignment's delay is that driver's delay, never a net delay (the
+capture gives it only to the assignment). Selected delayed drivers and
+net-array cells start X on their own bits (`initialize_delayed_lhs`). A delayed
+concatenation or alias-split target is one vector driver: one inertial driver
+on a hidden packed signal plus a zero-delay scatter process
+(`delayed_shadow_driver`), never one delay per part; pattern members are
+separate drivers. A SystemVerilog runtime-valued driver delay
+(`driver_delay`, `IrInertialDelay::Runtime`) is evaluated by the driver when it
+schedules; a runtime net delay registers one `SetNetDelay` updater process,
+emitted before every Comb process and sensitive to its operands. Verilog-2001
+rejects both (V §7.14.1). Every min:typ:max expression, folded
+or lowered, selects through `min_typ_max_operand`.
 Force overlays visible storage while ordinary writes/driver slots remain live;
 release retains variable value or recomputes current net resolution. Releasing a
 variable toggles its hidden release marker; `attach_release_reevaluation` makes

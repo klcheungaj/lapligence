@@ -837,7 +837,7 @@ pub(super) fn nonblocking_event_assignment_when_text(
     ))
 }
 
-pub(super) fn render_delay(
+pub(in crate::sim::emit_c) fn render_delay(
     ctx: &RCtx<'_>,
     delay: &crate::sim::ir::IrDelay,
 ) -> Result<String, String> {

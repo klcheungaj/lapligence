@@ -630,10 +630,9 @@ impl<'a> Codegen<'a> {
                 "cast expressions are not supported in `{scope_path}` \
                  (the database does not capture the cast typespec)"
             )),
-            Operation::MinTypMax => {
-                let a = op!(0);
-                Ok(a)
-            }
+            // Only the selected operand is evaluated, so the unselected
+            // ones contribute neither side effects nor sensitivity.
+            Operation::MinTypMax => Ok(op!(self.min_typ_max_operand())),
             other => Err(format!(
                 "unsupported operation op type {other:?} in `{scope_path}`"
             )),

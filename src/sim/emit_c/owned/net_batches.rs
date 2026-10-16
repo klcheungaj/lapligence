@@ -32,7 +32,8 @@ impl Frame<'_, '_> {
                 rhs,
                 nba: false,
             } => (lhs, rhs, None),
-            IrStmt::InertialAssign { lhs, rhs, delay } => (lhs, rhs, Some(*delay)),
+            // Runtime-valued delays are evaluated per site, never batched.
+            IrStmt::InertialAssign { lhs, rhs, delay } => (lhs, rhs, Some(delay.constant()?)),
             _ => return None,
         };
         let IrLhs::Whole(signal) = lhs else {

@@ -445,7 +445,7 @@ fn inertial_updates_require_persistent_packed_drivers() {
     let statement = |lhs, rhs| IrStmt::InertialAssign {
         lhs,
         rhs,
-        delay: IrTransitionDelay::uniform(2),
+        delay: crate::sim::ir::IrInertialDelay::Constant(IrTransitionDelay::uniform(2)),
     };
     assert_eq!(
         model
@@ -2318,4 +2318,30 @@ fn memory_rows_of_an_associative_array_are_whole_or_one_element() {
             None,
         )
         .expect_err("an associative array is addressed whole or by one key");
+}
+
+#[test]
+fn runtime_delays_need_valid_scaling_and_net_groups() {
+    let model = valid_model();
+    let runtime = |unit_ticks| crate::sim::ir::IrRuntimeTransitionDelay {
+        rise: IrDelay::Runtime {
+            value: Box::new(packed_const(3, 8)),
+            unit_ticks,
+            precision_ticks: 1,
+        },
+        fall: None,
+        turn_off: None,
+    };
+    let inertial = |unit_ticks| IrStmt::InertialAssign {
+        lhs: IrLhs::Whole(0),
+        rhs: packed_const(1, 1),
+        delay: crate::sim::ir::IrInertialDelay::Runtime(Box::new(runtime(unit_ticks))),
+    };
+    model.validate_stmt(&inertial(1), None).unwrap();
+    assert!(model.validate_stmt(&inertial(0), None).is_err());
+    let set_net = IrStmt::SetNetDelay {
+        group: model.net_groups.len(),
+        delay: Box::new(runtime(1)),
+    };
+    assert!(model.validate_stmt(&set_net, None).is_err());
 }

@@ -1,0 +1,11 @@
+0 assign=x gate=x net=z sum=x
+3 assign=x gate=x net=0 sum=x
+4 assign=0 gate=x net=0 sum=x
+6 assign=0 gate=0 net=0 sum=x
+7 assign=0 gate=0 net=0 sum=0
+22 assign=0 gate=1 net=0 sum=0
+23 assign=0 gate=1 net=1 sum=0
+24 assign=1 gate=1 net=1 sum=0
+27 assign=1 gate=1 net=1 sum=1
+43 variable
+45 constant

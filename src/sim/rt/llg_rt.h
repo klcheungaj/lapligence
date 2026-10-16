@@ -560,6 +560,10 @@ struct llg_net {
     uint64_t propagation_rise;
     uint64_t propagation_fall;
     uint64_t propagation_turn_off;
+    /* A vector net delay applies to each bit on its own (IEEE 1364-2001
+     * 6.1.3): one inertial handle per bit, emitted only for delayed nets
+     * wider than one bit. NULL keeps the whole-net handle above. */
+    llg_inertial_t** propagation_bits;
     int n_aliases;
     int alias_capacity;
     llg_net_alias_t** aliases;

@@ -35,7 +35,8 @@ after snapshot/Db destruction.
 - Negatives: overlapping continuous, procedural, initializer and hierarchical
   writers of members, rows, cells and pattern leaves (including FND-002's
   `neg_continuous_extra_writer`), and a runtime-selected pattern leaf.
-- `boundary_delayed_pattern` adopts FND-002's legal L-F08-02-02 witness. Delayed
-  pattern drivers belong to ADV-002 and remain rejected until then.
+- `boundary_delayed_pattern` adopts FND-002's legal L-F08-02-02 witness: a
+  delayed pattern driver delays each leaf as its own driver (ADV-002), so it
+  prints `1 2` after the delay.
 
 All `.out` files are hand-derived from the clauses above.
