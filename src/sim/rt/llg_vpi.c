@@ -3888,7 +3888,13 @@ static int compile_site(llg_vpi_callsite_t* site) {
     if (!site->registration) {
         vpi_set_errorf(vpiCompile, vpiError, "LLG_VPI_UNRESOLVED",
                        "no VPI registration for `%s`", site->name);
-        fprintf(stderr, "llg: VPI error: no VPI registration for `%s`\n", site->name);
+        /* Name the call site: the model stops before time 0, so nothing
+         * else points at the source line. */
+        if (site->file)
+            fprintf(stderr, "llg: VPI error: no VPI registration for `%s` (called at %s:%d)\n",
+                    site->name, site->file, site->line);
+        else
+            fprintf(stderr, "llg: VPI error: no VPI registration for `%s`\n", site->name);
         return 0;
     }
     llg_vpi_call_t call;

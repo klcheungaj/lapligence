@@ -705,12 +705,37 @@ impl EmitCtx<'_, '_> {
                     .push(format!("{name} in `{}` skipped (not supported)", self.path));
                 Ok(vec![])
             }
+            // A system function in statement position (a void cast, SV
+            // 13.4.1) is still a function call whose value is discarded: a
+            // built-in runs its own lowering, and a user-defined function
+            // reaches its VPI calltf as a function. Only tasks take the VPI
+            // task route below.
+            _ if name.starts_with('$') && self.cg.is_system_function_call(h) => {
+                if self
+                    .cg
+                    .query_descriptor(h)
+                    .is_some_and(|descriptor| matches!(descriptor.shape, TypeShape::String))
+                {
+                    return Err(format!(
+                        "{}: the discarded string result of `{name}` in statement position is not supported in `{}`",
+                        self.cg.source_location(h),
+                        self.path
+                    ));
+                }
+                Ok(vec![IrStmt::PlusArg(self.cg.lower_expr(&self.path, h)?)])
+            }
             _ if name.starts_with('$') => {
                 let arg_nodes = args;
-                let args = arg_nodes
-                    .iter()
-                    .map(|arg| self.cg.lower_expr(&self.path, *arg))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let mut args = Vec::with_capacity(arg_nodes.len());
+                for arg in &arg_nodes {
+                    let value = self.cg.lower_expr(&self.path, *arg).map_err(|error| {
+                        format!(
+                            "{}: argument of VPI system task `{name}`: {error}",
+                            self.cg.source_location(*arg)
+                        )
+                    })?;
+                    args.push(value);
+                }
                 if let Some((index, _)) = args
                     .iter()
                     .enumerate()

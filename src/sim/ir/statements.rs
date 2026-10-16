@@ -494,8 +494,10 @@ pub enum IrStmt {
         nba: bool,
     },
     Object(Box<IrObjectStmt>),
-    /// A system plusarg query used in statement position. The expression is
-    /// retained so `$value$plusargs` still performs its destination write.
+    /// A call evaluated in statement position for its effects only: a
+    /// plusarg query (`$value$plusargs` still writes its destination), a
+    /// void-cast system function or a constructor call. The value is
+    /// discarded.
     PlusArg(IrExpr),
     /// Feed a randomize problem's solver session (IEEE 1800-2009 18).
     Randomize(Box<super::IrRandStmt>),
