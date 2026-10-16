@@ -162,9 +162,10 @@ fn unregistered_call_stops_at_startup() {
             assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
             assert!(output.stdout.is_empty(), "{label}: {output:?}");
             assert!(
-                stderr.contains("llg: VPI error: no VPI registration for `$absent`"),
+                stderr.contains("llg: VPI error: no VPI registration for `$absent` (called at "),
                 "{label}: {stderr}"
             );
+            assert!(stderr.contains("missing.sv:6)"), "{label}: {stderr}");
         },
     );
 }

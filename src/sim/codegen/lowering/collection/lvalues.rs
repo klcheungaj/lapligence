@@ -397,6 +397,9 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn analyze_lhs(&mut self, path: &str, lhs: NodeId) -> Result<Lhs, String> {
+        if let Some(target) = self.virtual_interface_select_lhs(path, lhs)? {
+            return Ok(Lhs::Canonical(target));
+        }
         if self.packed_element_member_select(lhs).is_some() {
             if let Some(target) = self.packed_value_lhs(path, lhs)? {
                 return Ok(target);
@@ -984,6 +987,26 @@ impl<'a> Codegen<'a> {
                         i128::from(member.lsb),
                         two_state,
                     ));
+                }
+                // A member reached through a virtual-interface handle
+                // (`v.data`) is the storage of the instance the handle names
+                // when the write executes; a select of it (`v.data[3]`)
+                // lowers relative to that address.
+                if let Some(IrLhs::WholeRef {
+                    addr,
+                    width,
+                    signed,
+                    two_state,
+                    shortreal,
+                }) = self.virtual_interface_member_lhs(path, lhs)?
+                {
+                    return Ok(Lhs::WholeRef {
+                        addr,
+                        width,
+                        signed,
+                        two_state,
+                        shortreal,
+                    });
                 }
                 // A whole-signal hierarchical WRITE (`m.data`, `tb.dut.sig`,
                 // …) lowers to the resolved target signal's global, so

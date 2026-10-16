@@ -3,6 +3,21 @@
 use super::*;
 
 impl Validator<'_> {
+    /// Whether `addr` (`&_llg_access_<n>`) names a virtual-interface member
+    /// access. Access symbols are numbered by their table position.
+    fn is_interface_member_address(&self, addr: &str) -> bool {
+        addr.strip_prefix("&_llg_access_")
+            .and_then(|index| index.parse::<usize>().ok())
+            .and_then(|index| self.model.native_accesses.get(index))
+            .is_some_and(|access| {
+                addr[1..] == access.name
+                    && matches!(
+                        access.kind,
+                        crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. }
+                    )
+            })
+    }
+
     pub(super) fn has_transient_target(&self, lhs: &IrLhs) -> bool {
         match lhs {
             IrLhs::WholeRef {
@@ -12,6 +27,12 @@ impl Validator<'_> {
                 two_state,
                 shortreal,
             } => {
+                // A virtual-interface member is the bound interface
+                // instance's signal storage, which lives as long as the
+                // model whatever activation computed its address.
+                if self.is_interface_member_address(addr) {
+                    return false;
+                }
                 let Some(function) = self.function.get() else {
                     return true;
                 };

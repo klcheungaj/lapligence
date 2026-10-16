@@ -1,0 +1,30 @@
+vpi watch tb.dut.result
+[0] vpi result=0
+[10] reset released
+[10] A holds the bus
+[10] A queued op=0 a=10 b=20 ok=1
+[10] A queued op=1 a=50 b=8 ok=1
+[25] vpi result=30
+[30] A queued op=2 a=60 b=15 ok=1
+[35] check op=0 a=10 b=20 dut=30 ref=30
+[45] vpi result=42
+[50] A queued op=2 a=61 b=15 ok=1
+[50] B holds the bus
+[50] B reserved under legal: ok=0
+[50] B free: ok=1 legal=1
+[55] check op=1 a=50 b=8 dut=42 ref=42
+[65] vpi result=12
+[70] B queued op=1 a=5 b=9 ok=1
+[75] check op=2 a=60 b=15 dut=12 ref=12
+[85] vpi result=13
+[90] B queued op=3 a=85 b=170 ok=1
+[95] check op=2 a=61 b=15 dut=13 ref=13
+[105] vpi result=252
+[115] check op=1 a=5 b=9 dut=252 ref=252
+[125] vpi result=255
+[125] assertion reserved_op failed
+[135] check op=3 a=85 b=170 dut=255 ref=255
+[135] checked=6 mismatches=0
+coverage op=100.00 a=66.67 group=83.33
+[135] done
+vpi end: 7 result changes

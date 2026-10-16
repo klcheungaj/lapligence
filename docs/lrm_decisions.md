@@ -564,6 +564,11 @@ These are documented in [known issues](known_issues.md) and have no decision cas
   ([collected objects](known_issues.md#collected-objects-keep-some-runtime-objects-and-defer-collection)).
 - **B7:** `status()` inside a `wait` condition or an event expression is
   rejected ([rejected process-handle forms](known_issues.md#rejected-process-handle-forms)).
+- **B8:** a VPI registration under the name of a built-in llg implements is
+  never called, although SV 36.3.2 L56427-56429 says it "shall override the
+  built-in"; built-ins llg does not implement are dispatched to it
+  ([VPI object model limits](known_issues.md#vpi-object-model-limits-sim-042)).
+  A case needs a VPI application, so it cannot be a portable decision case.
 
 ## On a mismatch
 

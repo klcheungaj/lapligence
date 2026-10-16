@@ -52,6 +52,27 @@ pub(crate) fn run_compile_opts_after_db_drop(
     expected: &str,
     expected_stderr: &str,
 ) {
+    run_compile_opts_after_db_drop_with_warnings(
+        suite,
+        fixture,
+        opts,
+        expected,
+        expected_stderr,
+        &[],
+    );
+}
+
+/// [`run_compile_opts_after_db_drop`] for a model that prints run-time
+/// `llg: warning:` lines (`expected_warnings`, without the prefix, in any
+/// order).
+pub(crate) fn run_compile_opts_after_db_drop_with_warnings(
+    suite: &str,
+    fixture: &str,
+    opts: llg::core::compile::CompileOpts,
+    expected: &str,
+    expected_stderr: &str,
+    expected_warnings: &[&str],
+) {
     use llg::core::{compile, db::Db};
     use llg::sim::{build, codegen, opt::OptConfig};
 
@@ -122,7 +143,7 @@ pub(crate) fn run_compile_opts_after_db_drop(
                 sim_harness::run_executable_output(&executable).expect("execute owned model");
             let label =
                 format!("{suite}/{fixture}, Db dropped, optimized={optimized}, native={level:?}");
-            assert_case_output(output, &label, expected, expected_stderr, &[]);
+            assert_case_output(output, &label, expected, expected_stderr, expected_warnings);
         }
     }
 }

@@ -1,0 +1,4 @@
+[0] deferred action sees 7 8
+[2] after DPI churn 200: mine 20 21 kept 1
+[3] after VPI answer ack=31: mine 30 30
+[4] after VPI answer ack=41: mine 40 40

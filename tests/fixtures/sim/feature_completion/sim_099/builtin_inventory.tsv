@@ -1,0 +1,45 @@
+# Slang built-in system subroutines (vendor/slang/scripts/systemnames.txt)
+# that no positive simulator fixture calls, with the reason. Checked by
+# tests/sim_feature_completion/sim_099.rs (builtin_inventory_is_complete):
+# a name must be called by a fixture or listed here, never both, and
+# the not-implemented rows are exactly the located compile-time rejections.
+# Statuses: not-implemented (located compile-time rejection), vpi-only (no
+# lowering; a VPI application may provide it, and an unregistered call stops
+# the run at startup naming its source position), advanced (owned by an ADV
+# task), by-design (located unsupported diagnostic), edition (rejected before
+# lowering by the strict edition profile).
+# name	status	reference
+$global_clock	not-implemented	IEEE 1800-2009 14.14
+$inferred_clock	not-implemented	IEEE 1800-2009 16.15.7
+$inferred_disable	not-implemented	IEEE 1800-2009 16.15.7
+$input	vpi-only	IEEE 1800-2009 D.4 (informative; a VPI application may provide it, 36.3.2)
+$key	vpi-only	IEEE 1800-2009 D.5 (informative; a VPI application may provide it, 36.3.2)
+$nokey	vpi-only	IEEE 1800-2009 D.5 (informative; a VPI application may provide it, 36.3.2)
+$log	vpi-only	IEEE 1800-2009 D.7 (informative; a VPI application may provide it, 36.3.2)
+$nolog	vpi-only	IEEE 1800-2009 D.7 (informative; a VPI application may provide it, 36.3.2)
+$reset	vpi-only	IEEE 1800-2009 D.8 (informative; a VPI application may provide it, 36.3.2)
+$reset_value	vpi-only	IEEE 1800-2009 D.8 (informative; a VPI application may provide it, 36.3.2)
+$save	vpi-only	IEEE 1800-2009 D.9 (informative; a VPI application may provide it, 36.3.2)
+$restart	vpi-only	IEEE 1800-2009 D.9 (informative; a VPI application may provide it, 36.3.2)
+$incsave	vpi-only	IEEE 1800-2009 D.9 (informative; a VPI application may provide it, 36.3.2)
+$sreadmemb	vpi-only	IEEE 1800-2009 D.14 (informative; a VPI application may provide it, 36.3.2)
+$sreadmemh	vpi-only	IEEE 1800-2009 D.14 (informative; a VPI application may provide it, 36.3.2)
+$sdf_annotate	vpi-only	IEEE 1800-2009 32.9 (a VPI application may provide it, 36.3.2)
+$rising_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4
+$falling_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4
+$steady_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4
+$changing_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4
+$async$and$plane	by-design	legacy PLA tasks, IEEE 1800-2009 20.17 (docs/sim_features.md)
+$sync$and$plane	by-design	legacy PLA tasks, IEEE 1800-2009 20.17 (docs/sim_features.md)
+$async$nand$array	by-design	legacy PLA tasks, IEEE 1800-2009 20.17 (docs/sim_features.md)
+$sync$nand$array	by-design	legacy PLA tasks, IEEE 1800-2009 20.17 (docs/sim_features.md)
+$async$or$plane	by-design	legacy PLA tasks, IEEE 1800-2009 20.17 (docs/sim_features.md)
+$sync$or$plane	by-design	legacy PLA tasks, IEEE 1800-2009 20.17 (docs/sim_features.md)
+$async$nor$array	by-design	legacy PLA tasks, IEEE 1800-2009 20.17 (docs/sim_features.md)
+$sync$nor$array	by-design	legacy PLA tasks, IEEE 1800-2009 20.17 (docs/sim_features.md)
+$psprintf	edition	not in IEEE 1800-2009; the strict edition profile rejects the call
+$stacktrace	edition	not in IEEE 1800-2009; the strict edition profile rejects the call
+$static_assert	edition	not in IEEE 1800-2009; the strict edition profile rejects the call
+$deposit	edition	not in IEEE 1800-2009; the strict edition profile rejects the call
+$timeunit	edition	not in IEEE 1800-2009; the strict edition profile rejects the call
+$timeprecision	edition	not in IEEE 1800-2009; the strict edition profile rejects the call

@@ -169,6 +169,50 @@ impl<'a> Codegen<'a> {
         })
     }
 
+    /// Write target of a select chain over a packed member reached through
+    /// a virtual-interface handle (`v.data[3]`, `v.data[7:4]`,
+    /// `v.data[i +: 2]`): packed steps relative to the member storage of the
+    /// instance the handle names when the write executes, so the store
+    /// notifies that instance's waiters like a direct write.
+    pub(in super::super) fn virtual_interface_select_lhs(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrLhs>, String> {
+        let Some((root, selectors)) = self.packed_value_selectors(node) else {
+            return Ok(None);
+        };
+        if !matches!(self.kind(root), NodeKind::Expr(ExprKind::HierPath { .. })) {
+            return Ok(None);
+        }
+        let Some(target) = self.virtual_interface_member_lhs(path, root)? else {
+            return Ok(None);
+        };
+        let IrLhs::WholeRef {
+            width, two_state, ..
+        } = &target
+        else {
+            return Ok(None);
+        };
+        if *width == 0 {
+            return Err(format!(
+                "select on a real virtual interface member in `{path}` is not supported"
+            ));
+        }
+        let two_state = *two_state;
+        let mut width = *width;
+        let mut steps = Vec::new();
+        for (base, select) in selectors {
+            self.packed_selection_steps_folding(path, base, select, &mut width, &mut steps, true)?;
+        }
+        Ok(Some(IrLhs::PackedSelect {
+            target: Box::new(target),
+            steps,
+            signed: false,
+            two_state,
+        }))
+    }
+
     /// Steps of a packed value chain whose outer dimension has elements wider
     /// than one bit, or `None` for a one-dimensional bit vector, whose bit
     /// coordinates the scalar select paths already use.

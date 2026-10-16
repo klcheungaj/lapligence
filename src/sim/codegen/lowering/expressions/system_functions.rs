@@ -25,6 +25,25 @@ fn sampled_argument_error(name: &str, scope_path: &str, argument: &IrExpr) -> St
     }
 }
 
+/// The reference of a built-in system function the frontend admits but llg
+/// cannot lower: the clock-resolution functions `$global_clock` (used as a
+/// clocking event) and `$inferred_clock`/`$inferred_disable` (property and
+/// sequence formal defaults). They name events and conditions, so a VPI
+/// application cannot provide them, and the generic VPI path would otherwise
+/// fail with a misleading result-type diagnostic. Other built-ins without a
+/// lowering (the informative Annex D services, `$sreadmemb/$sreadmemh`,
+/// `$sdf_annotate`) stay on the VPI path, where an application may provide
+/// them (IEEE 1800-2009 36.3.2) and a call nobody registers stops the run at
+/// startup naming its source position. Keep
+/// `tests/fixtures/sim/feature_completion/sim_099/builtin_inventory.tsv` in step.
+fn unimplemented_builtin_reference(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "$global_clock" => "IEEE 1800-2009 14.14",
+        "$inferred_clock" | "$inferred_disable" => "IEEE 1800-2009 16.15.7",
+        _ => return None,
+    })
+}
+
 impl<'a> Codegen<'a> {
     /// Classify a sampled-value argument by its declared type before it is
     /// lowered, so a non-integral operand gets a specific diagnostic instead
@@ -261,6 +280,9 @@ impl<'a> Codegen<'a> {
         name: &str,
         call: NodeId,
     ) -> Result<IrExpr, String> {
+        if let Some(error) = self.unimplemented_builtin(call, name) {
+            return Err(error);
+        }
         let args: Vec<NodeId> = self.node(call).children.clone();
         if matches!(
             name,
@@ -1149,10 +1171,16 @@ impl<'a> Codegen<'a> {
                     None => (32, true),
                 };
                 let arg_nodes = args;
-                let args = arg_nodes
-                    .iter()
-                    .map(|arg| self.lower_expr(scope_path, *arg))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let mut args = Vec::with_capacity(arg_nodes.len());
+                for arg in &arg_nodes {
+                    let value = self.lower_expr(scope_path, *arg).map_err(|error| {
+                        format!(
+                            "{}: argument of VPI system function `{name}`: {error}",
+                            self.source_location(*arg)
+                        )
+                    })?;
+                    args.push(value);
+                }
                 if let Some((index, _)) = args
                     .iter()
                     .enumerate()
@@ -1178,6 +1206,28 @@ impl<'a> Codegen<'a> {
                 "unsupported system function {name} in `{scope_path}`"
             )),
         }
+    }
+
+    /// The located rejection of a built-in clock-resolution function llg
+    /// cannot lower (see `unimplemented_builtin_reference`).
+    pub(in super::super) fn unimplemented_builtin(
+        &self,
+        call: NodeId,
+        name: &str,
+    ) -> Option<String> {
+        let reference = unimplemented_builtin_reference(name)?;
+        Some(format!(
+            "{}: built-in system subroutine `{name}` ({reference}) is not implemented by llg",
+            self.source_location(call)
+        ))
+    }
+
+    /// Whether system call `call` is a function: the frontend gives it a
+    /// result type other than `void`. A task call has none.
+    pub(in super::super) fn is_system_function_call(&self, call: NodeId) -> bool {
+        self.db.type_descriptor(call).is_some_and(
+            |descriptor| !matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Void"),
+        )
     }
 
     /// Lower one output argument of an IEEE stochastic queue task. The C ABI

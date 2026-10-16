@@ -372,6 +372,20 @@ unused-storage pass changes. Decisions S47-D1-D13 are in `sim_lrm_decisions`.
 Under ASan run the set with `LLG_CC=gcc LLG_CFLAGS='-fsanitize=address,undefined
 -fno-omit-frame-pointer'`.
 
+SIM-099's gate fixtures use
+`-E 'binary(sim_feature_completion) & test(sim_099::)'`. The integrated
+testbench runs with its DPI-C model and VPI application linked as static
+archives (every host), as a shared companion plus `LLG_VPI_PLUGIN` (skipped
+where `sim_040::plugin_library` cannot build one) and under
+`LLG_GC_STRESS=1 LLG_GC_VERIFY=1`; `selected_writes` compares each time step's
+lines as a set (SV 4.7); `random_replay` compares its generator-dependent
+checksum across the twelve runs only. `builtin_inventory_is_complete` reads
+`vendor/slang/scripts/systemnames.txt` and every simulator fixture (about
+0.2 s) and fails when a built-in is neither called by a positive fixture nor
+classified in `sim_099/builtin_inventory.tsv`. The CI sanitizer job includes
+`sim_099`; locally run the set with `LLG_CC=gcc
+LLG_CFLAGS='-fsanitize=address,undefined -DLLG_CO_DEBUG'`.
+
 SIM-037's sequence-composition fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_037::)'`. `exhaustive` compares
 36 sequences on all 1024 two-signal traces of length 5 with the test-side
