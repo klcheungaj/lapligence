@@ -365,16 +365,17 @@ void llg_net_strength_reset(llg_net_t* net) {
 static void llg_net_propagate_bits(llg_net_t* net, sv4_t resolved);
 
 static void llg_net_publish(llg_net_t* net, sv4_t resolved) {
-    if (net->propagation_bits) {
+    // An undelayed net pays one flag test.
+    if (!net->propagation_enabled) {
+        sig_write(&net->resolved, resolved);
+        llg_net_alias_refresh_all(net);
+    } else if (net->propagation_bits) {
         llg_net_propagate_bits(net, resolved);
-    } else if (net->propagation_enabled) {
+    } else {
         llg_inertial_assign(&net->propagation, &net->resolved, resolved,
                             net->propagation_rise, net->propagation_fall,
                             net->propagation_turn_off);
         if (net->propagation) net->propagation->publication_net = net;
-    } else {
-        sig_write(&net->resolved, resolved);
-        llg_net_alias_refresh_all(net);
     }
 }
 
