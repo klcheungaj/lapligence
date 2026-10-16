@@ -509,6 +509,67 @@ fn builtins_without_lowering_dispatch_to_vpi() {
     );
 }
 
+/// G3 / IEEE 1800-2009 36.3.2, decision S99-D6: a VPI registration under
+/// the name of a built-in the design calls stops the run at startup, naming
+/// the built-in and its call, instead of being silently ignored, for linked
+/// applications and `LLG_VPI_PLUGIN` plugins alike; a registration of a
+/// built-in the design does not call is accepted.
+#[test]
+fn vpi_registrations_of_called_builtins_stop_at_startup() {
+    let directory = sim_harness::TempDir::new("sim099-override").expect("temporary directory");
+    let vpi = archive(&directory, "builtin_override");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "builtin_override",
+        &["--dpi-lib", &vpi],
+        &|label, output| {
+            assert_run(
+                label,
+                output,
+                include_str!("../fixtures/sim/feature_completion/sim_099/builtin_override.out"),
+                &[],
+            )
+        },
+    );
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(SUITE)
+        .join("neg_builtin_override.sv");
+    let diagnostic = format!(
+        "llg: VPI error: a VPI application registers `$random`, which llg implements as a \
+         built-in (called at {}:6); llg does not support overriding built-in system tasks and \
+         functions (IEEE 1800-2009 36.3.2)",
+        source.display()
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_builtin_override",
+        &diagnostic,
+        &["--dpi-lib", &vpi],
+    );
+    let Some(plugin) = super::sim_040::plugin_library(SUITE, &directory, "builtin_override", &[])
+    else {
+        return;
+    };
+    for optimized in [false, true] {
+        let output = sim_cli::invoke_with_env(
+            SUITE,
+            "neg_builtin_override",
+            optimized,
+            &[],
+            &[("LLG_VPI_PLUGIN", &plugin)],
+            &[],
+        );
+        let seen = sim_cli::observed_output(&output);
+        assert_eq!(output.status.code(), Some(1), "plugin: {seen}");
+        assert!(output.stdout.is_empty(), "plugin: {seen}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(&diagnostic),
+            "plugin: {seen}"
+        );
+    }
+}
+
 /// SV source without `//` and `/* */` comments, so a name mentioned only in
 /// prose does not count as called.
 fn without_sv_comments(text: &str) -> String {

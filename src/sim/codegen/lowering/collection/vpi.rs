@@ -9,8 +9,8 @@
 use super::*;
 use crate::core::db::{ConstantSource, ConstantType, Direction, NetType};
 use crate::sim::ir::{
-    IrVpiArgRef, IrVpiCompileArg, IrVpiCompileCall, IrVpiConstant, IrVpiDirection, IrVpiObject,
-    IrVpiObjectKind, IrVpiVarKind,
+    IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConstant,
+    IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiVarKind,
 };
 
 const SEPARATOR: &str = "\u{1f}";
@@ -359,6 +359,46 @@ impl Codegen<'_> {
         }
         model.vpi_objects = objects.into_values().collect();
         Ok(())
+    }
+
+    /// Record every built-in system subroutine the design calls and llg runs
+    /// natively, with its first call site in source order, so a VPI
+    /// registration under its name stops the run at startup instead of being
+    /// silently ignored (IEEE 1800-2009 36.3.2, decision S99-D6). Names with
+    /// a VPI call site (user system tasks and built-ins without a lowering)
+    /// are dispatched to the registration and are left out.
+    pub(in super::super) fn populate_vpi_builtin_calls(&self, model: &mut IrModel) {
+        use std::collections::BTreeMap;
+        let dispatched: HashSet<&str> = model
+            .vpi_compile_calls
+            .iter()
+            .map(|call| call.name.as_str())
+            .collect();
+        let mut first: BTreeMap<&str, (Option<&str>, u32, u32)> = BTreeMap::new();
+        for id in self.db.node_ids() {
+            let NodeKind::SysCall { name } = self.kind(id) else {
+                continue;
+            };
+            // Built-in methods (`constraint_mode`) share the node kind; only
+            // `$` names can be registered as system tasks and functions.
+            if !name.starts_with('$') || dispatched.contains(name.as_str()) {
+                continue;
+            }
+            let node = self.node(id);
+            let site = (node.file(), node.line, node.col);
+            first
+                .entry(name.as_str())
+                .and_modify(|known| *known = (*known).min(site))
+                .or_insert(site);
+        }
+        model.vpi_builtin_calls = first
+            .into_iter()
+            .map(|(name, (file, line, _))| IrVpiBuiltinCall {
+                name: name.to_owned(),
+                file: file.map(str::to_owned),
+                line,
+            })
+            .collect();
     }
 
     /// Record the compile-time descriptor of one VPI system call site and

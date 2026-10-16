@@ -2315,8 +2315,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   a registered VPI function its calltf; only a discarded `string` result of a
   built-in is rejected at its position. A call nobody registered stops the run
   at startup naming its source file and line. A registration under the name
-  of a built-in llg implements is not used: llg's built-in runs (SV §36.3.2
-  override is a [known issue](known_issues.md#vpi-object-model-limits-sim-042)); the
+  of a built-in llg implements and the design calls stops the run at startup
+  naming the built-in and its call (decision S99-D6; the SV §36.3.2 override
+  is a [known issue](known_issues.md#vpi-object-model-limits-sim-042)); the
   built-ins llg does not implement are provided by such a registration
   ([sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md)).
   SV ch.36-38, V ch.20–27 **[1995/2001]**.

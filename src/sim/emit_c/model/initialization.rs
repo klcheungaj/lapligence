@@ -475,6 +475,15 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
              \x20   }}\n",
         c_string_literal(model.design_name())
     ));
+    if let Some(check) = super::vpi::vpi_builtin_check(model) {
+        out.push_str(&format!(
+            "    if (!{check}) {{\n\
+             \x20       llg_vpi_shutdown();\n\
+             \x20       llg_rt_cleanup();\n\
+             \x20       return 1;\n\
+             \x20   }}\n"
+        ));
+    }
     let scopes = super::vpi::vpi_call_scopes(model);
     for ((index, call), scope) in model.vpi_compile_calls.iter().enumerate().zip(&scopes) {
         out.push_str(&format!(

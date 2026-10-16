@@ -609,6 +609,7 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
     cg.build_init_steps(&mut model)?;
     check_wave_variable_targets(&cg.wave_variable_targets, &model)?;
     cg.populate_vpi_metadata(&mut model, &tops)?;
+    cg.populate_vpi_builtin_calls(&mut model);
     cg.finish_dpi(&mut model)?;
     cg.populate_assertion_coverage(&mut model);
     // Final-block processes render like any other but spawn into the

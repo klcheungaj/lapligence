@@ -32,7 +32,7 @@ use assertions::{assertion_predicate_name, assertion_sequence_name};
 mod storage;
 use storage::{render_signal_decls, render_static_local_decls};
 pub(in crate::sim::emit_c) mod vpi;
-use vpi::{render_vpi_compile_calls, render_vpi_metadata};
+use vpi::{render_vpi_builtin_calls, render_vpi_compile_calls, render_vpi_metadata};
 mod functions;
 pub(super) use functions::handle_marker_param;
 pub(super) use functions::native_companion_param;
@@ -1146,6 +1146,7 @@ fn render_model(
     // so it follows every storage declaration.
     render_vpi_metadata(model, &mut out);
     render_vpi_compile_calls(model, &mut out);
+    render_vpi_builtin_calls(model, &mut out);
     out.push_str(&sharing.declarations);
     out.push_str(&sharing.prototypes);
     out.push_str(&coroutine_metadata);

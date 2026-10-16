@@ -37,6 +37,8 @@ Each `<ID>_<name>.sv` file is:
 2. If there is a `.c` companion of the same name (B8, S40-D1 to S40-D5 and
    S41-D1 to S41-D8), build it as a shared DPI-C library (the S40 and S41
    cases include `svdpi.h`) and load it with the simulator's DPI library option.
+   For S99-D6 the `.c` file is a VPI application (`vpi_user.h`,
+   `vlog_startup_routines`); load it with the simulator's VPI option.
 3. Compare stdout with the `.out` file. Ignore the simulator's own banners and
    its `$finish` message.
 4. **Negative cases have an empty `.out`.** For AA-D7, S14-D5, S22-D3, S22-D4, S23-D2 and S30-D10, the
@@ -71,7 +73,9 @@ its first line, reporting "null class handle access". S16-D3 must end with
 exit status 1 after both lines, reporting "the weight of rule 1 is negative",
 S16-D4 after all its lines, reporting "randsequence repeat count is negative or
 unknown", and S16-D7 after both lines, reporting "rand join expression is not a
-real number in 0.0 to 1.0". The scripted run is in
+real number in 0.0 to 1.0". S99-D6 is linked with its `.c` file as `--dpi-lib` and must
+stop at startup with exit status 1 and empty stdout, reporting "a VPI
+application registers `$random`, which llg implements as a built-in". The scripted run is in
 [tests/readme.md](../tests/readme.md):
 
 ```sh
@@ -321,6 +325,7 @@ case.
 | S99-D3 | **Assertion controls and queued instances.** `$assertoff` stops new instances from being queued; instances already queued or matured still begin their attempts. `$assertkill` clears the pending instances and the matured instances still waiting for their leading clock. | 20.11 L35048-35057 | `S99-D3_assertion_controls` | LRM text for pending instances; matured instances waiting for a clock are an llg choice (the text is silent) |
 | S99-D4 | **Late maturation in the clock's time step.** An instance queued after the Observed region of its clock's time step (after a clocking block event, or by program code) matures when the Observed region is reached again in that time step and begins its attempt at that tick, with that tick's sampled values. | 16.15.6 L26757-26762 | `S99-D4_late_maturation` | LRM text |
 | S99-D5 | **Inferred clocks.** A procedural concurrent assertion without a clock uses the procedure's inferred clock before default clocking; the `iff` qualifier stays part of it; reading a term of the edge expression anywhere else in the procedure (assertion action blocks included) prevents the inference; nonblocking intra-assignment event controls count as event controls. An inferred `edge` clock is rejected, and so are `const'` casts and automatic variables in the assertion (16.15.6.1), whose queued values llg does not keep. | 16.15.6 L26782-26798; 16.15.6.1 L26881-26884 | `S99-D5_inferred_clock` | LRM text for the rules; action blocks and intra-assignment controls are an llg choice; the rejections are llg limits |
+| S99-D6 | **VPI registrations do not override built-ins.** llg runs the built-in system tasks and functions it implements natively. A VPI application (linked with `--dpi-lib` or loaded with `LLG_VPI_PLUGIN`) that registers the name of one the design calls stops the run at startup with "a VPI application registers `$random`, which llg implements as a built-in (called at <file>:<line>); llg does not support overriding built-in system tasks and functions"; a registration of a built-in the design does not call is accepted, and built-ins without a lowering (Annex D services, `$sreadmemb`/`$sreadmemh`, `$sdf_annotate`) still dispatch to their registration. | 36.3.2 L56427-56431 | `S99-D6_builtin_override` (`.sv` and `.c`; negative: exit status 1, empty `.out`) | llg policy (an llg limit: the text requires the override; llg refuses it at startup instead of ignoring the registration) |
 
 ## Waits on `ref` formals in typed tasks (SIM-009)
 
@@ -564,11 +569,6 @@ These are documented in [known issues](known_issues.md) and have no decision cas
   ([collected objects](known_issues.md#collected-objects-keep-some-runtime-objects-and-defer-collection)).
 - **B7:** `status()` inside a `wait` condition or an event expression is
   rejected ([rejected process-handle forms](known_issues.md#rejected-process-handle-forms)).
-- **B8:** a VPI registration under the name of a built-in llg implements is
-  never called, although SV 36.3.2 L56427-56429 says it "shall override the
-  built-in"; built-ins llg does not implement are dispatched to it
-  ([VPI object model limits](known_issues.md#vpi-object-model-limits-sim-042)).
-  A case needs a VPI application, so it cannot be a portable decision case.
 
 ## On a mismatch
 

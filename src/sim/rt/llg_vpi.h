@@ -67,6 +67,14 @@ typedef struct {
     int64_t right;
 } llg_vpi_compile_arg_t;
 
+/* A built-in system task or function the model runs natively and its first
+ * call site (file may be NULL). */
+typedef struct {
+    const char* name;
+    const char* file;
+    int line;
+} llg_vpi_builtin_call_t;
+
 typedef struct {
     int kind;
     uint32_t width;
@@ -117,6 +125,11 @@ sv4_t llg_vpi_call_function_site(uint64_t site, const char* name, llg_vpi_arg_t*
     int count, uint32_t fallback_width, int8_t fallback_signed);
 double llg_vpi_call_real_function_site(uint64_t site, const char* name, llg_vpi_arg_t* args, int count);
 int llg_vpi_failed(void);
+/* After startup: fail, naming the call site, when a VPI application
+ * registered one of the `count` built-ins in `calls`. llg runs built-ins
+ * natively and cannot let a registration override them (IEEE 1800-2009
+ * 36.3.2). Returns 1 when none is registered. */
+int llg_vpi_check_builtin_overrides(const llg_vpi_builtin_call_t* calls, uint32_t count);
 
 #ifdef __cplusplus
 }

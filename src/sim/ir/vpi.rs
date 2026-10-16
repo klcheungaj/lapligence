@@ -224,6 +224,17 @@ pub struct IrVpiCompileCall {
     pub(in crate::sim) line: u32,
 }
 
+/// A built-in system task or function the design calls and llg runs
+/// natively, with its first call site. A VPI registration under the same name
+/// would override it (IEEE 1800-2009 36.3.2), which llg does not support, so
+/// the generated startup stops naming the call (decision S99-D6).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrVpiBuiltinCall {
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) file: Option<String>,
+    pub(in crate::sim) line: u32,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IrVpiCompileArg {
     pub(in crate::sim) width: u32,

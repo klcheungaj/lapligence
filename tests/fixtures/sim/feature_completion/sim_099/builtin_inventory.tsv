@@ -8,6 +8,9 @@
 # the run at startup naming its source position), advanced (owned by an ADV
 # task), by-design (located unsupported diagnostic), edition (rejected before
 # lowering by the strict edition profile).
+# Every built-in llg lowers runs natively: a VPI registration under the name
+# of one the design calls stops the run at startup naming the call
+# (IEEE 1800-2009 36.3.2, decision S99-D6); only vpi-only names reach it.
 # name	status	reference
 $global_clock	not-implemented	IEEE 1800-2009 14.14
 $inferred_clock	not-implemented	IEEE 1800-2009 16.15.7

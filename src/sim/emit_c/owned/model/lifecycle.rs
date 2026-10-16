@@ -340,6 +340,9 @@ pub(in crate::sim::emit_c) fn main(
         ));
     }
     out.push_str(&format!("    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_startup_static(LLG_VPI_STATIC_ROUTINES) || !llg_vpi_startup()) goto start_failed;\n", c_string_literal(model.design_name())));
+    if let Some(check) = crate::sim::emit_c::model::vpi::vpi_builtin_check(model) {
+        out.push_str(&format!("    if (!{check}) goto start_failed;\n"));
+    }
     let scopes = crate::sim::emit_c::model::vpi::vpi_call_scopes(model);
     for ((index, call), scope) in model.vpi_compile_calls.iter().enumerate().zip(&scopes) {
         out.push_str(&format!("    if (!llg_vpi_compile_call_site_at({index}ULL, {}, llg_vpi_compile_args_{index}, {}, {}ULL, {scope}, {}, {})) goto start_failed;\n",

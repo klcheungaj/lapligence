@@ -1660,6 +1660,25 @@ fn run_vpi_decision(case: &str, prototypes: &[&str], expected: &str) {
 }
 
 #[test]
+fn s99_d6_builtin_override() {
+    // Negative case: llg stops at startup, so the expected stdout is empty.
+    assert!(include_str!("fixtures/sim/lrm_decisions/S99-D6_builtin_override.out").is_empty());
+    let case = "S99-D6_builtin_override";
+    let directory = crate::sim_harness::TempDir::new("lrm-s99").expect("temporary directory");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source = root.join(format!("tests/fixtures/sim/lrm_decisions/{case}.c"));
+    let archive = crate::c_compiler::static_archive(&source, directory.path(), case, &[])
+        .unwrap_or_else(|error| panic!("{case}: {error}"));
+    let archive = archive.to_string_lossy().into_owned();
+    sim_cli::reject_case_with_args(
+        SUITE,
+        case,
+        "a VPI application registers `$random`, which llg implements as a built-in",
+        &["--dpi-lib", &archive],
+    );
+}
+
+#[test]
 fn s42_d1_put_value_returns_null() {
     run_vpi_decision(
         "S42-D1_put_value_returns_null",

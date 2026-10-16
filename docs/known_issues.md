@@ -1927,12 +1927,14 @@ of a handle or value:
 
 System task and function registrations are also limited (SIM-099):
 
-- a `vpi_register_systf` under the name of a built-in llg implements (the
-  LRM's example is `$random`) is accepted but never called: the built-in
-  runs, without a diagnostic, although SV 36.3.2 says the application "shall
-  override the built-in system task or system function". Built-ins llg does
-  not implement (the Annex D services, `$sreadmemb/$sreadmemh`,
-  `$sdf_annotate`) are dispatched to such a registration;
+- a `vpi_register_systf` under the name of a built-in llg implements does
+  not override it, although SV 36.3.2 says the application "shall override
+  the built-in system task or system function". When the design calls that
+  built-in, the run stops at startup naming it and its call (decision
+  S99-D6); a registration of a built-in the design does not call is
+  accepted. Built-ins llg does not implement (the Annex D services,
+  `$sreadmemb/$sreadmemh`, `$sdf_annotate`) are dispatched to such a
+  registration;
 - a call whose built-in signature has a `string` formal (`$input`, `$log`,
   `$sdf_annotate`'s file names, or a `--define-system-task` `string` formal)
   fails to compile with `<file>:<line>:<col>: argument of VPI system task

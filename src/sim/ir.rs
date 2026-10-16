@@ -137,8 +137,8 @@ pub use storage::{
 };
 mod vpi;
 pub use vpi::{
-    IrVpiArgRef, IrVpiCompileArg, IrVpiCompileCall, IrVpiConstant, IrVpiDirection, IrVpiObject,
-    IrVpiObjectKind, IrVpiVarKind,
+    IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConstant,
+    IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiVarKind,
 };
 
 /// Upper bound on one generated `llg_net_t`'s driver count. The runtime stores
@@ -560,6 +560,10 @@ pub struct IrModel {
     /// Type-only VPI call sites run through compiletf/sizetf before the
     /// generated scheduler starts. Empty for hand-built IR fixtures.
     pub(in crate::sim) vpi_compile_calls: Vec<IrVpiCompileCall>,
+    /// Built-in system subroutines run natively, by name, with their first
+    /// call site; checked against VPI registrations at startup. Empty for
+    /// hand-built IR fixtures.
+    pub(in crate::sim) vpi_builtin_calls: Vec<IrVpiBuiltinCall>,
     /// Whether the model emits its VPI object catalog. Generation clears it,
     /// with `vpi_objects`, when no application can reach the catalog: no
     /// user system task call site and no `CodegenOptions::vpi`.
@@ -709,6 +713,7 @@ impl IrModel {
             final_spawns: parts.final_spawns,
             vpi_objects: Vec::new(),
             vpi_compile_calls: Vec::new(),
+            vpi_builtin_calls: Vec::new(),
             vpi_catalog: true,
             random: IrRandomUse::default(),
             rand_problems: Vec::new(),

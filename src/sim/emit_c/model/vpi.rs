@@ -483,6 +483,38 @@ pub(in crate::sim::emit_c) fn vpi_call_scopes(model: &IrModel) -> Vec<String> {
         .collect()
 }
 
+/// Emit the built-in system subroutines the model runs natively, checked
+/// against VPI registrations after plugin startup (decision S99-D6).
+pub(super) fn render_vpi_builtin_calls(model: &IrModel, out: &mut String) {
+    if model.vpi_builtin_calls.is_empty() {
+        return;
+    }
+    out.push_str("\n/* built-in system subroutines a VPI registration must not override */\n");
+    out.push_str("static const llg_vpi_builtin_call_t llg_vpi_builtin_calls[] = {\n");
+    for call in &model.vpi_builtin_calls {
+        out.push_str(&format!(
+            "    {{ {}, {}, {} }},\n",
+            c_string_literal(&call.name),
+            call.file
+                .as_deref()
+                .map_or_else(|| "NULL".to_owned(), c_string_literal),
+            call.line
+        ));
+    }
+    out.push_str("};\n");
+}
+
+/// The startup statement that rejects VPI registrations of the built-ins
+/// the model runs natively, or `None` when it calls none.
+pub(in crate::sim::emit_c) fn vpi_builtin_check(model: &IrModel) -> Option<String> {
+    (!model.vpi_builtin_calls.is_empty()).then(|| {
+        format!(
+            "llg_vpi_check_builtin_overrides(llg_vpi_builtin_calls, {}u)",
+            model.vpi_builtin_calls.len()
+        )
+    })
+}
+
 /// Emit type-only descriptors for every source-level VPI call site. The
 /// generated `main` invokes these after plugin startup, so compiletf/sizetf
 /// runs before start-of-simulation callbacks or user processes. Values are

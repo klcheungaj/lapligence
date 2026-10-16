@@ -726,6 +726,11 @@ buffers valid until the next query/shutdown. Puts go through `llg_ba`/`llg_ba_d`
 force table (`llg_force_value_parts`, `llg_force_real_value`, release through
 `llg_release_parts`/`llg_release_real`). Tear down VPI/runtime queues before
 model storage.
+Built-ins are never dispatched to a registration under their name: after
+plugin startup, `llg_vpi_check_builtin_overrides` fails the start, naming the
+call, when an application registered a built-in the model runs natively
+(decision S99-D6). It returns at once without registrations; the generated
+model emits the table and the call only when it calls built-ins.
 
 VPI callbacks (SIM-043) are records owned by the registry from registration
 until removal or, for time and action reasons, retirement after they run.

@@ -250,6 +250,13 @@ collector setting instead of comparing it with a fixed value.
   have no llg lowering; the registered applications return 2 and print one line.
   Annex D is informative (D.1 L69791: "for informative purposes only and are not
   part of this standard").
+- `builtin_override.sv` + `builtin_override.c` (gate item G3): the application
+  registers `$random`, the example of SV 36.3.2 L56427-56431 ("a user could
+  write a random number generator as a PLI application and then associate the
+  application with the name $random, thereby overriding the built-in $random
+  function"). llg runs its built-ins natively and does not support the override
+  (decision S99-D6); this design does not call `$random`, so nothing is
+  overridden and the run prints `no built-in overridden`.
 
 ## Procedural concurrent assertions (`procedural_assertions.sv`, gate item G5)
 
@@ -341,6 +348,7 @@ Derivation:
 | `neg_view_input_select.sv` | `:12:15 cannot assign to input port 'data'` | SV 25.5 L43860: modports declare directions; a select of an input member through the view is still a write to it (frontend diagnostic). |
 | `neg_unregistered_annex_task.sv` | `llg: VPI error: no VPI registration for `$sreadmemh` (called at <path>:7)` | No lowering and no application: the run stops at startup naming the call, never a no-op. |
 | `neg_unregistered_annex_function.sv` | `... `$reset_count` (called at <path>:7)` | Same for a function. |
+| `neg_builtin_override.sv` (with `builtin_override.c` linked by `--dpi-lib` or loaded by `LLG_VPI_PLUGIN`) | `llg: VPI error: a VPI application registers `$random`, which llg implements as a built-in (called at <path>:6); llg does not support overriding built-in system tasks and functions (IEEE 1800-2009 36.3.2)` | SV 36.3.2 requires the override, which llg does not support; the run stops at startup instead of silently running the built-in (S99-D6). |
 | `neg_procedural_automatic.sv` | `:9:47: automatic variable `i` in a procedural concurrent assertion takes its value when the assertion is queued (IEEE 1800-2009 16.15.6.1); llg does not capture queued values` | SV 16.15.6.1 L26882-26884: a procedural concurrent assertion "shall not sample any const expression or automatic variable, but shall instead save the value of the expression or variable at the time the assertion evaluation attempt is added to the procedural assertion queue"; llg keeps no values with a queued instance. |
 | `neg_procedural_const.sv` | `:9:45: a const cast in a procedural concurrent assertion takes its value when the assertion is queued ...` | The same rule for a `const'` cast. |
 | `neg_procedural_edge.sv` | `:8:5: the clock inferred from the procedure (`edge` of the expression at line 6, column 17) cannot clock a concurrent assertion in llg ...` | SV 16.15.6 c) infers `edge clk`; llg assertion clocks are a posedge or a negedge. |

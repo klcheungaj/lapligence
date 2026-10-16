@@ -4165,6 +4165,31 @@ double llg_vpi_call_real_function(const char* name, llg_vpi_arg_t* args, int cou
 
 int llg_vpi_failed(void) { return g_vpi.failed; }
 
+int llg_vpi_check_builtin_overrides(const llg_vpi_builtin_call_t* calls, uint32_t count) {
+    if (!g_vpi.registration_count) return 1;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (!find_registration(calls[i].name)) continue;
+        vpi_set_errorf(vpiCompile, vpiError, "LLG_VPI_BUILTIN_OVERRIDE",
+                       "VPI registration of built-in `%s` cannot override it", calls[i].name);
+        /* The model stops before time 0; name the call that would have
+         * reached the application. */
+        if (calls[i].file)
+            fprintf(stderr,
+                    "llg: VPI error: a VPI application registers `%s`, which llg implements "
+                    "as a built-in (called at %s:%d); llg does not support overriding built-in "
+                    "system tasks and functions (IEEE 1800-2009 36.3.2)\n",
+                    calls[i].name, calls[i].file, calls[i].line);
+        else
+            fprintf(stderr,
+                    "llg: VPI error: a VPI application registers `%s`, which llg implements "
+                    "as a built-in; llg does not support overriding built-in system tasks and "
+                    "functions (IEEE 1800-2009 36.3.2)\n",
+                    calls[i].name);
+        return 0;
+    }
+    return 1;
+}
+
 /* Shutdown hook of the DPI-C bridge, which the runtime compiles after this
  * file: llg_dpi_model_init registers it, so a build of this file alone (the
  * storage probes) needs no DPI symbol. */
