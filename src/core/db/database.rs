@@ -126,6 +126,12 @@ pub use coverage::{
 };
 mod shared;
 use shared::{DenseShared, DenseSharedBuilder};
+mod specify;
+use specify::{specify_tables_from_slang, SpecifyTables};
+pub use specify::{
+    ModulePath, PathCondition, PathConnection, PathEdge, PathPolarity, PulseStyle, SpecifyItem,
+    SpecifyItemKind, Specparam, TimingCheckKind,
+};
 
 /// Arena index of one [`Node`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -352,6 +358,8 @@ pub struct Db {
     /// Exact admitted source buffers keyed by their frontend file name.
     source_files: HashMap<String, String>,
     elaborated_type_ranges: Vec<ElaboratedTypeRanges>,
+    /// Specify blocks, module paths, specify items and specparam facts.
+    specify: SpecifyTables,
 }
 
 impl Db {
@@ -418,6 +426,7 @@ impl Db {
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
             elaborated_type_ranges: Vec::new(),
+            specify: SpecifyTables::default(),
         }
     }
 
@@ -497,6 +506,7 @@ impl Db {
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
             elaborated_type_ranges: Vec::new(),
+            specify: SpecifyTables::default(),
         };
         db.validate().map_err(DbError::InvalidDatabase)?;
         Ok(db)

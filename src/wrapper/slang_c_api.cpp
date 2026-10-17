@@ -49,6 +49,7 @@
 #include "slang/diagnostics/DeclarationsDiags.h"
 #include "slang/diagnostics/DiagnosticEngine.h"
 #include "slang/diagnostics/DiagnosticClient.h"
+#include "slang/diagnostics/ExpressionsDiags.h"
 #include "slang/diagnostics/StatementsDiags.h"
 #include "slang/driver/UserDefinedSubroutine.h"
 #include "slang/numeric/ConstantValue.h"
@@ -1514,8 +1515,79 @@ uint32_t semanticSymbolKind(SymbolKind kind) {
     case SymbolKind::CoverageBin:
     case SymbolKind::CoverCross: return LLG_SLANG_SEMANTIC_COVERAGE;
     case SymbolKind::RandSeqProduction: return LLG_SLANG_SEMANTIC_PRODUCTION;
+    case SymbolKind::SpecifyBlock:
+    case SymbolKind::TimingPath:
+    case SymbolKind::PulseStyle:
+    case SymbolKind::SystemTimingCheck: return LLG_SLANG_SEMANTIC_SPECIFY;
     default: return LLG_SLANG_SEMANTIC_UNSUPPORTED;
   }
+}
+
+// Repository codes for a module path's polarity and edge fields
+// (LLG_SLANG_SPECIFY_PATH_*).
+uint64_t specifyPolarityCode(TimingPathSymbol::Polarity polarity) {
+  switch (polarity) {
+    case TimingPathSymbol::Polarity::Unknown: return 0;
+    case TimingPathSymbol::Polarity::Positive: return 1;
+    case TimingPathSymbol::Polarity::Negative: return 2;
+  }
+  return 0;
+}
+
+uint64_t specifyEdgeCode(EdgeKind edge) {
+  switch (edge) {
+    case EdgeKind::None: return 0;
+    case EdgeKind::PosEdge: return 1;
+    case EdgeKind::NegEdge: return 2;
+    case EdgeKind::BothEdges: return 3;
+  }
+  return 0;
+}
+
+uint64_t specifyPathAuxiliary(const TimingPathSymbol& path) {
+  uint64_t auxiliary = 0;
+  if (path.connectionKind == TimingPathSymbol::ConnectionKind::Full)
+    auxiliary |= LLG_SLANG_SPECIFY_PATH_FULL;
+  auxiliary |= specifyPolarityCode(path.polarity)
+               << LLG_SLANG_SPECIFY_PATH_POLARITY_SHIFT;
+  auxiliary |= specifyEdgeCode(path.edgeIdentifier)
+               << LLG_SLANG_SPECIFY_PATH_EDGE_SHIFT;
+  auxiliary |= specifyPolarityCode(path.edgePolarity)
+               << LLG_SLANG_SPECIFY_PATH_EDGE_POLARITY_SHIFT;
+  if (path.isStateDependent)
+    auxiliary |= LLG_SLANG_SPECIFY_PATH_STATE_DEPENDENT;
+  return auxiliary;
+}
+
+uint64_t specifyPulseStyleCode(PulseStyleKind kind) {
+  switch (kind) {
+    case PulseStyleKind::OnEvent: return LLG_SLANG_SPECIFY_PULSE_ONEVENT;
+    case PulseStyleKind::OnDetect: return LLG_SLANG_SPECIFY_PULSE_ONDETECT;
+    case PulseStyleKind::ShowCancelled: return LLG_SLANG_SPECIFY_PULSE_SHOWCANCELLED;
+    case PulseStyleKind::NoShowCancelled: return LLG_SLANG_SPECIFY_PULSE_NOSHOWCANCELLED;
+  }
+  throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR, "unknown pulse style kind");
+}
+
+// An unknown timing check (an error the frontend has already reported)
+// maps to 0, which the importer rejects only if the block is lowered.
+uint64_t specifyTimingCheckCode(SystemTimingCheckKind kind) {
+  switch (kind) {
+    case SystemTimingCheckKind::Setup: return LLG_SLANG_SPECIFY_CHECK_SETUP;
+    case SystemTimingCheckKind::Hold: return LLG_SLANG_SPECIFY_CHECK_HOLD;
+    case SystemTimingCheckKind::SetupHold: return LLG_SLANG_SPECIFY_CHECK_SETUPHOLD;
+    case SystemTimingCheckKind::Recovery: return LLG_SLANG_SPECIFY_CHECK_RECOVERY;
+    case SystemTimingCheckKind::Removal: return LLG_SLANG_SPECIFY_CHECK_REMOVAL;
+    case SystemTimingCheckKind::RecRem: return LLG_SLANG_SPECIFY_CHECK_RECREM;
+    case SystemTimingCheckKind::Skew: return LLG_SLANG_SPECIFY_CHECK_SKEW;
+    case SystemTimingCheckKind::TimeSkew: return LLG_SLANG_SPECIFY_CHECK_TIMESKEW;
+    case SystemTimingCheckKind::FullSkew: return LLG_SLANG_SPECIFY_CHECK_FULLSKEW;
+    case SystemTimingCheckKind::Period: return LLG_SLANG_SPECIFY_CHECK_PERIOD;
+    case SystemTimingCheckKind::Width: return LLG_SLANG_SPECIFY_CHECK_WIDTH;
+    case SystemTimingCheckKind::NoChange: return LLG_SLANG_SPECIFY_CHECK_NOCHANGE;
+    case SystemTimingCheckKind::Unknown: return 0;
+  }
+  return 0;
 }
 
 // Repository codes for Slang constraint kinds; 0 for an invalid constraint,
@@ -2387,6 +2459,37 @@ public:
     }
     if constexpr (std::same_as<T, AnonymousProgramSymbol>)
       result.subkind = LLG_SLANG_SCOPE_ANONYMOUS_PROGRAM;
+    // Specify items have no name, so they are located by their syntax.
+    if constexpr (std::same_as<T, SpecifyBlockSymbol> ||
+                  std::same_as<T, TimingPathSymbol> ||
+                  std::same_as<T, PulseStyleSymbol> ||
+                  std::same_as<T, SystemTimingCheckSymbol>) {
+      if (const syntax::SyntaxNode* syntaxNode = symbol.getSyntax())
+        result.range = capture.span(syntaxNode->sourceRange());
+    }
+    if constexpr (std::same_as<T, SpecifyBlockSymbol>)
+      result.subkind = LLG_SLANG_SPECIFY_BLOCK;
+    if constexpr (std::same_as<T, TimingPathSymbol>) {
+      result.subkind = LLG_SLANG_SPECIFY_PATH;
+      result.auxiliary = specifyPathAuxiliary(symbol);
+    }
+    if constexpr (std::same_as<T, PulseStyleSymbol>) {
+      result.subkind = LLG_SLANG_SPECIFY_PULSE_STYLE;
+      result.auxiliary = specifyPulseStyleCode(symbol.pulseStyleKind);
+    }
+    if constexpr (std::same_as<T, SystemTimingCheckSymbol>) {
+      result.subkind = LLG_SLANG_SPECIFY_TIMING_CHECK;
+      result.auxiliary = specifyTimingCheckCode(symbol.timingCheckKind);
+    }
+    if constexpr (std::same_as<T, SpecparamSymbol>) {
+      if (symbol.isPathPulse) {
+        result.subkind = LLG_SLANG_PARAMETER_PATHPULSE;
+      }
+      else {
+        result.subkind = LLG_SLANG_PARAMETER_SPECPARAM;
+        result.constant_id = capture.constant(symbol.getValue());
+      }
+    }
     if constexpr (std::same_as<T, RandSeqProductionSymbol>) {
       result.subkind = LLG_SLANG_PRODUCTION_DECLARATION;
       result.type_id = capture.type(symbol.getReturnType());
@@ -2646,6 +2749,17 @@ public:
     }
     else {
       visitDefault(symbol);
+    }
+    if constexpr (std::same_as<T, TimingPathSymbol>) {
+      if (!capture.declarationOnly)
+        captureTimingPath(id, symbol);
+    }
+    if constexpr (std::same_as<T, PulseStyleSymbol>) {
+      if (!capture.declarationOnly) {
+        uint32_t index = 0;
+        for (const Expression* terminal : symbol.getTerminals())
+          specifyOperand(id, *terminal, LLG_SLANG_EDGE_OPERAND, index++);
+      }
     }
     if constexpr (std::same_as<T, CovergroupType> ||
                   std::same_as<T, CoverpointSymbol> ||
@@ -3437,6 +3551,31 @@ private:
       if (const auto* syntaxNode = symbol.getSyntax())
         captureNames(*syntaxNode, context);
     }
+  }
+
+  // Specify path capture (IEEE 1364-2001 14.2, IEEE 1800-2009 30.4).
+  // Slang's visitor does not descend into a timing path's expressions; each
+  // one is captured here under the path node (the caller has pushed it).
+  void specifyOperand(uint64_t owner, const Expression& expression, uint32_t role,
+                      uint32_t index = 0) {
+    expression.visit(*this);
+    capture.semanticRole(owner, &expression, role, index);
+  }
+
+  void captureTimingPath(uint64_t id, const TimingPathSymbol& path) {
+    uint32_t index = 0;
+    for (const Expression* input : path.getInputs())
+      specifyOperand(id, *input, LLG_SLANG_EDGE_OPERAND, index++);
+    index = 0;
+    for (const Expression* output : path.getOutputs())
+      specifyOperand(id, *output, LLG_SLANG_EDGE_LHS, index++);
+    index = 0;
+    for (const Expression* delay : path.getDelays())
+      specifyOperand(id, *delay, LLG_SLANG_EDGE_DELAY, index++);
+    if (const Expression* condition = path.getConditionExpr())
+      specifyOperand(id, *condition, LLG_SLANG_EDGE_CONDITION);
+    if (const Expression* source = path.getEdgeSourceExpr())
+      specifyOperand(id, *source, LLG_SLANG_EDGE_RHS);
   }
 
   // Randsequence capture (IEEE 1800-2009 18.17). Rules and production-list
@@ -6921,6 +7060,12 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   // drops the statement, which would otherwise surface as an unlocated
   // lowering failure.
   engine.setSeverity(diag::BadProceduralForce, DiagnosticSeverity::Error);
+  // IEEE 1364-2001 Table 8 and 1800-2009 Table 6-11: a parameter "May not be
+  // used inside specify blocks"; the frontend only warns. Two declarations
+  // of the same (or an overlapping) module path give that path two delays,
+  // which neither standard orders; llg rejects them (decision A7-D4).
+  engine.setSeverity(diag::SpecifyBlockParam, DiagnosticSeverity::Error);
+  engine.setSeverity(diag::DupTimingPath, DiagnosticSeverity::Error);
   Diagnostics pragmaDiagnostics = engine.setMappingsFromPragmas();
   for (const Diagnostic& diagnostic : pragmaDiagnostics)
     compilationClient->issue(engine, diagnostic);

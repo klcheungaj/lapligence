@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 27u
+#define LLG_SLANG_ABI_VERSION 28u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -437,7 +437,63 @@ enum {
   /* A randsequence production or one of its synthetic rule and production
    * list nodes (IEEE 1800-2009 18.17); subkind is LLG_SLANG_PRODUCTION_*. */
   LLG_SLANG_SEMANTIC_PRODUCTION = 32,
+  /* A specify block or one of its items (IEEE 1364-2001 14, IEEE 1800-2009
+   * 30); subkind is LLG_SLANG_SPECIFY_*. */
+  LLG_SLANG_SEMANTIC_SPECIFY = 33,
   LLG_SLANG_SEMANTIC_UNSUPPORTED = 255
+};
+
+/* Specify subkinds (ABI v28). Every node is a Slang symbol owned by its
+ * specify block, which is owned by its instance body.
+ * BLOCK: the specify block; its specparams (PARAMETER nodes with subkind
+ *   LLG_SLANG_PARAMETER_SPECPARAM or _PATHPULSE) and items are children.
+ * PATH: one module path declaration (14.2/30.4). OPERAND[i] is input
+ *   terminal i, LHS[i] output terminal i, DELAY[i] path delay value i in
+ *   source order, CONDITION the state-dependent condition (absent for an
+ *   unconditional or `ifnone` path) and RHS the edge-sensitive data source.
+ *   Auxiliary: LLG_SLANG_SPECIFY_PATH_* bits and fields.
+ * PULSE_STYLE: a pulsestyle/showcancelled declaration; OPERAND[i] is
+ *   terminal i and the auxiliary is an LLG_SLANG_SPECIFY_PULSE_* code.
+ * TIMING_CHECK: a system timing check; the auxiliary is an
+ *   LLG_SLANG_SPECIFY_CHECK_* code. Its arguments are not exported. */
+enum {
+  LLG_SLANG_SPECIFY_BLOCK = 1,
+  LLG_SLANG_SPECIFY_PATH = 2,
+  LLG_SLANG_SPECIFY_PULSE_STYLE = 3,
+  LLG_SLANG_SPECIFY_TIMING_CHECK = 4
+};
+
+/* PATH auxiliary. Polarity fields: 0 unknown, 1 positive, 2 negative.
+ * Edge field: 0 none, 1 posedge, 2 negedge, 3 edge. */
+enum {
+  LLG_SLANG_SPECIFY_PATH_FULL = 1ull << 0,
+  LLG_SLANG_SPECIFY_PATH_POLARITY_SHIFT = 1,
+  LLG_SLANG_SPECIFY_PATH_EDGE_SHIFT = 3,
+  LLG_SLANG_SPECIFY_PATH_EDGE_POLARITY_SHIFT = 5,
+  LLG_SLANG_SPECIFY_PATH_FIELD_MASK = 3,
+  LLG_SLANG_SPECIFY_PATH_STATE_DEPENDENT = 1ull << 7
+};
+
+enum {
+  LLG_SLANG_SPECIFY_PULSE_ONEVENT = 1,
+  LLG_SLANG_SPECIFY_PULSE_ONDETECT = 2,
+  LLG_SLANG_SPECIFY_PULSE_SHOWCANCELLED = 3,
+  LLG_SLANG_SPECIFY_PULSE_NOSHOWCANCELLED = 4
+};
+
+enum {
+  LLG_SLANG_SPECIFY_CHECK_SETUP = 1,
+  LLG_SLANG_SPECIFY_CHECK_HOLD = 2,
+  LLG_SLANG_SPECIFY_CHECK_SETUPHOLD = 3,
+  LLG_SLANG_SPECIFY_CHECK_RECOVERY = 4,
+  LLG_SLANG_SPECIFY_CHECK_REMOVAL = 5,
+  LLG_SLANG_SPECIFY_CHECK_RECREM = 6,
+  LLG_SLANG_SPECIFY_CHECK_SKEW = 7,
+  LLG_SLANG_SPECIFY_CHECK_TIMESKEW = 8,
+  LLG_SLANG_SPECIFY_CHECK_FULLSKEW = 9,
+  LLG_SLANG_SPECIFY_CHECK_PERIOD = 10,
+  LLG_SLANG_SPECIFY_CHECK_WIDTH = 11,
+  LLG_SLANG_SPECIFY_CHECK_NOCHANGE = 12
 };
 
 /* Pattern subtype tags carried by unsupported semantic nodes.  Keeping the
@@ -915,7 +971,12 @@ enum {
   /* An anonymous program (SV 24.6) in a package or compilation unit. Its
    * members belong to the enclosing namespace; the scope only records that
    * they are programwide items. */
-  LLG_SLANG_SCOPE_ANONYMOUS_PROGRAM = 235
+  LLG_SLANG_SCOPE_ANONYMOUS_PROGRAM = 235,
+  /* A specparam (V 3.11.3, SV 6.20.5): a PARAMETER node whose constant_id
+   * is its value. PATHPULSE marks a `PATHPULSE$` pulse-limit specparam,
+   * which carries no constant. */
+  LLG_SLANG_PARAMETER_SPECPARAM = 236,
+  LLG_SLANG_PARAMETER_PATHPULSE = 237
 };
 
 /* Clocking metadata carried in LlgSlangSemanticNode::auxiliary. Edge codes

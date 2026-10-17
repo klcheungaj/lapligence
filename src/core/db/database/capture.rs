@@ -11,6 +11,7 @@ impl Db {
         let ids = SemanticIds::new(&snapshot.semantic_nodes)?;
         let mut source_positions = SourcePositions::new(snapshot);
         let udp_tables = udp_tables_from_slang(snapshot, &mut source_positions)?;
+        let specify = specify_tables_from_slang(snapshot, &ids)?;
         let mut source_identities = HashMap::new();
         for semantic in &snapshot.semantic_nodes {
             let id = NodeId::from_index(semantic.id as usize);
@@ -1344,6 +1345,7 @@ impl Db {
                 .map(|file| (file.name.clone(), file.text.clone()))
                 .collect(),
             elaborated_type_ranges,
+            specify,
         };
         db.validate().map_err(DbError::InvalidDatabase)?;
         Ok(db)

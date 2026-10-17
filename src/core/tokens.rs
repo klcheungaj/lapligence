@@ -448,6 +448,7 @@ fn semantic_kind(kind: SemanticKind) -> &'static str {
         SemanticKind::Constraint => "constraint",
         SemanticKind::Coverage => "coverage",
         SemanticKind::Production => "production",
+        SemanticKind::Specify => "specify item",
         SemanticKind::Primitive => "primitive",
         SemanticKind::Subroutine => "subroutine",
         SemanticKind::Argument => "argument",

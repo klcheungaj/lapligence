@@ -1610,3 +1610,66 @@ fn constraint_and_randomize_auxiliary_bits_are_validated() {
         );
     }
 }
+
+#[test]
+fn specify_nodes_validate_subkind_and_auxiliary_fields() {
+    let decoded = |subkind: u32, auxiliary: u64| {
+        let mut raw = raw_semantic_node(0);
+        raw.kind = 33;
+        raw.subkind = subkind;
+        raw.auxiliary = auxiliary;
+        stream(&nodes(vec![raw]))
+    };
+    let path = SPECIFY_PATH_FULL
+        | (2 << SPECIFY_PATH_POLARITY_SHIFT)
+        | (3 << SPECIFY_PATH_EDGE_SHIFT)
+        | (1 << SPECIFY_PATH_EDGE_POLARITY_SHIFT)
+        | SPECIFY_PATH_STATE_DEPENDENT;
+    let node = decoded(SEMANTIC_SPECIFY_PATH, path).expect("module path fields must decode");
+    assert_eq!(node.semantic_nodes[0].kind, SemanticKind::Specify);
+    assert_eq!(node.semantic_nodes[0].auxiliary, path);
+    for (subkind, auxiliary, what) in [
+        (0, 0, "a missing specify subkind"),
+        (
+            SEMANTIC_SPECIFY_TIMING_CHECK + 1,
+            0,
+            "an unknown specify subkind",
+        ),
+        (
+            SEMANTIC_SPECIFY_PATH,
+            3 << SPECIFY_PATH_POLARITY_SHIFT,
+            "polarity code 3",
+        ),
+        (SEMANTIC_SPECIFY_PATH, 1 << 8, "an unknown path bit"),
+        (SEMANTIC_SPECIFY_PULSE_STYLE, 0, "pulse style 0"),
+        (
+            SEMANTIC_SPECIFY_PULSE_STYLE,
+            SPECIFY_PULSE_NOSHOWCANCELLED + 1,
+            "pulse style 5",
+        ),
+        (
+            SEMANTIC_SPECIFY_TIMING_CHECK,
+            SPECIFY_CHECK_NOCHANGE + 1,
+            "timing check 13",
+        ),
+        (SEMANTIC_SPECIFY_BLOCK, 1, "block auxiliary"),
+    ] {
+        let error = decoded(subkind, auxiliary).expect_err(what);
+        assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData, "{what}");
+    }
+    decoded(SEMANTIC_SPECIFY_TIMING_CHECK, 0).expect("an unclassified timing check decodes");
+
+    let mut specparam = raw_semantic_node(0);
+    specparam.kind = 12;
+    for subkind in [
+        0,
+        SEMANTIC_PARAMETER_SPECPARAM,
+        SEMANTIC_PARAMETER_PATHPULSE,
+    ] {
+        specparam.subkind = subkind;
+        stream(&nodes(vec![specparam])).expect("parameter subkinds must decode");
+    }
+    specparam.subkind = 1;
+    let error = stream(&nodes(vec![specparam])).expect_err("unknown parameter subkind");
+    assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+}
