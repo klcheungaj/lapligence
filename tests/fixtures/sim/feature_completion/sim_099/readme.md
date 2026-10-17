@@ -290,6 +290,21 @@ collector setting instead of comparing it with a fixed value.
   `y` changes (6a, 62): the latch keeps 48, the others follow (run 4, `y.b` = 6b),
   and at 8 `i` = 1 selects `y.mem[1]` = 61.
 
+- `null_handle_access.sv` (gate-fixes-2 item 2, decision S99-D8): SV 25.9
+  L44893-44895: "A virtual interface shall be initialized before referencing a
+  component of the virtual interface; it has the value null before it is
+  initialized. Attempting to use a null virtual interface shall result in a
+  fatal run-time error."; SV 8.4 L9653-9654: "Accessing nonstatic members (see
+  8.8) or virtual methods (see 8.19) via a null object handle is illegal. The
+  result of an illegal access via a null object is indeterminate, and
+  implementations may issue an error." Each `+case=<n>` (0 to 8) runs one
+  access through the null `v` or `c`: a member read stored to `k`, a member
+  read in a display, an array element read and write, a bit-select write, a
+  method call, a function that reads `v.a`, and a class property read stored
+  and displayed. Every case prints `before`, reports the error at the access
+  and exits with status 1; `k` keeps 5, and neither the display that made the
+  access nor `after` prints.
+
 ## Procedural concurrent assertions (`procedural_assertions.sv`, gate item G5)
 
 Eight modules under `tb`, finishing at 46; `clk` rises at 5, 15, 25, 35 and 45

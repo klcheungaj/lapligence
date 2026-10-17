@@ -96,7 +96,10 @@ impl Frame<'_, '_> {
 
     pub(super) fn statement(&mut self, statement: &IrStmt) -> Result<(), String> {
         let touches = self.pending_touches.len();
-        self.statement_body(statement)?;
+        self.statement_depth += 1;
+        let rendered = self.statement_body(statement);
+        self.statement_depth -= 1;
+        rendered?;
         // Element members written in place are published after the store.
         let pending = self.pending_touches.split_off(touches);
         let mut seen = Vec::new();

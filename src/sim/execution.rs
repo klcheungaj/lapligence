@@ -2290,7 +2290,9 @@ fn collect_object_query_effects(
             collect_chandle_effects(ir, a, effects, visited_calls);
             collect_chandle_effects(ir, b, effects, visited_calls);
         }
+        // A null or unbound handle is a fatal run-time error (SV 25.9).
         IrObjectQuery::VirtualInterfaceInstance { handle, .. } => {
+            effects.push(ExecutionEffect::Terminate);
             collect_chandle_effects(ir, handle, effects, visited_calls);
         }
         IrObjectQuery::Coverage(query) => {

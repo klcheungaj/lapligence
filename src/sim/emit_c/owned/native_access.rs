@@ -114,7 +114,17 @@ impl Frame<'_, '_> {
             IrClassFieldType::String => "llg_string_t*",
             IrClassFieldType::Chandle => "void**",
         };
-        Ok(Some((self.scalar(c_type, address), ty)))
+        let address = self.scalar(c_type, address);
+        // A failed member access yields the never-changing scratch storage.
+        if matches!(access.kind, IrNativeAccessKind::InterfaceMember { .. }) {
+            let invalid = if matches!(ty, IrClassFieldType::Real { .. }) {
+                "&llg_vif_invalid_real"
+            } else {
+                "&llg_vif_invalid"
+            };
+            self.exit_on_failed_access(&format!("{address} == {invalid}"));
+        }
+        Ok(Some((address, ty)))
     }
 
     pub(super) fn resolve_lookup(&mut self, name: &str) -> Result<Binding, String> {

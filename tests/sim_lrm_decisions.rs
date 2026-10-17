@@ -2673,6 +2673,19 @@ fn s99_d7_vif_implicit_sensitivity() {
 }
 
 #[test]
+fn s99_d8_null_access_stops() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S99-D8_null_access_stops.out");
+    sim_cli::run_case_checked_matrix(SUITE, "S99-D8_null_access_stops", &[], &|label, output| {
+        runtime_error(
+            label,
+            output,
+            expected,
+            "virtual interface access failed: virtual interface member access at tb:26:45",
+        );
+    });
+}
+
+#[test]
 fn s99_d6_builtin_override() {
     // Negative case: llg stops at startup, so the expected stdout is empty.
     assert!(include_str!("fixtures/sim/lrm_decisions/S99-D6_builtin_override.out").is_empty());

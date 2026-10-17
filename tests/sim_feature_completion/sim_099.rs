@@ -494,6 +494,39 @@ fn implicit_sensitivity_virtual_interface_limits_are_located() {
     );
 }
 
+/// Gate-fixes-2 item 2 / IEEE 1800-2009 25.9, 8.4 (S99-D8): an access
+/// through a null virtual interface or class handle is a fatal run-time
+/// error that stops the run at once, in its own statement, in a called
+/// function and in an interface method call, for packed members, selects,
+/// array elements and class properties.
+#[test]
+fn null_handle_accesses_stop_at_once() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_099/null_handle_access.out");
+    let vif = "virtual interface access failed: virtual interface";
+    let class = "null class handle access: property access at tb:";
+    let cases = [
+        ("0", format!("{vif} member access at tb:33:14")),
+        ("1", format!("{vif} member access at tb:34:33")),
+        ("2", format!("{vif} member access at tb:35:14")),
+        ("3", format!("{vif} member access at tb:36:10")),
+        ("4", format!("{vif} member access at tb:37:10")),
+        ("5", format!("{vif} method call at tb:38:14")),
+        ("6", format!("{vif} member access at tb:27:12")),
+        ("7", format!("{class}40:14")),
+        ("8", format!("{class}41:40")),
+    ];
+    for (case, diagnostic) in cases {
+        sim_cli::run_case_failing_at_runtime(
+            SUITE,
+            "null_handle_access",
+            &[&format!("+case={case}")],
+            expected,
+            &diagnostic,
+        );
+    }
+}
+
 /// G4 / IEEE 1800-2009 32.9, D.4, D.7: string literals of `string` formals
 /// reach a VPI application as string constants and scope actuals as module
 /// handles, for built-ins without a lowering and user system tasks alike; a

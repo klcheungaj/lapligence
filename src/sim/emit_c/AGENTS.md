@@ -77,6 +77,12 @@ Class virtual slots with a suspending implementation
 (`ExecutionAnalysis::suspendable_dispatch_slots`, SIM-011) use the same
 helper from any coroutine at an arena call site; their plain dispatchers
 fail instead of entering a coroutine with plain arguments.
+A failed null class or virtual-interface access is fatal at once (S99-D8):
+inside a statement, the owned emitter checks the access result and leaves the
+process (`LLG_CO_EXIT_CHECK`, or `goto _llg_return` in plain functions) before
+the rest of the statement, and checks the exit flag after a plain or dispatched
+call whose effects include `Terminate`. The checks sit on the failure branch, so
+code without such accesses or calls is unchanged.
 Compute conservative LP64 upper
 bounds with every embedded call charged its 16-byte anchor prefix and sibling
 blocks contributing their maximum rather than their sum; the named
