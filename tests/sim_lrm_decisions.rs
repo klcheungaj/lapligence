@@ -2686,6 +2686,14 @@ fn s99_d8_null_access_stops() {
 }
 
 #[test]
+fn s99_d10_class_method_scope() {
+    run_decision(
+        "S99-D10_class_method_scope",
+        include_str!("fixtures/sim/lrm_decisions/S99-D10_class_method_scope.out"),
+    );
+}
+
+#[test]
 fn s99_d6_builtin_override() {
     // Negative case: llg stops at startup, so the expected stdout is empty.
     assert!(include_str!("fixtures/sim/lrm_decisions/S99-D6_builtin_override.out").is_empty());

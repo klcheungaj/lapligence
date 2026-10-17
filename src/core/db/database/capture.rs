@@ -217,6 +217,43 @@ impl Db {
                 );
             }
         }
+        // Class nodes have no owned parent, so the scope that declares each
+        // class is kept apart for names such as `%m` (SV 21.2.1.6): the
+        // nearest enclosing class, package, compilation unit, instance,
+        // generate block or definition. A specialization's parent is its
+        // generic class definition, which is passed over: the specialization
+        // is declared where the generic class is.
+        let mut class_declaring_scopes = HashMap::new();
+        for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
+            if semantic.kind != SemanticKind::Class {
+                continue;
+            }
+            let mut ancestor = semantic.parent_id();
+            while let Some(parent) = ancestor {
+                let Some(node) = snapshot.semantic_nodes.get(parent as usize) else {
+                    return Err(DbError::InvalidSnapshot(format!(
+                        "class node {index} has unknown ancestor {parent}"
+                    )));
+                };
+                let generic_class =
+                    node.kind == SemanticKind::Class && node.detail == "GenericClassDef";
+                if node.detail == "CompilationUnit"
+                    || (!generic_class && node.kind == SemanticKind::Class)
+                    || matches!(
+                        node.kind,
+                        SemanticKind::Package
+                            | SemanticKind::Instance
+                            | SemanticKind::GenerateScope
+                            | SemanticKind::Definition
+                    )
+                {
+                    class_declaring_scopes
+                        .insert(NodeId::from_index(index), semantic_id(&ids, parent)?);
+                    break;
+                }
+                ancestor = node.parent_id();
+            }
+        }
         let source_map = super::super::SourceMap::from_slang(snapshot)?;
         let legacy_directives = legacy_directives(snapshot, &mut source_positions)?;
         let unconnected_drives = snapshot
@@ -1246,6 +1283,7 @@ impl Db {
             unconnected_drives,
             source_libraries,
             declaration_time_scales,
+            class_declaring_scopes,
             source_map,
             legacy_directives,
             tops,

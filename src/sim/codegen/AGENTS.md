@@ -804,7 +804,8 @@ Parse display formats during lowering (`objects/format_text.rs`, shared by every
 display, file, string and severity task); `%d` retains signedness and `$write` omits
 newline. Arguments stay typed: never re-parse rendered text. Literal string
 arguments start format segments, `%m` comes from `format_scope` (nearest named
-block, subroutine or generate block), and non-`%p` conversions of unpacked values
+block, subroutine or generate block; in class methods the class below the scope
+from `Db::class_declaring_scope`, S99-D10), and non-`%p` conversions of unpacked values
 or handles reject. `%p` (`objects/patterns.rs`) lowers to `IrStringExpr::Pattern`
 over interned `IrModel::pattern_types`/`pattern_classes`; the runtime walker in
 `rt/scheduler/patterns.c` only reads storage, bounds object nesting with

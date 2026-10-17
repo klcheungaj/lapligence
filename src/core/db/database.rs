@@ -226,6 +226,10 @@ pub struct Db {
     /// theirs in [`NodeKind::ModuleInst`]; a scope without a captured scale
     /// uses the compilation default.
     declaration_time_scales: HashMap<NodeId, (i32, i32)>,
+    /// The scope that declares each class (class nodes have no owned
+    /// parent): the nearest enclosing class, package, compilation unit,
+    /// module instance, generate block or definition.
+    class_declaring_scopes: HashMap<NodeId, NodeId>,
     /// Logical `` `line`` positions, kept apart from the physical node
     /// positions that remain the diagnostic identity.
     source_map: super::SourceMap,
@@ -365,6 +369,7 @@ impl Db {
             unconnected_drives: HashMap::new(),
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
+            class_declaring_scopes: HashMap::new(),
             source_map: super::SourceMap::default(),
             legacy_directives: Vec::new(),
             tops: Vec::new(),
@@ -443,6 +448,7 @@ impl Db {
             unconnected_drives: HashMap::new(),
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
+            class_declaring_scopes: HashMap::new(),
             source_map: super::SourceMap::default(),
             legacy_directives: Vec::new(),
             tops,
@@ -578,6 +584,14 @@ impl Db {
     /// for it or for the scope that declares the class.
     pub fn declaration_time_scale(&self, id: NodeId) -> Option<(i32, i32)> {
         self.declaration_time_scales.get(&id).copied()
+    }
+
+    /// The scope that declares class `id`: the nearest enclosing class,
+    /// package, compilation unit (a `Begin` with the `CompilationUnit`
+    /// detail), module instance, generate block or definition. Synthetic test
+    /// databases have none.
+    pub fn class_declaring_scope(&self, id: NodeId) -> Option<NodeId> {
+        self.class_declaring_scopes.get(&id).copied()
     }
 
     /// Active `` `default_decay_time``, `` `default_trireg_strength`` and

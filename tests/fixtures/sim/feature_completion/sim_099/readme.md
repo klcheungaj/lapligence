@@ -305,6 +305,21 @@ collector setting instead of comparing it with a fixed value.
   and exits with status 1; `k` keeps 5, and neither the display that made the
   access nor `after` prints.
 
+- `class_method_scope.sv` (gate-fixes-2 item 4, decision S99-D10): SV 21.2.1.6
+  L36379-36381: "The %m format specifier does not accept an argument. Instead,
+  it causes the display task to print the hierarchical name of the design
+  element, subroutine, named block, or labeled statement that invokes the system
+  task containing the format specifier." The subroutine is the method; llg
+  names it below its class and the class below the scope that declares it. At
+  0: `C.f`, `C.t`, `C.s` (a static method) for the compilation-unit class `C`;
+  `E.f` for the override called through a `C` handle; `C.base_only` for the
+  method `E` inherits (through `$sformatf`); `C.N.n` for the class nested in
+  `C`; `p.D.g` for the class in package `p`, named as the package function
+  `p.pf` is; `P.h` for the specialization `P#(4)`; `tb.mf` for the module
+  function. At 1 each instance of `sub` names its own class `L` (`tb.u1.L.k`,
+  `tb.u2.L.k`), and at 2 each generate block its class `G` (`tb.g[0].G.t`,
+  `tb.g[1].G.t`).
+
 ## Procedural concurrent assertions (`procedural_assertions.sv`, gate item G5)
 
 Eight modules under `tb`, finishing at 46; `clk` rises at 5, 15, 25, 35 and 45

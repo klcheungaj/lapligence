@@ -460,6 +460,86 @@ fn implicit_sensitivity_follows_virtual_interfaces() {
     );
 }
 
+/// Gate-fixes-2 item 4: `%m` in a class method names the method below its
+/// class and the scope that declares the class (S99-D10).
+#[test]
+fn class_method_scope_names_the_method() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "class_method_scope",
+        include_str!("../fixtures/sim/feature_completion/sim_099/class_method_scope.out"),
+        &[],
+        &[],
+    );
+}
+
+/// The owned Db keeps the scope that declares each class, although class
+/// nodes have no parent: the package, the enclosing class, each module
+/// instance's own class, and the compilation unit for a specialization of a
+/// generic class (not the generic definition).
+#[test]
+fn class_declaring_scopes_are_owned() {
+    use llg::core::{
+        compile,
+        db::{Db, NodeKind},
+    };
+
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/feature_completion/sim_099/class_method_scope.sv");
+    let database = sim_harness::with_frontend_temp_cwd("sim-099-db", |_| {
+        let compiled = compile::compile_checked(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile: {error}"))?;
+        Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))
+    })
+    .expect("checked compilation");
+    let classes = |name: &str| -> Vec<_> {
+        database
+            .classes()
+            .iter()
+            .copied()
+            .filter(|id| {
+                database.node(*id).name == name
+                    && database.semantic_detail(*id) != Some("GenericClassDef")
+            })
+            .collect()
+    };
+    let scope = |class| {
+        let scope = database
+            .class_declaring_scope(class)
+            .unwrap_or_else(|| panic!("class {class:?} has no declaring scope"));
+        (database.node(scope).name.clone(), database.node_kind(scope))
+    };
+    let [d] = classes("D")[..] else {
+        panic!("one class D")
+    };
+    let (name, kind) = scope(d);
+    assert!(name == "p" && matches!(kind, NodeKind::Package), "{name}");
+    let [n] = classes("N")[..] else {
+        panic!("one class N")
+    };
+    let (name, kind) = scope(n);
+    assert!(name == "C" && matches!(kind, NodeKind::ClassDef), "{name}");
+    let mut instances: Vec<String> = classes("L")
+        .into_iter()
+        .map(|class| {
+            let (name, kind) = scope(class);
+            assert!(matches!(kind, NodeKind::ModuleInst { .. }), "{name}");
+            name
+        })
+        .collect();
+    instances.sort();
+    assert_eq!(instances, ["u1", "u2"]);
+    for class in classes("P") {
+        let scope = database.class_declaring_scope(class).expect("scope of P");
+        assert_eq!(database.semantic_detail(scope), Some("CompilationUnit"));
+    }
+    assert!(!classes("P").is_empty(), "a specialization of P");
+}
+
 /// Gate-fixes-2 item 1: reads an implicit sensitivity cannot follow through a
 /// virtual interface stop compilation at their position instead of being
 /// left out of the sensitivity.

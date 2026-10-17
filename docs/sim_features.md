@@ -1602,7 +1602,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   conversions round to 64-bit integers and integral `%e/%f/%g` arguments
   convert to real. String literals in argument lists start format segments;
   empty arguments print a space. `%m` names the enclosing named block,
-  subroutine or generate block. `%p` prints arrays (declared order), queues,
+  subroutine or generate block; in a class method it names the method below its
+  class and the scope that declares the class (`C.f`, `p.D.g`, `tb.L.k`,
+  S99-D10). `%p` prints arrays (declared order), queues,
   dynamic and associative arrays, unpacked and packed structures (named
   members), packed unions, enums (names), quoted strings, other singular
   values as unformatted display text (SV §21.2.1.7), class objects (properties, cycle
