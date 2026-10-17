@@ -2013,7 +2013,9 @@ These are bounded implementations, not full verification-infrastructure support.
   Methods hold named `begin`-`end` and `fork`-`join` blocks with automatic
   and static locals; a `disable` of such a block or of a class task, from the
   method or from another process, ends every active execution in every
-  object (CD-D1)
+  object (CD-D1). Value parameters, localparams and type parameters read in
+  method bodies, nested classes and out-of-block (`extern`) bodies take each
+  specialization's own values
   ([class_defects](../tests/fixtures/sim/feature_completion/class_defects/readme.md)).
   Unreachable objects, including cycles through handle, container and record
   properties, are reclaimed at scheduler safe points (after a process turn or

@@ -1523,17 +1523,6 @@ handles); the method call needs the method body's reads per bound instance.
 Reproduce with
 `tests/fixtures/sim/feature_completion/sim_099/neg_vif_sensitivity_*.sv`.
 
-## Value parameters in class methods
-
-**Status:** open (found by gate-fixes-2; stops compilation, nothing is
-silent).
-
-A value parameter of a parameterized class read in a method body (`class P
-#(int W = 8); function void h(); $display("%0d", W); ...`) stops with "cannot
-resolve bound expression reference `W` in `P`".
-
-Reproduce with a class method that displays its class's value parameter.
-
 ## Modport expression ports through virtual interfaces
 
 **Status:** open (RTL-102 deferral).

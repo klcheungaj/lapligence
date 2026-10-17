@@ -54,3 +54,28 @@ fn class_block_misuse_is_rejected() {
          hierarchical reference",
     );
 }
+
+/// Item 2: value parameters, localparams and type parameters of each class
+/// specialization read in method bodies, static and out-of-block (`extern`)
+/// methods, a nested class, default arguments, initializers, a derived
+/// specialization and constraints.
+#[test]
+fn class_parameters_in_methods() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "class_parameters",
+        include_str!("../fixtures/sim/feature_completion/class_defects/class_parameters.out"),
+        &[],
+        &[],
+    );
+}
+
+/// Item 2 negative: a type parameter used as a value.
+#[test]
+fn class_type_parameter_value_is_rejected() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_type_parameter_value",
+        "neg_type_parameter_value.sv:4:12 'T' cannot be used in an expression",
+    );
+}

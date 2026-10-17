@@ -71,30 +71,35 @@ impl<'a> Codegen<'a> {
         self.lower_expr(path, initializer).map(Some)
     }
 
-    fn lower_subroutine_localparam_value(
+    /// Lower a parameter that no instance collection records: a localparam
+    /// of a subroutine, or any parameter of a class. Each class
+    /// specialization owns its own parameter nodes, so the frontend value of
+    /// the referenced node is that specialization's value (SV 8.24).
+    fn lower_scoped_parameter_value(
         &self,
         scope_path: &str,
         parameter: NodeId,
     ) -> Result<Option<IrExpr>, String> {
-        let NodeKind::Param {
-            value, local: true, ..
-        } = self.kind(parameter)
-        else {
+        let NodeKind::Param { value, local, .. } = self.kind(parameter) else {
             return Ok(None);
         };
         let mut parent = self.node(parameter).parent;
-        let mut in_subroutine = false;
+        let mut admitted = false;
         while let Some(scope) = parent {
             match self.kind(scope) {
                 NodeKind::FuncTask { .. } => {
-                    in_subroutine = true;
+                    admitted = *local;
+                    break;
+                }
+                NodeKind::ClassDef => {
+                    admitted = true;
                     break;
                 }
                 NodeKind::ModuleInst { .. } | NodeKind::GenScope => break,
                 _ => parent = self.node(scope).parent,
             }
         }
-        if !in_subroutine {
+        if !admitted {
             return Ok(None);
         }
         let Some(parent) = self.node(parameter).parent else {
@@ -1983,7 +1988,7 @@ impl<'a> Codegen<'a> {
             if let Some(value) = self.lower_fixed_array_parameter_value(scope_path, t)? {
                 return Ok(value);
             }
-            if let Some(value) = self.lower_subroutine_localparam_value(scope_path, t)? {
+            if let Some(value) = self.lower_scoped_parameter_value(scope_path, t)? {
                 return Ok(value);
             }
             if let NodeKind::EnumConst { value } = self.kind(t) {
