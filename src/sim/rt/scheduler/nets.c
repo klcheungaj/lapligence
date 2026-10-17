@@ -410,8 +410,13 @@ void llg_net_resolve(llg_net_t* net) {
 void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
     if (!net || !region_can_mutate("net write")) return;
     if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx]) return;
-    sv4_t replacement = sv4_resize(value, net->width, net->is_signed);
     sv4_t* slot = net->drivers[idx];
+    // A same-width value needs no resize to compare: an unchanged driver
+    // (most gate and assignment wakes) returns without copying it.
+    if (LLG_GATE_FAST_PATH && llg_sv4_width(value) == net->width &&
+        sv4_same(*slot, value))
+        return;
+    sv4_t replacement = sv4_resize(value, net->width, net->is_signed);
     if (sv4_same(*slot, replacement)) {
         sv4_destroy(&replacement);
         return;
@@ -489,15 +494,21 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
                          llg_net_range_same(slot, new_low, &selected)))) {
         return;
     }
-    if (llg_net_has_index(net)) llg_net_index_remove(net, idx);
-    if (llg_net_has_index(net)) {
+    // The index orders drivers by their driven range only: a new value over
+    // the same range keeps the driver's node and overwrites those bits.
+    int same_range = LLG_GATE_FAST_PATH && llg_net_has_index(net) &&
+        old_active && new_active && old_low == new_low && old_high == new_high;
+    if (same_range) {
+        llg_net_range_copy(slot, new_low, &selected);
+    } else if (llg_net_has_index(net)) {
+        llg_net_index_remove(net, idx);
         if (old_active) llg_net_range_fill_z(slot, old_low, old_high - old_low + 1u);
     } else {
         llg_net_range_fill_z(slot, 0, net->width);
         old_low = 0;
         old_high = net->width - 1u;
     }
-    if (new_active) {
+    if (new_active && !same_range) {
         llg_net_range_copy(slot, new_low, &selected);
         if (llg_net_has_index(net)) llg_net_index_insert(net, idx, new_low, new_high);
     }
