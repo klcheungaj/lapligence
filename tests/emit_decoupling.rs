@@ -121,3 +121,30 @@ fn simulator_sources_do_not_reference_lsp_dependencies() {
         }
     }
 }
+
+/// The legacy fragment emitter (`emit_c::render_expr`, `render_stmt` and
+/// `render_pre_fn`) is development-only: its entry points always return the
+/// owner-migration diagnostic, and no code outside `emit_c` calls them, so
+/// `llg`, `llg_ls` and library model generation reach generated C only
+/// through the owned whole-model emitter.
+#[test]
+fn legacy_fragment_emitter_has_no_callers_outside_emit_c() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let emit_c = root.join("sim/emit_c");
+    let emit_c_facade = root.join("sim/emit_c.rs");
+    let mut sources = Vec::new();
+    collect_rust_sources(&root, &mut sources);
+    assert!(!sources.is_empty(), "library sources should be discovered");
+    for (path, source) in &sources {
+        if path.starts_with(&emit_c) || *path == emit_c_facade {
+            continue;
+        }
+        for banned in ["render_expr", "render_stmt", "render_pre_fn"] {
+            assert!(
+                !source.contains(banned),
+                "{} must not call the legacy fragment emitter `{banned}`",
+                path.display()
+            );
+        }
+    }
+}

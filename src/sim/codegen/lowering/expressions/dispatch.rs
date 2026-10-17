@@ -748,27 +748,6 @@ impl<'a> Codegen<'a> {
         }))
     }
 
-    /// Render context for the IR built so far (the enclosing function, when
-    /// any, resolves formal reads).
-    #[allow(dead_code)] // retained for fragment callers pending the lowering migration
-    pub(in super::super) fn render_ctx(&self) -> RCtx<'_> {
-        RCtx {
-            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
-            model: &self.model,
-            func: self.cur_fn_ir.map(|i| &self.model.funcs[i]),
-            sampled: false,
-            activation_label: None,
-            constants: None,
-        }
-    }
-
-    /// Render a lowered expression to its C code.
-    #[allow(dead_code)] // retained for fragment callers pending the lowering migration
-    pub(in super::super) fn render_ir_code(&self, ir: &IrExpr) -> Result<String, String> {
-        let ctx = self.render_ctx();
-        Ok(render_expr(&ctx, ir)?.code)
-    }
-
     /// Lower an expression node decision-for-decision like the pre-IR
     /// emitter: same widths, signednesses, fills, and error strings.
     pub(in super::super) fn lower_expr(

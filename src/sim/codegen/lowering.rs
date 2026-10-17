@@ -251,7 +251,7 @@ use crate::core::value::ValueData;
 use crate::ffi::slang::LanguageEdition;
 use crate::sim::emit_c::{
     display_ident, event_global_name, function_ident, global_name, ident, path_ident,
-    real_global_name, render_expr, scoped_name, strip_lib, RCtx, LLG_MAX_WIDTH,
+    real_global_name, scoped_name, strip_lib, LLG_MAX_WIDTH,
 };
 use crate::sim::ir::{
     FrameId, IrAssocKey, IrAssocTraversal, IrBinOp, IrBitQuery, IrCall, IrCallArg, IrCallExpr,
