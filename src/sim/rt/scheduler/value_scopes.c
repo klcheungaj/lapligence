@@ -39,9 +39,17 @@ static void value_scope_index_rebuild(size_t capacity) {
     value_scope_used = value_scope_count;
 }
 
+/* Marks a runtime-private scope (value_scope_begin_private). */
+static void value_scope_private_tag(void* object) { (void)object; }
+
+static int value_scope_is_private(const llg_value_scope_t* scope) {
+    return scope->destroy_object == value_scope_private_tag;
+}
+
 /* Packed scopes index each descriptor; native scopes index their payload base.
  * Interior native fields do not acquire lifetime guarantees from this index. */
 static size_t value_scope_key_count(const llg_value_scope_t* scope) {
+    if (value_scope_is_private(scope)) return 0;
     return scope->count ? scope->count : (scope->object != NULL ? 1u : 0u);
 }
 
@@ -127,11 +135,14 @@ static void value_scope_release(llg_value_scope_t* scope) {
     if (scope->all_prev) scope->all_prev->all_next = scope->all_next;
     else all_value_scopes = scope->all_next;
     if (scope->all_next) scope->all_next->all_prev = scope->all_prev;
-    for (size_t i = 0; i < scope->count; ++i)
-        llg_clocking_forget_signal(&scope->values[i]);
+    int private_scope = value_scope_is_private(scope);
+    if (!private_scope) {
+        for (size_t i = 0; i < scope->count; ++i)
+            llg_clocking_forget_signal(&scope->values[i]);
+    }
     value_scope_index_remove(scope);
     sv4_destroy_array(scope->values, scope->count);
-    if (!scope->intrusive) free(scope->values);
+    if (!scope->intrusive && !private_scope) free(scope->values);
     if (scope->destroy_object) scope->destroy_object(scope->object);
     if (!scope->intrusive) {
         free(scope->object);
@@ -174,6 +185,22 @@ llg_value_scope_t* llg_value_scope_begin(size_t count) {
     scope->values = count ? (sv4_t*)llg_checked_calloc(
         count, sizeof(sv4_t), "scoped values") : NULL;
     scope->count = count;
+    return value_scope_register(scope);
+}
+
+/* Owner of runtime-internal temporaries (publication snapshots, resolved net
+ * values) that never become write, NBA or clocking targets: nothing looks
+ * them up by address, so they skip the address index and clocking history.
+ * Node and cells share one allocation; unwind still destroys them. */
+static llg_value_scope_t* value_scope_begin_private(size_t count) {
+    if (!LLG_GATE_FAST_PATH) return llg_value_scope_begin(count);
+    if (count > (SIZE_MAX - sizeof(llg_value_scope_t)) / sizeof(sv4_t))
+        llg_fatal_allocation("value owner scope", count, sizeof(sv4_t));
+    llg_value_scope_t* scope = (llg_value_scope_t*)llg_checked_calloc(
+        1, sizeof(*scope) + count * sizeof(sv4_t), "value owner scope");
+    scope->values = count ? (sv4_t*)(scope + 1) : NULL;
+    scope->count = count;
+    scope->destroy_object = value_scope_private_tag;
     return value_scope_register(scope);
 }
 

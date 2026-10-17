@@ -225,7 +225,52 @@ static int wait_inline_same(llg_wait_t* wait, sv4_t value) {
                                  LLG_WAIT_INLINE_LIMBS);
 }
 
+// The retained record whose dependency list this wait borrows, if any.
+static llg_wait_retained_t* wait_retained_of(const llg_wait_t* wait) {
+    if (wait->kind != W_DEPS || !wait->proc) return NULL;
+    llg_wait_retained_t* retained = wait->proc->retained_wait;
+    return retained && retained->dependencies == wait->payload.expression.dependencies
+               ? retained
+               : NULL;
+}
+
+// Re-arm retained memberships in their original registration order, each at
+// the head of its source list as a fresh registration would place it.
+static void wait_retained_relink(llg_wait_t* wait, llg_wait_retained_t* retained) {
+    for (size_t i = 0; i < retained->n_subscriptions; i++) {
+        llg_wait_subscription_t* node = &retained->subscriptions[i];
+        if (node->source->head != node) {
+            *node->prev_link = node->next;
+            if (node->next) node->next->prev_link = node->prev_link;
+            wait_subscription_insert(node, &node->source->head);
+        }
+        node->wait = wait;
+    }
+    wait->subscriptions = retained->subscriptions;
+    wait->n_subscriptions = retained->n_subscriptions;
+}
+
+// Release a process's retained dependency wait. Its memberships are dormant:
+// callers drop it only while the process is not waiting on it.
+static void wait_retained_drop(llg_proc_t* proc) {
+    llg_wait_retained_t* retained = proc ? proc->retained_wait : NULL;
+    if (!retained) return;
+    proc->retained_wait = NULL;
+    for (size_t i = 0; i < retained->n_subscriptions; i++)
+        wait_subscription_unlink(&retained->subscriptions[i]);
+    free(retained->subscriptions);
+    sv4_destroy_array(retained->last, (size_t)retained->n);
+    free(retained->last);
+    free(retained->dependencies);
+    free(retained);
+}
+
 static void wait_subscriptions_register(llg_wait_t* wait) {
+    llg_wait_retained_t* retained = wait_retained_of(wait);
+    if (retained && retained->subscriptions) {
+        wait_retained_relink(wait, retained);
+        return;
+    }
     if (wait->kind == W_EVENTS_INLINE || wait->kind == W_LEVEL_INLINE) {
         const void* key = wait->payload.single.specs[0].sig;
         if (!key) return;
@@ -283,6 +328,10 @@ static void wait_subscriptions_register(llg_wait_t* wait) {
         wait_subscription_insert(node, &node->source->head);
     }
     free(keys.keys);
+    if (retained) {
+        retained->subscriptions = wait->subscriptions;
+        retained->n_subscriptions = wait->n_subscriptions;
+    }
 }
 
 static void wait_inline_promote(llg_wait_t* wait, const sv4_t* value) {
@@ -311,6 +360,15 @@ static void remove_waiters_entry(llg_wait_t* w) {
         *w->prev_link = w->next;
         if (w->next) w->next->prev_link = w->prev_link;
         w->prev_link = NULL;
+    }
+    llg_wait_retained_t* retained = wait_retained_of(w);
+    if (retained && w->subscriptions == retained->subscriptions) {
+        // Dormant until the next re-arm or wait_retained_drop.
+        for (size_t i = 0; i < w->n_subscriptions; i++)
+            w->subscriptions[i].wait = NULL;
+        w->subscriptions = NULL;
+        w->n_subscriptions = 0;
+        return;
     }
     for (size_t i = 0; i < w->n_subscriptions; i++)
         wait_subscription_unlink(&w->subscriptions[i]);
@@ -568,6 +626,7 @@ static void wait_payload_release(llg_wait_t* wait) {
             free(wait->payload.expression.last);
             break;
         case W_DEPS:
+            if (wait_retained_of(wait)) break;
             free(wait->payload.expression.dependencies);
             sv4_destroy_array(wait->payload.expression.last,
                               wait->payload.expression.last

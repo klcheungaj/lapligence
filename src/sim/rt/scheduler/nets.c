@@ -163,6 +163,32 @@ static int llg_net_all_z(const sv4_t* value) {
     return 1;
 }
 
+// The lowest and highest bit of `value` that is not Z; 0 when all bits are
+// Z. Z bits add no drive, so a driver is indexed by this extent only.
+static int llg_net_driven_extent(const sv4_t* value, uint32_t* low,
+                                 uint32_t* high) {
+    uint32_t width = llg_sv4_width(*value);
+    int limbs = (int)((width + 63u) / 64u);
+    int found = 0;
+    for (int limb = 0; limb < limbs; limb++) {
+        uint32_t remaining = width - (uint32_t)limb * 64u;
+        uint64_t mask = remaining >= 64u
+            ? UINT64_MAX : (UINT64_C(1) << remaining) - UINT64_C(1);
+        uint64_t driven = (llg_sv4_word(*value, limb, LLG_SV4_BITS) |
+                           llg_sv4_word(*value, limb, LLG_SV4_X) |
+                           ~llg_sv4_word(*value, limb, LLG_SV4_Z)) & mask;
+        if (!driven) continue;
+        uint32_t first = 0;
+        while (!((driven >> first) & 1u)) first++;
+        uint32_t last = 63u;
+        while (!((driven >> last) & 1u)) last--;
+        if (!found) *low = (uint32_t)limb * 64u + first;
+        *high = (uint32_t)limb * 64u + last;
+        found = 1;
+    }
+    return found;
+}
+
 static sv4_t llg_net_compute_range(llg_net_t* net, uint32_t low,
                                    uint32_t width) {
     int count = 0;
@@ -183,7 +209,7 @@ static sv4_t llg_net_compute(llg_net_t* net) {
 
 static void llg_net_alias_refresh(llg_net_alias_t* alias) {
     if (!alias || !alias->storage) return;
-    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    llg_value_scope_t* scope = value_scope_begin_private(1);
     sv4_t* owned = llg_value_scope_values(scope);
     sv4_copy(&owned[0], alias->storage);
     for (uint32_t i = 0; i < alias->n_parts; i++) {
@@ -349,7 +375,7 @@ static int llg_net_propagation_pending(const llg_net_t* net) {
 static void llg_net_strength_publish(llg_net_t* net) {
     if (!net || !net->strength) return;
     if (llg_net_propagation_pending(net)) return;
-    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    llg_value_scope_t* scope = value_scope_begin_private(1);
     sv4_t* owned = llg_value_scope_values(scope);
     sv4_replace(&owned[0], llg_net_strength_levels(net));
     sig_write(net->strength, owned[0]);
@@ -398,7 +424,7 @@ void llg_net_resolve(llg_net_t* net) {
     if (llg_is_forced(&net->resolved)) {
         force_recompute_target(&net->resolved, net);
     } else {
-        llg_value_scope_t* scope = llg_value_scope_begin(1);
+        llg_value_scope_t* scope = value_scope_begin_private(1);
         sv4_t* owned = llg_value_scope_values(scope);
         sv4_replace(&owned[0], llg_net_compute(net));
         llg_net_publish(net, owned[0]);
@@ -410,8 +436,13 @@ void llg_net_resolve(llg_net_t* net) {
 void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
     if (!net || !region_can_mutate("net write")) return;
     if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx]) return;
-    sv4_t replacement = sv4_resize(value, net->width, net->is_signed);
     sv4_t* slot = net->drivers[idx];
+    // A same-width value needs no resize to compare: an unchanged driver
+    // (most gate and assignment wakes) returns without copying it.
+    if (LLG_GATE_FAST_PATH && llg_sv4_width(value) == net->width &&
+        sv4_same(*slot, value))
+        return;
+    sv4_t replacement = sv4_resize(value, net->width, net->is_signed);
     if (sv4_same(*slot, replacement)) {
         sv4_destroy(&replacement);
         return;
@@ -427,9 +458,15 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
         llg_net_index_remove(net, idx);
     }
     sv4_move(slot, &replacement);
-    int new_active = !llg_net_all_z(slot);
+    uint32_t new_low = 0;
+    uint32_t new_high = net->width - 1u;
+    int new_active;
+    if (LLG_GATE_FAST_PATH)
+        new_active = llg_net_driven_extent(slot, &new_low, &new_high);
+    else
+        new_active = !llg_net_all_z(slot);
     if (llg_net_has_index(net) && new_active)
-        llg_net_index_insert(net, idx, 0, net->width - 1u);
+        llg_net_index_insert(net, idx, new_low, new_high);
     // A selected force may cover only part of the net. Recompute through the
     // force path so unforced bits still publish underlying driver changes.
     if (llg_is_forced(&net->resolved)) {
@@ -444,10 +481,10 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
     uint32_t high = old_active ? old_high : net->width - 1u;
     if (!old_active && !new_active) return;
     if (new_active) {
-        if (!old_active || low > 0) low = 0;
-        if (!old_active || high < net->width - 1u) high = net->width - 1u;
+        if (!old_active || low > new_low) low = new_low;
+        if (!old_active || high < new_high) high = new_high;
     }
-    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    llg_value_scope_t* scope = value_scope_begin_private(1);
     sv4_t* owned = llg_value_scope_values(scope);
     sv4_replace(owned, llg_net_compute_range(net, low, high - low + 1u));
     llg_net_publish_range(net, low, owned[0]);
@@ -489,15 +526,21 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
                          llg_net_range_same(slot, new_low, &selected)))) {
         return;
     }
-    if (llg_net_has_index(net)) llg_net_index_remove(net, idx);
-    if (llg_net_has_index(net)) {
+    // The index orders drivers by their driven range only: a new value over
+    // the same range keeps the driver's node and overwrites those bits.
+    int same_range = LLG_GATE_FAST_PATH && llg_net_has_index(net) &&
+        old_active && new_active && old_low == new_low && old_high == new_high;
+    if (same_range) {
+        llg_net_range_copy(slot, new_low, &selected);
+    } else if (llg_net_has_index(net)) {
+        llg_net_index_remove(net, idx);
         if (old_active) llg_net_range_fill_z(slot, old_low, old_high - old_low + 1u);
     } else {
         llg_net_range_fill_z(slot, 0, net->width);
         old_low = 0;
         old_high = net->width - 1u;
     }
-    if (new_active) {
+    if (new_active && !same_range) {
         llg_net_range_copy(slot, new_low, &selected);
         if (llg_net_has_index(net)) llg_net_index_insert(net, idx, new_low, new_high);
     }
@@ -512,7 +555,7 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
     if (!old_active && !new_active) return;
     if (old_active && new_active &&
         (old_high + 1u < new_low || new_high + 1u < old_low)) {
-        llg_value_scope_t* scope = llg_value_scope_begin(2);
+        llg_value_scope_t* scope = value_scope_begin_private(2);
         sv4_t* owned = llg_value_scope_values(scope);
         sv4_replace(&owned[0], llg_net_compute_range(
             net, old_low, old_high - old_low + 1u));
@@ -529,7 +572,7 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
         if (!old_active || new_low < low) low = new_low;
         if (!old_active || new_high > high) high = new_high;
     }
-    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    llg_value_scope_t* scope = value_scope_begin_private(1);
     sv4_t* owned = llg_value_scope_values(scope);
     sv4_replace(owned, llg_net_compute_range(net, low, high - low + 1u));
     llg_net_publish_range(net, low, owned[0]);
@@ -608,7 +651,7 @@ void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
     if (!alias || !alias->parts || !region_can_mutate("net alias write")) return;
     /* A publication callback may reenter or terminate the current process.
      * Both the input snapshot and each contribution must outlive that edge. */
-    llg_value_scope_t* scope = llg_value_scope_begin(2);
+    llg_value_scope_t* scope = value_scope_begin_private(2);
     sv4_t* owned = llg_value_scope_values(scope);
     sv4_copy(&owned[0], &value);
     for (uint32_t i = 0; i < alias->n_parts; i++) {
@@ -734,13 +777,34 @@ static uint64_t inertial_transition_ticks(const sv4_t* old_value,
     return rise;
 }
 
+// The pending list is sorted by maturity time and FIFO among equal times.
+// Back links make removal constant time; insertion searches from the tail,
+// where new (latest) maturities land, for the same position a forward search
+// past every entry due no later would find.
+static void inertial_pending_remove(llg_inertial_t* driver) {
+    if (driver->prev_pending) driver->prev_pending->next_pending = driver->next_pending;
+    else if (g.inertial_pending == driver) g.inertial_pending = driver->next_pending;
+    if (driver->next_pending) driver->next_pending->prev_pending = driver->prev_pending;
+    else if (g.inertial_pending_tail == driver) g.inertial_pending_tail = driver->prev_pending;
+    driver->next_pending = NULL;
+    driver->prev_pending = NULL;
+}
+
+static void inertial_pending_insert(llg_inertial_t* driver) {
+    llg_inertial_t* before = g.inertial_pending_tail;
+    while (before && before->time > driver->time) before = before->prev_pending;
+    driver->prev_pending = before;
+    driver->next_pending = before ? before->next_pending : g.inertial_pending;
+    if (driver->next_pending) driver->next_pending->prev_pending = driver;
+    else g.inertial_pending_tail = driver;
+    if (before) before->next_pending = driver;
+    else g.inertial_pending = driver;
+}
+
 static void inertial_unlink_pending(llg_inertial_t* driver) {
     if (!driver->pending) return;
-    llg_inertial_t** entry = &g.inertial_pending;
-    while (*entry && *entry != driver) entry = &(*entry)->next_pending;
-    if (*entry) *entry = driver->next_pending;
+    inertial_pending_remove(driver);
     driver->pending = 0;
-    driver->next_pending = NULL;
     sv4_destroy(&driver->value);
     sv4_destroy(&driver->mask);
     driver->has_mask = 0;
@@ -788,7 +852,6 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
     }
     const sv4_t* effective_mask = mask ? &selected_mask : NULL;
     uint64_t ticks;
-    llg_inertial_t** entry;
     if (driver->pending) {
         // Unchanged expression values keep the original propagation time.
         if (driver->has_mask == (effective_mask != NULL) &&
@@ -814,10 +877,7 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
     sv4_move(&driver->value, &value);
     driver->time = g.now + ticks;
     driver->pending = 1;
-    entry = &g.inertial_pending;
-    while (*entry && (*entry)->time <= driver->time) entry = &(*entry)->next_pending;
-    driver->next_pending = *entry;
-    *entry = driver;
+    inertial_pending_insert(driver);
 cleanup:
     sv4_destroy(&value);
     sv4_destroy(&selected_mask);
@@ -896,22 +956,24 @@ static void llg_net_cancel_propagation(llg_net_t* net) {
     }
 }
 
-static int inertial_ready(llg_region_t region) {
-    for (llg_inertial_t* driver = g.inertial_pending; driver;
-         driver = driver->next_pending) {
-        if (driver->time == g.now && driver->region == region) return 1;
+// The first pending update due now in `region`. The list is sorted, so the
+// scan stops at the first later maturity.
+static llg_inertial_t* inertial_due(llg_region_t region) {
+    for (llg_inertial_t* driver = g.inertial_pending;
+         driver && driver->time <= g.now; driver = driver->next_pending) {
+        if (driver->time == g.now && driver->region == region) return driver;
     }
-    return 0;
+    return NULL;
+}
+
+static int inertial_ready(llg_region_t region) {
+    return inertial_due(region) != NULL;
 }
 
 static void commit_inertial(llg_region_t region) {
-    llg_inertial_t** slot = &g.inertial_pending;
-    while (*slot && ((*slot)->time != g.now || (*slot)->region != region))
-        slot = &(*slot)->next_pending;
-    llg_inertial_t* driver = *slot;
+    llg_inertial_t* driver = inertial_due(region);
     if (!driver) return;
-    *slot = driver->next_pending;
-    driver->next_pending = NULL;
+    inertial_pending_remove(driver);
     driver->pending = 0;
 
     // Detach before publishing: callbacks may schedule another update on driver.

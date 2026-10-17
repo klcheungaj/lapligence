@@ -85,7 +85,7 @@ trailing-hole trimming are amortized constant time per registration/removal;
 ordinary slot removal uses the process's stored position. Cancellation traversals
 that can remove other records restart as before.
 
-On 64-bit hosts the process record is 440 bytes, including a 128-byte wait
+On 64-bit hosts the process record is 448 bytes, including a 128-byte wait
 record, the pointer to a granted semaphore request that the process has
 not resumed to take (its keys return if the process is killed first) and the
 pointer to a mailbox delivery it has not resumed to take (the message returns
@@ -112,6 +112,28 @@ comparisons; no packed descriptor is fabricated over their storage. Native
 signal-width growth promotes a live edge wait to heap storage while preserving
 its subscription's exact list position.
 Wake, cancellation and teardown unlink subscriptions before clearing the payload.
+A dependency wait (`W_DEPS`) is the exception: its process keeps the copied
+list, snapshots and memberships in one `llg_wait_retained_t` (the process
+record's `retained_wait`, 8 bytes). A wake leaves the memberships linked with
+a NULL waiter, which publication skips like a cursor; re-arming the same list
+(every continuous assignment, gate, UDP and `@*` loop) refreshes the snapshots
+and moves each membership to the head of its source list, the position a fresh
+registration takes, so wake order is unchanged and no allocation, sort or
+source lookup runs per wake. Arming a different list, completion, kill and
+teardown release the record. The development-only C define
+`LLG_DEV_LEGACY_GATE_PATH` restores per-wake registration, and the net and
+scope paths below, for differential tests.
+
+Net writes keep the driver interval index exact but cheap: a whole-slot write
+indexes the driver by its driven (non-Z) extent rather than the full net, a
+selected write over the same range keeps its node, and a same-width unchanged
+driver returns before any resize. Publication snapshots and resolved net
+values live in private value scopes (`value_scope_begin_private`): they are
+never write, NBA or clocking targets, so they skip the address index and
+clocking history and allocate node and cells together. Pending inertial
+updates form a doubly linked list sorted by time (FIFO among equal times);
+insertion searches from the tail and the due-now scans stop at the first later
+time.
 
 Stop/resume retains a live context; close releases observers/queues before model
 storage. Runtime ticks are integer design-precision units; lowering supplies

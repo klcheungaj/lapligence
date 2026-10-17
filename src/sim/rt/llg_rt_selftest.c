@@ -993,6 +993,107 @@ static void test_real_dependencies(void) {
     CHECK(real_expression_wakes == 3);
 }
 
+// Re-armed dependency waits keep their memberships between wakes. The wake
+// order must match fresh registration: each re-arm moves the waiter to the
+// head of its source lists, so waiters on one signal alternate their order.
+// `rw_b` alternates between two lists, `rw_d` waits on one selected bit.
+static sv4_t rw_x, rw_y, rw_v;
+static char rw_log[32];
+static int rw_n;
+
+static void rw_note(char id) {
+    if (rw_n < (int)sizeof(rw_log) - 1) rw_log[rw_n++] = id;
+}
+
+LLG_SELFTEST_PROCESS(rw_a, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    for (F->index = 0; F->index < 4; F->index++) {
+        LLG_SELFTEST_AWAIT(1, llg_arm_event_dependencies(
+            self, (llg_wait_dependency_t[]){{.sig = &rw_x}}, 1));
+        rw_note('a');
+    }
+    LLG_SELFTEST_DONE();
+}
+
+LLG_SELFTEST_PROCESS(rw_b, 2) {
+    LLG_SELFTEST_BEGIN(2);
+    for (F->index = 0;; F->index++) {
+        if (F->index % 2 == 0) {
+            LLG_SELFTEST_AWAIT(1, llg_arm_event_dependencies(
+                self, (llg_wait_dependency_t[]){{.sig = &rw_x}}, 1));
+        } else {
+            LLG_SELFTEST_AWAIT(2, llg_arm_event_dependencies(
+                self, (llg_wait_dependency_t[]){{.sig = &rw_x}, {.sig = &rw_y}}, 2));
+        }
+        rw_note('b');
+    }
+}
+
+LLG_SELFTEST_PROCESS(rw_c, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    for (F->index = 0; F->index < 4; F->index++) {
+        LLG_SELFTEST_AWAIT(1, llg_arm_event_dependencies(
+            self, (llg_wait_dependency_t[]){{.sig = &rw_x}}, 1));
+        rw_note('c');
+    }
+    LLG_SELFTEST_DONE();
+}
+
+LLG_SELFTEST_PROCESS(rw_d, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    for (F->index = 0; F->index < 2; F->index++) {
+        LLG_SELFTEST_AWAIT(1, llg_arm_event_dependencies(
+            self, (llg_wait_dependency_t[]){
+                {.sig = &rw_v, .value = &rw_v, .lsb = 2u, .width = 1u}}, 1));
+        rw_note('d');
+    }
+    LLG_SELFTEST_DONE();
+}
+
+LLG_SELFTEST_PROCESS(rw_writer, 8) {
+    LLG_SELFTEST_BEGIN(8);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 1));
+    llg_ba(&rw_x, test_temp(SV4_C(1, 1)));
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 1));
+    llg_ba(&rw_x, test_temp(SV4_C(0, 1)));
+    LLG_SELFTEST_AWAIT(3, llg_arm_time(self, 1));
+    llg_ba(&rw_y, test_temp(SV4_C(1, 1)));  // b waits on x alone
+    llg_ba(&rw_v, test_temp(SV4_C(1, 4)));  // bit 2 unchanged
+    LLG_SELFTEST_AWAIT(4, llg_arm_time(self, 1));
+    llg_ba(&rw_x, test_temp(SV4_C(1, 1)));
+    LLG_SELFTEST_AWAIT(5, llg_arm_time(self, 1));
+    llg_ba(&rw_y, test_temp(SV4_C(0, 1)));  // b waits on x and y
+    LLG_SELFTEST_AWAIT(6, llg_arm_time(self, 1));
+    llg_ba(&rw_v, test_temp(SV4_C(5, 4)));
+    LLG_SELFTEST_AWAIT(7, llg_arm_time(self, 1));
+    llg_ba(&rw_x, test_temp(SV4_C(0, 1)));
+    LLG_SELFTEST_AWAIT(8, llg_arm_time(self, 1));
+    llg_ba(&rw_v, test_temp(SV4_C(1, 4)));
+    LLG_SELFTEST_DONE();
+}
+
+static void test_retained_dependency_waits(void) {
+    llg_rt_init();
+    sv4_replace(&rw_x, SV4_C(0, 1));
+    sv4_replace(&rw_y, SV4_C(0, 1));
+    sv4_replace(&rw_v, SV4_C(0, 4));
+    rw_n = 0;
+    llg_spawn(&rw_a_desc, "rw-a");
+    llg_spawn(&rw_b_desc, "rw-b");
+    llg_spawn(&rw_c_desc, "rw-c");
+    llg_spawn(&rw_d_desc, "rw-d");
+    llg_spawn(&rw_writer_desc, "rw-writer");
+    llg_rt_run();
+    rw_log[rw_n] = 0;
+    CHECK(strcmp(rw_log, "cbaabccbabdbacd") == 0);
+    if (strcmp(rw_log, "cbaabccbabdbacd") != 0)
+        fprintf(stderr, "retained dependency wake order: %s\n", rw_log);
+    llg_rt_cleanup();
+    sv4_destroy(&rw_x);
+    sv4_destroy(&rw_y);
+    sv4_destroy(&rw_v);
+}
+
 // Delay ordering: two processes with staggered #delays must wake in time order.
 static uint64_t order_log[8];
 static int order_n;
@@ -2336,6 +2437,8 @@ static int run_selftests(int argc, char** argv) {
     check_vector_table();
     test_clear_temporaries();
     test_real_dependencies();
+    test_clear_temporaries();
+    test_retained_dependency_waits();
     test_clear_temporaries();
     test_llg_net();
     test_clear_temporaries();
