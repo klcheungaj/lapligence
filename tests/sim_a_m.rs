@@ -55,6 +55,7 @@ mod sim_frame_cells;
 mod sim_frame_hoisting;
 mod sim_function;
 mod sim_g1_closure;
+mod sim_gate_path_differential;
 mod sim_gates;
 mod sim_gates_p40;
 mod sim_geninit;
