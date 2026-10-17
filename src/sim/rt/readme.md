@@ -121,8 +121,19 @@ and moves each membership to the head of its source list, the position a fresh
 registration takes, so wake order is unchanged and no allocation, sort or
 source lookup runs per wake. Arming a different list, completion, kill and
 teardown release the record. The development-only C define
-`LLG_DEV_LEGACY_GATE_PATH` restores per-wake registration for differential
-tests.
+`LLG_DEV_LEGACY_GATE_PATH` restores per-wake registration, and the net and
+scope paths below, for differential tests.
+
+Net writes keep the driver interval index exact but cheap: a whole-slot write
+indexes the driver by its driven (non-Z) extent rather than the full net, a
+selected write over the same range keeps its node, and a same-width unchanged
+driver returns before any resize. Publication snapshots and resolved net
+values live in private value scopes (`value_scope_begin_private`): they are
+never write, NBA or clocking targets, so they skip the address index and
+clocking history and allocate node and cells together. Pending inertial
+updates form a doubly linked list sorted by time (FIFO among equal times);
+insertion searches from the tail and the due-now scans stop at the first later
+time.
 
 Stop/resume retains a live context; close releases observers/queues before model
 storage. Runtime ticks are integer design-precision units; lowering supplies
