@@ -346,6 +346,22 @@ outputs hand-derived from V §§4.3, 6.1.3, 7.14 and SV §§10.3.3, 11.12, 28.16
 (fixture readme); SystemVerilog-only sources (aliases, patterns) run in
 sv2009. Decisions S2-D1-D9 are in `sim_lrm_decisions` (`-E 'test(/s2_d/)'`).
 
+ADV-007's specify and module-path fixtures use
+`-E 'binary(sim_feature_completion) & test(adv_007::)'`
+([readme](fixtures/sim/feature_completion/adv_007/readme.md)). The Verilog
+sources run in both editions, both optimizer modes and on every value
+backend, with outputs hand-derived from V §§3.11.3, 14.2-14.4 and SV §§6.20.5,
+30.4-30.6 (Tables 30-2 and 30-3); `wired.v` runs in sv2009 and is rejected in
+v2001 (14.2.1); the negatives pin the frontend's and llg's located errors.
+Decisions A7-D1-D6 are in `sim_lrm_decisions` (`-E 'test(/a7_d/)'`). Unit
+tests: `core::db::database::specify::tests`, the ffi specify decode test,
+`sim::ir::timing::tests`, the IR validation test
+`module_path_sets_check_sources_destinations_and_ranges`, the emitter test
+`module_path_tables_bind_only_their_destination_nets` and the runtime selftest
+`test_module_paths` (`sim_counter::sim_rt_selftest`). Under ASan run the set
+with `LLG_CC=gcc LLG_CFLAGS='-fsanitize=address,undefined
+-fno-omit-frame-pointer -fno-sanitize-recover=all -DLLG_CO_DEBUG'`.
+
 ADV-016's randsequence fixtures use
 `-E 'binary(sim_feature_completion) & test(adv_016::)'`. Positives run in both
 optimizer modes on every backend with oracles from SV 18.17 (fixture readme):
