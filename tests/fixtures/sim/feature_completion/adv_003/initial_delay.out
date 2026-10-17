@@ -1,0 +1,17 @@
+t1 qs=1 qi=1 q=x qb=x qd=1 qa=0
+t2 q=x qb=x qd=1
+t4 q=1 qb=x
+t6 q=1 qb=0 qd=x
+sr r0 qs=x
+sr set qs=1
+sr f0 qs=1
+sr reset qs=0
+sr hold qs=0
+ansi x0 qa=x
+ansi r qa=1
+t35 qd=x
+t37 qd=0
+t53 qd=0
+t55 qd=1
+t63 qd=1
+t65 qd=x

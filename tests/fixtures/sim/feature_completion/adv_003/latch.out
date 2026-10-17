@@ -1,0 +1,15 @@
+start q=x
+ena0 q=x
+load1 q=1
+load0 q=0
+close q=0
+hold_d1 q=0
+hold_dz q=0
+ena_x q=x
+ena_x_d0 q=x
+load0b q=0
+x_same q=0
+x_diff q=x
+load1b q=1
+z_same q=1
+z_to_1 q=1

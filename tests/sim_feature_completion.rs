@@ -12,6 +12,9 @@ mod vcd;
 #[path = "sim_feature_completion/adv_002.rs"]
 mod adv_002;
 
+#[path = "sim_feature_completion/adv_003.rs"]
+mod adv_003;
+
 #[path = "sim_feature_completion/adv_016.rs"]
 mod adv_016;
 

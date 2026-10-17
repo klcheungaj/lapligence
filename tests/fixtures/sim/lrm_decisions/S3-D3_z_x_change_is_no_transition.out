@@ -1,0 +1,6 @@
+start q=0
+0_to_x q=1
+x_to_z q=1
+z_to_x q=1
+x_to_0 q=1
+0_to_z q=0
