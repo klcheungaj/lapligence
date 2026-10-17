@@ -2767,3 +2767,51 @@ fn cd_d2_named_block_scope() {
         include_str!("fixtures/sim/lrm_decisions/CD-D2_named_block_scope.out"),
     );
 }
+
+#[test]
+fn s26_d16_strings_form_one_image() {
+    run_decision(
+        "S26-D16_strings_form_one_image",
+        include_str!("fixtures/sim/lrm_decisions/S26-D16_strings_form_one_image.out"),
+    );
+}
+
+#[test]
+fn s26_d17_string_variable_data_rejected() {
+    // Negative case: llg rejects the string variable, so the expected stdout
+    // is empty.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S26-D17_string_variable_data_rejected.out")
+            .is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "S26-D17_string_variable_data_rejected",
+        "S26-D17_string_variable_data_rejected.sv:16:25: a data argument of $sreadmemh must be a \
+         string literal (IEEE 1800-2009 D.14)",
+    );
+}
+
+#[test]
+fn s26_d18_start_after_finish_descends() {
+    run_decision(
+        "S26-D18_start_after_finish_descends",
+        include_str!("fixtures/sim/lrm_decisions/S26-D18_start_after_finish_descends.out"),
+    );
+}
+
+#[test]
+fn s26_d19_errors_end_the_load() {
+    run_decision(
+        "S26-D19_errors_end_the_load",
+        include_str!("fixtures/sim/lrm_decisions/S26-D19_errors_end_the_load.out"),
+    );
+}
+
+#[test]
+fn s26_d20_comments_across_strings() {
+    run_decision(
+        "S26-D20_comments_across_strings",
+        include_str!("fixtures/sim/lrm_decisions/S26-D20_comments_across_strings.out"),
+    );
+}

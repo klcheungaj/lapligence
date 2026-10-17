@@ -1,0 +1,15 @@
+A file 10 20 3x xx xx zz 6f 7a
+A str  10 20 3x xx xx zz 6f 7a
+B file 01 02 03 04 05 0a 0b 0c
+B str  01 02 03 04 05 0a 0b 0c
+F file xx xx 0d 0c 0b 0a xx xx
+F str  xx xx 0d 0c 0b 0a xx xx
+G file xx xx 22 33 44 55 xx xx
+G str  xx xx 22 33 44 55 xx xx
+D file 123456789abcdef0123456789 000000000000000000000000f xxxxxxxxxxxxxxxxxxxxxxxxx x23456789abcdef012345678z
+D str  123456789abcdef0123456789 000000000000000000000000f xxxxxxxxxxxxxxxxxxxxxxxxx x23456789abcdef012345678z
+E file deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefde 00000000000000000000000000000000000000000000000001
+E str  deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefde 00000000000000000000000000000000000000000000000001
+H file 000001 1x1010 xxxxxx zzzzzz
+H str  000001 1x1010 xxxxxx zzzzzz
+mismatches 0

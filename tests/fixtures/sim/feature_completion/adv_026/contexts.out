@@ -1,0 +1,21 @@
+module=40,41,42,43
+static_local=10,11,12,13
+automatic_local[3:0]=20,21,22,23
+function_sum=198
+ref_module=50,51,52,53
+ref_automatic=50,51,52,53
+local_row0=ee,80,81,ee
+local_row1=60,61,62,63
+local_row2=ee,ee,71,70
+block_automatic=90,91,92,93
+fork_shared=a0,a1,a2,a3
+struct_member=b0,b1,b2,b3
+struct_tag=7
+class_property[5:2]=c3,c2,c1,c0
+class_slice=c3,11,10,c0
+static_property=20,21,22,23
+package=30,31,32,33
+hierarchical=xx,40,41,xx
+grid_row1=xx,xx,50,51
+dynamic=60,61,62 size=3
+queue=01,02,72,71,70 size=5

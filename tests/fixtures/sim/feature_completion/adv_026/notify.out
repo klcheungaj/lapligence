@@ -1,0 +1,12 @@
+[2] f w0 11
+[2] f w2 33
+[2] vpi tb.totf=044
+[3] s w0 11
+[3] s w2 33
+[3] vpi tb.tots=044
+[6] f w1 99
+[6] vpi tb.sumf=99
+[7] s w1 99
+[7] vpi tb.sums=99
+[8] final f 11 99 33 77
+[8] final s 11 99 33 77

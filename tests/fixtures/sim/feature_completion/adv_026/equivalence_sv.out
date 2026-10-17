@@ -1,0 +1,13 @@
+C file aaa f0f 001 005 01f 000
+C str  aaa f0f 001 005 01f 000
+I file -1 2147483647 591751049 -2147483648
+I str  -1 2147483647 591751049 -2147483648
+P file a5 x1 0f
+P str  a5 x1 0f
+N file GREEN BLUE RED
+N str  GREEN BLUE RED
+M file 1 2 3 4 5 6
+M str  1 2 3 4 5 6
+V file xx xx e1 e2 e3 xx xx xx
+V str  xx xx e1 e2 e3 xx xx xx
+mismatches 0
