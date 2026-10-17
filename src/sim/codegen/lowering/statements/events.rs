@@ -1036,10 +1036,30 @@ impl EmitCtx<'_, '_> {
         &mut self,
         specs: &[EventSpec],
     ) -> Result<Vec<(IrWaitSrc, IrEdge)>, String> {
-        specs
-            .iter()
-            .map(|spec| self.lower_event_spec(spec, None))
-            .collect()
+        let mut lowered = Vec::with_capacity(specs.len());
+        for spec in specs {
+            match self.global_clock_events(spec)? {
+                Some(global) => {
+                    for event in &global {
+                        lowered.push(self.lower_event_spec(event, None)?);
+                    }
+                }
+                None => lowered.push(self.lower_event_spec(spec, None)?),
+            }
+        }
+        Ok(lowered)
+    }
+
+    /// `$global_clock` stands for the global clocking block's event list
+    /// (IEEE 1800-2009 14.14); `None` for any other event.
+    fn global_clock_events(&mut self, spec: &EventSpec) -> Result<Option<Vec<EventSpec>>, String> {
+        let (EventSpec::AnyChange { sig: event } | EventSpec::Named(event)) = spec else {
+            return Ok(None);
+        };
+        if !matches!(self.cg.kind(*event), NodeKind::SysCall { name } if name == "$global_clock") {
+            return Ok(None);
+        }
+        self.cg.global_clocking_events(&self.path).map(Some)
     }
 
     fn event_evaluator(&mut self, expression: NodeId) -> Result<(String, bool), String> {
@@ -1110,6 +1130,18 @@ impl EmitCtx<'_, '_> {
     ) -> Result<(IrWaitSrc, IrEdge), String> {
         if let EventSpec::Qualified { event, condition } = spec {
             return self.lower_event_spec(event, Some(*condition));
+        }
+        if let Some(global) = self.global_clock_events(spec)? {
+            return match (global.as_slice(), condition) {
+                ([event], None) => self.lower_event_spec(event, None),
+                ([event @ (EventSpec::Edge { .. } | EventSpec::AnyChange { .. } | EventSpec::Named(_))], Some(_)) => {
+                    self.lower_event_spec(event, condition)
+                }
+                _ => Err(format!(
+                    "`$global_clock` in `{}` names a global clocking event that is not one unqualified event; llg expands it only in an event list (IEEE 1800-2009 14.14)",
+                    self.path
+                )),
+            };
         }
         let condition = condition
             .map(|expression| {

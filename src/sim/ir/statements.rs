@@ -716,6 +716,14 @@ pub enum IrStmt {
     SampledClockTick {
         clock: usize,
     },
+    /// One tick of a planned assertion clock (IEEE 1800-2009 16.14): pulse
+    /// the hidden one-bit `signal` 0->1->0 so assertions clocked on its
+    /// posedge observe the clocking event that woke the issuing process. A
+    /// clock ticks at most once per time step (16.5), so later pulses in the
+    /// same step are dropped.
+    AssertionClockPulse {
+        signal: usize,
+    },
     /// `->> ev` — queue the named-event trigger in NBA without suspending
     /// the issuing process. An optional delay is evaluated at issue time.
     NonblockingEventTrigger {

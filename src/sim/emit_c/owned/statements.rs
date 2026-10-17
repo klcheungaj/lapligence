@@ -567,6 +567,10 @@ impl Frame<'_, '_> {
             IrStmt::SampledClockTick { clock } => {
                 self.line(format!("llg_sampled_clock_tick({clock}ULL);"));
             }
+            IrStmt::AssertionClockPulse { signal } => {
+                let name = self.ctx.model.signal(*signal).c_name.clone();
+                self.line(format!("llg_assertion_clock_pulse(&{name});"));
+            }
             IrStmt::ClockingDrive {
                 lhs,
                 rhs,

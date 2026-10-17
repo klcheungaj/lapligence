@@ -873,7 +873,11 @@ pub(super) enum SampledClockSource {
 
 /// An event-driven sampled clock awaiting its synthetic tick process.
 struct PendingSampledEventClock {
+    /// The sampled clock index, or the hidden signal of a pulse clock.
     clock: usize,
+    /// Whether the process pulses an assertion clock signal instead of
+    /// recording a sampled-value tick.
+    pulse: bool,
     path: String,
     specs: Vec<(IrWaitSrc, IrEdge)>,
     pre_fns: Vec<crate::sim::ir::IrPreFn>,
@@ -1681,6 +1685,18 @@ struct Codegen<'a> {
     sampled_domain_keys: HashMap<String, usize>,
     /// Event clocks whose waiting tick process is emitted after lowering.
     sampled_event_clocks: Vec<PendingSampledEventClock>,
+    /// Planned assertion clock signals keyed by their source event list and
+    /// by their lowered event list.
+    assertion_pulse_keys: HashMap<String, usize>,
+    /// `$inferred_clock` resolution (16.15.7): the clocks flowing to the
+    /// instances being examined (`None` is the assertion statement's own
+    /// inferred clock), the statement whose procedure supplies it, the
+    /// clocking events already resolved, and the statement's default
+    /// disable condition for `$inferred_disable`.
+    assertion_inferred_clocks: Vec<Option<SampledClock>>,
+    assertion_inferred_origin: Option<NodeId>,
+    assertion_inferred_resolved: HashMap<NodeId, SampledClock>,
+    assertion_default_disable: Option<Option<NodeId>>,
     /// Slang-materialized local assertion declarations currently being
     /// lowered into one sequence graph. The map is scoped to the graph so
     /// every runtime attempt receives an independent slot set.
@@ -1968,6 +1984,11 @@ impl<'a> Codegen<'a> {
             sampled_clock_keys: HashMap::new(),
             sampled_domain_keys: HashMap::new(),
             sampled_event_clocks: Vec::new(),
+            assertion_pulse_keys: HashMap::new(),
+            assertion_inferred_clocks: Vec::new(),
+            assertion_inferred_origin: None,
+            assertion_inferred_resolved: HashMap::new(),
+            assertion_default_disable: None,
             assertion_local_bindings: None,
             assertion_controls_used: None,
             sequence_endpoints: HashMap::new(),

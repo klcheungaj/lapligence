@@ -877,6 +877,11 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             }
         }
         IrStmt::FixedArrayFill { value, .. } => collect_expr_reads(value, model, rw),
+        // The pulse writes its clock signal, which assertions read.
+        IrStmt::AssertionClockPulse { signal } => {
+            rw.read(*signal);
+            rw.write(*signal);
+        }
         // Delays are read through `IrStmt::delay_expression` above.
         IrStmt::Delay { .. } => {}
         // Fixed arrays, native values, events, activations and labels are

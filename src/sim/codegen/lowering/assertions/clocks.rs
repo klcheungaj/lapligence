@@ -86,31 +86,255 @@ pub(super) struct AssertionClocks {
 }
 
 impl Codegen<'_> {
-    /// The clock of an assertion clocking event.
+    /// The clock of an assertion clocking event, as an identity for clock
+    /// resolution: one edge of a direct signal (with its `iff`) is detected
+    /// at that signal's write; every other legal clocking event becomes a
+    /// planned pulse clock.
     pub(super) fn assertion_event_clock(
         &mut self,
         path: &str,
         node: NodeId,
     ) -> Result<SampledClock, String> {
-        let NodeKind::AssertionExpr(AssertionExprKind::Clocking {
-            signal,
-            posedge,
-            gate,
-            ..
-        }) = self.kind(node)
+        if let Some(clock) = self.assertion_inferred_resolved.get(&node) {
+            return Ok(*clock);
+        }
+        let NodeKind::AssertionExpr(AssertionExprKind::Clocking { specs, .. }) = self.kind(node)
         else {
             return Err(format!(
                 "assertion clocking event expected at {}",
                 self.source_location(node)
             ));
         };
-        let (signal, posedge, gate) = (*signal, *posedge, *gate);
-        let signal = self.lower_assertion_signal(path, signal, "clock")?;
-        Ok(SampledClock {
-            signal,
-            posedge,
-            gate,
+        let specs = specs.clone();
+        if let [EventSpec::Named(event) | EventSpec::AnyChange { sig: event }] = specs.as_slice() {
+            if matches!(self.kind(*event), NodeKind::SysCall { name } if name == "$inferred_clock")
+            {
+                let clock = self.inferred_assertion_clock(path, node)?;
+                self.assertion_inferred_resolved.insert(node, clock);
+                return Ok(clock);
+            }
+        }
+        self.assertion_clock_from_specs(path, &specs, 0)
+    }
+
+    /// `$inferred_clock` (IEEE 1800-2009 16.15.7): the clock that flows to
+    /// the instance whose formal default it replaced, or, for an instance
+    /// that is the top-level property, the clock inferred at the assertion
+    /// statement (its procedure's clock, else default clocking).
+    fn inferred_assertion_clock(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<SampledClock, String> {
+        let context = match self.assertion_inferred_clocks.last().copied().flatten() {
+            Some(clock) => Some(clock),
+            None => {
+                let procedure = match self.assertion_inferred_origin {
+                    Some(origin) => self.procedure_assertion_clock(path, origin)?,
+                    None => None,
+                };
+                match procedure {
+                    Some(clock) => Some(clock),
+                    None => self.lower_default_sampled_clock(path)?,
+                }
+            }
+        };
+        context.ok_or_else(|| {
+            format!(
+                "$inferred_clock at {} has no current resolved event expression (IEEE 1800-2009 16.15.7)",
+                self.source_location(node)
+            )
         })
+    }
+
+    /// The clock a clocking event switches the evaluation to while a
+    /// property or sequence is lowered. A gated edge that is not the
+    /// assertion's leading clock, and an edge of the leading clock's signal
+    /// and polarity under a different gate, are pulse clocks: the runtime
+    /// gates a direct signal edge only by the leading clock's `iff`.
+    pub(super) fn assertion_flow_clock(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<SampledClock, String> {
+        let clock = self.assertion_event_clock(path, node)?;
+        let Some(leading) = self.assertion_leading_clock else {
+            return if clock.gate.is_some() {
+                self.assertion_clock_pulse_of(path, node)
+            } else {
+                Ok(clock)
+            };
+        };
+        if same_clock(&clock, &leading) {
+            return Ok(leading);
+        }
+        let same_edge = clock.signal == leading.signal && clock.posedge == leading.posedge;
+        if clock.gate.is_some() || (same_edge && leading.gate.is_some()) {
+            return self.assertion_clock_pulse_of(path, node);
+        }
+        Ok(clock)
+    }
+
+    /// The pulse clock of a clocking event node, regardless of its form.
+    fn assertion_clock_pulse_of(
+        &mut self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<SampledClock, String> {
+        let NodeKind::AssertionExpr(AssertionExprKind::Clocking { specs, .. }) = self.kind(node)
+        else {
+            return Err(format!(
+                "assertion clocking event expected at {}",
+                self.source_location(node)
+            ));
+        };
+        let specs = specs.clone();
+        self.assertion_pulse_clock(path, &specs)
+    }
+
+    /// Resolve a clocking event list to an assertion clock. A clocking
+    /// block event (`@(cb)`, 14.13) and `$global_clock` (14.14) stand for
+    /// their block's clocking event, so a block clocked on one direct edge
+    /// keeps the direct form.
+    pub(super) fn assertion_clock_from_specs(
+        &mut self,
+        path: &str,
+        specs: &[EventSpec],
+        depth: usize,
+    ) -> Result<SampledClock, String> {
+        if let [spec] = specs {
+            if let Some((event, posedge, gate)) = flatten_clock_spec(spec) {
+                if let Some(signal) = self.direct_sampled_clock_signal(path, event) {
+                    return Ok(SampledClock {
+                        signal,
+                        posedge,
+                        gate,
+                    });
+                }
+            }
+            if let EventSpec::Named(event) | EventSpec::AnyChange { sig: event } = spec {
+                if depth < 8 {
+                    if let Some(block) = self.assertion_clocking_block_events(path, *event)? {
+                        return self.assertion_clock_from_specs(path, &block, depth + 1);
+                    }
+                }
+            }
+        }
+        if specs.is_empty() {
+            return Err(format!("assertion clocking event has no event in `{path}`"));
+        }
+        self.assertion_pulse_clock(path, specs)
+    }
+
+    /// The event list of the clocking block an event expression names
+    /// (`@(cb)`), or of the global clocking block for `$global_clock`.
+    fn assertion_clocking_block_events(
+        &mut self,
+        path: &str,
+        event: NodeId,
+    ) -> Result<Option<Vec<EventSpec>>, String> {
+        if let NodeKind::SysCall { name } = self.kind(event) {
+            if name == "$global_clock" {
+                return self.global_clocking_events(path).map(Some);
+            }
+            return Ok(None);
+        }
+        let Some(target) = self.event_target_of(event) else {
+            return Ok(None);
+        };
+        if !target.indices.is_empty() {
+            return Ok(None);
+        }
+        Ok(self
+            .db
+            .clocking_block(target.declaration)
+            .map(|block| block.event_specs.clone()))
+    }
+
+    /// A planned assertion clock: a hidden one-bit signal that a synthetic
+    /// process pulses each time `specs` occurs (at most once per time step).
+    /// Identical lowered event lists share one signal.
+    pub(super) fn assertion_pulse_clock(
+        &mut self,
+        path: &str,
+        specs: &[EventSpec],
+    ) -> Result<SampledClock, String> {
+        let pulse = |signal: usize| SampledClock {
+            signal,
+            posedge: true,
+            gate: None,
+        };
+        // The owned event list identifies one written clocking event in one
+        // instance; equal lowered lists without evaluated qualifiers are
+        // the same event wherever they are written.
+        let source_key = format!("source {:?} {specs:?}", self.inst);
+        if let Some(signal) = self.assertion_pulse_keys.get(&source_key) {
+            return Ok(pulse(*signal));
+        }
+        self.ensure_event_spec_endpoints(path, specs)?;
+        let inst = self.inst;
+        let (lowered, pre_fns) = {
+            let mut ctx = EmitCtx::new(self, path.to_owned(), inst, "0", None, false);
+            let lowered = ctx.lower_event_specs(specs)?;
+            (lowered, std::mem::take(&mut ctx.pre_fns))
+        };
+        let lowered_key = pre_fns.is_empty().then(|| format!("lowered {lowered:?}"));
+        if let Some(signal) = lowered_key
+            .as_ref()
+            .and_then(|key| self.assertion_pulse_keys.get(key))
+            .copied()
+        {
+            self.assertion_pulse_keys.insert(source_key, signal);
+            return Ok(pulse(signal));
+        }
+        let signal = self.model.signals.len();
+        self.model.signals.push(IrSignal {
+            fixed_default: None,
+            c_name: format!("llg_assertion_clock_{signal}"),
+            hdl_name: None,
+            ty: IrType::Packed {
+                width: 1,
+                signed: false,
+                two_state: false,
+            },
+            net_driver: None,
+            net_alias: Vec::new(),
+            alias: None,
+            omit: false,
+        });
+        self.assertion_pulse_keys.insert(source_key, signal);
+        if let Some(key) = lowered_key {
+            self.assertion_pulse_keys.insert(key, signal);
+        }
+        self.sampled_event_clocks.push(PendingSampledEventClock {
+            clock: signal,
+            pulse: true,
+            path: path.to_owned(),
+            specs: lowered,
+            pre_fns,
+        });
+        Ok(pulse(signal))
+    }
+
+    /// The event list of the design's one global clocking block (IEEE
+    /// 1800-2009 14.14: at most one in the elaborated model).
+    pub(in crate::sim::codegen) fn global_clocking_events(
+        &self,
+        path: &str,
+    ) -> Result<Vec<EventSpec>, String> {
+        let mut blocks = self
+            .db
+            .node_ids()
+            .filter_map(|id| self.db.clocking_block(id).filter(|info| info.is_global));
+        match (blocks.next(), blocks.next()) {
+            (Some(block), None) => Ok(block.event_specs.clone()),
+            (None, _) => Err(format!(
+                "$global_clock requires a global clocking declaration in the elaborated model (IEEE 1800-2009 14.14) in `{path}`"
+            )),
+            (Some(_), Some(_)) => Err(format!(
+                "$global_clock found more than one global clocking declaration (IEEE 1800-2009 14.14) in `{path}`"
+            )),
+        }
     }
 
     /// The body of an assertion instance expression, if `node` is one used
@@ -232,9 +456,11 @@ impl Codegen<'_> {
             AssertionExprKind::Clocking { expr, .. } => {
                 let expr = *expr;
                 let clock = self.assertion_event_clock(path, node)?;
-                Ok(self
-                    .semantic_leading_clocks_inner(path, expr, seen)?
-                    .under(clock))
+                // Leading positions below flow this clock to any instance.
+                self.assertion_inferred_clocks.push(Some(clock));
+                let inner = self.semantic_leading_clocks_inner(path, expr, seen);
+                self.assertion_inferred_clocks.pop();
+                Ok(inner?.under(clock))
             }
             AssertionExprKind::Simple { expr, .. } => match self.kind(*expr) {
                 NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) => {
@@ -396,7 +622,14 @@ impl Codegen<'_> {
     ) -> Result<HashSet<NodeId>, String> {
         let mut changes = HashSet::new();
         let mut active = HashSet::new();
-        self.collect_clock_changes_inner(path, root, context, true, &mut active, &mut changes)?;
+        self.collect_clock_changes_inner(
+            path,
+            root,
+            context,
+            (true, None),
+            &mut active,
+            &mut changes,
+        )?;
         Ok(changes)
     }
 
@@ -405,7 +638,7 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
         flowing: Option<SampledClock>,
-        top: bool,
+        (top, inferred): (bool, Option<SampledClock>),
         active: &mut HashSet<NodeId>,
         changes: &mut HashSet<NodeId>,
     ) -> Result<(), String> {
@@ -414,15 +647,20 @@ impl Codegen<'_> {
         }
         let mut flowing = flowing;
         let mut top = top;
+        // The clock the innermost clocking event above `node` flows to it,
+        // even one nullified by a juxtaposed inner event; `None` when the
+        // clock is the one inferred at the assertion statement (16.15.7).
+        let mut inferred = inferred;
         match self.kind(node) {
             NodeKind::AssertionExpr(AssertionExprKind::Clocking { .. }) => {
+                let clock = self.assertion_event_clock(path, node)?;
                 if !self.clocking_nullified(node) {
-                    let clock = self.assertion_event_clock(path, node)?;
                     if !top && flowing.is_some_and(|flowing| !same_clock(&flowing, &clock)) {
                         changes.insert(node);
                     }
                     flowing = Some(clock);
                 }
+                inferred = Some(clock);
             }
             NodeKind::AssertionExpr(kind) => {
                 let keeps_top = transparent_body(kind).is_some();
@@ -430,11 +668,114 @@ impl Codegen<'_> {
             }
             _ => top = false,
         }
+        // An instance passes the clock flowing to it to `$inferred_clock`
+        // defaults in its body (16.15.7).
+        let instance = self.assertion_instance_body(node).is_some();
+        if instance {
+            self.assertion_inferred_clocks.push(inferred);
+        }
+        let mut result = Ok(());
         for operand in self.assertion_operands(node) {
-            self.collect_clock_changes_inner(path, operand, flowing, top, active, changes)?;
+            result = self.collect_clock_changes_inner(
+                path,
+                operand,
+                flowing,
+                (top, inferred),
+                active,
+                changes,
+            );
+            if result.is_err() {
+                break;
+            }
+        }
+        if instance {
+            self.assertion_inferred_clocks.pop();
         }
         active.remove(&node);
+        result
+    }
+
+    /// Differently clocked or multiclocked sequence operands combine only
+    /// through `##1` and `##0` (IEEE 1800-2009 16.14.1), so a repetition,
+    /// `first_match` or sequence `and`/`or`/`intersect`/`throughout`/`within`
+    /// over an operand that changes clock is illegal.
+    pub(super) fn check_multiclocked_sequence_operator(&self, node: NodeId) -> Result<(), String> {
+        let NodeKind::AssertionExpr(kind) = self.kind(node) else {
+            return Ok(());
+        };
+        let operator = match kind {
+            AssertionExprKind::Simple {
+                repeated,
+                repetition,
+                ..
+            }
+            | AssertionExprKind::SequenceWithMatch {
+                repeated,
+                repetition,
+                ..
+            } if *repeated || repetition.is_some() => "repetition",
+            AssertionExprKind::FirstMatch { .. } => "first_match",
+            AssertionExprKind::Binary { op, .. } => match op {
+                AssertionBinaryOp::And => "and",
+                AssertionBinaryOp::Or => "or",
+                AssertionBinaryOp::Intersect => "intersect",
+                AssertionBinaryOp::Throughout => "throughout",
+                AssertionBinaryOp::Within => "within",
+                _ => return Ok(()),
+            },
+            _ => return Ok(()),
+        };
+        if self
+            .assertion_operands(node)
+            .into_iter()
+            .any(|operand| self.changes_clock_within(operand))
+        {
+            return Err(format!(
+                "sequence operator {operator}{} combines differently clocked or multiclocked sequence operands; only ##1 and ##0 may (IEEE 1800-2009 16.14.1)",
+                self.known_location_suffix(node)
+            ));
+        }
         Ok(())
+    }
+
+    /// Checks one `##` boundary of a sequence concatenation whose sides are
+    /// differently clocked or multiclocked (IEEE 1800-2009 16.14.1): the
+    /// delay must be `##1` or `##0`, and the maximal singly clocked
+    /// subsequences on both sides must not admit an empty match.
+    pub(super) fn check_multiclocked_concat(
+        &self,
+        node: NodeId,
+        left: NodeId,
+        right: NodeId,
+        delay: &AssertionRange,
+        empty_side: bool,
+    ) -> Result<(), String> {
+        if !self.changes_clock_within(left) && !self.changes_clock_within(right) {
+            return Ok(());
+        }
+        let location = self.known_location_suffix(node);
+        if delay.max != Some(delay.min) || delay.min > 1 {
+            return Err(format!(
+                "differently clocked or multiclocked sequences{location} may be concatenated only with ##1 or ##0 (IEEE 1800-2009 16.14.1)"
+            ));
+        }
+        if empty_side {
+            return Err(format!(
+                "a maximal singly clocked subsequence of the multiclocked sequence{location} admits an empty match (IEEE 1800-2009 16.14.1)"
+            ));
+        }
+        Ok(())
+    }
+
+    /// ` at file:line:col` when the node has a source location; the caller
+    /// appends the assertion's own location otherwise.
+    fn known_location_suffix(&self, node: NodeId) -> String {
+        let location = self.source_location(node);
+        if location == "<unknown>:0:0" {
+            String::new()
+        } else {
+            format!(" at {location}")
+        }
     }
 
     /// Whether some clocking event inside `node` changes the clock of the

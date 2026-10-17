@@ -136,6 +136,11 @@ pub enum AssertionExprKind {
         /// `iff` condition of the clocking event (`@(posedge clk iff en)`).
         gate: Option<NodeId>,
         expr: NodeId,
+        /// The whole clocking event as an event-control list: value changes,
+        /// `edge` (both edges), `or` lists, named and clocking-block events
+        /// and `iff` qualifiers. `signal`/`posedge`/`gate` describe only its
+        /// first edge.
+        specs: Vec<EventSpec>,
     },
     StrongWeak {
         expr: NodeId,

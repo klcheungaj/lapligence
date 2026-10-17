@@ -338,7 +338,7 @@ impl Codegen<'_> {
             NodeKind::AssertionExpr(AssertionExprKind::Clocking { expr, .. }) => {
                 // The clock flows into the operand (16.14.3, F.5.1).
                 let expr = *expr;
-                let clock = self.assertion_event_clock(path, node)?;
+                let clock = self.assertion_flow_clock(path, node)?;
                 let previous = self.sampled_clock.replace(clock);
                 let result = self.lower_property_node(path, expr, top, builder);
                 self.sampled_clock = previous;
@@ -352,6 +352,12 @@ impl Codegen<'_> {
                         self.assertion_location(node, builder.origin)
                     ));
                 }
+                let condition = match self.inferred_disable(condition) {
+                    Some(Some(default)) => default,
+                    // `disable iff (1'b0)` never disables.
+                    Some(None) => return self.lower_property_node(path, expr, top, builder),
+                    None => condition,
+                };
                 let signal = self.lower_disable_condition(path, condition)?;
                 if builder.disable.is_some_and(|existing| existing != signal) {
                     return Err(format!(

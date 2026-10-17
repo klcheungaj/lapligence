@@ -829,6 +829,7 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         | IrStmt::Delay { .. }
         | IrStmt::ClockingSample { .. }
         | IrStmt::SampledClockTick { .. }
+        | IrStmt::AssertionClockPulse { .. }
         | IrStmt::WaitAny { .. }
         | IrStmt::Fork { .. }
         | IrStmt::DisableTarget { .. }

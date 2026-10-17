@@ -1,8 +1,10 @@
 # Slang built-in system subroutines (vendor/slang/scripts/systemnames.txt)
 # that no positive simulator fixture calls, with the reason. Checked by
 # tests/sim_feature_completion/sim_099.rs (builtin_inventory_is_complete):
-# a name must be called by a fixture or listed here, never both, and
-# the not-implemented rows are exactly the located compile-time rejections.
+# a name must be called by a fixture or listed here, never both. No row is
+# not-implemented any more: the clock-resolution functions ($global_clock,
+# $inferred_clock, $inferred_disable) are lowered since ADV-013
+# (feature_completion/adv_013 calls them).
 # Statuses: not-implemented (located compile-time rejection), vpi-only (no
 # lowering; a VPI application may provide it, and an unregistered call stops
 # the run at startup naming its source position), advanced (owned by an ADV
@@ -17,9 +19,6 @@
 # String literal and scope actuals reach the application (vpi_string_scope_args.sv
 # calls $input, $log and $sdf_annotate); string variables are a located error.
 # name	status	reference
-$global_clock	not-implemented	IEEE 1800-2009 14.14
-$inferred_clock	not-implemented	IEEE 1800-2009 16.15.7
-$inferred_disable	not-implemented	IEEE 1800-2009 16.15.7
 $key	vpi-only	IEEE 1800-2009 D.5 (informative; a VPI application may provide it, 36.3.2)
 $nokey	vpi-only	IEEE 1800-2009 D.5 (informative; a VPI application may provide it, 36.3.2)
 $nolog	vpi-only	IEEE 1800-2009 D.7 (informative; a VPI application may provide it, 36.3.2)

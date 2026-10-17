@@ -480,6 +480,27 @@ impl Codegen<'_> {
             ));
         };
         let property = *property;
+        let default_disable = match self.kind(assertion) {
+            NodeKind::Stmt(StmtKind::ConcurrentAssertion {
+                default_disable, ..
+            }) => *default_disable,
+            _ => None,
+        };
+        let previous_origin = self.assertion_inferred_origin.replace(assertion);
+        let previous_disable = self.assertion_default_disable.replace(default_disable);
+        let result = self.emit_concurrent_assertion_resolved(inst, path, assertion, property);
+        self.assertion_inferred_origin = previous_origin;
+        self.assertion_default_disable = previous_disable;
+        result
+    }
+
+    fn emit_concurrent_assertion_resolved(
+        &mut self,
+        inst: NodeId,
+        path: &str,
+        assertion: NodeId,
+        property: NodeId,
+    ) -> Result<(), String> {
         // Multiclocking decides the lowering path, so it is known first.
         let clocks = self.resolve_assertion_clocks(path, property, None, assertion)?;
         let changes = self.collect_clock_changes(
@@ -491,6 +512,14 @@ impl Codegen<'_> {
         let result = self.emit_concurrent_assertion_clocked(inst, path, assertion);
         self.assertion_clock_changes = previous;
         result
+    }
+
+    /// `$inferred_disable` (IEEE 1800-2009 16.15.7) as a `disable iff`
+    /// condition: the default disable condition at the assertion statement,
+    /// or `None` for 1'b0 when no default disable declaration applies.
+    pub(super) fn inferred_disable(&self, condition: NodeId) -> Option<Option<NodeId>> {
+        matches!(self.kind(condition), NodeKind::SysCall { name } if name == "$inferred_disable")
+            .then(|| self.assertion_default_disable.flatten())
     }
 
     fn emit_concurrent_assertion_clocked(
@@ -680,24 +709,29 @@ impl Codegen<'_> {
         let mut abort = None;
         loop {
             match self.kind(current) {
-                NodeKind::AssertionExpr(AssertionExprKind::Clocking {
-                    signal,
-                    posedge,
-                    gate,
-                    expr,
-                    ..
-                }) => {
+                NodeKind::AssertionExpr(AssertionExprKind::Clocking { expr, .. }) => {
                     // Juxtaposed clocking events nullify the outer one
                     // (`@(d) @(c) x` is `@(c) x`, 16.14.3), as does a
                     // property clock under an enclosing context clock.
-                    let signal = self.lower_assertion_signal(path, *signal, "clock")?;
-                    clock = Some((signal, *posedge, *gate));
-                    current = *expr;
+                    let expr = *expr;
+                    let event = self.assertion_event_clock(path, current)?;
+                    clock = Some((event.signal, event.posedge, event.gate));
+                    current = expr;
                 }
                 NodeKind::AssertionExpr(AssertionExprKind::DisableIff {
                     condition, expr, ..
                 }) => {
-                    let signal = self.lower_disable_condition(path, *condition)?;
+                    let (condition, expr) = (*condition, *expr);
+                    let condition = match self.inferred_disable(condition) {
+                        Some(Some(default)) => default,
+                        // `disable iff (1'b0)` never disables.
+                        Some(None) => {
+                            current = expr;
+                            continue;
+                        }
+                        None => condition,
+                    };
+                    let signal = self.lower_disable_condition(path, condition)?;
                     match disable {
                         None => disable = Some(signal),
                         Some(existing) if existing == signal => {}
@@ -708,7 +742,7 @@ impl Codegen<'_> {
                             ));
                         }
                     }
-                    current = *expr;
+                    current = expr;
                 }
                 NodeKind::AssertionExpr(AssertionExprKind::Abort {
                     condition,
@@ -964,6 +998,13 @@ impl Codegen<'_> {
         path: &str,
         specs: Vec<EventSpec>,
     ) -> Result<SampledClockSource, String> {
+        // `$global_clock` is the global clocking block's event (14.14).
+        let specs = match specs.as_slice() {
+            [EventSpec::Named(event) | EventSpec::AnyChange { sig: event }] if matches!(self.kind(*event), NodeKind::SysCall { name } if name == "$global_clock") => {
+                self.global_clocking_events(path)?
+            }
+            _ => specs,
+        };
         if let [spec] = specs.as_slice() {
             if let Some((event, posedge, gate)) = flatten_clock_spec(spec) {
                 if let Some(signal) = self.direct_sampled_clock_signal(path, event) {
@@ -1044,8 +1085,8 @@ impl Codegen<'_> {
         self.sampled_clock_source(path, specs).map(Some)
     }
 
-    /// The default clock of a concurrent assertion, which still needs one
-    /// direct signal edge.
+    /// The default clock of a concurrent assertion: a direct signal edge, or
+    /// a pulse clock for any other clocking event.
     pub(super) fn lower_default_sampled_clock(
         &mut self,
         path: &str,
@@ -1053,9 +1094,9 @@ impl Codegen<'_> {
         match self.default_sampled_clock_source(path)? {
             None => Ok(None),
             Some(SampledClockSource::Edge(clock)) => Ok(Some(clock)),
-            Some(SampledClockSource::Events(_)) => Err(format!(
-                "concurrent assertion default clocking block must use one direct edge event in `{path}`"
-            )),
+            Some(SampledClockSource::Events(specs)) => {
+                self.assertion_clock_from_specs(path, &specs, 0).map(Some)
+            }
         }
     }
 
@@ -1154,6 +1195,7 @@ impl Codegen<'_> {
                 self.sampled_clock_keys.insert(key, index);
                 self.sampled_event_clocks.push(PendingSampledEventClock {
                     clock: index,
+                    pulse: false,
                     path: path.to_owned(),
                     specs,
                     pre_fns,
@@ -1192,10 +1234,32 @@ impl Codegen<'_> {
     pub(super) fn emit_sampled_clock_processes(&mut self) -> Vec<String> {
         let mut names = Vec::new();
         for pending in std::mem::take(&mut self.sampled_event_clocks) {
-            let name = self.new_fn_name(&pending.path, &format!("sampled_clock_{}", pending.clock));
+            let (stem, tick, reason) = if pending.pulse {
+                (
+                    format!("assertion_clock_{}", pending.clock),
+                    IrStmt::AssertionClockPulse {
+                        signal: pending.clock,
+                    },
+                    format!("assertion clock {} in {}", pending.clock, pending.path),
+                )
+            } else {
+                (
+                    format!("sampled_clock_{}", pending.clock),
+                    IrStmt::SampledClockTick {
+                        clock: pending.clock,
+                    },
+                    format!("sampled-value clock {} in {}", pending.clock, pending.path),
+                )
+            };
+            let name = self.new_fn_name(&pending.path, &stem);
+            let origin = if pending.pulse {
+                "assertion_clock"
+            } else {
+                "sampled_clock"
+            };
             self.model.processes.push(IrProcess::new_with_origin(
                 name.clone(),
-                format!("{}.sampled_clock", pending.path),
+                format!("{}.{origin}", pending.path),
                 IrShape::Loop,
                 pending.pre_fns,
                 vec![
@@ -1203,13 +1267,9 @@ impl Codegen<'_> {
                         specs: pending.specs,
                         refresh: false,
                     },
-                    IrStmt::SampledClockTick {
-                        clock: pending.clock,
-                    },
+                    tick,
                 ],
-                crate::sim::semantic::Origin::Synthetic {
-                    reason: format!("sampled-value clock {} in {}", pending.clock, pending.path),
-                },
+                crate::sim::semantic::Origin::Synthetic { reason },
             ));
             names.push(name);
         }
@@ -1450,44 +1510,6 @@ impl Codegen<'_> {
         result
     }
 
-    fn lower_nested_clock(
-        &mut self,
-        path: &str,
-        signal: NodeId,
-        posedge: bool,
-        gate: Option<NodeId>,
-    ) -> Result<SampledClock, String> {
-        let signal = self.lower_assertion_signal(path, signal, "clock")?;
-        // Sequence transitions name only a signal edge, and the runtime gates
-        // that edge by the leading clock's `iff`. A nested clock is therefore
-        // exact only when it is the leading clocking event itself, or an
-        // ungated edge of a different signal or polarity.
-        if let Some(leading) = self.assertion_leading_clock {
-            let same_edge = leading.signal == signal && leading.posedge == posedge;
-            if (same_edge && leading.gate != gate) || (!same_edge && gate.is_some()) {
-                return Err(format!(
-                    "an `iff`-qualified clock inside a concurrent assertion sequence is not supported unless it is the leading clocking event ({path})"
-                ));
-            }
-            if same_edge {
-                return Ok(leading);
-            }
-        } else if gate.is_some() {
-            return Err(format!(
-                "an `iff`-qualified clock inside a concurrent assertion sequence is not supported unless it is the leading clocking event ({path})"
-            ));
-        }
-        // A direct clocking wrapper is allowed to switch the sampled domain
-        // for a non-empty sequence segment. The Slang-owned analyzer has
-        // already rejected illegal empty/ambiguous multiclocked forms; the
-        // runtime receives the explicit edge on each generated transition.
-        Ok(SampledClock {
-            signal,
-            posedge,
-            gate: None,
-        })
-    }
-
     fn lower_sequence_fragment(
         &mut self,
         path: &str,
@@ -1495,6 +1517,7 @@ impl Codegen<'_> {
         builder: &mut SequenceBuilder,
         role: &str,
     ) -> Result<SequenceFragment, String> {
+        self.check_multiclocked_sequence_operator(node)?;
         match self.kind(node) {
             NodeKind::AssertionExpr(AssertionExprKind::Simple {
                 expr,
@@ -1568,17 +1591,45 @@ impl Codegen<'_> {
             }
             NodeKind::AssertionExpr(AssertionExprKind::SequenceConcat { elements, delays }) => {
                 let mut result: Option<SequenceFragment> = None;
+                // Whether the trailing maximal singly clocked run of the
+                // elements so far admits an empty match (16.14.1).
+                let mut segment_empty = false;
                 for (index, element) in elements.iter().enumerate() {
                     // Clock flow is structural: an element's own clocking
                     // event does not flow out of it into later elements
                     // (16.14.3, F.5.1.1 `T_s((r1 ##1 r2), c)`).
                     let fragment = self.lower_sequence_fragment(path, *element, builder, role)?;
                     let delay = delays.get(index).cloned().unwrap_or_else(zero_range);
+                    let changes = self.changes_clock_within(*element);
                     result = Some(if let Some(left) = result {
+                        let previous = elements[index - 1];
+                        self.check_multiclocked_concat(
+                            node,
+                            previous,
+                            *element,
+                            &delay,
+                            segment_empty || fragment.empty,
+                        )?;
+                        segment_empty = if changes || self.changes_clock_within(previous) {
+                            fragment.empty
+                        } else {
+                            segment_empty && fragment.empty && delay.min <= 1
+                        };
                         builder.concatenate(left, fragment, delay)?
                     } else if delay.min == 0 && delay.max == Some(0) {
+                        segment_empty = fragment.empty;
                         fragment
                     } else {
+                        if changes {
+                            self.check_multiclocked_concat(
+                                node,
+                                *element,
+                                *element,
+                                &delay,
+                                fragment.empty,
+                            )?;
+                        }
+                        segment_empty = false;
                         let start = builder.state()?;
                         let accept = builder.state()?;
                         builder.epsilon_with_clock(start, accept, zero_range(), self.sampled_clock)?;
@@ -1806,14 +1857,8 @@ impl Codegen<'_> {
                     )),
                 }
             }
-            NodeKind::AssertionExpr(AssertionExprKind::Clocking {
-                signal,
-                posedge,
-                gate,
-                expr,
-                ..
-            }) => {
-                let clock = self.lower_nested_clock(path, *signal, *posedge, *gate)?;
+            NodeKind::AssertionExpr(AssertionExprKind::Clocking { expr, .. }) => {
+                let clock = self.assertion_flow_clock(path, node)?;
                 let previous_clock = self.sampled_clock;
                 self.sampled_clock = Some(clock);
                 let result = self.lower_sequence_fragment(path, *expr, builder, role);
@@ -2129,14 +2174,8 @@ impl Codegen<'_> {
                 repeated: false,
                 repetition: None,
             }) => self.lower_sequence_atom(path, *expr, role).map(property_truth),
-            NodeKind::AssertionExpr(AssertionExprKind::Clocking {
-                signal,
-                posedge,
-                gate,
-                expr,
-                ..
-            }) => {
-                let clock = self.lower_nested_clock(path, *signal, *posedge, *gate)?;
+            NodeKind::AssertionExpr(AssertionExprKind::Clocking { expr, .. }) => {
+                let clock = self.assertion_flow_clock(path, node)?;
                 let previous_clock = self.sampled_clock;
                 self.sampled_clock = Some(clock);
                 let result = self.lower_one_cycle_assertion(path, *expr, role);

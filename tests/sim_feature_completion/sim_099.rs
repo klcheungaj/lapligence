@@ -663,23 +663,11 @@ fn remaining_builtins_execute() {
     );
 }
 
-/// A02: the clock-resolution built-ins llg cannot lower and a discarded
-/// string result stop the run at their source position instead of reaching
-/// VPI dispatch; the view direction check still covers selects.
+/// A02: a discarded string result stops the run at its source position
+/// instead of reaching VPI dispatch; the view direction check still covers
+/// selects. (The clock-resolution built-ins are lowered since ADV-013.)
 #[test]
 fn unsupported_builtin_forms_are_located_rejections() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_global_clock",
-        "neg_global_clock.sv:7:22: built-in system subroutine `$global_clock` (IEEE 1800-2009 \
-         14.14) is not implemented by llg",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_inferred_clock",
-        "neg_inferred_clock.sv:6:7: built-in system subroutine `$inferred_clock` (IEEE \
-         1800-2009 16.15.7) is not implemented by llg",
-    );
     sim_cli::reject_case(
         SUITE,
         "neg_void_string",
@@ -691,12 +679,7 @@ fn unsupported_builtin_forms_are_located_rejections() {
         "neg_view_input_select",
         "neg_view_input_select.sv:12:15 cannot assign to input port 'data'",
     );
-    for fixture in [
-        "neg_global_clock",
-        "neg_inferred_clock",
-        "neg_void_string",
-        "neg_view_input_select",
-    ] {
+    for fixture in ["neg_void_string", "neg_view_input_select"] {
         let output = sim_cli::invoke_with_env(SUITE, fixture, true, &[], &[], &[]);
         assert!(
             !String::from_utf8_lossy(&output.stderr).contains("VPI"),
@@ -930,22 +913,16 @@ fn builtin_inventory_is_complete() {
     }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 
-    let lowering =
-        fs::read_to_string(root.join("src/sim/codegen/lowering/expressions/system_functions.rs"))
-            .expect("system_functions.rs");
-    let table = lowering
-        .split_once("fn unimplemented_builtin_reference")
-        .and_then(|(_, rest)| rest.split_once("\n}\n"))
-        .map(|(body, _)| body)
-        .expect("unimplemented_builtin_reference table");
-    let rejected: BTreeSet<&str> = table
-        .split('"')
-        .filter(|literal| literal.starts_with('$'))
-        .collect();
+    // Every built-in the frontend admits is lowered, classified above, or
+    // on the VPI path; none is a blanket compile-time rejection any more
+    // (the clock-resolution functions are lowered since ADV-013).
     let not_implemented: BTreeSet<&str> = rows
         .iter()
         .filter(|(_, status)| **status == "not-implemented")
         .map(|(name, _)| *name)
         .collect();
-    assert_eq!(rejected, not_implemented);
+    assert!(
+        not_implemented.is_empty(),
+        "not-implemented inventory rows without a rejection: {not_implemented:?}"
+    );
 }

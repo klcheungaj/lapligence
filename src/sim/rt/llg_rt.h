@@ -2401,6 +2401,14 @@ int llg_assertion_gate_clock(uint64_t identity, llg_sampled_gate_fn gate);
 int llg_sampled_clock_register_event(uint64_t clock, llg_sampled_gate_fn gate,
                                      void* data);
 void llg_sampled_clock_tick(uint64_t clock);
+/* One tick of a planned assertion clock: a clocking event other than one
+ * edge of a direct signal (value change, `edge`, event lists, expression
+ * edges, named and clocking-block events, gated non-leading clocks) is
+ * waited on by a generated process, which pulses the hidden one-bit
+ * `signal` 0->1->0; concurrent assertions are clocked on its posedge. A
+ * clock ticks at most once per time step (IEEE 1800-2009 16.5), so a second
+ * pulse in the same step is dropped. */
+void llg_assertion_clock_pulse(sv4_t* signal);
 /// One sampled history domain: an expression sampled on one clock. The
 /// callback stores the expression's Preponed value into `out`, an
 /// initialized owner. `history_ticks` (at least 1) is the deepest `$past`

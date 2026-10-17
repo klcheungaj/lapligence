@@ -817,6 +817,10 @@ fn collect_effects(
                 effects.push(ExecutionEffect::RuntimeService);
             }
             IrStmt::SampledClockTick { .. } => effects.push(ExecutionEffect::RuntimeService),
+            IrStmt::AssertionClockPulse { .. } => {
+                effects.push(ExecutionEffect::ImmediateStore);
+                effects.push(ExecutionEffect::RuntimeService);
+            }
             IrStmt::PlusArg(_) | IrStmt::Stochastic(_) => {
                 effects.push(ExecutionEffect::ImmediateStore);
                 effects.push(ExecutionEffect::RuntimeService);
@@ -1315,7 +1319,8 @@ fn collect_statement_expression_effects(
         | IrStmt::EventCapture { .. }
         | IrStmt::EventDeclare { .. }
         | IrStmt::ClockingSample { .. }
-        | IrStmt::SampledClockTick { .. } => {}
+        | IrStmt::SampledClockTick { .. }
+        | IrStmt::AssertionClockPulse { .. } => {}
         IrStmt::If { cond: rhs, .. }
         | IrStmt::While { cond: rhs, .. }
         | IrStmt::Repeat { count: rhs, .. }

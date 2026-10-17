@@ -31,7 +31,8 @@ diagnostic labels remain separate from C symbols. The
   operand in the frontend does not select PLA execution.
 - A built-in without a lowering stays on the VPI path only when an application
   could provide it (SV 36.3.2); names that cannot be (clock resolution) are in
-  `unimplemented_builtin_reference`. A system function in statement position
+  `clock_resolution_reference`, lowered as clocking events and `disable iff`
+  conditions and rejected at the call anywhere else. A system function in statement position
   (void cast) is a function call, never a VPI task. Keep
   `tests/fixtures/sim/feature_completion/sim_099/builtin_inventory.tsv` in step.
 - VPI call actuals go through `lower_vpi_argument`: a `string`-formal string

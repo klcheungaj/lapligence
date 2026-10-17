@@ -154,12 +154,14 @@ pub(super) fn assertion_expr_from_slang(
             let timing_edges = semantic_edges(snapshot, timing)?;
             let signal = edge_target(ids, timing_edges, SemanticEdgeRole::Event)?
                 .ok_or_else(|| DbError::InvalidSnapshot("assertion clock has no signal".into()))?;
+            let (specs, _) = event_specs(snapshot, timing, ids)?;
             AssertionExprKind::Clocking {
                 control,
                 signal,
                 posedge: timing.is_posedge(),
                 gate: edge_target(ids, timing_edges, SemanticEdgeRole::Condition)?,
                 expr: required(SemanticEdgeRole::Body, "clocked assertion body")?,
+                specs,
             }
         }
         9 => AssertionExprKind::StrongWeak {

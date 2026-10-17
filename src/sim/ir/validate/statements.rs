@@ -1102,6 +1102,22 @@ impl Validator<'_> {
                     return self.fail(path, "sampled clock tick must name an event clock");
                 }
             }
+            IrStmt::AssertionClockPulse { signal } => {
+                if !matches!(
+                    self.model.signals.get(*signal),
+                    Some(crate::sim::ir::IrSignal {
+                        fixed_default: None,
+                        ty: crate::sim::ir::IrType::Packed { width: 1, .. },
+                        omit: false,
+                        ..
+                    })
+                ) {
+                    return self.fail(
+                        path,
+                        "assertion clock pulse must name an active one-bit packed signal",
+                    );
+                }
+            }
             IrStmt::NonblockingEventTrigger { ev, ticks } => {
                 self.validate_event_ref(ev, formals, path)?;
                 if let Some(IrDelay::Runtime { value, .. }) = ticks {

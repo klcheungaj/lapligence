@@ -410,10 +410,12 @@ Derivation:
 
 ## Rejections
 
+`$global_clock` as a clocking event and `$inferred_clock`/`$inferred_disable`
+as formal defaults, once rejected here, are implemented by ADV-013; their
+witnesses are in `../adv_013/`.
+
 | Fixture | Diagnostic | Why |
 | --- | --- | --- |
-| `neg_global_clock.sv` | `:7:22: built-in system subroutine `$global_clock` (IEEE 1800-2009 14.14) is not implemented by llg` | SV 14.14 L19973-19976: `$global_clock` "may be invoked anywhere that a clocking event may be specified"; llg has no lowering for it as an event expression (gate failure, see the SIM-099 report). |
-| `neg_inferred_clock.sv` | `:6:7: ... `$inferred_clock` (IEEE 1800-2009 16.15.7) ...` | `$inferred_clock` as a property formal default is not lowered. |
 | `neg_void_string.sv` | `:5:11: the discarded string result of `$sformatf` in statement position is not supported` | A string-valued built-in in a void cast is a limit, not a VPI task. |
 | `neg_view_input_select.sv` | `:12:15 cannot assign to input port 'data'` | SV 25.5 L43860: modports declare directions; a select of an input member through the view is still a write to it (frontend diagnostic). |
 | `neg_unregistered_annex_task.sv` | `llg: VPI error: no VPI registration for `$key` (called at <path>:7)` | No lowering and no application: the run stops at startup naming the call, never a no-op. |

@@ -25,18 +25,19 @@ fn sampled_argument_error(name: &str, scope_path: &str, argument: &IrExpr) -> St
     }
 }
 
-/// The reference of a built-in system function the frontend admits but llg
-/// cannot lower: the clock-resolution functions `$global_clock` (used as a
-/// clocking event) and `$inferred_clock`/`$inferred_disable` (property and
-/// sequence formal defaults). They name events and conditions, so a VPI
-/// application cannot provide them, and the generic VPI path would otherwise
-/// fail with a misleading result-type diagnostic. Other built-ins without a
-/// lowering (the informative Annex D services such as `$key`, `$reset_count`
-/// and `$sdf_annotate`; `$sreadmemb/$sreadmemh` are built-ins since ADV-026) stay on the VPI path, where an application may provide
-/// them (IEEE 1800-2009 36.3.2) and a call nobody registers stops the run at
-/// startup naming its source position. Keep
+/// The clock-resolution functions name an event or a condition, not a
+/// value: `$global_clock` is lowered as an assertion or sampled-value
+/// clocking event (14.14) and `$inferred_clock`/`$inferred_disable` as the
+/// clocking event or `disable iff` condition a property or sequence formal
+/// defaults to (16.15.7). Anywhere else they are rejected at the call, never
+/// sent to VPI, which cannot provide them. Other built-ins without a lowering
+/// (the informative Annex D services such as `$key`, `$reset_count` and
+/// `$sdf_annotate`; `$sreadmemb/$sreadmemh` are built-ins since ADV-026) stay
+/// on the VPI path, where an application may provide them (IEEE 1800-2009
+/// 36.3.2) and a call nobody registers stops the run at startup naming its
+/// source position. Keep
 /// `tests/fixtures/sim/feature_completion/sim_099/builtin_inventory.tsv` in step.
-fn unimplemented_builtin_reference(name: &str) -> Option<&'static str> {
+fn clock_resolution_reference(name: &str) -> Option<&'static str> {
     Some(match name {
         "$global_clock" => "IEEE 1800-2009 14.14",
         "$inferred_clock" | "$inferred_disable" => "IEEE 1800-2009 16.15.7",
@@ -280,7 +281,7 @@ impl<'a> Codegen<'a> {
         name: &str,
         call: NodeId,
     ) -> Result<IrExpr, String> {
-        if let Some(error) = self.unimplemented_builtin(call, name) {
+        if let Some(error) = self.clock_resolution_misuse(call, name) {
             return Err(error);
         }
         let args: Vec<NodeId> = self.node(call).children.clone();
@@ -1203,17 +1204,22 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    /// The located rejection of a built-in clock-resolution function llg
-    /// cannot lower (see `unimplemented_builtin_reference`).
-    pub(in super::super) fn unimplemented_builtin(
+    /// The located rejection of a clock-resolution function used as a value
+    /// (see `clock_resolution_reference`).
+    pub(in super::super) fn clock_resolution_misuse(
         &self,
         call: NodeId,
         name: &str,
     ) -> Option<String> {
-        let reference = unimplemented_builtin_reference(name)?;
+        let reference = clock_resolution_reference(name)?;
         Some(format!(
-            "{}: built-in system subroutine `{name}` ({reference}) is not implemented by llg",
-            self.source_location(call)
+            "{}: `{name}` ({reference}) is supported only as a concurrent assertion or sampled-value clocking event{}, not in this position",
+            self.source_location(call),
+            if name == "$inferred_disable" {
+                " or `disable iff` condition"
+            } else {
+                ""
+            }
         ))
     }
 

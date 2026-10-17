@@ -1093,3 +1093,15 @@ int llg_assertion_register_sequence(
         fail_desc, data, kind, overlapped, 0, 0,
         identity, label, location, scope);
 }
+
+void llg_assertion_clock_pulse(sv4_t* signal) {
+    if (!signal) return;
+    llg_clocking_edge_t* edge = find_clocking_edge(signal);
+    if (edge && edge->time == g.now && (edge->occurred & CLOCKING_POSEDGE)) return;
+    sv4_t one = sv4_from_u64(1, 1, 0);
+    sv4_t zero = sv4_from_u64(0, 1, 0);
+    sig_write(signal, one);
+    sig_write(signal, zero);
+    sv4_destroy(&one);
+    sv4_destroy(&zero);
+}
