@@ -123,6 +123,7 @@ static void nba_destroy(llg_nba_t* nba) {
 struct llg_inertial {
     struct llg_inertial* next_all;
     struct llg_inertial* next_pending;
+    struct llg_inertial* prev_pending;
     llg_inertial_t** handle;
     sv4_t* target;
     llg_net_t* net;

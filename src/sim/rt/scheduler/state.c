@@ -578,7 +578,8 @@ typedef struct {
     llg_nba_queue_t nba_queues[LLG_REGION_COUNT];
     llg_nba_bucket_t* delayed_nba_buckets;
     llg_inertial_t* inertial_drivers;
-    llg_inertial_t* inertial_pending;
+    llg_inertial_t* inertial_pending;      // sorted by time, FIFO per time
+    llg_inertial_t* inertial_pending_tail;
     uint64_t nba_sequence;
     llg_wait_t* timed_head;   // sorted ascending by time
     llg_wait_queue_t zero_waits[LLG_REGION_COUNT];

@@ -745,13 +745,34 @@ static uint64_t inertial_transition_ticks(const sv4_t* old_value,
     return rise;
 }
 
+// The pending list is sorted by maturity time and FIFO among equal times.
+// Back links make removal constant time; insertion searches from the tail,
+// where new (latest) maturities land, for the same position a forward search
+// past every entry due no later would find.
+static void inertial_pending_remove(llg_inertial_t* driver) {
+    if (driver->prev_pending) driver->prev_pending->next_pending = driver->next_pending;
+    else if (g.inertial_pending == driver) g.inertial_pending = driver->next_pending;
+    if (driver->next_pending) driver->next_pending->prev_pending = driver->prev_pending;
+    else if (g.inertial_pending_tail == driver) g.inertial_pending_tail = driver->prev_pending;
+    driver->next_pending = NULL;
+    driver->prev_pending = NULL;
+}
+
+static void inertial_pending_insert(llg_inertial_t* driver) {
+    llg_inertial_t* before = g.inertial_pending_tail;
+    while (before && before->time > driver->time) before = before->prev_pending;
+    driver->prev_pending = before;
+    driver->next_pending = before ? before->next_pending : g.inertial_pending;
+    if (driver->next_pending) driver->next_pending->prev_pending = driver;
+    else g.inertial_pending_tail = driver;
+    if (before) before->next_pending = driver;
+    else g.inertial_pending = driver;
+}
+
 static void inertial_unlink_pending(llg_inertial_t* driver) {
     if (!driver->pending) return;
-    llg_inertial_t** entry = &g.inertial_pending;
-    while (*entry && *entry != driver) entry = &(*entry)->next_pending;
-    if (*entry) *entry = driver->next_pending;
+    inertial_pending_remove(driver);
     driver->pending = 0;
-    driver->next_pending = NULL;
     sv4_destroy(&driver->value);
     sv4_destroy(&driver->mask);
     driver->has_mask = 0;
@@ -799,7 +820,6 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
     }
     const sv4_t* effective_mask = mask ? &selected_mask : NULL;
     uint64_t ticks;
-    llg_inertial_t** entry;
     if (driver->pending) {
         // Unchanged expression values keep the original propagation time.
         if (driver->has_mask == (effective_mask != NULL) &&
@@ -825,10 +845,7 @@ static void inertial_update(llg_inertial_t** handle, sv4_t* target,
     sv4_move(&driver->value, &value);
     driver->time = g.now + ticks;
     driver->pending = 1;
-    entry = &g.inertial_pending;
-    while (*entry && (*entry)->time <= driver->time) entry = &(*entry)->next_pending;
-    driver->next_pending = *entry;
-    *entry = driver;
+    inertial_pending_insert(driver);
 cleanup:
     sv4_destroy(&value);
     sv4_destroy(&selected_mask);
@@ -907,22 +924,24 @@ static void llg_net_cancel_propagation(llg_net_t* net) {
     }
 }
 
-static int inertial_ready(llg_region_t region) {
-    for (llg_inertial_t* driver = g.inertial_pending; driver;
-         driver = driver->next_pending) {
-        if (driver->time == g.now && driver->region == region) return 1;
+// The first pending update due now in `region`. The list is sorted, so the
+// scan stops at the first later maturity.
+static llg_inertial_t* inertial_due(llg_region_t region) {
+    for (llg_inertial_t* driver = g.inertial_pending;
+         driver && driver->time <= g.now; driver = driver->next_pending) {
+        if (driver->time == g.now && driver->region == region) return driver;
     }
-    return 0;
+    return NULL;
+}
+
+static int inertial_ready(llg_region_t region) {
+    return inertial_due(region) != NULL;
 }
 
 static void commit_inertial(llg_region_t region) {
-    llg_inertial_t** slot = &g.inertial_pending;
-    while (*slot && ((*slot)->time != g.now || (*slot)->region != region))
-        slot = &(*slot)->next_pending;
-    llg_inertial_t* driver = *slot;
+    llg_inertial_t* driver = inertial_due(region);
     if (!driver) return;
-    *slot = driver->next_pending;
-    driver->next_pending = NULL;
+    inertial_pending_remove(driver);
     driver->pending = 0;
 
     // Detach before publishing: callbacks may schedule another update on driver.
