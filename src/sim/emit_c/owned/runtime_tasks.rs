@@ -31,6 +31,7 @@ impl Frame<'_, '_> {
         let IrStmt::Memory {
             write,
             path,
+            text,
             view,
             radix,
             addressing,
@@ -76,6 +77,7 @@ impl Frame<'_, '_> {
             rows: None,
             element,
             path,
+            text: text.as_deref(),
             origin: view.origin,
             selectors: &view.selectors,
             dims: &view.dims,
@@ -220,6 +222,7 @@ impl Frame<'_, '_> {
                 two_state: task.two_state,
             },
             path: &task.path,
+            text: task.text.as_deref(),
             origin: task.origin,
             selectors: &task.selectors,
             dims: &task.dims,
@@ -432,10 +435,23 @@ impl Frame<'_, '_> {
             ),
             None => format!("{}, {}ULL", call.memory, element.cells),
         };
+        // The words of `$sreadmemb/$sreadmemh` are text in the model; the
+        // runtime serves them to the same parser that reads a file for the
+        // duration of this one call.
+        if let Some(text) = call.text {
+            self.line(format!(
+                "llg_memory_text_begin({}, {}u);",
+                c_byte_string(text),
+                text.len()
+            ));
+        }
         self.line(format!("{}({}, {storage}, {}u, {}, {}, {dimensions}, {}, {strides}, {origin}, {view_total}, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
             call.runtime, path.take_string(), element.width,
             u8::from(element.signed), u8::from(element.two_state), call.dims.len(),
             u8::from(call.start.is_some()), u8::from(call.finish.is_some())));
+        if call.text.is_some() {
+            self.line("llg_memory_text_end();");
+        }
         if let Some(enum_name) = enum_name {
             self.line(format!("sv4_destroy_array({enum_name}, {enum_count});"));
             self.line("}");
@@ -753,6 +769,8 @@ struct MemoryCall<'a> {
     rows: Option<(&'static str, u64)>,
     element: MemoryElement,
     path: &'a IrStringExpr,
+    /// The text a load reads instead of the file `path` names.
+    text: Option<&'a [u8]>,
     origin: u64,
     selectors: &'a [IrMemorySelector],
     dims: &'a [(i32, i32)],
@@ -763,4 +781,19 @@ struct MemoryCall<'a> {
     enum_values: Option<&'a [IrConst]>,
     start: Option<&'a IrExpr>,
     finish: Option<&'a IrExpr>,
+}
+
+/// A C string literal of `bytes`: octal escapes keep every byte exact and
+/// cannot run into a following digit.
+fn c_byte_string(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() + 2);
+    out.push('"');
+    for &byte in bytes {
+        match byte {
+            b' '..=b'~' if !matches!(byte, b'"' | b'\\' | b'?') => out.push(char::from(byte)),
+            _ => out.push_str(&format!("\\{byte:03o}")),
+        }
+    }
+    out.push('"');
+    out
 }

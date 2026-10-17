@@ -687,6 +687,13 @@ longer unpack sources consume leftmost bits. Composite call/ref layouts use the
 same recursive descriptors.
 Memory views evaluate each dynamic selector once, retaining static strides and HDL
 bounds; invalid views fail before writes. `statements/memory_tasks.rs` lowers
+`$sreadmemb/$sreadmemh (memory, start, finish, string {, string})` use the same
+lowering with the arguments rearranged to the `$readmem*` layout
+(`lower_string_memory_task`): the string literals, joined by one newline each,
+become `text` on the load (`IrStmt::Memory`/`IrMemoryAccess`), the path is only
+the diagnostic label `$sreadmemh at <scope>:<line>:<col>`, and a data argument
+that is not a string literal rejects with its location (S26-D17). Start and
+finish are required, so the load direction never depends on the edition.
 `$readmem*`/`$writemem*`: memories with model array storage keep the
 fixed-array call; a slice with a variable position becomes a `SliceBase`
 selector and a queue range slice with a runtime or `$` bound (or reversed

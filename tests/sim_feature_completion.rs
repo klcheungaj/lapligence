@@ -18,6 +18,9 @@ mod adv_003;
 #[path = "sim_feature_completion/adv_016.rs"]
 mod adv_016;
 
+#[path = "sim_feature_completion/adv_026.rs"]
+mod adv_026;
+
 #[path = "sim_feature_completion/adv_032.rs"]
 mod adv_032;
 

@@ -740,7 +740,7 @@ fn builtins_without_lowering_dispatch_to_vpi() {
     sim_cli::reject_case(
         SUITE,
         "neg_unregistered_annex_task",
-        &unregistered("neg_unregistered_annex_task", "$sreadmemh"),
+        &unregistered("neg_unregistered_annex_task", "$key"),
     );
     sim_cli::reject_case(
         SUITE,

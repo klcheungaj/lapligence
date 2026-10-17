@@ -416,7 +416,7 @@ Derivation:
 | `neg_inferred_clock.sv` | `:6:7: ... `$inferred_clock` (IEEE 1800-2009 16.15.7) ...` | `$inferred_clock` as a property formal default is not lowered. |
 | `neg_void_string.sv` | `:5:11: the discarded string result of `$sformatf` in statement position is not supported` | A string-valued built-in in a void cast is a limit, not a VPI task. |
 | `neg_view_input_select.sv` | `:12:15 cannot assign to input port 'data'` | SV 25.5 L43860: modports declare directions; a select of an input member through the view is still a write to it (frontend diagnostic). |
-| `neg_unregistered_annex_task.sv` | `llg: VPI error: no VPI registration for `$sreadmemh` (called at <path>:7)` | No lowering and no application: the run stops at startup naming the call, never a no-op. |
+| `neg_unregistered_annex_task.sv` | `llg: VPI error: no VPI registration for `$key` (called at <path>:7)` | No lowering and no application: the run stops at startup naming the call, never a no-op. |
 | `neg_unregistered_annex_function.sv` | `... `$reset_count` (called at <path>:7)` | Same for a function. |
 | `neg_vif_array_whole.sv` | `:11:12: unpacked array member `mem` of virtual interface `bus_if` is supported only through element selects ...` | A whole array member has no per-instance value in llg; only elements are dispatched on the bound instance. |
 | `neg_vif_array_update.sv` | `:10:5: a compound assignment to an element of an unpacked array member through a virtual interface is not supported ...` | Only `=` and `<=` dispatch on the bound instance. |

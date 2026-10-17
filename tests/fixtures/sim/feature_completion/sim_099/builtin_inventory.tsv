@@ -11,6 +11,9 @@
 # Every built-in llg lowers runs natively: a VPI registration under the name
 # of one the design calls stops the run at startup naming the call
 # (IEEE 1800-2009 36.3.2, decision S99-D6); only vpi-only names reach it.
+# $sreadmemb/$sreadmemh are built-ins (ADV-026: feature_completion/adv_026
+# calls both), so they are not listed and a registration of one the design
+# calls stops the run like any other built-in.
 # String literal and scope actuals reach the application (vpi_string_scope_args.sv
 # calls $input, $log and $sdf_annotate); string variables are a located error.
 # name	status	reference
@@ -25,8 +28,6 @@ $reset_value	vpi-only	IEEE 1800-2009 D.8 (informative; a VPI application may pro
 $save	vpi-only	IEEE 1800-2009 D.9 (informative; a VPI application may provide it, 36.3.2)
 $restart	vpi-only	IEEE 1800-2009 D.9 (informative; a VPI application may provide it, 36.3.2)
 $incsave	vpi-only	IEEE 1800-2009 D.9 (informative; a VPI application may provide it, 36.3.2)
-$sreadmemb	vpi-only	IEEE 1800-2009 D.14 (informative; a VPI application may provide it, 36.3.2)
-$sreadmemh	vpi-only	IEEE 1800-2009 D.14 (informative; a VPI application may provide it, 36.3.2)
 $rising_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4
 $falling_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4
 $steady_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4

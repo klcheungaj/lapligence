@@ -31,8 +31,8 @@ fn sampled_argument_error(name: &str, scope_path: &str, argument: &IrExpr) -> St
 /// sequence formal defaults). They name events and conditions, so a VPI
 /// application cannot provide them, and the generic VPI path would otherwise
 /// fail with a misleading result-type diagnostic. Other built-ins without a
-/// lowering (the informative Annex D services, `$sreadmemb/$sreadmemh`,
-/// `$sdf_annotate`) stay on the VPI path, where an application may provide
+/// lowering (the informative Annex D services such as `$key`, `$reset_count`
+/// and `$sdf_annotate`; `$sreadmemb/$sreadmemh` are built-ins since ADV-026) stay on the VPI path, where an application may provide
 /// them (IEEE 1800-2009 36.3.2) and a call nobody registers stops the run at
 /// startup naming its source position. Keep
 /// `tests/fixtures/sim/feature_completion/sim_099/builtin_inventory.tsv` in step.

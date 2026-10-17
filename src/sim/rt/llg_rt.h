@@ -1514,6 +1514,12 @@ enum {
     LLG_MEMORY_ADDRESSING_VERILOG_2001 = 0,
     LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009 = 1,
 };
+// `$sreadmemb/$sreadmemh` (IEEE 1800-2009 D.14): the next memory load reads
+// `data` (not copied, valid until `llg_memory_text_end`) instead of opening
+// the file its `path` names, which then only labels its diagnostics. Bracket
+// exactly one load call.
+void llg_memory_text_begin(const char* data, size_t length);
+void llg_memory_text_end(void);
 void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
                      uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                      const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,

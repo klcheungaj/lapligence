@@ -617,6 +617,8 @@ fn is_whole_unpacked_value(
 fn legacy_storage_argument(name: &str) -> Option<u32> {
     match name {
         "$readmemb" | "$readmemh" | "$writememb" | "$writememh" => Some(1),
+        // IEEE 1364-2001 C.13: the memory is the first argument.
+        "$sreadmemb" | "$sreadmemh" => Some(0),
         // IEEE 1364-2001 17.2.4.4 explicitly admits $fread(memory, fd).
         "$fread" => Some(0),
         // IEEE 1364-2001 17.5 admits a memory personality as PLA argument 0.
@@ -1567,6 +1569,8 @@ mod tests {
         assert_eq!(legacy_storage_argument("$readmemh"), Some(1));
         assert_eq!(legacy_storage_argument("$readmemb"), Some(1));
         assert_eq!(legacy_storage_argument("$writememh"), Some(1));
+        assert_eq!(legacy_storage_argument("$sreadmemb"), Some(0));
+        assert_eq!(legacy_storage_argument("$sreadmemh"), Some(0));
         assert_eq!(legacy_storage_argument("$async$and$array"), Some(0));
         assert_eq!(legacy_storage_argument("$sync$nor$plane"), Some(0));
         assert_eq!(legacy_storage_argument("$async$and$other"), None);

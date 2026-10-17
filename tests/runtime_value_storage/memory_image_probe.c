@@ -135,6 +135,39 @@ static void conversion_controls(void) {
     sv4_destroy(&value);
 }
 
+// `$sreadmemh` text (IEEE 1800-2009 D.14) reaches the file parser: the load
+// stops at the given length although the buffer continues, opens no file, and
+// the next load reads its file again.
+static void text_source(void) {
+    const int32_t dims[] = {0, 3};
+    sv4_t memory[4];
+    for (int i = 0; i < 4; ++i) memory[i] = sv4_zero(8, 0);
+    const char buffer[] = "11 22\n33 44 55";
+    llg_memory_text_begin(buffer, 10);
+    load("no_such_file.hex", memory, 4, 8, 0, 0, dims,
+         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, NULL, 0, 16);
+    llg_memory_text_end();
+    const uint64_t expected[] = {0x11, 0x22, 0x33, 0x04};
+    for (int i = 0; i < 4; ++i) CHECK(sv4_to_u64(memory[i]) == expected[i]);
+    write_input("after_text.hex", "aa bb cc dd\n");
+    load("after_text.hex", memory, 4, 8, 0, 0, dims,
+         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, NULL, 0, 16);
+    CHECK(sv4_to_u64(memory[0]) == 0xaa && sv4_to_u64(memory[3]) == 0xdd);
+    for (int i = 0; i < 4; ++i) sv4_destroy(&memory[i]);
+}
+
+static void text_malformed(void) {
+    const int32_t dims[] = {0, 3};
+    sv4_t memory[4];
+    for (int i = 0; i < 4; ++i) memory[i] = sv4_zero(8, 0);
+    llg_memory_text_begin("11 1g 22", 8);
+    load("$sreadmemh at tb:1:1", memory, 4, 8, 0, 0, dims,
+         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, NULL, 0, 16);
+    llg_memory_text_end();
+    CHECK(sv4_to_u64(memory[0]) == 0x11 && sv4_to_u64(memory[1]) == 0);
+    for (int i = 0; i < 4; ++i) sv4_destroy(&memory[i]);
+}
+
 int main(int argc, char** argv) {
     CHECK(argc == 2);
     llg_rt_init();
@@ -146,6 +179,8 @@ int main(int argc, char** argv) {
     else if (strcmp(argv[1], "repeated2001") == 0) repeated_addresses(LLG_MEMORY_ADDRESSING_VERILOG_2001);
     else if (strcmp(argv[1], "conversion") == 0) conversion_controls();
     else if (strcmp(argv[1], "signed") == 0) signed_address_spellings();
+    else if (strcmp(argv[1], "text") == 0) text_source();
+    else if (strcmp(argv[1], "textmalformed") == 0) text_malformed();
     else CHECK(0);
     llg_rt_cleanup();
     CHECK(value_test_live() == 0 && value_test_bytes() == 0);
