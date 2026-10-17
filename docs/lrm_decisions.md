@@ -579,6 +579,22 @@ Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | S26-D19 | **An address outside the start/finish range and a token that is not a number are errors that end the load.** The words placed before the error stay and the simulation continues. | D.14 L70159-70160; 21.4 L37268-37271, L37315-37317 | `S26-D19_errors_end_the_load` | llg choice (D.14 states no error rules; 21.4 states the address error for files) |
 | S26-D20 | **A `//` comment ends with its string; a `/*` comment still open at the end of a string continues in the next.** | D.14 L70159-70160; 21.4 L37268-37271 | `S26-D20_comments_across_strings` | llg choice (the text does not relate comments to string ends) |
 
+## Specify blocks and module paths (ADV-007)
+
+Specparams and simple module paths (SV 6.20.5 and 30.1-30.6, V2001 3.11.3
+and 14.1-14.4). The fixtures and the derivation of every expected value are
+in [`adv_007`](../tests/fixtures/sim/feature_completion/adv_007/readme.md).
+Line numbers refer to `SystemVerilog-1800-2009.txt`.
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| A7-D1 | **A path transition is due at the larger of the distributed arrival and the latest input change plus the path delay.** The distributed arrival is when the drivers inside the module deliver the new value, plus a net delay declared on the destination; among the paths whose inputs changed at the same latest time the smallest delay for the transition wins. | 30.5.3 L50166-50173; 30.6 L50201-50202 | `A7-D1_path_delay_selection` | LRM text for selection and the larger delay; counting a net delay on the destination as distributed is an llg choice |
+| A7-D2 | **The path delays the destination net itself.** Every reader sees the delayed value, inside the module and outside; several drivers inside the module resolve first and the path delays the resolved value (V2001 rejects such a destination, 14.2.1). | 30.3 L49330-49332; 30.4.1 L49410-49413 | `A7-D2_path_delays_destination_net` | llg choice (the text does not say where the delay applies) |
+| A7-D3 | **An input that never changed counts as changed at time 0** when the active paths are chosen. | 30.5.3 L50166-50167 | `A7-D3_unchanged_input_time_zero` | llg choice (the text does not cover an input without transitions) |
+| A7-D4 | **Duplicate and overlapping paths are errors.** Two declarations of one path, or paths sharing a source and a destination bit, are rejected with the location of the later one; the frontend only warns. | 30.5 L49946-50001; 30.4.4.4 L49763 | `A7-D4_duplicate_path_rejected` (negative: exit status 1, empty `.out`) | llg choice (the text assigns one delay per path and does not say what a second declaration means) |
+| A7-D5 | **A parameter inside a specify block is an error**, as Table 6-11 states; the frontend only warns. | Table 6-11 L6818 | `A7-D5_parameter_in_specify_rejected` (negative: exit status 1, empty `.out`) | LRM text |
+| A7-D6 | **A path destination keeps its initial z until its first path-delayed transition matures**, like a net with a net delay (S2-D3); the first transition is from z. | 6.7 L5199-5200 | `A7-D6_path_destination_initial_z` | llg choice (the value of a destination before its first delayed transition is not stated) |
+
 ## Native initialization and let environments (SIM-022)
 
 | ID | Decision | Clause (SV) | Case | Kind |
