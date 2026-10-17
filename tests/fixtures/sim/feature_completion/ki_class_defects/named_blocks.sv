@@ -104,7 +104,6 @@ module tb;
     int done_count;
     function new(int i);
       id = i;
-      done_count = 0;
     endfunction
     task watch();
       fork : watchers

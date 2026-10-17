@@ -263,7 +263,17 @@ pub fn collect_reads(db: &Db, root: NodeId) -> Vec<NodeId> {
 pub fn collect_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    walk_writes(db, root, &mut seen, &mut out);
+    walk_writes(db, root, false, &mut seen, &mut out);
+    out
+}
+
+/// [`collect_writes`] that also resolves each member of a concatenation,
+/// streaming or assignment-pattern target (`assign {a, b} = ...`).  Kept apart
+/// so that rules built on [`collect_writes`] keep their established behavior.
+pub fn collect_writes_with_members(db: &Db, root: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    walk_writes(db, root, true, &mut seen, &mut out);
     out
 }
 
@@ -415,7 +425,13 @@ fn add_read(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<Nod
     }
 }
 
-fn walk_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
+fn walk_writes(
+    db: &Db,
+    node: NodeId,
+    members: bool,
+    seen: &mut HashSet<NodeId>,
+    out: &mut Vec<NodeId>,
+) {
     match db.node_kind(node) {
         NodeKind::Stmt(
             StmtKind::ProcContAssign { lhs, .. }
@@ -423,25 +439,25 @@ fn walk_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<
             | StmtKind::Release { lhs }
             | StmtKind::Deassign { lhs },
         ) => {
-            add_lhs_write(db, *lhs, seen, out);
+            add_lhs_write(db, *lhs, members, seen, out);
             return;
         }
         NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
             if db.var_initializer(*declaration).is_some() {
-                add_lhs_write(db, *declaration, seen, out);
+                add_lhs_write(db, *declaration, members, seen, out);
             }
             return;
         }
         NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::ContAssign { .. } => {
             if let Some(lhs) = db.node(node).children.first() {
-                add_lhs_write(db, *lhs, seen, out);
+                add_lhs_write(db, *lhs, members, seen, out);
             }
             return;
         }
         _ => {}
     }
     for c in &db.node(node).children {
-        walk_writes(db, *c, seen, out);
+        walk_writes(db, *c, members, seen, out);
     }
 }
 
@@ -465,6 +481,44 @@ fn walk_driver_writes(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &m
         }
         NodeKind::Stmt(StmtKind::Release { .. }) | NodeKind::Stmt(StmtKind::Deassign { .. }) => {
             return;
+        }
+        // Assignments in expression position (`for` initializers and steps,
+        // `a = (b = 1)`) and the increment/decrement operators, which behave
+        // as blocking assignments (IEEE 1800-2009 11.4.2), write their first
+        // operand.
+        NodeKind::Expr(ExprKind::Operation {
+            op,
+            operands,
+            assignment,
+            ..
+        }) if *assignment
+            || matches!(
+                op,
+                Operation::Assignment
+                    | Operation::PostIncrement
+                    | Operation::PreIncrement
+                    | Operation::PostDecrement
+                    | Operation::PreDecrement
+                    | Operation::OverloadUpdate
+                    | Operation::OverloadPostUpdate
+            ) =>
+        {
+            if let Some(lhs) = operands.first() {
+                add_driver_lhs_write(db, *lhs, seen, out);
+            }
+        }
+        // The loop supplies the (read-only) iterator variables of a
+        // `foreach` (IEEE 1800-2009 12.7.3), and a `for` initializer assigns
+        // the variables it declares.
+        NodeKind::Stmt(StmtKind::Foreach { vars, .. }) => {
+            for var in vars.iter().flatten() {
+                add_driver_lhs_write(db, *var, seen, out);
+            }
+        }
+        NodeKind::Stmt(StmtKind::For { vars, .. }) => {
+            for var in vars {
+                add_driver_lhs_write(db, *var, seen, out);
+            }
         }
         NodeKind::FuncCall { .. } | NodeKind::SysCall { .. } | NodeKind::MethodCall { .. } => {
             for actual in call_written_actuals(db, node) {
@@ -528,6 +582,13 @@ fn call_written_actuals(db: &Db, call: NodeId) -> Vec<NodeId> {
         _ => return Vec::new(),
     };
     let mut written = call_assigned_actuals(db, actuals);
+    // A built-in method's callee is absent or an opaque node; a user method
+    // resolves to its declaration and is handled through its formals below.
+    if let NodeKind::MethodCall { name, receiver, .. } = db.node_kind(call) {
+        if callee.is_none_or(|callee| !matches!(db.node_kind(callee), NodeKind::FuncTask { .. })) {
+            written.extend(builtin_method_writes(db, call, name, *receiver, actuals));
+        }
+    }
     let formals: Vec<NodeId> = callee
         .map(|callee| {
             db.node(callee)
@@ -553,6 +614,43 @@ fn call_written_actuals(db: &Db, call: NodeId) -> Vec<NodeId> {
     written
 }
 
+/// Signals a built-in method call writes beyond assignment-wrapped actuals:
+/// the receiver of a method that stores into it (`q.push_back(x)`,
+/// `s.putc(i, c)`, `s.itoa(n)`), the message variable of a mailbox
+/// `get`/`peek` (IEEE 1800-2009 15.4.5 to 15.4.8) and the variables listed in
+/// `obj.randomize(v, ...)`, which are randomized (18.11).
+fn builtin_method_writes(
+    db: &Db,
+    call: NodeId,
+    name: &str,
+    receiver: Option<NodeId>,
+    actuals: &[NodeId],
+) -> Vec<NodeId> {
+    match name {
+        "push_back" | "push_front" | "insert" | "putc" | "itoa" | "hextoa" | "octtoa"
+        | "bintoa" | "realtoa" => receiver.into_iter().collect(),
+        "get" | "try_get" | "peek" | "try_peek" => {
+            let is_mailbox = receiver
+                .and_then(|receiver| {
+                    db.type_descriptor(receiver).or_else(|| {
+                        signal_of_ref(db, receiver).and_then(|signal| db.type_descriptor(signal))
+                    })
+                })
+                .is_some_and(|ty| ty.name.starts_with("mailbox"));
+            match actuals {
+                [message] if is_mailbox => vec![*message],
+                _ => Vec::new(),
+            }
+        }
+        "randomize" if db.randomize_call(call).is_some() => actuals
+            .iter()
+            .copied()
+            .filter(|actual| matches!(db.node_kind(*actual), NodeKind::Expr(_)))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// First operands of the assignment-wrapped (output/inout) actuals.
 fn call_assigned_actuals(db: &Db, actuals: &[NodeId]) -> Vec<NodeId> {
     actuals
@@ -568,8 +666,54 @@ fn call_assigned_actuals(db: &Db, actuals: &[NodeId]) -> Vec<NodeId> {
         .collect()
 }
 
-fn add_lhs_write(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
-    if let Some(sig) = signal_of_ref(db, lhs) {
+fn add_lhs_write(
+    db: &Db,
+    lhs: NodeId,
+    members: bool,
+    seen: &mut HashSet<NodeId>,
+    out: &mut Vec<NodeId>,
+) {
+    if members {
+        add_lhs_members(db, lhs, |db, id| [signal_of_ref(db, id), None], seen, out);
+    } else if let Some(sig) = signal_of_ref(db, lhs) {
+        if seen.insert(sig) {
+            out.push(sig);
+        }
+    }
+}
+
+/// Add the signal each member of an assignment target resolves to.  A
+/// concatenation, streaming or assignment-pattern target writes each of its
+/// members (IEEE 1800-2009 11.4.12 and 11.4.14.3 for concatenations and
+/// streaming targets, 10.9 for assignment patterns); any other target is
+/// resolved as a whole by `resolve`.
+fn add_lhs_members(
+    db: &Db,
+    lhs: NodeId,
+    resolve: fn(&Db, NodeId) -> [Option<NodeId>; 2],
+    seen: &mut HashSet<NodeId>,
+    out: &mut Vec<NodeId>,
+) {
+    match db.node_kind(lhs) {
+        NodeKind::Expr(ExprKind::Operation {
+            op: Operation::Concat | Operation::AssignmentPattern,
+            operands,
+            ..
+        }) => {
+            for member in operands {
+                add_lhs_members(db, *member, resolve, seen, out);
+            }
+            return;
+        }
+        NodeKind::Expr(ExprKind::Streaming { streams, .. }) => {
+            for stream in streams {
+                add_lhs_members(db, stream.value, resolve, seen, out);
+            }
+            return;
+        }
+        _ => {}
+    }
+    for sig in resolve(db, lhs).into_iter().flatten() {
         if seen.insert(sig) {
             out.push(sig);
         }
@@ -601,22 +745,65 @@ pub fn driver_signal_of_lhs(db: &Db, id: NodeId) -> Option<NodeId> {
 }
 
 fn add_driver_lhs_write(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
-    if let Some(sig) = driver_signal_of_lhs(db, lhs) {
-        if seen.insert(sig) {
-            out.push(sig);
+    add_lhs_members(db, lhs, driven_objects_of_lhs, seen, out);
+}
+
+/// The objects a write to `id` drives: [`driver_signal_of_lhs`] plus, for a
+/// write to a member of a struct or union, the declared object that owns it.
+/// The frontend models such a member as a detached node (no parent) at the end
+/// of a hierarchical path (or as the base of a member-array select, which the
+/// database maps to its owner); a class property or a signal in another scope
+/// has a parent and stays the only driven object.
+fn driven_objects_of_lhs(db: &Db, id: NodeId) -> [Option<NodeId>; 2] {
+    [driver_signal_of_lhs(db, id), member_owner_of_lhs(db, id)]
+}
+
+fn member_owner_of_lhs(db: &Db, id: NodeId) -> Option<NodeId> {
+    if let Some((owner, _)) = db.array_select_path(id) {
+        return driver_signal_of_lhs(db, owner);
+    }
+    match db.node_kind(id) {
+        NodeKind::Expr(
+            ExprKind::BitSelect { base, .. }
+            | ExprKind::PartSelect { base, .. }
+            | ExprKind::IndexedPartSelect { base, .. }
+            | ExprKind::ArraySelect { base, .. },
+        ) => member_owner_of_lhs(db, *base),
+        NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+            let mut signals: Vec<NodeId> = refs
+                .iter()
+                .flatten()
+                .copied()
+                .filter(|target| is_signal(db, *target))
+                .collect();
+            let mut stepped = false;
+            while signals.len() > 1
+                && signals
+                    .last()
+                    .is_some_and(|last| db.node(*last).parent.is_none())
+            {
+                signals.pop();
+                stepped = true;
+            }
+            stepped.then(|| signals.last().copied()).flatten()
         }
+        _ => None,
     }
 }
 
-/// The executable body of a function/task node: the last statement child.
-/// Declarations (formals, locals) precede it among the children.
+/// The executable body of a function/task node: the frontend-recorded body
+/// statement.  A subroutine with loop or block scopes lists extra scope-only
+/// statement children after the body, so the last statement child is only a
+/// fallback for nodes that record no body.
 pub fn subroutine_body(db: &Db, id: NodeId) -> Option<NodeId> {
-    db.node(id)
-        .children
-        .iter()
-        .rev()
-        .copied()
-        .find(|child| matches!(db.node_kind(*child), NodeKind::Stmt(_)))
+    db.subroutine_body(id).or_else(|| {
+        db.node(id)
+            .children
+            .iter()
+            .rev()
+            .copied()
+            .find(|child| matches!(db.node_kind(*child), NodeKind::Stmt(_)))
+    })
 }
 
 /// Default-value expressions of a function/task node's formals. They are
@@ -840,7 +1027,13 @@ pub fn connected_port_link_drivers(db: &Db) -> HashSet<NodeId> {
                         out.insert(*sig);
                     }
                 }
-                Direction::Mixed | Direction::None | Direction::Ref | Direction::Unsupported => {}
+                // A `ref` port aliases the actual: either side may write it
+                // (IEEE 1800-2009 23.3.3 shared variable behavior), so both count as driven.
+                Direction::Ref => {
+                    out.extend(low.iter().copied());
+                    out.extend(high.iter().copied());
+                }
+                Direction::Mixed | Direction::None | Direction::Unsupported => {}
             }
         }
     }
