@@ -463,3 +463,30 @@ fn owned_drop_helpers_are_referenced_by_a_model_that_needs_none() {
         assert!(uses > 1, "{helper} is defined but never referenced:\n{c}");
     }
 }
+
+/// `llg_class_id` tests the checked handle before reading its class id, so a
+/// null handle reaching it cannot dereference NULL after the report.
+#[test]
+fn class_id_guards_a_null_handle_before_reading_it() {
+    let mut model = IrModel::new("class_id".to_owned(), 1).unwrap();
+    model.classes.push(crate::sim::ir::IrClass {
+        c_name: "only".to_owned(),
+        base: None,
+        fields: Vec::new(),
+    });
+    let mut out = String::new();
+    classes::render_class_decls(&model, &mut out);
+    let body = out
+        .split("static uint32_t llg_class_id(void* object) {")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .expect("llg_class_id is rendered");
+    let guard = body
+        .find("if (!checked) return LLG_CLASS_NO_OBJECT;")
+        .expect("llg_class_id guards a null handle");
+    let read = body
+        .find("checked->class_id")
+        .expect("llg_class_id reads the class id");
+    assert!(guard < read, "{body}");
+    assert!(out.contains("#define LLG_CLASS_NO_OBJECT (UINT32_MAX - 1u)"));
+}
