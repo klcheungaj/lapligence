@@ -237,12 +237,11 @@ llg_co_arm_t llg_arm_any(llg_proc_t* self, sv4_t** sigs, int n) {
     return LLG_CO_ARM_SUSPEND;
 }
 
-static int wait_dependency_same(const llg_wait_dependency_t* left,
-                                const llg_wait_dependency_t* right) {
-    return left->sig == right->sig && left->real == right->real &&
-           left->value == right->value && left->lsb == right->lsb &&
-           left->width == right->width;
-}
+// Dependency lists compare as bytes: the record has no padding, so equal
+// bytes are equal pointers, offsets and widths.
+_Static_assert(sizeof(llg_wait_dependency_t) ==
+                   3 * sizeof(void*) + 2 * sizeof(uint32_t),
+               "llg_wait_dependency_t must stay free of padding");
 
 // The retained record to arm with `deps`: the process's previous one when it
 // names the same list, otherwise a new one replacing it. The previous wait
@@ -251,12 +250,9 @@ static llg_wait_retained_t* wait_retained_for(llg_proc_t* self,
                                               const llg_wait_dependency_t* deps,
                                               int n) {
     llg_wait_retained_t* retained = self->retained_wait;
-    if (retained && retained->n == n) {
-        int same = 1;
-        for (int i = 0; i < n && same; i++)
-            same = wait_dependency_same(&retained->dependencies[i], &deps[i]);
-        if (same) return retained;
-    }
+    if (retained && retained->n == n &&
+        memcmp(retained->dependencies, deps, (size_t)n * sizeof(*deps)) == 0)
+        return retained;
     wait_retained_drop(self);
     retained = (llg_wait_retained_t*)llg_checked_calloc(
         1, sizeof(*retained), "retained dependency wait");
