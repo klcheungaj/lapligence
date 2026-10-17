@@ -671,16 +671,14 @@ targets, and queue a whole-container commit for nonblocking unpacks.
 Structures with string or real members are stored as native records, and
 their lvalue path resolves one member level only. A string character has no
 retained element cell to stage a conversion through. String reads from
-associative arrays are lowered only for string keys. The lint driver walk
-visits assignment statements, not call arguments.
+associative arrays are lowered only for string keys.
 
 ### Intended direction
 
 Resolve nested packed fields of native-record members as selects of the
 member. Stage a string-character destination through a byte local, as
 container string elements are staged. Add integer-key string reads to the
-associative-array read path. Count the output arguments of calls as driver writes in
-`core::lint::rules::analysis`.
+associative-array read path.
 
 Binary input and output assume a little-endian host. `%u` and `%z` (in
 `$fscanf` and `$fwrite`) move 32-bit words as little-endian bytes. That is the
@@ -1767,8 +1765,7 @@ The thunk moves each aggregate through the packed payload, which has no
 representation for owned strings, doubles or handles inside a record. Open
 formals are specialized per actual shape at compile time, so a runtime-sized
 actual has no fixed shape. Scope, user-data and disable services need the
-time services need a defined simulation-time view for foreign code. The lint
-driver analysis does not yet treat DPI output actuals as writes.
+time services need a defined simulation-time view for foreign code.
 
 ### Intended direction
 

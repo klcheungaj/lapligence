@@ -9,6 +9,9 @@
 //! assignment driver (a driver exists — flagging them would hit every driven
 //! output that is only consumed at a port).
 //!
+//! Input terminals of gate and UDP instances count as reads and output
+//! terminals as continuous drivers.
+//!
 //! Reads and writes inside any subroutine body count as well (a variable read
 //! only by a DPI-exported function is used); a write there alone leaves the
 //! signal "never read".
@@ -21,8 +24,9 @@ use std::collections::HashSet;
 
 use crate::core::db::{Db, Direction, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
-    all_design_nodes, collect_reads, collect_writes, is_signal, iter_instances,
-    port_connected_signals, signal_scope_path, subroutine_body, subroutine_formal_defaults,
+    all_design_nodes, collect_reads, collect_writes_with_members, gate_terminal_drivers,
+    gate_terminal_reads, is_signal, iter_instances, port_connected_signals, signal_scope_path,
+    subroutine_body, subroutine_formal_defaults,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -58,13 +62,19 @@ impl LintRule for UnusedSignalRule {
             if matches!(db.node_kind(id), NodeKind::FuncTask { .. }) {
                 if let Some(body) = subroutine_body(db, id) {
                     reads.extend(collect_reads(db, body));
-                    writes.extend(collect_writes(db, body));
+                    writes.extend(collect_writes_with_members(db, body));
                 }
                 for default in subroutine_formal_defaults(db, id) {
                     reads.extend(collect_reads(db, default));
                 }
             }
         }
+        // Primitive instances (gates and UDPs) read their input terminals and
+        // drive their output terminals, like a continuous assignment does.
+        reads.extend(gate_terminal_reads(db));
+        let gate_drivers = gate_terminal_drivers(db);
+        writes.extend(gate_drivers.iter().copied());
+        cont_writes.extend(gate_drivers);
         // A covergroup reads its sampling event, coverpoint expressions and
         // guards, bins values and options whenever it samples (19.3).
         for group in db.covergroups().keys() {
@@ -138,12 +148,12 @@ fn instance_activity(db: &Db, scope: NodeId) -> (Vec<NodeId>, Vec<NodeId>, Vec<N
             match db.node_kind(*c) {
                 NodeKind::Process { .. } => {
                     reads.extend(collect_reads(db, *c));
-                    writes.extend(collect_writes(db, *c));
+                    writes.extend(collect_writes_with_members(db, *c));
                 }
                 NodeKind::ContAssign { .. } => {
                     reads.extend(collect_reads(db, *c));
-                    writes.extend(collect_writes(db, *c));
-                    cont_writes.extend(collect_writes(db, *c));
+                    writes.extend(collect_writes_with_members(db, *c));
+                    cont_writes.extend(collect_writes_with_members(db, *c));
                 }
                 NodeKind::GenScopeArray | NodeKind::GenScope => stack.push(*c),
                 // A clocking block reads its clock and samples every input
@@ -386,5 +396,132 @@ mod tests {
             "top",
         );
         assert!(paths.is_empty(), "{paths:?}");
+    }
+
+    #[test]
+    fn udp_instance_inputs_are_reads() {
+        let paths = unused_paths(
+            "primitive comb(output o, input a, input b);\n  table\n    0 0 : 0;\n    0 1 : 0;\n    1 0 : 0;\n    1 1 : 1;\n  endtable\nendprimitive\n\
+             primitive seq(output reg q, input d, input clk);\n  table\n    (01) 0 : ? : 0;\n    (01) 1 : ? : 1;\n    (0?) ? : ? : -;\n    ? (??) : ? : -;\n  endtable\nendprimitive\n\
+             module top;\n  reg r1, r2, r3, ck;\n  wire o1, o2;\n  reg dead;\n\
+               initial begin r1 = 0; r2 = 0; r3 = 0; ck = 0; end\n\
+               comb u1 (o1, r1, r2);\n  seq u2 (o2, r3, ck);\n  initial $display(o1, o2);\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            paths,
+            ["signal `dead` in `top` is never used"],
+            "UDP inputs are read, UDP outputs are read here by the display"
+        );
+    }
+
+    #[test]
+    fn primitive_outputs_count_as_drivers_like_continuous_assigns() {
+        let paths = unused_paths(
+            "primitive inv(output o, input a);\n  table\n    0 : 1;\n    1 : 0;\n  endtable\nendprimitive\n\
+             module top;\n  reg src;\n  wire from_gate, from_udp, dead;\n\
+               initial src = 0;\n  and g (from_gate, src, src);\n  inv u (from_udp, src);\nendmodule\n",
+            "top",
+        );
+        assert_eq!(paths, ["signal `dead` in `top` is never used"]);
+    }
+
+    #[test]
+    fn builtin_gate_inputs_are_reads() {
+        let paths = unused_paths(
+            "module top;\n  reg r1, r2;\n  wire o;\n  reg dead;\n  initial begin r1 = 0; r2 = 0; end\n\
+               and g (o, r1, r2);\n  initial $display(o);\nendmodule\n",
+            "top",
+        );
+        assert_eq!(paths, ["signal `dead` in `top` is never used"]);
+    }
+
+    #[test]
+    fn unconnected_udp_input_signal_is_still_unused() {
+        let paths = unused_paths(
+            "primitive inv(output o, input a);\n  table\n    0 : 1;\n    1 : 0;\n  endtable\nendprimitive\n\
+             module top;\n  reg src, other;\n  wire o;\n  initial begin src = 0; other = 0; end\n\
+               inv u (o, src);\n  initial $display(o);\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            paths,
+            ["signal `other` in `top` is never read"],
+            "only the signal the primitive does not touch"
+        );
+    }
+
+    #[test]
+    fn variables_used_only_inside_automatic_tasks_are_used() {
+        let paths = unused_paths(
+            "module top;\n  int a = 1;\n  int b = 2;\n  int c = 3;\n  int dead;\n\
+               task automatic t1();\n    int local_sum;\n    local_sum = a + b;\n    $display(local_sum);\n  endtask\n\
+               function automatic int f(int x);\n    return x + c;\n  endfunction\n\
+               initial begin\n    t1();\n    $display(f(1));\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(paths, ["signal `dead` in `top` is never used"]);
+    }
+
+    #[test]
+    fn variable_written_only_in_an_automatic_task_is_never_read() {
+        let paths = unused_paths(
+            "module top;\n  int sink;\n  task automatic put(input int v);\n    sink = v;\n  endtask\n\
+               initial put(1);\nendmodule\n",
+            "top",
+        );
+        assert_eq!(paths, ["signal `sink` in `top` is never read"]);
+    }
+
+    #[test]
+    fn unnamed_and_case_generate_block_signals_are_analysed() {
+        let paths = unused_paths(
+            "module top;\n  parameter P = 1;\n  if (P == 1) begin\n    logic unnamed_dead;\n  end\n\
+               case (P)\n    1: begin : c1\n      logic case_dead;\n    end\n    default: begin : c2\n      logic never_elaborated;\n    end\n  endcase\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            paths,
+            [
+                "signal `case_dead` in `top.c1` is never used",
+                "signal `unnamed_dead` in `top.genblk1` is never used",
+            ],
+            "the untaken branch is not elaborated"
+        );
+    }
+
+    #[test]
+    fn generate_block_signal_read_by_the_enclosing_module_is_used() {
+        let paths = unused_paths(
+            "module top;\n  if (1) begin : h\n    logic used;\n    logic dead;\n    initial used = 1'b1;\n  end\n\
+               initial $display(h.used);\nendmodule\n",
+            "top",
+        );
+        assert_eq!(paths, ["signal `dead` in `top.h` is never used"]);
+    }
+
+    #[test]
+    fn concatenated_continuous_targets_are_drivers() {
+        let paths = unused_paths(
+            "module top;\n  wire a, b, dead;\n  wire [1:0] src = 2'b10;\n  assign {a, b} = src;\nendmodule\n",
+            "top",
+        );
+        assert_eq!(paths, ["signal `dead` in `top` is never used"]);
+    }
+
+    #[test]
+    fn subroutine_with_loop_and_block_scopes_is_analysed_whole() {
+        let paths = unused_paths(
+            "module top;\n  int arr [4];\n  int offset = 1;\n  int dead;\n\
+               function automatic int total();\n    int s;\n    s = 0;\n\
+                 foreach (arr[n]) s += arr[n] + offset;\n    for (int k = 0; k < 2; k++) s += k;\n    return s;\n  endfunction\n\
+               initial begin\n    arr[0] = 1;\n    $display(total());\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            paths,
+            ["signal `dead` in `top` is never used"],
+            "the reads after the nested scopes belong to the body"
+        );
     }
 }

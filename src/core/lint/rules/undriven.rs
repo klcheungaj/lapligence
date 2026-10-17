@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use crate::core::db::{ConstraintKind, Db, NodeId, NodeKind};
+use crate::core::db::{ConstraintKind, Db, NodeId, NodeKind, RandQualifier};
 use crate::core::lint::rules::analysis::{
     all_nodes, collect_driver_writes, collect_reads, connected_port_link_drivers,
     gate_terminal_drivers, gate_terminal_reads, is_signal, port_link_reads, signal_scope_path,
@@ -77,6 +77,9 @@ impl LintRule for UndrivenSignalRule {
                 || exempt.contains(&id)
                 || has_intrinsic_net_driver(db, id)
                 || db.is_implicit_net(id)
+                // A `rand`/`randc` property is assigned by every call of
+                // `randomize()` (IEEE 1800-2009 18.4, 18.6.1).
+                || db.rand_qualifier(id) != RandQualifier::None
             {
                 continue;
             }
@@ -461,5 +464,270 @@ mod tests {
             "top",
         );
         assert_eq!(names, ["value"]);
+    }
+
+    #[test]
+    fn increment_and_decrement_operators_drive_their_operand() {
+        let names = undriven_names(
+            "module top;\n  int a, b, c, d, e, f, never;\n  int sink;\n\
+               initial begin\n    a++;\n    --b;\n    ++c;\n    d--;\n    sink = e++ + f;\n\
+                 $display(a, b, c, d, e, f, never, sink);\n  end\nendmodule\n",
+            "top",
+        );
+        // `f` is only read by the sum, `never` only by the display.
+        assert_eq!(names, ["f", "never"], "{names:?}");
+    }
+
+    #[test]
+    fn compound_assignments_drive_their_target() {
+        let names = undriven_names(
+            "module top;\n  int a, b, c, d, never;\n\
+               initial begin\n    a += 1;\n    b <<= 1;\n    c |= 2;\n    d -= 1;\n\
+                 $display(a, b, c, d, never);\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["never"], "{names:?}");
+    }
+
+    #[test]
+    fn increment_inside_a_subroutine_and_a_class_method_drives() {
+        let names = undriven_names(
+            "module top;\n  int in_task;\n  class C;\n    int count;\n\
+                 function void bump(); count++; endfunction\n\
+                 function int get(); return count; endfunction\n  endclass\n\
+               task t(); in_task++; endtask\n  C c = new;\n\
+               initial begin\n    t();\n    c.bump();\n    $display(in_task, c.get());\n  end\nendmodule\n",
+            "top",
+        );
+        assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn for_loop_variables_are_driven_by_the_loop() {
+        let names = undriven_names(
+            "module top;\n  int i, j, k, limit;\n  int sink;\n\
+               initial begin\n    for (i = 0; i < 4; i++) sink = i;\n\
+                 for (j = 0; j < 4; j = j + 1) sink = j;\n\
+                 for (int m = 0; m < 4; m++) sink = m;\n\
+                 for (k = 0, sink = 0; k < limit; k += 2) sink = k;\n\
+                 $display(i, j, sink);\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["limit"], "only the undriven bound is reported");
+    }
+
+    #[test]
+    fn foreach_iterator_variables_are_driven_by_the_loop() {
+        let names = undriven_names(
+            "module top;\n  int arr [4];\n  int mat [2][3];\n  int sink;\n  int ro;\n\
+               initial begin\n    foreach (arr[n]) sink = n;\n\
+                 foreach (mat[p, q]) mat[p][q] = p + q;\n\
+                 foreach (arr[r]) arr[r] = r + ro;\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            names,
+            ["ro"],
+            "only the genuinely undriven variable: {names:?}"
+        );
+    }
+
+    #[test]
+    fn foreach_in_a_function_body_is_driven_by_the_loop() {
+        let names = undriven_names(
+            "module top;\n  int arr [4];\n  function int total();\n    int s;\n    s = 0;\n\
+                 foreach (arr[n]) s += arr[n] + n;\n    return s;\n  endfunction\n\
+               initial begin\n    arr[0] = 1;\n    $display(total());\n  end\nendmodule\n",
+            "top",
+        );
+        assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn rand_properties_are_driven_by_randomize() {
+        let names = undriven_names(
+            "module top;\n  class C;\n    rand int x;\n    randc bit [1:0] y;\n    int fixed;\n\
+                 function int sum(); return x + y + fixed; endfunction\n  endclass\n\
+               C c = new;\n  initial begin\n    if (!c.randomize()) $display(\"fail\");\n\
+                 $display(c.sum());\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            names,
+            ["fixed"],
+            "only the non-rand, never written property"
+        );
+    }
+
+    #[test]
+    fn rand_property_of_a_package_class_is_driven_by_randomize() {
+        let names = undriven_names(
+            "package p;\n  class K;\n    rand int a;\n    function int get(); return a; endfunction\n  endclass\nendpackage\n\
+             module top;\n  p::K k = new;\n  initial begin\n    void'(k.randomize());\n    $display(k.get());\n  end\nendmodule\n",
+            "top",
+        );
+        assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn properties_written_only_by_methods_are_driven() {
+        let names = undriven_names(
+            "module top;\n  class C;\n    int a, b, c, d, e;\n    int never;\n    int arr [2];\n\
+                 function new(); a = 1; endfunction\n\
+                 function void set(int v); this.b = v; arr[0] = v; endfunction\n\
+                 task run(); #1 c = 2; d += 1; e++; endtask\n\
+                 function int get(); return a + b + c + d + e + never + arr[0]; endfunction\n  endclass\n\
+               C o = new;\n  initial begin\n    o.set(1);\n    o.run();\n    $display(o.get());\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["never"], "{names:?}");
+    }
+
+    #[test]
+    fn concatenated_net_targets_drive_each_member() {
+        let names = undriven_names(
+            "module top;\n  wire a, b, x, y;\n  wire [1:0] w, v;\n  wire [3:0] src = 4'b1010;\n  wire floating;\n\
+               assign {a, b} = src[1:0];\n  assign #5 {x, y} = src[3:2];\n\
+               assign {w[0], v} = 3'b101;\n  assign w[1] = 1'b0;\n\
+               wire sink = a ^ b ^ x ^ y ^ w[0] ^ v[1] ^ floating;\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["floating"], "{names:?}");
+    }
+
+    #[test]
+    fn concatenated_procedural_targets_drive_each_member() {
+        let names = undriven_names(
+            "module top;\n  logic a, b, c, d, e;\n  logic [1:0] pair;\n  logic floating;\n\
+               initial begin\n    {a, b} = 2'b10;\n    {c, {d, e}} = 3'b101;\n    {pair[0], pair[1]} <= 2'b01;\n  end\n\
+               initial $display(a, b, c, d, e, pair, floating);\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["floating"], "{names:?}");
+    }
+
+    #[test]
+    fn streaming_target_drives_each_member() {
+        let names = undriven_names(
+            "module top;\n  bit [3:0] a, b;\n  bit [7:0] src = 8'h5a;\n  bit [3:0] floating;\n\
+               initial begin\n    {>>{a, b}} = src;\n  end\n\
+               initial $display(a, b, floating);\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["floating"], "{names:?}");
+    }
+
+    #[test]
+    fn concatenated_read_is_not_a_driver() {
+        let names = undriven_names(
+            "module top;\n  wire a, b;\n  wire [1:0] sink;\n  assign sink = {a, b};\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["a", "b"], "a concat on the right only reads");
+    }
+
+    #[test]
+    fn container_and_string_mutator_receivers_are_drivers() {
+        let names = undriven_names(
+            "module top;\n  int q[$];\n  int front[$];\n  int mid[$];\n  string s, t;\n  int popped[$];\n\
+               class C;\n    int pending[$];\n    function void add(int v); pending.push_back(v); endfunction\n\
+                 function int first(); return pending[0]; endfunction\n  endclass\n  C o = new;\n\
+               initial begin\n    q.push_back(1);\n    front.push_front(2);\n    mid.insert(0, 3);\n\
+                 s.putc(0, \"x\");\n    t.itoa(5);\n    o.add(4);\n\
+                 $display(q[0], front[0], mid[0], s, t, o.first(), popped.pop_back());\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["popped"], "popping is not a driver: {names:?}");
+    }
+
+    #[test]
+    fn mailbox_message_actuals_are_drivers() {
+        let names = undriven_names(
+            "module top;\n  mailbox #(int) mb = new;\n  int a, b;\n  int ok;\n\
+               initial begin\n    mb.get(a);\n    ok = mb.try_get(b);\n    $display(a, b, ok);\n  end\nendmodule\n",
+            "top",
+        );
+        assert!(names.is_empty(), "{names:?}");
+    }
+
+    #[test]
+    fn semaphore_get_count_is_not_a_driver() {
+        let names = undriven_names(
+            "module top;\n  semaphore sem = new(2);\n  int n;\n\
+               initial begin\n    sem.get(n);\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["n"], "the key count is an input: {names:?}");
+    }
+
+    #[test]
+    fn randomize_variable_list_arguments_are_drivers() {
+        let names = undriven_names(
+            "module top;\n  class C;\n    rand int x;\n    int v;\n    int w;\n  endclass\n  C o = new;\n\
+               initial begin\n    void'(o.randomize(v));\n    $display(o.v, o.w);\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["w"], "{names:?}");
+    }
+
+    #[test]
+    fn user_method_named_like_a_container_mutator_is_not_a_driver() {
+        let names = undriven_names(
+            "module top;\n  class Box;\n    function void insert(int v); endfunction\n  endclass\n  Box h;\n\
+               initial h.insert(1);\nendmodule\n",
+            "top",
+        );
+        assert_eq!(
+            names,
+            ["h"],
+            "the call does not assign the handle: {names:?}"
+        );
+    }
+
+    #[test]
+    fn struct_member_writes_drive_the_owning_object() {
+        let names = undriven_names(
+            "module top;\n  typedef struct { int n; int tags[2]; int q[$]; } node_t;\n\
+               typedef struct { node_t inner; int k; } outer_t;\n\
+               node_t a, b, c;\n  outer_t o;\n  node_t never;\n  int sink;\n\
+               function automatic int local_use();\n    node_t acc;\n    acc.n = 0;\n    acc.tags[1] = 2;\n    return acc.n + acc.tags[1];\n  endfunction\n\
+               initial begin\n    a.n = 1;\n    b.tags[0] = 2;\n    c.q.push_back(3);\n    o.inner.n = 4;\n    o.k = 5;\n\
+                 sink = a.n + b.tags[0] + c.q[0] + o.inner.n + o.k + local_use() + never.n;\n    $display(sink);\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["never"], "{names:?}");
+    }
+
+    #[test]
+    fn struct_member_write_does_not_drive_a_different_object() {
+        let names = undriven_names(
+            "module top;\n  typedef struct { int n; } node_t;\n  node_t written, other;\n  int sink;\n\
+               initial begin\n    written.n = 1;\n    sink = written.n + other.n;\n    $display(sink);\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["other"], "{names:?}");
+    }
+
+    #[test]
+    fn compound_assignment_in_expression_position_drives_its_target() {
+        let names = undriven_names(
+            "module top;\n  int step, total, bound, x, never;\n\
+               initial begin\n    for (int i = 0; i < 6; i++, step += 2) total = step;\n\
+                 x = (bound += 1);\n    $display(step, total, bound, x, never);\n  end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["never"], "{names:?}");
+    }
+
+    #[test]
+    fn ref_port_actuals_are_drivers() {
+        let names = undriven_names(
+            "module child(ref logic [3:0] slot);\n  always_comb slot = 4'h5;\nendmodule\n\
+             module top;\n  logic [3:0] cells [0:1];\n  logic [3:0] whole;\n  logic [3:0] floating;\n\
+               child c0 (.slot(cells[0]));\n  child c1 (.slot(whole));\n\
+               initial $display(cells[0], whole, floating);\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["floating"], "{names:?}");
     }
 }
