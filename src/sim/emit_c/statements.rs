@@ -286,6 +286,9 @@ fn render_stmt_scoped(
         IrStmt::UdpStep { .. } => {
             return Err("sequential UDP state requires the structured owned emitter".to_owned())
         }
+        IrStmt::ModulePathStamp { .. } => {
+            return Err("module path delays require the structured owned emitter".to_owned())
+        }
         IrStmt::RandomSeed { seed } => {
             format!(
                 "    llg_process_srandom({});\n",

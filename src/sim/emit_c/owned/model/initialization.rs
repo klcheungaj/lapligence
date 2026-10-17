@@ -248,6 +248,13 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             table_loop("llg_net_storage")
         ));
     }
+    // Module path sets take the initialized source values as their change
+    // reference; the runtime releases their state at cleanup.
+    for index in 0..model.module_paths().len() {
+        initialize.push_str(&format!(
+            "    llg_module_paths_start(&llg_path_set_{index});\n"
+        ));
+    }
     emitted.clear();
     // Function return slots and static locals are independent persistent
     // objects: tabled packed/real defaults first, then string/chandle resets

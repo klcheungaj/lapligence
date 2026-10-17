@@ -854,6 +854,8 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         | IrStmt::Nop
         // Its delay expressions are walked with every statement's.
         | IrStmt::SetNetDelay { .. }
+        // Sources live in `IrModel::module_paths`, not in the statement.
+        | IrStmt::ModulePathStamp { .. }
         | IrStmt::System(None)
         | IrStmt::DeclLocal { init: None, .. }
         | IrStmt::SharedLocal { init: None, .. }

@@ -131,3 +131,63 @@ impl Validator<'_> {
         Ok(())
     }
 }
+
+impl Validator<'_> {
+    /// Module path sets: packed sources, existing destination groups that
+    /// belong to one set at most, terminal ranges inside their storage and
+    /// equal widths for parallel paths.
+    pub(super) fn validate_module_paths(&self) -> ValidationResult {
+        let mut destinations = HashSet::new();
+        for (index, set) in self.model.module_paths.iter().enumerate() {
+            let path = format!("module_paths[{index}]");
+            if set.destinations.is_empty() {
+                return self.fail(path, "module path set has no destination");
+            }
+            let mut source_widths = Vec::with_capacity(set.sources.len());
+            for (source_index, &signal) in set.sources.iter().enumerate() {
+                match self.model.signals.get(signal).map(|signal| &signal.ty) {
+                    Some(IrType::Packed { width, .. }) => source_widths.push(*width),
+                    _ => {
+                        return self.fail(
+                            format!("{path}.sources[{source_index}]"),
+                            "module path source must be a packed signal",
+                        )
+                    }
+                }
+            }
+            for (destination_index, destination) in set.destinations.iter().enumerate() {
+                let path = format!("{path}.destinations[{destination_index}]");
+                let Some(group) = self.model.net_groups.get(destination.group) else {
+                    return self.fail(path, "module path destination names no net group");
+                };
+                if !destinations.insert(destination.group) {
+                    return self.fail(path, "net group is the destination of two path sets");
+                }
+                if destination.paths.is_empty() {
+                    return self.fail(path, "module path destination has no path");
+                }
+                for (path_index, module_path) in destination.paths.iter().enumerate() {
+                    let path = format!("{path}.paths[{path_index}]");
+                    let fits = |lsb: u32, width: u32, limit: u32| {
+                        width != 0 && lsb.checked_add(width).is_some_and(|end| end <= limit)
+                    };
+                    let Some(&source_width) = source_widths.get(module_path.source) else {
+                        return self.fail(path, "module path names no source of its set");
+                    };
+                    if !fits(
+                        module_path.source_lsb,
+                        module_path.source_width,
+                        source_width,
+                    ) || !fits(module_path.dest_lsb, module_path.dest_width, group.width)
+                    {
+                        return self.fail(path, "module path terminal lies outside its storage");
+                    }
+                    if !module_path.full && module_path.source_width != module_path.dest_width {
+                        return self.fail(path, "parallel module path terminals differ in width");
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}

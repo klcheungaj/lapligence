@@ -971,6 +971,9 @@ fn classify_simulation_node(
                 SimulationNodeClass::Executable
             }
             Some(CapturedSemanticKind::TimingControl) => SimulationNodeClass::ElaborationConsumed,
+            // Specify blocks are lowered from the Db's specify tables, which
+            // reject the items simulation does not model with a location.
+            Some(CapturedSemanticKind::Specify) => SimulationNodeClass::ElaborationConsumed,
             Some(CapturedSemanticKind::Unsupported) if elaboration_placeholder => {
                 SimulationNodeClass::ElaborationConsumed
             }

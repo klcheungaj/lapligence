@@ -175,6 +175,27 @@ impl<'a> Codegen<'a> {
         )
     }
 
+    /// One module path delay value in scheduler ticks. Path delays are
+    /// constant expressions of literals and specparams; a negative value is
+    /// treated as zero (IEEE 1364-2001 14.3.1, IEEE 1800-2009 30.5.1) and
+    /// min:typ:max takes the selected operand like any other delay.
+    pub(super) fn path_delay_ticks(
+        &mut self,
+        path_node: NodeId,
+        expression: NodeId,
+    ) -> Result<u64, String> {
+        match self.eval_decl_value_without_time_rounding(expression) {
+            Ok(Val::Bits(value))
+                if value.signed && value.to_i128().is_some_and(|value| value < 0) =>
+            {
+                return Ok(0)
+            }
+            Ok(Val::Real(value)) if value < 0.0 => return Ok(0),
+            _ => {}
+        }
+        self.procedural_delay_ticks(path_node, expression)
+    }
+
     fn lower_expr_for_delay(&mut self, path: &str, expression: NodeId) -> Result<IrExpr, String> {
         let previous = self.round_time_literals;
         self.round_time_literals = false;

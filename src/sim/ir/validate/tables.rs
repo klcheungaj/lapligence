@@ -12,6 +12,8 @@ impl Validator<'_> {
             self.validate_udp_table(table, &format!("udp_tables[{idx}]"))?;
         }
 
+        self.validate_module_paths()?;
+
         for (idx, problem) in self.model.rand_problems.iter().enumerate() {
             problem.validate(&format!("rand_problems[{idx}]"))?;
         }

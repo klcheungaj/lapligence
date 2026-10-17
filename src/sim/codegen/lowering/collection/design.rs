@@ -300,6 +300,21 @@ impl<'a> Codegen<'a> {
                         .insert(name, info);
                 }
                 NodeKind::Param { .. } => self.collect_parameter_value(inst, nid)?,
+                // Specparams declared in a specify block belong to the
+                // module (IEEE 1800-2009 6.20.5); module items and path
+                // delays read them like module-body specparams.
+                NodeKind::Other => {
+                    let specparams = self
+                        .node(nid)
+                        .children
+                        .iter()
+                        .copied()
+                        .filter(|child| self.db.specparam(*child).is_some())
+                        .collect::<Vec<_>>();
+                    for specparam in specparams {
+                        self.collect_parameter_value(inst, specparam)?;
+                    }
+                }
                 NodeKind::NamedEvent => {
                     self.collect_named_event(path, nid, &mut seen)?;
                 }

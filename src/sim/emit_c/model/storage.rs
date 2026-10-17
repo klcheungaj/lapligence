@@ -68,7 +68,15 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
         }
     }
     let mut groups_emitted: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for g in &model.net_groups {
+    // Module path destinations publish every bit through its own inertial
+    // record; every other net keeps its initializer unchanged.
+    let path_destinations = model
+        .module_paths()
+        .iter()
+        .flat_map(|set| set.destinations())
+        .map(|destination| destination.group())
+        .collect::<std::collections::HashSet<_>>();
+    for (group_index, g) in model.net_groups.iter().enumerate() {
         if !groups_emitted.insert(g.c_name.as_str()) {
             continue;
         }
@@ -89,10 +97,11 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
             .map(|(_, one)| one.to_string())
             .collect::<Vec<_>>()
             .join(", ");
+        let path_destination = path_destinations.contains(&group_index);
         let (propagation_enabled, propagation_rise, propagation_fall, propagation_turn_off) =
             match g.propagation_delay {
                 Some(delay) => (1, delay.rise, delay.fall, delay.turn_off),
-                None => (0, 0, 0, 0),
+                None => (u8::from(path_destination), 0, 0, 0),
             };
         // Exact elaborated-size driver and strength tables. The generated
         // `llg_net_t` points at them instead of embedding a fixed array, so
@@ -137,7 +146,8 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
             };
         // A delayed vector net keeps one inertial handle per bit; undelayed
         // and scalar nets leave the field zero-initialized.
-        let propagation_bits = if g.propagation_delay.is_some() && g.width > 1 {
+        let propagation_bits = if (g.propagation_delay.is_some() && g.width > 1) || path_destination
+        {
             out.push_str(&format!(
                 "static llg_inertial_t* {}__propagation_bits[{}];\n",
                 g.c_name, g.width
@@ -191,6 +201,7 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
             part_count,
         ));
     }
+    render_module_paths(model, out);
     // Named events use a stable waiter-table object plus an assignable handle.
     for ev in &model.events {
         if ev.is_array() {
@@ -257,5 +268,91 @@ pub(super) fn render_static_local_decls(model: &IrModel, out: &mut String) {
             let init = "SV4_EMPTY";
             out.push_str(&format!("sv4_t {} = {init};\n", local.c_name()));
         }
+    }
+}
+
+/// Storage address of a signal after alias resolution, as the runtime reads
+/// module path sources.
+fn path_source_storage(model: &IrModel, index: usize) -> String {
+    let mut index = index;
+    let mut seen = std::collections::HashSet::new();
+    while seen.insert(index) {
+        let Some(alias) = model.signals.get(index).and_then(|signal| signal.alias) else {
+            break;
+        };
+        index = alias;
+    }
+    let signal = model.signal(index);
+    if signal.net_alias.is_empty() {
+        format!("&{}", signal.c_name)
+    } else {
+        format!("&llg_net_alias_{index}.visible")
+    }
+}
+
+/// Module path tables: one `llg_module_path_set_t` per instance with simple
+/// paths, after every net group they name. Delay tables are writable so
+/// back-annotation can replace them. Nothing is emitted for a design without
+/// paths.
+fn render_module_paths(model: &IrModel, out: &mut String) {
+    for (index, set) in model.module_paths().iter().enumerate() {
+        let name = format!("llg_path_set_{index}");
+        let sources = set
+            .sources()
+            .iter()
+            .map(|signal| path_source_storage(model, *signal))
+            .collect::<Vec<_>>();
+        let sources = if sources.is_empty() {
+            "NULL".to_owned()
+        } else {
+            out.push_str(&format!(
+                "static sv4_t* const {name}__sources[] = {{ {} }};\n",
+                sources.join(", ")
+            ));
+            format!("{name}__sources")
+        };
+        let mut dests = Vec::with_capacity(set.destinations().len());
+        for (dest_index, destination) in set.destinations().iter().enumerate() {
+            let rows = destination
+                .paths()
+                .iter()
+                .map(|path| {
+                    let delays = path
+                        .delays()
+                        .iter()
+                        .map(|delay| format!("{delay}ULL"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!(
+                        "{{ {}, {}, {}, {}, {}, {}, {}, {{ {delays} }}, {} }}",
+                        path.source,
+                        path.source_lsb,
+                        path.source_width,
+                        path.dest_lsb,
+                        path.dest_width,
+                        u8::from(path.full),
+                        path.polarity.code(),
+                        crate::sim::emit_c::constants::c_string_literal(&path.origin),
+                    )
+                })
+                .collect::<Vec<_>>();
+            out.push_str(&format!(
+                "static llg_module_path_t {name}__paths_{dest_index}[] = {{ {} }};\n",
+                rows.join(", ")
+            ));
+            dests.push(format!(
+                "{{ &{}, {name}__paths_{dest_index}, {}, NULL, NULL }}",
+                model.net_group(destination.group()).c_name,
+                destination.paths().len()
+            ));
+        }
+        out.push_str(&format!(
+            "static llg_module_path_dest_t {name}__dests[] = {{ {} }};\n\
+             static llg_module_path_set_t {name} = {{ {}, {sources}, {}, {name}__dests, {}, NULL, NULL, NULL }};\n",
+            dests.join(", "),
+            crate::sim::emit_c::constants::c_string_literal(set.scope()),
+            set.sources().len(),
+            set.destinations().len(),
+        ));
     }
 }

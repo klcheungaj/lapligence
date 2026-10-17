@@ -581,6 +581,13 @@ pub enum IrStmt {
         group: usize,
         delay: Box<IrRuntimeTransitionDelay>,
     },
+    /// Record which source bits of module path set `set` (an index of
+    /// `IrModel::module_paths`) changed since its last record, with the
+    /// current time. Its process wakes on every source change, so a source
+    /// transition is timed even when no destination changes in that slot.
+    ModulePathStamp {
+        set: usize,
+    },
     /// Advance sequential UDP instance state `state` (an index of
     /// `IrModel::udp_states`) from its scalar inputs, in port order. The
     /// state keeps the inputs it last saw; each input whose 0/1/X value

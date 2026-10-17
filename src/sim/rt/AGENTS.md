@@ -301,6 +301,20 @@ the union of old and new ranges against overlapping drivers. Keep full-net waite
 identity and notification behavior. Pending delayed drivers start X, not driverless
 Z. Fixed-array delayed sites retain per-element identity.
 
+Module paths (`llg_module_path_set_t`, one per instance with simple paths)
+borrow the model's source storage and own, between `llg_module_paths_start`
+and `llg_rt_cleanup`, a last value per source and a last-change time per
+source bit. A bound destination net (`llg_net_t.path_dest`, NULL otherwise, so
+undelayed nets keep their single flag test) always has `propagation_enabled`
+and per-bit records: `llg_net_propagate_paths` first refreshes the stamps
+(order-independent within a slot), then schedules each changed bit at the
+absolute `max(now + net delay, latest stamp + smallest path delay of the
+latest inputs)` (A7-D1) through the ordinary inertial record. Delay tables
+are writable for annotation; `llg_net_path_pending` reports a scheduled path
+event. A force or release resynchronizes the propagation records'
+committed values (`llg_net_propagation_sync`), so the next delayed
+transition starts from the published value.
+
 Opaque activation slots may hold event object identities, valid until model
 teardown, or a parent coroutine's event handle address for a synchronous join.
 Cancel joined children before releasing that parent frame. Detached event

@@ -127,3 +127,81 @@ fn spawn_labels_come_from_the_first_process_with_each_name() {
         ]
     );
 }
+
+#[test]
+fn module_path_sets_check_sources_destinations_and_ranges() {
+    use super::{
+        IrModel, IrModulePath, IrModulePathDestination, IrModulePathSet, IrNetGroup, IrNetKind,
+        IrPathPolarity, IrProcess, IrShape, IrSignal, IrStmt, IrType,
+    };
+    let packed = |name: &str, width: u32| {
+        IrSignal::new(
+            name.to_owned(),
+            None,
+            IrType::Packed {
+                width,
+                signed: false,
+                two_state: false,
+            },
+            None,
+        )
+        .unwrap()
+    };
+    let path = |source_lsb, source_width, dest_lsb, dest_width, full| {
+        IrModulePath::new(
+            0,
+            source_lsb,
+            source_width,
+            dest_lsb,
+            dest_width,
+            full,
+            IrPathPolarity::Unknown,
+            [1; 12],
+            "f.v:1:1".to_owned(),
+        )
+    };
+    let model_with = |paths: Vec<IrModulePath>, group: usize| {
+        let mut model = IrModel::new("paths".to_owned(), 1).unwrap();
+        model.signals.push(packed("a", 4));
+        let mut y = packed("y", 4);
+        y.net_driver = Some((0, 0));
+        y.c_name = "g_net_0.resolved".to_owned();
+        model.signals.push(y);
+        model
+            .net_groups
+            .push(IrNetGroup::new("g_net_0".to_owned(), 4, false, IrNetKind::Wire, 1).unwrap());
+        model.module_paths.push(IrModulePathSet::new(
+            "tb.u".to_owned(),
+            vec![0],
+            vec![IrModulePathDestination::new(group, paths)],
+        ));
+        model.processes.push(IrProcess::new(
+            "p_stamp".to_owned(),
+            "tb.u.specify".to_owned(),
+            IrShape::RunOnce,
+            Vec::new(),
+            vec![IrStmt::ModulePathStamp { set: 0 }],
+        ));
+        model
+    };
+    model_with(vec![path(0, 4, 0, 4, false), path(1, 2, 3, 1, true)], 0)
+        .validate()
+        .expect("well-formed module paths");
+    for (paths, group, detail) in [
+        (vec![path(0, 4, 0, 4, false)], 1, "names no net group"),
+        (Vec::new(), 0, "has no path"),
+        (vec![path(2, 3, 0, 3, false)], 0, "outside its storage"),
+        (vec![path(0, 1, 3, 2, true)], 0, "outside its storage"),
+        (vec![path(0, 2, 0, 1, false)], 0, "differ in width"),
+    ] {
+        let error = model_with(paths, group).validate().unwrap_err();
+        assert!(error.detail().contains(detail), "{detail}: {error:?}");
+    }
+    let mut model = model_with(vec![path(0, 4, 0, 4, false)], 0);
+    model.processes[0].body = vec![IrStmt::ModulePathStamp { set: 1 }];
+    assert!(model
+        .validate()
+        .unwrap_err()
+        .detail()
+        .contains("names no module path set"));
+}

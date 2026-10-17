@@ -38,6 +38,7 @@ mod gates;
 mod initialization;
 mod locals;
 mod lvalues;
+mod module_paths;
 mod names;
 pub(super) mod native_values;
 mod net_arrays;

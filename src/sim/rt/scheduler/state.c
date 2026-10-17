@@ -580,6 +580,7 @@ typedef struct {
     llg_inertial_t* inertial_drivers;
     llg_inertial_t* inertial_pending;      // sorted by time, FIFO per time
     llg_inertial_t* inertial_pending_tail;
+    llg_module_path_set_t* module_path_sets; // bound sets, owned path state
     uint64_t nba_sequence;
     llg_wait_t* timed_head;   // sorted ascending by time
     llg_wait_queue_t zero_waits[LLG_REGION_COUNT];

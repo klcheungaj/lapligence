@@ -817,6 +817,8 @@ fn collect_effects(
                 effects.push(ExecutionEffect::RuntimeService);
             }
             IrStmt::SampledClockTick { .. } => effects.push(ExecutionEffect::RuntimeService),
+            // Updates the runtime-owned source stamps of a module path set.
+            IrStmt::ModulePathStamp { .. } => effects.push(ExecutionEffect::RuntimeService),
             IrStmt::PlusArg(_) | IrStmt::Stochastic(_) => {
                 effects.push(ExecutionEffect::ImmediateStore);
                 effects.push(ExecutionEffect::RuntimeService);

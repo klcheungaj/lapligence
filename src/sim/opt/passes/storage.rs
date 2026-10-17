@@ -140,6 +140,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         virtual_interfaces,
         udp_tables: _,
         udp_states: _,
+        module_paths,
         events: _,
         funcs,
         assertions,
@@ -179,6 +180,12 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         )
     {
         receiver.expressions(&mut |child| collect_expr_reads(child, model, &mut rw));
+    }
+    // The runtime reads module path sources through their storage address.
+    for set in module_paths {
+        for &signal in &set.sources {
+            rw.read(signal);
+        }
     }
     // A net-array cell observes its canonical resolved net signal.
     for (_, signal) in arrays.iter().flat_map(|array| &array.net_elements) {
@@ -915,6 +922,8 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         | IrStmt::Goto(_)
         // Its delay expressions are read with every statement's.
         | IrStmt::SetNetDelay { .. }
+        // Its sources are read through `IrModel::module_paths` (below).
+        | IrStmt::ModulePathStamp { .. }
         | IrStmt::Nop => {}
         // `$dumpvars` names scopes; waveform models keep every HDL-visible
         // signal (`model.waveform`).

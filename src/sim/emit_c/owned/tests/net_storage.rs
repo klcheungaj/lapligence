@@ -388,3 +388,73 @@ fn declared_view_bindings_render_contiguous_runs() {
     ));
     assert!(source.contains(".parts = llg_array_net_0_0_parts, .n_parts = 3,"));
 }
+
+#[test]
+fn module_path_tables_bind_only_their_destination_nets() {
+    use crate::sim::ir::{IrModulePath, IrModulePathDestination, IrModulePathSet, IrPathPolarity};
+    let plain = render(net_model(2, 1));
+    assert!(!plain.contains("llg_path_set"));
+    assert!(!plain.contains("llg_module_paths_start"));
+
+    let mut model = net_model(2, 1);
+    model.signals.push(
+        IrSignal::new(
+            "G_tb_a".to_owned(),
+            Some("tb.a".to_owned()),
+            IrType::Packed {
+                width: 2,
+                signed: false,
+                two_state: false,
+            },
+            None,
+        )
+        .unwrap(),
+    );
+    let mut delays = [0u64; 12];
+    for (index, delay) in delays.iter_mut().enumerate() {
+        *delay = index as u64 + 1;
+    }
+    model.module_paths.push(IrModulePathSet::new(
+        "tb.u".to_owned(),
+        vec![0],
+        vec![IrModulePathDestination::new(
+            1,
+            vec![IrModulePath::new(
+                0,
+                1,
+                1,
+                3,
+                2,
+                true,
+                IrPathPolarity::Negative,
+                delays,
+                "f.v:7:5".to_owned(),
+            )],
+        )],
+    ));
+    let source = render(model);
+    let net = |index: usize| {
+        source
+            .lines()
+            .find(|line| line.starts_with(&format!("static llg_net_t g_net_{index} = ")))
+            .unwrap()
+            .to_owned()
+    };
+    assert!(net(0).contains(".propagation_enabled = 0"));
+    assert!(!net(0).contains("propagation_bits"));
+    assert!(net(1).contains(".propagation_enabled = 1"));
+    assert!(net(1).contains(".propagation_bits = g_net_1__propagation_bits"));
+    assert!(source.contains("static llg_inertial_t* g_net_1__propagation_bits[65];"));
+    assert!(source.contains("static sv4_t* const llg_path_set_0__sources[] = { &G_tb_a };"));
+    assert!(source.contains(
+        "static llg_module_path_t llg_path_set_0__paths_0[] = { { 0, 1, 1, 3, 2, 1, 2, \
+         { 1ULL, 2ULL, 3ULL, 4ULL, 5ULL, 6ULL, 7ULL, 8ULL, 9ULL, 10ULL, 11ULL, 12ULL }, \
+         \"f.v:7:5\" } };"
+    ));
+    assert!(source.contains(
+        "static llg_module_path_set_t llg_path_set_0 = { \"tb.u\", llg_path_set_0__sources, 1, \
+         llg_path_set_0__dests, 1, NULL, NULL, NULL };"
+    ));
+    let defaults = lifecycle(&source, "llg_model_storage_defaults");
+    assert!(defaults.contains("llg_module_paths_start(&llg_path_set_0);"));
+}
