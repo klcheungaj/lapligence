@@ -1,0 +1,12 @@
+start q=x
+rise_1 q=1
+fall q=1
+data_0 q=1
+e1_edge q=1
+e2_edge q=1
+data_1 q=1
+rise_1b q=1
+e8_level_x q=x
+fall_x q=x
+all_ones q=0
+rise_dom q=0

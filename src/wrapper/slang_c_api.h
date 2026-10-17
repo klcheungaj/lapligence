@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 26u
+#define LLG_SLANG_ABI_VERSION 27u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -311,27 +311,36 @@ typedef struct {
   uint64_t initializer_constant_id;
 } LlgSlangTypeMember;
 
-/* One owned truth table attached to a user-defined primitive declaration.
+/* One owned truth table attached to a user-defined primitive declaration,
+ * combinational or sequential (the declaration's subkind tells which).
  * `primitive_id` is the semantic-node ID of the declaration. Rows are stored
- * in source order in the separate row vector. */
+ * in source order in the separate row vector. `initial_value` is the
+ * sequential start value as a lower-case character ('0', '1' or 'x') from an
+ * `initial` statement or `output reg q = v`, or zero when none is given. */
 typedef struct {
   uint64_t primitive_id;
   uint32_t input_count;
-  uint32_t reserved;
+  uint32_t initial_value;
   uint64_t row_start;
   uint64_t row_count;
   LlgSlangString name;
 } LlgSlangUdpTable;
 
-/* A normalized Slang UDP table row. `state` is zero for combinational rows;
- * nonzero values are retained so the owned decoder can reject sequential UDP
- * data if the frontend ever exposes it through this table. */
+/* A Slang UDP table row as the frontend kept it. `inputs` is Slang's
+ * lower-case normalization: one character per level or shorthand edge field
+ * (`0 1 x ? b r f p n *`) and `(vw)` for an explicit transition. `state` is
+ * the current-state character, zero when the row has none; `output` is the
+ * next-state character (`0 1 x -`). Rows of a primitive with frontend errors
+ * may carry other characters; consumers reject them only after the frontend
+ * diagnostics are reported. `range` is the row's source text, or unknown when
+ * the rows cannot be paired with their syntax. */
 typedef struct {
   LlgSlangString inputs;
   uint32_t state;
   uint32_t output;
   uint32_t flags;
   uint32_t reserved;
+  LlgSlangSourceRange range;
 } LlgSlangUdpRow;
 
 enum {

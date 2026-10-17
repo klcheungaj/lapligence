@@ -64,14 +64,14 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 5. Procedural statements | 5 | 7 | 0 | 1 | 0 | 0 | 13 |
 | 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 0 | 7 |
 | 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 0 | 17 |
-| 8. Continuous/structural | 4 | 6 | 3 | 1 | 0 | 0 | 14 |
+| 8. Continuous/structural | 5 | 6 | 2 | 1 | 0 | 0 | 14 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 0 | 7 |
 | 10. System tasks/functions | 12 | 8 | 2 | 4 | 0 | 0 | 26 |
 | 11. Compiler directives | 6 | 1 | 0 | 1 | 0 | 0 | 8 |
 | 12. Verification/foreign interfaces | 1 | 14 | 0 | 1 | 3 | 0 | 19 |
-| **Total** | **48** | **79** | **6** | **8** | **3** | **1** | **145** |
+| **Total** | **49** | **79** | **5** | **8** | **3** | **1** | **145** |
 
-**128 rows have some source implementation; 79 of those remain partial and one
+**129 rows have some source implementation; 79 of those remain partial and one
 is accepted.** The accepted row (`always_ff` and writer rules) carries
 post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
@@ -1419,13 +1419,26 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   definition). An output on one cell of a large net array costs only that
   cell (200,000 cells: 21 KB of `model.c`); thousands of driven cells share
   the per-cell code cost of driven net-array cells ([known issue](known_issues.md#driven-net-array-cells-emit-per-cell-electrical-code)).
-  Sequential UDPs are a separate missing capability below.
+  Sequential UDPs are the separate row below.
   V §§8.1–8.2, 8.6; SV §§29.3–29.4, 29.8 **[1995/SV-2009]**.
-- ❌ **Sequential UDPs** — State-holding level/edge tables and UDP
-  state-initialization semantics are not implemented. The
-  [UDP regression sources](../tests/sim_udp.rs) retain explicit sequential/edge
-  rejection checks; combinational UDP support does not imply sequential support.
-  V §8.3; SV §§29.5–29.6 **[1995]**.
+- 🟦 **Sequential UDPs** — Level-sensitive, edge-sensitive and mixed state
+  tables run with per-instance state (instance-array elements included):
+  current-state fields, `-` (no change), explicit `(vw)` transitions with
+  `0 1 x ? b` and the `r f p n *` shorthands; a change matches a level row
+  first and then an edge row on the changed input (level dominance), and an
+  unmatched combination gives X. `initial q = v;` and `output reg q = v`
+  set the starting state, which reaches the output without the instance
+  delay. Outputs use the shared gate publication (strengths, resolved nets,
+  delay2 inertial delays). Unspecified points are decisions S3-D1..S3-D4 in
+  the [LRM decision register](lrm_decisions.md#sequential-udps-adv-003):
+  level rows see the prior state, several inputs changing together are taken
+  in port order, a Z/X change is no transition, and time-zero inputs start
+  from X. Each definition with a next-state table of at most 2^20 entries
+  steps through one dense lookup; wider definitions scan their encoded rows.
+  Edge rows in combinational UDPs, state fields, `-`, `initial`, arity and
+  contradictory entries stop with the frontend's located diagnostic
+  ([ADV-003 fixtures](../tests/fixtures/sim/feature_completion/adv_003/readme.md)).
+  V §§8.1–8.7; SV §§29.3–29.9 **[1995/SV-2009]**.
 - 🚫 **MOS switches and charge storage** — The MOS/CMOS/resistive primitives
   `nmos/pmos/cmos/rnmos/rpmos/rcmos`, every `trireg` net (including charge
   strengths, decay delays and `trireg` ports) stop the run with `unsupported:

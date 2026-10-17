@@ -10,6 +10,7 @@ impl Db {
         let type_projector = SlangTypeProjector::new(snapshot)?;
         let ids = SemanticIds::new(&snapshot.semantic_nodes)?;
         let mut source_positions = SourcePositions::new(snapshot);
+        let udp_tables = udp_tables_from_slang(snapshot, &mut source_positions)?;
         let mut source_identities = HashMap::new();
         for semantic in &snapshot.semantic_nodes {
             let id = NodeId::from_index(semantic.id as usize);
@@ -895,8 +896,15 @@ impl Db {
                 }
             }
             let (file, line, col, end_line, end_col) = source_positions.position(semantic)?;
-            let mut kind =
-                node_kind_from_slang(snapshot, &type_projector, semantic, edges, &ids, type_info)?;
+            let mut kind = node_kind_from_slang(
+                snapshot,
+                &type_projector,
+                semantic,
+                edges,
+                &ids,
+                type_info,
+                &udp_tables,
+            )?;
             if matches!(
                 &kind,
                 NodeKind::Expr(ExprKind::Operation {

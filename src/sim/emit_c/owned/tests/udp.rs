@@ -12,6 +12,7 @@ fn udp_model(rows: usize) -> IrModel {
             };
             rows
         ],
+        sequential: None,
     });
     model
 }
@@ -206,6 +207,7 @@ fn dense_index_matches_first_row_scan_for_every_combination() {
                         output: outputs[next(outputs.len())],
                     })
                     .collect(),
+                sequential: None,
             };
             let dense = super::super::udp::dense_index(&table).expect("small tables are dense");
             assert_eq!(dense.len(), 3usize.pow(input_count as u32));
@@ -235,6 +237,7 @@ fn dense_index_limit_is_ten_inputs() {
             inputs: vec![IrUdpInput::Any; input_count],
             output: IrUdpOutput::One,
         }],
+        sequential: None,
     };
     let dense = super::super::udp::dense_index(&table(10)).expect("ten inputs are dense");
     assert_eq!(dense.len(), 59_049);
@@ -252,6 +255,7 @@ fn definitions_above_the_dense_limit_keep_the_row_scan() {
             inputs: vec![IrUdpInput::Binary; 11],
             output: IrUdpOutput::One,
         }],
+        sequential: None,
     });
     let expr = IrExpr::new(
         IrExprKind::UdpEval {
@@ -348,4 +352,138 @@ fn scalar_inputs_and_constant_bits_are_read_in_place() {
     assert!(!body.contains("sv4_bit_select"), "{body}");
     assert!(!body.contains("sv4_part_select"), "{body}");
     assert_eq!(body.matches("sv4_fill_to(").count(), 1, "{body}");
+}
+
+fn sequential_definition(input_count: usize, rows: Vec<IrUdpSequentialRow>) -> IrUdpTable {
+    IrUdpTable {
+        name: "sequential".into(),
+        input_count,
+        rows: Vec::new(),
+        sequential: Some(Box::new(IrUdpSequential {
+            initial: IrUdpOutput::Unknown,
+            rows,
+        })),
+    }
+}
+
+#[test]
+fn sequential_index_matches_the_row_lookup_for_every_transition() {
+    use IrUdpInput::{Any, Binary, One, OneOrUnknown, Unknown, Zero, ZeroOrUnknown};
+    let levels = [Zero, One, Unknown, Binary, Any];
+    let froms = [Zero, One, Unknown, Binary, Any, ZeroOrUnknown, OneOrUnknown];
+    let nexts = [
+        IrUdpNext::Output(IrUdpOutput::Zero),
+        IrUdpNext::Output(IrUdpOutput::One),
+        IrUdpNext::Output(IrUdpOutput::Unknown),
+        IrUdpNext::Hold,
+    ];
+    let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+    let mut next = move |bound: usize| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed % bound as u64) as usize
+    };
+    for input_count in 1..=4 {
+        for rows in [0, 1, 4, 12, 40] {
+            let rows = (0..rows)
+                .map(|_| {
+                    let edge = (next(3) != 0).then(|| IrUdpEdge {
+                        input: next(input_count),
+                        from: froms[next(froms.len())],
+                    });
+                    IrUdpSequentialRow {
+                        inputs: (0..input_count)
+                            .map(|_| levels[next(levels.len())])
+                            .collect(),
+                        edge,
+                        state: levels[next(levels.len())],
+                        next: nexts[next(nexts.len())],
+                    }
+                })
+                .collect();
+            let table = sequential_definition(input_count, rows);
+            let sequential = table.sequential.as_deref().unwrap();
+            let index = super::super::udp::sequential_index(input_count, sequential)
+                .expect("small definitions are dense");
+            let edges = sequential.edge_inputs(input_count);
+            let combinations = 3usize.pow(input_count as u32);
+            assert_eq!(index.len(), combinations * 3 * (1 + 2 * edges.len()));
+            for code in 0..combinations {
+                let mut digits = vec![0u8; input_count];
+                let mut rest = code;
+                for digit in digits.iter_mut().rev() {
+                    *digit = (rest % 3) as u8;
+                    rest /= 3;
+                }
+                for changed in 0..input_count {
+                    for old in (0..3u8).filter(|old| *old != digits[changed]) {
+                        let slot = match edges.iter().position(|edge| *edge == changed) {
+                            Some(ordinal) => {
+                                1 + 2 * ordinal + usize::from(old - u8::from(old > digits[changed]))
+                            }
+                            None => 0,
+                        };
+                        for state in 0..3u8 {
+                            assert_eq!(
+                                index[(slot * combinations + code) * 3 + usize::from(state)],
+                                sequential.next_state(&digits, changed, old, state),
+                                "{table:?} at {digits:?}, input {changed} from {old}, state {state}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn sequential_definitions_above_the_dense_limit_scan_encoded_rows() {
+    // Ten inputs, five of them with transitions: 3^11 * 11 entries exceed
+    // the 1 MiB index, so the step function scans the rows.
+    let rows = (0..5)
+        .map(|input| IrUdpSequentialRow {
+            inputs: vec![IrUdpInput::Any; 10],
+            edge: Some(IrUdpEdge {
+                input,
+                from: IrUdpInput::Any,
+            }),
+            state: IrUdpInput::Any,
+            next: IrUdpNext::Hold,
+        })
+        .collect();
+    let wide = sequential_definition(10, rows);
+    assert!(super::super::udp::sequential_index(10, wide.sequential.as_deref().unwrap()).is_none());
+    let mut narrow = wide.clone();
+    narrow.sequential.as_mut().unwrap().rows.truncate(4);
+    let mut model = IrModel::new("udp_sequential".into(), 1).unwrap();
+    model.udp_tables = vec![wide, narrow];
+    model.udp_states = vec![0, 1, 1];
+    let mut tables = String::new();
+    super::super::udp::tables(&model, &mut tables);
+    assert!(
+        tables.contains("static const uint8_t llg_udp_rows_0["),
+        "{tables}"
+    );
+    assert!(tables
+        .contains("llg_udp_wide_0_t llg_udp_state_0 = { { 2, 2, 2, 2, 2, 2, 2, 2, 2, 2 }, 2u };"));
+    // Four edge inputs: 3^11 * 9 entries still exceed the limit; two fit.
+    assert!(tables.contains("llg_udp_rows_1["), "{tables}");
+    model.udp_tables[1]
+        .sequential
+        .as_mut()
+        .unwrap()
+        .rows
+        .truncate(2);
+    let mut tables = String::new();
+    super::super::udp::tables(&model, &mut tables);
+    assert!(tables.contains("static const uint8_t llg_udp_next_1[885735]"));
+    // Every input starts unknown: code 3^10 - 1, state X.
+    assert!(tables.contains("static llg_udp_seq_t llg_udp_state_1 = { 59048u, 2u };"));
+    assert!(tables.contains("static llg_udp_seq_t llg_udp_state_2 = { 59048u, 2u };"));
+    assert_eq!(
+        tables.matches("static inline void llg_udp_step_").count(),
+        2
+    );
 }

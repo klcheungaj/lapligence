@@ -1,0 +1,5 @@
+start q=1 qd=0
+three q=0
+two q=0
+clock_first qd=0
+next_edge qd=1

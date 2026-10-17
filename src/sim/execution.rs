@@ -772,6 +772,8 @@ fn collect_effects(
             IrStmt::InertialAssign { .. } => {
                 effects.push(ExecutionEffect::EnqueueUpdate(ScheduleRegion::Active))
             }
+            // Advances the instance's model-owned state record in place.
+            IrStmt::UdpStep { .. } => effects.push(ExecutionEffect::ImmediateStore),
             IrStmt::FixedValueAssign { nba: true, .. }
             | IrStmt::FixedArrayFill { nba: true, .. }
             | IrStmt::FixedArrayCopy { nba: true, .. }
@@ -1097,7 +1099,7 @@ fn collect_statement_expression_effects(
         IrStmt::System(Some(command)) => {
             collect_string_effects(ir, command, effects, visited_calls);
         }
-        IrStmt::VpiCall { args, .. } => {
+        IrStmt::VpiCall { args, .. } | IrStmt::UdpStep { inputs: args, .. } => {
             for arg in args {
                 collect_expression_effects(ir, arg, effects, visited_calls);
             }
@@ -2140,6 +2142,7 @@ fn collect_expression_effects(
         | IrExprKind::SigRead(_)
         | IrExprKind::FormalRead(_)
         | IrExprKind::Fill(_)
+        | IrExprKind::UdpState(_)
         | IrExprKind::EventTriggered(_)
         | IrExprKind::RuntimeQuery(_)
         | IrExprKind::FixedArrayCompare { .. }

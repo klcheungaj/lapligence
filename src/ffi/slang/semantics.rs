@@ -595,27 +595,55 @@ pub(super) fn decode_semantic_operation(raw: u32) -> Result<SemanticOperation, S
 /// them; the owning table checks the width and moves the text out.
 pub(super) struct PendingUdpRow {
     inputs: String,
+    state: Option<u8>,
     output: u8,
+    edge_sensitive: bool,
+    range: Option<SourceRange>,
 }
 
-/// Validate and copy one combinational UDP row.
-pub(super) fn decode_udp_row(raw_row: &RawUdpRow) -> Result<PendingUdpRow, SlangError> {
-    if raw_row.reserved != 0 || raw_row.flags != 0 || raw_row.state != 0 {
-        return Err(invalid_native(
-            "combinational UDP row contains state or edge metadata",
-        ));
-    }
-    if raw_row.output > u8::MAX as u32 || !matches!(raw_row.output as u8, b'0' | b'1' | b'x') {
-        return Err(invalid_native(
-            "combinational UDP row has an invalid output",
-        ));
+/// Copy one UDP row, checking only its record structure. Symbol legality is
+/// a frontend rule: Slang keeps rows whose symbols it diagnosed, and failing
+/// here would replace those located diagnostics with an unlocated startup
+/// error, so consumers check symbols after the frontend has reported.
+pub(super) fn decode_udp_row(
+    raw_row: &RawUdpRow,
+    files: &[File],
+) -> Result<PendingUdpRow, SlangError> {
+    const EDGE_SENSITIVE: u32 = 1;
+    if raw_row.reserved != 0
+        || raw_row.flags & !EDGE_SENSITIVE != 0
+        || raw_row.state > u32::from(u8::MAX)
+        || raw_row.output == 0
+        || raw_row.output > u32::from(u8::MAX)
+    {
+        return Err(invalid_native("UDP row has invalid metadata"));
     }
     Ok(PendingUdpRow {
         // SAFETY: stream records and their strings are valid for the callback
         // that delivered them.
         inputs: unsafe { copy_string(raw_row.inputs, "UDP row inputs")? },
+        state: (raw_row.state != 0).then_some(raw_row.state as u8),
         output: raw_row.output as u8,
+        edge_sensitive: raw_row.flags & EDGE_SENSITIVE != 0,
+        range: decode_range(raw_row.range, files)?,
     })
+}
+
+/// Number of input fields in Slang's row normalization, where `(vw)` is one
+/// field and every other character is one field; `None` for unbalanced or
+/// non-two-symbol transitions, which Slang never keeps.
+fn udp_field_count(inputs: &str) -> Option<usize> {
+    let bytes = inputs.as_bytes();
+    let (mut count, mut index) = (0, 0);
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' if bytes.get(index + 3) == Some(&b')') => index += 4,
+            b'(' | b')' => return None,
+            _ => index += 1,
+        }
+        count += 1;
+    }
+    Some(count)
 }
 
 /// Receiver state shared by every UDP table of one stream.
@@ -627,16 +655,22 @@ pub(super) struct UdpTableContext<'a> {
     pub(super) semantic_nodes: &'a [SemanticNode],
 }
 
+/// Semantic subkinds of sequential and combinational UDP declarations.
+const UDP_SEQUENTIAL_SUBKIND: u32 = 226;
+const UDP_COMBINATIONAL_SUBKIND: u32 = 227;
+
 /// Decode one UDP table into owned rows and check the frontend-independent
-/// consistency rules needed by downstream lowering. Slang has already
-/// diagnosed conflicting rows, but retaining this check at the ABI boundary
-/// prevents a malformed or stale native export from making the simulator
-/// depend on borrowed frontend state.
+/// structure needed by downstream consumers: the declaration identity, the
+/// row windows and each row's field count. A well-formed combinational table
+/// also keeps the bounded overlap check at the ABI boundary, so a malformed
+/// or stale native export cannot make the simulator depend on borrowed
+/// frontend state; sequential overlap (including `-` against explicit
+/// outputs) is left to Slang's `UdpDupDiffOutput`.
 pub(super) fn decode_udp_table(
     raw_table: &RawUdpTable,
     context: UdpTableContext<'_>,
 ) -> Result<UdpTable, SlangError> {
-    if raw_table.reserved != 0 || !context.table_ids.insert(raw_table.primitive_id) {
+    if !context.table_ids.insert(raw_table.primitive_id) {
         return Err(invalid_native(
             "UDP table has invalid or duplicate metadata",
         ));
@@ -648,14 +682,25 @@ pub(super) fn decode_udp_table(
         .get(declaration_index)
         .filter(|node| node.id == raw_table.primitive_id)
         .ok_or_else(|| invalid_native("UDP table refers to an unknown primitive"))?;
-    if declaration.kind != SemanticKind::Primitive
-        || !declaration.is_primitive_declaration()
-        || declaration.subkind != 227
-    {
+    let sequential = match declaration.subkind {
+        UDP_SEQUENTIAL_SUBKIND => true,
+        UDP_COMBINATIONAL_SUBKIND => false,
+        _ => {
+            return Err(invalid_native(
+                "UDP table is not attached to a user-defined primitive declaration",
+            ))
+        }
+    };
+    if declaration.kind != SemanticKind::Primitive || !declaration.is_primitive_declaration() {
         return Err(invalid_native(
-            "UDP table is not attached to a combinational primitive declaration",
+            "UDP table is not attached to a user-defined primitive declaration",
         ));
     }
+    let initial = match raw_table.initial_value {
+        0 => None,
+        value if sequential && b"01x".map(u32::from).contains(&value) => Some(value as u8),
+        _ => return Err(invalid_native("UDP table has an invalid initial value")),
+    };
     let input_count = usize::try_from(raw_table.input_count)
         .map_err(|_| invalid_native("UDP input count does not fit usize"))?;
     let window = checked_window(
@@ -673,23 +718,32 @@ pub(super) fn decode_udp_table(
         // Each row is claimed by exactly one window, so its text moves.
         let pending = &mut context.rows[index];
         let inputs = std::mem::take(&mut pending.inputs);
-        if inputs.chars().count() != input_count
-            || inputs
-                .bytes()
-                .any(|symbol| !matches!(symbol, b'0' | b'1' | b'x' | b'?' | b'b'))
-        {
+        if udp_field_count(&inputs) != Some(input_count) {
             return Err(invalid_native(
-                "combinational UDP row has invalid input symbols or width",
+                "UDP row has the wrong number of input fields",
             ));
         }
         rows.push(UdpRow {
             inputs,
-            state: None,
+            state: pending.state,
             output: pending.output,
-            edge_sensitive: false,
+            edge_sensitive: pending.edge_sensitive,
+            range: pending.range,
         });
     }
-    context.overlap.validate_rows(&rows)?;
+    let well_formed_combinational = !sequential
+        && rows.iter().all(|row| {
+            row.state.is_none()
+                && !row.edge_sensitive
+                && matches!(row.output, b'0' | b'1' | b'x')
+                && row
+                    .inputs
+                    .bytes()
+                    .all(|symbol| udp_symbol_mask(symbol) != 0)
+        });
+    if well_formed_combinational {
+        context.overlap.validate_rows(&rows)?;
+    }
     // SAFETY: stream records and their strings are valid for the callback
     // that delivered them.
     let name = unsafe { copy_string(raw_table.name, "UDP table name")? };
@@ -702,6 +756,8 @@ pub(super) fn decode_udp_table(
         primitive_id: raw_table.primitive_id,
         name,
         input_count: raw_table.input_count,
+        sequential,
+        initial,
         rows,
     })
 }

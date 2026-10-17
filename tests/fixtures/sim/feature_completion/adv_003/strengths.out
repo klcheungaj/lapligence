@@ -1,0 +1,9 @@
+t1 w1=Pu1 w2=St1 w3=Pu1 w4=PuX
+t3 w1=Pu1 w2=St1 w3=Pu1 w4=Pu1
+d2_0 w1=Pu1 w2=StX w3=Pu0 w4=Pu1
+t6 w1=Pu0 w2=St0 w3=Pu0 w4=Pu1
+t7 w1=Pu0 w2=St0 w3=Pu0 w4=Pu0
+d1_1 w1=Pu1 w2=StX w3=Pu0 w4=Pu1
+ena_x w1=Pu1 w2=StX w3=Pu0 w4=Pu1
+t16 w1=PuX w2=StX w3=Pu0 w4=Pu1
+t18 w1=PuX w2=StX w3=Pu0 w4=PuX

@@ -1348,7 +1348,9 @@ not merge them. A 4,096-element mux UDP array produces 9.8 MB of `model.c`
 (about 2.4 KB per element) after RTL-020's dense-index lookup, which already
 removed the per-evaluation input copies (15.8 MB before). Evaluation cost per
 element is constant; the cost is C size and compile time, linear in the
-element count.
+element count. Sequential UDP arrays (ADV-003) follow the same pattern: each
+element also owns one small state record, while the next-state table and the
+step function are shared per definition.
 
 Reproduce with `mux3 m[4095:0] (y, sel, a, b);` over 4,096-bit vectors and
 `--gen-only`, then measure `model.c`.

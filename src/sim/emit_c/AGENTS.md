@@ -217,6 +217,20 @@ scalar input expressions and keeps selected output indices, sensitivity,
 strengths and inertial publication. Row count affects only table data, never the
 executable gate body.
 
+A sequential definition emits one `static inline llg_udp_step_<t>` and each
+instance one file-scope state record (`IrModel::udp_states`) holding the
+base-3 code of its prior inputs and its state, initialized to all-X inputs
+and the initial value. `UdpStep` advances the record from the current input
+digits; `UdpState` reads its state with one `sv4_fill`. While the next-state
+index `3^(n+1) * (1 + 2e)` (`e` inputs named with a transition) fits
+`UDP_SEQUENTIAL_DENSE_MAX_ENTRIES` (2^20 bytes) the step makes one index load
+per changed input: slot 0 serves inputs without transitions, and each edge
+input has a slot per `old - (old > new)`. The index is built by evaluating
+`IrUdpSequential::next_state` for every entry, so the emitted lookup and the
+IR rule cannot diverge. Larger definitions keep encoded rows and scan them
+in the step (level rows, then edge rows on the changed input). Changed inputs
+are taken in port order (decision S3-D2) and Z/X changes are skipped.
+
 ArrayMux uses immediate-element defaults; StructMux uses immediate-member plans.
 Evaluate each branch once and preserve its self-determined shape; an enclosing cast
 must not resize operands before the merge. Predicates evaluate only reached clauses,

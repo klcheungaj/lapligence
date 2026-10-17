@@ -522,12 +522,11 @@ struct Capture {
   }
 
   void captureUdpTable(uint64_t primitiveId, const PrimitiveSymbol& primitive) {
+    // A primitive with fewer than two ports has no table to evaluate; Slang
+    // reports it (PrimitiveTwoPorts), so capture must not fail first.
     if (primitive.primitiveKind != PrimitiveSymbol::UserDefined ||
-        primitive.isSequential)
+        primitive.ports.size() < 2)
       return;
-    if (primitive.ports.size() < 2)
-      throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
-                          "combinational UDP has too few ports");
     if (output.udp_tables.size() >= maxSemanticNodes())
       throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
                           "UDP table limit exceeded");
@@ -541,8 +540,16 @@ struct Capture {
     if (inputCount > std::numeric_limits<uint32_t>::max())
       throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
                           "UDP input count exceeds the ABI limit");
+    // Slang appends one table entry per syntax entry unless the entry has an
+    // error, so equal counts pair each kept row with its source entry.
+    const syntax::UdpBodySyntax* body = nullptr;
+    if (const auto* syntax = primitive.getSyntax();
+        syntax && syntax->kind == syntax::SyntaxKind::UdpDeclaration)
+      body = syntax->as<syntax::UdpDeclarationSyntax>().body;
+    const bool rowsHaveSyntax = body && body->entries.size() == rowCount;
     const uint64_t rowStart = output.udp_rows.size();
-    for (const auto& row : primitive.table) {
+    for (size_t index = 0; index < primitive.table.size(); ++index) {
+      const auto& row = primitive.table[index];
       chargeRecord(output, sizeof(LlgSlangUdpRow));
       output.udp_rows.push_back({
           storeString(output, row.inputs),
@@ -550,13 +557,27 @@ struct Capture {
           static_cast<uint32_t>(static_cast<unsigned char>(row.output)),
           row.isEdgeSensitive ? LLG_SLANG_UDP_ROW_EDGE_SENSITIVE : 0u,
           0u,
+          rowsHaveSyntax ? span(body->entries[index]->sourceRange())
+                         : LlgSlangSourceRange{LLG_SLANG_INVALID_ID, 0, 0},
       });
+    }
+    uint32_t initialValue = 0;
+    if (primitive.isSequential && primitive.initVal &&
+        primitive.initVal->isInteger()) {
+      // Slang accepts only 0, 1 and 1'bx here (PrimitiveInitVal otherwise).
+      const auto& value = primitive.initVal->integer();
+      if (value.getBitWidth() == 1 && exactlyEqual(value[0], logic_t::x))
+        initialValue = 'x';
+      else if (value == 0)
+        initialValue = '0';
+      else if (value == 1)
+        initialValue = '1';
     }
     chargeRecord(output, sizeof(LlgSlangUdpTable));
     output.udp_tables.push_back({
         primitiveId,
         static_cast<uint32_t>(inputCount),
-        0u,
+        initialValue,
         rowStart,
         rowCount,
         storeString(output, primitive.name),

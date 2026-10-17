@@ -1,0 +1,28 @@
+start clk=x jk=xx pc=xx q=x
+clk0 clk=0 jk=xx pc=xx q=x
+clear1 clk=0 jk=xx pc=x1 q=x
+preset clk=0 jk=xx pc=01 q=1
+preset_rel clk=0 jk=xx pc=11 q=1
+j0 clk=0 jk=0x pc=11 q=1
+k0 clk=0 jk=00 pc=11 q=1
+r_00 clk=1 jk=00 pc=11 q=1
+f clk=0 jk=00 pc=11 q=1
+k1 clk=0 jk=01 pc=11 q=1
+r_01 clk=1 jk=01 pc=11 q=0
+f2 clk=0 jk=01 pc=11 q=0
+j1 clk=0 jk=11 pc=11 q=0
+r_11_s0 clk=1 jk=11 pc=11 q=1
+f3 clk=0 jk=11 pc=11 q=1
+clear clk=0 jk=11 pc=10 q=0
+clear_rel clk=0 jk=11 pc=11 q=0
+r_11_s0b clk=1 jk=11 pc=11 q=1
+f4 clk=0 jk=11 pc=11 q=1
+r_11_s1 clk=1 jk=11 pc=11 q=0
+dom_start c=x d=x qd=x
+c0 c=0 d=x qd=x
+d0 c=0 d=0 qd=x
+rise_d0 c=1 d=0 qd=1
+fall c=0 d=0 qd=1
+d1 c=0 d=1 qd=1
+rise_d1 c=1 d=1 qd=1
+level_d0 c=1 d=0 qd=1

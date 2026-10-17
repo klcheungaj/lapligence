@@ -575,6 +575,15 @@ pub enum IrStmt {
         group: usize,
         delay: Box<IrRuntimeTransitionDelay>,
     },
+    /// Advance sequential UDP instance state `state` (an index of
+    /// `IrModel::udp_states`) from its scalar inputs, in port order. The
+    /// state keeps the inputs it last saw; each input whose 0/1/X value
+    /// (Z reads as X) differs is processed as one transition. The new output
+    /// is read with [`IrExprKind::UdpState`].
+    UdpStep {
+        state: usize,
+        inputs: Vec<IrExpr>,
+    },
     /// Capture a continuous-driver value and replace its pending active-region update.
     InertialAssign {
         lhs: IrLhs,

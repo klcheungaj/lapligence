@@ -1,7 +1,12 @@
 //! Gates.
 
 use super::*;
-use crate::sim::ir::{IrUdpInput, IrUdpOutput, IrUdpRow, IrUdpTable};
+use crate::core::db::{UdpRow, UdpTable};
+use crate::sim::ir::{
+    IrUdpEdge, IrUdpInput, IrUdpNext, IrUdpOutput, IrUdpRow, IrUdpSequential, IrUdpSequentialRow,
+    IrUdpTable,
+};
+use std::sync::Arc;
 
 impl<'a> Codegen<'a> {
     // ── Structural gate primitives ─────────────────────────────────────────
@@ -15,9 +20,11 @@ impl<'a> Codegen<'a> {
     /// Multi-input logic gates reduce their inputs left-to-right with the
     /// two-input runtime op; nand/nor/xnor negate after the full reduce.
     /// A gate delay `#D` schedules a captured inertial update while the
-    /// process continues watching its inputs. Combinational UDPs use their
-    /// owned truth table and retain the same structural driver identity as
-    /// builtin gates; switches and sequential UDPs are rejected explicitly.
+    /// process continues watching its inputs. UDPs use their owned table and
+    /// retain the same structural driver identity as builtin gates; a
+    /// sequential UDP instance first advances its own persistent state
+    /// ([`IrStmt::UdpStep`]) and then publishes that state. Switches are
+    /// rejected explicitly.
     pub(super) fn emit_gate(&mut self, inst: NodeId, path: &str, g: NodeId) -> Result<(), String> {
         let (class, prim_type, strength0, strength1, delay, terms, udp_table) = match self.kind(g) {
             NodeKind::Gate {
@@ -53,15 +60,7 @@ impl<'a> Codegen<'a> {
                      supported"
                 ))
             }
-            PrimClass::Udp => {
-                if prim_type != PrimitiveType::Combinational {
-                    return Err(format!(
-                        "sequential user-defined primitive instance `{shown}` in `{path}` is \
-                         not supported"
-                    ));
-                }
-            }
-            PrimClass::Array => {}
+            PrimClass::Udp | PrimClass::Array => {}
         }
         let driver_strengths =
             gate_driver_strengths(prim_type, strength0, strength1, &format!("{path}.{shown}"))?;
@@ -94,7 +93,7 @@ impl<'a> Codegen<'a> {
             },
             PrimitiveType::Pullup => GateOp::Pull(true),
             PrimitiveType::Pulldown => GateOp::Pull(false),
-            PrimitiveType::Combinational => GateOp::Udp,
+            PrimitiveType::Combinational | PrimitiveType::Sequential => GateOp::Udp,
             _ => {
                 return Err(format!(
                     "primitive type {prim_type:?} of `{shown}` in `{path}` is not \
@@ -158,6 +157,9 @@ impl<'a> Codegen<'a> {
                     "logic gates take exactly one output terminal plus at least one \
                      input terminal"
                 }
+                GateOp::Udp if prim_type == PrimitiveType::Sequential => {
+                    "sequential UDPs take one scalar output followed by scalar input terminals"
+                }
                 GateOp::Udp => {
                     "combinational UDPs take one scalar output followed by scalar input terminals"
                 }
@@ -182,6 +184,11 @@ impl<'a> Codegen<'a> {
         let mut widths = vec![0u32; terms.len()];
         let mut sens = Vec::new();
         let is_udp = matches!(op, GateOp::Udp);
+        let udp_kind = if prim_type == PrimitiveType::Sequential {
+            "sequential"
+        } else {
+            "combinational"
+        };
         for i in &in_positions {
             let expr = self.lower_expr(path, terms[*i].expr).map_err(|error| {
                 format!(
@@ -205,8 +212,10 @@ impl<'a> Codegen<'a> {
             }
             if is_udp && expr.width() != 1 {
                 return Err(format!(
-                    "input terminal {} of combinational UDP `{shown}` in `{path}` must be scalar",
-                    i
+                    "input terminal {} of {udp_kind} UDP `{shown}` in `{path}` must be scalar \
+                     (at {})",
+                    i,
+                    self.source_location(g)
                 ));
             }
             widths[*i] = expr.width();
@@ -240,8 +249,10 @@ impl<'a> Codegen<'a> {
             }
             if is_udp && width != 1 {
                 return Err(format!(
-                    "output terminal {} of combinational UDP `{shown}` in `{path}` must be scalar",
-                    i
+                    "output terminal {} of {udp_kind} UDP `{shown}` in `{path}` must be scalar \
+                     (at {})",
+                    i,
+                    self.source_location(g)
                 ));
             }
             widths[*i] = width;
@@ -361,6 +372,7 @@ impl<'a> Codegen<'a> {
                 })
                 .collect::<Vec<_>>();
             let mut enable_halves = None;
+            let mut udp_step = None;
             let value = match op {
                 GateOp::Pull(ones) => const_bits_expr(output_width, ones),
                 // IEEE 1364-2001 Table 34: `buf` outputs x for a z input, so a
@@ -458,12 +470,16 @@ impl<'a> Codegen<'a> {
                     }
                     enable_mux(data, const_z_expr(output_width))
                 }
-                GateOp::Udp => self.udp_value(
-                    udp_table.as_ref().ok_or_else(|| {
-                        format!("combinational UDP `{shown}` in `{path}` has no owned truth table")
-                    })?,
-                    input_values,
-                )?,
+                GateOp::Udp => {
+                    let table = udp_table.as_ref().ok_or_else(|| {
+                        format!("{udp_kind} UDP `{shown}` in `{path}` has no owned table")
+                    })?;
+                    let (value, step, start) =
+                        self.udp_value(table, input_values, &format!("{path}.{shown}"))?;
+                    udp_step = step;
+                    self.delayed_driver_start = start;
+                    value
+                }
             };
             let body = if let (Some(bindings), Some((zero_side, one_side))) =
                 (&alias_bindings, &enable_halves)
@@ -542,6 +558,12 @@ impl<'a> Codegen<'a> {
                     nba: false,
                 }]
             };
+            // Delayed-driver initialization above used the UDP start value.
+            self.delayed_driver_start = None;
+            let mut body = body;
+            if let Some(step) = udp_step {
+                body.insert(0, step);
+            }
             let shape = if sens.is_empty() {
                 IrShape::RunOnce
             } else {
@@ -592,83 +614,278 @@ impl<'a> Codegen<'a> {
 const ENABLE_ONE_SIDE_TERMINAL: usize = 1;
 
 impl Codegen<'_> {
-    /// Retain the definition once and evaluate its rows against scalar inputs.
-    fn udp_value(&mut self, table: &UdpTable, inputs: Vec<IrExpr>) -> Result<IrExpr, String> {
-        let definition = udp_definition(table, inputs.len())?;
-        let index = match self.udp_table_indices.get(&definition) {
+    /// Retain the definition once and lower one instance's evaluation.
+    ///
+    /// A combinational instance evaluates its rows against the scalar inputs.
+    /// A sequential instance gets its own persistent state: the returned
+    /// [`IrStmt::UdpStep`] advances it and the value reads it. The third
+    /// result is the start value a delayed output driver takes: an
+    /// `initial` value is not delayed by the instance delay (IEEE 1364-2001
+    /// 8.5, Figure 30), while without one the output starts X.
+    fn udp_value(
+        &mut self,
+        table: &Arc<UdpTable>,
+        inputs: Vec<IrExpr>,
+        instance: &str,
+    ) -> Result<(IrExpr, Option<IrStmt>, Option<bool>), String> {
+        let key = Arc::as_ptr(table) as usize;
+        let index = match self.udp_declaration_indices.get(&key) {
             Some(index) => *index,
             None => {
-                let index = self.model.udp_tables.len();
-                self.model.udp_tables.push(definition.clone());
-                self.udp_table_indices.insert(definition, index);
+                let definition = udp_definition(table)?;
+                let index = match self.udp_table_indices.get(&definition) {
+                    Some(index) => *index,
+                    None => {
+                        let index = self.model.udp_tables.len();
+                        self.model.udp_tables.push(definition.clone());
+                        self.udp_table_indices.insert(definition, index);
+                        index
+                    }
+                };
+                self.udp_declaration_indices.insert(key, index);
                 index
             }
         };
-        Ok(IrExpr::new(
-            IrExprKind::UdpEval {
-                table: index,
-                inputs,
-            },
-            1,
-            false,
-            None,
+        let definition = &self.model.udp_tables[index];
+        if definition.input_count != inputs.len() {
+            return Err(format!(
+                "UDP `{}` instance `{instance}` has {} input terminals but its definition at {} \
+                 has {}",
+                definition.name,
+                inputs.len(),
+                table.location,
+                definition.input_count
+            ));
+        }
+        let Some(sequential) = &definition.sequential else {
+            return Ok((
+                IrExpr::new(
+                    IrExprKind::UdpEval {
+                        table: index,
+                        inputs,
+                    },
+                    1,
+                    false,
+                    None,
+                ),
+                None,
+                None,
+            ));
+        };
+        let start = match sequential.initial {
+            IrUdpOutput::Zero => Some(false),
+            IrUdpOutput::One => Some(true),
+            IrUdpOutput::Unknown => None,
+        };
+        let state = self.model.udp_states.len();
+        self.model.udp_states.push(index);
+        Ok((
+            IrExpr::new(IrExprKind::UdpState(state), 1, false, None),
+            Some(IrStmt::UdpStep { state, inputs }),
+            start,
         ))
     }
 }
 
-/// Convert one owned definition into its typed row masks.
-fn udp_definition(table: &UdpTable, input_count: usize) -> Result<IrUdpTable, String> {
-    if input_count != usize::try_from(table.input_count).unwrap_or(usize::MAX) {
-        return Err(format!(
-            "UDP table `{}` input count does not match its instance terminals",
-            table.name
-        ));
+/// One input field of a Slang-normalized row: a level symbol, a shorthand
+/// edge or an explicit `(vw)` transition.
+enum UdpField {
+    Level(IrUdpInput),
+    Edge { from: IrUdpInput, to: IrUdpInput },
+}
+
+fn udp_level(symbol: u8) -> Option<IrUdpInput> {
+    Some(match symbol {
+        b'0' => IrUdpInput::Zero,
+        b'1' => IrUdpInput::One,
+        b'x' => IrUdpInput::Unknown,
+        b'b' => IrUdpInput::Binary,
+        b'?' => IrUdpInput::Any,
+        _ => return None,
+    })
+}
+
+/// Split one row's inputs into fields; IEEE 1364-2001 Table 40 gives the
+/// shorthand edges: `r` = (01), `f` = (10), `p` = (01)(0x)(x1), `n` =
+/// (10)(1x)(x0) and `*` = (??). A transition always changes the value, so
+/// `p` and `n` are the from/to products minus the unchanged (xx).
+fn udp_fields(inputs: &str) -> Result<Vec<UdpField>, char> {
+    let bytes = inputs.as_bytes();
+    let mut fields = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let field = match bytes[index] {
+            b'(' => {
+                let (from, to, close) = (
+                    bytes.get(index + 1),
+                    bytes.get(index + 2),
+                    bytes.get(index + 3),
+                );
+                index += 3;
+                match (
+                    from.copied().and_then(udp_level),
+                    to.copied().and_then(udp_level),
+                    close,
+                ) {
+                    (Some(from), Some(to), Some(b')')) => UdpField::Edge { from, to },
+                    _ => return Err('('),
+                }
+            }
+            b'r' => UdpField::Edge {
+                from: IrUdpInput::Zero,
+                to: IrUdpInput::One,
+            },
+            b'f' => UdpField::Edge {
+                from: IrUdpInput::One,
+                to: IrUdpInput::Zero,
+            },
+            b'p' => UdpField::Edge {
+                from: IrUdpInput::ZeroOrUnknown,
+                to: IrUdpInput::OneOrUnknown,
+            },
+            b'n' => UdpField::Edge {
+                from: IrUdpInput::OneOrUnknown,
+                to: IrUdpInput::ZeroOrUnknown,
+            },
+            b'*' => UdpField::Edge {
+                from: IrUdpInput::Any,
+                to: IrUdpInput::Any,
+            },
+            symbol => UdpField::Level(udp_level(symbol).ok_or(symbol as char)?),
+        };
+        fields.push(field);
+        index += 1;
     }
-    let rows = table
-        .rows
-        .iter()
-        .map(|row| {
-            if row.inputs.len() != input_count {
-                return Err(format!(
-                    "UDP table `{}` contains a row with the wrong input width",
-                    table.name
+    Ok(fields)
+}
+
+/// Convert one owned definition into its typed form. Slang has already
+/// reported every illegal table (and stopped the run); these located errors
+/// keep a frontend that kept a diagnosed row from reaching execution.
+fn udp_definition(table: &UdpTable) -> Result<IrUdpTable, String> {
+    let kind = if table.sequential {
+        "sequential"
+    } else {
+        "combinational"
+    };
+    let input_count = usize::try_from(table.input_count).unwrap_or(usize::MAX);
+    let row_error = |row: &UdpRow, what: String| {
+        format!(
+            "{kind} UDP `{}` table entry at {}: {what}",
+            table.name, row.location
+        )
+    };
+    let mut rows = Vec::new();
+    let mut sequential_rows = Vec::new();
+    for row in &table.rows {
+        let fields = udp_fields(&row.inputs)
+            .map_err(|symbol| row_error(row, format!("invalid input symbol `{symbol}`")))?;
+        if fields.len() != input_count {
+            return Err(row_error(
+                row,
+                format!("{} input fields, expected {input_count}", fields.len()),
+            ));
+        }
+        let mut inputs = Vec::with_capacity(input_count);
+        let mut edge = None;
+        for (position, field) in fields.into_iter().enumerate() {
+            match field {
+                UdpField::Level(level) => inputs.push(level),
+                UdpField::Edge { from, to } => {
+                    if !table.sequential {
+                        return Err(row_error(
+                            row,
+                            "an input transition is only allowed in a sequential UDP".to_owned(),
+                        ));
+                    }
+                    if edge.is_some() {
+                        return Err(row_error(
+                            row,
+                            "an entry may have at most one input transition".to_owned(),
+                        ));
+                    }
+                    edge = Some(IrUdpEdge {
+                        input: position,
+                        from,
+                    });
+                    inputs.push(to);
+                }
+            }
+        }
+        let output = match row.output {
+            b'0' => Some(IrUdpOutput::Zero),
+            b'1' => Some(IrUdpOutput::One),
+            b'x' => Some(IrUdpOutput::Unknown),
+            b'-' => None,
+            other => {
+                return Err(row_error(
+                    row,
+                    format!("invalid output symbol `{}`", other as char),
+                ))
+            }
+        };
+        if !table.sequential {
+            if row.state.is_some() {
+                return Err(row_error(
+                    row,
+                    "a current-state field is only allowed in a sequential UDP".to_owned(),
                 ));
             }
-            let masks = row
-                .inputs
-                .bytes()
-                .map(|symbol| match symbol {
-                    b'0' => Ok(IrUdpInput::Zero),
-                    b'1' => Ok(IrUdpInput::One),
-                    b'x' => Ok(IrUdpInput::Unknown),
-                    b'b' => Ok(IrUdpInput::Binary),
-                    b'?' => Ok(IrUdpInput::Any),
-                    other => Err(format!(
-                        "UDP table `{}` contains unsupported input symbol `{}`",
-                        table.name, other as char
-                    )),
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let output = match row.output {
-                b'0' => IrUdpOutput::Zero,
-                b'1' => IrUdpOutput::One,
-                b'x' => IrUdpOutput::Unknown,
-                other => {
-                    return Err(format!(
-                        "UDP table `{}` contains unsupported output symbol `{}`",
-                        table.name, other as char
-                    ))
-                }
-            };
-            Ok(IrUdpRow {
-                inputs: masks,
-                output,
+            let output = output.ok_or_else(|| {
+                row_error(
+                    row,
+                    "`-` (no change) is only allowed in a sequential UDP".to_owned(),
+                )
+            })?;
+            rows.push(IrUdpRow { inputs, output });
+            continue;
+        }
+        let state = row
+            .state
+            .ok_or_else(|| {
+                row_error(
+                    row,
+                    "a sequential entry needs a current-state field".to_owned(),
+                )
             })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+            .and_then(|state| {
+                udp_level(state).ok_or_else(|| {
+                    row_error(
+                        row,
+                        format!("invalid current-state symbol `{}`", state as char),
+                    )
+                })
+            })?;
+        sequential_rows.push(IrUdpSequentialRow {
+            inputs,
+            edge,
+            state,
+            next: output.map_or(IrUdpNext::Hold, IrUdpNext::Output),
+        });
+    }
+    let sequential = if table.sequential {
+        let initial = match table.initial {
+            None | Some(b'x') => IrUdpOutput::Unknown,
+            Some(b'0') => IrUdpOutput::Zero,
+            Some(b'1') => IrUdpOutput::One,
+            Some(other) => {
+                return Err(format!(
+                    "sequential UDP `{}` at {} has invalid initial value `{}`",
+                    table.name, table.location, other as char
+                ))
+            }
+        };
+        Some(Box::new(IrUdpSequential {
+            initial,
+            rows: sequential_rows,
+        }))
+    } else {
+        None
+    };
     Ok(IrUdpTable {
         name: table.name.clone(),
         input_count,
         rows,
+        sequential,
     })
 }

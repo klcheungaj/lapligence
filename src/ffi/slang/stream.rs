@@ -771,7 +771,7 @@ impl StreamBuilder {
         self.enter(Table::UdpRows, raw.len())?;
         for item in raw {
             self.charge(item.inputs)?;
-            self.udp_rows.push(decode_udp_row(item)?);
+            self.udp_rows.push(decode_udp_row(item, &self.files)?);
             self.claimed_rows.push(false);
         }
         Ok(())

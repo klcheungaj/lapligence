@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 26;
+const ABI_VERSION: u32 = 27;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1423,27 +1423,37 @@ pub struct LexicalToken {
     pub text: String,
 }
 
-/// One normalized row from a combinational user-defined primitive table.
+/// One row of a user-defined primitive table, as the frontend kept it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UdpRow {
-    /// Input symbols in primitive port order. Slang normalizes these to
-    /// lowercase `0`, `1`, `x`, `?`, and `b` for combinational rows.
+    /// Input fields in primitive port order, in Slang's lower-case
+    /// normalization: one character per level or shorthand edge field
+    /// (`0 1 x ? b r f p n *`) and `(vw)` for an explicit transition.
     pub inputs: String,
-    /// Sequential UDP state, when present. Combinational tables require this
-    /// to be absent; retaining it lets the owned decoder reject a malformed
-    /// or accidentally broadened native export.
+    /// Current-state field of a sequential row (`0 1 x ? b`), when present.
     pub state: Option<u8>,
+    /// Output (combinational) or next-state (sequential) field: `0 1 x -`.
     pub output: u8,
     pub edge_sensitive: bool,
+    /// Source text of the table entry, when the frontend could pair it.
+    pub range: Option<SourceRange>,
 }
 
-/// One owned combinational user-defined primitive table.
+/// One owned user-defined primitive table, combinational or sequential.
+///
+/// Tables of a primitive with frontend errors are still delivered so that
+/// the frontend's own diagnostics are reported; their rows may then contain
+/// symbols that consumers must reject before use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UdpTable {
     /// Semantic-node ID of the primitive declaration.
     pub primitive_id: u64,
     pub name: String,
     pub input_count: u32,
+    /// The declaration's output is `reg` (IEEE 1364-2001 8.1.2).
+    pub sequential: bool,
+    /// Start value of a sequential output (`0`, `1` or `x`), when declared.
+    pub initial: Option<u8>,
     pub rows: Vec<UdpRow>,
 }
 
@@ -1708,7 +1718,7 @@ struct RawTypeMember {
 struct RawUdpTable {
     primitive_id: u64,
     input_count: u32,
-    reserved: u32,
+    initial_value: u32,
     row_start: u64,
     row_count: u64,
     name: RawString,
@@ -1745,6 +1755,7 @@ struct RawUdpRow {
     output: u32,
     flags: u32,
     reserved: u32,
+    range: RawRange,
 }
 
 #[repr(C)]

@@ -2625,6 +2625,38 @@ fn s2_d8_alias_conflicting_net_delays() {
 }
 
 #[test]
+fn s3_d1_level_rows_use_prior_state() {
+    run_decision(
+        "S3-D1_level_rows_use_prior_state",
+        include_str!("fixtures/sim/lrm_decisions/S3-D1_level_rows_use_prior_state.out"),
+    );
+}
+
+#[test]
+fn s3_d2_simultaneous_inputs_in_port_order() {
+    run_decision(
+        "S3-D2_simultaneous_inputs_in_port_order",
+        include_str!("fixtures/sim/lrm_decisions/S3-D2_simultaneous_inputs_in_port_order.out"),
+    );
+}
+
+#[test]
+fn s3_d3_z_x_change_is_no_transition() {
+    run_decision(
+        "S3-D3_z_x_change_is_no_transition",
+        include_str!("fixtures/sim/lrm_decisions/S3-D3_z_x_change_is_no_transition.out"),
+    );
+}
+
+#[test]
+fn s3_d4_time_zero_inputs_start_x() {
+    run_decision(
+        "S3-D4_time_zero_inputs_start_x",
+        include_str!("fixtures/sim/lrm_decisions/S3-D4_time_zero_inputs_start_x.out"),
+    );
+}
+
+#[test]
 fn s99_d1_procedural_queue() {
     run_decision(
         "S99-D1_procedural_queue",

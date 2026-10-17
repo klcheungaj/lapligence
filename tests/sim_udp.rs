@@ -1,5 +1,6 @@
-//! Public CLI coverage for combinational UDP truth tables and explicit UDP
-//! rejection boundaries. Each fixture runs with and without optimization.
+//! Public CLI coverage for UDP truth tables and UDP rejection boundaries.
+//! Each fixture runs with and without optimization; sequential tables are
+//! covered in depth by `sim_feature_completion::adv_003`.
 
 use crate::sim_cli;
 use crate::sim_harness;
@@ -163,24 +164,26 @@ fn syn_031_invalid_ports_and_table_width_reject_in_both_editions() {
 }
 
 #[test]
-fn sequential_udp_remains_rejected() {
+fn sequential_udp_latch_runs_in_both_editions() {
     for edition in ["v2001", "sv2009"] {
-        sim_cli::reject_case_with_args(
+        sim_cli::run_case_with_args(
             "partial_features",
-            "udp_sequential_rejected",
-            "user-defined primitive instance is not supported",
+            "udp_sequential_latch",
+            "load0 out=0\nload1 out=1\nunlisted out=x\n",
+            "",
+            &[],
             &["--edition", edition],
         );
     }
 }
 
 #[test]
-fn edge_sensitive_udp_row_remains_rejected() {
+fn edge_sensitive_row_in_combinational_udp_reports_its_location() {
     for edition in ["v2001", "sv2009"] {
         sim_cli::reject_case_with_args(
             "partial_features",
             "udp_edge_rejected",
-            "combinational UDP row contains state or edge metadata",
+            "udp_edge_rejected.sv:9:9 edge transition can only be used in a sequential primitive",
             &["--edition", edition],
         );
     }

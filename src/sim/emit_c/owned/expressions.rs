@@ -206,6 +206,7 @@ impl Frame<'_, '_> {
                 self.mux(sel, a, b, expr, None, Some(members))?
             }
             IrExprKind::UdpEval { table, inputs } => self.udp_eval(*table, inputs)?,
+            IrExprKind::UdpState(state) => self.udp_state(*state),
             IrExprKind::Predicate { clauses } => self.predicate(clauses)?,
             IrExprKind::Pattern(pattern) => self.pattern(pattern)?,
             IrExprKind::Concat { parts } => self.concat(parts)?,

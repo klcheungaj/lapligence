@@ -1,0 +1,8 @@
+start q=0000 s=00 r=xxxx
+rise0 q=0001 s=01
+rise1 q=0011 s=11
+fall q=0011 s=11
+rise30 q=1010 s=10
+clk1 r=1010
+hold r=1010
+clk2 r=0110

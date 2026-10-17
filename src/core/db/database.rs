@@ -60,7 +60,7 @@ pub use randsequence::{
 mod nodes;
 pub use nodes::{
     CaseItem, GateTerm, Node, NodeKind, PatternCaseItem, PrimClass, ProcessKind, RandCaseItem,
-    UdpRow, UdpTable,
+    UdpLocation, UdpRow, UdpTable,
 };
 mod assertions;
 pub use assertions::{
@@ -107,7 +107,7 @@ use values::{
 mod assertion_import;
 use assertion_import::assertion_expr_from_slang;
 mod node_import;
-use node_import::node_kind_from_slang;
+use node_import::{node_kind_from_slang, udp_tables_from_slang};
 mod statement_import;
 use statement_import::{event_specs, statement_from_slang};
 mod expression_import;

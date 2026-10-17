@@ -73,7 +73,9 @@ owner. Normalize input Z to X, scan in source order and return X if no row
 matches. Dense-index evaluation needs no runtime operation beyond the bridge's
 `llg_sv4_state` and `sv4_fill`. The additive API leaves value ABI 4 unchanged;
 `value_sources` embeds `value/udp.c` in facade order, so runtime-content cache
-hashing invalidates earlier archives.
+hashing invalidates earlier archives. Sequential UDPs need no runtime
+operation: the generated model owns their next-state tables, step functions
+and per-instance state records.
 
 Keep `llg_value` scheduler/coroutine/waveform-independent, parity with `core::elab`,
 X/Z distinction, actual-width arithmetic/conversions and partial-select X fill.

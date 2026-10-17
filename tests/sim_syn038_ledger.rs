@@ -1229,7 +1229,7 @@ fn selected_rows_are_traceable_and_unique() {
         ("SYN038-CORE-ED-03", "REJECT"),
         ("SYN038-CORE-ED-06", "REJECT"),
         ("SYN038-CORE-PI-03", "PASS"),
-        ("SYN038-CORE-PI-04", "REJECT"),
+        ("SYN038-CORE-PI-04", "PASS"),
     ];
 
     let mut ids = HashSet::new();
