@@ -2183,6 +2183,7 @@ fn memory_slice_position_selector_must_match_its_view() {
     let task = |view: IrMemoryView| IrStmt::Memory {
         write: false,
         path: IrStringExpr::Literal(b"words.mem".to_vec()),
+        text: None,
         view: Box::new(view),
         radix: IrMemoryRadix::Hex,
         addressing: IrMemoryAddressingPolicy::SystemVerilog2009,
@@ -2254,6 +2255,7 @@ fn memory_rows_of_an_associative_array_are_whole_or_one_element() {
         IrStmt::MemoryAccess(Box::new(IrMemoryAccess {
             write: false,
             path: IrStringExpr::Literal(b"words.mem".to_vec()),
+            text: None,
             storage: IrMemoryStorage::Container(storage),
             root_dims,
             element_width: 8,
@@ -2344,4 +2346,56 @@ fn runtime_delays_need_valid_scaling_and_net_groups() {
         delay: Box::new(runtime(1)),
     };
     assert!(model.validate_stmt(&set_net, None).is_err());
+}
+
+#[test]
+fn memory_dump_cannot_carry_source_text() {
+    use crate::sim::ir::{IrMemoryAddressingPolicy, IrMemoryRadix};
+    let mut model = valid_model();
+    model.arrays.push(IrArray {
+        activation: false,
+        descriptor: false,
+        net: None,
+        net_elements: Vec::new(),
+        element_default: None,
+        element_uninitialized: None,
+        c_name: "mem".to_string(),
+        hdl_name: "mem".to_string(),
+        elem_width: 8,
+        signed: false,
+        two_state: false,
+        real: false,
+        shortreal: false,
+        dims: vec![(0, 3)],
+        total: 4,
+    });
+    let task = |write: bool, text: Option<Vec<u8>>| IrStmt::Memory {
+        write,
+        path: IrStringExpr::Literal(b"$sreadmemh at tb:3:5".to_vec()),
+        text,
+        view: Box::new(IrMemoryView {
+            array: 0,
+            origin: 0,
+            selectors: Vec::new(),
+            sliced: false,
+            dims: vec![(0, 3)],
+            strides: vec![1],
+            total: 4,
+        }),
+        radix: IrMemoryRadix::Hex,
+        addressing: IrMemoryAddressingPolicy::SystemVerilog2009,
+        enum_values: None,
+        start: None,
+        finish: None,
+    };
+    model
+        .validate_stmt(&task(false, Some(b"11 22".to_vec())), None)
+        .expect("a load reads text");
+    model
+        .validate_stmt(&task(true, None), None)
+        .expect("a dump names a file");
+    let error = model
+        .validate_stmt(&task(true, Some(b"11".to_vec())), None)
+        .expect_err("a dump has no source text");
+    assert!(error.detail().contains("source text"), "{}", error.detail());
 }

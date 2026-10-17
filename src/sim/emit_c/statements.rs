@@ -302,9 +302,13 @@ fn render_stmt_scoped(
         IrStmt::Coverage(_) => {
             return Err("functional coverage requires the ownership-aware emitter".to_owned())
         }
+        IrStmt::Memory { text: Some(_), .. } => {
+            return Err("string-sourced memory loads require the owned emitter".to_owned())
+        }
         IrStmt::Memory {
             write,
             path,
+            text: None,
             view,
             radix,
             addressing,

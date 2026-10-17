@@ -1,4 +1,4 @@
-foreach(mode IN ITEMS tokens enum sparse2009 sparse2001 repeated2009 repeated2001 conversion signed)
+foreach(mode IN ITEMS tokens enum sparse2009 sparse2001 repeated2009 repeated2001 conversion signed text textmalformed)
   execute_process(COMMAND "${PROBE}" "${mode}" RESULT_VARIABLE result
     OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 30)
   if(NOT result EQUAL 0)
@@ -11,6 +11,8 @@ foreach(mode IN ITEMS tokens enum sparse2009 sparse2001 repeated2009 repeated200
     set(expected "llg: warning: memory file `sparse.hex`: memory file contains too few words for the selected range\n")
   elseif(mode STREQUAL "repeated2001")
     set(expected "llg: warning: memory file `repeated.hex`: memory file contains more words than the selected range\n")
+  elseif(mode STREQUAL "textmalformed")
+    set(expected "llg: error: memory string `$sreadmemh at tb:1:1`: malformed or over-width memory token; load terminated\n")
   elseif(mode STREQUAL "conversion")
     set(expected "llg: warning: memory file `two_state.hex`: X/Z memory data converted to a two-state element\n")
   endif()

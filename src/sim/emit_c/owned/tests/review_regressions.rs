@@ -145,6 +145,7 @@ fn owned_memory_emitter_uses_enum_entry_count_for_c_array_bound() {
     let statement = IrStmt::Memory {
         write: false,
         path: IrStringExpr::Literal(b"enum.mem".to_vec()),
+        text: None,
         view: Box::new(IrMemoryView {
             array: 0,
             origin: 0,
@@ -172,4 +173,85 @@ fn owned_memory_emitter_uses_enum_entry_count_for_c_array_bound() {
         .expect("enum declaration");
     assert!(declaration.contains("[3]"), "{declaration}");
     assert!(rendered.contains(", 3, 16);"), "{rendered}");
+}
+
+#[test]
+fn owned_memory_emitter_brackets_a_string_sourced_load_with_its_text() {
+    let array = IrArray::new(
+        "G_memory".to_owned(),
+        "tb.memory".to_owned(),
+        8,
+        false,
+        vec![(0, 3)],
+    )
+    .expect("memory array");
+    let model = IrModel::from_parts(
+        "string_memory".to_owned(),
+        1,
+        IrModelParts {
+            arrays: vec![array],
+            ..Default::default()
+        },
+    )
+    .expect("valid model");
+    let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+        constants: None,
+    };
+    let statement = |text: Option<Vec<u8>>| IrStmt::Memory {
+        write: false,
+        path: IrStringExpr::Literal(b"$sreadmemh at tb:3:5".to_vec()),
+        text,
+        view: Box::new(IrMemoryView {
+            array: 0,
+            origin: 0,
+            selectors: Vec::new(),
+            sliced: false,
+            dims: vec![(0, 3)],
+            strides: vec![1],
+            total: 4,
+        }),
+        radix: IrMemoryRadix::Hex,
+        addressing: IrMemoryAddressingPolicy::SystemVerilog2009,
+        enum_values: None,
+        start: None,
+        finish: None,
+    };
+    // Every byte survives: quotes, backslashes, trigraph introducers, line
+    // ends, NUL and non-ASCII bytes are escaped, and an escape never runs into
+    // a following digit.
+    let text = b"1 \"2\\ ??= \n\x003\xff".to_vec();
+    let mut frame = Frame::new(&ctx);
+    frame
+        .memory_task(&statement(Some(text.clone())))
+        .expect("owned string memory rendering");
+    let rendered = frame.body();
+    let begin = format!(
+        r#"llg_memory_text_begin("1 \0422\134 \077\077= \012\0003\377", {}u);"#,
+        text.len()
+    );
+    let begin_at = rendered
+        .find(&begin)
+        .unwrap_or_else(|| panic!("{begin} in {rendered}"));
+    let call_at = rendered
+        .find("llg_memory_read_view(")
+        .expect("the load call");
+    let end_at = rendered
+        .find("llg_memory_text_end();")
+        .expect("the end call");
+    assert!(begin_at < call_at && call_at < end_at, "{rendered}");
+
+    let mut frame = Frame::new(&ctx);
+    frame
+        .memory_task(&statement(None))
+        .expect("owned file memory rendering");
+    assert!(
+        !frame.body().contains("llg_memory_text"),
+        "{}",
+        frame.body()
+    );
 }

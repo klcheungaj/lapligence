@@ -461,6 +461,7 @@ impl EmitCtx<'_, '_> {
             "$readmemb" | "$readmemh" | "$writememb" | "$writememh" => {
                 Ok(vec![self.lower_memory_task(name, &args)?])
             }
+            "$sreadmemb" | "$sreadmemh" => Ok(vec![self.lower_string_memory_task(name, h, &args)?]),
             "$set_coverage_db_name" | "$load_coverage_db" => Ok(vec![self
                 .cg
                 .lower_coverage_db_task(&self.path, name, h, &args)?]),

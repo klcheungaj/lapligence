@@ -16,6 +16,64 @@ typedef struct {
     int invalid_index;
 } llg_memory_value_t;
 
+// The words of a load come from a file or, for `$sreadmemb/$sreadmemh`
+// (IEEE 1800-2009 D.14), from text in the model. Both reach the one parser
+// through this stream, so values, `@` addresses, comments, X/Z and range
+// rules cannot differ between them.
+typedef struct {
+    FILE* file;
+    const char* text;
+    size_t length;
+    size_t offset;
+} llg_memory_stream_t;
+
+// The text the generated code supplies for the load it is about to call,
+// which `llg_memory_open_read` serves instead of opening the file. The load
+// runs to completion within the calling process, so one slot is enough.
+static struct {
+    const char* data;
+    size_t length;
+    int active;
+} llg_memory_text;
+
+void llg_memory_text_begin(const char* data, size_t length) {
+    llg_memory_text.data = data;
+    llg_memory_text.length = length;
+    llg_memory_text.active = 1;
+}
+
+void llg_memory_text_end(void) {
+    memset(&llg_memory_text, 0, sizeof(llg_memory_text));
+}
+
+static int llg_memory_getc(llg_memory_stream_t* stream) {
+    if (stream->file) return fgetc(stream->file);
+    return stream->offset < stream->length ? (unsigned char)stream->text[stream->offset++] : EOF;
+}
+
+// Pushes back one character that `llg_memory_getc` just returned.
+static void llg_memory_ungetc(int c, llg_memory_stream_t* stream) {
+    if (stream->file) {
+        (void)ungetc(c, stream->file);
+    } else if (stream->offset != 0) {
+        --stream->offset;
+    }
+}
+
+static void llg_memory_close(llg_memory_stream_t* stream) {
+    if (stream->file) fclose(stream->file);
+}
+
+static int llg_memory_stream_failed(const llg_memory_stream_t* stream) {
+    return stream->file && ferror(stream->file);
+}
+
+// What the diagnostics call the source: the label names the file, or the
+// `$sreadmem*` call.
+static const char* llg_memory_noun(void) {
+    return llg_memory_text.active ? "memory string" : "memory file";
+}
+
 // Diagnostics carry the category IEEE 1800-2009 21.4/21.4.2 and IEEE
 // 1364-2001 17.2.8 prescribe: a word count that differs from the range is a
 // warning; an out-of-range file address or enum value is an error that
@@ -24,7 +82,8 @@ static void llg_memory_report(const char* category, const char* path,
                               const char* format, va_list args) {
     llg_report_t report;
     llg_report_init(&report);
-    llg_report_printf(&report, "llg: %s: memory file `%s`: ", category, path ? path : "");
+    llg_report_printf(&report, "llg: %s: %s `%s`: ", category, llg_memory_noun(),
+                      path ? path : "");
     llg_report_vprintf(&report, format, args);
     llg_report_bytes(&report, "\n", 1);
     llg_report_emit(&report, stderr);
@@ -42,6 +101,23 @@ static void llg_memory_error(const char* path, const char* format, ...) {
     va_start(args, format);
     llg_memory_report("error", path, format, args);
     va_end(args);
+}
+
+// Opens the source of a load; returns 0, with the warning reported, when a
+// file cannot be opened. Text sources always open.
+static int llg_memory_open_read(const char* label, llg_memory_stream_t* stream) {
+    memset(stream, 0, sizeof(*stream));
+    if (llg_memory_text.active) {
+        stream->text = llg_memory_text.data;
+        stream->length = llg_memory_text.length;
+        return 1;
+    }
+    stream->file = fopen(label, "r");
+    if (!stream->file) {
+        llg_memory_warning(label, "open for reading failed: %s", strerror(errno));
+        return 0;
+    }
+    return 1;
 }
 
 static char* llg_memory_path_copy(llg_string_t path) {
@@ -107,20 +183,20 @@ static int llg_memory_digit(int c, int radix, int* state, unsigned* numeric) {
     return 0;
 }
 
-static int llg_memory_next_noncomment(FILE* stream) {
+static int llg_memory_next_noncomment(llg_memory_stream_t* stream) {
     for (;;) {
-        int c = fgetc(stream);
+        int c = llg_memory_getc(stream);
         if (c == EOF || !isspace((unsigned char)c)) {
             if (c != '/') return c;
-            int next = fgetc(stream);
+            int next = llg_memory_getc(stream);
             if (next == '/') {
-                while ((c = fgetc(stream)) != EOF && c != '\n') {}
+                while ((c = llg_memory_getc(stream)) != EOF && c != '\n') {}
                 continue;
             }
             if (next == '*') {
                 int previous = 0;
                 int closed = 0;
-                while ((c = fgetc(stream)) != EOF) {
+                while ((c = llg_memory_getc(stream)) != EOF) {
                     if (previous == '*' && c == '/') {
                         closed = 1;
                         break;
@@ -130,24 +206,24 @@ static int llg_memory_next_noncomment(FILE* stream) {
                 if (!closed) return -2;
                 continue;
             }
-            if (next != EOF) (void)ungetc(next, stream);
+            if (next != EOF) llg_memory_ungetc(next, stream);
             return '/';
         }
     }
 }
 
-static void llg_memory_consume_bad_token(FILE* stream) {
+static void llg_memory_consume_bad_token(llg_memory_stream_t* stream) {
     int c;
-    while ((c = fgetc(stream)) != EOF) {
+    while ((c = llg_memory_getc(stream)) != EOF) {
         if (isspace((unsigned char)c)) break;
         if (c == '/') {
-            (void)ungetc(c, stream);
+            llg_memory_ungetc(c, stream);
             break;
         }
     }
 }
 
-static int llg_memory_parse_digits(FILE* stream, int radix, int first,
+static int llg_memory_parse_digits(llg_memory_stream_t* stream, int radix, int first,
                                    llg_memory_value_t* value) {
     const unsigned bits = radix == 2 ? 1u : 4u;
     int c = first;
@@ -164,14 +240,14 @@ static int llg_memory_parse_digits(FILE* stream, int radix, int first,
         } else if (isspace((unsigned char)c)) {
             break;
         } else if (c == '/') {
-            (void)ungetc(c, stream);
+            llg_memory_ungetc(c, stream);
             break;
         } else {
             malformed = 1;
             llg_memory_consume_bad_token(stream);
             break;
         }
-        c = fgetc(stream);
+        c = llg_memory_getc(stream);
     }
     if (!saw_digit || malformed || value->too_wide) return LLG_MEMORY_TOKEN_ERROR;
     sv4_replace(&value->value, sv4_resize(value->value,
@@ -182,7 +258,7 @@ static int llg_memory_parse_digits(FILE* stream, int radix, int first,
 // With `wide_address`, an `@` address keeps all its hexadecimal digits in
 // `value->value` (an unsigned number without sign or X/Z) instead of a host
 // index, for associative-array keys of any width.
-static int llg_memory_next_token(FILE* stream, int radix, int wide_address,
+static int llg_memory_next_token(llg_memory_stream_t* stream, int radix, int wide_address,
                                  llg_memory_value_t* value) {
     sv4_destroy(&value->value);
     memset(value, 0, sizeof(*value));
@@ -190,7 +266,7 @@ static int llg_memory_next_token(FILE* stream, int radix, int wide_address,
     if (c == EOF) return LLG_MEMORY_TOKEN_EOF;
     if (c == -2) return LLG_MEMORY_TOKEN_ERROR;
     if (c == '@' && wide_address) {
-        c = fgetc(stream);
+        c = llg_memory_getc(stream);
         int state = 0;
         if (!llg_memory_digit(c, 16, &state, &(unsigned){0}) || state != 0) {
             if (c != EOF && !isspace((unsigned char)c)) llg_memory_consume_bad_token(stream);
@@ -203,13 +279,13 @@ static int llg_memory_next_token(FILE* stream, int radix, int wide_address,
         return LLG_MEMORY_TOKEN_ADDRESS;
     }
     if (c == '@') {
-        c = fgetc(stream);
+        c = llg_memory_getc(stream);
         int negative = 0;
         uint64_t magnitude = 0;
         int saw_digit = 0;
         if (c == '-' || c == '+') {
             negative = c == '-';
-            c = fgetc(stream);
+            c = llg_memory_getc(stream);
         }
         int state;
         unsigned numeric;
@@ -226,13 +302,13 @@ static int llg_memory_next_token(FILE* stream, int radix, int wide_address,
             } else if (isspace((unsigned char)c)) {
                 break;
             } else if (c == '/') {
-                (void)ungetc(c, stream);
+                llg_memory_ungetc(c, stream);
                 break;
             } else {
                 llg_memory_consume_bad_token(stream);
                 return LLG_MEMORY_TOKEN_ERROR;
             }
-            c = fgetc(stream);
+            c = llg_memory_getc(stream);
         }
         if (!saw_digit) return LLG_MEMORY_TOKEN_ERROR;
         uint64_t limit = negative ? (uint64_t)INT64_MAX + 1u : (uint64_t)INT64_MAX;
@@ -669,9 +745,9 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
                           int has_start, int has_finish, int addressing_policy,
                           const sv4_t* enum_values, uint32_t enum_count, int radix) {
     char* filename = llg_memory_path_copy(path);
-    FILE* stream = fopen(filename, "r");
-    if (!stream) {
-        llg_memory_warning(filename, "open for reading failed: %s", strerror(errno));
+    llg_memory_stream_t stream_storage;
+    llg_memory_stream_t* stream = &stream_storage;
+    if (!llg_memory_open_read(filename, stream)) {
         free(filename);
         return 0;
     }
@@ -682,7 +758,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
                            view_total, start, finish, has_start, has_finish,
                            addressing_policy, &first, &last, &inner_total) ||
         !llg_memory_storage_resolve(filename, storage)) {
-        fclose(stream);
+        llg_memory_close(stream);
         free(filename);
         return 0;
     }
@@ -707,7 +783,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
             // address, so the load stops and keeps the words already placed.
             llg_memory_error(filename, "malformed or over-width memory token; load terminated");
             sv4_destroy(&token.value);
-            fclose(stream);
+            llg_memory_close(stream);
             free(filename);
             return written;
         }
@@ -717,7 +793,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
             if (token.invalid_index) {
                 llg_memory_error(filename, "address jump is not a known index; load terminated");
                 sv4_destroy(&token.value);
-                fclose(stream);
+                llg_memory_close(stream);
                 free(filename);
                 return written;
             } else {
@@ -728,7 +804,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
                     llg_memory_error(filename,
                         "address jump is outside the destination memory or selected range; load terminated");
                     sv4_destroy(&token.value);
-                    fclose(stream);
+                    llg_memory_close(stream);
                     free(filename);
                     return written;
                 }
@@ -737,7 +813,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
         }
         if (!llg_memory_in_requested_range(current, first, last)) {
             if (!warned_extra) {
-                llg_memory_warning(filename, "memory file contains more words than the selected range");
+                llg_memory_warning(filename, "%s contains more words than the selected range", llg_memory_noun());
                 warned_extra = 1;
             }
         } else {
@@ -755,7 +831,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
                                              two_state, enum_values, enum_count,
                                              &warned_unknown, &converted)) {
                     sv4_destroy(&token.value);
-                    fclose(stream);
+                    llg_memory_close(stream);
                     free(filename);
                     return written;
                 }
@@ -779,13 +855,13 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
     sv4_destroy(&token.value);
     if (written < expected &&
         (!saw_address || addressing_policy == LLG_MEMORY_ADDRESSING_VERILOG_2001)) {
-        llg_memory_warning(filename, "memory file contains too few words for the selected range");
+        llg_memory_warning(filename, "%s contains too few words for the selected range", llg_memory_noun());
     } else if (written > expected && !warned_extra &&
                addressing_policy == LLG_MEMORY_ADDRESSING_VERILOG_2001) {
-        llg_memory_warning(filename, "memory file contains more words than the selected range");
+        llg_memory_warning(filename, "%s contains more words than the selected range", llg_memory_noun());
     }
-    if (ferror(stream)) llg_memory_error(filename, "read failed");
-    fclose(stream);
+    if (llg_memory_stream_failed(stream)) llg_memory_error(filename, "read failed");
+    llg_memory_close(stream);
     free(filename);
     return written;
 }
@@ -1274,16 +1350,16 @@ static void llg_assoc_memory_read(llg_string_t path, llg_assoc_t* array,
                                   const sv4_t* enum_values, uint32_t enum_count,
                                   int radix) {
     char* filename = llg_memory_path_copy(path);
-    FILE* stream = fopen(filename, "r");
-    if (!stream) {
-        llg_memory_warning(filename, "open for reading failed: %s", strerror(errno));
+    llg_memory_stream_t stream_storage;
+    llg_memory_stream_t* stream = &stream_storage;
+    if (!llg_memory_open_read(filename, stream)) {
         free(filename);
         return;
     }
     sv4_t current, last;
     if (!llg_assoc_memory_bounds(filename, llg_assoc_keys(array), start, finish,
                                  has_start, has_finish, &current, &last)) {
-        fclose(stream);
+        llg_memory_close(stream);
         free(filename);
         return;
     }
@@ -1317,7 +1393,7 @@ static void llg_assoc_memory_read(llg_string_t path, llg_assoc_t* array,
         }
         if (exhausted) {
             if (!warned_extra) {
-                llg_memory_warning(filename, "memory file contains more words than the selected range");
+                llg_memory_warning(filename, "%s contains more words than the selected range", llg_memory_noun());
                 warned_extra = 1;
             }
             continue;
@@ -1339,16 +1415,16 @@ static void llg_assoc_memory_read(llg_string_t path, llg_assoc_t* array,
             exhausted = 1;
         }
     }
-    if (has_finish && !saw_address && !exhausted && !terminated && !ferror(stream)) {
-        llg_memory_warning(filename, "memory file contains too few words for the selected range");
+    if (has_finish && !saw_address && !exhausted && !terminated && !llg_memory_stream_failed(stream)) {
+        llg_memory_warning(filename, "%s contains too few words for the selected range", llg_memory_noun());
     }
-    if (ferror(stream)) llg_memory_error(filename, "read failed");
+    if (llg_memory_stream_failed(stream)) llg_memory_error(filename, "read failed");
     sv4_destroy(&token.value);
     sv4_destroy(&one);
     sv4_destroy(&first);
     sv4_destroy(&last);
     sv4_destroy(&current);
-    fclose(stream);
+    llg_memory_close(stream);
     free(filename);
 }
 
@@ -1464,9 +1540,9 @@ static void llg_assoc_rows_read(llg_string_t path, llg_assoc_value_t* array,
                                 sv4_t start, sv4_t finish, int has_start, int has_finish,
                                 const sv4_t* enum_values, uint32_t enum_count, int radix) {
     char* filename = llg_memory_path_copy(path);
-    FILE* stream = fopen(filename, "r");
-    if (!stream) {
-        llg_memory_warning(filename, "open for reading failed: %s", strerror(errno));
+    llg_memory_stream_t stream_storage;
+    llg_memory_stream_t* stream = &stream_storage;
+    if (!llg_memory_open_read(filename, stream)) {
         free(filename);
         return;
     }
@@ -1474,7 +1550,7 @@ static void llg_assoc_rows_read(llg_string_t path, llg_assoc_value_t* array,
     sv4_t current, last;
     if (!llg_assoc_memory_bounds(filename, keys, start, finish, has_start, has_finish,
                                  &current, &last)) {
-        fclose(stream);
+        llg_memory_close(stream);
         free(filename);
         return;
     }
@@ -1513,7 +1589,7 @@ static void llg_assoc_rows_read(llg_string_t path, llg_assoc_value_t* array,
         }
         if (exhausted) {
             if (!warned_extra) {
-                llg_memory_warning(filename, "memory file contains more words than the selected range");
+                llg_memory_warning(filename, "%s contains more words than the selected range", llg_memory_noun());
                 warned_extra = 1;
             }
             continue;
@@ -1552,10 +1628,10 @@ static void llg_assoc_rows_read(llg_string_t path, llg_assoc_value_t* array,
             exhausted = 1;
         }
     }
-    if (has_finish && !saw_address && !exhausted && !terminated && !ferror(stream)) {
-        llg_memory_warning(filename, "memory file contains too few words for the selected range");
+    if (has_finish && !saw_address && !exhausted && !terminated && !llg_memory_stream_failed(stream)) {
+        llg_memory_warning(filename, "%s contains too few words for the selected range", llg_memory_noun());
     }
-    if (ferror(stream)) llg_memory_error(filename, "read failed");
+    if (llg_memory_stream_failed(stream)) llg_memory_error(filename, "read failed");
     if (written != 0 && array->notify) {
         array->notify(array->contents_dependency, array->shape_dependency,
                       LLG_CONTAINER_CHANGED_CONTENTS);
@@ -1565,7 +1641,7 @@ static void llg_assoc_rows_read(llg_string_t path, llg_assoc_value_t* array,
     sv4_destroy(&first);
     sv4_destroy(&last);
     sv4_destroy(&current);
-    fclose(stream);
+    llg_memory_close(stream);
     free(filename);
 }
 

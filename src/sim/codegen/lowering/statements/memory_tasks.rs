@@ -1,4 +1,5 @@
-//! Memory file tasks: `$readmemb`, `$readmemh`, `$writememb`, `$writememh`.
+//! Memory file tasks: `$readmemb`, `$readmemh`, `$writememb`, `$writememh`,
+//! and the string-sourced loads `$sreadmemb`, `$sreadmemh`.
 
 use super::*;
 use crate::sim::ir::{
@@ -38,6 +39,14 @@ struct MemoryOperands {
     finish: Option<IrExpr>,
 }
 
+/// Where a load reads its words. A dump or a `$readmem*` load names a file;
+/// `$sreadmem*` carries the words themselves and `path` only labels its
+/// diagnostics.
+struct MemorySource {
+    path: IrStringExpr,
+    text: Option<Vec<u8>>,
+}
+
 impl EmitCtx<'_, '_> {
     pub(super) fn lower_memory_task(
         &mut self,
@@ -57,10 +66,98 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        if !self.memory_has_model_storage(name, args[1]) {
-            return self.lower_memory_access_task(name, args, write);
+        let source = MemorySource {
+            path: self.cg.lower_string(&self.path, args[0])?,
+            text: None,
+        };
+        self.lower_memory_task_from(name, args, write, source)
+    }
+
+    /// `$sreadmemb/$sreadmemh (memory, start_address, finish_address, string
+    /// {, string})` (IEEE 1800-2009 D.14, IEEE 1364-2001 C.13). The strings
+    /// are the text of a memory file, so the load is a `$readmem*` of the
+    /// same memory over `start_address:finish_address` whose words come from
+    /// them: the strings, in order, separated by one newline each, form one
+    /// file image (decision S26-D16). Both editions admit the task.
+    pub(super) fn lower_string_memory_task(
+        &mut self,
+        name: &str,
+        call: NodeId,
+        args: &[NodeId],
+    ) -> Result<IrStmt, String> {
+        // The frontend checks the order, count and types of the arguments
+        // (a string where the memory belongs, fewer than four arguments);
+        // this guards the shape the lowering relies on.
+        let [memory, start, finish, strings @ ..] = args else {
+            return Err(format!(
+                "{}: {name} requires a memory, start and finish address and at least one string in `{}`",
+                self.cg.source_location(call),
+                self.path
+            ));
+        };
+        if strings.is_empty() {
+            return Err(format!(
+                "{}: {name} requires at least one string after the finish address in `{}`",
+                self.cg.source_location(call),
+                self.path
+            ));
         }
-        let path = self.cg.lower_string(&self.path, args[0])?;
+        let mut text = Vec::new();
+        for (index, node) in strings.iter().enumerate() {
+            let Some(bytes) = self.string_literal_bytes(*node)? else {
+                return Err(format!(
+                    "{}: a data argument of {name} must be a string literal (IEEE 1800-2009 D.14); \
+                     a string variable or expression is not supported (decision S26-D17) in `{}`",
+                    self.cg.source_location(*node),
+                    self.path
+                ));
+            };
+            if index != 0 {
+                text.push(b'\n');
+            }
+            text.extend_from_slice(&bytes);
+        }
+        let source = MemorySource {
+            // Run-time diagnostics name the call as `$finish` reports do.
+            path: IrStringExpr::Literal(
+                format!("{name} at {}", self.finish_location(call)).into_bytes(),
+            ),
+            text: Some(text),
+        };
+        // The load takes the `$readmem*` argument layout; its first entry
+        // only supplies the (unused) file name.
+        let readmem_layout = [strings[0], *memory, *start, *finish];
+        self.lower_memory_task_from(name, &readmem_layout, false, source)
+            .map_err(|error| format!("{}: {error}", self.cg.source_location(*memory)))
+    }
+
+    /// The bytes of a string literal argument, `None` for any other
+    /// expression.
+    fn string_literal_bytes(&self, node: NodeId) -> Result<Option<Vec<u8>>, String> {
+        match self.cg.kind(node) {
+            NodeKind::Expr(ExprKind::Constant {
+                const_type: ConstantType::String,
+                value,
+                ..
+            }) => decoded_string_bytes(value).map(Some),
+            NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) if ty.kind == "string" => {
+                self.string_literal_bytes(*operand)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn lower_memory_task_from(
+        &mut self,
+        name: &str,
+        args: &[NodeId],
+        write: bool,
+        source: MemorySource,
+    ) -> Result<IrStmt, String> {
+        if !self.memory_has_model_storage(name, args[1]) {
+            return self.lower_memory_access_task(name, args, write, source);
+        }
+        let MemorySource { path, text } = source;
         let view = self.lower_memory_view(name, args[1])?;
         let array = self.cg.model.arrays.get(view.array).ok_or_else(|| {
             format!(
@@ -86,6 +183,7 @@ impl EmitCtx<'_, '_> {
         Ok(IrStmt::Memory {
             write,
             path,
+            text,
             view: Box::new(view),
             radix: operands.radix,
             addressing: operands.addressing,
@@ -118,6 +216,7 @@ impl EmitCtx<'_, '_> {
         name: &str,
         args: &[NodeId],
         write: bool,
+        source: MemorySource,
     ) -> Result<IrStmt, String> {
         let target = args[1];
         let (root, mut selectors, slice) = self.memory_image_base(name, target)?;
@@ -133,6 +232,7 @@ impl EmitCtx<'_, '_> {
                 Some(row),
                 &selectors,
                 slice,
+                source,
             );
         }
         if let Some(container) = self.cg.container_of(root) {
@@ -149,6 +249,7 @@ impl EmitCtx<'_, '_> {
                     None,
                     &selectors,
                     slice,
+                    source,
                 );
             }
             return self.lower_container_memory_task(
@@ -159,6 +260,7 @@ impl EmitCtx<'_, '_> {
                 &selectors,
                 slice,
                 container.ir,
+                source,
             );
         }
         if self
@@ -240,10 +342,11 @@ impl EmitCtx<'_, '_> {
             }
             IrMemoryImage::Target(lhs)
         };
-        let path = self.cg.lower_string(&self.path, args[0])?;
+        let MemorySource { path, text } = source;
         Ok(IrStmt::MemoryAccess(Box::new(IrMemoryAccess {
             write,
             path,
+            text,
             storage: IrMemoryStorage::Image(image),
             root_dims,
             element_width,
@@ -297,6 +400,7 @@ impl EmitCtx<'_, '_> {
         selectors: &[NodeId],
         slice: Option<MemorySliceNodes>,
         container: usize,
+        source: MemorySource,
     ) -> Result<IrStmt, String> {
         let (kind, initial_size, element_layout) = {
             let container = &self.cg.model.containers[container];
@@ -393,10 +497,11 @@ impl EmitCtx<'_, '_> {
             self.memory_geometry(name, &root_dims, selectors, slice)?
         };
         self.check_memory_edition(name, root_dims.len(), geometry.sliced)?;
-        let path = self.cg.lower_string(&self.path, args[0])?;
+        let MemorySource { path, text } = source;
         Ok(IrStmt::MemoryAccess(Box::new(IrMemoryAccess {
             write,
             path,
+            text,
             storage: IrMemoryStorage::Container(container),
             root_dims,
             element_width: width,
@@ -468,6 +573,7 @@ impl EmitCtx<'_, '_> {
         row: Option<NodeId>,
         selectors: &[NodeId],
         slice: Option<MemorySliceNodes>,
+        source: MemorySource,
     ) -> Result<IrStmt, String> {
         let (kind, element) = {
             let container = &self.cg.model.containers[container];
@@ -594,10 +700,11 @@ impl EmitCtx<'_, '_> {
         };
         self.check_memory_edition(name, dimensions.len() + 1, geometry.sliced)?;
         ir_selectors.extend(geometry.selectors);
-        let path = self.cg.lower_string(&self.path, args[0])?;
+        let MemorySource { path, text } = source;
         Ok(IrStmt::MemoryAccess(Box::new(IrMemoryAccess {
             write,
             path,
+            text,
             storage: IrMemoryStorage::Container(container),
             root_dims,
             element_width: width,
@@ -837,8 +944,8 @@ impl EmitCtx<'_, '_> {
             )
         };
         let radix = match name {
-            "$readmemb" | "$writememb" => IrMemoryRadix::Binary,
-            "$readmemh" | "$writememh" => IrMemoryRadix::Hex,
+            "$readmemb" | "$writememb" | "$sreadmemb" => IrMemoryRadix::Binary,
+            "$readmemh" | "$writememh" | "$sreadmemh" => IrMemoryRadix::Hex,
             _ => unreachable!(),
         };
         let addressing = match self.cg.db.edition() {

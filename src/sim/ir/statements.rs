@@ -243,6 +243,8 @@ pub enum IrMemoryImage {
 pub struct IrMemoryAccess {
     pub write: bool,
     pub path: IrStringExpr,
+    /// As [`IrStmt::Memory`] `text`.
+    pub text: Option<Vec<u8>>,
     pub storage: IrMemoryStorage,
     pub root_dims: Vec<(i32, i32)>,
     pub element_width: u32,
@@ -431,6 +433,10 @@ pub enum IrStmt {
     Memory {
         write: bool,
         path: IrStringExpr,
+        /// The words of a load that come from text in the design
+        /// (`$sreadmemb/$sreadmemh`, IEEE 1800-2009 D.14) instead of a file;
+        /// `path` is then only the label of its diagnostics.
+        text: Option<Vec<u8>>,
         view: Box<IrMemoryView>,
         radix: IrMemoryRadix,
         addressing: IrMemoryAddressingPolicy,

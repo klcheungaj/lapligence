@@ -195,12 +195,17 @@ impl Validator<'_> {
                 result?;
             }
             IrStmt::Memory {
+                write,
                 path: file,
+                text,
                 view,
                 start,
                 finish,
                 ..
             } => {
+                if *write && text.is_some() {
+                    return self.fail(path.to_owned(), "a memory dump has no source text");
+                }
                 file.validate(self.model, self.string_return.get())?;
                 let mut result = Ok(());
                 file.expressions(&mut |child| {
@@ -223,6 +228,9 @@ impl Validator<'_> {
                 }
             }
             IrStmt::MemoryAccess(task) => {
+                if task.write && task.text.is_some() {
+                    return self.fail(path.to_owned(), "a memory dump has no source text");
+                }
                 self.validate_memory_image_root(task, formals, path)?;
                 task.path.validate(self.model, self.string_return.get())?;
                 let mut result = Ok(());

@@ -145,6 +145,7 @@ fn memory_views_bound_their_last_element() {
     let fill = |view: IrMemoryView| IrStmt::Memory {
         write: false,
         path: IrStringExpr::Literal(b"m.hex".to_vec()),
+        text: None,
         view: Box::new(view),
         radix: IrMemoryRadix::Hex,
         addressing: IrMemoryAddressingPolicy::SystemVerilog2009,
