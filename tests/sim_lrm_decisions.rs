@@ -2686,6 +2686,14 @@ fn s99_d8_null_access_stops() {
 }
 
 #[test]
+fn s99_d9_implicit_finish_reactive() {
+    run_decision(
+        "S99-D9_implicit_finish_reactive",
+        include_str!("fixtures/sim/lrm_decisions/S99-D9_implicit_finish_reactive.out"),
+    );
+}
+
+#[test]
 fn s99_d10_class_method_scope() {
     run_decision(
         "S99-D10_class_method_scope",

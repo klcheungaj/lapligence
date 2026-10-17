@@ -305,6 +305,14 @@ collector setting instead of comparing it with a fixed value.
   and exits with status 1; `k` keeps 5, and neither the display that made the
   access nor `after` prints.
 
+- Implicit `$finish` ordering (gate-fixes-2 item 3, decision S99-D9): no
+  fixture here and no change. SV 24.3 L43228-43232 ends the simulation
+  "immediately after all the threads ... originating from all initial
+  procedures within all programs have ended", and SV 4.4.2.6 L3184-3185 lets
+  the Reactive region's events "be processed in any order", so llg's
+  implicit `$finish` before a same-step assertion action conforms. The
+  portable case `S99-D9_implicit_finish_reactive` records it.
+
 - `class_method_scope.sv` (gate-fixes-2 item 4, decision S99-D10): SV 21.2.1.6
   L36379-36381: "The %m format specifier does not accept an argument. Instead,
   it causes the display task to print the hierarchical name of the design
