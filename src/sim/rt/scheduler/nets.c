@@ -163,6 +163,32 @@ static int llg_net_all_z(const sv4_t* value) {
     return 1;
 }
 
+// The lowest and highest bit of `value` that is not Z; 0 when all bits are
+// Z. Z bits add no drive, so a driver is indexed by this extent only.
+static int llg_net_driven_extent(const sv4_t* value, uint32_t* low,
+                                 uint32_t* high) {
+    uint32_t width = llg_sv4_width(*value);
+    int limbs = (int)((width + 63u) / 64u);
+    int found = 0;
+    for (int limb = 0; limb < limbs; limb++) {
+        uint32_t remaining = width - (uint32_t)limb * 64u;
+        uint64_t mask = remaining >= 64u
+            ? UINT64_MAX : (UINT64_C(1) << remaining) - UINT64_C(1);
+        uint64_t driven = (llg_sv4_word(*value, limb, LLG_SV4_BITS) |
+                           llg_sv4_word(*value, limb, LLG_SV4_X) |
+                           ~llg_sv4_word(*value, limb, LLG_SV4_Z)) & mask;
+        if (!driven) continue;
+        uint32_t first = 0;
+        while (!((driven >> first) & 1u)) first++;
+        uint32_t last = 63u;
+        while (!((driven >> last) & 1u)) last--;
+        if (!found) *low = (uint32_t)limb * 64u + first;
+        *high = (uint32_t)limb * 64u + last;
+        found = 1;
+    }
+    return found;
+}
+
 static sv4_t llg_net_compute_range(llg_net_t* net, uint32_t low,
                                    uint32_t width) {
     int count = 0;
@@ -432,9 +458,15 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
         llg_net_index_remove(net, idx);
     }
     sv4_move(slot, &replacement);
-    int new_active = !llg_net_all_z(slot);
+    uint32_t new_low = 0;
+    uint32_t new_high = net->width - 1u;
+    int new_active;
+    if (LLG_GATE_FAST_PATH)
+        new_active = llg_net_driven_extent(slot, &new_low, &new_high);
+    else
+        new_active = !llg_net_all_z(slot);
     if (llg_net_has_index(net) && new_active)
-        llg_net_index_insert(net, idx, 0, net->width - 1u);
+        llg_net_index_insert(net, idx, new_low, new_high);
     // A selected force may cover only part of the net. Recompute through the
     // force path so unforced bits still publish underlying driver changes.
     if (llg_is_forced(&net->resolved)) {
@@ -449,8 +481,8 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
     uint32_t high = old_active ? old_high : net->width - 1u;
     if (!old_active && !new_active) return;
     if (new_active) {
-        if (!old_active || low > 0) low = 0;
-        if (!old_active || high < net->width - 1u) high = net->width - 1u;
+        if (!old_active || low > new_low) low = new_low;
+        if (!old_active || high < new_high) high = new_high;
     }
     llg_value_scope_t* scope = value_scope_begin_private(1);
     sv4_t* owned = llg_value_scope_values(scope);
