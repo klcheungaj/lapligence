@@ -260,8 +260,8 @@ mod sim_047;
 #[path = "sim_feature_completion/sim_099.rs"]
 mod sim_099;
 
-#[path = "sim_feature_completion/class_defects.rs"]
-mod class_defects;
+#[path = "sim_feature_completion/ki_class_defects.rs"]
+mod ki_class_defects;
 
 #[test]
 fn component_fixture_integrity() {

@@ -7,7 +7,7 @@
 //! compact/portable and compact/GMP value backends.
 use super::sim_cli;
 
-const SUITE: &str = "feature_completion/class_defects";
+const SUITE: &str = "feature_completion/ki_class_defects";
 
 /// Item 1: named `begin`-`end` and `fork`-`join` blocks in static, virtual
 /// and parameterized-class methods, with automatic and static block locals,
@@ -18,7 +18,7 @@ fn named_blocks_in_class_methods() {
     sim_cli::run_case_backend_parity(
         SUITE,
         "named_blocks",
-        include_str!("../fixtures/sim/feature_completion/class_defects/named_blocks.out"),
+        include_str!("../fixtures/sim/feature_completion/ki_class_defects/named_blocks.out"),
         &[],
         &[],
     );
@@ -32,7 +32,7 @@ fn class_block_disable_from_another_process() {
     sim_cli::run_case_backend_parity(
         SUITE,
         "named_block_disable",
-        include_str!("../fixtures/sim/feature_completion/class_defects/named_block_disable.out"),
+        include_str!("../fixtures/sim/feature_completion/ki_class_defects/named_block_disable.out"),
         &[],
         &[],
     );
@@ -64,7 +64,7 @@ fn class_parameters_in_methods() {
     sim_cli::run_case_backend_parity(
         SUITE,
         "class_parameters",
-        include_str!("../fixtures/sim/feature_completion/class_defects/class_parameters.out"),
+        include_str!("../fixtures/sim/feature_completion/ki_class_defects/class_parameters.out"),
         &[],
         &[],
     );

@@ -387,7 +387,7 @@ classified in `sim_099/builtin_inventory.tsv`. The CI sanitizer job includes
 LLG_CFLAGS='-fsanitize=address,undefined -DLLG_CO_DEBUG'`.
 
 The class-defects fixtures (named blocks and class parameters in class
-methods) use `-E 'binary(sim_feature_completion) & test(class_defects::)'`;
+methods) use `-E 'binary(sim_feature_completion) & test(ki_class_defects::)'`;
 decisions CD-D1 and CD-D2 are in `sim_lrm_decisions`. Locally run them under
 the same sanitizer flags as `sim_099`.
 

@@ -2016,7 +2016,7 @@ These are bounded implementations, not full verification-infrastructure support.
   object (CD-D1). Value parameters, localparams and type parameters read in
   method bodies, nested classes and out-of-block (`extern`) bodies take each
   specialization's own values
-  ([class_defects](../tests/fixtures/sim/feature_completion/class_defects/readme.md)).
+  ([ki_class_defects](../tests/fixtures/sim/feature_completion/ki_class_defects/readme.md)).
   Unreachable objects, including cycles through handle, container and record
   properties, are reclaimed at scheduler safe points (after a process turn or
   region callback) once enough objects were allocated; objects reachable from

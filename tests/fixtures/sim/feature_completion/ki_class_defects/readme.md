@@ -1,6 +1,6 @@
 # class-defects fixtures
 
-Run by [`tests/sim_feature_completion/class_defects.rs`](../../../../sim_feature_completion/class_defects.rs).
+Run by [`tests/sim_feature_completion/ki_class_defects.rs`](../../../../sim_feature_completion/ki_class_defects.rs).
 Positive cases run in both optimizer modes on the legacy, compact/portable and
 compact/GMP value backends; negatives are rejected in both optimizer modes.
 Clause line numbers refer to the `pdftotext -layout` extraction
