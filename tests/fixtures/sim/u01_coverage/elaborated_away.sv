@@ -18,7 +18,9 @@ module tb;
     localparam int WIDTH = 1;
     generate
         if (1'b0) begin : dead
+            wire switched;
             mux2 u(result, result, result, result);
+            nmos n(switched, result, result);
         end
         if (1'b1) begin : live
             logic elaboration_marker;

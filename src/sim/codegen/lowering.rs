@@ -243,7 +243,7 @@ use crate::core::db::{
     EventTriggerTiming, ExprKind, ImmediateAssertionKind, IntraControl, JoinKind as DbJoinKind,
     NetType, NodeId, NodeKind, Operation, PackedMember, PrimClass, PrimitiveType, ProcessKind,
     StmtKind, StreamingDirection as DbStreamingDirection, Strength, TypeDescriptor, TypeShape,
-    UdpTable, UnconnectedDrive, VariableLifetime,
+    UnconnectedDrive, VariableLifetime,
 };
 use crate::core::elab::{self, Bit, Val};
 use crate::core::model::TypeInfo;
@@ -1184,9 +1184,17 @@ struct Codegen<'a> {
     dpi_scope_ids: HashMap<NodeId, usize>,
     /// Source file and line → `model.dpi_sites` index.
     dpi_site_ids: HashMap<(String, u32), u32>,
-    /// Interned combinational UDP definitions → `model.udp_tables` index, so
-    /// every instance of one definition shares a table without rescanning.
+    /// Interned UDP definitions → `model.udp_tables` index, so every
+    /// instance of one definition shares a table without rescanning.
     udp_table_indices: HashMap<crate::sim::ir::IrUdpTable, usize>,
+    /// Db table identity (the shared `Arc` address, stable while the Db is
+    /// borrowed) → `model.udp_tables` index: later instances of a declaration
+    /// skip conversion and hashing.
+    udp_declaration_indices: HashMap<usize, usize>,
+    /// Start value of the delayed driver being initialized: `Some` for a
+    /// sequential UDP output with an `initial` value, which is not delayed
+    /// (IEEE 1364-2001 8.5); `None` starts at X (decision S2-D4).
+    delayed_driver_start: Option<bool>,
     /// Persistent storage for every formal of static subroutines,
     /// keyed by (owning instance, formal declaration).
     static_formals: HashMap<(NodeId, NodeId), SignalInfo>,
@@ -1785,6 +1793,8 @@ impl<'a> Codegen<'a> {
             dpi_scope_ids: HashMap::new(),
             dpi_site_ids: HashMap::new(),
             udp_table_indices: HashMap::new(),
+            udp_declaration_indices: HashMap::new(),
+            delayed_driver_start: None,
             static_formals: HashMap::new(),
             static_string_formals: HashMap::new(),
             static_chandle_formals: HashMap::new(),

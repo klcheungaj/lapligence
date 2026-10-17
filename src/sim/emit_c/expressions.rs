@@ -366,7 +366,7 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                 "fixed-array reductions require the ownership-aware expression emitter".to_owned(),
             );
         }
-        IrExprKind::UdpEval { .. } => {
+        IrExprKind::UdpEval { .. } | IrExprKind::UdpState(_) => {
             return Err("UDP evaluation requires the structured owned emitter".to_owned());
         }
         IrExprKind::Predicate { .. } => {

@@ -158,8 +158,9 @@ pub enum NodeKind {
         strength1: Strength,
         delay: Option<DriverDelay>,
         terms: Vec<GateTerm>,
-        /// Owned truth table for a combinational UDP instance.
-        udp: Option<UdpTable>,
+        /// Owned table of a UDP instance, shared by every instance of the
+        /// same declaration.
+        udp: Option<std::sync::Arc<UdpTable>>,
     },
     Stmt(StmtKind),
     AssertionExpr(AssertionExprKind),
@@ -253,19 +254,54 @@ pub struct GateTerm {
     pub expr: NodeId,
 }
 
-/// Owned combinational UDP behavior captured through the frontend-neutral
-/// snapshot. Rows retain source order for deterministic matching.
+/// Owned user-defined primitive behavior captured through the
+/// frontend-neutral snapshot, combinational or sequential. Rows retain source
+/// order for deterministic matching. The table is immutable after import and
+/// shared by every instance of its declaration.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UdpTable {
     pub name: String,
     pub input_count: u32,
+    /// The output is a `reg` holding state (IEEE 1364-2001 8.1.2): rows have
+    /// a current-state field and may have one input transition.
+    pub sequential: bool,
+    /// Sequential start value (`b'0'`, `b'1'` or `b'x'`) from an `initial`
+    /// statement or an `output reg q = v` declaration.
+    pub initial: Option<u8>,
     pub rows: Vec<UdpRow>,
+    /// The `primitive` declaration.
+    pub location: UdpLocation,
 }
 
+/// One table entry, in the frontend's lower-case normalization.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UdpRow {
+    /// One character per level or shorthand edge field (`0 1 x ? b r f p n
+    /// *`) and `(vw)` for an explicit transition, in port order.
     pub inputs: String,
+    /// Current-state field of a sequential row.
+    pub state: Option<u8>,
+    /// Output or next-state field: `0`, `1`, `x` or `-` (no change).
     pub output: u8,
+    pub location: UdpLocation,
+}
+
+/// Physical source position of a UDP declaration or table entry; `file` is
+/// `None` when the frontend could not place it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct UdpLocation {
+    pub file: Option<std::sync::Arc<str>>,
+    pub line: u32,
+    pub col: u32,
+}
+
+impl std::fmt::Display for UdpLocation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.file {
+            Some(file) => write!(f, "{file}:{}:{}", self.line, self.col),
+            None => f.write_str("<unknown>"),
+        }
+    }
 }
 
 impl GateTerm {

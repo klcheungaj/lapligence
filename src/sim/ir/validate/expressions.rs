@@ -599,6 +599,7 @@ impl Validator<'_> {
             IrExprKind::UdpEval { table, inputs } => {
                 self.validate_udp_eval(expr, *table, inputs, formals, path)?;
             }
+            IrExprKind::UdpState(state) => self.validate_udp_state(expr, *state, path)?,
             IrExprKind::Predicate { clauses } => {
                 if clauses.is_empty() || expr.width != 1 || expr.signed || expr.fill.is_some() {
                     return self.fail(

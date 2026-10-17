@@ -1,6 +1,7 @@
 // llg-test-fixture: tests/fixtures/sim/partial_features/udp_edge_rejected.sv
-// IEEE 1364-2001 8.3; IEEE 1800-2009 29.5. Edge-sensitive table rows are
-// rejected by the combinational UDP policy.
+// IEEE 1364-2001 8.1.6 Table 40; IEEE 1800-2009 29.3.6 Table 29-1. An
+// edge-sensitive row is only legal in a sequential UDP; the frontend reports
+// it at the row.
 primitive udp_edge(out, data);
     output out;
     input data;

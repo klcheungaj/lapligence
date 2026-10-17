@@ -236,7 +236,7 @@ fn raw_udp_table(
     RawUdpTable {
         primitive_id,
         input_count,
-        reserved: 0,
+        initial_value: 0,
         row_start,
         row_count,
         name: raw_string(name),
@@ -250,6 +250,11 @@ fn raw_udp_row(inputs: &str, output: u8) -> RawUdpRow {
         output: u32::from(output),
         flags: 0,
         reserved: 0,
+        range: RawRange {
+            file_id: INVALID_ID,
+            start: 0,
+            end: 0,
+        },
     }
 }
 
@@ -633,6 +638,72 @@ fn udp_wide_wildcard_rejects_before_large_assignment_growth() {
         .expect_err("wide wildcard expansion must stay below the memory boundary");
     assert_eq!(error.kind(), SlangErrorKind::LimitExceeded);
     assert!(error.message().contains("bounded assignment capacity"));
+}
+
+#[test]
+fn sequential_udp_rows_keep_state_edges_and_initial_value() {
+    let mut tables = Tables {
+        semantic_nodes: vec![raw_udp_node(0, "seq")],
+        udp_rows: vec![
+            RawUdpRow {
+                state: u32::from(b'?'),
+                flags: 1,
+                ..raw_udp_row("(01)0", b'0')
+            },
+            RawUdpRow {
+                state: u32::from(b'1'),
+                ..raw_udp_row("1b", b'-')
+            },
+        ],
+        udp_tables: vec![RawUdpTable {
+            initial_value: u32::from(b'1'),
+            ..raw_udp_table(0, 0, 2, 2, "seq")
+        }],
+        ..Tables::default()
+    };
+    tables.semantic_nodes[0].subkind = 226;
+    let decoded = stream_with(&tables, Limits::default()).expect("sequential UDP table");
+    let table = &decoded.udp_tables[0];
+    assert!(table.sequential);
+    assert_eq!(table.initial, Some(b'1'));
+    assert_eq!(table.rows[0].inputs, "(01)0");
+    assert_eq!(table.rows[0].state, Some(b'?'));
+    assert!(table.rows[0].edge_sensitive);
+    assert_eq!(table.rows[1].output, b'-');
+
+    // A combinational declaration has no start value.
+    tables.semantic_nodes[0].subkind = 227;
+    let error = stream_with(&tables, Limits::default())
+        .expect_err("a combinational table must not carry an initial value");
+    assert!(error.message().contains("initial value"));
+
+    // A field count that disagrees with the declaration is structural.
+    tables.semantic_nodes[0].subkind = 226;
+    tables.udp_rows[0] = RawUdpRow {
+        state: u32::from(b'?'),
+        ..raw_udp_row("(01", b'0')
+    };
+    let error = stream_with(&tables, Limits::default())
+        .expect_err("an unbalanced transition must fail checked decoding");
+    assert!(error.message().contains("number of input fields"));
+}
+
+#[test]
+fn diagnosed_combinational_rows_are_delivered_for_frontend_reporting() {
+    // Slang keeps `(01) : 1` in a combinational table after reporting
+    // UdpEdgeInComb; decoding must not replace that located error.
+    let tables = Tables {
+        semantic_nodes: vec![raw_udp_node(0, "comb")],
+        udp_rows: vec![RawUdpRow {
+            flags: 1,
+            ..raw_udp_row("(01)", b'1')
+        }],
+        udp_tables: vec![raw_udp_table(0, 0, 1, 1, "comb")],
+        ..Tables::default()
+    };
+    let decoded = stream_with(&tables, Limits::default()).expect("diagnosed rows decode");
+    assert!(!decoded.udp_tables[0].sequential);
+    assert!(decoded.udp_tables[0].rows[0].edge_sensitive);
 }
 
 #[test]

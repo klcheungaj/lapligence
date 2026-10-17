@@ -7,9 +7,10 @@ parameterized interfaces with generated memory consumers; true aliases with
 multi-instance wired drivers; and the selected combinational UDP, tagged
 pattern-case and library/configuration paths.
 
-`unsupported_sequential_udp.sv` is a single-fault neighboring rejection. The
-selected profile admits combinational UDPs; sequential or edge-sensitive UDP
-forms remain outside the profile.
+`sequential_udp_neighbor.sv` is the neighboring control. The selected profile
+admits combinational UDPs; sequential or edge-sensitive UDP forms remain
+outside the profile, and ADV-003 implements them, so the control runs (x until
+the first rising edge, then 1).
 # SYN-039 selected-profile integration
 
 All positive fixtures run through the public CLI with optimization enabled and
@@ -31,8 +32,8 @@ single-feature owners in the SYN-038 ledger.
   `+left=5a` chooses the tagged pattern payload and `+left=03` chooses
   the UDP parity fallback. A structural bind observes the result; a map
   configuration selects the `gate` library cell, which adds `0x20`.
-  `unsupported_sequential_udp.sv` remains the neighboring selected-profile
-  rejection control.
+  `sequential_udp_neighbor.sv` is the neighboring sequential UDP control
+  outside the selected profile.
 
 Verilog-2001 does not admit the SV-only compositions. Its retained Core,
 library/configuration and non-ANSI combinational UDP evidence is in the

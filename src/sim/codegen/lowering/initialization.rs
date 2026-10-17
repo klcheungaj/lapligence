@@ -329,25 +329,25 @@ impl<'a> Codegen<'a> {
 
     /// Start a whole delayed driver at X: its output is unknown until its
     /// first propagation event matures. Net-array cells, gate outputs and
-    /// scalar drivers alike (decision S2-D4).
+    /// scalar drivers alike (decision S2-D4). A sequential UDP output with an
+    /// `initial` value starts at that value instead
+    /// ([`Self::delayed_driver_start`](Codegen)).
     pub(super) fn initialize_delayed_driver(&mut self, index: usize) -> Result<(), String> {
         use crate::sim::ir::IrInitStep;
         let signal = self.model.signal(index);
         let width = signal.ty.width();
         let limbs = (width as usize).div_ceil(64);
-        let mut x = vec![u64::MAX; limbs];
+        let mut driven = vec![u64::MAX; limbs];
         if !width.is_multiple_of(64) {
-            x[limbs - 1] = (1u64 << (width % 64)) - 1;
+            driven[limbs - 1] = (1u64 << (width % 64)) - 1;
         }
-        let value = IrConst::packed(
-            vec![0; limbs],
-            x,
-            vec![0; limbs],
-            width,
-            signal.ty.signed(),
-            None,
-        )
-        .map_err(|error| error.to_string())?;
+        let (bits, x) = match self.delayed_driver_start {
+            Some(true) => (driven, vec![0; limbs]),
+            Some(false) => (vec![0; limbs], vec![0; limbs]),
+            None => (vec![0; limbs], driven),
+        };
+        let value = IrConst::packed(bits, x, vec![0; limbs], width, signal.ty.signed(), None)
+            .map_err(|error| error.to_string())?;
         self.delayed_driver_inits.push(match signal.net_driver {
             Some((group, slot)) => IrInitStep::WriteNet { group, slot, value },
             None => IrInitStep::SetScalar { sig: index, value },
@@ -387,17 +387,20 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         let limbs = (width as usize).div_ceil(64);
+        let mut bits = vec![0u64; limbs];
         let mut x = vec![0u64; limbs];
         let mut z = vec![0u64; limbs];
         for bit in 0..width {
             let (limb, offset) = ((bit / 64) as usize, bit % 64);
-            if (low..=high).contains(&i64::from(bit)) {
-                x[limb] |= 1 << offset;
-            } else {
+            if !(low..=high).contains(&i64::from(bit)) {
                 z[limb] |= 1 << offset;
+            } else if self.delayed_driver_start == Some(true) {
+                bits[limb] |= 1 << offset;
+            } else if self.delayed_driver_start.is_none() {
+                x[limb] |= 1 << offset;
             }
         }
-        let value = IrConst::packed(vec![0; limbs], x, z, width, signal.ty.signed(), None)
+        let value = IrConst::packed(bits, x, z, width, signal.ty.signed(), None)
             .map_err(|error| error.to_string())?;
         self.delayed_driver_inits
             .push(IrInitStep::WriteNet { group, slot, value });

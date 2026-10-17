@@ -176,6 +176,7 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         class_allocations: Vec::new(),
         containers: Vec::new(),
         udp_tables: Vec::new(),
+        udp_states: Vec::new(),
         events: Vec::new(),
         funcs: Vec::new(),
         assertions: Vec::new(),

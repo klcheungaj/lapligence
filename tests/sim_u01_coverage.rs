@@ -4,7 +4,11 @@ use crate::sim_cli;
 
 #[test]
 fn reachable_unsupported_primitive_fails_with_source_span() {
-    sim_cli::reject_case("u01_coverage", "reachable_udp", "reachable_udp.sv:18:10");
+    sim_cli::reject_case(
+        "u01_coverage",
+        "reachable_switch",
+        "reachable_switch.sv:7:10: unsupported: `nmos` primitive",
+    );
 }
 
 #[test]
@@ -35,8 +39,8 @@ fn coverage_reachable_pattern_executes_with_owned_tag_matching() {
 }
 
 /// G1-02 `coverage_pruned_udp`: an elaboration-pruned unsupported primitive
-/// stays irrelevant while a reachable sequential UDP remains an explicit
-/// unsupported boundary after combinational UDP support.
+/// stays irrelevant while a reachable switch remains an explicit unsupported
+/// boundary (sequential UDPs are supported since ADV-003).
 #[test]
 fn coverage_pruned_udp_does_not_fail_an_unrelated_top() {
     sim_cli::run_case(
@@ -48,7 +52,7 @@ fn coverage_pruned_udp_does_not_fail_an_unrelated_top() {
     );
     sim_cli::reject_case(
         "u01_coverage",
-        "reachable_udp",
-        "user-defined primitive instance is not supported",
+        "reachable_switch",
+        "`nmos` primitive (MOS and resistive switch primitives) is not supported",
     );
 }

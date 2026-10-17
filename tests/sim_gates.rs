@@ -1,8 +1,8 @@
 //! End-to-end simulator tests for structural gate primitives
 //! (IEEE 1364-1995 ch. 7 §7.1–7.2): n-input gates (`and`/`or`/`nand`/`nor`/
 //! `xor`/`xnor`), `buf`/`not`, enable gates (`bufif0/1`, `notif0/1`),
-//! `pullup`/`pulldown`, optional gate delays, strength-aware gate drivers, and
-//! the documented rejects (sequential UDPs and switch/transistor primitives).
+//! `pullup`/`pulldown`, optional gate delays, strength-aware gate drivers, a
+//! sequential UDP instance, and the documented switch/transistor rejects.
 //!
 //! Expected traces are hand-computed from the LRM gate tables and the
 //! runtime's `sv4_*` X/Z semantics: Z behaves as X in every expression
@@ -17,38 +17,12 @@ use crate::sim_cli;
 use crate::sim_harness;
 use std::sync::Mutex;
 
-use llg::core::compile;
 use llg::ffi::slang::DiagnosticSeverity;
-use llg::sim;
 
 static CWD_LOCK: Mutex<()> = Mutex::new(());
 
 fn run_sim(sv: &str, tag: &str) -> Result<String, String> {
     sim_harness::run_sim(sv, "tb", tag)
-}
-
-/// Compile and codegen without building or running; preserves the codegen
-/// error for rejection cases.
-fn codegen_error(sv: &str, tag: &str) -> Result<String, String> {
-    sim_harness::with_temp_cwd(tag, |dir| {
-        let src = dir.join("tb.sv");
-        std::fs::write(&src, sv).map_err(|error| format!("write source: {error}"))?;
-        let out = compile::compile(&compile::CompileOpts {
-            files: vec![src.to_string_lossy().into_owned()],
-            top: Some("tb".to_string()),
-            ..Default::default()
-        })
-        .map_err(|e| format!("compile: {e}"))?;
-        if !out.ok() {
-            return Err(format!("compile diagnostics: {:?}", out.diagnostics));
-        }
-        let db =
-            llg::core::db::Db::from_slang(&out.snapshot).map_err(|error| format!("db: {error}"))?;
-        match sim::codegen::generate(&db) {
-            Ok(_) => Err("codegen unexpectedly succeeded".to_string()),
-            Err(e) => Ok(e.to_string()),
-        }
-    })
 }
 
 // ── Basic two-input truth tables incl. X/Z propagation ──────────────────────
@@ -426,7 +400,9 @@ endmodule
 // ── Unsupported primitives ──────────────────────────────────────────────────
 
 #[test]
-fn sim_gates_reject_sequential_udp_instance() {
+fn sim_gates_sequential_udp_instance_runs() {
+    // Sequential UDPs are supported since ADV-003 (IEEE 1364-2001 8.3): a
+    // level row decides from the select alone.
     let _guard = CWD_LOCK.lock().unwrap();
     let sv = r#"primitive mux2 (out, sel, a, b);
     output reg out;
@@ -443,15 +419,15 @@ module tb;
     mux2 u(y, sel, a, b);
     initial begin
         sel = 0; a = 0; b = 1;
+        #1 $display("sel0 y=%b", y);
+        sel = 1;
+        #1 $display("sel1 y=%b", y);
         $finish;
     end
 endmodule
 "#;
-    let err = codegen_error(sv, "udp").expect("compile should succeed");
-    assert!(
-        err.contains("user-defined primitive"),
-        "unexpected error: {err}"
-    );
+    let stdout = run_sim(sv, "udp").expect("sequential UDP should simulate");
+    assert_eq!(stdout, "sel0 y=0\nsel1 y=1\n");
 }
 
 #[test]

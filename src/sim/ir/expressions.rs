@@ -138,6 +138,9 @@ pub enum IrExprKind {
         table: usize,
         inputs: Vec<IrExpr>,
     },
+    /// The unsigned one-bit 0/1/X output of sequential UDP instance state
+    /// `state`, as its last [`IrStmt::UdpStep`] left it.
+    UdpState(usize),
     /// A concrete constant.
     Const(IrConst),
     /// Read a lowered signal global (or real companion / collapsed-net

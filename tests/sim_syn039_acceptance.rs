@@ -2,7 +2,7 @@
 //!
 //! The fixtures intentionally compose completed Core, Extended and capacity
 //! tracks. Every CLI helper runs the source once with optimization and once
-//! with `--no-opt`; exact stdout and the selected rejection diagnostic are
+//! with `--no-opt`; exact stdout is
 //! checked independently of the generated model's implementation details.
 
 use crate::sim_cli;
@@ -99,10 +99,14 @@ fn selected_pattern_udp_and_configuration_paths_compose() {
 }
 
 #[test]
-fn sequential_udp_remains_a_single_fault_profile_rejection() {
-    sim_cli::reject_case(
+fn sequential_udp_neighbor_runs_outside_the_selected_profile() {
+    // ADV-003 implements sequential UDPs; the selected profile still lists
+    // only combinational UDPs, so this neighbor is an Extended control.
+    sim_cli::run_case(
         SUITE,
-        "unsupported_sequential_udp",
-        "user-defined primitive instance is not supported",
+        "sequential_udp_neighbor",
+        "before=x\nafter=1\n",
+        "",
+        &[],
     );
 }

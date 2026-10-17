@@ -1256,7 +1256,10 @@ fn is_simulation_gate(
         return false;
     }
     if class == PrimClass::Udp {
-        return prim_type == PrimitiveType::Combinational;
+        return matches!(
+            prim_type,
+            PrimitiveType::Combinational | PrimitiveType::Sequential
+        );
     }
     matches!(class, PrimClass::Gate | PrimClass::Array)
         && matches!(

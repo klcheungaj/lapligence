@@ -17,6 +17,7 @@ built-in buffer, and the delayed reference uses a built-in delayed buffer.
 The matrix exercises scalar instances, an instance array, input changes, a
 second mux instance with reversed data ports, net resolution and a two-tick
 primitive delay. `invalid_port_list.sv` and `invalid_table_width.sv` are
-single-fault frontend negatives in both editions. Existing
-`partial_features/udp_sequential_rejected.sv` and `udp_edge_rejected.sv` retain
-the sequential and edge-table unsupported diagnostics.
+single-fault frontend negatives in both editions. Sequential UDPs are covered
+by `partial_features/udp_sequential_latch.sv` and
+`feature_completion/adv_003/`; `partial_features/udp_edge_rejected.sv` keeps
+the located rejection of an edge row in a combinational UDP.

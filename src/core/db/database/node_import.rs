@@ -1,6 +1,7 @@
 //! Node import.
 
 use super::*;
+use std::sync::Arc;
 
 pub(super) fn node_kind_from_slang(
     snapshot: &SlangSnapshot,
@@ -9,6 +10,7 @@ pub(super) fn node_kind_from_slang(
     edges: &[crate::ffi::slang::SemanticEdge],
     ids: &SemanticIds,
     ty: TypeInfo,
+    udp_tables: &HashMap<u64, Arc<UdpTable>>,
 ) -> Result<NodeKind, DbError> {
     let first = |role| edge_target(ids, edges, role);
     Ok(match node.kind {
@@ -134,37 +136,24 @@ pub(super) fn node_kind_from_slang(
                 })
                 .collect::<Result<Vec<_>, DbError>>()?;
             let prim_type = primitive_type_from_subkind(node.subkind);
-            let udp = if prim_type == PrimitiveType::Combinational {
+            let udp = if matches!(
+                prim_type,
+                PrimitiveType::Combinational | PrimitiveType::Sequential
+            ) {
                 let primitive_id = node.target_id().ok_or_else(|| {
                     DbError::InvalidSnapshot(format!(
-                        "combinational UDP instance `{}` has no declaration identity",
+                        "UDP instance `{}` has no declaration identity",
                         node.definition_name
                     ))
                 })?;
-                Some(
-                    snapshot
-                        .udp_tables
-                        .iter()
-                        .find(|table| table.primitive_id == primitive_id)
-                        .ok_or_else(|| {
-                            DbError::InvalidSnapshot(format!(
-                                "combinational UDP instance `{}` has no owned truth table for declaration {}",
-                                node.definition_name, primitive_id
-                            ))
-                        })
-                        .map(|table| UdpTable {
-                            name: table.name.clone(),
-                            input_count: table.input_count,
-                            rows: table
-                                .rows
-                                .iter()
-                                .map(|row| UdpRow {
-                                    inputs: row.inputs.clone(),
-                                    output: row.output,
-                                })
-                                .collect(),
-                        })?,
-                )
+                Some(Arc::clone(udp_tables.get(&primitive_id).ok_or_else(
+                    || {
+                        DbError::InvalidSnapshot(format!(
+                            "UDP instance `{}` has no owned table for declaration {}",
+                            node.definition_name, primitive_id
+                        ))
+                    },
+                )?))
             } else {
                 None
             };
@@ -284,4 +273,54 @@ pub(super) fn node_kind_from_slang(
         }
         SemanticKind::Unsupported => NodeKind::Other,
     })
+}
+
+/// Import every UDP declaration's table once, with source positions, so its
+/// instances share one immutable owned table.
+pub(super) fn udp_tables_from_slang(
+    snapshot: &SlangSnapshot,
+    positions: &mut SourcePositions<'_>,
+) -> Result<HashMap<u64, Arc<UdpTable>>, DbError> {
+    let mut location = |range: Option<crate::ffi::slang::SourceRange>| match range {
+        Some(range) => positions
+            .range_position(range)
+            .map(|(file, line, col, _, _)| UdpLocation { file, line, col }),
+        None => Ok(UdpLocation::default()),
+    };
+    let mut tables = HashMap::with_capacity(snapshot.udp_tables.len());
+    for table in &snapshot.udp_tables {
+        let declaration = snapshot
+            .semantic_nodes
+            .get(table.primitive_id as usize)
+            .ok_or_else(|| {
+                DbError::InvalidSnapshot(format!(
+                    "UDP table `{}` has no declaration node",
+                    table.name
+                ))
+            })?;
+        let rows = table
+            .rows
+            .iter()
+            .map(|row| {
+                Ok(UdpRow {
+                    inputs: row.inputs.clone(),
+                    state: row.state,
+                    output: row.output,
+                    location: location(row.range)?,
+                })
+            })
+            .collect::<Result<Vec<_>, DbError>>()?;
+        tables.insert(
+            table.primitive_id,
+            Arc::new(UdpTable {
+                name: table.name.clone(),
+                input_count: table.input_count,
+                sequential: table.sequential,
+                initial: table.initial,
+                rows,
+                location: location(declaration.range)?,
+            }),
+        );
+    }
+    Ok(tables)
 }

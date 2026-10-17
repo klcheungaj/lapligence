@@ -138,6 +138,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         class_allocations,
         virtual_interfaces,
         udp_tables: _,
+        udp_states: _,
         events: _,
         funcs,
         assertions,
@@ -456,7 +457,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         collect_expr_reads(value, model, rw);
     }
     match s.unlocated() {
-        IrStmt::VpiCall { args, .. } => {
+        IrStmt::VpiCall { args, .. } | IrStmt::UdpStep { inputs: args, .. } => {
             for arg in args {
                 collect_expr_reads(arg, model, rw);
             }
@@ -1234,6 +1235,8 @@ fn collect_expr_reads(e: &IrExpr, model: &IrModel, rw: &mut Rw) {
         | IrExprKind::FixedArrayCompare { .. }
         | IrExprKind::RuntimeQuery(_)
         | IrExprKind::Verbatim { .. } => {}
+        // Sequential UDP state is model-owned emitted storage, not a signal.
+        IrExprKind::UdpState(_) => {}
         // A match-item call copies its by-value arguments into the call frame
         // when the item is evaluated.
         IrExprKind::MatchCall(action) => {

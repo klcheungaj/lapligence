@@ -283,6 +283,9 @@ fn render_stmt_scoped(
             format!("    (void)llg_system({command}, {has_command});\n")
         }
         IrStmt::VpiCall { site, name, args } => render_vpi_call(ctx, *site, name, args)?,
+        IrStmt::UdpStep { .. } => {
+            return Err("sequential UDP state requires the structured owned emitter".to_owned())
+        }
         IrStmt::RandomSeed { seed } => {
             format!(
                 "    llg_process_srandom({});\n",

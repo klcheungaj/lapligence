@@ -8,7 +8,66 @@ fn table() -> IrUdpTable {
             inputs: vec![IrUdpInput::Binary, IrUdpInput::Any],
             output: IrUdpOutput::One,
         }],
+        sequential: None,
     }
+}
+
+fn sequential_table() -> IrUdpTable {
+    IrUdpTable {
+        name: "seq".into(),
+        input_count: 2,
+        rows: Vec::new(),
+        sequential: Some(Box::new(IrUdpSequential {
+            initial: IrUdpOutput::Zero,
+            rows: vec![IrUdpSequentialRow {
+                inputs: vec![IrUdpInput::One, IrUdpInput::Zero],
+                edge: Some(IrUdpEdge {
+                    input: 0,
+                    from: IrUdpInput::Zero,
+                }),
+                state: IrUdpInput::Any,
+                next: IrUdpNext::Hold,
+            }],
+        })),
+    }
+}
+
+#[test]
+fn sequential_udp_steps_and_state_reads_name_a_sequential_instance() {
+    let mut model = valid_model();
+    model.udp_tables.push(table());
+    model.udp_tables.push(sequential_table());
+    model.udp_states = vec![1, 0];
+    let step = |state, inputs| IrStmt::UdpStep { state, inputs };
+    let read = |state| IrExpr::new(IrExprKind::UdpState(state), 1, false, None);
+    let inputs = vec![packed_const(0, 1), packed_const(1, 1)];
+    model.validate_stmt(&step(0, inputs.clone()), None).unwrap();
+    model.validate_expr(&read(0), None).unwrap();
+    // State 1 belongs to the combinational definition; state 2 is missing.
+    for state in [1, 2] {
+        assert!(model
+            .validate_stmt(&step(state, inputs.clone()), None)
+            .is_err());
+        assert!(model.validate_expr(&read(state), None).is_err());
+    }
+    assert!(model
+        .validate_stmt(&step(0, vec![packed_const(0, 1)]), None)
+        .is_err());
+    assert!(model
+        .validate_stmt(&step(0, vec![packed_const(0, 2), packed_const(1, 1)]), None)
+        .is_err());
+    let mut wide = read(0);
+    wide.width = 2;
+    assert!(model.validate_expr(&wide, None).is_err());
+    // A sequential definition is never evaluated as a combinational table.
+    let eval_sequential = IrExpr::new(IrExprKind::UdpEval { table: 1, inputs }, 1, false, None);
+    assert!(model.validate_expr(&eval_sequential, None).is_err());
+    model.udp_tables[1].sequential.as_mut().unwrap().rows[0]
+        .edge
+        .as_mut()
+        .unwrap()
+        .input = 2;
+    assert!(model.validate().is_err());
 }
 
 fn eval(inputs: Vec<IrExpr>) -> IrExpr {

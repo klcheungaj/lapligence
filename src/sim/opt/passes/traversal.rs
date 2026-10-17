@@ -262,6 +262,7 @@ pub(in crate::sim) fn walk_expr_mut(e: &mut IrExpr, f: &mut impl FnMut(&mut IrEx
         IrExprKind::FixedArrayCompare { .. }
         | IrExprKind::Const(_)
         | IrExprKind::SigRead(_)
+        | IrExprKind::UdpState(_)
         | IrExprKind::LocalRead(_)
         | IrExprKind::FormalRead(_)
         | IrExprKind::RuntimeQuery(_)
@@ -420,7 +421,7 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         IrStmt::System(Some(command)) => {
             command.expressions_mut(&mut |child| walk_expr_mut(child, f));
         }
-        IrStmt::VpiCall { args, .. } => {
+        IrStmt::VpiCall { args, .. } | IrStmt::UdpStep { inputs: args, .. } => {
             for arg in args {
                 walk_expr_mut(arg, f);
             }
