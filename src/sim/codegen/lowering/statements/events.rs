@@ -218,10 +218,22 @@ impl EmitCtx<'_, '_> {
             // @* / always_comb without explicit sensitivity, or a condition
             // that produced no specs: wait on the body's read set.
             self.cg.reject_process_status_wait(&self.path, body)?;
-            let reads = if implicit && self.process_kind == Some(AlwaysKind::Always) {
-                self.cg.collect_at_star_signals(&self.path, body)?
+            let at_star = implicit && self.process_kind == Some(AlwaysKind::Always);
+            let path = self.path.clone();
+            let collect = |cg: &Codegen<'_>| {
+                if at_star {
+                    cg.collect_at_star_signals(&path, body)
+                } else {
+                    cg.collect_read_signals(&path, body)
+                }
+            };
+            // An implicit list follows reads through virtual interfaces
+            // (SV 9.4.2.2); its wait arms again after every wake.
+            let reads = if implicit {
+                self.cg
+                    .with_interface_reads(&path, body, !at_star, collect)?
             } else {
-                self.cg.collect_read_signals(&self.path, body)?
+                collect(self.cg)?
             };
             if implicit && self.process_kind == Some(AlwaysKind::Always) && reads.is_empty() {
                 // An empty `@*` sensitivity list waits forever. Keep the

@@ -204,6 +204,18 @@ impl Codegen<'_> {
         }
     }
 
+    /// The handle declaration and member name of a member path rooted at a
+    /// virtual-interface handle (`v.x`, `v.cb.x`), when `node` is one.
+    pub(in super::super) fn virtual_interface_member_key(
+        &self,
+        path: &str,
+        node: NodeId,
+    ) -> Result<Option<(NodeId, String)>, String> {
+        Ok(self
+            .virtual_interface_member_path(path, node, false)?
+            .map(|target| (target.handle, target.member)))
+    }
+
     /// Lower a member path rooted at a virtual-interface handle. The runtime
     /// receives the handle on every access, so assigning a new handle changes
     /// the target of all subsequent reads and writes.
@@ -293,6 +305,12 @@ pub(in super::super) struct VirtualInterfaceArrayElement {
     /// The member declaration the frontend names as the select base; it
     /// carries the element's packed range.
     pub(in super::super) declaration: NodeId,
+    /// The member path through the handle (`v.mem`), the select's
+    /// structural operand.
+    pub(in super::super) member_path: NodeId,
+    /// The handle declaration and member name, which identify the selected
+    /// storage in the source text.
+    pub(in super::super) key: (NodeId, String),
 }
 
 impl Codegen<'_> {
@@ -454,6 +472,8 @@ impl Codegen<'_> {
             indices,
             select,
             declaration,
+            member_path: base,
+            key: (target.handle, target.member),
         }))
     }
 

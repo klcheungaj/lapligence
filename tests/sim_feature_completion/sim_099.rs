@@ -445,6 +445,55 @@ fn virtual_interface_array_member_limits_are_located() {
     );
 }
 
+/// Gate-fixes-2 item 1 / IEEE 1800-2009 9.2.2.2.1, 9.4.2.2, 25.9 (S99-D7):
+/// always_comb, always_latch and `@*` follow members read through a
+/// virtual-interface handle to the instance it binds, re-arm when the handle
+/// is rebound and ignore instances it does not bind.
+#[test]
+fn implicit_sensitivity_follows_virtual_interfaces() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "vif_sensitivity",
+        include_str!("../fixtures/sim/feature_completion/sim_099/vif_sensitivity.out"),
+        &[],
+        &[],
+    );
+}
+
+/// Gate-fixes-2 item 1: reads an implicit sensitivity cannot follow through a
+/// virtual interface stop compilation at their position instead of being
+/// left out of the sensitivity.
+#[test]
+fn implicit_sensitivity_virtual_interface_limits_are_located() {
+    let reason = "(IEEE 1800-2009 9.2.2.2.1, 25.9)";
+    sim_cli::reject_case(
+        SUITE,
+        "neg_vif_sensitivity_formal",
+        &format!(
+            "neg_vif_sensitivity_formal.sv:12:12: the implicit sensitivity of `tb` cannot \
+             follow a virtual-interface member that a called function reads through a handle \
+             other than a virtual-interface variable {reason}"
+        ),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_vif_sensitivity_method",
+        &format!(
+            "neg_vif_sensitivity_method.sv:13:19: the implicit sensitivity of `tb` cannot \
+             follow the storage a virtual-interface method call reads {reason}"
+        ),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_vif_sensitivity_handle",
+        &format!(
+            "neg_vif_sensitivity_handle.sv:11:19: the implicit sensitivity of `tb` cannot \
+             follow a virtual-interface member read through a handle that is neither a \
+             variable nor a formal {reason}"
+        ),
+    );
+}
+
 /// G4 / IEEE 1800-2009 32.9, D.4, D.7: string literals of `string` formals
 /// reach a VPI application as string constants and scope actuals as module
 /// handles, for built-ins without a lowering and user system tasks alike; a

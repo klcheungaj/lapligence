@@ -2665,6 +2665,14 @@ fn s99_d5_inferred_clock() {
 }
 
 #[test]
+fn s99_d7_vif_implicit_sensitivity() {
+    run_decision(
+        "S99-D7_vif_implicit_sensitivity",
+        include_str!("fixtures/sim/lrm_decisions/S99-D7_vif_implicit_sensitivity.out"),
+    );
+}
+
+#[test]
 fn s99_d6_builtin_override() {
     // Negative case: llg stops at startup, so the expected stdout is empty.
     assert!(include_str!("fixtures/sim/lrm_decisions/S99-D6_builtin_override.out").is_empty());

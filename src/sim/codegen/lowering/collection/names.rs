@@ -235,7 +235,7 @@ impl<'a> Codegen<'a> {
             IrDependency::RefFormal { .. } | IrDependency::NativeRefFormal { .. } => {
                 "`ref` formal storage".to_owned()
             }
-            IrDependency::NativeAccess(_) => {
+            IrDependency::NativeAccess(_) | IrDependency::InterfaceInstance { .. } => {
                 "class property or interface member storage".to_owned()
             }
             IrDependency::Object(object) => self

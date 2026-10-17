@@ -392,6 +392,18 @@ pub enum IrDependency {
     /// next wait to the new storage. A null or invalid receiver selects
     /// storage that never changes.
     NativeAccess(String),
+    /// The storage of the interface instance that virtual-interface variable
+    /// `handle` (an object index) binds when the wait arms: `arms[i]` names
+    /// instance `i` of descriptor `interface` (an element or contents marker
+    /// of that instance's unpacked array member, `v.mem[i]`). Like
+    /// [`IrDependency::NativeAccess`], only waits that arm again after every
+    /// wake may name it; a null or unbound handle selects storage that never
+    /// changes.
+    InterfaceInstance {
+        handle: usize,
+        interface: usize,
+        arms: Vec<IrDependency>,
+    },
 }
 
 impl IrDependency {

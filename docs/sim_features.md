@@ -706,7 +706,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   timing and forks reject; delayed NBAs are not rejected merely for their delay.
   Class-property paths and class method calls add nothing, not even the
   handle variable (`h` in `h.x`/`h.f()`; a direct `h == null` is a variable
-  read) (§9.2.2.2.1) and virtual-interface members add nothing (§25.9); dynamic
+  read) (§9.2.2.2.1). A member read through a virtual-interface handle (packed
+  members, their selects and elements `v.mem[i]` of unpacked array members,
+  also inside called functions through a module-level handle) waits on the
+  member of the instance the handle binds, re-armed when the handle is rebound
+  (S99-D7); handles the arming process cannot evaluate (function formals,
+  vif-array elements) and `v.f()` calls are located errors
+  ([sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md)); dynamic
   container elements and sizes are read through their contents/shape markers
   ([sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
   Native record leaves held in dynamic containers remain partial.
@@ -924,8 +930,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   handle's change marker, which also drives whole-handle ports and `@(h)`
   (SIM-007). Module process handles publish the same marker (SIM-015).
   Like `always_comb`, `@*` adds nothing for a property read through a handle
-  (`h.v`) or a virtual-interface member (SV §§9.2.2.2.1, 25.9), but it adds the
-  handle identifier `h` itself (§9.4.2.2), which `always_comb` does not; explicit event
+  (`h.v`) (SV §9.2.2.2.1), but it adds the handle identifier `h` itself
+  (§9.4.2.2), which `always_comb` does not; like `always_comb`, it follows a
+  virtual-interface member to the bound instance (S99-D7); explicit event
   controls and `wait` follow them instead (below). Built-in semaphore/mailbox
   handles have no change marker and reject in sensitivity and wait expressions.
   V §9.7.5 **[2001]**.

@@ -1,0 +1,8 @@
+[2] bound to x: a=15 fn=15 el=12 var=11 nib=05 latch=15 star=15 runs=1 xb=16 yb=xx
+[3] x changes: a=37 fn=37 el=32 var=11 nib=07 latch=37 star=37 runs=2 xb=38 yb=xx
+[4] index changes: a=37 fn=37 el=32 var=32 nib=07 latch=37 star=37 runs=2 xb=38 yb=xx
+[5] unbound y changes: a=37 fn=37 el=32 var=32 nib=07 latch=37 star=37 runs=2 xb=38 yb=xx
+[6] rebound to y: a=48 fn=48 el=42 var=42 nib=08 latch=48 star=48 runs=3 xb=38 yb=49
+[7] unbound x changes: a=48 fn=48 el=42 var=42 nib=08 latch=48 star=48 runs=3 xb=38 yb=49
+[8] y changes, latch closed: a=6a fn=6a el=62 var=62 nib=0a latch=48 star=6a runs=4 xb=38 yb=6b
+[9] index changes back: a=6a fn=6a el=62 var=61 nib=0a latch=48 star=6a runs=4 xb=38 yb=6b

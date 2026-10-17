@@ -1634,6 +1634,17 @@ impl<'a> Codegen<'a> {
                 format!("ref formal {index}")
             }
             IrDependency::NativeAccess(name) => format!("native access {name}"),
+            IrDependency::InterfaceInstance {
+                handle,
+                interface,
+                arms,
+            } => format!(
+                "object[{handle}] interface[{interface}] instance of {}",
+                arms.iter()
+                    .map(|arm| self.dependency_sort_key(arm))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            ),
         }
     }
 
@@ -2052,9 +2063,9 @@ impl<'a> Codegen<'a> {
                 // SV 16.4.3: the member behaves as if contained in an
                 // always_comb procedure, so it re-executes when anything it
                 // reads changes, including by-value action arguments.
-                let reads =
-                    ctx.cg
-                        .collect_process_sensitivity(path, member, Some(AlwaysKind::Comb))?;
+                let reads = ctx.cg.with_interface_reads(path, member, true, |cg| {
+                    cg.collect_process_sensitivity(path, member, Some(AlwaysKind::Comb))
+                })?;
                 if reads.is_empty() {
                     IrShape::RunOnce
                 } else {
@@ -2064,9 +2075,12 @@ impl<'a> Codegen<'a> {
                 // always_comb/always_latch/always_ff without any event or
                 // delay control use the existing sensitivity-driven shape.
                 // Run once at t=0, then re-run whenever a read signal changes.
-                let sigs = ctx
-                    .cg
-                    .collect_process_sensitivity(path, stmt, always_type)?;
+                let sigs = ctx.cg.with_interface_reads(
+                    path,
+                    stmt,
+                    always_type != Some(AlwaysKind::Always),
+                    |cg| cg.collect_process_sensitivity(path, stmt, always_type),
+                )?;
                 if sigs.is_empty() {
                     ctx.cg.warnings.push(format!(
                         "combinational always process in `{}` reads no \

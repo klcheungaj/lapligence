@@ -84,8 +84,10 @@ impl Validator<'_> {
         // A native-access dependency is resolved each time its wait arms.
         if let IrStmt::WaitAny { sens, .. } | IrStmt::WaitCond { sens, .. } = stmt {
             for (index, dependency) in sens.iter().enumerate() {
-                if matches!(dependency, IrDependency::NativeAccess(_))
-                    && !self.valid_dependency(dependency)
+                if matches!(
+                    dependency,
+                    IrDependency::NativeAccess(_) | IrDependency::InterfaceInstance { .. }
+                ) && !self.valid_dependency(dependency)
                 {
                     return self.fail(
                         format!("{path}.sens[{index}]"),

@@ -216,6 +216,11 @@ impl Frame<'_, '_> {
                 self.ctx.model.containers[*index].c_name
             ),
             IrDependency::NativeAccess(name) => self.native_access_dependency(name)?,
+            IrDependency::InterfaceInstance {
+                handle,
+                interface,
+                arms,
+            } => self.interface_instance_dependency(*handle, *interface, arms)?,
             IrDependency::Object(index) => {
                 let object = &self.ctx.model.objects[*index];
                 if !object.ty.has_change_marker() {
@@ -277,6 +282,44 @@ impl Frame<'_, '_> {
                 return Err(pending("native value item wait dependencies"))
             }
         })
+    }
+
+    /// The fixed-array marker of the instance `handle` binds when the wait
+    /// arms. A null handle, or one of another descriptor, selects storage
+    /// that never changes: arming is not an access.
+    fn interface_instance_dependency(
+        &mut self,
+        handle: usize,
+        interface: usize,
+        arms: &[IrDependency],
+    ) -> Result<String, String> {
+        let object = self.ctx.model.objects[handle].c_name.clone();
+        let env = self.scalar("void*", object);
+        let instance = self.scalar(
+            "uint32_t",
+            format!(
+                "({env} && ((const llg_vif_env_t*){env})->interface_id == {interface}u) ? ((const llg_vif_env_t*){env})->instance_id : UINT32_MAX"
+            ),
+        );
+        let mut marker = "NULL".to_owned();
+        for (position, arm) in arms.iter().enumerate().rev() {
+            let arm = match arm {
+                IrDependency::ArrayElement { array, index } => {
+                    let array = self.ctx.model.array(*array);
+                    if array.sparse() {
+                        array.cell_address(&index.to_string())
+                    } else {
+                        format!("&{}_llg_element_deps[{index}]", array.c_name)
+                    }
+                }
+                IrDependency::ArrayContents(array) => {
+                    format!("&{}_llg_contents_dep", self.ctx.model.array(*array).c_name)
+                }
+                _ => return Err(pending("this interface-instance dependency arm")),
+            };
+            marker = format!("{instance} == {position}u ? {arm} : ({marker})");
+        }
+        Ok(format!("{{ .sig = llg_dependency_or_never({marker}) }}"))
     }
 
     pub(super) fn wait_any(
