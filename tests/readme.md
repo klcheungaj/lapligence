@@ -509,6 +509,17 @@ exhaustive table sweep compares with the all-matching-rows oracle in
 row widths, conflicting rows, terminal counts, empty terminals, mis-sized array
 connections and vector or aggregate terminals of single instances.
 
+ADV-003's sequential UDP fixtures use
+`-E 'binary(sim_feature_completion) & test(adv_003::)'`, together with
+`test(/^sim_udp::/)`, `test(emit_c::owned::tests::udp::)`,
+`test(ir::validate::tests::udp::)` and the `S3-D*` cases of
+`sim_lrm_decisions`. Positive `.v` fixtures run in both editions, both
+optimizer modes and on the legacy, compact/portable and compact/GMP value
+backends, two of them after Db destruction; the hand-derived oracles quote
+IEEE 1364-2001 8 and IEEE 1800-2009 29 ([readme](fixtures/sim/feature_completion/adv_003/readme.md)).
+Negatives are single-fault sources that stop with the frontend's located
+diagnostic in both editions, plus a vector actual on a single instance.
+
 RTL-099's gate fixtures use `-E 'binary(sim_feature_completion) & test(rtl_099::)'`.
 They pin the output-port writer rule for constant slices of descriptor-backed
 arrays: disjoint procedural writers execute in both optimizer modes on both
@@ -753,8 +764,9 @@ names, 61 Extended forms, 18 implemented outside-Core forms, 411 exclusions
 and 222 aliases/helpers, with zero OPEN or BOUNDARY names. The checker
 requires Extended entries to name real owning task fixtures and test functions;
 implemented outside-Core entries name a product row and execution owner.
-Sequential UDP edge/state forms remain excluded while scalar combinational
-UDP forms have SYN-031 evidence. The ordinary checker validates the frozen PDF
+Sequential UDP edge/state forms remain excluded from the selected profile
+(ADV-003 implements them as Extended forms) while scalar combinational UDP
+forms have SYN-031 evidence. The ordinary checker validates the frozen PDF
 name sets and the checked-in [addendum name/section snapshot](syn038_annex_reference_names.json).
 The snapshot records the ignored source file's SHA-256 and generator command;
 it contains names and section IDs only. Optional source re-verification needs

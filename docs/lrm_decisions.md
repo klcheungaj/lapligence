@@ -365,6 +365,15 @@ case.
 | S2-D8 | **Conflicting alias net delays are rejected.** Nets joined by `alias` that declare different net delays fail compilation; equal delays, or a delay on one member, are one net delay of the shared net. | 10.11 L13981, L13994-13995 | `S2-D8_alias_conflicting_net_delays` (empty output: rejected) | llg choice (the standard gives a shared net no rule for different delays) |
 | S2-D9 | **Runtime delays are evaluated when an update is scheduled.** A SystemVerilog runtime-valued continuous-assignment, gate or net delay takes its expressions' values when the delayed update is scheduled (the net changes); changing a delay operand alone schedules nothing and pending updates keep their times. Values convert like procedural delays (X or Z is zero). Verilog-2001 requires constant delays and rejects them. | 28.16.1 L48462-48466; 10.3.3 L12894-12895 | `S2-D9_runtime_delay_evaluation` | llg choice (when the expressions are evaluated is not stated) |
 
+## Sequential UDPs (ADV-003)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S3-D1 | **Level rows see the prior state.** When one input changes, the next state is one lookup against the state held before the change: a level row matching the new inputs and that state decides, otherwise an edge row for that input's transition, otherwise X. Level rows are not looked up again with the state an edge row produced. | 29.9 L49196-49198; 29.3.4 L48801-48802 | `S3-D1_level_rows_use_prior_state` | llg choice (the text orders the cases but does not say which state the level cases see) |
+| S3-D2 | **Simultaneous input changes in port order.** When several inputs have changed by the time a UDP is evaluated, each change is one transition, in port order; each sees the new values of the inputs before it and the old values of those after it. Only the final state is driven, and a change undone before the evaluation is not seen. | 4.7 L3465-3471; 29.6 L48960 | `S3-D2_simultaneous_inputs_in_port_order` | llg choice (the interleaving is nondeterministic; lines without the `llg` label hold for every order) |
+| S3-D3 | **A change between Z and X is no transition.** The table is not evaluated when an input moves between z and x; 0/1 to or from z is the same transition as to or from x. | 29.3.5 L48808-48809 | `S3-D3_z_x_change_is_no_transition` | LRM text (llg's reading of "treated the same as x") |
+| S3-D4 | **Inputs start X at time zero.** When simulation begins every input is taken as x and the state is the initial value (else x); an input known at time zero, such as a constant terminal, is a transition from x then, while an undriven input makes none. The initial value is driven at time zero without the instance delay. | 29.3.3 L48761; 29.7 L49064-49066 | `S3-D4_time_zero_inputs_start_x` | llg choice for the inputs (not stated); LRM text for the undelayed initial value |
+
 ## Random sequence generation (ADV-016)
 
 | ID | Decision | Clause (SV) | Case | Kind |

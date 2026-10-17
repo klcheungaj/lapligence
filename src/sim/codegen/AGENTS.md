@@ -290,6 +290,16 @@ through the ordinary expression/lvalue paths; a bit select of a computed value
 type, as Slang's instance-array slicing requires. Vector or aggregate terminals
 of a single instance reject.
 
+Sequential UDP instances lower to one `UdpStep` at the start of the
+continuous gate body followed by the shared publication of `UdpState`; each
+instance owns one `IrModel::udp_states` record, so instance-array elements
+keep independent states. The definition's typed rows come from the Db
+(`core::db::UdpTable`, located rows); a row the IR cannot represent fails
+with its source location. The initial value is published at time zero
+without the instance delay: lowering sets `delayed_driver_start` so the
+delayed driver starts at the initial value instead of X (S2-D4), and the
+first step runs at time zero with every prior input X (decision S3-D4).
+
 `collection/net_partition.rs` forms maximal affine runs of canonical electrical
 roots for fixed arrays and selected/aliased scalar or vector nets. Adjacent
 positions must have the same declared members, structural source/terminal sites,
