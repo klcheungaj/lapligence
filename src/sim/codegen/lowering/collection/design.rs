@@ -188,7 +188,7 @@ impl<'a> Codegen<'a> {
     /// that a loop generate block is named once as written (`g[0]`, SV
     /// 27.4), not as the loop array followed by the block. An unnamed block
     /// keeps the array's name, as generate scopes do.
-    fn instance_display_path(&self, inst: NodeId) -> String {
+    pub(super) fn instance_display_path(&self, inst: NodeId) -> String {
         let parts = self.db.hierarchical_name_parts(inst);
         if parts.len() <= 1 {
             return self.instance_path_of(inst);

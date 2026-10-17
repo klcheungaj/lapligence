@@ -77,6 +77,21 @@ Class virtual slots with a suspending implementation
 (`ExecutionAnalysis::suspendable_dispatch_slots`, SIM-011) use the same
 helper from any coroutine at an arena call site; their plain dispatchers
 fail instead of entering a coroutine with plain arguments.
+A failed null class or virtual-interface access is fatal at once (S99-D8):
+inside a statement, the owned emitter checks the access result and leaves the
+process (`LLG_CO_EXIT_CHECK`, or `goto _llg_return` in plain functions) before
+the rest of the statement, and checks the exit flag after a plain or dispatched
+call whose effects include `Terminate`. The checks sit on the failure branch, so
+code without such accesses or calls is unchanged.
+The legacy fragment emitter (`statements.rs`, `expressions.rs`, `objects.rs`
+and their children, and the `#[allow(dead_code)]` legacy model renderer in
+`model/`) does not get these checks and is development-only: its public entry
+points `render_expr`, `render_stmt` and `render_pre_fn` return
+`OWNER_MIGRATION_DIAGNOSTIC` before rendering, no code outside `emit_c` calls
+them (`emit_decoupling::legacy_fragment_emitter_has_no_callers_outside_emit_c`,
+`legacy_fragment_emitter_rejects_valid_ir`), and with those entry points cut off
+rustc reports `render_stmt_impl` and `render_expr_impl` unused. Port a
+behaviour to it only together with a user-reachable path.
 Compute conservative LP64 upper
 bounds with every embedded call charged its 16-byte anchor prefix and sibling
 blocks contributing their maximum rather than their sum; the named

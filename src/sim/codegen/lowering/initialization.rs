@@ -40,13 +40,31 @@ impl<'a> Codegen<'a> {
         None
     }
 
+    /// The class whose method declares `node`, if any.
+    fn owner_class(&self, node: NodeId) -> Option<NodeId> {
+        let mut current = Some(node);
+        while let Some(id) = current {
+            if matches!(self.kind(id), NodeKind::ClassDef) {
+                return Some(id);
+            }
+            current = self.node(id).parent;
+        }
+        None
+    }
+
     /// Build the typed runtime identity for a named block, task, or fork
     /// scope. Unowned synthetic nodes fail closed instead of using a name.
+    /// A block inside a class method has no instance or package: its class
+    /// (each specialization is its own node) is the environment, since every
+    /// activation of the method shares the one declaration (SV 9.6.2).
     pub(super) fn activation_target(
         &self,
         declaration: NodeId,
     ) -> Result<crate::sim::ir::IrActivationTarget, String> {
-        let instance = self.owner_instance(declaration).ok_or_else(|| {
+        let instance = self
+            .owner_instance(declaration)
+            .or_else(|| self.owner_class(declaration));
+        let instance = instance.ok_or_else(|| {
             format!(
                 "named activation `{}` has no elaborated module, interface, or package environment",
                 self.node(declaration).full_name()

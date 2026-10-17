@@ -235,7 +235,7 @@ impl<'a> Codegen<'a> {
             IrDependency::RefFormal { .. } | IrDependency::NativeRefFormal { .. } => {
                 "`ref` formal storage".to_owned()
             }
-            IrDependency::NativeAccess(_) => {
+            IrDependency::NativeAccess(_) | IrDependency::InterfaceInstance { .. } => {
                 "class property or interface member storage".to_owned()
             }
             IrDependency::Object(object) => self
@@ -267,13 +267,62 @@ impl<'a> Codegen<'a> {
     /// `%m` text for a call at `node` lowered in `path` (SV 21.2.1.6): the
     /// hierarchical name of the nearest enclosing named scope, so named
     /// blocks and subroutines extend the instance or generate-block path.
+    /// Code in a class method extends the class's name (decision S99-D10).
     /// When the call's parents do not lead back to `path`'s own scope (for
-    /// example code shared from a package or class), the scope path alone is
-    /// the conservative answer.
+    /// example code shared from a package), the scope path alone is the
+    /// conservative answer.
     pub(in super::super) fn format_scope(&self, path: &str, node: NodeId) -> String {
+        if let Some(name) = self.class_member_scope(path, node) {
+            return name;
+        }
         let mut text = self.display_path(path).to_owned();
         text.push_str(&self.named_scope_suffix(path, node));
         text
+    }
+
+    /// The `%m` name of `node` inside a class method: the class's scope name
+    /// followed by the method and the named blocks around `node`
+    /// (`C.f`, `p.D.g`, `tb.L.k`), or `None` when `node` is not class code.
+    fn class_member_scope(&self, path: &str, node: NodeId) -> Option<String> {
+        let scope = self.scope_nodes.get(path).copied();
+        let mut current = self.node(node).parent;
+        while let Some(id) = current {
+            if Some(id) == scope {
+                return None;
+            }
+            if self.class_nodes.contains_key(&id) {
+                let mut name = self.class_scope_name(id);
+                name.push_str(&self.named_suffix_below(id, node));
+                return Some(name);
+            }
+            current = self.node(id).parent;
+        }
+        None
+    }
+
+    /// A class's name prefixed by the scopes that declare it: enclosing
+    /// classes, then the package (`p.D`, as package subroutines are named)
+    /// or the module instance; a compilation-unit class has its own name.
+    fn class_scope_name(&self, class: NodeId) -> String {
+        let mut parts = vec![strip_lib(&self.node(class).name).to_string()];
+        let mut current = self.db.class_declaring_scope(class);
+        while let Some(id) = current {
+            if self.class_nodes.contains_key(&id) {
+                parts.push(strip_lib(&self.node(id).name).to_string());
+                current = self.db.class_declaring_scope(id);
+                continue;
+            }
+            match self.kind(id) {
+                NodeKind::Package => parts.push(strip_lib(&self.node(id).name).to_string()),
+                NodeKind::ModuleInst { .. } | NodeKind::GenScope => {
+                    parts.push(self.instance_display_path(id))
+                }
+                _ => {}
+            }
+            break;
+        }
+        parts.reverse();
+        parts.join(".")
     }
 
     /// The `.name` components of the named blocks and subroutines between
@@ -290,6 +339,9 @@ impl<'a> Codegen<'a> {
     pub(in super::super) fn named_suffix_below(&self, scope: NodeId, node: NodeId) -> String {
         let mut names: Vec<String> = Vec::new();
         let mut current = self.node(node).parent;
+        // Subroutines do not nest, so a subroutine above the first one is the
+        // prototype that owns an out-of-block (`extern`) method body.
+        let mut in_subroutine = false;
         while let Some(id) = current {
             if id == scope {
                 let mut text = String::new();
@@ -299,12 +351,22 @@ impl<'a> Codegen<'a> {
                 }
                 return text;
             }
-            let named = matches!(
-                self.kind(id),
-                NodeKind::Stmt(StmtKind::Begin) | NodeKind::FuncTask { .. }
-            );
-            let name = &self.node(id).name;
-            if named && !name.is_empty() {
+            // A named fork's scope is its target block; the fork statement
+            // itself is unnamed (SV 9.3.4 names both block kinds).
+            let name = match self.kind(id) {
+                NodeKind::FuncTask { .. } if in_subroutine => "",
+                NodeKind::FuncTask { .. } => {
+                    in_subroutine = true;
+                    &self.node(id).name
+                }
+                NodeKind::Stmt(StmtKind::Begin) => &self.node(id).name,
+                NodeKind::Stmt(StmtKind::Fork {
+                    target: Some(target),
+                    ..
+                }) => &self.node(*target).name,
+                _ => "",
+            };
+            if !name.is_empty() {
                 names.push(strip_lib(name).to_string());
             }
             current = self.node(id).parent;

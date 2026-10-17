@@ -133,6 +133,9 @@ impl Validator<'_> {
                 .objects
                 .get(*object)
                 .is_some_and(|object| object.ty.has_change_marker()),
+            IrDependency::InterfaceInstance { .. } => {
+                crate::sim::execution::valid_interface_instance(self.model, dependency)
+            }
         }
     }
 

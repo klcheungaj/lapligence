@@ -62,10 +62,12 @@ impl Frame<'_, '_> {
                 if self.quiet_receivers {
                     return Ok(handle);
                 }
-                return Ok(self.scalar(
+                let required = self.scalar(
                     "void*",
                     format!("llg_class_require({handle}, {})", c_string_literal(site)),
-                ));
+                );
+                self.exit_on_failed_access(&format!("!{required}"));
+                return Ok(required);
             }
             IrChandleExpr::InterfaceInstance {
                 interface,
@@ -334,14 +336,15 @@ impl Frame<'_, '_> {
                 site,
             } => {
                 let handle = self.chandle(handle)?;
-                self.value(
+                let instance = self.scalar(
+                    "uint64_t",
                     format!(
-                        "sv4_from_u64(llg_vif_instance({handle}, {interface}, {}), 32, 0)",
+                        "llg_vif_instance({handle}, {interface}, {})",
                         c_string_literal(site)
                     ),
-                    32,
-                    false,
-                )
+                );
+                self.exit_on_failed_access(&format!("{instance} == UINT32_MAX"));
+                self.value(format!("sv4_from_u64({instance}, 32, 0)"), 32, false)
             }
             ProcessEq(left, right) => {
                 let left = self.process_value(left)?;

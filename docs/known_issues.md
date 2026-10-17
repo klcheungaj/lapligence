@@ -1503,6 +1503,26 @@ matched last.
 Reproduce with `property p; logic [7:0] v = d; always (a |-> d == v);
 endproperty`.
 
+## Implicit sensitivity through handles a process cannot evaluate
+
+**Status:** open (gate-fixes-2 limit, decision S99-D7).
+
+`always_comb`, `always_latch` and `@*` wait on a member read through a
+virtual-interface handle by evaluating the handle each time they arm. Three
+forms have no handle the arming process can evaluate, so they stop
+compilation at the read with "the implicit sensitivity of `<scope>` cannot
+follow ...": a member read inside a called function through the function's
+handle formal or local (`function f(virtual bus_if b); return b.a;`), a member
+read through an element of a virtual-interface array (`va[1].a`), and an
+interface method call through a handle under `always_comb` (`v.f()`, whose
+body the bound instance selects). Elements of unpacked array members are
+followed only through a virtual-interface variable. Supporting the formal
+needs the call's actual bound at arm time (like `CalleeReceivers` for class
+handles); the method call needs the method body's reads per bound instance.
+
+Reproduce with
+`tests/fixtures/sim/feature_completion/sim_099/neg_vif_sensitivity_*.sv`.
+
 ## Modport expression ports through virtual interfaces
 
 **Status:** open (RTL-102 deferral).

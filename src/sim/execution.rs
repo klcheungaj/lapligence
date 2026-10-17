@@ -496,13 +496,52 @@ fn is_emitted_trigger_storage(ir: &IrModel, dependency: &IrDependency) -> bool {
             .objects
             .get(*object)
             .is_some_and(|object| object.ty.has_change_marker()),
+        // A virtual-interface member is resolved through its handle each
+        // time a sensitivity loop arms (SV 9.2.2.2.1, 25.9).
+        IrDependency::NativeAccess(name) => ir.native_accesses.iter().any(|access| {
+            access.name == *name
+                && matches!(
+                    access.kind,
+                    crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. }
+                )
+        }),
+        IrDependency::InterfaceInstance { .. } => valid_interface_instance(ir, dependency),
         // A process-local cell is no static trigger storage.
         IrDependency::SharedCell { .. }
         | IrDependency::SharedNative { .. }
         | IrDependency::RefFormal { .. }
-        | IrDependency::NativeRefFormal { .. }
-        | IrDependency::NativeAccess(_) => false,
+        | IrDependency::NativeRefFormal { .. } => false,
     }
+}
+
+/// Whether an [`IrDependency::InterfaceInstance`] names a chandle handle
+/// variable and one fixed-array marker per instance of its descriptor.
+pub(in crate::sim) fn valid_interface_instance(ir: &IrModel, dependency: &IrDependency) -> bool {
+    let IrDependency::InterfaceInstance {
+        handle,
+        interface,
+        arms,
+    } = dependency
+    else {
+        return false;
+    };
+    ir.objects
+        .get(*handle)
+        .is_some_and(|object| object.ty == crate::sim::ir::IrObjectType::Chandle)
+        && ir
+            .virtual_interfaces
+            .get(*interface)
+            .is_some_and(|interface| interface.instances.len() == arms.len())
+        && arms.iter().all(|arm| match arm {
+            IrDependency::ArrayElement { array, index } => ir
+                .arrays
+                .get(*array)
+                .is_some_and(|array| !array.real && *index < array.total),
+            IrDependency::ArrayContents(array) => {
+                ir.arrays.get(*array).is_some_and(|array| !array.real)
+            }
+            _ => false,
+        })
 }
 
 fn build_processes(ir: &mut IrModel) -> Vec<ExecutionProcess> {
@@ -2254,7 +2293,9 @@ fn collect_object_query_effects(
             collect_chandle_effects(ir, a, effects, visited_calls);
             collect_chandle_effects(ir, b, effects, visited_calls);
         }
+        // A null or unbound handle is a fatal run-time error (SV 25.9).
         IrObjectQuery::VirtualInterfaceInstance { handle, .. } => {
+            effects.push(ExecutionEffect::Terminate);
             collect_chandle_effects(ir, handle, effects, visited_calls);
         }
         IrObjectQuery::Coverage(query) => {

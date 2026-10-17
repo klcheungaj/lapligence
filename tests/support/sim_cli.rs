@@ -899,6 +899,33 @@ pub(crate) fn reject_case_with_error_lines(
     }
 }
 
+/// Run `fixture` with `runtime_args` in both optimizer modes and require a
+/// run-time failure: exit status 1, exactly `expected` on stdout and
+/// `diagnostic` on stderr.
+pub(crate) fn run_case_failing_at_runtime(
+    suite: &str,
+    fixture: &str,
+    runtime_args: &[&str],
+    expected: &str,
+    diagnostic: &str,
+) {
+    for optimized in [false, true] {
+        let output = invoke_with_runtime_args(suite, fixture, optimized, &[], runtime_args);
+        let seen = observed_output(&output);
+        let label = format!("{fixture} {runtime_args:?}, optimized={optimized}");
+        assert_eq!(output.status.code(), Some(1), "{label}: {seen}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            expected,
+            "{label}: {seen}"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(diagnostic),
+            "{label}: {seen}"
+        );
+    }
+}
+
 pub(crate) fn reject_case_with_runtime_args(
     suite: &str,
     fixture: &str,

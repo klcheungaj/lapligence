@@ -272,6 +272,62 @@ collector setting instead of comparing it with a fixed value.
   (decision S99-D6); this design does not call `$random`, so nothing is
   overridden and the run prints `no built-in overridden`.
 
+- `vif_sensitivity.sv` (gate-fixes-2 item 1, decision S99-D7): SV 9.2.2.2.1
+  L11184-11186: "The implicit sensitivity list of an always_comb includes the
+  expansions of the longest static prefix of each variable or select expression
+  that is read within the block or within any function called within the
+  block"; SV 9.4.2.2 L11899: "All net and variable identifiers that appear in the
+  statement will be automatically added to the event expression"; SV 9.2.2.3
+  L11231: "All statements in 9.2.2.2 shall apply to always_latch"; SV 25.9
+  L44930-44932 (above). Each line shows the changes made one time unit
+  earlier. `v` binds `x` until 5. At 1 the members of `x` change: every
+  procedure follows them (`c_el` = `x.mem[2]` 12, `c_var` = `x.mem[i]` with
+  `i` = 1, 11; `nib` = 05; `@*` runs once; `v.b` = 16). At 2 `x` changes again
+  (37, 32; `@*` run 2), at 3 `i` = 2 selects `x.mem[2]` = 32, and at 4 the
+  unbound `y` changes, which wakes nothing (runs stays 2). At 5 `v` = `y`
+  re-runs every procedure on `y` (48, 42; run 3; `y.b` = 49), and the change of
+  the now unbound `x` at 6 wakes nothing. At 7 the latch closes (`en` = 0) while
+  `y` changes (6a, 62): the latch keeps 48, the others follow (run 4, `y.b` = 6b),
+  and at 8 `i` = 1 selects `y.mem[1]` = 61.
+
+- `null_handle_access.sv` (gate-fixes-2 item 2, decision S99-D8): SV 25.9
+  L44893-44895: "A virtual interface shall be initialized before referencing a
+  component of the virtual interface; it has the value null before it is
+  initialized. Attempting to use a null virtual interface shall result in a
+  fatal run-time error."; SV 8.4 L9653-9654: "Accessing nonstatic members (see
+  8.8) or virtual methods (see 8.19) via a null object handle is illegal. The
+  result of an illegal access via a null object is indeterminate, and
+  implementations may issue an error." Each `+case=<n>` (0 to 8) runs one
+  access through the null `v` or `c`: a member read stored to `k`, a member
+  read in a display, an array element read and write, a bit-select write, a
+  method call, a function that reads `v.a`, and a class property read stored
+  and displayed. Every case prints `before`, reports the error at the access
+  and exits with status 1; `k` keeps 5, and neither the display that made the
+  access nor `after` prints.
+
+- Implicit `$finish` ordering (gate-fixes-2 item 3, decision S99-D9): no
+  fixture here and no change. SV 24.3 L43228-43232 ends the simulation
+  "immediately after all the threads ... originating from all initial
+  procedures within all programs have ended", and SV 4.4.2.6 L3184-3185 lets
+  the Reactive region's events "be processed in any order", so llg's
+  implicit `$finish` before a same-step assertion action conforms. The
+  portable case `S99-D9_implicit_finish_reactive` records it.
+
+- `class_method_scope.sv` (gate-fixes-2 item 4, decision S99-D10): SV 21.2.1.6
+  L36379-36381: "The %m format specifier does not accept an argument. Instead,
+  it causes the display task to print the hierarchical name of the design
+  element, subroutine, named block, or labeled statement that invokes the system
+  task containing the format specifier." The subroutine is the method; llg
+  names it below its class and the class below the scope that declares it. At
+  0: `C.f`, `C.t`, `C.s` (a static method) for the compilation-unit class `C`;
+  `E.f` for the override called through a `C` handle; `C.base_only` for the
+  method `E` inherits (through `$sformatf`); `C.N.n` for the class nested in
+  `C`; `p.D.g` for the class in package `p`, named as the package function
+  `p.pf` is; `P.h` for the specialization `P#(4)`; `tb.mf` for the module
+  function. At 1 each instance of `sub` names its own class `L` (`tb.u1.L.k`,
+  `tb.u2.L.k`), and at 2 each generate block its class `G` (`tb.g[0].G.t`,
+  `tb.g[1].G.t`).
+
 ## Procedural concurrent assertions (`procedural_assertions.sv`, gate item G5)
 
 Eight modules under `tb`, finishing at 46; `clk` rises at 5, 15, 25, 35 and 45
@@ -367,6 +423,9 @@ Derivation:
 | `neg_vif_array_increment.sv` | `:10:5: this write to an element of an unpacked array member through a virtual interface is not supported ...` | The same for increments, decrements and output arguments. |
 | `neg_vpi_string_variable.sv` | `:5:18: argument of VPI system task `$input`: a string variable or expression is not supported (only string literals reach VPI applications) in `tb`` | A string variable has no fixed-width argument image in llg's VPI call path. |
 | `neg_builtin_override.sv` (with `builtin_override.c` linked by `--dpi-lib` or loaded by `LLG_VPI_PLUGIN`) | `llg: VPI error: a VPI application registers `$random`, which llg implements as a built-in (called at <path>:6); llg does not support overriding built-in system tasks and functions (IEEE 1800-2009 36.3.2)` | SV 36.3.2 requires the override, which llg does not support; the run stops at startup instead of silently running the built-in (S99-D6). |
+| `neg_vif_sensitivity_formal.sv` | `:12:12: the implicit sensitivity of `tb` cannot follow a virtual-interface member that a called function reads through a handle other than a virtual-interface variable (IEEE 1800-2009 9.2.2.2.1, 25.9)` | SV 9.2.2.2.1 follows reads inside called functions; a handle formal has no value when the process arms its wait, so the read is rejected instead of left out (S99-D7). |
+| `neg_vif_sensitivity_method.sv` | `:13:19: the implicit sensitivity of `tb` cannot follow the storage a virtual-interface method call reads ...` | always_comb would follow the method body, whose instance the handle selects at run time. |
+| `neg_vif_sensitivity_handle.sv` | `:11:19: the implicit sensitivity of `tb` cannot follow a virtual-interface member read through a handle that is neither a variable nor a formal ...` | An element of a virtual-interface array is a handle expression the arming process does not evaluate again. |
 | `neg_procedural_automatic.sv` | `:9:47: automatic variable `i` in a procedural concurrent assertion takes its value when the assertion is queued (IEEE 1800-2009 16.15.6.1); llg does not capture queued values` | SV 16.15.6.1 L26882-26884: a procedural concurrent assertion "shall not sample any const expression or automatic variable, but shall instead save the value of the expression or variable at the time the assertion evaluation attempt is added to the procedural assertion queue"; llg keeps no values with a queued instance. |
 | `neg_procedural_const.sv` | `:9:45: a const cast in a procedural concurrent assertion takes its value when the assertion is queued ...` | The same rule for a `const'` cast. |
 | `neg_procedural_edge.sv` | `:8:5: the clock inferred from the procedure (`edge` of the expression at line 6, column 17) cannot clock a concurrent assertion in llg ...` | SV 16.15.6 c) infers `edge clk`; llg assertion clocks are a posedge or a negedge. |

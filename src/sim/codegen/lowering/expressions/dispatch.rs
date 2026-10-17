@@ -71,30 +71,35 @@ impl<'a> Codegen<'a> {
         self.lower_expr(path, initializer).map(Some)
     }
 
-    fn lower_subroutine_localparam_value(
+    /// Lower a parameter that no instance collection records: a localparam
+    /// of a subroutine, or any parameter of a class. Each class
+    /// specialization owns its own parameter nodes, so the frontend value of
+    /// the referenced node is that specialization's value (SV 8.24).
+    fn lower_scoped_parameter_value(
         &self,
         scope_path: &str,
         parameter: NodeId,
     ) -> Result<Option<IrExpr>, String> {
-        let NodeKind::Param {
-            value, local: true, ..
-        } = self.kind(parameter)
-        else {
+        let NodeKind::Param { value, local, .. } = self.kind(parameter) else {
             return Ok(None);
         };
         let mut parent = self.node(parameter).parent;
-        let mut in_subroutine = false;
+        let mut admitted = false;
         while let Some(scope) = parent {
             match self.kind(scope) {
                 NodeKind::FuncTask { .. } => {
-                    in_subroutine = true;
+                    admitted = *local;
+                    break;
+                }
+                NodeKind::ClassDef => {
+                    admitted = true;
                     break;
                 }
                 NodeKind::ModuleInst { .. } | NodeKind::GenScope => break,
                 _ => parent = self.node(scope).parent,
             }
         }
-        if !in_subroutine {
+        if !admitted {
             return Ok(None);
         }
         let Some(parent) = self.node(parameter).parent else {
@@ -741,27 +746,6 @@ impl<'a> Codegen<'a> {
         } else {
             selected
         }))
-    }
-
-    /// Render context for the IR built so far (the enclosing function, when
-    /// any, resolves formal reads).
-    #[allow(dead_code)] // retained for fragment callers pending the lowering migration
-    pub(in super::super) fn render_ctx(&self) -> RCtx<'_> {
-        RCtx {
-            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
-            model: &self.model,
-            func: self.cur_fn_ir.map(|i| &self.model.funcs[i]),
-            sampled: false,
-            activation_label: None,
-            constants: None,
-        }
-    }
-
-    /// Render a lowered expression to its C code.
-    #[allow(dead_code)] // retained for fragment callers pending the lowering migration
-    pub(in super::super) fn render_ir_code(&self, ir: &IrExpr) -> Result<String, String> {
-        let ctx = self.render_ctx();
-        Ok(render_expr(&ctx, ir)?.code)
     }
 
     /// Lower an expression node decision-for-decision like the pre-IR
@@ -1983,7 +1967,7 @@ impl<'a> Codegen<'a> {
             if let Some(value) = self.lower_fixed_array_parameter_value(scope_path, t)? {
                 return Ok(value);
             }
-            if let Some(value) = self.lower_subroutine_localparam_value(scope_path, t)? {
+            if let Some(value) = self.lower_scoped_parameter_value(scope_path, t)? {
                 return Ok(value);
             }
             if let NodeKind::EnumConst { value } = self.kind(t) {

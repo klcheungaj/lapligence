@@ -627,6 +627,49 @@ fn evaluated_event_emits_owned_context_and_contextual_callback() {
     assert!(!rendered.contains("out[0] ="));
 }
 
+/// The legacy fragment entry points reject valid IR before rendering, so a
+/// class or virtual-interface access can reach generated C only through the
+/// owned emitter and its immediate exit checks (S99-D8). Their remaining
+/// non-test callers are the legacy model renderer, which is dead code.
+#[test]
+fn legacy_fragment_emitter_rejects_valid_ir() {
+    let model = IrModel::new("legacy".to_owned(), 1).unwrap();
+    let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+        constants: None,
+    };
+    let expression = IrExpr::try_new(IrExprKind::Fill(0), 1, false, None).unwrap();
+    model.validate_expr(&expression, None).unwrap();
+    let statement = IrStmt::If {
+        cond: expression.clone(),
+        then_: Vec::new(),
+        els: None,
+        check: crate::sim::ir::IrUniquePriorityCheck::None,
+    };
+    model.validate_stmt(&statement, None).unwrap();
+    let helper = IrPreFn::MonEval {
+        c_name: "legacy".into(),
+        args: vec![expression.clone()],
+        context: None,
+        item: false,
+        real_item: false,
+    };
+    model.validate_pre_fn(&helper, None).unwrap();
+    let errors = [
+        render_expr(&ctx, &expression).err(),
+        render_stmt(&ctx, &statement).err(),
+        render_pre_fn(&ctx, &helper).err(),
+    ];
+    for error in errors {
+        let error = error.expect("the legacy fragment emitter rendered IR");
+        assert_eq!(error.detail(), super::OWNER_MIGRATION_DIAGNOSTIC);
+    }
+}
+
 #[test]
 fn dynamic_runtime_requires_generated_owner_lifetimes() {
     let error = super::require_owned_emission().expect_err("P05 must gate generated C");

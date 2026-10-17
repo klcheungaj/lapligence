@@ -445,6 +445,168 @@ fn virtual_interface_array_member_limits_are_located() {
     );
 }
 
+/// Gate-fixes-2 item 1 / IEEE 1800-2009 9.2.2.2.1, 9.4.2.2, 25.9 (S99-D7):
+/// always_comb, always_latch and `@*` follow members read through a
+/// virtual-interface handle to the instance it binds, re-arm when the handle
+/// is rebound and ignore instances it does not bind.
+#[test]
+fn implicit_sensitivity_follows_virtual_interfaces() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "vif_sensitivity",
+        include_str!("../fixtures/sim/feature_completion/sim_099/vif_sensitivity.out"),
+        &[],
+        &[],
+    );
+}
+
+/// Gate-fixes-2 item 4: `%m` in a class method names the method below its
+/// class and the scope that declares the class (S99-D10).
+#[test]
+fn class_method_scope_names_the_method() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "class_method_scope",
+        include_str!("../fixtures/sim/feature_completion/sim_099/class_method_scope.out"),
+        &[],
+        &[],
+    );
+}
+
+/// The owned Db keeps the scope that declares each class, although class
+/// nodes have no parent: the package, the enclosing class, each module
+/// instance's own class, and the compilation unit for a specialization of a
+/// generic class (not the generic definition).
+#[test]
+fn class_declaring_scopes_are_owned() {
+    use llg::core::{
+        compile,
+        db::{Db, NodeKind},
+    };
+
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/feature_completion/sim_099/class_method_scope.sv");
+    let database = sim_harness::with_frontend_temp_cwd("sim-099-db", |_| {
+        let compiled = compile::compile_checked(&compile::CompileOpts {
+            files: vec![source.to_string_lossy().into_owned()],
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        })
+        .map_err(|error| format!("compile: {error}"))?;
+        Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))
+    })
+    .expect("checked compilation");
+    let classes = |name: &str| -> Vec<_> {
+        database
+            .classes()
+            .iter()
+            .copied()
+            .filter(|id| {
+                database.node(*id).name == name
+                    && database.semantic_detail(*id) != Some("GenericClassDef")
+            })
+            .collect()
+    };
+    let scope = |class| {
+        let scope = database
+            .class_declaring_scope(class)
+            .unwrap_or_else(|| panic!("class {class:?} has no declaring scope"));
+        (database.node(scope).name.clone(), database.node_kind(scope))
+    };
+    let [d] = classes("D")[..] else {
+        panic!("one class D")
+    };
+    let (name, kind) = scope(d);
+    assert!(name == "p" && matches!(kind, NodeKind::Package), "{name}");
+    let [n] = classes("N")[..] else {
+        panic!("one class N")
+    };
+    let (name, kind) = scope(n);
+    assert!(name == "C" && matches!(kind, NodeKind::ClassDef), "{name}");
+    let mut instances: Vec<String> = classes("L")
+        .into_iter()
+        .map(|class| {
+            let (name, kind) = scope(class);
+            assert!(matches!(kind, NodeKind::ModuleInst { .. }), "{name}");
+            name
+        })
+        .collect();
+    instances.sort();
+    assert_eq!(instances, ["u1", "u2"]);
+    for class in classes("P") {
+        let scope = database.class_declaring_scope(class).expect("scope of P");
+        assert_eq!(database.semantic_detail(scope), Some("CompilationUnit"));
+    }
+    assert!(!classes("P").is_empty(), "a specialization of P");
+}
+
+/// Gate-fixes-2 item 1: reads an implicit sensitivity cannot follow through a
+/// virtual interface stop compilation at their position instead of being
+/// left out of the sensitivity.
+#[test]
+fn implicit_sensitivity_virtual_interface_limits_are_located() {
+    let reason = "(IEEE 1800-2009 9.2.2.2.1, 25.9)";
+    sim_cli::reject_case(
+        SUITE,
+        "neg_vif_sensitivity_formal",
+        &format!(
+            "neg_vif_sensitivity_formal.sv:12:12: the implicit sensitivity of `tb` cannot \
+             follow a virtual-interface member that a called function reads through a handle \
+             other than a virtual-interface variable {reason}"
+        ),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_vif_sensitivity_method",
+        &format!(
+            "neg_vif_sensitivity_method.sv:13:19: the implicit sensitivity of `tb` cannot \
+             follow the storage a virtual-interface method call reads {reason}"
+        ),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_vif_sensitivity_handle",
+        &format!(
+            "neg_vif_sensitivity_handle.sv:11:19: the implicit sensitivity of `tb` cannot \
+             follow a virtual-interface member read through a handle that is neither a \
+             variable nor a formal {reason}"
+        ),
+    );
+}
+
+/// Gate-fixes-2 item 2 / IEEE 1800-2009 25.9, 8.4 (S99-D8): an access
+/// through a null virtual interface or class handle is a fatal run-time
+/// error that stops the run at once, in its own statement, in a called
+/// function and in an interface method call, for packed members, selects,
+/// array elements and class properties.
+#[test]
+fn null_handle_accesses_stop_at_once() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_099/null_handle_access.out");
+    let vif = "virtual interface access failed: virtual interface";
+    let class = "null class handle access: property access at tb:";
+    let cases = [
+        ("0", format!("{vif} member access at tb:33:14")),
+        ("1", format!("{vif} member access at tb:34:33")),
+        ("2", format!("{vif} member access at tb:35:14")),
+        ("3", format!("{vif} member access at tb:36:10")),
+        ("4", format!("{vif} member access at tb:37:10")),
+        ("5", format!("{vif} method call at tb:38:14")),
+        ("6", format!("{vif} member access at tb:27:12")),
+        ("7", format!("{class}40:14")),
+        ("8", format!("{class}41:40")),
+    ];
+    for (case, diagnostic) in cases {
+        sim_cli::run_case_failing_at_runtime(
+            SUITE,
+            "null_handle_access",
+            &[&format!("+case={case}")],
+            expected,
+            &diagnostic,
+        );
+    }
+}
+
 /// G4 / IEEE 1800-2009 32.9, D.4, D.7: string literals of `string` formals
 /// reach a VPI application as string constants and scope actuals as module
 /// handles, for built-ins without a lowering and user system tasks alike; a

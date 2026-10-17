@@ -1,0 +1,17 @@
+C.f.fb x=3
+C.g.outer.inner
+s=3
+counted=2
+1000 C.t.tf a
+2000 C.t.tf.tb2 b
+base=29 hits=4
+Derived.scan.again extra=104
+derived=104
+P.fill.fb calls=1 v=f
+P.fill.fb calls=2 v=f
+P.fill.fb calls=1 v=fff
+3000 P.tick.tk c=1
+4000 P.tick.tk c=1
+9000 tb.Wt.watch.watchers.w1 k=10
+10000 tb.Wt.watch.watchers.w1 k=20
+12000 watched 1 1

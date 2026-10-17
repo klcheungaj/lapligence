@@ -1,0 +1,13 @@
+W=4 L=8 bits=4 tmp=15
+W=16 L=32 bits=8 tmp=255
+W=8 L=16 bits=4 tmp=15
+5 17 12
+48 24
+12 40
+50 6 11 5 five
+30 4 7 3 o
+10 15 9
+9 13 5
+randomized 1 1 module W=99
+tb.R.show W=3 below=1
+tb.R.show W=7 below=1

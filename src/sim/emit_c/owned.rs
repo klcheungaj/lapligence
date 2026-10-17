@@ -192,11 +192,15 @@ pub(super) struct Frame<'a, 'm> {
     /// become cancelled.
     cancellation_points: usize,
     may_disable: HashMap<usize, bool>,
+    may_terminate: HashMap<usize, bool>,
     access_stack: Vec<String>,
     /// Resolving a wait dependency's native-access receiver: null checks
     /// and class-property lookups yield null or scratch storage silently,
     /// because arming a wait on an unbound handle is not an access.
     quiet_receivers: bool,
+    /// Nesting depth of statements being rendered. Expression code outside
+    /// any statement (read-only callbacks, evaluators) has no exit path.
+    statement_depth: usize,
     /// Containers written in place through element-item accesses during the
     /// current statement; their readers are notified once it completes.
     pending_touches: Vec<(String, &'static str)>,
@@ -329,6 +333,51 @@ impl<'a, 'm> Frame<'a, 'm> {
         self.resume_numbers.len()
     }
 
+    /// Leave at once when `failed`, a C condition that holds only after an
+    /// access through a null class handle (SV 8.4) or a null or unbound
+    /// virtual interface (25.9) reported its fatal run-time error: nothing
+    /// after the failed access runs, not even the rest of its statement.
+    /// Checking the failed value keeps the success path to one register
+    /// compare.
+    fn exit_on_failed_access(&mut self, failed: &str) {
+        if self.statement_depth == 0 || self.read_only_callback || self.quiet_receivers {
+            return;
+        }
+        if self.plain_exits() {
+            self.line(format!(
+                "if (LLG_CO_UNLIKELY({failed}) && llg_rt_exiting()) goto _llg_return;"
+            ));
+        } else {
+            self.line(format!(
+                "if (LLG_CO_UNLIKELY({failed})) LLG_CO_EXIT_CHECK(ch);"
+            ));
+        }
+    }
+
+    /// Leave at once after a plain call (one that returns instead of
+    /// propagating `LLG_CO_EXIT`) whose callee may have requested
+    /// termination: a fatal access, `$finish` or a budget stop inside it
+    /// returns early, and the caller must not run on with its result
+    /// (`llg_rt.h`: callers check immediately).
+    fn exit_after_call(&mut self, function: usize, dynamic: bool) {
+        if self.statement_depth == 0 || self.read_only_callback || self.quiet_receivers {
+            return;
+        }
+        let may_terminate = dynamic
+            || *self.may_terminate.entry(function).or_insert_with(|| {
+                crate::sim::execution::effects_for_function(self.ctx.model, function)
+                    .contains(&crate::sim::execution::ExecutionEffect::Terminate)
+            });
+        if !may_terminate {
+            return;
+        }
+        if self.plain_exits() {
+            self.line("if (LLG_CO_UNLIKELY(llg_rt_exiting())) goto _llg_return;");
+        } else {
+            self.line("LLG_CO_EXIT_CHECK(ch);");
+        }
+    }
+
     /// Whether this frame exits like a plain function (`goto _llg_return`
     /// after termination) rather than by returning `LLG_CO_EXIT`.
     fn plain_exits(&self) -> bool {
@@ -367,8 +416,10 @@ impl<'a, 'm> Frame<'a, 'm> {
             cancellation_return: false,
             cancellation_points: 0,
             may_disable: HashMap::new(),
+            may_terminate: HashMap::new(),
             access_stack: Vec::new(),
             quiet_receivers: false,
+            statement_depth: 0,
             pending_touches: Vec::new(),
             construction_stack: Vec::new(),
             layout: FrameLayout::with_backend(storage, ctx.value_backend),

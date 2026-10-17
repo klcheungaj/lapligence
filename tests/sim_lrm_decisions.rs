@@ -2697,6 +2697,43 @@ fn s99_d5_inferred_clock() {
 }
 
 #[test]
+fn s99_d7_vif_implicit_sensitivity() {
+    run_decision(
+        "S99-D7_vif_implicit_sensitivity",
+        include_str!("fixtures/sim/lrm_decisions/S99-D7_vif_implicit_sensitivity.out"),
+    );
+}
+
+#[test]
+fn s99_d8_null_access_stops() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S99-D8_null_access_stops.out");
+    sim_cli::run_case_checked_matrix(SUITE, "S99-D8_null_access_stops", &[], &|label, output| {
+        runtime_error(
+            label,
+            output,
+            expected,
+            "virtual interface access failed: virtual interface member access at tb:26:45",
+        );
+    });
+}
+
+#[test]
+fn s99_d9_implicit_finish_reactive() {
+    run_decision(
+        "S99-D9_implicit_finish_reactive",
+        include_str!("fixtures/sim/lrm_decisions/S99-D9_implicit_finish_reactive.out"),
+    );
+}
+
+#[test]
+fn s99_d10_class_method_scope() {
+    run_decision(
+        "S99-D10_class_method_scope",
+        include_str!("fixtures/sim/lrm_decisions/S99-D10_class_method_scope.out"),
+    );
+}
+
+#[test]
 fn s99_d6_builtin_override() {
     // Negative case: llg stops at startup, so the expected stdout is empty.
     assert!(include_str!("fixtures/sim/lrm_decisions/S99-D6_builtin_override.out").is_empty());
@@ -2712,5 +2749,21 @@ fn s99_d6_builtin_override() {
         case,
         "a VPI application registers `$random`, which llg implements as a built-in",
         &["--dpi-lib", &archive],
+    );
+}
+
+#[test]
+fn cd_d1_class_block_disable() {
+    run_decision(
+        "CD-D1_class_block_disable",
+        include_str!("fixtures/sim/lrm_decisions/CD-D1_class_block_disable.out"),
+    );
+}
+
+#[test]
+fn cd_d2_named_block_scope() {
+    run_decision(
+        "CD-D2_named_block_scope",
+        include_str!("fixtures/sim/lrm_decisions/CD-D2_named_block_scope.out"),
     );
 }

@@ -706,7 +706,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   timing and forks reject; delayed NBAs are not rejected merely for their delay.
   Class-property paths and class method calls add nothing, not even the
   handle variable (`h` in `h.x`/`h.f()`; a direct `h == null` is a variable
-  read) (§9.2.2.2.1) and virtual-interface members add nothing (§25.9); dynamic
+  read) (§9.2.2.2.1). A member read through a virtual-interface handle (packed
+  members, their selects and elements `v.mem[i]` of unpacked array members,
+  also inside called functions through a module-level handle) waits on the
+  member of the instance the handle binds, re-armed when the handle is rebound
+  (S99-D7); handles the arming process cannot evaluate (function formals,
+  vif-array elements) and `v.f()` calls are located errors
+  ([sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md)); dynamic
   container elements and sizes are read through their contents/shape markers
   ([sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
   Native record leaves held in dynamic containers remain partial.
@@ -924,8 +930,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   handle's change marker, which also drives whole-handle ports and `@(h)`
   (SIM-007). Module process handles publish the same marker (SIM-015).
   Like `always_comb`, `@*` adds nothing for a property read through a handle
-  (`h.v`) or a virtual-interface member (SV §§9.2.2.2.1, 25.9), but it adds the
-  handle identifier `h` itself (§9.4.2.2), which `always_comb` does not; explicit event
+  (`h.v`) (SV §9.2.2.2.1), but it adds the handle identifier `h` itself
+  (§9.4.2.2), which `always_comb` does not; like `always_comb`, it follows a
+  virtual-interface member to the bound instance (S99-D7); explicit event
   controls and `wait` follow them instead (below). Built-in semaphore/mailbox
   handles have no change marker and reject in sensitivity and wait expressions.
   V §9.7.5 **[2001]**.
@@ -1608,7 +1615,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   conversions round to 64-bit integers and integral `%e/%f/%g` arguments
   convert to real. String literals in argument lists start format segments;
   empty arguments print a space. `%m` names the enclosing named block,
-  subroutine or generate block. `%p` prints arrays (declared order), queues,
+  subroutine or generate block; in a class method it names the method below its
+  class and the scope that declares the class (`C.f`, `p.D.g`, `tb.L.k`,
+  S99-D10), followed by its named blocks (`C.f.fb`); a named `fork`-`join`
+  is a named block (`tb.top`, CD-D2). `%p` prints arrays (declared order), queues,
   dynamic and associative arrays, unpacked and packed structures (named
   members), packed unions, enums (names), quoted strings, other singular
   values as unformatted display text (SV §21.2.1.7), class objects (properties, cycle
@@ -1997,8 +2007,16 @@ These are bounded implementations, not full verification-infrastructure support.
   `this`
   ([sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md)).
   A null receiver, property access or copy
-  source is a run-time error at its source position
+  source is a run-time error at its source position that ends the run before
+  the rest of the statement runs (S99-D8)
   ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).
+  Methods hold named `begin`-`end` and `fork`-`join` blocks with automatic
+  and static locals; a `disable` of such a block or of a class task, from the
+  method or from another process, ends every active execution in every
+  object (CD-D1). Value parameters, localparams and type parameters read in
+  method bodies, nested classes and out-of-block (`extern`) bodies take each
+  specialization's own values
+  ([ki_class_defects](../tests/fixtures/sim/feature_completion/ki_class_defects/readme.md)).
   Unreachable objects, including cycles through handle, container and record
   properties, are reclaimed at scheduler safe points (after a process turn or
   region callback) once enough objects were allocated; objects reachable from
@@ -2026,8 +2044,8 @@ These are bounded implementations, not full verification-infrastructure support.
   samples are present. Timed tasks dispatch through any receiver storage and
   stay on the instance named at the call while the variable is rebound; event
   formals of every direction keep their identity; a method call or member
-  access through a null handle is a run-time error at its source position
-  that stops the process
+  access through a null handle is a fatal run-time error at its source
+  position that ends the run before the rest of the statement runs (S99-D8)
   ([sim_012](../tests/fixtures/sim/feature_completion/sim_012/readme.md)).
   Synchronous drives through handles, views, class properties and array
   elements (output, skewed, cycle-delayed, selected and inout-net drives) go

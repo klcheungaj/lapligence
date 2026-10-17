@@ -171,7 +171,12 @@ impl EmitCtx<'_, '_> {
         };
         let fidx = self.cg.dpi_open_callee(fidx, &formals, &bound)?;
         let call = self.lower_call_stmts(fidx, callee_inst, h, &formals, &bound, call_receiver)?;
-        if can_be_disabled && !self.cg.class_nodes.contains_key(&callee_inst) {
+        // A class task's call keeps the activation only when a `disable`
+        // names the task, matching its body (`emit_func_task_with`).
+        if can_be_disabled
+            && (!self.cg.class_nodes.contains_key(&callee_inst)
+                || self.cg.task_is_disable_target(ft))
+        {
             // Keep cancellation visible after the callee retires its own
             // activation, until caller-side output copy-out has finished.
             Ok(IrStmt::ActivationScope {

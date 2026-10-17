@@ -269,13 +269,15 @@ impl Frame<'_, '_> {
         let mut callee = function.c_name.clone();
         if let Some(call) = virtual_call {
             let receiver = self.chandle(&call.receiver)?;
-            parameters.push(self.scalar(
+            let required = self.scalar(
                 "void*",
                 format!(
                     "llg_vif_require({receiver}, {})",
                     super::c_string_literal(&call.site)
                 ),
-            ));
+            );
+            self.exit_on_failed_access(&format!("!{required}"));
+            parameters.push(required);
             callee = format!("llg_vif_call_{}_{}", call.interface, call.method);
         } else if let Some(receiver) = receiver {
             parameters.push(self.chandle(receiver)?);
@@ -885,6 +887,11 @@ impl Frame<'_, '_> {
         // callee, or any override behind dynamic dispatch, may disable an
         // activation of this process; copy-out must then be skipped.
         let dynamic = virtual_dispatch || virtual_call.is_some();
+        // A coroutine call propagates an exit itself; a plain call, or a
+        // dispatched implementation that ran as one, returns.
+        if !coroutine {
+            self.exit_after_call(f, dynamic);
+        }
         if !coroutine && !dispatch_coroutine && (dynamic || self.callee_may_disable(f)) {
             self.cancellation_point();
         }

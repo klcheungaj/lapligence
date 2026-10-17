@@ -42,8 +42,14 @@ static void* llg_class_require(void* object, const char* site) {
     }
     return object;
 }
+/* Callers test for NULL first, so the guard folds into their test; no class
+ * has this id, so a dispatcher reached with NULL takes its failure branch. */
+#define LLG_CLASS_NO_OBJECT (UINT32_MAX - 1u)
 static uint32_t llg_class_id(void* object) {
-    uint32_t id = ((llg_class_object_t*)llg_class_require(object, "class dispatch"))->class_id;
+    const llg_class_object_t* checked =
+        (const llg_class_object_t*)llg_class_require(object, "class dispatch");
+    if (!checked) return LLG_CLASS_NO_OBJECT;
+    uint32_t id = checked->class_id;
     if (id == LLG_CLASS_RECLAIMED) {
         fprintf(stderr, "llg: access to a reclaimed class object (missing collector root)\n");
         abort();

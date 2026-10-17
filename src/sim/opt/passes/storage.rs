@@ -103,7 +103,8 @@ impl SignalNames {
             | IrDependency::SharedNative { .. }
             | IrDependency::RefFormal { .. }
             | IrDependency::NativeRefFormal { .. }
-            | IrDependency::NativeAccess(_) => None,
+            | IrDependency::NativeAccess(_)
+            | IrDependency::InterfaceInstance { .. } => None,
         }
     }
 }

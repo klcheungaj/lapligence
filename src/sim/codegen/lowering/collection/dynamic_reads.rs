@@ -16,9 +16,12 @@
 //! a missed dependency would leave the wait blocked forever.
 //!
 //! `always_comb` adds nothing for class objects, not even the handle
-//! variables of property paths (SV 9.2.2.2.1), `@*` keeps those handle
-//! identifiers (SV 9.4.2.2), and virtual-interface members cannot be used
-//! in sensitivity lists (SV 25.9).
+//! variables of property paths (SV 9.2.2.2.1), and `@*` keeps those handle
+//! identifiers (SV 9.4.2.2). The implicit sensitivity of `always_comb`,
+//! `always_latch` and `@*` does follow members read through a
+//! virtual-interface handle to the instance it binds when the process arms
+//! (`with_interface_reads`, decision S99-D7); a read it cannot follow is a
+//! located error.
 
 use super::*;
 use crate::sim::ir::IrNativeAccessKind;
@@ -26,6 +29,10 @@ use crate::sim::ir::IrNativeAccessKind;
 /// Longest handle-property chain (`a.b.c.d.v`) whose links a wait follows;
 /// deeper links reject at the emitter's own access-depth guard first.
 const MAX_HANDLE_PROPERTY_DEPTH: usize = 256;
+
+/// Why a member read inside a called function cannot be followed.
+const CALLEE_HANDLE: &str =
+    "a virtual-interface member that a called function reads through a handle other than a virtual-interface variable";
 
 /// Deepest nest of calls whose bodies a wait's dependency walk follows.
 const MAX_CALLEE_DEPTH: usize = 64;
@@ -72,6 +79,15 @@ impl Codegen<'_> {
             target.is_some_and(|target| self.virtual_interface_spelling(target).is_some())
                 && parts.iter().skip(position + 1).any(|part| !part.is_empty())
         })
+    }
+
+    /// Whether `node` calls an interface method through a virtual-interface
+    /// handle (`v.f()`).
+    fn virtual_interface_method_call(&self, node: NodeId) -> bool {
+        matches!(self.kind(node), NodeKind::MethodCall {
+            receiver: Some(receiver),
+            ..
+        } if self.virtual_interface_spelling(*receiver).is_some())
     }
 
     /// The nonvirtual class function a method call `node` invokes, with its
@@ -695,5 +711,296 @@ impl Codegen<'_> {
         let result = prepared.and_then(|()| collect(self));
         self.dynamic_reads.clear();
         result
+    }
+
+    /// Run `collect` (an implicit-sensitivity read walk over `root`) with
+    /// the virtual-interface member reads of `root` resolved to dependencies
+    /// on the storage of the instance the handle binds. always_comb,
+    /// always_latch and `@*` are sensitive to what the block reads (SV
+    /// 9.2.2.2.1, 9.4.2.2); through a virtual interface that is the member of
+    /// the instance the handle names (25.9), so the process waits on that
+    /// member, resolved again every time it arms, beside the handle variable
+    /// the read walk already adds: rebinding the handle wakes the process,
+    /// which arms on the new instance. Members the block also writes through
+    /// the same handle and member are left out (9.2.2.2.1 b). Function bodies
+    /// are followed when `include_function_bodies` (always_comb).
+    pub(in super::super) fn with_interface_reads<T>(
+        &mut self,
+        path: &str,
+        root: NodeId,
+        include_function_bodies: bool,
+        collect: impl FnOnce(&Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        if self.model.virtual_interfaces.is_empty() {
+            return collect(self);
+        }
+        let saved_reads = std::mem::take(&mut self.dynamic_reads);
+        let saved_errors = std::mem::take(&mut self.dynamic_read_errors);
+        let prepared = self.prepare_interface_reads(path, root, include_function_bodies);
+        let result = prepared.and_then(|()| collect(self));
+        self.dynamic_reads = saved_reads;
+        self.dynamic_read_errors = saved_errors;
+        result
+    }
+
+    /// The nodes an implicit-sensitivity walk of `root` can reach, each with
+    /// whether it lies in a called function's body. Procedural concurrent
+    /// assertions (S99-D2), class property paths and class method bodies add
+    /// nothing (SV 9.2.2.2.1), so they are not entered.
+    fn implicit_read_nodes(
+        &self,
+        root: NodeId,
+        include_function_bodies: bool,
+    ) -> Vec<(NodeId, bool)> {
+        let mut nodes = Vec::new();
+        let mut visited = HashSet::new();
+        let mut pending = vec![(root, false)];
+        while let Some((node, in_callee)) = pending.pop() {
+            match self.kind(node) {
+                NodeKind::Stmt(StmtKind::ConcurrentAssertion { kind, .. })
+                    if *kind != ConcurrentAssertionKind::Expect =>
+                {
+                    continue;
+                }
+                NodeKind::Expr(ExprKind::HierPath { .. })
+                    if self.class_field_target(node).is_some() =>
+                {
+                    continue;
+                }
+                NodeKind::FuncCall {
+                    callee: Some(callee),
+                    is_task: false,
+                    ..
+                } if include_function_bodies && visited.insert(*callee) => {
+                    if let Some(body) = self.func_body(*callee) {
+                        pending.push((body, true));
+                    }
+                }
+                _ => {}
+            }
+            nodes.push((node, in_callee));
+            pending.extend(
+                self.node(node)
+                    .children
+                    .iter()
+                    .rev()
+                    .map(|child| (*child, in_callee)),
+            );
+        }
+        nodes
+    }
+
+    /// The handle and member of each virtual-interface member an assignment
+    /// target `lhs` writes (`v.x`, `v.x[i]`, `v.mem[i]`, concatenations).
+    fn written_interface_members(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        out: &mut HashSet<(NodeId, String)>,
+    ) -> Result<(), String> {
+        let base = match self.kind(lhs) {
+            NodeKind::Expr(ExprKind::Operation {
+                op: Operation::Concat,
+                ..
+            }) => {
+                for child in self.node(lhs).children.clone() {
+                    self.written_interface_members(path, child, out)?;
+                }
+                return Ok(());
+            }
+            NodeKind::Expr(ExprKind::HierPath { .. }) => {
+                if let Some(key) = self.virtual_interface_member_key(path, lhs)? {
+                    out.insert(key);
+                }
+                return Ok(());
+            }
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::ArraySelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. },
+            ) => *base,
+            _ => return Ok(()),
+        };
+        if let Some(element) = self.virtual_interface_array_element(path, lhs, true)? {
+            out.insert(element.key);
+        } else {
+            self.written_interface_members(path, base, out)?;
+        }
+        Ok(())
+    }
+
+    /// A located rejection of a virtual-interface read that an implicit
+    /// sensitivity cannot follow.
+    fn unobservable_interface_read(&self, path: &str, node: NodeId, what: &str) -> String {
+        format!(
+            "{}: the implicit sensitivity of `{}` cannot follow {what} (IEEE 1800-2009 9.2.2.2.1, 25.9)",
+            self.source_location(node),
+            self.source_path(path)
+        )
+    }
+
+    fn prepare_interface_reads(
+        &mut self,
+        path: &str,
+        root: NodeId,
+        include_function_bodies: bool,
+    ) -> Result<(), String> {
+        let nodes = self.implicit_read_nodes(root, include_function_bodies);
+        let mut written = HashSet::new();
+        for (node, _) in &nodes {
+            if let NodeKind::Stmt(StmtKind::Assign { .. }) = self.kind(*node) {
+                if let Some(lhs) = self.node(*node).children.first().copied() {
+                    self.written_interface_members(path, lhs, &mut written)?;
+                }
+            }
+        }
+        // Structural member paths of element selects (`v.mem` of `v.mem[i]`)
+        // are no reads of their own.
+        let mut structural = HashSet::new();
+        // Parents are listed before their children, so a member path that
+        // fails (`v.s.f`) yields to a member path below it that succeeds.
+        let mut failed: Vec<(NodeId, String)> = Vec::new();
+        for (node, in_callee) in nodes {
+            if structural.contains(&node) {
+                continue;
+            }
+            // always_comb follows called functions, but not into the
+            // implementation a virtual-interface method call selects.
+            if include_function_bodies && self.virtual_interface_method_call(node) {
+                let error = self.unobservable_interface_read(
+                    path,
+                    node,
+                    "the storage a virtual-interface method call reads",
+                );
+                self.dynamic_read_errors.insert(node, error);
+                continue;
+            }
+            let element = match self.kind(node) {
+                NodeKind::Expr(
+                    ExprKind::BitSelect { .. }
+                    | ExprKind::ArraySelect { .. }
+                    | ExprKind::PartSelect { .. }
+                    | ExprKind::IndexedPartSelect { .. },
+                ) => self.virtual_interface_array_element(path, node, false),
+                _ => Ok(None),
+            };
+            let element = match element {
+                Ok(element) => element,
+                Err(error) => {
+                    self.dynamic_read_errors.insert(node, error);
+                    continue;
+                }
+            };
+            if let Some(element) = element {
+                structural.insert(element.member_path);
+                if written.contains(&element.key) {
+                    continue;
+                }
+                let IrChandleExpr::Read(handle) = element.handle else {
+                    let error = self.unobservable_interface_read(
+                        path,
+                        node,
+                        "an element of an unpacked array member read through a handle other than a virtual-interface variable",
+                    );
+                    self.dynamic_read_errors.insert(node, error);
+                    continue;
+                };
+                let mut arms = Vec::new();
+                for array in &element.arrays {
+                    let mut dependencies = Vec::new();
+                    self.add_fixed_array_dependency(
+                        array,
+                        &element.indices,
+                        &mut HashSet::new(),
+                        &mut dependencies,
+                    );
+                    arms.extend(dependencies);
+                }
+                // A constant index outside the bounds reads no storage.
+                if arms.len() == element.arrays.len() {
+                    self.dynamic_reads.entry(node).or_default().push(
+                        IrDependency::InterfaceInstance {
+                            handle,
+                            interface: element.descriptor,
+                            arms,
+                        },
+                    );
+                }
+                continue;
+            }
+            if !self.dynamic_interface_member(node) {
+                continue;
+            }
+            let key = match self.virtual_interface_member_key(path, node) {
+                Ok(key) => key,
+                Err(error) => {
+                    failed.push((node, error));
+                    continue;
+                }
+            };
+            if key.is_some_and(|key| written.contains(&key)) {
+                continue;
+            }
+            let read = match self.virtual_interface_member_expr(path, node) {
+                Ok(read) => read,
+                // A handle formal or local of a called function has no
+                // value when the process arms.
+                Err(_) if in_callee => {
+                    let error = self.unobservable_interface_read(path, node, CALLEE_HANDLE);
+                    self.dynamic_read_errors.insert(node, error);
+                    continue;
+                }
+                Err(error) => {
+                    failed.push((node, error));
+                    continue;
+                }
+            };
+            let Some(IrExprKind::LocalRead(name)) = read.map(|read| read.kind().clone()) else {
+                continue;
+            };
+            let receiver = self
+                .model
+                .native_accesses
+                .iter()
+                .find(|access| access.name == name)
+                .map(|access| access.receiver.clone());
+            // Inside a called function only a module-level handle names the
+            // same storage when the process arms.
+            let followed = receiver.is_some_and(|receiver| {
+                if in_callee {
+                    matches!(receiver, IrChandleExpr::Read(_))
+                } else {
+                    Self::rearmable_handle(&receiver)
+                }
+            });
+            if !followed {
+                let error = self.unobservable_interface_read(
+                    path,
+                    node,
+                    if in_callee {
+                        CALLEE_HANDLE
+                    } else {
+                        "a virtual-interface member read through a handle that is neither a variable nor a formal"
+                    },
+                );
+                self.dynamic_read_errors.insert(node, error);
+                continue;
+            }
+            self.dynamic_reads
+                .entry(node)
+                .or_default()
+                .push(IrDependency::NativeAccess(name));
+        }
+        for (node, error) in failed {
+            let resolved_below = self.node(node).children.iter().any(|child| {
+                self.dynamic_reads.contains_key(child)
+                    || self.dynamic_read_errors.contains_key(child)
+            });
+            if !resolved_below {
+                self.dynamic_read_errors.insert(node, error);
+            }
+        }
+        Ok(())
     }
 }

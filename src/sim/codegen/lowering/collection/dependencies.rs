@@ -1218,7 +1218,8 @@ impl<'a> Codegen<'a> {
                 | IrDependency::SharedNative { .. }
                 | IrDependency::RefFormal { .. }
                 | IrDependency::NativeRefFormal { .. }
-                | IrDependency::NativeAccess(_) => {
+                | IrDependency::NativeAccess(_)
+                | IrDependency::InterfaceInstance { .. } => {
                     return Err(format!(
                         "container/object dependencies cannot yet drive force evaluators in `{scope_path}`"
                     ))
@@ -1319,6 +1320,9 @@ impl<'a> Codegen<'a> {
                 self.add_dependency(prefix.clone(), seen, out);
                 return Ok(());
             }
+        }
+        if let Some(error) = self.dynamic_read_errors.get(&node) {
+            return Err(error.clone());
         }
         for dependency in self.dynamic_reads.get(&node).into_iter().flatten() {
             self.add_dependency(dependency.clone(), seen, out);
@@ -2140,7 +2144,7 @@ impl<'a> Codegen<'a> {
         }
     }
 
-    fn add_fixed_array_dependency(
+    pub(super) fn add_fixed_array_dependency(
         &self,
         array: &ArrayInfo,
         indices: &[NodeId],
