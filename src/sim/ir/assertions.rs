@@ -544,12 +544,17 @@ pub enum IrPropertyNode {
         sync: bool,
         operand: u32,
     },
+    /// A recursive property instance (16.13.17): evaluates node `target`,
+    /// which may follow it, once the evaluation reaches it.
+    Call {
+        target: u32,
+    },
 }
 
 impl IrPropertyNode {
     fn operands(&self) -> [Option<u32>; 2] {
         match *self {
-            Self::Boolean { .. } | Self::Sequence { .. } => [None, None],
+            Self::Boolean { .. } | Self::Sequence { .. } | Self::Call { .. } => [None, None],
             Self::Not { operand }
             | Self::Nexttime { operand, .. }
             | Self::Always { operand, .. }
@@ -575,21 +580,58 @@ pub struct IrProperty {
     pub(in crate::sim) nodes: Vec<IrPropertyNode>,
     pub(in crate::sim) sequences: Vec<IrSequence>,
     pub(in crate::sim) atoms: Vec<IrExpr>,
+    /// Clocks of a multiclocked program (16.14.2), the assertion's leading
+    /// clock first, including every sequence transition clock. Empty for a
+    /// singly clocked program, whose nodes all use the leading clock.
+    pub(in crate::sim) clocks: Vec<IrPropertyClock>,
+    /// Index into `clocks` of each node's clock; empty with `clocks`.
+    pub(in crate::sim) node_clocks: Vec<u32>,
+}
+
+/// One clock of a multiclocked property program: a packed signal edge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrPropertyClock {
+    pub(in crate::sim) signal: usize,
+    pub(in crate::sim) posedge: bool,
+}
+
+impl IrPropertyClock {
+    pub fn signal(&self) -> usize {
+        self.signal
+    }
+
+    pub fn posedge(&self) -> bool {
+        self.posedge
+    }
 }
 
 impl IrProperty {
-    pub(in crate::sim) fn new(
+    /// A program whose nodes run on the listed clocks (`node_clocks` per
+    /// node); empty `clocks` is a singly clocked program.
+    pub(in crate::sim) fn new_clocked(
         nodes: Vec<IrPropertyNode>,
         sequences: Vec<IrSequence>,
         atoms: Vec<IrExpr>,
+        clocks: Vec<IrPropertyClock>,
+        node_clocks: Vec<u32>,
     ) -> Result<Self, IrValidationError> {
         let property = Self {
             nodes,
             sequences,
             atoms,
+            clocks,
+            node_clocks,
         };
         property.validate_shape()?;
         Ok(property)
+    }
+
+    pub fn clocks(&self) -> &[IrPropertyClock] {
+        &self.clocks
+    }
+
+    pub fn node_clocks(&self) -> &[u32] {
+        &self.node_clocks
     }
 
     pub fn nodes(&self) -> &[IrPropertyNode] {
@@ -623,6 +665,18 @@ impl IrProperty {
                 "property program has too many nodes",
             ));
         }
+        if self.clocks.is_empty() != self.node_clocks.is_empty()
+            || (!self.clocks.is_empty() && self.node_clocks.len() != self.nodes.len())
+            || self
+                .node_clocks
+                .iter()
+                .any(|clock| *clock as usize >= self.clocks.len())
+        {
+            return Err(IrValidationError::new(
+                "property.node_clocks",
+                "every node of a multiclocked property names one of its clocks",
+            ));
+        }
         for (index, node) in self.nodes.iter().enumerate() {
             let path = format!("property.nodes[{index}]");
             for operand in node.operands().into_iter().flatten() {
@@ -630,6 +684,16 @@ impl IrProperty {
                     return Err(IrValidationError::new(
                         path,
                         "property operand must precede its user",
+                    ));
+                }
+            }
+            if let IrPropertyNode::Call { target } = *node {
+                if target as usize >= self.nodes.len()
+                    || matches!(self.nodes[target as usize], IrPropertyNode::Call { .. })
+                {
+                    return Err(IrValidationError::new(
+                        path,
+                        "a recursive property instance must name an operator node",
                     ));
                 }
             }

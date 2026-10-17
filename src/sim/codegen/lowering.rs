@@ -1663,6 +1663,10 @@ struct Codegen<'a> {
     /// Leading clock of the concurrent assertion being lowered, with its
     /// `iff` gate; nested sequence clocks are checked against it.
     assertion_leading_clock: Option<SampledClock>,
+    /// Clocking events of the concurrent assertion being lowered whose clock
+    /// differs from the clock flowing into them (16.14.2 multiclocking).
+    /// Empty for a singly clocked assertion.
+    assertion_clock_changes: HashSet<NodeId>,
     /// Body of the procedure being lowered, whose inferred clock (IEEE
     /// 1800-2009 16.15.6) leads its procedural concurrent assertions that
     /// have no clock of their own, ahead of default clocking.
@@ -1958,6 +1962,7 @@ impl<'a> Codegen<'a> {
             sampled_clock: None,
             expect_action_clock: None,
             assertion_leading_clock: None,
+            assertion_clock_changes: HashSet::new(),
             procedure_body: None,
             procedural_assertions: 0,
             sampled_clock_keys: HashMap::new(),

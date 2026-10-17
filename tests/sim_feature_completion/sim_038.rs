@@ -1053,24 +1053,6 @@ fn neg_empty_match_property() {
 }
 
 #[test]
-fn neg_multiclock_property() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_multiclock_property",
-        "multiclock properties are not supported: a clocking event inside the property differs from its leading clock",
-    );
-}
-
-#[test]
-fn neg_conflicting_clock() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_conflicting_clock",
-        "multiclock properties are not supported: a clocking event inside the property differs from its leading clock",
-    );
-}
-
-#[test]
 fn neg_recursive_property() {
     sim_cli::reject_case(
         SUITE,

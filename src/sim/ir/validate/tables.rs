@@ -581,12 +581,41 @@ impl Validator<'_> {
                 property.validate_shape().map_err(|error| {
                     IrValidationError::new(format!("{path}.{}", error.path()), error.detail())
                 })?;
+                if let Some(first) = property.clocks.first() {
+                    if first.signal != assertion.clock_signal || first.posedge != assertion.posedge
+                    {
+                        return self.fail(
+                            format!("{path}.property.clocks"),
+                            "a multiclocked property lists its leading clock first",
+                        );
+                    }
+                }
+                for (index, clock) in property.clocks.iter().enumerate() {
+                    let valid = self
+                        .model
+                        .signals
+                        .get(clock.signal)
+                        .is_some_and(|signal| !signal.omit && signal.ty.width() != 0);
+                    if !valid {
+                        return self.fail(
+                            format!("{path}.property.clocks[{index}]"),
+                            "property clock must be an active packed signal",
+                        );
+                    }
+                }
                 for (index, sequence) in property.sequences.iter().enumerate() {
                     let name = format!("property.sequences[{index}]");
                     self.validate_assertion_sequence(assertion, &path, &name, sequence)?;
                     let on_clock = |clock: Option<usize>, posedge: bool| {
                         clock.is_none_or(|clock| {
-                            clock == assertion.clock_signal && posedge == assertion.posedge
+                            if property.clocks.is_empty() {
+                                clock == assertion.clock_signal && posedge == assertion.posedge
+                            } else {
+                                property
+                                    .clocks
+                                    .iter()
+                                    .any(|known| known.signal == clock && known.posedge == posedge)
+                            }
                         })
                     };
                     if !on_clock(sequence.leading_clock, sequence.leading_posedge)
@@ -597,7 +626,7 @@ impl Validator<'_> {
                     {
                         return self.fail(
                             format!("{path}.{name}"),
-                            "property-program sequences run on the assertion clock only",
+                            "property-program sequences run on the program's clocks only",
                         );
                     }
                 }

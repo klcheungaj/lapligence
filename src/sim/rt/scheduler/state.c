@@ -314,6 +314,19 @@ typedef struct llg_property_locals {
     sv4_t* values;
 } llg_property_locals_t;
 
+/* The point at which a property node starts (16.14.2, F.5.1): the clock
+ * event of its parent that started it. A node first evaluates at the
+ * nearest tick of its own clock at or after that point, or strictly after
+ * it when `strict` (|=>, #=#): the same clock compares tick numbers, other
+ * clocks compare simulation time. */
+typedef struct llg_property_launch {
+    sv4_t* clock;
+    int edge;
+    uint64_t time;
+    uint64_t tick;
+    uint64_t order;
+} llg_property_launch_t;
+
 /* One live node of a property evaluation attempt. Children are kept in
  * creation order; a resolved child stays until its parent consumes it. */
 typedef struct llg_property_inst {
@@ -324,16 +337,24 @@ typedef struct llg_property_inst {
     /* Leaf sequence of SEQUENCE, antecedent of IMPLICATION/FOLLOWED_BY. */
     llg_sequence_attempt_t* sequence;
     llg_property_locals_t* locals;
-    /* Ticks evaluated so far; the next evaluation is relative tick `ticks`. */
+    llg_property_launch_t launch;
+    /* Own-clock ticks evaluated so far (the next is relative tick `ticks`);
+     * for nodes without a clock of their own, 1 once started. */
     uint64_t ticks;
     /* Simulation time + 1 of the last asynchronous abort check. */
     uint64_t abort_checked;
     uint8_t status;     /* 0 pending, 1 true, 2 false */
     uint8_t nonvacuous; /* valid once resolved (16.15.8) */
-    uint8_t delay;      /* ticks to skip before the first evaluation */
+    uint8_t strict;     /* starts strictly after `launch` */
     uint8_t done;       /* no further children or antecedent matches */
     uint8_t matched;    /* the antecedent matched at least once */
     uint8_t accumulated; /* nonvacuity of consumed children */
+    uint8_t begun;      /* its sequence started (SEQUENCE, IMPLICATION) */
+    uint8_t phase;      /* IF: 0 condition pending, 1 then, 2 else */
+    /* Nonvacuity of operands an operator was collapsed past, added when the
+     * node resolves true or false (see property_collapse). */
+    uint8_t carry_true;
+    uint8_t carry_false;
 } llg_property_inst_t;
 
 /* A sequence can advance on a clock other than its leading assertion clock.
@@ -454,6 +475,10 @@ typedef struct llg_concurrent_assertion {
     llg_assertion_clock_event_t* clock_history;
     llg_assertion_clock_event_t* clock_history_tail;
     uint64_t sequence_cycle;
+    /* Clock edges other than the leading one that advance the assertion's
+     * sequences or property nodes, collected at registration. */
+    uint32_t extra_clock_count;
+    llg_property_clock_t* extra_clocks;
     /* Property-engine assertion: its program, the per-sequence ranks, and
      * the live attempts in start order. */
     const llg_property_program_t* property;

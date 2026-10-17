@@ -263,6 +263,9 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
             for atom in &property.atoms {
                 collect_expr_reads(atom, model, &mut rw);
             }
+            for clock in &property.clocks {
+                rw.read(clock.signal);
+            }
         }
         for sequence in [
             assertion.antecedent_sequence.as_ref(),

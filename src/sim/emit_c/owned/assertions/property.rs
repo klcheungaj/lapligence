@@ -50,8 +50,9 @@ fn bound(max: Option<u32>) -> String {
         .unwrap_or_else(|| "LLG_SEQUENCE_UNBOUNDED".to_owned())
 }
 
-/// `{kind, flags, first, second, third, min, max}` for one node.
-fn node_row(node: &IrPropertyNode) -> String {
+/// `{kind, flags, first, second, third, min, max[, clock]}` for one node;
+/// the clock index only in a multiclocked program.
+fn node_row(node: &IrPropertyNode, clock: Option<u32>) -> String {
     const NONE: &str = "LLG_PROPERTY_NONE";
     fn flag(set: bool, name: &'static str) -> &'static str {
         if set {
@@ -212,8 +213,18 @@ fn node_row(node: &IrPropertyNode) -> String {
             0,
             "0ULL".to_owned(),
         ),
+        IrPropertyNode::Call { target } => (
+            "LLG_PROPERTY_CALL",
+            "0".to_owned(),
+            format!("{target}u"),
+            NONE.to_owned(),
+            NONE.to_owned(),
+            0,
+            "0ULL".to_owned(),
+        ),
     };
-    format!("    {{{kind}, {flags}, {first}, {second}, {third}, {min}ULL, {max}}},\n")
+    let clock = clock.map(|clock| format!(", {clock}u")).unwrap_or_default();
+    format!("    {{{kind}, {flags}, {first}, {second}, {third}, {min}ULL, {max}{clock}}},\n")
 }
 
 pub(super) fn render(
@@ -258,12 +269,40 @@ pub(super) fn render(
         "static const llg_property_node_t {nodes_name}[{}] = {{\n",
         property.nodes().len()
     ));
-    for node in property.nodes() {
-        out.push_str(&node_row(node));
+    for (index, node) in property.nodes().iter().enumerate() {
+        out.push_str(&node_row(node, property.node_clocks().get(index).copied()));
     }
     out.push_str("};\n");
+    // A singly clocked program keeps the shorter initializer; its clock
+    // fields are zero.
+    let clocks = if property.clocks().is_empty() {
+        String::new()
+    } else {
+        let clocks_name = format!("{name}_clocks");
+        let entries = property
+            .clocks()
+            .iter()
+            .map(|clock| {
+                format!(
+                    "{{&{}, {}}}",
+                    registration::signal_name(model, clock.signal()),
+                    if clock.posedge() {
+                        "LLG_EV_POSEDGE"
+                    } else {
+                        "LLG_EV_NEGEDGE"
+                    }
+                )
+            })
+            .collect::<Vec<_>>();
+        out.push_str(&format!(
+            "static const llg_property_clock_t {clocks_name}[{}] = {{ {} }};\n",
+            entries.len(),
+            entries.join(", ")
+        ));
+        format!(", {}u, {clocks_name}", entries.len())
+    };
     out.push_str(&format!(
-        "static const llg_property_program_t {name} = {{ {}u, {nodes_name}, {}u, {}u, {graphs_ptr}, {}u, {atom} }};\n\n",
+        "static const llg_property_program_t {name} = {{ {}u, {nodes_name}, {}u, {}u, {graphs_ptr}, {}u, {atom}{clocks} }};\n\n",
         property.nodes().len(),
         property.root(),
         property.sequences().len(),

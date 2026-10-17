@@ -211,6 +211,7 @@ static void free_assertions(void) {
             free(g.assertions->property_ranks);
         }
         free(g.assertions->endpoint_slots);
+        free(g.assertions->extra_clocks);
         free(g.assertions);
         g.assertions = next;
     }

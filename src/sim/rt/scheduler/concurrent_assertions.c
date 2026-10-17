@@ -302,23 +302,36 @@ static void assertion_abort_condition_changed(void) {
     }
 }
 
-static int sequence_graph_uses_clock(const llg_sequence_graph_t* graph,
-                                     sv4_t* signal, int edge) {
-    if (!graph || !signal) return 0;
-    for (uint32_t index = 0; index < graph->transition_count; index++) {
-        const llg_sequence_transition_t* transition = &graph->transitions[index];
-        if (transition->clock == signal && transition->edge == edge) return 1;
+/* Record one more clock edge whose events the assertion consumes besides
+ * its leading clock, and number that edge's ticks across time slots. */
+static void assertion_add_extra_clock(llg_concurrent_assertion_t* assertion,
+                                      sv4_t* signal, int edge) {
+    if (!signal || (signal == assertion->clock && edge == assertion->edge)) return;
+    for (uint32_t index = 0; index < assertion->extra_clock_count; index++)
+        if (assertion->extra_clocks[index].signal == signal &&
+            assertion->extra_clocks[index].edge == edge)
+            return;
+    if ((assertion->extra_clock_count & (assertion->extra_clock_count - 1u)) == 0) {
+        size_t capacity = assertion->extra_clock_count ? (size_t)assertion->extra_clock_count * 2u : 1u;
+        llg_property_clock_t* clocks = (llg_property_clock_t*)llg_checked_malloc(
+            capacity, sizeof(*clocks), "assertion clocks");
+        if (assertion->extra_clock_count)
+            memcpy(clocks, assertion->extra_clocks,
+                   (size_t)assertion->extra_clock_count * sizeof(*clocks));
+        free(assertion->extra_clocks);
+        assertion->extra_clocks = clocks;
     }
-    return 0;
+    assertion->extra_clocks[assertion->extra_clock_count++] =
+        (llg_property_clock_t){signal, edge};
+    clocking_edge_get(signal)->keep_ticks = 1;
 }
 
-static int assertion_sequence_uses_clock(llg_concurrent_assertion_t* assertion,
-                                         sv4_t* signal, int edge) {
-    return assertion &&
-           (sequence_graph_uses_clock(assertion->antecedent_sequence, signal,
-                                      edge) ||
-            sequence_graph_uses_clock(assertion->consequent_sequence, signal,
-                                      edge));
+static void assertion_add_graph_clocks(llg_concurrent_assertion_t* assertion,
+                                       const llg_sequence_graph_t* graph) {
+    if (!graph) return;
+    for (uint32_t index = 0; index < graph->transition_count; index++)
+        assertion_add_extra_clock(assertion, graph->transitions[index].clock,
+                                  graph->transitions[index].edge);
 }
 
 static void assertion_clock_event_append(llg_concurrent_assertion_t* assertion,
@@ -393,18 +406,10 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
             g.assertion_edges_pending = 1;
             continue;
         }
-        if (assertion->consequent_sequence &&
-            ev_matches(old, value, LLG_EV_POSEDGE) &&
-            assertion_sequence_uses_clock(assertion, signal, LLG_EV_POSEDGE)) {
-            assertion_clock_event_append(assertion, signal, LLG_EV_POSEDGE,
-                                         order);
-            g.assertion_edges_pending = 1;
-        } else if (assertion->consequent_sequence &&
-                   ev_matches(old, value, LLG_EV_NEGEDGE) &&
-                   assertion_sequence_uses_clock(assertion, signal,
-                                                 LLG_EV_NEGEDGE)) {
-            assertion_clock_event_append(assertion, signal, LLG_EV_NEGEDGE,
-                                         order);
+        for (uint32_t index = 0; index < assertion->extra_clock_count; index++) {
+            const llg_property_clock_t* extra = &assertion->extra_clocks[index];
+            if (extra->signal != signal || !ev_matches(old, value, extra->edge)) continue;
+            assertion_clock_event_append(assertion, signal, extra->edge, order);
             g.assertion_edges_pending = 1;
         }
     }
@@ -1012,14 +1017,8 @@ int llg_assertion_register_sequence_control(
     /* Registration precedes execution. Only sequence consumers need ticks
      * across slots, including explicit clocks in either transition graph. */
     clocking_edge_get(clock)->keep_ticks = 1;
-    const llg_sequence_graph_t* graphs[] = {antecedent, consequent};
-    for (size_t gi = 0; gi < sizeof(graphs) / sizeof(graphs[0]); ++gi) {
-        if (!graphs[gi]) continue;
-        for (uint32_t ti = 0; ti < graphs[gi]->transition_count; ++ti) {
-            sv4_t* source = graphs[gi]->transitions[ti].clock;
-            if (source) clocking_edge_get(source)->keep_ticks = 1;
-        }
-    }
+    assertion_add_graph_clocks(assertion, antecedent);
+    assertion_add_graph_clocks(assertion, consequent);
     if (g.assertion_tail)
         g.assertion_tail->next = assertion;
     else

@@ -1329,8 +1329,10 @@ int llg_assertion_register_sequence_control(
     int overlapped, int abort_reject, int abort_sync, uint64_t identity,
     const char* label, const char* location, const char* scope);
 
-/* A property program (IEEE 1800-2009 16.12-16.13) is a static node table
+/* A property program (IEEE 1800-2009 16.12-16.14) is a static node table
  * whose operands index earlier nodes; `root` is evaluated once per attempt.
+ * A CALL node names a recursive property instance (16.13.17): it starts the
+ * node `first`, which may follow it, when the evaluation reaches it.
  * Node operand fields by kind:
  *   BOOLEAN       first = atom
  *   SEQUENCE      first = sequence graph; STRONG flag
@@ -1343,8 +1345,13 @@ int llg_assertion_register_sequence_control(
  *   ALWAYS / EVENTUALLY  first = operand, [min, max] ticks; STRONG flag
  *   UNTIL         first = left, second = right; STRONG, OVERLAPPED (until_with)
  *   ABORT         first = condition atom, second = operand; ACCEPT, SYNC
- * Atoms read Preponed sampled values. Ticks are counted on the assertion's
- * leading clock from the tick at which the node starts. */
+ *   CALL          first = node the recursive instance evaluates
+ * Atoms read Preponed sampled values. Ticks are counted on the node's clock:
+ * the assertion's leading clock, or with `clock_count` nonzero the entry
+ * `clock` of `clocks` (whose entry 0 is the leading clock). A node starts at
+ * the nearest tick of its clock at or after the point where its parent
+ * starts it, or strictly after it for `|=>`, `#=#` and `nexttime` (16.14.2,
+ * F.5.1). */
 #define LLG_PROPERTY_BOOLEAN 1u
 #define LLG_PROPERTY_SEQUENCE 2u
 #define LLG_PROPERTY_NOT 3u
@@ -1360,6 +1367,7 @@ int llg_assertion_register_sequence_control(
 #define LLG_PROPERTY_EVENTUALLY 13u
 #define LLG_PROPERTY_UNTIL 14u
 #define LLG_PROPERTY_ABORT 15u
+#define LLG_PROPERTY_CALL 16u
 #define LLG_PROPERTY_STRONG 1u
 #define LLG_PROPERTY_OVERLAPPED 2u
 #define LLG_PROPERTY_ACCEPT 4u
@@ -1374,7 +1382,13 @@ typedef struct {
     uint32_t third;
     uint64_t min;
     uint64_t max;
+    uint32_t clock;
 } llg_property_node_t;
+/* One clock of a multiclocked property program: a signal edge. */
+typedef struct {
+    sv4_t* signal;
+    int edge;
+} llg_property_clock_t;
 typedef struct {
     uint32_t node_count;
     const llg_property_node_t* nodes;
@@ -1383,6 +1397,10 @@ typedef struct {
     const llg_sequence_graph_t* const* sequences;
     uint32_t atom_count;
     llg_property_atom_fn atom;
+    /* Zero for a singly clocked program; otherwise the clocks of every node
+     * and sequence transition, the leading clock first. */
+    uint32_t clock_count;
+    const llg_property_clock_t* clocks;
 } llg_property_program_t;
 int llg_assertion_register_property(
     sv4_t* clock, int edge, sv4_t* disable, const llg_property_program_t* program,

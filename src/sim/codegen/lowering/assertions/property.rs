@@ -8,7 +8,7 @@
 //! clock; a single-tick Boolean operand becomes a sampled atom.
 
 use super::*;
-use crate::sim::ir::{IrProperty, IrPropertyBinaryOp, IrPropertyNode};
+use crate::sim::ir::{IrProperty, IrPropertyBinaryOp, IrPropertyClock, IrPropertyNode};
 
 /// Nested property-instance expansion limit. A recursive property (16.13.17)
 /// expands without bound and is rejected explicitly instead.
@@ -26,6 +26,9 @@ struct PropertyBuilder {
     atoms: Vec<IrExpr>,
     disable: Option<usize>,
     leading: SampledClock,
+    /// Clocks of the nodes, `clocks[0]` the leading clock (16.14.2).
+    clocks: Vec<SampledClock>,
+    node_clocks: Vec<u32>,
     /// Strength of a sequence written without `strong`/`weak`: weak in
     /// `assert`/`assume`, strong in `cover`/`expect` (16.13.1, F.3.4.3.1).
     strong_default: bool,
@@ -34,11 +37,58 @@ struct PropertyBuilder {
 }
 
 impl PropertyBuilder {
-    fn push(&mut self, node: IrPropertyNode) -> Result<u32, String> {
+    /// Add a node evaluated on `clock`.
+    fn push(&mut self, node: IrPropertyNode, clock: SampledClock) -> Result<u32, String> {
         let index = u32::try_from(self.nodes.len())
             .map_err(|_| "property has too many operators".to_owned())?;
+        let clock = self.clock(clock)?;
         self.nodes.push(node);
+        self.node_clocks.push(clock);
         Ok(index)
+    }
+
+    /// Intern a node or sequence clock. Only the leading clock carries an
+    /// `iff` gate at runtime; an edge of the leading signal under another
+    /// gate would be gated by it, so it is rejected.
+    fn clock(&mut self, clock: SampledClock) -> Result<u32, String> {
+        if let Some(index) = self
+            .clocks
+            .iter()
+            .position(|known| clocks::same_clock(known, &clock))
+        {
+            return u32::try_from(index).map_err(|_| "property has too many clocks".to_owned());
+        }
+        let leading = self.leading;
+        if clock.gate.is_some()
+            || (clock.signal == leading.signal && clock.posedge == leading.posedge)
+        {
+            return Err(
+                "an `iff`-qualified clock inside a concurrent assertion is not supported unless \
+                 it is the leading clocking event"
+                    .to_owned(),
+            );
+        }
+        let index = u32::try_from(self.clocks.len())
+            .map_err(|_| "property has too many clocks".to_owned())?;
+        self.clocks.push(clock);
+        Ok(index)
+    }
+
+    /// The edge clock of one sequence transition or leading clock.
+    fn edge_clock(&mut self, signal: Option<usize>, posedge: bool) -> Result<(), String> {
+        let Some(signal) = signal else {
+            return Ok(());
+        };
+        let leading = self.leading;
+        if signal == leading.signal && posedge == leading.posedge {
+            return Ok(());
+        }
+        self.clock(SampledClock {
+            signal,
+            posedge,
+            gate: None,
+        })
+        .map(|_| ())
     }
 
     fn atom(&mut self, atom: IrExpr) -> Result<u32, String> {
@@ -57,8 +107,8 @@ impl PropertyBuilder {
 }
 
 /// The atom of a sequence that matches exactly one tick on one Boolean, if
-/// that is all it does.
-fn single_tick_atom(sequence: &IrSequence) -> Option<IrExpr> {
+/// that is all it does, with the clock of that tick.
+fn single_tick_atom(sequence: &IrSequence) -> Option<(IrExpr, Option<(usize, bool)>)> {
     let [transition] = sequence.transitions.as_slice() else {
         return None;
     };
@@ -81,9 +131,23 @@ fn single_tick_atom(sequence: &IrSequence) -> Option<IrExpr> {
                 .and_then(|atom| sequence.atoms.get(atom as usize).cloned())
         })
         .flatten()
+        .map(|atom| {
+            (
+                atom,
+                transition
+                    .clock_signal
+                    .map(|signal| (signal, transition.clock_posedge)),
+            )
+        })
 }
 
 impl Codegen<'_> {
+    /// The clock flowing into the property node being lowered.
+    fn flowing_clock(&self) -> Result<SampledClock, String> {
+        self.sampled_clock
+            .ok_or_else(|| "property node has no clock flowing into it".to_owned())
+    }
+
     /// Whether the dedicated predicate/sequence lowering cannot represent
     /// this property, so it needs the property engine.
     pub(super) fn property_requires_engine(&self, root: NodeId) -> bool {
@@ -143,6 +207,13 @@ impl Codegen<'_> {
             NodeKind::AssertionExpr(AssertionExprKind::FirstMatch { sequence, .. }) => {
                 self.property_sequence_form(*sequence)
             }
+            // Differently clocked operands make `and`/`or` property
+            // operators (16.14.1 admits only `##0`/`##1` between clocks).
+            NodeKind::AssertionExpr(AssertionExprKind::Binary {
+                op: AssertionBinaryOp::And | AssertionBinaryOp::Or,
+                left,
+                right,
+            }) if self.changes_clock_within(*left) || self.changes_clock_within(*right) => false,
             NodeKind::AssertionExpr(AssertionExprKind::Binary {
                 op:
                     AssertionBinaryOp::And
@@ -179,33 +250,24 @@ impl Codegen<'_> {
         origin: NodeId,
         strong_default: bool,
     ) -> Result<PropertyProgram, String> {
-        // 16.15.6: a procedural assertion takes its procedure's inferred
-        // clock before default clocking.
-        let clock = match self.infer_leading_assertion_clock(path, root)? {
-            Some(clock) => Some(clock),
-            None => self.procedure_assertion_clock(path, origin)?,
-        };
-        let clock = match clock {
-            Some(clock) => clock,
-            // 16.17 a): the default clocking event acts as the leading one.
-            None => self.lower_default_sampled_clock(path)?.ok_or_else(|| {
-                format!(
-                    "concurrent assertions require one explicit signal clock at {} ({path})",
-                    self.assertion_location(root, origin)
-                )
-            })?,
-        };
+        // Attempts start on the semantic leading clock (16.17.1); the context
+        // clock (16.15.6, 16.17 a)) flows into the unclocked parts.
+        let clocks = self.resolve_assertion_clocks(path, root, None, origin)?;
+        let clock = clocks.leading;
+        let flowing = clocks.context.unwrap_or(clock);
         let mut builder = PropertyBuilder {
             nodes: Vec::new(),
             sequences: Vec::new(),
             atoms: Vec::new(),
             disable: None,
             leading: clock,
+            clocks: vec![clock],
+            node_clocks: Vec::new(),
             strong_default,
             instances: Vec::new(),
             origin,
         };
-        let previous_clock = self.sampled_clock.replace(clock);
+        let previous_clock = self.sampled_clock.replace(flowing);
         let previous_leading = self.assertion_leading_clock.replace(clock);
         let result = self.lower_property_node(path, root, true, &mut builder);
         self.sampled_clock = previous_clock;
@@ -215,8 +277,49 @@ impl Codegen<'_> {
         if root_index as usize + 1 != builder.nodes.len() {
             return Err("property program root is not its last node".to_owned());
         }
-        let property = IrProperty::new(builder.nodes, builder.sequences, builder.atoms)
-            .map_err(|error| error.to_string())?;
+        // Every clock a sequence transition advances on is a clock of the
+        // program, so the runtime delivers its events.
+        let sequence_clocks = builder
+            .sequences
+            .iter()
+            .flat_map(|sequence| {
+                std::iter::once((sequence.leading_clock, sequence.leading_posedge)).chain(
+                    sequence
+                        .transitions
+                        .iter()
+                        .map(|transition| (transition.clock_signal, transition.clock_posedge)),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (signal, posedge) in sequence_clocks {
+            builder.edge_clock(signal, posedge).map_err(|error| {
+                format!("{error} (assertion at {})", self.source_location(origin))
+            })?;
+        }
+        // A program on its leading clock alone keeps the singly clocked form.
+        let (clocks, node_clocks) = if builder.clocks.len() == 1 {
+            (Vec::new(), Vec::new())
+        } else {
+            (
+                builder
+                    .clocks
+                    .iter()
+                    .map(|clock| IrPropertyClock {
+                        signal: clock.signal,
+                        posedge: clock.posedge,
+                    })
+                    .collect(),
+                builder.node_clocks,
+            )
+        };
+        let property = IrProperty::new_clocked(
+            builder.nodes,
+            builder.sequences,
+            builder.atoms,
+            clocks,
+            node_clocks,
+        )
+        .map_err(|error| error.to_string())?;
         Ok(PropertyProgram {
             clock,
             disable: builder.disable,
@@ -232,23 +335,14 @@ impl Codegen<'_> {
         builder: &mut PropertyBuilder,
     ) -> Result<u32, String> {
         match self.kind(node) {
-            NodeKind::AssertionExpr(AssertionExprKind::Clocking {
-                signal,
-                posedge,
-                gate,
-                expr,
-                ..
-            }) => {
-                let (signal, posedge, gate, expr) = (*signal, *posedge, *gate, *expr);
-                let lowered = self.lower_assertion_signal(path, signal, "clock")?;
-                let leading = builder.leading;
-                if lowered != leading.signal || posedge != leading.posedge || gate != leading.gate {
-                    return Err(format!(
-                        "multiclock properties are not supported: a clocking event inside the property differs from its leading clock at {} (SV 16.14)",
-                        self.assertion_location(node, builder.origin)
-                    ));
-                }
-                return self.lower_property_node(path, expr, top, builder);
+            NodeKind::AssertionExpr(AssertionExprKind::Clocking { expr, .. }) => {
+                // The clock flows into the operand (16.14.3, F.5.1).
+                let expr = *expr;
+                let clock = self.assertion_event_clock(path, node)?;
+                let previous = self.sampled_clock.replace(clock);
+                let result = self.lower_property_node(path, expr, top, builder);
+                self.sampled_clock = previous;
+                return result;
             }
             NodeKind::AssertionExpr(AssertionExprKind::DisableIff { condition, expr }) => {
                 let (condition, expr) = (*condition, *expr);
@@ -333,15 +427,18 @@ impl Codegen<'_> {
                 sync,
             } => {
                 let (condition, expr, reject, sync) = (*condition, *expr, *reject, *sync);
-                let condition = self.lower_abort_condition(path, condition, builder.leading)?;
+                let condition = self.lower_abort_condition(path, condition, self.flowing_clock()?)?;
                 let condition = builder.atom(property_truth(condition))?;
                 let operand = self.lower_property_node(path, expr, false, builder)?;
-                builder.push(IrPropertyNode::Abort {
-                    condition,
-                    accept: !reject,
-                    sync,
-                    operand,
-                })
+                builder.push(
+                    IrPropertyNode::Abort {
+                        condition,
+                        accept: !reject,
+                        sync,
+                        operand,
+                    },
+                    self.flowing_clock()?,
+                )
             }
             AssertionExprKind::Unary {
                 op, expr, range, ..
@@ -388,7 +485,7 @@ impl Codegen<'_> {
                         }
                     }
                 };
-                builder.push(node)
+                builder.push(node, self.flowing_clock()?)
             }
             AssertionExprKind::Binary { op, left, right } => {
                 let (op, left, right) = (*op, *left, *right);
@@ -405,20 +502,23 @@ impl Codegen<'_> {
                         let antecedent = self.lower_property_sequence(path, left, builder)?;
                         let antecedent = builder.sequence(antecedent)?;
                         let consequent = self.lower_property_node(path, right, false, builder)?;
-                        builder.push(IrPropertyNode::Implication {
-                            antecedent,
-                            consequent,
-                            overlapped: matches!(
-                                op,
-                                AssertionBinaryOp::OverlappedImplication
-                                    | AssertionBinaryOp::OverlappedFollowedBy
-                            ),
-                            followed_by: matches!(
-                                op,
-                                AssertionBinaryOp::OverlappedFollowedBy
-                                    | AssertionBinaryOp::NonOverlappedFollowedBy
-                            ),
-                        })
+                        builder.push(
+                            IrPropertyNode::Implication {
+                                antecedent,
+                                consequent,
+                                overlapped: matches!(
+                                    op,
+                                    AssertionBinaryOp::OverlappedImplication
+                                        | AssertionBinaryOp::OverlappedFollowedBy
+                                ),
+                                followed_by: matches!(
+                                    op,
+                                    AssertionBinaryOp::OverlappedFollowedBy
+                                        | AssertionBinaryOp::NonOverlappedFollowedBy
+                                ),
+                            },
+                            self.flowing_clock()?,
+                        )
                     }
                     AssertionBinaryOp::And
                     | AssertionBinaryOp::Or
@@ -426,16 +526,19 @@ impl Codegen<'_> {
                     | AssertionBinaryOp::Implies => {
                         let left = self.lower_property_node(path, left, false, builder)?;
                         let right = self.lower_property_node(path, right, false, builder)?;
-                        builder.push(IrPropertyNode::Binary {
-                            op: match op {
-                                AssertionBinaryOp::And => IrPropertyBinaryOp::And,
-                                AssertionBinaryOp::Or => IrPropertyBinaryOp::Or,
-                                AssertionBinaryOp::Iff => IrPropertyBinaryOp::Iff,
-                                _ => IrPropertyBinaryOp::Implies,
+                        builder.push(
+                            IrPropertyNode::Binary {
+                                op: match op {
+                                    AssertionBinaryOp::And => IrPropertyBinaryOp::And,
+                                    AssertionBinaryOp::Or => IrPropertyBinaryOp::Or,
+                                    AssertionBinaryOp::Iff => IrPropertyBinaryOp::Iff,
+                                    _ => IrPropertyBinaryOp::Implies,
+                                },
+                                left,
+                                right,
                             },
-                            left,
-                            right,
-                        })
+                            self.flowing_clock()?,
+                        )
                     }
                     AssertionBinaryOp::Until
                     | AssertionBinaryOp::SUntil
@@ -443,18 +546,21 @@ impl Codegen<'_> {
                     | AssertionBinaryOp::SUntilWith => {
                         let left = self.lower_property_node(path, left, false, builder)?;
                         let right = self.lower_property_node(path, right, false, builder)?;
-                        builder.push(IrPropertyNode::Until {
-                            left,
-                            right,
-                            strong: matches!(
-                                op,
-                                AssertionBinaryOp::SUntil | AssertionBinaryOp::SUntilWith
-                            ),
-                            overlapping: matches!(
-                                op,
-                                AssertionBinaryOp::UntilWith | AssertionBinaryOp::SUntilWith
-                            ),
-                        })
+                        builder.push(
+                            IrPropertyNode::Until {
+                                left,
+                                right,
+                                strong: matches!(
+                                    op,
+                                    AssertionBinaryOp::SUntil | AssertionBinaryOp::SUntilWith
+                                ),
+                                overlapping: matches!(
+                                    op,
+                                    AssertionBinaryOp::UntilWith | AssertionBinaryOp::SUntilWith
+                                ),
+                            },
+                            self.flowing_clock()?,
+                        )
                     }
                     AssertionBinaryOp::Intersect
                     | AssertionBinaryOp::Throughout
@@ -475,11 +581,14 @@ impl Codegen<'_> {
                     .map(|expr| self.lower_property_node(path, expr, false, builder))
                     .transpose()?;
                 let condition = builder.atom(condition)?;
-                builder.push(IrPropertyNode::If {
-                    condition,
-                    then,
-                    otherwise,
-                })
+                builder.push(
+                    IrPropertyNode::If {
+                        condition,
+                        then,
+                        otherwise,
+                    },
+                    self.flowing_clock()?,
+                )
             }
             AssertionExprKind::Case {
                 expr,
@@ -517,12 +626,32 @@ impl Codegen<'_> {
                 self.assertion_location(node, builder.origin)
             ));
         }
-        if let Some(atom) = single_tick_atom(&sequence) {
+        let flowing = self.flowing_clock()?;
+        if let Some((atom, clock)) = single_tick_atom(&sequence) {
+            // The atom is sampled at its own clock's tick, which a nested
+            // clocking event may have changed.
+            let clock = match clock {
+                Some((signal, posedge))
+                    if signal != flowing.signal || posedge != flowing.posedge =>
+                {
+                    let leading = builder.leading;
+                    if signal == leading.signal && posedge == leading.posedge {
+                        leading
+                    } else {
+                        SampledClock {
+                            signal,
+                            posedge,
+                            gate: None,
+                        }
+                    }
+                }
+                _ => flowing,
+            };
             let atom = builder.atom(atom)?;
-            return builder.push(IrPropertyNode::Boolean { atom });
+            return builder.push(IrPropertyNode::Boolean { atom }, clock);
         }
         let sequence = builder.sequence(sequence)?;
-        builder.push(IrPropertyNode::Sequence { sequence, strong })
+        builder.push(IrPropertyNode::Sequence { sequence, strong }, flowing)
     }
 
     fn lower_property_sequence(
@@ -538,21 +667,6 @@ impl Codegen<'_> {
             // sequence operand of a property operator can start later.
             return Err(format!(
                 "local input formal arguments of a sequence inside a property operator are not supported at {location}"
-            ));
-        }
-        let leading = builder.leading;
-        let on_leading = |clock: Option<usize>, posedge: bool| {
-            clock.is_none_or(|clock| clock == leading.signal && posedge == leading.posedge)
-        };
-        if !on_leading(sequence.leading_clock, sequence.leading_posedge)
-            || !on_leading(sequence.trailing_clock, sequence.trailing_posedge)
-            || sequence
-                .transitions
-                .iter()
-                .any(|transition| !on_leading(transition.clock_signal, transition.clock_posedge))
-        {
-            return Err(format!(
-                "multiclock sequences inside property operators are not supported at {location} (SV 16.14)"
             ));
         }
         Ok(sequence)
@@ -645,11 +759,14 @@ impl Codegen<'_> {
                 .ok_or_else(|| format!("property case item has no expression in `{path}`"))?;
             let then = self.lower_property_node(path, body, false, builder)?;
             let condition = builder.atom(condition)?;
-            tail = Some(builder.push(IrPropertyNode::If {
-                condition,
-                then,
-                otherwise: tail,
-            })?);
+            tail = Some(builder.push(
+                IrPropertyNode::If {
+                    condition,
+                    then,
+                    otherwise: tail,
+                },
+                self.flowing_clock()?,
+            )?);
         }
         tail.ok_or_else(|| format!("property case has no items in `{path}`"))
     }

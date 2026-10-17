@@ -193,13 +193,23 @@ impl Codegen<'_> {
             std::mem::replace(&mut self.assertion_local_capture_at_attempt_entry, false);
         let saved_locals = self.assertion_local_bindings.take();
         let saved_initializers = self.assertion_local_initializers.take();
+        let saved_changes = std::mem::take(&mut self.assertion_clock_changes);
         let parts = (|| {
-            let own = self.infer_leading_assertion_clock(path, body)?;
+            let own = self.explicit_leading_clock(path, body)?;
             let inherited = if own.is_none() && self.lower_default_sampled_clock(path)?.is_none() {
                 context.map(|clock| (clock.signal, clock.posedge, clock.gate))
             } else {
                 None
             };
+            let flowing = match inherited {
+                Some((signal, posedge, gate)) => Some(SampledClock {
+                    signal,
+                    posedge,
+                    gate,
+                }),
+                None => own.or(self.lower_default_sampled_clock(path)?),
+            };
+            self.assertion_clock_changes = self.collect_clock_changes(path, body, flowing)?;
             self.lower_assertion_instance(receiver, true, |this, body| {
                 this.lower_property_inner(path, body, inherited, None, receiver)
             })?
@@ -211,6 +221,7 @@ impl Codegen<'_> {
         self.assertion_local_capture_at_attempt_entry = saved_capture;
         self.assertion_local_bindings = saved_locals;
         self.assertion_local_initializers = saved_initializers;
+        self.assertion_clock_changes = saved_changes;
         let parts = parts.map_err(|error| {
             format!(
                 "{error} (sequence endpoint at {})",
