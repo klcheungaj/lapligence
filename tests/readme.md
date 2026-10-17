@@ -386,6 +386,11 @@ classified in `sim_099/builtin_inventory.tsv`. The CI sanitizer job includes
 `sim_099`; locally run the set with `LLG_CC=gcc
 LLG_CFLAGS='-fsanitize=address,undefined -DLLG_CO_DEBUG'`.
 
+The class-defects fixtures (named blocks and class parameters in class
+methods) use `-E 'binary(sim_feature_completion) & test(class_defects::)'`;
+decisions CD-D1 and CD-D2 are in `sim_lrm_decisions`. Locally run them under
+the same sanitizer flags as `sim_099`.
+
 SIM-037's sequence-composition fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_037::)'`. `exhaustive` compares
 36 sequences on all 1024 two-signal traces of length 5 with the test-side

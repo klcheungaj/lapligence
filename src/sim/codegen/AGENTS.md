@@ -395,6 +395,13 @@ them) and context-import call sites carry `dpi_site` for `svGetCallerInfo`.
 Static exported subroutines name their persistent formal storage in
 `IrDpiExport::storage`, which the export thunk reads and writes around the call.
 
+Named activations (`activation_target`) pair the declaration with its module
+instance or package; inside a class method, which has neither, the class
+specialization is the environment, so a `disable` ends the block or task in
+every object (CD-D1). Class task bodies and call sites carry the task's own
+activation scope only when some `disable` names the task
+(`task_is_disable_target`); other class tasks keep none.
+
 Ordinary forks use owned activation frames. Completion/cancellation releases
 captures; synchronous join may borrow live parent storage, detached joins snapshot
 admitted values. Keep blocking-function-join and unsupported capture/formal guards.
@@ -814,8 +821,10 @@ Parse display formats during lowering (`objects/format_text.rs`, shared by every
 display, file, string and severity task); `%d` retains signedness and `$write` omits
 newline. Arguments stay typed: never re-parse rendered text. Literal string
 arguments start format segments, `%m` comes from `format_scope` (nearest named
-block, subroutine or generate block; in class methods the class below the scope
-from `Db::class_declaring_scope`, S99-D10), and non-`%p` conversions of unpacked values
+block, named fork (its target block), subroutine or generate block; in class
+methods the class below the scope from `Db::class_declaring_scope`, S99-D10; an
+`extern` body is named once, not also by its prototype, CD-D2), and non-`%p`
+conversions of unpacked values
 or handles reject. `%p` (`objects/patterns.rs`) lowers to `IrStringExpr::Pattern`
 over interned `IrModel::pattern_types`/`pattern_classes`; the runtime walker in
 `rt/scheduler/patterns.c` only reads storage, bounds object nesting with

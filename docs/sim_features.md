@@ -1617,7 +1617,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   empty arguments print a space. `%m` names the enclosing named block,
   subroutine or generate block; in a class method it names the method below its
   class and the scope that declares the class (`C.f`, `p.D.g`, `tb.L.k`,
-  S99-D10). `%p` prints arrays (declared order), queues,
+  S99-D10), followed by its named blocks (`C.f.fb`); a named `fork`-`join`
+  is a named block (`tb.top`, CD-D2). `%p` prints arrays (declared order), queues,
   dynamic and associative arrays, unpacked and packed structures (named
   members), packed unions, enums (names), quoted strings, other singular
   values as unformatted display text (SV §21.2.1.7), class objects (properties, cycle
@@ -2009,6 +2010,11 @@ These are bounded implementations, not full verification-infrastructure support.
   source is a run-time error at its source position that ends the run before
   the rest of the statement runs (S99-D8)
   ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).
+  Methods hold named `begin`-`end` and `fork`-`join` blocks with automatic
+  and static locals; a `disable` of such a block or of a class task, from the
+  method or from another process, ends every active execution in every
+  object (CD-D1)
+  ([class_defects](../tests/fixtures/sim/feature_completion/class_defects/readme.md)).
   Unreachable objects, including cycles through handle, container and record
   properties, are reclaimed at scheduler safe points (after a process turn or
   region callback) once enough objects were allocated; objects reachable from

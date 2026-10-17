@@ -1105,10 +1105,10 @@ impl<'a> Codegen<'a> {
         };
         pre_fns.extend(std::mem::take(&mut self.pending_container_pre_fns));
         // Delay-free module tasks need the same declaration-level activation
-        // as an inlined timed task. Class methods have no module activation
-        // environment; the bounded class subset admits only direct,
-        // delay-free task calls, so they do not need this cancellation scope.
-        if is_task && !self.class_nodes.contains_key(&inst) {
+        // as an inlined timed task. A class task gets it only when a
+        // `disable` names it (SV 9.6.2): its activation identity is its
+        // class, and other class tasks keep their bodies free of the scope.
+        if is_task && (!self.class_nodes.contains_key(&inst) || self.task_is_disable_target(ft)) {
             body_stmts = vec![IrStmt::ActivationScope {
                 target: self.activation_target(ft)?,
                 exit: self.new_fn_name(path, "task_exit"),

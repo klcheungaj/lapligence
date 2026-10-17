@@ -1523,22 +1523,16 @@ handles); the method call needs the method body's reads per bound instance.
 Reproduce with
 `tests/fixtures/sim/feature_completion/sim_099/neg_vif_sensitivity_*.sv`.
 
-## Named blocks and value parameters in class methods
+## Value parameters in class methods
 
-**Status:** open (found by gate-fixes-2; both stop compilation, nothing is
+**Status:** open (found by gate-fixes-2; stops compilation, nothing is
 silent).
 
-A named `begin`-`end` or `fork`-`join` block inside a class method stops with
-"named activation `C.f.fb` has no elaborated module, interface, or package
-environment": named activations look for an enclosing instance or package,
-and a class method has neither. A value parameter of a parameterized class
-read in a method body (`class P #(int W = 8); function void h();
-$display("%0d", W); ...`) stops with "cannot resolve bound expression
-reference `W` in `P`". `%m` in an unnamed block of a class method prints the
-method's name (decision S99-D10).
+A value parameter of a parameterized class read in a method body (`class P
+#(int W = 8); function void h(); $display("%0d", W); ...`) stops with "cannot
+resolve bound expression reference `W` in `P`".
 
-Reproduce with a class method that contains `begin : fb ... end`, or that
-displays its class's value parameter.
+Reproduce with a class method that displays its class's value parameter.
 
 ## Modport expression ports through virtual interfaces
 

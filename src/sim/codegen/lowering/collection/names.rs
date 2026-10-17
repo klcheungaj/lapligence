@@ -339,6 +339,9 @@ impl<'a> Codegen<'a> {
     pub(in super::super) fn named_suffix_below(&self, scope: NodeId, node: NodeId) -> String {
         let mut names: Vec<String> = Vec::new();
         let mut current = self.node(node).parent;
+        // Subroutines do not nest, so a subroutine above the first one is the
+        // prototype that owns an out-of-block (`extern`) method body.
+        let mut in_subroutine = false;
         while let Some(id) = current {
             if id == scope {
                 let mut text = String::new();
@@ -348,12 +351,22 @@ impl<'a> Codegen<'a> {
                 }
                 return text;
             }
-            let named = matches!(
-                self.kind(id),
-                NodeKind::Stmt(StmtKind::Begin) | NodeKind::FuncTask { .. }
-            );
-            let name = &self.node(id).name;
-            if named && !name.is_empty() {
+            // A named fork's scope is its target block; the fork statement
+            // itself is unnamed (SV 9.3.4 names both block kinds).
+            let name = match self.kind(id) {
+                NodeKind::FuncTask { .. } if in_subroutine => "",
+                NodeKind::FuncTask { .. } => {
+                    in_subroutine = true;
+                    &self.node(id).name
+                }
+                NodeKind::Stmt(StmtKind::Begin) => &self.node(id).name,
+                NodeKind::Stmt(StmtKind::Fork {
+                    target: Some(target),
+                    ..
+                }) => &self.node(*target).name,
+                _ => "",
+            };
+            if !name.is_empty() {
                 names.push(strip_lib(name).to_string());
             }
             current = self.node(id).parent;

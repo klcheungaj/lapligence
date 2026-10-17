@@ -2751,3 +2751,19 @@ fn s99_d6_builtin_override() {
         &["--dpi-lib", &archive],
     );
 }
+
+#[test]
+fn cd_d1_class_block_disable() {
+    run_decision(
+        "CD-D1_class_block_disable",
+        include_str!("fixtures/sim/lrm_decisions/CD-D1_class_block_disable.out"),
+    );
+}
+
+#[test]
+fn cd_d2_named_block_scope() {
+    run_decision(
+        "CD-D2_named_block_scope",
+        include_str!("fixtures/sim/lrm_decisions/CD-D2_named_block_scope.out"),
+    );
+}
