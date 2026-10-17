@@ -131,6 +131,7 @@ static void proc_complete(llg_proc_t* self) {
     // boundary.  Release children before unwinding the creator's activation
     // and frame; their copied captures remain retained by the child process.
     start_pending_fork_children(self);
+    wait_retained_drop(self);
     self->completed = 1;
     // SV 9.7: "KILLED means the process was forcibly killed (via kill or
     // disable)"; a disabled whole-branch block leaves nothing to resume at.
@@ -236,6 +237,38 @@ llg_co_arm_t llg_arm_any(llg_proc_t* self, sv4_t** sigs, int n) {
     return LLG_CO_ARM_SUSPEND;
 }
 
+static int wait_dependency_same(const llg_wait_dependency_t* left,
+                                const llg_wait_dependency_t* right) {
+    return left->sig == right->sig && left->real == right->real &&
+           left->value == right->value && left->lsb == right->lsb &&
+           left->width == right->width;
+}
+
+// The retained record to arm with `deps`: the process's previous one when it
+// names the same list, otherwise a new one replacing it. The previous wait
+// has been released, so any retained memberships are dormant.
+static llg_wait_retained_t* wait_retained_for(llg_proc_t* self,
+                                              const llg_wait_dependency_t* deps,
+                                              int n) {
+    llg_wait_retained_t* retained = self->retained_wait;
+    if (retained && retained->n == n) {
+        int same = 1;
+        for (int i = 0; i < n && same; i++)
+            same = wait_dependency_same(&retained->dependencies[i], &deps[i]);
+        if (same) return retained;
+    }
+    wait_retained_drop(self);
+    retained = (llg_wait_retained_t*)llg_checked_calloc(
+        1, sizeof(*retained), "retained dependency wait");
+    retained->dependencies = (llg_wait_dependency_t*)llg_checked_malloc(
+        (size_t)n, sizeof(llg_wait_dependency_t), "typed event dependencies");
+    retained->last = (sv4_t*)llg_checked_calloc(
+        (size_t)n, sizeof(sv4_t), "packed-prefix wait snapshots");
+    retained->n = n;
+    self->retained_wait = retained;
+    return retained;
+}
+
 llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
                                       const llg_wait_dependency_t* deps,
                                       int n) {
@@ -247,10 +280,17 @@ llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
     w->resume_region = take_wait_resume_region(self);
     llg_wait_expression_payload_t* payload = &w->payload.expression;
     payload->n = n;
-    payload->dependencies = (llg_wait_dependency_t*)llg_checked_malloc(
-        (size_t)n, sizeof(llg_wait_dependency_t), "typed event dependencies");
-    payload->last = (sv4_t*)llg_checked_calloc(
-        (size_t)n, sizeof(sv4_t), "packed-prefix wait snapshots");
+    llg_wait_retained_t* retained = LLG_GATE_FAST_PATH && n > 0
+        ? wait_retained_for(self, deps, n) : NULL;
+    if (retained) {
+        payload->dependencies = retained->dependencies;
+        payload->last = retained->last;
+    } else {
+        payload->dependencies = (llg_wait_dependency_t*)llg_checked_malloc(
+            (size_t)n, sizeof(llg_wait_dependency_t), "typed event dependencies");
+        payload->last = (sv4_t*)llg_checked_calloc(
+            (size_t)n, sizeof(sv4_t), "packed-prefix wait snapshots");
+    }
     for (int i = 0; i < n; i++) {
         if ((deps[i].sig == NULL) == (deps[i].real == NULL)) {
             fprintf(stderr, "llg: typed wait dependency must name one storage kind\n");
@@ -263,9 +303,9 @@ llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
                 deps[i].width > llg_sv4_width(*value) - deps[i].lsb) {
                 fprintf(stderr, "llg: invalid packed-prefix wait dependency\n"); abort();
             }
-            payload->last[i] = sv4_part_select(
+            sv4_replace(&payload->last[i], sv4_part_select(
                 *value, (int64_t)deps[i].lsb + deps[i].width - 1,
-                deps[i].lsb);
+                deps[i].lsb));
         }
     }
     register_wait();

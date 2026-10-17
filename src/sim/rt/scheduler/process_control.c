@@ -87,6 +87,7 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
         wait_payload_release(w);
         g.wait_count--;
     }
+    wait_retained_drop(p);
     remove_region_entry(p);
 
     llg_fork_group_t* parent_group = p->grp;

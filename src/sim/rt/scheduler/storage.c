@@ -261,6 +261,29 @@ typedef struct {
     uint64_t reserved; // Preserve the process record layout across this bridge migration.
 } llg_wait_inline_payload_t;
 
+// A dependency wait's list, snapshots and source memberships, kept by its
+// process after a wake. A process that re-arms the same dependency list (a
+// continuous assignment, gate, UDP or `@*` loop) reuses them: each membership
+// moves back to the head of its source list, which is exactly where a fresh
+// registration would insert it, so wake order is unchanged. Between wakes the
+// memberships stay linked with a NULL waiter, which publication skips like a
+// cursor; a different list or the end of the process releases them.
+// LLG_DEV_LEGACY_GATE_PATH (a development-only C define) keeps the earlier
+// per-wake registration and net-write paths for differential tests.
+#ifdef LLG_DEV_LEGACY_GATE_PATH
+#define LLG_GATE_FAST_PATH 0
+#else
+#define LLG_GATE_FAST_PATH 1
+#endif
+
+typedef struct {
+    llg_wait_dependency_t* dependencies;
+    sv4_t* last;
+    int n;
+    llg_wait_subscription_t* subscriptions;
+    size_t n_subscriptions;
+} llg_wait_retained_t;
+
 typedef struct llg_wait {
     struct llg_wait* next;         // all active waits (signal + timed + zero-delay)
     struct llg_wait** prev_link;  // O(1) global-list removal
@@ -498,6 +521,8 @@ struct llg_proc {
     // A mailbox message delivered to this blocked getter that it has not
     // resumed to take yet (SIM-017); handed back if the process dies first.
     struct llg_mailbox_message* mailbox_delivery;
+    // Dependency wait retained across re-arms (llg_wait_retained_t).
+    llg_wait_retained_t* retained_wait;
     // Resume-hot fields are packed next to the chain and appended root frame.
     llg_value_scope_t* value_scopes;
     llg_activation_t* activation_top;
@@ -528,7 +553,7 @@ _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) -
 _Static_assert(offsetof(llg_proc_t, chain) + sizeof(llg_co_chain_t) ==
                    sizeof(llg_proc_t),
                "coroutine chain must remain the process record's last member");
-_Static_assert(sizeof(llg_proc_t) == 440,
+_Static_assert(sizeof(llg_proc_t) == 448,
                "64-bit process record size changed; update the layout contract");
 #endif
 
@@ -559,6 +584,7 @@ static void deferred_trigger_event(llg_event_object_t* ev);
 static void process_local_release_all(llg_proc_t* proc);
 static void start_pending_fork_children(llg_proc_t* parent);
 static void proc_complete(llg_proc_t* self);
+static void wait_retained_drop(llg_proc_t* proc);
 static void event_triggered_unlink(llg_wait_t* w);
 static void mailbox_unlink_wait(llg_wait_t* w);
 static void mailbox_value_destroy(llg_mailbox_value_t* value);

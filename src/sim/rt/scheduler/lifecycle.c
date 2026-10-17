@@ -33,6 +33,7 @@ static void free_proc_storage(llg_proc_t* p) {
     if (p->wait.kind == W_MAILBOX_GET || p->wait.kind == W_MAILBOX_PUT)
         mailbox_unlink_wait(&p->wait);
     wait_payload_release(&p->wait);
+    wait_retained_drop(p);
     value_scopes_unwind(p);
     activation_unwind_proc(p);
     llg_frame_release(p->frame);
