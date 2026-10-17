@@ -787,7 +787,7 @@ static void sig_write(sv4_t* target, sv4_t value) {
     // Callbacks can finish/disable the writer without returning through here.
     // Heap-backed registered owners survive both suspension and stack discard.
     llg_value_scope_t* target_pin = value_target_pin(target);
-    llg_value_scope_t* snapshots = llg_value_scope_begin(2);
+    llg_value_scope_t* snapshots = value_scope_begin_private(2);
     sv4_t* owned = llg_value_scope_values(snapshots);
     sv4_copy(&owned[0], &value);
     sv4_copy(&owned[1], target);
@@ -839,7 +839,7 @@ static int sig_write_ranges(sv4_t* target,
         return 0;
     }
     llg_value_scope_t* target_pin = value_target_pin(target);
-    llg_value_scope_t* snapshots = llg_value_scope_begin(2);
+    llg_value_scope_t* snapshots = value_scope_begin_private(2);
     sv4_t* edges = llg_value_scope_values(snapshots);
     // Every directional packed edge rule consumes only the LSB. Publication
     // has already established that some bit changed, so these stable one-bit

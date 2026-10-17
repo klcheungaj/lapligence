@@ -183,7 +183,7 @@ static sv4_t llg_net_compute(llg_net_t* net) {
 
 static void llg_net_alias_refresh(llg_net_alias_t* alias) {
     if (!alias || !alias->storage) return;
-    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    llg_value_scope_t* scope = value_scope_begin_private(1);
     sv4_t* owned = llg_value_scope_values(scope);
     sv4_copy(&owned[0], alias->storage);
     for (uint32_t i = 0; i < alias->n_parts; i++) {
@@ -349,7 +349,7 @@ static int llg_net_propagation_pending(const llg_net_t* net) {
 static void llg_net_strength_publish(llg_net_t* net) {
     if (!net || !net->strength) return;
     if (llg_net_propagation_pending(net)) return;
-    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    llg_value_scope_t* scope = value_scope_begin_private(1);
     sv4_t* owned = llg_value_scope_values(scope);
     sv4_replace(&owned[0], llg_net_strength_levels(net));
     sig_write(net->strength, owned[0]);
@@ -398,7 +398,7 @@ void llg_net_resolve(llg_net_t* net) {
     if (llg_is_forced(&net->resolved)) {
         force_recompute_target(&net->resolved, net);
     } else {
-        llg_value_scope_t* scope = llg_value_scope_begin(1);
+        llg_value_scope_t* scope = value_scope_begin_private(1);
         sv4_t* owned = llg_value_scope_values(scope);
         sv4_replace(&owned[0], llg_net_compute(net));
         llg_net_publish(net, owned[0]);
@@ -452,7 +452,7 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
         if (!old_active || low > 0) low = 0;
         if (!old_active || high < net->width - 1u) high = net->width - 1u;
     }
-    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    llg_value_scope_t* scope = value_scope_begin_private(1);
     sv4_t* owned = llg_value_scope_values(scope);
     sv4_replace(owned, llg_net_compute_range(net, low, high - low + 1u));
     llg_net_publish_range(net, low, owned[0]);
@@ -523,7 +523,7 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
     if (!old_active && !new_active) return;
     if (old_active && new_active &&
         (old_high + 1u < new_low || new_high + 1u < old_low)) {
-        llg_value_scope_t* scope = llg_value_scope_begin(2);
+        llg_value_scope_t* scope = value_scope_begin_private(2);
         sv4_t* owned = llg_value_scope_values(scope);
         sv4_replace(&owned[0], llg_net_compute_range(
             net, old_low, old_high - old_low + 1u));
@@ -540,7 +540,7 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
         if (!old_active || new_low < low) low = new_low;
         if (!old_active || new_high > high) high = new_high;
     }
-    llg_value_scope_t* scope = llg_value_scope_begin(1);
+    llg_value_scope_t* scope = value_scope_begin_private(1);
     sv4_t* owned = llg_value_scope_values(scope);
     sv4_replace(owned, llg_net_compute_range(net, low, high - low + 1u));
     llg_net_publish_range(net, low, owned[0]);
@@ -619,7 +619,7 @@ void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
     if (!alias || !alias->parts || !region_can_mutate("net alias write")) return;
     /* A publication callback may reenter or terminate the current process.
      * Both the input snapshot and each contribution must outlive that edge. */
-    llg_value_scope_t* scope = llg_value_scope_begin(2);
+    llg_value_scope_t* scope = value_scope_begin_private(2);
     sv4_t* owned = llg_value_scope_values(scope);
     sv4_copy(&owned[0], &value);
     for (uint32_t i = 0; i < alias->n_parts; i++) {
