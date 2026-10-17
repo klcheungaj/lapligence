@@ -112,7 +112,7 @@ forms. Body rules need executable capture; navigation snapshots skip them. Expli
 from standards. Directive bodies are ignored until expanded; executable for-loop
 header edges differ from navigation-only capture. Memory-storage exemptions are
 argument-specific (`$fread` and legacy PLA personality argument 0;
-`$readmem*` argument 1), never exemptions for unrelated whole-array uses of the
+`$readmem*` argument 1, `$sreadmem*` argument 0), never exemptions for unrelated whole-array uses of the
 same declaration. PLA syntax admission does not select a simulator PLA target.
 
 Frontend `Diag`s keep their physical `file`/`line`/`col` and carry the

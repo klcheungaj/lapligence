@@ -693,6 +693,15 @@ task range or memory, enum value, invalid range, a generated `origin` of
 I/O failure); neither stops
 the simulation (decisions S27-D5..D9 in `docs/lrm_decisions.md`). `$writemem*`
 checks its range before opening the file, so a rejected call keeps the file.
+`$sreadmemb/$sreadmemh` (ADV-026) call the same read entry points inside a
+`llg_memory_text_begin(data, length)` / `llg_memory_text_end()` pair the
+emitter generates: `llg_memory_open_read` then serves the text instead of
+opening the file `path` names (which only labels the diagnostics, printed as
+`memory string`), through the `llg_memory_stream_t` that every parser function
+reads, so file and text loads share one tokenizer, address and range rules
+(S26-D16..D20). The text is not copied and not NUL-terminated; the stream stops
+at `length`. One slot suffices because a load never suspends. Do not add a file
+read path that bypasses `llg_memory_open_read`.
 Binary rank-one `$fread` advances low-to-high HDL addresses independently of physical
 declaration order, clamps count at the high bound, and consumes/writes nothing for
 invalid/unknown bounds or negative count. Keep element owners across callbacks;

@@ -1755,12 +1755,29 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   The same element/view restrictions apply; writers
   reject in 2001 mode. SV §21.5 **[SV-2005]**.
 
-- ❌ **String-sourced memory loading** — `$sreadmemb/$sreadmemh` appear in the
-  frontend's standard-name allowlist, but have no built-in simulator lowering or
-  runtime implementation. File-based memory loading and `$sscanf` do not provide
-  these routines; the generic VPI fallback requires an external registration.
-  These are optional informative services (V Annex C.13; SV Annex D.14), not
-  required language features.
+- 🟦 **String-sourced memory loading** — `$sreadmemb/$sreadmemh (memory,
+  start_address, finish_address, string {, string})` are built-in tasks, with no
+  VPI registration or file involved. The strings are one memory image (joined by
+  one newline each, S26-D16) read by the `$readmem*` parser, so values, `@`
+  addresses, comments, X/Z, word extension and truncation, two-state and enum
+  rules and the word-count warnings are those of memory files; start and finish
+  are required and load descending when start is larger (S26-D18). Any storage
+  form and view `$readmemh` accepts is a legal memory, in Verilog-2001 (with its
+  limits: no slices or multidimensional views) and SystemVerilog-2009. Stores
+  go through the same store path as `$readmem*`, so changed words wake waiters,
+  update continuous assignments and fire VPI value-change callbacks exactly
+  alike. An address outside the start/finish range or the memory and a token
+  that is not a number are errors that end the load (S26-D19); a `//` comment
+  ends with its string and an open `/*` continues in the next (S26-D20).
+  Diagnostics print as `llg: warning: memory string `$sreadmemh at tb:<line>:<col>`: ...`
+  or `llg: error: memory string ...`. **Limit (S26-D17):** the data arguments
+  must be string literals, as SV D.14 says; a string variable, parameter,
+  concatenation or reg vector is rejected at compile time with its location.
+  A wrong argument order, count or type is a located compile error. A VPI
+  registration of either name while the design calls it stops the run at
+  startup (S99-D6). Optional informative service (V Annex C.13; SV Annex D.14).
+  The [ADV-026 suite](../tests/fixtures/sim/feature_completion/adv_026/readme.md)
+  compares every load with the file image of the same text.
 
 ### Time, control and utility services
 

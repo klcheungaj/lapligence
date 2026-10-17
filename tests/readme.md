@@ -372,6 +372,19 @@ unused-storage pass changes. Decisions S47-D1-D13 are in `sim_lrm_decisions`.
 Under ASan run the set with `LLG_CC=gcc LLG_CFLAGS='-fsanitize=address,undefined
 -fno-omit-frame-pointer'`.
 
+ADV-026's string-sourced memory loads (`$sreadmemb`/`$sreadmemh`) use
+`-E 'binary(sim_feature_completion) & test(adv_026::)'`
+([readme](fixtures/sim/feature_completion/adv_026/readme.md)). Each positive
+loads a memory from strings and from the data file holding the same text and
+compares them (`equivalence*`, `contexts*`); `notify` compares the per-time-step
+event sets of a string load and a file load, including VPI value-change
+callbacks; `diagnostics*` check every warning/error category and that nothing is
+written outside the range; the negatives pin the located rejections. Positives
+run in both optimizer modes on every backend, and `.v` fixtures in both
+editions. The native `memory_image` probe has `text`/`textmalformed` modes for
+the text source. Decisions S26-D16..D20 are in `sim_lrm_decisions`. The CI
+sanitizer job includes `adv_026`.
+
 SIM-099's gate fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_099::)'`. The integrated
 testbench runs with its DPI-C model and VPI application linked as static
@@ -605,7 +618,7 @@ requirements above apply without repeating them for each suite.
 | Unused-storage optimizer | `opt_storage_differential` generates every fixture with and without the `unused_storage` pass: pruning must never make generation fail, a differing optimized model must compile, and every eighth differing fixture per shard is built and run in both forms with identical status and output (`LLG_STORAGE_DIFF_EXEC=all` runs all of them). `sim_opt_storage` and [opt_storage](fixtures/sim/opt_storage/readme.md) run variables read only through event-handle indices, handle receivers and arguments, and clocked nonblocking wait sources in both optimizer modes; `sim::opt::passes::tests::storage_references` covers each reference kind. |
 | Instance body sharing | `sim_instance_sharing`, [instance identities](fixtures/sim/instance_sharing/readme.md): shared module/task and generate bodies preserve `%m`, named events, external disable isolation and net contribution slots in both optimizer modes. Render tests cover thresholds, width/parameter splits, PCA sites and deterministic records; the frame lint recognizes shared entries and model-lifetime record addresses. |
 | Time and numeric services | `sim_delay`, `sim_time_literals`, `sim_time_values`, `sim_physical_time`, `sim_real`, `sim_real_conversions`, `sim_random`, `sim_random_streams`: exact units/rounding, overflow, real precision, Annex N vectors and child-stream isolation. |
-| I/O and observation | `sim_file_io`, `sim_memory_editions`, `sim_memory_views`, `sim_syn030_memory_views`, `sim_plusargs`, `sim_waveform`, `sim_vpi`, `sim_syn035_pla`, `sim_feature_completion::sim_027`; [SIM-027 memory files](fixtures/sim/feature_completion/sim_027/readme.md), [SYN-030 memory views](fixtures/sim/syn030_memory_views/readme.md), checked signed `@` spellings/bounds in both editions and selected views in SV2009, [SYN-035 PLA exclusion](fixtures/sim/syn035_pla/readme.md), [file I/O](fixtures/sim/file_io/readme.md), [waveforms](fixtures/sim/waveform/readme.md), [partial features](fixtures/sim/partial_features/readme.md). |
+| I/O and observation | `sim_file_io`, `sim_memory_editions`, `sim_memory_views`, `sim_syn030_memory_views`, `sim_plusargs`, `sim_waveform`, `sim_vpi`, `sim_syn035_pla`, `sim_feature_completion::sim_027`, `sim_feature_completion::adv_026`; [SIM-027 memory files](fixtures/sim/feature_completion/sim_027/readme.md), [SYN-030 memory views](fixtures/sim/syn030_memory_views/readme.md), checked signed `@` spellings/bounds in both editions and selected views in SV2009, [SYN-035 PLA exclusion](fixtures/sim/syn035_pla/readme.md), [file I/O](fixtures/sim/file_io/readme.md), [waveforms](fixtures/sim/waveform/readme.md), [partial features](fixtures/sim/partial_features/readme.md). |
 | Undefined behavior characterization | `sim_undefined_behavior` compares exact CLI stdout, stderr and status to checked-in [Q02 goldens](fixtures/sim/undefined_behavior/readme.md) in both optimizer modes and each legal edition. These are observations for later cross-simulator comparison, not independent conformance oracles. |
 | Verification and native objects | `sim_classes`, `sim_virtual_interfaces`, `sim_dpi`, [concurrent assertions](fixtures/sim/concurrent_assertions/readme.md): nominal identity, dispatch/casts, interface bindings, scalar native ABI, sampled/sequence/property behavior and explicit rejection boundaries. |
 | Build and safeguards | `sim_cmake`, `cli_info`, `sim_memory_guard`, `support_harness`, `emit_decoupling`, `generated_c_determinism`: CMake/generator failures, source cleanup, early CLI exits, memory limits, timeout trees, CWD recovery, frontend-independent emission and byte-identical generated source trees across separate processes. |

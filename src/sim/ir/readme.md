@@ -137,6 +137,12 @@ members keeps them in one SIM-003 native value (a structure of those leaves
 with the record type's nominal identity), passed as one more trailing formal
 after the record's columns; no `IrFixedValue` carries a native payload.
 
+`IrStmt::Memory` and `IrMemoryAccess` carry `text: Option<Vec<u8>>`: for
+`$sreadmemb/$sreadmemh` (ADV-026) the words of the load, with `path` only the
+label of its diagnostics; the validator rejects text on a dump, and the legacy
+fragment emitter rejects a load with text (the owned emitter brackets the
+runtime call with `llg_memory_text_begin`/`llg_memory_text_end`).
+
 SIM-027 adds one statement variant, `IrStmt::MemoryAccess`
 (`IrMemoryAccess`), for `$readmem*`/`$writemem*` on memories without model
 array storage. `IrMemoryStorage::Image` addresses the memory's packed image

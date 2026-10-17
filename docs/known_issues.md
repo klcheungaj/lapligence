@@ -1940,9 +1940,9 @@ System task and function registrations are also limited (SIM-099):
   the built-in system task or system function". When the design calls that
   built-in, the run stops at startup naming it and its call (decision
   S99-D6); a registration of a built-in the design does not call is
-  accepted. Built-ins llg does not implement (the Annex D services,
-  `$sreadmemb/$sreadmemh`, `$sdf_annotate`) are dispatched to such a
-  registration;
+  accepted. Built-ins llg does not implement (the Annex D services such as
+  `$key`, `$reset_count` and `$sdf_annotate`) are dispatched to such a
+  registration; `$sreadmemb/$sreadmemh` are built-ins (ADV-026);
 - a `string` formal (`$input`, `$log`, `$sdf_annotate`'s file names, or a
   `--define-system-task` `string` formal) accepts only a string literal, which
   the application reads as a `vpiConstant` string; a string variable or
