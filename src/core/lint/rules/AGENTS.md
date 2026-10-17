@@ -11,7 +11,12 @@ native traversal or I/O.
 
 - `unused.rs` — `unused-signal`: signals that are never read or used. Reads and
   writes in every subroutine body (exported ones included) and in formal
-  defaults count, wherever the subroutine is declared.
+  defaults count, wherever the subroutine is declared (the body is the Db's
+  recorded `body`; extra scope-only `Begin` children of a subroutine with
+  loops or blocks are not it). Input terminals of gate and UDP instances
+  are reads and output terminals are drivers; a concatenation, streaming or
+  assignment-pattern write target counts for each member (`collect_writes_with_members`).
+  Generate scopes (loop, if, case) are analysed like module scopes.
 - `width.rs` — `width-mismatch`: assignments and port links with different known widths.
 - `latch.rs` — `incomplete-case`: exact cases without a default in combinational/latch logic.
 - `combloop.rs` — `combinational-loop`: combinational feedback paths. A
@@ -53,7 +58,14 @@ native traversal or I/O.
   non-`const` `ref` actuals of any call are drivers: DPI imports, tasks,
   `$sscanf`/`$fscanf`/`$fgets`/`$fread`/`$readmem*`/`$sformat` destinations and
   `std::randomize` arguments (Slang wraps each written actual in an assignment
-  operation), plus the `$random` seed. Constraint `foreach` loop variables
+  operation), plus the `$random` seed. Assignments in expression position
+  (`for` initializers and steps, compound `+=`), `++`/`--`, `foreach` and
+  declared `for` variables, concatenation/streaming targets (each member),
+  struct/union member writes (the owning object), `rand`/`randc` properties
+  (set by `randomize()`), built-in `push_back`/`push_front`/`insert`/`putc`/
+  `itoa`-family receivers, mailbox `get`/`peek` messages,
+  `obj.randomize(v, ...)` arguments and both sides of `ref` port connections
+  are drivers. Constraint `foreach` loop variables
   are bound by the solver and never reported. Top-level
   external inputs/inouts, explicitly open child ports, implicit nets,
   and intrinsic pull/supply nets are skipped.
