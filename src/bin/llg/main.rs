@@ -20,6 +20,8 @@
 //! line (`-I`, `-D`, source files, `--`, ...) replaces the file's list; its
 //! `--append-<list>` twin adds to the list instead, after any replacing values.
 //! With no arguments the driver prints usage and exits 2.
+//! On Windows on ARM (`llg_ls` only) the driver is unsupported: it prints an
+//! "unsupported platform" error and exits 2 before parsing any argument.
 //!
 //! Every run lints the elaborated design (`core::lint`) before codegen: each
 //! finding prints to stderr as `file:line:col: [SEVERITY] rule: message`
@@ -93,6 +95,10 @@ mod settings;
 use settings::{DriverOptions, SettingsError};
 
 fn main() -> std::process::ExitCode {
+    if let Some(reason) = llg::ffi::platform::simulator_unsupported_reason() {
+        eprintln!("llg: {reason}");
+        return std::process::ExitCode::from(2);
+    }
     let code = match start(std::env::args().skip(1).collect()) {
         Ok(options) => {
             let memory_report = llg::memory_limit::install();

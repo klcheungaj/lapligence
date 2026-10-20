@@ -110,6 +110,20 @@ pub fn resolves_symlinked_paths() -> bool {
     cfg!(unix)
 }
 
+/// Why the simulator driver `llg`, and so generated models, is unsupported on
+/// this host, or `None` where it is supported. Windows on ARM ships only the
+/// language server (`llg_ls`); the library and `llg_ls` build and run there.
+pub fn simulator_unsupported_reason() -> Option<&'static str> {
+    simulator_unsupported_reason_for(cfg!(windows), cfg!(target_arch = "aarch64"))
+}
+
+fn simulator_unsupported_reason_for(windows: bool, aarch64: bool) -> Option<&'static str> {
+    (windows && aarch64).then_some(
+        "unsupported platform: on Windows on ARM only the language server (llg_ls) is \
+         supported; the llg simulator driver and generated models are not",
+    )
+}
+
 /// Rewrites every CRLF pair as LF; a lone CR is kept.
 pub fn crlf_to_lf(bytes: Vec<u8>) -> Vec<u8> {
     if !bytes.windows(2).any(|pair| pair == b"\r\n") {
@@ -248,6 +262,17 @@ mod host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_windows_on_arm_lacks_simulator_support() {
+        assert!(simulator_unsupported_reason_for(true, true)
+            .is_some_and(|reason| reason.contains("llg_ls")));
+        assert_eq!(simulator_unsupported_reason_for(true, false), None);
+        assert_eq!(simulator_unsupported_reason_for(false, true), None);
+        assert_eq!(simulator_unsupported_reason_for(false, false), None);
+        let here = simulator_unsupported_reason();
+        assert_eq!(here.is_some(), cfg!(all(windows, target_arch = "aarch64")));
+    }
 
     #[test]
     fn verbatim_prefixes_are_stripped_only_on_windows() {
