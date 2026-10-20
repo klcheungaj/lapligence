@@ -1624,10 +1624,6 @@ real values" or "must be a static packed or real expression") instead of being
 flattened. Sampling them needs Preponed snapshots of unpacked storage, which
 assertions also lack.
 
-Concurrent assertions themselves still need one direct signal clock
-(ADV-013), so sampled-value functions in an assertion inherit that limit;
-explicit clocking-event arguments are not limited.
-
 Reproduce with
 [`neg_unpacked_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_arg.sv),
 [`neg_unpacked_struct_arg.sv`](../tests/fixtures/sim/feature_completion/sim_035/neg_unpacked_struct_arg.sv) and
@@ -1693,6 +1689,11 @@ other items need small hand-written cases.
   that is evaluated with property local variables, is rejected with a
   located diagnostic as well; no shape of this kind is known among legal
   programs without local formals.
+- A property local with a declaration assignment in a property with two
+  semantic leading clocks (16.10 L26329-26337: one copy per leading clock) is
+  rejected ("is initialized at the property attempt's start, which this
+  property form does not support"); the equivalent explicit form with a local
+  assignment in each operand works.
 - `restrict property` stops with the generic "unsupported executable node
   ConcurrentAssertion" instead of a clause-linked message; 16.15.4 does not
   verify it in simulation.
@@ -1705,7 +1706,8 @@ other items need small hand-written cases.
 A recursive re-entry is a call (`IrPropertyNode::Call`) of an earlier
 expansion of the same property, which needs the same actual values; a local
 formal changes its value per call and would need its own local-variable
-frame per call. `restrict` has no
+frame per call. Property locals are initialized only at the attempt's start
+(the SIM-039 boundary), not at each leading clock's first tick. `restrict` has no
 lowering at all. The empty-match check is Slang's, which examines the whole
 operand rather than the maximal singly clocked subsequence.
 
@@ -1717,7 +1719,7 @@ patch.
 
 ### Reproduce
 
-`neg_rec_local_formal.sv` in
+`neg_rec_local_formal.sv` and `neg_local_two_clocks.sv` in
 [adv_013](../tests/fixtures/sim/feature_completion/adv_013/readme.md); the
 other items need small hand-written cases.
 

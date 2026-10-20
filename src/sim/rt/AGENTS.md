@@ -599,13 +599,23 @@ run per attempt as a tree of instances over the static `llg_property_node_t`
 table (operands precede users; the last node is the root). Each instance
 resolves once to true/false with its 16.15.8 nonvacuity; a parent may decide
 while an operand is pending, which then counts as vacuous (decision S38-D3).
-Sequence operands reuse the sequence engine on the leading clock with their
-own zero-delay ranks. Asynchronous `accept_on`/`reject_on` are checked once per
+A multiclocked program lists its clocks (`llg_property_clock_t`, the leading
+clock first) and each node and sequence names its own; an instance starts at a
+launch point (clock, time, tick) and advances on the first tick of its own
+clock at or strictly after it, so coincident ticks of different clocks are one
+time step (16.14). Single-clock programs have no clock list and run on the
+assertion's clock. Sequence operands reuse the sequence engine on their clock
+with their own zero-delay ranks. `LLG_PROPERTY_CALL` (a recursive property
+instance, 16.13.17) starts a fresh instance of its target node.
+`llg_assertion_clock_pulse` writes a planned clock's hidden signal 1 then 0 at
+most once per time step. Asynchronous `accept_on`/`reject_on` are checked once per
 time step from the write hook with sampled values; synchronous ones and every
 abort are checked first on each tick. At the end of simulation
 (`run_end_of_simulation_assertions`, after deferred reports) a pending attempt
 settles by its finite-trace verdict: unmet strong obligations fail (fail
-action in an isolated Reactive pass), weak ones end without a result (S38-D1);
+action in an isolated Reactive pass), weak ones end without a result (S38-D1),
+and an obligation whose clock has not ticked since it became due imposes
+nothing (A13-D7);
 `cover` and `expect` are not settled. Instances count against
 `LLG_SEQUENCE_THREAD_LIMIT` and are recycled through `g.property_inst_pool`.
 An `expect` keeps its outcome (`llg_assertion_expect_outcome`: 0 none, 1 pass,

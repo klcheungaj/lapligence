@@ -864,8 +864,17 @@ a non-integral value into packed bits (reals use their exact 64-bit image).
 
 Concurrent assertions use dedicated instances, immutable sampled predicates,
 explicit clocks/disable/control metadata, per-attempt/thread locals and ordered
-match-item effects. Preserve Slang actual/default expansion; reject conflicting
-clocks or unsupported temporal/cross-clock forms. Locals (`assertions/locals.rs`)
+match-item effects. Preserve Slang actual/default expansion. Clock flow is
+structural (`assertions/clocks.rs`, SV 16.14.3 and the Annex F.5.1 rewrite: a
+consequent takes the clock flowing into its implication, A13-D1); an
+assertion registers on its semantic leading clock (16.17.1). A clock on one
+direct packed-signal edge stays an edge clock; every other clocking event
+(event lists, `edge`, value changes, bit selects, clocking-block events, `iff`
+gates off the leading position, `$global_clock`) is a planned pulse clock: a
+hidden one-bit signal pulsed at most once per time step by a synthetic
+process (`IrStmt::AssertionClockPulse`, `llg_assertion_clock_pulse`), shared
+by equal event lists. `$inferred_clock`/`$inferred_disable` defaults resolve
+at the instance (16.15.7). Locals (`assertions/locals.rs`)
 are initialized at attempt entry when their instance starts the attempt (formals
 first, then Db `assertion_local_initializer`s in declaration order); any other
 instance with locals, and every output/inout formal, lowers as the SV 16.8.2
@@ -884,12 +893,18 @@ operands become an `IrSequenceJoin`. Repeated non-Boolean sequences re-lower
 their body per literal copy (an unbounded bound loops the last copy), within
 `SEQUENCE_STATE_BUDGET`; never introduce a fixed unroll depth for `$`.
 Assignments to locals inside join operands and differently clocked join
-operands stay explicit rejections (ADV-013). A property that the
-predicate/sequence forms cannot represent (`property_requires_engine`) lowers
-whole to an `IrProperty` node table (`assertions/property.rs`): sequence
-operands on the leading clock, single-tick operands as sampled atoms, the
-`strong`/`weak` default from the assertion kind; nested clocks other than the
-leading one (16.14) and recursive instances are rejected. A non-signal
+operands stay explicit rejections (16.14.1 makes cross-clock ones illegal). A
+property that the predicate/sequence forms cannot represent
+(`property_requires_engine`) lowers whole to an `IrProperty` node table
+(`assertions/property.rs`): every node and sequence carries its own clock from
+the program's clock list (leading clock first), single-tick operands are
+sampled atoms on their clock, and the `strong`/`weak` default comes from the
+assertion kind. A recursive re-entry (16.13.17), which Slang leaves
+unexpanded, becomes `IrPropertyNode::Call` of the nearest enclosing expansion
+of the same property whose actuals have equal structural keys and whose
+flowing clock is the same (Annex F.7); the call site's actuals are read from
+any expansion of the same site. Recursion through local variable formals is a
+located limit. A non-signal
 `disable iff` condition, and an inherited `default disable iff` (Db
 `default_disable`, not for `expect`), become a hidden net driven by a
 synthetic process and shared per instance and condition node. `expect` action
