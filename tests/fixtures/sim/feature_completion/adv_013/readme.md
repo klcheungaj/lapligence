@@ -107,7 +107,7 @@ Nested aborts (16.13.14, L25335-25337): "if two nested operator conditions
 become true in the same time step during the evaluation of the argument
 property, then the outermost operator takes precedence."
 
-## Stimulus of `flow.sv`, `clocks.sv` and `recursion.sv`
+## Stimulus of `flow.sv`, `clocks.sv`, `recursion.sv` and `domains.sv`
 
 The fixtures use one race-free stimulus: clocks change on multiples of five,
 data at other times, so every sampled value is the last change before the
@@ -269,6 +269,50 @@ d 1 1 0 1 1, e 0 1 0 0 0; at the `c2` ticks 20, 30, 45, 60, 90, 100: d 1 1 0
   p1(a && b)`. 10: d, then a30=1 P30; 30: d, a50=0, then `p1(a && b)` at 70
   with a&&b=1 and a90=1 P90; 50: d=0 vacuous P50; 70: d, a90=1 P90; 90 open.
 
+## `domains.sv`
+
+Additional stimulus: `x` is 1 from 1, 2 from 22, 3 from 41, 4 from 48, 5 from
+81; `y` is 0, 1 from 25, 2 from 55, 4 from 95; `rst` is 1 from 40 to 42 and
+`rst2` from 47 to 48. `cnt1` and `cnt2` count the `c1` and `c2` ticks with
+nonblocking updates. Sampled x at the `c1` ticks 10, 30, 50, 70, 90: 1 2 4 4
+5; at the `c2` ticks 20, 30, 45, 60, 90, 100: x 1 2 3 4 5 5 and y 0 1 1 2 2 4.
+
+Clauses: a local variable assigned in an attempt belongs to that attempt
+(16.10 L23833, "The local variable u is unassigned at the beginning of the
+evaluation attempt"); with several semantic leading clocks (16.10
+L26329-26333) "a separate copy of the local variable shall be created for
+each semantic leading clock"; disable iff (16.12, L24454-24455): "If prior
+to the completion of that evaluation the disable condition becomes true,
+then the overall evaluation of the property results in disabled", and (L24470-24471)
+"The values of variables used in the disable condition are those in the
+current simulation cycle, i.e., not sampled"; actions (16.15.1 L26464):
+"The pass and fail statements of an assert statement are executed in the
+Reactive region", after the NBA region of the same time step (4.4).
+
+- `l1` `keep_x = (1'b1, v = x) ##1 @(posedge c2) 1'b1 ##1 y == v` from every
+  `c1` tick, so attempts overlap (30's lasts to 60, 50's to 90, 70's to
+  100): 10 (v=1)→20→y30=1 P30; 30 (v=2)→45→y60=2 P60; 50 (v=4)→60→y90=2 F90;
+  70 (v=4)→90→y100=4 P100; 90 open. The action prints `cnt1 cnt2`, which
+  include the NBA updates of the action's own time step: 30 → 2 2, 60 → 3 4,
+  90 → 5 5, 100 → 5 6.
+- `l2` `(a, v = x) |=> @(posedge c2) y == v - 1`: 10 (v=1)→y20=0 P20; 30
+  (v=2)→y45=1 P45; 50 vacuous P50; 70 (v=4)→y90=2 F90; 90 (v=5)→y100=4 P100.
+- `l3` `e |=> two_copies`, the 16.10 L26363-26369 equivalent form of one copy
+  per leading clock: `(@(posedge c1) (1'b1, v = x) ##0 v == 4) and
+  (@(posedge c2) (1'b1, v = x) ##0 v == 3)`. Only 30 has e: the c1 copy is
+  x(50)=4 and the c2 copy x(45)=3, so both hold: P50. The other attempts are
+  vacuous: P10 P50 P70 P90.
+- `dl1` `disable iff (rst) a |=> @(posedge c2) b ##1 @(posedge c1) d`: 10→b20
+  →d30=1 P30; 30 waits for the `c2` tick 45 and is disabled at 40 (no
+  action); 50 vacuous P50; 70→b90→ no later `c1` tick (open); 90→b100=0 F100.
+- `dl2` `@(posedge c2) disable iff (rst2) b |=> @(posedge c1) d`: 20→d30=1
+  P30; 30 vacuous P30; 45 waits for the `c1` tick 50 and is disabled at 47;
+  60→d70=1 P70; 90 open; 100 vacuous P100.
+- `s1` `a |=> strong(@(posedge c2) d ##1 d)`: 10→d20, d30 P30; 30→d45=0 F45;
+  50 vacuous P50; 70→d90, d100 P100; 90→d100, then no `c2` tick: the strong
+  obligation fails at `$finish` (S38-D1): F115. `s2`, the same with `weak`,
+  leaves 90 open: P30 F45 P50 P100.
+
 ## Rejections
 
 | Fixture | Diagnostic | Why |
@@ -285,3 +329,4 @@ d 1 1 0 1 1, e 0 1 0 0 0; at the `c2` ticks 20, 30, 45, 60, 90, 100: d 1 1 0
 | `neg_rec_no_advance.sv` | `recursive property instance must occur after a positive advance in time` (frontend) | 16.13.17 L25515-25516 (restriction 3): "every instance of p must occur after a positive advance in time." |
 | `neg_rec_args.sv` | `cannot refer to argument 'x' in an argument to a recursive property ...` (frontend) | 16.13.17 L25526-25530 (restriction 4). |
 | `neg_rec_local_formal.sv` | `recursive property `count` with local variable formal arguments at ... is not supported (SV 16.13.17)` (llg limit) | Legal by L25530 ("e is bound to a local variable formal argument of q"); llg calls an earlier expansion for a recursive re-entry, which needs the same actual values, and a local formal changes its value per call. Rejected with a location instead of approximated. |
+| `neg_local_two_clocks.sv` | `local variable `v` of the property declared at ... is initialized at the property attempt's start, which this property form does not support` (llg limit) | Legal by 16.10 L26329-26337 (one copy per semantic leading clock, initialized at that clock's first tick); llg supports the explicit equivalent form of L26363-26369 (`l3`) and rejects the declaration-assignment form with a location. |

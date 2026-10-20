@@ -81,6 +81,24 @@ fn recursive_properties() {
     });
 }
 
+/// A03 / 16.10, 16.12, 16.15.1, 16.13.1: overlapping local contexts across
+/// clocks, a property local's copy per semantic leading clock, disable iff
+/// preempting attempts waiting in either domain, actions after both domains'
+/// NBA updates of their time step, and strong versus weak obligations open
+/// at $finish.
+#[test]
+fn locals_disables_actions_and_end_across_domains() {
+    sim_cli::run_case_checked_matrix(SUITE, "domains", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("domains.out"))
+    });
+    sim_cli::reject_case(
+        SUITE,
+        "neg_local_two_clocks",
+        "neg_local_two_clocks.sv:9:17 is initialized at the property attempt's start, which this \
+         property form does not support",
+    );
+}
+
 /// A02 negatives: the four 16.13.17 restrictions, and the located limit for
 /// recursion through local variable formals.
 #[test]
