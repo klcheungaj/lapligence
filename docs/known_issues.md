@@ -1648,11 +1648,6 @@ Reproduce with
   in the LRM's `wait_for` example) is rejected ("unsupported sampled ...
   expression"); static variables work and the action block may assign
   automatic variables.
-- A recursive property (16.13.17) with a local variable formal argument is
-  rejected with a located diagnostic ("recursive property `name` with local
-  variable formal arguments"), as is a recursive re-entry that does not
-  repeat an enclosing expansion with the same actual values and clock, or
-  that is evaluated with property local variables.
 - `accept_on`/`reject_on` are checked at the first signal update of each time
   step (with that step's sampled values) and at every clock tick. A time step
   in which no signal changes does not check them, so an abort whose condition
@@ -1665,9 +1660,7 @@ Reproduce with
 
 ### Cause
 
-A recursive re-entry is a call of an earlier expansion of the same
-property (`IrPropertyNode::Call`), which needs the same actual values; a
-local formal changes its value per call. The per-process procedural assertion queue
+The per-process procedural assertion queue
 (`llg_assertion_queue`, kept with the deferred report queue) holds only the
 assertion of each pending instance, not values; the expect property is
 lowered once per assertion instance, where automatic storage has no static
@@ -1676,17 +1669,56 @@ location; asynchronous aborts are driven from the signal-write hook.
 ### Intended direction
 
 Give each pending procedural instance (and `expect`) a frame of captured
-automatic and constant arguments read by its attempt, give a recursive call
-its own local-variable frame, and drive the
+automatic and constant arguments read by its attempt, and drive the
 asynchronous abort check from the scheduler's time-step entry.
 
 ### Reproduce
 
-`neg_rec_local_formal.sv` in
-[adv_013](../tests/fixtures/sim/feature_completion/adv_013/readme.md);
 `neg_procedural_automatic.sv`, `neg_procedural_const.sv` and
 `neg_procedural_edge.sv` in
 [sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md); the
+other items need small hand-written cases.
+
+## Multiclock and recursive assertion limits after ADV-013
+
+**Status:** open (ADV-013 boundary).
+
+### Symptom
+
+- A recursive property (16.13.17) with a local variable formal argument,
+  such as the LRM's `fibonacci1` and `check_write_data_beat`, is rejected
+  with "recursive property `name` with local variable formal arguments ...
+  is not supported (SV 16.13.17)". A recursive re-entry that does not repeat
+  an enclosing expansion with the same actual values and flowing clock, or
+  that is evaluated with property local variables, is rejected with a
+  located diagnostic as well; no shape of this kind is known among legal
+  programs without local formals.
+- `restrict property` stops with the generic "unsupported executable node
+  ConcurrentAssertion" instead of a clause-linked message; 16.15.4 does not
+  verify it in simulation.
+- The frontend rejects the legal multiclocked `a ##1 b[*0:1] ##1 @(c2) d`
+  (16.14.1: the maximal singly clocked subsequence `a ##1 b[*0:1]` admits only
+  nonempty matches) with "sequence admits an empty match".
+
+### Cause
+
+A recursive re-entry is a call (`IrPropertyNode::Call`) of an earlier
+expansion of the same property, which needs the same actual values; a local
+formal changes its value per call and would need its own local-variable
+frame per call. `restrict` has no
+lowering at all. The empty-match check is Slang's, which examines the whole
+operand rather than the maximal singly clocked subsequence.
+
+### Intended direction
+
+Give a recursive call a frame of local variables passed by value, and lower
+`restrict property` to nothing with a note. The frontend check needs a Slang
+patch.
+
+### Reproduce
+
+`neg_rec_local_formal.sv` in
+[adv_013](../tests/fixtures/sim/feature_completion/adv_013/readme.md); the
 other items need small hand-written cases.
 
 ## DPI-C import limits (SIM-040)

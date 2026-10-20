@@ -2815,3 +2815,51 @@ fn s26_d20_comments_across_strings() {
         include_str!("fixtures/sim/lrm_decisions/S26-D20_comments_across_strings.out"),
     );
 }
+
+#[test]
+fn a13_d1_consequent_clock() {
+    run_decision(
+        "A13-D1_consequent_clock",
+        include_str!("fixtures/sim/lrm_decisions/A13-D1_consequent_clock.out"),
+    );
+}
+
+#[test]
+fn a13_d2_clock_flow_scope() {
+    run_decision(
+        "A13-D2_clock_flow_scope",
+        include_str!("fixtures/sim/lrm_decisions/A13-D2_clock_flow_scope.out"),
+    );
+}
+
+#[test]
+fn a13_d3_multiclock_else_start() {
+    run_decision(
+        "A13-D3_multiclock_else_start",
+        include_str!("fixtures/sim/lrm_decisions/A13-D3_multiclock_else_start.out"),
+    );
+}
+
+#[test]
+fn a13_d4_async_abort_after_nonoverlap() {
+    run_decision(
+        "A13-D4_async_abort_after_nonoverlap",
+        include_str!("fixtures/sim/lrm_decisions/A13-D4_async_abort_after_nonoverlap.out"),
+    );
+}
+
+#[test]
+fn a13_d5_event_list_clock_once() {
+    run_decision(
+        "A13-D5_event_list_clock_once",
+        include_str!("fixtures/sim/lrm_decisions/A13-D5_event_list_clock_once.out"),
+    );
+}
+
+#[test]
+fn a13_d6_inferred_clock_flow() {
+    run_decision(
+        "A13-D6_inferred_clock_flow",
+        include_str!("fixtures/sim/lrm_decisions/A13-D6_inferred_clock_flow.out"),
+    );
+}
