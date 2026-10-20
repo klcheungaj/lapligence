@@ -5,10 +5,10 @@
 // RNG is seeded with the next value from the initialization RNG of the module
 // instance, interface instance, program instance, or package containing the
 // thread declaration."
-// Decision (llg choice; the default seed is implementation dependent): each
-// instance's initialization RNG derives from the default seed and the
-// instance's hierarchical name, so identical instances draw different
-// values, and processes added to one instance never move another's seeds.
+// Decision (clause text): every instance's initialization RNG starts from
+// the same default seed, so the first static process of two identical
+// instances gets the same seed and draws the same value. Processes added to
+// one instance still never move another instance's seeds.
 module drawer;
   int unsigned v;
   initial v = $urandom;
@@ -19,7 +19,7 @@ module tb;
   drawer d2();
   initial begin
     #1;
-    $display("identical instances differ %0d", d1.v != d2.v);
+    $display("identical instances draw the same value %0d", d1.v == d2.v);
     $finish;
   end
 endmodule

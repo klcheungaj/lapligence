@@ -225,9 +225,10 @@ static uint32_t llg_rng_argument(sv4_t value) {
  * of the initialization RNG of the instance that declares it. The instance is
  * the process label without its final kind component (`tb.u.always` ->
  * `tb.u`); an indexed initializer label (`tb.class_initializer.3`) also drops
- * its index. Each instance stream derives from the root and the instance
- * name, so processes added to one instance never move another instance's
- * seeds and identical instances still draw different sequences. */
+ * its index. "Each initialization RNG is seeded with the default seed", so
+ * every instance stream starts from the same state: identical instances draw
+ * identical sequences, and processes added to one instance never move
+ * another instance's seeds. The name only keys the table. */
 typedef struct llg_rng_scope_entry {
     const char* scope;
     size_t length;
@@ -293,7 +294,7 @@ static llg_rng_state_t* rng_instance_stream(const char* name) {
     llg_rng_scope_t* entry = &g.rng_scopes[slot];
     entry->scope = scope;
     entry->length = length;
-    llg_rng_state_derive(&entry->rng, &g.rng_root, hash);
+    llg_rng_state_seed(&entry->rng, LLG_RNG_DEFAULT_SEED);
     ++g.rng_scope_count;
     return &entry->rng;
 }

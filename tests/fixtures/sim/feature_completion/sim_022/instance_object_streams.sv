@@ -1,8 +1,9 @@
 // SIM-022-A01 composition with SV 18.14.1: an object that a static
 // initializer constructs seeds from its declaring instance's initialization
-// RNG, so identical instances get different object streams, two objects of
-// one instance differ, and each instance's objects are independent of the
-// other instances' declarations.
+// RNG. Every initialization RNG starts from the same default seed, so the
+// first objects of two identical instances get the same stream, while two
+// objects of one instance differ and each instance's objects are independent
+// of the other instances' declarations.
 class Item;
   int k;
 endclass

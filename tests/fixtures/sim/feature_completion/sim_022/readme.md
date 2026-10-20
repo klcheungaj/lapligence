@@ -79,7 +79,8 @@ with portable cases under `tests/fixtures/sim/lrm_decisions/`.
   occur." "An export of the form package_name::name makes the given
   declaration available." `package_state`.
 - SV 18.14.1 L31148-31151, L31163-31166: "Each module instance, interface
-  instance, program instance, and package has an initialization RNG." "When a
+  instance, program instance, and package has an initialization RNG. Each
+  initialization RNG is seeded with the default seed." "When a
   class object is created by a static declaration initializer, there is no
   active thread; thus, the RNG of the created object is seeded with the next
   random value of the initialization RNG of the module instance, interface
@@ -98,7 +99,7 @@ with portable cases under `tests/fixtures/sim/lrm_decisions/`.
 | `init_order` | A package handle and the package values computed from it, a module handle read by later initializers, and static locals initialized from module state all hold their before-time-0 values, whichever procedure calls first and although one procedure changes the sources at time 0. | 6.8 L5286-5287, 6.21 L6942-6944 |
 | `fork_capture_lifetime` | `join_none` children of two task activations print each activation's own automatic string, queue, handle and record 5 time units after the task returned, including the parent's writes after the fork. | 6.21 L6908-6909 |
 | `class_static_properties` | Static string, handle, integral (from another property and from a call) and queue properties initialize once before time 0, are shared by all objects and the class scope, and a derived class's static property reads its base's. | 8.8, 6.8 |
-| `instance_object_streams` | Objects built by static initializers of two identical instances, and two objects of one instance, have different random states. | 18.14.1 L31148-31151, L31163-31166 (S28-D4) |
+| `instance_object_streams` | Objects built by static initializers of two identical instances have the same random state (every initialization RNG is seeded with the default seed); two objects of one instance have different random states. | 18.14.1 L31148-31151, L31163-31166 (S28-D4, S28-D7) |
 | `package_state` | Package string, queue, associative array, handle and record, and a package function's static locals, are one copy for two importing instances; names re-exported through `export p::name` and `export *::*` reach the same storage. | 26.2 L45340-45345, 26.6 L45812-45815 |
 | `unit_shared_b` (+ `unit_shared_a`) | Merged: the second file reads and the first file's module writes the same `$unit` string, queue and handle. Separate: the second file's references are undeclared. | 3.12.1 L2662-2667 |
 | `unit_isolated_b` (+ `unit_shared_a`) | Separate: each file has its own `$unit` variables of the same names. Merged: the second declaration of a name rejects with both locations. | 3.12.1 L2662-2667 |
