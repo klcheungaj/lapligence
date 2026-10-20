@@ -154,6 +154,14 @@ void llg_monitor(const char* fmt, int n, llg_mon_eval_fn eval) {
     llg_monitor_with_reads(fmt, n, eval, NULL, 0);
 }
 
+// Pending strobes form a stack: the Postponed region prints the most recently
+// issued `$strobe`/`$fstrobe` of the slot first, across processes and files
+// (decision S25-D6; the order within the region is not specified, SV 4.4.2.9).
+static void strobe_push(llg_strobe_t* e) {
+    e->next = g.strobes;
+    g.strobes = e;
+}
+
 void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval) {
     if (!region_can_mutate("strobe scheduling")) return;
     llg_strobe_t* e = (llg_strobe_t*)llg_checked_malloc(
@@ -170,13 +178,7 @@ void llg_strobe(const char* fmt, int n, llg_mon_eval_fn eval) {
     int alloc = n > 0 ? n : 1;
     e->work = (sv4_t*)llg_checked_calloc(
         (size_t)alloc, sizeof(sv4_t), "strobe working values");
-    e->next = NULL;
-    if (g.strobe_tail) {
-        g.strobe_tail->next = e;
-    } else {
-        g.strobes = e;
-    }
-    g.strobe_tail = e;
+    strobe_push(e);
 }
 
 static void monitor_register_typed(int primary, uint32_t descriptor,
@@ -247,13 +249,7 @@ void llg_file_strobe_typed(uint32_t descriptor, const char* fmt, int n,
     e->typed_work = (llg_fmt_arg_t*)llg_checked_calloc(
         (size_t)alloc, sizeof(llg_fmt_arg_t), "strobe working values");
     e->region = LLG_REGION_POSTPONED;
-    e->next = NULL;
-    if (g.strobe_tail) {
-        g.strobe_tail->next = e;
-    } else {
-        g.strobes = e;
-    }
-    g.strobe_tail = e;
+    strobe_push(e);
 }
 
 // Re-print one dirty monitor at the settled observation point. The
@@ -318,12 +314,12 @@ static void check_monitors(void) {
     monitors_sweep();
 }
 
-// Print queued $strobe lines after the current time step has settled.
+// Print queued $strobe lines after the current time step has settled, the
+// last issued first.
 static void flush_strobes(void) {
     while (g.strobes && !g.finish) {
         llg_strobe_t* e = g.strobes;
         g.strobes = e->next;
-        if (!g.strobes) g.strobe_tail = NULL;
         if (e->typed) {
             if (e->descriptor) {
                 e->typed_eval(e->typed_work, NULL);

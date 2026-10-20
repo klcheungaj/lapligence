@@ -5,10 +5,11 @@
 //   Postponed region."
 //
 // The text gives no order among the events of the Postponed region. llg
-// policy: strobes print in call order, then the $monitor and $fmonitor lists
-// print in registration order. Every line of the output is llg policy; a
-// simulator may order the lines differently, and the set of lines is the
-// portable result.
+// follows the industry-standard order: first the $monitor and $fmonitor lists
+// report in registration order (a replaced $monitor moves to the end), then
+// the pending $strobe and $fstrobe lines print in reverse issue order, the
+// last issued first, across processes and files. llg previously printed the
+// strobes first, in call order.
 module tb;
   reg [3:0] a = 1;
   initial begin

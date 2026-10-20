@@ -1,6 +1,7 @@
 // SIM-025 A01: $strobe prints once per call at the end of its slot with the
 // values settled after every Active, Inactive and NBA event of the slot
-// (SV 4.4.2.9, 21.2.2). Reports of one slot appear in call order.
+// (SV 4.4.2.9, 21.2.2). Reports of one slot appear in reverse call order,
+// the last issued first (decision S25-D6).
 module tb;
   reg [7:0] a = 8'h01;
   reg [3:0] x = 4'b0000;

@@ -10,7 +10,8 @@
 // executes $finish still runs. llg exits at $finish and prints neither the
 // pending $strobe nor the pending $monitor report of that slot, so the
 // output ends with "before finish". A simulator that completes the slot would
-// also print "pending strobe a=2" and "mon a=2".
+// also print "pending strobe a=2" and "mon a=2". In the first slot the
+// monitor reports before the strobe (S25-D6).
 module tb;
   reg [3:0] a = 1;
   initial begin

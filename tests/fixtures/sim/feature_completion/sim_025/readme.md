@@ -29,8 +29,8 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
 - `strobe_final`: each `$strobe` prints once, after the NBA region and the
   `#0` (Inactive) update, so `a` reads 50 although the call saw 1. Three
   strobes issued by a loop in one slot all print the end-of-slot values.
-  Reports of one slot appear in call order (llg policy: the text names no
-  order).
+  Reports of one slot appear in reverse call order, the last issued first
+  (decision S25-D6, industry-standard behaviour: the text names no order).
 - `scope_time`: `$time` alone never triggers a report (L36517-36518); two
   `$fmonitor` lists registered by different instances stay active together
   (L36676-36677) and `%m` names each instance.
@@ -72,7 +72,8 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
   registration of the old channel). `file_strobes` cancels a pending
   `$fstrobe`; a multichannel strobe keeps its remaining channels (llg choice,
   decision S25-D2).
-- Reports of one slot appear in registration order (llg policy).
+- In one slot, monitors report first in registration order, then strobes in
+  reverse call order (decision S25-D6, industry-standard behaviour).
 
 ## A03: illegal forms and safe failure (`neg_*`, `invalid_descriptors`, `postponed_readonly`)
 

@@ -5,9 +5,9 @@
 [2.5] active: e=6
 [2.5] active after nba: q=12
   $peek: write x -> LLG_VPI_READ_ONLY
-[2.5] strobe: peek=102 x=2
-  $peek: write x -> LLG_VPI_READ_ONLY
 [2.5] monitor: peek=102 x=2
+  $peek: write x -> LLG_VPI_READ_ONLY
+[2.5] strobe: peek=102 x=2
 [2.5] read-only:
   no-delay put -> LLG_VPI_READ_ONLY
   delayed put -> LLG_VPI_READ_ONLY

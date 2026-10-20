@@ -1655,7 +1655,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   conversions of unpacked values or handles reject; run-time formats keep
   `%l` approximate. V §17.1.1.2; SV §21.2 **[1995/SV-2005]**.
 - 🟨 **Postponed output** — Strobes print once at the end of their slot, after
-  Active/Inactive/NBA iteration, in call order; `$monitor` keeps one list
+  Active/Inactive/NBA iteration and after the slot's monitor reports, the last
+  issued first (S25-D6); `$monitor` keeps one list
   (a new call replaces it) that reports once per slot when an argument's settled
   value differs from the printed one, governed by the `$monitoron/$monitoroff`
   flag, which outlives the list. Any number of `$fmonitor` lists are

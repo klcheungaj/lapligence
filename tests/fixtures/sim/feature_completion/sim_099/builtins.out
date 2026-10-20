@@ -2,8 +2,8 @@ onehot 1 0 0 onehot0 1 1 0 itor -7.0
 00010000
 020
 0000|020|10
-strobe h ff
 strobe o 377
+strobe h ff
 monitor b 0000
 monitor b 1010
 monitor o 377

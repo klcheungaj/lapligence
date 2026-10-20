@@ -13,7 +13,7 @@ fn monitor_reports_final_values_once_per_slot() {
 }
 
 #[test]
-fn strobe_reports_settled_values_in_call_order() {
+fn strobe_reports_settled_values_last_issued_first() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_025/strobe_final.out");
     sim_cli::run_case(SUITE, "strobe_final", expected, "", &[]);
     sim_cli::run_case_backend_parity(SUITE, "strobe_final", expected, &[], &[]);

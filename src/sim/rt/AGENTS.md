@@ -250,7 +250,9 @@ set returns the slot through Observed (SV 4.5, 24.3.1). Region callbacks schedul
 with `llg_schedule_region_callback_id` can be cancelled while queued; their
 identity carries the runtime lifetime, so cancels from an earlier run are stale
 no-ops. `#0` enters Inactive/Re-Inactive;
-NBA/Re-NBA preserve issue order. Preponed/Observed/Postponed views are immutable;
+NBA/Re-NBA preserve issue order. Postponed reports run monitors first, in
+registration order, then strobes, the last issued first (S25-D6); a slot with
+neither pays nothing. Preponed/Observed/Postponed views are immutable;
 illegal writes or read-only scheduling fail controllably.
 
 Active coroutines are FIFO. Each initial/always/link/continuous process owns a

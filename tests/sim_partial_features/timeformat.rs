@@ -20,8 +20,8 @@ high=[1.00000000000000 ns]\n\
 ps=[1000.000 ps]\n\
 write=[1.2 ns]\n\
 reset=[                1000]\n\
-strobe=[                1000]\n\
 monitor=[                1000] changed=1\n\
+strobe=[                1000]\n\
 final=[                2000]\n",
     );
 }

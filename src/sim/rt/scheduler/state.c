@@ -724,8 +724,7 @@ typedef struct {
     llg_monitor_state_t* monitors_tail;
     int monitor_off;                    // `$monitoroff` flag (default on, SV 21.2.3)
     int monitors_sweeping;              // a check is walking the list
-    llg_strobe_t* strobes;     // pending $strobe lines for this time step
-    llg_strobe_t* strobe_tail; // preserves source issue order
+    llg_strobe_t* strobes;     // pending $strobe lines, last issued first
     // Active procedural forces. Entries own copied target/source descriptors;
     // no pre-force value is retained because release is object-specific.
     llg_force_entry_t* force_table;   // checked-growable live-entry table

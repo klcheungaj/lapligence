@@ -333,7 +333,6 @@ void llg_rt_cleanup(void) {
         free(g.strobes);
         g.strobes = next;
     }
-    g.strobe_tail = NULL;
     llg_monitors_free_all();
     free_region_callbacks();
     free_sampled_values();
