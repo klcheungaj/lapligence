@@ -2863,3 +2863,11 @@ fn a13_d6_inferred_clock_flow() {
         include_str!("fixtures/sim/lrm_decisions/A13-D6_inferred_clock_flow.out"),
     );
 }
+
+#[test]
+fn a13_d7_unbegun_strong_at_end() {
+    run_decision(
+        "A13-D7_unbegun_strong_at_end",
+        include_str!("fixtures/sim/lrm_decisions/A13-D7_unbegun_strong_at_end.out"),
+    );
+}

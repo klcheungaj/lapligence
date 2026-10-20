@@ -37,7 +37,7 @@ module tb;
     x and (1'b1 |=> then_d(d));
   endproperty
   property two_sites(x, y);
-    (x |=> two_sites(x, y)) and (y or (1'b1 |=> two_sites(x, y)));
+    (x |=> (y and two_sites(x, y))) and (y or (1'b1 |=> two_sites(x, y)));
   endproperty
   property sync_p3(p, bit bb, abort);
     (p and (1'b1 |=> sync_p4(p, bb, abort)));

@@ -4,9 +4,16 @@
 //! (16.13.17, Annex F.7). Hand-derived fixtures compare their action lines
 //! as a set (actions of different assertions in one time step have no
 //! defined order); every positive case runs in both optimizer modes on the
-//! legacy, compact/portable and compact/GMP value backends.
+//! legacy, compact/portable and compact/GMP value backends. A01 compares
+//! randomized traces against the Annex F interpreter in `adv_013/oracle.rs`.
 use super::sim_cli;
 use std::process::Output;
+
+#[path = "adv_013/oracle.rs"]
+mod oracle;
+use oracle::{
+    a, at, b, bxq, c1, c2, cat, fuse, nb, one, qat, sb, Letter, Oracle, Outcome, Program, Q,
+};
 
 const SUITE: &str = "feature_completion/adv_013";
 
@@ -177,4 +184,201 @@ fn illegal_multiclock_forms_are_rejected() {
         "neg_global_clock_missing",
         "neg_global_clock_missing.sv:5:25 no global clocking is available in this scope",
     );
+}
+
+/// The named properties of `oracle.sv` with their actuals substituted:
+/// `ra(b)`, `wu(a, b)`, `oc2(b)`, `ph1`, `ph2` and `ts(a, b)`.
+fn oracle_program() -> Program {
+    let weak = |b| Q::Weak(sb(b));
+    let next = |q| Q::NonImp(sb(one()), bxq(q));
+    Program {
+        bodies: vec![
+            // ra(b): b and (1'b1 |=> ra(b))
+            Q::And(bxq(weak(b())), bxq(next(Q::Inst(0)))),
+            // wu(a, b): b or (a and (1'b1 |=> wu(a, b)))
+            Q::Or(
+                bxq(weak(b())),
+                bxq(Q::And(bxq(weak(a())), bxq(next(Q::Inst(1))))),
+            ),
+            // oc2(b): b and (1'b1 |=> @(posedge c2) oc2(b))
+            Q::And(bxq(weak(b())), bxq(next(qat(c2(), Q::Inst(2))))),
+            // ph1: a |-> (b and (1'b1 |=> ph2))
+            Q::Imp(sb(a()), bxq(Q::And(bxq(weak(b())), bxq(next(Q::Inst(4)))))),
+            // ph2: b |-> (a and (1'b1 |=> ph1))
+            Q::Imp(sb(b()), bxq(Q::And(bxq(weak(a())), bxq(next(Q::Inst(3)))))),
+            // ts(a, b): (a |=> (b and ts(a, b))) and (b or (1'b1 |=> ts(a, b)))
+            Q::And(
+                bxq(Q::NonImp(
+                    sb(a()),
+                    bxq(Q::And(bxq(weak(b())), bxq(Q::Inst(5)))),
+                )),
+                bxq(Q::Or(bxq(weak(b())), bxq(next(Q::Inst(5))))),
+            ),
+        ],
+    }
+}
+
+/// The properties of `oracle.sv` (each under `@(posedge c1)`), as fixture
+/// text and as interpreter input.
+fn oracle_properties() -> Vec<(&'static str, Q)> {
+    let weak = |b| Q::Weak(sb(b));
+    let on_c2 = |b| qat(c2(), Q::Weak(sb(b)));
+    vec![
+        (
+            "a ##1 @(posedge c2) b",
+            Q::Weak(cat(sb(a()), at(c2(), sb(b())))),
+        ),
+        (
+            "a ##0 @(posedge c2) b",
+            Q::Weak(fuse(sb(a()), at(c2(), sb(b())))),
+        ),
+        ("a |=> @(posedge c2) b", Q::NonImp(sb(a()), bxq(on_c2(b())))),
+        (
+            "a |-> @(posedge c2) b ##1 a",
+            Q::Imp(sb(a()), bxq(qat(c2(), Q::Weak(cat(sb(b()), sb(a())))))),
+        ),
+        (
+            "a ##1 @(posedge c2) b |=> a",
+            Q::NonImp(cat(sb(a()), at(c2(), sb(b()))), bxq(weak(a()))),
+        ),
+        (
+            "(a |=> @(posedge c2) b) and (b |=> a)",
+            Q::And(
+                bxq(Q::NonImp(sb(a()), bxq(on_c2(b())))),
+                bxq(Q::NonImp(sb(b()), bxq(weak(a())))),
+            ),
+        ),
+        (
+            "a |=> (@(posedge c2) b) or (@(posedge c1) a ##1 b)",
+            Q::NonImp(
+                sb(a()),
+                bxq(Q::Or(
+                    bxq(on_c2(b())),
+                    bxq(qat(c1(), Q::Weak(cat(sb(a()), sb(b()))))),
+                )),
+            ),
+        ),
+        (
+            "not (a ##1 @(posedge c2) b)",
+            Q::Not(bxq(Q::Weak(cat(sb(a()), at(c2(), sb(b())))))),
+        ),
+        (
+            "if (a) @(posedge c2) b else @(posedge c2) !b",
+            Q::IfElse(a(), bxq(on_c2(b())), bxq(on_c2(nb()))),
+        ),
+        (
+            "a |=> nexttime (@(posedge c2) b)",
+            Q::NonImp(sb(a()), bxq(Q::Next(bxq(on_c2(b()))))),
+        ),
+        (
+            "a |=> ((@(posedge c2) b) until a)",
+            Q::NonImp(sb(a()), bxq(Q::Until(bxq(on_c2(b())), bxq(weak(a()))))),
+        ),
+        (
+            "a |=> always (@(posedge c2) b)",
+            Q::NonImp(sb(a()), bxq(Q::Always(bxq(on_c2(b()))))),
+        ),
+        (
+            "a |=> @(posedge c2) ra(b)",
+            Q::NonImp(sb(a()), bxq(qat(c2(), Q::Inst(0)))),
+        ),
+        ("wu(a, b)", Q::Inst(1)),
+        ("a |=> oc2(b)", Q::NonImp(sb(a()), bxq(Q::Inst(2)))),
+        ("ph1", Q::Inst(3)),
+        ("ts(a, b)", Q::Inst(5)),
+        (
+            "a |=> strong(@(posedge c2) b ##1 b)",
+            Q::NonImp(sb(a()), bxq(Q::Strong(at(c2(), cat(sb(b()), sb(b())))))),
+        ),
+        (
+            "b |-> sync_accept_on(a) (1'b1 |=> @(posedge c2) b)",
+            Q::Imp(
+                sb(b()),
+                bxq(Q::SyncAccept(
+                    a(),
+                    bxq(Q::NonImp(sb(one()), bxq(on_c2(b())))),
+                )),
+            ),
+        ),
+    ]
+}
+
+/// Seeds of the `unit` instances of `oracle.sv`.
+const ORACLE_SEEDS: [u32; 12] = [
+    2654435761, 1013904227, 3668339987, 2027808453, 387276917, 3041712679, 1401181143, 4055616905,
+    2415085369, 774553835, 3428989595, 1788458061,
+];
+const ORACLE_STEPS: u64 = 16;
+const ORACLE_FINISH: u64 = 170;
+
+/// The trace of one `unit`: the letters of the time steps in which a clock
+/// ticks, with their times, from the fixture's xorshift32 generator.
+fn oracle_trace(seed: u32) -> Vec<(Letter, u64)> {
+    let mut s = seed;
+    let mut trace = Vec::new();
+    for step in 0..ORACLE_STEPS {
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        let bit = |n: u32| (s >> n) & 1 == 1;
+        let (c1, c2) = (bit(2), bit(3));
+        if c1 || c2 {
+            let letter = Letter::V {
+                a: bit(0),
+                b: bit(1),
+                c1,
+                c2,
+            };
+            trace.push((letter, 10 * step + 5));
+        }
+    }
+    trace
+}
+
+/// A01 / Annex F.5, F.7: the generated model reports exactly what the
+/// independent interpreter derives for multiclocked, recursive, strong and
+/// weak properties on randomized traces with coincident, separate and
+/// missing ticks of two irregular clocks, including results at `$finish`.
+#[test]
+fn properties_match_the_annex_f_interpreter_on_random_traces() {
+    let source = fixture!("oracle.sv");
+    let program = oracle_program();
+    let properties = oracle_properties();
+    let mut expected = Vec::new();
+    for (index, (text, q)) in properties.iter().enumerate() {
+        let line = format!(
+            "  p{index:02}: assert property (@(posedge c1) {text}) $display(\"P{index:02} %0d %0t\", SEED, $time); else $display(\"F{index:02} %0d %0t\", SEED, $time);"
+        );
+        assert!(
+            source.contains(line.as_str()),
+            "fixture lacks interpreter property {index}: {line}"
+        );
+        let mut oracle = Oracle::new(&program, q);
+        for seed in ORACLE_SEEDS {
+            assert!(source.contains(&format!("unit #(.SEED(32'd{seed}))")));
+            let trace = oracle_trace(seed);
+            let letters: Vec<Letter> = trace.iter().map(|(letter, _)| *letter).collect();
+            for start in 0..letters.len() {
+                if !matches!(letters[start], Letter::V { c1: true, .. }) {
+                    continue;
+                }
+                let line = |kind: char, time: u64| format!("{kind}{index:02} {seed} {time}");
+                match oracle.outcome(&letters[start..]) {
+                    Outcome::Pass(k) => expected.push(line('P', trace[start + k].1)),
+                    Outcome::Fail(k) => expected.push(line('F', trace[start + k].1)),
+                    Outcome::FailAtEnd => expected.push(line('F', ORACLE_FINISH)),
+                    Outcome::Pending => {}
+                }
+            }
+        }
+    }
+    assert_eq!(
+        source.matches(": assert property").count(),
+        properties.len(),
+        "fixture and interpreter list different properties"
+    );
+    let expected = expected.join("\n");
+    sim_cli::run_case_checked_matrix(SUITE, "oracle", &[], &|label, output| {
+        assert_line_set(label, output, &expected)
+    });
 }

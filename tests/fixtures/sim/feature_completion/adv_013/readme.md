@@ -247,10 +247,13 @@ d 1 1 0 1 1, e 0 1 0 0 0; at the `c2` ticks 20, 30, 45, 60, 90, 100: d 1 1 0
   constant actual, restriction 4 second form): e at the next tick, then d at
   every later tick: 10→e30=1, d50=0 F50; 30→e50=0 F50; 50 vacuous P50;
   70→e90=0 F90; 90 open.
-- `r7` `two_sites(e, b)`, `(x |=> two_sites(x, y)) and (y or (1'b1 |=>
-  two_sites(x, y)))`: both conjuncts are done at a tick where x is 0 and y is
-  1, otherwise both recurse: 10 (e=0, b=1) P10; 30 (e=1, b=0) recurses at
-  both sites into 50, where e=0 and b=1: P50; 50 P50; 70 P70; 90 P90.
+- `r7` `two_sites(e, b)`, `(x |=> (y and two_sites(x, y))) and (y or
+  (1'b1 |=> two_sites(x, y)))`: both conjuncts are done at a tick where x is 0
+  and y is 1; where x is 1 the next tick needs y, and where y is 0 the
+  property recurses: 10 (e=0, b=1) P10; 30 (e=1, b=0) needs b50=1 and recurses
+  at both sites into 50, where e=0 and b=1: P50; 50 P50; 70 P70; 90 P90. (The
+  form without `y and` could never fail, so its attempts would be decided at
+  once by any extension argument; this one is not.)
 - `r8` the 16.13.17 abort example (L25570-25571) in its synchronous form:
   `a |-> sync_p3(d, b, e)`, `sync_p4 = sync_accept_on(bb)
   sync_reject_on(abort) sync_p3(...)`: at the attempt d must hold, then at
@@ -312,6 +315,32 @@ Reactive region", after the NBA region of the same time step (4.4).
   50 vacuous P50; 70→d90, d100 P100; 90→d100, then no `c2` tick: the strong
   obligation fails at `$finish` (S38-D1): F115. `s2`, the same with `weak`,
   leaves 90 open: P30 F45 P50 P100.
+
+## `oracle.sv` (A01)
+
+Twelve `unit` instances each draw a trace from a xorshift32 generator seeded
+by their `SEED` parameter (16 steps of 10 time units: `a` and `b` change at
+offset 4, `posedge c1` and `posedge c2` occur at offset 5 when bits 2 and 3 of
+the state are set). The clocks are irregular: they tick together, apart, or
+not at all in a step. Every unit asserts the same 19 properties under
+`@(posedge c1)`: multiclocked sequences with `##1` and `##0`, both
+implications, a multiclocked antecedent, `and`, `or`, `not`, `if`-`else`,
+`nexttime`, `until` and `always` with operands on the other clock, recursion
+(`ra` on c2, the weak-until `wu`, `oc2` alternating clocks, the mutual
+`ph1`/`ph2`, the two-site `ts`), a strong multiclocked consequent, and
+`sync_accept_on`.
+
+The expected lines are not stored. The suite recomputes the traces and
+derives every report with the test-side interpreter
+[`oracle.rs`](../../../../sim_feature_completion/adv_013/oracle.rs), written
+from Annex F: the derived forms of F.3.4.3, the clock rewrite rules of F.5.1
+(L70999-71045), the neutral satisfaction of F.5.3.1 (L71168-71184) and the
+k-fold approximations of F.7 (L71666-71689). A letter is a time step in which
+a clock ticks. An attempt is reported on the first letter after which every
+continuation (one more letter, then any letter repeated forever) gives the
+same verdict; an attempt still undecided at `$finish` fails there when
+F.5.3.1 rejects the finite word, with the unbegun-obligation rule of A13-D7,
+and otherwise reports nothing (S38-D1).
 
 ## Rejections
 
