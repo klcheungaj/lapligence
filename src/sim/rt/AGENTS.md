@@ -289,9 +289,14 @@ at commit; a mismatch reports a runtime error and stores nothing.
 Inertial sites own pending Active events: changed pending values cancel, unchanged
 values retain deadlines, return-to-current cancels without replacement. A
 one-bit update takes its delay from the from/to table, a wider one from the
-whole-value vector rule (`inertial_transition_ticks`). A delayed vector net
-keeps one record per bit (`llg_net_t.propagation_bits`, emitted only for such
-nets), so each bit schedules, keeps and cancels its update on its own. A
+whole-value vector rule (`inertial_transition_ticks`). A net delay keeps one
+record for the whole resolved vector, or one per separately driven part
+(`segment_lsb`/`segment_records`), and the new value of the record's least
+significant bit selects the delay (`net_delay_ticks`, S2-D3); a runtime-valued
+net delay (`net_delayed == 2`) takes the whole-value vector rule instead (S2-D9). A driven
+delayed net or path destination starts X with a strong-X strength view
+(`llg_net_start_unknown`, S2-D10) and reaches its resolved value through its
+delay. A
 runtime-valued net delay is the generated updater's store into
 `propagation_rise/fall/turn_off`; each later publication reads those fields and
 pending records keep their times. Reset
@@ -308,10 +313,12 @@ borrow the model's source storage and own, between `llg_module_paths_start`
 and `llg_rt_cleanup`, a last value per source and a last-change time per
 source bit. A bound destination net (`llg_net_t.path_dest`, NULL otherwise, so
 undelayed nets keep their single flag test) always has `propagation_enabled`
-and per-bit records: `llg_net_propagate_paths` first refreshes the stamps
-(order-independent within a slot), then schedules each changed bit at the
-absolute `max(now + net delay, latest stamp + smallest path delay of the
-latest inputs)` (A7-D1) through the ordinary inertial record. Delay tables
+and per-bit path-stage records (`propagation_bits`): `llg_net_propagate_paths`
+first refreshes the stamps (order-independent within a slot), then schedules
+each changed bit at `max(now, latest stamp + smallest path delay of the latest
+inputs)` (A7-D1). A matured path stage publishes directly, or, on a net with a
+net delay (`net_delayed`), feeds the net-delay stage above, so the net delay
+adds to the path delay. Delay tables
 are writable for annotation; `llg_net_path_pending` reports a scheduled path
 event. A force or release resynchronizes the propagation records'
 committed values (`llg_net_propagation_sync`), so the next delayed

@@ -78,7 +78,7 @@ fn port_net_type_delays() {
     sim_cli::run_case_with_args(
         "port_net_types",
         "delays",
-        "t3=zz/11\nt5=11/11\nt10=11/00\nt12=00/00\nt14=00/zz\nt16=zz/zz\n",
+        "t3=xx/11\nt5=11/11\nt10=11/00\nt12=00/00\nt14=00/zz\nt16=zz/zz\n",
         "",
         &[],
         &["--edition", "v2001"],
@@ -90,7 +90,7 @@ fn port_net_type_selected_delays() {
     sim_cli::run_case_with_args(
         "port_net_types",
         "selected_delays",
-        "t2=z1\nt5=11\n",
+        "t2=x1\nt5=11\n",
         "",
         &[],
         &["--edition", "v2001"],

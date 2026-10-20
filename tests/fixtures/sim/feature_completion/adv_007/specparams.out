@@ -1,8 +1,8 @@
 tr=1.5 tf=5
-0.0 a=0 yb=z yk=z yn=z ym=z
-3.0 a=0 yb=z yk=z yn=0 ym=z
-4.0 a=0 yb=0 yk=z yn=0 ym=z
-5.0 a=0 yb=0 yk=0 yn=0 ym=z
+0.0 a=0 yb=x yk=x yn=x ym=x
+3.0 a=0 yb=x yk=x yn=0 ym=x
+4.0 a=0 yb=0 yk=x yn=0 ym=x
+5.0 a=0 yb=0 yk=0 yn=0 ym=x
 6.0 a=0 yb=0 yk=0 yn=0 ym=0
 10.0 a=1 yb=0 yk=0 yn=1 ym=0
 11.5 a=1 yb=0 yk=1 yn=1 ym=0

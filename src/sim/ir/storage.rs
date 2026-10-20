@@ -148,6 +148,16 @@ pub struct IrNetGroup {
     pub(in crate::sim) driver_strengths: Vec<(u8, u8)>,
     /// Optional propagation delay applied after all driver slots resolve.
     pub(in crate::sim) propagation_delay: Option<IrTransitionDelay>,
+    /// Ascending bit offsets, each in `1..width`, where a separately driven
+    /// part of a delayed group starts: each part schedules its net delay as
+    /// one vector (decision S2-D3). Empty when the whole group is one part.
+    pub(in crate::sim) propagation_segments: Vec<u32>,
+    /// A delayed or module-path destination group with a driver starts at X
+    /// until its first delayed transition (decision S2-D10).
+    pub(in crate::sim) starts_unknown: bool,
+    /// The net delay is runtime-valued: a `SetNetDelay` updater stores it
+    /// before any driver runs (decision S2-D9).
+    pub(in crate::sim) runtime_delay: bool,
     /// Two-state signal holding the resolved strength view (eight bits per
     /// net bit), present only when a `%v` consumer reads this net.
     pub(in crate::sim) strength_view: Option<usize>,
@@ -182,6 +192,9 @@ impl IrNetGroup {
             n_drivers,
             driver_strengths: vec![(6, 6); n_drivers],
             propagation_delay: None,
+            propagation_segments: Vec::new(),
+            starts_unknown: false,
+            runtime_delay: false,
             strength_view: None,
         })
     }
@@ -204,6 +217,18 @@ impl IrNetGroup {
 
     pub fn propagation_delay(&self) -> Option<IrTransitionDelay> {
         self.propagation_delay
+    }
+
+    pub fn propagation_segments(&self) -> &[u32] {
+        &self.propagation_segments
+    }
+
+    pub fn starts_unknown(&self) -> bool {
+        self.starts_unknown
+    }
+
+    pub fn runtime_delay(&self) -> bool {
+        self.runtime_delay
     }
 }
 

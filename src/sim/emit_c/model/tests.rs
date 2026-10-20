@@ -255,6 +255,9 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
         n_drivers: 1,
         driver_strengths: vec![(6, 6)],
         propagation_delay: None,
+        propagation_segments: Vec::new(),
+        starts_unknown: false,
+        runtime_delay: false,
         strength_view: None,
     }];
     model.arrays = vec![IrArray {
@@ -392,6 +395,9 @@ fn component_strength_view_descriptor_is_validated_and_emitted() {
             n_drivers: 1,
             driver_strengths: vec![(6, 6)],
             propagation_delay: None,
+            propagation_segments: Vec::new(),
+            starts_unknown: false,
+            runtime_delay: false,
             strength_view: Some(1),
         }];
         model

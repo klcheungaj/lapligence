@@ -135,6 +135,9 @@ fn selected_terminal_remapping_keeps_each_output_contribution_distinct() {
         n_drivers: 0,
         driver_strengths: Vec::new(),
         propagation_delay: None,
+        propagation_segments: Vec::new(),
+        starts_unknown: false,
+        runtime_delay: false,
         strength_view: None,
     });
     let first = cg

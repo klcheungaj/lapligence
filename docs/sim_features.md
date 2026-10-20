@@ -1375,8 +1375,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (S2-D2). A concatenation, or a target split over alias groups, is one
   vector driver with its delay applied once (S2-D6); each assignment-pattern
   member is its own delayed driver (S2-D7). Net propagation delays apply after
-  resolution, per bit on a vector (S2-D3); a declaration assignment's delay is
-  that driver's own (S2-D5). Delayed drivers, net-array elements included,
+  resolution to the whole vector, or to each separately driven part, with the
+  delay selected by the new least significant bit (S2-D3); a driven net with a
+  net delay starts x (S2-D10); a declaration assignment's delay is that
+  driver's own (S2-D5). Delayed drivers, net-array elements included,
   start X on the bits they drive (S2-D4). Changed pending
   results cancel; unchanged results retain deadlines; returning to the current
   value cancels without replacement. The
@@ -1458,9 +1460,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   paths with 1, 2, 3, 6 or 12 delays select the delay of each 0/1/x/z
   transition (Tables 30-2 and 30-3, negative delays are zero), choose the
   smallest delay among the inputs that changed last and take the larger of
-  the path and the distributed delays, including a net delay on the
-  destination (A7-D1). The destination is inertial with the default pulse
-  limits and delays the net itself (A7-D2). The owned Db keeps every specify
+  the path and the distributed delays; a net delay on the destination then
+  adds to that (A7-D1). The destination is inertial with the default pulse
+  limits, delays the net itself (A7-D2) and starts x when driven (A7-D6). The owned Db keeps every specify
   block, path (terminals, connection, polarity, delays) and specify item with
   its stable source node; the generated model keeps a writable per-path delay
   table and reports scheduled path events (`llg_module_path_sets`,

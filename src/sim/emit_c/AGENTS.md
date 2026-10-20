@@ -230,8 +230,11 @@ Module path sets emit after every net group: a source pointer table, one
 writable `llg_module_path_t` row array per destination, the destination and
 set records and one `llg_module_paths_start` call in the storage defaults.
 Only destination groups gain `.propagation_enabled = 1` and per-bit
-propagation records; a model without paths emits exactly what it did
-before. `ModulePathStamp` is one `llg_module_path_stamp` call; the legacy
+path-stage records; a model without paths emits exactly what it did
+before. A delayed group with separately driven parts emits its part bounds
+and one record slot per part; a group that starts X calls
+`llg_net_start_unknown` in the storage defaults, after the runtime delay
+store when its net delay is runtime-valued. `ModulePathStamp` is one `llg_module_path_stamp` call; the legacy
 statement renderer rejects it.
 
 A sequential definition emits one `static inline llg_udp_step_<t>` and each

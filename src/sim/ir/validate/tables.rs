@@ -391,6 +391,28 @@ impl Validator<'_> {
                     "net driver strength is outside the IEEE 1800 strength scale",
                 );
             }
+            if group.runtime_delay && group.propagation_delay.is_none() {
+                return self.fail(
+                    format!("{path}.runtime_delay"),
+                    "a runtime-valued net delay needs a propagation delay",
+                );
+            }
+            if !group.propagation_segments.is_empty() && group.propagation_delay.is_none() {
+                return self.fail(
+                    format!("{path}.propagation_segments"),
+                    "only a net with a net delay has propagation segments",
+                );
+            }
+            let mut previous = 0u32;
+            for (index, &start) in group.propagation_segments.iter().enumerate() {
+                if start <= previous || start >= group.width {
+                    return self.fail(
+                        format!("{path}.propagation_segments[{index}]"),
+                        "propagation segment starts must ascend strictly inside the net",
+                    );
+                }
+                previous = start;
+            }
             if let Some(view) = group.strength_view {
                 let valid = self.model.signals.get(view).is_some_and(|signal| {
                     signal.net_driver.is_none()

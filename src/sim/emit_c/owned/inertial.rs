@@ -141,10 +141,16 @@ impl Frame<'_, '_> {
             (None, Some(_)) => format!("({rise} < {fall} ? {rise} : {fall})"),
             (None, None) => rise.clone(),
         };
-        let net = self.ctx.model.net_group(group).c_name.clone();
-        self.line(format!("{net}.propagation_rise = {rise};"));
-        self.line(format!("{net}.propagation_fall = {fall};"));
-        self.line(format!("{net}.propagation_turn_off = {turn_off};"));
+        let net = self.ctx.model.net_group(group);
+        let (name, starts_unknown) = (net.c_name.clone(), net.starts_unknown);
+        self.line(format!("{name}.propagation_rise = {rise};"));
+        self.line(format!("{name}.propagation_fall = {fall};"));
+        self.line(format!("{name}.propagation_turn_off = {turn_off};"));
+        // The first store lets the X start propagate (S2-D10); a later one
+        // finds the net settled or pending, which a resolution keeps.
+        if starts_unknown {
+            self.line(format!("llg_net_resolve(&{name});"));
+        }
         Ok(())
     }
 }

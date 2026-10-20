@@ -1,7 +1,8 @@
 // Decision A7-D3: an input that has never transitioned counts as having
 // transitioned at time 0 when the active paths are chosen. Here B is never
-// driven and stays z; Y's first transition at time 0 therefore has both
-// paths active and takes the smaller rise delay, B's 5 rather than A's 6.
+// driven and stays z; Y's first transition, from its initial x (A7-D6) at
+// time 0, therefore has both paths active and takes the smaller rise delay,
+// B's 5 rather than A's 6.
 //
 // IEEE 1800-2009 30.5.3 (SystemVerilog-1800-2009.txt L50166-50167): "Active
 // specify paths are those whose input has transitioned most recently in

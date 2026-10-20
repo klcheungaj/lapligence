@@ -1,4 +1,4 @@
-0 assign=x gate=x net=z sum=x
+0 assign=x gate=x net=x sum=x
 3 assign=x gate=x net=0 sum=x
 4 assign=0 gate=x net=0 sum=x
 6 assign=0 gate=0 net=0 sum=x

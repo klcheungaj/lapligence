@@ -38,7 +38,7 @@ fn vector_targets_take_one_delay_for_the_whole_value() {
 }
 
 #[test]
-fn vector_net_delays_apply_to_each_bit() {
+fn vector_net_delays_schedule_the_whole_vector() {
     let expected = include_str!("../fixtures/sim/feature_completion/adv_002/net_delay_bits.out");
     for edition in BOTH {
         sim_cli::run_case_backend_parity(

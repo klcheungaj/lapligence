@@ -283,6 +283,7 @@ mod assertion_context;
 mod clocking_context;
 mod delays;
 mod initialization;
+mod net_delay_layout;
 mod packed_geometry;
 mod references;
 mod selections;
@@ -611,6 +612,8 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
             .expect("the default timescale has non-zero precision"),
     );
     cg.build_init_steps(&mut model)?;
+    // Every driver site and delayed-driver start now exists.
+    net_delay_layout::assign_net_delay_layouts(&mut model);
     check_wave_variable_targets(&cg.wave_variable_targets, &model)?;
     cg.populate_vpi_metadata(&mut model, &tops)?;
     cg.populate_vpi_builtin_calls(&mut model);

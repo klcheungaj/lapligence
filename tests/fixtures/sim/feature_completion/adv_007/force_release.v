@@ -1,8 +1,8 @@
 `timescale 1ns/1ns
 // ADV-007: a forced path destination drops its pending path update, and after
 // the release its next transition starts from the released value. Delayed
-// nets (net delays, ADV-002) share the per-bit propagation records and follow
-// the same rule.
+// nets (net delays, ADV-002) share the propagation records and follow the
+// same rule.
 module m(input [1:0] a, output [1:0] y);
   assign y = a;
   specify

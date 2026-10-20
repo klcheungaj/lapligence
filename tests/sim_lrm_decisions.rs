@@ -2563,10 +2563,10 @@ fn s2_d2_vector_delay_rule() {
 }
 
 #[test]
-fn s2_d3_net_delay_per_bit() {
+fn s2_d3_net_delay_vector() {
     run_decision(
-        "S2-D3_net_delay_per_bit",
-        include_str!("fixtures/sim/lrm_decisions/S2-D3_net_delay_per_bit.out"),
+        "S2-D3_net_delay_vector",
+        include_str!("fixtures/sim/lrm_decisions/S2-D3_net_delay_vector.out"),
     );
 }
 
@@ -2621,6 +2621,14 @@ fn s2_d8_alias_conflicting_net_delays() {
         SUITE,
         "S2-D8_alias_conflicting_net_delays",
         "has conflicting member delays",
+    );
+}
+
+#[test]
+fn s2_d10_delayed_net_initial_x() {
+    run_decision(
+        "S2-D10_delayed_net_initial_x",
+        include_str!("fixtures/sim/lrm_decisions/S2-D10_delayed_net_initial_x.out"),
     );
 }
 
@@ -2868,10 +2876,10 @@ fn a7_d5_parameter_in_specify_rejected() {
 }
 
 #[test]
-fn a7_d6_path_destination_initial_z() {
+fn a7_d6_path_destination_initial_x() {
     run_decision(
-        "A7-D6_path_destination_initial_z",
-        include_str!("fixtures/sim/lrm_decisions/A7-D6_path_destination_initial_z.out"),
+        "A7-D6_path_destination_initial_x",
+        include_str!("fixtures/sim/lrm_decisions/A7-D6_path_destination_initial_x.out"),
     );
 }
 

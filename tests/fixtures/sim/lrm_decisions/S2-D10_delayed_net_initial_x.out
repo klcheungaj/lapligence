@@ -1,0 +1,4 @@
+0 nodrv=z wz=x wa=x w1=StX t0n=0 t0z=x t1z=x wan=x wo=x pu=x g=x gz=x p=x v=xxxx na=xz
+2 nodrv=z wz=x wa=x w1=St1 t0n=0 t0z=x t1z=1 wan=x wo=x pu=1 g=x gz=x p=x v=xxxx na=xz
+3 nodrv=z wz=x wa=0 w1=St1 t0n=0 t0z=0 t1z=1 wan=0 wo=0 pu=1 g=0 gz=x p=0 v=01z0 na=0z
+4 nodrv=z wz=z wa=0 w1=St1 t0n=0 t0z=0 t1z=1 wan=0 wo=0 pu=1 g=0 gz=z p=0 v=01z0 na=0z

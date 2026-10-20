@@ -129,7 +129,9 @@ struct llg_inertial {
     llg_net_t* net;
     llg_net_t* publication_net; // net-delay commit, not a driver contribution
     uint32_t publication_bit;   // the bit a per-bit net delay commits
-    int8_t bit_publication;     // commits publication_bit of publication_net
+    int8_t bit_publication;     // commits bits from publication_bit of publication_net
+    int8_t path_stage;          // a module path destination bit, before the net delay
+    int8_t lsb_rule;            // net delay: the new LSB value selects the delay
     int slot;
     int pending;
     uint64_t time;

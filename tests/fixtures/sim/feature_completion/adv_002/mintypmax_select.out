@@ -1,4 +1,4 @@
-0 assign=x gate=x bufif=x net=z param=x sum=x
+0 assign=x gate=x bufif=x net=x param=x sum=x
 3 assign=x gate=x bufif=x net=0 param=x sum=x
 4 assign=0 gate=x bufif=x net=0 param=x sum=x
 5 assign=0 gate=x bufif=0 net=0 param=0 sum=x

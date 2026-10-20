@@ -70,15 +70,16 @@ Line numbers are those of the `pdftotext -layout` extractions
   set equal to the delay."
 - Net initial value, V 3.6 L2631 (SV 6.7 L5199-5200): "The default
   initialization value for a net shall be the value z. Nets with drivers shall
-  assume the output value of their drivers." A path destination keeps its
-  initial z until its first delayed transition matures (decision A7-D6, as
-  for net delays, S2-D3), so every first transition below is from z.
+  assume the output value of their drivers." A driven path destination
+  starts x until its first delayed transition matures (decision A7-D6, as for
+  net delays, S2-D10), so every first transition below is from x.
 
 ## Derivations
 
 Delays below are written in the twelve-transition order 01, 10, 0z, z1, 1z,
 z0, 0x, x1, 1x, x0, xz, zx. A transition caused at time `t` by an input that
-last changed at `s` is due at `max(t + net delay, s + path delay)` (A7-D1).
+last changed at `s` passes the path at `max(t, s + path delay)`; a net delay
+on the destination then delays that result like any net delay (A7-D1).
 
 - `transitions.v`: `(3, 5)` expands to 3 5 3 3 5 5 and, by Table 30-3, 0x =
   min(3, 3) = 3, x1 = max(3, 3) = 3, 1x = min(5, 5) = 5, x0 = 5, xz =
@@ -89,10 +90,11 @@ last changed at `s` is due at `max(t + net delay, s + path delay)` (A7-D1).
   zx = min(4, 6) = 4 (the example of Table 30-3 gives the same shape). Each
   input change is 100 units after the previous one, so every output changes
   at the change time plus the delay of its own transition; the first one is
-  z->0 at time 0 (2, 4, 5, 6 and 6). `p12` uses `*>`, which for scalars is the
+  x->0 at time 0 (2, 4, 5, 6 and 10; the twelfth form's x0 is its tenth
+  delay). `p12` uses `*>`, which for scalars is the
   same connection.
 - `connections.v`: `Y = A | B` with `(A => Y) = (6, 9)` and `(B => Y) =
-  (5, 11)` (the example of 30.5.3). Y's first z->0 has both inputs changed at
+  (5, 11)` (the example of 30.5.3). Y's first x->0 has both inputs changed at
   0: min(9, 11) = 9. B rises at 100: 105; B falls at 200: 211; A rises at 300:
   306; A falls at 400: 409; both rise at 500: min(6, 5) = 5, 505; both fall at
   600: min(9, 11), 609; A rises at 700: 706; B rises at 800 and A falls at 900
@@ -109,7 +111,8 @@ last changed at `s` is due at `max(t + net delay, s + path delay)` (A7-D1).
   at 22, 122, 222. `fig4` (gates 10 and 20, path 22, Figure 30-4): Q follows D
   after the distributed 30: 30, 130, 230; its gate output starts X (decision
   S2-D4), which reaches Q through the path at 0 + 22 = 22. `netd` (net delay
-  4, path 2): 4, 104, 204. `netp` (net delay 1, path 6): 6, 106, 206. `hier`
+  4, path 2): 2 + 4, so 6, 106, 206. `netp` (net delay 1, path 6): 6 + 1, so
+  7, 107, 207. `hier`
   (an inverter instance drives Q, path 4): 4, 104, 204. `io` (an inout
   destination driven only inside, path 3): 3, 103, 203, and the outside copy
   `qr` follows at the same times.
@@ -118,12 +121,12 @@ last changed at `s` is due at `max(t + net delay, s + path delay)` (A7-D1).
   5.0, 11.5, 25.0; its module-body `$display` reads the specify-block
   specparams. `neg_sp` delays (-2 -> 0, 3): 3.0, 10.0, 23.0. `mtm` delays
   (1:2:3 -> 2, 4:6:8 -> 6): 6.0, 12.0, 26.0.
-- `pulses.v` (rise 3, fall 8): z->0 at 8; 100/105 gives 103/113; the 2-unit
+- `pulses.v` (rise 3, fall 8): x->0 at 8; 100/105 gives 103/113; the 2-unit
   pulse at 200 is shorter than the rise delay and is rejected (the new value
   equals the output, so the pending update is descheduled); 300/350 gives
   303/358.
 - `force_release.v`: y, v (net delay (2, 3)) and s (scalar net delay (2, 3))
-  first change z->0 after the fall delay 3. The rise of a to 11 at 10 would
+  first change x->0 after the fall delay 3. The rise of a to 11 at 10 would
   reach them at 12, but the force at 11 publishes 01 / 0 at once and drops the
   pending updates; the release at 21 publishes the driven 11 / 1 at once (SV
   10.6.2 L13397-13399: "A force procedural statement on a net shall override
@@ -133,8 +136,9 @@ last changed at `s` is due at `max(t + net delay, s + path delay)` (A7-D1).
   the drivers of the net."; V 9.3.2 L8928-8929 has the first sentence). The fall
   of bit 0 at 31 then starts from the released 1 and arrives at 34, and the
   fall of bit 1 and of s at 41 arrives at 44.
-- `wired.v` (SystemVerilog only): two in-module drivers resolve first. a rises
-  at 10, y z->1 after a's 2: 12; b rises at 20, y 1->x after b's 5 (the 1->x
+- `wired.v` (SystemVerilog only): two in-module drivers resolve first. y
+  starts x and reaches the resolved z after a's 2 (both inputs count as
+  changed at 0, A7-D3). a rises at 10, y z->1 after a's 2: 12; b rises at 20, y 1->x after b's 5 (the 1->x
   delay of `5` is 5): 25; a falls at 30, y x->0 after 2: 32; b falls at 40,
   y 0->z after 5: 45. IEEE 1364-2001 rejects the module (14.2.1).
 

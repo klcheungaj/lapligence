@@ -92,9 +92,10 @@ Line numbers are those of the `pdftotext -layout` extractions
   delay per change by the 6.1.3 rules (nonzero to zero falls, all-Z turns off,
   partly X or Z values rise); a one-bit select follows Table 39, so 0 to X
   takes the smallest delay (S2-D2). Selected targets start X (S2-D4).
-- `net_delay_bits`: a vector net delay applies per bit, so bits rising and
-  falling at once reach the net at their own rise and fall times and staggered
-  changes are not merged (S2-D3); a scalar three-delay net follows Table 39.
+- `net_delay_bits`: a vector net delay schedules the whole vector, its delay
+  selected by the new least significant bit (0 falls, 1 rises), and a new
+  value replaces the pending one (S2-D3); a scalar three-delay net follows
+  Table 39. Driven delayed nets start x (S2-D10).
 - `decl_assign_delay`: a declaration assignment's delay delays only that
   driver, never the net's other driver, and on a vector it is one delay (S2-D5).
 - `pulse_widths`: continuous, gate, UDP and net delays filter a pulse narrower
@@ -107,8 +108,8 @@ Line numbers are those of the `pdftotext -layout` extractions
   output starts X.
 - `net_array_delays`: a declaration delay on a one- and a two-dimensional net
   array delays every driven element after resolution, adds to a delayed
-  driver's own delay, filters a 1 ns pulse and applies per bit to vector
-  elements, including one driven through a bit-select.
+  driver's own delay, filters a 1 ns pulse and schedules each vector element
+  as one vector, or a bit-select driver's part on its own (S2-D3).
 - `net_array_ports` (SystemVerilog): the delayed element reached through an
   inout port and through an `alias` of one element is delayed once.
 - `concat_targets`: a delayed concatenation is one vector driver (S2-D6): a
@@ -130,7 +131,8 @@ Line numbers are those of the `pdftotext -layout` extractions
   delays use the values current when the driver schedules; changing only a
   delay operand schedules nothing; X is zero (S2-D9).
 - `runtime_net_delays` (SystemVerilog): a runtime net delay uses its value at
-  each net change, per bit on a vector net (S2-D3, S2-D9).
+  each net change; on a vector net it selects the delay like a delayed
+  continuous assignment, from the whole old and new value (S2-D9).
 - `neg_runtime_delays_v2001`, `neg_runtime_gate_delay_v2001`,
   `neg_runtime_net_delay_v2001`: with `--edition v2001` runtime-valued
   continuous-assignment, gate and net delays are rejected (V 7.14.1).

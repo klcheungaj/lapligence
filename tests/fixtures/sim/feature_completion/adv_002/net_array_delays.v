@@ -2,8 +2,8 @@
 // IEEE 1364-2001 6.1.3, 7.14; IEEE 1800-2009 10.3.3, 28.16. A delay in a
 // net-array declaration is the net delay of every element: each element
 // delays the changes of its resolved value, after a delayed driver's own
-// delay, and filters narrower pulses. Vector elements apply it per bit
-// (S2-D3), also to a bit-select driver of one element.
+// delay, and filters narrower pulses. A vector element is scheduled as one
+// vector, a bit-select driver's part on its own (S2-D3).
 `timescale 1ns/1ns
 module tb;
     reg a;

@@ -2,9 +2,10 @@
 // IEEE 1364-2001 6.1.3, 7.14; IEEE 1800-2009 10.3.3, 28.16. A net delay
 // delays every change applied to the net, after resolution. 6.1.3 contrasts
 // a declaration assignment, whose "rising and falling delays shall not be
-// applied to the individual bits", with the net delay: on a vector net each
-// bit is delayed, scheduled and filtered on its own, with its own rise/fall
-// delay. A scalar net follows the from/to table.
+// applied to the individual bits", with the net delay, but states no rule for
+// the net delay: the vector is scheduled and filtered as one, and the new
+// value of its least significant bit selects the delay (S2-D3), the
+// industry-standard behaviour. A scalar net follows the from/to table.
 `timescale 1ns/1ns
 module tb;
     reg [1:0] a;

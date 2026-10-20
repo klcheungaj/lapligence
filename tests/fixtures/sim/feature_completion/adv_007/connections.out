@@ -1,7 +1,7 @@
-0 A=0 B=0 Y=z v=0000 c=0 p=zzzz f=zz
-1 A=0 B=0 Y=z v=0000 c=0 p=zzzz f=z0
-3 A=0 B=0 Y=z v=0000 c=0 p=0000 f=z0
-5 A=0 B=0 Y=z v=0000 c=0 p=0000 f=00
+0 A=0 B=0 Y=x v=0000 c=0 p=xxxx f=xx
+1 A=0 B=0 Y=x v=0000 c=0 p=xxxx f=x0
+3 A=0 B=0 Y=x v=0000 c=0 p=0000 f=x0
+5 A=0 B=0 Y=x v=0000 c=0 p=0000 f=00
 9 A=0 B=0 Y=0 v=0000 c=0 p=0000 f=00
 100 A=0 B=1 Y=0 v=0000 c=0 p=0000 f=00
 105 A=0 B=1 Y=1 v=0000 c=0 p=0000 f=00

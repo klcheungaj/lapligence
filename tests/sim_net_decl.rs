@@ -119,8 +119,9 @@ fn net_declaration_propagation_is_after_resolution_and_not_double_delayed() {
         "partial_features",
         "net_declaration_propagation",
         // A declaration assignment's delay is that driver's own (decision
-        // S2-D5), so `declared_init` matches `driver_only`.
-        "t2 x z x z x\nt3 1 1 1 x x\n",
+        // S2-D5), so `declared_init` matches `driver_only`; a driven net
+        // with a net delay starts x (S2-D10).
+        "t2 x x x x x\nt3 1 1 1 x x\n",
         "",
         &[],
         &["--edition", "sv2009"],
@@ -132,7 +133,7 @@ fn net_declaration_delay_keeps_transition_tuple_and_real_edges() {
     sim_cli::run_case(
         "partial_features",
         "net_declaration_transition",
-        "t1 z z\nt3 1 0\nt5 1 1\nt7 0 0\n",
+        "t1 x x\nt3 1 0\nt5 1 1\nt7 0 0\n",
         "",
         &[],
     );

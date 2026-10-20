@@ -79,6 +79,11 @@ pub(super) fn render_set_net_delay(
     delay: &IrRuntimeTransitionDelay,
 ) -> Result<String, String> {
     let net = &ctx.model.net_group(group).c_name;
+    let start = if ctx.model.net_group(group).starts_unknown {
+        format!(" llg_net_resolve(&{net});")
+    } else {
+        String::new()
+    };
     let rise = super::statements::render_runtime_delay(ctx, &delay.rise)?;
     let fall = match &delay.fall {
         Some(fall) => super::statements::render_runtime_delay(ctx, fall)?,
@@ -92,7 +97,7 @@ pub(super) fn render_set_net_delay(
     Ok(format!(
         "    {{ uint64_t _llg_rise = {rise}; uint64_t _llg_fall = {fall}; \
          uint64_t _llg_turn_off = {turn_off}; {net}.propagation_rise = _llg_rise; \
-         {net}.propagation_fall = _llg_fall; {net}.propagation_turn_off = _llg_turn_off; }}\n"
+         {net}.propagation_fall = _llg_fall; {net}.propagation_turn_off = _llg_turn_off;{start} }}\n"
     ))
 }
 

@@ -144,10 +144,8 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
                     format!("{}__overlap_scratch", g.c_name),
                 )
             };
-        // A delayed vector net keeps one inertial handle per bit; undelayed
-        // and scalar nets leave the field zero-initialized.
-        let propagation_bits = if (g.propagation_delay.is_some() && g.width > 1) || path_destination
-        {
+        // A path destination keeps one path-stage inertial handle per bit.
+        let mut propagation_bits = if path_destination {
             out.push_str(&format!(
                 "static llg_inertial_t* {}__propagation_bits[{}];\n",
                 g.c_name, g.width
@@ -156,6 +154,33 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
         } else {
             String::new()
         };
+        // A delayed net driven in separate parts schedules each part on its
+        // own (S2-D3); a net scheduled whole leaves these fields zero.
+        if g.propagation_delay.is_some() && !g.propagation_segments.is_empty() {
+            let bounds = std::iter::once(0)
+                .chain(g.propagation_segments.iter().copied())
+                .chain(std::iter::once(g.width))
+                .map(|bound| bound.to_string())
+                .collect::<Vec<_>>();
+            out.push_str(&format!(
+                "static const uint32_t {name}__segment_lsb[] = {{ {} }};\n\
+                 static llg_inertial_t* {name}__segment_records[{}];\n",
+                bounds.join(", "),
+                bounds.len() - 1,
+                name = g.c_name,
+            ));
+            propagation_bits.push_str(&format!(
+                ".n_segments = {}, .segment_lsb = {name}__segment_lsb, \
+                 .segment_records = {name}__segment_records, ",
+                bounds.len() - 1,
+                name = g.c_name,
+            ));
+        }
+        if g.runtime_delay {
+            propagation_bits.push_str(".net_delayed = 2, ");
+        } else if g.propagation_delay.is_some() {
+            propagation_bits.push_str(".net_delayed = 1, ");
+        }
         let strength_view = g
             .strength_view
             .and_then(|view| model.signals.get(view))

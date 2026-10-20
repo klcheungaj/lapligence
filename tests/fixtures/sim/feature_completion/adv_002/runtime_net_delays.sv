@@ -1,7 +1,8 @@
 // llg-test-fixture: tests/fixtures/sim/feature_completion/adv_002/runtime_net_delays.sv
 // IEEE 1800-2009 28.16, 28.16.1, 10.3.3. A runtime-valued net delay applies
-// the value current when the net changes (S2-D9), per bit on a vector net
-// (S2-D3).
+// the value current when the net changes (S2-D9); on a vector net it selects
+// the delay from the whole old and new value, like a delayed continuous
+// assignment. Driven delayed nets start x (S2-D10).
 `timescale 1ns/1ns
 module tb;
     reg a;

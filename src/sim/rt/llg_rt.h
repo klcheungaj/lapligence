@@ -560,10 +560,22 @@ struct llg_net {
     uint64_t propagation_rise;
     uint64_t propagation_fall;
     uint64_t propagation_turn_off;
-    /* A vector net delay applies to each bit on its own (IEEE 1364-2001
-     * 6.1.3): one inertial handle per bit, emitted only for delayed nets
-     * wider than one bit. NULL keeps the whole-net handle above. */
+    /* Module path destinations only: the path stage keeps one inertial
+     * handle per bit (IEEE 1800-2009 30.4); NULL for every other net. */
     llg_inertial_t** propagation_bits;
+    /* A net delay schedules the net as one vector through `propagation`,
+     * its delay chosen by the new value of the least significant bit
+     * (decision S2-D3). A vector net driven in separate parts instead
+     * schedules part k, bits [segment_lsb[k], segment_lsb[k + 1]), through
+     * segment_records[k]; n_segments is 0 for a net scheduled whole. */
+    uint32_t n_segments;
+    const uint32_t* segment_lsb;
+    llg_inertial_t** segment_records;
+    /* 0: no net delay, so a path destination publishes its path-delayed
+     * value directly; 1: a constant net delay; 2: a runtime-valued net
+     * delay, whose vector updates take the whole-value rule of a delayed
+     * continuous assignment instead of the least significant bit (S2-D9). */
+    int8_t net_delayed;
     int n_aliases;
     int alias_capacity;
     llg_net_alias_t** aliases;
@@ -604,6 +616,12 @@ struct llg_net_alias {
 };
 
 void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */
+/* Startup of a delayed or path-destination net with drivers, after its value
+ * was filled with X: its strength view reads StX and, when `resolve` is set,
+ * its resolved drivers propagate through its delay, so a driver that never
+ * changes still reaches the net (decision S2-D10). A runtime-valued net
+ * delay resolves once its updater stored the delay. */
+void llg_net_start_unknown(llg_net_t* net, int resolve);
 void llg_net_write(llg_net_t* net, int idx, sv4_t value);
 // Selected writes replace the driver's previous range, so a moving selector
 // releases its old contribution to Z. `value` has plan.width bits; reverse is

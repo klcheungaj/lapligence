@@ -343,7 +343,11 @@ original deadlines, changed values cancel, return to current value cancels witho
 replacement. Preserve full single/rise-fall/three-way delays. A one-bit target
 follows the from/to table (a change to X takes the smallest delay); a wider
 target takes one delay for its whole value (nonzero to zero falls, all-Z turns
-off, else rises; V §6.1.3), and a vector net delay applies per bit. A net
+off, else rises; V §6.1.3). A net delay schedules the whole resolved vector,
+or each separately driven part, with the delay selected by the new least
+significant bit (S2-D3); `net_delay_layout` derives the parts from every
+driver site after initialization steps exist and marks driven delayed nets and
+module-path destinations to start X (S2-D10, A7-D6). A net
 declaration assignment's delay is that driver's delay, never a net delay (the
 capture gives it only to the assignment). Selected delayed drivers and
 net-array cells start X on their own bits (`initialize_delayed_lhs`). A delayed

@@ -164,7 +164,10 @@ fn net_storage_lifecycle(
         .source
         .push_str("static const struct { llg_net_t* net; uint8_t fill; } llg_net_storage[] = {\n");
     for group in groups {
+        // A delayed net with drivers shows X until its first delayed
+        // transition (S2-D10); `net_delay_starts` then propagates it.
         let fill = match group.kind {
+            _ if group.starts_unknown => 2,
             IrNetKind::Tri0 | IrNetKind::Supply0 => 0,
             IrNetKind::Tri1 | IrNetKind::Supply1 => 1,
             _ => 3,
@@ -180,6 +183,36 @@ fn net_storage_lifecycle(
     ));
     destroy.push_str(&format!(
         "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_destroy(net->drivers[slot]);\n        sv4_destroy(&net->resolved);\n        net->propagation = NULL;\n    }}\n"
+    ));
+}
+
+/// Start every delayed or path-destination net that has drivers from X
+/// through its delay, after aliases and module paths are bound. A
+/// runtime-valued delay is unknown until its updater runs, so that updater
+/// starts the propagation instead (`IrStmt::SetNetDelay`).
+fn net_delay_starts(model: &IrModel, tables: &mut StorageTables, initialize: &mut String) {
+    let mut emitted = HashSet::new();
+    let mut started = Vec::new();
+    for group in &model.net_groups {
+        if !group.starts_unknown || !emitted.insert(group.c_name.as_str()) {
+            continue;
+        }
+        if group.runtime_delay {
+            initialize.push_str(&format!(
+                "    llg_net_start_unknown(&{}, 0);\n",
+                group.c_name
+            ));
+        } else {
+            started.push(group.c_name.clone());
+        }
+    }
+    if started.is_empty() {
+        return;
+    }
+    let table = tables.pointer_table("llg_net_t", &started);
+    initialize.push_str(&format!(
+        "    {}\n        llg_net_start_unknown({table}[_llg_n], 1);\n",
+        table_loop(&table)
     ));
 }
 
@@ -255,6 +288,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             "    llg_module_paths_start(&llg_path_set_{index});\n"
         ));
     }
+    net_delay_starts(model, &mut tables, &mut initialize);
     emitted.clear();
     // Function return slots and static locals are independent persistent
     // objects: tabled packed/real defaults first, then string/chandle resets

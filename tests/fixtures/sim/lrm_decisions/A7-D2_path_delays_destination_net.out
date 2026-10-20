@@ -1,4 +1,5 @@
-0 a=0 b=0 y=z seen=x copy=z w=z
+0 a=0 b=0 y=x seen=x copy=x w=x
+2 a=0 b=0 y=x seen=x copy=x w=z
 5 a=0 b=0 y=0 seen=0 copy=0 w=z
 10 a=1 b=0 y=0 seen=0 copy=0 w=z
 12 a=1 b=0 y=0 seen=0 copy=0 w=1

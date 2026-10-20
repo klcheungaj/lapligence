@@ -1,6 +1,6 @@
-0 A=0 B=0 Y=z D=0 qs=z ql=z qn=z
-4 A=0 B=0 Y=z D=0 qs=z ql=z qn=0
-9 A=0 B=0 Y=0 D=0 qs=z ql=z qn=0
+0 A=0 B=0 Y=x D=0 qs=x ql=x qn=x
+6 A=0 B=0 Y=x D=0 qs=x ql=x qn=0
+9 A=0 B=0 Y=0 D=0 qs=x ql=x qn=0
 22 A=0 B=0 Y=0 D=0 qs=0 ql=x qn=0
 30 A=0 B=0 Y=0 D=0 qs=0 ql=0 qn=0
 100 A=1 B=0 Y=0 D=0 qs=0 ql=0 qn=0
@@ -22,6 +22,6 @@
 1000 A=0 B=0 Y=1 D=0 qs=0 ql=0 qn=0
 1011 A=0 B=0 Y=0 D=0 qs=0 ql=0 qn=0
 1100 A=0 B=0 Y=0 D=1 qs=0 ql=0 qn=0
-1104 A=0 B=0 Y=0 D=1 qs=0 ql=0 qn=1
+1106 A=0 B=0 Y=0 D=1 qs=0 ql=0 qn=1
 1122 A=0 B=0 Y=0 D=1 qs=1 ql=0 qn=1
 1130 A=0 B=0 Y=0 D=1 qs=1 ql=1 qn=1

@@ -179,6 +179,9 @@ impl<'a> Codegen<'a> {
             } else {
                 IrShape::SensLoop { reads }
             };
+            if let Some(net) = self.model.net_groups.get_mut(group) {
+                net.runtime_delay = true;
+            }
             let name = self.new_fn_name(&path, "net_delay");
             let origin = self.origin(member);
             self.model.processes.push(IrProcess::new_with_origin(
@@ -1639,6 +1642,9 @@ impl<'a> Codegen<'a> {
                 n_drivers: members.len(),
                 driver_strengths: vec![(6, 6); members.len()],
                 propagation_delay,
+                propagation_segments: Vec::new(),
+                starts_unknown: false,
+                runtime_delay: false,
                 strength_view: None,
             });
             for (group_bit, bit) in run
@@ -1860,6 +1866,9 @@ impl<'a> Codegen<'a> {
                 n_drivers: members.len(),
                 driver_strengths: vec![(6, 6); members.len()],
                 propagation_delay,
+                propagation_segments: Vec::new(),
+                starts_unknown: false,
+                runtime_delay: false,
                 strength_view: None,
             });
             for member in members {
@@ -2598,6 +2607,9 @@ impl<'a> Codegen<'a> {
                 n_drivers: initial_drivers,
                 driver_strengths: vec![(6, 6); initial_drivers],
                 propagation_delay,
+                propagation_segments: Vec::new(),
+                starts_unknown: false,
+                runtime_delay: false,
                 strength_view: None,
             });
 
