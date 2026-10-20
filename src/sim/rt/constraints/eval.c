@@ -730,6 +730,8 @@ CR_INLINE void cr_classify_node(llg_cr_session_t* s, uint32_t n) {
             const llg_cr_leaf_t* leaf = &p->leaves[l];
             if (s->leaf_input[l] == LLG_CR_INPUT_NULL) {
                 cr_set_error(s, n, LLG_CR_REASON_NULL, l);
+            } else if (s->leaf_input[l] == LLG_CR_INPUT_EMPTY) {
+                cr_set_error(s, n, LLG_CR_REASON_EMPTY_REDUCTION, l);
             } else if (s->leaf_input[l] != LLG_CR_INPUT_KNOWN) {
                 cr_set_error(s, n, LLG_CR_REASON_XZ_LEAF, l);
             } else {

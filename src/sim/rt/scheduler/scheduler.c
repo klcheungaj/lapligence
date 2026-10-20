@@ -330,7 +330,7 @@ void llg_rt_run_finals(void) {
     // Do not run final procedures while an embedding has intentionally
     // returned control to its caller under the EXIT policy.
     if (g.suspended) return;
-    if (llg_last_config_error) {
+    if (llg_last_config_error || llg_skip_final_procedures) {
         llg_clear_final_timeformat();
         finals_release();
         llg_n_finals = 0;

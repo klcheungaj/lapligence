@@ -895,6 +895,9 @@ pub enum IrStmt {
         /// Simulator-generated failures set the process exit status; they
         /// use `Error` (the run continues) or `Fatal` severity.
         runtime_failure: bool,
+        /// `Fatal` only: the run ends without running its final procedures,
+        /// for simulator-generated errors that stop a run at once.
+        skip_finals: bool,
     },
     /// `$asserton`, `$assertoff`, `$assertkill`, or the bounded
     /// `$assertcontrol` form. Integral arguments are evaluated at the call

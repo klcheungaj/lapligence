@@ -350,28 +350,45 @@ sv4_t llg_urandom_range(sv4_t max, sv4_t min, int has_min) {
 }
 
 /* randcase (IEEE 1800-2009 18.16). Weights are read as unsigned two-state
- * values (X/Z bits as 0, a negative signed weight as its bit pattern, with a
- * warning); the sum is exact in `sum_width` bits, which lowering sized so it
- * cannot wrap (weight width plus ceil(log2(items))). One draw per call from
- * the calling process stream picks a number in [0, sum-1], and the first item
- * whose running total exceeds it wins, so a zero weight is never chosen.
- * Totals up to 32 bits draw exactly like $urandom_range(sum-1, 0), wider ones
- * combine more 32-bit draws with rejection to stay unbiased. */
+ * values (X/Z bits as 0); the sum is exact in `sum_width` bits, which lowering
+ * sized so it cannot wrap (weight width plus ceil(log2(items))). One draw per
+ * call from the calling process stream picks a number in [0, sum-1], and the
+ * first item whose running total exceeds it wins, so a zero weight is never
+ * chosen. Totals up to 32 bits draw exactly like $urandom_range(sum-1, 0),
+ * wider ones combine more 32-bit draws with rejection to stay unbiased.
+ * The weights are "non-negative integral values" (L31311): a signed weight
+ * with its sign bit set ends the run at once, without final procedures
+ * (S31-D4, S16-D3), and selects nothing. */
 static const char* randcase_where(const char* location) {
     return location && location[0] != '\0' ? location : "<unknown>";
 }
 
-static void randcase_warn_negative(const sv4_t* weight, size_t index,
-                                   const char* location) {
-    if (!llg_sv4_signed(*weight) || llg_sv4_width(*weight) == 0) return;
+static int random_weight_negative(const sv4_t* weight) {
+    if (!llg_sv4_signed(*weight) || llg_sv4_width(*weight) == 0) return 0;
     sv4_t sign = sv4_bit_select(*weight, (uint64_t)llg_sv4_width(*weight) - 1u);
     int negative = sv4_to_bool(sign);
     sv4_destroy(&sign);
-    if (negative)
-        fprintf(stderr,
-                "llg: warning: randcase at %s: weight %zu is negative; "
-                "its bit pattern is used as an unsigned weight\n",
+    return negative;
+}
+
+/* The caller returns -1 (nothing selected) and its generated statement ends
+ * the process at the exit check that follows the selection. */
+static void random_weight_fatal(const char* message, const char* location) {
+    llg_rt_mark_failed();
+    llg_rt_skip_finals();
+    llg_rt_fatal_typed(0, message, NULL, 0, "", randcase_where(location));
+}
+
+static int randcase_negative_weight(const sv4_t* const* weights, size_t count,
+                                    const char* location) {
+    for (size_t index = 0; index < count; ++index) {
+        if (!random_weight_negative(weights[index])) continue;
+        fprintf(stderr, "llg: error: randcase at %s: weight %zu is negative\n",
                 randcase_where(location), index);
+        random_weight_fatal("randcase weight is negative", location);
+        return 1;
+    }
+    return 0;
 }
 
 static void randcase_warn_zero(const char* location) {
@@ -394,10 +411,8 @@ static int32_t randcase_select_u64(llg_rng_state_t* rng,
                                    const sv4_t* const* weights, size_t count,
                                    const char* location) {
     uint64_t total = 0;
-    for (size_t index = 0; index < count; ++index) {
-        randcase_warn_negative(weights[index], index, location);
+    for (size_t index = 0; index < count; ++index)
         total += randcase_weight_u64(weights[index]);
-    }
     if (total == 0) {
         randcase_warn_zero(location);
         return -1;
@@ -441,7 +456,6 @@ static int32_t randcase_select_wide(llg_rng_state_t* rng,
                                     uint32_t sum_width, const char* location) {
     sv4_t total = sv4_zero(sum_width, 0);
     for (size_t index = 0; index < count; ++index) {
-        randcase_warn_negative(weights[index], index, location);
         sv4_t wide = randcase_weight_wide(weights[index], sum_width);
         sv4_add_into(&total, total, wide);
         sv4_destroy(&wide);
@@ -488,6 +502,7 @@ static int32_t randcase_select_wide(llg_rng_state_t* rng,
 
 int32_t llg_randcase_select(const sv4_t* const* weights, size_t count,
                             uint32_t sum_width, const char* location) {
+    if (randcase_negative_weight(weights, count, location)) return -1;
     llg_rng_state_t* rng = llg_process_rng();
     return sum_width <= 64u
         ? randcase_select_u64(rng, weights, count, location)
@@ -496,37 +511,27 @@ int32_t llg_randcase_select(const sv4_t* const* weights, size_t count,
 
 /* randsequence rule selection (IEEE 1800-2009 18.17.1): "A
  * weight_specification shall evaluate to an integral non-negative value", so
- * a negative or unknown weight is a run-time error that marks the run failed
- * and selects no rule (S16-D3). Valid weights draw exactly like randcase. */
-static int randsequence_weight_invalid(const sv4_t* weight, size_t index,
-                                       const char* location) {
-    const char* problem = NULL;
-    if (llg_sv4_width(*weight) != 0 && sv4_is_unknown(*weight)) {
-        problem = "has unknown bits";
-    } else if (llg_sv4_signed(*weight) && llg_sv4_width(*weight) != 0) {
-        sv4_t sign =
-            sv4_bit_select(*weight, (uint64_t)llg_sv4_width(*weight) - 1u);
-        if (sv4_to_bool(sign)) problem = "is negative";
-        sv4_destroy(&sign);
-    }
-    if (!problem) return 0;
-    fprintf(stderr,
-            "llg: error: randsequence production at %s: the weight of rule %zu "
-            "%s; no rule is generated\n",
-            randcase_where(location), index + 1u, problem);
-    llg_rt_mark_failed();
-    return 1;
-}
-
+ * a negative weight ends the run at once, without final procedures, and
+ * selects no rule (S16-D3). X/Z bits read as 0, as in randcase. Valid
+ * weights draw exactly like randcase. */
 int32_t llg_randsequence_select(const sv4_t* const* weights, size_t count,
                                 uint32_t sum_width, const char* location) {
-    int invalid = 0;
-    for (size_t index = 0; index < count; ++index)
-        invalid |= randsequence_weight_invalid(weights[index], index, location);
-    if (invalid) return -1;
+    for (size_t index = 0; index < count; ++index) {
+        if (!random_weight_negative(weights[index])) continue;
+        fprintf(stderr,
+                "llg: error: randsequence production at %s: the weight of rule %zu "
+                "is negative\n",
+                randcase_where(location), index + 1u);
+        random_weight_fatal("randsequence weight is negative", location);
+        return -1;
+    }
     int any = 0;
-    for (size_t index = 0; index < count && !any; ++index)
-        any = llg_sv4_width(*weights[index]) != 0 && sv4_to_bool(*weights[index]);
+    for (size_t index = 0; index < count && !any; ++index) {
+        if (llg_sv4_width(*weights[index]) == 0) continue;
+        sv4_t known = sv4_to_two_state(*weights[index]);
+        any = sv4_to_bool(known);
+        sv4_destroy(&known);
+    }
     if (!any) {
         fprintf(stderr,
                 "llg: warning: randsequence production at %s: all rule weights "

@@ -175,11 +175,13 @@ odd stream increment, child count):
   just enough 32-bit words for the bit length of the sum and rejecting values
   at or above it. Lowering passes the exact-sum width (widest weight plus
   `ceil(log2(items))` bits), so the path is chosen per site and the sum never
-  wraps. All-zero weights draw nothing and warn; a negative signed weight
-  keeps its unsigned bit pattern and warns.
+  wraps. All-zero weights draw nothing and warn; a negative signed weight is
+  an error that ends the run without final procedures (`llg_rt_skip_finals`
+  before a fatal report) and returns -1; the generated statement takes its
+  exit check.
 - `llg_randsequence_select` chooses a `randsequence` rule (SV 18.17.1) with the
-  same draw as `llg_randcase_select`, but a negative (by its own signedness)
-  or X/Z weight is a located error that marks the run failed and returns -1
+  same draw as `llg_randcase_select`; a negative (by its own signedness)
+  weight is a located error that ends the run the same way and returns -1
   without drawing; all-zero weights warn and return -1.
   `llg_randsequence_join_pick` takes one `rand join` step (SV 18.17.5,
   S16-D6): with p = |2r - 1| it restricts the candidates to the longest

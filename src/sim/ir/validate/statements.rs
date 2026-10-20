@@ -1419,6 +1419,7 @@ impl Validator<'_> {
                 location,
                 fatal_finish_number,
                 runtime_failure,
+                skip_finals,
                 ..
             } => {
                 if scope.is_empty() {
@@ -1435,6 +1436,9 @@ impl Validator<'_> {
                     )
                 {
                     return self.fail(path, "runtime failure must use error or fatal severity");
+                }
+                if *skip_finals && !level.is_fatal() {
+                    return self.fail(path, "only a fatal severity can skip final procedures");
                 }
                 if level.is_fatal() {
                     let Some(finish_number) = fatal_finish_number else {

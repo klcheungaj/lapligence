@@ -1,8 +1,8 @@
-sample 1: 1
-sample 2: 2
-sample 3: 3
-sample 4: 5
-sample 5: 6
-sample 6: 9
-sample 7: 9
-coverage 100.00
+sample 1: 5
+sample 2: 6
+sample 3: 9
+sample 4: 9
+sample 5: 1
+sample 6: 2
+sample 7: 3
+final coverage 100.00

@@ -50,8 +50,10 @@ reached later through a random link it is returned again to be fed as
 random.
 
 Each solve expands the template over the instances into an ordinary
-problem: loops become conjunctions or operator chains (an empty reduction is
-the operation's identity, S30-D6), constant indices select an element
+problem: loops become conjunctions or operator chains (an empty `sum`,
+`product` or logical fold is the operation's identity; an empty `and`, `or`
+or `xor` is an object-less leaf whose input is `LLG_CR_INPUT_EMPTY`, an
+evaluation error a guard can eliminate, S30-D6), constant indices select an element
 variable directly, and other indices become `ELEM` nodes over a table of
 the array's elements, whose out-of-range or null selections are evaluation
 errors the engines exclude (S30-D11). A value read through a null handle is
@@ -72,7 +74,8 @@ per size combination, which is why this cache is larger than one.
    enabled block or an active variable's domain becomes K (known before
    solving), R (depends on an unsolved random variable) or E (evaluation
    error: null handle, X/Z input (S29-D1), division by zero, select index out
-   of range, a negative `dist` weight (S30-D8)). `&&`, `||`, `!` and
+   of range, a negative `dist` weight (S30-D8), an empty `and`/`or`/`xor`
+   reduction (S30-D6)). `&&`, `||`, `!` and
    implication follow Figure 18-3; every other operator is E if any operand
    is E, else R if any operand is R. A root that is E fails with
    `LLG_CR_ERROR`; a known false root is `LLG_CR_UNSAT`. A random divisor,

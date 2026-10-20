@@ -1,8 +1,10 @@
 // llg-test-fixture: tests/fixtures/sim/feature_completion/sim_045/transition_illegal.sv
-// SIM-045: an illegal transition is a run-time error and removes every
-// covered sequence that contains it; an illegal default sequence reports
-// each sample the default sequence would count (IEEE 1800-2009 19.5.1,
-// 19.5.5, decisions S45-D3 and S45-D10). The run exits with a failure status.
+// SIM-045: an illegal default sequence reports each sample the default
+// sequence would count and the run continues (decision S45-D10); an
+// explicit illegal transition is a run-time error that ends the simulation
+// and removes every covered sequence that contains it (IEEE 1800-2009
+// 19.5.1, 19.5.5, decision S45-D3). The final procedures run and the run
+// exits with a failure status.
 module tb;
   bit [3:0] v;
   covergroup g;
@@ -14,7 +16,8 @@ module tb;
     }
   endgroup
   g c = new;
-  bit [3:0] values[7] = '{1, 2, 3, 5, 6, 9, 9};
+  bit [3:0] values[7] = '{5, 6, 9, 9, 1, 2, 3};
+  final $display("final coverage %0.2f", c.get_inst_coverage());
   initial begin
     foreach (values[i]) begin
       v = values[i];

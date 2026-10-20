@@ -76,6 +76,10 @@ void llg_rt_mark_failed(void) {
     llg_last_failure = 1;
 }
 
+void llg_rt_skip_finals(void) {
+    llg_skip_final_procedures = 1;
+}
+
 static void report_stop(int verbosity, const char* location) {
     if (verbosity >= 1) {
         llg_report_t report;

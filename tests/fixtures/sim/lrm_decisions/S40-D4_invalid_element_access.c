@@ -6,8 +6,10 @@ DPI_DLLESPEC void d4_access(const svOpenArrayHandle l, const svOpenArrayHandle b
 {
     svLogicVecVal lv;
     svBitVecVal bv;
-    printf("pointers %d%d%d%d\n", svGetArrElemPtr1(l, 0) == NULL, svGetArrElemPtr1(l, 3) == NULL,
-           svGetArrElemPtr2(l, 1, 1) == NULL, svGetArrElemPtr1(b, 0) == NULL);
+    int low_null = svGetArrElemPtr1(l, 0) == NULL;
+    int high_null = svGetArrElemPtr1(l, 3) == NULL;
+    int bit_null = svGetArrElemPtr2(b, 2, 3) == NULL;
+    printf("pointers %d%d%d\n", low_null, high_null, bit_null);
     svGetLogicArrElem1VecVal(&lv, l, 3);
     printf("logic out of range=%x/%x\n", (unsigned)(lv.aval & 0xfu), (unsigned)(lv.bval & 0xfu));
     bv = 7u;
@@ -18,7 +20,6 @@ DPI_DLLESPEC void d4_access(const svOpenArrayHandle l, const svOpenArrayHandle b
     lv.aval = 0xfu;
     lv.bval = 0u;
     svPutLogicArrElem1VecVal(l, &lv, 0);
-    svPutLogicArrElem2VecVal(l, &lv, 1, 2);
     svPutBitArrElem2(b, sv_0, 0, 4);
-    svPutBitArrElem1(b, sv_0, 0);
+    svPutBitArrElem2(b, sv_0, 2, 3);
 }

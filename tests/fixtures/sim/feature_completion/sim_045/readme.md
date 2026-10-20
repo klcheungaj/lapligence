@@ -216,12 +216,19 @@ are the register decisions
 `illegal.sv`:
 
 - `g`: `lo` = {0..7} minus the illegal 5; `rest` is an illegal default bin.
-  Sample 5 is a run-time error (19.5.5, S45-D3) and counts nothing, also not
-  in `lo`; 12 hits the illegal default: another error. 0/1 = 0.00. Sample 3:
-  100.00.
-- `g_count` with `n` = 0: `b[n]` has no bins, a run-time error when the
-  instance is constructed (S45-D5); `other` = {9} is the only bin: sample 9 is
-  100.00. The run exits with status 1.
+  Sample 3: 100.00. Sample 5 is a run-time error (19.5.5, S45-D3) that ends
+  the run: `after 5` never prints, the final procedure runs and shows 100.00
+  (5 counted nothing, also not in `lo`). Exit status 1.
+
+`illegal_default.sv`: sample 2 hits `lo` (100.00); 12 is in no other bin, so
+it hits the illegal default bin `rest`: a run-time error that ends the run
+(S45-D3); the final procedure shows 100.00. Exit status 1.
+
+`bins_count_runtime.sv`: `two` = `new(2)`: `b[2]` = <0,1>, <2,3> and `other`
+= {9}: sample 9 is 1/3 = 33.33. `new(0)` gives `b[n]` a size that is not
+positive, a run-time error when the instance is constructed that ends the run
+(S45-D5): `after new(0)` never prints; the final procedure shows 33.33. Exit
+status 1.
 
 `transitions.sv` (A02):
 
@@ -249,11 +256,14 @@ are the register decisions
   `later` (1 => 2 [-> 1]) lets it fall in the gap: 0.00, 100.00.
 - `g_wild`: 3 => 1 is `2'b1?` => `2'b0?`: `w` of {`w`, `other`}: 50.00.
 
-`transition_illegal.sv` (S45-D10): samples 1 2 3 complete `bad` (2=>3, a
-run-time error) and `up` (1=>2=>3), which contains it and is removed, so it
-is empty. 5 starts `pair` but ends nothing and nothing was pending: the
-illegal default sequence reports it; 6 completes `pair`; each 9 ends nothing
-with nothing pending: two more reports. Coverage: `pair` only, 100.00.
+`transition_illegal.sv` (S45-D10, S45-D3): samples 5 6 9 9 1 2 3. 5 starts
+`pair` but ends nothing and nothing was pending before (the first sample, no
+report); 6 completes `pair`; each 9 ends nothing with nothing pending, and so
+does 1 (it starts `up` but nothing was pending before it): the illegal
+default sequence reports three samples and the run continues. 2 continues
+`up`; 3 completes `bad` (2=>3), a run-time error that ends the run, and `up`
+(1=>2=>3), which contains it and is removed, so it is empty. `coverage` never
+prints; the final procedure shows `pair` only, 100.00. Exit status 1.
 
 `crosses.sv` (A01, A03):
 
@@ -287,8 +297,9 @@ with nothing pending: two more reports. Coverage: `pair` only, 100.00.
 
 `cross_illegal.sv`: 16 products; `diag` = <1,1>, `skip` the `cx` = 3 row,
 `illegal` the `cy` = 2 column (the argument `bad`): Bb = 1 + 4 + 4 − 1 = 8,
-Bc = 8, Bu = 1. (3,2) is illegal although ignored: a run-time error, nothing
-counts. (1,1) counts `diag`: 1/9 = 11.11; (0,0) an automatic bin: 22.22.
+Bc = 8, Bu = 1. (1,1) counts `diag`: 1/9 = 11.11; (0,0) an automatic bin:
+22.22. (3,2) is illegal although ignored: a run-time error that ends the run
+(S45-D3), nothing counts; the final procedure shows 22.22. Exit status 1.
 
 `options.sv`:
 

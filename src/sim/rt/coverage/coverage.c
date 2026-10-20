@@ -197,6 +197,16 @@ static size_t llg_cov_n_model_types;
 static uint8_t llg_cov_quiet;
 static void llg_cov_db_release(void);
 
+// An illegal bin hit (19.5.5, 19.6.3) and a bins array size that is not
+// positive end the run like a fatal error, final procedures included (S45-D3,
+// S45-D5). The caller has reported the error; the statement that sampled or
+// constructed takes its exit check. A process that is already exiting stays
+// quiet.
+static void llg_cov_fatal(const char* message, const char* site) {
+    llg_rt_mark_failed();
+    llg_rt_fatal_typed(0, message, NULL, 0, "", site ? site : "");
+}
+
 static void* llg_cov_grow(void* data, size_t count, size_t size, const char* what) {
     if (size != 0 && count > SIZE_MAX / size) llg_fatal_allocation(what, count, size);
     size_t bytes = count * size;
@@ -416,12 +426,12 @@ static uint64_t llg_cov_bin_count(const llg_cov_inst_t* inst, const llg_cov_bin_
     const llg_cov_slot_value_t* slot = &inst->slots[bin->count];
     llg_cov_num_t value = llg_cov_slot_num(slot);
     if (slot->unknown || value.neg || value.mag == 0) {
-        if (llg_cov_quiet) return 0;
+        if (llg_cov_quiet || llg_rt_exiting()) return 0;
         fprintf(stderr,
                 "llg: runtime error: bins `%s` at %s: the number of bins is not a positive "
-                "value, so the declaration has no bins\n",
+                "value\n",
                 bin->name, bin->site);
-        llg_rt_mark_failed();
+        llg_cov_fatal("the number of bins is not a positive value", bin->site);
         return 0;
     }
     return value.mag;
@@ -1267,11 +1277,12 @@ void llg_cov_cross_hit(void* record, uint32_t index, const uint8_t* guards) {
                 if (state->cross->stamp[b] == inst->serial) continue;
                 state->cross->stamp[b] = inst->serial;
                 if (bin->kind == LLG_COV_BIN_ILLEGAL) {
+                    if (llg_rt_exiting()) continue;
                     fprintf(stderr,
                             "llg: runtime error: covergroup `%s` cross `%s` sampled a product of "
                             "illegal_bins `%s` at %s (IEEE 1800-2009 19.6.3)\n",
                             inst->group->name, cross->name, bin->name, bin->site);
-                    llg_rt_mark_failed();
+                    llg_cov_fatal("illegal_bins product sampled", bin->site);
                     continue;
                 }
                 if (state->cross->counts[b] != UINT64_MAX) state->cross->counts[b]++;
@@ -1740,10 +1751,10 @@ static void llg_cov_format_key(const llg_cov_point_t* point, uint64_t key, char*
 }
 
 // 19.5.5: an illegal value is a run-time error even when another bin also
-// holds it; the simulation continues and the value counts in no bin
-// (decision S45-D3).
+// holds it; it counts in no bin and ends the run (decision S45-D3).
 LLG_NOINLINE static void llg_cov_illegal(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
                             uint32_t decl, uint64_t key) {
+    if (llg_rt_exiting()) return;
     const llg_cov_bin_t* bin = &point->bins[decl];
     char value[32];
     llg_cov_format_key(point, key, value, sizeof value);
@@ -1751,7 +1762,7 @@ LLG_NOINLINE static void llg_cov_illegal(const llg_cov_inst_t* inst, const llg_c
             "llg: runtime error: covergroup `%s` coverpoint `%s` sampled %s, a value of "
             "illegal_bins `%s` at %s (IEEE 1800-2009 19.5.5)\n",
             inst->group->name, point->name, value, bin->name, bin->site);
-    llg_rt_mark_failed();
+    llg_cov_fatal("illegal_bins value sampled", bin->site);
 }
 
 static const llg_cov_seg_t* llg_cov_find(const llg_cov_layout_t* layout, uint64_t key) {
@@ -1987,6 +1998,7 @@ static void llg_cov_sequence_count(llg_cov_history_t* history, uint32_t bin,
 
 static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
                                        const llg_cov_tbin_t* bin, int known, uint64_t key) {
+    if (bin->kind != LLG_COV_BIN_ILLEGAL_DEFAULT && llg_rt_exiting()) return;
     char value[32];
     if (known) llg_cov_format_key(point, key, value, sizeof value);
     else snprintf(value, sizeof value, "a value with X or Z bits");
@@ -1997,7 +2009,10 @@ static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov
             "llg: runtime error: covergroup `%s` coverpoint `%s` sampled %s, %s illegal_bins "
             "`%s` at %s (IEEE 1800-2009 19.5.5)\n",
             inst->group->name, point->name, value, what, bin->name, bin->site);
-    llg_rt_mark_failed();
+    // An illegal `default sequence` count reports and the run continues
+    // (S45-D10); an explicit illegal transition ends it (S45-D3).
+    if (bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT) llg_rt_mark_failed();
+    else llg_cov_fatal("illegal_bins transition sampled", bin->site);
 }
 
 // One sample of a coverpoint with transition bins. Every pending attempt

@@ -480,7 +480,11 @@ at the same time. `LLG_STOP_POLICY=resume` (CLI default) avoids stdin waits;
 `exit` returns the live context for inspection/resumption. Do not run finals while
 suspended; generated CLI exit policy cleans up explicitly. Validate verbosity 0/1/2
 without changing semantics. Normal completion/severity termination runs final
-handling exactly once and preserves severity counters.
+handling exactly once and preserves severity counters. A run-ending simulator
+error that skips final procedures calls `llg_rt_skip_finals` before its fatal
+report (S14-D6, S16-D3, S29-D1, S31-D4); the flag lives outside `g` and resets
+at init, and its callers' generated statements carry a Terminate effect so the
+process takes its exit check.
 
 Semaphore waiters are FIFO. Cancelling a head or subtree must reservice surviving
 waiters without an extra put; do not grant during an incomplete cancellation batch

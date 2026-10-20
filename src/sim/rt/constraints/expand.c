@@ -27,6 +27,9 @@
 #define CR_TPL_FLATS 16u
 #define CR_X_NULL 0xFFFFFFFEu /* a ref that names no object */
 #define CR_X_DROP 0xFFFFFFFDu /* needs elements of an array of unknown size */
+/* leaf_idx of an object-less leaf that stands for an and/or/xor reduction of
+ * an empty array (LLG_CR_INPUT_EMPTY); other object-less leaves are null. */
+#define CR_LEAF_EMPTY 0xFFFFFFFEu
 
 enum { CR_FV_UNIT = 0, CR_FV_GLOBAL = 1, CR_FV_ELEM = 2, CR_FV_SIZE = 3 };
 enum { CR_PH_IDLE = 0, CR_PH_SIZES = 1, CR_PH_ELEMS = 2, CR_PH_DONE = 3 };
@@ -1206,14 +1209,15 @@ static uint32_t cr_fx_leaf(cr_ex_t* ex, uint32_t inst, uint32_t leaf) {
 
 /* A value read through a null handle: a leaf that is a null-dereference
  * evaluation error (18.5.12 E), so a guard can still eliminate it. */
-static uint32_t cr_fx_null(cr_ex_t* ex, uint32_t width, int sign) {
+static uint32_t cr_fx_object_less(cr_ex_t* ex, uint32_t width, int sign, const char* name,
+                                  uint32_t kind) {
     cr_flat_t* f = ex->f;
     llg_cr_leaf_t* l = CR_VEC_PUSH(f->leaves, f->leaves_len, f->leaves_cap);
-    l->name = "null";
+    l->name = name;
     l->bit_width = width;
     l->sign_flag = (uint8_t)sign;
     cr_u32_push(&f->leaf_inst, LLG_CR_NONE);
-    cr_u32_push(&f->leaf_idx, LLG_CR_NONE);
+    cr_u32_push(&f->leaf_idx, kind);
     llg_cr_node_t nd;
     memset(&nd, 0, sizeof(nd));
     nd.op = LLG_CR_STATE;
@@ -1221,6 +1225,10 @@ static uint32_t cr_fx_null(cr_ex_t* ex, uint32_t width, int sign) {
     nd.sign_flag = (uint8_t)sign;
     nd.a = (uint32_t)(f->leaves_len - 1u);
     return cr_fb_intern(ex, &nd);
+}
+
+static uint32_t cr_fx_null(cr_ex_t* ex, uint32_t width, int sign) {
+    return cr_fx_object_less(ex, width, sign, "null", LLG_CR_NONE);
 }
 
 static uint32_t cr_fx_arr(cr_ex_t* ex, uint32_t inst, uint32_t array) {
@@ -1426,12 +1434,15 @@ static uint32_t cr_ex_loop(cr_ex_t* ex, uint32_t n) {
         size_t count_items = ex->items.len - base;
         if (!reduce) {
             result = cr_fb_all(ex, ex->items.data + base, count_items);
+        } else if (count_items == 0u && (op == LLG_CR_AND || op == LLG_CR_OR || op == LLG_CR_XOR)) {
+            /* and(), or() and xor() of no elements are evaluation errors
+             * that a guard can eliminate, like a null leaf (S30-D6). */
+            result = cr_fx_object_less(ex, nd->bit_width, nd->sign_flag, "empty array",
+                                       CR_LEAF_EMPTY);
         } else if (count_items == 0u) {
             /* Identity of the operation (S30-D6). */
             uint64_t* words = (uint64_t*)cr_alloc(CR_WORDS(nd->bit_width), sizeof(uint64_t));
             if (op == LLG_CR_MUL || op == LLG_CR_LAND) words[0] = 1u;
-            if (op == LLG_CR_AND)
-                for (uint32_t i = 0; i < CR_WORDS(nd->bit_width); ++i) words[i] = UINT64_MAX;
             result = cr_fb_const(ex, words, nd->bit_width, nd->sign_flag);
             free(words);
         } else {
@@ -2003,7 +2014,9 @@ static void cr_flat_feed(cr_tpl_t* t, cr_flat_t* f) {
     for (size_t l = 0; l < f->leaves_len; ++l) {
         uint32_t inst = f->leaf_inst.data[l];
         if (inst == LLG_CR_NONE) {
-            llg_cr_set_leaf(fs, (uint32_t)l, NULL, LLG_CR_INPUT_NULL);
+            llg_cr_set_leaf(fs, (uint32_t)l, NULL,
+                            f->leaf_idx.data[l] == CR_LEAF_EMPTY ? LLG_CR_INPUT_EMPTY
+                                                                 : LLG_CR_INPUT_NULL);
             continue;
         }
         const cr_inst_t* in = &t->inst[inst];

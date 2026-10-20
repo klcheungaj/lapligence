@@ -706,8 +706,20 @@ int svSizeOfArray(const svOpenArrayHandle h) {
 }
 
 /* Element address for exactly `count` original-range indices, else NULL. */
+/* An element access whose number of indices differs from the array's
+ * unpacked dimensions is a fatal error (S40-D6): the access does nothing and
+ * the run ends when the import returns, like a protocol violation. An index
+ * outside its dimension only selects no element (SV 7.4.6, S40-D4). */
 static unsigned char* llg_dpi_element_at(const svOpenArrayHandle h, int count, const int* index) {
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
+    if (open && count != open->dims && !llg_rt_exiting()) {
+        fprintf(stderr,
+                "llg: DPI-C open array element access with %d index(es) to an array "
+                "with %d unpacked dimension(s)\n",
+                count, open->dims);
+        llg_rt_mark_failed();
+        llg_rt_fatal_typed(0, "DPI-C open array index count", NULL, 0, "", "svdpi.h");
+    }
     if (!open || count != open->dims || count < 1) return NULL;
     const llg_dpi_type_t* level = open->type;
     unsigned char* address = (unsigned char*)open->data;

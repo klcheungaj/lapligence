@@ -911,6 +911,9 @@ static size_t llg_dependency_binding_count;
 // to inspect whether that run stopped with a controlled runtime failure.
 static int llg_last_failure;
 static int llg_last_config_error;
+// A run-ending simulator error that skips the final procedures
+// (llg_rt_skip_finals); read by llg_rt_run_finals after the scheduler exit.
+static int llg_skip_final_procedures;
 static uint64_t llg_severity_counts[4];
 static uint64_t llg_assertion_failure_counts[4];
 static uint64_t llg_assertion_cover_count;

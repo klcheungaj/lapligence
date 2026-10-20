@@ -428,6 +428,7 @@ void llg_rt_init_with_args_and_precision(int argc, char** argv,
     llg_warn_host_stack_limit();
     llg_last_failure = 0;
     llg_last_config_error = 0;
+    llg_skip_final_procedures = 0;
     memset(llg_severity_counts, 0, sizeof(llg_severity_counts));
     memset(llg_assertion_failure_counts, 0, sizeof(llg_assertion_failure_counts));
     llg_assertion_cover_count = 0;

@@ -19,8 +19,7 @@ endclass
 class empty_c;
   rand int e[];
   rand bit [3:0] x;
-  constraint c { e.size() == 0; e.sum() == 0; e.product() == 1; e.and() == -1; e.or() == 0;
-                 e.xor() == 0; x == e.size(); }
+  constraint c { e.size() == 0; e.sum() == 0; e.product() == 1; x == e.size(); }
 endclass
 
 class member_c;
@@ -76,7 +75,8 @@ module tb;
           || 4'(o.v[1] + 2 * o.v[2]) != 4'd5) bad = bad + 1;
     end
     $display("ops: bad=%0d", bad);
-    // Reductions of an empty array are the operation's identity (S30-D6).
+    // sum() and product() of an empty array are 0 and 1 (S30-D6); and(), or()
+    // and xor() of one are evaluation errors (S30-D6_empty_reductions).
     e = new;
     e.e = new[3];
     $display("empty: ok=%0d size=%0d x=%0d", e.randomize(), e.e.size(), e.x);

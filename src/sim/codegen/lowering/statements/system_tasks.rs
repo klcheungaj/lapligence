@@ -214,6 +214,7 @@ impl EmitCtx<'_, '_> {
                 location: self.finish_location(h),
                 fatal_finish_number,
                 runtime_failure: false,
+                skip_finals: false,
             }]);
         }
         if let Some((task_kind, default_radix)) = display_task_variant(name) {

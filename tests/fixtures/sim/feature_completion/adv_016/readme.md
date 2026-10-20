@@ -33,7 +33,7 @@ outcomes the clause lists, a chi-square bound for weights, or a relation
   selected, thus allowing weights to change dynamically." L31502-31503: "If no
   weight is specified, a production shall use a weight of 1. If only some
   weights are specified, the unspecified weights shall use a weight of 1."
-  `frequency`, `invalid_runtime`, S16-D1, S16-D3, S16-D9.
+  `frequency`, `invalid_runtime`, `invalid_weight`, S16-D1, S16-D3, S16-D9.
 - SV 18.17.2 L31526-31528: "If the expression evaluates to true, the production
   following the expression is generated; otherwise, the production following
   the optional else statement is generated." `control`, `lrm_examples`.
@@ -89,7 +89,8 @@ outcomes the clause lists, a chi-square bound for weights, or a relation
 | `contexts` | randsequence in a class function and task, in automatic tasks run concurrently with waits on time and on a clock, in a function and in an always block. | 18.17 (statement_item) |
 | `suspend_kill` | `process::kill()` of a suspended recursive generation with string arguments, `disable` of a named block during a rand join and `disable fork` during a weighted production: nothing after the suspension point runs, and a later generation starts clean. | 9.6, 9.7, 18.17 |
 | `depth_limit` | Unbounded recursion stops at 10000 active generations with a located fatal error, exit status 1, after `final` runs. | llg resource bound |
-| `invalid_runtime` | A negative weight inside a recursive production (twice), a negative repeat count and a NaN join ratio each report a located error; generation continues and the run ends with exit status 1. | S16-D3, S16-D4, S16-D7 |
+| `invalid_runtime` | All-zero weights inside a recursive production (twice) warn and generate nothing; a negative repeat count and a NaN join ratio each report a located error; generation continues and the run ends with exit status 1. | S16-D3, S16-D4, S16-D7 |
+| `invalid_weight` | A negative weight inside a recursive production, reached at the second level after `trace x` printed, is a located error that ends the run at once: `walk` and `done` never print and the final procedure does not run; exit status 1. | S16-D3 |
 | `neg_output_formal`, `neg_join_*`, `neg_recursive_*_frame` | Located llg errors: only input arguments; rand join of distinct, non-recursive productions that do not generate one another; recursive productions save packed, real and string values only. | llg limits |
 | `neg_continue`, `neg_void_return_value`, `neg_missing_return_value`, `neg_result_type`, `neg_real_weight`, `neg_real_repeat_count`, `neg_undeclared_production`, `neg_void_result_read` | Frontend errors for illegal control, results, weights, counts and production names. | 18.17.1, 18.17.4, 18.17.6, 18.17.7 |
 

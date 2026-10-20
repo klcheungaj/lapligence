@@ -281,6 +281,34 @@ fn svdpi_routines_handle_valid_boundary_and_invalid_arguments() {
     );
 }
 
+/// A wrong number of element indices ends the run when the import returns;
+/// the final procedure runs (S40-D6).
+#[test]
+fn a_wrong_element_index_count_ends_the_run() {
+    let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");
+    let Some(library) = companion(&directory, "svdpi_index_count") else {
+        return;
+    };
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_040/svdpi_index_count.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "svdpi_index_count",
+        &["--dpi-lib", &library],
+        &|label, output| {
+            assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+            assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                stderr
+                    .matches("llg: DPI-C open array element access")
+                    .count(),
+                1,
+                "{label}: {stderr}"
+            );
+        },
+    );
+}
+
 #[test]
 fn one_c_function_imported_from_several_scopes() {
     let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");

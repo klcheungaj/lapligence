@@ -1063,6 +1063,7 @@ fn render_stmt_scoped(
             location,
             fatal_finish_number,
             runtime_failure,
+            skip_finals,
         } => render_severity(
             ctx,
             *level,
@@ -1071,7 +1072,9 @@ fn render_stmt_scoped(
             scope,
             location,
             *fatal_finish_number,
-        ).map(|source| if *runtime_failure { format!("    llg_rt_mark_failed();\n{source}") } else { source })?,
+        )
+        .map(|source| if *skip_finals { format!("    llg_rt_skip_finals();\n{source}") } else { source })
+        .map(|source| if *runtime_failure { format!("    llg_rt_mark_failed();\n{source}") } else { source })?,
         IrStmt::AssertionControl {
             kind,
             args,

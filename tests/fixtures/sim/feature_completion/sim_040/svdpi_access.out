@@ -12,13 +12,13 @@ c d2=[2:4] lo=2 hi=4 inc=-1 size=3
 c d3=[-1:-2] lo=-2 hi=-1 inc=1 size=2
 c d4=[0:0] lo=0 hi=0 inc=0 size=0
 c invalid=0,0
-p dims=1 bytes=4 value=a5 elem=0
+p dims=1 bytes=4 value=a5
 p d0=[7:0] lo=0 hi=7 inc=1 size=8 d1=[0:0] lo=0 hi=0 inc=0 size=0
 s dims=2 d0=[0:0] lo=0 hi=0 inc=1 size=1 d1=[0:2] lo=0 hi=2 inc=-1 size=3 v=132
 ptr3 c[1][2][-1]=121
 ptr c[0][4][-2]=42
 ptr first=1 last=1
-ptr invalid=11111
+ptr invalid=111
 c[1][3][-2]=-1
 c[0][2][-1]=-2
 l1 get=0133 out=3
