@@ -1051,12 +1051,3 @@ fn neg_empty_match_property() {
         "sequence must not admit an empty match",
     );
 }
-
-#[test]
-fn neg_recursive_property() {
-    sim_cli::reject_case(
-        SUITE,
-        "neg_recursive_property",
-        "recursive property instances are not supported",
-    );
-}

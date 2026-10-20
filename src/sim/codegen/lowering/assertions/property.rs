@@ -10,9 +10,61 @@
 use super::*;
 use crate::sim::ir::{IrProperty, IrPropertyBinaryOp, IrPropertyClock, IrPropertyNode};
 
-/// Nested property-instance expansion limit. A recursive property (16.13.17)
-/// expands without bound and is rejected explicitly instead.
+/// Nested property-instance expansion limit. Recursive properties never
+/// reach it: the frontend expands a recursion once and the re-entry becomes
+/// a call of that expansion.
 const PROPERTY_INSTANCE_DEPTH_LIMIT: usize = 64;
+
+/// A source span: file, line, column, end line, end column.
+type SourceSpan = (Option<std::sync::Arc<str>>, u32, u32, u32, u32);
+
+/// How a recursive call site passes one actual (16.13.17 restriction 4:
+/// the actual is a formal of the enclosing property, or no such formal
+/// appears in it and it denotes the same expression wherever the site is
+/// expanded).
+#[derive(Clone, Debug)]
+enum SiteActual {
+    Formal(usize),
+    Value(String),
+}
+
+/// One property instance being lowered (IEEE 1800-2009 16.13.17).
+struct InstanceFrame {
+    /// The instance expression.
+    instance: NodeId,
+    target: NodeId,
+    body: NodeId,
+    /// Structural keys of the actuals: equal keys denote the same
+    /// expression of the same declarations.
+    values: Vec<String>,
+    /// The clock flowing into the instance.
+    clock: Option<SampledClock>,
+    /// CALL nodes of recursive re-entries, patched to the instance's root.
+    calls: Vec<u32>,
+}
+
+/// The frame a recursive re-entry repeats exactly, if any. The re-entry
+/// passes `site` evaluated in the last frame; it is a call of the nearest
+/// enclosing expansion of `target` with the same actual values, because
+/// every later expansion of both is then the same (Annex F.7: all k-fold
+/// approximations agree with the call).
+fn recursion_target(
+    frames: &[InstanceFrame],
+    target: NodeId,
+    site: &[SiteActual],
+) -> Option<usize> {
+    let parent = frames.last()?;
+    let values = site
+        .iter()
+        .map(|actual| match actual {
+            SiteActual::Formal(formal) => parent.values.get(*formal).cloned(),
+            SiteActual::Value(value) => Some(value.clone()),
+        })
+        .collect::<Option<Vec<_>>>()?;
+    frames
+        .iter()
+        .rposition(|frame| frame.target == target && frame.values == values)
+}
 
 pub(super) struct PropertyProgram {
     pub(super) clock: SampledClock,
@@ -32,7 +84,7 @@ struct PropertyBuilder {
     /// Strength of a sequence written without `strong`/`weak`: weak in
     /// `assert`/`assume`, strong in `cover`/`expect` (16.13.1, F.3.4.3.1).
     strong_default: bool,
-    instances: Vec<NodeId>,
+    instances: Vec<InstanceFrame>,
     origin: NodeId,
 }
 
@@ -376,18 +428,50 @@ impl Codegen<'_> {
             repetition: None,
         }) = self.kind(node)
         {
-            if let NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) = self.kind(*expr) {
+            if let NodeKind::Expr(ExprKind::AssertionInstance {
+                target,
+                body,
+                bindings,
+            }) = self.kind(*expr)
+            {
                 if !self.property_sequence_form(node) {
-                    let (instance, body) = (*expr, *body);
-                    if builder.instances.contains(&body)
+                    let (instance, target, body) = (*expr, *target, *body);
+                    let values = bindings
+                        .iter()
+                        .map(|binding| self.expression_key(binding.actual))
+                        .collect::<Vec<_>>();
+                    let local_formal = bindings.iter().any(|binding| {
+                        self.db.assertion_formal_direction(binding.formal).is_some()
+                    });
+                    if matches!(
+                        self.kind(body),
+                        NodeKind::AssertionExpr(AssertionExprKind::Invalid { .. })
+                    ) {
+                        return self.lower_recursive_reentry(node, instance, target, builder);
+                    }
+                    if builder.instances.iter().any(|frame| frame.body == body)
                         || builder.instances.len() >= PROPERTY_INSTANCE_DEPTH_LIMIT
                     {
                         return Err(format!(
-                            "recursive property instances are not supported at {} (SV 16.13.17)",
+                            "property instances nest deeper than {PROPERTY_INSTANCE_DEPTH_LIMIT} at {} (SV 16.13.17)",
                             self.assertion_location(node, builder.origin)
                         ));
                     }
-                    builder.instances.push(body);
+                    if local_formal && self.instance_recurses(target, body) {
+                        return Err(format!(
+                            "recursive property `{}` with local variable formal arguments at {} is not supported (SV 16.13.17)",
+                            self.node(target).name,
+                            self.assertion_location(node, builder.origin)
+                        ));
+                    }
+                    builder.instances.push(InstanceFrame {
+                        instance,
+                        target,
+                        body,
+                        values,
+                        clock: self.sampled_clock,
+                        calls: Vec::new(),
+                    });
                     let capture = self.assertion_instance_depth == 0;
                     // Property operands start after the property attempt, so
                     // they cannot initialize its locals (16.10).
@@ -398,8 +482,16 @@ impl Codegen<'_> {
                         this.lower_property_node(path, body, top, builder)
                     });
                     self.assertion_property_locals.truncate(enclosing);
-                    builder.instances.pop();
-                    return result?.ok_or_else(|| "assertion instance body is missing".to_owned());
+                    let frame = builder
+                        .instances
+                        .pop()
+                        .ok_or_else(|| "property instance frame is missing".to_owned())?;
+                    let root =
+                        result?.ok_or_else(|| "assertion instance body is missing".to_owned())?;
+                    for call in frame.calls {
+                        builder.nodes[call as usize] = IrPropertyNode::Call { target: root };
+                    }
+                    return Ok(root);
                 }
             }
         }
@@ -605,15 +697,238 @@ impl Codegen<'_> {
                 self.lower_property_case(path, expr, &items, default_case, builder)
             }
             // Slang elaborates the re-entry of a recursive property instance
-            // as an invalid body (it never expands the recursion); a clean
+            // as an instance with an invalid body (handled above); a clean
             // compile has no other source of an invalid property node.
-            AssertionExprKind::Invalid { .. } if !builder.instances.is_empty() => Err(format!(
-                "recursive property instances are not supported at {location} ({path}) (SV 16.13.17)"
+            AssertionExprKind::Invalid { .. } => Err(format!(
+                "invalid property expression at {location} ({path})"
             )),
             other => Err(format!(
                 "property form {other:?} is not supported in concurrent assertion at {location} ({path})"
             )),
         }
+    }
+
+    /// The source span of a node.
+    fn source_span(&self, node: NodeId) -> SourceSpan {
+        let node = self.node(node);
+        (
+            node.file.clone(),
+            node.line,
+            node.col,
+            node.end_line,
+            node.end_col,
+        )
+    }
+
+    /// The source text of a node's span (1-based lines and columns, end
+    /// column exclusive), if its file was admitted.
+    fn span_text(&self, node: NodeId) -> Option<&str> {
+        let node = self.node(node);
+        let text = self.db.source_text(node.file.as_deref()?)?;
+        let offset = |line: u32, col: u32| -> Option<usize> {
+            let start = if line <= 1 {
+                0
+            } else {
+                text.match_indices('\n')
+                    .nth(line as usize - 2)
+                    .map(|(index, _)| index + 1)?
+            };
+            Some(start + (col as usize).checked_sub(1)?)
+        };
+        let begin = offset(node.line, node.col)?;
+        let end = offset(node.end_line, node.end_col)?;
+        text.get(begin..end)
+    }
+
+    /// A structural key of an expression: its kind with every captured
+    /// child replaced by the child's key. Equal keys denote the same
+    /// expression over the same declarations; spans and arena positions
+    /// are not part of it, so two expansions of one actual agree.
+    fn expression_key(&self, node: NodeId) -> String {
+        const ID: &str = "NodeId(";
+        let data = self.node(node);
+        let text = format!("{:?}", data.kind);
+        let mut key = String::with_capacity(text.len());
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find(ID) {
+            key.push_str(&rest[..at]);
+            let after = &rest[at + ID.len()..];
+            let Some(close) = after.find(')') else {
+                break;
+            };
+            let child = after[..close].parse::<usize>().ok().and_then(|index| {
+                data.children
+                    .iter()
+                    .copied()
+                    .find(|child| child.index() == index)
+            });
+            match child {
+                Some(child) => {
+                    key.push('{');
+                    key.push_str(&self.expression_key(child));
+                    key.push('}');
+                }
+                None => key.push_str(&rest[at..at + ID.len() + close + 1]),
+            }
+            rest = &after[close + 1..];
+        }
+        key.push_str(rest);
+        key
+    }
+
+    /// How the recursive call site `site` of property `target`, written in
+    /// the body of property `parent`, passes its actuals, read from an
+    /// expansion of the same site under `root` (an enclosing instance
+    /// expression).
+    /// Slang leaves the re-entry without arguments, but expands each call
+    /// site at least once under the first instance of the enclosing
+    /// property; an actual whose text is a formal of `parent` passes that
+    /// formal (Slang gives a substituted formal the span of its use).
+    fn recursion_site(
+        &self,
+        root: NodeId,
+        target: NodeId,
+        site: &SourceSpan,
+        parent: NodeId,
+    ) -> Option<Vec<SiteActual>> {
+        let NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) = self.kind(root) else {
+            return None;
+        };
+        let mut stack = vec![(*body, Some(root))];
+        let mut seen = HashSet::new();
+        while let Some((node, enclosing)) = stack.pop() {
+            if !seen.insert(node) {
+                continue;
+            }
+            let mut inner = enclosing;
+            if let NodeKind::AssertionExpr(AssertionExprKind::Simple { expr, .. }) = self.kind(node)
+            {
+                if let NodeKind::Expr(ExprKind::AssertionInstance {
+                    target: instance_target,
+                    body,
+                    bindings,
+                }) = self.kind(*expr)
+                {
+                    let expanded = !matches!(
+                        self.kind(*body),
+                        NodeKind::AssertionExpr(AssertionExprKind::Invalid { .. })
+                    );
+                    if *instance_target == target && expanded && self.source_span(*expr) == *site {
+                        if let Some(NodeKind::Expr(ExprKind::AssertionInstance {
+                            target: enclosing_target,
+                            bindings: enclosing_bindings,
+                            ..
+                        })) = enclosing.map(|enclosing| self.kind(enclosing))
+                        {
+                            if *enclosing_target == parent {
+                                let formals = enclosing_bindings
+                                    .iter()
+                                    .map(|binding| self.node(binding.formal).name.as_str())
+                                    .collect::<Vec<_>>();
+                                return Some(
+                                    bindings
+                                        .iter()
+                                        .map(|binding| self.site_actual(binding.actual, &formals))
+                                        .collect(),
+                                );
+                            }
+                        }
+                    }
+                    inner = Some(*expr);
+                }
+            }
+            stack.extend(
+                self.assertion_operands(node)
+                    .into_iter()
+                    .map(|operand| (operand, inner)),
+            );
+        }
+        None
+    }
+
+    /// How one actual of a call site in a property with `formals` is passed.
+    fn site_actual(&self, actual: NodeId, formals: &[&str]) -> SiteActual {
+        let formal = self.span_text(actual).and_then(|text| {
+            let mut text = text.trim();
+            while let Some(inner) = text
+                .strip_prefix('(')
+                .and_then(|rest| rest.strip_suffix(')'))
+            {
+                text = inner.trim();
+            }
+            formals.iter().position(|formal| *formal == text)
+        });
+        match formal {
+            Some(formal) => SiteActual::Formal(formal),
+            None => SiteActual::Value(self.expression_key(actual)),
+        }
+    }
+
+    /// Whether the expansion `body` of property `target` instantiates
+    /// `target` again (a recursive property, 16.13.17).
+    fn instance_recurses(&self, target: NodeId, body: NodeId) -> bool {
+        let mut stack = vec![body];
+        let mut seen = HashSet::new();
+        while let Some(node) = stack.pop() {
+            if !seen.insert(node) {
+                continue;
+            }
+            if let NodeKind::AssertionExpr(AssertionExprKind::Simple { expr, .. }) = self.kind(node)
+            {
+                if matches!(
+                    self.kind(*expr),
+                    NodeKind::Expr(ExprKind::AssertionInstance { target: inner, .. }) if *inner == target
+                ) {
+                    return true;
+                }
+            }
+            stack.extend(self.assertion_operands(node));
+        }
+        false
+    }
+
+    /// The re-entry of a recursive property instance (16.13.17), which the
+    /// frontend leaves unexpanded: a call of the nearest enclosing expansion
+    /// of the same property when that expansion repeats exactly (same
+    /// actuals in every later cycle, same flowing clock, no local variable
+    /// formals). Anything else is a located limit, never an approximation.
+    fn lower_recursive_reentry(
+        &mut self,
+        node: NodeId,
+        instance: NodeId,
+        target: NodeId,
+        builder: &mut PropertyBuilder,
+    ) -> Result<u32, String> {
+        let location = self.assertion_location(node, builder.origin);
+        let site = self.source_span(instance);
+        let index = match (builder.instances.first(), builder.instances.last()) {
+            (Some(root), Some(parent)) => self
+                .recursion_site(root.instance, target, &site, parent.target)
+                .and_then(|site| recursion_target(&builder.instances, target, &site)),
+            _ => None,
+        };
+        let Some(index) = index else {
+            return Err(format!(
+                "recursive property instance at {location} does not repeat an enclosing expansion with the same actual arguments, which llg does not support (SV 16.13.17)"
+            ));
+        };
+        if !self.assertion_property_locals.is_empty() {
+            return Err(format!(
+                "recursive property instance at {location} is evaluated with property local variables, which llg does not support (SV 16.13.17)"
+            ));
+        }
+        let clock = self.flowing_clock()?;
+        if !builder.instances[index]
+            .clock
+            .is_some_and(|entry| clocks::same_clock(&entry, &clock))
+        {
+            return Err(format!(
+                "recursive property instance at {location} is reached under a different clock than its expansion, which llg does not support (SV 16.13.17)"
+            ));
+        }
+        let call = builder.push(IrPropertyNode::Call { target: u32::MAX }, clock)?;
+        builder.instances[index].calls.push(call);
+        Ok(call)
     }
 
     /// A sequence operand used as a property (16.13.1). A one-tick Boolean

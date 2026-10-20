@@ -172,7 +172,6 @@ fails at 25 (tick 2), 35 (tick 3) and 35 (tick 4, `a` 0).
   grammar (16.12); Slang reports "expected expression".
 - `neg_empty_match_property`: a sequence property must not admit an empty
   match (16.13.1 L24484); Slang reports it.
-- Multiclock properties (16.14), rejected by SIM-038, are implemented by
-  ADV-013; their witnesses are in `../adv_013/`.
-- `neg_recursive_property`: recursive property instances (16.13.17) are
-  rejected with "recursive property instances are not supported".
+- Multiclock properties (16.14) and recursive properties (16.13.17),
+  rejected by SIM-038, are implemented by ADV-013; their witnesses are in
+  `../adv_013/`.

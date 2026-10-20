@@ -70,6 +70,52 @@ fn clocking_event_forms_and_clock_resolution_functions() {
     });
 }
 
+/// A02 / 16.13.17, F.7: recursive properties, including the 16.13.17
+/// examples, mutual recursion, swapped and constant actuals, two recursive
+/// call sites, synchronous aborts, recursion under a second clock and the
+/// F.7 dependency example (formerly SIM-038's `neg_recursive_property`).
+#[test]
+fn recursive_properties() {
+    sim_cli::run_case_checked_matrix(SUITE, "recursion", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("recursion.out"))
+    });
+}
+
+/// A02 negatives: the four 16.13.17 restrictions, and the located limit for
+/// recursion through local variable formals.
+#[test]
+fn illegal_recursive_properties_are_rejected() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_rec_not",
+        "neg_rec_not.sv:6:25 recursive property instance cannot have the operators 'not', \
+         's_nexttime', 's_eventually', 's_always', 's_until', or 's_until_with' applied to it",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_rec_disable",
+        "neg_rec_disable.sv:6:5 recursive properties cannot have disable iff conditions",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_rec_no_advance",
+        "neg_rec_no_advance.sv:6:21 recursive property instance must occur after a positive \
+         advance in time to avoid infinite recursion",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_rec_args",
+        "neg_rec_args.sv:6:24 cannot refer to argument 'x' in an argument to a recursive \
+         property unless it is the entire argument expression or bound to a local variable \
+         formal argument",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_rec_local_formal",
+        "recursive property `count` with local variable formal arguments at",
+    );
+}
+
 /// A02 negatives: clause-linked rejections of illegal multiclock forms and
 /// clock resolution.
 #[test]

@@ -1648,9 +1648,11 @@ Reproduce with
   in the LRM's `wait_for` example) is rejected ("unsupported sampled ...
   expression"); static variables work and the action block may assign
   automatic variables.
-- Multiclock properties (a clock inside the property other than the leading
-  clock, 16.14) and recursive property instances (16.13.17) are rejected with
-  located diagnostics.
+- A recursive property (16.13.17) with a local variable formal argument is
+  rejected with a located diagnostic ("recursive property `name` with local
+  variable formal arguments"), as is a recursive re-entry that does not
+  repeat an enclosing expansion with the same actual values and clock, or
+  that is evaluated with property local variables.
 - `accept_on`/`reject_on` are checked at the first signal update of each time
   step (with that step's sampled values) and at every clock tick. A time step
   in which no signal changes does not check them, so an abort whose condition
@@ -1663,8 +1665,9 @@ Reproduce with
 
 ### Cause
 
-The property engine (`src/sim/rt/scheduler/properties.c`) evaluates one
-leading clock per assertion. The per-process procedural assertion queue
+A recursive re-entry is a call of an earlier expansion of the same
+property (`IrPropertyNode::Call`), which needs the same actual values; a
+local formal changes its value per call. The per-process procedural assertion queue
 (`llg_assertion_queue`, kept with the deferred report queue) holds only the
 assertion of each pending instance, not values; the expect property is
 lowered once per assertion instance, where automatic storage has no static
@@ -1673,14 +1676,14 @@ location; asynchronous aborts are driven from the signal-write hook.
 ### Intended direction
 
 Give each pending procedural instance (and `expect`) a frame of captured
-automatic and constant arguments read by its attempt, add multiclock property
-sequencing on top of the multiclock sequence boundaries, and drive the
+automatic and constant arguments read by its attempt, give a recursive call
+its own local-variable frame, and drive the
 asynchronous abort check from the scheduler's time-step entry.
 
 ### Reproduce
 
-`neg_multiclock_property.sv` and `neg_recursive_property.sv` in
-[sim_038](../tests/fixtures/sim/feature_completion/sim_038/readme.md);
+`neg_rec_local_formal.sv` in
+[adv_013](../tests/fixtures/sim/feature_completion/adv_013/readme.md);
 `neg_procedural_automatic.sv`, `neg_procedural_const.sv` and
 `neg_procedural_edge.sv` in
 [sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md); the

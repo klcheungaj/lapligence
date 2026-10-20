@@ -2,8 +2,8 @@
 
 These public HDL fixtures cover multiclocked sequences and properties (IEEE
 1800-2009 16.14), clock resolution (16.17), the clock-resolution functions
-`$global_clock` (14.14) and `$inferred_clock`/`$inferred_disable`
-(16.15.7) through
+`$global_clock` (14.14), `$inferred_clock`/`$inferred_disable`
+(16.15.7) and recursive properties (16.13.17, Annex F.7) through
 [`sim_feature_completion::adv_013`](../../../../sim_feature_completion/adv_013.rs).
 Positive cases run in both optimizer modes on the legacy, compact/portable and
 compact/GMP value backends. Action lines of different assertions in one time
@@ -85,9 +85,31 @@ semantic leading clock of m, then the semantic leading clock of @(c) m is c.
 Otherwise, the semantic leading clock of @(c) m is equal to the semantic
 leading clock of m."
 
-## Stimulus of `flow.sv` and `clocks.sv`
+Recursive properties (16.13.17, L25430-25431):
 
-Both fixtures use one race-free stimulus: clocks change on multiples of five,
+> SystemVerilog allows recursive properties. A named property is recursive if its declaration involves an
+> instantiation of itself. Recursion provides a flexible framework for coding properties to serve as ongoing
+
+Their meaning is the limit of the k-fold approximations (F.7, L71669-71675,
+L71688-71689): `p[0]` replaces the body by `1'b1`, `p[k]` replaces each
+recursive instance by its `(k - 1)`-fold approximation, and "w, L ⊨ π iff for
+all k > 0, w, L ⊨ π[k]". A recursive obligation therefore never fails by
+running out of trace: it is weak, and an attempt whose recursion is still
+open at `$finish` reports nothing.
+
+Synchronous aborts (16.13.14, L25269-25271):
+
+> The operators sync_accept_on and sync_reject_on are evaluated at the simulation time step when the
+> clocking event happens, unlike disable iff, accept_on and reject_on. Their abort condition is
+> evaluated using sampled value as for accept_on and reject_on. The operators sync_accept_on and
+
+Nested aborts (16.13.14, L25335-25337): "if two nested operator conditions
+become true in the same time step during the evaluation of the argument
+property, then the outermost operator takes precedence."
+
+## Stimulus of `flow.sv`, `clocks.sv` and `recursion.sv`
+
+The fixtures use one race-free stimulus: clocks change on multiples of five,
 data at other times, so every sampled value is the last change before the
 tick. `$finish` is at 115.
 
@@ -198,6 +220,55 @@ Attempts start at the `posedge c1` ticks 10, 30, 50, 70, 90 unless noted.
 - `i5` `p5(a)` in `tb`, which has no default disable: r is 1'b0, so nothing
   is disabled: F30, then 30→b50=1 P50, 50 vacuous P50, 70→ P90.
 
+## `recursion.sv`
+
+All assertions are clocked by `posedge c1` (ticks 10, 30, 50, 70, 90, with no
+`c1` tick after 90). Sampled values at those ticks: a 1 1 0 1 1, b 1 0 1 1 1,
+d 1 1 0 1 1, e 0 1 0 0 0; at the `c2` ticks 20, 30, 45, 60, 90, 100: d 1 1 0
+0 1 1.
+
+- `r1` `a |-> prop_always(a)` (16.13.17 L25436-25438, and SIM-038's former
+  `neg_recursive_property`): a at every tick from the attempt: 10 and 30 fail
+  at a50=0 (F50 F50); 50 vacuous P50; 70 and 90 open.
+- `r2` `a |=> prop_always(d)`: d at every tick after the attempt: 10→d30=1,
+  d50=0 F50; 30→d50=0 F50; 50 vacuous P50; 70→d90=1 then open; 90 open.
+- `r3` `prop_weak_until(d, e)` (L25450-25452, `q or (p and (1'b1 |=>
+  ...))`): 10: e=0, d=1, then e30=1 P30; 30: e=1 P30; 50: e=0 and d=0 F50;
+  70 and 90: d holds and e never does, open.
+- `r4` the mutual recursion `check_phase1`/`check_phase2` (L25465-25470) with
+  `s1 = a`, `s2 = b`, both phase properties `d`: 10: a, d10, then phase 2 at
+  30 with b30=0 vacuous P30; 30: a, d30, then b50=1 and d50=0 F50; 50 vacuous
+  P50; 70: phase 2 at 90 (b, d) then open; 90 open.
+- `r5` `a |=> swap(b, d)`, `swap(x, y) = x and (1'b1 |=> swap(y, x))`
+  (swapped formals, restriction 4 first form): b, d, b, ... from the next
+  tick: 10→b30=0 F30; 30→b50=1, d70=1, b90=1, open; 50 vacuous P50; 70→b90=1
+  open; 90 open.
+- `r6` `a |=> then_d(e)`, `then_d(x) = x and (1'b1 |=> then_d(d))` (a
+  constant actual, restriction 4 second form): e at the next tick, then d at
+  every later tick: 10→e30=1, d50=0 F50; 30→e50=0 F50; 50 vacuous P50;
+  70→e90=0 F90; 90 open.
+- `r7` `two_sites(e, b)`, `(x |=> two_sites(x, y)) and (y or (1'b1 |=>
+  two_sites(x, y)))`: both conjuncts are done at a tick where x is 0 and y is
+  1, otherwise both recurse: 10 (e=0, b=1) P10; 30 (e=1, b=0) recurses at
+  both sites into 50, where e=0 and b=1: P50; 50 P50; 70 P70; 90 P90.
+- `r8` the 16.13.17 abort example (L25570-25571) in its synchronous form:
+  `a |-> sync_p3(d, b, e)`, `sync_p4 = sync_accept_on(bb)
+  sync_reject_on(abort) sync_p3(...)`: at the attempt d must hold, then at
+  each next tick the outer accept on b wins over the inner reject on e: 10:
+  d10=1, at 30 b=0 and e=1 reject F30; 30: d30=1, at 50 b=1 accept P50; 50
+  vacuous P50; 70: d70=1, at 90 b=1 accept P90; 90: d90=1, no next tick, open.
+- `r9` `a |=> @(posedge c2) prop_always(d)`: d at every `c2` tick strictly
+  after the attempt: 10→d20=1, d30=1, d45=0 F45; 30→d45=0 F45; 50 vacuous
+  P50; 70→d90, d100 then open; 90→d100 open.
+- `r10` `a |=> on_c2(d)`, `on_c2(x) = x and (1'b1 |=> @(posedge c2)
+  on_c2(x))`: the first instance is clocked by c1 and the recursion by c2: d
+  at the next `c1` tick, then at every later `c2` tick: 10→d30=1, d45=0 F45;
+  30→d50=0 F50; 50 vacuous P50; 70→d90=1, d100=1 open; 90 open.
+- `r11` the F.7 dependency example `p1`/`p2`/`p3` (L71630-71640) as
+  `p1(d)`: `p1(v) = v |=> p2(p3())`, `p2(v) = a or (1'b1 |=> v)`, `p3 =
+  p1(a && b)`. 10: d, then a30=1 P30; 30: d, a50=0, then `p1(a && b)` at 70
+  with a&&b=1 and a90=1 P90; 50: d=0 vacuous P50; 70: d, a90=1 P90; 90 open.
+
 ## Rejections
 
 | Fixture | Diagnostic | Why |
@@ -209,3 +280,8 @@ Attempts start at the `posedge c1` ticks 10, 30, 50, 70, 90 unless noted.
 | `neg_leading_clocks.sv` | `assertion expression does not have a unique leading clock` (frontend) | 16.17 e) L27666-27668: the maximal property "shall have a unique semantic leading clock". |
 | `neg_inferred_no_clock.sv` | `no inferred clock in this context` (frontend) | 16.15.7 L27196-27197: with no current resolved event expression "an error shall be issued". |
 | `neg_global_clock_missing.sv` | `no global clocking is available in this scope` (frontend) | 14.14 L19974-19975: "It shall be an error to invoke the $global_clock system function if there is no global clocking declaration". |
+| `neg_rec_not.sv` | `recursive property instance cannot have the operators 'not', ...` (frontend) | 16.13.17 L25473-25475 (restriction 1): "The negation operator not and strong operators ... cannot be applied to any property expression that instantiates a recursive property." |
+| `neg_rec_disable.sv` | `recursive properties cannot have disable iff conditions` (frontend) | 16.13.17 L25499-25500 (restriction 2): "The operator disable iff cannot be used in the declaration of a recursive property." |
+| `neg_rec_no_advance.sv` | `recursive property instance must occur after a positive advance in time` (frontend) | 16.13.17 L25515-25516 (restriction 3): "every instance of p must occur after a positive advance in time." |
+| `neg_rec_args.sv` | `cannot refer to argument 'x' in an argument to a recursive property ...` (frontend) | 16.13.17 L25526-25530 (restriction 4). |
+| `neg_rec_local_formal.sv` | `recursive property `count` with local variable formal arguments at ... is not supported (SV 16.13.17)` (llg limit) | Legal by L25530 ("e is bound to a local variable formal argument of q"); llg calls an earlier expansion for a recursive re-entry, which needs the same actual values, and a local formal changes its value per call. Rejected with a location instead of approximated. |
