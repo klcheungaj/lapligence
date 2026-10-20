@@ -41,17 +41,17 @@ impl Letter {
 
 /// A Boolean over one letter.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub(super) enum B {
+pub(super) enum Cond {
     A,
     B,
     C1,
     C2,
     One,
-    Not(Box<B>),
-    And(Box<B>, Box<B>),
+    Not(Box<Cond>),
+    And(Box<Cond>, Box<Cond>),
 }
 
-impl B {
+impl Cond {
     /// `ζ |= b` (F.5): T satisfies every Boolean and ⊥ none, so the letter
     /// kind is decided before the expression is looked at.
     fn holds(&self, letter: Letter) -> bool {
@@ -64,34 +64,34 @@ impl B {
 
     fn value(&self, a: bool, b: bool, c1: bool, c2: bool) -> bool {
         match self {
-            B::A => a,
-            B::B => b,
-            B::C1 => c1,
-            B::C2 => c2,
-            B::One => true,
-            B::Not(x) => !x.value(a, b, c1, c2),
-            B::And(x, y) => x.value(a, b, c1, c2) && y.value(a, b, c1, c2),
+            Cond::A => a,
+            Cond::B => b,
+            Cond::C1 => c1,
+            Cond::C2 => c2,
+            Cond::One => true,
+            Cond::Not(x) => !x.value(a, b, c1, c2),
+            Cond::And(x, y) => x.value(a, b, c1, c2) && y.value(a, b, c1, c2),
         }
     }
 }
 
-fn not(b: B) -> B {
-    B::Not(Box::new(b))
+fn not(b: Cond) -> Cond {
+    Cond::Not(Box::new(b))
 }
 
-fn and(x: B, y: B) -> B {
-    B::And(Box::new(x), Box::new(y))
+fn and(x: Cond, y: Cond) -> Cond {
+    Cond::And(Box::new(x), Box::new(y))
 }
 
 /// Clocked sequences as written in the fixture.
 #[derive(Clone, Debug)]
 pub(super) enum S {
-    Bool(B),
+    Bool(Cond),
     /// `##1`
     Cat(Box<S>, Box<S>),
     /// `##0`
     Fuse(Box<S>, Box<S>),
-    Clock(B, Box<S>),
+    Clock(Cond, Box<S>),
 }
 
 /// Clocked properties as written in the fixture, with the derived forms
@@ -100,7 +100,7 @@ pub(super) enum S {
 pub(super) enum Q {
     Weak(S),
     Strong(S),
-    Clock(B, Box<Q>),
+    Clock(Cond, Box<Q>),
     Not(Box<Q>),
     And(Box<Q>, Box<Q>),
     Or(Box<Q>, Box<Q>),
@@ -108,11 +108,11 @@ pub(super) enum Q {
     Imp(S, Box<Q>),
     /// `|=>`
     NonImp(S, Box<Q>),
-    IfElse(B, Box<Q>, Box<Q>),
+    IfElse(Cond, Box<Q>, Box<Q>),
     Next(Box<Q>),
     Until(Box<Q>, Box<Q>),
     Always(Box<Q>),
-    SyncAccept(B, Box<Q>),
+    SyncAccept(Cond, Box<Q>),
     /// An instance of named property `n` of the [`Program`].
     Inst(usize),
 }
@@ -120,7 +120,7 @@ pub(super) enum Q {
 /// Unclocked sequences (F.3.2).
 #[derive(Clone, Debug)]
 enum R {
-    Bool(B),
+    Bool(Cond),
     Cat(Box<R>, Box<R>),
     Fuse(Box<R>, Box<R>),
     Or(Box<R>, Box<R>),
@@ -135,7 +135,7 @@ enum R {
 enum P {
     /// `strong(R)`, with the clock of the first tick of the clocked
     /// sequence it was rewritten from (see [`Interp::sat`]).
-    Strong(R, B),
+    Strong(R, Cond),
     Weak(R),
     Not(Box<P>),
     And(Box<P>, Box<P>),
@@ -143,7 +143,7 @@ enum P {
     Imp(R, Box<P>),
     Next(Box<P>),
     Until(Box<P>, Box<P>),
-    Accept(B, Box<P>),
+    Accept(Cond, Box<P>),
     /// A named-property instance rewritten under one clock: index into the
     /// interpreter's call table.
     Call(usize),
@@ -154,7 +154,7 @@ fn bx<T>(x: T) -> Box<T> {
 }
 
 /// `T_s(S, c)` (F.5.1.1).
-fn t_s(s: &S, c: &B) -> R {
+fn t_s(s: &S, c: &Cond) -> R {
     match s {
         // T_s(b, c) = (!c[*0:$] ##1 c & b), with R[*0:$] = R[*0] or R[*1:$].
         S::Bool(b) => R::Cat(
@@ -171,7 +171,7 @@ fn t_s(s: &S, c: &B) -> R {
 }
 
 /// The clock of the first tick of a clocked sequence under clock `c`.
-fn leading(s: &S, c: &B) -> B {
+fn leading(s: &S, c: &Cond) -> Cond {
     match s {
         S::Bool(_) => c.clone(),
         S::Cat(x, _) | S::Fuse(x, _) => leading(x, c),
@@ -187,7 +187,7 @@ pub(super) struct Program {
 /// The rewritten instance bodies, one per (named property, clock).
 struct Calls<'p> {
     program: &'p Program,
-    keys: Vec<(usize, B)>,
+    keys: Vec<(usize, Cond)>,
     bodies: Vec<P>,
     /// `T_p(1'b1, c)`: the body of the 0-fold approximation (F.7).
     zero: Vec<P>,
@@ -195,7 +195,7 @@ struct Calls<'p> {
 
 impl Calls<'_> {
     /// `T_p(Q, c)` (F.5.1.2), after the derived forms of F.3.4.3.
-    fn t_p(&mut self, q: &Q, c: &B) -> P {
+    fn t_p(&mut self, q: &Q, c: &Cond) -> P {
         match q {
             Q::Weak(s) => P::Weak(t_s(s, c)),
             Q::Strong(s) => P::Strong(t_s(s, c), leading(s, c)),
@@ -206,7 +206,10 @@ impl Calls<'_> {
             Q::Imp(s, q) => P::Imp(t_s(s, c), bx(self.t_p(q, c))),
             // F.3.4.3.3: (S |=> Q) is ((S ##1 @(1) 1) |-> Q).
             Q::NonImp(s, q) => {
-                let s = S::Cat(bx(s.clone()), bx(S::Clock(B::One, bx(S::Bool(B::One)))));
+                let s = S::Cat(
+                    bx(s.clone()),
+                    bx(S::Clock(Cond::One, bx(S::Bool(Cond::One)))),
+                );
                 self.t_p(&Q::Imp(s, q.clone()), c)
             }
             // F.3.4.3.4: (if(b) P1 else P2) is ((b |-> P1) and (weak(b) or P2)).
@@ -242,7 +245,7 @@ impl Calls<'_> {
             }
             // F.3.4.3.8: (always p) is (p until 0).
             Q::Always(q) => {
-                let zero = Q::Weak(S::Bool(not(B::One)));
+                let zero = Q::Weak(S::Bool(not(Cond::One)));
                 self.t_p(&Q::Until(q.clone(), bx(zero)), c)
             }
             // T_p(sync_accept_on(b) p, c) = (accept_on(b && c) T_p(p, c)).
@@ -254,7 +257,7 @@ impl Calls<'_> {
     /// The call-table entry of named property `name` under clock `c`; the
     /// entry exists before its body is rewritten, so recursive instances
     /// refer back to it.
-    fn call(&mut self, name: usize, c: &B) -> usize {
+    fn call(&mut self, name: usize, c: &Cond) -> usize {
         if let Some(index) = self
             .keys
             .iter()
@@ -264,8 +267,8 @@ impl Calls<'_> {
         }
         let index = self.keys.len();
         self.keys.push((name, c.clone()));
-        self.bodies.push(P::Strong(R::Empty, B::One));
-        self.zero.push(P::Weak(t_s(&S::Bool(B::One), c)));
+        self.bodies.push(P::Strong(R::Empty, Cond::One));
+        self.zero.push(P::Weak(t_s(&S::Bool(Cond::One), c)));
         let body = self.program.bodies[name].clone();
         self.bodies[index] = self.t_p(&body, c);
         index
@@ -564,7 +567,7 @@ impl<'p> Oracle<'p> {
             bodies: Vec::new(),
             zero: Vec::new(),
         };
-        let top = calls.t_p(q, &B::C1);
+        let top = calls.t_p(q, &Cond::C1);
         Oracle {
             interp: Interp {
                 calls,
@@ -650,31 +653,31 @@ impl<'p> Oracle<'p> {
 
 // Builders for the fixture's properties.
 
-pub(super) fn a() -> B {
-    B::A
+pub(super) fn a() -> Cond {
+    Cond::A
 }
 
-pub(super) fn b() -> B {
-    B::B
+pub(super) fn b() -> Cond {
+    Cond::B
 }
 
-pub(super) fn nb() -> B {
-    not(B::B)
+pub(super) fn nb() -> Cond {
+    not(Cond::B)
 }
 
-pub(super) fn one() -> B {
-    B::One
+pub(super) fn one() -> Cond {
+    Cond::One
 }
 
-pub(super) fn c2() -> B {
-    B::C2
+pub(super) fn c2() -> Cond {
+    Cond::C2
 }
 
-pub(super) fn c1() -> B {
-    B::C1
+pub(super) fn c1() -> Cond {
+    Cond::C1
 }
 
-pub(super) fn sb(b: B) -> S {
+pub(super) fn sb(b: Cond) -> S {
     S::Bool(b)
 }
 
@@ -686,11 +689,11 @@ pub(super) fn fuse(x: S, y: S) -> S {
     S::Fuse(bx(x), bx(y))
 }
 
-pub(super) fn at(c: B, s: S) -> S {
+pub(super) fn at(c: Cond, s: S) -> S {
     S::Clock(c, bx(s))
 }
 
-pub(super) fn qat(c: B, q: Q) -> Q {
+pub(super) fn qat(c: Cond, q: Q) -> Q {
     Q::Clock(c, bx(q))
 }
 
