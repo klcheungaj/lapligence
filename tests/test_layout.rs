@@ -154,3 +154,87 @@ fn group_rule_matches_documented_examples() {
     assert_eq!(expected_root("runtime_values"), "runtime");
     assert_eq!(expected_root("lsp_stdio"), "general");
 }
+
+/// Suites of the `general` binary that the Windows on ARM language-server lane
+/// (`[profile.ci-lsp]` in `.config/nextest.toml`) selects.
+fn ci_lsp_general_suites(nextest_config: &str) -> Vec<String> {
+    let config: toml::Value = nextest_config.parse().expect("parse .config/nextest.toml");
+    let filter = config["profile"]["ci-lsp"]["default-filter"]
+        .as_str()
+        .expect("[profile.ci-lsp] default-filter");
+    let marker = "binary_id(=llg::general) and test(/^(";
+    let start = filter
+        .find(marker)
+        .expect("ci-lsp filter selects `general` suites")
+        + marker.len();
+    let names = filter[start..]
+        .split_once(")::/)")
+        .expect("ci-lsp `general` suite list ends with `)::/)`")
+        .0;
+    names.split('|').map(str::to_string).collect()
+}
+
+/// Windows on ARM supports `llg_ls` only, so the suites its CI lane runs must
+/// exist in `general` and must not execute the simulator, a C compiler or the
+/// `llg` driver (which that platform does not support).
+#[test]
+fn ci_lsp_profile_selects_only_registered_language_server_suites() {
+    let root = manifest_dir();
+    let tests = root.join("tests");
+    let config = fs::read_to_string(root.join(".config/nextest.toml")).expect("read nextest.toml");
+    let general = fs::read_to_string(tests.join("general.rs")).expect("read general.rs");
+    let registered = registered_modules(&general);
+    let suites = ci_lsp_general_suites(&config);
+    assert!(
+        suites.iter().any(|suite| suite == "lsp_stdio"),
+        "the language-server lane must run the LSP wire suite: {suites:?}"
+    );
+    let forbidden = [
+        "sim_cli",
+        "llg::sim",
+        "c_compiler",
+        "CARGO_BIN_EXE_llg)",
+        "CARGO_BIN_EXE_llg\"",
+    ];
+    let mut errors = Vec::new();
+    for suite in &suites {
+        if !registered.contains(suite) {
+            errors.push(format!(
+                "ci-lsp names `{suite}`, which general.rs does not register"
+            ));
+            continue;
+        }
+        let mut sources = vec![tests.join(format!("{suite}.rs"))];
+        let nested = tests.join(suite);
+        if nested.is_dir() {
+            sources.extend(
+                fs::read_dir(&nested)
+                    .expect("read suite directory")
+                    .map(|entry| entry.expect("suite directory entry").path())
+                    .filter(|path| path.extension().is_some_and(|ext| ext == "rs")),
+            );
+        }
+        for path in sources {
+            let text = fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            for needle in forbidden {
+                if text.contains(needle) {
+                    errors.push(format!(
+                        "{} uses `{needle}`; the ci-lsp lane must not run simulator suites",
+                        path.display()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(errors.is_empty(), "ci-lsp errors:\n{}", errors.join("\n"));
+}
+
+#[test]
+fn ci_lsp_suite_list_is_parsed_from_the_filter() {
+    let config = r#"
+[profile.ci-lsp]
+default-filter = "binary(=llg) or (binary_id(=llg::general) and test(/^(a|b_c)::/))"
+"#;
+    assert_eq!(ci_lsp_general_suites(config), ["a", "b_c"]);
+}

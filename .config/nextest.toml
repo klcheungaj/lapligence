@@ -35,6 +35,31 @@ test-threads = 32
 [profile.ci]
 test-threads = "num-cpus"
 
+# Windows on ARM supports only the language server (`llg_ls`); `llg` and
+# generated models are unsupported there. Its CI lane archives only the
+# library, `llg_ls` and the `general` test binary and selects this profile, whose
+# default filter keeps the tests that need neither the simulator, a C compiler,
+# CMake nor the `llg` driver:
+#   - every `llg_ls` unit test (`llg::bin/llg_ls`);
+#   - library tests of the frontend, owned Db, lint, tokens, configuration,
+#     native wrappers and memory guard (`core`, `config`, `ffi`,
+#     `memory_limit`), not `sim`;
+#   - the `general` suites below: the LSP wire suites (`lsp_stdio`, `shadowing`,
+#     `dump_tokens`) and the frontend, include, compilation-unit and
+#     configuration suites that run no model.
+# A suite that executes the simulator or the `llg` driver (model_tests,
+# slang_semantics, region_conformance, llg_config_cli, lint_config_cli, ...)
+# stays out. A new LSP or frontend-only suite in `general` must be added here;
+# `test_layout` rejects names that no longer exist. Command line `-E` filters
+# narrow this set further.
+[profile.ci-lsp]
+inherits = "ci"
+default-filter = """
+    binary_id(=llg::bin/llg_ls)
+    or (binary_id(=llg) and test(/^(core|config|ffi|memory_limit)::/))
+    or (binary_id(=llg::general) and test(/^(lsp_stdio|shadowing|dump_tokens|config_effect|compilation_units|include_dir_search|parse_only|probe_bindings|slang_frontend|slang_static_function_return|elab_resolve)::/))
+"""
+
 # Frontend-heavy suites (see the group below) get their own concurrency cap;
 # lighter suites (emit_decoupling, property_elab, …) run in the default
 # full-width pool.
