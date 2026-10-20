@@ -2,7 +2,7 @@
 static llg_proc_t* spawn_process(const llg_co_desc_t* desc,
                                  const char* name, llg_region_t region,
                                  llg_program_t* program, int is_initial,
-                                 int runtime_owned) {
+                                 int runtime_owned, int enqueue) {
     if (g.config_error || !desc || !desc->fn || !region_valid(region)) return NULL;
     if (!callback_region_allowed(region, 0)) return NULL;
     if (desc->frame_size < sizeof(llg_co_frame_t) ||
@@ -38,14 +38,14 @@ static llg_proc_t* spawn_process(const llg_co_desc_t* desc,
     p->budget_time = g.now;
     p->region = region;
     register_proc(p);
-    enqueue_region(p, region);
+    if (enqueue) enqueue_region(p, region);
     return p;
 }
 
 static llg_proc_t* spawn_in_region(const llg_co_desc_t* desc,
                                    const char* name, llg_region_t region,
                                    llg_program_t* program, int is_initial) {
-    return spawn_process(desc, name, region, program, is_initial, 0);
+    return spawn_process(desc, name, region, program, is_initial, 0, 1);
 }
 
 llg_proc_t* llg_spawn_in_region(const llg_co_desc_t* desc,
@@ -53,13 +53,40 @@ llg_proc_t* llg_spawn_in_region(const llg_co_desc_t* desc,
     return spawn_in_region(desc, name, region, NULL, 0);
 }
 
+static void proc_complete(llg_proc_t* self);
+
 llg_proc_t* llg_spawn_owned_with_frame(const llg_co_desc_t* desc,
                                        const char* name,
                                        llg_frame_t* frame) {
-    llg_proc_t* p = spawn_process(desc, name, LLG_REGION_ACTIVE, NULL, 0, 1);
+    // From a process turn, the new process runs its first turn now, nested
+    // in the caller's, so that a wait it arms observes changes the caller
+    // makes before it suspends (decision S44-D6). Elsewhere (model
+    // initialization, region callbacks) it is queued in the Active region.
+    int now = g.process_turn_active && g.current != NULL;
+    llg_proc_t* p =
+        spawn_process(desc, name, LLG_REGION_ACTIVE, NULL, 0, 1, !now);
     if (!p) return NULL;
     p->frame = frame;
     llg_frame_retain(frame);
+    if (!now) return p;
+    llg_proc_t* caller = g.current;
+    const char* caller_name = g.last_process_name;
+    g.last_process_name = p->name;
+    g.current = p;
+    llg_co_status_t status = llg_co_run(&p->chain);
+    g.current = caller;
+    g.last_process_name = caller_name;
+    if (status == LLG_CO_DONE ||
+        (status == LLG_CO_EXIT && p->chain.exiting == LLG_EXIT_COMPLETE)) {
+        proc_complete(p);
+        proc_retire_completed(p);
+        return NULL;
+    }
+    if (status == LLG_CO_CALLED) {
+        fprintf(stderr,
+                "llg runtime fatal: coroutine anchor escaped llg_co_run\n");
+        abort();
+    }
     return p;
 }
 

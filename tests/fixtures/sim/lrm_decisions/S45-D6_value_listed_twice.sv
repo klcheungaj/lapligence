@@ -8,9 +8,15 @@
 // follow the bin name." The text does not say whether a duplicated value
 // creates a second bin; llg reads "each value" as each distinct value (a
 // bin is named by its value, so two bins of one value would share a name).
+// get_inst_coverage() reads instance data, which option.per_instance = 1
+// requires: 19.7 Table 19-1 (L33285-33289) "When true, coverage information
+// for this covergroup instance shall be saved in the coverage database ...
+// When false, implementations are not required to save instance-specific
+// information."
 module tb;
   bit [3:0] a;
   covergroup g;
+    option.per_instance = 1;
     cp: coverpoint a { bins each[] = {1, [3:4], 3}; }
   endgroup
   g c = new;

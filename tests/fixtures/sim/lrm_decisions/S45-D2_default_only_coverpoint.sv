@@ -13,9 +13,12 @@
 // contribute to the coverage computation ... b) If the coverpoint's weight is
 // non-zero, a value of 0.0 is returned". llg reads `bins d = default` as an
 // explicit bins definition, so no automatic bins are created.
+// option.per_instance = 1 keeps the instance coverage (19.7 Table 19-1)
+// portable.
 module tb;
   bit [3:0] a;
   covergroup g;
+    option.per_instance = 1;
     only_default: coverpoint a { bins d = default; }
     one: coverpoint a { bins x = {1}; }
   endgroup

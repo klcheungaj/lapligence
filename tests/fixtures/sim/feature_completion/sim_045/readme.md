@@ -251,9 +251,11 @@ status 1.
   disabled sample ends the attempt) nor `guarded` (it sees 1 5 2). Then 1
   with `en` = 0 and 2 with `en` = 1: `cp` still 0.00, `guarded` completes with
   its guard true at the last sample: 100.00. `stopped`: 1, `stop()`,
-  `start()`, 2 matches nothing; 1 2 then does: 0.00, 100.00.
-- `g_x` (S45-D7): 1, `4'bxx01`, 2: `next` (1 => 2) fails at the X sample;
-  `later` (1 => 2 [-> 1]) lets it fall in the gap: 0.00, 100.00.
+  `start()`, 2 matches, since a stop does not end the attempt; 1 2 then
+  matches again: 100.00, 100.00.
+- `g_x` (S45-D7): 1, `4'bxx01`, 2: the X sample ends the attempts of both
+  `next` (1 => 2) and `later` (1 => 2 [-> 1]), also in a goto gap: 0.00,
+  0.00.
 - `g_wild`: 3 => 1 is `2'b1?` => `2'b0?`: `w` of {`w`, `other`}: 50.00.
 
 `transition_illegal.sv` (S45-D10, S45-D3): samples 5 6 9 9 1 2 3. 5 starts

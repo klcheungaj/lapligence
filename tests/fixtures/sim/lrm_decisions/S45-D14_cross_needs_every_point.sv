@@ -1,7 +1,8 @@
 // Decision S45-D14: a cross counts a sample only through bins its crossed
-// coverpoints counted in that sample: a crossed coverpoint whose iff is
-// false, that is stopped, or whose value has X or Z bits gives the cross
-// nothing to count.
+// coverpoints hold in that sample: a crossed coverpoint whose iff is false,
+// or whose value has X or Z bits, gives the cross nothing to count. A
+// stopped crossed coverpoint counts nothing itself, but the cross still
+// counts through the bins its value falls in.
 //
 // IEEE 1800-2009 19.5 (SystemVerilog-1800-2009.txt L32384-32385): "If the
 // guard expression evaluates to false at a sampling point, the coverage
@@ -10,12 +11,14 @@
 // coverage point in the cross matches its corresponding bin in the cross
 // product." 19.8 Table 19-5 L33565: stop() "Stops collecting coverage". The
 // text does not say how an ignored or stopped coverpoint affects a cross;
-// llg treats it as matching no bin.
+// llg follows industry-standard behaviour. option.per_instance = 1 keeps the
+// instance coverage (19.7 Table 19-1) portable.
 module tb;
   logic [1:0] a;
   bit [1:0] b;
   bit en;
   covergroup g;
+    option.per_instance = 1;
     ca: coverpoint a;
     cb: coverpoint b iff (en);
     ab: cross ca, cb;

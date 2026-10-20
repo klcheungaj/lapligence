@@ -1,8 +1,8 @@
 // Decision S45-D7: X and Z bits. A bins value with X or Z bits (outside
 // wildcard bins) does not participate in the bin's values, and a sampled
 // value with X or Z bits counts in no value bin. In a transition, such a
-// sample matches no transition item: it ends a consecutive sequence, and may
-// fall in the gap of a goto or nonconsecutive repetition.
+// sample matches no transition item and ends every sequence in progress,
+// also one in the gap of a goto or nonconsecutive repetition.
 //
 // IEEE 1800-2009 19.5.3 (SystemVerilog-1800-2009.txt L32767-32769): "By
 // default, a value or transition bin definition can specify 4-state values.
@@ -14,10 +14,14 @@
 // shall not participate in the bins values." The two clauses conflict; llg
 // follows 19.5.6. 19.5.1 L32596-32599 (goto) and L32618-32622
 // (nonconsecutive) let "any number of sample points" occur between
-// occurrences.
+// occurrences; the text does not say whether a sample with X or Z bits is
+// one of them. llg ends the sequence there, as industry-standard behaviour
+// does. option.per_instance = 1 keeps the instance coverage (19.7 Table
+// 19-1) portable.
 module tb;
   logic [3:0] v;
   covergroup g;
+    option.per_instance = 1;
     xval: coverpoint v { bins x = {4'b1x00}; bins two = {2}; }
     next: coverpoint v { bins t = (1 => 2); }
     later: coverpoint v { bins t = (1 => 2 [-> 1]); }

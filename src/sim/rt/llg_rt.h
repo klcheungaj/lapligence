@@ -2034,8 +2034,12 @@ llg_proc_t* llg_spawn_detached_with_frame(const llg_co_desc_t* desc,
 // the end of the calling process or program never observe it. Callable
 // from a process or during model initialization. Its random stream is
 // derived from the root without drawing from any stream. Retains one
-// reference to `frame` like llg_fork_with_frame. Used for the per-instance
-// sampling-event waiter of a covergroup, which lives as long as its instance.
+// reference to `frame` like llg_fork_with_frame. Called from a process
+// turn, the new process runs its first turn at once, nested in the caller's,
+// until it suspends; it returns NULL if that turn ended it. Elsewhere it is
+// queued in the Active region.
+// Used for the per-instance sampling-event waiter of a covergroup, which
+// lives as long as its instance and arms its event inside `new()` (S44-D6).
 llg_proc_t* llg_spawn_owned_with_frame(const llg_co_desc_t* desc,
                                        const char* name,
                                        llg_frame_t* frame);

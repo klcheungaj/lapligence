@@ -9,9 +9,15 @@
 // point x whose values do not intersect the range given by y." The text only
 // shows a whole coverpoint; it could also be read as the bins of `ca.lo`
 // whose values do not intersect {1} (none).
+// get_inst_coverage() reads instance data, which option.per_instance = 1
+// requires: 19.7 Table 19-1 (L33285-33289) "When true, coverage information
+// for this covergroup instance shall be saved in the coverage database ...
+// When false, implementations are not required to save instance-specific
+// information."
 module tb;
   bit [1:0] a, b;
   covergroup g;
+    option.per_instance = 1;
     ca: coverpoint a { bins lo = {[0:1]}; bins hi = {[2:3]}; }
     cb: coverpoint b;
     ab: cross ca, cb { bins notlo = ! binsof(ca.lo) intersect {1}; }

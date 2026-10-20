@@ -12,9 +12,15 @@
 // value or transition associated with a bin, the bin is ignored and shall not
 // contribute to the coverage computation." The text does not say which bins
 // are empty; llg assigns one value per bin from the first bin on.
+// get_inst_coverage() reads instance data, which option.per_instance = 1
+// requires: 19.7 Table 19-1 (L33285-33289) "When true, coverage information
+// for this covergroup instance shall be saved in the coverage database ...
+// When false, implementations are not required to save instance-specific
+// information."
 module tb;
   bit [3:0] a;
   covergroup g;
+    option.per_instance = 1;
     cp: coverpoint a { bins b[4] = {5, 9}; }
   endgroup
   g c = new;

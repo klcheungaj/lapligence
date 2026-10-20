@@ -15,9 +15,15 @@
 // from both the numerator and the denominator". The text neither counts
 // empty coverpoint bins in Bj nor defines "significant"; llg reads both as
 // "with something left to cover".
+// get_inst_coverage() reads instance data, which option.per_instance = 1
+// requires: 19.7 Table 19-1 (L33285-33289) "When true, coverage information
+// for this covergroup instance shall be saved in the coverage database ...
+// When false, implementations are not required to save instance-specific
+// information."
 module tb;
   bit [1:0] a, b;
   covergroup g;
+    option.per_instance = 1;
     ca: coverpoint a {
       bins one = {1};
       bins two = {2};

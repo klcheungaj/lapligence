@@ -1,7 +1,8 @@
-// Decision S45-D9: a sample the coverpoint's iff disables, and stop(), end
-// the transition sequences in progress: (1 => 2) does not match 1, a
-// disabled sample, 2, nor 1, stop(), start(), 2. A bin's own iff guard only
-// decides whether a completed sequence counts.
+// Decision S45-D9: a sample the coverpoint's iff disables ends the
+// transition sequences in progress: (1 => 2) does not match 1, a disabled
+// sample, 2. A stop() does not: samples while stopped are not seen, so
+// (1 => 2) matches 1, stop(), start(), 2. A bin's own iff guard only decides
+// whether a completed sequence counts.
 //
 // IEEE 1800-2009 19.5 (SystemVerilog-1800-2009.txt L32384-32385): "If the
 // guard expression evaluates to false at a sampling point, the coverage
@@ -10,9 +11,11 @@
 // stop() "Stops collecting coverage". 19.5.1 L32543-32544: value1 => value2
 // "represents the value of coverage point at two successive sample points".
 // The text does not say whether an ignored sample or a stop interrupts a
-// transition; llg ends the sequences in progress.
+// transition; llg follows industry-standard behaviour. option.per_instance
+// = 1 keeps the instance coverage (19.7 Table 19-1) portable.
 module tb;
   covergroup g with function sample(bit [3:0] x, bit en);
+    option.per_instance = 1;
     cp: coverpoint x iff (en) { bins t = (1 => 2); }
     guarded: coverpoint x { bins t = (1 => 2) iff (en); }
   endgroup

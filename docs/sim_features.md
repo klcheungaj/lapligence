@@ -2435,7 +2435,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   samples every instance from one sampler process; one that reads a
   covergroup argument or a property of the embedding object (`@(posedge
   vif.clk)` in a class) gets a waiter process per instance, owned by the
-  instance rather than by the constructing process (S44-D5, S44-D6).
+  instance rather than by the constructing process and armed inside `new()`
+  (S44-D5, S44-D6).
   `type_option.strobe` samples once per time slot in the Postponed region
   (not for block events, S44-D9). An `end` block event also samples after
   `return` (S44-D7), not after a disable or a jump (`break`, `continue`,
@@ -2453,7 +2454,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `goal`, `at_least` and `auto_bin_max` (group values are item defaults),
   `detect_overlap` warnings (S45-D17), `type_option.weight`, and
   `type_option.merge_instances` with `option.get_inst_coverage` (19.11.3,
-  S45-D18). `get_coverage()` (type, per source declaration, S44-D1),
+  S45-D18). `get_coverage()` (type, per elaborated declaration, S44-D1),
   `get_inst_coverage()`, `start()`, `stop()`, `set_inst_name()` (no report)
   and `$get_coverage()` follow 19.11; the two-argument forms of 19.8 assign
   the covered and total bins (S46-D7). Options are read through an

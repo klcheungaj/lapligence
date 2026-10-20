@@ -393,8 +393,8 @@ model-lifetime ([known issue](../../../docs/known_issues.md#collected-objects-ke
 
 `coverage/coverage.c` is the coverage store (IEEE 1800-2009 19). Generated
 code owns the static metadata (`llg_cov_point_t`, one `llg_cov_group_t` per
-elaborated declaration, one mutable `llg_cov_type_t` per declaration
-identity); the runtime owns instance records (`llg_cov_new`), which outlive the
+elaborated declaration, one mutable `llg_cov_type_t` per elaborated
+declaration, so each module instance has its own type, S44-D1); the runtime owns instance records (`llg_cov_new`), which outlive the
 covergroup object and are freed only by `llg_cov_release_all` in
 `llg_rt_cleanup`, after `final` procedures (which may still query them) and
 after `llg_cov_end_of_run` saves the 19.9 database. Options apply between `llg_cov_new` and `llg_cov_ready`,
