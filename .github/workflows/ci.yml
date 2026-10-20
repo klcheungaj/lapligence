@@ -284,9 +284,11 @@ jobs:
       # several times slower.
       msvc_arch: arm64
       target: aarch64-pc-windows-msvc
-      # One runner reached 3988 of 4583 tests in the 300-minute limit
-      # (CI round 5): two shards keep each test job well inside it.
-      test_shards: "[1, 2]"
+      # Windows on ARM supports the language server only: llg_ls is built,
+      # audited and packaged, and only the language-server tests run (nextest
+      # profile ci-lsp). The simulator, generated models and their shards,
+      # samplers and probes are not part of this lane.
+      lsp_only: true
 
   macos-arm64:
     if: github.event_name != 'schedule'
@@ -366,6 +368,24 @@ jobs:
             archive="lapligence-$version-$platform.$extension"
             test -s "$archive"
             sha256sum --check "$archive.sha256"
+            # Windows on ARM supports llg_ls only; every other package holds both.
+            python3 - "$platform" "$archive" <<'PY'
+          import sys
+          import tarfile
+          import zipfile
+
+          platform, archive = sys.argv[1:]
+          if archive.endswith(".zip"):
+              names = zipfile.ZipFile(archive).namelist()
+          else:
+              names = tarfile.open(archive).getnames()
+          suffix = ".exe" if platform.startswith("windows-") else ""
+          expected = {"llg_ls" + suffix, "LICENSE", "readme.md"}
+          if platform != "windows-arm64":
+              expected.add("llg" + suffix)
+          if sorted(names) != sorted(expected):
+              sys.exit(f"{archive} holds {sorted(names)}, expected {sorted(expected)}")
+          PY
           done
 
       - name: Attach packages to existing release

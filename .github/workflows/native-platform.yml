@@ -2,6 +2,12 @@
 # Called once per platform from ci.yml so that a platform's `test` job waits
 # only for that platform's `build` job, never for another platform's build.
 #
+# `lsp_only` is the Windows on ARM scope: that platform supports `llg_ls` only
+# (`llg` and generated models are unsupported there), so its lane builds,
+# audits and packages `llg_ls` alone and runs just the language-server test
+# set (nextest profile `ci-lsp`, .config/nextest.toml). Every simulator,
+# generated-model, DPI/VPI and runtime step is skipped.
+#
 # See ci.yml for the CACHING POLICY (binding): compiled third-party Cargo
 # dependencies are cached; nothing built from this repository is. A called
 # workflow does not inherit the caller's top-level `env`, so NEXTEST_PROFILE is
@@ -44,13 +50,21 @@ on:
         type: string
         required: false
         default: "[1]"
+      lsp_only:
+        description: >-
+          Build, audit, package and test only the language server (`llg_ls`);
+          the simulator driver `llg` is unsupported on this platform.
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
 env:
-  # Run one nextest test per available logical CPU (.config/nextest.toml).
-  NEXTEST_PROFILE: ci
+  # Run one nextest test per available logical CPU (.config/nextest.toml);
+  # the language-server-only scope selects the profile that filters to it.
+  NEXTEST_PROFILE: ${{ inputs.lsp_only && 'ci-lsp' || 'ci' }}
 
 jobs:
   build:
@@ -109,7 +123,7 @@ jobs:
         run: scripts/llg-co-compile-gate.sh clang
 
       - name: Phase 1 llg_co compile gate with MSVC C11
-        if: inputs.platform == 'windows'
+        if: inputs.platform == 'windows' && !inputs.lsp_only
         shell: pwsh
         run: |
           $gate = Join-Path $env:RUNNER_TEMP "llg-co-gate"
@@ -131,10 +145,10 @@ jobs:
           }
 
       - name: Build release executables
-        run: cargo build --locked --release --bin llg_ls --bin llg --target ${{ inputs.target }}
+        run: cargo build --locked --release --bin llg_ls ${{ inputs.lsp_only && '' || '--bin llg' }} --target ${{ inputs.target }}
 
       - name: Build and run generated model with MSVC
-        if: inputs.platform == 'windows'
+        if: inputs.platform == 'windows' && !inputs.lsp_only
         shell: pwsh
         run: |
           $root = Join-Path $env:RUNNER_TEMP "llg-msvc-generated-model"
@@ -158,7 +172,7 @@ jobs:
 
       # Without --cc, LLG_CC or CC, llg compiles models with MSVC cl on Windows.
       - name: Run a generated model with llg's default Windows compiler
-        if: inputs.platform == 'windows'
+        if: inputs.platform == 'windows' && !inputs.lsp_only
         shell: pwsh
         env:
           CMAKE_GENERATOR: Ninja
@@ -185,7 +199,7 @@ jobs:
       # builds, and the processes one model build starts. Read-only
       # diagnostics: the step never fails the job.
       - name: Measure Windows model-build costs
-        if: inputs.platform == 'windows'
+        if: inputs.platform == 'windows' && !inputs.lsp_only
         shell: bash
         continue-on-error: true
         timeout-minutes: 20
@@ -202,14 +216,14 @@ jobs:
         if: inputs.platform == 'windows'
         shell: pwsh
         run: |
-          $binaries = @(
-              "target/${{ inputs.target }}/release/llg_ls.exe",
-              "target/${{ inputs.target }}/release/llg.exe"
-          )
+          $binaries = @("target/${{ inputs.target }}/release/llg_ls.exe")
+          if ("${{ inputs.lsp_only }}" -ne "true") {
+              $binaries += "target/${{ inputs.target }}/release/llg.exe"
+          }
           & scripts/verify-windows-release.ps1 -Architecture "${{ inputs.arch }}" -Binary $binaries
 
       - name: Smoke-test Windows executable
-        if: inputs.platform == 'windows'
+        if: inputs.platform == 'windows' && !inputs.lsp_only
         shell: pwsh
         run: |
           & "target/${{ inputs.target }}/release/llg.exe"
@@ -218,6 +232,17 @@ jobs:
           }
           # GitHub's pwsh wrapper otherwise propagates the expected exit code 2.
           exit 0
+
+      # llg is not built for release and is unsupported on this platform.
+      - name: Smoke-test Windows language server
+        if: inputs.platform == 'windows' && inputs.lsp_only
+        shell: pwsh
+        run: |
+          $server = "target/${{ inputs.target }}/release/llg_ls.exe"
+          & $server --version
+          if ($LASTEXITCODE -ne 0) {
+              throw "llg_ls --version returned $LASTEXITCODE instead of 0"
+          }
 
       - name: Verify macOS architecture and system-only dynamic linkage
         if: inputs.platform == 'macos'
@@ -243,11 +268,17 @@ jobs:
       # target directory are identical on both runners, so compile-time paths
       # embedded in the test binaries (CARGO_MANIFEST_DIR, CARGO_BIN_EXE_*)
       # resolve after extraction.
+      #
+      # The language-server scope archives only the library, llg_ls and the
+      # `general` group (which holds the LSP wire suites); the other groups
+      # are simulator suites. Cargo still compiles the `llg` driver for them
+      # (CARGO_BIN_EXE_llg), but it is neither run, audited nor packaged.
       - name: Archive release-profile test binaries
         shell: bash
         run: >-
           cargo nextest archive --locked --all-features --cargo-profile release
           --target ${{ inputs.target }}
+          ${{ inputs.lsp_only && '--lib --bin llg_ls --test general' || '' }}
           --archive-file target/nextest-archive.tar.zst
 
       - name: Upload release test archive
@@ -293,7 +324,9 @@ jobs:
           $archive = "lapligence-$version-windows-${{ inputs.package_arch }}.zip"
           New-Item -ItemType Directory -Force -Path dist/package | Out-Null
           Copy-Item -LiteralPath "target/${{ inputs.target }}/release/llg_ls.exe" -Destination dist/package/
-          Copy-Item -LiteralPath "target/${{ inputs.target }}/release/llg.exe" -Destination dist/package/
+          if ("${{ inputs.lsp_only }}" -ne "true") {
+              Copy-Item -LiteralPath "target/${{ inputs.target }}/release/llg.exe" -Destination dist/package/
+          }
           Copy-Item -LiteralPath LICENSE, readme.md -Destination dist/package/
           Compress-Archive -Path dist/package/* -DestinationPath "dist/$archive"
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist/$archive").Hash.ToLowerInvariant()
@@ -330,10 +363,12 @@ jobs:
     name: ${{ strategy.job-total > 1 && format('test {0}', matrix.shard) || 'test' }}
     needs: build
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 300
-    # Windows arm64 runs about 4.5 times longer per model-building test than
-    # x64 (CI round 5) and exceeded the timeout on one runner, so its caller
-    # splits the suite over two runners; every other platform keeps one.
+    # The language-server set of Windows on ARM runs in minutes; the full
+    # suite keeps the long limit.
+    timeout-minutes: ${{ inputs.lsp_only && 60 || 300 }}
+    # A caller may split the suite over several runners with `test_shards`
+    # (Windows arm64 did, at 4.5 times x64's per-test model-build time, until
+    # it became language-server-only); every platform now keeps one.
     strategy:
       fail-fast: false
       matrix:
@@ -355,6 +390,7 @@ jobs:
 
       # Tests run python3 helper scripts.
       - uses: actions/setup-python@v7
+        if: ${{ !inputs.lsp_only }}
         with:
           python-version: "3.12"
           architecture: ${{ inputs.python_arch }}
@@ -364,13 +400,13 @@ jobs:
       # Generated models are compiled with MSVC cl, llg's Windows default when
       # LLG_CC and CC are unset, as in the build job.
       - name: Select MSVC target tools
-        if: inputs.platform == 'windows'
+        if: inputs.platform == 'windows' && !inputs.lsp_only
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ inputs.msvc_arch }}
 
       - name: Pin the MSVC linker for Git Bash steps
-        if: inputs.platform == 'windows'
+        if: inputs.platform == 'windows' && !inputs.lsp_only
         uses: ./.github/actions/msvc-linker
         with:
           target: ${{ inputs.target }}
@@ -385,6 +421,7 @@ jobs:
       # Windows entries to the repository's cache budget.
       - name: Set up the generated-model compiler cache
         id: ccache
+        if: ${{ !inputs.lsp_only }}
         uses: ./.github/actions/ccache-setup
         with:
           key: test-${{ inputs.target }}
@@ -395,6 +432,7 @@ jobs:
       # holds the pristine vendor/libfst; the standalone CMake probes need the
       # patched sources the build script applies in place elsewhere.
       - name: Apply the libfst patch
+        if: ${{ !inputs.lsp_only }}
         shell: bash
         run: git apply --whitespace=nowarn --directory=vendor/libfst patches/libfst/libfst-local-changes.patch
 
@@ -403,7 +441,7 @@ jobs:
       # target/, the runtime cache and ccache, and live or orphaned build
       # processes. A diagnostic only: it never fails the job.
       - name: Start the resource sampler
-        if: inputs.platform == 'windows'
+        if: inputs.platform == 'windows' && !inputs.lsp_only
         shell: pwsh
         continue-on-error: true
         run: >-
@@ -436,7 +474,7 @@ jobs:
       # directory, LLG_C_LAUNCHER) after the suite, also without the launcher,
       # so a slow test job can be told apart from load. Never fails the job.
       - name: Measure model-build costs after the suite
-        if: ${{ !cancelled() && inputs.platform == 'windows' }}
+        if: ${{ !cancelled() && inputs.platform == 'windows' && !inputs.lsp_only }}
         shell: bash
         continue-on-error: true
         timeout-minutes: 15
@@ -452,7 +490,7 @@ jobs:
       # prints its CMake version (ready) or why it was refused (rejected).
       # A diagnostic only: it never fails the job.
       - name: Report CMake toolchain seeds
-        if: always()
+        if: ${{ always() && !inputs.lsp_only }}
         shell: bash
         run: |
           find target -mindepth 2 -maxdepth 4 -type d -path '*/cmake-toolchain/*' 2>/dev/null | while read -r seed; do
@@ -466,7 +504,7 @@ jobs:
       # Where model-build time went: per-phase sums and medians, and how often
       # the runtime archive and toolchain seed were reused.
       - name: Report model build timings
-        if: always()
+        if: ${{ always() && !inputs.lsp_only }}
         shell: bash
         run: python scripts/ci_build_timings.py "$RUNNER_TEMP/llg-build-timings.tsv" || true
 
@@ -474,7 +512,7 @@ jobs:
       # runner's Defender state and the image architecture of each tool the
       # suite runs, so a slow run can be checked against them.
       - name: Report Windows Defender state and tool architectures
-        if: always() && inputs.platform == 'windows'
+        if: always() && inputs.platform == 'windows' && !inputs.lsp_only
         shell: bash
         continue-on-error: true
         run: python scripts/ci_windows_runner.py report
@@ -488,13 +526,13 @@ jobs:
 
       # Stops the sampler and prints one line per sample.
       - name: Report resource samples
-        if: always() && inputs.platform == 'windows'
+        if: always() && inputs.platform == 'windows' && !inputs.lsp_only
         shell: bash
         continue-on-error: true
         run: python scripts/ci_resource_sampler.py report --log "$RUNNER_TEMP/llg-resources.jsonl"
 
       - name: Upload resource samples
-        if: always() && inputs.platform == 'windows'
+        if: always() && inputs.platform == 'windows' && !inputs.lsp_only
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
@@ -506,7 +544,7 @@ jobs:
       # Only the first shard saves the shared weekly entry; a second save of
       # the same key would race it.
       - name: Compiler cache statistics and save
-        if: always()
+        if: ${{ always() && !inputs.lsp_only }}
         uses: ./.github/actions/ccache-finish
         with:
           key: ${{ steps.ccache.outputs.key }}
