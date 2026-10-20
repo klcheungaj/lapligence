@@ -437,24 +437,25 @@ static void s9(void) {
            (unsigned long long)llg_cr_value(b.s, x)[0]);
 }
 
-/* S10: reductions of an empty (non-random) array are identities. */
+/* S10: sum, product and the logical folds of an empty (non-random) array
+ * are identities. */
 static void s10(void) {
     static B b;
     uint32_t z = newvar(&b, "z", 1, 0, 0);
     uint32_t e = arr(&b, "e", 8, 0, LLG_CR_ARRAY_DYNAMIC, 0, 0);
-    uint32_t ops[] = {LLG_CR_ADD, LLG_CR_MUL, LLG_CR_AND, LLG_CR_OR, LLG_CR_XOR, LLG_CR_LOR};
-    int64_t want[] = {0, 1, 255, 0, 0, 0};
+    uint32_t ops[] = {LLG_CR_ADD, LLG_CR_MUL, LLG_CR_LOR};
+    int64_t want[] = {0, 1, 0};
     uint32_t root = LLG_CR_NONE;
-    for (uint32_t i = 0; i < 6; ++i) {
+    for (uint32_t i = 0; i < 3; ++i) {
         uint32_t it = nd(&b, LLG_CR_ITER, 32, 1, i, 0, 0);
         uint32_t red = loopn(&b, LLG_CR_REDUCE, 8, 0, e, nd(&b, LLG_CR_AELEM, 8, 0, e, it, LLG_CR_NONE),
                              LLG_CR_NONE, i, ops[i]);
         uint32_t eq = nd(&b, LLG_CR_EQ, 1, 0, red, k(&b, want[i], 8, 0), 0);
         root = root == LLG_CR_NONE ? eq : all2(&b, root, eq);
     }
-    uint32_t it = nd(&b, LLG_CR_ITER, 32, 1, 6, 0, 0);
+    uint32_t it = nd(&b, LLG_CR_ITER, 32, 1, 3, 0, 0);
     uint32_t land = loopn(&b, LLG_CR_REDUCE, 1, 0, e, nd(&b, LLG_CR_AELEM, 8, 0, e, it, LLG_CR_NONE),
-                          LLG_CR_NONE, 6, LLG_CR_LAND);
+                          LLG_CR_NONE, 3, LLG_CR_LAND);
     blk(&b, "c0", all2(&b, root, nd(&b, LLG_CR_EQ, 1, 0, vr(&b, z), land, 0)));
     uint32_t v0[] = {z}, a0[] = {e};
     unit(&b, "E", v0, 1, a0, 1, NULL, 0, 0, 1);
@@ -468,6 +469,40 @@ static void s10(void) {
     }
     llg_cr_status_t st = llg_cr_step(b.s, &rng, NULL);
     printf("S10 status=%s z=%llu\n", names[st], (unsigned long long)llg_cr_value(b.s, z)[0]);
+}
+
+/* S10b: and, or and xor of an empty array are evaluation errors (S30-D6);
+ * a known-false implication guard eliminates the error (18.5.12). */
+static void s10b(uint32_t op, int guarded) {
+    /* One problem per call: sessions are kept per problem. */
+    static B problems[6];
+    static unsigned used;
+    B* bp = &problems[used++];
+#define b (*bp)
+    uint32_t z = newvar(&b, "z", 1, 0, 0);
+    uint32_t e = arr(&b, "e", 8, 0, LLG_CR_ARRAY_DYNAMIC, 0, 0);
+    uint32_t it = nd(&b, LLG_CR_ITER, 32, 1, 0, 0, 0);
+    uint32_t red = loopn(&b, LLG_CR_REDUCE, 8, 0, e, nd(&b, LLG_CR_AELEM, 8, 0, e, it, LLG_CR_NONE),
+                         LLG_CR_NONE, 0, op);
+    uint32_t eq = nd(&b, LLG_CR_EQ, 1, 0, red, k(&b, 0, 8, 0), 0);
+    if (guarded) eq = nd(&b, LLG_CR_IMPL, 1, 0, k(&b, 0, 1, 0), eq, 0);
+    blk(&b, "c0", all2(&b, eq, nd(&b, LLG_CR_EQ, 1, 0, vr(&b, z), k(&b, 1, 1, 0), 0)));
+    uint32_t v0[] = {z}, a0[] = {e};
+    unit(&b, "E", v0, 1, a0, 1, NULL, 0, 0, 1);
+    finish(&b, "s10b");
+    llg_cr_begin(b.s);
+    uint32_t inst;
+    while ((inst = llg_cr_next_inst(b.s)) != LLG_CR_NONE) {
+        set_blocks(&b, inst, 1);
+        set_vars(&b, inst, 0, 1);
+        llg_cr_set_array(b.s, inst, e, 0, 0);
+    }
+    llg_cr_report_t report;
+    memset(&report, 0, sizeof(report));
+    llg_cr_status_t st = llg_cr_step(b.s, &rng, &report);
+    printf("S10b op=%u guarded=%d status=%s empty=%d\n", op, guarded, names[st],
+           st == LLG_CR_ERROR && report.reason == LLG_CR_REASON_EMPTY_REDUCTION);
+#undef b
 }
 
 /* S11: y == f(x) through the call thunk (unit 0). */
@@ -595,6 +630,10 @@ int main(int argc, char** argv) {
         s8();
         s9();
         s10();
+        for (uint32_t op = LLG_CR_AND; op <= LLG_CR_XOR; ++op) {
+            s10b(op, 0);
+            s10b(op, 1);
+        }
         s11();
         s12();
     }
@@ -703,6 +742,19 @@ fn template_problems_expand_objects_arrays_and_loops() {
 
     assert_eq!(field(&output, "S9 "), "S9 status=ok instances=1 x=5");
     assert_eq!(field(&output, "S10 "), "S10 status=ok z=1");
+    let empty: Vec<&str> = output
+        .lines()
+        .filter(|line| line.starts_with("S10b "))
+        .collect();
+    assert_eq!(empty.len(), 6, "{output}");
+    for line in empty {
+        let expected = if line.contains("guarded=0") {
+            "status=error empty=1"
+        } else {
+            "status=ok empty=0"
+        };
+        assert!(line.ends_with(expected), "{line}");
+    }
     assert_eq!(field(&output, "S11 "), "S11 bad=0");
     assert_eq!(
         field(&output, "S12 promote=0"),

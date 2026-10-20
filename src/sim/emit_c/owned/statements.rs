@@ -928,6 +928,7 @@ impl Frame<'_, '_> {
                 location,
                 fatal_finish_number,
                 runtime_failure,
+                skip_finals,
             } => {
                 let values = self.formatted_arguments(args, self.ctx.model.precision_fs)?;
                 let (scope, location) = (c_string_literal(scope), c_string_literal(location));
@@ -936,6 +937,9 @@ impl Frame<'_, '_> {
                         .ok_or_else(|| "fatal task missing finish number".to_owned())?;
                     if *runtime_failure {
                         self.line("llg_rt_mark_failed();");
+                    }
+                    if *skip_finals {
+                        self.line("llg_rt_skip_finals();");
                     }
                     self.line(format!(
                         "llg_rt_fatal_typed({number}, {fmt}, {values}, {}, {scope}, {location});",

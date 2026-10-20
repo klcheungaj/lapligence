@@ -322,6 +322,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 location,
                 fatal_finish_number,
                 runtime_failure,
+                skip_finals,
             } => Ok(IrStmt::Severity {
                 level,
                 fmt,
@@ -333,6 +334,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 location,
                 fatal_finish_number,
                 runtime_failure,
+                skip_finals,
             }),
             IrStmt::FileControl { op, descriptor } => Ok(IrStmt::FileControl {
                 op,

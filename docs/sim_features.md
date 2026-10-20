@@ -994,8 +994,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   null and comparison execute. Nonblocking triggers name their event at issue
   and do not suspend the issuer; `.triggered` holds for the time step and is
   false for null; events test false only when null; `wait_order` lets its
-  first event use the triggered state and reports a run-time error when it
-  fails without an `else`
+  first event use the triggered state, and a failure without an `else` is a
+  run-time error that ends the run at once, without final procedures
+  (S14-D6)
   ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md)).
   Mixed event lists and event formals of tasks, functions (including
   function-expression calls) and class methods execute. Event handles other
@@ -1887,8 +1888,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   without wrapping, and one value of the calling thread's stream (the value
   `$urandom_range(sum - 1, 0)` would return) picks the first branch whose
   running total exceeds it. A zero-weight branch never runs; all-zero weights
-  run nothing and warn on stderr, as does a negative weight, which counts as
-  its unsigned bit pattern; X/Z weight bits read as 0. The chosen body is an
+  run nothing and warn on stderr; a negative signed weight is an error that
+  ends the run at once, without final procedures (S31-D4); X/Z weight bits
+  read as 0. The chosen body is an
   ordinary statement (waits, forks, timed task calls, `return`, `disable`,
   `break`/`continue`), and a weight sum that needs the 1048576 bits of the packed limit is a
   source-addressed lowering error
@@ -2436,7 +2438,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   samples every instance from one sampler process; one that reads a
   covergroup argument or a property of the embedding object (`@(posedge
   vif.clk)` in a class) gets a waiter process per instance, owned by the
-  instance rather than by the constructing process (S44-D5, S44-D6).
+  instance rather than by the constructing process and armed inside `new()`
+  (S44-D5, S44-D6).
   `type_option.strobe` samples once per time slot in the Postponed region
   (not for block events, S44-D9). An `end` block event also samples after
   `return` (S44-D7), not after a disable or a jump (`break`, `continue`,
@@ -2445,7 +2448,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   cardinality, `auto_bin_max`, numeric order for signed values, S44-D2) and
   the 1800-2009 bins forms (19.5): single, `[]` and `[N]` value bins,
   `default`, `wildcard`, `ignore_bins` and `illegal_bins` (a run-time error
-  that does not stop the run), `iff`-guarded bins and bins values from
+  that ends the run, final procedures included, S45-D3), `iff`-guarded bins and bins values from
   covergroup arguments; transition bins (19.5.1) with `[*]`, `[->]` and `[=]`
   repetition, `[]` transition arrays and `default sequence`; crosses (19.6)
   of coverpoints and variables with `binsof`/`intersect` select expressions
@@ -2454,7 +2457,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `goal`, `at_least` and `auto_bin_max` (group values are item defaults),
   `detect_overlap` warnings (S45-D17), `type_option.weight`, and
   `type_option.merge_instances` with `option.get_inst_coverage` (19.11.3,
-  S45-D18). `get_coverage()` (type, per source declaration, S44-D1),
+  S45-D18). `get_coverage()` (type, per elaborated declaration, S44-D1),
   `get_inst_coverage()`, `start()`, `stop()`, `set_inst_name()` (no report)
   and `$get_coverage()` follow 19.11; the two-argument forms of 19.8 assign
   the covered and total bins (S46-D7). Options are read through an
@@ -2535,8 +2538,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   place, recursive or large shared ones run in a dispatch loop whose recursive
   generations keep their packed, real and string values in heap frames, with a
   located fatal error past 10000 active generations. A single rule needs no
-  weight evaluation or draw; negative or unknown weights and repeat counts and
-  a join ratio outside 0.0 to 1.0 are located run-time errors
+  weight evaluation or draw; a negative weight is a located error that ends
+  the run at once (X/Z weight bits read as 0); negative or unknown repeat
+  counts and a join ratio outside 0.0 to 1.0 are located run-time errors
   ([adv_016](../tests/fixtures/sim/feature_completion/adv_016/readme.md),
   decisions S16-D1 to S16-D9 in [lrm_decisions](lrm_decisions.md)). Output
   arguments, rand join of recursive or overlapping productions and recursive

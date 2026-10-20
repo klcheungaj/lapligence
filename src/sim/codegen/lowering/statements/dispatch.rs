@@ -540,17 +540,19 @@ impl EmitCtx<'_, '_> {
                     .transpose()?
                     .unwrap_or_default();
                 // SV 15.5.4: "If the fail statement is not specified, a
-                // failure generates a run-time error."
+                // failure generates a run-time error." The error ends the
+                // run at once, without final procedures (S14-D6).
                 let failure = match if_false {
                     Some(body) => self.lower_stmt(*body)?,
                     None => vec![IrStmt::Severity {
-                        level: crate::sim::ir::IrSeverityLevel::Error,
+                        level: crate::sim::ir::IrSeverityLevel::Fatal,
                         fmt: "\"wait_order: events triggered out of order\"".to_owned(),
                         args: Vec::new(),
                         scope: self.format_scope(h),
                         location: self.finish_location(h),
-                        fatal_finish_number: None,
-                        runtime_failure: false,
+                        fatal_finish_number: Some(0),
+                        runtime_failure: true,
+                        skip_finals: true,
                     }],
                 };
                 self.saw_wait = true;

@@ -228,11 +228,22 @@ fn s14_d5_class_property_nba() {
     );
 }
 
+/// The failure ends the run at once, without final procedures.
 #[test]
-fn s14_d6_wait_order_error_continues() {
-    run_decision(
-        "S14-D6_wait_order_error_continues",
-        include_str!("fixtures/sim/lrm_decisions/S14-D6_wait_order_error_continues.out"),
+fn s14_d6_wait_order_error_ends_run() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S14-D6_wait_order_error_ends_run.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S14-D6_wait_order_error_ends_run",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "wait_order: events triggered out of order",
+            );
+        },
     );
 }
 
@@ -840,6 +851,18 @@ fn s40_d4_invalid_element_access() {
     );
 }
 
+/// A wrong number of indices ends the run when the import returns; the
+/// final procedures run.
+#[test]
+fn s40_d6_wrong_index_count_ends_run() {
+    run_dpi_fatal_decision(
+        "S40-D6_wrong_index_count_ends_run",
+        include_str!("fixtures/sim/lrm_decisions/S40-D6_wrong_index_count_ends_run.out"),
+        "llg: DPI-C open array element access with 1 index(es) to an array with 2 unpacked \
+         dimension(s)",
+    );
+}
+
 #[test]
 fn s40_d5_task_disable_protocol() {
     let case = "S40-D5_task_disable_protocol";
@@ -1120,11 +1143,17 @@ fn s31_d3_zero_weights() {
     );
 }
 
+/// A negative weight ends the run at once, without final procedures.
 #[test]
-fn s31_d4_negative_weight_unsigned() {
-    run_decision(
-        "S31-D4_negative_weight_unsigned",
-        include_str!("fixtures/sim/lrm_decisions/S31-D4_negative_weight_unsigned.out"),
+fn s31_d4_negative_weight_ends_run() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S31-D4_negative_weight_ends_run.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S31-D4_negative_weight_ends_run",
+        &[],
+        &|label, output| {
+            runtime_error(label, output, expected, "weight 0 is negative");
+        },
     );
 }
 
@@ -1341,11 +1370,11 @@ fn runtime_error(label: &str, output: &std::process::Output, expected: &str, dia
 }
 
 #[test]
-fn s29_d1_unknown_state_fails() {
-    let expected = include_str!("fixtures/sim/lrm_decisions/S29-D1_unknown_state_fails.out");
+fn s29_d1_unknown_state_ends_run() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S29-D1_unknown_state_ends_run.out");
     sim_cli::run_case_checked_matrix(
         SUITE,
-        "S29-D1_unknown_state_fails",
+        "S29-D1_unknown_state_ends_run",
         &[],
         &|label, output| {
             runtime_error(label, output, expected, "X or Z value in a constraint");
@@ -1473,10 +1502,15 @@ fn s30_d5_sizes_first() {
 
 #[test]
 fn s30_d6_empty_reductions() {
-    run_decision(
-        "S30-D6_empty_reductions",
-        include_str!("fixtures/sim/lrm_decisions/S30-D6_empty_reductions.out"),
-    );
+    let expected = include_str!("fixtures/sim/lrm_decisions/S30-D6_empty_reductions.out");
+    sim_cli::run_case_checked_matrix(SUITE, "S30-D6_empty_reductions", &[], &|label, output| {
+        runtime_error(
+            label,
+            output,
+            expected,
+            "and(), or() or xor() of an empty array in a constraint; randomize returns 0",
+        );
+    });
 }
 
 #[test]
@@ -2081,18 +2115,18 @@ fn s45_d2_default_only_coverpoint() {
     );
 }
 
-/// The illegal sample is a run-time error: exact stdout, exit status 1.
+/// The illegal sample ends the run; the final procedures run.
 #[test]
-fn s45_d3_illegal_bin_continues() {
+fn s45_d3_illegal_bin_ends_run() {
     sim_cli::run_case_checked_matrix(
         SUITE,
-        "S45-D3_illegal_bin_continues",
+        "S45-D3_illegal_bin_ends_run",
         &[],
         &|label, output| {
             assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
             assert_eq!(
                 String::from_utf8_lossy(&output.stdout),
-                include_str!("fixtures/sim/lrm_decisions/S45-D3_illegal_bin_continues.out"),
+                include_str!("fixtures/sim/lrm_decisions/S45-D3_illegal_bin_ends_run.out"),
                 "{label}"
             );
             assert!(
@@ -2112,7 +2146,8 @@ fn s45_d4_wildcard_range_bounds() {
     );
 }
 
-/// A non-positive bins array size from an argument is a run-time error.
+/// A non-positive bins array size from an argument ends the run at the
+/// construction; the final procedures run.
 #[test]
 fn s45_d5_bins_count_not_positive() {
     sim_cli::run_case_checked_matrix(
@@ -2128,7 +2163,7 @@ fn s45_d5_bins_count_not_positive() {
             );
             assert!(
                 String::from_utf8_lossy(&output.stderr).contains(
-                    "llg: runtime error: bins `b` at tb:18:12: the number of bins is not a positive value"
+                    "llg: runtime error: bins `b` at tb:19:12: the number of bins is not a positive value"
                 ),
                 "{label}: {output:?}"
             );
@@ -2459,17 +2494,9 @@ fn s16_d3_invalid_weight_error() {
         "S16-D3_invalid_weight_error",
         &[],
         &|label, output| {
-            runtime_error(
-                label,
-                output,
-                expected,
-                "the weight of rule 1 is negative; no rule is generated",
-            );
+            runtime_error(label, output, expected, "the weight of rule 1 is negative");
             let stderr = String::from_utf8_lossy(&output.stderr);
-            assert!(
-                stderr.contains("the weight of rule 1 has unknown bits; no rule is generated"),
-                "{label}: {output:?}"
-            );
+            assert!(!stderr.contains("unknown bits"), "{label}: {output:?}");
             assert!(
                 stderr.contains("all rule weights are zero; nothing is generated"),
                 "{label}: {output:?}"

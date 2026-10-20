@@ -122,8 +122,8 @@ fn unrelated_activity_does_not_perturb_streams() {
     let (first_label, first) = &outputs[0];
     assert_eq!(first.lines().count(), 7, "{first_label}: {first}");
     assert!(
-        first.contains("differ 1\n"),
-        "{first_label}: identical instances must draw different values: {first}"
+        first.contains("differ 0\n"),
+        "{first_label}: identical instances must draw the same value: {first}"
     );
     for (label, output) in &outputs[1..] {
         assert_eq!(output, first, "{label} differs from {first_label}");

@@ -1084,6 +1084,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             location: self.production_location(node),
             fatal_finish_number: None,
             runtime_failure: true,
+            skip_finals: false,
         }
     }
 
@@ -1933,6 +1934,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             location: self.production_location(item),
             fatal_finish_number: Some(0),
             runtime_failure: true,
+            skip_finals: false,
         };
         let mut saves = vec![IrStmt::Container(Box::new(
             IrContainerStmt::QueuePushBack { container, value },

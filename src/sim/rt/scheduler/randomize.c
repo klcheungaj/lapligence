@@ -141,13 +141,17 @@ static const char* randomize_reason_text(int reason) {
     case LLG_CR_REASON_ORDER: return "circular function-argument order";
     case LLG_CR_REASON_SOLVE_BEFORE: return "circular solve-before order";
     case LLG_CR_REASON_WEIGHT: return "negative or unevaluated dist weight";
+    case LLG_CR_REASON_EMPTY_REDUCTION:
+        return "and(), or() or xor() of an empty array in a constraint";
     default: return "evaluation error";
     }
 }
 
 /* Report a finished solve and return the randomize() result (1 when the
  * caller may commit). UNSAT warns and the run continues; RESOURCE and ERROR
- * are run-time errors that make the run exit with status 1 (S29-D5). */
+ * are run-time errors that make the run exit with status 1 (S29-D5). An X or
+ * Z state variable or inactive random variable ends the run at once, without
+ * final procedures (S29-D1); the generated caller takes its exit check. */
 static int randomize_report(const llg_cr_problem_t* problem, llg_cr_status_t status,
                             const llg_cr_report_t* report, const char* site) {
     switch (status) {
@@ -184,10 +188,16 @@ static int randomize_report(const llg_cr_problem_t* problem, llg_cr_status_t sta
         default:
             break;
         }
-        fprintf(stderr, "llg: error: %s: %s%s%s%s; randomize returns 0\n", site,
+        int ends_run = report->reason == LLG_CR_REASON_XZ_LEAF ||
+                       report->reason == LLG_CR_REASON_XZ_VAR;
+        fprintf(stderr, "llg: error: %s: %s%s%s%s%s\n", site,
                 randomize_reason_text(report->reason), name ? " (`" : "", name ? name : "",
-                name ? "`)" : "");
+                name ? "`)" : "", ends_run ? "" : "; randomize returns 0");
         llg_last_failure = 1;
+        if (ends_run) {
+            llg_rt_skip_finals();
+            llg_rt_fatal_typed(0, randomize_reason_text(report->reason), NULL, 0, "", site);
+        }
         return 0;
     }
     }

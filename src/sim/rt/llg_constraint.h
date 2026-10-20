@@ -104,7 +104,8 @@ enum {
                            body over the elements, each converted to the
                            node's width, folded with op (ADD, MUL, AND, OR,
                            XOR, LAND, LOR); an empty array gives the
-                           operation's identity (S30-D6) */
+                           identity of ADD, MUL, LAND and LOR, and an
+                           evaluation error for AND, OR and XOR (S30-D6) */
     LLG_CR_ISNULL,      /* 1-bit: the object ref a names is null */
     LLG_CR_OP_LIMIT
 };
@@ -285,7 +286,9 @@ typedef enum {
 enum {
     LLG_CR_INPUT_KNOWN = 0,
     LLG_CR_INPUT_NULL = 1,   /* evaluating it dereferenced a null handle */
-    LLG_CR_INPUT_XZ = 2      /* it holds an X or Z bit (S29-D1) */
+    LLG_CR_INPUT_XZ = 2,     /* it holds an X or Z bit (S29-D1) */
+    LLG_CR_INPUT_EMPTY = 3   /* an and/or/xor reduction of an empty array
+                                (S30-D6; set by the expansion only) */
 };
 
 /* Reasons for LLG_CR_ERROR, with the offending item in report fields. */
@@ -300,7 +303,9 @@ enum {
     LLG_CR_REASON_ORDER,     /* var: circular function-argument order */
     LLG_CR_REASON_WEIGHT,    /* node: negative or unevaluated dist weight
                                 or bound (S30-D8) */
-    LLG_CR_REASON_SOLVE_BEFORE /* var: circular solve...before order */
+    LLG_CR_REASON_SOLVE_BEFORE, /* var: circular solve...before order */
+    LLG_CR_REASON_EMPTY_REDUCTION /* leaf: and/or/xor of an empty array
+                                     (S30-D6) */
 };
 
 /* Engines, as bits of llg_cr_report_t.engines. */

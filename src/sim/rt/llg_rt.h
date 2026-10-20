@@ -992,6 +992,10 @@ int llg_region_is_read_only(void);
 void llg_rt_request_finish(void);
 // Mark a simulator-generated failure before terminating through a severity task.
 void llg_rt_mark_failed(void);
+// Make the run that a following fatal severity task ends skip its final
+// procedures: some simulator-generated errors stop the run at once, without
+// the end-of-simulation work a `$finish` or `$fatal` does.
+void llg_rt_skip_finals(void);
 // Request normal completion of the current process and scheduler. These
 // services set chain.exiting=LLG_EXIT_COMPLETE and return. Coroutine callers
 // must immediately use LLG_CO_EXIT_CHECK; plain functions must immediately
@@ -1125,14 +1129,16 @@ sv4_t llg_urandom_seed(sv4_t seed);
 sv4_t llg_urandom_range(sv4_t max, sv4_t min, int has_min);
 // `randcase` (IEEE 1800-2009 18.16): picks the index of the item whose share
 // of the exact weight sum contains one draw from the calling process stream,
-// or -1 (after a warning naming `location`) when every weight is zero. The
+// or -1 (after a warning naming `location`) when every weight is zero. A
+// negative signed weight reports an error, ends the run without final
+// procedures (the caller must take its exit check) and returns -1. The
 // weights are borrowed for the call; `sum_width` is the bit width that holds
 // their exact sum and `count` is at least 1.
 int32_t llg_randcase_select(const sv4_t* const* weights, size_t count,
                             uint32_t sum_width, const char* location);
 // A randsequence production's rule (IEEE 1800-2009 18.17.1): like
-// `llg_randcase_select`, but a negative or unknown weight is an error that
-// marks the run failed and selects no rule (-1), and the all-zero warning
+// `llg_randcase_select` (X/Z weight bits read as 0, a negative weight ends
+// the run without final procedures and returns -1), and the all-zero warning
 // names the production.
 int32_t llg_randsequence_select(const sv4_t* const* weights, size_t count,
                                 uint32_t sum_width, const char* location);
@@ -2046,8 +2052,12 @@ llg_proc_t* llg_spawn_detached_with_frame(const llg_co_desc_t* desc,
 // the end of the calling process or program never observe it. Callable
 // from a process or during model initialization. Its random stream is
 // derived from the root without drawing from any stream. Retains one
-// reference to `frame` like llg_fork_with_frame. Used for the per-instance
-// sampling-event waiter of a covergroup, which lives as long as its instance.
+// reference to `frame` like llg_fork_with_frame. Called from a process
+// turn, the new process runs its first turn at once, nested in the caller's,
+// until it suspends; it returns NULL if that turn ended it. Elsewhere it is
+// queued in the Active region.
+// Used for the per-instance sampling-event waiter of a covergroup, which
+// lives as long as its instance and arms its event inside `new()` (S44-D6).
 llg_proc_t* llg_spawn_owned_with_frame(const llg_co_desc_t* desc,
                                        const char* name,
                                        llg_frame_t* frame);

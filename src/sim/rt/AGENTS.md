@@ -402,8 +402,8 @@ model-lifetime ([known issue](../../../docs/known_issues.md#collected-objects-ke
 
 `coverage/coverage.c` is the coverage store (IEEE 1800-2009 19). Generated
 code owns the static metadata (`llg_cov_point_t`, one `llg_cov_group_t` per
-elaborated declaration, one mutable `llg_cov_type_t` per declaration
-identity); the runtime owns instance records (`llg_cov_new`), which outlive the
+elaborated declaration, one mutable `llg_cov_type_t` per elaborated
+declaration, so each module instance has its own type, S44-D1); the runtime owns instance records (`llg_cov_new`), which outlive the
 covergroup object and are freed only by `llg_cov_release_all` in
 `llg_rt_cleanup`, after `final` procedures (which may still query them) and
 after `llg_cov_end_of_run` saves the 19.9 database. Options apply between `llg_cov_new` and `llg_cov_ready`,
@@ -489,7 +489,11 @@ at the same time. `LLG_STOP_POLICY=resume` (CLI default) avoids stdin waits;
 `exit` returns the live context for inspection/resumption. Do not run finals while
 suspended; generated CLI exit policy cleans up explicitly. Validate verbosity 0/1/2
 without changing semantics. Normal completion/severity termination runs final
-handling exactly once and preserves severity counters.
+handling exactly once and preserves severity counters. A run-ending simulator
+error that skips final procedures calls `llg_rt_skip_finals` before its fatal
+report (S14-D6, S16-D3, S29-D1, S31-D4); the flag lives outside `g` and resets
+at init, and its callers' generated statements carry a Terminate effect so the
+process takes its exit check.
 
 Semaphore waiters are FIFO. Cancelling a head or subtree must reservice surviving
 waiters without an extra put; do not grant during an incomplete cancellation batch

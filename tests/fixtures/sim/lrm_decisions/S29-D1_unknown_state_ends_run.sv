@@ -3,28 +3,31 @@
 // illegal and shall result in an error." 18.6.1 L30402-30403: randomize()
 // "returns 1 if it successfully sets all the random variables and objects to
 // valid values; otherwise, it returns 0."
-// Decision (llg reading; the text does not say whether an X/Z *value* of a
-// state variable read by an active constraint is the error it names): the
-// call fails at run time. It returns 0, leaves the random variables
-// unchanged, reports an error and the run ends with exit status 1 after
-// $finish (decision S29-D5). The 2-state reading would convert X/Z to 0 as
-// for seeds (S28-D3, S28-D8) and solve.
+// Decision S29-D1: an X or Z bit in a state variable (or an inactive random
+// variable) that an active constraint reads is the error 18.3 names, and it
+// ends the simulation at once: randomize() does not return, nothing after it
+// runs and final procedures do not run (llg: an error on stderr, exit
+// status 1). The text does not say what the error does; llg follows the
+// industry-standard behaviour.
 class item_c;
   rand bit [3:0] a;
   logic [3:0] limit;
   constraint c { a < limit; }
 endclass
 module tb;
+  final begin
+    $display("final block");
+  end
+
   initial begin
     static item_c item = new;
     int ok;
-    item.a = 4'd9;
-    item.limit = 4'b1x00;
-    ok = item.randomize();
-    $display("unknown limit: ok=%0d a=%0d", ok, item.a);
     item.limit = 4'd3;
     ok = item.randomize();
     $display("known limit: ok=%0d a_below=%0d", ok, item.a < 4'd3);
+    item.limit = 4'b1x00;
+    ok = item.randomize();
+    $display("unknown limit: ok=%0d a=%0d", ok, item.a);
     $finish;
   end
 endmodule

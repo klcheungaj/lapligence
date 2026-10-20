@@ -14,9 +14,15 @@
 // bins of a coverpoint." The text does not say whether values removed by
 // ignore_bins or illegal_bins still overlap, what an overlap of two
 // transition lists is, or when the warning is issued.
+// get_inst_coverage() reads instance data, which option.per_instance = 1
+// requires: 19.7 Table 19-1 (L33285-33289) "When true, coverage information
+// for this covergroup instance shall be saved in the coverage database ...
+// When false, implementations are not required to save instance-specific
+// information."
 module tb;
   bit [1:0] x;
   covergroup g;
+    option.per_instance = 1;
     option.detect_overlap = 1;
     c1: coverpoint x { bins lo = {[0:1]}; bins mid = {[1:2]}; bins top = {[2:3]}; ignore_bins skip = {2}; }
     c2: coverpoint x { bins s = (1 => 2); bins l = (1 => 2 => 3); bins r = (0 => 1 [*2]); bins r2 = (0 => 1 => 1); }

@@ -1,2 +1,5 @@
-identity: ok=1 size=0
+sum and product: ok=1 size=0
+and: ok=0 size=2
+or: ok=0 size=2
+xor: ok=0 size=2
 sum1: ok=0

@@ -11,9 +11,15 @@
 // values in the set." The text does not say whether one sample matching two
 // products of one cross bin counts once or twice; llg counts once, like a
 // value bin.
+// get_inst_coverage() reads instance data, which option.per_instance = 1
+// requires: 19.7 Table 19-1 (L33285-33289) "When true, coverage information
+// for this covergroup instance shall be saved in the coverage database ...
+// When false, implementations are not required to save instance-specific
+// information."
 module tb;
   bit [1:0] a, b;
   covergroup g;
+    option.per_instance = 1;
     ca: coverpoint a { bins lo = {[0:1]}; bins mid = {[1:2]}; }
     cb: coverpoint b { bins any = {[0:3]}; }
     ab: cross ca, cb;

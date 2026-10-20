@@ -2,10 +2,10 @@
 //
 // Generated code emits one static `llg_cov_group_t` per covergroup
 // declaration site (its coverpoint specifications) and one `llg_cov_type_t`
-// per declaration identity; type coverage merges every instance ever created
-// for that identity (19.11.3). Instance records are runtime-owned and live
-// until llg_rt_cleanup, so counters survive the collection of the covergroup
-// object. A model without covergroups never reaches this file's state.
+// per elaborated declaration (S44-D1); type coverage merges every instance
+// ever created for that declaration (19.11.3). Instance records are
+// runtime-owned and live until llg_rt_cleanup, so counters survive the
+// collection of the covergroup object. A model without covergroups never reaches this file's state.
 //
 // llg_cov_ready turns each coverpoint specification into a layout: the bins
 // as counter indices and the key segments a sampled value is looked up in.
@@ -196,6 +196,16 @@ static size_t llg_cov_n_model_types;
 // 19.5.6 warnings and bin-count errors were reported by that run.
 static uint8_t llg_cov_quiet;
 static void llg_cov_db_release(void);
+
+// An illegal bin hit (19.5.5, 19.6.3) and a bins array size that is not
+// positive end the run like a fatal error, final procedures included (S45-D3,
+// S45-D5). The caller has reported the error; the statement that sampled or
+// constructed takes its exit check. A process that is already exiting stays
+// quiet.
+static void llg_cov_fatal(const char* message, const char* site) {
+    llg_rt_mark_failed();
+    llg_rt_fatal_typed(0, message, NULL, 0, "", site ? site : "");
+}
 
 static void* llg_cov_grow(void* data, size_t count, size_t size, const char* what) {
     if (size != 0 && count > SIZE_MAX / size) llg_fatal_allocation(what, count, size);
@@ -416,12 +426,12 @@ static uint64_t llg_cov_bin_count(const llg_cov_inst_t* inst, const llg_cov_bin_
     const llg_cov_slot_value_t* slot = &inst->slots[bin->count];
     llg_cov_num_t value = llg_cov_slot_num(slot);
     if (slot->unknown || value.neg || value.mag == 0) {
-        if (llg_cov_quiet) return 0;
+        if (llg_cov_quiet || llg_rt_exiting()) return 0;
         fprintf(stderr,
                 "llg: runtime error: bins `%s` at %s: the number of bins is not a positive "
-                "value, so the declaration has no bins\n",
+                "value\n",
                 bin->name, bin->site);
-        llg_rt_mark_failed();
+        llg_cov_fatal("the number of bins is not a positive value", bin->site);
         return 0;
     }
     return value.mag;
@@ -1217,9 +1227,9 @@ void llg_cov_cross_hit(void* record, uint32_t index, const uint8_t* guards) {
     if (state->stopped || !state->cross) return;
     const llg_cov_xlayout_t* xl = state->cross->layout;
     if (!xl->product) return;
-    // A crossed coverpoint that counted nothing in this sample (disabled by
-    // its iff, stopped, or an X/Z value) leaves the cross unsampled
-    // (decision S45-D14).
+    // A crossed coverpoint that holds no bin of this sample (disabled by its
+    // iff, or an X/Z value) leaves the cross unsampled; a stopped one still
+    // notes the bins it holds (decision S45-D14).
     for (uint32_t d = 0; d < cross->n_dims; ++d) {
         const llg_cov_point_state_t* point = &inst->points[cross->dims[d]];
         if (point->hit_serial != inst->serial || !point->n_hits) return;
@@ -1267,11 +1277,12 @@ void llg_cov_cross_hit(void* record, uint32_t index, const uint8_t* guards) {
                 if (state->cross->stamp[b] == inst->serial) continue;
                 state->cross->stamp[b] = inst->serial;
                 if (bin->kind == LLG_COV_BIN_ILLEGAL) {
+                    if (llg_rt_exiting()) continue;
                     fprintf(stderr,
                             "llg: runtime error: covergroup `%s` cross `%s` sampled a product of "
                             "illegal_bins `%s` at %s (IEEE 1800-2009 19.6.3)\n",
                             inst->group->name, cross->name, bin->name, bin->site);
-                    llg_rt_mark_failed();
+                    llg_cov_fatal("illegal_bins product sampled", bin->site);
                     continue;
                 }
                 if (state->cross->counts[b] != UINT64_MAX) state->cross->counts[b]++;
@@ -1740,10 +1751,10 @@ static void llg_cov_format_key(const llg_cov_point_t* point, uint64_t key, char*
 }
 
 // 19.5.5: an illegal value is a run-time error even when another bin also
-// holds it; the simulation continues and the value counts in no bin
-// (decision S45-D3).
+// holds it; it counts in no bin and ends the run (decision S45-D3).
 LLG_NOINLINE static void llg_cov_illegal(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
                             uint32_t decl, uint64_t key) {
+    if (llg_rt_exiting()) return;
     const llg_cov_bin_t* bin = &point->bins[decl];
     char value[32];
     llg_cov_format_key(point, key, value, sizeof value);
@@ -1751,7 +1762,7 @@ LLG_NOINLINE static void llg_cov_illegal(const llg_cov_inst_t* inst, const llg_c
             "llg: runtime error: covergroup `%s` coverpoint `%s` sampled %s, a value of "
             "illegal_bins `%s` at %s (IEEE 1800-2009 19.5.5)\n",
             inst->group->name, point->name, value, bin->name, bin->site);
-    llg_rt_mark_failed();
+    llg_cov_fatal("illegal_bins value sampled", bin->site);
 }
 
 static const llg_cov_seg_t* llg_cov_find(const llg_cov_layout_t* layout, uint64_t key) {
@@ -1987,6 +1998,7 @@ static void llg_cov_sequence_count(llg_cov_history_t* history, uint32_t bin,
 
 static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov_point_t* point,
                                        const llg_cov_tbin_t* bin, int known, uint64_t key) {
+    if (bin->kind != LLG_COV_BIN_ILLEGAL_DEFAULT && llg_rt_exiting()) return;
     char value[32];
     if (known) llg_cov_format_key(point, key, value, sizeof value);
     else snprintf(value, sizeof value, "a value with X or Z bits");
@@ -1997,7 +2009,10 @@ static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov
             "llg: runtime error: covergroup `%s` coverpoint `%s` sampled %s, %s illegal_bins "
             "`%s` at %s (IEEE 1800-2009 19.5.5)\n",
             inst->group->name, point->name, value, what, bin->name, bin->site);
-    llg_rt_mark_failed();
+    // An illegal `default sequence` count reports and the run continues
+    // (S45-D10); an explicit illegal transition ends it (S45-D3).
+    if (bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT) llg_rt_mark_failed();
+    else llg_cov_fatal("illegal_bins transition sampled", bin->site);
 }
 
 // One sample of a coverpoint with transition bins. Every pending attempt
@@ -2014,7 +2029,9 @@ LLG_NOINLINE static void llg_cov_transitions(const llg_cov_inst_t* inst, llg_cov
     uint32_t cls = known ? llg_cov_class(trans, key) : UINT32_MAX;
     history->n_next = 0;
     history->n_done = 0;
-    for (uint32_t i = 0; i < history->n_active; ++i) {
+    // A value with X or Z bits ends every sequence in progress, also one in
+    // the gap of a goto or nonconsecutive repetition (decision S45-D7).
+    for (uint32_t i = 0; cls != UINT32_MAX && i < history->n_active; ++i) {
         llg_cov_attempt_t attempt = history->active[i];
         llg_cov_consume(trans, history, attempt.step, attempt.state - trans->steps[attempt.step].state,
                         cls, attempt.start, 1u);
@@ -2085,7 +2102,9 @@ LLG_NOINLINE static void llg_cov_transitions(const llg_cov_inst_t* inst, llg_cov
 
 void llg_cov_skip(void* record, uint32_t point_index) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
-    if (!inst || point_index >= inst->group->n_points) return;
+    if (!inst || inst->stopped || point_index >= inst->group->n_points) return;
+    // A stopped coverpoint does not see the sample (decision S45-D9).
+    if (inst->points[point_index].stopped) return;
     llg_cov_history_reset(inst->points[point_index].history);
 }
 
@@ -2134,11 +2153,55 @@ LLG_NOINLINE static void llg_cov_hit_default(llg_cov_inst_t* inst, llg_cov_point
     else llg_cov_count(state, (uint64_t)layout->default_bin);
 }
 
+// A stopped coverpoint counts nothing itself, but its crosses still see the
+// value bins it holds (decision S45-D14); its ignored and illegal values give
+// them nothing and report nothing.
+LLG_NOINLINE static void llg_cov_hit_stopped(llg_cov_inst_t* inst, uint32_t point_index,
+                                             const sv4_t* value, const uint8_t* guards) {
+    llg_cov_point_state_t* state = &inst->points[point_index];
+    const llg_cov_point_t* point = &inst->group->points[point_index];
+    if (!state->stopped || !state->layout || !point->crossed) return;
+    state->hit_serial = inst->serial;
+    state->n_hits = 0;
+    if (sv4_is_unknown(*value)) return;
+    uint64_t key = llg_cov_key(point, sv4_to_u64(*value));
+    const llg_cov_layout_t* layout = state->layout;
+    const llg_cov_seg_t* segment = layout->n_segments ? llg_cov_find(layout, key) : NULL;
+    if (segment) {
+        if (segment->removed) return;
+        for (uint32_t e = 0; e < segment->count; ++e) {
+            const llg_cov_entry_t* entry = &layout->entries[segment->first + e];
+            if (!llg_cov_guard(point, entry->decl, guards)) continue;
+            uint64_t bin = entry->base;
+            if (entry->div) {
+                uint64_t element = (entry->pos + (key - segment->lo)) / entry->div;
+                bin += element < entry->last ? element : entry->last;
+            }
+            llg_cov_note_hit(state, bin);
+        }
+        return;
+    }
+    if (point->kind == LLG_COV_POINT_AUTO) {
+        llg_cov_note_hit(state, llg_cov_auto_bin(point, layout->n_auto, key));
+    } else if (point->kind == LLG_COV_POINT_ENUM) {
+        uint32_t lo = 0, hi = point->n_keys;
+        while (lo < hi) {
+            uint32_t mid = lo + (hi - lo) / 2u;
+            if (point->keys[mid] < key) lo = mid + 1u;
+            else hi = mid;
+        }
+        if (lo < point->n_keys && point->keys[lo] == key) llg_cov_note_hit(state, lo);
+    }
+}
+
 void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const uint8_t* guards) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst || inst->stopped || point_index >= inst->group->n_points) return;
     llg_cov_point_state_t* state = &inst->points[point_index];
-    if (state->stopped || !state->layout) return;
+    if (state->stopped || !state->layout) {
+        llg_cov_hit_stopped(inst, point_index, value, guards);
+        return;
+    }
     const llg_cov_point_t* point = &inst->group->points[point_index];
     int known = !sv4_is_unknown(*value);
     uint64_t key = known ? llg_cov_key(point, sv4_to_u64(*value)) : 0u;
@@ -2180,15 +2243,12 @@ void llg_cov_hit(void* record, uint32_t point_index, const sv4_t* value, const u
 void llg_cov_control(void* record, int32_t point, int start) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst) return;
-    // A stop ends the transition sequences in progress (decision S45-D9).
+    // Samples while stopped are not seen; a stop does not end the transition
+    // sequences in progress (decision S45-D9).
     if (point < 0) {
         inst->stopped = (uint8_t)!start;
-        if (!start)
-            for (uint32_t i = 0; i < inst->group->n_points; ++i)
-                llg_cov_history_reset(inst->points[i].history);
     } else if ((uint32_t)point < inst->group->n_points + inst->group->n_crosses) {
         inst->points[point].stopped = (uint8_t)!start;
-        if (!start) llg_cov_history_reset(inst->points[point].history);
     }
 }
 

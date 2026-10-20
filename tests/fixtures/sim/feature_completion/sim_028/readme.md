@@ -14,7 +14,11 @@ only: equal seeds give equal sequences, a restored state replays, a shuffle is
 a permutation, unrelated activity leaves a stream unchanged. `$random` and the
 `$dist_*` functions are fixed by Annex N, so their expected values are
 numbers, produced by the independent transcription `annex_n_reference.c` and
-never captured from llg.
+never captured from llg. Some simulators differ by one in a few wide-range
+`$dist_uniform` results and return x (keeping the seed) for `start >= end`,
+a nonpositive mean, degree of freedom or k-stage, or a negative Erlang mean;
+llg follows the Annex N source, which is normative ("The algorithm for these
+functions is defined by the C code in N.2", SV N.1 L76890).
 
 ## Clauses relied on
 
@@ -35,7 +39,8 @@ never captured from llg.
   get_randstate(), or from a different implementation of get_randstate(), is
   undefined."
 - SV 18.14.1 L31148-31151: "Each module instance, interface instance, program
-  instance, and package has an initialization RNG. ... An initialization RNG
+  instance, and package has an initialization RNG. Each initialization RNG is
+  seeded with the default seed. ... An initialization RNG
   shall be used in the creation of static processes and static initializers".
 - SV 18.14.1 L31152-31160: "Each thread has an independent RNG for all
   randomization system calls invoked from that thread. When a new dynamic
@@ -91,7 +96,7 @@ never captured from llg.
 | `object_streams` | A02, A01 | Object `srandom`/`get_randstate`/`set_randstate` on classes with and without properties, inherited and implicit-`this` calls, array elements, independence from thread draws, hierarchical object seeding, the one value creation takes, 2-state seed conversion and shallow copies. |
 | `state_replay` | A02 | `get_randstate`/`set_randstate` of the running thread replays `$urandom`, `$urandom_range`, `shuffle` and fork-child seeding; through a process handle it replays another process's draws; X/Z arguments of `srandom`, `$urandom` and `$urandom_range` read as 0 and real arguments round. |
 | `shuffle_streams` | A02 | Permutations of queue, dynamic, fixed, string, real and class-handle arrays, empty and single-element shuffles; reseeding the calling thread reproduces the order and the following draws; a child thread's shuffle leaves the parent alone; a method body shuffles from the thread, not its object. |
-| `thread_stability` | A01 | No `.out`: the suite runs it with and without `-D EXTRA_ACTIVITY` on every backend and optimizer mode and requires identical output apart from `extra` lines. The extra activity is a new instance before and after `tb`'s own, a display, and a thread added after `tb`'s existing processes that creates and seeds an object, shuffles, draws and forks. It also checks that two identical instances draw different values (S28-D7). |
+| `thread_stability` | A01 | No `.out`: the suite runs it with and without `-D EXTRA_ACTIVITY` on every backend and optimizer mode and requires identical output apart from `extra` lines. The extra activity is a new instance before and after `tb`'s own, a display, and a thread added after `tb`'s existing processes that creates and seeds an object, shuffles, draws and forks. It also checks that two identical instances draw the same value, because every initialization RNG is seeded with the default seed (S28-D7). |
 | `neg_srandom_override` | nearest illegal | A class declaring `srandom` is a compile error ("cannot override built-in method"). |
 | `neg_randstate_invalid` | boundary | A state string not produced by `get_randstate` is undefined (18.13.5); llg reports `invalid randstate string`, keeps the stream and exits with status 1 (S28-D9). |
 | `neg_srandom_null` | boundary | `srandom` through a null handle is a null object access (8.4), a run-time error. |

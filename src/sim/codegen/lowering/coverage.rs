@@ -122,9 +122,10 @@ const MAX_SELECT_BOXES: u64 = 1 << 10;
 /// rejected.
 const WILDCARD_RANGE_LIMIT: u64 = 1 << 12;
 
-/// Declaration identity of a covergroup type: every elaboration of one
-/// source declaration shares its type coverage (decision S44-D1).
-pub(super) type CoverageTypeKey = (Option<std::sync::Arc<str>>, u32, u32);
+/// Identity of a covergroup type: the elaborated declaration, so the
+/// covergroup declared in each module instance is a type of its own
+/// (decision S44-D1).
+pub(super) type CoverageTypeKey = NodeId;
 
 const COVERAGE_RECORD_FIELD: &str = "llg_cov_record";
 
@@ -233,8 +234,7 @@ impl<'a> Codegen<'a> {
     }
 
     fn coverage_type_index(&mut self, group: NodeId) -> usize {
-        let node = self.node(group);
-        let key: CoverageTypeKey = (node.file.clone(), node.line, node.col);
+        let key: CoverageTypeKey = group;
         if let Some(index) = self.coverage_types.get(&key) {
             return *index;
         }
@@ -2471,7 +2471,8 @@ impl<'a> Codegen<'a> {
     /// argument or an owner property, 19.3) becomes a waiter per instance:
     /// a captured helper of the sample method whose only capture is the
     /// covergroup object, started by every `new` as a runtime-owned process
-    /// (decision S44-D5). It loops on the event and samples its instance;
+    /// (decision S44-D5) whose first turn, arming the event, runs inside
+    /// `new` (S44-D6). It loops on the event and samples its instance;
     /// the capture keeps the instance, and through it the owner and the
     /// arguments, reachable for the rest of the run (S44-D3).
     fn emit_covergroup_waiter(

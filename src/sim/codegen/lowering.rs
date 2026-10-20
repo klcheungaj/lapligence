@@ -1304,7 +1304,7 @@ struct Codegen<'a> {
     fork_branch_receiver: Option<IrChandleExpr>,
     /// Constructed covergroup declaration → its lowering (SIM-044).
     covergroups: HashMap<NodeId, coverage::CovergroupLowering>,
-    /// Covergroup declaration identity → `model.coverage_types` index.
+    /// Elaborated covergroup declaration → `model.coverage_types` index.
     coverage_types: HashMap<coverage::CoverageTypeKey, usize>,
     /// Built-in `option`/`type_option` members of every covergroup,
     /// coverpoint and cross (19.10) -> their owners.

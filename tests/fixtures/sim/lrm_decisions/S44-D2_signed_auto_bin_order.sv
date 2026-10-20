@@ -10,10 +10,16 @@
 // <4,5,6,7>." The example is unsigned; the text does not order the values
 // of a signed coverpoint. llg orders them numerically, so a 3-bit signed
 // coverpoint with three bins has <-4:-3>, <-2:-1> and <0,1,2,3>.
+// get_inst_coverage() reads instance data, which option.per_instance = 1
+// requires: 19.7 Table 19-1 (L33285-33289) "When true, coverage information
+// for this covergroup instance shall be saved in the coverage database ...
+// When false, implementations are not required to save instance-specific
+// information."
 module tb;
   bit signed [2:0] s;
   bit [2:0] u;
   covergroup cg;
+    option.per_instance = 1;
     cs: coverpoint s { option.auto_bin_max = 3; }
     cu: coverpoint u { option.auto_bin_max = 3; }
   endgroup

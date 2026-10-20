@@ -15,7 +15,9 @@
 // sample() method." 19.8 (Table 19-5, L33562-33566): stop() "Stops
 // collecting coverage information"; start() "Starts collecting coverage
 // information". The text does not say which process waits for the event
-// of an instance, nor how long it waits.
+// of an instance, nor how long it waits. option.per_instance = 1 keeps the
+// instance coverage (19.7 Table 19-1) portable; get_coverage() is the
+// weighted average of the instances (19.11.3, merge_instances is 0).
 class Source;
   logic clk = 0;
   bit [1:0] val;
@@ -23,6 +25,7 @@ endclass
 class Monitor;
   Source src;
   covergroup cg @(posedge src.clk);
+    option.per_instance = 1;
     coverpoint src.val;
   endgroup
   function new(Source s);

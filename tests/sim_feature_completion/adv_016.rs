@@ -194,7 +194,7 @@ fn unbounded_recursion_stops_at_the_depth_limit() {
 }
 
 #[test]
-fn invalid_weights_counts_and_ratios_are_located_runtime_errors() {
+fn invalid_counts_and_ratios_are_located_runtime_errors() {
     let expected = include_str!("../fixtures/sim/feature_completion/adv_016/invalid_runtime.out");
     sim_cli::run_case_checked_matrix(SUITE, "invalid_runtime", &[], &|label, output| {
         runtime_failure(
@@ -203,19 +203,39 @@ fn invalid_weights_counts_and_ratios_are_located_runtime_errors() {
             expected,
             &[
                 (
-                    "invalid_runtime.sv:14:7: the weight of rule 1 is negative; no rule is \
-                     generated",
+                    "invalid_runtime.sv:15:7: all rule weights are zero; nothing is generated",
                     2,
                 ),
                 (
-                    "invalid_runtime.sv:13:29: randsequence repeat count is negative or unknown",
+                    "invalid_runtime.sv:14:29: randsequence repeat count is negative or unknown",
                     1,
                 ),
                 (
-                    "invalid_runtime.sv:15:16: rand join expression is not a real number in 0.0 \
+                    "invalid_runtime.sv:16:16: rand join expression is not a real number in 0.0 \
                      to 1.0; 0.5 is used",
                     1,
                 ),
+            ],
+        );
+    });
+}
+
+/// A negative weight in a recursive production ends the run at once,
+/// without final procedures (S16-D3).
+#[test]
+fn a_negative_weight_ends_the_run() {
+    let expected = include_str!("../fixtures/sim/feature_completion/adv_016/invalid_weight.out");
+    sim_cli::run_case_checked_matrix(SUITE, "invalid_weight", &[], &|label, output| {
+        runtime_failure(
+            label,
+            output,
+            expected,
+            &[
+                (
+                    "invalid_weight.sv:13:7: the weight of rule 1 is negative",
+                    1,
+                ),
+                ("randsequence weight is negative", 1),
             ],
         );
     });

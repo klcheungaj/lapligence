@@ -1,9 +1,9 @@
 // Decision S40-D4: open-array element access with an index outside its
-// dimension's range, or with a different number of indices than the array
-// has unpacked dimensions, does not touch the array: svGetArrElemPtr*
-// returns NULL, svGet*ArrElem* reads the element type's default (X for
-// logic, 0 for bit) and svPut*ArrElem* does nothing. Reading a logic array
-// through the svBit accessors maps X and Z to 0.
+// dimension's range does not touch the array: svGetArrElemPtr* returns
+// NULL, svGet*ArrElem* reads the element type's default (X for logic, 0 for
+// bit) and svPut*ArrElem* does nothing. Reading a logic array through the
+// svBit accessors maps X and Z to 0. (A wrong number of indices ends the
+// simulation: S40-D6.)
 //
 // IEEE 1800-2009 H.12.4 (SystemVerilog-1800-2009.txt L73337-73340):
 //   "If the actual layout of the SystemVerilog array passed as an argument for

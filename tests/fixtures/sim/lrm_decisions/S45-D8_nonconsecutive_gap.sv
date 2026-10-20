@@ -10,9 +10,15 @@
 // again." L32730: "Transition bin b7 is incremented on the 13th sample." The
 // rule alone would also end b7 on samples 14 to 18; llg follows the
 // example. at_least 2 shows the count stays 1.
+// get_inst_coverage() reads instance data, which option.per_instance = 1
+// requires: 19.7 Table 19-1 (L33285-33289) "When true, coverage information
+// for this covergroup instance shall be saved in the coverage database ...
+// When false, implementations are not required to save instance-specific
+// information."
 module tb;
   bit [3:0] v;
   covergroup g;
+    option.per_instance = 1;
     once: coverpoint v { bins b7 = (1 => 2 [= 3:6] => 5); }
     twice: coverpoint v { option.at_least = 2; bins b7 = (1 => 2 [= 3:6] => 5); }
   endgroup

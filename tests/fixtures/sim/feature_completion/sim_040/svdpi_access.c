@@ -69,8 +69,9 @@ DPI_DLLESPEC void sa_query(const svOpenArrayHandle c, const svOpenArrayHandle p,
     }
     printf("c invalid=%d,%d\n", svSize(c, -1), svLeft(c, 9));
     packed = (const svBitVecVal *)svGetArrayPtr(p);
-    printf("p dims=%d bytes=%d value=%x elem=%d\n", svDimensions(p), svSizeOfArray(p),
-           packed ? (unsigned)(packed[0] & 0xffu) : 0u, svGetArrElemPtr1(p, 0) != NULL);
+    /* p has no unpacked dimension: any element index count is wrong (S40-D6). */
+    printf("p dims=%d bytes=%d value=%x\n", svDimensions(p), svSizeOfArray(p),
+           packed ? (unsigned)(packed[0] & 0xffu) : 0u);
     printf("p");
     show_range(p, 0);
     show_range(p, 1);
@@ -93,9 +94,9 @@ DPI_DLLESPEC void sa_pointers(const svOpenArrayHandle c)
     printf("ptr first=%d last=%d\n",
            (int *)svGetArrElemPtr3(c, 0, 2, -2) == (int *)svGetArrayPtr(c),
            (int *)svGetArrElemPtr3(c, 1, 4, -1) == (int *)svGetArrayPtr(c) + 11);
-    printf("ptr invalid=%d%d%d%d%d\n", svGetArrElemPtr3(c, 2, 2, -1) == NULL,
-           svGetArrElemPtr3(c, 1, 5, -1) == NULL, svGetArrElemPtr3(c, 1, 2, 0) == NULL,
-           svGetArrElemPtr2(c, 1, 2) == NULL, svGetArrElemPtr1(c, 1) == NULL);
+    /* A wrong number of indices ends the run (S40-D6, svdpi_index_count). */
+    printf("ptr invalid=%d%d%d\n", svGetArrElemPtr3(c, 2, 2, -1) == NULL,
+           svGetArrElemPtr3(c, 1, 5, -1) == NULL, svGetArrElemPtr3(c, 1, 2, 0) == NULL);
     *(int *)svGetArrElemPtr3(c, 1, 3, -2) = -1;
     *(int *)svGetArrElemPtr(c, 0, 2, -1) = -2;
 }

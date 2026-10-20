@@ -932,6 +932,17 @@ fn collect_effects(
                 if operation.written_access().is_some() {
                     effects.push(ExecutionEffect::ImmediateStore);
                 }
+                // A bins array size that is not positive (at construction)
+                // and an illegal bin hit (when sampling) end the run (S45-D3,
+                // S45-D5).
+                if matches!(
+                    operation.as_ref(),
+                    crate::sim::ir::IrCoverageStmt::Ready { .. }
+                        | crate::sim::ir::IrCoverageStmt::SampleInstance { .. }
+                        | crate::sim::ir::IrCoverageStmt::SampleRegistered { .. }
+                ) {
+                    effects.push(ExecutionEffect::Terminate);
+                }
                 if let Some(function) = operation.called_function() {
                     visited_calls.record(CallTarget::of_call(function, false, None));
                     collect_callee_effects(ir, function, false, effects, visited_calls);
@@ -1949,12 +1960,18 @@ fn collect_expression_effects(
             }
             IrSysFunc::Randcase { weights, .. } => {
                 effects.push(ExecutionEffect::RuntimeService);
+                // A negative signed weight ends the run (S31-D4, S16-D3).
+                if weights.iter().any(|weight| weight.signed) {
+                    effects.push(ExecutionEffect::Terminate);
+                }
                 for weight in weights {
                     collect_expression_effects(ir, weight, effects, visited_calls);
                 }
             }
             IrSysFunc::RandStep { stream, .. } => {
                 effects.push(ExecutionEffect::RuntimeService);
+                // An X or Z state value ends the run (S29-D1).
+                effects.push(ExecutionEffect::Terminate);
                 if let Some(stream) = stream {
                     collect_chandle_effects(ir, stream, effects, visited_calls);
                 }
@@ -3029,6 +3046,7 @@ mod tests {
                 location: "test.sv:1".into(),
                 fatal_finish_number: Some(0),
                 runtime_failure: false,
+                skip_finals: false,
             },
             IrStmt::Object(Box::new(IrObjectStmt::ProcessControl {
                 op: IrProcessControl::Kill,

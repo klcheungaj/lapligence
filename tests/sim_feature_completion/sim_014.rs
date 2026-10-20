@@ -104,15 +104,15 @@ fn triggered_state_identity_and_wait_order() {
 }
 
 #[test]
-fn failed_wait_order_without_else_reports_a_runtime_error() {
+fn failed_wait_order_without_else_ends_the_run() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_014/wait_order_error.out");
     sim_cli::run_case_checked_matrix(SUITE, "wait_order_error", &[], &|label, output| {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(output.status.success(), "{label}: {stderr}");
+        assert_eq!(output.status.code(), Some(1), "{label}: {stderr}");
         assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
         assert!(
             stderr
-                .contains("llg: severity error: tb:9:9: wait_order: events triggered out of order"),
+                .contains("llg: severity fatal: tb:9:9: wait_order: events triggered out of order"),
             "{label}: {stderr}"
         );
     });

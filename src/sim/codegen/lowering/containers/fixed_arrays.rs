@@ -1588,6 +1588,7 @@ impl<'a> Codegen<'a> {
                 location: self.source_location(lhs),
                 fatal_finish_number: Some(0),
                 runtime_failure: true,
+                skip_finals: false,
             }]),
             check: IrUniquePriorityCheck::None,
         });
@@ -1750,6 +1751,7 @@ impl<'a> Codegen<'a> {
                 location: self.source_location(lhs),
                 fatal_finish_number: Some(0),
                 runtime_failure: true,
+                skip_finals: false,
             }]),
             check: IrUniquePriorityCheck::None,
         });

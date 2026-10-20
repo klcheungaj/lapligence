@@ -1,6 +1,6 @@
-// Decision S44-D1: a covergroup declared in a module is one covergroup type
-// for every instance of that module; get_coverage() of any instance averages
-// the instances of all module instances.
+// Decision S44-D1: a covergroup declared in a module is a covergroup type of
+// its own in each instance of that module; get_coverage() of an instance
+// averages only the instances created in the same module instance.
 //
 // IEEE 1800-2009 19.8 (SystemVerilog-1800-2009.txt L33569-33571): "The
 // get_coverage() method returns the cumulative (or type) coverage, which
@@ -10,9 +10,12 @@
 // "When type_option.merge_instances is false, type coverage is computed as
 // the weighted average of all instances." The text does not say whether the
 // covergroup declarations elaborated in two module instances are one type:
-// llg treats one source declaration as one type.
+// llg treats each elaborated declaration as its own type, as industry-standard
+// behaviour does. option.per_instance = 1 keeps the instance coverage
+// (19.7 Table 19-1) portable.
 module unit(input logic clk, input logic [1:0] d);
   covergroup cg @(posedge clk);
+    option.per_instance = 1;
     coverpoint d;
   endgroup
   cg c = new;
