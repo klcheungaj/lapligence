@@ -289,6 +289,7 @@ fn decode_semantic_kind(raw: u32) -> Result<SemanticKind, SlangError> {
         30 => SemanticKind::Constraint,
         31 => SemanticKind::Coverage,
         32 => SemanticKind::Production,
+        33 => SemanticKind::Specify,
         255 => SemanticKind::Unsupported,
         _ => return Err(invalid_native("semantic node has an unknown kind")),
     })
@@ -317,6 +318,14 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
             subkind,
             super::SEMANTIC_PRODUCTION_DECLARATION..=super::SEMANTIC_PRODUCTION_CASE
         ),
+        33 => matches!(
+            subkind,
+            super::SEMANTIC_SPECIFY_BLOCK..=super::SEMANTIC_SPECIFY_TIMING_CHECK
+        ),
+        12 => matches!(
+            subkind,
+            0 | super::SEMANTIC_PARAMETER_SPECPARAM | super::SEMANTIC_PARAMETER_PATHPULSE
+        ),
         28 => matches!(subkind, 0..=13),
         30 => matches!(
             subkind,
@@ -330,7 +339,7 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
                 | SEMANTIC_VARIABLE_ASSERTION_LOCAL
                 | SEMANTIC_VARIABLE_PATTERN_BINDING
         ),
-        2 | 3 | 5..=7 | 10..=12 | 16 | 17 | 23 | 24 | 27 | 29 => subkind == 0,
+        2 | 3 | 5..=7 | 10 | 11 | 16 | 17 | 23 | 24 | 27 | 29 => subkind == 0,
         255 => matches!(
             subkind,
             0 | SEMANTIC_PATTERN_INVALID
@@ -443,6 +452,28 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
             node.auxiliary & !super::PRODUCTION_RULE_RAND_JOIN == 0
         }
         (32, _, _) => node.auxiliary == 0,
+        // A module path's connection, polarity, edge and state-dependence
+        // fields; a polarity field never holds 3.
+        (33, super::SEMANTIC_SPECIFY_PATH, _) => {
+            let field = |shift: u32| (node.auxiliary >> shift) & super::SPECIFY_PATH_FIELD_MASK;
+            node.auxiliary
+                & !(super::SPECIFY_PATH_FULL
+                    | super::SPECIFY_PATH_FIELD_MASK << super::SPECIFY_PATH_POLARITY_SHIFT
+                    | super::SPECIFY_PATH_FIELD_MASK << super::SPECIFY_PATH_EDGE_SHIFT
+                    | super::SPECIFY_PATH_FIELD_MASK << super::SPECIFY_PATH_EDGE_POLARITY_SHIFT
+                    | super::SPECIFY_PATH_STATE_DEPENDENT)
+                == 0
+                && field(super::SPECIFY_PATH_POLARITY_SHIFT) != 3
+                && field(super::SPECIFY_PATH_EDGE_POLARITY_SHIFT) != 3
+        }
+        (33, super::SEMANTIC_SPECIFY_PULSE_STYLE, _) => (super::SPECIFY_PULSE_ONEVENT
+            ..=super::SPECIFY_PULSE_NOSHOWCANCELLED)
+            .contains(&node.auxiliary),
+        // Zero is a timing check the frontend could not classify.
+        (33, super::SEMANTIC_SPECIFY_TIMING_CHECK, _) => {
+            node.auxiliary <= super::SPECIFY_CHECK_NOCHANGE
+        }
+        (33, _, _) => node.auxiliary == 0,
         (31, super::SEMANTIC_COVERAGE_CROSS, _) => {
             node.auxiliary & !super::COVER_CROSS_OF_CROSS == 0
         }

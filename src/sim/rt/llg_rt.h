@@ -574,6 +574,11 @@ struct llg_net {
      * It is published after every resolution, so strength-only changes wake
      * its readers while ordinary value readers stay asleep. */
     sv4_t* strength;
+    /* Module paths into this net (IEEE 1800-2009 30.4), bound by
+     * llg_module_paths_start. NULL for every net without a specify path, so
+     * generated initializers leave it out. A bound net also has
+     * propagation_enabled and a per-bit propagation_bits array. */
+    struct llg_module_path_dest* path_dest;
 };
 
 /* One contiguous run: view bits [signal_bit, signal_bit + bit_count) map to
@@ -628,6 +633,68 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
                                int slot, sv4_t value, sv4_t mask,
                                uint64_t rise, uint64_t fall,
                                uint64_t turn_off);
+
+// ── Module path delays ────────────────────────────────────────────────────────
+
+/* Simple module paths (IEEE 1364-2001 14.2-14.4, IEEE 1800-2009 30.4-30.6).
+ * A generated model emits one set per module instance that declares paths.
+ * Terminals are storage-bit ranges (bit 0 is the least significant storage
+ * bit). `delays` holds scheduler ticks per transition in the order
+ * 0->1, 1->0, 0->z, z->1, 1->z, z->0, 0->x, x->1, 1->x, x->0, x->z, z->x and
+ * stays writable so back-annotation can replace it; a new value applies to
+ * the next scheduled destination transition. */
+#define LLG_PATH_TRANSITIONS 12
+
+typedef struct llg_module_path {
+    uint32_t source;       /* index into the set's sources */
+    uint32_t source_lsb;
+    uint32_t source_width;
+    uint32_t dest_lsb;
+    uint32_t dest_width;
+    uint8_t full;          /* 1: `*>` every bit to every bit, 0: `=>` */
+    uint8_t polarity;      /* 0 unknown, 1 positive, 2 negative (metadata) */
+    uint64_t delays[LLG_PATH_TRANSITIONS];
+    const char* origin;    /* "file:line:col" of the declaration */
+} llg_module_path_t;
+
+typedef struct llg_module_path_set llg_module_path_set_t;
+
+typedef struct llg_module_path_dest {
+    llg_net_t* net;
+    llg_module_path_t* paths;
+    uint32_t n_paths;
+    /* Runtime state, owned between llg_module_paths_start and cleanup. */
+    llg_module_path_set_t* set;
+    uint64_t* path_stamps; /* per path: latest change of a full source range */
+} llg_module_path_dest_t;
+
+struct llg_module_path_set {
+    const char* scope;     /* hierarchical instance name */
+    sv4_t* const* sources; /* borrowed model storage of each source signal */
+    uint32_t n_sources;
+    llg_module_path_dest_t* dests;
+    uint32_t n_dests;
+    /* Runtime state, owned between llg_module_paths_start and cleanup. */
+    sv4_t* last;           /* per source: value at the last refresh */
+    uint64_t** stamps;     /* per source bit: time of its last change */
+    llg_module_path_set_t* next;
+};
+
+/* Bind the set's destination nets and take the current source values as the
+ * reference for change detection. Called once per set during model
+ * initialization, after net and signal storage exist; the runtime releases
+ * the state in llg_rt_cleanup. A source that has not changed since counts as
+ * changed at time 0. */
+void llg_module_paths_start(llg_module_path_set_t* set);
+/* Record the current time for every source bit that changed since the last
+ * record. Generated hidden processes call it whenever a source changes. */
+void llg_module_path_stamp(llg_module_path_set_t* set);
+/* The bound sets, most recently started first, linked through `next`. */
+llg_module_path_set_t* llg_module_path_sets(void);
+/* 1 when bit `bit` of a path destination has a scheduled update; then its
+ * absolute time and four-state value (0, 1, 2 = x, 3 = z) are stored. */
+int llg_net_path_pending(const llg_net_t* net, uint32_t bit, uint64_t* time,
+                         int* state);
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 

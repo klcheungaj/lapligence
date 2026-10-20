@@ -2817,6 +2817,65 @@ fn s26_d20_comments_across_strings() {
 }
 
 #[test]
+fn a7_d1_path_delay_selection() {
+    run_decision(
+        "A7-D1_path_delay_selection",
+        include_str!("fixtures/sim/lrm_decisions/A7-D1_path_delay_selection.out"),
+    );
+}
+
+#[test]
+fn a7_d2_path_delays_destination_net() {
+    run_decision(
+        "A7-D2_path_delays_destination_net",
+        include_str!("fixtures/sim/lrm_decisions/A7-D2_path_delays_destination_net.out"),
+    );
+}
+
+#[test]
+fn a7_d3_unchanged_input_time_zero() {
+    run_decision(
+        "A7-D3_unchanged_input_time_zero",
+        include_str!("fixtures/sim/lrm_decisions/A7-D3_unchanged_input_time_zero.out"),
+    );
+}
+
+#[test]
+fn a7_d4_duplicate_path_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/A7-D4_duplicate_path_rejected.out").is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "A7-D4_duplicate_path_rejected",
+        "duplicate timing path",
+    );
+}
+
+#[test]
+fn a7_d5_parameter_in_specify_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/A7-D5_parameter_in_specify_rejected.out")
+            .is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "A7-D5_parameter_in_specify_rejected",
+        "parameters cannot be used in specify blocks",
+    );
+}
+
+#[test]
+fn a7_d6_path_destination_initial_z() {
+    run_decision(
+        "A7-D6_path_destination_initial_z",
+        include_str!("fixtures/sim/lrm_decisions/A7-D6_path_destination_initial_z.out"),
+    );
+}
+
+#[test]
 fn a13_d1_consequent_clock() {
     run_decision(
         "A13-D1_consequent_clock",

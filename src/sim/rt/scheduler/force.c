@@ -3,6 +3,7 @@ static sv4_t llg_net_compute(llg_net_t* net);
 static void force_recompute_target(sv4_t* target, llg_net_t* net);
 static void llg_net_alias_refresh_all(llg_net_t* net);
 static void llg_net_cancel_propagation(llg_net_t* net);
+static void llg_net_propagation_sync(llg_net_t* net);
 static void llg_net_strength_publish(llg_net_t* net);
 
 // Grow one live-binding table to hold at least `needed` entries. The grown copy
@@ -212,6 +213,7 @@ static void force_recompute_target(sv4_t* target, llg_net_t* net) {
     }
     sig_write(target, *value);
     if (net) {
+        llg_net_propagation_sync(net);
         llg_net_alias_refresh_all(net);
         llg_net_strength_publish(net);
     }

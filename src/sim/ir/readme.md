@@ -12,6 +12,14 @@ validation covers each variant and its cross-table constraints.
 row arity, scalar inputs and the unsigned one-bit result. Optimizer and execution
 walkers retain every input; row evaluation stays out of expression trees.
 
+`timing.rs` holds simple module paths: `IrModel::module_paths` sets of
+destination net groups with storage-bit terminal ranges, full/parallel
+connection, polarity metadata and twelve-transition delays in scheduler ticks
+(`expand_path_delays` applies Tables 30-2 and 30-3). Validation checks packed
+sources, unique existing destination groups, ranges within storage and equal
+parallel widths; `ModulePathStamp` names a set. The storage audit reads every
+source.
+
 `coverage.rs` holds functional coverage (SIM-044, SIM-045): `covergroups` and
 `coverage_types` are static coverpoint bin tables (validated for width, key
 order and segment shape), transition automata (`IrCoverTransitions`) and

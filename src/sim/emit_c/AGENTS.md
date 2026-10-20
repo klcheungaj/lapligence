@@ -226,6 +226,14 @@ scalar input expressions and keeps selected output indices, sensitivity,
 strengths and inertial publication. Row count affects only table data, never the
 executable gate body.
 
+Module path sets emit after every net group: a source pointer table, one
+writable `llg_module_path_t` row array per destination, the destination and
+set records and one `llg_module_paths_start` call in the storage defaults.
+Only destination groups gain `.propagation_enabled = 1` and per-bit
+propagation records; a model without paths emits exactly what it did
+before. `ModulePathStamp` is one `llg_module_path_stamp` call; the legacy
+statement renderer rejects it.
+
 A sequential definition emits one `static inline llg_udp_step_<t>` and each
 instance one file-scope state record (`IrModel::udp_states`) holding the
 base-3 code of its prior inputs and its state, initialized to all-X inputs

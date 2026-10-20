@@ -1964,6 +1964,84 @@ static void test_inertial_lifetime(void) {
     llg_rt_cleanup();
 }
 
+// Module paths: a two-bit source `a`, a one-bit destination net `y`, the
+// parallel path a[0] => y (rise 3, fall 5) and the full path a[1] *> y (7).
+static sv4_t path_source = SV4_EMPTY;
+static sv4_t path_cell = SV4_EMPTY;
+static llg_inertial_t* path_bits[1];
+static llg_net_t path_net;
+static llg_module_path_t path_rows[2] = {
+    { 0, 0, 1, 0, 1, 0, 1, { 3, 5, 3, 3, 5, 5, 3, 3, 5, 5, 5, 3 }, "t.v:1:1" },
+    { 0, 1, 1, 0, 1, 1, 2, { 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7 }, "t.v:2:1" },
+};
+static llg_module_path_dest_t path_dest = { &path_net, path_rows, 2, NULL, NULL };
+static sv4_t* const path_sources[] = { &path_source };
+static llg_module_path_set_t path_set = { "tb.u", path_sources, 1, &path_dest, 1,
+                                          NULL, NULL, NULL };
+
+static void path_check_pending(uint64_t time, int state) {
+    uint64_t due = 0;
+    int value = -1;
+    CHECK(llg_net_path_pending(&path_net, 0, &due, &value));
+    CHECK(due == time);
+    CHECK(value == state);
+}
+
+LLG_SELFTEST_PROCESS(module_path_proc, 3) {
+    LLG_SELFTEST_BEGIN(3);
+    // t=0: a[1] rises with the destination. Both inputs count as changed at
+    // time 0, so the smaller rise delay (3) of the simultaneous paths wins.
+    sv4_replace(&path_source, SV4_C(2, 2));
+    llg_net_write(&path_net, 0, test_temp(SV4_C(1, 1)));
+    path_check_pending(3, 1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 10));
+    CHECK(!llg_net_path_pending(&path_net, 0, NULL, NULL));
+    CHECK(sv4_same(path_net.resolved, test_temp(SV4_C(1, 1))));
+    // t=10: a[0] changes and the stamp process records it; the destination
+    // follows at 12, so the latest input's fall delay counts from 10.
+    sv4_replace(&path_source, SV4_C(3, 2));
+    llg_module_path_stamp(&path_set);
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 2));
+    llg_net_write(&path_net, 0, test_temp(SV4_C(0, 1)));
+    path_check_pending(15, 0);
+    // A rewritten delay applies to the next scheduled transition.
+    CHECK(llg_module_path_sets() == &path_set);
+    CHECK(path_set.next == NULL && strcmp(path_set.scope, "tb.u") == 0);
+    llg_module_path_sets()->dests[0].paths[0].delays[0] = 20;
+    LLG_SELFTEST_AWAIT(3, llg_arm_time(self, 8));
+    CHECK(sv4_same(path_net.resolved, test_temp(SV4_C(0, 1))));
+    llg_net_write(&path_net, 0, test_temp(SV4_C(1, 1)));
+    path_check_pending(30, 1);
+    LLG_SELFTEST_FINISH();
+}
+
+static void test_module_paths(void) {
+    llg_rt_init();
+    sv4_replace(&path_source, SV4_C(0, 2));
+    sv4_replace(&path_cell, SV4_Z(1));
+    path_net = (llg_net_t){ .resolved = SV4_EMPTY, .width = 1,
+                            .resolution = LLG_RESOLVE_WIRE, .n_drivers = 1,
+                            .drivers = (sv4_t* const[]){ &path_cell },
+                            .strength0 = (const uint8_t[]){ 6 },
+                            .strength1 = (const uint8_t[]){ 6 },
+                            .index_root = -1, .propagation_enabled = 1,
+                            .propagation_bits = path_bits };
+    sv4_replace(&path_net.resolved, SV4_Z(1));
+    llg_module_paths_start(&path_set);
+    CHECK(path_net.path_dest == &path_dest && path_dest.set == &path_set);
+    llg_spawn(&module_path_proc_desc, "module-paths");
+    llg_rt_run();
+    CHECK(!llg_rt_failed());
+    llg_rt_cleanup();
+    // Cleanup releases the runtime state and unbinds the net.
+    CHECK(path_net.path_dest == NULL && path_set.last == NULL);
+    CHECK(llg_module_path_sets() == NULL);
+    CHECK(path_bits[0] == NULL);
+    sv4_destroy(&path_net.resolved);
+    sv4_destroy(&path_cell);
+    sv4_destroy(&path_source);
+}
+
 static int run_time_overflow_probe(void) {
     llg_rt_init();
     llg_spawn(&time_overflow_proc_desc, "time-overflow");
@@ -2458,6 +2536,7 @@ static int run_selftests(int argc, char** argv) {
     test_force_wakes_waiters();
     test_clear_temporaries();
     test_inertial_lifetime();
+    test_module_paths();
     test_clear_temporaries();
     test_time_scaled_rounding();
     test_clear_temporaries();

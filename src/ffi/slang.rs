@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 27;
+const ABI_VERSION: u32 = 28;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -685,6 +685,9 @@ pub enum SemanticKind {
     /// nodes; the subkind is a `SEMANTIC_PRODUCTION_*` code (IEEE 1800-2009
     /// 18.17).
     Production,
+    /// A specify block or one of its items; the subkind is a
+    /// `SEMANTIC_SPECIFY_*` code (IEEE 1364-2001 14, IEEE 1800-2009 30).
+    Specify,
     Unsupported,
 }
 
@@ -712,6 +715,25 @@ pub(crate) const SEMANTIC_PRODUCTION_CODE_BLOCK: u32 = 4;
 pub(crate) const SEMANTIC_PRODUCTION_IF: u32 = 5;
 pub(crate) const SEMANTIC_PRODUCTION_REPEAT: u32 = 6;
 pub(crate) const SEMANTIC_PRODUCTION_CASE: u32 = 7;
+/// Specify subkinds (ABI v28); see the C header for the edges each carries.
+pub(crate) const SEMANTIC_SPECIFY_BLOCK: u32 = 1;
+pub(crate) const SEMANTIC_SPECIFY_PATH: u32 = 2;
+pub(crate) const SEMANTIC_SPECIFY_PULSE_STYLE: u32 = 3;
+pub(crate) const SEMANTIC_SPECIFY_TIMING_CHECK: u32 = 4;
+/// Module path auxiliary: `*>` (full) rather than `=>` (parallel).
+pub(crate) const SPECIFY_PATH_FULL: u64 = 1 << 0;
+/// Shifts of the two-bit polarity (0 unknown, 1 `+`, 2 `-`) and edge
+/// (0 none, 1 posedge, 2 negedge, 3 edge) fields of a path's auxiliary.
+pub(crate) const SPECIFY_PATH_POLARITY_SHIFT: u32 = 1;
+pub(crate) const SPECIFY_PATH_EDGE_SHIFT: u32 = 3;
+pub(crate) const SPECIFY_PATH_EDGE_POLARITY_SHIFT: u32 = 5;
+pub(crate) const SPECIFY_PATH_FIELD_MASK: u64 = 3;
+pub(crate) const SPECIFY_PATH_STATE_DEPENDENT: u64 = 1 << 7;
+/// Pulse-style declaration codes (14.6.4 / 30.7.4).
+pub(crate) const SPECIFY_PULSE_ONEVENT: u64 = 1;
+pub(crate) const SPECIFY_PULSE_NOSHOWCANCELLED: u64 = 4;
+/// System timing check codes, `$setup` (1) through `$nochange` (12).
+pub(crate) const SPECIFY_CHECK_NOCHANGE: u64 = 12;
 /// A rule whose production list is a `rand join` (18.17.5).
 pub(crate) const PRODUCTION_RULE_RAND_JOIN: u64 = 1 << 0;
 /// A cross item names another cross (not 1800-2009 syntax).
@@ -898,6 +920,10 @@ pub const SEMANTIC_VARIABLE_ASSERTION_LOCAL: u32 = 232;
 /// Conditional pattern `.name` bindings are lexical temporaries rather than
 /// instance signals.
 pub const SEMANTIC_VARIABLE_PATTERN_BINDING: u32 = 234;
+/// A specparam (V 3.11.3, SV 6.20.5), exported as a parameter node.
+pub const SEMANTIC_PARAMETER_SPECPARAM: u32 = 236;
+/// A `PATHPULSE$` pulse-limit specparam (14.6.1 / 30.7.1); no constant.
+pub const SEMANTIC_PARAMETER_PATHPULSE: u32 = 237;
 pub const CLOCKING_BLOCK_DEFAULT: u64 = 1 << 0;
 pub const CLOCKING_BLOCK_GLOBAL: u64 = 1 << 1;
 pub const CLOCKING_INPUT_EDGE_SHIFT: u32 = 2;

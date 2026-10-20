@@ -67,6 +67,11 @@ pub use fixed_array_cells::{
 };
 mod fixed_array_reductions;
 pub use fixed_array_reductions::{IrFixedArrayReduction, IrFixedArrayReductionSource};
+mod timing;
+pub use timing::{
+    expand_path_delays, IrModulePath, IrModulePathDestination, IrModulePathSet, IrPathPolarity,
+    PATH_TRANSITIONS,
+};
 mod udp;
 pub use udp::{
     IrUdpEdge, IrUdpInput, IrUdpNext, IrUdpOutput, IrUdpRow, IrUdpSequential, IrUdpSequentialRow,
@@ -554,6 +559,9 @@ pub struct IrModel {
     /// instance's definition. Each entry is one persistent state record that
     /// only that instance's [`IrStmt::UdpStep`] updates.
     pub(in crate::sim) udp_states: Vec<usize>,
+    /// Simple module paths, one set per module instance that declares any
+    /// (IEEE 1800-2009 30.4). Empty for designs without specify paths.
+    pub(in crate::sim) module_paths: Vec<IrModulePathSet>,
     pub(in crate::sim) events: Vec<IrEvent>,
     pub(in crate::sim) funcs: Vec<IrFunc>,
     /// Concurrent assertion instances, kept outside ordinary process IR.
@@ -723,6 +731,7 @@ impl IrModel {
             virtual_interfaces: parts.virtual_interfaces,
             udp_tables: parts.udp_tables,
             udp_states: Vec::new(),
+            module_paths: Vec::new(),
             events: parts.events,
             funcs: parts.funcs,
             assertions: parts.assertions,
@@ -771,6 +780,10 @@ impl IrModel {
     /// Definition index of every sequential UDP instance state.
     pub fn udp_states(&self) -> &[usize] {
         &self.udp_states
+    }
+    /// Module path sets, one per module instance with simple paths.
+    pub fn module_paths(&self) -> &[IrModulePathSet] {
+        &self.module_paths
     }
     pub fn net_groups(&self) -> &[IrNetGroup] {
         &self.net_groups

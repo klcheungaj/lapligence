@@ -336,6 +336,9 @@ impl Frame<'_, '_> {
             IrStmt::InertialAssign { lhs, rhs, delay } => self.inertial_assign(lhs, rhs, delay)?,
             IrStmt::SetNetDelay { group, delay } => self.set_net_delay(*group, delay)?,
             IrStmt::UdpStep { state, inputs } => self.udp_step(*state, inputs)?,
+            IrStmt::ModulePathStamp { set } => {
+                self.line(format!("llg_module_path_stamp(&llg_path_set_{set});"))
+            }
             IrStmt::Force {
                 lhs,
                 eval,

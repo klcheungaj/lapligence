@@ -815,6 +815,52 @@ values through the native container element writers.
 scripts/run-tests.sh -E 'binary(sim_feature_completion) & test(adv_016::)'
 ```
 
+## Module path limits (ADV-007)
+
+**Status:** open (ADV-007; later work in ADV-008 to ADV-012 and ADV-019); the
+forms below stop code generation with a located error, and simple module
+paths otherwise run.
+
+### Symptom
+
+- A variable destination (`output reg q` with `(a => q) = 1;`) is rejected:
+  "a variable destination is not simulated yet; declare the output as a net".
+- An inout destination that is also driven outside the module is rejected:
+  "the destination is also driven outside the module, so the path would delay
+  that driver too".
+- A bit or part select of a multidimensional packed terminal is rejected.
+- State-dependent (`if`, `ifnone`) and edge-sensitive paths, `PATHPULSE$`
+  specparams, `pulsestyle_*`/`showcancelled` declarations and timing checks
+  are rejected as not simulated yet.
+- There are no `vpiModPath` objects; path metadata is available through the
+  owned `Db::module_paths` and the generated model's `llg_module_path_sets`.
+- A specparam declared inside a specify block draws a frontend warning such
+  as `'t2' shadows a declaration in an outer scope`, although nothing is
+  shadowed. Compilation and simulation are not affected.
+
+### Cause
+
+A path delays the destination net group after its drivers resolve, so it
+can model a destination whose drivers are all inside the module, but not a
+variable (no net group) or an inout net with an outside driver, whose
+contribution must stay undelayed. The frontend makes each specify-block
+specparam a transparent member of the module, and its shadowing analysis then
+finds that hoisted copy.
+
+### Intended direction
+
+Delay only the in-module driver contributions of a shared inout net, give
+variable destinations their own propagation record, and add the path forms
+of ADV-008 and the VPI objects of ADV-019 on the same per-path tables. Skip
+transparent copies of the same symbol in the frontend's shadow check, through
+a tracked `patches/slang/` patch.
+
+### Reproduce
+
+```sh
+scripts/run-tests.sh -E 'binary(sim_feature_completion) & test(adv_007::)'
+```
+
 ## Anonymous program members draw a spurious shadowing warning
 
 **Status:** open (SIM-032); cosmetic.

@@ -57,6 +57,9 @@ pub enum CapturedSemanticKind {
     Constraint,
     Coverage,
     Production,
+    /// A specify block, module path, pulse-style declaration or timing
+    /// check; its typed facts are in the Db's specify side tables.
+    Specify,
     Unsupported,
 }
 
@@ -95,6 +98,7 @@ impl From<crate::ffi::slang::SemanticKind> for CapturedSemanticKind {
             crate::ffi::slang::SemanticKind::Constraint => Self::Constraint,
             crate::ffi::slang::SemanticKind::Coverage => Self::Coverage,
             crate::ffi::slang::SemanticKind::Production => Self::Production,
+            crate::ffi::slang::SemanticKind::Specify => Self::Specify,
             crate::ffi::slang::SemanticKind::Unsupported => Self::Unsupported,
         }
     }

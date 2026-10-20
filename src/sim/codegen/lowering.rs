@@ -527,6 +527,8 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
     // design precision (scheduler tick unit) is consistent across the model.
     cg.collect_timescales();
     cg.build_net_groups()?;
+    // Module paths name net groups and their structural driver sites.
+    cg.lower_module_paths()?;
     cg.collect_clocking_storage()?;
     cg.validate_const_method_writes()?;
     cg.validate_process_semantics()?;

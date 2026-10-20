@@ -133,6 +133,11 @@ impl Validator<'_> {
         }
         match stmt {
             IrStmt::Located { statement, .. } => self.validate_stmt(statement, formals, path)?,
+            IrStmt::ModulePathStamp { set } => {
+                if *set >= self.model.module_paths.len() {
+                    return self.fail(path, "module path stamp names no module path set");
+                }
+            }
             IrStmt::UdpStep { state, inputs } => {
                 self.validate_udp_step(*state, inputs, formals, path)?
             }

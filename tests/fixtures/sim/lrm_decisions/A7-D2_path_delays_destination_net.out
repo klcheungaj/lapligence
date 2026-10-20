@@ -1,0 +1,12 @@
+0 a=0 b=0 y=z seen=x copy=z w=z
+5 a=0 b=0 y=0 seen=0 copy=0 w=z
+10 a=1 b=0 y=0 seen=0 copy=0 w=z
+12 a=1 b=0 y=0 seen=0 copy=0 w=1
+15 a=1 b=0 y=1 seen=1 copy=1 w=1
+20 a=1 b=1 y=1 seen=1 copy=1 w=1
+25 a=1 b=1 y=1 seen=1 copy=1 w=x
+30 a=0 b=1 y=1 seen=1 copy=1 w=x
+32 a=0 b=1 y=1 seen=1 copy=1 w=0
+35 a=0 b=1 y=0 seen=0 copy=0 w=0
+40 a=0 b=0 y=0 seen=0 copy=0 w=0
+45 a=0 b=0 y=0 seen=0 copy=0 w=z

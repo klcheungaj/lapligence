@@ -252,6 +252,9 @@ pub(super) fn node_kind_from_slang(
         // side tables; the node itself is a declaration.
         SemanticKind::Coverage => NodeKind::Other,
         SemanticKind::Production => production_from_slang(node, edges, ids)?,
+        // Specify blocks keep their typed facts in the Db's specify side
+        // tables (`Db::module_paths`); the nodes give them stable identity.
+        SemanticKind::Specify => NodeKind::Other,
         // Assertion-control hierarchy arguments are exported by vendored
         // Slang as an `ArbitrarySymbol` expression even though that node is
         // not assigned the ordinary expression semantic kind. Preserve its

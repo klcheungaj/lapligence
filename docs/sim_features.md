@@ -1449,10 +1449,36 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `rtran/rtranif0/rtranif1` have no simulator path; a design using one stops
   with the generic `unsupported executable node` diagnostic. V §§7.5–7.6
   **[1995]**.
-- ❌ **Specify, timing checks and SDF** — `specparam`, module/state/edge paths,
-  `PATHPULSE$`, notifiers, timing-check `&&&`, `$setup/$hold/$setuphold`,
-  `$recovery/$removal/$recrem`, `$skew/$timeskew/$fullskew`, `$period/$width/$nochange` and `$sdf_annotate` delay/check application are not implemented.
-  V §§3.11.3, ch.14–16; SV ch.30–32 **[1995/SV-2009 restored]**.
+- 🟨 **Specify blocks, specparams and simple module paths** — Specparams in
+  the module body and in specify blocks give constant values (min:typ:max
+  takes typical) and stay distinct from parameters (`Db::specparam`); a
+  specparam in a parameter value or a declaration range, a use before the
+  declaration, a `parameter` inside a specify block (A7-D5) and duplicate or
+  overlapping paths (A7-D4) are errors. Simple full (`*>`) and parallel (`=>`)
+  paths with 1, 2, 3, 6 or 12 delays select the delay of each 0/1/x/z
+  transition (Tables 30-2 and 30-3, negative delays are zero), choose the
+  smallest delay among the inputs that changed last and take the larger of
+  the path and the distributed delays, including a net delay on the
+  destination (A7-D1). The destination is inertial with the default pulse
+  limits and delays the net itself (A7-D2). The owned Db keeps every specify
+  block, path (terminals, connection, polarity, delays) and specify item with
+  its stable source node; the generated model keeps a writable per-path delay
+  table and reports scheduled path events (`llg_module_path_sets`,
+  `llg_net_path_pending`). IEEE 1364-2001 rejects a destination with two
+  drivers inside the module (14.2.1). Located errors reject state-dependent
+  and edge-sensitive paths, `PATHPULSE$`, pulse-style/showcancelled
+  declarations (ADV-008), timing checks (ADV-009/010), variable destinations,
+  inout destinations also driven outside the module and selects of
+  multidimensional packed terminals. No `vpiModPath` objects yet (ADV-019)
+  ([ADV-007 fixtures](../tests/fixtures/sim/feature_completion/adv_007/readme.md)).
+  V §§3.11.3, 14.1–14.4; SV §§6.20.5, 30.1–30.6 **[1995/SV-2009 restored]**.
+- ❌ **Timing checks, pulse control and SDF** — State-dependent and
+  edge-sensitive paths, `PATHPULSE$`, pulse styles, notifiers, timing-check
+  `&&&`, `$setup/$hold/$setuphold`, `$recovery/$removal/$recrem`,
+  `$skew/$timeskew/$fullskew`, `$period/$width/$nochange` and `$sdf_annotate`
+  delay/check application are not implemented.
+  V §§14.2.3–14.2.4, 14.6, ch.15–16; SV §§30.4.3–30.4.4, 30.7, ch.31–32
+  **[1995/SV-2009 restored]**.
 
 ## 9. Functions & tasks
 
