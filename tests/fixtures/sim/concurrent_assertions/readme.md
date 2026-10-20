@@ -34,6 +34,9 @@ covered by `feature_completion/sim_039`. Named sequence/property instances, decl
 defaults/named arguments, one-cycle property
 `not`/`and`/`or`/`iff`/`implies` composition, and inherited `disable iff`
 metadata are covered by `property_instances.sv`.
-`unsupported_instance.sv`, `unsupported_clock_instance.sv`, and
-`h25_unsupported_multiclock.sv` retain source-bearing temporal, conflicting
-clock, and out-of-subset cross-clock rejection probes.
+`recursive_instance.sv` (a recursive property with its own clock, 16.13.17)
+and `juxtaposed_clock_instance.sv` (a property clock that nullifies the
+call-site clock, 16.14.3), rejected before ADV-013, now run; ADV-013's
+fixtures hold the full multiclock and recursion witnesses.
+`h25_unsupported_multiclock.sv` keeps the illegal `##2` cross-clock boundary
+(16.14.1) as a source-bearing rejection.

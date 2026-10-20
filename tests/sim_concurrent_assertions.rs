@@ -246,11 +246,13 @@ fn concurrent_assertions_gate_their_clock_by_iff() {
 }
 
 #[test]
-fn concurrent_assertions_reject_nested_iff_clocks() {
-    sim_cli::reject_case(
+fn concurrent_assertions_gate_nested_iff_clocks() {
+    sim_cli::run_case(
         "concurrent_assertions",
-        "neg_nested_clock_iff",
-        "an `iff`-qualified clock inside a concurrent assertion sequence is not supported unless it is the leading clocking event",
+        "nested_clock_iff",
+        "PASS 20\n",
+        "",
+        &[],
     );
 }
 
@@ -299,20 +301,24 @@ fn concurrent_assertions_capture_local_formal_defaults() {
 }
 
 #[test]
-fn concurrent_assertions_reject_unsupported_named_property_temporal_forms() {
-    sim_cli::reject_case(
+fn concurrent_assertions_run_recursive_named_properties() {
+    sim_cli::run_case(
         "concurrent_assertions",
-        "unsupported_instance",
-        "recursive property instances are not supported",
+        "recursive_instance",
+        "FAIL\nFAIL\n",
+        "",
+        &[],
     );
 }
 
 #[test]
-fn concurrent_assertions_reject_conflicting_named_property_clocks() {
-    sim_cli::reject_case(
+fn concurrent_assertions_nullify_juxtaposed_call_site_clocks() {
+    sim_cli::run_case(
         "concurrent_assertions",
-        "unsupported_clock_instance",
-        "multiple clocks in concurrent assertion",
+        "juxtaposed_clock_instance",
+        "FAIL\nPASS\n",
+        "",
+        &[],
     );
 }
 
