@@ -182,7 +182,7 @@ compiler; CMake checks version agreement and 64-bit nail-free limbs, and the
 content hash keeps runtime archives of different installations apart. A
 host-tuned build (for example `-march=native`) is valid only on matching CPUs.
 Every CI test lane builds the bundled GMP with its target's compiler (MSVC
-x64/arm64, macOS arm64, Linux musl and glibc distributions); installation tests
+x64, macOS arm64, Linux musl and glibc distributions); installation tests
 run when `LLG_TEST_GMP_ROOT` is set.
 
 Licensing (review, not legal advice): GMP is dual-licensed LGPLv3-or-later /

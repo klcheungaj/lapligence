@@ -35,14 +35,14 @@ can take several minutes and use several gigabytes.
 ## Platform support
 
 The release workflow is configured to build `llg` and `llg_ls` for these
-targets:
+targets (Windows on ARM: `llg_ls` only; `llg` unsupported):
 
 | Platform | Target | `llg_ls`, lint, and C generation | Generated simulator |
 | --- | --- | --- | --- |
 | Linux x86_64 | `x86_64-unknown-linux-musl` | Release target; validation pending | Musl validation pending |
 | Linux arm64 | `aarch64-unknown-linux-musl` | Release target | Not yet supported |
 | Windows x86_64 | `x86_64-pc-windows-msvc` | Release target | CI build/run configured; native validation pending |
-| Windows arm64 | `aarch64-pc-windows-msvc` | Release target | CI build/run configured; native validation pending |
+| Windows arm64 | `aarch64-pc-windows-msvc` | `llg_ls` only; native validation pending | Unsupported (`llg` is not built or packaged) |
 | macOS arm64 | `aarch64-apple-darwin` | Release target | Not yet supported |
 
 These are configured targets, not equivalent validation claims. Recorded native
@@ -56,12 +56,15 @@ trigger CI. For a tag such as `v1.2.3`, download packages use
 `lapligence-1.2.3-<os>-<arch>.<ext>`: `os` is `linux`, `windows`, or `macos`,
 and `arch` is `x64` or `arm64` for the targets above. Windows packages are ZIP
 files; Linux and macOS packages are `.tar.gz` files. Each includes `llg`,
-`llg_ls` (with `.exe` on Windows), `readme.md`, and `LICENSE`. SHA-256 checksum
+`llg_ls` (with `.exe` on Windows), `readme.md`, and `LICENSE`; the Windows arm64
+package holds `llg_ls.exe`, `readme.md` and `LICENSE` only. Running a locally built
+`llg` on Windows on ARM exits 2 with an "unsupported platform" message. SHA-256 checksum
 files accompany the packages.
 
 The generated simulator uses a bundled pure-C11 stackless coroutine runtime.
 The release workflow configures generated-model build/run checks for MSVC x64
-and ARM64; those lanes remain unvalidated until native results are recorded.
+only; Windows on ARM has no simulator lane. Configured lanes remain unvalidated until
+native results are recorded.
 Other table entries likewise remain configuration, not support claims.
 
 ## Build prerequisites
@@ -152,8 +155,13 @@ cargo build --locked --release --bin llg --bin llg_ls `
   --target x86_64-pc-windows-msvc
 ```
 
-For Windows arm64, install the MSVC arm64 tools and replace the target with
-`aarch64-pc-windows-msvc`.
+For Windows arm64 (language server only; `llg` is unsupported there), install the
+MSVC arm64 tools and build just the server:
+
+```powershell
+rustup target add aarch64-pc-windows-msvc
+cargo build --locked --release --bin llg_ls --target aarch64-pc-windows-msvc
+```
 
 ## Optional development accelerators
 

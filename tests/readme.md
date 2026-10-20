@@ -22,7 +22,7 @@ single profile's `deps/` ~22 GB):
 | `sim_a_m` | other `tests/sim_[a-m]*.rs` |
 | `sim_n_z` | `tests/sim_[n-z]*.rs` except `sim_syn*` |
 | `runtime` | `tests/runtime_*.rs` |
-| `general` | every other `tests/*.rs` (frontend, LSP, lint, CLI, configuration, tooling) |
+| `general` | every other `tests/*.rs` (frontend, LSP, lint, CLI, configuration, tooling); the Windows on ARM lane runs only its language-server suites (`ci-lsp` profile) |
 | `sim_feature_completion` | its `#[path]` task modules |
 | `sim_cmake`, `wide_elab` | standalone: they change the process environment or CWD outside the shared harness lock, which plain `cargo test` would share across a group |
 | `cli_info` | standalone small harness for the CI release linkage audit |
@@ -851,6 +851,17 @@ support; the corresponding execution tests must also pass.
   `cargo nextest archive --locked --all-features --cargo-profile release --archive-file F`
   then `cargo nextest run --archive-file F --workspace-remap ROOT --extract-to ROOT`
   with ROOT the absolute checkout path used for the build.
+- Windows on ARM: `llg_ls` only; `llg` unsupported. Its CI lane builds only
+  `llg_ls` and runs nextest profile `ci-lsp` (`NEXTEST_PROFILE=ci-lsp`, a
+  `default-filter` in `.config/nextest.toml`): the `llg_ls` unit tests, library
+  `core`/`config`/`ffi`/`memory_limit` tests and the `general` suites that need
+  no simulator, C compiler or `llg` driver (`lsp_stdio`, `shadowing`,
+  `dump_tokens`, `config_effect`, `compilation_units`, `include_dir_search`,
+  `parse_only`, `probe_bindings`, `slang_frontend`, `slang_static_function_return`,
+  `elab_resolve`). Reproduce it on any host with
+  `scripts/run-tests.sh --cargo-profile quick --profile ci-lsp --all-features --lib --bin llg_ls --test general`
+  (about 1,030 tests). A new LSP or frontend-only `general` suite must join the
+  filter; `test_layout` checks that its names exist and run no simulator code.
   Preserve suite-specific skips: `sim_cmake` may skip absent CMake; native DPI
   shared-library tests need Unix/CMake/compiler. These are not blanket skips.
 
@@ -1206,7 +1217,8 @@ cargo test --locked --doc --all-features
 
 [CI](../.github/workflows/ci.yml) owns job/suite selection, audits and release checks.
 Configuration or another host's results do not establish native Windows/macOS or
-architecture-specific generated-model support.
+architecture-specific generated-model support. Windows on ARM: `llg_ls` only;
+`llg` unsupported, so no generated-model result exists or is expected there.
 
 ### Reproducible baseline and per-patch regression
 

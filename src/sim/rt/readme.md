@@ -246,8 +246,9 @@ transfers. [Repository tests](../../../tests/readme.md#dynamic-ownership-validat
 separately exercise real emission and public HDL. Component-only results, handwritten
 output-shape probes and configured platforms do not establish full model acceptance.
 Stackless coroutine probes run under ASan/UBSan without stack-switch exceptions.
-Windows x64/ARM64 generated-model build/run lanes are configured in CI but remain
-unvalidated until native results are recorded. Complete platform qualification
+A Windows x64 generated-model build/run lane is configured in CI but remains
+unvalidated until native results are recorded; Windows on ARM supports `llg_ls`
+only, so it has no generated-model lane. Complete platform qualification
 remains a separate gate.
 Use [feature status](../../../docs/sim_features.md), not this component map, for
 supported language contexts and outstanding qualification.

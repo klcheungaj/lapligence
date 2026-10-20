@@ -6,7 +6,7 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
 | Binary | Role |
 | --- | --- |
 | `llg_ls` | tower-lsp stdio server; [guide](llg_ls/AGENTS.md) |
-| `llg` | compile → lower/IR/opt/emit → CMake build → run; `llg/` holds `main.rs` (flow), `cli.rs` (parsing) and `settings.rs` (config + precedence) |
+| `llg` | compile → lower/IR/opt/emit → CMake build → run (Windows on ARM: unsupported, exits 2 before parsing arguments via `ffi::platform::simulator_unsupported_reason`); `llg/` holds `main.rs` (flow), `cli.rs` (parsing) and `settings.rs` (config + precedence) |
 | `elab_check` | Owned DB and resolved-hierarchy validation |
 | `helloslang`, `helloworld`, `llg_demo` | Owned snapshot demonstrations |
 

@@ -239,7 +239,26 @@ extracted over the same path, so compile-time paths (`CARGO_MANIFEST_DIR`,
 `CARGO_BIN_EXE_*`) resolve; they install nextest, Python and (Windows) the MSVC
 tools, apply the libfst patch to the fresh checkout, and need no Rust toolchain.
 Archives are retained one day. CI selects the `ci` nextest profile (one test per
-logical CPU). The Windows `build` job runs `scripts/ci_windows_runner.py measure`
+logical CPU).
+
+**Windows on ARM: `llg_ls` only; `llg` unsupported.** The `windows-arm64` caller
+passes `lsp_only: true` to `native-platform.yml`: its `build` job runs
+`cargo build --bin llg_ls` (no `--bin llg`), skips the MSVC C11 runtime gate, the
+generated-model builds and the model-build cost probe, audits and smoke-tests
+`llg_ls.exe` (`--version`) alone, and packages `llg_ls.exe`, `readme.md` and
+`LICENSE`; the `release` job checks each archive's exact file list (only
+`windows-arm64` lacks `llg.exe`). Its archive covers `--lib --bin llg_ls --test
+general` (Cargo still compiles `llg` for `CARGO_BIN_EXE_llg`; it is never run,
+audited or packaged), and its single `test` job (no shards, ccache, Python, MSVC
+environment, libfst patch, samplers or timing reports) runs nextest profile
+`ci-lsp`. That profile's `default-filter` in `.config/nextest.toml` is the
+language-server test set: every `llg_ls` unit test, the library `core`, `config`,
+`ffi` and `memory_limit` tests, and the `general` suites that need neither the
+simulator, a C compiler nor the `llg` driver (`lsp_stdio`, `shadowing`,
+`dump_tokens`, frontend, include and compilation-unit suites). Add a new
+LSP/frontend-only suite of `general` to that filter; `test_layout` rejects stale
+names and simulator-using suites. Run it locally with
+`scripts/run-tests.sh --profile ci-lsp --lib --bin llg_ls --test general`. The Windows `build` job runs `scripts/ci_windows_runner.py measure`
 (tool image architectures, Defender state, spawn and new-file costs, timings,
 CMake configure profiles via `LLG_CMAKE_PROFILE_DIR` and the processes one model
 build starts). The Windows `test` job samples resources every 30 s
@@ -249,8 +268,8 @@ printed per sample and uploaded as `resource-samples-<target>-<shard>`) and runs
 the measure again after the suite in its temporary directory, with and without
 `LLG_C_LAUNCHER`. These and the `report` steps are read-only diagnostics that
 never fail a job. A caller may split the test job over runners with
-`test_shards` (`nextest --partition count:k/N`); Windows arm64 uses two, whose
-jobs show as `test 1`/`test 2`. Observed platform
+`test_shards` (`nextest --partition count:k/N`); no platform uses it now (Windows
+arm64 did until it became language-server-only). Observed platform
 differences and their portable fixes are in
 [shared source policies](../src/AGENTS.md#platform-differences).
 
@@ -316,7 +335,7 @@ budget holds about nine Cargo entries (about 0.3 GB) plus nine ccache entries (a
 most 300 MB each, about 0.1 GB measured); Python tests for the scripts run in `lint`
 (`scripts/test_ci_cache.py`).
 
-Matrix: Linux x86_64/arm64, Windows x86_64/arm64, macOS arm64. Audit architecture,
+Matrix: Linux x86_64/arm64, Windows x86_64/arm64 (`llg_ls` only), macOS arm64. Audit architecture,
 static Linux/static Windows CRT linkage, system-only Windows/macOS imports and
 startup before packaging. Alpine also lists cli_info from a small release test
 binary to catch allocator/libc startup failures. The release job waits for every
@@ -324,8 +343,8 @@ test/audit/build, checks all five checksums and attaches to the existing Release
 Only it receives contents:write; never create/publish/edit release metadata.
 Reruns replace matching asset names. Package naming is
 `lapligence-<version>-<os>-<arch>.<ext>`: strip leading v, use linux/windows/macos,
-x64/arm64 and tar.gz on Unix/zip on Windows; include both executables, readme.md,
-LICENSE and checksum files. Configuration is not validated platform support;
+x64/arm64 and tar.gz on Unix/zip on Windows; include both executables (Windows
+arm64: `llg_ls.exe` only), readme.md, LICENSE and checksum files. Configuration is not validated platform support;
 keep evidence in ignored `persistence/platforms.md`.
 
 ## Documentation ownership

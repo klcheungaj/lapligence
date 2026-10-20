@@ -77,7 +77,9 @@ static target archives. Preserve `ffi/slang.rs` native `#[link]` attributes for
 wrapper, Slang and fmt linkage through the library.
 
 The release matrix targets static-musl Linux x86_64/arm64, MSVC Windows
-x86_64/arm64 and macOS arm64, with linkage audits. Configuration is not validated
+x86_64/arm64 and macOS arm64, with linkage audits. Windows on ARM: `llg_ls` only;
+`llg` unsupported (its CI lane builds, audits, packages and tests the language
+server alone, and `llg` refuses to run there). Configuration is not validated
 support; keep platform evidence and generated-model limits in local
 `persistence/platforms.md`. [Tests](tests/AGENTS.md) owns CI/release commands.
 The stackless coroutine library is in `src/sim/rt/llg_co.h/.c`; LRMs are in

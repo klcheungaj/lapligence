@@ -82,6 +82,16 @@ conditional elsewhere.
 Observed in CI and native builds; keep code portable across all of them. Resolve
 or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
 
+- Windows on ARM (`aarch64-pc-windows-msvc`): `llg_ls` only; `llg` unsupported, so
+  generated models, DPI/VPI and the C runtime are too. Its CI lane builds only
+  `--bin llg_ls`, packages only `llg_ls.exe` and runs the language-server test
+  set (nextest profile `ci-lsp`); the library, frontend, Db and lint code that
+  `llg_ls` uses must stay portable there. `ffi::platform::simulator_unsupported_reason`
+  makes `llg` exit 2 with an "unsupported platform" message on that target; never
+  add simulator-only tests to the `ci-lsp` set (see
+  [CI and release gate](../tests/AGENTS.md#ci-and-release-gate)). The arm64
+  runner observations below stay as history for a possible return of the platform.
+
 - macOS `/var`, `/tmp` and `/etc` are symlinks into `/private`, and `temp_dir()`
   is `/var/folders/...`. Handle-derived paths are resolved, so compare resolved
   spellings: resolve user roots (include directories, dump targets) once at entry
@@ -254,7 +264,9 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
   median 4.5 times longer than on x64, flat over five hours, while tests that
   compile without model builds (frame lint, storage probes) ran at x64 speed and
   isolated or 4-way concurrent builds in the build job matched x64. The cause is
-  not known; the job samples resources and the suite runs in two shards there.
+  not known. Windows on ARM no longer runs the simulator suite (language server
+  only), so the two-shard split and the resource samplers were removed from that
+  lane; the observation stays for a possible return of the platform.
 - tower-lsp 0.20 runs notifications concurrently, so slower runners (Rocky arm64)
   interleave handlers that are sequential elsewhere; state written after an
   `await` must not let an older result replace a newer one (workspace rescans

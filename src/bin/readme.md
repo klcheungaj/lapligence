@@ -3,7 +3,8 @@
 Binaries keep CLI/transport/presentation thin and reuse the core, FFI and simulator
 libraries. LSP dependencies remain behind `lsp`.
 
-- `llg` (`llg/`): compile, lint, build and run simulations. `cli.rs` parses the
+- `llg` (`llg/`): compile, lint, build and run simulations; unsupported on Windows
+  on ARM (it exits 2 there; only `llg_ls` ships for that platform). `cli.rs` parses the
   command line, `settings.rs` loads the `--config` file (never discovered) and
   applies the precedence command line > environment > config file > default.
 - [`llg_ls`](llg_ls/readme.md): feature-gated tower-lsp stdio server.
