@@ -479,7 +479,12 @@ jobs:
         continue-on-error: true
         timeout-minutes: 15
         run: |
-          llg=$(ls target/*/release/llg.exe target/release/llg.exe 2>/dev/null | head -n 1)
+          # Not `ls ... | head`: bash runs with -eo pipefail, and ls exits 2
+          # for an unmatched glob, which ended this step silently.
+          llg=
+          for candidate in target/*/release/llg.exe target/release/llg.exe; do
+            if [ -f "$candidate" ]; then llg=$candidate; break; fi
+          done
           if [ -z "$llg" ]; then echo "no llg.exe in the extracted archive"; exit 0; fi
           work=$(python -c "import tempfile; print(tempfile.gettempdir())")/llg-probe
           python scripts/ci_windows_runner.py measure --llg "$llg" --compare-launcher \

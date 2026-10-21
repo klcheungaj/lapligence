@@ -69,6 +69,7 @@ mod sim_inout;
 mod sim_instance_sharing;
 mod sim_interface;
 mod sim_interface_body;
+mod sim_llg_policy;
 mod sim_logical_ops;
 mod sim_loops;
 mod sim_lrm_decisions;

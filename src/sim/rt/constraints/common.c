@@ -23,7 +23,10 @@
 
 #define CR_WORDS(width) ((width) == 0u ? 1u : (((width) + 63u) / 64u))
 
-static void cr_fatal(const char* message) {
+/* _Noreturn, and no statement follows an unconditional call: MSVC /O2 inlines
+ * this helper, sees abort() and reports such a statement as unreachable
+ * (C4702), an error in the /W4 /WX standalone probe builds. */
+static _Noreturn void cr_fatal(const char* message) {
     fprintf(stderr, "llg: constraint solver: %s\n", message);
     abort();
 }

@@ -347,7 +347,7 @@ are 1/4 = 25.00 and 1/6 = 16.67.
 | `neg_bins_with` | a bins `with` filter, 1800-2012 syntax |
 | `neg_wildcard_wide` | a wildcard value that expands to more than 4096 ranges (llg limitation) |
 | `neg_wide_argument` | a bins value read from an argument wider than 64 bits (llg limitation) |
-| `neg_trans_length0` | `(3 [-> 1])`, a transition of length 0 (S45-D11) |
+| `neg_trans_length0` | `(3 [-> 1])`, a transition of length 0 (S45-D19) |
 | `neg_trans_array_goto` | `[]` transition bins with a goto repetition (19.5.1) |
 | `neg_trans_ignore_goto` | ignore_bins with a nonconsecutive repetition (19.5.4) |
 | `neg_trans_argument` | a transition value read from a covergroup argument (llg limitation) |

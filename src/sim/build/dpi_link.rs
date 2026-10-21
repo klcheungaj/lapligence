@@ -9,10 +9,12 @@
 //!
 //! Apple's ld64 does not check the undefined symbols of a dylib it links
 //! against: a DPI library built with `-undefined dynamic_lookup` leaves its
-//! `svdpi.h` calls to dyld, which binds a missing one to an abort that fires,
-//! without a message on stderr, when the model calls it. So before a build,
-//! [`unprovided_routines_in_mach_o`] reads each Mach-O library's symbol table
-//! and names the unprovided routines it imports, as the ELF link does.
+//! `svdpi.h` and export calls to dyld, which binds a missing one to an abort
+//! that fires, without a message on stderr, when the model calls it (or, for
+//! a call the run never makes, not at all). So before a build,
+//! [`missing_mach_o_symbols`] reads each Mach-O library's symbol table and
+//! names the unprovided routines and the undefined symbols it imports, as the
+//! ELF link does.
 
 use std::collections::BTreeSet;
 use std::io::{Read, Seek, SeekFrom};
@@ -68,7 +70,8 @@ pub(super) const UNPROVIDED_ROUTINES: &[&str] = &[
 /// undefined one is an llg defect, never attributed to a user library.
 const RUNTIME_PREFIXES: &[&str] = &["llg_", "LLG_", "sv4_", "vpi_"];
 
-/// Undefined DPI-C symbols named by a failed model link.
+/// Undefined DPI-C symbols named by a failed model link (or, for Mach-O
+/// libraries, by their symbol tables before the build).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct MissingDpiSymbols {
     /// Imported C functions that no linked library defines.
@@ -79,6 +82,9 @@ pub(super) struct MissingDpiSymbols {
     /// model and runtime complete, these are exports the design does not
     /// declare (`export "DPI-C"`) and helpers missing from every library.
     pub unresolved: Vec<String>,
+    /// Evidence from the Mach-O symbol tables; empty for a link failure,
+    /// whose transcript is the evidence.
+    pub output: String,
 }
 
 /// C linkage names of the imports declared by the generated sources.
@@ -104,6 +110,19 @@ pub(super) fn declared_imports(out_dir: &Path) -> BTreeSet<String> {
         }
     }
     names
+}
+
+/// C linkage names of the imports declared by the generated model sources
+/// `extra` (name, text), as [`declared_imports`] reads them from disk.
+pub(super) fn declared_imports_in(extra: &[(&str, &str)]) -> BTreeSet<String> {
+    extra
+        .iter()
+        .filter(|(name, _)| name.ends_with(".c"))
+        .flat_map(|(_, source)| source.lines())
+        .filter_map(|line| line.strip_prefix(IMPORT_MARKER))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Symbols reported undefined by a linker transcript.
@@ -186,27 +205,91 @@ pub(super) fn missing_dpi_symbols(
             imports,
             routines,
             unresolved,
+            output: String::new(),
         },
     )
 }
 
-/// `svdpi.h` routines that a Mach-O library at `path` imports without naming
-/// the dylib that provides them, so dyld would look them up in the model.
-/// Empty for other formats (their links report undefined symbols) and for a
-/// file that cannot be read or parsed: the build then proceeds unchanged.
-pub(super) fn unprovided_routines_in_mach_o(path: &Path) -> Vec<String> {
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return Vec::new();
-    };
-    let imports = mach_o_lookup_imports(&mut file).unwrap_or_default();
-    UNPROVIDED_ROUTINES
-        .iter()
-        .filter(|routine| imports.contains(**routine))
-        .map(|routine| (*routine).to_owned())
-        .collect()
+/// What the Mach-O `--dpi-lib` libraries leave to dyld that nothing will
+/// provide, found before the build because ld64 does not check it:
+///
+/// - `routines`: unprovided `svdpi.h` routines any Mach-O library imports;
+/// - `unresolved`: other imports that neither `provided` (what the model
+///   defines for its libraries: the `svdpi.h` and VPI routines, the design's
+///   DPI-C exports and imports) nor any library defines, such as an export
+///   the design does not declare. Only judged when every library is a
+///   readable Mach-O file, because the definitions of another format (a
+///   static archive, for example) are not read.
+///
+/// An import is one without a dependent dylib (library ordinal 0, 0xfe for
+/// `-undefined dynamic_lookup`, or 0xff); a call into libSystem names it and
+/// is never counted. Weak imports are skipped: dyld binds a missing one to
+/// null. A relocatable object's undefined symbols (ordinal 0, libSystem's
+/// included) are linked into the model, whose link checks them, so they
+/// count only as routines. `None` when nothing is missing; otherwise `output` names each
+/// library and the symbols it imports.
+pub(super) fn missing_mach_o_symbols(
+    libraries: &[impl AsRef<Path>],
+    provided: &BTreeSet<String>,
+) -> Option<MissingDpiSymbols> {
+    let mut all_mach_o = true;
+    let mut scanned = Vec::new();
+    let mut definitions = BTreeSet::new();
+    for path in libraries {
+        let path = path.as_ref();
+        let symbols = std::fs::File::open(path)
+            .ok()
+            .and_then(|mut file| mach_o_symbols(&mut file));
+        match symbols {
+            Some(symbols) => {
+                definitions.extend(symbols.definitions);
+                scanned.push((path, symbols.imports, symbols.relocatable));
+            }
+            None => all_mach_o = false,
+        }
+    }
+    let mut routines = BTreeSet::new();
+    let mut unresolved = BTreeSet::new();
+    let mut output = String::new();
+    for (path, imports, relocatable) in &scanned {
+        let mut named = Vec::new();
+        for import in imports {
+            if UNPROVIDED_ROUTINES.contains(&import.as_str()) {
+                routines.insert(import.clone());
+            } else if all_mach_o
+                && !relocatable
+                && !provided.contains(import)
+                && !definitions.contains(import)
+                && !RUNTIME_PREFIXES
+                    .iter()
+                    .any(|prefix| import.starts_with(prefix))
+            {
+                unresolved.insert(import.clone());
+            } else {
+                continue;
+            }
+            named.push(import.as_str());
+        }
+        if !named.is_empty() {
+            output.push_str(&format!(
+                "{} imports {} for dyld to resolve when the model runs; ld64 does not check \
+                 a library's undefined symbols at link time\n",
+                path.display(),
+                named.join(", ")
+            ));
+        }
+    }
+    (!routines.is_empty() || !unresolved.is_empty()).then(|| MissingDpiSymbols {
+        imports: Vec::new(),
+        routines: routines.into_iter().collect(),
+        unresolved: unresolved.into_iter().collect(),
+        output,
+    })
 }
 
 const MH_MAGIC_64: u32 = 0xfeed_facf;
+/// `mach_header_64.filetype` of a relocatable object.
+const MH_OBJECT: u32 = 0x1;
 const FAT_MAGIC: u32 = 0xcafe_babe;
 const FAT_MAGIC_64: u32 = 0xcafe_babf;
 const LC_SYMTAB: u32 = 0x2;
@@ -215,6 +298,11 @@ const N_STAB: u8 = 0xe0;
 const N_TYPE: u8 = 0x0e;
 const N_EXT: u8 = 0x01;
 const N_UNDF: u8 = 0x0;
+const N_ABS: u8 = 0x2;
+const N_INDR: u8 = 0xa;
+const N_SECT: u8 = 0xe;
+/// `n_desc` bit of a weak import, which dyld binds to null when missing.
+const N_WEAK_REF: u8 = 0x40;
 /// Library ordinals 1 to 0xfd name a dependent dylib; 0 (own image or flat
 /// namespace), 0xfe (`-undefined dynamic_lookup`) and 0xff (the main
 /// executable) leave the lookup to the loading process.
@@ -223,13 +311,34 @@ const MAX_DEPENDENT_LIBRARY_ORDINAL: u16 = 0xfd;
 /// another format with the same magic (a Java class file).
 const MAX_FAT_SLICES: u32 = 32;
 
-/// Names (without the leading `_`) of the external symbols the Mach-O file
-/// leaves to the loading process, from every 64-bit slice. `None` when the
-/// file is not a 64-bit Mach-O or universal file or is malformed.
-fn mach_o_lookup_imports(file: &mut (impl Read + Seek)) -> Option<BTreeSet<String>> {
+/// External symbols of a Mach-O file, by name without the leading `_`.
+#[derive(Debug, Default)]
+struct MachOSymbols {
+    /// Undefined, non-weak symbols left to the loading process.
+    imports: BTreeSet<String>,
+    /// Symbols the file defines for other images (section, absolute,
+    /// indirect and common symbols).
+    definitions: BTreeSet<String>,
+    /// A slice is a relocatable object (`MH_OBJECT`): its undefined symbols
+    /// carry no library ordinals, and ld64 resolves and checks them against
+    /// everything the model links, libSystem included.
+    relocatable: bool,
+}
+
+impl MachOSymbols {
+    fn extend(&mut self, other: MachOSymbols) {
+        self.imports.extend(other.imports);
+        self.definitions.extend(other.definitions);
+        self.relocatable |= other.relocatable;
+    }
+}
+
+/// [`MachOSymbols`] of every 64-bit slice. `None` when the file is not a
+/// 64-bit Mach-O or universal file or is malformed.
+fn mach_o_symbols(file: &mut (impl Read + Seek)) -> Option<MachOSymbols> {
     let length = file.seek(SeekFrom::End(0)).ok()?;
     let magic = read_at(file, 0, 4, length)?;
-    let mut imports = BTreeSet::new();
+    let mut imports = MachOSymbols::default();
     match u32::from_be_bytes(magic.clone().try_into().ok()?) {
         fat @ (FAT_MAGIC | FAT_MAGIC_64) => {
             let count = be_u32(&read_at(file, 4, 4, length)?, 0)?;
@@ -245,27 +354,24 @@ fn mach_o_lookup_imports(file: &mut (impl Read + Seek)) -> Option<BTreeSet<Strin
                     u64::from_be_bytes(slice.get(8..16)?.try_into().ok()?)
                 };
                 // A 32-bit or malformed slice cannot run on a supported host.
-                imports.extend(thin_lookup_imports(file, offset, length).unwrap_or_default());
+                imports.extend(thin_symbols(file, offset, length).unwrap_or_default());
             }
         }
         _ if u32::from_le_bytes(magic.try_into().ok()?) == MH_MAGIC_64 => {
-            imports = thin_lookup_imports(file, 0, length)?;
+            imports = thin_symbols(file, 0, length)?;
         }
         _ => return None,
     }
     Some(imports)
 }
 
-/// [`mach_o_lookup_imports`] for the little-endian 64-bit image at `base`.
-fn thin_lookup_imports(
-    file: &mut (impl Read + Seek),
-    base: u64,
-    length: u64,
-) -> Option<BTreeSet<String>> {
+/// [`mach_o_symbols`] for the little-endian 64-bit image at `base`.
+fn thin_symbols(file: &mut (impl Read + Seek), base: u64, length: u64) -> Option<MachOSymbols> {
     let header = read_at(file, base, 32, length)?;
     if le_u32(&header, 0)? != MH_MAGIC_64 {
         return None;
     }
+    let relocatable = le_u32(&header, 12)? == MH_OBJECT;
     let commands = read_at(file, base + 32, le_u32(&header, 20)? as usize, length)?;
     let mut at = 0usize;
     for _ in 0..le_u32(&header, 16)? {
@@ -282,35 +388,48 @@ fn thin_lookup_imports(
                 strings_size as usize,
                 length,
             )?;
-            let mut imports = BTreeSet::new();
+            let mut found = MachOSymbols {
+                relocatable,
+                ..MachOSymbols::default()
+            };
             for symbol in table.as_chunks::<16>().0 {
                 let kind = symbol[4];
                 let ordinal = u16::from_le_bytes([symbol[6], symbol[7]]) >> 8;
                 let value = u64::from_le_bytes(symbol[8..16].try_into().ok()?);
-                // An undefined external with a value is a common symbol.
-                if kind & N_STAB != 0
-                    || kind & N_TYPE != N_UNDF
-                    || kind & N_EXT == 0
-                    || value != 0
-                    || (1..=MAX_DEPENDENT_LIBRARY_ORDINAL).contains(&ordinal)
-                {
+                if kind & N_STAB != 0 || kind & N_EXT == 0 {
                     continue;
                 }
+                // An undefined external with a value is a common symbol.
+                let set = match kind & N_TYPE {
+                    N_UNDF if value != 0 => &mut found.definitions,
+                    N_UNDF
+                        if symbol[6] & N_WEAK_REF != 0
+                            || (1..=MAX_DEPENDENT_LIBRARY_ORDINAL).contains(&ordinal) =>
+                    {
+                        continue;
+                    }
+                    N_UNDF => &mut found.imports,
+                    N_SECT | N_ABS | N_INDR => &mut found.definitions,
+                    _ => continue,
+                };
                 let start = le_u32(symbol, 0)? as usize;
                 let name = names.get(start..)?;
                 let name = &name[..name.iter().position(|&byte| byte == 0)?];
                 if let Some(name) = name.strip_prefix(b"_") {
-                    imports.insert(String::from_utf8_lossy(name).into_owned());
+                    set.insert(String::from_utf8_lossy(name).into_owned());
                 }
             }
-            return Some(imports);
+            return Some(found);
         }
         if size < 8 {
             return None;
         }
         at += size;
     }
-    Some(BTreeSet::new())
+    Some(MachOSymbols {
+        relocatable,
+        ..MachOSymbols::default()
+    })
 }
 
 /// `count` bytes at `offset`, refused when they would run past `length` (a
@@ -345,12 +464,22 @@ mod tests {
     /// A minimal 64-bit Mach-O image with one `LC_SYMTAB` holding `symbols`
     /// as (name with `_`, type, library ordinal, value).
     fn mach_o(symbols: &[(&str, u8, u16, u64)]) -> Vec<u8> {
+        let described = symbols
+            .iter()
+            .map(|(name, kind, ordinal, value)| (*name, *kind, ordinal << 8, *value))
+            .collect::<Vec<_>>();
+        mach_o_described(&described)
+    }
+
+    /// [`mach_o`] with each symbol's whole `n_desc` (library ordinal in the
+    /// high byte, flags such as `N_WEAK_REF` in the low byte).
+    fn mach_o_described(symbols: &[(&str, u8, u16, u64)]) -> Vec<u8> {
         let mut strings = vec![0u8];
         let mut table = Vec::new();
-        for (name, kind, ordinal, value) in symbols {
+        for (name, kind, desc, value) in symbols {
             table.extend_from_slice(&(strings.len() as u32).to_le_bytes());
             table.extend_from_slice(&[*kind, 0]);
-            table.extend_from_slice(&(ordinal << 8).to_le_bytes());
+            table.extend_from_slice(&desc.to_le_bytes());
             table.extend_from_slice(&value.to_le_bytes());
             strings.extend_from_slice(name.as_bytes());
             strings.push(0);
@@ -377,7 +506,7 @@ mod tests {
     }
 
     fn imports(bytes: &[u8]) -> Option<BTreeSet<String>> {
-        mach_o_lookup_imports(&mut std::io::Cursor::new(bytes))
+        mach_o_symbols(&mut std::io::Cursor::new(bytes)).map(|symbols| symbols.imports)
     }
 
     /// Only undefined externals left to the loading process count: not
@@ -433,26 +562,122 @@ mod tests {
         assert!(imports(&huge).is_none());
     }
 
+    /// A temporary directory holding `files` (name, contents).
+    fn library_directory(line: u32, files: &[(&str, &[u8])]) -> std::path::PathBuf {
+        let directory =
+            std::env::temp_dir().join(format!("llg-dpi-macho-{}-{line}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        for (name, contents) in files {
+            std::fs::write(directory.join(name), contents).unwrap();
+        }
+        directory
+    }
+
+    fn provided(names: &[&str]) -> BTreeSet<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
     #[test]
     fn only_unprovided_routines_of_a_mach_o_library_are_named() {
-        let directory =
-            std::env::temp_dir().join(format!("llg-dpi-macho-{}-{}", std::process::id(), line!()));
-        std::fs::create_dir_all(&directory).unwrap();
-        let library = directory.join("libneg.dylib");
-        std::fs::write(
-            &library,
-            mach_o(&[
-                ("_svGetTime", N_EXT, 0xfe, 0),
-                ("_svGetArrayPtr", N_EXT, 0xfe, 0),
-                ("_neg_helper", N_EXT, 0xfe, 0),
-            ]),
+        let library = mach_o(&[
+            ("_svGetTime", N_EXT, 0xfe, 0),
+            ("_svGetArrayPtr", N_EXT, 0xfe, 0),
+        ]);
+        let directory = library_directory(line!(), &[("libneg.dylib", &library)]);
+        let missing = missing_mach_o_symbols(
+            &[directory.join("libneg.dylib")],
+            &provided(&["svGetArrayPtr"]),
         )
-        .unwrap();
-        assert_eq!(unprovided_routines_in_mach_o(&library), ["svGetTime"]);
+        .expect("svGetTime is unprovided");
+        assert_eq!(missing.routines, ["svGetTime"]);
+        assert!(missing.imports.is_empty() && missing.unresolved.is_empty());
+        assert!(
+            missing
+                .output
+                .contains("libneg.dylib imports svGetTime for dyld"),
+            "{}",
+            missing.output
+        );
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    /// The macOS form of an export the design does not declare (CI round 6,
+    /// `sim_041::library_call_to_an_undeclared_export_is_named_at_link`):
+    /// named unless the model or another library defines it. libSystem
+    /// calls, weak imports and runtime names are never counted.
+    #[test]
+    fn undefined_imports_of_mach_o_libraries_are_named_unless_something_defines_them() {
+        const LOOKUP: u16 = 0xfe << 8;
+        let errors = mach_o_described(&[
+            ("_err_scope", N_EXT | N_SECT, 0, 0x3f80),
+            ("_err_inc", N_EXT, LOOKUP, 0),
+            ("_err_kill", N_EXT, LOOKUP, 0),
+            ("_err_tick", N_EXT, 0, 0),
+            ("_helper", N_EXT, 0xff << 8, 0),
+            ("_svSetScope", N_EXT, LOOKUP, 0),
+            ("_printf", N_EXT, 1 << 8, 0),
+            ("_maybe", N_EXT, LOOKUP | u16::from(N_WEAK_REF), 0),
+            ("_llg_internal", N_EXT, LOOKUP, 0),
+        ]);
+        let helpers = mach_o(&[("_helper", N_EXT | N_SECT, 0, 0x10)]);
+        let directory = library_directory(
+            line!(),
+            &[
+                ("liberrors.dylib", &errors),
+                ("libhelpers.dylib", &helpers),
+                ("libother.a", b"!<arch>\n"),
+            ],
+        );
+        let model = provided(&["err_inc", "svSetScope"]);
+        let missing = missing_mach_o_symbols(
+            &[
+                directory.join("liberrors.dylib"),
+                directory.join("libhelpers.dylib"),
+            ],
+            &model,
+        )
+        .expect("err_kill and err_tick are undefined");
+        assert_eq!(missing.unresolved, ["err_kill", "err_tick"]);
+        assert!(missing.routines.is_empty() && missing.imports.is_empty());
+        assert!(
+            missing
+                .output
+                .contains("liberrors.dylib imports err_kill, err_tick for dyld"),
+            "{}",
+            missing.output
+        );
+        // Without the library that defines `helper`, it is named too.
+        let alone = missing_mach_o_symbols(&[directory.join("liberrors.dylib")], &model).unwrap();
+        assert_eq!(alone.unresolved, ["err_kill", "err_tick", "helper"]);
+        // A library whose definitions are not read (another format, a
+        // missing file) withholds the judgement; routines are still named.
+        for other in ["libother.a", "absent.dylib"] {
+            assert!(
+                missing_mach_o_symbols(
+                    &[directory.join("liberrors.dylib"), directory.join(other)],
+                    &model
+                )
+                .is_none(),
+                "{other}"
+            );
+        }
         let elf = directory.join("libneg.so");
-        std::fs::write(&elf, b"\x7fELF svGetScope").unwrap();
-        assert!(unprovided_routines_in_mach_o(&elf).is_empty());
-        assert!(unprovided_routines_in_mach_o(&directory.join("absent")).is_empty());
+        std::fs::write(&elf, b"\x7fELF svGetTime").unwrap();
+        assert!(missing_mach_o_symbols(&[&elf], &model).is_none());
+        // A relocatable object (`MH_OBJECT`) leaves every undefined symbol
+        // at ordinal 0, libc's too; the model link checks them, so only an
+        // unprovided routine is named before it.
+        let mut object = mach_o(&[
+            ("_printf", N_EXT, 0, 0),
+            ("_err_kill", N_EXT, 0, 0),
+            ("_svGetTime", N_EXT, 0, 0),
+        ]);
+        object[12..16].copy_from_slice(&MH_OBJECT.to_le_bytes());
+        let object_path = directory.join("errors.o");
+        std::fs::write(&object_path, &object).unwrap();
+        let missing = missing_mach_o_symbols(&[&object_path], &model).unwrap();
+        assert_eq!(missing.routines, ["svGetTime"]);
+        assert!(missing.unresolved.is_empty(), "{missing:?}");
         std::fs::remove_dir_all(&directory).unwrap();
     }
 

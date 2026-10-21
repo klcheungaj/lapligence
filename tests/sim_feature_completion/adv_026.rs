@@ -567,10 +567,15 @@ fn registrations_of_sreadmem_follow_the_builtin_override_policy() {
             );
         },
     );
-    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim")
-        .join(SUITE)
-        .join("neg_sreadmem_override.sv");
+    // The resolved native spelling llg reports: on Windows `SUITE`'s `/`
+    // would stay in a joined path.
+    let source = llg::ffi::platform::canonicalize(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sim")
+            .join(SUITE)
+            .join("neg_sreadmem_override.sv"),
+    )
+    .expect("resolve the fixture");
     let diagnostic = format!(
         "llg: VPI error: a VPI application registers `$sreadmemh`, which llg implements as a \
          built-in (called at {}:7); llg does not support overriding built-in system tasks and \

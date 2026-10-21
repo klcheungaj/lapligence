@@ -1,10 +1,6 @@
-// Decision S41-D4: argument handling of the scope and user-data routines.
-// svPutUserData returns -1 for a NULL scope, NULL data or NULL key and 0
-// otherwise; a second put with the same key replaces the data. svGetUserData
-// returns NULL for a NULL scope or a key never stored. svGetNameFromScope and
-// svGetScopeFromName return NULL for NULL. svSetScope with an argument that
-// is not a scope leaves the context scope unchanged and returns it (llg also
-// prints a warning on stderr).
+// Decision S41-D4: user data stored in a scope. svPutUserData returns 0 on
+// success; a second put with the same key replaces the data. svGetUserData
+// returns the stored pointer, and NULL for a key never stored.
 //
 // IEEE 1800-2009 H.9.3 (SystemVerilog-1800-2009.txt L72711-72714):
 //   "It is illegal to pass in NULL values for either the scope or userData
@@ -13,10 +9,10 @@
 // H.9.3 (L72723-72726): svGetUserData "returns NULL for all error cases, and
 //   a non-Null user data pointer upon success. This function also returns NULL
 //   in the event that a prior call to svPutUserData() was never made."
-// H.9.3 (L72683): svSetScope "The return is the previous active scope
-//   (per svGetScope)".
-// The NULL key, the NULL name arguments, replacement and an illegal
-// svSetScope argument are not specified; the results here are llg choices.
+// Replacement is not specified; the result here is an llg choice. The
+// routines' NULL arguments are not exercised here, since simulators diverge
+// on the error cases the text calls illegal; llg's results for them are
+// checked by llg_policy/S41-D4_null_arguments.
 //
 // Build S41-D4_scope_routine_arguments.c into a shared library and load it
 // with the simulator's DPI library option.

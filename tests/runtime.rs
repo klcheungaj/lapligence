@@ -22,6 +22,7 @@ mod runtime_regions;
 mod runtime_review_batch3;
 mod runtime_rng;
 mod runtime_stochastic;
+mod runtime_strict_sources;
 mod runtime_value_facade;
 mod runtime_value_storage;
 mod runtime_values;

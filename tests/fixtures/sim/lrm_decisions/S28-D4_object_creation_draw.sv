@@ -8,8 +8,10 @@
 // $urandom would return is llg's reading): `new` takes exactly one value from
 // the creating thread, so objects created from equal thread states have
 // equal states, and the thread continues as if one $urandom had run.
+// The object states are compared through the values randomize() draws from
+// them; the form of get_randstate() strings is not specified.
 class item_c;
-  int k;
+  rand int unsigned v;
 endclass
 
 module tb;
@@ -25,12 +27,20 @@ module tb;
     $display("new takes one value %0d", z == y);
     process::self().srandom(11);
     b = new;
-    $display("equal thread states %0d", a.get_randstate() == b.get_randstate());
+    void'(a.randomize());
+    void'(b.randomize());
+    $display("equal thread states %0d", a.v == b.v);
+    process::self().srandom(11);
+    a = new;
     b = new;
-    $display("next object differs %0d", a.get_randstate() != b.get_randstate());
+    void'(a.randomize());
+    void'(b.randomize());
+    $display("next object differs %0d", a.v != b.v);
     a.srandom(4);
     b.srandom(4);
-    $display("equal seeds %0d", a.get_randstate() == b.get_randstate());
+    void'(a.randomize());
+    void'(b.randomize());
+    $display("equal seeds %0d", a.v == b.v);
     $finish;
   end
 endmodule

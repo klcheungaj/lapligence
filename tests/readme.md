@@ -597,6 +597,11 @@ longest static prefix reject. The legality ruling is in the
   trusted simulator wins).
 - `sim_lrm_decisions.rs` runs each case on all value backends in both optimizer
   modes: `scripts/run-tests.sh -E 'test(/^sim_lrm_decisions::/)'`.
+- [`fixtures/sim/llg_policy/`](fixtures/sim/llg_policy/readme.md) holds llg-only
+  policy cases that have no portable form (RNG draw mappings, whole `%m` names
+  of class scopes, NULL arguments of the DPI scope routines);
+  `sim_llg_policy.rs` runs them the same way:
+  `scripts/run-tests.sh -E 'test(/^sim_llg_policy::/)'`.
 
 ### Vendor patch preparation
 
@@ -971,8 +976,13 @@ compile runtime C directly with `$LLG_CC`/`$CC` (`runtime_values`,
 the launcher. Without either variable they use the model default (MSVC `cl` on
 Windows); `tests/support/c_compiler.rs` (`host_c_compiler`,
 `strict_c11_executable`) translates their strict C11 build to `/W4 /WX` for
-MSVC. The DPI, VPI-plugin and FST-reader probes stay Unix-only; the static
-archive routes of SIM-041, SIM-042 and the S42 decisions run on every host.
+MSVC. The `sim_dpi` and `sim_vpi` probes stay Unix-only; the static
+archive routes of SIM-041, SIM-042 and the S42 decisions run on every host,
+the DLL companions of the feature-completion and decision suites build with
+`/MD` (the model's shared UCRT, so their `printf` output shares its `stdout`
+buffer) and export every import definition with `DPI_DLLESPEC`
+(`sim_040::dll_companions_export_every_import_definition`), and the `sim_047`
+FST reader builds with the MSVC flag set.
 
 `LLG_CCACHE` now rejects invalid values or a missing requested executable instead
 of continuing uncached. Changing the launcher reconfigures the native CMake cache

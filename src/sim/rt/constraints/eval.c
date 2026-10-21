@@ -518,7 +518,6 @@ static int cr_eval_op(llg_cr_session_t* s, uint32_t n) {
     default:
         cr_fatal("invalid node operation");
     }
-    return 0;
 }
 
 /* ---- classification (IEEE 1800-2009 18.5.12) ---------------------------

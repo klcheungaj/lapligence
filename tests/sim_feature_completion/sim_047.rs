@@ -666,7 +666,8 @@ fn dump_limit_keeps_the_declarations_and_appends_a_comment() {
 /// The host command that copies `from` to `to` for `$system`.
 fn copy_command(from: &str, to: &str) -> String {
     if cfg!(windows) {
-        format!("COPY=\"copy /Y {from} {to}\"")
+        // `copy` reports "1 file(s) copied." on stdout, which the model shares.
+        format!("COPY=\"copy /Y {from} {to} >NUL\"")
     } else {
         format!("COPY=\"cp {from} {to}\"")
     }
@@ -828,30 +829,43 @@ fn fst_dump(dir: &Path, file: &str) -> Result<FstDump, String> {
     } else {
         "fst_dump"
     });
-    let compile = sim_harness::run_command(
-        Command::new(&compiler)
-            .current_dir(&reader)
-            .args([
-                "-std=c11",
-                "-DFST_CONFIG_INCLUDE=\"fst_config.h\"",
-                "-DZ_PREFIX",
-                "-DZ_HAVE_UNISTD_H",
-                "-I.",
-                "-Izlib",
-                "fst_dump.c",
-                "fstapi.c",
-                "fastlz.c",
-                "lz4.c",
-            ])
-            .args(zlib)
-            .args(["-lm", "-o"])
-            .arg(&executable),
-        Duration::from_secs(120),
-    )?;
+    // The definitions of the generated model's waveform build (`zlib_cmake!`
+    // in `sim/build.rs`): zlib's POSIX I/O only outside Windows.
+    let mut command = Command::new(&compiler);
+    command.current_dir(&reader);
+    if c_compiler::is_msvc(&compiler) {
+        command.args([
+            "/nologo",
+            "/std:c11",
+            "/DFST_CONFIG_INCLUDE=\"fst_config.h\"",
+            "/DZ_PREFIX",
+            "/D_CRT_SECURE_NO_WARNINGS",
+            "/I.",
+            "/Izlib",
+        ]);
+    } else {
+        command.args([
+            "-std=c11",
+            "-DFST_CONFIG_INCLUDE=\"fst_config.h\"",
+            "-DZ_PREFIX",
+            "-DZ_HAVE_UNISTD_H",
+            "-I.",
+            "-Izlib",
+        ]);
+    }
+    command
+        .args(["fst_dump.c", "fstapi.c", "fastlz.c", "lz4.c"])
+        .args(zlib);
+    if c_compiler::is_msvc(&compiler) {
+        command.arg(format!("/Fe{}", executable.display()));
+    } else {
+        command.args(["-lm", "-o"]).arg(&executable);
+    }
+    let compile = sim_harness::run_command(&mut command, Duration::from_secs(120))?;
     if !compile.status.success() {
         return Err(format!(
             "compile FST reader with `{compiler}`: {}",
-            String::from_utf8_lossy(&compile.stderr)
+            c_compiler::compiler_diagnostics(&compile)
         ));
     }
     let output = sim_harness::run_command(

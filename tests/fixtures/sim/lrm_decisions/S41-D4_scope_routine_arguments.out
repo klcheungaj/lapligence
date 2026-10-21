@@ -1,13 +1,6 @@
-put null scope -1
-put null data -1
-put null key -1
 put 0
 put again 0
 get 2
-get null scope NULL
 get other key NULL
-name of null NULL
-scope of null NULL
-set null returned the current scope
 scope after tb
 run=4

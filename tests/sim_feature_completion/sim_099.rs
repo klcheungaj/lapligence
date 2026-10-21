@@ -25,6 +25,18 @@ const GC_STRESS: &[(&str, &str)] = &[("LLG_GC_STRESS", "1"), ("LLG_GC_VERIFY", "
 const RANDOMIZE_WARNING: &str = "llg: warning: randomize() at env:222:12: the constraints cannot \
                                  be satisfied; randomize returns 0";
 
+/// `<SUITE>/<name>` in the resolved native spelling llg reports in
+/// diagnostics; a joined path would keep `SUITE`'s `/` on Windows.
+fn fixture_path(name: &str) -> std::path::PathBuf {
+    llg::ffi::platform::canonicalize(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sim")
+            .join(SUITE)
+            .join(name),
+    )
+    .expect("resolve the fixture")
+}
+
 /// `<stem>.c` of this suite built into a static archive for `--dpi-lib`
 /// (every host; `$LLG_CFLAGS` instruments it in sanitizer runs).
 fn archive(directory: &sim_harness::TempDir, stem: &str) -> String {
@@ -196,10 +208,7 @@ fn selected_writes_notify_waiters_assignments_and_callbacks() {
 #[test]
 fn reports_keep_their_source_positions() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_099/source_map.out");
-    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim")
-        .join(SUITE)
-        .join("source_map.sv");
+    let source = fixture_path("source_map.sv");
     let source = source.to_string_lossy().into_owned();
     let assertion = format!("llg: assertion assert failed: {source}:16:3 (always_low)");
     let messages = [
@@ -711,10 +720,7 @@ fn builtins_without_lowering_dispatch_to_vpi() {
         },
     );
     let unregistered = |fixture: &str, name: &str| {
-        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/sim")
-            .join(SUITE)
-            .join(format!("{fixture}.sv"));
+        let source = fixture_path(&format!("{fixture}.sv"));
         format!(
             "llg: VPI error: no VPI registration for `{name}` (called at {}:7)",
             source.display()
@@ -754,10 +760,7 @@ fn vpi_registrations_of_called_builtins_stop_at_startup() {
             )
         },
     );
-    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim")
-        .join(SUITE)
-        .join("neg_builtin_override.sv");
+    let source = fixture_path("neg_builtin_override.sv");
     let diagnostic = format!(
         "llg: VPI error: a VPI application registers `$random`, which llg implements as a \
          built-in (called at {}:6); llg does not support overriding built-in system tasks and \

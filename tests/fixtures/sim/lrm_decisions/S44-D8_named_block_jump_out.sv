@@ -16,13 +16,20 @@
 // of execution shall not be triggered if the block, task, function, or
 // method is disabled." The text does not say what a jump out of a named
 // block does.
+// get_inst_coverage() reads instance data, which option.per_instance = 1
+// requires: 19.7 Table 19-1 (L33285-33289) "When true, coverage information
+// for this covergroup instance shall be saved in the coverage database ...
+// When false, implementations are not required to save instance-specific
+// information."
 module tb;
   int n;
   int k;
   covergroup enter @@(begin blk);
+    option.per_instance = 1;
     coverpoint n { bins zero = {0}; bins one = {1}; bins two = {2}; bins three = {3}; }
   endgroup
   covergroup leave @@(end blk);
+    option.per_instance = 1;
     coverpoint n { bins ran = {30}; bins disabled = {21}; bins continued = {22}; bins broke = {23}; }
   endgroup
   enter ge = new;

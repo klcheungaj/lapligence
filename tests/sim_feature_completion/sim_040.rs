@@ -412,7 +412,7 @@ fn unprovided_svdpi_routine_is_named() {
 /// A 64-bit Mach-O dylib whose symbol table imports `names` through
 /// `-undefined dynamic_lookup` (library ordinal 0xfe), as the macOS build of
 /// `neg_unprovided_routine.c` does. Written by hand so every host can check it.
-fn dynamic_lookup_dylib(names: &[&str]) -> Vec<u8> {
+pub(super) fn dynamic_lookup_dylib(names: &[&str]) -> Vec<u8> {
     let mut strings = vec![0u8];
     let mut table = Vec::new();
     for name in names {
@@ -465,10 +465,18 @@ fn unprovided_routine_imported_by_a_mach_o_library_is_named_before_the_build() {
         "a DPI-C library calls svdpi.h routine `svGetTime`, which llg does not provide",
         &["--dpi-lib", &library],
     );
+    // `neg_helper` is defined by nothing, so it is named too, as the ELF
+    // link names it; `svGetArrayPtr` is provided by the model.
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "imports svGetTime for dyld to resolve when the model runs",
+        "a DPI-C library calls `neg_helper`, which no export \"DPI-C\" declaration of the design and no --dpi-lib library defines",
+        &["--dpi-lib", &library],
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_unprovided_routine",
+        "imports neg_helper, svGetTime for dyld to resolve when the model runs",
         &["--dpi-lib", &library],
     );
 }
@@ -518,5 +526,83 @@ fn model_import_library_is_explicit_about_the_toolchain() {
             .join(format!("sim{}", std::env::consts::EXE_SUFFIX))
             .exists(),
         "the model was linked"
+    );
+}
+
+/// C function definitions in `source` that do not carry `DPI_DLLESPEC`: a
+/// signature starting in column 0 (not `static`) followed by a body.
+fn unexported_definitions(source: &str) -> Vec<String> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut missing = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let starts_declaration = line.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+            && line.contains('(')
+            && !["static", "typedef", "struct", "enum", "union", "extern"]
+                .iter()
+                .any(|keyword| line.starts_with(keyword));
+        if !starts_declaration {
+            continue;
+        }
+        // A function body, not an initializer (`= {`) or a prototype.
+        let definition = lines[index..]
+            .iter()
+            .flat_map(|line| line.chars())
+            .find(|c| matches!(c, '{' | ';' | '='))
+            == Some('{');
+        if definition && !line.contains("DPI_DLLESPEC") {
+            missing.push(format!("{}: {line}", index + 1));
+        }
+    }
+    missing
+}
+
+/// A Windows DLL exports only what is marked: an unmarked import definition
+/// leaves the model's link without the symbol, and a DLL that exports
+/// nothing gets no import library for `--dpi-lib` (CI round 6: sim_039's
+/// `endpoints_dpi_dll.lib` "is not a regular file"). Every `svdpi.h`
+/// companion that the DLL helpers build marks each import definition
+/// `DPI_DLLESPEC`, which is empty on ELF and Mach-O hosts. `sim/dpi` is the
+/// Unix-only `sim_dpi` suite, which never builds a DLL.
+#[test]
+fn dll_companions_export_every_import_definition() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim");
+    let mut pending = vec![root.clone()];
+    let mut checked = 0;
+    let mut missing = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).expect("read fixture directory") {
+            let path = entry.expect("fixture entry").path();
+            if path.is_dir() {
+                if path != root.join("dpi") {
+                    pending.push(path);
+                }
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("c") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("read companion");
+            if !source.contains("#include \"svdpi.h\"") {
+                continue;
+            }
+            checked += 1;
+            missing.extend(
+                unexported_definitions(&source)
+                    .into_iter()
+                    .map(|line| format!("{}:{line}", path.display())),
+            );
+        }
+    }
+    assert!(checked > 20, "found only {checked} svdpi.h companions");
+    assert!(
+        missing.is_empty(),
+        "import definitions without DPI_DLLESPEC:\n{}",
+        missing.join("\n")
+    );
+    assert_eq!(
+        unexported_definitions(
+            "int f(int a,\n      int b)\n{\n    return a;\n}\nint g(void);\nvoid (*t[])(void) = {0};\n"
+        ),
+        ["1: int f(int a,"]
     );
 }

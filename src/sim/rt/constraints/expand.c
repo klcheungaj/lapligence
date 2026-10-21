@@ -237,7 +237,6 @@ static void cr_tpl_validate(const llg_cr_problem_t* p) {
         switch (nd->op) {
         case LLG_CR_ELEM:
             cr_fatal("element table in a template");
-            break;
         case LLG_CR_REF:
             if (nd->a >= p->slot_count || !cr_is_ref(p, nd->b, n) ||
                 (nd->c != LLG_CR_NONE && nd->c >= n))
@@ -2229,7 +2228,6 @@ const uint64_t* llg_cr_elem_value(const llg_cr_session_t* s, uint32_t inst, uint
     }
     if (index < arr->size) return arr->words + (size_t)index * CR_WORDS(t->p->arrays[array].elem_width);
     cr_fatal("array element without a value");
-    return NULL;
 }
 
 /* ---- session ---------------------------------------------------------- */

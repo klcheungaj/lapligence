@@ -1,4 +1,3 @@
 class realtime=1.000
 tb realtime=1.000 t=1
-Time scale of ($unit) is 1ns / 1ns
-Time scale of (tb) is 1ns / 1ns
+class #1 moved the module to 2.000

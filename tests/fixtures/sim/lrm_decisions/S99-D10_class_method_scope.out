@@ -1,4 +1,4 @@
-llg f: C.f
-llg g: p.D.g
-llg k: tb.L.k
+f: f
+g: g
+k: k
 mf: tb.mf

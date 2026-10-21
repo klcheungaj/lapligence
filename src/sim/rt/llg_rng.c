@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void rng_fail(const char* message) {
+static _Noreturn void rng_fail(const char* message) {
     fprintf(stderr, "llg: random runtime: %s\n", message);
     abort();
 }

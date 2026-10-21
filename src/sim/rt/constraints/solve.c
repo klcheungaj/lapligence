@@ -113,7 +113,6 @@ static void cr_validate_problem(const llg_cr_problem_t* p) {
         case LLG_CR_REDUCE:
         case LLG_CR_ISNULL:
             cr_fatal("template operation in a problem without units");
-            break;
         case LLG_CR_REPL:
         case LLG_CR_SLICE:
         case LLG_CR_RESIZE:

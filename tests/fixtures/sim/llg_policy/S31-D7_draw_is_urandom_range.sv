@@ -1,3 +1,6 @@
+// llg policy case: not in the portable lrm_decisions set, because it compares
+// the randcase draw with a $urandom_range draw in the same simulator, a
+// mapping that is an llg choice, not LRM behaviour.
 // Decision S31-D7: a randcase takes exactly one value from the calling
 // thread's stream, the value $urandom_range(sum - 1, 0) would return at that
 // point, and the first branch whose running weight total exceeds the value is

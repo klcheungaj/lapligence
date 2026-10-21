@@ -1,5 +1,5 @@
-llg f: C.f.fb
-llg t: C.t.tf
-llg e: C.e
+f: fb
+t: tf
+e: e
 top: tb.top
 mt: tb.mt.mf
