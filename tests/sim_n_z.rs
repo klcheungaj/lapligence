@@ -24,6 +24,7 @@ mod sim_nonconvergence;
 mod sim_operator_semantics;
 mod sim_opt_differential;
 mod sim_opt_storage;
+mod sim_output_port_init;
 mod sim_p30_fixed_arrays;
 mod sim_packed_strings;
 mod sim_param_override;

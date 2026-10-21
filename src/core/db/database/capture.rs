@@ -1151,6 +1151,36 @@ impl Db {
             }
         }
 
+        // An output variable port declaration may carry an initializer
+        // (IEEE 1800-2009 A.2.1.2 `[= constant_expression]`; IEEE 1364-2001
+        // 12.3.3). Slang binds it on the port, not on the internal variable,
+        // so record it as that variable's declaration initializer: the
+        // variable then initializes like any other static variable (6.8).
+        for semantic in &snapshot.semantic_nodes {
+            if semantic.kind != SemanticKind::Port || !semantic.is_output() {
+                continue;
+            }
+            let edges = semantic_edges(snapshot, semantic)?;
+            let Some(initializer) = edge_target(&ids, edges, SemanticEdgeRole::Initializer)? else {
+                continue;
+            };
+            let Some(internal) = edge_target(&ids, edges, SemanticEdgeRole::LowConnection)? else {
+                continue;
+            };
+            let Some(variable) = port_internal_variable(snapshot, &ids, internal)? else {
+                continue;
+            };
+            let target = &snapshot.semantic_nodes[variable.index()];
+            if let Some(array) = arrays.get_mut(&variable) {
+                array.init.get_or_insert(initializer);
+            } else if target.kind == SemanticKind::Variable
+                && target.subkind != SEMANTIC_VARIABLE_CLOCKING
+                && target.subkind != crate::ffi::slang::SEMANTIC_VARIABLE_ASSERTION_LOCAL
+            {
+                vars_init.entry(variable).or_insert(initializer);
+            }
+        }
+
         // A virtual interface handle is an elaboration-time alias to a
         // concrete interface instance.  Capture that static binding while
         // the frontend identities are still available; lowering can then
@@ -1352,6 +1382,40 @@ impl Db {
     }
 }
 
+/// The variable a port's internal connection names: the internal symbol
+/// itself, or the variable a non-ANSI port expression references through
+/// selects. Nets and anything else yield `None`.
+fn port_internal_variable(
+    snapshot: &SlangSnapshot,
+    ids: &SemanticIds,
+    internal: NodeId,
+) -> Result<Option<NodeId>, DbError> {
+    let mut current = internal;
+    for _ in 0..=snapshot.semantic_nodes.len() {
+        let node = &snapshot.semantic_nodes[current.index()];
+        match node.kind {
+            SemanticKind::Variable | SemanticKind::Array => return Ok(Some(current)),
+            SemanticKind::Expression if node.subkind == 65 => {
+                let Some(target) = expression_reference_target(snapshot, ids, node)? else {
+                    return Ok(None);
+                };
+                current = target;
+            }
+            SemanticKind::Expression => {
+                let edges = semantic_edges(snapshot, node)?;
+                let Some(base) = edge_target(ids, edges, SemanticEdgeRole::Base)? else {
+                    return Ok(None);
+                };
+                current = base;
+            }
+            _ => return Ok(None),
+        }
+    }
+    Err(DbError::InvalidSnapshot(
+        "port connection chain contains a cycle".into(),
+    ))
+}
+
 /// Optional charge and delay-mode directives (IEEE 1364-2001 Annex D, IEEE
 /// 1800-2009 Annex E). Slang consumes them without effect, so their tokens
 /// are the only record that the source used them.
@@ -1436,6 +1500,51 @@ mod tests {
             db.semantic_details.slot_count(),
             snapshot.semantic_nodes.len()
         );
+    }
+
+    #[test]
+    fn output_variable_port_initializers_become_declaration_initializers() {
+        let source = "module child(output logic o = 1'b1, output logic [3:0] ua [2] = '{1, 2}, \
+            output wire w, input logic i = 1'b0); endmodule \
+            module legacy(q); output logic [3:0] q = 4'h6; endmodule \
+            module top; wire o, w; logic [3:0] ua [2]; wire [3:0] q; \
+            child c(.o(o), .ua(ua), .w(w)); legacy l(.q(q)); endmodule";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "port_initializers.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let storage = |path: &str| {
+            db.node_ids()
+                .find(|id| {
+                    db.node(*id).full_name() == path
+                        && matches!(
+                            db.node_kind(*id),
+                            NodeKind::Var { .. } | NodeKind::Array { .. }
+                        )
+                })
+                .unwrap_or_else(|| panic!("missing {path}"))
+        };
+        for path in ["top.c.o", "top.l.q"] {
+            assert!(
+                db.var_initializer(storage(path)).is_some(),
+                "{path} keeps its port initializer"
+            );
+        }
+        assert!(db
+            .array_meta(storage("top.c.ua"))
+            .and_then(|meta| meta.init)
+            .is_some());
+        // An input port's value is a default for an unconnected port
+        // (23.2.2.4), never a variable initializer.
+        assert!(db.var_initializer(storage("top.c.i")).is_none());
     }
 
     #[test]
