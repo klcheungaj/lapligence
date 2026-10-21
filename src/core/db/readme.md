@@ -71,7 +71,9 @@ identities later annotation and timing-check work keys on.
 Modport expression ports `.p(expr)` keep their port expression in a side
 table (`Db::modport_port_expression`); references still target the port.
 `Db::is_const_cast` marks `const'(expr)` casts (6.24.1), which are otherwise
-ordinary `ExprKind::Cast` nodes.
+ordinary `ExprKind::Cast` nodes. `Db::is_parenthesized_assertion` marks
+assertion expressions written in parentheses, which the frontend binds away;
+clock flow stops at them (16.14.3).
 Typed references distinguish subroutine
 bodies, indexed pattern keys, event qualifiers and ordered conditional clauses.
 Concrete loop-generate blocks use the array name and source index as one

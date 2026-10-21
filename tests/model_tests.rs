@@ -766,3 +766,41 @@ fn const_casts_are_distinguished_from_ordinary_casts() {
         "ordinary casts are captured too: {casts:?}"
     );
 }
+
+/// IEEE 1800-2009 16.14.3: the database marks assertion expressions written
+/// in parentheses, which the frontend binds away, so clock flow can stop at
+/// them (decision A13-D1).
+#[test]
+fn parenthesized_assertion_expressions_are_marked() {
+    let compiled = compile::compile_checked(&compile::CompileOpts {
+        sources: vec![compile::OwnedSource::compilation_unit(
+            "parenthesized_assertions.sv",
+            "module tb; logic clk = 0, a = 0, b = 0, d = 0;
+                p1: assert property (@(posedge clk) (a ##1 b) |=> d);
+                p2: assert property (@(posedge clk) a ##1 b |=> d);
+             endmodule",
+        )],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    })
+    .expect("valid assertions");
+    let database = db::Db::from_slang(&compiled.snapshot).expect("owned database");
+    let concats: Vec<bool> = database
+        .node_ids()
+        .filter(|id| {
+            matches!(
+                database.node(*id).kind,
+                db::NodeKind::AssertionExpr(db::AssertionExprKind::SequenceConcat { .. })
+            )
+        })
+        .map(|id| database.is_parenthesized_assertion(id))
+        .collect();
+    assert_eq!(concats, [true, false], "p1's antecedent only: {concats:?}");
+    assert_eq!(
+        database
+            .node_ids()
+            .filter(|id| database.is_parenthesized_assertion(*id))
+            .count(),
+        1
+    );
+}

@@ -395,16 +395,15 @@ static int property_clocked_kind(uint32_t kind) {
            kind == LLG_PROPERTY_UNTIL;
 }
 
-/* `if (b) p else q`: b is sampled at the if's first tick; `(b |-> p) and
- * (weak(b) or q)` (F.3.4.3.4) starts q at the if's own start point, so in a
- * multiclocked program the else branch starts with the if and is dropped if
- * b holds. In a singly clocked program both points are the same tick. */
+/* `if (b) p else q`: b is sampled at the if's first tick, and the branch
+ * it selects starts at that tick; a differently clocked branch first
+ * evaluates at its own clock's nearest tick at or after it (decision
+ * A13-D3, which follows the industry-standard behaviour rather than the
+ * F.3.4.3.4 rewrite `(b |-> p) and (weak(b) or q)`, whose q would start
+ * with the if). */
 static void property_if_step(llg_property_ctx_t* ctx, llg_property_inst_t* inst, int start) {
     const llg_property_node_t* node = inst->node;
-    if (start && node->third != LLG_PROPERTY_NONE && ctx->program->clock_count)
-        property_spawn(ctx, inst, node->third, inst->launch, inst->strict, inst->locals);
-    else if (!start)
-        property_tick_children(ctx, inst);
+    if (!start) property_tick_children(ctx, inst);
     if (inst->phase || inst->status || g.finish) return;
     sv4_t* clock;
     int edge;
@@ -415,13 +414,10 @@ static void property_if_step(llg_property_ctx_t* ctx, llg_property_inst_t* inst,
     at.event = *first;
     uint32_t branch;
     if (property_atom(&at, node->first)) {
-        property_free_list(inst->children);
-        inst->children = inst->children_tail = NULL;
         inst->phase = 1;
         branch = node->second;
     } else if (node->third != LLG_PROPERTY_NONE) {
         inst->phase = 2;
-        if (inst->children) return;
         branch = node->third;
     } else {
         // `if (b) p` with b false holds vacuously (16.13.5, 16.15.8 g).

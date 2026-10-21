@@ -281,6 +281,8 @@ pub struct Db {
     method_calls_with_clause: HashSet<NodeId>,
     /// `const'(expr)` cast expressions (IEEE 1800-2009 6.24.1).
     const_casts: HashSet<NodeId>,
+    /// Assertion expressions written in parentheses (16.14.3).
+    parenthesized_assertions: HashSet<NodeId>,
     /// Method-call node → the frontend-owned iterator declaration used by its
     /// `with` expression.  Slang visits the expression itself as a structural
     /// child, but the implicit iterator variable is not an argument edge.
@@ -399,6 +401,7 @@ impl Db {
             randomize_calls: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
             const_casts: HashSet::new(),
+            parenthesized_assertions: HashSet::new(),
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
@@ -479,6 +482,7 @@ impl Db {
             randomize_calls: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
             const_casts: HashSet::new(),
+            parenthesized_assertions: HashSet::new(),
             method_call_iterators: HashMap::new(),
             packed_members: HashMap::new(),
             aggregate_layouts: HashMap::new(),
@@ -931,6 +935,13 @@ impl Db {
         self.const_casts.contains(&id)
     }
 
+    /// Whether assertion expression `id` was written in parentheses. The
+    /// frontend binds the parentheses away; a clocking event inside them
+    /// does not flow out of them (IEEE 1800-2009 16.14.3).
+    pub fn is_parenthesized_assertion(&self, id: NodeId) -> bool {
+        self.parenthesized_assertions.contains(&id)
+    }
+
     /// Random qualifier of a class property (IEEE 1800-2009 18.4).
     pub fn rand_qualifier(&self, id: NodeId) -> RandQualifier {
         self.rand_qualifiers
@@ -971,6 +982,10 @@ impl Db {
 
     pub(crate) fn const_cast_nodes(&self) -> &HashSet<NodeId> {
         &self.const_casts
+    }
+
+    pub(crate) fn parenthesized_assertion_nodes(&self) -> &HashSet<NodeId> {
+        &self.parenthesized_assertions
     }
 
     pub(crate) fn method_call_iterator_nodes(&self) -> &HashMap<NodeId, NodeId> {

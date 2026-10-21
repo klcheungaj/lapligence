@@ -639,8 +639,9 @@ A multiclocked program lists its clocks (`llg_property_clock_t`, the leading
 clock first) and each node and sequence names its own; an instance starts at a
 launch point (clock, time, tick) and advances on the first tick of its own
 clock at or strictly after it, so coincident ticks of different clocks are one
-time step (16.14). Single-clock programs have no clock list and run on the
-assertion's clock. Sequence operands reuse the sequence engine on their clock
+time step (16.14). Both branches of an `if`-`else` start at the tick that
+reads its condition (A13-D3). Single-clock programs have no clock list and run
+on the assertion's clock. Sequence operands reuse the sequence engine on their clock
 with their own zero-delay ranks. `LLG_PROPERTY_CALL` (a recursive property
 instance, 16.13.17) starts a fresh instance of its target node.
 `llg_assertion_clock_pulse` writes a planned clock's hidden signal 1 then 0 at

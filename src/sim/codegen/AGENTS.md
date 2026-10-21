@@ -880,9 +880,10 @@ a non-integral value into packed bits (reals use their exact 64-bit image).
 Concurrent assertions use dedicated instances, immutable sampled predicates,
 explicit clocks/disable/control metadata, per-attempt/thread locals and ordered
 match-item effects. Preserve Slang actual/default expansion. Clock flow is
-structural (`assertions/clocks.rs`, SV 16.14.3 and the Annex F.5.1 rewrite: a
-consequent takes the clock flowing into its implication, A13-D1); an
-assertion registers on its semantic leading clock (16.17.1). A clock on one
+structural (`assertions/clocks.rs`, SV 16.14.3), except that a `|->`/`|=>`
+consequent takes the clock its antecedent ends on unless that clock is inside
+parentheses (`Db::is_parenthesized_assertion`) or a sequence instance
+(A13-D1); an assertion registers on its semantic leading clock (16.17.1). A clock on one
 direct packed-signal edge stays an edge clock; every other clocking event
 (event lists, `edge`, value changes, bit selects, clocking-block events, `iff`
 gates off the leading position, `$global_clock`) is a planned pulse clock: a

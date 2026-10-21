@@ -5,7 +5,8 @@
 //! as a set (actions of different assertions in one time step have no
 //! defined order); every positive case runs in both optimizer modes on the
 //! legacy, compact/portable and compact/GMP value backends. A01 compares
-//! randomized traces against the Annex F interpreter in `adv_013/oracle.rs`.
+//! randomized traces against the Annex F interpreter in `adv_013/oracle.rs`
+//! (with the clock rules of decisions A13-D1 and A13-D3).
 use super::sim_cli;
 use std::process::Output;
 

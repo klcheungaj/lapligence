@@ -72,6 +72,10 @@ remain on the calling thread; do not implement `Send` or `Sync`.
 - ABI v26 marks a `const'(expr)` conversion expression with auxiliary bit
   `LLG_SLANG_CONVERSION_CONST` (`Db::is_const_cast`), so a procedural
   concurrent assertion can tell it from an ordinary cast (16.15.6.1).
+- ABI v29 marks an assertion expression written in parentheses with
+  auxiliary bit `LLG_SLANG_ASSERTION_PARENTHESIZED`
+  (`Db::is_parenthesized_assertion`): Slang binds the parentheses away, and a
+  clocking event inside them does not flow out (16.14.3, decision A13-D1).
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

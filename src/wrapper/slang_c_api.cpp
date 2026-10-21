@@ -3303,6 +3303,12 @@ public:
     else if constexpr (std::derived_from<T, AssertionExpr>) {
       result.kind = LLG_SLANG_SEMANTIC_ASSERTION_EXPR;
       result.subkind = semanticAssertionExprKind(node.kind);
+      // Slang binds a parenthesized sequence or property to its operand and
+      // records the parenthesized syntax as the operand's syntax.
+      if (node.syntax &&
+          (node.syntax->kind == syntax::SyntaxKind::ParenthesizedSequenceExpr ||
+           node.syntax->kind == syntax::SyntaxKind::ParenthesizedPropertyExpr))
+        result.auxiliary |= LLG_SLANG_ASSERTION_PARENTHESIZED;
       auto setRange = [&](const SequenceRange& range, uint32_t repetitionKind) {
         result.assertion_range_min = range.min;
         result.assertion_range_max = range.max.value_or(LLG_SLANG_ASSERTION_RANGE_UNBOUNDED);
