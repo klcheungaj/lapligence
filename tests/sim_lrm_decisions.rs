@@ -608,10 +608,10 @@ fn s36_d2_flush_point_kinds() {
 }
 
 #[test]
-fn s36_d3_receiver_at_issue() {
+fn s36_d3_receiver_at_maturity() {
     run_decision(
-        "S36-D3_receiver_at_issue",
-        include_str!("fixtures/sim/lrm_decisions/S36-D3_receiver_at_issue.out"),
+        "S36-D3_receiver_at_maturity",
+        include_str!("fixtures/sim/lrm_decisions/S36-D3_receiver_at_maturity.out"),
     );
 }
 

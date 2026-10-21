@@ -507,7 +507,7 @@ void llg_rt_run(void) {
         g.running = 0;
         return;
     }
-    run_deferred_assertions_now();
+    deferred_assertions_finish();
     run_end_of_simulation_assertions();
     flush_assertion_attempts();
     // Finals ($time inside them) report when the scheduler loop ended.

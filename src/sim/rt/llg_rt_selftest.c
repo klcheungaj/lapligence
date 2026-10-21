@@ -2319,7 +2319,8 @@ static void test_deferred_assertion_termination(void) {
     CHECK(llg_schedule_region_callback(LLG_REGION_POST_OBSERVED,
                                        deferred_termination_issue, NULL) == 1);
     llg_rt_run();
-    CHECK(deferred_termination_seen == 1);
+    // A report still pending at $finish never executes (S36-D6).
+    CHECK(deferred_termination_seen == 0);
     CHECK(!llg_rt_failed());
 }
 

@@ -935,7 +935,8 @@ rejections (no queued values are kept), and its operands are not implicit
 sensitivities (S99-D2). Assertion-only `initial` and timing-free `always`
 procedures keep the static path. Deferred
 assertions retain issue-time values (packed, real, string, chandle/class handle
-and method receiver captures) and Reactive actions under the single-call
+captures; a method receiver naming static storage is read at maturity with an
+issue-time index, others are captured, S36-D3) and Reactive actions under the single-call
 contract in process, subroutine, class-method and final contexts, rejecting
 automatic/dynamic ref actuals, timing actions and container/event/virtual-
 interface action arguments. `disable` of a labeled deferred assertion or of a

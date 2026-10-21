@@ -265,8 +265,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
     /// descriptors remain untouched so their storage lookup occurs when
     /// Reactive executes the callback (SV 16.4: by-value actuals use their
     /// values when the assertion is evaluated, ref actuals the Reactive-time
-    /// values). A method call's receiver handle is captured with the inputs
-    /// (llg decision S36-D3).
+    /// values). A method call's receiver is captured with the inputs unless
+    /// it names static storage (decision S36-D3,
+    /// [`Self::capture_deferred_receiver`]).
     fn capture_deferred_assertion_stmt(
         &self,
         frame: FrameId,
@@ -359,7 +360,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     ));
                 }
                 if let Some(receiver) = call.receiver.take() {
-                    call.receiver = Some(Self::capture_deferred_handle(frame, captures, receiver));
+                    call.receiver = Some(self.capture_deferred_receiver(frame, captures, receiver));
                 }
                 for arg in &mut call.args {
                     match arg {
@@ -510,6 +511,71 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             ),
         ));
         IrStringExpr::LocalRead(local)
+    }
+
+    /// The receiver of a deferred assertion's method-call action (decision
+    /// S36-D3). A receiver that names static storage, a handle variable or
+    /// an element of a static array, is read when the report matures: only
+    /// the element's index or key is taken at issue, like an argument, and a
+    /// null handle then is the run-time error. Any other receiver (an
+    /// automatic variable, a property selected through a handle, a function
+    /// result) is captured at issue. Sequence match-item calls capture every
+    /// receiver.
+    fn capture_deferred_receiver(
+        &self,
+        frame: FrameId,
+        captures: &mut Vec<IrCapture>,
+        receiver: IrChandleExpr,
+    ) -> IrChandleExpr {
+        let IrChandleExpr::Required { handle, site } = receiver else {
+            return Self::capture_deferred_handle(frame, captures, receiver);
+        };
+        let static_container =
+            |container: usize| self.cg.model.containers[container].is_global_storage();
+        let handle = match *handle {
+            IrChandleExpr::Read(object) if self.late_receiver => IrChandleExpr::Read(object),
+            IrChandleExpr::ContainerGet { container, index }
+                if self.late_receiver && static_container(container) =>
+            {
+                IrChandleExpr::ContainerGet {
+                    container,
+                    index: Box::new(Self::capture_deferred_value(frame, captures, *index)),
+                }
+            }
+            IrChandleExpr::ContainerGetNested { container, indices }
+                if self.late_receiver && static_container(container) =>
+            {
+                IrChandleExpr::ContainerGetNested {
+                    container,
+                    indices: indices
+                        .into_iter()
+                        .map(|index| Self::capture_deferred_value(frame, captures, index))
+                        .collect(),
+                }
+            }
+            IrChandleExpr::AssociativeGet { container, key }
+                if self.late_receiver && static_container(container) =>
+            {
+                IrChandleExpr::AssociativeGet {
+                    container,
+                    key: Box::new(Self::capture_deferred_string(frame, captures, *key)),
+                }
+            }
+            handle => {
+                return Self::capture_deferred_handle(
+                    frame,
+                    captures,
+                    IrChandleExpr::Required {
+                        handle: Box::new(handle),
+                        site,
+                    },
+                )
+            }
+        };
+        IrChandleExpr::Required {
+            handle: Box::new(handle),
+            site,
+        }
     }
 
     fn capture_deferred_handle(

@@ -420,9 +420,44 @@ static int wait_is_deferred_flush_point(llg_wait_kind_t kind) {
     }
 }
 
-// Finish/deadlock teardown and the end of a final procedure execute the
-// reports that are still queued, in issue order: matured ones first, then
-// the pending ones (llg policy, recorded in docs/lrm_decisions.md).
+// $finish, and the end of the run, drop every deferred assertion report
+// still queued, pending or matured, also the rest of a Reactive drain whose
+// action called $finish: none executes after $finish (decision S36-D6).
+// Queued sequence match-item calls still run, in order, as before.
+static void deferred_assertions_finish(void) {
+    procedural_drop_pending();
+    deferred_queue_release(&g.deferred_pending, 0);
+    g.deferred_pending_live = 0;
+    if (g.deferred_matured_next >= g.deferred_matured.count) {
+        g.deferred_matured.count = 0;
+        g.deferred_matured_next = 0;
+        return;
+    }
+    llg_region_t saved_region = g.current_region;
+    int saved_action = g.in_deferred_action;
+    g.current_region = LLG_REGION_REACTIVE;
+    while (g.deferred_matured_next < g.deferred_matured.count) {
+        llg_deferred_assertion_report_t* slot =
+            &g.deferred_matured.items[g.deferred_matured_next++];
+        // Copy: a match-item call can append matured records.
+        llg_deferred_assertion_report_t report = *slot;
+        slot->frame = NULL;
+        if (report.kind == LLG_DEFERRED_MATCH_CALL)
+            deferred_report_execute(&report);
+        else
+            llg_frame_release(report.frame);
+    }
+    g.deferred_matured.count = 0;
+    g.deferred_matured_next = 0;
+    // A report issued by a match-item call above is dropped too.
+    deferred_queue_release(&g.deferred_pending, 0);
+    g.deferred_pending_live = 0;
+    g.in_deferred_action = saved_action;
+    g.current_region = saved_region;
+}
+
+// The end of a final procedure executes the reports that it queued, in
+// issue order (llg policy S36-D4); no Observed region follows it.
 static void run_deferred_assertions_now(void) {
     procedural_drop_pending();
     if (g.deferred_matured_next >= g.deferred_matured.count &&

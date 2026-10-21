@@ -13,6 +13,7 @@ module tb;
       assert #0 (i != 0) else report(i);
     #0;
     $display("reports=%0d", reports);
+    #1 $display("reports=%0d", reports);
     $finish(2);
   end
 endmodule

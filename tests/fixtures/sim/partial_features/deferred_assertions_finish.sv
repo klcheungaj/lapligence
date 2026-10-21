@@ -1,7 +1,7 @@
 // llg-test-fixture: tests/fixtures/sim/partial_features/deferred_assertions_finish.sv
 module tb;
   initial begin
-    assert #0 (1'b0) else $display("finish-drained");
+    assert #0 (1'b0) else $display("dropped-at-finish");
     $finish(2);
   end
 

@@ -2221,15 +2221,16 @@ These are bounded implementations, not full verification-infrastructure support.
   of processes, class methods, programs, final procedures and as module items
   (always_comb sensitivity, S36-D7). Each execution queues one report on its
   process's queue with issue-time copies of by-value arguments (packed, real,
-  string, chandle, class handle, packed/unpacked structs, fixed arrays and a
-  method call's receiver, S36-D3); `ref`/`const ref` actuals are read in the
-  Reactive region. Resuming from an event control or wait statement,
+  string, chandle, class handle, packed/unpacked structs, fixed arrays, and a
+  method call's receiver unless it names static storage, S36-D3); `ref`/`const
+  ref` actuals and a static receiver are read in the Reactive region. Resuming from an event control or wait statement,
   re-triggering, `disable` of the assertion or of the procedure's outermost
   scope flush pending reports; Observed matures them and the
   [deferred-action lowerer](../src/sim/codegen/lowering/statements/assertions.rs)'s
   single calls (tasks, void functions, display/severity tasks, `$fatal`,
   `$finish`, `$stop`) execute once in Reactive. `$assertoff` keeps queued
-  reports; `$assertkill` flushes unmatured ones (S36-D5). Final-procedure
+  reports; `$assertkill` flushes unmatured ones (S36-D5). Reports still queued
+  at `$finish` are dropped (S36-D6). Final-procedure
   reports run when the procedure returns (S36-D4)
   ([sim_036](../tests/fixtures/sim/feature_completion/sim_036/readme.md)).
   Queue, dynamic/associative array and event value arguments and

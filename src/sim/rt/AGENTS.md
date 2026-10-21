@@ -566,8 +566,10 @@ statement (`deferred_flush`, set by `wake_proc`, applied before `llg_co_run`),
 an outermost-scope disable and a specific-assertion disable flush pending
 reports. Observed matures reports into a retained array run by one Reactive
 callback in issue order. OFF prevents new checks but does not cancel pending
-actions; KILL flushes only unmatured reports. Drain actions before cleanup and
-after each final procedure. These fields fit existing `llg_proc_t` padding.
+actions; KILL flushes only unmatured reports. `$finish` and the end of the run
+drop every queued report, pending or matured (S36-D6;
+`deferred_assertions_finish`, which still runs queued match-item calls); a
+final procedure's own reports execute when it returns (S36-D4). These fields fit existing `llg_proc_t` padding.
 Procedural concurrent assertions (SV 16.15.6) share that pending array and its
 flush points: `llg_assertion_queue(index)` appends a value-free
 `LLG_DEFERRED_PROCEDURAL` record (none while the assertion is off) for the
