@@ -1,6 +1,8 @@
 // SIM-007: class handles publish a change marker. Whole-handle ports, a
-// record port with a handle member, always_comb and @(h) wake on handle
-// stores by blocking and nonblocking assignment, task outputs and ref formals.
+// record port with a handle member and @(h) wake on handle stores by
+// blocking and nonblocking assignment, task outputs and ref formals. (An
+// always_comb would not: class references add nothing to its sensitivity,
+// decision AB-N2.)
 class Obj;
     int v;
     function new(int x); v = x; endfunction
@@ -20,7 +22,7 @@ module tb;
     node_t n, m;
     int seen;
     child u(.hi(a), .ho(b), .ni(n), .no(m));
-    always_comb seen = (a == null) ? 0 : a.v;
+    always @(a) seen = (a == null) ? 0 : a.v;
     initial forever begin
         @(c);
         $display("c changed %0d", c == null ? -1 : c.v);

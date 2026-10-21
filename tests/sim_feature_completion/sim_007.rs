@@ -256,7 +256,7 @@ fn nested_records_with_strings_reals_queues_and_handles_complete_their_lifecycle
 }
 
 #[test]
-fn class_handle_stores_wake_ports_comb_logic_and_event_controls() {
+fn class_handle_stores_wake_ports_and_event_controls() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_007/handle_sensitivity.out");
     sim_cli::run_case_backend_parity(SUITE, "handle_sensitivity", expected, &[], &[]);
