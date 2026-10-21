@@ -287,7 +287,11 @@ pub(crate) fn native_flag(flag: &str, msvc: bool) -> &str {
 ///   is linked, so a companion that calls `svdpi.h` or VPI routines or a
 ///   DPI-C export links against `model_import_library`, the model
 ///   executable's import library (`llg --dpi-import-lib`). `/W4 /WX` is the
-///   MSVC counterpart of `-Wall -Wextra -Werror`.
+///   MSVC counterpart of `-Wall -Wextra -Werror`. `/MD` links the DLL to the
+///   shared UCRT that CMake builds the model with: `/LD` alone implies the
+///   static CRT (`/MT`), whose separate `stdout` buffer would hold the
+///   companion's `printf` output until the DLL unloads, after every line
+///   the model printed.
 ///
 /// `Err` carries both output streams of a failed build.
 pub(crate) fn shared_library(
@@ -304,7 +308,7 @@ pub(crate) fn shared_library(
     let library = if msvc {
         let module = directory.join(format!("{stem}_dll.dll"));
         command
-            .args(["/nologo", "/std:c11", "/W4", "/WX", "/LD"])
+            .args(["/nologo", "/std:c11", "/W4", "/WX", "/LD", "/MD"])
             .arg(format!("/I{}", root.join("src/sim/rt").display()))
             .arg(format!(
                 "/Fo{}",

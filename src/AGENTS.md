@@ -166,6 +166,14 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
   chosen over a function-pointer table because calls stay direct by name with no
   llg stub library in the DLL (LLVM's `opt.exe` plugins work the same way);
   static archives remain the route that needs no import library.
+- `cl /LD` implies the static CRT (`/MT`) unless `/MD` is given, while CMake
+  builds the model with the shared UCRT (`/MD`, CMP0091). A static-CRT DLL has
+  its own `stdout` buffer: its `printf` lines reach a piped stdout when the
+  DLL unloads, after everything the model printed, where ELF and Mach-O
+  companions share the model's libc buffer. The model flushes its own
+  `stdout` after every line but cannot flush another CRT's, so the companion
+  owns that: test DLLs build with `/MD` (`c_compiler::shared_library`), and
+  the Windows DLL guidance in `docs/known_issues.md` says so.
 - `cl` writes its diagnostics to stdout, not stderr: print both streams when a
   compile fails. A Ninja build stops at the first failing source, so one CI run
   can hide further MSVC-only errors behind it.

@@ -1835,6 +1835,10 @@ call chains; these cases remain outside it.
   import library names. A call of an export the design does not declare fails
   the DLL's link instead of the model's. Only MSVC toolchains build the import
   library; a MinGW DLL is not supported (static archives work everywhere).
+  Build the DLL with `/MD`, the shared UCRT the model is built with: `/LD`
+  alone implies the static CRT (`/MT`), whose own `stdout` buffer keeps the
+  DLL's `printf` output until the DLL unloads, after every line the model
+  printed. llg cannot flush another C runtime's buffers.
   The route is unit-tested on Linux (generated `sim.def`, CMake text) and
   written for MSVC; its Windows run is pending CI.
 - On macOS a dylib built with `-undefined dynamic_lookup` that calls a symbol
