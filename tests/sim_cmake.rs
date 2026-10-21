@@ -1063,6 +1063,47 @@ fn build_timings_record_phases_and_cache_outcomes() {
     );
 }
 
+/// `path` as CMake may write it into a configured tree: native, and on
+/// Windows also with `/` separators and either drive-letter case
+/// (`CMakeCache.txt` names the build directory `c:/Users/...`).
+fn cmake_path_spellings(path: &std::path::Path) -> Vec<String> {
+    path_spellings(path.to_str().expect("UTF-8 temp path"), cfg!(windows))
+}
+
+fn path_spellings(native: &str, windows: bool) -> Vec<String> {
+    let mut spellings = vec![native.to_owned()];
+    if windows {
+        for spelling in [native.to_owned(), native.replace('\\', "/")] {
+            if let Some(rest) = spelling.get(1..).filter(|rest| rest.starts_with(':')) {
+                let drive = spelling.chars().next().unwrap_or_default();
+                spellings.push(format!("{}{rest}", drive.to_ascii_lowercase()));
+                spellings.push(format!("{}{rest}", drive.to_ascii_uppercase()));
+            }
+            spellings.push(spelling);
+        }
+    }
+    spellings.sort();
+    spellings.dedup();
+    spellings
+}
+
+#[test]
+fn windows_tree_paths_match_cmakes_spellings() {
+    assert_eq!(
+        path_spellings(r"C:\Users\a\Temp\llg-1-0\third", true),
+        [
+            "C:/Users/a/Temp/llg-1-0/third",
+            r"C:\Users\a\Temp\llg-1-0\third",
+            "c:/Users/a/Temp/llg-1-0/third",
+            r"c:\Users\a\Temp\llg-1-0\third",
+        ]
+    );
+    assert_eq!(
+        path_spellings("/tmp/llg-1-0/third", false),
+        ["/tmp/llg-1-0/third"]
+    );
+}
+
 /// Opt-in configured-tree templates (`LLG_CMAKE_TREE_TEMPLATES`): the first
 /// fresh tree is captured, a second tree in another directory checks the
 /// template against its own real configure, and later fresh trees are written
@@ -1116,18 +1157,18 @@ fn opt_in_tree_templates_replace_checked_fresh_configures() {
             "no configure ran: {line}"
         );
     }
-    // The written tree names its own directories only.
+    // The written tree names its own directories only, in any of CMake's
+    // spellings (on Windows `c:/...` beside the native `C:\...`).
     let cache_text = std::fs::read_to_string(dir.path().join("third/build/CMakeCache.txt"))
         .expect("written cache");
-    let third = dir.path().join("third");
-    let third = third.to_str().expect("UTF-8 temp path");
-    assert!(cache_text.contains(third), "{cache_text}");
+    let names = |model: &str| {
+        cmake_path_spellings(&dir.path().join(model))
+            .iter()
+            .any(|spelling| cache_text.contains(spelling.as_str()))
+    };
+    assert!(names("third"), "{cache_text}");
     for other in ["first", "second", "fourth"] {
-        let other = dir.path().join(other);
-        assert!(
-            !cache_text.contains(other.to_str().unwrap()),
-            "{cache_text}"
-        );
+        assert!(!names(other), "{other}: {cache_text}");
     }
     // An existing templated tree reconfigures and rebuilds in place.
     let stdout = build_counter(dir.path(), &dir.path().join("third"), &opts)
