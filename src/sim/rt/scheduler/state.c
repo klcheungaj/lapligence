@@ -380,12 +380,14 @@ typedef struct llg_assertion_clock_event {
 } llg_assertion_clock_event_t;
 
 /* One destination clock of a sequence endpoint's `.matched` status (SV
- * 16.14.6): the match is visible at destination tick `visible_tick`, the
- * first tick of `clock` at or after the match. */
+ * 16.14.6): a match is visible at destination tick `visible_tick`, the
+ * first tick of `clock` after the match's time step (S39-D5); `also_next`
+ * keeps a later match visible at the tick after it. */
 typedef struct llg_matched_slot {
     sv4_t* clock;
     int edge;
     uint8_t has_match;
+    uint8_t also_next;
     uint64_t visible_tick;
 } llg_matched_slot_t;
 

@@ -597,7 +597,9 @@ suppressed default failure still counts (`llg_assertion_failure_quiet`).
 Sequence end points (`llg_assertion_endpoint`) are hidden covers skipped by
 controls and counters: a nonvacuous match triggers the end point's event in
 the Observed region (`.triggered`, `@(seq)`) and latches each `.matched` slot
-until the next tick of its destination clock (a coincident tick sees it).
+until the first tick of its destination clock in a later time step (S39-D5):
+a coincident tick does not see a new match, but keeps showing an earlier one
+for the rest of its step (`also_next`).
 
 Sequence tokens own a transition, local snapshot and retained first-match scope
 chain. Each scope belongs to an invocation; completion cannot discard outer

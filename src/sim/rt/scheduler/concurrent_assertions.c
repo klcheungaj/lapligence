@@ -36,21 +36,32 @@ static void assertion_default_failure_action(void* data) {
 /* Report one attempt result. The result counters always change; action
  * controls (SV 20.12: "shall not affect the statistics counters") only
  * decide whether the pass, fail or default fail action executes. */
+/* Whether a `.matched` slot holds a match visible at destination tick
+ * `tick`. */
+static int matched_slot_visible(const llg_matched_slot_t* slot, uint64_t tick) {
+    return slot->has_match &&
+           (slot->visible_tick == tick || (slot->also_next && slot->visible_tick + 1u == tick));
+}
+
 /* A match of a sequence endpoint, in the Observed region: `.triggered` and
- * `@(seq)` see the event; each `.matched` slot becomes visible at the first
- * tick of its destination clock at or after this time step (a destination
- * tick already in this step counts, S39-D5). */
+ * `@(seq)` see the event; each `.matched` slot becomes visible at the next
+ * tick of its destination clock, so a destination tick already in this time
+ * step does not see it (S39-D5). An earlier match that this step's
+ * destination tick shows stays visible for the rest of the step. */
 static void sequence_endpoint_matched(llg_concurrent_assertion_t* endpoint) {
     // Observed is not a mutating region for process code; the runtime
     // itself publishes the endpoint, as for clocking-block events.
     event_trigger_object_unchecked(endpoint->endpoint_event->object);
     for (uint32_t index = 0; index < endpoint->endpoint_slot_count; index++) {
         llg_matched_slot_t* slot = &endpoint->endpoint_slots[index];
-        llg_clocking_edge_t* edge = find_clocking_edge(slot->clock);
         uint64_t ticks = assertion_clock_tick(slot->clock, slot->edge);
-        unsigned flag = slot->edge == LLG_EV_POSEDGE ? CLOCKING_POSEDGE : CLOCKING_NEGEDGE;
-        int ticked_now = edge && edge->time == g.now && (edge->occurred & flag);
-        slot->visible_tick = ticked_now ? ticks : ticks + 1u;
+        if (matched_slot_visible(slot, ticks)) {
+            slot->visible_tick = ticks;
+            slot->also_next = 1;
+        } else {
+            slot->visible_tick = ticks + 1u;
+            slot->also_next = 0;
+        }
         slot->has_match = 1;
     }
 }
@@ -75,8 +86,7 @@ int llg_sequence_matched(uint32_t endpoint, uint32_t slot) {
         return 0;
     }
     const llg_matched_slot_t* state = &g.sequence_endpoints[endpoint]->endpoint_slots[slot];
-    return state->has_match &&
-           state->visible_tick == assertion_clock_tick(state->clock, state->edge);
+    return matched_slot_visible(state, assertion_clock_tick(state->clock, state->edge));
 }
 
 int llg_assertion_endpoint(uint64_t identity, uint32_t index, llg_event_t* event,

@@ -5,8 +5,9 @@
 // (posedges 5, 15, ..., 95) and matches at 25, 35, 75 and 85 whatever tick
 // its match started on. `.triggered` is read on the same clock; `.matched`
 // is read on `sysclk` (posedges 7, 21, 35, 49, 63, 77, 91) and holds each
-// match until the first `sysclk` tick at or after it (S39-D5: the match at
-// 35 is visible at the coincident tick 35). `e3` itself reads
+// match until the first `sysclk` tick after its time step (S39-D5: the match
+// at 35 is not seen at the coincident tick 35, which shows the 25 match, but
+// at 49). `e3` itself reads
 // `e1(...).triggered`. Derivation: readme.md.
 module tb;
   logic clk = 1'b0, sysclk = 1'b0;
