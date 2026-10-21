@@ -7,6 +7,17 @@
 //! F.5.2/F.5.3.1. Nothing here is shared with the simulator's property
 //! engine.
 //!
+//! Two rules deliberately differ from Annex F, following decisions A13-D1
+//! and A13-D3 (industry-standard behaviour):
+//! - the consequent of `S |-> Q` and `S |=> Q` is rewritten under the clock
+//!   `S` ends on, its last clocking event that flows out of it left to right
+//!   (16.14.3), not under the clock flowing into the implication (F.5.1.2
+//!   `T_p((r |-> p), c) = (T_s(r, c) |-> T_p(p, c))`): `T_p(S |-> Q, c) =
+//!   (T_s(S, c) |-> T_p(Q, end(S, c)))`;
+//! - both branches of `if (b) P1 else P2` start at the tick that reads `b`,
+//!   instead of F.3.4.3.4 `(b |-> P1) and (weak(b) or P2)`, which starts `P2`
+//!   with the if-else: `(b |-> P1) and (!b |-> P2)`.
+//!
 //! A word has one letter per time step in which a clock of the test ticks:
 //! the sampled values of `a` and `b` and which of `posedge c1` and
 //! `posedge c2` occur. Time steps without a tick are left out: the tested
@@ -133,9 +144,7 @@ enum R {
 /// Unclocked properties (F.3.2).
 #[derive(Clone, Debug)]
 enum P {
-    /// `strong(R)`, with the clock of the first tick of the clocked
-    /// sequence it was rewritten from (see [`Interp::sat`]).
-    Strong(R, Cond),
+    Strong(R),
     Weak(R),
     Not(Box<P>),
     And(Box<P>, Box<P>),
@@ -153,6 +162,17 @@ fn bx<T>(x: T) -> Box<T> {
     Box::new(x)
 }
 
+/// The clock sequence `s` ends on when clock `c` flows into it: the clock of
+/// its last clocking event (16.14.3, decision A13-D1). The fixture's
+/// sequences have no parentheses or instances around a clocking event.
+fn end_clock(s: &S, c: &Cond) -> Cond {
+    match s {
+        S::Bool(_) => c.clone(),
+        S::Cat(_, y) | S::Fuse(_, y) => end_clock(y, c),
+        S::Clock(c2, x) => end_clock(x, c2),
+    }
+}
+
 /// `T_s(S, c)` (F.5.1.1).
 fn t_s(s: &S, c: &Cond) -> R {
     match s {
@@ -167,15 +187,6 @@ fn t_s(s: &S, c: &Cond) -> R {
         S::Cat(x, y) => R::Cat(bx(t_s(x, c)), bx(t_s(y, c))),
         S::Fuse(x, y) => R::Fuse(bx(t_s(x, c)), bx(t_s(y, c))),
         S::Clock(c2, x) => t_s(x, c2),
-    }
-}
-
-/// The clock of the first tick of a clocked sequence under clock `c`.
-fn leading(s: &S, c: &Cond) -> Cond {
-    match s {
-        S::Bool(_) => c.clone(),
-        S::Cat(x, _) | S::Fuse(x, _) => leading(x, c),
-        S::Clock(c2, x) => leading(x, c2),
     }
 }
 
@@ -198,25 +209,29 @@ impl Calls<'_> {
     fn t_p(&mut self, q: &Q, c: &Cond) -> P {
         match q {
             Q::Weak(s) => P::Weak(t_s(s, c)),
-            Q::Strong(s) => P::Strong(t_s(s, c), leading(s, c)),
+            Q::Strong(s) => P::Strong(t_s(s, c)),
             Q::Clock(c2, q) => self.t_p(q, c2),
             Q::Not(q) => P::Not(bx(self.t_p(q, c))),
             Q::And(x, y) => P::And(bx(self.t_p(x, c)), bx(self.t_p(y, c))),
             Q::Or(x, y) => P::Or(bx(self.t_p(x, c)), bx(self.t_p(y, c))),
-            Q::Imp(s, q) => P::Imp(t_s(s, c), bx(self.t_p(q, c))),
-            // F.3.4.3.3: (S |=> Q) is ((S ##1 @(1) 1) |-> Q).
+            // The consequent takes the antecedent's end clock (A13-D1).
+            Q::Imp(s, q) => P::Imp(t_s(s, c), bx(self.t_p(q, &end_clock(s, c)))),
+            // F.3.4.3.3: (S |=> Q) is ((S ##1 @(1) 1) |-> Q), with Q under
+            // the end clock of S (A13-D1).
             Q::NonImp(s, q) => {
+                let end = end_clock(s, c);
                 let s = S::Cat(
                     bx(s.clone()),
                     bx(S::Clock(Cond::One, bx(S::Bool(Cond::One)))),
                 );
-                self.t_p(&Q::Imp(s, q.clone()), c)
+                P::Imp(t_s(&s, c), bx(self.t_p(q, &end)))
             }
-            // F.3.4.3.4: (if(b) P1 else P2) is ((b |-> P1) and (weak(b) or P2)).
+            // Both branches start at the condition's tick (A13-D3):
+            // (if(b) P1 else P2) is ((b |-> P1) and (!b |-> P2)).
             Q::IfElse(b, x, y) => {
                 let q = Q::And(
                     bx(Q::Imp(S::Bool(b.clone()), x.clone())),
-                    bx(Q::Or(bx(Q::Weak(S::Bool(b.clone()))), y.clone())),
+                    bx(Q::Imp(S::Bool(not(b.clone())), y.clone())),
                 );
                 self.t_p(&q, c)
             }
@@ -267,7 +282,7 @@ impl Calls<'_> {
         }
         let index = self.keys.len();
         self.keys.push((name, c.clone()));
-        self.bodies.push(P::Strong(R::Empty, Cond::One));
+        self.bodies.push(P::Strong(R::Empty));
         self.zero.push(P::Weak(t_s(&S::Bool(Cond::One), c)));
         let body = self.program.bodies[name].clone();
         self.bodies[index] = self.t_p(&body, c);
@@ -416,14 +431,8 @@ impl Interp<'_> {
     /// `w^{s..} |= p` (F.5.3.1) with `depth` approximation levels left.
     fn sat(&self, p: &P, w: &Word, s: usize, depth: usize) -> bool {
         match p {
-            // strong(R): some nonempty prefix tightly satisfies R. On the
-            // finite word of a whole simulation (decision A13-D7), a strong
-            // obligation whose first clock never ticks imposes nothing.
-            P::Strong(r, clock) => {
-                !ends(r, w, s).lasts.is_empty()
-                    || (w.tail.is_none()
-                        && (s..w.len()).all(|i| w.letter(i).is_some_and(|l| !clock.holds(l))))
-            }
+            // strong(R): some nonempty prefix tightly satisfies R.
+            P::Strong(r) => !ends(r, w, s).lasts.is_empty(),
             // weak(R): every prefix followed by T^ω satisfies strong(R).
             P::Weak(r) => self.prefixes(w, s).all(|letters| {
                 let top = Word {
@@ -530,10 +539,9 @@ pub(super) enum Outcome {
     /// Passed or failed on the letter with this index.
     Pass(usize),
     Fail(usize),
-    /// Undecided at the end, with a strong obligation unmet (fails at
-    /// `$finish`, S38-D1).
-    FailAtEnd,
-    /// Undecided at the end with only weak obligations: no report.
+    /// Undecided at `$finish`: no report. Only a pending `s_eventually`
+    /// obligation fails at the end (decisions S38-D1, A13-D7), and the
+    /// tested operators include none.
     Pending,
 }
 
@@ -636,18 +644,7 @@ impl<'p> Oracle<'p> {
                 None => {}
             }
         }
-        // F.5.3.1 on the finite word: a strong obligation needs its match
-        // inside the word, a weak one does not.
-        let w = Word {
-            letters: trace,
-            tail: None,
-            dual: false,
-        };
-        if self.holds(&w) {
-            Outcome::Pending
-        } else {
-            Outcome::FailAtEnd
-        }
+        Outcome::Pending
     }
 }
 

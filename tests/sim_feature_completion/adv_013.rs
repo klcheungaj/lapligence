@@ -5,7 +5,8 @@
 //! as a set (actions of different assertions in one time step have no
 //! defined order); every positive case runs in both optimizer modes on the
 //! legacy, compact/portable and compact/GMP value backends. A01 compares
-//! randomized traces against the Annex F interpreter in `adv_013/oracle.rs`.
+//! randomized traces against the Annex F interpreter in `adv_013/oracle.rs`
+//! (with the clock rules of decisions A13-D1 and A13-D3).
 use super::sim_cli;
 use std::process::Output;
 
@@ -309,7 +310,6 @@ const ORACLE_SEEDS: [u32; 12] = [
     2415085369, 774553835, 3428989595, 1788458061,
 ];
 const ORACLE_STEPS: u64 = 16;
-const ORACLE_FINISH: u64 = 170;
 
 /// The trace of one `unit`: the letters of the time steps in which a clock
 /// ticks, with their times, from the fixture's xorshift32 generator.
@@ -338,7 +338,9 @@ fn oracle_trace(seed: u32) -> Vec<(Letter, u64)> {
 /// A01 / Annex F.5, F.7: the generated model reports exactly what the
 /// independent interpreter derives for multiclocked, recursive, strong and
 /// weak properties on randomized traces with coincident, separate and
-/// missing ticks of two irregular clocks, including results at `$finish`.
+/// missing ticks of two irregular clocks; attempts still pending at
+/// `$finish` report nothing (no tested operator is an `s_eventually`,
+/// decision A13-D7).
 #[test]
 fn properties_match_the_annex_f_interpreter_on_random_traces() {
     let source = fixture!("oracle.sv");
@@ -366,7 +368,6 @@ fn properties_match_the_annex_f_interpreter_on_random_traces() {
                 match oracle.outcome(&letters[start..]) {
                     Outcome::Pass(k) => expected.push(line('P', trace[start + k].1)),
                     Outcome::Fail(k) => expected.push(line('F', trace[start + k].1)),
-                    Outcome::FailAtEnd => expected.push(line('F', ORACLE_FINISH)),
                     Outcome::Pending => {}
                 }
             }

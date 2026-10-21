@@ -3,10 +3,15 @@
 //!
 //! Clock flow is structural: a clocking event clocks the subexpression it
 //! prefixes and nothing outside it ("the scope of a clocking event does not
-//! flow out of enclosing parentheses", 16.14.3), and `T_p((r |-> p), c)`
-//! clocks the consequent by the clock flowing into the implication, not by
-//! the clock the antecedent ends on (F.5.1.2). The assertion is registered on
-//! its semantic leading clock (16.17.1).
+//! flow out of enclosing parentheses", 16.14.3), with one exception: the
+//! consequent of `|->` and `|=>` is clocked by the clock the antecedent ends
+//! on, the last clocking event of the antecedent that is neither inside
+//! parentheses nor inside a sequence instance
+//! ("clock flows ... left to right across linear operators (e.g., ...
+//! implication ...)", 16.14.3; decision A13-D1, which follows the
+//! industry-standard reading instead of the Annex F.5.1.2 rewrite).
+//! Followed-by keeps the clock flowing into it. The assertion is registered
+//! on its semantic leading clock (16.17.1).
 
 use super::*;
 
@@ -417,6 +422,37 @@ impl Codegen<'_> {
         false
     }
 
+    /// The clocking event whose clock flows into the consequent of
+    /// `antecedent |-> consequent` or `antecedent |=> consequent` (decision
+    /// A13-D1): the innermost clocking event on the antecedent's trailing
+    /// chain (the last element of each concatenation) that is not nullified
+    /// by a juxtaposed inner one. Parentheses and a sequence instance end the
+    /// chain: clocks inside them do not flow out (16.14.3). `None` keeps the
+    /// clock flowing into the implication.
+    pub(super) fn implication_end_clocking(&self, antecedent: NodeId) -> Option<NodeId> {
+        let mut end = None;
+        let mut node = antecedent;
+        let mut seen = HashSet::new();
+        while seen.insert(node) && !self.db.is_parenthesized_assertion(node) {
+            match self.kind(node) {
+                NodeKind::AssertionExpr(AssertionExprKind::Clocking { expr, .. }) => {
+                    if !self.clocking_nullified(node) {
+                        end = Some(node);
+                    }
+                    node = *expr;
+                }
+                NodeKind::AssertionExpr(AssertionExprKind::SequenceConcat { elements, .. }) => {
+                    match elements.last() {
+                        Some(last) => node = *last,
+                        None => break,
+                    }
+                }
+                _ => break,
+            }
+        }
+        end
+    }
+
     /// The semantic leading clocks of `node` (16.17.1).
     pub(super) fn semantic_leading_clocks(
         &mut self,
@@ -668,6 +704,30 @@ impl Codegen<'_> {
             }
             _ => top = false,
         }
+        // The consequent of |-> and |=> takes the antecedent's end clock
+        // (decision A13-D1).
+        let consequent_clock = match self.kind(node) {
+            NodeKind::AssertionExpr(AssertionExprKind::Binary {
+                op:
+                    AssertionBinaryOp::OverlappedImplication
+                    | AssertionBinaryOp::NonOverlappedImplication,
+                left,
+                right,
+            }) => {
+                let (left, right) = (*left, *right);
+                match self.implication_end_clocking(left) {
+                    Some(clocking) => match self.assertion_event_clock(path, clocking) {
+                        Ok(clock) => Some((right, clock)),
+                        Err(error) => {
+                            active.remove(&node);
+                            return Err(error);
+                        }
+                    },
+                    None => None,
+                }
+            }
+            _ => None,
+        };
         // An instance passes the clock flowing to it to `$inferred_clock`
         // defaults in its body (16.15.7).
         let instance = self.assertion_instance_body(node).is_some();
@@ -676,6 +736,10 @@ impl Codegen<'_> {
         }
         let mut result = Ok(());
         for operand in self.assertion_operands(node) {
+            let flowing = match consequent_clock {
+                Some((right, clock)) if right == operand => Some(clock),
+                _ => flowing,
+            };
             result = self.collect_clock_changes_inner(
                 path,
                 operand,

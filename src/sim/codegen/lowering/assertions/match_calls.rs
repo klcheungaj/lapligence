@@ -40,6 +40,7 @@ impl Codegen<'_> {
             let mut ctx = EmitCtx::new(self, label.clone(), inst, "0", None, false);
             ctx.display_scope = display_scope.map(|scope| (scope, None));
             ctx.call_owner = "sequence match-item call";
+            ctx.late_receiver = false;
             ctx.lower_deferred_assertion_action(node)
                 .map(|action| (action, std::mem::take(&mut ctx.pre_fns)))
         };

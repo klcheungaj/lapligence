@@ -574,8 +574,10 @@ statement (`deferred_flush`, set by `wake_proc`, applied before `llg_co_run`),
 an outermost-scope disable and a specific-assertion disable flush pending
 reports. Observed matures reports into a retained array run by one Reactive
 callback in issue order. OFF prevents new checks but does not cancel pending
-actions; KILL flushes only unmatured reports. Drain actions before cleanup and
-after each final procedure. These fields fit existing `llg_proc_t` padding.
+actions; KILL flushes only unmatured reports. `$finish` and the end of the run
+drop every queued report, pending or matured (S36-D6;
+`deferred_assertions_finish`, which still runs queued match-item calls); a
+final procedure's own reports execute when it returns (S36-D4). These fields fit existing `llg_proc_t` padding.
 Procedural concurrent assertions (SV 16.15.6) share that pending array and its
 flush points: `llg_assertion_queue(index)` appends a value-free
 `LLG_DEFERRED_PROCEDURAL` record (none while the assertion is off) for the
@@ -605,7 +607,9 @@ suppressed default failure still counts (`llg_assertion_failure_quiet`).
 Sequence end points (`llg_assertion_endpoint`) are hidden covers skipped by
 controls and counters: a nonvacuous match triggers the end point's event in
 the Observed region (`.triggered`, `@(seq)`) and latches each `.matched` slot
-until the next tick of its destination clock (a coincident tick sees it).
+until the first tick of its destination clock in a later time step (S39-D5):
+a coincident tick does not see a new match, but keeps showing an earlier one
+for the rest of its step (`also_next`).
 
 Sequence tokens own a transition, local snapshot and retained first-match scope
 chain. Each scope belongs to an invocation; completion cannot discard outer
@@ -634,12 +638,18 @@ run per attempt as a tree of instances over the static `llg_property_node_t`
 table (operands precede users; the last node is the root). Each instance
 resolves once to true/false with its 16.15.8 nonvacuity; a parent may decide
 while an operand is pending, which then counts as vacuous (decision S38-D3).
+Each result also carries its cover vacuity (S38-D10): a cover counts every
+success as a hit except the vacuous success of an implication without an
+antecedent match or of an else-less `if`, passed on through `not`,
+`nexttime`, an unfired abort or implication consequents; assert and assume
+keep the 16.15.8 vacuity.
 A multiclocked program lists its clocks (`llg_property_clock_t`, the leading
 clock first) and each node and sequence names its own; an instance starts at a
 launch point (clock, time, tick) and advances on the first tick of its own
 clock at or strictly after it, so coincident ticks of different clocks are one
-time step (16.14). Single-clock programs have no clock list and run on the
-assertion's clock. Sequence operands reuse the sequence engine on their clock
+time step (16.14). Both branches of an `if`-`else` start at the tick that
+reads its condition (A13-D3). Single-clock programs have no clock list and run
+on the assertion's clock. Sequence operands reuse the sequence engine on their clock
 with their own zero-delay ranks. `LLG_PROPERTY_CALL` (a recursive property
 instance, 16.13.17) starts a fresh instance of its target node.
 `llg_assertion_clock_pulse` writes a planned clock's hidden signal 1 then 0 at
@@ -647,10 +657,11 @@ most once per time step. Asynchronous `accept_on`/`reject_on` are checked once p
 time step from the write hook with sampled values; synchronous ones and every
 abort are checked first on each tick. At the end of simulation
 (`run_end_of_simulation_assertions`, after deferred reports) a pending attempt
-settles by its finite-trace verdict: unmet strong obligations fail (fail
-action in an isolated Reactive pass), weak ones end without a result (S38-D1),
-and an obligation whose clock has not ticked since it became due imposes
-nothing (A13-D7);
+fails (fail action in an isolated Reactive pass) only if it waits on an
+`s_eventually` obligation, begun or due to begin through a started operator
+(`property_end_fails`, a per-program eventuality table built at the end);
+every other pending attempt, strong obligations included, ends without a
+result (S38-D1, A13-D7);
 `cover` and `expect` are not settled. Instances count against
 `LLG_SEQUENCE_THREAD_LIMIT` and are recycled through `g.property_inst_pool`.
 An `expect` keeps its outcome (`llg_assertion_expect_outcome`: 0 none, 1 pass,

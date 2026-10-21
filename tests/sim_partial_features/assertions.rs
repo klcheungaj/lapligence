@@ -49,7 +49,7 @@ fn deferred_assertions_report_defaults_and_cover_in_reactive() {
         concat!(
             "llg: assertion assert failed: tb:4:5\n",
             "llg: assertion assume failed: tb:5:5\n",
-            "llg: $finish at time 0 at tb:8:5\n",
+            "llg: $finish at time 1000 at tb:10:5\n",
             "llg: simulation statistics: processes=1\n",
             "llg: severity counts: info=0 warning=0 error=2 fatal=0\n",
             "llg: assertion counts: assert_failed=1 assume_failed=1 cover=1\n",
@@ -58,15 +58,15 @@ fn deferred_assertions_report_defaults_and_cover_in_reactive() {
 }
 
 /// SV 16.4.1/16.4.2: each execution queues a report and only a flush point
-/// clears the queue, so the loop's failing execution still reports. It is
-/// pending when `$finish` runs and executes before teardown (S36-D6).
+/// clears the queue, so the loop's failing execution still reports; `#0` is
+/// no flush point, and the report matures in the Observed region of time 0.
 #[test]
 fn deferred_assertions_queue_each_execution_until_a_flush_point() {
     run_case_with_stderr(
         "deferred_assertions_glitch",
-        "reports=0\nglitch=0\n",
+        "reports=0\nglitch=0\nreports=1\n",
         concat!(
-            "llg: $finish at time 0 at tb:16:5\n",
+            "llg: $finish at time 1000 at tb:17:5\n",
             "llg: simulation statistics: processes=1\n",
         ),
     );
@@ -78,17 +78,19 @@ fn deferred_assertions_support_module_level_actions() {
         "deferred_assertions_module",
         "module=1\n",
         concat!(
-            "llg: $finish at time 0 at tb:11:5\n",
+            "llg: $finish at time 1000 at tb:13:5\n",
             "llg: simulation statistics: processes=2\n",
         ),
     );
 }
 
+/// A report still pending when `$finish` runs is dropped; the final
+/// procedure runs next (S36-D6).
 #[test]
-fn deferred_assertions_drain_before_finish_and_finals() {
+fn deferred_assertions_pending_at_finish_are_dropped() {
     run_case_with_stderr(
         "deferred_assertions_finish",
-        "finish-drained\nfinal-after\n",
+        "final-after\n",
         concat!(
             "llg: $finish at time 0 at tb:5:5\n",
             "llg: simulation statistics: processes=1\n",

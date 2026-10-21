@@ -1,8 +1,8 @@
 // SIM-036 A02: action arguments passed by value keep their values from the
 // instant the deferred assertion executed, for native and packed types;
 // ref and const ref arguments read static variables in the Reactive region
-// (IEEE 1800-2009 16.4). A method call's receiver handle is taken when the
-// assertion executes (decision S36-D3).
+// (IEEE 1800-2009 16.4). A method call's receiver that names a static handle
+// variable is read when the report matures (decision S36-D3).
 module tb;
   typedef struct packed { logic [3:0] h; logic [3:0] l; } nibbles_t;
   typedef struct { int a; logic [7:0] b; } pair_t;

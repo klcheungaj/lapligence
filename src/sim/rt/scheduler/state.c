@@ -363,6 +363,15 @@ typedef struct llg_property_inst {
      * node resolves true or false (see property_collapse). */
     uint8_t carry_true;
     uint8_t carry_false;
+    /* Valid once resolved: the result is the vacuous outcome of an
+     * implication without an antecedent match or of an else-less if whose
+     * condition is false, passed on unchanged. A cover counts every other
+     * success as a hit (decision S38-D10). */
+    uint8_t cover_vacuous;
+    /* IMPLICATION: a consumed consequent's result was not cover-vacuous. */
+    uint8_t consumed_hit;
+    /* Collapsed past an operator whose result is never cover-vacuous. */
+    uint8_t carry_hit;
 } llg_property_inst_t;
 
 /* A sequence can advance on a clock other than its leading assertion clock.
@@ -379,12 +388,14 @@ typedef struct llg_assertion_clock_event {
 } llg_assertion_clock_event_t;
 
 /* One destination clock of a sequence endpoint's `.matched` status (SV
- * 16.14.6): the match is visible at destination tick `visible_tick`, the
- * first tick of `clock` at or after the match. */
+ * 16.14.6): a match is visible at destination tick `visible_tick`, the
+ * first tick of `clock` after the match's time step (S39-D5); `also_next`
+ * keeps a later match visible at the tick after it. */
 typedef struct llg_matched_slot {
     sv4_t* clock;
     int edge;
     uint8_t has_match;
+    uint8_t also_next;
     uint64_t visible_tick;
 } llg_matched_slot_t;
 

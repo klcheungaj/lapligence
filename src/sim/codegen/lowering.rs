@@ -2814,6 +2814,11 @@ struct EmitCtx<'c, 'a> {
     /// What a call lowered with a captured argument frame belongs to, for
     /// diagnostics: a deferred assertion action or a sequence match item.
     call_owner: &'static str,
+    /// Whether a method-call receiver that names static storage is read
+    /// when the call runs rather than captured with the arguments: true for
+    /// deferred assertion actions (decision S36-D3), false for sequence
+    /// match items.
+    late_receiver: bool,
     /// Replaces the `%m` scope of a hidden host process: the text plus the
     /// node whose named blocks extend it (`None` when no block can lie below).
     display_scope: Option<(String, Option<NodeId>)>,

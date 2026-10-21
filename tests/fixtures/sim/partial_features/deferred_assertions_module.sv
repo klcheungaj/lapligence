@@ -7,7 +7,9 @@ module tb;
   assert #0 (1'b0) else report(1'b1);
 
   initial begin
-    #0;
+    // The reports mature in time step 0; reports still queued at
+    // $finish would be dropped (S36-D6).
+    #1;
     $finish(2);
   end
 endmodule

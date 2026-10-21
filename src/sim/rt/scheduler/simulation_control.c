@@ -53,7 +53,7 @@ void llg_rt_finish_with_level(int verbosity, const char* location) {
         fprintf(stderr, "llg runtime fatal: invalid $finish verbosity %d\n", verbosity);
         abort();
     }
-    run_deferred_assertions_now();
+    deferred_assertions_finish();
     report_finish(verbosity, location);
     g.finish = 1;
     if (current) current->chain.exiting = LLG_EXIT_COMPLETE;

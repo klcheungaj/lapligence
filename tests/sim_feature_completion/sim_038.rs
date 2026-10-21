@@ -1,9 +1,10 @@
 //! SIM-038: ordinary properties, actions and expect (IEEE 1800-2009
 //! §§16.12-16.13, 16.15, 16.18, Annex F). A01 compares the public CLI against
 //! a test-side property interpreter written from the Annex F neutral
-//! satisfaction rules (F.5.3.1), the derived operators (F.3.4.3) and the
-//! nonvacuity rules of 16.15.8; the other oracles are derived by hand in the
-//! fixture readme.
+//! satisfaction rules (F.5.3.1), the derived operators (F.3.4.3), the
+//! nonvacuity rules of 16.15.8 and the cover-hit rule of llg decision S38-D10
+//! (which successes a `cover` counts); the other oracles are derived by hand
+//! in the fixture readme.
 use super::sim_cli;
 use std::collections::HashMap;
 
@@ -508,6 +509,36 @@ fn nonvacuous(p: &Prop, w: &Word) -> bool {
     }
 }
 
+/// Whether a passing evaluation attempt on the finite word `w` is not a
+/// cover hit (llg decision S38-D10): it is the vacuous success of an
+/// implication without an antecedent match or of an else-less `if` whose
+/// condition is false, passed on unchanged by `not`, `nexttime`, an abort
+/// that did not fire, an else-less `if` or the implication's consequents.
+/// Every other success counts, including those 16.15.8 calls vacuous. The
+/// suite's `not` only wraps operands that are never cover-vacuous.
+fn cover_vacuous(p: &Prop, w: &Word) -> bool {
+    let n = w.positions();
+    match p {
+        Not(p) => cover_vacuous(p, w),
+        Imp(_, seq, overlapped, p) => seq
+            .iter()
+            .filter(|alt| alt_matches(alt, w))
+            .map(|alt| alt.len() - 1 + usize::from(!*overlapped))
+            .filter(|start| *start < n)
+            .all(|start| cover_vacuous(p, &w.suffix(start))),
+        If(cond, then, None) => {
+            !w.letter(0).is_some_and(|letter| cond.holds(letter)) || cover_vacuous(then, w)
+        }
+        Next(k, _, p) => (*k as usize) < n && cover_vacuous(p, &w.suffix(*k as usize)),
+        // An abort that fired decides the attempt itself.
+        Abort(_, _, cond, p) => {
+            (0..n).all(|i| !w.letter(i).is_some_and(|letter| cond.holds(letter)))
+                && cover_vacuous(p, w)
+        }
+        _ => false,
+    }
+}
+
 fn seq_text(strength: Strength, text: &str) -> String {
     let keyword = match strength {
         Strength::Implicit => return text.to_owned(),
@@ -788,7 +819,7 @@ fn trace_word(trace: u32) -> Vec<Letter> {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Outcome {
-    Pass { tick: usize, nonvacuous: bool },
+    Pass { tick: usize, cover_hit: bool },
     Fail { tick: usize },
     Pending,
 }
@@ -820,7 +851,7 @@ fn outcome(
                 };
                 return Outcome::Pass {
                     tick: k + 1,
-                    nonvacuous: nonvacuous(p, &w),
+                    cover_hit: !cover_vacuous(p, &w),
                 };
             }
             Some(false) => return Outcome::Fail { tick: k + 1 },
@@ -869,14 +900,15 @@ fn properties_match_the_annex_f_interpreter_on_every_trace() {
         let mut cache = HashMap::new();
         for trace in 0..(1u32 << (2 * TRACE_LENGTH)) {
             // Ticks 1..=5 also start attempts with `go` low: each succeeds
-            // vacuously at once, so the assert prints and the cover does not.
+            // vacuously at once (an implication without an antecedent match),
+            // so the assert prints and the cover does not.
             for pos in 1..=TRACE_LENGTH {
                 expected.push(format!("A{index:02} {trace} {pos}"));
             }
             match outcome(p, &core, &trace_word(trace), &mut cache) {
-                Outcome::Pass { tick, nonvacuous } => {
+                Outcome::Pass { tick, cover_hit } => {
                     expected.push(format!("A{index:02} {trace} {tick}"));
-                    if nonvacuous {
+                    if cover_hit {
                         expected.push(format!("C{index:02} {trace} {tick}"));
                     }
                 }
@@ -962,6 +994,8 @@ fn interpreter_follows_the_annex_f_anchors() {
         dual: false,
     };
     assert!(!nonvacuous(&p, &w));
+    // A cover still counts that success (llg decision S38-D10).
+    assert!(!cover_vacuous(&p, &w));
     // `if (a) nexttime b` with a false holds at once and vacuously (16.15.8 g).
     let p = If(Atom::A, next(b()), None);
     let word = [letter(false, false)];
@@ -972,6 +1006,7 @@ fn interpreter_follows_the_annex_f_anchors() {
         dual: false,
     };
     assert!(!nonvacuous(&p, &w));
+    assert!(cover_vacuous(&p, &w));
 }
 
 #[test]

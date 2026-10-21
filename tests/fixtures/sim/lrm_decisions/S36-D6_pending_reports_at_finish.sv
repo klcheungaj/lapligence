@@ -1,5 +1,5 @@
 // Decision S36-D6: deferred assertion reports still queued when $finish
-// executes run before the final procedures.
+// executes, pending or matured, are dropped; the final procedures run next.
 //
 // IEEE 1800-2009 20.2 (SystemVerilog-1800-2009.txt L34119): "The $finish
 // system task causes the simulator to exit and pass control back to the host
@@ -8,10 +8,8 @@
 // execute in the Reactive region of the time step.
 //
 // The text does not say whether reports queued in the time step that calls
-// $finish execute. llg executes them, in issue order, before the final
-// procedures (unlike Postponed $strobe/$monitor output, decision S25-D5). A
-// simulator that exits at once would print only "before finish" and
-// "final".
+// $finish execute. llg follows the industry-standard behaviour and drops
+// them, like Postponed $strobe/$monitor output (decision S25-D5).
 module tb;
   initial begin
     assert #0 (1'b0) else $display("pending at finish");

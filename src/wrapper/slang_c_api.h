@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 28u
+#define LLG_SLANG_ABI_VERSION 29u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -996,7 +996,11 @@ enum {
   LLG_SLANG_ASSERTION_RANGE = 1ull << 1,
   LLG_SLANG_ASSERTION_STRONG = 1ull << 2,
   LLG_SLANG_ASSERTION_ABORT_REJECT = 1ull << 3,
-  LLG_SLANG_ASSERTION_ABORT_SYNC = 1ull << 4
+  LLG_SLANG_ASSERTION_ABORT_SYNC = 1ull << 4,
+  /* The expression was written in parentheses (a parenthesized sequence or
+   * property expression); a clocking event inside it does not flow out of
+   * it (IEEE 1800-2009 16.14.3). */
+  LLG_SLANG_ASSERTION_PARENTHESIZED = 1ull << 5
 };
 
 /* Sequence ranges are copied from Slang's checked SequenceRange. The

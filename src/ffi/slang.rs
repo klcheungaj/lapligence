@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 28;
+const ABI_VERSION: u32 = 29;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -877,6 +877,8 @@ pub const SEMANTIC_ASSERTION_RANGE: u64 = 1 << 1;
 pub const SEMANTIC_ASSERTION_STRONG: u64 = 1 << 2;
 pub const SEMANTIC_ASSERTION_ABORT_REJECT: u64 = 1 << 3;
 pub const SEMANTIC_ASSERTION_ABORT_SYNC: u64 = 1 << 4;
+/// The assertion expression was written in parentheses (ABI v29).
+pub const SEMANTIC_ASSERTION_PARENTHESIZED: u64 = 1 << 5;
 pub const SEMANTIC_ASSERTION_RANGE_UNBOUNDED: u32 = u32::MAX;
 pub const SEMANTIC_ASSERTION_REPEAT_CONSECUTIVE: u32 = 1;
 pub const SEMANTIC_ASSERTION_REPEAT_NONCONSECUTIVE: u32 = 2;

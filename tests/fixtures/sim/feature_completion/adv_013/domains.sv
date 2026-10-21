@@ -3,8 +3,10 @@
 // local values across c1 and c2 ticks, a property local gets one copy per
 // semantic leading clock (16.10), asynchronous disables preempt attempts
 // waiting in either domain, actions see both domains' updates of their time
-// step, and strong obligations still open at $finish fail. Same stimulus as
-// flow.sv plus x, y, rst and rst2; expected lines are derived in readme.md.
+// step, and strong sequence obligations still open at $finish report
+// nothing, like weak ones (only s_eventually fails there, A13-D7). Same
+// stimulus as flow.sv plus x, y, rst and rst2; expected lines are derived
+// in readme.md.
 module tb;
   logic c1 = 0, c2 = 0, a = 0, b = 0, d = 0, e = 0, rst = 0, rst2 = 0;
   logic [2:0] x = 0, y = 0;

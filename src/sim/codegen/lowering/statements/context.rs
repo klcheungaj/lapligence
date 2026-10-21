@@ -31,6 +31,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             label_seq: 0,
             in_final,
             call_owner: "deferred immediate assertion action",
+            late_receiver: true,
             display_scope: None,
             coverage_end_exit: None,
             coverage_end_exit_used: false,

@@ -41,9 +41,13 @@ Clock flow (16.14.3, L26026-26029, L26070-26072, L26099):
 
 > Juxtaposing two clocking events nullifies the first of them; therefore, the following two-clocking-event
 
-Annex F.5.1 gives the same flow as rewrite rules: the consequent of an
-implication is clocked by the clock that flows into the implication, not by
-the antecedent's last clock (`T_p((r |-> p), c)` rewrites `p` under `c`).
+Annex F.5.1 rewrites the consequent of an implication under the clock that
+flows into the implication (`T_p((r |-> p), c)` rewrites `p` under `c`).
+llg follows the left-to-right flow of 16.14.3 instead (decision A13-D1,
+industry-standard behaviour): the consequent of `|->` and `|=>` takes the
+clock the antecedent ends on, unless that clock is inside parentheses or a
+sequence instance. Both branches of a multiclocked `if`-`else` start at the
+tick that reads the condition (decision A13-D3).
 
 Clock ticks (16.5, L21468-21469):
 
@@ -131,7 +135,8 @@ Sampled values at the ticks:
 | e | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 A pass with a false antecedent is a vacuous success, which runs the pass
-action. A weak obligation still open at `$finish` reports nothing (S38-D1).
+action. An obligation still open at `$finish` reports nothing unless it is an
+`s_eventually` (S38-D1, A13-D7).
 
 ## `flow.sv`
 
@@ -168,9 +173,10 @@ Attempts start at the `posedge c1` ticks 10, 30, 50, 70, 90 unless noted.
 - `f12` `a ##1 (@(posedge c2) b) ##1 d`: c1 flows across the parentheses, so
   d is at the first `c1` tick after b: 10→b20→d30=1 P30; 30→b45→d50=0 F50; 50
   F50; 70→b90→ no later `c1` tick (open); 90→b100=0 F100.
-- `f13` `a ##1 @(posedge c2) b |=> d`: the consequent is clocked by c1, which
-  flows into the implication: 10→b20→d30=1 P30; 30→b45→d50=0 F50; 50
-  vacuous P50; 70→b90→ open; 90→b100=0 vacuous P100.
+- `f13` `a ##1 @(posedge c2) b |=> d`: the consequent is clocked by c2, the
+  antecedent's last clock (A13-D1), so d is at the next `c2` tick after b:
+  10→b20→d30=1 P30; 30→b45→d60=0 F60; 50 vacuous P50; 70→b90→d100=1 P100;
+  90→b100=0 vacuous P100.
 
 ## `clocks.sv`
 
@@ -313,8 +319,9 @@ Reactive region", after the NBA region of the same time step (4.4).
   60→d70=1 P70; 90 open; 100 vacuous P100.
 - `s1` `a |=> strong(@(posedge c2) d ##1 d)`: 10→d20, d30 P30; 30→d45=0 F45;
   50 vacuous P50; 70→d90, d100 P100; 90→d100, then no `c2` tick: the strong
-  obligation fails at `$finish` (S38-D1): F115. `s2`, the same with `weak`,
-  leaves 90 open: P30 F45 P50 P100.
+  obligation is pending at `$finish` and, being no `s_eventually`, reports
+  nothing (S38-D1, A13-D7). `s2`, the same with `weak`, also leaves 90 open:
+  both give P30 F45 P50 P100.
 
 ## `oracle.sv` (A01)
 
@@ -335,12 +342,15 @@ derives every report with the test-side interpreter
 [`oracle.rs`](../../../../sim_feature_completion/adv_013/oracle.rs), written
 from Annex F: the derived forms of F.3.4.3, the clock rewrite rules of F.5.1
 (L70999-71045), the neutral satisfaction of F.5.3.1 (L71168-71184) and the
-k-fold approximations of F.7 (L71666-71689). A letter is a time step in which
+k-fold approximations of F.7 (L71666-71689), except that an implication's
+consequent is rewritten under the antecedent's end clock (A13-D1) and an
+`if`-`else` is `(b |-> P1) and (!b |-> P2)`, so both branches start at the
+condition's tick (A13-D3). A letter is a time step in which
 a clock ticks. An attempt is reported on the first letter after which every
 continuation (one more letter, then any letter repeated forever) gives the
-same verdict; an attempt still undecided at `$finish` fails there when
-F.5.3.1 rejects the finite word, with the unbegun-obligation rule of A13-D7,
-and otherwise reports nothing (S38-D1).
+same verdict; an attempt still undecided at `$finish` reports nothing, since
+llg reports only a pending `s_eventually` obligation at the end (S38-D1,
+A13-D7) and the tested properties contain none.
 
 ## Rejections
 

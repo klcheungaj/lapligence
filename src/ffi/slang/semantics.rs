@@ -498,7 +498,8 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
                     | SEMANTIC_ASSERTION_RANGE
                     | SEMANTIC_ASSERTION_STRONG
                     | SEMANTIC_ASSERTION_ABORT_REJECT
-                    | SEMANTIC_ASSERTION_ABORT_SYNC)
+                    | SEMANTIC_ASSERTION_ABORT_SYNC
+                    | SEMANTIC_ASSERTION_PARENTHESIZED)
                 == 0;
             let kind_valid = matches!(node.assertion_repetition_kind, 0..=3)
                 && (node.assertion_range_max == SEMANTIC_ASSERTION_RANGE_UNBOUNDED

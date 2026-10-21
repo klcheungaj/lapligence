@@ -861,6 +861,19 @@ impl Codegen<'_> {
         let previous_clock = self.sampled_clock;
         let previous_leading = self.assertion_leading_clock.replace(leading_clock);
         self.sampled_clock = Some(flowing);
+        let consequent_clock = match antecedent_node
+            .and_then(|antecedent| self.implication_end_clocking(antecedent))
+        {
+            Some(clocking) => match self.assertion_flow_clock(path, clocking) {
+                Ok(clock) => Some(clock),
+                Err(error) => {
+                    self.sampled_clock = previous_clock;
+                    self.assertion_leading_clock = previous_leading;
+                    return Err(error);
+                }
+            },
+            None => None,
+        };
         // Locals live in sequence attempts, so a property that initializes
         // locals runs on the sequence engine.
         let use_engine = !matches!(
@@ -884,15 +897,20 @@ impl Codegen<'_> {
                 if antecedent.is_some() {
                     self.assertion_property_local_init = PropertyLocalInit::Inherited;
                 }
-                // The consequent is clocked by the clock flowing into the
-                // implication, not by the antecedent's ending clock
-                // (F.5.1.2 `T_p((r |-> p), c) = (T_s(r, c) |-> T_p(p, c))`).
+                // The consequent is clocked by the antecedent's end clock
+                // (decision A13-D1).
+                if let Some(clock) = consequent_clock {
+                    self.sampled_clock = Some(clock);
+                }
                 let consequent = self.lower_sequence(path, consequent_node, "consequent")?;
                 Ok::<_, String>((None, None, antecedent, Some(consequent)))
             } else {
                 let antecedent = antecedent_node
                     .map(|node| self.lower_simple_assertion_expr(path, node, "antecedent"))
                     .transpose()?;
+                if let Some(clock) = consequent_clock {
+                    self.sampled_clock = Some(clock);
+                }
                 let consequent = if matches!(
                     self.kind(consequent_node),
                     NodeKind::AssertionExpr(AssertionExprKind::Conditional { .. })

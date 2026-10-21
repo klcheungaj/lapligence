@@ -151,8 +151,9 @@ Every assertion fails at each tick.
 
 - `t1`: `inst ##1 e1(...).triggered` on `clk`: `inst` at 15 and 65 gives 25 and
   75; `inst` at 45 has no match at 55.
-- `pm`: `.matched` on `sysclk` (7, 21, 35, 49, 63, 77, 91): the 25 match is
-  seen at 35 (also the 35 match, coincident, S39-D5), 75 at 77, 85 at 91.
+- `pm`: `.matched` on `sysclk` (7, 21, 35, 49, 63, 77, 91): each match is
+  seen at the first `sysclk` tick after its time step (S39-D5): 25 at 35, 35
+  at 49 (the coincident tick 35 shows only the 25 match), 75 at 77, 85 at 91.
 - `m2`: `go` at 49, the first matched tick after is 77, `done` at 91.
 - `e3`: `e1(...).triggered ##1 !proc2`: triggered at 35 and 85, `!proc2` at 45
   and 95.

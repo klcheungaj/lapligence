@@ -456,6 +456,16 @@ impl Validator<'_> {
             }
         }
 
+        for expr in self.db.parenthesized_assertion_nodes() {
+            let node = self.node(*expr, &format!("parenthesized_assertions[{}]", expr.0))?;
+            if !matches!(node.kind, NodeKind::AssertionExpr(_)) {
+                return self.fail(
+                    format!("parenthesized_assertions[{}]", expr.0),
+                    "parenthesized-assertion metadata key is not an assertion expression",
+                );
+            }
+        }
+
         for (call, iterator) in self.db.method_call_iterator_nodes() {
             let node = self.node(*call, &format!("method_call_iterators[{}]", call.0))?;
             if !matches!(node.kind, NodeKind::MethodCall { .. }) {

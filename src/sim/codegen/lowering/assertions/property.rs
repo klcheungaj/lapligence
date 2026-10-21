@@ -599,7 +599,26 @@ impl Codegen<'_> {
                         }
                         let antecedent = self.lower_property_sequence(path, left, builder)?;
                         let antecedent = builder.sequence(antecedent)?;
-                        let consequent = self.lower_property_node(path, right, false, builder)?;
+                        // The consequent of |-> and |=> is clocked by the
+                        // antecedent's end clock (decision A13-D1);
+                        // followed-by keeps the clock flowing in.
+                        let end = match op {
+                            AssertionBinaryOp::OverlappedImplication
+                            | AssertionBinaryOp::NonOverlappedImplication => {
+                                self.implication_end_clocking(left)
+                            }
+                            _ => None,
+                        };
+                        let end = end
+                            .map(|clocking| self.assertion_flow_clock(path, clocking))
+                            .transpose()?;
+                        let previous = match end {
+                            Some(clock) => self.sampled_clock.replace(clock),
+                            None => self.sampled_clock,
+                        };
+                        let consequent = self.lower_property_node(path, right, false, builder);
+                        self.sampled_clock = previous;
+                        let consequent = consequent?;
                         builder.push(
                             IrPropertyNode::Implication {
                                 antecedent,
