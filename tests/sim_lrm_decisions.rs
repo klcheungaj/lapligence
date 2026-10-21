@@ -747,6 +747,22 @@ fn s38_d10_cover_vacuous_success() {
 }
 
 #[test]
+fn s38_d11_assert_vacuous_pass_action() {
+    run_decision(
+        "S38-D11_assert_vacuous_pass_action",
+        include_str!("fixtures/sim/lrm_decisions/S38-D11_assert_vacuous_pass_action.out"),
+    );
+}
+
+#[test]
+fn s38_d12_end_of_simulation_fail_before_final() {
+    run_decision(
+        "S38-D12_end_of_simulation_fail_before_final",
+        include_str!("fixtures/sim/lrm_decisions/S38-D12_end_of_simulation_fail_before_final.out"),
+    );
+}
+
+#[test]
 fn s21_d1_builtin_legal_overload() {
     // Negative case: the expected stdout is empty because compilation fails.
     assert!(
