@@ -156,7 +156,8 @@ pub struct IrNetGroup {
     /// until its first delayed transition (decision S2-D10).
     pub(in crate::sim) starts_unknown: bool,
     /// `(low bit, bit count)` runs an undelayed wire, wand or wor group's
-    /// drivers write. Those bits start at X, the output of drivers that have
+    /// drivers write, without a constant driver's z bits (decision T0-D4).
+    /// Those bits start at X, the output of drivers that have
     /// not evaluated yet (6.7), until the first driver write resolves the
     /// group (decision T0-D3). Empty for every other group.
     pub(in crate::sim) driven_runs: Vec<(u32, u32)>,

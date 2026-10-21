@@ -4,7 +4,8 @@
 //! driver site is one statement writing one or more group bits (a
 //! concatenation target is one site). A delayed or path-destination group
 //! with any driver starts at X (decision S2-D10); an undelayed wire, wand or
-//! wor group starts at X on the bits its sites write (decision T0-D3). A
+//! wor group starts at X on the bits its sites write (decision T0-D3), except
+//! the Z bits of a constant driver (decision T0-D4). A
 //! delayed group whose
 //! sites cover different bit ranges schedules each separately driven part
 //! as its own vector (decision S2-D3): every edge of a site's covered run
@@ -31,6 +32,9 @@ struct GroupDrives {
 struct SiteBits {
     bits: HashMap<usize, Vec<(u32, u32)>>,
     unknown: HashSet<usize>,
+    /// The bits whose time-0 value the site determines, when this differs
+    /// from `bits`: a constant driver's Z bits are left out (decision T0-D4).
+    start_bits: Option<HashMap<usize, Vec<(u32, u32)>>>,
 }
 
 impl SiteBits {
@@ -122,7 +126,13 @@ fn visit_statements(
 fn visit_statement(model: &IrModel, statement: &IrStmt, drives: &mut HashMap<usize, GroupDrives>) {
     match statement {
         IrStmt::Located { statement, .. } => visit_statement(model, statement, drives),
-        IrStmt::Assign { lhs, .. } | IrStmt::InertialAssign { lhs, .. } => {
+        IrStmt::Assign { lhs, rhs, .. } => {
+            let mut site = SiteBits::default();
+            lhs_bits(model, lhs, &mut site);
+            site.start_bits = constant_driven_bits(model, lhs, rhs);
+            record_site(model, site, drives);
+        }
+        IrStmt::InertialAssign { lhs, .. } => {
             let mut site = SiteBits::default();
             lhs_bits(model, lhs, &mut site);
             record_site(model, site, drives);
@@ -183,12 +193,21 @@ fn record_site(model: &IrModel, site: SiteBits, drives: &mut HashMap<usize, Grou
         drive.driven = true;
         drive.per_bit = true;
     }
+    let start_bits = site.start_bits;
     for (group, mut ranges) in site.bits {
         let Some(width) = model.net_groups.get(group).map(|group| group.width) else {
             continue;
         };
         let drive = drives.entry(group).or_default();
         drive.driven = true;
+        if let Some(start_bits) = &start_bits {
+            for &(low, high) in start_bits.get(&group).into_iter().flatten() {
+                let high = high.min(width.saturating_sub(1));
+                if low <= high {
+                    drive.runs.push((low, high));
+                }
+            }
+        }
         ranges.sort_unstable();
         let mut run: Option<(u32, u32)> = None;
         for (low, high) in ranges {
@@ -196,7 +215,9 @@ fn record_site(model: &IrModel, site: SiteBits, drives: &mut HashMap<usize, Grou
             if low > high {
                 continue;
             }
-            drive.runs.push((low, high));
+            if start_bits.is_none() {
+                drive.runs.push((low, high));
+            }
             run = match run {
                 Some((first, last)) if low <= last.saturating_add(1) => {
                     Some((first, last.max(high)))
@@ -271,6 +292,87 @@ fn lhs_bits(model: &IrModel, lhs: &IrLhs, site: &mut SiteBits) {
             }
         }
         IrLhs::WholeRef { .. } | IrLhs::Ref { .. } | IrLhs::ArrayElem { .. } => {}
+    }
+}
+
+/// The group bits a constant driver gives a non-Z value, when its value has
+/// Z bits: a Z bit is no driven value, so the net bit keeps its Z start and
+/// the driver's first write makes no change there (decision T0-D4). `None`
+/// when every written bit counts, or when the bits cannot be matched to the
+/// value statically.
+fn constant_driven_bits(
+    model: &IrModel,
+    lhs: &IrLhs,
+    rhs: &IrExpr,
+) -> Option<HashMap<usize, Vec<(u32, u32)>>> {
+    let (signal, low, high) = match lhs {
+        IrLhs::Whole(signal) => {
+            let width = model.signals.get(*signal)?.ty.width();
+            (*signal, 0, width.checked_sub(1)?)
+        }
+        IrLhs::Part(signal, left, right, _) => {
+            let (low, high) = if left < right {
+                (*left, *right)
+            } else {
+                (*right, *left)
+            };
+            (*signal, u32::try_from(low).ok()?, u32::try_from(high).ok()?)
+        }
+        _ => return None,
+    };
+    let width = high - low + 1;
+    let mut z = Vec::with_capacity(width as usize);
+    constant_z_bits(rhs, width, &mut z)?;
+    if z.len() != width as usize || !z.contains(&true) {
+        return None;
+    }
+    let mut site = SiteBits::default();
+    let mut bit = 0;
+    while bit < width {
+        if z[bit as usize] {
+            bit += 1;
+            continue;
+        }
+        let first = bit;
+        while bit < width && !z[bit as usize] {
+            bit += 1;
+        }
+        signal_bits(model, signal, low + first, low + bit - 1, &mut site);
+    }
+    Some(site.bits)
+}
+
+/// Append the Z flags of a constant value, least significant bit first: a
+/// literal (an unsized fill literal takes `width`) or a concatenation of
+/// them. `None` for any other expression.
+fn constant_z_bits(expression: &IrExpr, width: u32, out: &mut Vec<bool>) -> Option<()> {
+    match expression.kind() {
+        IrExprKind::Const(value) if value.real_value().is_none() => {
+            if let Some(fill) = value.fill() {
+                out.extend(std::iter::repeat_n(fill == 3, width as usize));
+                return Some(());
+            }
+            if value.width() != width {
+                return None;
+            }
+            out.extend((0..width).map(|bit| {
+                value
+                    .z_mask()
+                    .get((bit / 64) as usize)
+                    .is_some_and(|mask| mask >> (bit % 64) & 1 != 0)
+            }));
+            Some(())
+        }
+        IrExprKind::Concat { parts } => {
+            if parts.iter().map(|part| part.width()).sum::<u32>() != width {
+                return None;
+            }
+            for part in parts.iter().rev() {
+                constant_z_bits(part, part.width(), out)?;
+            }
+            Some(())
+        }
+        _ => None,
     }
 }
 
