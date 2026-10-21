@@ -19,7 +19,10 @@
 // region of the current time slot." 16.15.5 (L26681-26684): "Such a
 // concurrent assertion statement uses the always semantics".
 `timescale 1ns / 1ns
-program prg(input logic clk);
+// The clock is a 2-state variable without an initializer and the program
+// port has the same type, so the clock starts at 0 with no time-0 edge (see
+// T0-D1 and T0-D2).
+program prg(input bit clk);
   logic a = 1'b0;
   logic pclk = 1'b0;
   // a becomes 1 at 5 in the Re-NBA region: the tick at 5 samples 0.
@@ -38,7 +41,7 @@ program prg(input logic clk);
   end
 endprogram
 module tb;
-  logic clk = 1'b0;
+  bit clk;
   always #5 clk = ~clk;
   prg p0(clk);
 endmodule

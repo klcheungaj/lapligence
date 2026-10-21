@@ -157,29 +157,46 @@ fn verilog_declaration_races_are_not_converted_to_static_initialization() {
         &["--edition", "sv2009"],
     );
     // Verilog-2001: the declaration assignment is an initial-time assignment
-    // racing with the `always`; both outcomes are legal.
-    for optimized in [false, true] {
-        let output = sim_cli::invoke_with_env(
-            SUITE,
-            "edition_race.v",
-            optimized,
-            &["--edition", "v2001"],
-            &[],
-            &[],
-        );
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert!(
-            output.status.success(),
-            "optimized={optimized}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(
-            matches!(stdout.as_ref(), "1 0 6\n" | "1 1 6\n"),
-            "optimized={optimized}: {stdout:?}"
-        );
-    }
+    // racing with the `always` (both outcomes are legal). llg starts the
+    // `always @(r)` first, so it observes the assignment (decision T0-D2).
+    sim_cli::run_case_with_args(
+        SUITE,
+        "edition_race.v",
+        "1 1 6\n",
+        "",
+        &[],
+        &["--edition", "v2001"],
+    );
     assert!(declaration_init_processes("edition_race.v", "v2001"));
     assert!(!declaration_init_processes("edition_race.v", "sv2009"));
+}
+
+#[test]
+fn verilog_declaration_assignments_wake_only_event_controlled_always() {
+    // Verilog-2001 (decision T0-D2): the declaration assignments run after the
+    // `always @(e) s` procedures start and before every other procedure; the
+    // expected lines are the industry-standard results of the same source.
+    let expected = include_str!("../fixtures/sim/feature_completion/rtl_008/edition_order.out");
+    sim_cli::run_case_with_args(
+        SUITE,
+        "edition_order.v",
+        expected,
+        "",
+        &[],
+        &["--edition", "v2001"],
+    );
+    // SystemVerilog (T0-D1): no initializer is a change; the continuous
+    // assignment and the port connection still change their nets.
+    sim_cli::run_case_with_args(
+        SUITE,
+        "edition_order.v",
+        "first v=0 block v=0 u=1\n\
+         event: v=0 negedge v=0 posedge h=0 i=0 w=1 port negedge=1\n\
+         no event: rz=0 x1=0 always-block=0 initial=0\n",
+        "",
+        &[],
+        &["--edition", "sv2009"],
+    );
 }
 
 #[test]

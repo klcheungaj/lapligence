@@ -1,0 +1,5 @@
+const net: posedge=1 always-block=0 initial=0
+initial write: posedge=1 always-block=0 always_ff=1
+input port: negedge=1 change=1
+output port: change=1
+always @*: comb=1

@@ -1,3 +1,5 @@
+[0.0] active: e=1
+[0.0] active after nba: q=2
   $peek: write x -> LLG_VPI_READ_ONLY
 [0.0] monitor: peek=101 x=1
 [2.5] value: r=1.50

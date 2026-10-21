@@ -17,8 +17,10 @@
 //
 // The text does not say when the handle of a drive's target is resolved; llg
 // resolves it when the drive executes, like an NBA target.
+// `x` is a 2-state variable without an initializer, so it starts at 0 and
+// no simulator sees a time-0 change on it (see T0-D1).
 interface ifc (input bit clk);
-  logic [7:0] x = 0;
+  bit [7:0] x;
   clocking cb @(posedge clk);
     output #1 x;
   endclocking

@@ -591,6 +591,9 @@ struct llg_net {
      * generated initializers leave it out. A bound net also has
      * propagation_enabled and a per-bit propagation_bits array. */
     struct llg_module_path_dest* path_dest;
+    /* Set by llg_net_start_driven: the net holds X on its driven bits until
+     * its first driver write, which then resolves the whole net once (T0-D3). */
+    int8_t unsettled;
 };
 
 /* One contiguous run: view bits [signal_bit, signal_bit + bit_count) map to
@@ -622,6 +625,12 @@ void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */
  * changes still reaches the net (decision S2-D10). A runtime-valued net
  * delay resolves once its updater stored the delay. */
 void llg_net_start_unknown(llg_net_t* net, int resolve);
+/* Startup of an undelayed net with drivers: the `n_runs` pairs
+ * (low bit, bit count) in `runs` are the bits its drivers write. They hold X
+ * (strength StX) until the first driver write, the output of drivers that
+ * have not evaluated yet (6.7), so a driver whose first value is X makes no
+ * time-zero change; that first write resolves every bit (decision T0-D3). */
+void llg_net_start_driven(llg_net_t* net, const uint32_t* runs, uint32_t n_runs);
 void llg_net_write(llg_net_t* net, int idx, sv4_t value);
 // Selected writes replace the driver's previous range, so a moving selector
 // releases its old contribution to Z. `value` has plan.width bits; reverse is

@@ -39,7 +39,10 @@ the RTL-017 `A = f(A, B)` assignment.
 - `composition`: a clocked `q <= cnt++` (old value scheduled, new value stored
   at once), a continuous assignment of the registered member, an
   `always_comb` comparison of overloaded sums, and a task incrementing an
-  automatic copy.
+  automatic copy. The child's input port `clk` is a net driven from
+  `tb.clk = 0`; its time-0 X to 0 change is a negedge that the waiting
+  `always @(negedge clk)` sees (decision T0-D2), so it also prints at time 0
+  (`0 cnt=0/0 ... peek=0->3`).
 
 Nearest-illegal negatives: `neg_relational_both_ambiguous` (both operands need
 the other's type), `neg_relational_nested` (a nested operand has no expected

@@ -231,3 +231,33 @@ fn initialization_writes_drive_their_non_z_runs() {
     });
     assert_eq!(layout(&mut fixture, 0), (vec![1, 3], true));
 }
+
+#[test]
+fn undelayed_driven_bits_start_unknown_as_merged_runs() {
+    // Decision T0-D3: [3:2] and [1] driven, [0] and [7:4] undriven, no delay.
+    let mut fixture = fixture(&[(8, 2, false), (4, 1, false)]);
+    let (first, second) = (fixture.slots[0][0], fixture.slots[0][1]);
+    drive(&mut fixture, IrLhs::Part(first, 3, 2, false), 2);
+    drive(
+        &mut fixture,
+        IrLhs::Bit(second, Box::new(constant(1, 32)), false),
+        1,
+    );
+    assert_eq!(layout(&mut fixture, 0), (Vec::new(), false));
+    assert_eq!(fixture.model.net_groups[0].driven_runs(), &[(1, 3)]);
+    // An undriven group keeps its default.
+    assert!(fixture.model.net_groups[1].driven_runs().is_empty());
+}
+
+#[test]
+fn delayed_and_pull_groups_have_no_driven_runs() {
+    let mut fixture = fixture(&[(4, 1, true), (4, 1, false)]);
+    fixture.model.net_groups[1].kind = IrNetKind::Tri0;
+    let (delayed, pulled) = (fixture.slots[0][0], fixture.slots[1][0]);
+    drive(&mut fixture, IrLhs::Whole(delayed), 4);
+    drive(&mut fixture, IrLhs::Whole(pulled), 4);
+    assign_net_delay_layouts(&mut fixture.model);
+    assert!(fixture.model.net_groups[0].starts_unknown());
+    assert!(fixture.model.net_groups[0].driven_runs().is_empty());
+    assert!(fixture.model.net_groups[1].driven_runs().is_empty());
+}

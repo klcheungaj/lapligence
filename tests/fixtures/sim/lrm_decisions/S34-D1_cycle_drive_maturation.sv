@@ -27,9 +27,11 @@
 //
 // This case is the clause's example with a 10-unit clock (cycles 1-3 at 5,
 // 15 and 25). llg blocked the issuing process for the cycle count before.
+// `v` is a 2-state variable without an initializer, so it starts at 0 and
+// no simulator sees a time-0 change on it (see T0-D1).
 module tb;
   bit clk = 0;
-  logic [3:0] v = 0;
+  bit [3:0] v;
   default clocking cb @(posedge clk);
     output v;
   endclocking

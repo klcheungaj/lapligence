@@ -2117,6 +2117,15 @@ impl<'a> Codegen<'a> {
             origin,
         );
         process.set_program(self.db.is_program_instance(inst).then_some(inst.0));
+        if matches!(ir_kind, IrProcessKind::Always | IrProcessKind::FlipFlop)
+            && matches!(process.shape, IrShape::Loop)
+            && matches!(
+                self.kind(stmt),
+                NodeKind::Stmt(StmtKind::EventControl { .. })
+            )
+        {
+            self.armed_procs.insert(fn_name.clone());
+        }
         self.model.processes.push(process);
         if is_final {
             self.final_procs.push(fn_name);

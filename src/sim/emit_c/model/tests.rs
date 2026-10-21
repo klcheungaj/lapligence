@@ -257,6 +257,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
         propagation_delay: None,
         propagation_segments: Vec::new(),
         starts_unknown: false,
+        driven_runs: Vec::new(),
         runtime_delay: false,
         strength_view: None,
     }];
@@ -397,6 +398,7 @@ fn component_strength_view_descriptor_is_validated_and_emitted() {
             propagation_delay: None,
             propagation_segments: Vec::new(),
             starts_unknown: false,
+            driven_runs: Vec::new(),
             runtime_delay: false,
             strength_view: Some(1),
         }];

@@ -12,7 +12,7 @@ fn pure_input_and_const_ref_functions_use_event_expression_dependencies() {
 
 #[test]
 fn input_function_calls_keep_dynamic_array_dependencies() {
-    run_case("event_function_array", "array_changes=2\n");
+    run_case("event_function_array", "array_changes=3\n");
 }
 
 #[test]

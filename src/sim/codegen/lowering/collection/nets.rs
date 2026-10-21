@@ -1644,6 +1644,7 @@ impl<'a> Codegen<'a> {
                 propagation_delay,
                 propagation_segments: Vec::new(),
                 starts_unknown: false,
+                driven_runs: Vec::new(),
                 runtime_delay: false,
                 strength_view: None,
             });
@@ -1868,6 +1869,7 @@ impl<'a> Codegen<'a> {
                 propagation_delay,
                 propagation_segments: Vec::new(),
                 starts_unknown: false,
+                driven_runs: Vec::new(),
                 runtime_delay: false,
                 strength_view: None,
             });
@@ -2609,6 +2611,7 @@ impl<'a> Codegen<'a> {
                 propagation_delay,
                 propagation_segments: Vec::new(),
                 starts_unknown: false,
+                driven_runs: Vec::new(),
                 runtime_delay: false,
                 strength_view: None,
             });

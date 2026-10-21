@@ -437,6 +437,27 @@ void llg_net_start_unknown(llg_net_t* net, int resolve) {
     if (resolve) llg_net_resolve(net);
 }
 
+void llg_net_start_driven(llg_net_t* net, const uint32_t* runs, uint32_t n_runs) {
+    if (!net || !runs) return;
+    for (uint32_t run = 0; run < n_runs; run++) {
+        uint32_t low = runs[2u * run];
+        uint32_t count = runs[2u * run + 1u];
+        if (count == 0 || low >= net->width || count > net->width - low) continue;
+        llg_sv4_range_fill(&net->resolved, low, count, 2);
+        if (net->strength) {
+            uint64_t code = llg_net_strength_code(-LLG_STRENGTH_STRONG,
+                                                  LLG_STRENGTH_STRONG);
+            for (uint32_t bit = low; bit < low + count; bit++) {
+                sv4_t byte = sv4_from_u64(code, 8, 0);
+                sv4_part_select_set(net->strength, (int64_t)bit * 8 + 7,
+                                    (int64_t)bit * 8, byte);
+                sv4_destroy(&byte);
+            }
+        }
+    }
+    net->unsettled = 1;
+}
+
 void llg_net_resolve(llg_net_t* net) {
     if (!net || !region_can_mutate("net resolution")) return;
     if (llg_is_forced(&net->resolved)) {
@@ -455,14 +476,21 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
     if (!net || !region_can_mutate("net write")) return;
     if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx]) return;
     sv4_t* slot = net->drivers[idx];
+    // The first driver write of a net that started X resolves it whole, even
+    // when the driver's value equals its all-Z slot (T0-D3).
+    int settle = net->unsettled;
+    net->unsettled = 0;
     // A same-width value needs no resize to compare: an unchanged driver
     // (most gate and assignment wakes) returns without copying it.
     if (LLG_GATE_FAST_PATH && llg_sv4_width(value) == net->width &&
-        sv4_same(*slot, value))
+        sv4_same(*slot, value)) {
+        if (settle) llg_net_resolve(net);
         return;
+    }
     sv4_t replacement = sv4_resize(value, net->width, net->is_signed);
     if (sv4_same(*slot, replacement)) {
         sv4_destroy(&replacement);
+        if (settle) llg_net_resolve(net);
         return;
     }
     uint32_t old_low = 0;
@@ -491,7 +519,7 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
         llg_net_resolve(net);
         return;
     }
-    if (!llg_net_has_index(net) || net->propagation_enabled) {
+    if (settle || !llg_net_has_index(net) || net->propagation_enabled) {
         llg_net_resolve(net);
         return;
     }
@@ -539,9 +567,12 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
     }
     int new_active = llg_sv4_width(selected) && !llg_net_all_z(&selected);
     uint32_t new_high = new_active ? new_low + llg_sv4_width(selected) - 1u : new_low;
+    int settle = net->unsettled;
+    net->unsettled = 0;
     if (old_active == new_active &&
         (!new_active || (old_low == new_low && old_high == new_high &&
                          llg_net_range_same(slot, new_low, &selected)))) {
+        if (settle) llg_net_resolve(net);
         return;
     }
     // The index orders drivers by their driven range only: a new value over
@@ -566,7 +597,7 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
         llg_net_resolve(net);
         return;
     }
-    if (!llg_net_has_index(net) || net->propagation_enabled) {
+    if (settle || !llg_net_has_index(net) || net->propagation_enabled) {
         llg_net_resolve(net);
         return;
     }

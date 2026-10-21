@@ -3,7 +3,9 @@
 //! Runs once every driver process and initialization step exists. Each
 //! driver site is one statement writing one or more group bits (a
 //! concatenation target is one site). A delayed or path-destination group
-//! with any driver starts at X (decision S2-D10). A delayed group whose
+//! with any driver starts at X (decision S2-D10); an undelayed wire, wand or
+//! wor group starts at X on the bits its sites write (decision T0-D3). A
+//! delayed group whose
 //! sites cover different bit ranges schedules each separately driven part
 //! as its own vector (decision S2-D3): every edge of a site's covered run
 //! starts a part. A site whose bits cannot be resolved statically makes
@@ -12,7 +14,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::sim::ir::{
-    IrConst, IrExpr, IrExprKind, IrInitStep, IrLhs, IrModel, IrNetAliasBinding, IrStmt,
+    IrConst, IrExpr, IrExprKind, IrInitStep, IrLhs, IrModel, IrNetAliasBinding, IrNetKind, IrStmt,
 };
 
 #[derive(Default)]
@@ -20,6 +22,8 @@ struct GroupDrives {
     driven: bool,
     starts: BTreeSet<u32>,
     per_bit: bool,
+    /// Bits written by the group's sites, as sorted inclusive ranges.
+    runs: Vec<(u32, u32)>,
 }
 
 /// Bits one site writes, per group: resolved bit positions, or unknown.
@@ -50,7 +54,7 @@ pub(super) fn assign_net_delay_layouts(model: &mut IrModel) {
             group.propagation_delay.is_some() || path_destinations.contains(&index)
         })
         .collect::<Vec<_>>();
-    if !relevant.iter().any(|relevant| *relevant) {
+    if model.net_groups.is_empty() {
         return;
     }
     let mut drives = HashMap::<usize, GroupDrives>::new();
@@ -67,12 +71,24 @@ pub(super) fn assign_net_delay_layouts(model: &mut IrModel) {
         }
     }
     for (index, group) in model.net_groups.iter_mut().enumerate() {
-        if !relevant[index] {
-            continue;
-        }
-        let Some(drive) = drives.get(&index) else {
+        let Some(drive) = drives.get_mut(&index) else {
             continue;
         };
+        if !relevant[index] {
+            if drive.driven
+                && matches!(
+                    group.kind,
+                    IrNetKind::Wire | IrNetKind::Wand | IrNetKind::Wor
+                )
+            {
+                group.driven_runs = if drive.per_bit {
+                    vec![(0, group.width)]
+                } else {
+                    merged_runs(&mut drive.runs)
+                };
+            }
+            continue;
+        }
         group.starts_unknown = drive.driven;
         if group.propagation_delay.is_none() || group.width < 2 {
             continue;
@@ -146,6 +162,21 @@ fn visit_statement(model: &IrModel, statement: &IrStmt, drives: &mut HashMap<usi
     }
 }
 
+/// Merge sorted-or-not inclusive bit ranges into `(low, count)` runs.
+fn merged_runs(ranges: &mut [(u32, u32)]) -> Vec<(u32, u32)> {
+    ranges.sort_unstable();
+    let mut runs: Vec<(u32, u32)> = Vec::new();
+    for &(low, high) in ranges.iter() {
+        match runs.last_mut() {
+            Some((first, count)) if low <= *first + *count => {
+                *count = (*count).max(high + 1 - *first);
+            }
+            _ => runs.push((low, high + 1 - low)),
+        }
+    }
+    runs
+}
+
 fn record_site(model: &IrModel, site: SiteBits, drives: &mut HashMap<usize, GroupDrives>) {
     for group in site.unknown {
         let drive = drives.entry(group).or_default();
@@ -165,6 +196,7 @@ fn record_site(model: &IrModel, site: SiteBits, drives: &mut HashMap<usize, Grou
             if low > high {
                 continue;
             }
+            drive.runs.push((low, high));
             run = match run {
                 Some((first, last)) if low <= last.saturating_add(1) => {
                     Some((first, last.max(high)))
