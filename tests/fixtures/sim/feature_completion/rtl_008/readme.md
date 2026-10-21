@@ -47,9 +47,30 @@ follow a declaration dependency or use order-independent results.
 - `unit_separate_helper` with `unit_separate_top` keeps same-named `$unit`
   declarations of separate units distinct.
 - `edition_race.v` pairs editions: Verilog-2001 declaration assignments race
-  with an `always` (two allowed results, and the generated model keeps an
-  active-region initialization process); SystemVerilog-2009 initializes
+  with an `always` (two allowed results; llg starts the `always @(r)` before
+  the initialization, decision T0-D2, so it gives `1 1 6`, and the generated
+  model keeps an active-region initialization process); SystemVerilog-2009 initializes
   before processes without an event (one result, no such process).
+- `edition_order.v` (decisions T0-D1, T0-D2): with `--edition v2001` the
+  declaration assignments run after the `always @(e) s` procedures start and
+  before the other procedures, so only those `always` procedures see the
+  changes (`v`, `negedge v`, `posedge h`, `i`; `0.0` to a real and `x` to a
+  reg are no change), the `initial` and block-statement `always` read the
+  assigned values, and the continuous assignment `w` and the port net of
+  `l.a` change after the waiting procedures started. The expected output is
+  the industry-standard result of the same source. With `--edition sv2009`
+  no initializer is a change; only the net and the port still change.
+  Clauses: 1364-2001 6.2.1 (`Verilog-1364-2001.txt` L5676-5679) "This is
+  equivalent to writing: reg[3:0] a; initial a = 4'h4;"; 9.9 (L10312-10314)
+  "There shall be no implied order of execution between initial and always
+  constructs. The initial constructs need not be scheduled and executed
+  before the always constructs."; 1800-2009 6.8
+  (`SystemVerilog-1800-2009.txt` L5286-5287) "Setting the initial value of a
+  static variable as part of the variable declaration (including static
+  class members) shall occur before any initial or always procedures are
+  started"; 4.9.1 (L3509-3511) "A continuous assignment process is also
+  evaluated at time 0 in order to propagate constant values. This includes
+  implicit continuous assignments inferred from port connections".
 - Adopted FND-002 witnesses: `package_string_call_witness` (L-F03-03-02),
   `timed_function_witness` (L-F02-05-01), `let_recursive_witness`
   (L-F07-16-01), `hierarchical_constant_witness` (L-F03-03-04) and

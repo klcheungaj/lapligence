@@ -1,7 +1,8 @@
 // V2001 6.2.1, 10.3.5, 12.4.1; SV2009 6.8, 6.21, 10.5: a Verilog-2001
 // declaration assignment is an initial assignment that may race with other
 // processes, so an `always` armed first can observe it (allowed results
-// "1 0 6" and "1 1 6"). SystemVerilog initializes static variables before any
+// "1 0 6" and "1 1 6"; llg starts `always @(r)` first and gives "1 1 6",
+// decision T0-D2). SystemVerilog initializes static variables before any
 // process starts and the initialization is not a change event ("1 0 6" only).
 // A constant-function call keeps its value in both editions.
 module tb;

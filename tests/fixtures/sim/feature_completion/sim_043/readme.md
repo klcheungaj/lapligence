@@ -138,6 +138,9 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
 
 `timescale 1ns/100ps`; `$peek(v)` returns `v+100` and tries to write `tb.x`.
 
+- Time 0: the continuous assignment `e = d + 1` changes the net `e` from z to
+  1 after `always @(e)` is waiting (decision T0-D2), so it prints `e=1` and
+  issues `q<=2`, which wakes `always @(q)`.
 - `$monitor` at time 0 calls `$peek` in its Postponed evaluator: the write is
   `LLG_VPI_READ_ONLY` (4.4.2.9), the monitor prints `peek=101 x=1`.
 - 2.5: the real watch prints `r=1.50` with a scaled time `2.5` (the time type

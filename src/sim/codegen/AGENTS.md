@@ -131,7 +131,13 @@ read keeps its one contents marker above `PRECISE_EXCLUSION_CELLS` cells); plain
 `@*` retains call-site behavior. String variables and string record members
 contribute their change marker. always_comb/always_latch spawn after every
 other startup process so their time-zero evaluation follows the start of all
-initial and always procedures (SV 9.2.2.2.1). Carry exact always-kind and typed writes through validation;
+initial and always procedures (SV 9.2.2.2.1). Before every other startup
+process (after the sampled-clock tick processes) spawn the `always`
+procedures whose statement is an event control (`always @(e) s`,
+`always_ff`), then the Verilog-2001 declaration-assignment processes, so
+those procedures observe the time-0 changes of continuous assignments, port
+connections, Verilog initializers and `initial` procedures (decision T0-D2;
+SystemVerilog static initializers are no change, T0-D1). Carry exact always-kind and typed writes through validation;
 writer, timing and flip-flop violations reject independently of lint. Ordinary
 `always` remains a procedural loop with cooperative, source-located back-edge
 budgets, not a comb/run-once replacement.

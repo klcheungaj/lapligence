@@ -2965,3 +2965,19 @@ fn a13_d7_unbegun_strong_at_end() {
         include_str!("fixtures/sim/lrm_decisions/A13-D7_unbegun_strong_at_end.out"),
     );
 }
+
+#[test]
+fn t0_d1_initializer_no_event() {
+    run_decision(
+        "T0-D1_initializer_no_event",
+        include_str!("fixtures/sim/lrm_decisions/T0-D1_initializer_no_event.out"),
+    );
+}
+
+#[test]
+fn t0_d2_event_control_always_starts_first() {
+    run_decision(
+        "T0-D2_event_control_always_starts_first",
+        include_str!("fixtures/sim/lrm_decisions/T0-D2_event_control_always_starts_first.out"),
+    );
+}

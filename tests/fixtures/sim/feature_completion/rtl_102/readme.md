@@ -20,8 +20,12 @@ below; none were captured from `llg`.
 - `procedural_views`: `always_comb`, `@(b.bit2)`, NBA and blocking writes
   through expression ports. `.sum(data[3:0] + data[7:4])` is 4 bits, so
   `s = 8'(1 + 2) + K = 06`, then `4 + 2 + 3 = 09`, then `4 + b + 3 = 12`.
-  `.ascp(asc[2:5])` of `0011_1100` is `1111` and `ascp[3]` is `asc[3] = 1`.
-  `b.wd[i]` selects 8-bit elements at run time (`22`, then `44`, then `be`).
+  The writer's input port `clk` is a net driven from `tb.clk = 0`; its time-0
+  X to 0 change is a negedge that the waiting `always @(negedge clk)` sees
+  (decision T0-D2), so the negedge writes below already happen at time 0:
+  `.ascp(asc[2:5])` of `1110_1100` is `1011` and `ascp[3]` is `asc[3] = 0`,
+  and `words[3] = be` before the first read.
+  `b.wd[i]` selects 8-bit elements at run time (`22`, then `be`, then `be`).
   The posedge NBAs give `data = b4` and `{a, m, c} = 1011`. The negedge
   writes: `asc[0:3] = 1010` then `asc[1] = 1` (`1110_1100`); words `be`,
   `[2][3:0] = 5` (`35`), runtime `[j=0] = 91` then `[0][0 +: 4] = 3` (`93`);

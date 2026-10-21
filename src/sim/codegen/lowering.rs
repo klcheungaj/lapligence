@@ -611,6 +611,7 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
         IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
             .expect("the default timescale has non-zero precision"),
     );
+    let first_declaration_init = model.processes.len();
     cg.build_init_steps(&mut model)?;
     // Every driver site and delayed-driver start now exists.
     net_delay_layout::assign_net_delay_layouts(&mut model);
@@ -634,17 +635,31 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
         )
     };
     // Sampled-clock tick processes start first so their event controls are
-    // armed before any time-zero process can produce a clock event.
+    // armed before any time-zero process can produce a clock event. Next
+    // come the `always @(e) s` procedures, then the Verilog declaration
+    // initializers (processes appended by `build_init_steps`), then every
+    // other process in emission order: an `always` whose statement is an
+    // event control is already waiting when continuous assignments, port
+    // connections, Verilog initializers and `initial` procedures make their
+    // time-zero changes (decision T0-D2; the start order of procedures is
+    // left open by 4.7 and 9.2).
     let sampled_clock_set = sampled_clock_processes
         .iter()
         .map(String::as_str)
         .collect::<HashSet<_>>();
+    let armed = |process: &&crate::sim::ir::IrProcess| cg.armed_procs.contains(&process.c_name);
+    let (before_init, declaration_inits) = model.processes.split_at(first_declaration_init);
     model.spawns = startup_spawns(
         sampled_clock_processes.iter().map(String::as_str).chain(
-            model
-                .processes
+            before_init
                 .iter()
-                .filter(|process| !deferred(process))
+                .filter(armed)
+                .chain(declaration_inits)
+                .chain(
+                    before_init
+                        .iter()
+                        .filter(|process| !deferred(process) && !armed(process)),
+                )
                 .chain(model.processes.iter().filter(deferred))
                 .map(|process| process.c_name.as_str())
                 .filter(|name| !sampled_clock_set.contains(name)),
@@ -1651,6 +1666,10 @@ struct Codegen<'a> {
     /// emission order — spawned into [`IrModel::final_spawns`] instead of
     /// the t=0 spawn list.
     final_procs: Vec<String>,
+    /// `always` procedures whose statement is an event control
+    /// (`always @(e) s`), in emission order. They start before every other
+    /// time-zero process so they already wait when time-zero values settle.
+    armed_procs: HashSet<String>,
     /// `$dumpvars` arguments naming a variable, net or array element:
     /// (waveform name, dotted source path, calling scope). Checked against the
     /// finished storage catalog.
@@ -1977,6 +1996,7 @@ impl<'a> Codegen<'a> {
             structural_drivers: Vec::new(),
             structural_driver_terminal_sites: HashMap::new(),
             final_procs: Vec::new(),
+            armed_procs: HashSet::new(),
             wave_variable_targets: Vec::new(),
             assertion_action_procs: HashSet::new(),
             assertion_display_scope: None,
@@ -3711,5 +3731,68 @@ mod startup_spawn_tests {
                 names.iter().skip(3).step_by(2).cloned().collect::<Vec<_>>()
             );
         }
+    }
+
+    /// Spawn labels of `source` lowered for `edition`, in startup order.
+    fn startup_labels(source: &str, edition: crate::core::compile::LanguageEdition) -> Vec<String> {
+        let result = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "startup_order.v",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("tb".to_owned()),
+                edition,
+                ..Default::default()
+            },
+        )
+        .expect("compile startup-order source");
+        let db = Db::from_slang(&result.snapshot).expect("owned database");
+        let lowered = lower_model(&db, None).expect("lower startup-order source");
+        lowered
+            .model
+            .spawn_list()
+            .into_iter()
+            .map(|(_, label)| label.to_owned())
+            .collect()
+    }
+
+    #[test]
+    fn event_controlled_always_spawns_before_initializers_assignments_and_initials() {
+        // Decision T0-D2: `always @(e) s` first, then the Verilog declaration
+        // assignment, then every other process in emission order.
+        let source = "module tb;\n\
+                      reg v = 1'b0;\n\
+                      wire w;\n\
+                      initial $display(v);\n\
+                      always begin @(v) $display(v); end\n\
+                      assign w = v;\n\
+                      always @(w) $display(w);\n\
+                      endmodule\n";
+        let labels = startup_labels(source, crate::core::compile::LanguageEdition::Verilog2001);
+        assert_eq!(labels[0], "tb.always");
+        assert!(labels[1].starts_with("tb.declaration_init."), "{labels:?}");
+        assert_eq!(labels.len(), 5, "{labels:?}");
+        assert_eq!(
+            labels.iter().filter(|label| *label == "tb.always").count(),
+            2
+        );
+        assert_eq!(
+            labels.last().map(String::as_str),
+            Some("tb.always"),
+            "{labels:?}"
+        );
+        // SystemVerilog static initialization is no process (T0-D1).
+        let labels = startup_labels(
+            source,
+            crate::core::compile::LanguageEdition::SystemVerilog2009,
+        );
+        assert_eq!(labels.len(), 4, "{labels:?}");
+        assert_eq!(labels[0], "tb.always");
+        assert_eq!(
+            labels.last().map(String::as_str),
+            Some("tb.always"),
+            "{labels:?}"
+        );
     }
 }

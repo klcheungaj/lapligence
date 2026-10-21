@@ -63,10 +63,13 @@ fn declaration_initialization_keeps_edition_specific_scheduling() {
 
 #[test]
 fn selected_edition_matrix_accepts_legacy_and_systemverilog_cli_forms() {
+    // The Verilog-2001 declaration assignment of `initialized` runs before
+    // every `initial` procedure (decision T0-D2), so it reads `in` before
+    // `in = 1` in both editions.
     sim_cli::run_case_with_args(
         "partial_features",
         "edition_legacy_forms",
-        "legacy=1 ansi=1 comb=1 signed=-1 init=1\n",
+        "legacy=1 ansi=1 comb=1 signed=-1 init=x\n",
         "llg: $finish at time 0 at tb:31:9\n",
         &[],
         &["--edition", "v2001"],
