@@ -46,9 +46,12 @@ Rules used throughout:
 - No else. 16.15.1 (L26455-26456): "If no statement is specified for else,
   then $error is used as the statement when the assertion fails." llg reports
   it on stderr as `llg: assertion assert failed: <location> (<label>)`.
-- End of simulation (S38-D1): a pending attempt with an unmet strong
-  obligation fails when the simulation ends; one with only weak obligations
-  ends without a result.
+- End of simulation (S38-D1, A13-D7): a pending attempt that waits on an
+  `s_eventually` obligation fails when the simulation ends; every other
+  pending attempt, with weak or other strong obligations, ends without a
+  result. 16.13.21 (L25816-25822) calls such a trace "Pending" ("No bad
+  states have been seen", "Future obligations have not been met") and
+  reserves "Fails" for "A bad state has been seen".
 
 ## A01 `exhaustive`
 
@@ -114,10 +117,11 @@ Ticks 1-8 are the posedges at 5..75; `$finish` ends the run at 80.
 - `rj1` `reject_on (g)`: fails at 28.
 - `ab3` `s4 |=> accept_on (g2) always [0:2] h2`: the glitch at 62 is never a
   sampled 1, so the attempt (ticks 6-8) fails at 75 when `h2` is 0.
-- `es` `s5 |=> s_eventually k`: pending at the end with a strong obligation,
-  fails at 80. `sn` `s5 |=> s_nexttime [4] k2` needs tick 11: fails at 80.
-  `ens` `s5 |=> (k2 s_until k)` fails at 80 through `$error` (second stderr
-  failure line).
+- `es` `s5 |=> s_eventually k`: pending at the end with an `s_eventually`
+  obligation, fails at 80. `sn` `s5 |=> s_nexttime [4] k2` needs tick 11: a
+  pending strong obligation that is no `s_eventually`, so no result. `ens`
+  `s5 |=> s_eventually (k2 s_until k)` fails at 80 through `$error` (second
+  stderr failure line).
 - `ew` `s5 |=> always k2` and `wn` `s5 |=> nexttime [4] k`: weak and pending
   at the end, no result. `ew` prints only the vacuous passes of the other
   attempts (5, 15, 25, 35, 45, 65, 75), never a pass at 80.

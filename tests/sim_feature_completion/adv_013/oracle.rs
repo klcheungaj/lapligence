@@ -133,9 +133,7 @@ enum R {
 /// Unclocked properties (F.3.2).
 #[derive(Clone, Debug)]
 enum P {
-    /// `strong(R)`, with the clock of the first tick of the clocked
-    /// sequence it was rewritten from (see [`Interp::sat`]).
-    Strong(R, Cond),
+    Strong(R),
     Weak(R),
     Not(Box<P>),
     And(Box<P>, Box<P>),
@@ -170,15 +168,6 @@ fn t_s(s: &S, c: &Cond) -> R {
     }
 }
 
-/// The clock of the first tick of a clocked sequence under clock `c`.
-fn leading(s: &S, c: &Cond) -> Cond {
-    match s {
-        S::Bool(_) => c.clone(),
-        S::Cat(x, _) | S::Fuse(x, _) => leading(x, c),
-        S::Clock(c2, x) => leading(x, c2),
-    }
-}
-
 /// The named properties of one test: bodies indexed by [`Q::Inst`].
 pub(super) struct Program {
     pub(super) bodies: Vec<Q>,
@@ -198,7 +187,7 @@ impl Calls<'_> {
     fn t_p(&mut self, q: &Q, c: &Cond) -> P {
         match q {
             Q::Weak(s) => P::Weak(t_s(s, c)),
-            Q::Strong(s) => P::Strong(t_s(s, c), leading(s, c)),
+            Q::Strong(s) => P::Strong(t_s(s, c)),
             Q::Clock(c2, q) => self.t_p(q, c2),
             Q::Not(q) => P::Not(bx(self.t_p(q, c))),
             Q::And(x, y) => P::And(bx(self.t_p(x, c)), bx(self.t_p(y, c))),
@@ -267,7 +256,7 @@ impl Calls<'_> {
         }
         let index = self.keys.len();
         self.keys.push((name, c.clone()));
-        self.bodies.push(P::Strong(R::Empty, Cond::One));
+        self.bodies.push(P::Strong(R::Empty));
         self.zero.push(P::Weak(t_s(&S::Bool(Cond::One), c)));
         let body = self.program.bodies[name].clone();
         self.bodies[index] = self.t_p(&body, c);
@@ -416,14 +405,8 @@ impl Interp<'_> {
     /// `w^{s..} |= p` (F.5.3.1) with `depth` approximation levels left.
     fn sat(&self, p: &P, w: &Word, s: usize, depth: usize) -> bool {
         match p {
-            // strong(R): some nonempty prefix tightly satisfies R. On the
-            // finite word of a whole simulation (decision A13-D7), a strong
-            // obligation whose first clock never ticks imposes nothing.
-            P::Strong(r, clock) => {
-                !ends(r, w, s).lasts.is_empty()
-                    || (w.tail.is_none()
-                        && (s..w.len()).all(|i| w.letter(i).is_some_and(|l| !clock.holds(l))))
-            }
+            // strong(R): some nonempty prefix tightly satisfies R.
+            P::Strong(r) => !ends(r, w, s).lasts.is_empty(),
             // weak(R): every prefix followed by T^ω satisfies strong(R).
             P::Weak(r) => self.prefixes(w, s).all(|letters| {
                 let top = Word {
@@ -530,10 +513,9 @@ pub(super) enum Outcome {
     /// Passed or failed on the letter with this index.
     Pass(usize),
     Fail(usize),
-    /// Undecided at the end, with a strong obligation unmet (fails at
-    /// `$finish`, S38-D1).
-    FailAtEnd,
-    /// Undecided at the end with only weak obligations: no report.
+    /// Undecided at `$finish`: no report. Only a pending `s_eventually`
+    /// obligation fails at the end (decisions S38-D1, A13-D7), and the
+    /// tested operators include none.
     Pending,
 }
 
@@ -636,18 +618,7 @@ impl<'p> Oracle<'p> {
                 None => {}
             }
         }
-        // F.5.3.1 on the finite word: a strong obligation needs its match
-        // inside the word, a weak one does not.
-        let w = Word {
-            letters: trace,
-            tail: None,
-            dual: false,
-        };
-        if self.holds(&w) {
-            Outcome::Pending
-        } else {
-            Outcome::FailAtEnd
-        }
+        Outcome::Pending
     }
 }
 

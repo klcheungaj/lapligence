@@ -45,7 +45,7 @@ module tb;
     else $display("%0t sn fail", $time);
   wn: assert property (@(posedge clk) s5 |=> nexttime [4] k)
     else $display("%0t wn fail", $time);
-  ens: assert property (@(posedge clk) s5 |=> (k2 s_until k));
+  ens: assert property (@(posedge clk) s5 |=> s_eventually (k2 s_until k));
   ce: cover property (@(posedge clk) s5 |=> s_eventually k)
     $display("%0t ce cover", $time);
 

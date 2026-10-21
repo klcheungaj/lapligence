@@ -131,7 +131,8 @@ Sampled values at the ticks:
 | e | 0 | 0 | 0 | 0 | 1 | 1 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 
 A pass with a false antecedent is a vacuous success, which runs the pass
-action. A weak obligation still open at `$finish` reports nothing (S38-D1).
+action. An obligation still open at `$finish` reports nothing unless it is an
+`s_eventually` (S38-D1, A13-D7).
 
 ## `flow.sv`
 
@@ -313,8 +314,9 @@ Reactive region", after the NBA region of the same time step (4.4).
   60→d70=1 P70; 90 open; 100 vacuous P100.
 - `s1` `a |=> strong(@(posedge c2) d ##1 d)`: 10→d20, d30 P30; 30→d45=0 F45;
   50 vacuous P50; 70→d90, d100 P100; 90→d100, then no `c2` tick: the strong
-  obligation fails at `$finish` (S38-D1): F115. `s2`, the same with `weak`,
-  leaves 90 open: P30 F45 P50 P100.
+  obligation is pending at `$finish` and, being no `s_eventually`, reports
+  nothing (S38-D1, A13-D7). `s2`, the same with `weak`, also leaves 90 open:
+  both give P30 F45 P50 P100.
 
 ## `oracle.sv` (A01)
 
@@ -338,9 +340,9 @@ from Annex F: the derived forms of F.3.4.3, the clock rewrite rules of F.5.1
 k-fold approximations of F.7 (L71666-71689). A letter is a time step in which
 a clock ticks. An attempt is reported on the first letter after which every
 continuation (one more letter, then any letter repeated forever) gives the
-same verdict; an attempt still undecided at `$finish` fails there when
-F.5.3.1 rejects the finite word, with the unbegun-obligation rule of A13-D7,
-and otherwise reports nothing (S38-D1).
+same verdict; an attempt still undecided at `$finish` reports nothing, since
+llg reports only a pending `s_eventually` obligation at the end (S38-D1,
+A13-D7) and the tested properties contain none.
 
 ## Rejections
 

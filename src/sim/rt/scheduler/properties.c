@@ -721,63 +721,78 @@ static int property_begun(const llg_property_inst_t* inst) {
     }
 }
 
-/* Verdict of a pending evaluation when the trace ends here (Annex F
- * F.5.3.2): weak obligations hold, strong ones fail, `not` swaps them. */
-static int property_end(const llg_property_inst_t* inst) {
-    if (inst->status) return inst->status == LLG_PROP_TRUE;
-    // An evaluation that would begin after the last tick has no obligation.
-    if (!property_begun(inst)) return 1;
-    const llg_property_node_t* node = inst->node;
-    int strong = (node->flags & LLG_PROPERTY_STRONG) != 0;
-    const llg_property_inst_t* child = inst->children;
-    switch (node->kind) {
-    case LLG_PROPERTY_SEQUENCE:
-        return !strong;
-    case LLG_PROPERTY_NOT:
-        return child ? !property_end(child) : 1;
-    case LLG_PROPERTY_ABORT:
-    case LLG_PROPERTY_IF:
-        return child ? property_end(child) : 1;
-    case LLG_PROPERTY_NEXTTIME:
-        return child ? property_end(child) : !strong;
-    case LLG_PROPERTY_AND:
-        return child && child->next ? property_end(child) && property_end(child->next) : 1;
-    case LLG_PROPERTY_OR:
-        return child && child->next ? property_end(child) || property_end(child->next) : 1;
-    case LLG_PROPERTY_IMPLIES:
-        return child && child->next ? !property_end(child) || property_end(child->next) : 1;
-    case LLG_PROPERTY_IFF:
-        return child && child->next ? property_end(child) == property_end(child->next) : 1;
-    case LLG_PROPERTY_IMPLICATION:
-        for (; child; child = child->next)
-            if (!property_end(child)) return 0;
-        return 1;
-    case LLG_PROPERTY_FOLLOWED_BY:
-        // A consequent that has not begun has no match to follow.
-        for (; child; child = child->next)
-            if (property_begun(child) && property_end(child)) return 1;
-        return 0;
-    case LLG_PROPERTY_ALWAYS:
-        for (; child; child = child->next)
-            if (!property_end(child)) return 0;
-        return !strong || inst->done;
-    case LLG_PROPERTY_EVENTUALLY:
-        for (; child; child = child->next)
-            if (property_end(child)) return 1;
-        return !strong && !inst->done;
-    case LLG_PROPERTY_UNTIL: {
-        int overlapping = (node->flags & LLG_PROPERTY_OVERLAPPED) != 0;
-        int prefix = 1;
-        for (; child && child->next; child = child->next->next) {
-            int left = property_end(child);
-            if (prefix && property_end(child->next) && (!overlapping || left)) return 1;
-            prefix = prefix && left;
-            if (!prefix) return 0;
+/* Which nodes of a program contain an `s_eventually` obligation, through
+ * any operand or recursive instance (operands precede their users, so one
+ * forward pass is exact unless a CALL names a later node). */
+static uint8_t* property_eventuality_table(const llg_property_program_t* program) {
+    uint8_t* has = llg_checked_calloc(program->node_count, 1, "property eventuality table");
+    for (int changed = 1; changed;) {
+        changed = 0;
+        for (uint32_t index = 0; index < program->node_count; index++) {
+            const llg_property_node_t* node = &program->nodes[index];
+            uint32_t operands[2] = {LLG_PROPERTY_NONE, LLG_PROPERTY_NONE};
+            switch (node->kind) {
+            case LLG_PROPERTY_NOT:
+            case LLG_PROPERTY_NEXTTIME:
+            case LLG_PROPERTY_ALWAYS:
+            case LLG_PROPERTY_EVENTUALLY:
+            case LLG_PROPERTY_CALL: operands[0] = node->first; break;
+            case LLG_PROPERTY_AND:
+            case LLG_PROPERTY_OR:
+            case LLG_PROPERTY_IMPLIES:
+            case LLG_PROPERTY_IFF:
+            case LLG_PROPERTY_UNTIL:
+                operands[0] = node->first;
+                operands[1] = node->second;
+                break;
+            case LLG_PROPERTY_IMPLICATION:
+            case LLG_PROPERTY_FOLLOWED_BY:
+            case LLG_PROPERTY_ABORT: operands[0] = node->second; break;
+            case LLG_PROPERTY_IF:
+                operands[0] = node->second;
+                operands[1] = node->third;
+                break;
+            default: break;
+            }
+            uint8_t value = node->kind == LLG_PROPERTY_EVENTUALLY &&
+                            (node->flags & LLG_PROPERTY_STRONG) != 0;
+            for (int i = 0; i < 2 && !value; i++)
+                value = operands[i] != LLG_PROPERTY_NONE && has[operands[i]];
+            if (value && !has[index]) {
+                has[index] = 1;
+                changed = 1;
+            }
         }
-        return !strong && prefix;
     }
+    return has;
+}
+
+/* Whether a pending evaluation fails when the simulation ends here: it
+ * waits on an `s_eventually` obligation, one already started or one its
+ * started operators will still start (a nexttime, always, eventually or
+ * until operand, or a node that has not begun). Every other pending
+ * obligation, strong ones included, ends without a result, and an
+ * implication or followed-by whose antecedent has not matched imposes
+ * nothing (decisions S38-D1, A13-D7). */
+static int property_end_fails(const llg_property_inst_t* inst,
+                              const llg_property_node_t* nodes, const uint8_t* eventuality) {
+    if (inst->status) return 0;
+    const llg_property_node_t* node = inst->node;
+    size_t index = (size_t)(node - nodes);
+    if (!property_begun(inst)) return eventuality[index];
+    if (node->kind == LLG_PROPERTY_EVENTUALLY && (node->flags & LLG_PROPERTY_STRONG)) return 1;
+    for (const llg_property_inst_t* child = inst->children; child; child = child->next)
+        if (property_end_fails(child, nodes, eventuality)) return 1;
+    switch (node->kind) {
+    case LLG_PROPERTY_NEXTTIME:
+        return !inst->children && eventuality[node->first];
+    case LLG_PROPERTY_ALWAYS:
+    case LLG_PROPERTY_EVENTUALLY:
+        return !inst->done && eventuality[node->first];
+    case LLG_PROPERTY_UNTIL:
+        return !inst->done && (eventuality[node->first] || eventuality[node->second]);
     default:
-        return 1;
+        return 0;
     }
 }
 
@@ -884,10 +899,10 @@ static void property_assertions_async(void) {
     }
 }
 
-/* At the end of simulation an attempt that is still pending is settled by
- * its finite-trace verdict: an unmet strong obligation is a failure, while
- * weak obligations leave the attempt incomplete with no result (Annex F
- * F.5.3.2; llg decision S38-D1). Returns whether any failure was reported. */
+/* At the end of simulation an attempt that is still pending fails if it
+ * waits on an `s_eventually` obligation and otherwise ends without a result
+ * (16.13.21 calls both "Pending"; decisions S38-D1, A13-D7). Covers and
+ * expects are not settled. Returns whether any failure was reported. */
 static int settle_property_attempts_at_end(void) {
     int reported = 0;
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
@@ -895,18 +910,22 @@ static int settle_property_attempts_at_end(void) {
         if (!assertion->property) continue;
         llg_property_inst_t* attempts = assertion->property_attempts;
         assertion->property_attempts = assertion->property_attempts_tail = NULL;
+        // A blocked expect never resumes after the end of simulation.
+        int settled = attempts && assertion->kind != LLG_ASSERTION_EXPECT &&
+                      assertion->kind != LLG_ASSERTION_COVER;
+        uint8_t* eventuality = settled ? property_eventuality_table(assertion->property) : NULL;
         while (attempts) {
             llg_property_inst_t* attempt = attempts;
             attempts = attempt->next;
-            int verdict = property_end(attempt);
+            int fails = settled &&
+                        property_end_fails(attempt, assertion->property->nodes, eventuality);
             property_inst_free(attempt);
-            // A blocked expect never resumes after the end of simulation.
-            if (!verdict && assertion->kind != LLG_ASSERTION_EXPECT &&
-                assertion->kind != LLG_ASSERTION_COVER) {
+            if (fails) {
                 assertion_result(assertion, 0, 0);
                 reported = 1;
             }
         }
+        free(eventuality);
     }
     return reported;
 }

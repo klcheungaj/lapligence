@@ -644,10 +644,11 @@ most once per time step. Asynchronous `accept_on`/`reject_on` are checked once p
 time step from the write hook with sampled values; synchronous ones and every
 abort are checked first on each tick. At the end of simulation
 (`run_end_of_simulation_assertions`, after deferred reports) a pending attempt
-settles by its finite-trace verdict: unmet strong obligations fail (fail
-action in an isolated Reactive pass), weak ones end without a result (S38-D1),
-and an obligation whose clock has not ticked since it became due imposes
-nothing (A13-D7);
+fails (fail action in an isolated Reactive pass) only if it waits on an
+`s_eventually` obligation, begun or due to begin through a started operator
+(`property_end_fails`, a per-program eventuality table built at the end);
+every other pending attempt, strong obligations included, ends without a
+result (S38-D1, A13-D7);
 `cover` and `expect` are not settled. Instances count against
 `LLG_SEQUENCE_THREAD_LIMIT` and are recycled through `g.property_inst_pool`.
 An `expect` keeps its outcome (`llg_assertion_expect_outcome`: 0 none, 1 pass,
