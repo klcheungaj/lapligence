@@ -1,1 +1,2 @@
-5 a1 pass
+a1: 1 pass at 5, 0 fail
+c1: 1 covered at 5

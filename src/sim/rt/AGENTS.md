@@ -626,6 +626,11 @@ run per attempt as a tree of instances over the static `llg_property_node_t`
 table (operands precede users; the last node is the root). Each instance
 resolves once to true/false with its 16.15.8 nonvacuity; a parent may decide
 while an operand is pending, which then counts as vacuous (decision S38-D3).
+Each result also carries its cover vacuity (S38-D10): a cover counts every
+success as a hit except the vacuous success of an implication without an
+antecedent match or of an else-less `if`, passed on through `not`,
+`nexttime`, an unfired abort or implication consequents; assert and assume
+keep the 16.15.8 vacuity.
 A multiclocked program lists its clocks (`llg_property_clock_t`, the leading
 clock first) and each node and sequence names its own; an instance starts at a
 launch point (clock, time, tick) and advances on the first tick of its own

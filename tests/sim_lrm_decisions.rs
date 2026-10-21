@@ -731,6 +731,14 @@ fn s38_d9_sync_abort_new_attempt() {
 }
 
 #[test]
+fn s38_d10_cover_vacuous_success() {
+    run_decision(
+        "S38-D10_cover_vacuous_success",
+        include_str!("fixtures/sim/lrm_decisions/S38-D10_cover_vacuous_success.out"),
+    );
+}
+
+#[test]
 fn s21_d1_builtin_legal_overload() {
     // Negative case: the expected stdout is empty because compilation fails.
     assert!(

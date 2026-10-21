@@ -2487,9 +2487,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   (attempts, successes, vacuous successes, failures, disabled and killed
   attempts, S46-D8, S46-D9). Scopes are an instance (`SV_COV_MODULE` or
   `SV_COV_HIER`), `$root` or a module definition name (S46-D6); an item is
-  covered by a nonvacuous success (S46-D4); `$coverage_save` and
-  `$coverage_merge` write and add an llg database whose item table must match
-  (S46-D11). VPI reaches the same data: assertion handles from
+  covered by a nonvacuous success, for a cover a hit (S46-D4, S38-D10);
+  `$coverage_save` and `$coverage_merge` write and add an llg database whose
+  item table must match (S46-D11). VPI reaches the same data: assertion handles from
   `vpi_iterate(vpiAssertion, ...)` and `vpi_handle_by_name`, their 40.5.3
   counter properties, `vpi_get(vpiAssertCoverage, instance)` and
   `vpi_control(vpiCoverageStart/Stop/Reset/Check/Merge/Save)` (S46-D10), with

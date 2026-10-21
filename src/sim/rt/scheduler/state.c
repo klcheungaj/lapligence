@@ -355,6 +355,15 @@ typedef struct llg_property_inst {
      * node resolves true or false (see property_collapse). */
     uint8_t carry_true;
     uint8_t carry_false;
+    /* Valid once resolved: the result is the vacuous outcome of an
+     * implication without an antecedent match or of an else-less if whose
+     * condition is false, passed on unchanged. A cover counts every other
+     * success as a hit (decision S38-D10). */
+    uint8_t cover_vacuous;
+    /* IMPLICATION: a consumed consequent's result was not cover-vacuous. */
+    uint8_t consumed_hit;
+    /* Collapsed past an operator whose result is never cover-vacuous. */
+    uint8_t carry_hit;
 } llg_property_inst_t;
 
 /* A sequence can advance on a clock other than its leading assertion clock.

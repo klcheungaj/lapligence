@@ -2,8 +2,8 @@
 // condition once per time step. A pulse that starts at time 17 aborts the
 // evaluation in the next time step (18), where its sampled value is 1; a
 // glitch that rises and falls within one time step is never seen. An
-// accept_on abort is a vacuous success: the assert passes and the cover of
-// the same property does not count it.
+// accept_on abort is a vacuous success: the assert passes. (A cover of the
+// same property counts the abort as a hit, decision S38-D10.)
 //
 // IEEE 1800-2009 16.13.14 (SystemVerilog-1800-2009.txt L25265-25267): "The
 // operators accept_on and reject_on are evaluated at the granularity of the
@@ -17,8 +17,6 @@ module tb;
   logic clk = 1'b0, g = 1'b0, g2 = 1'b0, h = 1'b1;
   initial a1: assert property (@(posedge clk) accept_on (g) always h)
     $display("%0t a1 pass", $time); else $display("%0t a1 fail", $time);
-  initial c1: cover property (@(posedge clk) accept_on (g) always h)
-    $display("%0t c1 covered", $time);
   initial a2: assert property (@(posedge clk) reject_on (g2) always h)
     $display("%0t a2 pass", $time); else $display("%0t a2 fail", $time);
   initial begin

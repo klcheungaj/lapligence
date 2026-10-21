@@ -1,0 +1,3 @@
+implication 0, if 0, nexttime 0, instance 0, nested 0
+and 3, or 3, if-else 3, until_with 3, s_eventually 3
+followed-by 3, accept_on 3

@@ -22,9 +22,14 @@ Rules used throughout:
   property_expr1 or property_expr2 is nonvacuous if, and only if, either the
   underlying evaluation attempt of property_expr1 is nonvacuous or the
   underlying evaluation attempt of property_expr2 is nonvacuous." A pass
-  statement runs for vacuous and nonvacuous successes of an assert; a
-  `cover property` counts (and runs its statement for) nonvacuous successes
-  only.
+  statement runs for vacuous and nonvacuous successes of an assert. 16.15.3
+  (L26604-26605): "The pass statement specified in statement_or_null shall
+  be executed once for each successful evaluation attempt of the underlying
+  property_spec." A `cover property` counts (and runs its statement for)
+  every success except the vacuous success of an implication without an
+  antecedent match or of an else-less `if` with a false condition, passed on
+  through `not`, `nexttime`, an abort that did not fire or implication
+  consequents (decision S38-D10).
 - Aborts. 16.13.14 (L25255-25258): "If during the evaluation, the abort
   condition becomes true, then the overall evaluation of the property results
   in true." (false for `reject_on`); L25265-25267: "The operators accept_on
@@ -56,17 +61,20 @@ abort forms and nestings of them. For each of the 1024 two-signal traces of
 length 5 the testbench raises `go` on tick 0, drives the trace on ticks 1-5
 and disables pending attempts with `disable iff (kill)` on tick 6. Each
 property runs as `assert property (go |=> P)` printing `A`/`F` lines for pass
-and fail, and as `cover property (go |=> P)` printing `C` lines for
-nonvacuous successes; attempts started with `go` low succeed vacuously on
-their own tick (an `A` line without a `C` line).
+and fail, and as `cover property (go |=> P)` printing `C` lines for the
+successes a cover counts (S38-D10); attempts started with `go` low succeed
+vacuously on their own tick, through an implication without an antecedent
+match (an `A` line without a `C` line).
 
 The expected lines come from a test-side interpreter in
 `tests/sim_feature_completion/sim_038.rs` that shares no code with the
 runtime. It evaluates Annex F neutral satisfaction (F.5.3.1) on words over
 `2^{a,b}` plus the letters T and ⊥, expanding derived operators by F.3.4.3.
 An attempt is reported on the first tick whose trace prefix decides it: every
-continuation `u v c^ω` (`|v| <= 2`) gives the same result. A pass is
-nonvacuous when the 16.15.8 rules hold on the finite word of its ticks. An
+continuation `u v c^ω` (`|v| <= 2`) gives the same result. A pass is a
+cover hit unless the S38-D10 rule makes it cover-vacuous on the finite word
+of its ticks (the 16.15.8 rules are kept in the interpreter for its anchor
+test). An
 attempt no prefix decides stays pending and prints nothing. The test checks
 that the fixture spells each interpreter property exactly.
 
@@ -98,8 +106,9 @@ Ticks 1-8 are the posedges at 5..75; `$finish` ends the run at 80.
 - `ab1` `s3 |=> accept_on (g) always [0:3] h`: the tick-1 attempt would fail
   on tick 4 (`h` 0), but the sampled value of `g` is 1 in time step 28, so
   it succeeds vacuously at 28. The other attempts have `s3` 0 and pass
-  vacuously on their tick: `ab1 pass` at 15, 25, 28, 35, 45, 55, 65, 75;
-  `ab1c` prints nothing.
+  vacuously on their tick: `ab1 pass` at 15, 25, 28, 35, 45, 55, 65, 75.
+  `ab1c` covers the abort of 28 (a fired `accept_on` is a cover hit,
+  S38-D10) and nothing else: `28000 ab1 cover`.
 - `ab2` `sync_accept_on (g)`: the condition is sampled only at clock ticks
   and is 0 on every tick, so the attempt fails at 35.
 - `rj1` `reject_on (g)`: fails at 28.

@@ -137,12 +137,21 @@ static void property_resolve(llg_property_inst_t* inst, int status, int nonvacuo
     inst->status = (uint8_t)status;
     inst->nonvacuous = nonvacuous ||
                        (status == LLG_PROP_TRUE ? inst->carry_true : inst->carry_false);
+    inst->cover_vacuous = 0;
     property_free_list(inst->children);
     inst->children = inst->children_tail = NULL;
     if (inst->sequence) {
         sequence_attempt_discard(inst->sequence);
         inst->sequence = NULL;
     }
+}
+
+/* Resolve `inst` with an outcome that keeps the cover vacuity of the operand
+ * or condition it comes from (see llg_property_inst_t::cover_vacuous). */
+static void property_pass_on(llg_property_inst_t* inst, int status, int nonvacuous,
+                             int cover_vacuous) {
+    property_resolve(inst, status, nonvacuous);
+    inst->cover_vacuous = (uint8_t)(cover_vacuous && !inst->carry_hit);
 }
 
 /* Unlink and free `child`, whose predecessor link is `*link`. */
@@ -158,10 +167,11 @@ static void property_drop_child(llg_property_inst_t* inst, llg_property_inst_t**
  * is that operand's: `true and p`, `false or p`, an implication whose
  * antecedent is exhausted with one consequent left, a nexttime or if whose
  * operand has started. The operator's other operands only add nonvacuity
- * (16.15.8), kept per outcome. The instance keeps its place among its
- * siblings, so no parent needs to know. */
+ * (16.15.8), kept per outcome; `hit` marks an operator whose result is
+ * never cover-vacuous. The instance keeps its place among its siblings, so
+ * no parent needs to know. */
 static void property_collapse(llg_property_inst_t* inst, llg_property_inst_t* child,
-                              int carry_true, int carry_false) {
+                              int carry_true, int carry_false, int hit) {
     llg_property_inst_t** link = &inst->children;
     while (*link != child) link = &(*link)->next;
     *link = child->next;
@@ -172,10 +182,12 @@ static void property_collapse(llg_property_inst_t* inst, llg_property_inst_t* ch
     llg_property_inst_t* next = inst->next;
     uint8_t keep_true = (uint8_t)(inst->carry_true | (carry_true ? 1 : 0));
     uint8_t keep_false = (uint8_t)(inst->carry_false | (carry_false ? 1 : 0));
+    uint8_t keep_hit = (uint8_t)(inst->carry_hit | (hit ? 1 : 0));
     *inst = *child;
     inst->next = next;
     inst->carry_true |= keep_true;
     inst->carry_false |= keep_false;
+    inst->carry_hit |= keep_hit;
     memset(child, 0, sizeof(*child));
     child->next = g.property_inst_pool;
     g.property_inst_pool = child;
@@ -413,7 +425,7 @@ static void property_if_step(llg_property_ctx_t* ctx, llg_property_inst_t* inst,
         branch = node->third;
     } else {
         // `if (b) p` with b false holds vacuously (16.13.5, 16.15.8 g).
-        property_resolve(inst, LLG_PROP_TRUE, 0);
+        property_pass_on(inst, LLG_PROP_TRUE, 0, 1);
         return;
     }
     if (g.finish) return;
@@ -514,9 +526,9 @@ static void property_settle_binary(llg_property_inst_t* inst) {
         else if (ls == LLG_PROP_TRUE && rs == LLG_PROP_TRUE)
             property_resolve(inst, LLG_PROP_TRUE, lv || rv);
         else if (ls == LLG_PROP_TRUE)
-            property_collapse(inst, right, lv, lv);
+            property_collapse(inst, right, lv, lv, 1);
         else if (rs == LLG_PROP_TRUE)
-            property_collapse(inst, left, rv, rv);
+            property_collapse(inst, left, rv, rv, 1);
         break;
     case LLG_PROPERTY_OR:
         if (ls == LLG_PROP_TRUE || rs == LLG_PROP_TRUE)
@@ -524,9 +536,9 @@ static void property_settle_binary(llg_property_inst_t* inst) {
         else if (ls == LLG_PROP_FALSE && rs == LLG_PROP_FALSE)
             property_resolve(inst, LLG_PROP_FALSE, lv || rv);
         else if (ls == LLG_PROP_FALSE)
-            property_collapse(inst, right, lv, lv);
+            property_collapse(inst, right, lv, lv, 1);
         else if (rs == LLG_PROP_FALSE)
-            property_collapse(inst, left, rv, rv);
+            property_collapse(inst, left, rv, rv, 1);
         break;
     case LLG_PROPERTY_IMPLIES:
         // Nonvacuous iff the antecedent property is (16.15.8 z).
@@ -551,14 +563,19 @@ static void property_settle_quantifier(llg_property_inst_t* inst, int universal)
     int decisive = universal ? LLG_PROP_FALSE : LLG_PROP_TRUE;
     llg_property_inst_t** link = &inst->children;
     llg_property_inst_t* previous = NULL;
+    // An implication passes on the cover vacuity of its consequents (none:
+    // no antecedent match); the other quantifiers never yield one.
+    int implication = inst->node->kind == LLG_PROPERTY_IMPLICATION;
     while (*link) {
         llg_property_inst_t* child = *link;
         if (child->status == decisive) {
-            property_resolve(inst, decisive, child->nonvacuous);
+            property_pass_on(inst, decisive, child->nonvacuous,
+                             implication && child->cover_vacuous);
             return;
         }
         if (child->status) {
             inst->accumulated |= child->nonvacuous;
+            inst->consumed_hit |= !child->cover_vacuous;
             property_drop_child(inst, link, previous);
             continue;
         }
@@ -566,10 +583,10 @@ static void property_settle_quantifier(llg_property_inst_t* inst, int universal)
         link = &child->next;
     }
     if (inst->done && !inst->children)
-        property_resolve(inst, universal ? LLG_PROP_TRUE : LLG_PROP_FALSE, inst->accumulated);
-    else if (inst->done && universal && inst->node->kind == LLG_PROPERTY_IMPLICATION &&
-             inst->children == inst->children_tail)
-        property_collapse(inst, inst->children, inst->accumulated, 0);
+        property_pass_on(inst, universal ? LLG_PROP_TRUE : LLG_PROP_FALSE, inst->accumulated,
+                         implication && !inst->consumed_hit);
+    else if (inst->done && implication && inst->children == inst->children_tail)
+        property_collapse(inst, inst->children, inst->accumulated, 0, inst->consumed_hit);
 }
 
 /* `p until q` holds iff some stage j has q holding from tick j while p holds
@@ -619,22 +636,32 @@ static void property_settle(llg_property_inst_t* inst) {
     switch (inst->node->kind) {
     case LLG_PROPERTY_NOT:
         if (child && child->status)
-            property_resolve(inst,
+            property_pass_on(inst,
                              child->status == LLG_PROP_TRUE ? LLG_PROP_FALSE : LLG_PROP_TRUE,
-                             child->nonvacuous);
+                             child->nonvacuous, child->cover_vacuous);
         break;
     case LLG_PROPERTY_ABORT:
-        if (child && child->status) property_resolve(inst, child->status, child->nonvacuous);
+        if (child && child->status)
+            property_pass_on(inst, child->status, child->nonvacuous, child->cover_vacuous);
         break;
-    case LLG_PROPERTY_IF:
+    case LLG_PROPERTY_IF: {
         if (!inst->phase || !child) break;
-        if (child->status) property_resolve(inst, child->status, child->nonvacuous);
-        else property_collapse(inst, child, 0, 0);
+        // An if-else is a choice between two properties, so its result is
+        // never cover-vacuous; an else-less if passes its branch's on.
+        int has_else = inst->node->third != LLG_PROPERTY_NONE;
+        if (child->status)
+            property_pass_on(inst, child->status, child->nonvacuous,
+                             !has_else && child->cover_vacuous);
+        else
+            property_collapse(inst, child, 0, 0, has_else);
         break;
+    }
     case LLG_PROPERTY_NEXTTIME:
         if (!child) break;
-        if (child->status) property_resolve(inst, child->status, child->nonvacuous);
-        else property_collapse(inst, child, 0, 0);
+        if (child->status)
+            property_pass_on(inst, child->status, child->nonvacuous, child->cover_vacuous);
+        else
+            property_collapse(inst, child, 0, 0, 0);
         break;
     case LLG_PROPERTY_AND:
     case LLG_PROPERTY_OR:
@@ -754,9 +781,12 @@ static int property_end(const llg_property_inst_t* inst) {
     }
 }
 
+/* A cover counts a success as a hit unless it is cover-vacuous (decision
+ * S38-D10); assert and assume keep the 16.15.8 vacuity. */
 static void property_report(llg_concurrent_assertion_t* assertion, llg_property_inst_t* root) {
     int pass = root->status == LLG_PROP_TRUE;
-    int vacuous = pass && !root->nonvacuous;
+    int vacuous = pass && (assertion->kind == LLG_ASSERTION_COVER ? root->cover_vacuous
+                                                                  : !root->nonvacuous);
     property_inst_free(root);
     assertion_result(assertion, pass, vacuous);
 }

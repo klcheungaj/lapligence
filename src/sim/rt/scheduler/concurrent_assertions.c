@@ -131,10 +131,11 @@ static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
     if (vacuous) assertion_vacuous();
     llg_acov_result(assertion->acov, success, vacuous);
     if (success) {
-        // Cover counts and pass actions represent a non-vacuous match. An
-        // implication with a false antecedent is accounted separately but is
-        // not a coverage hit. Assert/assume pass actions still run for their
-        // vacuous success, as required by assertion action semantics.
+        // Cover counts and pass actions represent a hit: every success
+        // except a cover-vacuous one, whose implication had no antecedent
+        // match or whose else-less if had a false condition (decision
+        // S38-D10). Assert/assume pass actions still run for their vacuous
+        // success, as required by assertion action semantics.
         if (assertion->kind == LLG_ASSERTION_COVER && !vacuous)
             llg_assertion_cover(assertion->identity, assertion->label,
                                 assertion->location);
@@ -252,11 +253,14 @@ static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
     if (!assertion || !assertion->abort_condition) return;
     free_assertion_clock_events(assertion);
     const int success = assertion->abort_reject ? 0 : 1;
+    // An accepted attempt succeeds vacuously (16.15.8 ab); a cover still
+    // counts it as a hit (decision S38-D10).
+    const int vacuous = success && assertion->kind != LLG_ASSERTION_COVER;
     while (assertion->attempts) {
         llg_assertion_attempt_t* attempt = assertion->attempts;
         assertion->attempts = attempt->next;
         if (!assertion->attempts) assertion->attempts_tail = NULL;
-        assertion_result(assertion, success, assertion->abort_reject ? 0 : 1);
+        assertion_result(assertion, success, vacuous);
         free(attempt);
         if (g.finish) return;
     }
@@ -280,7 +284,7 @@ static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
             if (eval) eval->decided = 1;
             sequence_attempt_discard(attempt);
             if (report)
-                assertion_result(assertion, success, assertion->abort_reject ? 0 : 1);
+                assertion_result(assertion, success, vacuous);
             if (g.finish) return;
         }
         *tails[list_index] = NULL;
