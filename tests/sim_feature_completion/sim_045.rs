@@ -172,7 +172,7 @@ fn invalid_transition_forms_are_located_errors() {
     sim_cli::reject_case(
         SUITE,
         "neg_trans_length0",
-        "neg_trans_length0.sv:6:29: transition bins `t` of coverpoint `cp` in covergroup `g` specify a transition of length 0: a single range list whose repetition can be 1 (IEEE 1800-2009 19.5.1)",
+        "neg_trans_length0.sv:7:29: transition bins `t` of coverpoint `cp` in covergroup `g` specify a transition of length 0: a single range list, alone or with a consecutive repetition that evaluates to 1 (IEEE 1800-2009 19.5.1)",
     );
     sim_cli::reject_case(
         SUITE,

@@ -1752,13 +1752,18 @@ impl<'a> Codegen<'a> {
                 });
             }
             // 19.5.1: "Transition bin specifications of length 0 shall be
-            // illegal": one range list that one sample completes.
-            if steps.len() == 1 && steps[0].lo == 1 {
+            // illegal": a single range list, alone or with a consecutive
+            // repetition evaluating to 1. Goto and nonconsecutive
+            // repetitions, and a consecutive range that may exceed 1, are
+            // sequences the text does not name; one sample can complete
+            // them (decision S45-D19).
+            if steps.len() == 1 && steps[0].repeat == IrCoverRepeat::Consecutive && steps[0].hi == 1
+            {
                 let node = set.first().map_or(bin, |range| range.node);
                 return Err(self.coverage_error(
                     node,
                     format!(
-                        "transition bins {describe} specify a transition of length 0: a single range list whose repetition can be 1 (IEEE 1800-2009 19.5.1)"
+                        "transition bins {describe} specify a transition of length 0: a single range list, alone or with a consecutive repetition that evaluates to 1 (IEEE 1800-2009 19.5.1)"
                     ),
                 ));
             }
