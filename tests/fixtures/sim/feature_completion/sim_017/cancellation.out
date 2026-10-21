@@ -1,7 +1,7 @@
 killed getter n=1 keep=-1 untouched
 killed putter n=2
 fifo 2 two n=0
-woken kill conserves 2: 4 5
+woken kill conserves 1: 5 0
 peek kept n=1
 disabled n=1 wrote=0
 teardown n=2 0 str=p

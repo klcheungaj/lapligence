@@ -497,17 +497,22 @@ report (S14-D6, S16-D3, S29-D1, S31-D4); the flag lives outside `g` and resets
 at init, and its callers' generated statements carry a Terminate effect so the
 process takes its exit check.
 
-Semaphore waiters are FIFO. Cancelling a head or subtree must reservice surviving
-waiters without an extra put; do not grant during an incomplete cancellation batch
-or teardown. Mailboxes retain bounded/unbounded FIFO/peek rules and nominal typed
-identity (including null handles), packed width/sign/state and real precision.
+Semaphore waiters are served first-fit in arrival order: a put grants every
+queued request that fits, a request that fits is served at once, and a larger
+earlier request does not block a smaller later one (AB-N4). Keys are taken at the
+grant, so a waiter killed before it runs keeps them; cancelling a waiter never
+lets another proceed. Suspended semaphore and mailbox waiters keep their queue
+place and stay candidates; resume runs a waiter served while suspended (AB-N1).
+Mailboxes retain bounded/unbounded FIFO/peek rules and nominal typed identity
+(including null handles), packed width/sign/state and real precision.
 Mismatched try calls return -1 without assignment/consumption; blocking mismatches
-fail. A blocked get is serviced by type check, then removal (a peek clones) into
-the waiter's `mailbox_delivery`, then wake; the waiter writes its destination when
-it resumes (`llg_mailbox_delivery_take`). A waiter killed first hands a consumed
-message back to the head of its mailbox (a peek copy is dropped) and the mailbox is
-re-serviced after the cancellation batch, like a semaphore grant. `LLG_MAILBOX_VALUE`
-messages own a descriptor-backed `llg_value_t` matched by the model's static
+fail. A blocked get is serviced by type check, then removal (a peek clones), then
+wake: the put completes the get (AB-O3). A destination marked by
+`llg_mailbox_delivery_target` (whole variables of static or waiting-activation
+storage) is written then; any other goes to the waiter's `mailbox_delivery` and is
+written when it resumes (`llg_mailbox_delivery_take`). A waiter killed first keeps
+what it was delivered: its pending delivery is dropped, never returned.
+`LLG_MAILBOX_VALUE` messages own a descriptor-backed `llg_value_t` matched by the model's static
 equivalence key; `llg_mailbox_trace` enumerates queued, blocked-put and pending
 messages for the collector's roots (SIM-018).
 

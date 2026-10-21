@@ -1003,10 +1003,6 @@ These mailbox forms stop compilation with a SIM-017 diagnostic:
   in a loop condition, or in another expression that is not a statement, an
   assignment, a system-task argument or an `if` condition.
 
-At run time, a message handed back by a killed receiver returns to the head
-of a bounded mailbox even when a sender filled the freed slot meanwhile, so
-`num()` can exceed the bound until the next `get`.
-
 ### Cause
 
 An aggregate message is one descriptor-backed runtime value. The runtime

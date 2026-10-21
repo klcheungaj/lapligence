@@ -494,7 +494,9 @@ static int semaphore_valid(llg_semaphore_t* semaphore, const char* action) {
 
 // Remove a blocked get without changing the semaphore's available keys.  This
 // is used by process cancellation and teardown before the process storage is
-// reclaimed, so a killed waiter can never consume a later put.
+// reclaimed, so a killed waiter can never consume a later put. Removing a
+// waiter never lets another one proceed: every request still queued after a
+// service needs more keys than are available.
 static void semaphore_waiter_unlink(llg_wait_t* wait) {
     if (!wait || wait->kind != W_SEMAPHORE || !wait->payload.rare ||
         !wait->payload.rare->semaphore.waiter)
@@ -503,17 +505,15 @@ static void semaphore_waiter_unlink(llg_wait_t* wait) {
     llg_semaphore_wait_t* node = payload->waiter;
     llg_semaphore_t* semaphore = payload->semaphore ? payload->semaphore : node->owner;
     if (semaphore) {
+        llg_semaphore_wait_t* previous = NULL;
         llg_semaphore_wait_t** slot = &semaphore->wait_head;
-        while (*slot && *slot != node) slot = &(*slot)->next;
+        while (*slot && *slot != node) {
+            previous = *slot;
+            slot = &(*slot)->next;
+        }
         if (*slot == node) {
             *slot = node->next;
-            semaphore->cancelled_waiter = 1;
-            if (semaphore->wait_tail == node) {
-                semaphore->wait_tail = NULL;
-                for (llg_semaphore_wait_t* item = semaphore->wait_head; item;
-                     item = item->next)
-                    semaphore->wait_tail = item;
-            }
+            if (semaphore->wait_tail == node) semaphore->wait_tail = previous;
         }
     }
     free(node);
@@ -522,67 +522,42 @@ static void semaphore_waiter_unlink(llg_wait_t* wait) {
     payload->keys = 0;
 }
 
-// A process killed after a grant but before it resumed never took its keys:
-// give them back and let the FIFO head try again.
-static void semaphore_return_grant(llg_proc_t* proc) {
-    llg_semaphore_wait_t* request = proc ? proc->granted_request : NULL;
-    if (!request) return;
-    proc->granted_request = NULL;
-    if (request->owner) {
-        request->owner->available += request->keys;
-        request->owner->cancelled_waiter = 1;
-    }
-    free(request);
-}
-
-void llg_semaphore_grant_taken(llg_proc_t* self) {
-    if (!self || !self->granted_request) return;
-    free(self->granted_request);
-    self->granted_request = NULL;
-}
-
-// Service only the head request.  A later smaller request cannot bypass a
-// larger request at the front of the specified semaphore FIFO.
+/* Grant keys to every queued request that fits, in arrival order (SV 15.3.3:
+ * the queue is FIFO and preserves arrival order). A request that needs more
+ * keys than are available does not block a later, smaller one (decision
+ * AB-N4). A suspended waiter stays a candidate (AB-N1): it takes its keys
+ * while suspended and continues when resumed. Keys are taken at the grant,
+ * so a waiter killed before it runs does not return them. */
 static void semaphore_wake_available(llg_semaphore_t* semaphore) {
     if (!semaphore) return;
-    while (semaphore->wait_head) {
-        llg_semaphore_wait_t* node = semaphore->wait_head;
-        if (node->keys > semaphore->available) break;
-        semaphore->wait_head = node->next;
-        if (!semaphore->wait_head) semaphore->wait_tail = NULL;
+    llg_semaphore_wait_t* previous = NULL;
+    llg_semaphore_wait_t* node = semaphore->wait_head;
+    while (node && semaphore->available > 0) {
+        llg_semaphore_wait_t* next = node->next;
         llg_proc_t* proc = node->proc;
         llg_wait_t* wait = proc ? &proc->wait : NULL;
-        if (!proc || !wait || wait->kind != W_SEMAPHORE ||
-            !wait->payload.rare || wait->payload.rare->semaphore.waiter != node) {
-            free(node);
+        int stale = !proc || !wait || wait->kind != W_SEMAPHORE ||
+                    !wait->payload.rare || wait->payload.rare->semaphore.waiter != node;
+        if (!stale && node->keys > semaphore->available) {
+            previous = node;
+            node = next;
             continue;
         }
-        semaphore->available -= node->keys;
-        // Keep the request until the process takes its keys by resuming.
-        node->next = NULL;
-        free(proc->granted_request);
-        proc->granted_request = node;
-        wait->payload.rare->semaphore.semaphore = NULL;
-        wait->payload.rare->semaphore.waiter = NULL;
-        wait->payload.rare->semaphore.keys = 0;
-        wake_proc(proc);
+        if (previous)
+            previous->next = next;
+        else
+            semaphore->wait_head = next;
+        if (semaphore->wait_tail == node) semaphore->wait_tail = previous;
+        if (!stale) {
+            semaphore->available -= node->keys;
+            wait->payload.rare->semaphore.semaphore = NULL;
+            wait->payload.rare->semaphore.waiter = NULL;
+            wait->payload.rare->semaphore.keys = 0;
+        }
+        free(node);
+        if (!stale) wake_proc(proc);
+        node = next;
     }
-}
-
-// Finish the entire cancellation batch before granting keys. Servicing from
-// unlink would let a sibling that is about to be killed consume a grant.
-// Teardown only unlinks requests; it must never schedule new work.
-static void semaphore_service_cancelled_waiters(void) {
-    if (g.finish) return;
-    for (llg_semaphore_t* semaphore = g.semaphores; semaphore;
-         semaphore = semaphore->next_all) {
-        if (!semaphore->cancelled_waiter) continue;
-        semaphore->cancelled_waiter = 0;
-        semaphore_wake_available(semaphore);
-    }
-    // Mailbox messages handed back by killed getters follow the same
-    // end-of-batch rule (SIM-017).
-    mailbox_service_returned_deliveries();
 }
 
 // Remove a W_EVENT/W_MIXED waiter from every named-event list it registered

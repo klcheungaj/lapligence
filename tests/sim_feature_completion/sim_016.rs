@@ -32,7 +32,7 @@ fn array_semaphores_keep_pools_and_aliases_share_them() {
 }
 
 #[test]
-fn killed_waiters_never_consume_granted_keys() {
+fn granted_keys_stay_taken_when_the_waiter_is_killed() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_016/grant_cancellation.out");
     sim_cli::run_case_backend_parity(SUITE, "grant_cancellation", expected, &[], &[]);

@@ -1,0 +1,6 @@
+1: small got 1
+2: try_get(1)=1
+2: try_get(1)=1
+2: main got 1
+2: big got 3
+3: after kill try_get(2)=0

@@ -174,7 +174,6 @@ static void proc_complete(llg_proc_t* self) {
     if (self->grp) llg_fork_group_child_done(self->grp);
     release_program_process(self);
     service_program_completions();
-    semaphore_service_cancelled_waiters();
 }
 
 llg_co_arm_t llg_arm_time(llg_proc_t* self, uint64_t ticks) {

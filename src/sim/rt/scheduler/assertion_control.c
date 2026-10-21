@@ -519,7 +519,6 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
     if (operation == LLG_ASSERTION_CONTROL_KILL) {
         llg_proc_t* current = llg_current();
         service_program_completions();
-        semaphore_service_cancelled_waiters();
         reap_retired_procs();
         if (current && current->killed)
             current->chain.exiting = LLG_EXIT_ABANDON;

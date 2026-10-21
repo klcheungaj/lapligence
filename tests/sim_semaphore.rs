@@ -19,12 +19,12 @@ fn semaphore_zero_key_and_try_get_results_are_exact() {
 }
 
 #[test]
-fn semaphore_contention_keeps_differing_requests_in_fifo_order() {
+fn semaphore_contention_serves_fitting_requests_in_arrival_order() {
     sim_cli::run_case(
         "semaphore",
         "fifo",
-        "zero_try=1\nwide\nnarrow\n",
-        "llg: $finish at time 0 at tb:29:9\n",
+        "zero_try=1\nnarrow\nwide\n",
+        "llg: $finish at time 0 at tb:30:9\n",
         &[],
     );
 }
@@ -74,11 +74,11 @@ fn semaphore_static_procedural_initializers_run_once() {
 }
 
 #[test]
-fn suspended_semaphore_waiter_takes_keys_only_after_resume() {
+fn suspended_semaphore_waiter_takes_keys_and_runs_after_resume() {
     sim_cli::run_case(
         "semaphore",
         "suspend",
-        "waiting=2 suspended=3 woken=3 acquired=1 done=0\n",
+        "waiting=2 suspended=3 woken=3 left=0 acquired=1 done=0\n",
         "",
         &[],
     );

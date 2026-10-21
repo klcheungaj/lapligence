@@ -114,3 +114,18 @@ fn mailbox_typedef_elements_resolve_in_their_declaring_scope() {
         &[],
     );
 }
+
+#[test]
+fn woken_get_writes_whole_variables_at_the_put_and_selected_targets_on_resume() {
+    sim_cli::run_case(
+        "mailboxes",
+        "delivery",
+        concat!(
+            "at put whole=1 r=2.5 s=three ref=6 arr=0,0,0 h1.x=0 got_h=0\n",
+            "after resume arr=4,0,0 h1.x=5 h2.x=0 got_h=1\n",
+            "local at put v=8\n",
+        ),
+        "llg: $finish at time 2 at tb:75:9\n",
+        &[],
+    );
+}

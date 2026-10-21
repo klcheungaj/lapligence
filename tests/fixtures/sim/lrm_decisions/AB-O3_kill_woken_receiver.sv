@@ -1,18 +1,21 @@
 // AB-O3: killing a mailbox receiver that a put has already woken but that has
 // not run yet.
 //
-// IEEE 1800-2009 9.7 (L12631-12634): "The kill() function terminates the
-// given process and all its subprocesses ... If the process to be terminated
-// is not blocked waiting on some other condition, such as an event, wait
+// IEEE 1800-2009 15.4.5 (L20544): "task get( ref singular message );"
+// (L20548-20549): "The get() method retrieves one message from the mailbox,
+// that is, removes one message from the mailbox queue. If the mailbox is
+// empty, then the current process blocks until a message is placed in the
+// mailbox." 9.7 (L12631-12634): "If the process to be terminated is not
+// blocked waiting on some other condition, such as an event, wait
 // expression, or a delay, then the process shall be terminated at some
 // unspecified time in the current time step."
 //
-// Decision (llg policy; the standard allows the receiver to take the message
-// first): llg hands the message over at the put, so it leaves the queue
-// then; a kill before the receiver resumes returns it to the head of the
-// mailbox and the receiver writes nothing. Either way no message is lost or
-// received twice; the `conserved` line is what every conforming simulator
-// prints.
+// Decision (industry-standard behaviour; the text allows either order):
+// the put that wakes a blocked receiver completes its get. The message
+// leaves the queue and is written to the receiver's `ref` destination at the
+// put, so a receiver killed before it runs has still received it and the
+// message does not return to the mailbox. No message is lost or received
+// twice: `conserved` counts the destination and the queue.
 module tb;
   mailbox #(int) m = new();
   process k;
@@ -31,9 +34,9 @@ module tb;
     #1;
     m.put(4);
     m.put(5);
-    $display("llg queued after hand-off: %0d", m.num());
+    $display("queued after hand-off: %0d got=%0d", m.num(), got);
     k.kill();
-    $display("llg after kill: n=%0d got=%0d", m.num(), got);
+    $display("after kill: n=%0d got=%0d", m.num(), got);
     #1;
     if (got != 0) seen.push_back(got);
     while (m.try_get(y) > 0) seen.push_back(y);

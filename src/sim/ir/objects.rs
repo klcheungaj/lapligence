@@ -477,6 +477,12 @@ pub enum IrMailboxValue {
 /// (for example `&G_x` or `o0`) and remains valid across a suspended call.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IrMailboxTarget {
+    /// Storage that stays valid for the whole wait and needs no change
+    /// publication: a blocked `get`/`peek` writes it when `put` delivers
+    /// the message, so a receiver killed before it runs has still received
+    /// it (decision AB-O3). Other destinations are written when the receiver
+    /// resumes.
+    AtDelivery(Box<IrMailboxTarget>),
     Typed {
         type_id: u64,
         target: Box<IrMailboxTarget>,
@@ -1322,7 +1328,7 @@ impl IrMailboxTarget {
     /// lexical native value (SIM-017), which names no model signal.
     pub(in crate::sim) fn address(&self) -> Option<&str> {
         match self {
-            Self::Typed { target, .. } => target.address(),
+            Self::AtDelivery(target) | Self::Typed { target, .. } => target.address(),
             Self::Native { .. } => None,
             Self::Packed { addr, .. }
             | Self::Ref { addr }
@@ -1333,6 +1339,15 @@ impl IrMailboxTarget {
     }
 
     pub(in crate::sim) fn validate(&self) -> Result<(), super::IrValidationError> {
+        if let Self::AtDelivery(target) = self {
+            if matches!(**target, Self::AtDelivery(_) | Self::Native { .. }) {
+                return Err(super::IrValidationError::new(
+                    "mailbox target",
+                    "delivery-time storage must name one direct destination",
+                ));
+            }
+            return target.validate();
+        }
         if let Self::Typed { type_id, target } = self {
             if *type_id == 0 {
                 return Err(super::IrValidationError::new(
@@ -1354,7 +1369,9 @@ impl IrMailboxTarget {
         let (addr, width) = match self {
             Self::Packed { addr, width, .. } => (addr, Some(*width)),
             Self::Ref { addr } => (addr, None),
-            Self::Typed { .. } | Self::Native { .. } => unreachable!("handled above"),
+            Self::AtDelivery(_) | Self::Typed { .. } | Self::Native { .. } => {
+                unreachable!("handled above")
+            }
             Self::Real { addr, .. } | Self::String { addr } | Self::Handle { addr } => (addr, None),
         };
         if addr.is_empty() || width == Some(0) {

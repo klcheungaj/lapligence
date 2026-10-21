@@ -453,6 +453,9 @@ fn mailbox_value(ctx: &RCtx<'_>, value: &IrMailboxValue) -> Result<String, Strin
 
 fn mailbox_target(target: &IrMailboxTarget) -> Result<String, String> {
     Ok(match target {
+        IrMailboxTarget::AtDelivery(target) => {
+            format!("llg_mailbox_delivery_target({})", mailbox_target(target)?)
+        }
         IrMailboxTarget::Typed { type_id, target } => format!(
             "llg_mailbox_typed_target({}, {type_id}ULL)",
             mailbox_target(target)?

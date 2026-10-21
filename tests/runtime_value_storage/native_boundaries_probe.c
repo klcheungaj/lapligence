@@ -99,10 +99,11 @@ LLG_PROBE_SIMPLE_PROCESS(publisher, 2) {
                    llg_mailbox_value_packed(payload, 129, 0, 0)));
         if (mode == 4) {
             /* Killed after its wake but before it resumes, the receiver
-             * hands the message back and never writes its destination. */
+             * keeps the message it was delivered (the queue stays empty) and
+             * never writes a destination that is written on resume. */
             CHECK(sv4_to_u64(*destination) == 0 && evaluations == 1);
             llg_process_kill(self, receiver_handle);
-            CHECK(llg_mailbox_num(mailbox) == 1);
+            CHECK(llg_mailbox_num(mailbox) == 0);
             llg_rt_finish();
         }
     } else {

@@ -36,6 +36,11 @@ llg_mailbox_target_t llg_mailbox_typed_target(llg_mailbox_target_t target, uint6
     return target;
 }
 
+llg_mailbox_target_t llg_mailbox_delivery_target(llg_mailbox_target_t target) {
+    target.at_delivery = 1;
+    return target;
+}
+
 llg_mailbox_target_t llg_mailbox_target_ref(llg_ref_t* ref) {
     llg_mailbox_target_t target = {0};
     target.kind = LLG_MAILBOX_PACKED;
@@ -370,25 +375,13 @@ static void mailbox_remove_and_wake(llg_wait_t* wait) {
     wake_proc(wait->proc);
 }
 
-// A process killed after a message was delivered to it but before it resumed
-// never took it: a consumed message goes back to the head of its mailbox
-// (where it was taken from) and the mailbox's waiters are serviced after the
-// cancellation batch; a peek copy is dropped. A returned message may exceed
-// the bound until a get removes it, as a semaphore's returned keys may.
-static void mailbox_return_delivery(llg_proc_t* proc) {
+// A receiver killed after put delivered its message but before it resumed
+// has still received it (AB-O3): its pending delivery is dropped.
+static void mailbox_drop_delivery(llg_proc_t* proc) {
     llg_mailbox_message_t* message = proc ? proc->mailbox_delivery : NULL;
     if (!message) return;
     proc->mailbox_delivery = NULL;
-    llg_mailbox_t* owner = message->link.owner;
-    if (!owner) {
-        mailbox_message_free(message);
-        return;
-    }
-    message->link.next = owner->head;
-    owner->head = message;
-    if (!owner->tail) owner->tail = message;
-    owner->length++;
-    owner->returned_delivery = 1;
+    mailbox_message_free(message);
 }
 
 void llg_mailbox_delivery_take(llg_proc_t* self, llg_mailbox_target_t target) {
@@ -412,14 +405,19 @@ static void mailbox_service_waiters(llg_mailbox_t* mailbox) {
                 mailbox_type_error();
                 return;
             }
-            // Consume (or copy) before the wake; the waiter writes its
-            // destination when it resumes (llg_mailbox_delivery_take).
+            // Consume (or copy) before the wake. Delivery-time storage is
+            // written now; otherwise the waiter writes its destination when
+            // it resumes (llg_mailbox_delivery_take).
             int peek = payload->peek;
             llg_proc_t* proc = get->proc;
             llg_mailbox_message_t* delivery = mailbox_message_take(mailbox, peek);
-            delivery->link.owner = peek ? NULL : mailbox;
-            mailbox_message_free(proc->mailbox_delivery);
-            proc->mailbox_delivery = delivery;
+            if (payload->target.at_delivery) {
+                mailbox_deliver_owned(&delivery->value, &payload->target);
+                free(delivery);
+            } else {
+                mailbox_message_free(proc->mailbox_delivery);
+                proc->mailbox_delivery = delivery;
+            }
             mailbox_remove_and_wake(get);
             continue;
         }
@@ -434,18 +432,6 @@ static void mailbox_service_waiters(llg_mailbox_t* mailbox) {
             continue;
         }
         break;
-    }
-}
-
-// Run after a cancellation batch, like semaphore grants: servicing while
-// the batch is still killing siblings could hand a returned message to a
-// waiter that is about to die.
-static void mailbox_service_returned_deliveries(void) {
-    if (g.finish) return;
-    for (llg_mailbox_t* mailbox = g.mailboxes; mailbox; mailbox = mailbox->next) {
-        if (!mailbox->returned_delivery) continue;
-        mailbox->returned_delivery = 0;
-        mailbox_service_waiters(mailbox);
     }
 }
 

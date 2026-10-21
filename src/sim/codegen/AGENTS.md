@@ -959,7 +959,10 @@ type identity is the static equivalence key `mailbox_message_key` (SV 6.22.2), a
 the runtime only compares it. Destinations that are not whole variables receive into
 a local and copy out after the retrieval with selectors frozen at the call (a `ref`
 argument, Annex G.4); expression-form `try_*` calls that need this are hoisted only
-before assignments, system-task calls and `if` conditions. Container kinds keep
+before assignments, system-task calls and `if` conditions. A whole packed, real or
+string variable, formal or `ref` formal (not a class property, not a handle) is an
+`IrMailboxTarget::AtDelivery` destination that a blocked get writes at the put
+(`mailbox_target_at_delivery`, decision AB-O3). Container kinds keep
 distinct storage, key conversion, notification and lifetime rules; another container's admitted operation is not a fallback.
 The frontend flattens `c[i][b]` into one select: split indices at the container
 depth. A packed select of an element is one read/modify/write with indices and

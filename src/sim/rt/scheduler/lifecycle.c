@@ -23,9 +23,6 @@ static void free_proc_storage(llg_proc_t* p) {
     event_unlink(&p->wait);
     event_triggered_unlink(&p->wait);
     semaphore_waiter_unlink(&p->wait);
-    // A kill has already returned the keys of a grant it interrupted.
-    free(p->granted_request);
-    p->granted_request = NULL;
     // Likewise a kill has handed back any mailbox delivery; one left here
     // belongs to a process torn down at model close.
     mailbox_message_free(p->mailbox_delivery);

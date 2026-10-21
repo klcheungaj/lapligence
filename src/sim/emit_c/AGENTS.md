@@ -383,9 +383,11 @@ coroutines run synchronously inside a turn and need no frame map. Automatic chan
 the `llg_gc_handle_cell_drop` destructor tag so value scopes trace them.
 
 Mailbox payload capture follows all user operand effects. Remove a consumed node
-before callbacks; peek clones. A blocking get emits `llg_mailbox_delivery_take`
-with the same destination right after its arm, so a suspended get writes only
-live storage on resume. Never cast an integer to a target pointer.
+before callbacks; peek clones. A blocking get into an `AtDelivery` target
+(lowering marks whole variables of static or waiting-activation storage) wraps it
+in `llg_mailbox_delivery_target`, and the runtime writes it at the put (AB-O3).
+Any other blocking get emits `llg_mailbox_delivery_take` with the same destination
+right after its arm, so a suspended get writes only live storage on resume. Never cast an integer to a target pointer.
 
 DPI-C exports (`model/dpi_exports.rs`) render one external entry per C
 identifier that resolves the instance thunk through the current `svScope` and

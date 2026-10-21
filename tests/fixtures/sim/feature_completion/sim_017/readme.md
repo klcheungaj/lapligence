@@ -19,18 +19,20 @@ Rules used throughout:
   the message (SV 15.4.7). `num` counts queued messages (SV 15.4.3).
 - The message argument of `get`/`peek` is a `ref` (Annex G.4), so its
   selectors are fixed when the call starts (SV 13.5.2).
-- A blocked receiver writes its destination when it resumes. One killed or
-  disabled while still blocked never writes (SV 9.7 L12631-12632: kill
-  "terminates the given process"). No message is lost or received twice.
-- Killing a receiver that a put has already woken is open: §9.7 L12632-12634
-  says "If the process to be terminated is not blocked waiting on some other
+- The put that wakes a blocked receiver completes its get (decision AB-O3):
+  the message leaves the queue then (a peek copies it) and belongs to that
+  receiver. A whole-variable destination is written at the put; an element,
+  member, select or aggregate destination is written when the receiver
+  resumes. One killed or disabled while still blocked never writes (SV 9.7
+  L12631-12632: kill "terminates the given process"). No message is received
+  twice.
+- Killing a receiver that a put has already woken: §9.7 L12632-12634 says "If
+  the process to be terminated is not blocked waiting on some other
   condition, such as an event, wait expression, or a delay, then the process
-  shall be terminated at some unspecified time in the current time step." The
-  portable `cancellation` fixture prints only conservation for that case.
-  llg policy (pinned by `policy_woken_kill`, test
-  `llg_policy_woken_receiver_kill_returns_its_message`): the message leaves
-  the queue at the put that hands it over; a kill before the receiver resumes
-  puts it back at the head, and a woken peek copies nothing.
+  shall be terminated at some unspecified time in the current time step."
+  The receiver keeps the delivered message, so it does not return to the
+  mailbox; a message delivered to an automatic destination ends with the
+  receiver (`woken_kill`, test `woken_receiver_kill_keeps_its_message`).
 
 | Fixture | Clause and independent oracle |
 | --- | --- |
@@ -41,8 +43,8 @@ Rules used throughout:
 | `try_variants` | §§15.4.3-15.4.8, 6.22. Empty: both 0, `y` kept. A bound of 2 accepts two `try_put`s and refuses the third (`1 1 0 n=2`). `try_peek` copies `1 one` and keeps `n=2`; `try_get` removes it. A full mailbox refuses `try_put`; FIFO gives `2 two`. An untyped record message does not match a different record type with the same members (nominal, §6.22.1), `int`, `string` or `real`: all `-1`, `n=1`, destinations kept; the matching type gets `2 two`. `logic [7:0]` `x5` does not match `byte` or `int` (different sign/state/width, §6.22.2), matches `logic [7:0]` (`x5`). |
 | `selected` | §§13.5.2, 15.4.5, 15.4.7. Receivers block at 0 on `a[idx]`, `r.f`, `q[$]` (then `q[0]`), an automatic task local and `rq[idx]` with `idx = 0`; `idx` becomes 1 before the messages arrive at 1. Writes go to the selections made at the call: `a 11 0 0`, `r.f 22`, `q 33 33` (peek into `q[1]`, then get into `q[0]`), the task returns `330`, `rq 7 seven 2 b`. All mailboxes end empty. |
 | `members` | §§15.4, 8.4, 7.2, 13.5. A record copy shares its mailbox member (`record 5 n=0`). A class's bounded(1) property is full after one put (`class full=0`); its untyped property works (`class 6 8`). The same mailbox stored in fixed, dynamic, associative and queue elements and passed by value receives `9` and `10` (`arrays 9 n=2`, `arrays 9 10`). A `ref` formal constructs the caller's mailbox (`ref 11 null=0`). |
-| `cancellation` | §§15.4, 9.6.3, 9.7. A killed blocked getter never writes (`keep=-1 untouched`, the later message stays, `n=1`). A killed blocked putter adds nothing (`n=2`; FIFO `2 two`). A getter woken by message 4 is killed after message 5 is queued; whichever permitted moment the kill takes effect, messages 4 and 5 are each received exactly once, by the getter (`wrote`) or by the drain that follows (`woken kill conserves 2: 4 5`). A peek waiter killed after its wake never removes the message (`n=1`). `disable fork` of a getter with an automatic destination leaves the next message queued (`n=1 wrote=0`). The model ends with two queued records, a blocked putter and a blocked getter (`teardown n=2 0 str=p`); the sanitizer runs cover the teardown. |
-| `policy_woken_kill` | llg policy, not a conformance oracle (§9.7 L12632-12634 above). The getter woken by `put(4)` is killed before it resumes: 4 left the queue at the put (`pending n=1`), the kill puts it back at the head (`n=2 wrote=0`, then `head 4`, `next 5`); the killed peek waiter copied nothing (`n=1 str=[]`). |
+| `cancellation` | §§15.4, 9.6.3, 9.7. A killed blocked getter never writes (`keep=-1 untouched`, the later message stays, `n=1`). A killed blocked putter adds nothing (`n=2`; FIFO `2 two`). A getter woken by message 4 is killed after message 5 is queued: 4 was delivered to its automatic local at the put and ends with it, so only 5 is drained and `wrote` stays 0 (`woken kill conserves 1: 5 0`). A peek waiter killed after its wake never removes the message (`n=1`). `disable fork` of a getter with an automatic destination leaves the next message queued (`n=1 wrote=0`). The model ends with two queued records, a blocked putter and a blocked getter (`teardown n=2 0 str=p`); the sanitizer runs cover the teardown. |
+| `woken_kill` | Decision AB-O3 (§15.4.5 L20544 "task get( ref singular message );", §9.7 L12632-12634 above). The getter woken by `put(4)` is killed before it resumes: 4 left the queue at the put (`pending n=1`) and stays with the receiver, whose automatic destination never reaches `wrote` (`kept by receiver n=1 wrote=0`, then `head 5`). A getter into the whole variable `got` is written by `put(6)` (`delivered got=6 n=0`) and keeps it when killed (`after kill got=6 n=0`). A peek woken by `put("p")` copied the message into `str` at the put and left it queued (`peek copied n=1 str=[p]`). |
 | `reentry` | §§15.4, 9.4.2, 10.3. Message 1 resumes the receiver (`dest=1`); `always @(dest)` puts 101, handed to the receiver already blocked in its next get; likewise 2 and 102: `echoes 4: 1 101 2 102`. The continuous assignment's `try_peek` always sees an empty mailbox (`peeked=-1`). After the receiver finished, 3 stays queued (`n=1`). |
 | `mailbox_aggregate`, `mailbox_auto_capture` | Adopted FND-002 witnesses (ledger L-F12-07-02, L-F12-07-03); each expected line is the witness's `Expected:` header; the copies end with a quiet `$finish(0)`. |
 | `neg_blocking_mismatch` | §15.4.5: a blocking `get` whose destination type does not match the message is a run-time error; it reports `mailbox retrieval type mismatch` and ends the simulation (exit 1) after `before`. |

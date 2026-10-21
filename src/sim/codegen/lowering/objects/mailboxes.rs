@@ -368,11 +368,13 @@ impl Codegen<'_> {
             ));
         }
         if !self.is_selected_scalar_destination(path, node) {
-            return Ok((
-                Vec::new(),
-                self.lower_mailbox_target(path, node)?,
-                Vec::new(),
-            ));
+            let target = self.lower_mailbox_target(path, node)?;
+            let target = if self.mailbox_target_at_delivery(node, &target) {
+                IrMailboxTarget::AtDelivery(Box::new(target))
+            } else {
+                target
+            };
+            return Ok((Vec::new(), target, Vec::new()));
         }
         let descriptor = self
             .query_descriptor(node)
@@ -537,6 +539,40 @@ impl Codegen<'_> {
 
     /// A packed or real destination that is not a whole variable, ref
     /// formal or other directly addressable cell.
+    /// Whether a blocked `get`/`peek` writes `target` when `put` delivers
+    /// the message rather than when the receiver resumes (decision AB-O3):
+    /// a whole packed, real or string variable, formal or `ref` formal. Its
+    /// storage is static or belongs to the waiting activation, so it stays
+    /// valid for the whole wait. A class property may be reached through a
+    /// handle that is rebound (and its object reclaimed) during the wait,
+    /// and a handle destination publishes its change from the receiver, so
+    /// both are written on resume.
+    fn mailbox_target_at_delivery(&self, node: NodeId, target: &IrMailboxTarget) -> bool {
+        let direct = match target {
+            IrMailboxTarget::Typed { target, .. } => target.as_ref(),
+            target => target,
+        };
+        if !matches!(
+            direct,
+            IrMailboxTarget::Packed { .. }
+                | IrMailboxTarget::Real { .. }
+                | IrMailboxTarget::Ref { .. }
+                | IrMailboxTarget::String { .. }
+        ) {
+            return false;
+        }
+        let node = match self.kind(node) {
+            NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) if ty.kind == "string" => *operand,
+            _ => node,
+        };
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Ref {
+                target: Some(variable),
+            }) => !self.class_fields.contains_key(variable),
+            _ => false,
+        }
+    }
+
     fn is_selected_scalar_destination(&mut self, path: &str, node: NodeId) -> bool {
         if self.is_mailbox_expr(path, node)
             || self.is_string_expr(path, node)

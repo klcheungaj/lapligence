@@ -1,0 +1,6 @@
+pending n=1
+kept by receiver n=1 wrote=0
+head 5
+delivered got=6 n=0
+after kill got=6 n=0
+peek copied n=1 str=[p]

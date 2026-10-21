@@ -81,7 +81,7 @@ fn every_handle_writer_publishes_its_change() {
 }
 
 #[test]
-fn suspended_waiters_are_not_queue_candidates() {
+fn suspended_waiters_stay_queue_candidates() {
     let expected = include_str!(
         "../fixtures/sim/feature_completion/ki_lrm_audit_b/suspended_queue_waiters.out"
     );

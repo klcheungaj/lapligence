@@ -1,5 +1,6 @@
-// LRM audit B, N1 (SV 9.7): suspended semaphore and mailbox waiters are not
-// candidates for keys, messages or space; resume re-queues them at the tail.
+// LRM audit B, N1 (SV 9.7, decision AB-N1): suspended semaphore and mailbox
+// waiters keep their queue place and stay candidates for keys, messages and
+// space; they take them while suspended and continue when resumed.
 `timescale 1ns / 1ns
 module tb;
   semaphore sem = new(0);
@@ -17,16 +18,17 @@ module tb;
   initial begin
     log = "";
     fork
-      // A suspended head that needs more keys no longer blocks a smaller
-      // request behind it.
+      // A head that needs more keys than are available does not block a
+      // smaller request behind it (decision AB-N4).
       begin s1 = process::self(); big.get(3); note("s1"); end
       begin #0; s2 = process::self(); big.get(1); note("s2"); end
-      // A suspended putter does not take freed space.
+      // A suspended putter takes freed space; it runs when resumed.
       begin #0; p1 = process::self(); full.put(2); note("p1"); end
       begin #0; full.put(3); note("p2"); end
-      // A killed suspended getter consumes nothing.
+      // A killed suspended getter consumes nothing it was not delivered.
       begin k1 = process::self(); pm.get(v); note("k1"); end
-      // A peek waiter suspended and resumed sees the message then.
+      // A suspended peek waiter copies the message at the put; it runs when
+      // resumed.
       begin pk = process::self(); pm.peek(v); note($sformatf("pk%0d", v)); end
     join_none
     full.put(1);

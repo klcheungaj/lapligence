@@ -1,7 +1,7 @@
 // llg-test-fixture: tests/fixtures/sim/semaphore/suspend.sv
 // IEEE 1800-2009 §§9.7 and 15.3: a process suspended while blocked in a
-// semaphore get is not a candidate for keys, so a put leaves the key
-// available; resume re-queues the request, which then takes the key.
+// semaphore get stays a candidate (decision AB-N1): a put grants it the key
+// while it stays suspended, and resume lets it continue.
 module tb;
     timeunit 1ns;
     timeprecision 1ns;
@@ -12,6 +12,7 @@ module tb;
     integer waiting;
     integer suspended;
     integer woken;
+    integer left;
     integer done;
 
     initial begin
@@ -29,14 +30,16 @@ module tb;
         suspended = worker.status();
         sem.put();
         woken = worker.status();
+        left = sem.try_get();
         worker.resume();
         worker.await();
         done = worker.status();
         $display(
-            "waiting=%0d suspended=%0d woken=%0d acquired=%0d done=%0d",
+            "waiting=%0d suspended=%0d woken=%0d left=%0d acquired=%0d done=%0d",
             waiting,
             suspended,
             woken,
+            left,
             acquired,
             done
         );

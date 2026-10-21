@@ -2173,9 +2173,9 @@ These are bounded implementations, not full verification-infrastructure support.
   simulation with an error. `resume()` resensitizes a process suspended on an
   event control (an occurrence while it is suspended is not delivered), and
   completes a wait condition that became true or a delay that transpired.
-  A process suspended in semaphore `get` or mailbox `get`/`peek`/`put` is not
-  a candidate for keys, messages or space; `resume()` re-queues it at the
-  FIFO tail. Disabling the named block that forms a whole fork branch ends
+  A process suspended in semaphore `get` or mailbox `get`/`peek`/`put` keeps
+  its queue place and stays a candidate for keys, messages or space; it takes
+  them while suspended and continues on `resume()` (decision AB-N1). Disabling the named block that forms a whole fork branch ends
   that process `KILLED`; a disabled block followed by more statements does not
   end its process
   ([ki_lrm_audit_b](../tests/fixtures/sim/feature_completion/ki_lrm_audit_b/readme.md)).
@@ -2184,8 +2184,9 @@ These are bounded implementations, not full verification-infrastructure support.
   bound to plain storage and `try_get` into process variables reject
   ([known issues](known_issues.md#process-handles-in-plain-handle-storage-stay-allocated-until-teardown)).
   SV §9.7 **[SV-2005]**.
-- 🟨 **Semaphores** — `new/get/put/try_get`, zero-key operations, FIFO blocking,
-  cancellation cleanup, automatic task-handle arguments and fixed/resizable
+- 🟨 **Semaphores** — `new/get/put/try_get`, zero-key operations, blocking
+  requests served first-fit in arrival order, keys taken at the grant
+  (decision AB-N4), cancellation cleanup, automatic task-handle arguments and fixed/resizable
   semaphore arrays (handles copied, never the semaphore) are represented.
   Task semaphore variables are shared with fork branches; output and inout
   semaphore formals copy out into container elements selected at call start
@@ -2201,9 +2202,10 @@ These are bounded implementations, not full verification-infrastructure support.
   process, virtual-interface and mailbox handles by identity; untyped mailboxes
   match nominal and SV 6.22 equivalent types. Empty, full and mismatch differ;
   failed calls preserve message and destination, peek does not consume. Element,
-  member and select destinations keep the selectors of the call; a blocked
-  receiver writes on resume, and one killed first hands the message back to the
-  head. Mailbox handles work in arrays, queues, record members, class properties
+  member and select destinations keep the selectors of the call. The put that
+  wakes a blocked receiver completes its get: whole-variable destinations are
+  written then, others on resume, and a receiver killed first keeps its
+  message (decision AB-O3). Mailbox handles work in arrays, queues, record members, class properties
   and by-value/`ref` formals
   ([sim_017](../tests/fixtures/sim/feature_completion/sim_017/readme.md)).
   Associative-array messages, whole unpacked-array variable operands and

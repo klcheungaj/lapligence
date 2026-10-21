@@ -1,7 +1,7 @@
 // SIM-016: blocked semaphore requests are served in arrival order (SV
-// 15.3.3): a later request for fewer keys does not overtake an earlier one;
-// acquisition is all-or-nothing, and a zero-key request with no waiters
-// returns at once.
+// 15.3.3), first-fit: a later request for fewer keys is served while an
+// earlier, larger one cannot be met (decision AB-N4); acquisition is
+// all-or-nothing, and a zero-key request returns at once.
 module tb;
   semaphore s = new(0);
   initial begin

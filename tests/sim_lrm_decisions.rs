@@ -170,6 +170,14 @@ fn ab_n1_suspended_queue_waiter() {
 }
 
 #[test]
+fn ab_n4_semaphore_waiter_order() {
+    run_decision(
+        "AB-N4_semaphore_waiter_order",
+        include_str!("fixtures/sim/lrm_decisions/AB-N4_semaphore_waiter_order.out"),
+    );
+}
+
+#[test]
 fn ab_n2_always_comb_class_reference() {
     run_decision(
         "AB-N2_always_comb_class_reference",

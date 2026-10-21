@@ -830,6 +830,9 @@ typedef struct {
     int8_t is_signed;
     int8_t two_state;
     int8_t shortreal;
+    // Set by llg_mailbox_delivery_target: a blocked get writes this storage
+    // when put delivers the message (decision AB-O3).
+    int8_t at_delivery;
     llg_ref_t* reference; // optional packed destination descriptor
     union {
         sv4_t* packed;
@@ -842,6 +845,9 @@ typedef struct {
 
 llg_mailbox_value_t llg_mailbox_typed_value(llg_mailbox_value_t value, uint64_t type_id);
 llg_mailbox_target_t llg_mailbox_typed_target(llg_mailbox_target_t target, uint64_t type_id);
+// Marks storage that stays valid while its process waits (static storage or
+// the waiting activation's own frame) and publishes no change marker.
+llg_mailbox_target_t llg_mailbox_delivery_target(llg_mailbox_target_t target);
 llg_mailbox_target_t llg_mailbox_target_ref(llg_ref_t* target);
 llg_mailbox_value_t llg_mailbox_value_packed(sv4_t value, uint32_t width,
                                               int is_signed, int two_state);
@@ -868,15 +874,17 @@ uint64_t llg_mailbox_num(const llg_mailbox_t* mailbox);
 // wake/cancellation; EXIT means a blocking type/null error requested
 // LLG_EXIT_COMPLETE.
 //
-// A blocked get completes in one defined order (SIM-017): when a message
-// arrives, the runtime checks its type against the waiter's destination,
-// removes it from the queue (a peek copies it) into the waiter's pending
-// delivery, and wakes the waiter. The waiter writes its destination only
-// when it resumes, through llg_mailbox_delivery_take with the same
+// A blocked get completes in one defined order (SIM-017, AB-O3): when a
+// message arrives, the runtime checks its type against the waiter's
+// destination, removes it from the queue (a peek copies it) and wakes the
+// waiter, so the message belongs to that receiver from the put on. A
+// destination marked by llg_mailbox_delivery_target is written then;
+// any other destination is held as the waiter's pending delivery and
+// written when it resumes, through llg_mailbox_delivery_take with the same
 // destination descriptor, so the write always lands in live storage. A
-// waiter killed, disabled or torn down before it resumes hands a consumed
-// message back to the head of its mailbox (a peek copy is dropped), so no
-// message is lost, duplicated or written into dead storage.
+// waiter killed, disabled or torn down before it resumes keeps what it was
+// delivered: a pending delivery is dropped with it and never returns to
+// the mailbox, so no message is received twice.
 llg_co_arm_t llg_arm_mailbox_put_value(llg_proc_t* self,
                                        llg_mailbox_t* mailbox,
                                        llg_mailbox_value_t value);
@@ -2211,9 +2219,6 @@ llg_co_arm_t llg_arm_process_suspend(llg_proc_t* self,
                                      llg_process_handle_t* handle);
 llg_co_arm_t llg_arm_process_await(llg_proc_t* self,
                                    llg_process_handle_t* handle);
-// Called when a granted get resumes: the request's keys are taken. A process
-// killed between the grant and this call returns its keys (SV 15.3).
-void llg_semaphore_grant_taken(llg_proc_t* self);
 llg_co_arm_t llg_arm_semaphore_get(llg_proc_t* self,
                                    llg_semaphore_t* semaphore,
                                    sv4_t key_count);

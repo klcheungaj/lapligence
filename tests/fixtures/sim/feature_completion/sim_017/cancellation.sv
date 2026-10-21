@@ -1,11 +1,10 @@
 // SIM-017: receivers and senders killed or disabled while blocked, and a
-// receiver killed after a put woke it. No message is consumed twice or lost,
-// and a blocked receiver's storage is never written; the model then ends with
+// receiver killed after a put woke it. No message is consumed twice, and a
+// blocked receiver's storage is never written; the model then ends with
 // queued messages, a blocked sender and a blocked receiver (SV 15.4, 9.6.3,
-// 9.7). A woken receiver is no longer blocked, so 9.7 lets it be terminated
-// "at some unspecified time in the current time step": it may or may not take
-// its message first, and only conservation is printed for it. llg's order is
-// pinned by `policy_woken_kill`.
+// 9.7). The put that wakes a receiver completes its get (decision AB-O3), so
+// a woken receiver killed before it resumes keeps its message: one delivered
+// to an automatic destination ends with the receiver (`woken_kill`).
 module tb;
   typedef struct {
     int id;

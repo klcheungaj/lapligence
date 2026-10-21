@@ -177,7 +177,7 @@ The per-arm outcomes are:
 | `llg_arm_wait_fork` (`llg_wait_fork`) | no live groups | last live group wakes once | none |
 | `llg_arm_process_suspend` (`llg_process_suspend`) | invalid/terminal/already suspended, or another target was suspended | target resolves to `self`; resume requeues this continuation | termination discovered during control bookkeeping |
 | `llg_arm_process_await` (`llg_process_await`) | null, self, or terminal handle | target terminal transition wakes once | none |
-| `llg_arm_semaphore_get` (`llg_semaphore_get`) | keys granted immediately or invalid/no-op | FIFO head receives its keys before wake | none |
+| `llg_arm_semaphore_get` (`llg_semaphore_get`) | keys granted immediately or invalid/no-op | first fitting request in arrival order receives its keys before wake | none |
 | `llg_arm_mailbox_put_value` (`llg_mailbox_put_value`) | value transferred/queued immediately; the arm consumes it | bounded FIFO owns the value until it is accepted or cancelled | type/null failure sets COMPLETE |
 | `llg_arm_mailbox_get_value` (`llg_mailbox_get_value`) | get/peek delivered immediately | runtime retains the target and writes it before wake | blocking type/null failure sets COMPLETE without consuming or assigning |
 | `llg_arm_stop` (coroutine-body `llg_rt_stop_with_level`) | none | continuation and queues remain live until stop resume | none |

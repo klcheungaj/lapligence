@@ -120,6 +120,10 @@ impl Frame<'_, '_> {
 
     fn mailbox_destination(&mut self, target: &IrMailboxTarget) -> Result<String, String> {
         Ok(match target {
+            IrMailboxTarget::AtDelivery(target) => {
+                let target = self.mailbox_destination(target)?;
+                format!("llg_mailbox_delivery_target({target})")
+            }
             IrMailboxTarget::Typed { type_id, target } => {
                 let target = self.mailbox_destination(target)?;
                 format!("llg_mailbox_typed_target({target}, UINT64_C({type_id}))")
@@ -268,7 +272,6 @@ impl Frame<'_, '_> {
                             keys.code
                         ),
                     )?;
-                    self.line("llg_semaphore_grant_taken(self);");
                 }
                 self.discard(keys);
             }
@@ -297,6 +300,7 @@ impl Frame<'_, '_> {
             | MailboxTryGetLocal(_, mailbox, target, peek) => {
                 let mailbox = self.chandle(mailbox)?;
                 let publish = self.mailbox_handle_publish(target)?;
+                let target_ir = target;
                 let target = self.mailbox_destination(target)?;
                 if matches!(statement, MailboxTryGet(..) | MailboxTryGetLocal(..)) {
                     self.line(format!(
@@ -311,9 +315,12 @@ impl Frame<'_, '_> {
                             u8::from(*peek)
                         ),
                     )?;
-                    // A suspended get writes its destination on resume, so
-                    // the write lands in live storage (SIM-017).
-                    self.line(format!("llg_mailbox_delivery_take(self, {target});"));
+                    // A destination that is not written at delivery is
+                    // written on resume, so the write lands in live storage
+                    // (SIM-017).
+                    if !matches!(target_ir, IrMailboxTarget::AtDelivery(_)) {
+                        self.line(format!("llg_mailbox_delivery_take(self, {target});"));
+                    }
                 }
                 self.finish_handle_store_publish(publish);
             }
@@ -329,7 +336,9 @@ impl Frame<'_, '_> {
         target: &IrMailboxTarget,
     ) -> Result<Option<super::native_access::HandleStorePublish>, String> {
         match target {
-            IrMailboxTarget::Typed { target, .. } => self.mailbox_handle_publish(target),
+            IrMailboxTarget::AtDelivery(target) | IrMailboxTarget::Typed { target, .. } => {
+                self.mailbox_handle_publish(target)
+            }
             IrMailboxTarget::Handle { addr } => {
                 let slot = self.native_address(addr, NativeKind::Chandle)?.address;
                 self.handle_store_publish(addr, &slot)

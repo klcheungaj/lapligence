@@ -132,12 +132,13 @@ LLG_PROBE_SIMPLE_PROCESS(writer, 2) {
                self, mailbox, llg_mailbox_value_real(sent, mode == 1)));
     if (mode >= 2) {
         /* The receiver is woken with a pending delivery but has not written
-         * its live storage yet. Killing it hands the message back (mode 2);
-         * finishing drops the pending delivery at teardown (mode 3). */
+         * its live storage yet. Killing it drops the delivery, which the
+         * receiver owns from the put on (mode 2); finishing drops it at
+         * teardown (mode 3). */
         CHECK(evaluations == 1 && *destination == 0.0 && destroyed == 0);
         if (mode == 2) {
             llg_process_kill(self, receiver_handle);
-            CHECK(llg_mailbox_num(mailbox) == 1);
+            CHECK(llg_mailbox_num(mailbox) == 0);
         }
         llg_rt_finish();
         LLG_CO_EXIT_CHECK(ch);

@@ -1,4 +1,5 @@
-// R02: do not grant a key to a sibling that will be removed by the same tree kill.
+// R02: a tree kill grants no key to a cancelled waiter; a later put serves the
+// surviving waiter, queued behind both cancelled ones.
 module tb;
     timeunit 1ns;
     timeprecision 1ns;
@@ -16,17 +17,18 @@ module tb;
                 join_none
                 #1;
                 fork
-                    begin sem.get(1); escaped = escaped + 1; end
+                    begin sem.get(2); escaped = escaped + 1; end
                 join_none
                 wait fork;
             end
         join_none
         #3;
         fork
-            begin sem.get(1); survivor = 1; end
+            begin sem.get(2); survivor = 1; end
         join_none
         #1;
         owner.kill();
+        sem.put(1);
         #0;
         $display("survivor=%0d escaped=%0d remaining=%0d",
             survivor, escaped, sem.try_get(1));

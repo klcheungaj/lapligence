@@ -243,7 +243,6 @@ void llg_disable_fork(llg_proc_t* self) {
     if (!self) return;
     llg_kill_proc_groups(self);
     service_program_completions();
-    semaphore_service_cancelled_waiters();
     reap_retired_procs();
 }
 
@@ -268,7 +267,6 @@ void llg_program_exit(llg_proc_t* self) {
         llg_kill_proc_tree(victim);
     }
     service_program_completions();
-    semaphore_service_cancelled_waiters();
     reap_retired_procs();
     // Cancellation already detached all process-owned resources.
     self->chain.exiting = LLG_EXIT_ABANDON;
@@ -363,7 +361,6 @@ void llg_disable_target(llg_proc_t* self, uint32_t declaration,
             }
         }
     }
-    semaphore_service_cancelled_waiters();
     reap_retired_procs();
     if (self && self->killed) self->chain.exiting = LLG_EXIT_ABANDON;
 }

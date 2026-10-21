@@ -1,19 +1,25 @@
 // AB-N1: a process suspended while blocked in semaphore get or mailbox get
-// is not a candidate for keys or messages; resume() re-queues it at the tail.
+// keeps its place in the queue and stays a candidate for keys and messages.
+// It takes them while suspended and continues when it is resumed.
 //
-// IEEE 1800-2009 9.7 (L12618): "SUSPENDED: Process is stopped awaiting a
-// resume." (L12644-12647): "Calling resume on a process that was suspended
-// while blocked on another condition shall resensitize the process to the
-// event expression or to wait for the wait condition to become true or for
-// the delay to expire. If the wait condition is now true or the original
-// delay has transpired, the process is scheduled onto the Active or Reactive
-// region to continue its execution in the current time step."
+// IEEE 1800-2009 9.7 (L12618): "SUSPENDED means the process is stopped
+// awaiting a resume." (L12644-12648): "Calling resume on a process that was
+// suspended while blocked on another condition shall resensitize the process
+// to the event expression or to wait for the wait condition to become true
+// or for the delay to expire. If the wait condition is now true or the
+// original delay has transpired, the process is scheduled onto the Active or
+// Reactive region to continue its execution in the current time step."
+// 15.3.3 (L20417-20418) and 15.4.5 (L20568-20569): the waiting queue "is
+// first-in first-out (FIFO). This does not guarantee the order in which
+// processes arrive at the queue, only that their arrival order shall be
+// preserved".
 //
-// Decision: suspension withdraws the waiter's request, so keys and messages
-// stay available to the other waiters and nothing is delivered to it while
-// it is suspended. resume() makes it wait again as a new request at the tail
-// of the FIFO; if keys or a message are available then, it continues in that
-// time step.
+// Decision (industry-standard behaviour; the text does not say whether a
+// suspended waiter leaves the queue): suspension does not withdraw the
+// request. Keys or a message reaching a suspended waiter are taken by it
+// (a mailbox destination variable is written then), it stays SUSPENDED, and
+// resume() lets it continue in that time step. Suspending and resuming a
+// waiter keeps its place in the FIFO.
 `timescale 1ns / 1ns
 module tb;
   semaphore sem = new(0);
@@ -40,7 +46,7 @@ module tb;
     #0 $display("%0d: a %s, mailbox holds %0d", $time, a.status().name(), m.num());
     #1 a.resume();
     g1.resume();
-    // x requeues behind y: y needs 2 keys, so the first key reaches nobody.
+    // x keeps its place ahead of y, so the first key reaches x.
     #1 x.suspend();
     x.resume();
     fifo.put(1);

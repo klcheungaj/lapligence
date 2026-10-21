@@ -1,6 +1,7 @@
 // llg-test-fixture: tests/fixtures/sim/semaphore/fifo.sv
-// IEEE 1800-2009 §15.3: blocked semaphore gets are serviced in specified
-// FIFO order; a later smaller request cannot bypass an earlier larger one.
+// IEEE 1800-2009 §15.3: blocked semaphore gets are serviced first-fit in
+// arrival order (decision AB-N4): the first key serves the later one-key
+// request, because the earlier two-key request cannot be met yet.
 module tb;
     timeunit 1ns;
     timeprecision 1ns;
