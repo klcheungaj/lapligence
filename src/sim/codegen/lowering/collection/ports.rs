@@ -2067,7 +2067,7 @@ fn unconnected_drive_expr(drive: UnconnectedDrive, width: u32) -> Result<IrExpr,
 
 /// Whether `descriptor` is a user class handle, which publishes a change
 /// marker, rather than a chandle or a built-in semaphore, mailbox or process.
-fn is_class_handle_descriptor(descriptor: &TypeDescriptor) -> bool {
+pub(super) fn is_class_handle_descriptor(descriptor: &TypeDescriptor) -> bool {
     matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Class")
         && !matches!(
             descriptor.name.as_str(),

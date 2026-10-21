@@ -1178,7 +1178,8 @@ struct Codegen<'a> {
     /// Set while collecting an always_comb/always_latch sensitivity list:
     /// SV 9.2.2.2.1 "References to class objects and method calls of class
     /// objects do not add anything", so the read walk skips class property
-    /// paths and class method receivers (the handle variables included).
+    /// paths, class method receivers and direct class-handle references
+    /// (the handle variables included).
     /// Waits and `@*` walk them normally.
     comb_excludes_class_references: std::cell::Cell<bool>,
     warnings: Vec<String>,

@@ -1,4 +1,4 @@
 always_comb h.x: value 0 runs 1
 always_comb h.get(): value 0 runs 1
-always_comb h == null: runs 2
+always_comb h == null: runs 1
 always @* h.x: value 7 runs 1

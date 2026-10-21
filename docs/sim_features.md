@@ -704,9 +704,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Unchanged results do not notify downstream readers; a closed latch retains
   its value. Branches pruned by the optimizer keep their wake sources. Blocking
   timing and forks reject; delayed NBAs are not rejected merely for their delay.
-  Class-property paths and class method calls add nothing, not even the
-  handle variable (`h` in `h.x`/`h.f()`; a direct `h == null` is a variable
-  read) (§9.2.2.2.1). A member read through a virtual-interface handle (packed
+  Class-property paths, class method calls and direct class-handle reads add
+  nothing, not even the handle variable (`h` in `h.x`/`h.f()`/`h == null`)
+  (§9.2.2.2.1, decision AB-N2). A member read through a virtual-interface handle (packed
   members, their selects and elements `v.mem[i]` of unpacked array members,
   also inside called functions through a module-level handle) waits on the
   member of the instance the handle binds, re-armed when the handle is rebound

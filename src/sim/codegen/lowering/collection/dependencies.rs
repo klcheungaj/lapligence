@@ -1358,6 +1358,16 @@ impl<'a> Codegen<'a> {
             }
             return Ok(());
         }
+        if self.comb_excludes_class_references.get()
+            && matches!(self.kind(node), NodeKind::Expr(ExprKind::Ref { .. }))
+            && self
+                .query_descriptor(node)
+                .is_some_and(super::ports::is_class_handle_descriptor)
+        {
+            // SV 9.2.2.2.1: a direct reference to a class object, such as
+            // `h` in `h == null`, adds nothing either (decision AB-N2).
+            return Ok(());
+        }
         if let Some(object) = self.object_of(scope_path, node) {
             // Native strings and handles publish a change marker on every
             // changed store, including record members with their own owner.

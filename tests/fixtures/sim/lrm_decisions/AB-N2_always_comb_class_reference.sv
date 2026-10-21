@@ -1,5 +1,5 @@
-// AB-N2: an always_comb that reads a class property through a handle is not
-// sensitive to the handle variable; always @* is.
+// AB-N2: an always_comb that reads a class property through a handle, or the
+// handle itself, is not sensitive to the handle variable; always @* is.
 //
 // IEEE 1800-2009 9.2.2.2.1 (L11192-11194): "References to class objects and
 // method calls of class objects do not add anything to the sensitivity list
@@ -9,10 +9,10 @@
 // following exceptions: ..."
 //
 // Decision: in always_comb, `h.x` and `h.f()` add nothing, not even the
-// handle variable `h`; a direct read of the handle (`h == null`) is an
-// ordinary variable read and adds `h`. always @* keeps its own rule: the
-// identifier `h` appears in the statement, so rebinding `h` wakes it, while
-// writes to the object's property do not.
+// handle variable `h`, and neither does a direct reference to the class
+// object such as `h == null` (industry-standard behaviour). always @* keeps
+// its own rule: the identifier `h` appears in the statement, so rebinding
+// `h` wakes it, while writes to the object's property do not.
 `timescale 1ns / 1ns
 module tb;
   class C;

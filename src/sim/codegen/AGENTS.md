@@ -504,7 +504,8 @@ compiles to a wait that cannot wake (a missed dependency is a hang). Only waits 
 re-arm after every wake (`wait`, process-evaluated event plans) may use it, so
 such event controls, foreign functions and `ref`-formal selects take the
 process plan. always_comb/always_latch add nothing for a class property path or
-class method call, not even the handle variable (§9.2.2.2.1;
+class method call, not even the handle variable, nor for a direct class-handle
+reference such as `h == null` (§9.2.2.2.1, AB-N2;
 `comb_excludes_class_references`); `@*` adds the handle identifier `h` of `h.x`
 (§9.4.2.2: every identifier in the statement). Neither adds class storage
 (§9.2.2.2.1); chandle event expressions reject (§6.14). always_comb,
