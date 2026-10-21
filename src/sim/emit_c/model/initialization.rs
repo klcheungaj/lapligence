@@ -152,6 +152,14 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
                 let s = model.signal(*sig);
                 out.push_str(&format!("    llg_sampled_register_value(&{});\n", s.c_name));
             }
+            IrInitStep::SampledStart { sig, value } => {
+                let s = model.signal(*sig);
+                out.push_str(&format!(
+                    "    llg_sampled_start(&{}, {});\n",
+                    s.c_name,
+                    emit_const(value)
+                ));
+            }
             IrInitStep::WriteNet { group, slot, value } => {
                 let g = model.net_group(*group);
                 out.push_str(&format!(

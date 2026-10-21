@@ -136,7 +136,15 @@ typedef struct llg_sampled_value {
     struct llg_sampled_history* history; // newest first, one entry per slot
     struct llg_sampled_history* history_tail;
     uint64_t history_ticks; // deepest clocking skew read from this history
+    sv4_t* start; // time-zero Preponed value (decision T0-D5); NULL after time 0
 } llg_sampled_value_t;
+
+/* A time-zero Preponed value given before its signal was registered. */
+typedef struct llg_sampled_start {
+    struct llg_sampled_start* next;
+    const sv4_t* signal;
+    sv4_t value;
+} llg_sampled_start_t;
 
 /* Preponed snapshot of one real variable; the value is numeric, never a
  * packed bit image. */
@@ -622,6 +630,8 @@ typedef struct {
     llg_region_callback_t* callbacks; // sorted by time, region, issue order
     llg_sampled_value_t* sampled;
     llg_sampled_value_t* sampled_values; // Preponed value only, no history
+    llg_sampled_start_t* sampled_starts; // pending time-zero values (T0-D5)
+    int sampled_starts_live; // some slot or pending entry holds a start value
     llg_sampled_real_t* sampled_reals;
     // Dense identity tables owned by the runtime; entries are owners.
     llg_sampled_clock_t** sampled_clocks;

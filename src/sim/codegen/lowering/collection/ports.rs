@@ -611,13 +611,14 @@ impl<'a> Codegen<'a> {
         let fn_name = self.new_fn_name(parent_path, "link");
         let origin = self.origin(port);
         self.model.processes.push(IrProcess::new_with_origin(
-            fn_name,
+            fn_name.clone(),
             format!("{child_path}.link"),
             shape,
             Vec::new(),
             vec![body],
             origin,
         ));
+        self.continuous_drivers.insert(fn_name);
     }
 
     /// Resolve a fixed-array value-port actual to the array being connected,
@@ -1912,13 +1913,14 @@ impl<'a> Codegen<'a> {
                 }]
             };
             self.model.processes.push(IrProcess::new_with_origin(
-                fn_name,
+                fn_name.clone(),
                 format!("{child_path}.link"),
                 shape,
                 Vec::new(),
                 body,
                 origin,
             ));
+            self.continuous_drivers.insert(fn_name);
         }
         Ok(())
     }

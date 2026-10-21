@@ -103,6 +103,12 @@ pub enum IrInitStep {
     /// Register a packed source for its Preponed value only, without the
     /// per-slot history clocking skews read (procedural `$sampled`).
     RegisterSampledValue(usize),
+    /// The value a net's storage presents to Preponed sampling at time 0
+    /// (`$sampled`, `$past` and clocking samples), when its continuous
+    /// drivers determine one from the initial values (decision T0-D5). The
+    /// storage itself still starts as T0-D3 says. Appended after every
+    /// registration step.
+    SampledStart { sig: usize, value: IrConst },
     /// Fill a collapsed-net member through its driver slot.
     WriteNet {
         group: usize,
