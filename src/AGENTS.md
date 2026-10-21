@@ -165,7 +165,11 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
   design does not declare) fails the DLL's own link, which names it. This was
   chosen over a function-pointer table because calls stay direct by name with no
   llg stub library in the DLL (LLVM's `opt.exe` plugins work the same way);
-  static archives remain the route that needs no import library.
+  static archives remain the route that needs no import library. A DLL that
+  exports nothing gets no import library at all, so `--dpi-lib x_dll.lib`
+  then fails as "not a regular file": mark every import definition
+  `DPI_DLLESPEC` (`sim_040::dll_companions_export_every_import_definition`
+  checks the fixtures).
 - `cl /LD` implies the static CRT (`/MT`) unless `/MD` is given, while CMake
   builds the model with the shared UCRT (`/MD`, CMP0091). A static-CRT DLL has
   its own `stdout` buffer: its `printf` lines reach a piped stdout when the
@@ -177,6 +181,12 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
 - `cl` writes its diagnostics to stdout, not stderr: print both streams when a
   compile fails. A Ninja build stops at the first failing source, so one CI run
   can hide further MSVC-only errors behind it.
+- `cmd.exe`'s `copy` prints `1 file(s) copied.` on stdout, which a `$system`
+  command shares with the model; redirect it (`>NUL`) where output is compared.
+- GitHub Actions runs `shell: bash` steps as `bash -eo pipefail`, and `ls`
+  exits 2 when any operand (an unmatched glob) is missing, so
+  `x=$(ls a b 2>/dev/null | head -n 1)` ends the step silently with status 2
+  even when `b` exists; test each candidate with `[ -f ]` in a loop.
 - Unsequenced operands (`f() | g()`, C11 6.5p3) run in a different order under
   MSVC than under GCC/Clang. Sequence calls with side effects, such as printing
   checks, as separate statements.
@@ -193,6 +203,9 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
   written with CRLF, `CMakeFiles/ShowIncludes/` is scratch, and the default
   `CMAKE_INSTALL_PREFIX` depends on whether `CMAKE_SIZEOF_VOID_P` is known yet.
   The toolchain seed handles these ([sim guide](sim/AGENTS.md)).
+  `CMakeCache.txt` names the build directory with a lower-case drive and `/`
+  (`c:/Users/...`), so a test looking for a tree path matches CMake's
+  spellings, not only `Path::to_str` (`sim_cmake::cmake_path_spellings`).
 - Git for Windows' MSYS `make`/`sh` rewrites `/option` arguments into paths
   (`/nologo` becomes `C:/Program Files/Git/nologo`); use the NMake or Ninja
   generator with MSVC, never `Unix Makefiles`.
@@ -263,11 +276,14 @@ or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
   (written for MSVC `cl /c` + `lib`; Unix-verified only as of SIM-041).
 - Apple ld64 does not check a dylib's undefined symbols when it links an
   executable against it; GNU ld does. A DPI library built with `-undefined
-  dynamic_lookup` that calls a routine nobody defines therefore links, and the
-  model ends by a signal (status 1 and a `terminated by signal` line from
-  `llg`) when it calls it. llg reads Mach-O libraries' symbol tables before the build
-  (`build/dpi_link.rs`); `clang --target=arm64-apple-macos11 -c` produces Mach-O
-  objects on Linux for checking such a reader.
+  dynamic_lookup` that calls a routine or an export nobody defines therefore
+  links, and the model ends by a signal (status 1 and a `terminated by signal`
+  line from `llg`) when it calls it, or runs on when it never does. llg reads
+  Mach-O libraries' symbol tables before the build (`build/dpi_link.rs`) and
+  names the unprovided `svdpi.h` routines and every lookup that neither the
+  model nor another `--dpi-lib` defines, as GNU ld's link failure does;
+  `clang --target=arm64-apple-macos11 -c` produces Mach-O objects on Linux
+  for checking such a reader.
 - In the Windows arm64 test job (4 CPUs, Defender on) model-building tests ran a
   median 4.5 times longer than on x64, flat over five hours, while tests that
   compile without model builds (frame lint, storage probes) ran at x64 speed and
