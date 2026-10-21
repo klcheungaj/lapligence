@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void string_fail(const char *message) {
+static _Noreturn void string_fail(const char *message) {
     fprintf(stderr, "llg: string runtime: %s\n", message);
     abort();
 }

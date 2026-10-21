@@ -851,7 +851,9 @@ passed as `void*` (C4090), and a tentative definition `static const T x;` that a
 later initialized definition completes (C4132; declare the function it names
 and define the object before its first use). Clang `-Wunreachable-code` and
 `-Wconditional-uninitialized` approximate the first two; nothing approximates
-C4132. Generated models still forward-declare descriptors that way, because
+C4132. The `runtime_strict_sources` suite runs Clang's `-Wmissing-noreturn` and
+`-Wunreachable-code-aggressive` as errors over every probe-built source (it
+cannot see dead code from a macro expansion such as `return NULL;`). Generated models still forward-declare descriptors that way, because
 mutual recursion needs it; they build at `/W3`.
 
 Preserve source APIs: `value_sources`, `random_sources`, `rng_sources`,
