@@ -11,12 +11,18 @@
 // time slot, like the $strobe system task." A block event is an alternative
 // to a clocking event (L32111-32112); the text does not say whether strobe
 // applies to it.
+// get_inst_coverage() reads instance data, which option.per_instance = 1
+// requires: 19.7 Table 19-1 (L33285-33289) "When true, coverage information
+// for this covergroup instance shall be saved in the coverage database ...
+// When false, implementations are not required to save instance-specific
+// information."
 module tb;
   int n;
   function automatic void f(int a);
     n = a;
   endfunction
   covergroup g @@(end f);
+    option.per_instance = 1;
     type_option.strobe = 1;
     coverpoint n { bins one = {1}; bins two = {2}; }
   endgroup

@@ -10,11 +10,17 @@
 // The text does not say what happens when the program drops its last
 // reference to an instance or to the object that embeds it; llg keeps the
 // instance sampling and counting.
+// get_inst_coverage() reads instance data, which option.per_instance = 1
+// requires: 19.7 Table 19-1 (L33285-33289) "When true, coverage information
+// for this covergroup instance shall be saved in the coverage database ...
+// When false, implementations are not required to save instance-specific
+// information."
 module tb;
   logic clk = 0;
   class Holder;
     bit [1:0] level;
     covergroup cg @(posedge clk);
+      option.per_instance = 1;
       coverpoint level;
     endgroup
     function new(bit [1:0] start);

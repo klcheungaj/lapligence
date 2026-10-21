@@ -597,6 +597,11 @@ longest static prefix reject. The legality ruling is in the
   trusted simulator wins).
 - `sim_lrm_decisions.rs` runs each case on all value backends in both optimizer
   modes: `scripts/run-tests.sh -E 'test(/^sim_lrm_decisions::/)'`.
+- [`fixtures/sim/llg_policy/`](fixtures/sim/llg_policy/readme.md) holds llg-only
+  policy cases that have no portable form (RNG draw mappings, whole `%m` names
+  of class scopes, NULL arguments of the DPI scope routines);
+  `sim_llg_policy.rs` runs them the same way:
+  `scripts/run-tests.sh -E 'test(/^sim_llg_policy::/)'`.
 
 ### Vendor patch preparation
 

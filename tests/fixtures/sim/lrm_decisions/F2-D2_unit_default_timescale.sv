@@ -5,7 +5,10 @@
 // design declares, but never one coarser than the default unit, so a $unit
 // class does not make the global precision finer than the declared scales.
 // Here every declared scale is 1ns/1ns: the class's #1.4 rounds to 1ns, and
-// the time step, and with it the default %t unit, stays 1ns.
+// the time step, and with it the default %t unit, stays 1ns. The class's time
+// unit is observed through the time its delays advance in the module, which
+// counts in 1ns. ($printtimescale is not used: the form of its text is not
+// specified.)
 //
 // IEEE 1800-2009 3.14.2.3 (SystemVerilog-1800-2009.txt L2956-2960): "The
 // time unit of the compilation-unit scope can only be set by a timeunit
@@ -24,6 +27,9 @@ class C;
     #1.4;
     $display("class realtime=%0.3f", $realtime);
   endtask
+  task automatic step();
+    #1;
+  endtask
 endclass
 module tb;
   C c;
@@ -31,8 +37,8 @@ module tb;
     c = new;
     c.run();
     $display("tb realtime=%0.3f t=%0t", $realtime, $realtime);
-    $printtimescale($unit);
-    $printtimescale;
+    c.step();
+    $display("class #1 moved the module to %0.3f", $realtime);
     $finish;
   end
 endmodule

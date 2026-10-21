@@ -10,9 +10,15 @@
 // number of hits for each bin." option.at_least is an instance option and
 // can differ between instances; the text does not say which value a merged
 // bin uses (the smallest would give 100.00).
+// get_inst_coverage() reads instance data, which option.per_instance = 1
+// requires: 19.7 Table 19-1 (L33285-33289) "When true, coverage information
+// for this covergroup instance shall be saved in the coverage database ...
+// When false, implementations are not required to save instance-specific
+// information."
 module tb;
   bit [1:0] a;
   covergroup g(int n);
+    option.per_instance = 1;
     type_option.merge_instances = 1;
     option.get_inst_coverage = 1;
     option.at_least = n;

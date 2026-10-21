@@ -8,12 +8,14 @@
 // Decision (LRM text for the copied state; that the copy takes no value from
 // the thread is an llg choice, since 8.11 lists no seeding step): `new h`
 // copies h's RNG state and leaves the thread's stream unchanged.
+// The object states are compared through the values randomize() draws from
+// them; the form of get_randstate() strings is not specified.
 class item_c;
-  int k;
+  rand int unsigned v;
 endclass
 
 module tb;
-  item_c a, b;
+  item_c a, b, c;
   int unsigned x, y;
   initial begin
     a = new;
@@ -23,10 +25,14 @@ module tb;
     process::self().srandom(11);
     b = new a;
     y = $urandom;
-    $display("state copied %0d", a.get_randstate() == b.get_randstate());
+    c = new a;
+    void'(a.randomize());
+    void'(b.randomize());
+    $display("state copied %0d", a.v == b.v);
     $display("thread unchanged %0d", x == y);
-    b.srandom(6);
-    $display("copy independent %0d", a.get_randstate() != b.get_randstate());
+    c.srandom(6);
+    void'(c.randomize());
+    $display("copy independent %0d", a.v != c.v);
     $finish;
   end
 endmodule

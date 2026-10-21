@@ -12,6 +12,11 @@
 // the end of execution shall not be triggered if the block, task, function,
 // or method is disabled." The text does not say whether a subroutine that
 // returns early "executes its last statement".
+// get_inst_coverage() reads instance data, which option.per_instance = 1
+// requires: 19.7 Table 19-1 (L33285-33289) "When true, coverage information
+// for this covergroup instance shall be saved in the coverage database ...
+// When false, implementations are not required to save instance-specific
+// information."
 module tb;
   int n;
   int r;
@@ -27,9 +32,11 @@ module tb;
     n = 7;
   endtask
   covergroup at_f @@(end f);
+    option.per_instance = 1;
     coverpoint n { bins two = {2}; bins hundred = {100}; bins never = {0}; }
   endgroup
   covergroup at_t @@(end t);
+    option.per_instance = 1;
     coverpoint n { bins five = {5}; bins seven = {7}; }
   endgroup
   at_f gf = new;

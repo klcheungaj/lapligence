@@ -1174,14 +1174,6 @@ fn s31_d6_weight_evaluation_order() {
 }
 
 #[test]
-fn s31_d7_draw_is_urandom_range() {
-    run_decision(
-        "S31-D7_draw_is_urandom_range",
-        include_str!("fixtures/sim/lrm_decisions/S31-D7_draw_is_urandom_range.out"),
-    );
-}
-
-#[test]
 fn s27_d13_memory_name_evaluated_once() {
     run_decision(
         "S27-D13_memory_name_evaluated_once",
@@ -2244,6 +2236,15 @@ fn s45_d11_length_zero_repetition() {
 }
 
 #[test]
+fn s45_d19_length_zero_other_repetitions() {
+    sim_cli::reject_case(
+        SUITE,
+        "S45-D19_length_zero_other_repetitions",
+        "S45-D19_length_zero_other_repetitions.sv:18:29: transition bins `t` of coverpoint `cp` in covergroup `g` specify a transition of length 0",
+    );
+}
+
+#[test]
 fn s45_d12_cross_empty_bins() {
     run_decision(
         "S45-D12_cross_empty_bins",
@@ -2562,14 +2563,6 @@ fn s16_d8_default_values() {
     run_decision(
         "S16-D8_default_values",
         include_str!("fixtures/sim/lrm_decisions/S16-D8_default_values.out"),
-    );
-}
-
-#[test]
-fn s16_d9_draw_is_urandom_range() {
-    run_decision(
-        "S16-D9_draw_is_urandom_range",
-        include_str!("fixtures/sim/lrm_decisions/S16-D9_draw_is_urandom_range.out"),
     );
 }
 
