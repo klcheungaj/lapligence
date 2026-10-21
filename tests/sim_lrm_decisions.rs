@@ -2268,11 +2268,10 @@ fn s45_d11_length_zero_repetition() {
 }
 
 #[test]
-fn s45_d19_length_zero_other_repetitions() {
-    sim_cli::reject_case(
-        SUITE,
-        "S45-D19_length_zero_other_repetitions",
-        "S45-D19_length_zero_other_repetitions.sv:18:29: transition bins `t` of coverpoint `cp` in covergroup `g` specify a transition of length 0",
+fn s45_d19_single_item_repetitions() {
+    run_decision(
+        "S45-D19_single_item_repetitions",
+        include_str!("fixtures/sim/lrm_decisions/S45-D19_single_item_repetitions.out"),
     );
 }
 
@@ -3012,5 +3011,21 @@ fn t0_d3_driven_net_starts_x() {
     run_decision(
         "T0-D3_driven_net_starts_x",
         include_str!("fixtures/sim/lrm_decisions/T0-D3_driven_net_starts_x.out"),
+    );
+}
+
+#[test]
+fn t0_d4_constant_z_driver_no_event() {
+    run_decision(
+        "T0-D4_constant_z_driver_no_event",
+        include_str!("fixtures/sim/lrm_decisions/T0-D4_constant_z_driver_no_event.out"),
+    );
+}
+
+#[test]
+fn t0_d5_driven_net_time0_sample() {
+    run_decision(
+        "T0-D5_driven_net_time0_sample",
+        include_str!("fixtures/sim/lrm_decisions/T0-D5_driven_net_time0_sample.out"),
     );
 }

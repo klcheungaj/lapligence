@@ -94,13 +94,17 @@ fn fixture(groups: &[(u32, usize, bool)]) -> Fixture {
 }
 
 fn drive(fixture: &mut Fixture, lhs: IrLhs, width: u32) {
-    let name = format!("p_drive_{}", fixture.model.processes.len());
     let rhs = read(fixture.source, 1);
     let rhs = if width == 1 {
         rhs
     } else {
         IrExpr::new(IrExprKind::Resize { a: Box::new(rhs) }, width, false, None)
     };
+    drive_with(fixture, lhs, rhs);
+}
+
+fn drive_with(fixture: &mut Fixture, lhs: IrLhs, rhs: IrExpr) {
+    let name = format!("p_drive_{}", fixture.model.processes.len());
     fixture.model.processes.push(IrProcess::new(
         name.clone(),
         "tb.assign".to_owned(),
@@ -260,4 +264,58 @@ fn delayed_and_pull_groups_have_no_driven_runs() {
     assert!(fixture.model.net_groups[0].starts_unknown());
     assert!(fixture.model.net_groups[0].driven_runs().is_empty());
     assert!(fixture.model.net_groups[1].driven_runs().is_empty());
+}
+
+fn literal(bits: u64, z: u64, width: u32, fill: Option<u8>) -> IrExpr {
+    let value = IrConst {
+        bits: vec![bits],
+        x: vec![0],
+        z: vec![z],
+        width,
+        signed: false,
+        real: None,
+        fill,
+    };
+    IrExpr::new(IrExprKind::Const(value), width, false, fill)
+}
+
+#[test]
+fn constant_z_driver_bits_keep_their_z_start() {
+    // Decision T0-D4. Group 0: `4'b1z0z`; group 1: `'z`; group 2: a 2-bit
+    // part `{1'bz, 1'b1}` at [3:2] and a read at [1:0]; group 3: z and a
+    // non-constant driver on the same bit.
+    let mut fixture = fixture(&[(4, 1, false), (4, 1, false), (4, 2, false), (1, 2, false)]);
+    let slots = fixture.slots.clone();
+    drive_with(
+        &mut fixture,
+        IrLhs::Whole(slots[0][0]),
+        literal(0b1000, 0b0101, 4, None),
+    );
+    drive_with(
+        &mut fixture,
+        IrLhs::Whole(slots[1][0]),
+        literal(0, 1, 1, Some(3)),
+    );
+    let concat = IrExpr::new(
+        IrExprKind::Concat {
+            parts: vec![literal(0, 1, 1, None), literal(1, 0, 1, None)],
+        },
+        2,
+        false,
+        None,
+    );
+    drive_with(&mut fixture, IrLhs::Part(slots[2][0], 3, 2, false), concat);
+    drive(&mut fixture, IrLhs::Part(slots[2][1], 1, 0, false), 2);
+    drive_with(
+        &mut fixture,
+        IrLhs::Whole(slots[3][0]),
+        literal(0, 1, 1, None),
+    );
+    drive(&mut fixture, IrLhs::Whole(slots[3][1]), 1);
+    assign_net_delay_layouts(&mut fixture.model);
+    let runs = |group: usize| fixture.model.net_groups[group].driven_runs().to_vec();
+    assert_eq!(runs(0), [(1, 1), (3, 1)]);
+    assert!(runs(1).is_empty());
+    assert_eq!(runs(2), [(0, 3)]);
+    assert_eq!(runs(3), [(0, 1)]);
 }

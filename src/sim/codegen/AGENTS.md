@@ -355,7 +355,14 @@ significant bit (S2-D3); `net_delay_layout` derives the parts from every
 driver site after initialization steps exist and marks driven delayed nets and
 module-path destinations to start X (S2-D10, A7-D6); every other driven wire,
 wand or wor group records the bit runs its sites write (`driven_runs`), which
-start X until the first driver write (T0-D3). A net
+start X until the first driver write (T0-D3); a constant driver's z bits are
+left out (T0-D4). `net_time0_samples` then folds the one continuous driver
+(recorded in `continuous_drivers`: continuous assignments and port links,
+never gates) of each sampled undelayed net over the initial values of the
+variables and nets it reads and appends `IrInitStep::SampledStart`, the
+net's time-zero Preponed value (T0-D5); a net with several sites, a delayed,
+aliased or gate-driven net, a non-folding driver and a computed z keep the X
+start. A net
 declaration assignment's delay is that driver's delay, never a net delay (the
 capture gives it only to the assignment). Selected delayed drivers and
 net-array cells start X on their own bits (`initialize_delayed_lhs`). A delayed

@@ -52,7 +52,31 @@ static void free_region_callbacks(void) {
     }
 }
 
+static void free_sampled_starts(llg_sampled_value_t* items) {
+    for (llg_sampled_value_t* item = items; item; item = item->next) {
+        if (!item->start) continue;
+        sv4_destroy(item->start);
+        free(item->start);
+        item->start = NULL;
+    }
+}
+
+// Release every time-zero start value (decision T0-D5): after the first
+// Preponed sample, and at cleanup.
+static void release_sampled_starts(void) {
+    free_sampled_starts(g.sampled_values);
+    free_sampled_starts(g.sampled);
+    while (g.sampled_starts) {
+        llg_sampled_start_t* next = g.sampled_starts->next;
+        sv4_destroy(&g.sampled_starts->value);
+        free(g.sampled_starts);
+        g.sampled_starts = next;
+    }
+    g.sampled_starts_live = 0;
+}
+
 static void free_sampled_values(void) {
+    release_sampled_starts();
     while (g.sampled_reals) {
         llg_sampled_real_t* next = g.sampled_reals->next;
         free(g.sampled_reals);
