@@ -2974,3 +2974,11 @@ fn t0_d2_event_control_always_starts_first() {
         include_str!("fixtures/sim/lrm_decisions/T0-D2_event_control_always_starts_first.out"),
     );
 }
+
+#[test]
+fn t0_d3_driven_net_starts_x() {
+    run_decision(
+        "T0-D3_driven_net_starts_x",
+        include_str!("fixtures/sim/lrm_decisions/T0-D3_driven_net_starts_x.out"),
+    );
+}

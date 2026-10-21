@@ -296,7 +296,9 @@ significant bit selects the delay (`net_delay_ticks`, S2-D3); a runtime-valued
 net delay (`net_delayed == 2`) takes the whole-value vector rule instead (S2-D9). A driven
 delayed net or path destination starts X with a strong-X strength view
 (`llg_net_start_unknown`, S2-D10) and reaches its resolved value through its
-delay. A
+delay. An undelayed driven wire, wand or wor holds X (strong-X view) on its
+driven bits (`llg_net_start_driven`, T0-D3) until the first driver write,
+which resolves the whole net once (`unsettled`; one byte test per write). A
 runtime-valued net delay is the generated updater's store into
 `propagation_rise/fall/turn_off`; each later publication reads those fields and
 pending records keep their times. Reset

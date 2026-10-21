@@ -1,7 +1,8 @@
 // A procedural $sampled returns the value its expression had in the
 // Preponed region of the current time slot (IEEE 1800-2009 16.9.3, 16.5.1),
 // without any assertion or clock. At time 0 that is the declaration
-// initializer, or the type's default: X for a variable, Z for a net.
+// initializer, or the type's default: X for a variable. A driven net holds X
+// until its drivers first evaluate (decision T0-D3).
 module tb;
   typedef struct packed { logic [3:0] hi; logic [3:0] lo; } pair_t;
   logic [7:0] x;

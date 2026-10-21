@@ -137,6 +137,7 @@ fn selected_terminal_remapping_keeps_each_output_contribution_distinct() {
         propagation_delay: None,
         propagation_segments: Vec::new(),
         starts_unknown: false,
+        driven_runs: Vec::new(),
         runtime_delay: false,
         strength_view: None,
     });

@@ -70,7 +70,9 @@ file is derived by hand below; none were captured from `llg`.
     changes there; `m[1][1].p.hi = 3` is `0011 xxxx xx`, printed `0Xx`.
 - `procedural_sampled`: no assertion or clock exists.
   - Time 0 (Preponed, before any process): `x` is X, `d` holds its
-    initializer `33`, the net `w` is Z before its continuous assignment runs,
+    initializer `33`, the driven net `w` is X before its continuous
+    assignment runs (decision T0-D3; 6.7 L5199-5200 "Nets with drivers shall
+    assume the output value of their drivers"),
     and `x[3:0]` is X.
   - Time 1: `x = 5a`, `w = 5b`, `s = -2`, `r > 1.0` is `1`, and
     `ps[i].hi` with `i = 0` is `ps[0].hi = 3`. Writes later in the same slot do

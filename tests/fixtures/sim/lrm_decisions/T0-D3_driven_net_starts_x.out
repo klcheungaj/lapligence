@@ -1,0 +1,4 @@
+t0 sampled wx=xx wp=zx wu=zz
+t1 wx=xx wk=12 wp=zx wu=zz
+time-0 events: x-valued=0 constant=1 partial=0
+t2 wx=0f wp=z3 events: x-valued=1 partial=1

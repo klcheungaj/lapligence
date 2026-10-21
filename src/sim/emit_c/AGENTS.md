@@ -234,7 +234,9 @@ path-stage records; a model without paths emits exactly what it did
 before. A delayed group with separately driven parts emits its part bounds
 and one record slot per part; a group that starts X calls
 `llg_net_start_unknown` in the storage defaults, after the runtime delay
-store when its net delay is runtime-valued. `ModulePathStamp` is one `llg_module_path_stamp` call; the legacy
+store when its net delay is runtime-valued. Groups with `driven_runs` (T0-D3)
+share deduplicated run tables and call `llg_net_start_driven` after the net
+storage loop. `ModulePathStamp` is one `llg_module_path_stamp` call; the legacy
 statement renderer rejects it.
 
 A sequential definition emits one `static inline llg_udp_step_<t>` and each

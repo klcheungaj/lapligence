@@ -184,6 +184,57 @@ fn net_storage_lifecycle(
     destroy.push_str(&format!(
         "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_destroy(net->drivers[slot]);\n        sv4_destroy(&net->resolved);\n        net->propagation = NULL;\n    }}\n"
     ));
+    net_driven_starts(model, tables, initialize);
+}
+
+/// Start the driven bits of every undelayed driven net at X until its first
+/// driver write (decision T0-D3). Groups with equal runs share one run table.
+fn net_driven_starts(model: &IrModel, tables: &mut StorageTables, initialize: &mut String) {
+    let mut emitted = HashSet::new();
+    let mut run_tables: Vec<&[(u32, u32)]> = Vec::new();
+    let mut entries = Vec::new();
+    for group in &model.net_groups {
+        if group.driven_runs.is_empty() || !emitted.insert(group.c_name.as_str()) {
+            continue;
+        }
+        let table = match run_tables
+            .iter()
+            .position(|runs| *runs == group.driven_runs.as_slice())
+        {
+            Some(index) => index,
+            None => {
+                run_tables.push(&group.driven_runs);
+                run_tables.len() - 1
+            }
+        };
+        entries.push((group.c_name.as_str(), table, group.driven_runs.len()));
+    }
+    if entries.is_empty() {
+        return;
+    }
+    for (index, runs) in run_tables.iter().enumerate() {
+        let values = runs
+            .iter()
+            .map(|(low, count)| format!("{low}u, {count}u"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        tables.source.push_str(&format!(
+            "static const uint32_t llg_net_driven_runs_{index}[] = {{ {values} }};\n"
+        ));
+    }
+    tables.source.push_str(
+        "static const struct { llg_net_t* net; const uint32_t* runs; uint32_t n_runs; } llg_net_driven[] = {\n",
+    );
+    for (name, table, count) in entries {
+        tables.source.push_str(&format!(
+            "    {{ &{name}, llg_net_driven_runs_{table}, {count}u }},\n"
+        ));
+    }
+    tables.source.push_str("};\n");
+    let each = table_loop("llg_net_driven");
+    initialize.push_str(&format!(
+        "    {each}\n        llg_net_start_driven(llg_net_driven[_llg_n].net, llg_net_driven[_llg_n].runs, llg_net_driven[_llg_n].n_runs);\n"
+    ));
 }
 
 /// Start every delayed or path-destination net that has drivers from X
