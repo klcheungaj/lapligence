@@ -251,6 +251,44 @@ fn library_call_to_an_undeclared_export_is_named_at_link() {
     );
 }
 
+/// On macOS the companion is a dylib built with `-undefined dynamic_lookup`,
+/// whose undefined symbols ld64 does not check, so the model linked and the
+/// run reached the runtime's scope error instead (CI round 6). llg reads a
+/// Mach-O library's imports before the build and names the undeclared
+/// exports as the ELF link does; this synthetic dylib imports what the macOS
+/// build of `errors.c` imports, so the check runs on every host.
+#[test]
+fn undeclared_exports_imported_by_a_mach_o_library_are_named_before_the_build() {
+    let directory = sim_harness::TempDir::new("sim041-macho").expect("temporary directory");
+    let library = directory.path().join("liberrors.dylib");
+    std::fs::write(
+        &library,
+        super::sim_040::dynamic_lookup_dylib(&[
+            "err_inc",
+            "err_text",
+            "err_tick",
+            "err_kill",
+            "svSetScope",
+            "svGetScopeFromName",
+            "svAckDisabledState",
+        ]),
+    )
+    .expect("write Mach-O library");
+    let library = library.to_string_lossy().into_owned();
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_missing_export",
+        "a DPI-C library calls `err_kill`, `err_tick`, which no export \"DPI-C\" declaration of the design and no --dpi-lib library defines",
+        &["--dpi-lib", &library],
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_missing_export",
+        "imports err_kill, err_tick for dyld to resolve when the model runs",
+        &["--dpi-lib", &library],
+    );
+}
+
 #[test]
 fn unsupported_exports_are_codegen_errors() {
     sim_cli::reject_case(

@@ -412,7 +412,7 @@ fn unprovided_svdpi_routine_is_named() {
 /// A 64-bit Mach-O dylib whose symbol table imports `names` through
 /// `-undefined dynamic_lookup` (library ordinal 0xfe), as the macOS build of
 /// `neg_unprovided_routine.c` does. Written by hand so every host can check it.
-fn dynamic_lookup_dylib(names: &[&str]) -> Vec<u8> {
+pub(super) fn dynamic_lookup_dylib(names: &[&str]) -> Vec<u8> {
     let mut strings = vec![0u8];
     let mut table = Vec::new();
     for name in names {
@@ -465,10 +465,18 @@ fn unprovided_routine_imported_by_a_mach_o_library_is_named_before_the_build() {
         "a DPI-C library calls svdpi.h routine `svGetTime`, which llg does not provide",
         &["--dpi-lib", &library],
     );
+    // `neg_helper` is defined by nothing, so it is named too, as the ELF
+    // link names it; `svGetArrayPtr` is provided by the model.
     sim_cli::reject_case_with_args(
         SUITE,
         "neg_unprovided_routine",
-        "imports svGetTime for dyld to resolve when the model runs",
+        "a DPI-C library calls `neg_helper`, which no export \"DPI-C\" declaration of the design and no --dpi-lib library defines",
+        &["--dpi-lib", &library],
+    );
+    sim_cli::reject_case_with_args(
+        SUITE,
+        "neg_unprovided_routine",
+        "imports neg_helper, svGetTime for dyld to resolve when the model runs",
         &["--dpi-lib", &library],
     );
 }

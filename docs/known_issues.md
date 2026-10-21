@@ -1841,9 +1841,16 @@ call chains; these cases remain outside it.
   printed. llg cannot flush another C runtime's buffers.
   The route is unit-tested on Linux (generated `sim.def`, CMake text) and
   written for MSVC; its Windows run is pending CI.
-- On macOS a dylib built with `-undefined dynamic_lookup` that calls a symbol
-  the design does not export is not named before the build; dyld reports it
-  when the model loads.
+- On macOS ld64 does not check the undefined symbols of a dylib built with
+  `-undefined dynamic_lookup`, so llg reads each Mach-O `--dpi-lib` symbol
+  table before the build and names an import that neither the model (the
+  `svdpi.h` and VPI routines, the design's DPI-C exports and imports) nor
+  another `--dpi-lib` defines. When a `--dpi-lib` is not a Mach-O file (a
+  static archive), whose definitions are not read, only unprovided
+  `svdpi.h` routines are named; another missing symbol is left to dyld, which
+  ends the model without a message when it is called. A Mach-O library that
+  expects such a symbol from a dylib it was not linked against is reported
+  too.
 - An export called outside any DPI-C call chain (for example from a C
   `atexit` handler or another thread) is a fatal error; exports are not
   thread-safe.
