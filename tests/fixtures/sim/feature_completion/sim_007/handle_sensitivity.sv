@@ -1,8 +1,6 @@
-// SIM-007: class handles publish a change marker. Whole-handle ports, a
-// record port with a handle member and @(h) wake on handle stores by
-// blocking and nonblocking assignment, task outputs and ref formals. (An
-// always_comb would not: class references add nothing to its sensitivity,
-// decision AB-N2.)
+// SIM-007: class handles publish a change marker. Ports, a record port with a
+// handle member and @(h) (not always_comb, decision AB-N2) wake on handle
+// stores by blocking and nonblocking assignment, task outputs and ref formals.
 class Obj;
     int v;
     function new(int x); v = x; endfunction
