@@ -2,7 +2,7 @@
 // $sreadmemb/$sreadmemh give the same memory as $readmemb/$readmemh of the
 // file holding the strings joined by one newline (decision S26-D16).
 //   C  two-state words: x/z digits read as 0 (IEEE 1800-2009 21.4.2)
-//   I  signed int words: sign by width, a wider number loses its upper digits
+//   I  signed int words: sign by width; a word with more digits ends the load
 //   P  packed-struct words
 //   N  enumerated words: member values only
 //   M  a two-dimensional memory loaded in row-major order

@@ -1,3 +1,2 @@
 llg: warning: memory file `q02_hex.mem`: X/Z memory data converted to a two-state element
-llg: error: memory file `q02_hex.mem`: memory data value is not a member of the enum; load terminated
 llg: simulation ended without $finish (no processes remain) at time 0

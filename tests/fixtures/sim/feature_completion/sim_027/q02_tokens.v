@@ -3,8 +3,10 @@
 // base (IEEE 1364-2001 17.2.8; IEEE 1800-2009 21.4). Assigned to a word it
 // behaves like that literal (IEEE 1364-2001 3.5.1; IEEE 1800-2009 5.7.1):
 // a leftmost x/z digit fills the upper bits with x/z, a leftmost known digit
-// fills with zeros, even for a signed word, because the number is unsigned;
-// a wider number loses its upper bits. Expected values are derived by hand.
+// fills with zeros, even for a signed word, because the number is unsigned.
+// A number with a digit more than the word holds is an error that ends the
+// load (S27-D2): `1x` ends the 4-bit and 1-bit loads, whose later words keep
+// their initial x. Expected values are derived by hand.
 module tb;
   reg [7:0] hex8 [0:4];
   reg [11:0] hex12 [0:4];

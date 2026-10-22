@@ -1,7 +1,9 @@
-// Decision S27-D7: an address outside the memory is an error even when the
-// task gives no range. A file address outside the memory terminates the
-// load and keeps the words already loaded; a start or finish argument
-// outside the memory rejects the whole call before any word is loaded.
+// Decision S27-D7: a word whose address is outside the memory is an error
+// that terminates the load and keeps the words already loaded, whether the
+// address comes from an `@` specification in the file or from counting on
+// from the start address. A start or finish argument outside the memory is
+// not rejected by itself: the load stores the words whose addresses are
+// inside the memory and ends at the first word that is not.
 //
 // IEEE 1800-2009 21.4 (SystemVerilog-1800-2009.txt L37280,
 // L37315-37317):
@@ -11,8 +13,10 @@
 //   specified by the system task arguments; otherwise, an error message is
 //   issued, and the load operation is terminated."
 //
-// The text states the error only for a range given in the task; llg applies
-// it to the memory's own bounds as well, since no word can be stored there.
+// The text states the error only for a range given in the task. llg follows
+// industry-standard behaviour: the memory's own bounds end the load when a
+// word reaches them, and task arguments outside the memory are checked word
+// by word rather than up front.
 module tb;
   logic [7:0] mem [0:3];
   integer fd;
@@ -21,7 +25,7 @@ module tb;
     $fwrite(fd, "@1\n11\n@9\n22\n");
     $fclose(fd);
     fd = $fopen("s27_d7_plain.mem", "w");
-    $fwrite(fd, "aa\nbb\n");
+    $fwrite(fd, "aa\nbb\ncc\n");
     $fclose(fd);
     mem = '{default: 8'hee};
     $readmemh("s27_d7.mem", mem);
@@ -29,7 +33,8 @@ module tb;
     mem = '{default: 8'hee};
     $readmemh("s27_d7_plain.mem", mem, 2, 5);
     $display("finish outside %h %h %h %h", mem[0], mem[1], mem[2], mem[3]);
-    $readmemh("s27_d7_plain.mem", mem, -1);
+    mem = '{default: 8'hee};
+    $readmemh("s27_d7_plain.mem", mem, 5);
     $display("start outside %h %h %h %h", mem[0], mem[1], mem[2], mem[3]);
     $finish;
   end

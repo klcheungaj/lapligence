@@ -127,8 +127,8 @@ unsized-literal rules (SV §§21.4, 5.7.1), two-state words read X/Z as 0
 same-slot readers are tested against the allowed interleavings (V §§5.3–5.4;
 SV §§4.3–4.7) in the
 [sim_027 conformance fixtures](../tests/fixtures/sim/feature_completion/sim_027/readme.md).
-Enum width/X membership and malformed-token recovery remain llg readings or
-choices (S27-D4, S27-D5). Q03
+Enum words are not checked for membership (S27-D4, industry-standard
+behaviour); malformed-token recovery remains an llg choice (S27-D5). Q03
 member-NBA retagging is resolved from SV §§4.9.4, 10.4.2, 7.3.2 and 11.9: the
 member write is checked against the tag at commit (§2). Comparisons with
 other simulators are corroboration, not a normative resolution. Their
@@ -1647,8 +1647,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Typed formatting** — `%d/%h/%x/%b/%o/%c/%u/%z/%v/%t`, `%f/%e/%g`, `%s`,
   `%m`, `%l`, `%p/%0p`, `%%` and width/precision/`-`/`%0` flags share one typed
   formatter for display, file, monitor/strobe and string outputs. Unsized `%d`
-  uses the type's maximum decimal width, `%0` the minimum, explicit widths are
-  minimums; X/Z digits follow SV §21.2.1.4. Real arguments of integral
+  uses the maximum unsigned decimal width of the argument's width, and 11
+  characters for a signed argument of 2 to 32 bits (S24-D1); `%0` the minimum,
+  explicit widths are minimums; X/Z digits follow SV §21.2.1.4. Real arguments of integral
   conversions round to 64-bit integers and integral `%e/%f/%g` arguments
   convert to real. String literals in argument lists start format segments;
   empty arguments print a space. `%m` names the enclosing named block,
@@ -1696,9 +1697,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   %u %z %m`, `%*`, field widths, X/Z digits) into whole and selected packed
   variables, memory elements, structure members, strings, reals, task and
   function formals, class properties and the integral, string and real
-  elements of queues, dynamic, fixed and associative arrays. Destination
-  selectors are evaluated when the call starts; only converted items are
-  written. `%t` scales by `$timeformat` into the scope unit, integer
+  elements of queues, dynamic, fixed and associative arrays. A destination
+  selector that reads an earlier destination of the call is evaluated when its
+  value is stored; only converted items are written. `%t` scales by `$timeformat` into the scope unit, integer
   conversions convert into reals, `$sscanf` reads string, packed and byte-array
   sources, `$ungetc` returns 0 and invalid descriptors return EOF. Unpacked
   aggregates other than byte arrays reject; a string character and a nested
@@ -1751,19 +1752,23 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   walk low-to-high in row-major order; one-dimensional 2001 omitted ranges
   instead follow declaration direction. 2009 defaults, including start-only
   calls, are low-to-high; explicit ranges retain requested direction.
-  `@` addresses the highest remaining dimension. Invalid selected ranges leave
-  every cell unchanged; invalid later jumps stop while retaining earlier writes.
+  `@` addresses the highest remaining dimension. A word whose address is
+  outside the memory ends the load and keeps the earlier writes, also past the
+  highest address and for a start or finish argument outside the memory; words
+  past a range finish that still have cells are skipped with a warning
+  (S27-D7, S27-D8). Invalid later jumps stop while retaining earlier writes.
   The admitted signed `@` extension converts checked hexadecimal magnitude to
   a signed index after sign application; zero padding of the token does not
   change the selected cell. Magnitudes outside signed 64-bit index range and
   jumps outside a selected view diagnose before another write.
   Incomplete rows leave unread subwords unchanged.
   Words are unsized unsigned numbers: a leading X/Z pads with that state, known
-  digits zero-extend, wider numbers truncate (S27-D2); two-state words read X/Z
+  digits zero-extend, and a number with a digit more than the word holds is an
+  error that ends the load (S27-D2); two-state words read X/Z
   as 0 (S27-D3). Diagnostics print as `llg: warning: memory file ...` (missing
   file, word-count mismatch, X/Z conversion, empty resizable array) or
-  `llg: error: memory file ...` (malformed token, address outside the task range
-  or the memory, enum value, invalid range); neither changes the exit status
+  `llg: error: memory file ...` (malformed or too long token, address outside
+  the task range or the memory, invalid range); neither changes the exit status
   (S27-D5..D9). Erroneous files never write outside the selected memory.
   **Scheduling (S27-D1):** each word is stored when the task reaches it; a
   changed word wakes its waiters once in the same time slot, an unchanged word
@@ -1772,9 +1777,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   accepts every permitted order rather than one transcript.
   V §17.2.8; SV §21.4 **[1995/SV-2005]**.
 
-  Enum words are checked at the base width, allowing redundant signed
-  extension; invalid words diagnose and stop without undoing earlier writes
-  (S27-D4, an llg reading kept as a `q02_enum_*` characterization in
+  An enum element takes any word, member or not, truncated to the base width
+  like any other packed word; a word with more digits than the element needs
+  diagnoses and stops without undoing earlier writes (S27-D2, S27-D4,
+  industry-standard behaviour, characterized by the `q02_enum_*` fixtures in
   `sim_undefined_behavior`). Sparse addressed 2009 files omit the no-address
   short-file warning; 2001 count warnings remain, including excess data from
   repeated in-range addresses.
@@ -1786,10 +1792,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   from the same storage forms and views in low-to-high row-major order without
   `@` addresses (S27-D11); a range outside the memory is rejected before the
   file is opened (S27-D12). Associative arrays dump their existing entries in
-  index order, each word after its own `@` address (S27-D17); an associative
+  index order, each word after its own `@` address with the digits of the
+  index width (S27-D17); an associative
   array of unpacked arrays writes an `@` key before each element's cells
   (S27-D22), while one element of it writes its cells without addresses and a
-  missing or unknown key is an error that writes no file (S27-D24, S27-D25).
+  missing or unknown key warns and dumps the array's default value without
+  creating the element (S27-D24, S27-D25).
   The same element/view restrictions apply; writers
   reject in 2001 mode. SV §21.5 **[SV-2005]**.
 

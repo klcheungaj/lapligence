@@ -56,9 +56,10 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
   functions, a select of a ref formal, and a method's own properties.
 - `container_destinations`: elements of queues, dynamic arrays, fixed string
   arrays and associative arrays (integral, string and real elements), and bit
-  and part selects of dynamic-array elements. Selector expressions are
-  evaluated once, when the call starts, so `$sscanf("1 omega", "%d %s", i,
-  sq[i])` writes `sq[0]` (llg policy, S26-D1). A conversion that fails leaves
+  and part selects of dynamic-array elements. A selector that reads an
+  earlier destination of the same call is evaluated when its element is
+  stored, so `$sscanf("1 omega", "%d %s", i, sq[i])` writes `sq[1]`
+  (industry-standard behaviour, S26-D1). A conversion that fails leaves
   its element unchanged. A write to an index outside a dynamic array is
   dropped and creates nothing (SV 7.4.6), but the conversion still counts.
 - `scan_conversions`: every conversion of Table 21-8.
@@ -96,8 +97,9 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
     per memory word ... The data are read from the file in a big endian
     manner; the first byte read is used to fill the most significant location
     in the memory element." `start` and `count` select `mem[1:2]` (L37057-37061).
-  - A short final word fills only its most significant bytes and keeps the
-    rest (`w24=000007`; llg policy, S26-D7).
+  - A short final word fills its most significant bytes and zeroes the
+    rest (`w24=000000`), and a read at end of file zeroes the variable
+    (`p8=00`) (industry-standard behaviour, S26-D7).
   - `%u` (L36944-36958) and `%z` (L36979-36990) read 32-bit words in the
     host's little-endian order. `%z` reads an aval word then a bval word per
     32 bits, as in `s_vpi_vecval` (SV L62602: aval/bval `00`=0, `10`=1,
@@ -136,13 +138,15 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
   - overlong integral fields keep their least significant bits; `%s` into a
     24-bit vector keeps its last three characters;
   - `%d` reading a single `z` assigns all-Z and leaves the second `z` unread;
-  - `%u` with three bytes left assigns nothing and returns 0, then returns -1
-    at end of file (S26-D3);
+  - `%u` with three bytes left stores them in the low three bytes, keeps the
+    top byte and returns 0, then returns -1 at end of file (S26-D3);
   - a `$fread` with `count` 0, or with `start` outside the memory, reads
     nothing and returns 0.
 - `invalid_descriptors`: a closed descriptor, descriptor 0, an X descriptor,
   multichannel descriptors (including stdout), an unopened descriptor and a
-  write-only file. `$fgetc`, `$ungetc` and `$fscanf` return EOF (S26-D2).
+  write-only file. `$fgetc` and `$ungetc` return EOF. `$fscanf` returns 0
+  on every descriptor that is not an open file (lines D, I and J) and EOF on
+  the write-only file (line K), whose input ends at once (S26-D2).
   `$fgets` and `$fread` return 0 (L36844, L37090). `$ftell` and `$fseek`
   return -1 (L37125, L37154). `$feof` returns -1 (S26-D2). Destinations stay
   unchanged, and `$ferror` reports a nonzero code with a message (L37203-37205).

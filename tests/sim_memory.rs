@@ -424,7 +424,9 @@ fn sim_mem_file_short_and_extra_words_are_diagnosed() {
     initial begin
         $readmemh("short.mem", mem, 0, 1);
         $display("short=%h,%h", mem[0], mem[1]);
-        $readmemh("extra.mem", mem, 0, 1);
+        // `02` is past the range but has a cell: skipped with a warning;
+        // `03` has no cell and ends the load (S27-D8).
+        $readmemh("extra.mem", mem, 0, 0);
         $display("extra=%h,%h", mem[0], mem[1]);
         $readmemh("oor.mem", mem, 9, 10);
         $display("oor=%h,%h", mem[0], mem[1]);
@@ -443,7 +445,7 @@ endmodule
         ],
     )
     .expect("simulation should run");
-    assert_eq!(run.stdout, "short=7f,xx\nextra=01,02\noor=01,02\n");
+    assert_eq!(run.stdout, "short=7f,xx\nextra=01,xx\noor=01,xx\n");
     assert!(run
         .stderr
         .contains("memory file contains too few words for the selected range"));
@@ -452,7 +454,7 @@ endmodule
         .contains("memory file contains more words than the selected range"));
     assert!(run
         .stderr
-        .contains("selected range includes an address outside the memory"));
+        .contains("memory word address is outside the destination memory; load terminated"));
 }
 
 #[test]

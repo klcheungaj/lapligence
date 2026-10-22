@@ -466,7 +466,9 @@ static int llg_scan_store_time(const unsigned char* bytes, size_t length,
 // them, 32-bit little-endian words with the least significant word first;
 // `%z` writes each word as its VPI aval/bval pair (0:00 1:10 Z:01 X:11).
 // Exactly enough data to fill the destination is read; no white space is
-// skipped. A short read assigns nothing.
+// skipped. A short `%u` read stores the bytes it read over the destination's
+// value and leaves the rest of it (S26-D3); a short `%z` read assigns
+// nothing. Either does not count as a conversion.
 static int llg_scan_binary(llg_scan_input_t* input, char conversion,
                            const llg_file_input_target_t* target) {
     if (!target || target->kind != LLG_FILE_INPUT_PACKED || !target->packed ||
@@ -483,11 +485,27 @@ static int llg_scan_binary(llg_scan_input_t* input, char conversion,
             for (unsigned byte = 0; byte < 4u; ++byte) {
                 int c = llg_scan_get(input);
                 if (c == EOF) {
-                    sv4_destroy(&value);
                     if (!consumed) {
+                        sv4_destroy(&value);
                         input->input_failure = 1;
                         return -1;
                     }
+                    if (conversion == 'u') {
+                        // Byte k of the data holds bits 8k..8k+7 of the value.
+                        sv4_t merged = llg_ref_read(target->packed);
+                        uint64_t bits = (uint64_t)word * 32u;
+                        for (uint64_t bit = 0; bit < (uint64_t)byte * 8u + bits; ++bit) {
+                            if (bit >= width) break;
+                            uint64_t part = bit < bits ? 0u : bit - bits;
+                            unsigned state = bit < bits
+                                ? (unsigned)((llg_sv4_word(value, (size_t)(bit / 64u), LLG_SV4_BITS)
+                                              >> (bit % 64u)) & 1u)
+                                : (unsigned)((plane[0] >> part) & 1u);
+                            llg_scan_set_bit(&merged, (uint32_t)bit, (int)state);
+                        }
+                        llg_ref_write_owned(target->packed, merged);
+                    }
+                    sv4_destroy(&value);
                     return 0;
                 }
                 ++consumed;
@@ -551,6 +569,8 @@ static int llg_scan_strength(llg_scan_input_t* input, const llg_file_input_targe
     return 1;
 }
 
+// One directive: 1 assigned, 2 matched without assignment, 3 nothing to
+// match (the directive is skipped), 0 matching failure, -1 input failure.
 static int llg_scan_conversion(llg_scan_input_t* input, char conversion,
                                size_t width, int suppressed,
                                const llg_file_input_target_t* target) {
@@ -559,8 +579,8 @@ static int llg_scan_conversion(llg_scan_input_t* input, char conversion,
     int ok;
     if (conversion == 'u' || conversion == 'z') {
         // Unformatted data is sized by its destination; a suppressed field
-        // has none, so the directive fails.
-        return suppressed ? 0 : llg_scan_binary(input, conversion, target);
+        // has none, so it reads nothing and matches nothing (S26-D10).
+        return suppressed ? 3 : llg_scan_binary(input, conversion, target);
     }
     if (conversion == 'v') return llg_scan_strength(input, target, suppressed);
     if (conversion == 'm') {
@@ -657,6 +677,7 @@ static int llg_scan_format(llg_scan_input_t* input, const char* format,
             target = &targets[target_index++];
         }
         int converted = llg_scan_conversion(input, conversion, width, suppressed, target);
+        if (converted == 3) continue;
         if (converted < 0) break;
         if (converted == 0) break;
         matched = 1;
@@ -669,9 +690,11 @@ int llg_file_scanf_scoped(uint32_t descriptor, const char* format,
                           const llg_file_input_target_t* targets, int target_count,
                           const char* scope, uint64_t time_unit_fs) {
     llg_file_slot_t* slot;
-    // No input can be read from an invalid, closed or multichannel descriptor,
-    // so the call ends before its first conversion: EOF (21.3.4.3).
-    if (!llg_file_single_ordinary(descriptor, &slot)) return EOF;
+    // An invalid, closed or multichannel descriptor names no input to end,
+    // so nothing is matched or assigned and the call returns 0 (S26-D2,
+    // industry-standard behaviour). A file open only for writing does have
+    // an input that ends at once: EOF, from the scan itself.
+    if (!llg_file_single_ordinary(descriptor, &slot)) return 0;
     llg_scan_input_t input = {slot, NULL, 0, 0, 0, scope, time_unit_fs};
     return llg_scan_format(&input, format, targets, target_count);
 }
@@ -732,7 +755,10 @@ int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target) {
     llg_file_slot_t* slot;
     if (!target || !llg_file_single_ordinary(descriptor, &slot) || target->width == 0)
         return 0;
-    sv4_t value = llg_ref_read(target);
+    // The bytes fill the variable from its most significant byte down; the
+    // bytes the file could not supply become zero, also when it supplied
+    // none (S26-D7, industry-standard behaviour).
+    sv4_t value = sv4_zero(target->width, target->is_signed);
     size_t bytes = ((size_t)target->width + 7u) / 8u;
     int read = 0;
     for (size_t index = 0; index < bytes; index++) {
@@ -743,8 +769,7 @@ int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target) {
             llg_scan_set_bit(&value, (uint32_t)(bit_base + bit), (byte >> bit) & 1u);
         read++;
     }
-    if (read) llg_ref_write_owned(target, value);
-    else sv4_destroy(&value);
+    llg_ref_write_owned(target, value);
     return read;
 }
 
@@ -801,7 +826,13 @@ static int fixed_file_read_array(uint32_t descriptor, sv4_t* values, llg_fixed_a
                 llg_scan_set_bit(&value, (uint32_t)(bit_base + bit), (byte >> bit) & 1u);
             read++;
         }
-        if (!read) { sv4_destroy(&value); break; }
+        // An element the file ends inside keeps its value; its bytes still
+        // count as read (S26-D7).
+        if ((size_t)read < bytes_per_element) {
+            sv4_destroy(&value);
+            result += read;
+            break;
+        }
         llg_sv4_set_signed(&value, (int8_t)elem_signed);
         if (elem_two_state) sv4_replace(&value, sv4_to_two_state(value));
         llg_value_scope_t* value_scope = llg_value_scope_begin(1);
@@ -810,7 +841,6 @@ static int fixed_file_read_array(uint32_t descriptor, sv4_t* values, llg_fixed_a
         llg_ba(fixed ? llg_fixed_array_cell(fixed, position) : &values[position], owned[0]);
         llg_value_scope_end(value_scope);
         result += read;
-        if ((size_t)read < bytes_per_element) break;
     }
     return result;
 }

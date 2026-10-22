@@ -6,7 +6,8 @@
 // element as its `@` key and its cells. One element (`aa[k]`, also with an
 // index or slice inside it): a fixed unpacked array whose addresses are its own
 // indices; a load creates a missing key once the file and range are valid, a
-// dump of a missing or unknown key is an error that writes nothing.
+// dump of a missing or unknown key warns and writes the default value without
+// creating the element.
 module tb;
   typedef enum logic [3:0] { RED = 1, GREEN = 4 } color_t;
   class holder;
@@ -110,9 +111,10 @@ module tb;
     show_file("e3.mem");
     $writememh("e6.mem", aa[6], 2);
     show_file("e6.mem");
-    // A missing or unknown key writes no file and creates nothing.
+    // A missing or unknown key writes the default value and creates nothing.
     $writememh("miss.mem", aa[99]);
-    $writememh("miss.mem", aa[unk]);
+    show_file("miss.mem");
+    $writememh("miss.mem", aa[unk], 1);
     show_file("miss.mem");
     $display("missing n=%0d exists99=%0d", aa.num(), aa.exists(99));
 

@@ -2,7 +2,11 @@ s27_d24_keep.mem:
   0a
   0b
 s27_d24_keep.mem:
-  keep
-s27_d24_new.mem: no file
-s27_d24_unknown.mem: no file
-elements 1 exists2 0
+  xx
+  xx
+s27_d24_start.mem:
+  xx
+s27_d24_bit.mem:
+  00
+  00
+elements 1 exists2 0 bit elements 0

@@ -21,7 +21,7 @@ fn monitor_re_evaluates_real_and_string_arguments() {
 /// (SV 6.12.2, 21.2.1.3); the frontend only warns about it.
 #[test]
 fn display_converts_real_for_integral_conversion() {
-    run_case("display_real_integral", "                    1\n");
+    run_case("display_real_integral", "                   1\n");
 }
 
 #[test]

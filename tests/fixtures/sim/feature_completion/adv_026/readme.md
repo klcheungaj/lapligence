@@ -185,9 +185,9 @@ contain `@` addresses. Both editions warn "more words" for `F`.
 - `C`, two-state 12-bit binary: aaa, f0f; `x01` becomes 001 and `1z1` 101 (x/z
   read as 0, 21.4.2) with one conversion warning; 0000_0001_1111 is 01f; the
   sixth cell is unwritten (0) and five of six words warn "too few" (no `@`).
-- `I`, signed `int`: `ffffffff` is -1; `7fffffff` is 2147483647; `123456789` is
-  nine digits and is truncated from the left to `23456789` = 591751049 (5.7.1
-  L3923-3924); `80000000` is -2147483648.
+- `I`, signed `int`: `ffffffff` is -1; `7fffffff` is 2147483647; `123456789`
+  has nine digits, one more than an `int` holds: an error that ends the load,
+  so the last two cells keep 0 (S27-D2).
 - `P`, packed-struct `{hi, lo}` nibbles: `a5`, `x1` (hi is x), `0f`.
 - `N`, enum: 1, 2, 0 are GREEN, BLUE, RED.
 - `M`, `logic [3:0] [2][3]`: six words fill the cells row-major: `1 2 3 4 5 6`.
@@ -230,28 +230,28 @@ diagnostic and the printed cells.
 | D2 | `"44 /* open"` | 44 loaded; comment never closes: error |
 | D3 | `(mem, 2, 4, "11 @6 22")` | 11 at 2; `@6` outside 2..4: error, load ends (L37315-37317) |
 | D4 | `(mem, 0, 7, "11 @9 22")` | 11 at 0; `@9` outside the memory: error |
-| D5 | `(mem, 0, 9, "11")` | finish outside the memory: error, nothing loaded |
+| D5 | `(mem, 0, 9, "11")` | finish outside the memory: the word reaches only address 0 and loads; too few words for the part of the range inside the memory (S27-D7) |
 | D6 | start is `4'bx` | unknown start: error, nothing loaded |
-| D7 | start is -1 | outside the memory: error |
+| D7 | start is -1 | the first word has no cell: error, nothing loaded (S27-D7) |
 | D8 | `(mem, 0, 7, "11 22")` | 2 of 8 words: warning, 11 22 loaded |
 | D9 | `(mem, 0, 1, "11 22 33 44")` | 4 of 2 words: warning, 11 22 loaded |
 | D10 | `""` | no word: warning |
 | D11 | only comments | no word: warning |
 | D12 | `"11 @zz 22"` | `@zz` is not an address: error after 11 |
 | D13 | `$sreadmemb(..., "1 2")` | `2` is not a binary digit: error after 01 |
-| D14 | `(mem, 3, 0, "11 22 33 44 55")` | 11 at 3 ... 44 at 0; 55 past the finish: warning |
-| E1 | enum `"1 2 3 0"` | 1 and 2 are members; 3 is not: error, load ends (21.4.2 L37369-37370) |
-| S1 | slice `g[4:7]`, 6 words | cells 4..7 loaded, guards 3 and 8 unchanged: warning |
-| S2 | slice `g[4:7]`, finish 9 | outside the memory: error, nothing loaded |
+| D14 | `(mem, 3, 0, "11 22 33 44 55")` | 11 at 3 ... 44 at 0; 55 past the finish has no cell: error, load ends (S27-D8) |
+| E1 | enum `"1 2 3 10"` | 1 and 2 are members and 3, which fits the base, loads as a non-member (S27-D4); `10` has a digit more than the base holds: error, load ends (S27-D2) |
+| S1 | slice `g[4:7]`, 6 words | cells 4..7 loaded, guards 3 and 8 unchanged; the fifth word has no cell in the slice: error, load ends (S27-D8) |
+| S2 | slice `g[4:7]`, finish 9 | finish outside the slice: the word at 4 loads; too few words for the part of the range inside the slice (S27-D7) |
 | S3 | slice, `@3` | `@3` outside the slice: error after 11 |
 | S4 | slice `g[4:7]`, start 7 finish 4 | descending: cells 4..7 are 44 33 22 11 |
 | R1 | empty dynamic array, `(0, 0)` | address 0 is outside the memory: error |
-| R2 | 3-element dynamic array, finish 5 | outside its size: error, array keeps 7 8 9, size 3 |
-| R3 | same array, `(0, 2)`, 6 words | 1 2 3; extra words warn; size stays 3 (L37347) |
+| R2 | 3-element dynamic array, finish 5 | finish outside its size: 1 2 3 load, the fourth word has no cell: error, load ends, size 3 (S27-D7) |
+| R3 | same array, `(0, 2)`, 6 words | 1 2 3; the fourth word has no cell: error, load ends; size stays 3 (L37347, S27-D8) |
 | R4 | queue 7 8 9, start 2 finish 1, `"a b c"` | 7, b, a: 0xb at 1, 0xa at 2; c dropped with a warning |
 | A1 | associative array, `(0, 2)`, 4 words | entries 0, 1, 2 created with 1 2 3 (L37359-37360); warning |
 | W1 | two-state `"1x 2z 3"` | 10 20 03, cell 3 unchanged 77; conversion warning, then too few |
-| W2 | 8-bit cell, `"123"` | truncated from the left to 23, no diagnostic (5.7.1) |
+| W2 | 8-bit cell, `"123"` | a digit more than the cell holds: error, the cell stays x (S27-D2) |
 
 ### `notify.sv`, `notify.c` (step 3)
 

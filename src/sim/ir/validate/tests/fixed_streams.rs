@@ -149,7 +149,6 @@ fn memory_views_bound_their_last_element() {
         view: Box::new(view),
         radix: IrMemoryRadix::Hex,
         addressing: IrMemoryAddressingPolicy::SystemVerilog2009,
-        enum_values: None,
         start: None,
         finish: None,
     };

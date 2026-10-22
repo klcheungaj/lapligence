@@ -12,13 +12,12 @@ int main(int argc, char **argv) {
            (unsigned long long)llg_sv4_word(mux, 0, LLG_SV4_Z));
     sv4_destroy(&mux); sv4_destroy(&selector); sv4_destroy(&z);
     sv4_t memory[2] = {sv4_from_u64(1,2,0), sv4_from_u64(0,2,0)};
-    sv4_t legal[2] = {sv4_from_u64(0,2,0), sv4_from_u64(1,2,0)};
     sv4_t absent = sv4_zero(32,1);
     int32_t dims[2] = {0,1};
     llg_memory_read(llg_string_bytes(argv[1],strlen(argv[1])),memory,2,2,0,0,dims,1,
-                    absent,absent,0,0,LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009,legal,2,16);
+                    absent,absent,0,0,LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009,16);
     printf("enum_after_read: %llu %llu\n", (unsigned long long)sv4_to_u64(memory[0]), (unsigned long long)sv4_to_u64(memory[1]));
-    for(int i=0;i<2;++i) {sv4_destroy(&memory[i]);sv4_destroy(&legal[i]);}
+    for(int i=0;i<2;++i) sv4_destroy(&memory[i]);
     sv4_destroy(&absent);
     return 0;
 }

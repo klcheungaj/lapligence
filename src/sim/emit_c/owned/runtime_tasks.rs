@@ -1,5 +1,4 @@
 //! Runtime tasks which borrow packed operands or consume a published literal path.
-use super::super::constants::emit_const;
 use super::stores::Target;
 use super::*;
 
@@ -35,7 +34,6 @@ impl Frame<'_, '_> {
             view,
             radix,
             addressing,
-            enum_values,
             start,
             finish,
         } = statement
@@ -85,7 +83,6 @@ impl Frame<'_, '_> {
             total: view.total,
             radix: *radix,
             addressing: *addressing,
-            enum_values: enum_values.as_deref(),
             start: start.as_deref(),
             finish: finish.as_deref(),
         })
@@ -230,7 +227,6 @@ impl Frame<'_, '_> {
             total: task.total,
             radix: task.radix,
             addressing: task.addressing,
-            enum_values: task.enum_values.as_deref(),
             start: task.start.as_ref(),
             finish: task.finish.as_ref(),
         })?;
@@ -400,19 +396,6 @@ impl Frame<'_, '_> {
             IrMemoryAddressingPolicy::Verilog2001 => 0,
             IrMemoryAddressingPolicy::SystemVerilog2009 => 1,
         };
-        let enum_values = call.enum_values.filter(|values| !values.is_empty());
-        let enum_name = enum_values.map(|values| {
-            let rendered_values = values.iter().map(emit_const).collect::<Vec<_>>().join(", ");
-            self.line("{");
-            self.declare_array_init(
-                "sv4_t",
-                "memory_enum_values",
-                values.len(),
-                &rendered_values,
-            )
-        });
-        let enum_pointer = enum_name.as_deref().unwrap_or("NULL");
-        let enum_count = enum_values.map_or(0, <[IrConst]>::len);
         // C has no empty compound literal; a runtime-sized view passes NULL.
         let dimensions = if call.dims.is_empty() {
             "NULL".to_owned()
@@ -457,7 +440,7 @@ impl Frame<'_, '_> {
         if let Some((arguments, _)) = &text {
             self.line(format!("llg_memory_text_begin({arguments});"));
         }
-        self.line(format!("{}({}, {storage}, {}u, {}, {}, {dimensions}, {}, {strides}, {origin}, {view_total}, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
+        self.line(format!("{}({}, {storage}, {}u, {}, {}, {dimensions}, {}, {strides}, {origin}, {view_total}, {first}, {last}, {}, {}, {addressing}, {radix});",
             call.runtime, path.take_string(), element.width,
             u8::from(element.signed), u8::from(element.two_state), call.dims.len(),
             u8::from(call.start.is_some()), u8::from(call.finish.is_some())));
@@ -466,10 +449,6 @@ impl Frame<'_, '_> {
             if let Some(value) = value {
                 self.native_discard(value);
             }
-        }
-        if let Some(enum_name) = enum_name {
-            self.line(format!("sv4_destroy_array({enum_name}, {enum_count});"));
-            self.line("}");
         }
         self.native_discard(path);
         if let Some(value) = start_value {
@@ -793,7 +772,6 @@ struct MemoryCall<'a> {
     total: u64,
     radix: IrMemoryRadix,
     addressing: IrMemoryAddressingPolicy,
-    enum_values: Option<&'a [IrConst]>,
     start: Option<&'a IrExpr>,
     finish: Option<&'a IrExpr>,
 }

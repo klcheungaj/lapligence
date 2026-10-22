@@ -1,8 +1,9 @@
 // SIM-026 A01: $sscanf into elements of queues, dynamic arrays, fixed string
 // arrays and associative arrays: packed, string and real elements and bit
-// selections of packed elements (IEEE 1800-2009 21.3.4.3). Element keys are
-// evaluated once when the call starts, so `sq[i]` in E names `sq[0]` although
-// the same call assigns `i` first. A failed conversion leaves its element
+// selections of packed elements (IEEE 1800-2009 21.3.4.3). A key that reads an
+// earlier destination of the same call is evaluated when the element is
+// stored, so `sq[i]` in E names `sq[1]` after the call assigns `i` (S26-D1).
+// A failed conversion leaves its element
 // unchanged (F), and an element of an invalid index is not created (G).
 module tb;
   int q[$];

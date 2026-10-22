@@ -8,10 +8,11 @@ Section numbers refer to IEEE 1800-2009.
 
 ## Integral conversions (`integral_sizes`)
 
-- `%d` without a width is as wide as the largest value of the argument's
-  type, padded with spaces; a signed type adds one column for the sign
-  (21.2.1.3): 12 bits → 4 columns (`  10`), `int` → 11, signed 8 bits → 4
-  (`  -5`), `byte` −128 → `-128`. `%h`/`%o`/`%b` pad with zeros to the
+- `%d` without a width is as wide as the largest unsigned value of the
+  argument's width, padded with spaces (21.2.1.3): 12 bits → 4 columns
+  (`  10`). A signed argument of 2 to 32 bits takes 11 columns, like `int`
+  (signed 8 bits → `         -5`, `byte` −128 → `       -128`), and a wider
+  signed one the unsigned digit count (decision S24-D1). `%h`/`%o`/`%b` pad with zeros to the
   type's digit count (`00a`, `0012`).
 - `%0` selects the minimum width (`B|10|a|12|1010|`); an explicit width is a
   minimum: a 32-bit `%3h` of 5 prints `005`, of `'h1234` prints `1234`, and
@@ -27,7 +28,7 @@ Section numbers refer to IEEE 1800-2009.
   (`"AB"` → 16706).
 - `%e`/`%f` of an integral argument convert it to real; `%d`/`%h` of a real
   argument convert it to a 64-bit signed integer by rounding (6.12.2), so
-  `%d` of 2.5 is 21 columns wide and `%h` of −1.5 is `fffffffffffffffe`
+  `%d` of 2.5 is 20 columns wide and `%h` of −1.5 is `fffffffffffffffe`
   (the frontend only warns).
 - Argument lists (21.2.1): a string literal argument is a format that
   consumes the following arguments; any other argument without a

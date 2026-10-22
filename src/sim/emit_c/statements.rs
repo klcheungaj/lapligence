@@ -315,7 +315,6 @@ fn render_stmt_scoped(
             view,
             radix,
             addressing,
-            enum_values,
             start,
             finish,
         } => render_memory(
@@ -325,7 +324,6 @@ fn render_stmt_scoped(
             view,
             *radix,
             *addressing,
-            enum_values.as_deref(),
             start.as_deref(),
             finish.as_deref(),
         )?,

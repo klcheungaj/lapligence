@@ -506,14 +506,33 @@ impl Codegen<'_> {
     /// elements are written in place through runtime descriptors; string and
     /// real container elements and selections of packed container elements
     /// are staged (SIM-026). `tag` names the staging locals uniquely.
+    ///
+    /// A `late` destination is selected when its value is stored, after the
+    /// earlier destinations of the call were assigned (S26-D1): its value is
+    /// staged and its selectors and keys are evaluated by the store. Selections
+    /// of container elements and class properties stay selected at the call.
     pub(super) fn lower_scan_destination(
         &mut self,
         scope_path: &str,
         node: NodeId,
         tag: &str,
+        late: bool,
     ) -> Result<(IrFileInputTarget, Option<StagedInput>), String> {
-        if let Some(staged) = self.container_scalar_input_stage(scope_path, node, tag)? {
-            return Ok(staged);
+        if let Some((target, stage)) = self.container_scalar_input_stage(scope_path, node, tag)? {
+            let Some(mut stage) = stage else {
+                return Ok((target, None));
+            };
+            if !late {
+                return Ok((target, Some(stage)));
+            }
+            // The prelude ends with the value temporary; the key locals
+            // before it move into the store.
+            let value = stage.prelude.pop();
+            let mut store = std::mem::take(&mut stage.prelude);
+            store.push(stage.store);
+            stage.prelude.extend(value);
+            stage.store = IrStmt::Block(store);
+            return Ok((target, Some(stage)));
         }
         if let Some(input) = self.container_select_input_stage(scope_path, node, tag)? {
             let (prelude, lhs, width, store) =
@@ -553,7 +572,12 @@ impl Codegen<'_> {
             }
         }
         self.check_scan_destination_shape(scope_path, node)?;
-        Ok((self.lower_file_input_target(scope_path, node)?, None))
+        let target = self.lower_file_input_target(scope_path, node)?;
+        Ok(if late {
+            Self::late_scan_destination(target, tag)
+        } else {
+            (target, None)
+        })
     }
 
     /// Reject destinations SV 21.3.4.3 excludes: integer conversions "shall
@@ -727,6 +751,153 @@ impl Codegen<'_> {
                 store: IrStmt::Container(Box::new(store)),
             }),
         )))
+    }
+
+    /// Stage a packed or real scan destination whose selectors read an
+    /// earlier destination of the same call: the conversion writes a
+    /// temporary of the destination's type and the store assigns it through
+    /// the original lvalue, so the selectors are evaluated after the earlier
+    /// destinations were assigned. Other destination kinds stay direct.
+    fn late_scan_destination(
+        target: IrFileInputTarget,
+        tag: &str,
+    ) -> (IrFileInputTarget, Option<StagedInput>) {
+        let name = format!("_sil{tag}");
+        match target {
+            IrFileInputTarget::Packed {
+                lhs,
+                width,
+                signed,
+                two_state,
+            } => {
+                let prelude = vec![IrStmt::DeclLocal {
+                    name: name.clone(),
+                    width,
+                    signed,
+                    two_state,
+                    init: None,
+                }];
+                let store = IrStmt::Assign {
+                    lhs: *lhs,
+                    rhs: IrExpr::new(IrExprKind::LocalRead(name.clone()), width, signed, None),
+                    nba: false,
+                };
+                (
+                    IrFileInputTarget::Packed {
+                        lhs: Box::new(IrLhs::WholeRef {
+                            addr: format!("&{name}"),
+                            width,
+                            signed,
+                            two_state,
+                            shortreal: false,
+                        }),
+                        width,
+                        signed,
+                        two_state,
+                    },
+                    Some(StagedInput { prelude, store }),
+                )
+            }
+            IrFileInputTarget::Real { lhs, shortreal } => {
+                let prelude = vec![IrStmt::DeclLocal {
+                    name: name.clone(),
+                    width: 0,
+                    signed: false,
+                    two_state: false,
+                    init: Some(Box::new(super::super::real_literal_expr(0.0))),
+                }];
+                let store = IrStmt::Assign {
+                    lhs: *lhs,
+                    rhs: IrExpr::new(IrExprKind::LocalRead(name.clone()), 0, false, None),
+                    nba: false,
+                };
+                (
+                    IrFileInputTarget::Real {
+                        lhs: Box::new(IrLhs::WholeRef {
+                            addr: format!("&{name}"),
+                            width: 0,
+                            signed: false,
+                            two_state: false,
+                            shortreal,
+                        }),
+                        shortreal,
+                    },
+                    Some(StagedInput { prelude, store }),
+                )
+            }
+            IrFileInputTarget::Element {
+                read,
+                width,
+                signed,
+                two_state,
+            } => {
+                let value = IrExpr::new(IrExprKind::LocalRead(name.clone()), width, signed, None);
+                let store = match read.kind() {
+                    IrExprKind::Container(operation) => match operation.as_ref() {
+                        IrContainerExpr::Get { container, index } => IrContainerStmt::Set {
+                            container: *container,
+                            index: (**index).clone(),
+                            value,
+                        },
+                        IrContainerExpr::GetString { container, key } => {
+                            IrContainerStmt::SetString {
+                                container: *container,
+                                key: key.clone(),
+                                value,
+                            }
+                        }
+                        _ => {
+                            return (
+                                IrFileInputTarget::Element {
+                                    read,
+                                    width,
+                                    signed,
+                                    two_state,
+                                },
+                                None,
+                            )
+                        }
+                    },
+                    _ => {
+                        return (
+                            IrFileInputTarget::Element {
+                                read,
+                                width,
+                                signed,
+                                two_state,
+                            },
+                            None,
+                        )
+                    }
+                };
+                let prelude = vec![IrStmt::DeclLocal {
+                    name: name.clone(),
+                    width,
+                    signed,
+                    two_state,
+                    init: None,
+                }];
+                (
+                    IrFileInputTarget::Packed {
+                        lhs: Box::new(IrLhs::WholeRef {
+                            addr: format!("&{name}"),
+                            width,
+                            signed,
+                            two_state,
+                            shortreal: false,
+                        }),
+                        width,
+                        signed,
+                        two_state,
+                    },
+                    Some(StagedInput {
+                        prelude,
+                        store: IrStmt::Container(Box::new(store)),
+                    }),
+                )
+            }
+            other => (other, None),
+        }
     }
 
     /// Wrap a lowered file-input call whose destinations include staged ones.

@@ -121,8 +121,10 @@ const MALFORMED: &str = "malformed or over-width memory token; load terminated";
 const JUMP: &str =
     "address jump is outside the destination memory or selected range; load terminated";
 const OUTSIDE: &str = "selected range includes an address outside the memory";
+const WORD_OUTSIDE: &str = "memory word address is outside the destination memory; load terminated";
 const TOO_FEW: &str = "memory string contains too few words for the selected range";
 const MORE: &str = "memory string contains more words than the selected range";
+const DIGITS: &str = "memory word has more digits than the element holds; load terminated";
 
 /// For each pair of (file, string) lines `X file ...` / `X str  ...` of an
 /// equivalence fixture's output, the words after the tag are equal.
@@ -217,9 +219,10 @@ fn systemverilog_element_types_load_like_the_equivalent_file_image() {
             assert_eq!(stdout, fixture!("equivalence_sv.out"), "{label}: stdout");
             assert_file_and_string_agree(label, &stdout);
             // The two-state memory reads x/z digits as 0 with one warning
-            // (21.4.2) and five words fill five of six cells.
+            // (21.4.2) and five words fill five of six cells; a nine-digit
+            // `int` word ends its load (S27-D2).
             let found = memory_diagnostics(output);
-            assert_eq!(found.len(), 4, "{label}: {found:#?}");
+            assert_eq!(found.len(), 6, "{label}: {found:#?}");
             assert_eq!(
                 found[0],
                 "warning: memory file `c.bin`: X/Z memory data converted to a two-state element",
@@ -234,6 +237,12 @@ fn systemverilog_element_types_load_like_the_equivalent_file_image() {
             assert_eq!(normalized(&found[3]), normalized(&found[1]), "{label}");
             assert_label_is_a_call(source, diagnostic_label(&found[2]));
             assert_label_is_a_call(source, diagnostic_label(&found[3]));
+            assert_eq!(
+                found[4],
+                format!("error: memory file `i.hex`: {DIGITS}"),
+                "{label}"
+            );
+            assert_eq!(normalized(&found[5]), normalized(&found[4]), "{label}");
         },
     );
 }
@@ -377,20 +386,20 @@ fn erroneous_strings_and_arguments_report_and_never_write_outside() {
         ("D2", "error", MALFORMED),
         ("D3", "error", JUMP),
         ("D4", "error", JUMP),
-        ("D5", "error", OUTSIDE),
+        ("D5", "warning", TOO_FEW),
         (
             "D6",
             "error",
             "start address is unknown or outside the index range",
         ),
-        ("D7", "error", OUTSIDE),
+        ("D7", "error", WORD_OUTSIDE),
         ("D8", "warning", TOO_FEW),
         ("D9", "warning", MORE),
         ("D10", "warning", TOO_FEW),
         ("D11", "warning", TOO_FEW),
         ("D12", "error", MALFORMED),
         ("D13", "error", MALFORMED),
-        ("D14", "warning", MORE),
+        ("D14", "error", WORD_OUTSIDE),
     ];
     let expected: Vec<String> = cases
         .iter()
@@ -417,18 +426,14 @@ fn erroneous_strings_and_arguments_report_and_never_write_outside() {
 #[test]
 fn erroneous_systemverilog_storage_reports_and_never_writes_outside() {
     let source = fixture!("diagnostics_sv.sv");
-    let cases: [(&str, &str, &str); 11] = [
-        (
-            "E1",
-            "error",
-            "memory data value is not a member of the enum; load terminated",
-        ),
-        ("S1", "warning", MORE),
-        ("S2", "error", OUTSIDE),
+    let cases: [(&str, &str, &str); 12] = [
+        ("E1", "error", DIGITS),
+        ("S1", "error", WORD_OUTSIDE),
+        ("S2", "warning", TOO_FEW),
         ("S3", "error", JUMP),
         ("R1", "error", OUTSIDE),
-        ("R2", "error", OUTSIDE),
-        ("R3", "warning", MORE),
+        ("R2", "error", WORD_OUTSIDE),
+        ("R3", "error", WORD_OUTSIDE),
         ("R4", "warning", MORE),
         ("A1", "warning", MORE),
         (
@@ -437,9 +442,9 @@ fn erroneous_systemverilog_storage_reports_and_never_writes_outside() {
             "X/Z memory data converted to a two-state element",
         ),
         ("W1", "warning", TOO_FEW),
+        ("W2", "error", DIGITS),
     ];
-    // S4 (a descending load of a slice) and W2 (a word wider than its cell)
-    // report nothing.
+    // S4 (a descending load of a slice) reports nothing.
     let expected: Vec<String> = cases
         .iter()
         .map(|(tag, severity, message)| string_diagnostic(source, tag, severity, message))

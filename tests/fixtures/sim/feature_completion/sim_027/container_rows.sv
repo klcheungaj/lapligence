@@ -14,7 +14,7 @@ module tb;
   logic [7:0] dq [$][1:0];
   logic [7:0] grid [][2][2];
   int empty [][2];
-  logic [7:0] back [0:3];
+  int back [0:3];
   int k;
   int j;
   int calls;
@@ -49,7 +49,7 @@ module tb;
     // A dump of one element, read back.
     $writememh("dump.mem", da[k]);
     $readmemh("dump.mem", back);
-    $display("dump %h %h %h %h", back[0], back[1], back[2], back[3]);
+    $display("dump %0h %0h %0h %0h", back[0], back[1], back[2], back[3]);
 
     // A queue of descending two-element arrays: a slice ending at `$`, and
     // the last element.
@@ -84,7 +84,7 @@ module tb;
     $readmemh("four.mem", empty);
     $display("kept %p", da);
     $readmemh("dump.mem", back);
-    $display("kept dump %h %h %h %h", back[0], back[1], back[2], back[3]);
+    $display("kept dump %0h %0h %0h %0h", back[0], back[1], back[2], back[3]);
     $finish;
   end
 endmodule

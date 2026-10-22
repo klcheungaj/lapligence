@@ -25,7 +25,7 @@ module tb;
   endtask
 
   initial begin
-    $sreadmemh(ce, 0, 3, "1 2 3 0"); // E1
+    $sreadmemh(ce, 0, 3, "1 2 3 10"); // E1
     $display("E1 %b %b %b %b", ce[0], ce[1], ce[2], ce[3]);
 
     fresh; $sreadmemh(g[4:7], 4, 7, "11 22 33 44 55 66"); show("S1"); // S1

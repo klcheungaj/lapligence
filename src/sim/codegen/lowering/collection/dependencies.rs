@@ -754,6 +754,74 @@ impl<'a> Codegen<'a> {
             .any(|read| writes.iter().any(|write| self.same_storage(read, write))))
     }
 
+    /// Whether the run-time selectors of the lvalue `lhs` (its indices and
+    /// part-select bounds, not its own storage) can observe storage written
+    /// through any of the lvalue nodes in `targets`. A target whose writes
+    /// cannot be represented as storage dependencies is treated as
+    /// overlapping; an lvalue with only constant selectors never overlaps.
+    pub(in super::super) fn lhs_selectors_read_lvalue_writes(
+        &self,
+        scope_path: &str,
+        lhs: NodeId,
+        targets: &[NodeId],
+    ) -> Result<bool, String> {
+        if targets.is_empty() || !self.lhs_has_runtime_selector(lhs) {
+            return Ok(false);
+        }
+        let mut writes = HashSet::new();
+        for target in targets {
+            let mut target_writes = HashSet::new();
+            self.add_process_lhs_write_bound(*target, &mut target_writes, &HashMap::new());
+            if target_writes.is_empty() {
+                return Ok(true);
+            }
+            writes.extend(target_writes);
+        }
+        let mut reads = Vec::new();
+        self.walk_lhs_select_reads(
+            scope_path,
+            lhs,
+            &mut HashSet::new(),
+            &mut HashSet::new(),
+            &mut reads,
+        )?;
+        Ok(reads
+            .iter()
+            .any(|read| writes.iter().any(|write| self.same_storage(read, write))))
+    }
+
+    /// Whether `lhs` selects through a non-constant index or bound anywhere
+    /// in its selection chain.
+    fn lhs_has_runtime_selector(&self, lhs: NodeId) -> bool {
+        let mut node = lhs;
+        loop {
+            let (base, selectors): (NodeId, Vec<NodeId>) = match self.kind(node) {
+                NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, vec![*index]),
+                NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => (*base, indices.clone()),
+                NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+                    (*base, vec![*left, *right])
+                }
+                NodeKind::Expr(ExprKind::IndexedPartSelect {
+                    base,
+                    base_expr,
+                    width_expr,
+                    ..
+                }) => (*base, vec![*base_expr, *width_expr]),
+                NodeKind::Expr(ExprKind::MemberSelect { base, .. }) => (*base, Vec::new()),
+                _ => return false,
+            };
+            if selectors.iter().any(|selector| {
+                !matches!(
+                    self.kind(*selector),
+                    NodeKind::Expr(ExprKind::Constant { .. })
+                )
+            }) {
+                return true;
+            }
+            node = base;
+        }
+    }
+
     /// Storage a process owns under the always_comb/always_latch/always_ff
     /// single-writer rule. Overrides (force, release and procedural
     /// continuous assignments) are not ordinary assignments and stay legal

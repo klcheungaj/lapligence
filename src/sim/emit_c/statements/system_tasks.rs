@@ -1,8 +1,6 @@
 //! System tasks.
 
-use super::super::constants::emit_const;
 use super::*;
-use crate::sim::ir::IrConst;
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_memory(
@@ -12,7 +10,6 @@ pub(super) fn render_memory(
     view: &crate::sim::ir::IrMemoryView,
     radix: IrMemoryRadix,
     addressing: IrMemoryAddressingPolicy,
-    enum_values: Option<&[IrConst]>,
     start: Option<&IrExpr>,
     finish: Option<&IrExpr>,
 ) -> Result<String, String> {
@@ -90,28 +87,6 @@ pub(super) fn render_memory(
         IrMemoryAddressingPolicy::Verilog2001 => 0,
         IrMemoryAddressingPolicy::SystemVerilog2009 => 1,
     };
-    let enum_values = enum_values.filter(|values| !values.is_empty());
-    let enum_count = enum_values.map_or(0, <[_]>::len);
-    let enum_pointer = if enum_values.is_some() {
-        "_llg_memory_enum_values"
-    } else {
-        "NULL"
-    };
-    let enum_declaration = enum_values
-        .map(|values| {
-            let entry_count = values.len();
-            let rendered_values = values.iter().map(emit_const).collect::<Vec<_>>().join(", ");
-            format!(
-                "             sv4_t _llg_memory_enum_values[{}] = {{ {} }};\n",
-                entry_count, rendered_values
-            )
-        })
-        .unwrap_or_default();
-    let enum_cleanup = if enum_values.is_some() {
-        format!("             sv4_destroy_array(_llg_memory_enum_values, {enum_count});\n")
-    } else {
-        String::new()
-    };
     let dimensions = view
         .dims
         .iter()
@@ -130,13 +105,11 @@ pub(super) fn render_memory(
              {selector_declarations}\
              sv4_t _llg_memory_start = {start_value};\n\
              sv4_t _llg_memory_finish = {finish_value};\n\
-             {enum_declaration}\
              {runtime}(_llg_memory_path, {name}, {total}ULL, {width}u, {signed}, {two_state},\n\
                        (const int32_t[]){{ {dimensions} }}, {n_dims},\n\
                        (const uint64_t[]){{ {strides} }}, {origin}, {view_total}ULL,\n\
-                       _llg_memory_start, _llg_memory_finish, {has_start}, {has_finish}, {addressing}, {enum_pointer}, {enum_count}, {radix});\n\
+                       _llg_memory_start, _llg_memory_finish, {has_start}, {has_finish}, {addressing}, {radix});\n\
              {selector_cleanups}\
-             {enum_cleanup}\
          }}\n",
         name = array_info.c_name,
         total = array_info.total,
@@ -145,10 +118,6 @@ pub(super) fn render_memory(
         two_state = array_info.two_state as u8,
         has_start = start.is_some() as u8,
         has_finish = finish.is_some() as u8,
-        enum_declaration = enum_declaration,
-        enum_pointer = enum_pointer,
-        enum_count = enum_count,
-        enum_cleanup = enum_cleanup,
         selector_declarations = selector_declarations,
         selector_cleanups = selector_cleanups,
         origin = origin,
@@ -201,26 +170,10 @@ pub(super) fn render_vpi_call(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sim::ir::{IrArray, IrConst, IrMemoryView, IrModel, IrModelParts, IrStringExpr};
-
-    fn wide_enum_values() -> Vec<IrConst> {
-        (1..=3)
-            .map(|value| {
-                IrConst::packed(
-                    vec![value, value << 8, value],
-                    vec![0, 0, 0],
-                    vec![0, 0, 0],
-                    130,
-                    false,
-                    None,
-                )
-                .expect("wide enum value")
-            })
-            .collect()
-    }
+    use crate::sim::ir::{IrArray, IrMemoryView, IrModel, IrModelParts, IrStringExpr};
 
     #[test]
-    fn legacy_memory_emitter_uses_enum_entry_count_for_c_array_bound() {
+    fn legacy_memory_emitter_ends_with_addressing_and_radix() {
         let array = IrArray::new(
             "G_memory".to_owned(),
             "tb.memory".to_owned(),
@@ -230,7 +183,7 @@ mod tests {
         )
         .expect("memory array");
         let model = IrModel::from_parts(
-            "enum_memory".to_owned(),
+            "memory".to_owned(),
             1,
             IrModelParts {
                 arrays: vec![array],
@@ -246,11 +199,10 @@ mod tests {
             activation_label: None,
             constants: None,
         };
-        let values = wide_enum_values();
         let rendered = render_memory(
             &ctx,
             false,
-            &IrStringExpr::Literal(b"enum.mem".to_vec()),
+            &IrStringExpr::Literal(b"words.mem".to_vec()),
             &IrMemoryView {
                 array: 0,
                 origin: 0,
@@ -262,17 +214,11 @@ mod tests {
             },
             IrMemoryRadix::Hex,
             IrMemoryAddressingPolicy::SystemVerilog2009,
-            Some(&values),
             None,
             None,
         )
         .expect("legacy memory rendering");
 
-        let declaration = rendered
-            .lines()
-            .find(|line| line.contains("sv4_t _llg_memory_enum_values"))
-            .expect("enum declaration");
-        assert!(declaration.contains("[3]"), "{declaration}");
-        assert!(rendered.contains(", 3, 16);"), "{rendered}");
+        assert!(rendered.contains(", 0, 0, 1, 16);"), "{rendered}");
     }
 }

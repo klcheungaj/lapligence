@@ -9,16 +9,16 @@ module tb;
         signed_memory = '{NIL, NIL};
         $readmemh("enum.hex", memory);
         if (memory[0] !== ONE || memory[1] !== ONE || memory[2] !== ONE)
-            $fatal(1, "two-state normalization must not hide high enum overflow");
+            $fatal(1, "two-state normalization must not hide a word with a digit too many");
         $readmemh("signed.hex", signed_memory);
         if (signed_memory[0] !== NEGATIVE || signed_memory[1] !== NIL)
-            $fatal(1, "signed enum redundant extension");
+            $fatal(1, "signed enum word truncated to its base");
         $readmemh("two_state.hex", bits_memory);
         if (bits_memory[0] !== 7 || bits_memory[1] !== 1)
             $fatal(1, "two-state memory conversion");
         $readmemh("enum_unknown.hex", memory);
         if (memory[0] !== ZERO || memory[1] !== ONE || memory[2] !== ZERO)
-            $fatal(1, "two-state enum X/Z words convert to zero before membership");
+            $fatal(1, "two-state enum X/Z words convert to zero");
         $display("MEMORY_ENUM_CONVERSION_PASS");
         $finish(0);
     end

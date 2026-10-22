@@ -1645,9 +1645,6 @@ void llg_file_display_typed(uint32_t descriptor, const char* fmt,
 // Addressing policy is 0 for the Verilog-2001 declaration-order defaults and
 // 1 for the SystemVerilog-2009 low-to-high defaults. Explicit start/finish
 // bounds are honored in source order for either policy.
-// `enum_values` is a borrowed table used by reads to reject a non-member word;
-// writes ignore that table. Both the table and its elements remain owned by
-// the generated call scope.
 // The unsuffixed entry points retain the one-dimensional ABI; generated
 // multidimensional calls use the `_view` entry points below.
 enum {
@@ -1664,40 +1661,40 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
                      uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                      const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
                      int has_start, int has_finish, int addressing_policy,
-                     const sv4_t* enum_values, uint32_t enum_count, int radix);
+                     int radix);
 void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
                       uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                       const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
                       int has_start, int has_finish, int addressing_policy,
-                      const sv4_t* enum_values, uint32_t enum_count, int radix);
+                      int radix);
 void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                           const int32_t* dims, int n_dims,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
-                          const sv4_t* enum_values, uint32_t enum_count, int radix);
+                          int radix);
 void llg_fixed_memory_read_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                           const int32_t* dims, int n_dims,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
-                          const sv4_t* enum_values, uint32_t enum_count, int radix);
+                          int radix);
 void llg_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
                            uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                            const int32_t* dims, int n_dims,
                            const uint64_t* strides, uint64_t origin,
                            uint64_t view_total, sv4_t start, sv4_t finish,
                            int has_start, int has_finish, int addressing_policy,
-                           const sv4_t* enum_values, uint32_t enum_count, int radix);
+                           int radix);
 void llg_fixed_memory_write_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
                            uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                            const int32_t* dims, int n_dims,
                            const uint64_t* strides, uint64_t origin,
                            uint64_t view_total, sv4_t start, sv4_t finish,
                            int has_start, int has_finish, int addressing_policy,
-                           const sv4_t* enum_values, uint32_t enum_count, int radix);
+                           int radix);
 
 // Image entry points address the packed image of a fixed array without model
 // storage: `width` = `total` * `elem_width` bits of `*storage` starting at bit
@@ -1719,7 +1716,7 @@ void llg_image_memory_read_view(llg_string_t path, const llg_memory_image_t* mem
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
-                          const sv4_t* enum_values, uint32_t enum_count, int radix);
+                          int radix);
 void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* memory,
                            uint64_t total,
                            uint32_t elem_width, int8_t elem_signed, int8_t two_state,
@@ -1727,7 +1724,7 @@ void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* me
                            const uint64_t* strides, uint64_t origin,
                            uint64_t view_total, sv4_t start, sv4_t finish,
                            int has_start, int has_finish, int addressing_policy,
-                           const sv4_t* enum_values, uint32_t enum_count, int radix);
+                           int radix);
 
 // Container entry points address a dynamic array, queue or fixed-size class
 // property in place. With `n_dims` 0 the view is `[0:size-1]` of the current
@@ -1739,7 +1736,7 @@ void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* me
               int8_t elem_signed, int8_t two_state, const int32_t* dims, int n_dims, \
               const uint64_t* strides, uint64_t origin, uint64_t view_total,         \
               sv4_t start, sv4_t finish, int has_start, int has_finish,              \
-              int addressing_policy, const sv4_t* enum_values, uint32_t enum_count,  \
+              int addressing_policy, \
               int radix);
 LLG_CONTAINER_MEMORY_DECL(llg_dyn_memory_read_view, struct llg_dyn_array_t)
 LLG_CONTAINER_MEMORY_DECL(llg_dyn_memory_write_view, struct llg_dyn_array_t)
@@ -1770,8 +1767,7 @@ enum {
               uint32_t elem_width, int8_t elem_signed, int8_t two_state,                 \
               const int32_t* dims, int n_dims, const uint64_t* strides, uint64_t origin, \
               uint64_t view_total, sv4_t start, sv4_t finish, int has_start,             \
-              int has_finish, int addressing_policy, const sv4_t* enum_values,           \
-              uint32_t enum_count, int radix);
+              int has_finish, int addressing_policy, int radix);
 LLG_ROWS_MEMORY_DECL(llg_dyn_rows_memory_read_view, struct llg_dyn_value_array_t)
 LLG_ROWS_MEMORY_DECL(llg_dyn_rows_memory_write_view, struct llg_dyn_value_array_t)
 LLG_ROWS_MEMORY_DECL(llg_queue_rows_memory_read_view, struct llg_queue_value_array_t)

@@ -34,7 +34,6 @@ struct MemoryGeometry {
 struct MemoryOperands {
     radix: IrMemoryRadix,
     addressing: IrMemoryAddressingPolicy,
-    enum_values: Option<Vec<IrConst>>,
     start: Option<IrExpr>,
     finish: Option<IrExpr>,
 }
@@ -211,7 +210,7 @@ impl EmitCtx<'_, '_> {
                 self.path
             )
         })?;
-        let operands = self.lower_memory_operands(name, args, &element, write)?;
+        let operands = self.lower_memory_operands(name, args, &element)?;
         self.check_memory_edition(name, array_rank, view.sliced)?;
         Ok(IrStmt::Memory {
             write,
@@ -220,7 +219,6 @@ impl EmitCtx<'_, '_> {
             view: Box::new(view),
             radix: operands.radix,
             addressing: operands.addressing,
-            enum_values: operands.enum_values,
             start: operands.start.map(Box::new),
             finish: operands.finish.map(Box::new),
         })
@@ -334,7 +332,7 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        let operands = self.lower_memory_operands(name, args, &element, write)?;
+        let operands = self.lower_memory_operands(name, args, &element)?;
         let element_width = Codegen::fixed_descriptor_width(&element).ok_or_else(|| {
             format!(
                 "{name} requires packed integral or packed-struct memory elements in `{}`",
@@ -393,7 +391,6 @@ impl EmitCtx<'_, '_> {
             total: geometry.total,
             radix: operands.radix,
             addressing: operands.addressing,
-            enum_values: operands.enum_values,
             start: operands.start,
             finish: operands.finish,
         })))
@@ -500,7 +497,7 @@ impl EmitCtx<'_, '_> {
         if Codegen::fixed_descriptor_width(&element) != Some(width) {
             return Err(packed_elements());
         }
-        let operands = self.lower_memory_operands(name, args, &element, write)?;
+        let operands = self.lower_memory_operands(name, args, &element)?;
         let geometry = if root_dims.is_empty() {
             if !selectors.is_empty() {
                 return Err(format!(
@@ -548,7 +545,6 @@ impl EmitCtx<'_, '_> {
             total: geometry.total,
             radix: operands.radix,
             addressing: operands.addressing,
-            enum_values: operands.enum_values,
             start: operands.start,
             finish: operands.finish,
         })))
@@ -651,7 +647,7 @@ impl EmitCtx<'_, '_> {
             return Err(packed_elements());
         };
         // The packed element type, below the container and every fixed
-        // dimension, for enum members and the element checks.
+        // dimension, for the element checks.
         let mut descriptor = self
             .cg
             .query_descriptor(root)
@@ -665,7 +661,7 @@ impl EmitCtx<'_, '_> {
         if Codegen::fixed_descriptor_width(&descriptor) != Some(width) {
             return Err(packed_elements());
         }
-        let operands = self.lower_memory_operands(name, args, &descriptor, write)?;
+        let operands = self.lower_memory_operands(name, args, &descriptor)?;
         let row_cells = Self::memory_extent_product(name, &dimensions, &self.path)?;
         let (root_dims, mut ir_selectors, geometry) = match row {
             Some(row) => {
@@ -751,7 +747,6 @@ impl EmitCtx<'_, '_> {
             total: geometry.total,
             radix: operands.radix,
             addressing: operands.addressing,
-            enum_values: operands.enum_values,
             start: operands.start,
             finish: operands.finish,
         })))
@@ -919,14 +914,14 @@ impl EmitCtx<'_, '_> {
         Ok(value)
     }
 
-    /// Element checks, start/finish bounds, enum members, radix and default
-    /// addressing shared by both storage forms.
+    /// Element checks, start/finish bounds, radix and default addressing
+    /// shared by both storage forms. An enum element takes any word, member
+    /// or not (S27-D4).
     fn lower_memory_operands(
         &mut self,
         name: &str,
         args: &[NodeId],
         element: &TypeDescriptor,
-        write: bool,
     ) -> Result<MemoryOperands, String> {
         if !matches!(
             element.shape,
@@ -953,29 +948,6 @@ impl EmitCtx<'_, '_> {
         };
         let start = args.get(2).copied().map(&mut lower_bound).transpose()?;
         let finish = args.get(3).copied().map(&mut lower_bound).transpose()?;
-        let enum_values = if write || element.info.kind != "enum" {
-            None
-        } else {
-            let metadata = self.cg.db.enum_type_metadata(element.id).ok_or_else(|| {
-                format!(
-                    "{name} enum memory element has no owned enum metadata in `{}`",
-                    self.path
-                )
-            })?;
-            Some(
-                metadata
-                    .members
-                    .iter()
-                    .map(|member| match &member.value {
-                        Val::Bits(value) => val_to_const(value),
-                        _ => Err(format!(
-                            "{name} enum member `{}` has a non-integral value in `{}`",
-                            member.name, self.path
-                        )),
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            )
-        };
         let radix = match name {
             "$readmemb" | "$writememb" | "$sreadmemb" => IrMemoryRadix::Binary,
             "$readmemh" | "$writememh" | "$sreadmemh" => IrMemoryRadix::Hex,
@@ -988,7 +960,6 @@ impl EmitCtx<'_, '_> {
         Ok(MemoryOperands {
             radix,
             addressing,
-            enum_values,
             start,
             finish,
         })

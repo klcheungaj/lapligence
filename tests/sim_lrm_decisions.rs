@@ -352,6 +352,14 @@ fn s20_6_dynamic_cast_whole_elements() {
 }
 
 #[test]
+fn s24_d1_signed_decimal_field_width() {
+    run_decision(
+        "S24-D1_signed_decimal_field_width",
+        include_str!("fixtures/sim/lrm_decisions/S24-D1_signed_decimal_field_width.out"),
+    );
+}
+
+#[test]
 fn s26_d1_scan_selector_snapshot() {
     run_decision(
         "S26-D1_scan_selector_snapshot",

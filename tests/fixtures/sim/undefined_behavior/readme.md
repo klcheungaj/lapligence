@@ -30,11 +30,12 @@ elements the text only says (IEEE 1800-2009 21.4.2, L37368-37370):
 > out of range for a given type, then an error shall be issued and no further
 > reading shall take place.
 
-It does not say how a number with more digits than the base type, or one with
-x or z bits, compares with the member values. `llg` compares at the base width,
-accepts extra bits only when they are zero (unsigned base) or repeat the sign
-bit (signed base), and accepts x/z bits only when a member has exactly that
-value (decision S27-D4 in [the register](../../../../docs/lrm_decisions.md)).
+It does not say whether "out of range" means outside the base type's width or
+not a member value. `llg` follows industry-standard behaviour and reads it as
+the width: an enum word is stored like a word of the base type, member or not,
+and only a number with more digits than the base type needs is an error that
+ends the load (decisions S27-D2 and S27-D4 in
+[the register](../../../../docs/lrm_decisions.md)).
 
 For a malformed token the text only lists what the file may contain (IEEE
 1800-2009 21.4, L37268-37271; IEEE 1364-2001 17.2.8, L19311-19316):

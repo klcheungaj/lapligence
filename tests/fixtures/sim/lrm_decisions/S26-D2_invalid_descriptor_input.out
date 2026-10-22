@@ -1,1 +1,2 @@
-fscanf=-1 fgetc=-1 feof=-1 a=9
+fscanf=0 fgetc=-1 feof=-1 a=9
+write-only fscanf=-1 a=9

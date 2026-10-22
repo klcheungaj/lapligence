@@ -258,7 +258,6 @@ pub struct IrMemoryAccess {
     pub total: u64,
     pub radix: IrMemoryRadix,
     pub addressing: IrMemoryAddressingPolicy,
-    pub enum_values: Option<Vec<IrConst>>,
     pub start: Option<IrExpr>,
     pub finish: Option<IrExpr>,
 }
@@ -434,8 +433,6 @@ pub enum IrStmt {
     /// Bounds are evaluated at the call site; omitted bounds use `addressing`
     /// while the two presence flags remain distinct from an explicitly
     /// supplied value.
-    /// Enum element values are retained when the destination is an enum so
-    /// the runtime can stop after the first non-member word.
     Memory {
         write: bool,
         path: IrStringExpr,
@@ -447,7 +444,6 @@ pub enum IrStmt {
         view: Box<IrMemoryView>,
         radix: IrMemoryRadix,
         addressing: IrMemoryAddressingPolicy,
-        enum_values: Option<Vec<IrConst>>,
         start: Option<Box<IrExpr>>,
         finish: Option<Box<IrExpr>>,
     },

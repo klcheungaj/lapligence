@@ -2,8 +2,8 @@
 // layout in readme.md) holds a text header, ten raw bytes 01..0a and a text
 // line; generated.dat is written here with $fwrite %u/%z. Covers $fread into
 // packed and memory destinations with start/count, the first byte read
-// becoming the most significant byte, a short last word that fills only the
-// most significant bytes, %u/%z little-endian 32-bit words and the unread
+// becoming the most significant byte, a short last word that fills the most
+// significant bytes and zeroes the rest, %u/%z little-endian 32-bit words and the unread
 // suffix after each read (IEEE 1800-2009 21.3.4.3, 21.3.4.4).
 module tb;
   integer fd, c, ch;
