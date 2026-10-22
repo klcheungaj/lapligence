@@ -1373,7 +1373,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Self/duplicate/overlapping/variable/incompatible/width-mismatched aliases,
   runtime selects, hierarchical (cross-scope) references and unmapped writes
   reject. A delayed driver split over alias groups is one vector driver
-  (S2-D6); aliased nets with different net delays reject (S2-D8).
+  (S2-D6); aliased nets with different net delays take the first aliased
+  member's delay (S2-D8).
   SV §10.11 **[SV-2005]**.
 - 🟨 **Continuous, gate and net delays** — Constant single/rise-fall/turn-off
   delays, with min:typ:max values selecting the typical value (S2-D1) or the
@@ -1397,8 +1398,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   reached through inout ports and aliases. SystemVerilog runtime-valued
   driver, gate and net delays use the values current when an update is
   scheduled or the net changes (S2-D9); Verilog-2001 rejects them (V §7.14.1).
-  Aliased nets with different net delays reject (S2-D8), as do a runtime net
-  delay with another declared delay on its net and delayed pattern members
+  Aliased nets with different net delays take the first aliased member's
+  delay (S2-D8); a runtime net delay with another declared delay on its net
+  rejects, as do delayed pattern members
   that are descriptor-backed variable rows; unsupported terminals remain
   restricted.
   V §§4.3, 6.1.3, 7.14; SV §§10.3.3, 11.12, 28.16 **[1995]**.

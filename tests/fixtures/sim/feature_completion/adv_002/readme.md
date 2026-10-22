@@ -146,4 +146,5 @@ Line numbers are those of the `pdftotext -layout` extractions
   `neg_runtime_net_delay_v2001`: with `--edition v2001` runtime-valued
   continuous-assignment, gate and net delays are rejected (V 7.14.1).
 - `neg_runtime_net_delay_conflict` (SystemVerilog): a runtime net delay
-  aliased to a net with another declared delay is rejected (S2-D8).
+  aliased to a net with another declared delay is rejected (S2-D9; between
+  constant delays the first aliased member's applies, S2-D8).

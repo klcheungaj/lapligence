@@ -2678,16 +2678,10 @@ fn s2_d9_runtime_delay_evaluation() {
 }
 
 #[test]
-fn s2_d8_alias_conflicting_net_delays() {
-    // Negative case: the expected stdout is empty because compilation fails.
-    assert!(
-        include_str!("fixtures/sim/lrm_decisions/S2-D8_alias_conflicting_net_delays.out")
-            .is_empty()
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "S2-D8_alias_conflicting_net_delays",
-        "has conflicting member delays",
+fn s2_d8_alias_first_member_delay() {
+    run_decision(
+        "S2-D8_alias_first_member_delay",
+        include_str!("fixtures/sim/lrm_decisions/S2-D8_alias_first_member_delay.out"),
     );
 }
 

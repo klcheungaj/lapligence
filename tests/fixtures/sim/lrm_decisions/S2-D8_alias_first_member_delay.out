@@ -1,0 +1,13 @@
+0 p=x q=x r=x s=x
+3 p=x q=x r=0 s=x
+4 p=0 q=x r=0 s=x
+6 p=0 q=0 r=0 s=x
+8 p=0 q=0 r=0 s=0
+22 p=0 q=0 r=0 s=1
+23 p=0 q=0 r=1 s=1
+24 p=1 q=0 r=1 s=1
+26 p=1 q=1 r=1 s=1
+43 p=1 q=1 r=0 s=1
+44 p=0 q=1 r=0 s=1
+46 p=0 q=0 r=0 s=1
+48 p=0 q=0 r=0 s=0

@@ -138,9 +138,13 @@ pub(super) fn port_choice(internal: NetType, external: NetType) -> Option<PortCh
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct CollapsedType {
     pub(super) kind: NetType,
-    /// True aliases have no external side: retain their existing delay-conflict
-    /// checks. A port selects only the winning component's declaration(s).
+    /// True aliases have no external side: every member's declaration stays a
+    /// delay owner. A port selects only the winning component's declaration(s).
+    /// Members named in alias statements come first, in the order they first
+    /// appear there (decision S2-D8); the rest follow in declaration order.
     pub(super) delay_members: Vec<NodeId>,
+    /// How many leading `delay_members` were named in alias statements.
+    pub(super) aliased_delay_members: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -177,6 +181,8 @@ pub(super) struct NetCollapsePlan {
     points: HashMap<NetPoint, usize>,
     entries: Vec<Entry>,
     any_uwire: bool,
+    /// Rank of each declaration by its first appearance in an alias statement.
+    alias_order: HashMap<NodeId, usize>,
 }
 
 impl NetCollapsePlan {
@@ -191,6 +197,7 @@ impl NetCollapsePlan {
                 resolved: CollapsedType {
                     kind,
                     delay_members: vec![point.owner()],
+                    aliased_delay_members: 0,
                 },
                 uwire: kind == NetType::Uwire,
             });
@@ -247,9 +254,30 @@ impl NetCollapsePlan {
         self.entries[first].uwire |= self.entries[second].uwire;
     }
 
-    /// Call for source alias statements before introducing port edges. Port
+    /// Order delay owners: alias-statement members by first appearance, then
+    /// the others by declaration. Returns how many lead the list as aliased.
+    fn order_delay_members(&self, members: &mut Vec<NodeId>) -> usize {
+        members.sort_by_key(|node| {
+            (
+                self.alias_order.get(node).copied().unwrap_or(usize::MAX),
+                node.index(),
+            )
+        });
+        members.dedup();
+        members
+            .iter()
+            .take_while(|node| self.alias_order.contains_key(node))
+            .count()
+    }
+
+    /// Call for source alias statements, in source order and with each
+    /// statement's members in list order, before introducing port edges. Port
     /// compatibility must never legalize an invalid alias declaration.
     pub(super) fn alias(&mut self, first: NetPoint, second: NetPoint) -> Result<(), String> {
+        for owner in [first.owner(), second.owner()] {
+            let rank = self.alias_order.len();
+            self.alias_order.entry(owner).or_insert(rank);
+        }
         let (first, second) = self.roots(first, second)?;
         let mut resolved = self.entries[first].resolved.clone();
         if resolved.kind != self.entries[second].resolved.kind {
@@ -261,8 +289,7 @@ impl NetCollapsePlan {
             resolved
                 .delay_members
                 .extend(&self.entries[second].resolved.delay_members);
-            resolved.delay_members.sort_by_key(|node| node.index());
-            resolved.delay_members.dedup();
+            resolved.aliased_delay_members = self.order_delay_members(&mut resolved.delay_members);
             self.merge(first, second, resolved);
         }
         Ok(())
@@ -381,11 +408,11 @@ impl NetCollapsePlan {
                 .filter(|root| self.entries[**root].resolved.kind == selected)
                 .flat_map(|root| self.entries[*root].resolved.delay_members.iter().copied())
                 .collect::<Vec<_>>();
-            delay_members.sort_by_key(|node| node.index());
-            delay_members.dedup();
+            let aliased_delay_members = self.order_delay_members(&mut delay_members);
             let resolved = CollapsedType {
                 kind: selected,
                 delay_members,
+                aliased_delay_members,
             };
             let mut merged = roots[0];
             for other in roots.into_iter().skip(1) {
