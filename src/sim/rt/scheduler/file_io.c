@@ -428,7 +428,12 @@ static int llg_file_gets_bounded(uint32_t descriptor, llg_string_t* target, size
         if (value == '\n') break;
     }
     if (length == 0) {
+        /* Reading nothing from an open file (at its end, or one open only
+         * for writing) leaves an empty string destination (decision S26-D21,
+         * industry-standard behaviour). A vector destination is filled from
+         * this temporary only when something was read. */
         free(bytes);
+        llg_string_move(target, llg_string_bytes("", 0));
         return 0;
     }
     llg_string_t line = llg_string_bytes((const char*)bytes, length);

@@ -392,6 +392,14 @@ fn s26_d2_fread_ends_run() {
 }
 
 #[test]
+fn s26_d21_fgets_nothing_read() {
+    run_decision(
+        "S26-D21_fgets_nothing_read",
+        include_str!("fixtures/sim/lrm_decisions/S26-D21_fgets_nothing_read.out"),
+    );
+}
+
+#[test]
 fn s26_d3_unformatted_words() {
     run_decision(
         "S26-D3_unformatted_words",

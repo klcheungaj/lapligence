@@ -2,7 +2,7 @@ A c=11 same=1
 B c=4 narrow=seco
 C c=3 wide=0000000000000000006e640a
 D ch=10 u=0 c=5 s=Alast
-E c=0 s=Alast eof=1
+E c=0 s= eof=1
 F pos=23 seek=0 c=7 same=1
 G r=0 ch=102 tell=1
 H seek=0 c=2 s=st

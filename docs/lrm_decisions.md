@@ -227,6 +227,7 @@ the portable part, and the llg-specific cases are in
 | S26-D13 | **`%m` counts as an assigned item.** It assigns the scope name without reading input and is counted in the result. | Table 21-8 L36995-36996; 21.3.4.3 L37023 | `S26-D13_scope_conversion_counts` | llg choice |
 | S26-D14 | **`$ungetc` returns 0 on success.** | 21.3.4.1 L36816-36818; V2001 17.2.4.1 L18994-18995 | `S26-D14_ungetc_returns_zero` | LRM text (llg returned the character before) |
 | S26-D15 | **`$fwrite("%z")` writes vecval bits.** X is aval 1, bval 1 and Z is aval 0, bval 1. | Table 21-8 L36988-36990; 38.15 L62602 | `S26-D15_fwrite_z_encoding` | LRM text (llg wrote Z as X before). Another implementation writes the bval word before the aval word of each 32-bit group; llg keeps the aval-then-bval order of `s_vpi_vecval` (38.15) |
+| S26-D21 | **`$fgets` that reads nothing from an open file empties a string destination.** At the end of a file, in an empty file and in a file open only for writing, `$fgets` returns 0 and a string destination becomes empty; a descriptor that is not open leaves it unchanged (S26-D2). A vector destination is unchanged. | 21.3.4.2 L36830-36831, L36838 | `S26-D21_fgets_nothing_read` | industry-standard behaviour (the text does not say what the destination holds when no character is read; changed: a string destination was unchanged) |
 
 ## Operator overloading (SIM-021)
 

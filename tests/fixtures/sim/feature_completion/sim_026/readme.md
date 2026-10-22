@@ -115,8 +115,10 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
     right-justified in a wider packed destination (S26-D8).
   - `$ungetc` returns 0 on success (L36817-36818: "Otherwise, code is set to
     zero."; S26-D14).
-  - At end of file `$fgets` returns 0 and leaves its destination unchanged
-    (L36844).
+  - At end of file `$fgets` returns 0 (L36844), and its string destination
+    becomes empty (line E): the text does not say what the destination
+    holds when nothing is read, and llg follows industry-standard behaviour
+    (S26-D21).
   - `$rewind is equivalent to $fseek (fd,0,0)` (L37141). `$fseek` beyond the
     end is allowed (L37145-37146), and repositioning clears the end-of-file
     and error state (S26-D11).
