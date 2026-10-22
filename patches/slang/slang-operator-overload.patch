@@ -293,7 +293,7 @@ index 4f1fbb325..52ea8f8a0 100644
  token externKeyword
  list<AttributeInstance> actualAttributes
 diff --git a/source/analysis/AnalysisScopeVisitor.h b/source/analysis/AnalysisScopeVisitor.h
-index d03210214..a69360779 100644
+index d03210214..a901f920e 100644
 --- a/source/analysis/AnalysisScopeVisitor.h
 +++ b/source/analysis/AnalysisScopeVisitor.h
 @@ -401,7 +401,8 @@ struct AnalysisScopeVisitor {
@@ -306,6 +306,19 @@ index d03210214..a69360779 100644
                   std::is_base_of_v<Type, T>)
      void visit(const T& symbol) {
          // Everything else doesn't need to be analyzed (except visiting expressions, if necessary).
+@@ -559,6 +560,12 @@ private:
+                 break;
+ 
+             if (auto found = scope->find(symbol.name)) {
++                // A transparent member (a specify-block specparam, an
++                // anonymous-program member) is found again in the scope it
++                // is hoisted into; that copy is the symbol itself.
++                if (found == &symbol)
++                    continue;
++
+                 auto code = (found->isValue() && symbol.isValue()) ? diag::ShadowValue
+                                                                    : diag::ShadowHierarchy;
+ 
 diff --git a/source/ast/ElabVisitors.h b/source/ast/ElabVisitors.h
 index 5058df7d0..d10fc6c00 100644
 --- a/source/ast/ElabVisitors.h

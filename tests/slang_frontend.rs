@@ -255,6 +255,45 @@ fn statements_after_a_failed_loop_header_keep_their_blocks() {
 }
 
 #[test]
+fn transparent_members_do_not_shadow_themselves() {
+    // A specify-block specparam and an anonymous-program member are hoisted
+    // into the enclosing scope as transparent copies of themselves; the
+    // shadowing analysis must not report the symbol against its own copy,
+    // while a block variable that hides a module variable still warns.
+    let source = "package pk;\n\
+                  program; function automatic int scaled(int x); return 2 * x; endfunction endprogram\n\
+                  endpackage\n\
+                  program; function int twice(int x); return 2 * x; endfunction endprogram\n\
+                  module m(input a, output y);\n\
+                  assign y = a;\n\
+                  specify specparam t2 = 3; (a => y) = t2; endspecify\n\
+                  endmodule\n\
+                  module tb;\n\
+                  logic a; wire y; int v;\n\
+                  m u(.a(a), .y(y));\n\
+                  initial begin : blk int v; v = 1; a = v[0]; end\n\
+                  endmodule\n\
+                  program pr; int r; initial r = twice(pk::scaled(1)); endprogram\n";
+    let sources = [Source::compilation_unit("shadow.sv", source)];
+    let options = CompileOptions::default();
+    let snapshot = slang::compile(&request(&sources, &options))
+        .expect("HDL errors belong in a successful snapshot");
+    assert!(!snapshot.has_errors(), "{:?}", snapshot.diagnostics);
+    let shadows: Vec<&str> = snapshot
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.message.as_str())
+        .filter(|message| message.contains("shadows a declaration"))
+        .collect();
+    assert_eq!(
+        shadows,
+        ["'v' shadows a declaration in an outer scope"],
+        "{:?}",
+        snapshot.diagnostics
+    );
+}
+
+#[test]
 fn malformed_and_semantically_invalid_sources_report_exact_slang_diagnostics() {
     struct RejectionCase {
         name: &'static str,

@@ -834,58 +834,25 @@ paths otherwise run.
   are rejected as not simulated yet.
 - There are no `vpiModPath` objects; path metadata is available through the
   owned `Db::module_paths` and the generated model's `llg_module_path_sets`.
-- A specparam declared inside a specify block draws a frontend warning such
-  as `'t2' shadows a declaration in an outer scope`, although nothing is
-  shadowed. Compilation and simulation are not affected.
 
 ### Cause
 
 A path delays the destination net group after its drivers resolve, so it
 can model a destination whose drivers are all inside the module, but not a
 variable (no net group) or an inout net with an outside driver, whose
-contribution must stay undelayed. The frontend makes each specify-block
-specparam a transparent member of the module, and its shadowing analysis then
-finds that hoisted copy.
+contribution must stay undelayed.
 
 ### Intended direction
 
 Delay only the in-module driver contributions of a shared inout net, give
 variable destinations their own propagation record, and add the path forms
-of ADV-008 and the VPI objects of ADV-019 on the same per-path tables. Skip
-transparent copies of the same symbol in the frontend's shadow check, through
-a tracked `patches/slang/` patch.
+of ADV-008 and the VPI objects of ADV-019 on the same per-path tables.
 
 ### Reproduce
 
 ```sh
 scripts/run-tests.sh -E 'binary(sim_feature_completion) & test(adv_007::)'
 ```
-
-## Anonymous program members draw a spurious shadowing warning
-
-**Status:** open (SIM-032); cosmetic.
-
-### Symptom
-
-Each task, function or class declared in an anonymous program (SV 24.6)
-produces a frontend warning such as `'twice' shadows a declaration in an outer
-scope`, although nothing is shadowed. Compilation and simulation are not
-affected.
-
-### Cause
-
-Slang hoists every anonymous-program member into the enclosing package or
-compilation unit as a transparent member, and its shadowing analysis then
-finds the member's own hoisted copy in the outer scope.
-
-### Intended direction
-
-Skip transparent copies of the same symbol in Slang's shadow check, through a
-tracked `patches/slang/` patch.
-
-### Reproduce
-
-`tests/fixtures/sim/feature_completion/sim_032/anonymous_programs.sv`.
 
 ## Process handles in plain handle storage stay allocated until teardown
 
