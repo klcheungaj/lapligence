@@ -1,7 +1,7 @@
 //! llg-specific policy cases. Every fixture under
 //! `tests/fixtures/sim/llg_policy/` pins a choice that llg makes where the
 //! LRM leaves the result open and that has no portable form: an RNG draw
-//! mapping, the spelling of `%m` for class scopes, and the results of NULL
+//! mapping, the draws a failed randomize() makes, the spelling of `%m` for class scopes, and the results of NULL
 //! arguments of the DPI scope routines. They are not in the portable
 //! `lrm_decisions` set, so they are not meant to be rerun on another
 //! simulator. Each runs through the public CLI in both optimizer modes on
@@ -47,6 +47,14 @@ fn s16_d9_draw_is_urandom_range() {
     run_policy(
         "S16-D9_draw_is_urandom_range",
         include_str!("fixtures/sim/llg_policy/S16-D9_draw_is_urandom_range.out"),
+    );
+}
+
+#[test]
+fn s29_d6_failed_call_consumes_draws() {
+    run_policy(
+        "S29-D6_failed_call_consumes_draws",
+        include_str!("fixtures/sim/llg_policy/S29-D6_failed_call_consumes_draws.out"),
     );
 }
 

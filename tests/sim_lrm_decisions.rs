@@ -1447,10 +1447,10 @@ fn s29_d5_unsat_warns_and_continues() {
 }
 
 #[test]
-fn s29_d6_failed_call_consumes_draws() {
+fn s29_d6_failed_call_keeps_values() {
     run_decision(
-        "S29-D6_failed_call_consumes_draws",
-        include_str!("fixtures/sim/lrm_decisions/S29-D6_failed_call_consumes_draws.out"),
+        "S29-D6_failed_call_keeps_values",
+        include_str!("fixtures/sim/lrm_decisions/S29-D6_failed_call_keeps_values.out"),
     );
 }
 
