@@ -1205,8 +1205,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   dynamic/queue-element streams capture one RHS, then publish destinations in
   stream order with overlap-safe snapshots. A stream assigned to a wider fixed
   target is left-aligned and zero-filled on the right; oversize streams reject.
-  Unpacking consumes the leftmost required bits, also for `<<` with runtime
-  ranges; undersized sources reject.
+  Unpacking into fixed-size targets consumes the leftmost required bits, also
+  for `<<` with runtime ranges; with a queue or dynamic-array target, selected
+  or not, a `<<` unpack reverses the whole source first and the targets take
+  it in order (S20-5); undersized sources reject.
   `with` follows slice/declaration order, including descending arrays and `-:`
   ranges, and requires a one-dimensional operand: model and descriptor arrays,
   ref/const-ref formals, automatic locals, members, rows and call results. A
@@ -1223,8 +1225,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   packed width, as sources, unpack targets and bit-stream casts in both
   directions; a stream assigned to a dynamic array, queue or string resizes it
   (left-aligned, zero-filled), strings drop zero bytes, explicit casts to
-  dynamic types need whole elements, and a `<<` unpack resolves `with`
-  extents before reordering the consumed bits. Queue operands (plain or
+  dynamic types need whole elements, and a `<<` unpack into fixed-size
+  targets resolves `with` extents before reordering the consumed bits. Queue operands (plain or
   `with`-selected) of oversized descriptor streams and oversized whole fixed
   unpack targets use the same segments
   ([SIM-020](../tests/fixtures/sim/feature_completion/sim_020/readme.md),
@@ -1232,8 +1234,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Output copy-out from a task or void-function call statement unpacks into
   runtime or out-of-range `with` targets with selectors fixed at the call, and
   elements mixing two-state and four-state members convert member-wise
-  (RTL-103). Nonblocking, right-to-left or copy-out selectors that read an
-  earlier target of the same unpack, and such targets of a function call inside
+  (RTL-103). Nonblocking, copy-out or fixed-target right-to-left selectors
+  that read an earlier target of the same unpack, and such targets of a function call inside
   an expression or of an intra-assignment-delayed assignment, reject.
   Compound streaming assignments are outside the assignment grammar
   (SV §11.4.14.3, Annex A.6.2). Fixed-size cast mismatches, unpacked-union

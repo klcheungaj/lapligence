@@ -1,3 +1,6 @@
 fixed 22 11
-selected 2 22 11
+selected 2 33 22
+mixed 33 1 22
+fixed array 22 11 00
+dependent 2 2 22 33
 whole 3 33 22 11
