@@ -8,4 +8,4 @@ vpiFinish level 3 -> 0 LLG_VPI_ARGUMENT
 [7] read-write 7: vpiFinish -> 1, again -> 1
 [7] final: steps=2
 [7] end call 1: vpiFinish -> 1, vpiStop -> 1
-late cbEndOfSimulation: null LLG_VPI_CALLBACK
+late cbEndOfSimulation: handle none

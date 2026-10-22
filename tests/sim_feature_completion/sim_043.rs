@@ -103,7 +103,7 @@ vpiReset -> 0 LLG_VPI_UNSUPPORTED\n\
 vpiFinish level 3 -> 0 LLG_VPI_ARGUMENT\n\
 [3] after delay 3: vpiStop -> 1\n\
 [3] end call 1: vpiFinish -> 1, vpiStop -> 1\n\
-late cbEndOfSimulation: null LLG_VPI_CALLBACK\n";
+late cbEndOfSimulation: handle none\n";
     sim_cli::run_case_checked_matrix_with_env(
         SUITE,
         "control",

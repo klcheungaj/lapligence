@@ -23,6 +23,10 @@
  * space, whose width is LLG_VPI_INDEX_BITS. */
 #define LLG_VPI_MAX_OBJECTS (1u << 20)
 #define LLG_VPI_MAX_LIVE_HANDLES (1u << 21)
+/* Fired one-shot callback handles kept valid until removed (decision
+ * S43-D4). Past this count the oldest one is freed and its handle goes
+ * stale, which bounds the memory of applications that never remove them. */
+#define LLG_VPI_MAX_FIRED_CALLBACKS (1u << 16)
 #define LLG_VPI_MAX_REGISTRATIONS 4096
 #define LLG_VPI_MAX_STARTUP_ROUTINES 1024
 #define LLG_VPI_MAX_ARGS 256
@@ -49,6 +53,7 @@ typedef enum {
     SLOT_CALL,
     SLOT_ARGUMENT,  /* expression or literal argument snapshot */
     SLOT_CALLBACK,
+    SLOT_FIRED_CB,  /* one-shot callback that ran or cannot occur: llg_vpi_cb_done_t */
     SLOT_EVENT,     /* vpiSchedEvent */
     SLOT_ASSERTION, /* assertion coverage item `left` (39.3) */
 } llg_vpi_slot_kind_t;
@@ -186,6 +191,9 @@ typedef struct {
     size_t watch_capacity;
     size_t watch_count;
     uint64_t cb_sequence;
+    uint32_t fired_head;          /* fired callback slots, oldest first: index + 1 */
+    uint32_t fired_tail;
+    uint32_t fired_count;
     int dispatch_depth;
     int next_time_pending;        /* cbNextSimTime records waiting */
     int phase;                    /* LLG_VPI_PHASE_* */
@@ -2508,7 +2516,8 @@ static int handle_type(const llg_vpi_slot_t* slot) {
                        ? vpiSysFuncCall : vpiSysTaskCall;
         }
         case SLOT_ARGUMENT: return argument_type(slot);
-        case SLOT_CALLBACK: return vpiCallback;
+        case SLOT_CALLBACK:
+        case SLOT_FIRED_CB: return vpiCallback;
         case SLOT_EVENT: return vpiSchedEvent;
         case SLOT_ASSERTION: return assertion_type(slot_item(slot));
         default: return vpiUndefined;
@@ -3248,6 +3257,9 @@ PLI_INT32 vpi_chk_error(p_vpi_error_info output) {
     return g_vpi.error_level;
 }
 
+static void vpi_cb_handle_released(struct llg_vpi_cb* cb);
+static void fired_free(uint32_t index);
+
 static PLI_INT32 release_handle(vpiHandle handle) {
     uint32_t index;
     llg_vpi_slot_t* slot = checked_handle(handle, &index);
@@ -3258,7 +3270,13 @@ static PLI_INT32 release_handle(vpiHandle handle) {
             /* Catalog objects and registrations live for the whole run. */
             return 1;
         case SLOT_CALLBACK:
-            /* Releasing a callback handle does not remove the callback. */
+            /* Releasing a callback handle does not remove the callback; a
+             * one-shot one then leaves no record behind when it ran. */
+            vpi_cb_handle_released((struct llg_vpi_cb*)slot->pointer);
+            return 1;
+        case SLOT_FIRED_CB:
+            /* The handle is the only reference to a fired callback. */
+            fired_free(index);
             return 1;
         case SLOT_CALL: {
             llg_vpi_callsite_t* site = (llg_vpi_callsite_t*)slot->pointer;
@@ -3319,7 +3337,8 @@ PLI_INT32 vpi_put_userdata(vpiHandle handle, void* userdata) {
 /* ── simulation callbacks (SV 38.36, Table 4-1) ─────────────────────────── */
 
 /* Callback records. A record is owned by the registry list from registration
- * until it is removed or, for a one-shot reason, retired after it ran. A
+ * until it is removed or, for a one-shot reason, retired after it ran (its
+ * handle then names a compact fired copy, llg_vpi_cb_done_t). A
  * dispatch never frees a record: removal during a dispatch moves it to the
  * retired list, freed when the outermost dispatch returns, so callbacks may
  * register and remove any callback (including themselves) while running. */
@@ -3340,6 +3359,7 @@ typedef struct llg_vpi_cb {
     uint64_t registered_at;   /* simulation time of the registration */
     llg_vpi_cb_kind_t kind;
     int removed;
+    int handle_released;      /* vpi_release_handle ran: no record once fired */
     int scheduled;            /* a region callback is queued */
     int waiting;              /* cbNextSimTime not yet queued */
     llg_region_callback_id_t id;
@@ -3358,6 +3378,58 @@ typedef struct llg_vpi_cb {
 static void vpi_cb_free(llg_vpi_cb_t* cb) {
     sv4_destroy(&cb->last);
     free(cb);
+}
+
+/* What a one-shot callback keeps after it ran, or when it was registered
+ * for an action that already occurred (decision S43-D4): its handle stays
+ * valid for vpi_get_cb_info until vpi_remove_cb or vpi_release_handle frees
+ * this compact copy of the registration. */
+typedef struct {
+    s_cb_data data;           /* time/value point at the copies below */
+    s_vpi_time time;
+    s_vpi_value value;        /* format only */
+    uint32_t prev;            /* age list neighbours: slot index + 1 */
+    uint32_t next;
+} llg_vpi_cb_done_t;
+
+static llg_vpi_cb_done_t* fired_at(uint32_t link) {
+    return (llg_vpi_cb_done_t*)g_vpi.slots[link - 1u].pointer;
+}
+
+/* Free a fired callback's copy and its handle. */
+static void fired_free(uint32_t index) {
+    llg_vpi_cb_done_t* done = (llg_vpi_cb_done_t*)g_vpi.slots[index].pointer;
+    if (done->prev) fired_at(done->prev)->next = done->next;
+    else g_vpi.fired_head = done->next;
+    if (done->next) fired_at(done->next)->prev = done->prev;
+    else g_vpi.fired_tail = done->prev;
+    --g_vpi.fired_count;
+    free(done);
+    release_slot(index);
+}
+
+static llg_vpi_cb_done_t* cb_done_new(const s_cb_data* data) {
+    if (g_vpi.fired_count >= LLG_VPI_MAX_FIRED_CALLBACKS) fired_free(g_vpi.fired_head - 1u);
+    llg_vpi_cb_done_t* done = (llg_vpi_cb_done_t*)calloc(1, sizeof(*done));
+    if (!done) return NULL;
+    done->data = *data;
+    if (data->time) done->time = *data->time;
+    if (data->value) done->value.format = data->value->format;
+    done->data.time = data->time ? &done->time : NULL;
+    done->data.value = data->value ? &done->value : NULL;
+    return done;
+}
+
+/* Give slot `index` to `done`, the newest fired callback. */
+static void fired_attach(uint32_t index, llg_vpi_cb_done_t* done) {
+    g_vpi.slots[index].kind = SLOT_FIRED_CB;
+    g_vpi.slots[index].pointer = done;
+    done->prev = g_vpi.fired_tail;
+    done->next = 0;
+    if (g_vpi.fired_tail) fired_at(g_vpi.fired_tail)->next = index + 1u;
+    else g_vpi.fired_head = index + 1u;
+    g_vpi.fired_tail = index + 1u;
+    ++g_vpi.fired_count;
 }
 
 static size_t watch_bucket(const void* key, size_t capacity) {
@@ -3406,9 +3478,10 @@ static void watch_unlink(llg_vpi_cb_t* cb) {
     }
 }
 
-/* Detach a record from every trigger, invalidate its handle and free it now
- * or, inside a dispatch, when the outermost dispatch ends. */
-static void vpi_cb_retire(llg_vpi_cb_t* cb) {
+/* Detach a record from every trigger, invalidate its handle (or, when
+ * `done` is given, hand the handle to that fired-callback copy) and free the
+ * record now or, inside a dispatch, when the outermost dispatch ends. */
+static void vpi_cb_detach(llg_vpi_cb_t* cb, llg_vpi_cb_done_t* done) {
     if (cb->removed) return;
     cb->removed = 1;
     if (cb->scheduled) {
@@ -3420,7 +3493,11 @@ static void vpi_cb_retire(llg_vpi_cb_t* cb) {
         cb->waiting = 0;
         --g_vpi.next_time_pending;
     }
-    release_slot(cb->slot);
+    if (done) {
+        fired_attach(cb->slot, done);
+    } else {
+        release_slot(cb->slot);
+    }
     *cb->prev_link = cb->next;
     if (cb->next) cb->next->prev_link = cb->prev_link;
     else g_vpi.cbs_tail = cb->prev_link;
@@ -3430,6 +3507,18 @@ static void vpi_cb_retire(llg_vpi_cb_t* cb) {
     } else {
         vpi_cb_free(cb);
     }
+}
+
+static void vpi_cb_retire(llg_vpi_cb_t* cb) { vpi_cb_detach(cb, NULL); }
+
+static void vpi_cb_handle_released(llg_vpi_cb_t* cb) { cb->handle_released = 1; }
+
+/* A one-shot callback ran: keep its handle valid as a fired copy unless the
+ * application released the handle (or removed the callback while it ran).
+ * Without memory for the copy the handle goes stale, as before S43-D4. */
+static void vpi_cb_fired(llg_vpi_cb_t* cb) {
+    if (cb->removed) return;
+    vpi_cb_detach(cb, cb->handle_released ? NULL : cb_done_new(&cb->data));
 }
 
 static void dispatch_begin(void) { ++g_vpi.dispatch_depth; }
@@ -3544,7 +3633,7 @@ static void invoke_action(int reason) {
                                   reason == cbEndOfSimulation ? llg_rt_end_time() : llg_time(),
                                   &time);
         invoke_cb(cb, &data);
-        vpi_cb_retire(cb);
+        vpi_cb_fired(cb);
     }
     if (items != buffer) free(items);
     dispatch_end();
@@ -3560,8 +3649,8 @@ static void time_fire(void* context) {
     data.time = callback_time(cb->time.type, cb->scope, llg_time(), &time);
     dispatch_begin();
     invoke_cb(cb, &data);
-    /* Time callbacks are one-shot (38.36.2); the handle is now stale. */
-    vpi_cb_retire(cb);
+    /* Time callbacks are one-shot (38.36.2). */
+    vpi_cb_fired(cb);
     dispatch_end();
 }
 
@@ -3758,8 +3847,21 @@ vpiHandle vpi_register_cb(p_cb_data data) {
                    : reason == cbStartOfSimulation ? g_vpi.phase >= LLG_VPI_PHASE_RUNNING
                                                     : g_vpi.phase >= LLG_VPI_PHASE_ENDED;
         if (late) {
-            vpi_error("LLG_VPI_CALLBACK", "this simulator action has already occurred");
-            return NULL;
+            /* Accepted, but it never runs: the handle names a fired copy
+             * (decision S43-D4). */
+            if (!vpi_ready()) return NULL;
+            llg_vpi_cb_done_t* done = cb_done_new(data);
+            if (!done) {
+                vpi_error("LLG_VPI_NOMEM", "VPI callback allocation failed");
+                return NULL;
+            }
+            uint32_t index = alloc_slot(SLOT_FIRED_CB);
+            if (index == LLG_VPI_NONE) {
+                free(done);
+                return NULL;
+            }
+            fired_attach(index, done);
+            return encode_handle(index);
         }
     } else if (reason == cbValueChange) {
         kind = CB_VALUE;
@@ -3862,6 +3964,13 @@ static llg_vpi_cb_t* callback_record(vpiHandle handle, const char* routine) {
 
 PLI_INT32 vpi_remove_cb(vpiHandle handle) {
     vpi_enter();
+    uint32_t index;
+    llg_vpi_slot_t* slot = checked_handle(handle, &index);
+    if (!slot) return 0;
+    if (slot->kind == SLOT_FIRED_CB) {
+        fired_free(index);
+        return 1;
+    }
     llg_vpi_cb_t* cb = callback_record(handle, "vpi_remove_cb");
     if (!cb) return 0;
     vpi_cb_retire(cb);
@@ -3870,13 +3979,21 @@ PLI_INT32 vpi_remove_cb(vpiHandle handle) {
 
 void vpi_get_cb_info(vpiHandle handle, p_cb_data output) {
     vpi_enter();
-    llg_vpi_cb_t* cb = callback_record(handle, "vpi_get_cb_info");
-    if (!cb) return;
+    llg_vpi_slot_t* slot = checked_handle(handle, NULL);
+    if (!slot) return;
+    const s_cb_data* data = NULL;
+    if (slot->kind == SLOT_FIRED_CB) {
+        data = &((const llg_vpi_cb_done_t*)slot->pointer)->data;
+    } else {
+        llg_vpi_cb_t* cb = callback_record(handle, "vpi_get_cb_info");
+        if (!cb) return;
+        data = &cb->data;
+    }
     if (!output) {
         vpi_error("LLG_VPI_ARGUMENT", "null VPI callback info output");
         return;
     }
-    *output = cb->data;
+    *output = *data;
 }
 
 void llg_vpi_start_simulation(void) {
@@ -4280,6 +4397,7 @@ void llg_vpi_shutdown(void) {
             llg_vpi_event_t* event = (llg_vpi_event_t*)slot->pointer;
             if (!event->pending) free(event);
         }
+        if (slot->kind == SLOT_FIRED_CB) free(slot->pointer);
         free(slot->items);
     }
     free(g_vpi.slots);

@@ -92,7 +92,8 @@ All time callbacks are registered from `cbStartOfSimulation` at time 0 with a
 delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
 
 - `[0] cbEndOfCompile`, then a second `cbEndOfCompile` registered inside it is
-  refused (`null LLG_VPI_CALLBACK`, the action already occurred, S43-D4), then
+  accepted but never runs (`handle none`: the action already occurred, and
+  the handle stays valid until it is removed, S43-D4), then
   `[0] cbStartOfSimulation` (38.36.3).
 - Time 5, Pre-Active: `cbAtStartOfSimTime`, then `cbNextSimTime #1`: the slot
   after its registration time (S43-D3); both Pre-Active, in queue order.
@@ -131,7 +132,12 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
   fails (`0 LLG_VPI_HANDLE`, 38.39). `first` registers `third`, which starts
   with the next change.
 - At 3: `canceller` removes the pending `doomed` (never prints). The handle of
-  `kept-1`, a one-shot that ran at 1, is stale (S43-D4). Then `third v=3`,
+  `kept-1`, a one-shot that ran at 1, is still valid (S43-D4): its info gives
+  reason 9 (`cbAfterDelay`) and user data `kept-1`; `vpi_remove_cb` then frees
+  it (`1`) and the handle is stale (`LLG_VPI_HANDLE`). 65544 late
+  `cbEndOfCompile` registrations are accepted; the runtime keeps at most 65536
+  fired callback handles (`LLG_VPI_MAX_FIRED_CALLBACKS`), so the oldest is
+  freed and stale while the newest still reads reason 10. Then `third v=3`,
   `first v=3`.
 - End: `first=3 second=2 third=1`.
 
@@ -172,7 +178,8 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
   the callback returns: the `cbAfterDelay` at 9 and the HDL display at 27 never
   run. The final procedure prints `steps=2`, then `cbEndOfSimulation` runs once
   at 7; inside it control requests return 1 and change nothing, and a new
-  `cbEndOfSimulation` registration is refused.
+  `cbEndOfSimulation` registration is accepted but never runs (`handle none`,
+  S43-D4).
 - With `--stop-policy exit` (test only) the stop at 3 suspends the run; closing
   the model runs `cbEndOfSimulation` once at 3 and no final procedure.
 
