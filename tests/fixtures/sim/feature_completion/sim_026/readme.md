@@ -149,7 +149,9 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
   the write-only file (line K), whose input ends at once (S26-D2).
   `$fgets` and `$fread` return 0 (L36844, L37090). `$ftell` and `$fseek`
   return -1 (L37125, L37154). `$feof` returns -1 (S26-D2). Destinations stay
-  unchanged, and `$ferror` reports a nonzero code with a message (L37203-37205).
+  unchanged. `$ferror` of the closed descriptor (line H) returns 0 and leaves
+  its string empty: the text gives no result for a descriptor that is not
+  open, and llg follows industry-standard behaviour (S25-D7).
 
 ## A03: illegal destinations
 

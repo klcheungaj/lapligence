@@ -552,6 +552,14 @@ fn s25_d6_report_order_in_slot() {
 }
 
 #[test]
+fn s25_d7_output_to_closed_descriptors() {
+    run_decision(
+        "S25-D7_output_to_closed_descriptors",
+        include_str!("fixtures/sim/lrm_decisions/S25-D7_output_to_closed_descriptors.out"),
+    );
+}
+
+#[test]
 fn s28_d1_implicit_random_seed() {
     run_decision(
         "S28-D1_implicit_random_seed",

@@ -71,6 +71,30 @@ static int llg_file_mask_valid(uint32_t descriptor) {
     return 1;
 }
 
+/* Output through a multichannel descriptor reaches its open channels and
+ * skips the others (decision S25-D7); a channel that is not open is
+ * reported through the global file error. */
+static uint32_t llg_file_open_channels(uint32_t descriptor) {
+    llg_file_init_table();
+    uint32_t open = 0;
+    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
+        uint32_t bit = llg_file_mcd_bit(i);
+        if (bit && (descriptor & bit) && llg_file_slots[i].open && llg_file_slots[i].stream)
+            open |= bit;
+    }
+    if (open != descriptor)
+        llg_file_global_failure("invalid or closed multichannel descriptor");
+    return open;
+}
+
+/* The descriptor an output task writes through, or 0 when it reaches no
+ * open file. */
+static uint32_t llg_file_output_descriptor(uint32_t descriptor) {
+    if (descriptor && !(descriptor & LLG_FILE_FD_TAG))
+        return llg_file_open_channels(descriptor);
+    return llg_file_mask_valid(descriptor) ? descriptor : 0;
+}
+
 static int llg_file_single_ordinary(uint32_t descriptor, llg_file_slot_t** out) {
     if (!(descriptor & LLG_FILE_FD_TAG) || !llg_file_mask_valid(descriptor)) {
         llg_file_global_failure("file input/position operation requires an FD, not an MCD");
@@ -271,6 +295,17 @@ int llg_file_seek(uint32_t descriptor, sv4_t offset, sv4_t operation) {
 int llg_file_error(uint32_t descriptor, llg_string_t* message) {
     const char* text = "";
     int result = 0;
+    llg_file_init_table();
+    // A multichannel descriptor, or a file descriptor that is not open, has
+    // no error status: the result is 0 and `str` keeps its value (decision
+    // S25-D7). Descriptor 0 reports the last global failure.
+    if (descriptor && !(descriptor & LLG_FILE_FD_TAG)) return 0;
+    if (descriptor & LLG_FILE_FD_TAG) {
+        uint32_t index = descriptor & ~LLG_FILE_FD_TAG;
+        if (index >= LLG_FILE_SLOTS || (index >= 3u && index < LLG_FILE_FD_FIRST) ||
+            !llg_file_slots[index].open || !llg_file_slots[index].stream)
+            return 0;
+    }
     if (!llg_file_mask_valid(descriptor)) {
         result = 1;
         text = llg_file_global_message;

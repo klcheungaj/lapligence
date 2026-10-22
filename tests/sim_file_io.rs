@@ -29,7 +29,8 @@ fn file_output_and_controls_match_in_both_optimizer_modes() {
         // host's native line ends: 24 characters on three lines, ended by LF, or
         // by CRLF on Windows.
         let tell = if cfg!(windows) { 30 } else { 27 };
-        let expected_stdout = format!("fd_is_tagged=1\n fanout=9\ntell={tell}\nseek=0\nrewound=0\nerror=0 message= eof=0\nclosed=1 message=invalid or closed file descriptor\n");
+        // `$ferror` of a closed descriptor is 0 and keeps its string (S25-D7).
+        let expected_stdout = format!("fd_is_tagged=1\n fanout=9\ntell={tell}\nseek=0\nrewound=0\nerror=0 message= eof=0\nclosed=0 message=\n");
         let expected_file = "line=7\ntail=ab fanout=9\nab\n";
         for (name, options) in [("optimized", OptConfig::default()), ("unoptimized", OptConfig::none())] {
             let output_dir = dir.join(name);

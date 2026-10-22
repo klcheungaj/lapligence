@@ -90,9 +90,15 @@ quotes are from `SystemVerilog-1800-2009.txt` (line numbers of the
   are allowed and that the reports leave the design variables and the time
   unchanged.
 - `invalid_descriptors`: a zero, unknown (X), unopened or closed descriptor
-  registers nothing and sets the I/O error status (L37201-37204,
-  "$ferror ... error encountered by the most recent file I/O operation"); the
-  other monitors keep running.
+  registers nothing and the other monitors keep running. `$ferror` of the
+  closed multichannel descriptor is 0 (`closed err=0`; decision S25-D7,
+  industry-standard behaviour: L37203-37205 gives the error code of "the most
+  recent file I/O operation" and does not cover a descriptor that is not an
+  open file descriptor; changed: it was 1). The unopened file descriptor is
+  `32'h8000_0011`: a descriptor number beyond an implementation's descriptor
+  table is outside the text, and some simulators stop the run on one, so the
+  fixture uses a small number that no `$fopen` here returns (it was
+  `32'h8000_007f`).
 - Limits, not LRM rules: `neg_static_string_formal` (a static task keeps a
   string formal in the call activation) and `neg_class_method_strobe` (a
   deferred report in a class method) reject with a located diagnostic. They

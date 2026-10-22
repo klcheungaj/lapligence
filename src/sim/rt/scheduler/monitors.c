@@ -187,9 +187,13 @@ static void monitor_register_typed(int primary, uint32_t descriptor,
                                    const llg_display_read_t* reads,
                                    int n_reads) {
     if (!region_can_mutate("monitor scheduling")) return;
-    // An invalid or closed descriptor registers nothing; the failure is
-    // reported through $ferror like any other write to it.
-    if (!primary && !llg_file_mask_valid(descriptor)) return;
+    // An invalid or closed descriptor registers nothing, and a multichannel
+    // monitor keeps only its open channels (S25-D7), so a channel reopened
+    // later never receives its output.
+    if (!primary) {
+        descriptor = llg_file_output_descriptor(descriptor);
+        if (!descriptor) return;
+    }
     llg_monitor_state_t* m = monitor_add(primary, fmt, n);
     m->typed = 1;
     m->descriptor = descriptor;

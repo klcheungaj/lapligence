@@ -847,7 +847,8 @@ static int fixed_file_read_array(uint32_t descriptor, sv4_t* values, llg_fixed_a
 
 static void llg_file_write_typed(uint32_t descriptor, const char* output,
                                  size_t length, int newline) {
-    if (!llg_file_mask_valid(descriptor)) return;
+    descriptor = llg_file_output_descriptor(descriptor);
+    if (!descriptor) return;
     for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
         if (!llg_file_selected(descriptor, i)) continue;
         llg_file_slot_t* slot = &llg_file_slots[i];

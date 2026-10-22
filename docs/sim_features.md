@@ -1684,7 +1684,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   value differs from the printed one, governed by the `$monitoron/$monitoroff`
   flag, which outlives the list. Any number of `$fmonitor` lists are
   independent, and `$fclose` cancels them per channel (also pending `$fstrobe`s);
-  an invalid or closed descriptor registers nothing and sets `$ferror`. Packed,
+  a closed or invalid descriptor registers nothing, and a multichannel descriptor
+  keeps only its channels that are open (S25-D7). Packed,
   real, string and `%p` container/record arguments, nested expressions, function
   calls, `%m`/`%t`/`$time` work, also in static tasks and functions (module
   variables, static formals and locals); arguments that read through a class or
