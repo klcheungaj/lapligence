@@ -569,6 +569,8 @@ static int llg_scan_strength(llg_scan_input_t* input, const llg_file_input_targe
     return 1;
 }
 
+// One directive: 1 assigned, 2 matched without assignment, 3 nothing to
+// match (the directive is skipped), 0 matching failure, -1 input failure.
 static int llg_scan_conversion(llg_scan_input_t* input, char conversion,
                                size_t width, int suppressed,
                                const llg_file_input_target_t* target) {
@@ -577,8 +579,8 @@ static int llg_scan_conversion(llg_scan_input_t* input, char conversion,
     int ok;
     if (conversion == 'u' || conversion == 'z') {
         // Unformatted data is sized by its destination; a suppressed field
-        // has none, so the directive fails.
-        return suppressed ? 0 : llg_scan_binary(input, conversion, target);
+        // has none, so it reads nothing and matches nothing (S26-D10).
+        return suppressed ? 3 : llg_scan_binary(input, conversion, target);
     }
     if (conversion == 'v') return llg_scan_strength(input, target, suppressed);
     if (conversion == 'm') {
@@ -675,6 +677,7 @@ static int llg_scan_format(llg_scan_input_t* input, const char* format,
             target = &targets[target_index++];
         }
         int converted = llg_scan_conversion(input, conversion, width, suppressed, target);
+        if (converted == 3) continue;
         if (converted < 0) break;
         if (converted == 0) break;
         matched = 1;
