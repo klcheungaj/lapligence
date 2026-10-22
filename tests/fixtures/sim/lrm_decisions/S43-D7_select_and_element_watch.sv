@@ -2,14 +2,16 @@
 // only when a bit of that select changes; one on an array element reports
 // the element's index in the rightmost unpacked dimension in the index field
 // and runs only for writes of that element. A callback on a whole unpacked
-// array is refused (use its elements).
+// array is accepted and runs for every element write, with the value of the
+// element that changed and its index in the index field.
 //
 // IEEE 1800-2009 38.36.1 (SystemVerilog-1800-2009.txt L64761-64763): "if the
 // obj has the vpiArrayMenber property set to TRUE, the value in the
 // s_cb_data structure shall be the value of the array member that changed
 // value. The index field shall contain the index of the rightmost range of
 // the array declaration." The text does not cover selects or whole arrays;
-// llg chooses the above.
+// llg chooses the above, reporting a whole-array change like an element
+// change.
 //
 // Build S43-D7_select_and_element_watch.c as a VPI application (llg: static
 // archive given to --dpi-lib).

@@ -2013,9 +2013,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   `cbForce`/`cbRelease`, `cbAssign`/`cbDeassign`, `cbDisable`, the class,
   frame and thread reasons, `cbError`/`cbPLIError`/`cbTchkViolation`/
   `cbSignal` and the save, restart, reset and interactive features;
-- `cbValueChange` on a whole unpacked array (register it on the elements), on
-  named events, or with `vpiStrengthVal` to see strength-only changes (it
-  runs on value changes only);
+- `cbValueChange` on named events, on a whole unpacked array of more than
+  2^20 elements (register it on the elements), or with `vpiStrengthVal` to see
+  strength-only changes (it runs on value changes only);
 - `vpi_control(vpiReset)` and `vpiSetInteractiveScope`;
 - user VPI system functions in read-only evaluators other than
   `$strobe`/`$monitor` arguments (evaluated event controls, force

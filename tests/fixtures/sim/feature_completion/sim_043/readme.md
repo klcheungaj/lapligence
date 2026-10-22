@@ -124,9 +124,11 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
 - `vpi_get_cb_info` returns the registration (reason 1, user data, value
   format 6 = vpiIntVal). Releasing a callback handle does not remove the
   callback (`release kept handle -> 1`, and `kept` runs at 2).
-- `cbStmt` and `cbForce` are not provided, a whole array and a parameter are
-  not watchable, a NULL object is an invalid handle and a `vpiSuppressTime`
-  time callback is an error (L64969-64970); each returns NULL.
+- `cbStmt` and `cbForce` are not provided, a parameter is not watchable, a
+  NULL object is an invalid handle and a `vpiSuppressTime` time callback is
+  an error (L64969-64970); each returns NULL. A value-change callback on the
+  whole unpacked array `m` is accepted (S43-D7); a second one is removed at
+  once (`1`), which drops its watch on every element.
 - At 1 and 2: `second` then `first`, the newest registration first (S43-D6).
   At v=2, `second` has already run when `first` removes it; removing it again
   fails (`0 LLG_VPI_HANDLE`, 38.39). `first` registers `third`, which starts
@@ -138,7 +140,8 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
   `cbEndOfCompile` registrations are accepted; the runtime keeps at most 65536
   fired callback handles (`LLG_VPI_MAX_FIRED_CALLBACKS`), so the oldest is
   freed and stale while the newest still reads reason 10. Then `third v=3`,
-  `first v=3`.
+  `first v=3`, and the write `m[0] = 0` runs the whole-array callback with
+  the element's index: `[3] m[0] v=0`.
 - End: `first=3 second=2 third=1`.
 
 ## readonly (A02)

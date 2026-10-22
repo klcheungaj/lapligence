@@ -125,6 +125,12 @@ static PLI_INT32 kept(p_cb_data data) {
     return 0;
 }
 
+static PLI_INT32 element_changed(p_cb_data data) {
+    vpi_printf("[%u] %s[%d] v=%d\n", now_of(data), data->user_data, (int)data->index,
+               (int)data->value->value.integer);
+    return 0;
+}
+
 static void try_reason(PLI_INT32 reason, vpiHandle object, PLI_INT32 time_type,
                        const char* label) {
     s_vpi_time time;
@@ -161,7 +167,13 @@ static PLI_INT32 started(p_cb_data data) {
     after(3, canceller, "canceller");
     try_reason(cbStmt, v, vpiSimTime, "cbStmt");
     try_reason(cbForce, v, vpiSimTime, "cbForce");
-    try_reason(cbValueChange, vpi_handle_by_name("tb.m", NULL), vpiSimTime, "whole array");
+    /* A whole unpacked array reports each element write with its index;
+     * removing such a record drops the watch of every element. */
+    vpiHandle m = vpi_handle_by_name("tb.m", NULL);
+    vpiHandle whole = watch(m, element_changed, "m");
+    vpi_printf("whole array -> %s %s\n", whole ? "handle" : "null", error_code());
+    vpiHandle dropped = watch(m, never, "dropped");
+    vpi_printf("remove a whole-array callback -> %d\n", (int)vpi_remove_cb(dropped));
     try_reason(cbValueChange, vpi_handle_by_name("tb.P", NULL), vpiSimTime, "parameter");
     try_reason(cbValueChange, NULL, vpiSimTime, "null object");
     try_reason(cbAfterDelay, NULL, vpiSuppressTime, "suppressed time");

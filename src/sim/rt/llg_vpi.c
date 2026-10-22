@@ -27,6 +27,9 @@
  * S43-D4). Past this count the oldest one is freed and its handle goes
  * stale, which bounds the memory of applications that never remove them. */
 #define LLG_VPI_MAX_FIRED_CALLBACKS (1u << 16)
+/* Elements a cbValueChange on a whole unpacked array may watch; each costs
+ * one watch entry here and one runtime watch row. */
+#define LLG_VPI_MAX_ARRAY_WATCH_ELEMENTS (1u << 20)
 #define LLG_VPI_MAX_REGISTRATIONS 4096
 #define LLG_VPI_MAX_STARTUP_ROUTINES 1024
 #define LLG_VPI_MAX_ARGS 256
@@ -76,6 +79,7 @@ struct llg_vpi_callsite;
 struct llg_vpi_registration;
 struct llg_vpi_event;
 struct llg_vpi_cb;
+struct llg_vpi_watch;
 
 typedef struct {
     uint32_t generation;
@@ -187,7 +191,7 @@ typedef struct {
     struct llg_vpi_cb* cbs;       /* live callbacks, registration order */
     struct llg_vpi_cb** cbs_tail;
     struct llg_vpi_cb* retired;   /* removed while a dispatch was running */
-    struct llg_vpi_cb** watch_buckets; /* cbValueChange records by storage key */
+    struct llg_vpi_watch** watch_buckets; /* cbValueChange entries by storage key */
     size_t watch_capacity;
     size_t watch_count;
     uint64_t cb_sequence;
@@ -3364,7 +3368,6 @@ typedef struct llg_vpi_cb {
     int waiting;              /* cbNextSimTime not yet queued */
     llg_region_callback_id_t id;
     llg_vpi_target_t target;  /* cbValueChange object */
-    const void* key;          /* watched storage address */
     int value_type;           /* vpiType that formats the value */
     int value_signed;
     int32_t index;            /* reported s_cb_data index */
@@ -3372,11 +3375,23 @@ typedef struct llg_vpi_cb {
     const llg_vpi_model_object_t* scope; /* time scaling object */
     struct llg_vpi_cb* next;
     struct llg_vpi_cb** prev_link;
-    struct llg_vpi_cb* next_watch;
+    /* cbValueChange: one watch on the watched storage, or for a whole
+     * unpacked array one per element (decision S43-D7). */
+    struct llg_vpi_watch* watches;
+    uint64_t watch_total;
 } llg_vpi_cb_t;
+
+/* One watched storage address of a cbValueChange record. */
+typedef struct llg_vpi_watch {
+    const void* key;
+    llg_vpi_cb_t* cb;
+    uint64_t element;         /* array element of a whole-array record, else LLG_VPI_NO_ELEMENT */
+    struct llg_vpi_watch* next;
+} llg_vpi_watch_t;
 
 static void vpi_cb_free(llg_vpi_cb_t* cb) {
     sv4_destroy(&cb->last);
+    free(cb->watches);
     free(cb);
 }
 
@@ -3440,16 +3455,16 @@ static size_t watch_bucket(const void* key, size_t capacity) {
     return (size_t)hash & (capacity - 1u);
 }
 
-static int watch_insert(llg_vpi_cb_t* cb) {
+static int watch_insert(llg_vpi_watch_t* watch) {
     if (g_vpi.watch_count + 1u > g_vpi.watch_capacity - g_vpi.watch_capacity / 4u) {
         size_t capacity = g_vpi.watch_capacity ? g_vpi.watch_capacity * 2u : 64u;
-        llg_vpi_cb_t** table = (llg_vpi_cb_t**)calloc(capacity, sizeof(*table));
+        llg_vpi_watch_t** table = (llg_vpi_watch_t**)calloc(capacity, sizeof(*table));
         if (!table) return 0;
         for (size_t i = 0; i < g_vpi.watch_capacity; ++i) {
-            for (llg_vpi_cb_t* cursor = g_vpi.watch_buckets[i]; cursor;) {
-                llg_vpi_cb_t* next = cursor->next_watch;
+            for (llg_vpi_watch_t* cursor = g_vpi.watch_buckets[i]; cursor;) {
+                llg_vpi_watch_t* next = cursor->next;
                 size_t bucket = watch_bucket(cursor->key, capacity);
-                cursor->next_watch = table[bucket];
+                cursor->next = table[bucket];
                 table[bucket] = cursor;
                 cursor = next;
             }
@@ -3458,24 +3473,38 @@ static int watch_insert(llg_vpi_cb_t* cb) {
         g_vpi.watch_buckets = table;
         g_vpi.watch_capacity = capacity;
     }
-    if (!llg_value_watch_add(cb->key)) return 0;
-    size_t bucket = watch_bucket(cb->key, g_vpi.watch_capacity);
-    cb->next_watch = g_vpi.watch_buckets[bucket];
-    g_vpi.watch_buckets[bucket] = cb;
+    if (!llg_value_watch_add(watch->key)) return 0;
+    size_t bucket = watch_bucket(watch->key, g_vpi.watch_capacity);
+    watch->next = g_vpi.watch_buckets[bucket];
+    g_vpi.watch_buckets[bucket] = watch;
     ++g_vpi.watch_count;
     return 1;
 }
 
-static void watch_unlink(llg_vpi_cb_t* cb) {
-    size_t bucket = watch_bucket(cb->key, g_vpi.watch_capacity);
-    for (llg_vpi_cb_t** link = &g_vpi.watch_buckets[bucket]; *link; link = &(*link)->next_watch) {
-        if (*link != cb) continue;
-        *link = cb->next_watch;
-        cb->next_watch = NULL;
+static void watch_unlink(llg_vpi_watch_t* watch) {
+    size_t bucket = watch_bucket(watch->key, g_vpi.watch_capacity);
+    for (llg_vpi_watch_t** link = &g_vpi.watch_buckets[bucket]; *link; link = &(*link)->next) {
+        if (*link != watch) continue;
+        *link = watch->next;
+        watch->next = NULL;
         --g_vpi.watch_count;
-        llg_value_watch_remove(cb->key);
+        llg_value_watch_remove(watch->key);
         return;
     }
+}
+
+/* Insert every watch of a record, or none. */
+static int cb_watches_insert(llg_vpi_cb_t* cb) {
+    for (uint64_t i = 0; i < cb->watch_total; ++i) {
+        if (watch_insert(&cb->watches[i])) continue;
+        while (i-- > 0) watch_unlink(&cb->watches[i]);
+        return 0;
+    }
+    return 1;
+}
+
+static void cb_watches_unlink(llg_vpi_cb_t* cb) {
+    for (uint64_t i = 0; i < cb->watch_total; ++i) watch_unlink(&cb->watches[i]);
 }
 
 /* Detach a record from every trigger, invalidate its handle (or, when
@@ -3488,7 +3517,7 @@ static void vpi_cb_detach(llg_vpi_cb_t* cb, llg_vpi_cb_done_t* done) {
         llg_cancel_region_callback(cb->id);
         cb->scheduled = 0;
     }
-    if (cb->kind == CB_VALUE) watch_unlink(cb);
+    if (cb->kind == CB_VALUE) cb_watches_unlink(cb);
     if (cb->waiting) {
         cb->waiting = 0;
         --g_vpi.next_time_pending;
@@ -3579,13 +3608,13 @@ static void base_data(const llg_vpi_cb_t* cb, s_cb_data* out) {
 
 typedef int (*cb_match_fn)(const llg_vpi_cb_t* cb, const void* context);
 
-static llg_vpi_cb_t** collect_cbs(llg_vpi_cb_t* first, int watch_chain, cb_match_fn match,
+static llg_vpi_cb_t** collect_cbs(llg_vpi_cb_t* first, cb_match_fn match,
                                   const void* context, llg_vpi_cb_t** inline_buffer,
                                   size_t* count) {
     llg_vpi_cb_t** items = inline_buffer;
     size_t capacity = LLG_VPI_DISPATCH_INLINE;
     *count = 0;
-    for (llg_vpi_cb_t* cb = first; cb; cb = watch_chain ? cb->next_watch : cb->next) {
+    for (llg_vpi_cb_t* cb = first; cb; cb = cb->next) {
         if (cb->removed || !match(cb, context)) continue;
         if (*count == capacity) {
             size_t grown_capacity = capacity * 2u;
@@ -3622,7 +3651,7 @@ static void invoke_action(int reason) {
     llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
     size_t count;
     dispatch_begin();
-    llg_vpi_cb_t** items = collect_cbs(g_vpi.cbs, 0, matches_reason, &reason, buffer, &count);
+    llg_vpi_cb_t** items = collect_cbs(g_vpi.cbs, matches_reason, &reason, buffer, &count);
     for (size_t i = 0; i < count; ++i) {
         llg_vpi_cb_t* cb = items[i];
         if (cb->removed) continue;
@@ -3665,7 +3694,7 @@ static void vpi_time_slot(void) {
     uint64_t now = llg_time();
     llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
     size_t count;
-    llg_vpi_cb_t** items = collect_cbs(g_vpi.cbs, 0, matches_next_time, &now, buffer, &count);
+    llg_vpi_cb_t** items = collect_cbs(g_vpi.cbs, matches_next_time, &now, buffer, &count);
     for (size_t i = 0; i < count; ++i) {
         llg_vpi_cb_t* cb = items[i];
         if (llg_schedule_region_callback_id(LLG_REGION_PRE_ACTIVE_PLI, time_fire, cb, 0,
@@ -3676,10 +3705,6 @@ static void vpi_time_slot(void) {
         }
     }
     if (items != buffer) free(items);
-}
-
-static int matches_key(const llg_vpi_cb_t* cb, const void* context) {
-    return cb->key == context && cb->sequence < g_vpi.cb_sequence;
 }
 
 /* Index reported for an array element: its index in the rightmost unpacked
@@ -3694,21 +3719,61 @@ static int32_t element_index(const llg_vpi_model_object_t* object, uint64_t elem
     return (int32_t)index;
 }
 
+/* The live watches of `key`, in registration order of their records, like
+ * collect_cbs. */
+static llg_vpi_watch_t** collect_watches(const void* key, llg_vpi_watch_t** inline_buffer,
+                                         size_t* count) {
+    llg_vpi_watch_t** items = inline_buffer;
+    size_t capacity = LLG_VPI_DISPATCH_INLINE;
+    *count = 0;
+    for (llg_vpi_watch_t* watch = g_vpi.watch_buckets[watch_bucket(key, g_vpi.watch_capacity)];
+         watch; watch = watch->next) {
+        if (watch->key != key || watch->cb->removed) continue;
+        if (*count == capacity) {
+            size_t grown_capacity = capacity * 2u;
+            llg_vpi_watch_t** grown = (llg_vpi_watch_t**)malloc(grown_capacity * sizeof(*grown));
+            if (!grown) {
+                fputs("llg runtime fatal: VPI callback dispatch allocation failed\n", stderr);
+                abort();
+            }
+            memcpy(grown, items, *count * sizeof(*grown));
+            if (items != inline_buffer) free(items);
+            items = grown;
+            capacity = grown_capacity;
+        }
+        items[(*count)++] = watch;
+    }
+    for (size_t i = 1; i < *count; ++i) {
+        llg_vpi_watch_t* watch = items[i];
+        size_t j = i;
+        for (; j > 0 && items[j - 1]->cb->sequence > watch->cb->sequence; --j)
+            items[j] = items[j - 1];
+        items[j] = watch;
+    }
+    return items;
+}
+
 /* Runtime value-watch hook: the storage at `key` published a new value. */
 static void vpi_value_changed(const void* key) {
     if (!g_vpi.watch_count) return;
-    llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
+    llg_vpi_watch_t* buffer[LLG_VPI_DISPATCH_INLINE];
     size_t count;
     dispatch_begin();
-    llg_vpi_cb_t** items =
-        collect_cbs(g_vpi.watch_buckets[watch_bucket(key, g_vpi.watch_capacity)], 1, matches_key,
-                    key, buffer, &count);
+    llg_vpi_watch_t** items = collect_watches(key, buffer, &count);
     /* The newest registration runs first (decision S43-D6). */
     for (size_t i = count; i-- > 0;) {
-        llg_vpi_cb_t* cb = items[i];
+        llg_vpi_watch_t* watch = items[i];
+        llg_vpi_cb_t* cb = watch->cb;
         if (cb->removed) continue;
+        llg_vpi_target_t target = cb->target;
+        int32_t index = cb->index;
+        if (watch->element != LLG_VPI_NO_ELEMENT) {
+            /* A whole-array record reports the element that changed. */
+            target.element = watch->element;
+            index = element_index(row_object(target.object), watch->element);
+        }
         llg_vpi_datum_t datum;
-        if (!read_target(&cb->target, &datum)) {
+        if (!read_target(&target, &datum)) {
             datum_destroy(&datum);
             continue;
         }
@@ -3724,7 +3789,7 @@ static void vpi_value_changed(const void* key) {
         s_vpi_time time;
         s_vpi_value value;
         base_data(cb, &data);
-        data.index = cb->index;
+        data.index = index;
         data.time = callback_time(cb->time.type, cb->scope, llg_time(), &time);
         if (cb->value.format != vpiSuppressVal) {
             memset(&value, 0, sizeof(value));
@@ -3784,27 +3849,32 @@ static int schedule_time_cb(llg_vpi_cb_t* cb, uint64_t ticks) {
     return 1;
 }
 
-/* Bind a cbValueChange record to its storage. */
+/* Storage address of a value-change target. */
+static const void* watch_key(const llg_vpi_target_t* target) {
+    llg_vpi_model_object_t* object = row_object(target->object);
+    return object->is_real ? (const void*)real_cell(target) : (const void*)packed_cell(target);
+}
+
+/* Bind a cbValueChange record to its storage. A whole unpacked array
+ * watches each element and reports the one that changed (decision S43-D7). */
 static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
     llg_vpi_slot_t* slot = checked_handle(data->obj, NULL);
     if (!slot) return 0;
     llg_vpi_target_t target;
+    int whole_array = 0;
     if (!handle_target(slot, &target)) {
-        vpi_error("LLG_VPI_CALLBACK",
-                  slot->kind == SLOT_OBJECT && is_array_type(row_object(slot->object)->type)
-                      ? "cbValueChange needs an array element, not the whole array"
-                      : "cbValueChange needs a variable, net, element or select handle");
-        return 0;
+        llg_vpi_model_object_t* array =
+            slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
+        if (!array || !is_array_type(array->type) || !has_storage(array)) {
+            vpi_error("LLG_VPI_CALLBACK",
+                      "cbValueChange needs a variable, net, array, element or select handle");
+            return 0;
+        }
+        whole_array = 1;
     }
     llg_vpi_model_object_t* object = row_object(target.object);
     if (object->type == vpiParameter) {
         vpi_error("LLG_VPI_CALLBACK", "a parameter never changes value");
-        return 0;
-    }
-    const void* key = object->is_real ? (const void*)real_cell(&target)
-                                      : (const void*)packed_cell(&target);
-    if (!key) {
-        vpi_error("LLG_VPI_CALLBACK", "this VPI object has no watchable storage");
         return 0;
     }
     if (data->value && data->value->format != vpiSuppressVal &&
@@ -3812,10 +3882,34 @@ static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
         vpi_error("LLG_VPI_CALLBACK", "unsupported cbValueChange value format");
         return 0;
     }
+    uint64_t total = whole_array ? g_vpi.element_counts[target.object] : 1u;
+    if (total == 0 || total > LLG_VPI_MAX_ARRAY_WATCH_ELEMENTS) {
+        vpi_error("LLG_VPI_CALLBACK",
+                  "this array has too many elements for one cbValueChange; watch its elements");
+        return 0;
+    }
+    llg_vpi_watch_t* watches = (llg_vpi_watch_t*)calloc((size_t)total, sizeof(*watches));
+    if (!watches) {
+        vpi_error("LLG_VPI_NOMEM", "VPI value-change watch allocation failed");
+        return 0;
+    }
+    for (uint64_t i = 0; i < total; ++i) {
+        llg_vpi_target_t cell = target;
+        if (whole_array) cell.element = i;
+        watches[i].key = watch_key(&cell);
+        watches[i].cb = cb;
+        watches[i].element = whole_array ? i : LLG_VPI_NO_ELEMENT;
+        if (!watches[i].key) {
+            free(watches);
+            vpi_error("LLG_VPI_CALLBACK", "this VPI object has no watchable storage");
+            return 0;
+        }
+    }
+    cb->watches = watches;
+    cb->watch_total = total;
     cb->target = target;
-    cb->key = key;
     cb->scope = object;
-    cb->value_type = handle_type(slot);
+    cb->value_type = whole_array ? value_type_of(object, 0) : handle_type(slot);
     cb->value_signed = target.span ? 0 : object->is_signed;
     cb->index = slot->kind == SLOT_ELEMENT ? element_index(object, target.element) : 0;
     if (target.span) {
@@ -3924,7 +4018,7 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         vpi_cb_free(cb);
         return NULL;
     }
-    if (kind == CB_VALUE && !watch_insert(cb)) {
+    if (kind == CB_VALUE && !cb_watches_insert(cb)) {
         release_slot(index);
         vpi_cb_free(cb);
         vpi_error("LLG_VPI_NOMEM", "VPI value-change watch allocation failed");
