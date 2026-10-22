@@ -61,4 +61,5 @@ Fixtures:
   many operands); `neg_printtimescale_root` (`$root` is rejected rather than
   given an invented time scale); `neg_timeformat_units_range` (a units value
   outside 0 through -15 fails when the call runs and leaves the earlier format
-  in place).
+  in place). Table 20-2 lists only 0 through -15; some simulators accept such
+  a value at run time without a message, while llg reports it as an error.
