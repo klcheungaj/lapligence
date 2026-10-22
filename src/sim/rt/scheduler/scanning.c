@@ -669,9 +669,11 @@ int llg_file_scanf_scoped(uint32_t descriptor, const char* format,
                           const llg_file_input_target_t* targets, int target_count,
                           const char* scope, uint64_t time_unit_fs) {
     llg_file_slot_t* slot;
-    // No input can be read from an invalid, closed or multichannel descriptor,
-    // so the call ends before its first conversion: EOF (21.3.4.3).
-    if (!llg_file_single_ordinary(descriptor, &slot)) return EOF;
+    // An invalid, closed or multichannel descriptor names no input to end,
+    // so nothing is matched or assigned and the call returns 0 (S26-D2,
+    // industry-standard behaviour). A file open only for writing does have
+    // an input that ends at once: EOF, from the scan itself.
+    if (!llg_file_single_ordinary(descriptor, &slot)) return 0;
     llg_scan_input_t input = {slot, NULL, 0, 0, 0, scope, time_unit_fs};
     return llg_scan_format(&input, format, targets, target_count);
 }

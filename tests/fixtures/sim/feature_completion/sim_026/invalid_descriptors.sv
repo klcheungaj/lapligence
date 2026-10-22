@@ -1,9 +1,10 @@
 // SIM-026 A02/A03: every input function on a closed descriptor, descriptor
 // 0, an unknown descriptor, multichannel descriptors, an unopened descriptor
-// and a write-only file. Each returns its failure code (EOF for $fgetc,
-// $ungetc and $fscanf; 0 for $fgets and $fread; -1 for $ftell, $fseek,
-// $rewind and $feof) and leaves its destination unchanged (IEEE 1800-2009
-// 21.3.1, 21.3.4-21.3.7).
+// and a write-only file. Each returns its failure code (EOF for $fgetc and
+// $ungetc; 0 for $fgets, $fread and for $fscanf on a descriptor that is not
+// an open file (S26-D2); EOF for $fscanf on a write-only file; -1 for $ftell,
+// $fseek, $rewind and $feof) and leaves its destination unchanged (IEEE
+// 1800-2009 21.3.1, 21.3.4-21.3.7).
 module tb;
   integer fd, c, mcd;
   logic [7:0] a;

@@ -143,7 +143,9 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
     nothing and returns 0.
 - `invalid_descriptors`: a closed descriptor, descriptor 0, an X descriptor,
   multichannel descriptors (including stdout), an unopened descriptor and a
-  write-only file. `$fgetc`, `$ungetc` and `$fscanf` return EOF (S26-D2).
+  write-only file. `$fgetc` and `$ungetc` return EOF. `$fscanf` returns 0
+  on every descriptor that is not an open file (lines D, I and J) and EOF on
+  the write-only file (line K), whose input ends at once (S26-D2).
   `$fgets` and `$fread` return 0 (L36844, L37090). `$ftell` and `$fseek`
   return -1 (L37125, L37154). `$feof` returns -1 (S26-D2). Destinations stay
   unchanged, and `$ferror` reports a nonzero code with a message (L37203-37205).
