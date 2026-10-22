@@ -65,7 +65,7 @@ impl Frame<'_, '_> {
         let mut remaining = width;
         let value = self.convert(value, width, false, false, false);
         let code = format!(
-            "sv4_unstream({}, {slice}, {})",
+            "sv4_stream({}, {slice}, {})",
             value.code,
             u8::from(direction == IrStreamDirection::RightToLeft)
         );
@@ -261,7 +261,7 @@ impl Frame<'_, '_> {
             (value, self.scalar("int64_t", format!("(int64_t){total}")))
         } else {
             let code = format!(
-                "sv4_unstream({}, {slice}, {})",
+                "sv4_stream({}, {slice}, {})",
                 value.code,
                 u8::from(right_to_left)
             );
@@ -833,7 +833,7 @@ impl Frame<'_, '_> {
             self.line(format!("llg_bitstream_take(&{name}, {bits}ULL);"));
         }
         if let Some((slice, IrStreamDirection::RightToLeft)) = stream.unpack {
-            self.line(format!("llg_bitstream_reverse(&{name}, {slice}u, 1);"));
+            self.line(format!("llg_bitstream_reverse(&{name}, {slice}u);"));
         }
         Ok(name)
     }
@@ -936,7 +936,7 @@ impl Frame<'_, '_> {
         }
         // `>>` ignores the slice size (SV 11.4.14.2).
         if direction == IrStreamDirection::RightToLeft {
-            self.line(format!("llg_bitstream_reverse(&{name}, {slice}u, 0);"));
+            self.line(format!("llg_bitstream_reverse(&{name}, {slice}u);"));
         }
     }
 }

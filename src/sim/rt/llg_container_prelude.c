@@ -360,7 +360,7 @@ sv4_t llg_stream_unpack_source(sv4_t value, uint64_t bits, uint32_t slice,
     }
     sv4_t consumed = sv4_part_select(value, (int64_t)width - 1,
                                      (int64_t)(width - (uint32_t)bits));
-    sv4_t result = sv4_unstream(consumed, slice, right_to_left);
+    sv4_t result = sv4_stream(consumed, slice, right_to_left);
     sv4_destroy(&consumed);
     return result;
 }

@@ -169,7 +169,7 @@ fn streaming_prepares_all_values_before_any_publication() {
     };
     let writes = frame.prepare_assignment(&lhs, rhs).unwrap();
     assert_eq!(writes.len(), 2);
-    assert_eq!(frame.body().matches("sv4_unstream_to(").count(), 1);
+    assert_eq!(frame.body().matches("sv4_stream_to(").count(), 1);
     assert!(!frame.body().contains("llg_ba("));
     assert!(!frame.body().contains("llg_ba_from("));
     for (target, value) in writes {

@@ -188,7 +188,7 @@ static inline g4_t llg_gmp_sv4_repeat_count(g4_t value) {
     value.is_signed = 0;
     return value;
 }
-static inline g4_t g4_selection_small_stream(g4_t v, uint32_t slice, int reverse, int inverse) {
+static inline g4_t g4_selection_small_stream(g4_t v, uint32_t slice, int reverse) {
     if (!slice)
         llg_gmp_sv4_fail("zero streaming slice size");
     if (!reverse || slice >= v.width) {
@@ -199,21 +199,16 @@ static inline g4_t g4_selection_small_stream(g4_t v, uint32_t slice, int reverse
     for (uint32_t bit = 0; bit < v.width;) {
         uint32_t count = v.width - bit < slice ? v.width - bit : slice;
         uint32_t other = v.width - bit - count;
-        uint32_t src = inverse ? other : bit, dst = inverse ? bit : other;
         uint64_t mask = g4_mask(count);
-        r.data.small.a |= ((v.data.small.a >> src) & mask) << dst;
-        r.data.small.b |= ((v.data.small.b >> src) & mask) << dst;
+        r.data.small.a |= ((v.data.small.a >> bit) & mask) << other;
+        r.data.small.b |= ((v.data.small.b >> bit) & mask) << other;
         bit += count;
     }
     return r;
 }
 static inline g4_t llg_gmp_sv4_stream(g4_t v, uint32_t slice, int reverse) {
-    return v.width <= 64 ? g4_selection_small_stream(v, slice, reverse, 0)
+    return v.width <= 64 ? g4_selection_small_stream(v, slice, reverse)
                          : llg_gmp_sv4_stream_wide(v, slice, reverse);
-}
-static inline g4_t llg_gmp_sv4_unstream(g4_t v, uint32_t slice, int reverse) {
-    return v.width <= 64 ? g4_selection_small_stream(v, slice, reverse, 1)
-                         : llg_gmp_sv4_unstream_wide(v, slice, reverse);
 }
 static inline g4_t llg_gmp_sv4_array_conditional_merge(g4_t a, g4_t b, g4_t def) {
     if (a.width > 64)

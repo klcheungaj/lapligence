@@ -202,7 +202,7 @@ static void force_recompute_target(sv4_t* target, llg_net_t* net) {
         llg_force_entry_t* entry = &g.force_table[i];
         if (!entry->active || entry->is_real) continue;
         sv4_t streamed = entry->stream_slice
-            ? sv4_unstream(entry->value, entry->stream_slice, entry->stream_right_to_left)
+            ? sv4_stream(entry->value, entry->stream_slice, entry->stream_right_to_left)
             : sv4_clone(&entry->value);
         for (int j = 0; j < entry->n_parts; j++) {
             llg_force_part_t* part = &entry->parts[j];

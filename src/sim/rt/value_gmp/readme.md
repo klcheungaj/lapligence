@@ -80,7 +80,7 @@ Every result owns independently. Selected aliases snapshot before writes; known
 selected intervals do not promote B even if another source interval contains X/Z.
 Reversed intervals use fixed 64-bit bit permutations and shifted range copies.
 Streams gather slices into destination words before storing each word once.
-`sv4_stream`/`sv4_unstream` preserve width;
+`sv4_stream` preserves width (an unpack reorders with it too);
 assignment padding/truncation remains the caller's conversion before/after them.
 Array conditionals compare each immediate element with logical equality and use
 the supplied default for differing or X/Z-containing elements (SV2009 11.4.11).

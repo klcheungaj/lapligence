@@ -68,7 +68,6 @@ const OPERATIONS: &[(&str, &str, &[Param])] = &[
     ("sv4_repeat_count", "sv4_repeat_count_to", &[P]),
     ("sv4_repeat", "sv4_repeat_to", &[P, S]),
     ("sv4_stream", "sv4_stream_to", &[P, S, S]),
-    ("sv4_unstream", "sv4_unstream_to", &[P, S, S]),
     ("sv4_part_select", "sv4_part_select_to", &[P, S, S]),
     ("sv4_bit_select", "sv4_bit_select_to", &[P, S]),
     (

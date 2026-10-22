@@ -82,10 +82,11 @@ static size_t llg_stream_unpacked_values(sv4_t source, uint32_t element_width,
     size_t count;
     llg_stream_bounds(selector_kind, first, second, 0, left, right, &count);
     if (!selector_kind) {
-        if (element_width == 0 || llg_sv4_width(source) % element_width != 0)
-            llg_container_fatal(
-                "streaming source width is not divisible by destination element width");
-        count = llg_sv4_width(source) / element_width;
+        // The whole unpacked stream fills the target: a last partial element
+        // is zero-filled on the right (SV 11.4.14.4 "resized to accept all
+        // the available data").
+        count = llg_sv4_width(source) / element_width
+                + (llg_sv4_width(source) % element_width != 0);
         *left = 0;
         *right = count ? (int64_t)(count - 1) : -1;
     } else if (count > 0
@@ -99,6 +100,23 @@ static size_t llg_stream_unpacked_values(sv4_t source, uint32_t element_width,
     return count;
 }
 
+/* Reorder an unpack source as the stream operator does (SV 11.4.14.3) and
+ * zero-fill it on the right to `count` whole elements. Borrows `source`. */
+static sv4_t llg_stream_unpacked_image(sv4_t source, uint32_t slice,
+                                       int right_to_left,
+                                       uint32_t element_width, size_t count) {
+    sv4_t unpacked = sv4_stream(source, slice, right_to_left);
+    uint32_t width = llg_sv4_width(unpacked);
+    uint64_t needed = (uint64_t)count * element_width;
+    if (needed > width) {
+        sv4_t fill = sv4_zero((uint32_t)(needed - width), 0);
+        sv4_t padded = sv4_concat(unpacked, fill);
+        sv4_destroy(&fill);
+        sv4_replace(&unpacked, padded);
+    }
+    return unpacked;
+}
+
 static void llg_dyn_unstream_assign_impl(llg_dyn_array_t* dst, sv4_t source,
                              uint32_t slice, int right_to_left,
                              int selector_kind, sv4_t first, sv4_t second) {
@@ -106,7 +124,8 @@ static void llg_dyn_unstream_assign_impl(llg_dyn_array_t* dst, sv4_t source,
     int64_t right;
     size_t count = llg_stream_unpacked_values(
         source, dst->element_width, selector_kind, first, second, &left, &right);
-    sv4_t unpacked = sv4_unstream(source, slice, right_to_left);
+    sv4_t unpacked = llg_stream_unpacked_image(source, slice, right_to_left,
+                                               dst->element_width, count);
     if (!selector_kind) {
         sv4_t* values = llg_alloc_items(count, sizeof(*values));
         uint32_t cursor = llg_sv4_width(unpacked);

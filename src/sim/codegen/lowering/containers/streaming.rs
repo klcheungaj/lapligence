@@ -177,8 +177,8 @@ impl<'a> Codegen<'a> {
         )))
     }
 
-    /// The source of a whole unpack into one string: the stream consumed by
-    /// the inverse of the target operator, which must supply whole bytes
+    /// The source of a whole unpack into one string: the stream reordered by
+    /// the target operator; a partial last byte is zero-filled
     /// (SV 11.4.14.3, 11.4.14.4).
     pub(in super::super) fn lower_string_unpack_source(
         &mut self,
@@ -202,7 +202,7 @@ impl<'a> Codegen<'a> {
         stream.unpack = Some((slice, direction));
         Ok(IrStringExpr::BitStream {
             stream: Box::new(stream),
-            exact: true,
+            exact: false,
         })
     }
 
@@ -756,8 +756,8 @@ impl<'a> Codegen<'a> {
                 "streaming container target must have a packed element in `{path}`"
             ));
         }
-        // The whole source unpacks into the container, which must take whole
-        // elements; the source streams without a packed temporary.
+        // The whole source unpacks into the container; the source streams
+        // without a packed temporary.
         let source = match self.kind(rhs) {
             NodeKind::Expr(ExprKind::Cast { operand, .. })
                 if matches!(
@@ -775,11 +775,14 @@ impl<'a> Codegen<'a> {
             DbStreamingDirection::RightToLeft => IrStreamDirection::RightToLeft,
         };
         stream.unpack = Some((Self::stream_slice(path, *slice_size)?, direction));
+        // A whole unpack resizes the target to hold every source bit, the
+        // last element zero-filled (SV 11.4.14.4 "resized to accept all the
+        // available data").
         Ok(Some(IrStmt::Container(Box::new(
             IrContainerStmt::BitStreamAssign {
                 container: container.ir,
                 stream,
-                exact: true,
+                exact: false,
             },
         ))))
     }

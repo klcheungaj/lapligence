@@ -112,7 +112,6 @@ g4_t llg_gmp_sv4_concat_wide(g4_t hi, g4_t lo);
 g4_t llg_gmp_sv4_repeat_wide(g4_t pat, uint64_t n);
 g4_t llg_gmp_sv4_repeat_count_wide(g4_t v);
 g4_t llg_gmp_sv4_stream_wide(g4_t value, uint32_t slice, int right_to_left);
-g4_t llg_gmp_sv4_unstream_wide(g4_t value, uint32_t slice, int right_to_left);
 g4_t llg_gmp_sv4_array_conditional_merge_wide(g4_t a, g4_t b, g4_t element_default);
 /* End V05 S4/S5 declarations. */
 void llg_gmp_sv4_fail(const char* message);
@@ -988,7 +987,6 @@ static inline uint32_t llg_gmp_sv4_checked_width(g4_t value) {
 #define sv4_repeat llg_gmp_sv4_repeat
 #define sv4_repeat_count llg_gmp_sv4_repeat_count
 #define sv4_stream llg_gmp_sv4_stream
-#define sv4_unstream llg_gmp_sv4_unstream
 #define sv4_array_conditional_merge llg_gmp_sv4_array_conditional_merge
 #define llg_ref_read llg_gmp_ref_read
 #define llg_ref_view_valid llg_gmp_ref_view_valid

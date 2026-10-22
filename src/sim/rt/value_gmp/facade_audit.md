@@ -15,7 +15,7 @@ convert into legacy descriptors as a fallback.
 | `sv4_<op>_to` destination forms (`value/destinations.h`) | Backend-neutral `value/destinations.c`, appended to the compact `llg_value.c`; compact link names are prefixed `llg_gmp_sv4_<op>_to` with public aliases. |
 | Shifts, reductions, countones/onehot, wildcard/case modes, membership, logical implication/equivalence | `backend.h`, `shifts_reductions.c`, `comparison_membership.c`; inline small paths and direct word kernels |
 | Selection functions and plans | `selection_inline.h`, `selections.c`; clipped coordinate plans, alias snapshots and word range copies |
-| Stream/unstream, concat/repeat, array conditional | `selection_inline.h`, `assembly.c`; independent unsigned owners |
+| Stream, concat/repeat, array conditional | `selection_inline.h`, `assembly.c`; independent unsigned owners |
 | Enum, full/range resolution, strength resolution, UDP | `net_adapters.c`; word-parallel endpoints, no per-bit resolution |
 | Real/shortreal bits, integer/real conversions, checked delay scaling | Header and `real_time.c` |
 | Formatting, decimal, low i64, exact i64/index checks | Header, `format_index.c` and decimal kernel seam |

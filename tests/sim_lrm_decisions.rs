@@ -330,6 +330,14 @@ fn s20_5_reverse_unpack_consumed() {
     );
 }
 
+#[test]
+fn s20_7_unpack_uneven_slices() {
+    run_decision(
+        "S20-7_unpack_uneven_slices",
+        include_str!("fixtures/sim/lrm_decisions/S20-7_unpack_uneven_slices.out"),
+    );
+}
+
 /// Negative at run time: the output before the error is portable.
 #[test]
 fn s20_6_dynamic_cast_whole_elements() {

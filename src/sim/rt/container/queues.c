@@ -193,7 +193,8 @@ static void llg_queue_unstream_assign_impl(llg_queue_t* dst, sv4_t source,
     int64_t right;
     size_t count = llg_stream_unpacked_values(
         source, dst->element_width, selector_kind, first, second, &left, &right);
-    sv4_t unpacked = sv4_unstream(source, slice, right_to_left);
+    sv4_t unpacked = llg_stream_unpacked_image(source, slice, right_to_left,
+                                               dst->element_width, count);
     if (!selector_kind) {
         sv4_t* values = llg_alloc_items(count, sizeof(*values));
         uint32_t cursor = llg_sv4_width(unpacked);

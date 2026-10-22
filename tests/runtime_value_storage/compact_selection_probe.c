@@ -145,14 +145,16 @@ static void streams(g4_t v, sv4_t old) {
                 uint32_t dst = reverse ? v.width - start - take + bit - start : bit;
                 expect_state(r, dst, state_at(v, bit));
             }
-            g4_t restored = llg_gmp_sv4_unstream(r, slice, reverse);
-            for (uint32_t bit = 0; bit < v.width; ++bit)
-                expect_state(restored, bit, state_at(v, bit));
             compare(sv4_stream(old, slice, reverse), r);
-            sv4_t unsigned_old = sv4_clone(&old);
-            unsigned_old.is_signed = 0;
-            compare(unsigned_old, restored);
-            compare(sv4_unstream(old, slice, reverse), llg_gmp_sv4_unstream(v, slice, reverse));
+            // Whole blocks make the reordering its own inverse.
+            if (!reverse || slice >= v.width || v.width % slice == 0) {
+                g4_t restored = llg_gmp_sv4_stream(r, slice, reverse);
+                for (uint32_t bit = 0; bit < v.width; ++bit)
+                    expect_state(restored, bit, state_at(v, bit));
+                sv4_t unsigned_old = sv4_clone(&old);
+                unsigned_old.is_signed = 0;
+                compare(unsigned_old, restored);
+            }
         }
     }
 }
@@ -420,7 +422,6 @@ static void small_indices_and_empty(void) {
     compare(sv4_repeat(oe, UINT64_MAX), llg_gmp_sv4_repeat(empty, UINT64_MAX));
     compare(sv4_repeat_count(oe), llg_gmp_sv4_repeat_count(empty));
     compare(sv4_stream(oe, 7, 1), llg_gmp_sv4_stream(empty, 7, 1));
-    compare(sv4_unstream(oe, 7, 1), llg_gmp_sv4_unstream(empty, 7, 1));
     g4_t index = llg_gmp_sv4_x(65, 0);
     llg_gmp_sv4_select_plan_t p = llg_gmp_sv4_select_plan_init(4);
     llg_gmp_sv4_select_plan_step(&p, index, 7);
@@ -461,16 +462,13 @@ static void word_boundaries(void) {
             sv4_t old = legacy(value);
             for (uint32_t slice = 1; slice <= 130; ++slice) {
                 g4_t streamed = llg_gmp_sv4_stream(value, slice, 1);
-                g4_t unstreamed = llg_gmp_sv4_unstream(value, slice, 1);
                 for (uint32_t bit = 0; bit < value.width; ++bit) {
                     uint32_t start = bit / slice * slice;
                     uint32_t count = value.width - start < slice ? value.width - start : slice;
                     uint32_t other = value.width - start - count + bit - start;
                     expect_state(streamed, other, state_at(value, bit));
-                    expect_state(unstreamed, bit, state_at(value, other));
                 }
                 compare(sv4_stream(old, slice, 1), streamed);
-                compare(sv4_unstream(old, slice, 1), unstreamed);
             }
             for (int64_t left = -65; left <= 130; ++left)
                 for (size_t n = 0; n < sizeof(lengths) / sizeof(lengths[0]); ++n) {
@@ -648,18 +646,18 @@ static void stream_padding(void) {
         g4_t padded = llg_gmp_sv4_resize(source, width, 0);
         sv4_t opadded = sv4_resize(old, width, 0);
         for (int reverse = 0; reverse < 2; ++reverse) {
-            g4_t result = llg_gmp_sv4_unstream(padded, 7, reverse);
+            g4_t result = llg_gmp_sv4_stream(padded, 7, reverse);
             for (uint32_t bit = 0; bit < width;) {
                 uint32_t count = width - bit < 7 ? width - bit : 7;
                 uint32_t other = width - bit - count;
                 for (uint32_t j = 0; j < count; ++j) {
-                    uint32_t input = reverse ? other + j : bit + j;
-                    expect_state(result, bit + j,
-                                 input < source.width ? state_at(source, input) : 0);
+                    uint32_t output = reverse ? other + j : bit + j;
+                    expect_state(result, output,
+                                 bit + j < source.width ? state_at(source, bit + j) : 0);
                 }
                 bit += count;
             }
-            compare(sv4_unstream(opadded, 7, reverse), result);
+            compare(sv4_stream(opadded, 7, reverse), result);
         }
         llg_gmp_sv4_destroy(&padded);
         sv4_destroy(&opadded);
@@ -709,7 +707,7 @@ static void result_ownership(void) {
                       llg_gmp_sv4_select_plan_read(v, &p),
                       llg_gmp_sv4_select_plan_slice(v, &p, 1),
                       llg_gmp_sv4_stream(v, 7, 1),
-                      llg_gmp_sv4_unstream(v, 7, 1),
+                      llg_gmp_sv4_stream(v, 3, 1),
                       llg_gmp_sv4_concat(v, v),
                       llg_gmp_sv4_repeat(v, 3),
                       llg_gmp_sv4_repeat_count(v),
@@ -720,7 +718,7 @@ static void result_ownership(void) {
                         sv4_select_plan_read(old, &op),
                         sv4_select_plan_slice(old, &op, 1),
                         sv4_stream(old, 7, 1),
-                        sv4_unstream(old, 7, 1),
+                        sv4_stream(old, 3, 1),
                         sv4_concat(old, old),
                         sv4_repeat(old, 3),
                         sv4_repeat_count(old),

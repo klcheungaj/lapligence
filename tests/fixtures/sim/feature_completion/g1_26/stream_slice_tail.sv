@@ -1,7 +1,9 @@
 // llg-test-fixture: tests/fixtures/sim/feature_completion/g1_26/stream_slice_tail.sv
 // IEEE 1800-2009 11.4.14: a stream whose total width is not divisible by the
 // slice size keeps the short left-most block in place instead of padding or
-// truncating it, in both directions of assignment.
+// truncating it, in both directions of assignment. An unpack slices its source
+// from the right-most bit as a pack does (decision S20-7), so the unpack of
+// the packed value is not the original lanes.
 module tb;
     logic [7:0] lanes [0:2];
     logic [23:0] result;

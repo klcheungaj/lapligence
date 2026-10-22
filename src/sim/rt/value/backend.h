@@ -386,11 +386,11 @@ sv4_t sv4_mux(sv4_t sel, sv4_t a, sv4_t b);
 sv4_t sv4_array_conditional_merge(sv4_t a, sv4_t b, sv4_t element_default);
 sv4_t sv4_concat(sv4_t hi, sv4_t lo);     // hi is the MS part
 sv4_t sv4_repeat(sv4_t pat, uint64_t n);  // {n{pat}}
-// Packed streaming: right_to_left reverses slice-sized blocks; left-to-right
-// preserves stream order. The result is unsigned and has value.width bits.
+// Packed streaming: right_to_left slices from the right-most bit (a short
+// block is left-most) and reverses the blocks; left-to-right preserves stream
+// order. An unpack reorders its consumed source the same way (SV 11.4.14.3).
+// The result is unsigned and has value.width bits.
 sv4_t sv4_stream(sv4_t value, uint32_t slice, int right_to_left);
-// Inverse mapping used when a packed stream is an assignment target.
-sv4_t sv4_unstream(sv4_t value, uint32_t slice, int right_to_left);
 sv4_t sv4_part_select(sv4_t v, int64_t left, int64_t right); // handles reversed ranges
 void sv4_part_select_set(sv4_t* tgt, int64_t left, int64_t right, sv4_t value);
 sv4_t sv4_bit_select(sv4_t v, uint64_t i);

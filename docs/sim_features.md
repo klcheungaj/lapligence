@@ -1224,9 +1224,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   runtime-sized bit stream (`llg_bitstream_t`) that is not bounded by the
   packed width, as sources, unpack targets and bit-stream casts in both
   directions; a stream assigned to a dynamic array, queue or string resizes it
-  (left-aligned, zero-filled), strings drop zero bytes, explicit casts to
-  dynamic types need whole elements, and a `<<` unpack into fixed-size
-  targets resolves `with` extents before reordering the consumed bits. Queue operands (plain or
+  (left-aligned, zero-filled), as does a whole unpack into one, strings drop
+  zero bytes, explicit casts to dynamic types need whole elements, a `<<`
+  unpack reorders the consumed bits as a pack does (blocks sliced from the
+  right), and a `<<` unpack into fixed-size targets resolves `with` extents
+  before reordering the consumed bits. Queue operands (plain or
   `with`-selected) of oversized descriptor streams and oversized whole fixed
   unpack targets use the same segments
   ([SIM-020](../tests/fixtures/sim/feature_completion/sim_020/readme.md),

@@ -177,9 +177,9 @@ pub enum IrStringExpr {
     Repeat(Box<IrStringExpr>, Box<IrExpr>),
     FromPacked(Box<IrExpr>),
     /// The bytes of a runtime-sized bit stream (SV 6.24.3 treats a string as
-    /// a dynamic array of bytes). `exact` (a bit-stream cast or a whole
-    /// unpack) requires whole bytes; otherwise the stream is left-aligned and
-    /// zero-filled. Zero bytes are dropped (SV 6.16).
+    /// a dynamic array of bytes). `exact` (a bit-stream cast) requires whole
+    /// bytes; otherwise, an assignment or a whole unpack, the stream is
+    /// left-aligned and zero-filled. Zero bytes are dropped (SV 6.16).
     BitStream {
         stream: Box<super::IrBitStream>,
         exact: bool,

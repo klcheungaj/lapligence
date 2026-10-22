@@ -1111,9 +1111,10 @@ void llg_queue_value_sort_by_keys(llg_queue_value_array_t* queue,
  * resizable operands or destinations (IEEE 1800-2009 6.24.3, 11.4.14). The
  * stream is not bounded by the packed value width; only `llg_bitstream_value`
  * materializes it as one packed value. Appends borrow their operands.
- * `reverse` reorders `slice`-bit blocks: from the right for a pack and from
- * the left for the inverse unpack. Destinations with `exact` require whole
- * elements; otherwise the stream is left-aligned and zero-filled. */
+ * `reverse` reorders `slice`-bit blocks sliced from the right, for a pack and
+ * for the source an unpack consumes alike. Destinations with `exact` (a
+ * bit-stream cast) require whole elements; otherwise the stream is
+ * left-aligned and zero-filled. */
 /* One 64-bit stream word per plane, indexed by LLG_SV4_BITS/X/Z. */
 typedef struct {
     uint64_t plane[3];
@@ -1150,8 +1151,7 @@ void llg_bitstream_append_queue_values(llg_bitstream_t* stream,
                                        sv4_t second);
 void llg_bitstream_append_string(llg_bitstream_t* stream, llg_string_t value);
 void llg_bitstream_take(llg_bitstream_t* stream, uint64_t bits);
-void llg_bitstream_reverse(llg_bitstream_t* stream, uint32_t slice,
-                           int from_left);
+void llg_bitstream_reverse(llg_bitstream_t* stream, uint32_t slice);
 sv4_t llg_bitstream_value(const llg_bitstream_t* stream);
 /* Stream bits [position, position + width) as one packed value. */
 sv4_t llg_bitstream_bits(const llg_bitstream_t* stream, uint64_t position,

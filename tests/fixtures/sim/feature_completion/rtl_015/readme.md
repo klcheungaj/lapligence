@@ -3,7 +3,11 @@
 IEEE 1800-2009 §§6.24.3, 10.4.2 and 11.4.14 supply the oracles. Expected
 values are independent bit-string derivations of the packing, reordering and
 unpacking rules (`{<< n {...}}` slices from the right; an unpack consumes the
-leftmost bits it needs and reorders only those). Positive sources run through
+leftmost bits it needs and reorders only those, slicing them from the right as
+a pack does, so a short block is the leftmost: decision S20-7 in
+`docs/lrm_decisions.md`; the `d_set`, `u_set`, `o_set`, `mixed_rl5`, `wide_u`,
+`wide_rl4` and `arg` lines changed with it from the earlier inverse reading,
+which sliced the consumed bits from the left). Positive sources run through
 the public CLI in both optimizer modes and on the legacy and compact value
 backends; representative sources also run after snapshot/Db destruction.
 

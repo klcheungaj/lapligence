@@ -1,0 +1,9 @@
+fixed array d0 4d b1
+variables d0 4d b1
+wider source 77 e
+nested d2 e
+queue whole 3 5c 42 f8
+queue partial 3 63 4a c0
+dynamic 3 14 16 15
+left to right 2 5a 30
+string 3 204a80

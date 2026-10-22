@@ -353,7 +353,8 @@ pub enum IrStreamSegment {
 /// A runtime-sized bit stream (SV 6.24.3, 11.4.14) that is never limited by
 /// the packed value width: the segments are concatenated, reordered by the
 /// pack operator (`slice`, `direction`), and, for a whole unpack into one
-/// resizable destination, by the inverse of the target operator (`unpack`).
+/// resizable destination, by the target operator (`unpack`), which reorders
+/// the consumed source exactly as a pack would (SV 11.4.14.3).
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrBitStream {
     pub segments: Vec<IrStreamSegment>,
@@ -638,9 +639,10 @@ pub enum IrContainerStmt {
         selector: Option<IrStreamSelector>,
     },
     /// Replace a packed-element dynamic array or queue with the elements of
-    /// a runtime-sized bit stream. `exact` (a bit-stream cast or a whole
-    /// unpack) requires whole elements; otherwise the stream is left-aligned
-    /// and zero-filled (SV 6.24.3, 11.4.14, 11.4.14.4).
+    /// a runtime-sized bit stream. `exact` (a bit-stream cast) requires whole
+    /// elements; otherwise, an assignment or a whole unpack, the stream is
+    /// left-aligned and the last element zero-filled (SV 6.24.3, 11.4.14,
+    /// 11.4.14.4).
     BitStreamAssign {
         container: usize,
         stream: IrBitStream,

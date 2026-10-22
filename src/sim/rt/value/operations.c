@@ -1750,33 +1750,6 @@ sv4_t sv4_stream(sv4_t value, uint32_t slice, int right_to_left) {
     return r;
 }
 
-sv4_t sv4_unstream(sv4_t value, uint32_t slice, int right_to_left) {
-    if (slice == 0) {
-        fprintf(stderr, "llg runtime fatal: zero streaming slice size\n");
-        abort();
-    }
-    sv4_t r = sv4_zero(value.width, 0);
-    r.width = value.width;
-    r.is_signed = 0;
-    if (!right_to_left || value.width == 0 || slice >= value.width) {
-        int limbs = sv4_nlimbs(value.width);
-        for (int i = 0; i < limbs; i++) {
-            r.bits[i] = value.bits[i];
-            r.x[i] = value.x[i];
-            r.z[i] = value.z[i];
-        }
-        return r;
-    }
-    for (uint32_t bit = 0; bit < value.width;) {
-        uint32_t take = value.width - bit;
-        if (take > slice) take = slice;
-        uint32_t other = value.width - bit - take;
-        sv4_copy_bits(&r, bit, value, other, take);
-        bit += take;
-    }
-    return r;
-}
-
 sv4_t sv4_bit_select(sv4_t v, uint64_t i) {
     if (i >= v.width) return SV4_X(1);
     int b = sv4_lsb_bit(v, (int)i);
