@@ -1,6 +1,8 @@
 // Decision S26-D3: %u and %z read and write 32-bit words, least
-// significant word first, each word in little-endian byte order; a read
-// that runs out of data assigns nothing.
+// significant word first, each word in little-endian byte order. A %u read
+// that runs out of data stores the bytes it read and keeps the rest of the
+// destination; a %z read that runs out of data assigns nothing. Neither
+// counts as a conversion, and with no byte left the call returns EOF.
 //
 // IEEE 1800-2009 21.3.4.3 Table 21-8 (SystemVerilog-1800-2009.txt
 // L36944-36946, L36958-36959):
@@ -10,12 +12,16 @@
 //   underlying system"
 // z (L36988-36990): "in the same endian order as if the PLI was used, the
 //   data were in a s_vpi_vecval structure"
+// L37024-37025: "If the input ends before the first matching failure or
+//   conversion, EOF (-1) is returned."
 //
 // llg uses the s_vpi_vecval word layout for both: 32-bit words (an aval word
 // then a bval word for %z), least significant word first, little-endian
-// bytes (the byte order of llg's supported hosts). A %u or %z conversion that
-// meets end of file after some bytes assigns nothing and returns 0 for that
-// directive; with no byte left it returns EOF.
+// bytes (the byte order of llg's supported hosts). The text does not cover
+// data that ends inside a %u field; llg follows industry-standard behaviour
+// and stores the bytes read (byte k holds bits 8k to 8k+7) over the old value.
+// Some simulators also return 0 instead of EOF when a %u field finds no data
+// at all; llg returns EOF, as L37024-37025 says.
 module tb;
   integer fd, c, b0, b1, b2, b3;
   logic [31:0] u;

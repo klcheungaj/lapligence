@@ -1,5 +1,5 @@
 u bytes=04 03 02 01
 z c=1 z=10xz
-short c=0 u=55555555
-end c=-1 u=55555555
+short c=0 u=55554241
+end c=-1 u=55554241
 round c=1 u=01020304

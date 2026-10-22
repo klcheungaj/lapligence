@@ -137,8 +137,8 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
   - overlong integral fields keep their least significant bits; `%s` into a
     24-bit vector keeps its last three characters;
   - `%d` reading a single `z` assigns all-Z and leaves the second `z` unread;
-  - `%u` with three bytes left assigns nothing and returns 0, then returns -1
-    at end of file (S26-D3);
+  - `%u` with three bytes left stores them in the low three bytes, keeps the
+    top byte and returns 0, then returns -1 at end of file (S26-D3);
   - a `$fread` with `count` 0, or with `start` outside the memory, reads
     nothing and returns 0.
 - `invalid_descriptors`: a closed descriptor, descriptor 0, an X descriptor,

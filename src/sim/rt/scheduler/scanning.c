@@ -466,7 +466,9 @@ static int llg_scan_store_time(const unsigned char* bytes, size_t length,
 // them, 32-bit little-endian words with the least significant word first;
 // `%z` writes each word as its VPI aval/bval pair (0:00 1:10 Z:01 X:11).
 // Exactly enough data to fill the destination is read; no white space is
-// skipped. A short read assigns nothing.
+// skipped. A short `%u` read stores the bytes it read over the destination's
+// value and leaves the rest of it (S26-D3); a short `%z` read assigns
+// nothing. Either does not count as a conversion.
 static int llg_scan_binary(llg_scan_input_t* input, char conversion,
                            const llg_file_input_target_t* target) {
     if (!target || target->kind != LLG_FILE_INPUT_PACKED || !target->packed ||
@@ -483,11 +485,27 @@ static int llg_scan_binary(llg_scan_input_t* input, char conversion,
             for (unsigned byte = 0; byte < 4u; ++byte) {
                 int c = llg_scan_get(input);
                 if (c == EOF) {
-                    sv4_destroy(&value);
                     if (!consumed) {
+                        sv4_destroy(&value);
                         input->input_failure = 1;
                         return -1;
                     }
+                    if (conversion == 'u') {
+                        // Byte k of the data holds bits 8k..8k+7 of the value.
+                        sv4_t merged = llg_ref_read(target->packed);
+                        uint64_t bits = (uint64_t)word * 32u;
+                        for (uint64_t bit = 0; bit < (uint64_t)byte * 8u + bits; ++bit) {
+                            if (bit >= width) break;
+                            uint64_t part = bit < bits ? 0u : bit - bits;
+                            unsigned state = bit < bits
+                                ? (unsigned)((llg_sv4_word(value, (size_t)(bit / 64u), LLG_SV4_BITS)
+                                              >> (bit % 64u)) & 1u)
+                                : (unsigned)((plane[0] >> part) & 1u);
+                            llg_scan_set_bit(&merged, (uint32_t)bit, (int)state);
+                        }
+                        llg_ref_write_owned(target->packed, merged);
+                    }
+                    sv4_destroy(&value);
                     return 0;
                 }
                 ++consumed;

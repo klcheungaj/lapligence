@@ -10,8 +10,8 @@ I c=2 a=255 r=inf
 J c=1 r=-inf
 K c=3 a=1 b=2 d=zzzzzzzz ch=122
 L c=-1 s=keep eof=1
-M c=0 u=11223344
-N c=-1 u=11223344
+M c=0 u=11434241
+N c=-1 u=11434241
 O c=0 tell=0 m0=xx
 P c=0 tell=0
 Q c=2 m=xx xx 41 42
