@@ -186,15 +186,16 @@ fn protocol_violations_are_fatal_errors() {
             "llg: DPI-C export `err_inc` is not exported from the current scope `tb.uq`; call svSetScope with a scope that exports it (SV 35.5.3)",
         ),
     );
-    sim_cli::run_case_checked_matrix(
-        SUITE,
-        "neg_task_from_function",
-        &args,
-        &fatal_after(
-            "start\n",
-            "llg: DPI-C export task `err_tick` was called from an imported function; only imported tasks may call exported tasks (SV 35.8)",
-        ),
-    );
+    // Decision S41-D8: the exported task runs inside the imported function.
+    sim_cli::run_case_checked_matrix(SUITE, "task_from_function", &args, &|label, output| {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(0), "{label}: {stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "start\nafter r=0 ticks=1\n",
+            "{label}"
+        );
+    });
     sim_cli::run_case_checked_matrix(
         SUITE,
         "neg_missing_ack",

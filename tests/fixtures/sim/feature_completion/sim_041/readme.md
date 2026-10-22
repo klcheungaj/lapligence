@@ -216,9 +216,14 @@ Runtime protocol errors, each a fatal error after the output before it
 | --- | --- |
 | `neg_noncontext_export` | a noncontext import calls an export (35.5.3 L55796-55797) |
 | `neg_scope_without_export` | the chain's scope `tb.uq` does not export `err_inc`; a legal string call in `tb` precedes it |
-| `neg_task_from_function` | an imported function calls an exported task (35.8) |
 | `neg_missing_ack` | a disabled imported function returns without `svAckDisabledState` (35.9 c) |
 | `neg_call_after_disable` | a disabled import calls another export (35.9 d) |
+
+`task_from_function` (also companion `errors.c`): an imported function calls
+the exported task `err_tick`. 35.8 (L56241-56242) makes this illegal but
+mandates no check, and the call cannot be checked when the model is compiled,
+so the task runs and returns 0 (35.9 a), decision S41-D8): `start`, then
+`after r=0 ticks=1`.
 
 `neg_missing_export`: `errors.c` calls `err_tick` and `err_kill`, which the
 design does not export; the model link names both.

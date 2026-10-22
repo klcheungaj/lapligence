@@ -992,10 +992,9 @@ fn s41_d7_export_outside_scope() {
 
 #[test]
 fn s41_d8_task_from_import_function() {
-    run_dpi_fatal_decision(
+    run_dpi_decision(
         "S41-D8_task_from_import_function",
         include_str!("fixtures/sim/lrm_decisions/S41-D8_task_from_import_function.out"),
-        "llg: DPI-C export task `d8_task` was called from an imported function",
     );
 }
 

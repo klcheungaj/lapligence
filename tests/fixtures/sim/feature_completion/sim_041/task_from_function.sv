@@ -1,4 +1,5 @@
-// SIM-041 negative: an imported function calls an exported task (SV 35.8).
+// SIM-041: an imported function calls an exported task (SV 35.8, decision
+// S41-D8): the task runs and returns 0.
 module tb;
     export "DPI-C" function err_inc;
     export "DPI-C" function err_text;
@@ -13,7 +14,10 @@ module tb;
         return {s, "!"};
     endfunction
 
+    int ticks = 0;
+
     task err_tick();
+        ticks += 1;
     endtask
 
     function void err_kill();
@@ -29,7 +33,7 @@ module tb;
         begin : body
             r = err_task_from_function();
         end
-        $display("not reached r=%0d", r);
+        $display("after r=%0d ticks=%0d", r, ticks);
         $finish;
     end
 endmodule

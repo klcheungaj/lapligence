@@ -2357,12 +2357,12 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   (S41-D2); a noncontext import has no scope (S41-D3). An export task that
   disables the caller returns 1 and the disable protocol is checked (35.9;
   S41-D5): a missing acknowledgement, an export call after a disable, an
-  export call from a noncontext import (S41-D6), from a scope that does not
-  export it (S41-D7) or of a task from an imported function (S41-D8) is a
-  fatal error. Context imports carry the effects of every exported body
-  (stores, disables, `$finish`), so the optimizer and process cancellation
-  treat them as barriers; noncontext and pure imports keep their declared
-  properties. An exported task that can consume time is rejected (ADV-018).
+  export call from a noncontext import (S41-D6) or from a scope that does not
+  export it (S41-D7) is a fatal error. An exported task called from an
+  imported function runs (S41-D8). Context imports carry the effects of every
+  exported body (stores, disables, `$finish`), so the optimizer and process
+  cancellation treat them as barriers; noncontext and pure imports keep their
+  declared properties. An exported task that can consume time is rejected (ADV-018).
   On Windows a companion DLL links against the model's import library
   (`llg --dpi-import-lib`) and `--dpi-lib` takes the DLL's import library; a
   static archive works on every host; limits:
