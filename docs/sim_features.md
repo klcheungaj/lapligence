@@ -1744,8 +1744,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   walk low-to-high in row-major order; one-dimensional 2001 omitted ranges
   instead follow declaration direction. 2009 defaults, including start-only
   calls, are low-to-high; explicit ranges retain requested direction.
-  `@` addresses the highest remaining dimension. Invalid selected ranges leave
-  every cell unchanged; invalid later jumps stop while retaining earlier writes.
+  `@` addresses the highest remaining dimension. A word whose address is
+  outside the memory ends the load and keeps the earlier writes, also past the
+  highest address and for a start or finish argument outside the memory; words
+  past a range finish that still have cells are skipped with a warning
+  (S27-D7, S27-D8). Invalid later jumps stop while retaining earlier writes.
   The admitted signed `@` extension converts checked hexadecimal magnitude to
   a signed index after sign application; zero padding of the token does not
   change the selected cell. Magnitudes outside signed 64-bit index range and

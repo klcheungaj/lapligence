@@ -466,7 +466,7 @@ static int llg_memory_bounds(const char* path, uint64_t total,
                              const uint64_t* strides, uint64_t origin,
                              uint64_t view_total, sv4_t start, sv4_t finish,
                              int has_start, int has_finish, int addressing_policy,
-                             int64_t* first, int64_t* last,
+                             int reject_outside, int64_t* first, int64_t* last,
                              uint64_t* inner_total) {
     if (!llg_memory_descriptor(path, total, dims, n_dims, strides, origin,
                                view_total, inner_total)) {
@@ -492,6 +492,10 @@ static int llg_memory_bounds(const char* path, uint64_t total,
                     ? (left > right ? left : right)
                     : right;
     }
+    // A load checks each word's address as it reaches it (S27-D7). A dump
+    // rejects a range outside the memory before it opens the file, and so
+    // does a load that would create an associative element (S27-D23).
+    if (!reject_outside) return 1;
     uint64_t ignored_offset;
     if (!llg_memory_address_offset(*first, left_value, right_value, &ignored_offset) ||
         !llg_memory_address_offset(*last, left_value, right_value, &ignored_offset)) {
@@ -721,13 +725,22 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
     if (!llg_memory_storage_valid(filename, storage, total, elem_width) ||
         !llg_memory_bounds(filename, total, dims, n_dims, strides, origin,
                            view_total, start, finish, has_start, has_finish,
-                           addressing_policy, &first, &last, &inner_total) ||
+                           addressing_policy, storage->assoc != NULL, &first,
+                           &last, &inner_total) ||
         !llg_memory_storage_resolve(filename, storage)) {
         llg_memory_close(stream);
         free(filename);
         return 0;
     }
-    uint64_t range = llg_memory_range_length(first, last);
+    // Only the part of the range inside the memory can take words, so the
+    // word-count warnings compare against that part.
+    int64_t lowest = dims[0] < dims[1] ? dims[0] : dims[1];
+    int64_t highest = dims[0] < dims[1] ? dims[1] : dims[0];
+    int64_t range_low = first < last ? first : last;
+    int64_t range_high = first < last ? last : first;
+    if (range_low < lowest) range_low = lowest;
+    if (range_high > highest) range_high = highest;
+    uint64_t range = range_low > range_high ? 0u : llg_memory_range_length(range_low, range_high);
     uint64_t expected = range > UINT64_MAX / inner_total
                             ? UINT64_MAX
                             : range * inner_total;
@@ -776,6 +789,16 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
             }
             continue;
         }
+        if (!llg_memory_address_offset(current, dims[0], dims[1], &(uint64_t){0})) {
+            // A word whose address has no cell ends the load, also past the
+            // highest address of a file without a range (S27-D7, S27-D8,
+            // industry-standard behaviour).
+            llg_memory_error(filename, "memory word address is outside the destination memory; load terminated");
+            sv4_destroy(&token.value);
+            llg_memory_close(stream);
+            free(filename);
+            return written;
+        }
         if (!llg_memory_in_requested_range(current, first, last)) {
             if (!warned_extra) {
                 llg_memory_warning(filename, "%s contains more words than the selected range", llg_memory_noun());
@@ -805,13 +828,10 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
             }
         }
         if (inner + 1u >= inner_total) {
+            // `current` is inside the memory's 32-bit bounds here, so the
+            // step cannot overflow.
             inner = 0;
-            if (current == last) {
-                current = step > 0 ? INT64_MAX : INT64_MIN;
-            } else if ((step > 0 && current < INT64_MAX) ||
-                       (step < 0 && current > INT64_MIN)) {
-                current += step;
-            }
+            current += step;
         } else {
             ++inner;
         }
@@ -848,7 +868,7 @@ static void fixed_memory_write_view(llg_string_t path, const llg_memory_storage_
     if (!llg_memory_storage_valid(filename, storage, total, elem_width) ||
         !llg_memory_bounds(filename, total, dims, n_dims, strides, origin,
                            view_total, start, finish, has_start, has_finish,
-                           addressing_policy, &first, &last, &inner_total)) {
+                           addressing_policy, 1, &first, &last, &inner_total)) {
         free(filename);
         return;
     }

@@ -69,6 +69,14 @@ fn too_few_words(file: &str) -> String {
     )
 }
 
+/// A word whose address has no cell in the memory ends the load (S27-D7,
+/// S27-D8).
+fn no_cell(file: &str) -> String {
+    format!(
+        "error: memory file `{file}`: memory word address is outside the destination memory; load terminated"
+    )
+}
+
 fn as_strs(lines: &[String]) -> Vec<&str> {
     lines.iter().map(String::as_str).collect()
 }
@@ -78,11 +86,12 @@ fn as_strs(lines: &[String]) -> Vec<&str> {
 fn every_storage_form_loads_and_dumps() {
     let warnings = [
         more_words("d70.mem"),
-        more_words("d80.mem"),
-        more_words("d10.mem"),
+        no_cell("d80.mem"),
+        no_cell("d10.mem"),
         more_words("d40.mem"),
-        more_words("d50.mem"),
-        more_words("d60.mem"),
+        no_cell("d40.mem"),
+        no_cell("d50.mem"),
+        no_cell("d60.mem"),
         more_words("d70.mem"),
     ];
     sim_cli::run_case_checked_matrix_with_files(
@@ -161,9 +170,6 @@ fn invalid_files_never_write_outside_the_selected_memory() {
             "error: memory file `{file}`: malformed or over-width memory token; load terminated"
         )
     };
-    let range =
-        "error: memory file `short.hex`: selected range includes an address outside the memory"
-            .to_owned();
     let diagnostics = [
         "warning: memory file `missing.hex`: open for reading failed: No such file or directory"
             .to_owned(),
@@ -171,11 +177,12 @@ fn invalid_files_never_write_outside_the_selected_memory() {
         jump("outside_task.hex"),
         jump("outside_memory.hex"),
         malformed("unknown_address.hex"),
-        more_words("long.hex"),
+        no_cell("long.hex"),
         too_few_words("short.hex"),
-        range.clone(),
-        range,
+        too_few_words("short.hex"),
+        no_cell("short.hex"),
         more_words("long.hex"),
+        no_cell("long.hex"),
         jump("outside_task.hex"),
     ];
     for edition in EDITIONS {
@@ -362,7 +369,7 @@ fn memory_name_is_evaluated_once() {
         &[],
         &exact(
             include_str!("../fixtures/sim/feature_completion/sim_027/single_evaluation.out"),
-            &as_strs(&[more_words("words.mem")]),
+            &as_strs(&[no_cell("words.mem")]),
         ),
     );
 }
@@ -394,13 +401,13 @@ fn resizable_slices_address_elements_in_place() {
         format!("error: memory file `{file}`: slice is outside the current size of the array")
     };
     let diagnostics = [
-        more_words("words.mem"),
-        more_words("words.mem"),
+        no_cell("words.mem"),
+        no_cell("words.mem"),
         too_few_words("dump.mem"),
         too_few_words("dump.mem"),
-        more_words("words.mem"),
+        no_cell("words.mem"),
         too_few_words("dump.mem"),
-        more_words("words.mem"),
+        no_cell("words.mem"),
         outside("words.mem"),
         outside("dump.mem"),
         too_few_words("dump.mem"),
@@ -450,7 +457,7 @@ fn associative_arrays_of_unpacked_arrays_load_and_dump() {
         too_few_words("v.mem"),
         "error: memory file `r.mem`: address jump is outside the destination memory or selected range; load terminated".to_owned(),
         more_words("f.mem"),
-        more_words("v.mem"),
+        no_cell("v.mem"),
         "error: memory file `p.mem`: selected range includes an address outside the memory"
             .to_owned(),
         "error: memory file `p.mem`: selected index or slice is outside the memory".to_owned(),
@@ -521,10 +528,11 @@ fn rows_of_dynamic_arrays_and_queues_of_unpacked_arrays() {
         format!("error: memory file `{file}`: selected index or slice is outside the memory")
     };
     let diagnostics = [
+        no_cell("four.mem"),
         more_words("four.mem"),
-        more_words("four.mem"),
-        more_words("four.mem"),
-        more_words("four.mem"),
+        no_cell("four.mem"),
+        no_cell("four.mem"),
+        no_cell("four.mem"),
         outside("four.mem"),
         outside("four.mem"),
         "error: memory file `four.mem`: slice is outside the current size of the array".to_owned(),
@@ -550,9 +558,9 @@ fn rows_of_dynamic_arrays_and_queues_of_unpacked_arrays() {
 #[test]
 fn multidimensional_class_properties_load_and_dump() {
     let diagnostics = [
-        more_words("words.mem"),
-        more_words("words.mem"),
-        more_words("words.mem"),
+        no_cell("words.mem"),
+        no_cell("words.mem"),
+        no_cell("words.mem"),
         "error: memory file `words.mem`: selected index or slice is outside the memory".to_owned(),
     ];
     sim_cli::run_case_checked_matrix_with_files(

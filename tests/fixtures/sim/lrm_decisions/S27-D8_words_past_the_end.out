@@ -1,1 +1,2 @@
-mem aa ee 11 22
+memory end ee ee 11 22
+range end aa ff cc ee

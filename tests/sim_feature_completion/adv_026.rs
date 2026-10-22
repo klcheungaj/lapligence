@@ -121,6 +121,7 @@ const MALFORMED: &str = "malformed or over-width memory token; load terminated";
 const JUMP: &str =
     "address jump is outside the destination memory or selected range; load terminated";
 const OUTSIDE: &str = "selected range includes an address outside the memory";
+const WORD_OUTSIDE: &str = "memory word address is outside the destination memory; load terminated";
 const TOO_FEW: &str = "memory string contains too few words for the selected range";
 const MORE: &str = "memory string contains more words than the selected range";
 const DIGITS: &str = "memory word has more digits than the element holds; load terminated";
@@ -385,20 +386,20 @@ fn erroneous_strings_and_arguments_report_and_never_write_outside() {
         ("D2", "error", MALFORMED),
         ("D3", "error", JUMP),
         ("D4", "error", JUMP),
-        ("D5", "error", OUTSIDE),
+        ("D5", "warning", TOO_FEW),
         (
             "D6",
             "error",
             "start address is unknown or outside the index range",
         ),
-        ("D7", "error", OUTSIDE),
+        ("D7", "error", WORD_OUTSIDE),
         ("D8", "warning", TOO_FEW),
         ("D9", "warning", MORE),
         ("D10", "warning", TOO_FEW),
         ("D11", "warning", TOO_FEW),
         ("D12", "error", MALFORMED),
         ("D13", "error", MALFORMED),
-        ("D14", "warning", MORE),
+        ("D14", "error", WORD_OUTSIDE),
     ];
     let expected: Vec<String> = cases
         .iter()
@@ -427,12 +428,12 @@ fn erroneous_systemverilog_storage_reports_and_never_writes_outside() {
     let source = fixture!("diagnostics_sv.sv");
     let cases: [(&str, &str, &str); 12] = [
         ("E1", "error", DIGITS),
-        ("S1", "warning", MORE),
-        ("S2", "error", OUTSIDE),
+        ("S1", "error", WORD_OUTSIDE),
+        ("S2", "warning", TOO_FEW),
         ("S3", "error", JUMP),
         ("R1", "error", OUTSIDE),
-        ("R2", "error", OUTSIDE),
-        ("R3", "warning", MORE),
+        ("R2", "error", WORD_OUTSIDE),
+        ("R3", "error", WORD_OUTSIDE),
         ("R4", "warning", MORE),
         ("A1", "warning", MORE),
         (

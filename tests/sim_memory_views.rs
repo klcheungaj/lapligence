@@ -141,7 +141,7 @@ fn review_bundle_readmem_accepts_slices_and_runtime_rows() {
         "r09_readmem_slice_address_bounds",
         "PASS r09_readmem_slice_address_bounds\n",
         concat!(
-            "llg: error: memory file `words.hex`: selected range includes an address outside the memory\n",
+            "llg: error: memory file `words.hex`: memory word address is outside the destination memory; load terminated\n",
             "llg: $finish at time 0 at tb:10:5\n",
         ),
         &[],

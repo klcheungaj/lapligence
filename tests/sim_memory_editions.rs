@@ -261,7 +261,7 @@ fn enum_memory_word_of_one_digit_is_truncated_to_the_base() {
             )
             .expect("read original enum overflow input"),
             "AFTER_ENUM_LOAD 0 1\n",
-            None,
+            "",
         ),
         (
             std::fs::read_to_string(
@@ -270,18 +270,19 @@ fn enum_memory_word_of_one_digit_is_truncated_to_the_base() {
             )
             .expect("read enum overflow input after a valid word"),
             "AFTER_ENUM_LOAD 0 0\n",
-            Some("memory file `enum_overflow.hex`: memory file contains more words than the selected range"),
+            // The third word has no cell and ends the load (S27-D8).
+            "llg: error: memory file `enum_overflow.hex`: memory word address is outside the destination memory; load terminated\n",
         ),
     ];
     // `4` has one digit, which a two-bit base holds: it is truncated to 0
     // like any word (S27-D2), and an enum takes it (S27-D4).
-    for (words, expected, warning) in cases {
+    for (words, expected, error) in cases {
         sim_cli::run_case_with_files(
             "review_bundle",
             "r08_enum_readmem_overflow",
             expected,
-            "llg: $finish at time 0 at tb:10:5\n",
-            &warning.into_iter().collect::<Vec<_>>(),
+            &format!("{error}llg: $finish at time 0 at tb:10:5\n"),
+            &[],
             &["--edition", "sv2009"],
             &[("enum_overflow.hex", words.as_str())],
         );

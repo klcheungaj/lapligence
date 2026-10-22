@@ -63,7 +63,7 @@ fn invalid_selected_slice_range_leaves_all_cells_unchanged() {
         "selected_bad_bounds",
         "selected=ee,ee retained=ee\n",
         concat!(
-            "llg: error: memory file `bounds.mem`: selected range includes an address outside the memory\n",
+            "llg: error: memory file `bounds.mem`: memory word address is outside the destination memory; load terminated\n",
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
