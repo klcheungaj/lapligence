@@ -3640,9 +3640,14 @@ static int schedule_time_cb(llg_vpi_cb_t* cb, uint64_t ticks) {
             return 0;
         }
         if (region == LLG_REGION_PRE_ACTIVE_PLI && current != LLG_REGION_PRE_ACTIVE_PLI) {
-            vpi_error("LLG_VPI_CALLBACK",
-                      "a zero-delay start-of-time callback needs the slot's Pre-Active region");
-            return 0;
+            if (cb->data.reason != cbAfterDelay) {
+                vpi_error("LLG_VPI_CALLBACK",
+                          "a zero-delay start-of-time callback needs the slot's Pre-Active region");
+                return 0;
+            }
+            /* Past Pre-Active, a zero delay runs like a #0 wait: in the
+             * Inactive region of this slot (decision S43-D2). */
+            region = LLG_REGION_INACTIVE;
         }
         if (region == LLG_REGION_PRE_POSTPONED_PLI && current > region) {
             vpi_error("LLG_VPI_CALLBACK", "this time slot already left its Pre-Postponed region");

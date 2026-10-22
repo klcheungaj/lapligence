@@ -1,3 +1,4 @@
-zero-delay cbAfterDelay at 3: refused, error 3
+zero-delay cbAfterDelay at 3: accepted, error 0
+cbAfterDelay 0 at 3
 cbAfterDelay 2 at 5
 cbReadOnlySynch 4.0 at 7

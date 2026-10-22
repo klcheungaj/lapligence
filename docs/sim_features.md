@@ -2399,7 +2399,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `cbValueChange` on variables, nets, ports, array elements and bit/part
   selects (value, time and index per `s_cb_data`, at every changing write);
   the time reasons in their Table 4-1 PLI regions (`cbAtStartOfSimTime`,
-  `cbAfterDelay`, `cbNextSimTime` Pre-Active; `cbNBASynch` Pre-NBA;
+  `cbAfterDelay`, `cbNextSimTime` Pre-Active, a late zero-delay
+  `cbAfterDelay` Inactive; `cbNBASynch` Pre-NBA;
   `cbReadWriteSynch` Post-NBA; `cbAtEndOfSimTime` Pre-Postponed;
   `cbReadOnlySynch` Postponed) with relative delays; `cbEndOfCompile`,
   `cbStartOfSimulation` and `cbEndOfSimulation` (once); `vpi_remove_cb` and
