@@ -2355,7 +2355,9 @@ fn collect_object_query_effects(
             collect_mailbox_expr_effects(ir, a, effects, visited_calls);
             collect_mailbox_expr_effects(ir, b, effects, visited_calls);
         }
-        IrObjectQuery::ProcessEq(_, _) | IrObjectQuery::ProcessStatus(_) => {}
+        IrObjectQuery::ProcessEq(_, _) => {}
+        // A null handle ends the simulation (SV 8.4).
+        IrObjectQuery::ProcessStatus(_) => effects.push(ExecutionEffect::Terminate),
         IrObjectQuery::ArrayQuery(query) => {
             effects.push(ExecutionEffect::RuntimeService);
             if let IrArrayQueryTarget::String { value, .. } = &query.target {
