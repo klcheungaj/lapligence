@@ -1,7 +1,5 @@
 [0] start
-vpiStop before the run -> 0 LLG_VPI_CONTROL
 vpiReset -> 0 LLG_VPI_UNSUPPORTED
-vpiFinish level 3 -> 0 LLG_VPI_ARGUMENT
 [3] after delay 3: vpiStop -> 1
 [3] hdl: after the stop
 [7] hdl: active before the finish

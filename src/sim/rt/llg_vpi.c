@@ -210,6 +210,7 @@ typedef struct {
     int initialized;          /* llg_vpi_model_init ran */
     int startup_called;
     int running;
+    int starting;             /* cbEndOfCompile/cbStartOfSimulation are running */
     int failed;
     int error_pending;
     int error_state;
@@ -4093,10 +4094,12 @@ void vpi_get_cb_info(vpiHandle handle, p_cb_data output) {
 void llg_vpi_start_simulation(void) {
     if (!g_vpi.initialized || g_vpi.failed || g_vpi.phase >= LLG_VPI_PHASE_RUNNING) return;
     g_vpi.running = 1;
+    g_vpi.starting = 1;
     g_vpi.phase = LLG_VPI_PHASE_COMPILED;
     invoke_action(cbEndOfCompile);
     g_vpi.phase = LLG_VPI_PHASE_RUNNING;
     invoke_action(cbStartOfSimulation);
+    g_vpi.starting = 0;
 }
 
 void llg_vpi_end_simulation(void) {
@@ -4588,15 +4591,17 @@ PLI_INT32 vpi_control(PLI_INT32 operation, ...) {
     va_start(ap, operation);
     int level = va_arg(ap, int);
     va_end(ap);
-    if (level < 0 || level > 2) {
-        vpi_error("LLG_VPI_ARGUMENT", "the vpi_control diagnostic level must be 0, 1 or 2");
-        return 0;
-    }
+    /* A level outside the $stop/$finish levels 0-2 is accepted and reports
+     * like the default level 1 (decision S43-D8; 20.2). */
+    if (level < 0 || level > 2) level = 1;
     if (g_vpi.phase >= LLG_VPI_PHASE_ENDED) return 1; /* the simulation already ended */
     if (operation == vpiFinish) {
         llg_rt_control_finish(level);
         return 1;
     }
+    /* Before the run, a stop is taken when the start callbacks return
+     * (decision S43-D10). */
+    if (g_vpi.starting && llg_rt_control_stop_before_run(level)) return 1;
     if (!llg_rt_control_stop(level)) {
         vpi_error("LLG_VPI_CONTROL", "vpiStop needs a running, unfinished simulation");
         return 0;

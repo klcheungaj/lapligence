@@ -98,9 +98,7 @@ fn exit_policy_stop_from_a_callback_ends_once_at_close() {
         return;
     };
     let expected = "[0] start\n\
-vpiStop before the run -> 0 LLG_VPI_CONTROL\n\
 vpiReset -> 0 LLG_VPI_UNSUPPORTED\n\
-vpiFinish level 3 -> 0 LLG_VPI_ARGUMENT\n\
 [3] after delay 3: vpiStop -> 1\n\
 [3] end call 1: vpiFinish -> 1, vpiStop -> 1\n\
 late cbEndOfSimulation: handle none\n";
@@ -120,6 +118,85 @@ late cbEndOfSimulation: handle none\n";
             );
             assert!(!stderr.contains("$finish"), "{label}: {stderr}");
         },
+    );
+}
+
+/// A03 (S43-D10): stdout and the single `$stop`/`$finish` report of a
+/// `start_control` run; `SIM043_START_CONTROL` picks the start request.
+fn start_control_check<'a>(
+    expected: &'a str,
+    report: &'a str,
+) -> impl Fn(&str, &std::process::Output) + 'a {
+    move |label, output| {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{label}: {stderr}");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+        assert_eq!(stderr.matches(report).count(), 1, "{label}: {stderr}");
+    }
+}
+
+/// The default resume policy reports the stop at time 0 and continues.
+#[test]
+fn start_of_simulation_stop_resumes_under_the_default_policy() {
+    let directory = sim_harness::TempDir::new("sim043-start").expect("temporary directory");
+    let Some(library) = plugin(&directory, "start_control") else {
+        return;
+    };
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "start_control",
+        VPI,
+        &[("LLG_VPI_PLUGIN", &library), ("SIM043_START_CONTROL", "stop")],
+        &start_control_check(
+            "vpiStop -> 1 none\nstart returns\n[0] hdl: initial\n[2] hdl: later\n[2] final\n[2] end\n",
+            "$stop at time 0",
+        ),
+    );
+}
+
+/// With `--stop-policy exit` the stop suspends before any process runs;
+/// closing the model runs cbEndOfSimulation once and no final procedure.
+#[test]
+fn start_of_simulation_stop_suspends_before_the_run_under_exit_policy() {
+    let directory = sim_harness::TempDir::new("sim043-start").expect("temporary directory");
+    let Some(library) = plugin(&directory, "start_control") else {
+        return;
+    };
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "start_control",
+        &["--vpi", "--stop-policy", "exit"],
+        &[
+            ("LLG_VPI_PLUGIN", &library),
+            ("SIM043_START_CONTROL", "stop"),
+        ],
+        &start_control_check(
+            "vpiStop -> 1 none\nstart returns\n[0] end\n",
+            "$stop at time 0",
+        ),
+    );
+}
+
+/// A finish with a level outside 0-2 ends the run before time 0 processes:
+/// final procedures and cbEndOfSimulation run at 0.
+#[test]
+fn start_of_simulation_finish_ends_before_the_run() {
+    let directory = sim_harness::TempDir::new("sim043-start").expect("temporary directory");
+    let Some(library) = plugin(&directory, "start_control") else {
+        return;
+    };
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "start_control",
+        VPI,
+        &[
+            ("LLG_VPI_PLUGIN", &library),
+            ("SIM043_START_CONTROL", "finish"),
+        ],
+        &start_control_check(
+            "vpiFinish level 7 -> 1 none\nstart returns\n[0] final\n[0] end\n",
+            "$finish at time 0",
+        ),
     );
 }
 

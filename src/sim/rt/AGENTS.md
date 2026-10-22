@@ -829,7 +829,10 @@ Watches end with the runtime lifetime (`free_value_watches`), so VPI removal
 after cleanup is a no-op.
 `vpi_put_value` fails in read-only regions without touching the runtime's
 fatal region check; zero-delay time callbacks are refused there before
-scheduling. `vpi_control` stop/finish use `llg_rt_control_stop/finish`;
+scheduling. `vpi_control` stop/finish use `llg_rt_control_stop/finish`
+(levels outside 0-2 report as 1, S43-D8); a stop from the start callbacks uses
+`llg_rt_control_stop_before_run`, which under the EXIT policy suspends before
+the first `llg_rt_run` (the generated `main` then skips the advance, S43-D10);
 `cbEndOfSimulation` runs once, from advance or close.
 
 Waveforms record end-of-step values (SIM-047, S47-D1/D2): a publication only

@@ -445,7 +445,7 @@ pub(in crate::sim::emit_c) fn main(
         // Every native root belongs to model storage or an unwound scope.
         out.push_str("    if (llg_native_roots_count() != 0) {\n        fprintf(stderr, \"llg: %zu native values were not released at model close\\n\", llg_native_roots_count());\n        status = 1;\n    }\n");
     }
-    out.push_str("    llg_model_live = llg_model_done = llg_model_status = 0;\n    return status;\n}\n\n#ifndef LLG_MODEL_NO_MAIN\nint main(int argc, char** argv) {\n    int status = llg_model_start(argc, argv);\n    if (status == 0) {\n        status = llg_model_advance();\n        if (status == 2) status = 0; /* CLI exit-policy stop, not a model error. */\n    }\n    if (llg_model_close() != 0) status = 1;\n    return status;\n}\n#endif\n");
+    out.push_str("    llg_model_live = llg_model_done = llg_model_status = 0;\n    return status;\n}\n\n#ifndef LLG_MODEL_NO_MAIN\nint main(int argc, char** argv) {\n    int status = llg_model_start(argc, argv);\n    if (status == 0) {\n        /* A start callback's exit-policy vpiStop suspends before the run. */\n        status = llg_rt_is_suspended() ? 2 : llg_model_advance();\n        if (status == 2) status = 0; /* CLI exit-policy stop, not a model error. */\n    }\n    if (llg_model_close() != 0) status = 1;\n    return status;\n}\n#endif\n");
     // Startup argument tables are file-scope constants read by the loops.
     let start = out
         .find("int llg_model_start(")

@@ -2410,7 +2410,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpi_get_cb_info`, including registration and removal inside running
   callbacks. Read-only regions reject `vpi_put_value` and zero-delay time
   callbacks; `vpi_control(vpiStop/vpiFinish, level)` goes through the
-  `$stop`/`$finish` lifecycle. Decisions S43-D1..D9. The object catalog is
+  `$stop`/`$finish` lifecycle, also from `cbStartOfSimulation`. Decisions S43-D1..D10. The object catalog is
   emitted only with `--vpi`, `--dpi-lib` or a user system task call site.
   Registered packed/real system-function calls have direct
   expression-evaluation paths and may be `$strobe`/`$monitor` arguments (their

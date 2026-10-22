@@ -169,10 +169,8 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
 
 ## control (A03)
 
-- In `cbStartOfSimulation`: `vpiStop` has no running simulation to stop
-  (`0 LLG_VPI_CONTROL`), `vpiReset` is not provided (`0
-  LLG_VPI_UNSUPPORTED`), and a `vpiFinish` level of 3 is not a `$finish`
-  level (`0 LLG_VPI_ARGUMENT`) (S43-D8).
+- In `cbStartOfSimulation`: `vpiReset` is not provided (`0
+  LLG_VPI_UNSUPPORTED`, S43-D8).
 - 3: `vpiStop` from a Pre-Active callback returns 1; stderr reports `$stop at
   time 3` and the default `resume` policy continues the same slot, so the HDL
   prints `after the stop`.
@@ -185,6 +183,22 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
   S43-D4).
 - With `--stop-policy exit` (test only) the stop at 3 suspends the run; closing
   the model runs `cbEndOfSimulation` once at 3 and no final procedure.
+
+## start_control (A03)
+
+`vpi_control` from `cbStartOfSimulation` is honoured when the callback returns
+(S43-D10); `SIM043_START_CONTROL` selects the request (the tests set it).
+
+- `stop`: `vpiStop` returns 1 and stderr reports `$stop at time 0`. Under the
+  default `resume` policy the run continues: `[0] hdl: initial`, `[2] hdl:
+  later`, the final procedure at 2 and `cbEndOfSimulation` at 2.
+- `stop` with `--stop-policy exit`: the run is suspended before any process
+  runs; closing the model runs `cbEndOfSimulation` once at 0 and no final
+  procedure.
+- `finish`: `vpiFinish` with level 7, outside the `$finish` levels 0-2, is
+  accepted (S43-D8) and returns 1; stderr reports `$finish at time 0` (level
+  1, the default), no process runs, the final procedure prints `[0] final` and
+  `cbEndOfSimulation` runs at 0.
 
 ## catalog
 

@@ -175,6 +175,21 @@ int llg_rt_control_stop(int verbosity) {
     return 1;
 }
 
+int llg_rt_control_stop_before_run(int verbosity) {
+    if (!g.initialized || g.running || g.finish || g.suspended || g.stop_proc ||
+        g.deferred_stop)
+        return 0;
+    report_stop(verbosity, NULL);
+    // The noninteractive RESUME policy resumes immediately; EXIT returns
+    // control to the embedding before time 0, as a stop in a callback does.
+    if (g.stop_policy == LLG_STOP_POLICY_EXIT) {
+        g.stop_proc = NULL;
+        g.stop_region = LLG_REGION_PREPONED;
+        g.suspended = 1;
+    }
+    return 1;
+}
+
 int llg_rt_control_finish(int verbosity) {
     if (g.finish) return 0;
     report_finish(verbosity, NULL);
