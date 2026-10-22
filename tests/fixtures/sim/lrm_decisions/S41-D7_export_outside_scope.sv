@@ -11,11 +11,23 @@
 // The text does not say what happens otherwise; llg reports a fatal error
 // naming the scope.
 //
+// The import is called from its own scope, so the caller's scope and the
+// import's declaration scope agree.
+//
 // Expected: the first line only, then a fatal error (exit status nonzero).
 // Build S41-D7_export_outside_scope.c into a shared library and load it with
 // the simulator's DPI library option.
 module side_m;
     import "DPI-C" context function int d7_call(input int n);
+
+    int r = 0;
+
+    initial begin
+        $display("before");
+        r = d7_call(1);
+        $display("after r=%0d", r);
+        $finish;
+    end
 endmodule
 
 module tb;
@@ -26,12 +38,4 @@ module tb;
     endfunction
 
     side_m u();
-    int r = 0;
-
-    initial begin
-        $display("before");
-        r = u.d7_call(1);
-        $display("after r=%0d", r);
-        $finish;
-    end
 endmodule
