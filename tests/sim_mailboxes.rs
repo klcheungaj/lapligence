@@ -141,3 +141,23 @@ fn receivers_killed_after_the_put_keep_what_it_wrote() {
         &[],
     );
 }
+
+#[test]
+fn block_local_records_travel_through_mailboxes_and_containers() {
+    sim_cli::run_case(
+        "mailboxes",
+        "block_records",
+        "mb a=-5 l=10x1z0x1 n=1x0z p=1001 s=-3\n\
+         mb a=-5 l=10x1z0x1 n=1x0z p=1001 s=-3\n\
+         mb a=9 l=10100101 n=0011 p=1100 s=4\n\
+         q0 a=9 l=10100101 n=0011 s=4\n\
+         q1 a=-5 l=10x1z0x1 n=1x0z s=-3\n\
+         q2 a=-5 l=10x1z0x1 n=1x0z s=-3\n\
+         da a=-5 l=10x1z0x1 p=1001\n\
+         aa a=-5 n=1x0z\n\
+         back a=-5 l=10x1z0x1 n=1x0z s=-3\n\
+         got a=-5 l=10x1z0x1\n",
+        "llg: $finish at time 0 at tb:44:5\n",
+        &[],
+    );
+}

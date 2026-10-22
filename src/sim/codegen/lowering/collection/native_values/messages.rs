@@ -156,22 +156,25 @@ impl Codegen<'_> {
             self.container_record_writeback(path, destination, value, &mut before)?
         {
             after.push(writeback);
-        } else {
-            let (target, _) = self.native_endpoint(destination)?.ok_or_else(|| {
-                Self::fixed_array_message_error(
-                    path,
-                    descriptor,
-                    format!(
-                        "mailbox destination of type `{}` in `{path}` is not a supported record variable",
-                        descriptor.name
-                    ),
-                )
-            })?;
+        } else if let Some((target, _)) = self.native_endpoint(destination)? {
             let source = NativeEndpoint::Value {
                 value,
                 prefix: Vec::new(),
             };
             after.push(self.native_transfer(path, &target, &source, false)?);
+        } else if let Some(writeback) =
+            self.native_fixed_destination(path, destination, descriptor, value)?
+        {
+            after.push(writeback);
+        } else {
+            return Err(Self::fixed_array_message_error(
+                path,
+                descriptor,
+                format!(
+                    "mailbox destination of type `{}` in `{path}` is not a supported record variable",
+                    descriptor.name
+                ),
+            ));
         }
         Ok(MailboxMessage {
             before,
