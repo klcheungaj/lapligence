@@ -28,7 +28,11 @@ native traversal or I/O.
   variable, so bit-level self reads (`v[0] = v[1]`) still report.
 - `multidriver.rs` — `multi-driver`: signals driven by more than one process,
   continuous assignment or port link; drivers of disjoint constant bit ranges
-  (`assign n[0] = ...`, `.y(n[1])`) do not count as overlapping.
+  (`assign n[0] = ...`, `.y(n[1])`) or of different constant unpacked
+  elements (`.y(w[0])`, `.y(w[1])`, also with a bit range inside an element)
+  do not count as overlapping. A continuous assignment to an unpacked element
+  is not yet counted as a driver (`collect_writes` resolves only packed
+  selects).
 - `casez.rs` — `casez-misuse`: overlapping wildcard case items and constant selectors.
 - `if_latch.rs` — `if-latch`: incomplete combinational `if` assignments that may infer a latch.
 - `style.rs` — `naming-style`: configured naming-convention violations.
