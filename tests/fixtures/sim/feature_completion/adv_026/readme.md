@@ -231,7 +231,7 @@ diagnostic and the printed cells.
 | D3 | `(mem, 2, 4, "11 @6 22")` | 11 at 2; `@6` outside 2..4: error, load ends (L37315-37317) |
 | D4 | `(mem, 0, 7, "11 @9 22")` | 11 at 0; `@9` outside the memory: error |
 | D5 | `(mem, 0, 9, "11")` | finish outside the memory: the word reaches only address 0 and loads; too few words for the part of the range inside the memory (S27-D7) |
-| D6 | start is `4'bx` | unknown start: error, nothing loaded |
+| D6 | start is `4'bx` | unknown address bits read as 0 (S27-D26), so the range is 0..3: 11 at 0; too few words: warning |
 | D7 | start is -1 | the first word has no cell: error, nothing loaded (S27-D7) |
 | D8 | `(mem, 0, 7, "11 22")` | 2 of 8 words: warning, 11 22 loaded |
 | D9 | `(mem, 0, 1, "11 22 33 44")` | 4 of 2 words: warning, 11 22 loaded |

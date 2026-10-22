@@ -387,11 +387,7 @@ fn erroneous_strings_and_arguments_report_and_never_write_outside() {
         ("D3", "error", JUMP),
         ("D4", "error", JUMP),
         ("D5", "warning", TOO_FEW),
-        (
-            "D6",
-            "error",
-            "start address is unknown or outside the index range",
-        ),
+        ("D6", "warning", TOO_FEW),
         ("D7", "error", WORD_OUTSIDE),
         ("D8", "warning", TOO_FEW),
         ("D9", "warning", MORE),

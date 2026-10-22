@@ -2985,6 +2985,14 @@ fn s26_d19_errors_end_the_load() {
 }
 
 #[test]
+fn s27_d26_unknown_address_bits() {
+    run_decision(
+        "S27-D26_unknown_address_bits",
+        include_str!("fixtures/sim/lrm_decisions/S27-D26_unknown_address_bits.out"),
+    );
+}
+
+#[test]
 fn s26_d20_comments_across_strings() {
     run_decision(
         "S26-D20_comments_across_strings",

@@ -1,0 +1,9 @@
+string x start 11 22 33 5a 5a 5a 5a 5a
+string z start 11 22 33 5a 5a 5a 5a 5a
+string partial 5a 5a 5a 5a 11 22 33 5a
+file x finish 33 22 11 5a 5a 5a 5a 5a
+file partial 5a 5a 5a 5a 11 22 33 5a
+dump: 02 01 00
+aa[4]=11
+aa[5]=22
+aa[6]=33
