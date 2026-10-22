@@ -1134,10 +1134,7 @@ static void fill_value(llg_vpi_datum_t* datum, int is_signed, int type, p_vpi_va
             return;
         }
         case vpiScalarVal: {
-            if (width != 1) {
-                vpi_error("LLG_VPI_FORMAT", "vpiScalarVal requested for a value wider than one bit");
-                return;
-            }
+            /* A vector reads as its least significant bit (decision S42-D13). */
             static const PLI_INT32 scalar[4] = {vpi0, vpi1, vpiX, vpiZ};
             output->value.scalar = scalar[word_state(words, 0)];
             return;
@@ -1324,8 +1321,11 @@ static int value_from_vpi(const s_vpi_value* input, uint32_t width, int is_signe
             }
             break;
         case vpiScalarVal: {
-            if (width != 1) {
-                vpi_error("LLG_VPI_FORMAT", "vpiScalarVal put to a value wider than one bit");
+            /* A vector takes the scalar zero-extended, as an assignment of a
+             * one-bit unsigned value (decision S42-D13). A real has no
+             * scalar representation (S42-D9). */
+            if (real) {
+                vpi_error("LLG_VPI_FORMAT", "vpiScalarVal cannot be put to a real object");
                 return 0;
             }
             switch (input->value.scalar) {

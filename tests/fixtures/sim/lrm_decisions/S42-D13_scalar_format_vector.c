@@ -11,7 +11,7 @@ static PLI_INT32 d13(PLI_BYTE8* data) {
     memset(&value, 0, sizeof(value));
     value.format = vpiScalarVal;
     vpi_get_value(v, &value);
-    vpi_printf("get vector level=%d\n", (int)vpi_chk_error(NULL));
+    vpi_printf("get vector level=%d scalar=%d\n", (int)vpi_chk_error(NULL), (int)value.value.scalar);
     value.format = vpiScalarVal;
     value.value.scalar = vpiX;
     vpi_put_value(v, &value, NULL, vpiNoDelay);

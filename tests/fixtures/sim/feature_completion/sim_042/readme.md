@@ -93,8 +93,9 @@ checked against a run; no line was accepted only because the run printed it.
 - **Puts.** String `"OK"`, octal `7_7` (underscores ignored), hex `z`
   (fills the value), decimal `-1` and binary `10xz` (zero-extended) are
   accepted; every `vpiNoDelay` put returns NULL (S42-D1). A string to a real
-  and `vpiStrengthVal` to a vector are illegal (38.34) and a scalar to a
-  vector is an error (S42-D13). The real 6.5 put to `s` rounds to 7, read
+  and `vpiStrengthVal` to a vector are illegal (38.34). A scalar `vpi1` put to
+  the vector `v` is written zero-extended (S42-D13), so `v` ends as
+  `000000000001` after its earlier binary put `10xz`. The real 6.5 put to `s` rounds to 7, read
   back as the 11-character decimal `          7`.
 - **Delays (38.34).** At time 0: inertial 1@2, then inertial 2@3 removes it;
   transport 4@6, then transport 5@5 removes the later 4@6; pure transport 6@4

@@ -18,8 +18,8 @@ put tb.v fmt=1 "10xz" -> null level=0
 put tb.r fmt=8 "1.0" -> null level=3
 put tb.wide fmt=4 "fe_dcba_9876_5432_10ff" -> null level=0
 strength to vector -> null level=3
-scalar to vector -> null level=3
-after: xs=111111 zs=zzzz s=          7 v=0000000010xz pz=10zx wide=fedcba9876543210ff
+scalar to vector -> null level=0
+after: xs=111111 zs=zzzz s=          7 v=000000000001 pz=10zx wide=fedcba9876543210ff
 inertial=null
 event type=vpiSchedEvent scheduled=1
 cancel -> null level=0 stale=1

@@ -1,5 +1,5 @@
-get vector level=3
-put vector level=3
+get vector level=0 scalar=1
+put vector level=0
 put scalar level=0
 put bit level=0
-v=0111 s=x
+v=001x s=x
