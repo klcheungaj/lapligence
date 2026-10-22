@@ -5,7 +5,9 @@ source runs through the public CLI in both optimizer modes on the legacy and
 compact (portable and GMP) value backends. Output lines are compared as sorted
 multisets: the order of actions of different assertions in one time step is
 not fixed by the LRM. Times print in picoseconds of the default precision
-(tick 1 at 5 ns prints `5000`).
+(tick 1 at 5 ns prints `5000`); `initial_assert` and `outcomes` declare
+`` `timescale 1ns/1ps `` so that this holds on any tool, whatever its own
+default time unit.
 
 Clause quotes cite `SystemVerilog-1800-2009.txt` line numbers.
 

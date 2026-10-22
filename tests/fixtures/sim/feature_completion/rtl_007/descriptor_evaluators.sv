@@ -1,6 +1,7 @@
 // SV2009 10.3, 9.4.2, 10.6.2: an array beyond packed capacity reaches a
 // continuous-assignment helper and an evaluated-event helper by descriptor
 // (no per-cell expansion), and drives a force evaluator through its cells.
+`timescale 1ns/1ps
 module tb;
   localparam int N = 65537;
   typedef logic [16:0] big_t [0:N-1];

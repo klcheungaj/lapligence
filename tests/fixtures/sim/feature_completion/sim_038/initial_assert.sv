@@ -3,6 +3,7 @@
 // procedure is queued once and begins a single evaluation attempt at the
 // first leading clock event (16.15.6, F.5.3.1); the static copy `s1` starts
 // an attempt on every tick. Ticks 1..4 are the posedges at 5, 15, 25, 35.
+`timescale 1ns/1ps
 module tb;
   logic clk = 1'b0, a = 1'b0, b = 1'b0;
   // Bit 3 is tick 1, bit 0 is tick 4.

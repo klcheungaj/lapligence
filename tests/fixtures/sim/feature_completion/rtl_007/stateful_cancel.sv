@@ -1,6 +1,7 @@
 // SV2009 9.6.1-9.6.3: disabling a process suspended on a process-evaluated
 // event detaches its wait; later dependency changes neither resume it nor
 // evaluate its helper again.
+`timescale 1ns/1ps
 module tb;
   int a = 0, evals = 0, after = 0;
   function int f(input int value);

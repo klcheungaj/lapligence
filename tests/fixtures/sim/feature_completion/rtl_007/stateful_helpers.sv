@@ -4,6 +4,7 @@
 // evaluation counts are only checked as lower bounds. Writes made inside a
 // function called by a continuous assignment are procedural writes; they may
 // share storage with other procedural writers.
+`timescale 1ns/1ps
 module tb;
   logic [3:0] v;
   logic en;

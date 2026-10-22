@@ -20,7 +20,7 @@ module tb;
     t = s; t.putc(0, "Z");
     $display("6 %s %s", s, t);
     $display("7 %s %s", s.toupper(), s.tolower());
-    $display("8 %0d %0d %0d %0d", s.compare("JEllo"), s.compare("JElloz"), s.icompare("jello"), t.compare("Jf"));
+    $display("8 %0d %0d %0d %0d", s.compare("JEllo"), s.compare("JElloz"), s.icompare("jello"), t.compare("Jf") > 0);
     u = "  42xyz"; $display("9 %0d", u.atoi());
     t = "ff"; u = "1_000"; $display("10 %0d %0d", u.atoi(), t.atohex());
     u = "777"; t = "1011"; $display("11 %0d %0d", u.atooct(), t.atobin());

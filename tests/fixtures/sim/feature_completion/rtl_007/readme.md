@@ -4,7 +4,10 @@ IEEE 1364-2001 §§10.2-10.3 and 12.4 and IEEE 1800-2009 §§6.5, 6.21-6.22,
 9.4.2, 10.3, 10.6.2 and 13.3-13.5 supply the oracles. Every positive source
 runs through the public CLI in both optimizer modes and on the legacy and
 compact value backends; representative sources also run after snapshot/Db
-destruction at native O0/O3.
+destruction at native O0/O3. Sources that print `%t` (`descriptor_evaluators`,
+`evaluator_helpers`, `stateful_cancel`, `stateful_helpers`) declare
+`` `timescale 1ns/1ps `` so that their times do not depend on a tool's default
+time unit.
 
 - `formal_directions` passes fixed arrays and records through input, output,
   inout, ref and const-ref formals, returns and locals of functions and tasks.
