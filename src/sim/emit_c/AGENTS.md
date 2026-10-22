@@ -232,9 +232,11 @@ set records and one `llg_module_paths_start` call in the storage defaults.
 ADV-008 fields (`.edge`, `.condition`, `.ifnone`, `.group`, `.limits` with a
 writable limit table, destination `.styles`, set `.conditions` with a
 MonEval-shaped evaluator `llg_path_set_<n>__conditions`) are designated
-initializers emitted only when used, and `llg_module_paths_configure` only
-when `IrModel::path_pulse` differs from its default, so simple-path models
-are unchanged.
+initializers emitted only when used; every row, destination and set record
+still ends with one designated field (`.edge`, `.styles`, `.conditions`) so the
+omitted fields are zero without `-Wmissing-field-initializers` warnings.
+`llg_module_paths_configure` is emitted only when `IrModel::path_pulse`
+differs from its default. Models without paths are unchanged.
 Only destination groups gain `.propagation_enabled = 1` and per-bit
 path-stage records; a model without paths emits exactly what it did
 before. A delayed group with separately driven parts emits its part bounds

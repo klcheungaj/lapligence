@@ -1971,13 +1971,14 @@ static sv4_t path_cell = SV4_EMPTY;
 static llg_inertial_t* path_bits[1];
 static llg_net_t path_net;
 static llg_module_path_t path_rows[2] = {
-    { 0, 0, 1, 0, 1, 0, 1, { 3, 5, 3, 3, 5, 5, 3, 3, 5, 5, 5, 3 }, "t.v:1:1" },
-    { 0, 1, 1, 0, 1, 1, 2, { 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7 }, "t.v:2:1" },
+    { 0, 0, 1, 0, 1, 0, 1, { 3, 5, 3, 3, 5, 5, 3, 3, 5, 5, 5, 3 }, "t.v:1:1", .edge = 0 },
+    { 0, 1, 1, 0, 1, 1, 2, { 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7 }, "t.v:2:1", .edge = 0 },
 };
-static llg_module_path_dest_t path_dest = { &path_net, path_rows, 2, NULL, NULL };
+static llg_module_path_dest_t path_dest = { &path_net, path_rows, 2, NULL, NULL,
+                                            .styles = NULL };
 static sv4_t* const path_sources[] = { &path_source };
 static llg_module_path_set_t path_set = { "tb.u", path_sources, 1, &path_dest, 1,
-                                          NULL, NULL, NULL };
+                                          NULL, NULL, NULL, .conditions = NULL };
 
 static void path_check_pending(uint64_t time, int state) {
     uint64_t due = 0;
@@ -2054,10 +2055,11 @@ static llg_module_path_t pulse_rows[1] = {
     { 0, 0, 1, 0, 1, 0, 0, { 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10 },
       "t.v:3:1", .limits = pulse_limits },
 };
-static llg_module_path_dest_t pulse_dest = { &pulse_net, pulse_rows, 1, NULL, NULL };
+static llg_module_path_dest_t pulse_dest = { &pulse_net, pulse_rows, 1, NULL, NULL,
+                                             .styles = NULL };
 static sv4_t* const pulse_sources[] = { &pulse_source };
 static llg_module_path_set_t pulse_set = { "tb.p", pulse_sources, 1, &pulse_dest, 1,
-                                           NULL, NULL, NULL };
+                                           NULL, NULL, NULL, .conditions = NULL };
 
 static void pulse_check_event(uint32_t index, uint64_t time, int state) {
     uint64_t due = 0;

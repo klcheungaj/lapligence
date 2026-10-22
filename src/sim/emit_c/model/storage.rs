@@ -317,8 +317,8 @@ fn path_source_storage(model: &IrModel, index: usize) -> String {
 
 /// Module path tables: one `llg_module_path_set_t` per instance with paths,
 /// after every net group they name. Delay and limit tables are writable so
-/// back-annotation can replace them. Fields beyond the simple-path ones are
-/// emitted only when a path, destination or set uses them, and nothing is
+/// back-annotation can replace them. Each record ends with a designated
+/// field; the other ADV-008 fields are emitted only when used, and nothing is
 /// emitted for a design without paths. A set with path conditions points at
 /// its generated evaluator, defined with the model's functions
 /// (`render_path_condition_evaluators`).
@@ -350,10 +350,9 @@ fn render_module_paths(model: &IrModel, out: &mut String) {
                     .map(|delay| format!("{delay}ULL"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                let mut extra = String::new();
-                if path.edge().code() != 0 {
-                    extra.push_str(&format!(", .edge = {}", path.edge().code()));
-                }
+                // A designated field closes every row, so the fields left out
+                // are zero without a missing-initializer warning.
+                let mut extra = format!(", .edge = {}", path.edge().code());
                 match path.condition() {
                     IrPathCondition::None => {}
                     IrPathCondition::If(condition) => {
@@ -407,7 +406,7 @@ fn render_module_paths(model: &IrModel, out: &mut String) {
                     ));
                     format!(", .styles = {table}")
                 }
-                None => String::new(),
+                None => ", .styles = NULL".to_owned(),
             };
             dests.push(format!(
                 "{{ &{}, {name}__paths_{dest_index}, {}, NULL, NULL{styles} }}",
@@ -416,7 +415,7 @@ fn render_module_paths(model: &IrModel, out: &mut String) {
             ));
         }
         let conditions = if set.conditions().is_empty() {
-            String::new()
+            ", .conditions = NULL".to_owned()
         } else {
             out.push_str(&format!(
                 "static void {name}__conditions(sv4_t* out, void* context);\n"

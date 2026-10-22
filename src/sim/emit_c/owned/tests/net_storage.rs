@@ -449,11 +449,11 @@ fn module_path_tables_bind_only_their_destination_nets() {
     assert!(source.contains(
         "static llg_module_path_t llg_path_set_0__paths_0[] = { { 0, 1, 1, 3, 2, 1, 2, \
          { 1ULL, 2ULL, 3ULL, 4ULL, 5ULL, 6ULL, 7ULL, 8ULL, 9ULL, 10ULL, 11ULL, 12ULL }, \
-         \"f.v:7:5\" } };"
+         \"f.v:7:5\", .edge = 0 } };"
     ));
     assert!(source.contains(
         "static llg_module_path_set_t llg_path_set_0 = { \"tb.u\", llg_path_set_0__sources, 1, \
-         llg_path_set_0__dests, 1, NULL, NULL, NULL };"
+         llg_path_set_0__dests, 1, NULL, NULL, NULL, .conditions = NULL };"
     ));
     let defaults = lifecycle(&source, "llg_model_storage_defaults");
     assert!(defaults.contains("llg_module_paths_start(&llg_path_set_0);"));
@@ -525,7 +525,7 @@ fn module_path_triggers_limits_styles_and_options_are_emitted() {
         "\"f.v:3:5\", .edge = 2, .condition = 1, .group = 1, \
          .limits = llg_path_set_0__limits_0_0 }"
     ));
-    assert!(source.contains("\"f.v:3:5\", .ifnone = 1, .group = 1 } };"));
+    assert!(source.contains("\"f.v:3:5\", .edge = 0, .ifnone = 1, .group = 1 } };"));
     assert!(source.contains("static const uint8_t llg_path_set_0__styles_0[] = { 3, 3,"));
     assert!(source.contains("NULL, NULL, .styles = llg_path_set_0__styles_0 }"));
     assert!(source.contains(
