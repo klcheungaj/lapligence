@@ -1784,7 +1784,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   from the same storage forms and views in low-to-high row-major order without
   `@` addresses (S27-D11); a range outside the memory is rejected before the
   file is opened (S27-D12). Associative arrays dump their existing entries in
-  index order, each word after its own `@` address (S27-D17); an associative
+  index order, each word after its own `@` address with the digits of the
+  index width (S27-D17); an associative
   array of unpacked arrays writes an `@` key before each element's cells
   (S27-D22), while one element of it writes its cells without addresses and a
   missing or unknown key is an error that writes no file (S27-D24, S27-D25).

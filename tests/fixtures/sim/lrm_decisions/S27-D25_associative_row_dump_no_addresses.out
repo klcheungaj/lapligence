@@ -6,9 +6,9 @@ s27_d25_cell.mem:
 s27_d25_start.mem:
   0b
 s27_d25_all.mem:
-  @3
+  @00000003
   0a
   0b
-  @4
+  @00000004
   xx
   0a

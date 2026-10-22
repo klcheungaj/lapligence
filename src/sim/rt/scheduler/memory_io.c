@@ -1404,15 +1404,13 @@ static void llg_assoc_memory_read(llg_string_t path, llg_assoc_t* array,
     free(filename);
 }
 
-// The minimal lowercase hexadecimal digits of a key's bits (two's
-// complement for a negative signed key).
+// The lowercase hexadecimal digits of a key's bits, as many as the index
+// type's width needs, leading zeros included (two's complement for a
+// negative signed key; S27-D17, industry-standard behaviour).
 static void llg_assoc_memory_format_key(sv4_t key, char* digits, size_t capacity) {
     sv4_t bits = key;
     llg_sv4_set_signed(&bits, 0);
     sv4_format('h', bits, digits, capacity);
-    size_t skip = 0;
-    while (digits[skip] == '0' && digits[skip + 1] != 0) ++skip;
-    if (skip) memmove(digits, digits + skip, strlen(digits + skip) + 1u);
 }
 
 // Dump (S27-D17): the existing entries in index order, each preceded by its
