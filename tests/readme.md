@@ -307,8 +307,10 @@ SIM-043's callback fixtures use
 `-E 'binary(sim_feature_completion) & test(sim_043::)'`. `regions`, `reentry`,
 `readonly` and `control` load their C application with `LLG_VPI_PLUGIN` and
 run in both optimizer modes on every backend; `regions` also links it as a
-static archive, `control` also runs with `--stop-policy exit`, and `catalog`
-runs with and without `--vpi`. Decisions S43-D1-D9 are in
+static archive, `control` also runs with `--stop-policy exit`, `start_control`
+runs its start-callback stop and finish (selected by `SIM043_START_CONTROL`)
+under both stop policies, and `catalog` runs with and without `--vpi`.
+Decisions S43-D1-D10 are in
 `sim_lrm_decisions`; the CLI check is
 `settings::tests::vpi_catalog_follows_vpi_and_linked_libraries`. Under ASan
 run the set with `LLG_CC=gcc LLG_CFLAGS='-fsanitize=address,undefined
