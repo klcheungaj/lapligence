@@ -2210,9 +2210,11 @@ These are bounded implementations, not full verification-infrastructure support.
   match nominal and SV 6.22 equivalent types. Empty, full and mismatch differ;
   failed calls preserve message and destination, peek does not consume. Element,
   member and select destinations keep the selectors of the call. The put that
-  wakes a blocked receiver completes its get: whole-variable destinations are
-  written then, others on resume, and a receiver killed first keeps its
-  message (decision AB-O3). Mailbox handles work in arrays, queues, record members, class properties
+  wakes a blocked receiver completes its get: whole packed, real and string
+  storage (also an unpacked-record member, a class property or a `ref`
+  formal) and class handles are written then, a changed handle publishing its
+  event; element, select and whole-aggregate destinations are written on
+  resume; a receiver killed first keeps its message (decision AB-O3). Mailbox handles work in arrays, queues, record members, class properties
   and by-value/`ref` formals
   ([sim_017](../tests/fixtures/sim/feature_completion/sim_017/readme.md)).
   Associative-array messages, whole unpacked-array variable operands and

@@ -5,8 +5,10 @@ These fixtures cover the simulator's bounded mailbox subset from IEEE
 copy semantics, and class-handle identity; `blocking.sv` checks producer and
 consumer waiter order plus non-consuming peeks; `cancellation.sv` checks
 `disable fork` cleanup; `delivery.sv` checks that the put waking a blocked
-get writes whole-variable destinations at once and selected, class-property
-and handle destinations when the receiver resumes (decision AB-O3);
+get writes whole-variable, class-property and class-handle destinations at
+once and selected destinations when the receiver resumes, and
+`killed_receiver.sv` checks what receivers killed right after the put keep
+and that a handle written at the put wakes `@(h)` (decision AB-O3);
 `typed_values.sv` checks four-state, real, shortreal,
 typedef, and enum elements; `locals.sv` checks nested and automatic local
 mailbox storage; and `scoped_typedefs.sv` checks that same-named module,

@@ -163,10 +163,20 @@ impl Frame<'_, '_> {
                 "llg_mailbox_target_string({})",
                 self.native_address(addr, NativeKind::String)?.address
             ),
-            IrMailboxTarget::Handle { addr } => format!(
-                "llg_mailbox_target_handle({})",
-                self.native_address(addr, NativeKind::Chandle)?.address
-            ),
+            IrMailboxTarget::Handle { addr } => {
+                // The runtime publishes a changed handle when it writes the
+                // destination (SV 9.4.2), at the put for a destination
+                // written at delivery (decision AB-O3).
+                let slot = self.native_address(addr, NativeKind::Chandle)?.address;
+                let marker = self.handle_ref_marker(addr, &slot)?;
+                if marker == "NULL" {
+                    format!("llg_mailbox_target_handle({slot})")
+                } else {
+                    format!(
+                        "llg_mailbox_published_target(llg_mailbox_target_handle({slot}), {marker})"
+                    )
+                }
+            }
             IrMailboxTarget::Native { value, type_id } => format!(
                 "llg_mailbox_target_native({}, UINT64_C({type_id}))",
                 self.native_value_address(*value)?
@@ -299,7 +309,6 @@ impl Frame<'_, '_> {
             | MailboxTryGet(_, mailbox, target, peek)
             | MailboxTryGetLocal(_, mailbox, target, peek) => {
                 let mailbox = self.chandle(mailbox)?;
-                let publish = self.mailbox_handle_publish(target)?;
                 let target_ir = target;
                 let target = self.mailbox_destination(target)?;
                 if matches!(statement, MailboxTryGet(..) | MailboxTryGetLocal(..)) {
@@ -322,29 +331,10 @@ impl Frame<'_, '_> {
                         self.line(format!("llg_mailbox_delivery_take(self, {target});"));
                     }
                 }
-                self.finish_handle_store_publish(publish);
             }
             _ => return Err(pending("object statement ownership contract")),
         }
         self.cancellation_check_covering(cancellation_mark)
-    }
-
-    /// The change a `get`/`peek` into handle storage publishes (SV 9.4.2:
-    /// a write to a handle that changes it is an event).
-    fn mailbox_handle_publish(
-        &mut self,
-        target: &IrMailboxTarget,
-    ) -> Result<Option<super::native_access::HandleStorePublish>, String> {
-        match target {
-            IrMailboxTarget::AtDelivery(target) | IrMailboxTarget::Typed { target, .. } => {
-                self.mailbox_handle_publish(target)
-            }
-            IrMailboxTarget::Handle { addr } => {
-                let slot = self.native_address(addr, NativeKind::Chandle)?.address;
-                self.handle_store_publish(addr, &slot)
-            }
-            _ => Ok(None),
-        }
     }
 
     fn mailbox_put(

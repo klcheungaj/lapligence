@@ -1,9 +1,9 @@
 // llg-test-fixture: tests/fixtures/sim/mailboxes/delivery.sv
 // IEEE 1800-2009 §15.4.5 and decision AB-O3: the put that wakes a blocked
-// get completes it. A whole packed, real or string variable, a `ref` formal
-// and an automatic variable of the waiting activation are written at the
-// put; an array element, a class property and a class handle are written
-// when the receiver resumes, with the element selector fixed at the call.
+// get completes it. A whole packed, real or string variable, a `ref` formal,
+// an automatic variable of the waiting activation, a class property and a
+// class handle are written at the put; an array element is written when the
+// receiver resumes, with the element selector fixed at the call.
 module tb;
     timeunit 1ns;
     timeprecision 1ns;

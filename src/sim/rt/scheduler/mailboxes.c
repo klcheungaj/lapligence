@@ -41,6 +41,12 @@ llg_mailbox_target_t llg_mailbox_delivery_target(llg_mailbox_target_t target) {
     return target;
 }
 
+llg_mailbox_target_t llg_mailbox_published_target(llg_mailbox_target_t target,
+                                                  sv4_t* changed) {
+    target.changed = changed;
+    return target;
+}
+
 llg_mailbox_target_t llg_mailbox_target_ref(llg_ref_t* ref) {
     llg_mailbox_target_t target = {0};
     target.kind = LLG_MAILBOX_PACKED;
@@ -215,9 +221,13 @@ static void mailbox_deliver(const llg_mailbox_value_t* value,
         llg_string_move(target->target.string,
                         llg_string_clone(&value->value.string));
         break;
-    case LLG_MAILBOX_HANDLE:
+    case LLG_MAILBOX_HANDLE: {
+        void* previous = *target->target.handle;
         *target->target.handle = value->value.handle;
+        if (target->changed && previous != value->value.handle)
+            llg_dependency_changed(target->changed);
         break;
+    }
     default:
         break;
     }
