@@ -85,7 +85,9 @@ S16-D4 after all its lines, reporting "randsequence repeat count is negative or
 unknown", and S16-D7 after both lines, reporting "rand join expression is not a
 real number in 0.0 to 1.0". S99-D6 is linked with its `.c` file as `--dpi-lib` and must
 stop at startup with exit status 1 and empty stdout, reporting "a VPI
-application registers `$random`, which llg implements as a built-in". S99-D8 must
+application registers `$random`, which llg implements as a built-in". S11-D1 must end with exit status 1 after its
+second line and S11-D2 after both lines, reporting "$cast failed to assign an
+incompatible value". S99-D8 must
 end with exit status 1 after its first line, reporting "virtual interface access
 failed", and S99-D11 after its first line and the final procedure's line,
 reporting "null class handle access". The scripted run is in
@@ -678,6 +680,13 @@ Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | PX-D2 | **Indexed part-selects are port references.** `a[0+:2]` and `a[3-:2]` with constant bases are constant selects, so they may appear in a module header like `a[1:0]`. | 23.2.2.1 L40425-40426; A.8.4 L69126-69128; A.8.3 L69007-69013 | `PX-D2_indexed_port_reference` | LRM text (the grammar admits them). Some simulators report a syntax error. |
 | PX-D3 | **Explicitly named ANSI ports take expressions.** `output .P1(r[3:0])` and `input .Y({x, y})` connect exactly the bits their expressions name in body-declared variables. | 23.2.2.2 L40678-40680, L40711-40713 | `PX-D3_explicit_ansi_port_expression` | LRM text. Some simulators do not implement explicitly named ANSI port declarations. |
 | PX-D4 | **A port expression connects bit by bit.** When an actual and a port expression (a part-select or concatenation in the header) differ in width, only the low bits both sides have are connected: the expression's higher bits stay unconnected for a narrower actual, and a wider actual's higher bits stay undriven (z on a net, the default x on a variable). A whole port is a continuous assignment that widens or truncates. An inout width difference is an error. | 23.3.3 L41452-41454; 23.2.2.1 L40430-40434 | `PX-D4_port_expression_width_mismatch` | llg choice, industry-standard behaviour (23.3.3 makes every port connection a continuous assignment but gives no rule for the width of a port expression's connection). A port reference select outside the declared range is a warning and its out-of-range bits read x and ignore writes (11.5.1 L15784-15788); some simulators reject it, but 23.2.2.1 admits any part-select of a declared vector and 11.5.1 defines the out-of-range bits. |
+
+## Class handles and dynamic casts (SIM-011)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S11-D1 | **A failed task-form class cast ends the run without final procedures; a null source casts.** A task-form `$cast` whose source object is not of the destination's class reports a run-time error and ends the simulation at the call: the destination keeps its value, no later statement or process runs, the final procedures do not run and the exit status is 1. A null source handle is a successful cast that assigns null, in both forms (the function form returns 1). | 6.24.2 L7430-7431; 8.15 L10220-10222 | `S11-D1_task_cast_class_failure` (negative at run time: the `.out` holds the output before the error) | industry-standard behaviour (the text does not say whether the run-time error ends the simulation, or how a null source handle is checked; changed: the error was reported and the run continued, and a null source failed) |
+| S11-D2 | **A failed task-form enum cast ends the run; final procedures run.** A task-form `$cast` of a value that is no member of the destination enumeration reports a run-time error and ends the simulation at the call: the destination keeps its value, no later statement or process runs, the final procedures run and the exit status is 1. The function form returns 0 and the run continues. | 6.24.2 L7430-7434 | `S11-D2_task_cast_enum_failure` (negative at run time) | industry-standard behaviour (the text does not say whether the run-time error ends the simulation; changed: the error was reported and the run continued) |
 
 ## Earlier decisions
 

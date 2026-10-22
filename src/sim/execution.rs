@@ -1652,6 +1652,10 @@ fn collect_expression_effects(
         }
         IrExprKind::DynamicCast(cast) => {
             effects.push(ExecutionEffect::ImmediateStore);
+            // A failed task-form cast ends the run (decision S11-D1).
+            if cast.failure_location.is_some() {
+                effects.push(ExecutionEffect::Terminate);
+            }
             collect_lhs_expression_effects(ir, &cast.lhs, effects, visited_calls);
             collect_expression_effects(ir, &cast.rhs, effects, visited_calls);
             if let Some(source) = &cast.class_source {

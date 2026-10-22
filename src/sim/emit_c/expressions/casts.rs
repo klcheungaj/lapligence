@@ -19,7 +19,7 @@ pub(super) fn render_dynamic_cast(
         return Ok(RenderedExpr {
             code: format!(
                 "({{ void *_llg_cast_source = {source}; int _llg_cast_ok = \
-                 _llg_cast_source && llg_class_is_a(_llg_cast_source, {expected}); \
+                 !_llg_cast_source || llg_class_is_a(_llg_cast_source, {expected}); \
                  if (_llg_cast_ok) *({target}) = _llg_cast_source; \
                  sv4_from_u64((uint64_t)_llg_cast_ok, 1, 0); }})"
             ),

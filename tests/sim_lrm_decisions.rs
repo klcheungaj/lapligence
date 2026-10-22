@@ -2789,6 +2789,42 @@ fn s99_d7_vif_implicit_sensitivity() {
 }
 
 #[test]
+fn s11_d1_task_cast_class_failure() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S11-D1_task_cast_class_failure.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S11-D1_task_cast_class_failure",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "$cast failed to assign an incompatible value at tb:36:5",
+            );
+        },
+    );
+}
+
+#[test]
+fn s11_d2_task_cast_enum_failure() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S11-D2_task_cast_enum_failure.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S11-D2_task_cast_enum_failure",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "$cast failed to assign an incompatible value at tb:22:5",
+            );
+        },
+    );
+}
+
+#[test]
 fn s99_d8_null_access_stops() {
     let expected = include_str!("fixtures/sim/lrm_decisions/S99-D8_null_access_stops.out");
     sim_cli::run_case_checked_matrix(SUITE, "S99-D8_null_access_stops", &[], &|label, output| {

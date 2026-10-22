@@ -1099,8 +1099,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   state and conversion boundaries in admitted scalar/vector and fixed contexts.
   `$cast` supports packed/real values, enum membership against the complete
   source value and nominal class checks. Selectors and the source are evaluated
-  once and only a successful cast writes; a failed task-form `$cast` reports a
-  run-time error. Non-singular destinations reject. Fixed bit-stream casts are
+  once and only a successful cast writes; a failed task-form `$cast` is a
+  run-time error that ends the run (final procedures run after an enum
+  failure, not after a class one), and a null class source casts to null
+  (S11-D1, S11-D2). Non-singular destinations reject. Fixed bit-stream casts are
   described below; descriptor-backed arrays reshape and clear X/Z for two-state
   targets before comparison or storage. Real-source enum `$cast` and unsupported
   aggregate/net/reference targets remain restricted.

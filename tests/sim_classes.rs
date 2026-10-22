@@ -128,8 +128,9 @@ fn inherited_virtual_methods_casts_and_specializations_match_across_optimizer_mo
         "constructors=2/7\n",
         "cast=1 down=28\n",
         "bad_cast=0 bad_null=0\n",
-        "null_cast=0 null=0\n",
-        "null_literal_cast=0 null=0\n",
+        // A null source is a successful cast that assigns null (S11-D1).
+        "null_cast=1 null=1\n",
+        "null_literal_cast=1 null=1\n",
     );
     with_compiled_fixture(
         "inheritance.sv",

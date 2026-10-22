@@ -30,11 +30,13 @@ fn dynamic_and_static_casts_share_one_success_contract() {
 #[test]
 fn task_form_cast_failure_reports_and_preserves_destination() {
     // Values are written to stderr so the public contract is one exact
-    // stream: the failed cast reports its source location and continues.
+    // stream: the failed cast reports its source location and ends the run
+    // (decision S11-D2), so `B` never prints.
     sim_cli::reject_case_with_exact_stderr(
         SUITE,
         "cast_task_failure",
-        "A 5\nllg: runtime error: $cast failed to assign an incompatible value at tb:14:5\nB 5\n",
+        "A 5\nllg: runtime error: $cast failed to assign an incompatible value at tb:14:5\n\
+         llg: severity fatal: tb:14:5: $cast failed to assign an incompatible value\n",
         &[],
     );
 }

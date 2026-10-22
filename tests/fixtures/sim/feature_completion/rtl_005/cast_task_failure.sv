@@ -1,5 +1,5 @@
 // SV2009 6.24.2: a failed task-form $cast is a run-time error that leaves
-// its destination unchanged; execution continues after the report.
+// its destination unchanged and ends the run (decision S11-D2).
 module tb;
   typedef enum logic [2:0] { A0 = 3'd0, A2 = 3'd2, A5 = 3'd5 } e_t;
   localparam logic [31:0] STDERR = 32'h8000_0002;
