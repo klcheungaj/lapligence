@@ -1979,12 +1979,30 @@ impl Codegen<'_> {
                 vec![unit_of(committed()), when(random(), vec![chain])],
             ));
         }
+        // post_randomize follows the pre_randomize order (S30-D7): the walk
+        // counter `counter` steps through the visited instances.
         let mut post = Vec::new();
         if let Some(chain) = dispatch(&unit_local, posts) {
             post.push(counted(
-                &commit_local,
+                &counter,
                 count(),
-                vec![unit_of(committed()), when(random(), vec![chain])],
+                vec![
+                    assign32(
+                        &commit_local,
+                        query(
+                            problem,
+                            IrRandQuery::Visit,
+                            Some(local_read(&counter, 32, true)),
+                            None,
+                            32,
+                            true,
+                        ),
+                    ),
+                    when(
+                        bin32(IrBinOp::Neq, committed(), int_const(-1)),
+                        vec![unit_of(committed()), when(random(), vec![chain])],
+                    ),
+                ],
             ));
         }
         Ok(UnitCode {

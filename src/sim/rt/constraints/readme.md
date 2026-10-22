@@ -44,8 +44,9 @@ Generated code registers the objects of one call as instances: instance 0 is
 the randomized object, and `llg_cr_link` registers each object a handle
 names (deduplicated by handle, so an object reached twice, or the root
 reached again, is one instance). `llg_cr_next_inst` walks the instances in
-registration order; `llg_cr_inst_pre` says when to call an instance's
-`pre_randomize`. An object reached only through non-random links is state;
+depth-first preorder over the links (S30-D7); `llg_cr_inst_pre` says when to
+call an instance's `pre_randomize`, and `llg_cr_visit` lists the random
+instances in that order for `post_randomize`. An object reached only through non-random links is state;
 reached later through a random link it is returned again to be fed as
 random.
 

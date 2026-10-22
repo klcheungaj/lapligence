@@ -743,6 +743,9 @@ pub enum IrRandQuery {
     Pre,
     /// Registered instances (32-bit signed).
     Count,
+    /// The random instance fed `inst`-th (pre_randomize order, S30-D7), or
+    /// -1 past the last (32-bit signed).
+    Visit,
     /// Unit of `inst` (32-bit signed).
     Unit,
     /// 1 when `inst` takes part as random.

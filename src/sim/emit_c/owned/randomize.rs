@@ -528,6 +528,9 @@ impl Frame<'_, '_> {
                     IrRandQuery::Count => {
                         format!("sv4_from_i64((int64_t)llg_cr_inst_count({s}), 32)")
                     }
+                    IrRandQuery::Visit => {
+                        format!("sv4_from_i64((int64_t)(int32_t)llg_cr_visit({s}, {inst}), 32)")
+                    }
                     IrRandQuery::Pre => flag(format!("llg_cr_inst_pre({s}, {inst})")),
                     IrRandQuery::Unit => {
                         format!("sv4_from_i64((int64_t)llg_cr_inst_unit({s}, {inst}), 32)")

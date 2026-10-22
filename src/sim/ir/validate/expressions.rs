@@ -1534,6 +1534,7 @@ impl Validator<'_> {
                     let ty = match query {
                         IrRandQuery::NextInst
                         | IrRandQuery::Count
+                        | IrRandQuery::Visit
                         | IrRandQuery::Unit
                         | IrRandQuery::ArraySize(_) => Some((32, true)),
                         IrRandQuery::Pre

@@ -397,6 +397,10 @@ uint32_t llg_cr_var_words(const llg_cr_session_t* s, uint32_t var);
  * llg_cr_icyclic, llg_cr_array_size and llg_cr_elem_value. */
 void llg_cr_inst_root(llg_cr_session_t* s, void* handle);
 uint32_t llg_cr_next_inst(llg_cr_session_t* s);
+/* The k-th random instance llg_cr_next_inst returned (depth-first preorder
+ * over the links, each object once: the pre_randomize order, S30-D7), or
+ * LLG_CR_NONE past the last; post_randomize runs in the same order. */
+uint32_t llg_cr_visit(const llg_cr_session_t* s, uint32_t k);
 int llg_cr_inst_pre(llg_cr_session_t* s, uint32_t inst);
 uint32_t llg_cr_inst_count(const llg_cr_session_t* s);
 void* llg_cr_inst_handle(const llg_cr_session_t* s, uint32_t inst);

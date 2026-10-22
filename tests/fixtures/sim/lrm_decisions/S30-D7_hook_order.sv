@@ -4,11 +4,11 @@
 // assigned, randomize() invokes post_randomize() on obj and also all of its
 // random object members that are enabled." The order among the objects is
 // not specified.
-// Decision S30-D7 (llg choice): the randomized object's hook runs first, then
-// the members' in breadth-first order of their rand handles (declaration
-// order within a class, base class properties first); an object reached
-// twice runs its hooks once. post_randomize follows the same order, after
-// every value is committed.
+// Decision S30-D7 (llg choice): the hooks run in depth-first preorder over
+// the rand handles, starting at the randomized object (each object's rand
+// handles in declaration order, base class properties first); an object
+// reached twice runs its hooks once, at its first visit. post_randomize
+// follows the same order, after every value is committed.
 class node_c;
   string name;
   rand node_c a, b;

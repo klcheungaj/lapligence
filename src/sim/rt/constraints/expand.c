@@ -56,7 +56,7 @@ typedef struct {
 typedef struct {
     void* handle;
     uint32_t unit;      /* unit of the buffers, LLG_CR_NONE before the first */
-    uint8_t random, pre, queued;
+    uint8_t random, pre, queued, visited;
     uint64_t* var_cur;
     uint8_t* var_active;
     uint8_t* var_input;
@@ -143,8 +143,9 @@ struct cr_tpl {
     uint32_t loops;
     cr_inst_t* inst;
     uint32_t count, cap;
-    cr_u32vec_t queue;
-    size_t qhead;
+    cr_u32vec_t queue;      /* stack of instances still to feed */
+    size_t qhead;           /* queue entries pushed before the last pop */
+    cr_u32vec_t order;      /* random instances in feed order (S30-D7) */
     void** hkey;
     uint32_t* hval;
     size_t hcap, hcount;
@@ -539,6 +540,7 @@ static uint32_t cr_inst_add(cr_tpl_t* t, void* handle, uint32_t unit, int random
     in->handle = handle;
     in->random = (uint8_t)(random != 0);
     in->pre = 0;
+    in->visited = 0;
     in->queued = 1;
     cr_u32_push(&t->queue, id);
     if (handle) cr_hmap_insert(t, handle, id);
@@ -555,6 +557,7 @@ static void cr_tpl_begin(llg_cr_session_t* s) {
     t->count = 0;
     t->queue.len = 0;
     t->qhead = 0;
+    t->order.len = 0;
     if (t->hcap) {
         memset(t->hkey, 0, t->hcap * sizeof(void*));
         t->hcount = 0;
@@ -575,10 +578,29 @@ void llg_cr_inst_root(llg_cr_session_t* s, void* handle) {
 uint32_t llg_cr_next_inst(llg_cr_session_t* s) {
     cr_tpl_t* t = s->tpl;
     if (!t) cr_fatal("not a problem with units");
-    if (t->qhead >= t->queue.len) return LLG_CR_NONE;
-    uint32_t id = t->queue.data[t->qhead++];
+    /* Depth-first preorder over the links (S30-D7): the instances the last
+     * one linked are pushed in link order, so they are reversed before the
+     * first of them is popped. */
+    for (size_t lo = t->qhead, hi = t->queue.len; lo + 1u < hi; ++lo, --hi) {
+        uint32_t tmp = t->queue.data[lo];
+        t->queue.data[lo] = t->queue.data[hi - 1u];
+        t->queue.data[hi - 1u] = tmp;
+    }
+    if (!t->queue.len) return LLG_CR_NONE;
+    uint32_t id = t->queue.data[--t->queue.len];
+    t->qhead = t->queue.len;
     t->inst[id].queued = 0;
+    if (t->inst[id].random && !t->inst[id].visited) {
+        t->inst[id].visited = 1;
+        cr_u32_push(&t->order, id);
+    }
     return id;
+}
+
+uint32_t llg_cr_visit(const llg_cr_session_t* s, uint32_t k) {
+    const cr_tpl_t* t = s->tpl;
+    if (!t) cr_fatal("not a problem with units");
+    return k < t->order.len ? t->order.data[k] : LLG_CR_NONE;
 }
 
 int llg_cr_inst_pre(llg_cr_session_t* s, uint32_t inst) {
@@ -2122,7 +2144,7 @@ static llg_cr_status_t cr_tpl_step(llg_cr_session_t* s, const llg_cr_rng_t* rng,
     llg_cr_status_t status = LLG_CR_OK;
     if (t->phase == CR_PH_DONE) cr_fatal("llg_cr_step after the solve finished");
     if (t->phase == CR_PH_IDLE) {
-        if (t->qhead < t->queue.len) cr_fatal("an instance was not fed");
+        if (t->queue.len) cr_fatal("an instance was not fed");
         if (cr_has_random_size(t)) {
             status = cr_tpl_enter(t, CR_PH_SIZES, report);
         } else if (!cr_elements_ok(t)) {
@@ -2238,6 +2260,7 @@ static void cr_tpl_free(cr_tpl_t* t) {
     for (uint32_t i = 0; i < t->cap; ++i) cr_inst_release(&t->inst[i], t);
     free(t->inst);
     free(t->queue.data);
+    free(t->order.data);
     free(t->hkey); free(t->hval);
     free(t->var_pos); free(t->arr_pos); free(t->slot_pos);
     free(t->var_off); free(t->var_off_base); free(t->cyc_off);
