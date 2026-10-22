@@ -6,7 +6,7 @@ module tb;
   typedef enum {RED, GREEN = 5, BLUE} color_t;
   color_t color;
   bit en;
-  covergroup g1;
+  covergroup g1; option.per_instance = 1;
     c1: coverpoint p1 {
       bins b1 = {1, [2:5], [6:10]};
       bins b2 = {-1, [1:10], 15};
@@ -16,7 +16,7 @@ module tb;
       bins b4 = {-1, [1:10], 15};
     }
   endgroup
-  covergroup g2;
+  covergroup g2; option.per_instance = 1;
     ce: coverpoint color;
     cs: coverpoint p2 { option.auto_bin_max = 3; }
     ci: coverpoint p1 iff (en);

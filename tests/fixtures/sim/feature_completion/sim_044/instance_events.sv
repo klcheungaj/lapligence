@@ -10,7 +10,7 @@ class Source;
 endclass
 class Monitor;
   virtual bus_if vif;
-  covergroup cg @(posedge vif.clk);
+  covergroup cg @(posedge vif.clk); option.per_instance = 1;
     coverpoint vif.data;
   endgroup
   function new(virtual bus_if v);
@@ -23,10 +23,10 @@ module tb;
   bus_if b1();
   logic ca = 0, cb = 0;
   bit [1:0] va, vb;
-  covergroup by_ref(ref logic ck, ref bit [1:0] v) @(posedge ck);
+  covergroup by_ref(ref logic ck, ref bit [1:0] v) @(posedge ck); option.per_instance = 1;
     coverpoint v;
   endgroup
-  covergroup by_handle(Source s) @(posedge s.clk);
+  covergroup by_handle(Source s) @(posedge s.clk); option.per_instance = 1;
     coverpoint s.val;
   endgroup
   Source src = new;

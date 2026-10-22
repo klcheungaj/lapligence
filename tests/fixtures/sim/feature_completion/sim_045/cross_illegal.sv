@@ -5,7 +5,7 @@
 // 19.6.3, decision S45-D3). The illegal value is a covergroup argument.
 module tb;
   bit [1:0] x, y;
-  covergroup zz(int bad);
+  covergroup zz(int bad); option.per_instance = 1;
     cx: coverpoint x;
     cy: coverpoint y;
     xy: cross cx, cy {

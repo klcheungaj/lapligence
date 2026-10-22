@@ -7,7 +7,7 @@
 // exits with a failure status.
 module tb;
   bit [3:0] v;
-  covergroup g;
+  covergroup g; option.per_instance = 1;
     cp: coverpoint v {
       bins up = (1 => 2 => 3);
       bins pair = (5 => 6);

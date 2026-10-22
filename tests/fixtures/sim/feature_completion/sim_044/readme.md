@@ -8,6 +8,19 @@ numbers refer to the `pdftotext -layout` extraction
 are the register decisions
 [S44-D1 to S44-D9](../../../../../docs/lrm_decisions.md#covergroups-instances-and-sampling-sim-044).
 
+## Portability of instance coverage
+
+Every covergroup in `bins`, `dropped_waiters`, `embedded`,
+`instance_events`, `storage` and `strobe` sets `option.per_instance = 1` on
+its header line (so no other line moves). Without it, 19.7 (L33285-33289)
+does not require an implementation to keep instance-specific information,
+and some simulators then return 0 from `get_inst_coverage()`; llg's results
+are the same either way. With merge_instances false, 19.11.3 (L33937-33938)
+makes type coverage the weighted average of the instances, which is what
+`get_coverage()` returns in `dropped_waiters`, `embedded` and
+`instance_events`; some simulators return the union of the instances' bins
+instead.
+
 ## Clauses relied on
 
 - 19.3, L32081-32085: "When the covergroup specifies a list of formal

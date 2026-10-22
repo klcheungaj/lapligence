@@ -5,10 +5,10 @@ module tb;
   bit [1:0] only_point;
   bit only_guard;
   bit [3:0] only_sample;
-  covergroup g @(posedge clk);
+  covergroup g @(posedge clk); option.per_instance = 1;
     coverpoint only_point iff (only_guard);
   endgroup
-  covergroup w with function sample(bit [3:0] k);
+  covergroup w with function sample(bit [3:0] k); option.per_instance = 1;
     coverpoint k;
   endgroup
   g c = new;

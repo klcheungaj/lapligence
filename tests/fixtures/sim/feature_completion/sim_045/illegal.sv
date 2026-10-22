@@ -6,7 +6,7 @@
 // illegal value counted in no bin.
 module tb;
   bit [3:0] a;
-  covergroup g;
+  covergroup g; option.per_instance = 1;
     cp: coverpoint a {
       bins lo = {[0:7]};
       illegal_bins bad = {5};

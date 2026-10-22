@@ -10,7 +10,7 @@ module tb;
   bit q, en;
   bit [11:0] wa, wb;
 
-  covergroup ct;
+  covergroup ct; option.per_instance = 1;
     coverpoint i { bins i[] = { [0:1] }; }
     coverpoint j { bins j[] = { [0:1] }; }
     x1: cross i, j;
@@ -19,7 +19,7 @@ module tb;
     }
   endgroup
 
-  covergroup cg;
+  covergroup cg; option.per_instance = 1;
     a: coverpoint v_a {
       bins a1 = { [0:63] };
       bins a2 = { [64:127] };
@@ -39,12 +39,12 @@ module tb;
     }
   endgroup
 
-  covergroup g_implicit;
+  covergroup g_implicit; option.per_instance = 1;
     cq: coverpoint q;
     px: cross p, cq;
   endgroup
 
-  covergroup g_ignore;
+  covergroup g_ignore; option.per_instance = 1;
     ca: coverpoint a;
     cb: coverpoint b;
     plain: cross ca, cb { ignore_bins ig = binsof(ca) intersect {0}; }
@@ -54,7 +54,7 @@ module tb;
     }
   endgroup
 
-  covergroup g_guard;
+  covergroup g_guard; option.per_instance = 1;
     ca: coverpoint a { bins lo = {[0:1]}; bins hi = {[2:3]}; }
     cb: coverpoint b iff (en) { bins lo = {[0:1]}; bins hi = {[2:3]}; }
     on: cross ca, cb iff (q);
@@ -64,7 +64,7 @@ module tb;
     }
   endgroup
 
-  covergroup g_large;
+  covergroup g_large; option.per_instance = 1;
     ca: coverpoint wa { option.auto_bin_max = 4096; }
     cb: coverpoint wb { option.auto_bin_max = 4096; }
     all: cross ca, cb;
