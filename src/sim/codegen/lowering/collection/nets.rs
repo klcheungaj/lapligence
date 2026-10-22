@@ -1381,9 +1381,15 @@ impl<'a> Codegen<'a> {
                         let actual_bits = self.alias_expression_bits(*id, *actual)?;
                         let formal_bits = self.alias_expression_bits(*id, *l)?;
                         if actual_bits.len() != formal_bits.len() {
-                            return Err(
-                                "selected inout actual width disagrees with its formal".into()
-                            );
+                            return Err(format!(
+                                "inout port `{}` connects a {}-bit actual to its {}-bit formal at {}:{}:{}",
+                                self.node(*id).name,
+                                actual_bits.len(),
+                                formal_bits.len(),
+                                self.node(*id).file.as_deref().unwrap_or("<unknown>"),
+                                self.node(*id).line,
+                                self.node(*id).col,
+                            ));
                         }
                         for (actual, formal) in actual_bits.into_iter().zip(formal_bits) {
                             alias_bits.extend([actual, formal]);
@@ -1448,6 +1454,34 @@ impl<'a> Codegen<'a> {
                 ..
             } = self.kind(*id)
             {
+                // A select or concatenation port expression (SV 23.2.2.1)
+                // joins its bits with the actual's bits, MSB to MSB, like a
+                // selected actual above.
+                if let (Some(internal), Some(actual)) =
+                    (self.db.port_internal_expression(*id), high_expr.or(*high))
+                {
+                    let actual_bits = self.alias_expression_bits(*id, actual)?;
+                    let formal_bits = self.alias_expression_bits(*id, internal)?;
+                    if actual_bits.len() != formal_bits.len() {
+                        return Err(format!(
+                            "inout port `{}` connects a {}-bit actual to its {}-bit port expression at {}:{}:{}",
+                            self.node(*id).name,
+                            actual_bits.len(),
+                            formal_bits.len(),
+                            self.node(*id).file.as_deref().unwrap_or("<unknown>"),
+                            self.node(*id).line,
+                            self.node(*id).col,
+                        ));
+                    }
+                    for (actual, formal) in actual_bits.into_iter().zip(formal_bits) {
+                        alias_bits.extend([actual, formal]);
+                        alias_nets.extend(actual.net().into_iter().chain(formal.net()));
+                        alias_union(&mut alias_parent, &mut alias_rank, actual, formal);
+                    }
+                    inout_ports.push(*id);
+                    array_ports.insert(*id);
+                    continue;
+                }
                 if high.is_some() || high_expr.is_some() {
                     return Err(format!(
                         "inout port `{}` has no child-side connection at {}:{}:{}",
@@ -2030,12 +2064,18 @@ impl<'a> Codegen<'a> {
                 high_expr,
                 ..
             } => match direction {
-                DbDirection::Input => low.iter().copied().collect(),
+                DbDirection::Input => self.port_child_target(source, *low).into_iter().collect(),
                 DbDirection::Output => high_expr.or(*high).into_iter().collect(),
                 _ => Vec::new(),
             },
             _ => Vec::new(),
         }
+    }
+
+    /// The child-side storage an input port link writes: the whole internal
+    /// symbol, or the port expression of a select or explicit ANSI port.
+    pub(super) fn port_child_target(&self, port: NodeId, low: Option<NodeId>) -> Option<NodeId> {
+        low.or_else(|| self.db.port_internal_expression(port))
     }
 
     pub(super) fn add_structural_driver(
@@ -2328,7 +2368,7 @@ impl<'a> Codegen<'a> {
                     ..
                 } => {
                     let target = match direction {
-                        DbDirection::Input => *low,
+                        DbDirection::Input => self.port_child_target(id, *low),
                         DbDirection::Output => high_expr.or(*high),
                         _ => None,
                     };
@@ -2551,7 +2591,7 @@ impl<'a> Codegen<'a> {
                         ..
                     } => {
                         let target = match direction {
-                            DbDirection::Input => *low,
+                            DbDirection::Input => self.port_child_target(*id, *low),
                             DbDirection::Output => high_expr.or(*high),
                             _ => None,
                         };

@@ -1,8 +1,16 @@
 diff --git a/source/ast/symbols/PortSymbols.cpp b/source/ast/symbols/PortSymbols.cpp
-index 1eb90a82e..be093f625 100644
+index 1eb90a82e..c80b8a07d 100644
 --- a/source/ast/symbols/PortSymbols.cpp
 +++ b/source/ast/symbols/PortSymbols.cpp
-@@ -253,13 +253,12 @@ private:
+@@ -15,6 +15,7 @@
+ #include "slang/diagnostics/ExpressionsDiags.h"
+ #include "slang/diagnostics/LookupDiags.h"
+ #include "slang/diagnostics/ParserDiags.h"
++#include "slang/numeric/MathUtils.h"
+ #include "slang/syntax/AllSyntax.h"
+ #include "slang/syntax/SyntaxFacts.h"
+ 
+@@ -253,13 +254,12 @@ private:
          port->setAttributes(scope, attrs);
  
          if (!port->name.empty()) {
@@ -19,7 +27,7 @@ index 1eb90a82e..be093f625 100644
              else if (port->direction == ArgumentDirection::Ref && netType) {
                  scope.addDiag(diag::RefPortMustBeVariable, port->location) << port->name;
              }
-@@ -607,10 +606,8 @@ private:
+@@ -607,10 +607,8 @@ private:
          if (info.direction == ArgumentDirection::Ref && isNet)
              scope.addDiag(diag::RefPortMustBeVariable, declLoc) << name;
  
@@ -32,7 +40,59 @@ index 1eb90a82e..be093f625 100644
  
          if ((info.direction != ArgumentDirection::Out || isNet) && decl.initializer)
              scope.addDiag(diag::DisallowedPortDefault, decl.initializer->sourceRange());
-@@ -1832,6 +1829,15 @@ const Expression* PortConnection::getExpression() const {
+@@ -992,17 +990,49 @@ public:
+             return;
+         }
+ 
+-        const auto exprWidth = expr->type->getBitWidth();
++        auto exprWidth = expr->type->getBitWidth();
+ 
++        // An instance array splits a packed actual into one slice per
++        // instance (IEEE 1800-2009 23.3.3.5), as other ports do when their
++        // connection is converted; select this instance's slice first.
+         bitwidth_t index = 0;
++        if (!instance.arrayPath.empty()) {
++            SmallVector<ConstantRange> instanceDims;
++            instance.getArrayDimensions(instanceDims);
++            bitwidth_t numInstances = 1;
++            for (auto& dim : instanceDims)
++                numInstances *= dim.width();
++
++            const auto portWidth = mp.getType().getBitWidth();
++            auto instWidth = checkedMulU32(numInstances, portWidth);
++            if (numInstances > 1 && instWidth && *instWidth == exprWidth) {
++                int32_t offset = 0;
++                for (size_t i = 0; i < instance.arrayPath.size(); i++) {
++                    if (i > 0)
++                        offset *= int32_t(instanceDims[i - 1].width());
++
++                    uint32_t pathIndex = instance.arrayPath[i];
++                    if (!instanceDims[i].isDescending())
++                        pathIndex = instanceDims[i].width() - pathIndex - 1;
++                    offset += int32_t(pathIndex);
++                }
++                index = bitwidth_t(offset) * portWidth;
++                exprWidth = index + portWidth;
++            }
++        }
++
+         for (auto port : std::views::reverse(mp.ports)) {
+             if (index >= exprWidth) {
+                 results.push_back(emptyConnection(*port));
+                 continue;
+             }
+ 
++            // An actual narrower than the multi-port leaves the high
++            // component bits unconnected: the last connected component gets
++            // only the actual's remaining bits, never a select past its end.
+             const auto portWidth = port->getType().getBitWidth();
+-            ConstantRange range{int32_t(index + portWidth - 1), int32_t(index)};
++            const auto end = std::min<uint64_t>(uint64_t(index) + portWidth, exprWidth);
++            ConstantRange range{int32_t(end - 1), int32_t(index)};
+             index += portWidth;
+ 
+             auto& e = Expression::buildPackedSelectTree(comp, *const_cast<Expression*>(expr), range,
+@@ -1832,6 +1862,15 @@ const Expression* PortConnection::getExpression() const {
          if (!connectedSymbol) {
              if (port.kind == SymbolKind::MultiPort)
                  expr = &Expression::bind(*exprSyntax, context);

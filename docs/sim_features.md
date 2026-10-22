@@ -546,7 +546,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   instance arrays, `generate for/if/case`, `genvar`, hierarchical/upward reads and
   admitted selected blocking/NBA writes. Constant functions in a generate-loop
   bound and step elaborate three lanes whose values follow a runtime input in
-  both selected editions and optimizer modes. V §§12.1–12.4 **[1995/2001]**.
+  both selected editions and optimizer modes. Port expressions in module,
+  interface and program headers (bit-, part- and indexed selects,
+  concatenations, mixed directions, explicitly named ANSI ports) connect each
+  part to its bits of the actual; a width difference connects the common low
+  bits ([PX-D1 to PX-D4](lrm_decisions.md#port-expressions-bug-sweep)).
+  V §§12.1–12.4; SV §§23.2.2.1–23.2.2.2 **[1995/2001/SV-2005]**.
 - 🟦 **Parameters and constant elaboration** — Parameters, `localparam`, named/
   positional overrides and `defparam` re-elaboration propagate values and widths;
   overriding `localparam` is illegal. Finite constant functions, type-dependent

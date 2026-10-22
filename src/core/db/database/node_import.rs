@@ -45,7 +45,17 @@ pub(super) fn node_kind_from_slang(
                 strength0: strength_from_slang(node.strength0),
                 strength1: strength_from_slang(node.strength1),
                 high,
-                low: resolved_edge_target(snapshot, ids, edges, SemanticEdgeRole::LowConnection)?,
+                // A multi-port's low connections are its component ports
+                // (`Db::multi_port_components`), and a select or explicit ANSI
+                // port expression is `Db::port_internal_expression`: neither
+                // is one whole internal symbol.
+                low: if node.detail == "MultiPort"
+                    || port_internal_expression(snapshot, ids, edges)?.is_some()
+                {
+                    None
+                } else {
+                    resolved_edge_target(snapshot, ids, edges, SemanticEdgeRole::LowConnection)?
+                },
                 high_expr,
                 high_present: node.port_connection_present(),
                 high_open: node.port_connection_open(),

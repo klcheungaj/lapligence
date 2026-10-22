@@ -98,6 +98,7 @@ use clocking::{
 mod connections;
 use connections::{
     connection_source_expression, direction_from_slang, driver_delay, peel_gate_terminal,
+    port_internal_expression,
 };
 mod values;
 use values::{
@@ -343,6 +344,14 @@ pub struct Db {
     /// such a port keep the port as their target; consumers read or write
     /// this expression in the interface instance instead.
     modport_expressions: HashMap<NodeId, NodeId>,
+    /// Internal port expression of a port that does not connect to one whole
+    /// internal symbol: a bit/part select in a non-ANSI port reference or an
+    /// explicit ANSI port expression (SV 23.2.2.1-23.2.2.2), keyed by port.
+    port_expressions: HashMap<NodeId, NodeId>,
+    /// Component ports of each multi-port (a concatenated port expression
+    /// `.p({a, b})`, SV 23.2.2.1), most significant first. Each component
+    /// is an ordinary port with its own direction and connections.
+    multi_ports: HashMap<NodeId, Vec<NodeId>>,
     /// Statically initialized virtual-interface variables and their concrete
     /// interface instances. Runtime reassignment remains outside this map.
     virtual_interface_targets: HashMap<NodeId, NodeId>,
@@ -425,6 +434,8 @@ impl Db {
             default_clockings: HashMap::new(),
             modport_directions: HashMap::new(),
             modport_expressions: HashMap::new(),
+            port_expressions: HashMap::new(),
+            multi_ports: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
             dpi_exports: HashMap::new(),
@@ -507,6 +518,8 @@ impl Db {
             default_clockings: HashMap::new(),
             modport_directions: HashMap::new(),
             modport_expressions: HashMap::new(),
+            port_expressions: HashMap::new(),
+            multi_ports: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
             dpi_exports: HashMap::new(),
@@ -829,6 +842,39 @@ impl Db {
 
     pub(crate) fn modport_expression_entries(&self) -> &HashMap<NodeId, NodeId> {
         &self.modport_expressions
+    }
+
+    /// Return the internal expression of a port whose port expression is a
+    /// select or an explicit ANSI expression rather than one whole internal
+    /// symbol (SV 23.2.2.1-23.2.2.2). Such a port has no `low` symbol: input
+    /// connections write this expression in the child instance and output
+    /// connections read it.
+    pub fn port_internal_expression(&self, port: NodeId) -> Option<NodeId> {
+        self.port_expressions.get(&port).copied()
+    }
+
+    pub(crate) fn port_expression_entries(&self) -> &HashMap<NodeId, NodeId> {
+        &self.port_expressions
+    }
+
+    /// Return the component ports of a multi-port (a concatenated port
+    /// expression, SV 23.2.2.1), most significant first; empty for any other
+    /// node. The multi-port itself carries no connection: each component
+    /// port is connected to its slice of the actual.
+    pub fn multi_port_components(&self, port: NodeId) -> &[NodeId] {
+        self.multi_ports.get(&port).map_or(&[], Vec::as_slice)
+    }
+
+    /// Return the multi-port that a component port belongs to.
+    pub fn multi_port_of(&self, component: NodeId) -> Option<NodeId> {
+        self.multi_ports
+            .iter()
+            .find(|(_, components)| components.contains(&component))
+            .map(|(port, _)| *port)
+    }
+
+    pub(crate) fn multi_port_entries(&self) -> &HashMap<NodeId, Vec<NodeId>> {
+        &self.multi_ports
     }
 
     /// Return the concrete interface instance statically bound to a virtual

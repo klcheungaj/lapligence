@@ -70,6 +70,12 @@ its parameter constant; its node and each path node are the stable source
 identities later annotation and timing-check work keys on.
 Modport expression ports `.p(expr)` keep their port expression in a side
 table (`Db::modport_port_expression`); references still target the port.
+Module, interface and program port expressions (IEEE 1800-2009 23.2.2.1,
+23.2.2.2) are side tables too: a select or explicitly named ANSI port has no
+whole `low` signal and keeps its child-side expression
+(`Db::port_internal_expression`); a concatenated port is a `MultiPort` port
+whose component ports, MSB first, each carry one part and its slice of the
+actual (`Db::multi_port_components`, `Db::multi_port_of`).
 `Db::is_const_cast` marks `const'(expr)` casts (6.24.1), which are otherwise
 ordinary `ExprKind::Cast` nodes. `Db::is_parenthesized_assertion` marks
 assertion expressions written in parentheses, which the frontend binds away;

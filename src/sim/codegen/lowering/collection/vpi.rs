@@ -324,15 +324,26 @@ impl Codegen<'_> {
                 NodeKind::Port {
                     direction, low, ty, ..
                 } => {
+                    // The components of a multi-port are not module ports of
+                    // their own, and an unnamed port (a select or concatenation
+                    // port expression without `.name(...)`, SV 23.2.2.1) has no
+                    // name to publish; it still takes its place in the order.
                     let Some(parent) = node.parent else {
                         continue;
                     };
+                    let is_module_port = |port: NodeId| {
+                        matches!(self.kind(port), NodeKind::Port { .. })
+                            && self.db.multi_port_of(port).is_none()
+                    };
+                    if node.name.is_empty() || !is_module_port(id) {
+                        continue;
+                    }
                     let port_index = self
                         .node(parent)
                         .children
                         .iter()
                         .take_while(|child| **child != id)
-                        .filter(|child| matches!(self.kind(**child), NodeKind::Port { .. }))
+                        .filter(|child| is_module_port(**child))
                         .count();
                     let width = ty.width.unwrap_or(0);
                     insert(source(IrVpiObject {

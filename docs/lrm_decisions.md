@@ -662,6 +662,15 @@ Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | --- | --- | --- | --- | --- |
 | F2-D2 | **`$unit` time scale.** A compilation unit without `timeunit`/`timeprecision` uses the default unit 1ns whatever `timescale directive precedes its declarations. Its precision is the finest precision the design declares, capped at 1ns (1ps when nothing is declared), so a `$unit` class does not make the global precision finer than the declared scales. | 3.14.2.3 L2956-2960, L2962; 3.14.3 L2978-2980 | `F2-D2_unit_default_timescale` | LRM text for the unit (observed through the module time a class delay advances; the text of `$printtimescale` is not compared, its form is not specified); llg choice for the implementation-specific default precision (llg formerly used 1ps, which made the design tick 1ps) |
 
+## Port expressions (bug-sweep)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| PX-D1 | **One port may mix directions.** A port expression concatenating an input and an output (`.p({a, e})`) is legal; each part connects to its bits of the actual in its own direction. | 23.2.2.1 L40589-40593 (Example 7) | `PX-D1_mixed_direction_port_expression` | LRM text (llg formerly failed in code generation on every concatenated port). Some simulators accept only concatenations whose parts share one direction; the clause's example is legal. |
+| PX-D2 | **Indexed part-selects are port references.** `a[0+:2]` and `a[3-:2]` with constant bases are constant selects, so they may appear in a module header like `a[1:0]`. | 23.2.2.1 L40425-40426; A.8.4 L69126-69128; A.8.3 L69007-69013 | `PX-D2_indexed_port_reference` | LRM text (the grammar admits them). Some simulators report a syntax error. |
+| PX-D3 | **Explicitly named ANSI ports take expressions.** `output .P1(r[3:0])` and `input .Y({x, y})` connect exactly the bits their expressions name in body-declared variables. | 23.2.2.2 L40678-40680, L40711-40713 | `PX-D3_explicit_ansi_port_expression` | LRM text. Some simulators do not implement explicitly named ANSI port declarations. |
+| PX-D4 | **A port expression connects bit by bit.** When an actual and a port expression (a part-select or concatenation in the header) differ in width, only the low bits both sides have are connected: the expression's higher bits stay unconnected for a narrower actual, and a wider actual's higher bits stay undriven (z on a net, the default x on a variable). A whole port is a continuous assignment that widens or truncates. An inout width difference is an error. | 23.3.3 L41452-41454; 23.2.2.1 L40430-40434 | `PX-D4_port_expression_width_mismatch` | llg choice, industry-standard behaviour (23.3.3 makes every port connection a continuous assignment but gives no rule for the width of a port expression's connection). |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named

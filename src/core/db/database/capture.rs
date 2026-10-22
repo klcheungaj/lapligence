@@ -1213,6 +1213,39 @@ impl Db {
                 modport_expressions.insert(NodeId::from_index(semantic.id as usize), expression);
             }
         }
+        // A port whose port expression is not a whole internal symbol (a
+        // select or an explicit ANSI expression, SV 23.2.2.1-23.2.2.2) keeps
+        // that expression as its low connection, and a multi-port lists its
+        // component ports there, most significant first. Neither edge is a
+        // child, so record them beside the port.
+        let mut port_expressions = HashMap::new();
+        let mut multi_ports = HashMap::new();
+        for semantic in &snapshot.semantic_nodes {
+            if semantic.kind != SemanticKind::Port {
+                continue;
+            }
+            let port = NodeId::from_index(semantic.id as usize);
+            let edges = semantic_edges(snapshot, semantic)?;
+            if semantic.detail == "MultiPort" {
+                let mut components = edges
+                    .iter()
+                    .filter(|edge| edge.role == SemanticEdgeRole::LowConnection)
+                    .map(|edge| Ok((edge.index, semantic_id(&ids, edge.target_id)?)))
+                    .collect::<Result<Vec<_>, DbError>>()?;
+                components.sort_by_key(|(index, _)| *index);
+                multi_ports.insert(
+                    port,
+                    components
+                        .into_iter()
+                        .map(|(_, component)| component)
+                        .collect(),
+                );
+                continue;
+            }
+            if let Some(internal) = port_internal_expression(snapshot, &ids, edges)? {
+                port_expressions.insert(port, internal);
+            }
+        }
         let mut virtual_interface_targets = HashMap::new();
         for &variable in vars_init.keys() {
             if let Some(instance) = virtual_interface_instance_from_slang(snapshot, &ids, variable)?
@@ -1372,6 +1405,8 @@ impl Db {
             default_clockings,
             modport_directions,
             modport_expressions,
+            port_expressions,
+            multi_ports,
             virtual_interface_targets,
             dpi_imports,
             dpi_exports,
@@ -1759,5 +1794,59 @@ mod tests {
         let loop_var = vars[0].expect("loop variable");
         assert_eq!(db.node(loop_var).name, "i");
         assert!(matches!(db.node_kind(body), NodeKind::Constraint(_)));
+    }
+
+    #[test]
+    fn port_expressions_capture_components_and_internal_expressions() {
+        let source = "module m(.p({a, b}), .q(c[2:1]), d);\n\
+            input [1:0] a; input b; input [3:0] c; input d;\n\
+            endmodule\n\
+            module top; logic [2:0] x; logic [1:0] y; m u(.p(x), .q(y), .d(1'b0)); endmodule\n";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "port_expressions.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        db.validate().unwrap();
+        let port = |name: &str| {
+            db.node_ids()
+                .find(|id| {
+                    matches!(db.node_kind(*id), NodeKind::Port { .. }) && db.node(*id).name == name
+                })
+                .unwrap_or_else(|| panic!("port `{name}`"))
+        };
+        let (p, a, b, q, d) = (port("p"), port("a"), port("b"), port("q"), port("d"));
+        // The concatenation's components, MSB first, each knowing its group.
+        assert_eq!(db.multi_port_components(p), [a, b]);
+        assert_eq!(db.multi_port_of(a), Some(p));
+        assert_eq!(db.multi_port_of(b), Some(p));
+        assert_eq!(db.multi_port_of(q), None);
+        assert!(db.multi_port_components(q).is_empty());
+        // A select port keeps its expression instead of a whole child signal.
+        let NodeKind::Port { low, .. } = db.node_kind(q) else {
+            unreachable!()
+        };
+        assert_eq!(*low, None);
+        let internal = db
+            .port_internal_expression(q)
+            .expect("select port expression");
+        assert!(matches!(db.node_kind(internal), NodeKind::Expr(_)));
+        assert_eq!(db.semantic_detail(internal), Some("RangeSelect"));
+        // Simple ports and components keep their whole internal signal.
+        for simple in [a, b, d] {
+            let NodeKind::Port { low, .. } = db.node_kind(simple) else {
+                unreachable!()
+            };
+            assert!(low.is_some(), "{}", db.node(simple).name);
+            assert_eq!(db.port_internal_expression(simple), None);
+        }
+        assert_eq!(db.port_internal_expression(p), None);
     }
 }

@@ -1,0 +1,7 @@
+whole in c=01
+part in c=zz1z
+cat in a=zz b=1
+cat in 2 bits a=z1 b=1
+whole out w1=00110
+part out w2=zz110
+cat out w3=zz110 v3=xx110

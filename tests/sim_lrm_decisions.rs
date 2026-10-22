@@ -3029,3 +3029,35 @@ fn t0_d5_assertion_net_time0_sample() {
         include_str!("fixtures/sim/lrm_decisions/T0-D5_assertion_net_time0_sample.out"),
     );
 }
+
+#[test]
+fn px_d1_mixed_direction_port_expression() {
+    run_decision(
+        "PX-D1_mixed_direction_port_expression",
+        include_str!("fixtures/sim/lrm_decisions/PX-D1_mixed_direction_port_expression.out"),
+    );
+}
+
+#[test]
+fn px_d2_indexed_port_reference() {
+    run_decision(
+        "PX-D2_indexed_port_reference",
+        include_str!("fixtures/sim/lrm_decisions/PX-D2_indexed_port_reference.out"),
+    );
+}
+
+#[test]
+fn px_d3_explicit_ansi_port_expression() {
+    run_decision(
+        "PX-D3_explicit_ansi_port_expression",
+        include_str!("fixtures/sim/lrm_decisions/PX-D3_explicit_ansi_port_expression.out"),
+    );
+}
+
+#[test]
+fn px_d4_port_expression_width_mismatch() {
+    run_decision(
+        "PX-D4_port_expression_width_mismatch",
+        include_str!("fixtures/sim/lrm_decisions/PX-D4_port_expression_width_mismatch.out"),
+    );
+}

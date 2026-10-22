@@ -436,6 +436,40 @@ impl Validator<'_> {
             }
         }
 
+        for (port, expression) in self.db.port_expression_entries() {
+            let path = format!("port_expressions[{}]", port.0);
+            let node = self.node(*port, &path)?;
+            if !matches!(node.kind, NodeKind::Port { low: None, .. }) {
+                return self.fail(
+                    path,
+                    "metadata key is not a port without an internal symbol",
+                );
+            }
+            let expression_node = self.node(*expression, &path)?;
+            if !matches!(expression_node.kind, NodeKind::Expr(_)) {
+                return self.fail(path, "port expression is not an expression");
+            }
+        }
+
+        for (port, components) in self.db.multi_port_entries() {
+            let path = format!("multi_ports[{}]", port.0);
+            let node = self.node(*port, &path)?;
+            if !matches!(node.kind, NodeKind::Port { low: None, .. }) {
+                return self.fail(
+                    path,
+                    "metadata key is not a port without an internal symbol",
+                );
+            }
+            for component in components {
+                let component_node = self.node(*component, &path)?;
+                if !matches!(component_node.kind, NodeKind::Port { .. })
+                    || !self.db.multi_port_components(*component).is_empty()
+                {
+                    return self.fail(path, "multi-port component is not a simple port");
+                }
+            }
+        }
+
         for call in self.db.method_calls_with_clause_nodes() {
             let node = self.node(*call, &format!("method_calls_with_clause[{}]", call.0))?;
             if !matches!(node.kind, NodeKind::MethodCall { .. }) {
