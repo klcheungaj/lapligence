@@ -188,7 +188,7 @@ index b6cf0f2f2..a1ae407fd 100644
              }
  
 diff --git a/source/ast/symbols/MemberSymbols.cpp b/source/ast/symbols/MemberSymbols.cpp
-index 76c3e526b..d708cb2c2 100644
+index 76c3e526b..8a8f78ee0 100644
 --- a/source/ast/symbols/MemberSymbols.cpp
 +++ b/source/ast/symbols/MemberSymbols.cpp
 @@ -468,7 +468,8 @@ const Expression& ContinuousAssignSymbol::getAssignment() const {
@@ -201,7 +201,39 @@ index 76c3e526b..d708cb2c2 100644
      assign = &Expression::bind(syntax->as<ExpressionSyntax>(), context,
                                 ASTFlags::AssignmentAllowed);
  
-@@ -2304,6 +2305,28 @@ struct NetAlias {
+@@ -2087,7 +2088,10 @@ RandSeqProductionSymbol::Rule RandSeqProductionSymbol::createRule(
+ 
+ void RandSeqProductionSymbol::createRuleVariables(const RsRuleSyntax& syntax, const Scope& scope,
+                                                   SmallVectorBase<const Symbol*>& results) {
++    // The variables are created in order of first use: iterating the map
++    // would order them by symbol address, which differs between runs.
+     SmallMap<const RandSeqProductionSymbol*, uint32_t, 8> prodMap;
++    SmallVector<const RandSeqProductionSymbol*> prodOrder;
+     auto countProd = [&](const RsProdItemSyntax& item) {
+         auto symbol = Lookup::unqualified(scope, item.name.valueText(),
+                                           LookupFlags::AllowDeclaredAfter);
+@@ -2096,7 +2100,9 @@ void RandSeqProductionSymbol::createRuleVariables(const RsRuleSyntax& syntax, co
+             auto& type = prod.getReturnType();
+             if (!type.isVoid()) {
+                 auto [it, inserted] = prodMap.emplace(&prod, 1);
+-                if (!inserted)
++                if (inserted)
++                    prodOrder.push_back(&prod);
++                else
+                     it->second++;
+             }
+         }
+@@ -2141,7 +2147,8 @@ void RandSeqProductionSymbol::createRuleVariables(const RsRuleSyntax& syntax, co
+     auto& comp = scope.getCompilation();
+     ASTContext context(scope, LookupLocation::max);
+ 
+-    for (auto [symbol, count] : prodMap) {
++    for (auto symbol : prodOrder) {
++        const uint32_t count = prodMap[symbol];
+         auto var = comp.emplace<VariableSymbol>(symbol->name, syntax.getFirstToken().location(),
+                                                 VariableLifetime::Automatic);
+         var->flags |= VariableFlags::Const | VariableFlags::CompilerGenerated;
+@@ -2304,6 +2311,28 @@ struct NetAlias {
      Compilation::AliasBitRange bounds;
  };
  
@@ -230,7 +262,7 @@ index 76c3e526b..d708cb2c2 100644
  struct NetAliasVisitor {
      const ASTContext& context;
      const NetType* commonNetType = nullptr;
-@@ -2322,7 +2345,14 @@ struct NetAliasVisitor {
+@@ -2322,7 +2351,14 @@ struct NetAliasVisitor {
                  case ExpressionKind::MemberAccess:
                  case ExpressionKind::ElementSelect:
                  case ExpressionKind::RangeSelect: {
