@@ -2129,6 +2129,8 @@ fn collect_expression_effects(
                         count,
                     } => {
                         effects.push(ExecutionEffect::ImmediateStore);
+                        // A descriptor that is not open ends the run (S26-D2).
+                        effects.push(ExecutionEffect::Terminate);
                         collect_expression_effects(ir, descriptor, effects, visited_calls);
                         if let Some(start) = start {
                             collect_expression_effects(ir, start, effects, visited_calls);

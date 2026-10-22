@@ -753,7 +753,7 @@ static int llg_file_read_byte(llg_file_slot_t* slot, unsigned char* output) {
 
 int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target) {
     llg_file_slot_t* slot;
-    if (!target || !llg_file_single_ordinary(descriptor, &slot) || target->width == 0)
+    if (!llg_file_read_source(descriptor, &slot) || !target || target->width == 0)
         return 0;
     // The bytes fill the variable from its most significant byte down; the
     // bytes the file could not supply become zero, also when it supplied
@@ -778,8 +778,8 @@ static int fixed_file_read_array(uint32_t descriptor, sv4_t* values, llg_fixed_a
                         const int32_t* dimensions, int dimension_count,
                         int has_start, sv4_t start, int has_count, sv4_t count) {
     llg_file_slot_t* slot;
-    if ((!values && !fixed) || total == 0 || elem_width == 0 || !dimensions || dimension_count <= 0 ||
-        !llg_file_single_ordinary(descriptor, &slot)) return 0;
+    if (!llg_file_read_source(descriptor, &slot) || (!values && !fixed) || total == 0 ||
+        elem_width == 0 || !dimensions || dimension_count <= 0) return 0;
     /* IEEE 1364-2001 17.2.4.4 / 1800-2009 21.3.4.4: a memory
        is read from its lowest address toward its highest, not in declaration
        order. Rank-one descending storage therefore walks backward. */
@@ -959,7 +959,12 @@ static int llg_file_read_resizable(uint32_t descriptor, sv4_t* values, size_t si
         llg_file_global_failure("file read destination is too large");
         return 0;
     }
-    if (size == 0) return 0;
+    if (size == 0) {
+        // An empty destination still requires an open file (S26-D2).
+        llg_file_slot_t* slot;
+        (void)llg_file_read_source(descriptor, &slot);
+        return 0;
+    }
     const int32_t dimensions[2] = {0, (int32_t)(size - 1u)};
     int result = fixed_file_read_array(descriptor, values, NULL, elem_width, elem_signed,
                                        elem_two_state, size, dimensions, 1, has_start,

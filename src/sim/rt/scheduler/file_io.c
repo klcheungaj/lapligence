@@ -104,6 +104,21 @@ static int llg_file_single_ordinary(uint32_t descriptor, llg_file_slot_t** out) 
     return 1;
 }
 
+/* `$fread` from a descriptor that is not an open file (closed, never
+ * opened, 0, X or a multichannel descriptor) ends the run; final procedures
+ * still run (decision S26-D2, industry-standard behaviour). The other input
+ * functions return their failure code instead. */
+static int llg_file_read_source(uint32_t descriptor, llg_file_slot_t** out) {
+    if (llg_file_single_ordinary(descriptor, out)) return 1;
+    if (!llg_rt_exiting()) {
+        fprintf(stderr, "llg: $fread from file descriptor 0x%08x that is not open\n",
+                (unsigned)descriptor);
+        llg_rt_mark_failed();
+        llg_rt_fatal_typed(0, "invalid file descriptor", NULL, 0, "", "$fread");
+    }
+    return 0;
+}
+
 uint32_t llg_file_descriptor(sv4_t value) {
     // A descriptor is a 32-bit bit pattern, not a nonnegative signed integer.
     if (llg_sv4_width(value) == 0 || llg_sv4_width(value) > 32 || sv4_is_unknown(value)) {

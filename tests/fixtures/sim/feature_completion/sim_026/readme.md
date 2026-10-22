@@ -34,7 +34,8 @@ so Windows text mode maps newlines and its positions differ.
 for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
 (`$fwrite("%u", 16'h1234)`). `input_failures.sv` writes `failures.txt`
 (`1 2 zz`) and `short.bin` (`41 42 43`). `invalid_descriptors.sv` writes
-`closed.txt` and `writeonly.txt`.
+`closed.txt` and `writeonly.txt`; `fread_invalid_descriptor.sv` writes
+`fread_closed.txt`.
 
 ## A01: legal destinations, byte counts, bit order and unread suffix
 
@@ -147,11 +148,18 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
   write-only file. `$fgetc` and `$ungetc` return EOF. `$fscanf` returns 0
   on every descriptor that is not an open file (lines D, I and J) and EOF on
   the write-only file (line K), whose input ends at once (S26-D2).
-  `$fgets` and `$fread` return 0 (L36844, L37090). `$ftell` and `$fseek`
+  `$fgets` returns 0 (L36844). `$ftell` and `$fseek`
   return -1 (L37125, L37154). `$feof` returns -1 (S26-D2). Destinations stay
   unchanged. `$ferror` of the closed descriptor (line H) returns 0 and leaves
   its string empty: the text gives no result for a descriptor that is not
-  open, and llg follows industry-standard behaviour (S25-D7).
+  open, and llg follows industry-standard behaviour (S25-D7). `$fgetc` of
+  descriptor 0 or of a multichannel descriptor (lines I and J) returns EOF,
+  as 21.3.4.1 states for a read error (L36806); some simulators return 0.
+- `fread_invalid_descriptor`: `$fread` from a descriptor that is not open
+  ends the run with a fatal error; the memory keeps its contents and the
+  final procedures run (S26-D2, industry-standard behaviour: the text gives
+  no result for a descriptor that is not open, and L37090 covers only read
+  errors on an open file).
 
 ## A03: illegal destinations
 

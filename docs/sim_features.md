@@ -1726,7 +1726,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Packed reads ignore start/count; the memory argument is legal in 2001
   without admitting other whole-array uses. `%u`/`%z` read and `$fwrite`
   writes 32-bit little-endian vecval words.
-  Text and binary reads mix on one stream
+  Text and binary reads mix on one stream. `$fread` from a descriptor that is
+  not open ends the run with a fatal error; final procedures run (S26-D2)
   ([sim_026](../tests/fixtures/sim/feature_completion/sim_026/readme.md)).
   V §17.2.4.4; SV §21.3.4.4 **[2001/SV-2005]**.
 - 🟦 **File position/status** — `$ftell/$fseek/$rewind/$fflush/$ferror/$feof`

@@ -476,7 +476,15 @@ impl Frame<'_, '_> {
                 call
             }
         };
-        let result = self.integer_result(call);
+        // `$fread` from a descriptor that is not open ends the run after its
+        // fatal error (S26-D2): the rest of the statement must not run. Its
+        // count is kept in a scalar so the targets are released before the
+        // exit check.
+        let (read_count, result) = if matches!(input, IrFileInput::Read { .. }) {
+            (Some(self.scalar("int", call)), None)
+        } else {
+            (None, Some(self.integer_result(call)))
+        };
         for release in cells_to_release {
             self.line(release);
         }
@@ -489,7 +497,14 @@ impl Frame<'_, '_> {
         for value in text {
             self.native_discard(value);
         }
-        Ok(result)
+        match (read_count, result) {
+            (Some(count), _) => {
+                self.exit_on_failed_access(&format!("{count} == 0"));
+                Ok(self.integer_result(count))
+            }
+            (None, Some(result)) => Ok(result),
+            (None, None) => Err(pending("file input without a result")),
+        }
     }
 
     pub(super) fn file_expression(

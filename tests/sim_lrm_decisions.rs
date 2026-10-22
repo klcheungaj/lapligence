@@ -384,6 +384,14 @@ fn s26_d2_invalid_descriptor_input() {
 }
 
 #[test]
+fn s26_d2_fread_ends_run() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S26-D2_fread_ends_run.out");
+    sim_cli::run_case_checked_matrix(SUITE, "S26-D2_fread_ends_run", &[], &|label, output| {
+        runtime_error(label, output, expected, "$fread: invalid file descriptor");
+    });
+}
+
+#[test]
 fn s26_d3_unformatted_words() {
     run_decision(
         "S26-D3_unformatted_words",
