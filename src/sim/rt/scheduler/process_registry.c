@@ -349,6 +349,7 @@ int32_t llg_random_seed_read(sv4_t seed) {
     uint32_t width = llg_sv4_width(seed);
     if (width == 0) return 0;
     uint64_t mask = width >= 32u ? UINT64_C(0xffffffff) : (UINT64_C(1) << width) - 1u;
+    if ((llg_sv4_word(seed, 0, LLG_SV4_X) | llg_sv4_word(seed, 0, LLG_SV4_Z)) & mask) return 0;
     return (int32_t)(uint32_t)(llg_sv4_word(seed, 0, LLG_SV4_BITS) & mask);
 }
 
