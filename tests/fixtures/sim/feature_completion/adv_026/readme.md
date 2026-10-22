@@ -132,7 +132,7 @@ to SIM-026.
 | ID | Choice | Case |
 | --- | --- | --- |
 | S26-D16 | The strings of a call are one image: joined, in order, by one newline each. Words and `@` addresses continue across strings; a number never does ("1", "2" are two words). The equivalent file holds the strings separated by newlines. | `S26-D16_strings_form_one_image` |
-| S26-D17 | Only string literals are data arguments (SV D.14 "string literal arguments"). A string variable, a constant string parameter, a concatenation or a reg vector is rejected at compile time with its location, in both editions. | `S26-D17_string_variable_data_rejected` |
+| S26-D17 | A data argument may be any string expression or an integral value holding text, read when the task runs (SV D.14 L70157-70158 says "string literal arguments", but Annex D is informative; V2001 C.13 L48054-48055 says "string arguments"). | `S26-D17_string_variable_data` |
 | S26-D18 | Loading runs from `start_address` toward `finish_address` as `$readmem*` does, descending when start is larger (D.14 does not say; 21.4 L37310-37313 and 17.2.8 L19344-19346 do for files). | `S26-D18_start_after_finish_descends` |
 | S26-D19 | An address outside the start/finish range and a token that is not a number are errors that end the load; the words before them stay (D.14 states no error rules; 21.4 L37315-37317 does for files). | `S26-D19_errors_end_the_load` |
 | S26-D20 | A `//` comment ends with its string; a `/*` comment still open at the end of a string continues in the next one (D.14 does not relate comments to string ends). | `S26-D20_comments_across_strings` |
@@ -271,14 +271,22 @@ L3465-3466):
 - 7: the same for `ms` with `"11 99", "33"`.
 - 8: final cells `11 99 33 77` in both.
 
-### Negatives (A02, S26-D17)
+### String expression data (S26-D17)
+
+- `string_expressions.sv` (`.out` hand-derived): a `localparam string` loads
+  `11 22`; a variable plus a literal fills cells 2-3 (`33 44`); the variable
+  changed to `"@1 55"` writes cell 1 only; the concatenation `{"7", "7"}` is the
+  word `77`; a 48-bit vector holding `"88 99"` fills cells 2-3; a variable set
+  by `$sformatf` in a loop loads `a0` then `a1`. No diagnostics.
+- `string_expressions_v2001.v` (both editions): a parameter, a reg vector
+  reassigned between loads and a concatenation of literals (`"@0 6"`, `"6"` is
+  `@0 66`). Lines `a 11 22 33 44`, `b 66 22 33 55`; in Verilog-2001 the second
+  load's `@` holes give the "too few words" warning.
+
+### Negatives (A02)
 
 | Fixture | Diagnostic (position) | Reason |
 | --- | --- | --- |
-| `neg_variable_string.sv` | `:6:33` a data argument must be a string literal | SV D.14 L70157-70158; a `string` variable is not a literal |
-| `neg_variable_vector.v` (Verilog-2001) | `:8:27` same | a reg vector holding a string is not a literal either |
-| `neg_parameter_string.sv` | `:5:33` same | a constant string parameter is not a literal |
-| `neg_concatenation.sv` | `:5:39` same | a concatenation is an expression |
 | `neg_order.sv` | `:5:22 expression is not assignable` | the `$readmemh` order puts a string where the memory belongs (frontend) |
 | `neg_count.sv` | `:4:11 too few arguments ... expected 4 but 3` | memory, start, finish and one string are required (frontend) |
 | `neg_scalar.sv` | `:4:28 invalid argument type` | the first argument must be an array (frontend) |

@@ -2372,7 +2372,7 @@ fn memory_dump_cannot_carry_source_text() {
     let task = |write: bool, text: Option<Vec<u8>>| IrStmt::Memory {
         write,
         path: IrStringExpr::Literal(b"$sreadmemh at tb:3:5".to_vec()),
-        text,
+        text: text.map(IrStringExpr::Literal),
         view: Box::new(IrMemoryView {
             array: 0,
             origin: 0,

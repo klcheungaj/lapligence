@@ -1163,9 +1163,13 @@ fn collect_statement_expression_effects(
             for bound in [&task.start, &task.finish].into_iter().flatten() {
                 collect_expression_effects(ir, bound, effects, visited_calls);
             }
+            if let Some(text) = &task.text {
+                collect_string_effects(ir, text, effects, visited_calls);
+            }
         }
         IrStmt::Memory {
             path,
+            text,
             view,
             start,
             finish,
@@ -1180,6 +1184,9 @@ fn collect_statement_expression_effects(
             }
             if let Some(finish) = finish {
                 collect_expression_effects(ir, finish, effects, visited_calls);
+            }
+            if let Some(text) = text {
+                collect_string_effects(ir, text, effects, visited_calls);
             }
         }
         IrStmt::Container(operation) => match operation.as_ref() {

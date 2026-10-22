@@ -44,7 +44,18 @@ struct MemoryOperands {
 /// diagnostics.
 struct MemorySource {
     path: IrStringExpr,
-    text: Option<Vec<u8>>,
+    text: Option<IrStringExpr>,
+}
+
+/// Append one `$sreadmem*` data piece, merging it into a preceding literal.
+fn push_text_piece(pieces: &mut Vec<IrStringExpr>, piece: IrStringExpr) {
+    if let (Some(IrStringExpr::Literal(last)), IrStringExpr::Literal(bytes)) =
+        (pieces.last_mut(), &piece)
+    {
+        last.extend_from_slice(bytes);
+        return;
+    }
+    pieces.push(piece);
 }
 
 impl EmitCtx<'_, '_> {
@@ -78,7 +89,9 @@ impl EmitCtx<'_, '_> {
     /// are the text of a memory file, so the load is a `$readmem*` of the
     /// same memory over `start_address:finish_address` whose words come from
     /// them: the strings, in order, separated by one newline each, form one
-    /// file image (decision S26-D16). Both editions admit the task.
+    /// file image (decision S26-D16). A data argument may be any string
+    /// expression, read when the task runs (decision S26-D17); literal-only
+    /// data stays one compile-time image. Both editions admit the task.
     pub(super) fn lower_string_memory_task(
         &mut self,
         name: &str,
@@ -102,21 +115,41 @@ impl EmitCtx<'_, '_> {
                 self.path
             ));
         }
-        let mut text = Vec::new();
+        // Adjacent literals merge into one piece, so all-literal data stays a
+        // single compile-time image.
+        let mut pieces: Vec<IrStringExpr> = Vec::with_capacity(strings.len());
         for (index, node) in strings.iter().enumerate() {
-            let Some(bytes) = self.string_literal_bytes(*node)? else {
-                return Err(format!(
-                    "{}: a data argument of {name} must be a string literal (IEEE 1800-2009 D.14); \
-                     a string variable or expression is not supported (decision S26-D17) in `{}`",
-                    self.cg.source_location(*node),
-                    self.path
-                ));
+            let piece = match self.string_literal_bytes(*node)? {
+                Some(bytes) => IrStringExpr::Literal(bytes),
+                None if self.cg.is_string_expr(&self.path, *node) => {
+                    self.cg.lower_string(&self.path, *node)?
+                }
+                // An integral argument holds its text as bytes, as a
+                // Verilog-2001 string in a reg vector does (1364-2001 C.13
+                // names the arguments "string arguments").
+                None => {
+                    let value = self.cg.lower_expr(&self.path, *node)?;
+                    if value.is_real() {
+                        return Err(format!(
+                            "{}: a data argument of {name} must be a string or integral \
+                             expression (IEEE 1800-2009 D.14) in `{}`",
+                            self.cg.source_location(*node),
+                            self.path
+                        ));
+                    }
+                    IrStringExpr::FromPacked(Box::new(value))
+                }
             };
             if index != 0 {
-                text.push(b'\n');
+                push_text_piece(&mut pieces, IrStringExpr::Literal(b"\n".to_vec()));
             }
-            text.extend_from_slice(&bytes);
+            push_text_piece(&mut pieces, piece);
         }
+        let text = if pieces.len() == 1 {
+            pieces.pop().unwrap_or(IrStringExpr::Literal(Vec::new()))
+        } else {
+            IrStringExpr::Concat(pieces)
+        };
         let source = MemorySource {
             // Run-time diagnostics name the call as `$finish` reports do.
             path: IrStringExpr::Literal(

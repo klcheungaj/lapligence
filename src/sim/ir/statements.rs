@@ -244,7 +244,7 @@ pub struct IrMemoryAccess {
     pub write: bool,
     pub path: IrStringExpr,
     /// As [`IrStmt::Memory`] `text`.
-    pub text: Option<Vec<u8>>,
+    pub text: Option<IrStringExpr>,
     pub storage: IrMemoryStorage,
     pub root_dims: Vec<(i32, i32)>,
     pub element_width: u32,
@@ -315,6 +315,9 @@ impl IrMemoryAccess {
         for bound in [&self.start, &self.finish].into_iter().flatten() {
             visit(bound);
         }
+        if let Some(text) = &self.text {
+            text.expressions(visit);
+        }
     }
 
     pub(in crate::sim) fn expressions_mut(&mut self, visit: &mut impl FnMut(&mut IrExpr)) {
@@ -327,6 +330,9 @@ impl IrMemoryAccess {
         }
         for bound in [&mut self.start, &mut self.finish].into_iter().flatten() {
             visit(bound);
+        }
+        if let Some(text) = &mut self.text {
+            text.expressions_mut(visit);
         }
     }
 }
@@ -434,9 +440,10 @@ pub enum IrStmt {
         write: bool,
         path: IrStringExpr,
         /// The words of a load that come from text in the design
-        /// (`$sreadmemb/$sreadmemh`, IEEE 1800-2009 D.14) instead of a file;
-        /// `path` is then only the label of its diagnostics.
-        text: Option<Vec<u8>>,
+        /// (`$sreadmemb/$sreadmemh`, IEEE 1800-2009 D.14) instead of a file,
+        /// evaluated after the bounds; `path` is then only the label of its
+        /// diagnostics. All-literal data is one [`IrStringExpr::Literal`].
+        text: Option<IrStringExpr>,
         view: Box<IrMemoryView>,
         radix: IrMemoryRadix,
         addressing: IrMemoryAddressingPolicy,

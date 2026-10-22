@@ -1800,9 +1800,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   that is not a number are errors that end the load (S26-D19); a `//` comment
   ends with its string and an open `/*` continues in the next (S26-D20).
   Diagnostics print as `llg: warning: memory string `$sreadmemh at tb:<line>:<col>`: ...`
-  or `llg: error: memory string ...`. **Limit (S26-D17):** the data arguments
-  must be string literals, as SV D.14 says; a string variable, parameter,
-  concatenation or reg vector is rejected at compile time with its location.
+  or `llg: error: memory string ...`. A data argument may be any string
+  expression (variable, parameter, concatenation) or an integral value holding
+  text, read when the task runs (S26-D17); literal-only data is compiled into
+  the model.
   A wrong argument order, count or type is a located compile error. A VPI
   registration of either name while the design calls it stops the run at
   startup (S99-D6). Optional informative service (V Annex C.13; SV Annex D.14).

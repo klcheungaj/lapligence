@@ -484,6 +484,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         }
         IrStmt::Memory {
             path,
+            text,
             view,
             start,
             finish,
@@ -498,6 +499,9 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
             }
             if let Some(finish) = finish {
                 collect_expr_reads(finish, model, rw);
+            }
+            if let Some(text) = text {
+                text.expressions(&mut |child| collect_expr_reads(child, model, rw));
             }
         }
         IrStmt::Container(operation) => {
