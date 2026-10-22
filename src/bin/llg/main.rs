@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! llg [generate options] [lint options] [wave options] [build options] [<file.sv>...] [-- <plusargs>...]
-//! generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --stop-policy <resume|exit>
+//! generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --stop-policy <resume|exit>  --pulse-reject <0-100>  --pulse-error <0-100>  --pulse-style <onevent|ondetect>  --show-cancelled  --no-show-cancelled
 //! lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error
 //! wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave
 //! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dpi-import-lib <path>  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
@@ -176,6 +176,7 @@ fn run(options: DriverOptions) -> i32 {
         no_opt,
         vpi,
         stop_policy,
+        path_pulse,
         cli_build_options,
     } = options;
     let _generation_stage = llg::profile::Stage::new("generation");
@@ -298,6 +299,7 @@ fn run(options: DriverOptions) -> i32 {
             value_config,
             waveform: wave,
             vpi,
+            path_pulse,
             ..Default::default()
         },
     );

@@ -104,6 +104,10 @@ pub(super) struct RawRule {
 pub(super) struct RawSimulator {
     pub stop_policy: Option<String>,
     pub optimize: Option<bool>,
+    pub pulse_reject: Option<u64>,
+    pub pulse_error: Option<u64>,
+    pub pulse_style: Option<String>,
+    pub show_cancelled: Option<bool>,
     pub plusargs: Option<Vec<String>>,
 }
 

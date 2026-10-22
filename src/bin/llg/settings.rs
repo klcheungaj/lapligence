@@ -78,6 +78,8 @@ pub(crate) struct DriverOptions {
     /// Emit the VPI object catalog (`--vpi`, or any `--dpi-lib`).
     pub vpi: bool,
     pub stop_policy: StopPolicy,
+    /// Module path pulse limits, style and showcancelled setting.
+    pub path_pulse: sim::ir::IrPathPulseOptions,
     /// Whether the command line itself named a build-tool option, so
     /// `--gen-only` can warn that it is ignored. Config values do not warn.
     pub cli_build_options: bool,
@@ -236,6 +238,7 @@ pub(crate) fn resolve(
 ) -> Result<DriverOptions, SettingsError> {
     let empty = config::default_config(Path::new(if cfg!(windows) { "C:\\" } else { "/" }));
     let config = config.unwrap_or(&empty);
+    let path_pulse = path_pulse_options(&cli, &config.simulator)?;
     let append = cli.append;
 
     // Sources: files named on the command line replace the config's explicit
@@ -488,7 +491,45 @@ pub(crate) fn resolve(
             .stop_policy
             .or(config.simulator.stop_policy)
             .unwrap_or(StopPolicy::Resume),
+        path_pulse,
         cli_build_options,
+    })
+}
+
+/// The module path pulse options: command line, then `[simulator]`, then the
+/// IEEE 1800-2009 30.7 defaults (both limits 100% of the delay, styles from
+/// the declarations).
+fn path_pulse_options(
+    cli: &Cli,
+    simulator: &llg::config::SimulatorConfig,
+) -> Result<sim::ir::IrPathPulseOptions, SettingsError> {
+    let defaults = sim::ir::IrPathPulseOptions::default();
+    let reject_percent = cli
+        .pulse_reject
+        .or(simulator.pulse_reject)
+        .unwrap_or(defaults.reject_percent);
+    let error_percent = cli
+        .pulse_error
+        .or(simulator.pulse_error)
+        .unwrap_or(defaults.error_percent);
+    if error_percent < reject_percent {
+        return Err(SettingsError(format!(
+            "the pulse error limit ({error_percent}%) is below the pulse reject limit \
+             ({reject_percent}%)"
+        )));
+    }
+    let style = cli
+        .pulse_style
+        .or(simulator.pulse_style)
+        .map(|style| match style {
+            llg::config::PulseStyle::OnEvent => sim::ir::IrPulseStyle::OnEvent,
+            llg::config::PulseStyle::OnDetect => sim::ir::IrPulseStyle::OnDetect,
+        });
+    Ok(sim::ir::IrPathPulseOptions {
+        reject_percent,
+        error_percent,
+        style,
+        show_cancelled: cli.show_cancelled.or(simulator.show_cancelled),
     })
 }
 
@@ -1228,6 +1269,72 @@ files = ["a.sv"]
             &["--wave", "dump.txt", "x.sv"][..],
             &["--wave"][..],
             &["--wave", "d.vcd", "--wave-depth", "-1", "x.sv"][..],
+        ] {
+            assert_eq!(
+                parse_args(rejected.iter().map(|arg| (*arg).to_owned()).collect()).err(),
+                Some(2),
+                "{rejected:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pulse_controls_follow_the_precedence_rules() {
+        let dir = temp("pulse");
+        let defaults = resolve_no_env(cli(&["x.sv"]), None).unwrap();
+        assert_eq!(defaults.path_pulse, sim::ir::IrPathPulseOptions::default());
+        let cfg = config(
+            &dir,
+            "schema_version = 1\n[simulator]\npulse_reject = 20\npulse_error = 60\n\
+             pulse_style = \"onevent\"\nshow_cancelled = false\n",
+        );
+        let options = resolve_no_env(cli(&["x.sv"]), Some(&cfg)).unwrap();
+        assert_eq!(
+            options.path_pulse,
+            sim::ir::IrPathPulseOptions {
+                reject_percent: 20,
+                error_percent: 60,
+                style: Some(sim::ir::IrPulseStyle::OnEvent),
+                show_cancelled: Some(false),
+            }
+        );
+        let options = resolve_no_env(
+            cli(&[
+                "--pulse-error",
+                "90",
+                "--pulse-style",
+                "ondetect",
+                "--show-cancelled",
+                "x.sv",
+            ]),
+            Some(&cfg),
+        )
+        .unwrap();
+        assert_eq!(
+            options.path_pulse,
+            sim::ir::IrPathPulseOptions {
+                reject_percent: 20,
+                error_percent: 90,
+                style: Some(sim::ir::IrPulseStyle::OnDetect),
+                show_cancelled: Some(true),
+            }
+        );
+        // The error limit below the reject limit is an error after merging.
+        let error = resolve_no_env(cli(&["--pulse-reject", "70", "x.sv"]), Some(&cfg))
+            .expect_err("error limit below the reject limit");
+        assert!(
+            error
+                .0
+                .contains("(60%) is below the pulse reject limit (70%)"),
+            "{error:?}"
+        );
+        for rejected in [
+            &["--pulse-reject", "101", "x.sv"][..],
+            &["--pulse-error", "-1", "x.sv"][..],
+            &["--pulse-error"][..],
+            &["--pulse-style", "both", "x.sv"][..],
+            &["--pulse-style"][..],
         ] {
             assert_eq!(
                 parse_args(rejected.iter().map(|arg| (*arg).to_owned()).collect()).err(),

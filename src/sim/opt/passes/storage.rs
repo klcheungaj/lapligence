@@ -141,6 +141,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         udp_tables: _,
         udp_states: _,
         module_paths,
+        path_pulse: _,
         events: _,
         funcs,
         assertions,
@@ -181,10 +182,14 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
     {
         receiver.expressions(&mut |child| collect_expr_reads(child, model, &mut rw));
     }
-    // The runtime reads module path sources through their storage address.
+    // The runtime reads module path sources through their storage address
+    // and evaluates the path conditions when it schedules a destination.
     for set in module_paths {
         for &signal in &set.sources {
             rw.read(signal);
+        }
+        for condition in &set.conditions {
+            collect_expr_reads(condition, model, &mut rw);
         }
     }
     // A net-array cell observes its canonical resolved net signal.

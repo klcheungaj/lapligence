@@ -120,6 +120,16 @@ static void nba_destroy(llg_nba_t* nba) {
     free(nba);
 }
 
+// Further scheduled transitions of a module path destination bit after the
+// record's own pending one, in time order (30.7): they exist only while a
+// pulse passes or is filtered to x. `states` are 0, 1, 2 (x) or 3 (z).
+typedef struct llg_path_queue {
+    uint64_t* times;
+    uint8_t* states;
+    uint32_t count;
+    uint32_t capacity;
+} llg_path_queue_t;
+
 struct llg_inertial {
     struct llg_inertial* next_all;
     struct llg_inertial* next_pending;
@@ -143,6 +153,7 @@ struct llg_inertial {
     uint64_t rise;
     uint64_t fall;
     uint64_t turn_off;
+    llg_path_queue_t* queue;    // a path-stage bit's later transitions, or NULL
 };
 
 typedef struct llg_semaphore_wait llg_semaphore_wait_t;

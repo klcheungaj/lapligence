@@ -370,16 +370,24 @@ schedules; a runtime net delay registers one `SetNetDelay` updater process,
 emitted before every Comb process and sensitive to its operands. Verilog-2001
 rejects both (V §7.14.1). Every min:typ:max expression, folded
 or lowered, selects through `min_typ_max_operand`.
-Simple module paths lower after the net groups and their structural driver
+Module paths lower after the net groups and their structural driver
 sites exist (`collection/module_paths.rs`): one `IrModulePathSet` per
 instance, terminals resolved to storage-bit ranges, delays folded through
 `path_delay_ticks` (negative is zero) and expanded to twelve transitions,
 one hidden `ModulePathStamp` SensLoop process on the sources. A destination
 must be a whole net group driven only inside the instance subtree (Net-member
 slots of collapsed inout groups are storage, not drivers); IEEE 1364-2001
-also allows one driver site. Timing checks, pulse styles, `PATHPULSE$`,
-state-dependent and edge-sensitive paths and variable destinations fail with
-their location. Specify-block specparams are collected with the instance's
+also allows one driver site. Timing checks and variable destinations fail
+with their location. A condition is lowered once per declaration in the
+instance scope (`IrModulePathSet::conditions`); edges map to `IrPathEdge`;
+paths with exactly an `ifnone` path's terminals share a group, an
+unconditional duplicate of an `ifnone` path and all but the last duplicate
+`ifnone` are dropped (A8-D3). `PATHPULSE$` limits (first input and output
+terminal, else module-wide; error below reject lowers reject; ticks through
+`path_limit_ticks`) attach per declaration, and pulse-style declarations set
+per-bit destination flags, first declaration of each kind winning.
+`CodegenOptions::path_pulse` (the driver's `--pulse-*`/`--show-cancelled`)
+becomes `IrModel::path_pulse`. Specify-block specparams are collected with the instance's
 parameters. A design without specify blocks costs one emptiness test.
 Force overlays visible storage while ordinary writes/driver slots remain live;
 release retains variable value or recomputes current net resolution. Releasing a

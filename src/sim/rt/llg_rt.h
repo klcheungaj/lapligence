@@ -663,13 +663,15 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
 
 // ── Module path delays ────────────────────────────────────────────────────────
 
-/* Simple module paths (IEEE 1364-2001 14.2-14.4, IEEE 1800-2009 30.4-30.6).
+/* Module paths (IEEE 1364-2001 14.2-14.6, IEEE 1800-2009 30.4-30.7).
  * A generated model emits one set per module instance that declares paths.
  * Terminals are storage-bit ranges (bit 0 is the least significant storage
  * bit). `delays` holds scheduler ticks per transition in the order
  * 0->1, 1->0, 0->z, z->1, 1->z, z->0, 0->x, x->1, 1->x, x->0, x->z, z->x and
  * stays writable so back-annotation can replace it; a new value applies to
- * the next scheduled destination transition. */
+ * the next scheduled destination transition. `limits`, when set, holds the
+ * reject limits then the error limits in the same order (writable too); NULL
+ * takes the global percentages of `delays` (llg_module_paths_configure). */
 #define LLG_PATH_TRANSITIONS 12
 
 typedef struct llg_module_path {
@@ -682,9 +684,26 @@ typedef struct llg_module_path {
     uint8_t polarity;      /* 0 unknown, 1 positive, 2 negative (metadata) */
     uint64_t delays[LLG_PATH_TRANSITIONS];
     const char* origin;    /* "file:line:col" of the declaration */
+    /* The source edge the path waits for, on the least significant bit of
+     * its input terminal: 0 any transition, 1 posedge, 2 negedge, 3 either
+     * edge (30.4.3). */
+    uint8_t edge;
+    /* 1 for an `ifnone` path: it applies only when no other path of its
+     * group is active (30.4.4.4). */
+    uint8_t ifnone;
+    /* 0: unconditional; k: applies while the set's condition k - 1 is true
+     * (its least significant bit is 1, x or z, 30.4.4.1). */
+    uint32_t condition;
+    /* Nonzero for the paths sharing their terminals with an `ifnone` path. */
+    uint32_t group;
+    uint64_t* limits;      /* NULL or 2 * LLG_PATH_TRANSITIONS ticks */
 } llg_module_path_t;
 
 typedef struct llg_module_path_set llg_module_path_set_t;
+
+/* Style flags of a destination bit (30.7.4). */
+#define LLG_PATH_STYLE_ON_DETECT 1u
+#define LLG_PATH_STYLE_SHOW_CANCELLED 2u
 
 typedef struct llg_module_path_dest {
     llg_net_t* net;
@@ -693,6 +712,9 @@ typedef struct llg_module_path_dest {
     /* Runtime state, owned between llg_module_paths_start and cleanup. */
     llg_module_path_set_t* set;
     uint64_t* path_stamps; /* per path: latest change of a full source range */
+    /* NULL (on-event, no showcancelled) or LLG_PATH_STYLE_* flags per bit
+     * from the specify block's declarations. */
+    const uint8_t* styles;
 } llg_module_path_dest_t;
 
 struct llg_module_path_set {
@@ -705,8 +727,26 @@ struct llg_module_path_set {
     sv4_t* last;           /* per source: value at the last refresh */
     uint64_t** stamps;     /* per source bit: time of its last change */
     llg_module_path_set_t* next;
+    /* Generated evaluator of the set's path conditions, read in the
+     * instance's scope; it stores condition k in out[k]. NULL without
+     * conditions. */
+    void (*conditions)(sv4_t* out, void* context);
+    uint32_t n_conditions;
+    /* Runtime state, owned between llg_module_paths_start and cleanup. */
+    sv4_t* condition_values;
+    /* Per source bit: time of its last posedge (01, 0x, 0z, x1, z1) and
+     * negedge (10, 1x, 1z, x0, z0), kept only when an edge path exists. */
+    uint64_t** rise_stamps;
+    uint64_t** fall_stamps;
 };
 
+/* Global pulse controls (30.7.2, 30.7.4): reject and error limits as
+ * percentages of each path delay (truncated; defaults 100), and a pulse
+ * style (0 on-event, 1 on-detect) and showcancelled setting (0 or 1) that
+ * replace every specify-block declaration; -1 keeps the declarations.
+ * Called before llg_module_paths_start when a model sets an option. */
+void llg_module_paths_configure(uint32_t reject_percent, uint32_t error_percent,
+                                int style, int show_cancelled);
 /* Bind the set's destination nets and take the current source values as the
  * reference for change detection. Called once per set during model
  * initialization, after net and signal storage exist; the runtime releases
@@ -722,6 +762,12 @@ llg_module_path_set_t* llg_module_path_sets(void);
  * absolute time and four-state value (0, 1, 2 = x, 3 = z) are stored. */
 int llg_net_path_pending(const llg_net_t* net, uint32_t bit, uint64_t* time,
                          int* state);
+/* Scheduled updates of bit `bit` of a path destination in time order: 1 when
+ * update `index` exists (0 is the one llg_net_path_pending reports; later
+ * ones exist while a pulse passes or is filtered to x), then its absolute
+ * time and four-state value are stored. */
+int llg_net_path_event(const llg_net_t* net, uint32_t bit, uint32_t index,
+                       uint64_t* time, int* state);
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
 

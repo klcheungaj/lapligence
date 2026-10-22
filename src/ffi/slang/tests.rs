@@ -1705,6 +1705,15 @@ fn specify_nodes_validate_subkind_and_auxiliary_fields() {
         specparam.subkind = subkind;
         stream(&nodes(vec![specparam])).expect("parameter subkinds must decode");
     }
+    // A `PATHPULSE$` specparam's auxiliary is its error-limit constant id
+    // plus one; any other parameter keeps the one-bit override flag.
+    specparam.subkind = SEMANTIC_PARAMETER_PATHPULSE;
+    specparam.auxiliary = 3;
+    stream(&nodes(vec![specparam])).expect("a PATHPULSE$ error-limit constant must decode");
+    specparam.subkind = SEMANTIC_PARAMETER_SPECPARAM;
+    let error = stream(&nodes(vec![specparam])).expect_err("specparam auxiliary 3");
+    assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+    specparam.auxiliary = 0;
     specparam.subkind = 1;
     let error = stream(&nodes(vec![specparam])).expect_err("unknown parameter subkind");
     assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);

@@ -84,6 +84,10 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   `restrict property`, which the Db keeps as
   `ConcurrentAssertionKind::Restrict` and the simulator does not verify
   (16.15.4).
+- ABI v36 exports a `PATHPULSE$` specparam's limits and terminals: its
+  `constant_id` is the reject limit, its auxiliary is one more than the error
+  limit's constant id (0: none), and OPERAND[0]/LHS[0] name the resolved input
+  and output terminal declarations (`Db::path_pulses`, 30.7.1).
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

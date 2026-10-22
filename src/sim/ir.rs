@@ -69,8 +69,9 @@ mod fixed_array_reductions;
 pub use fixed_array_reductions::{IrFixedArrayReduction, IrFixedArrayReductionSource};
 mod timing;
 pub use timing::{
-    expand_path_delays, IrModulePath, IrModulePathDestination, IrModulePathSet, IrPathPolarity,
-    PATH_TRANSITIONS,
+    expand_path_delays, IrModulePath, IrModulePathDestination, IrModulePathSet, IrPathCondition,
+    IrPathEdge, IrPathLimits, IrPathPolarity, IrPathPulseOptions, IrPulseStyle,
+    PATH_STYLE_ON_DETECT, PATH_STYLE_SHOW_CANCELLED, PATH_TRANSITIONS,
 };
 mod udp;
 pub use udp::{
@@ -562,6 +563,8 @@ pub struct IrModel {
     /// Simple module paths, one set per module instance that declares any
     /// (IEEE 1800-2009 30.4). Empty for designs without specify paths.
     pub(in crate::sim) module_paths: Vec<IrModulePathSet>,
+    /// Global pulse controls of every module path (30.7.2, 30.7.4).
+    pub(in crate::sim) path_pulse: IrPathPulseOptions,
     pub(in crate::sim) events: Vec<IrEvent>,
     pub(in crate::sim) funcs: Vec<IrFunc>,
     /// Concurrent assertion instances, kept outside ordinary process IR.
@@ -732,6 +735,7 @@ impl IrModel {
             udp_tables: parts.udp_tables,
             udp_states: Vec::new(),
             module_paths: Vec::new(),
+            path_pulse: IrPathPulseOptions::default(),
             events: parts.events,
             funcs: parts.funcs,
             assertions: parts.assertions,
@@ -784,6 +788,10 @@ impl IrModel {
     /// Module path sets, one per module instance with simple paths.
     pub fn module_paths(&self) -> &[IrModulePathSet] {
         &self.module_paths
+    }
+    /// Global pulse controls of the module paths.
+    pub fn path_pulse(&self) -> IrPathPulseOptions {
+        self.path_pulse
     }
     pub fn net_groups(&self) -> &[IrNetGroup] {
         &self.net_groups

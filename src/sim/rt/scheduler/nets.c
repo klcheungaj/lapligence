@@ -1065,7 +1065,26 @@ static void llg_net_path_stage_commit(llg_net_t* net) {
     llg_value_scope_end(scope);
 }
 
-// ── Module path delays (IEEE 1800-2009 30.4-30.6) ──────────────────────────
+// ── Module path delays (IEEE 1800-2009 30.4-30.7) ──────────────────────────
+
+// Global pulse controls (30.7.2, 30.7.4); llg_module_paths_configure sets
+// them, cleanup restores the defaults.
+static struct {
+    uint32_t reject_percent;
+    uint32_t error_percent;
+    int style;          // -1: declarations decide, 0 on-event, 1 on-detect
+    int show_cancelled; // -1: declarations decide, 0 off, 1 on
+} path_pulse = {100u, 100u, -1, -1};
+
+void llg_module_paths_configure(uint32_t reject_percent, uint32_t error_percent,
+                                int style, int show_cancelled) {
+    path_pulse.reject_percent = reject_percent > 100u ? 100u : reject_percent;
+    path_pulse.error_percent = error_percent > 100u ? 100u : error_percent;
+    if (path_pulse.error_percent < path_pulse.reject_percent)
+        path_pulse.error_percent = path_pulse.reject_percent;
+    path_pulse.style = style;
+    path_pulse.show_cancelled = show_cancelled;
+}
 
 // Index of a transition in the path delay table; -1 for no transition.
 static int path_transition_index(unsigned from, unsigned to) {
@@ -1077,6 +1096,17 @@ static int path_transition_index(unsigned from, unsigned to) {
     };
     if (from > 3u || to > 3u) return -1;
     return table[from][to];
+}
+
+// Edge classes of a transition (Table 9-2): bit 0 a posedge, bit 1 a negedge.
+static unsigned path_edge_classes(unsigned from, unsigned to) {
+    static const unsigned char table[4][4] = {
+        /* from 0 */ {0, 1, 1, 1},
+        /* from 1 */ {2, 0, 2, 2},
+        /* from x */ {2, 1, 0, 0},
+        /* from z */ {2, 1, 0, 0},
+    };
+    return from > 3u || to > 3u ? 0u : table[from][to];
 }
 
 static int path_set_ready(const llg_module_path_set_t* set) {
@@ -1093,8 +1123,14 @@ void llg_module_path_stamp(llg_module_path_set_t* set) {
             continue;
         uint32_t width = llg_sv4_width(*last);
         for (uint32_t bit = 0; bit < width; bit++) {
-            if (llg_sv4_state(*source, bit) != llg_sv4_state(*last, bit))
-                set->stamps[index][bit] = g.now;
+            unsigned from = llg_sv4_state(*last, bit);
+            unsigned to = llg_sv4_state(*source, bit);
+            if (from == to) continue;
+            set->stamps[index][bit] = g.now;
+            if (!set->rise_stamps) continue;
+            unsigned classes = path_edge_classes(from, to);
+            if (classes & 1u) set->rise_stamps[index][bit] = g.now;
+            if (classes & 2u) set->fall_stamps[index][bit] = g.now;
         }
         sv4_copy(last, source);
     }
@@ -1112,13 +1148,260 @@ static uint64_t path_source_stamp(const llg_module_path_set_t* set,
     return latest;
 }
 
-// A destination bit transition is scheduled at the larger of the
-// distributed-delay arrival (`now`) and the latest transition of an input
-// that reaches the bit plus that path's delay; among paths whose inputs
-// changed at the same latest time the shortest delay wins (30.4.4, 30.5.3,
-// 30.6). A net delay declared on the destination then applies to the
-// path-delayed value (decision A7-D1). Each bit remains an inertial object:
-// an unchanged pending value keeps its time, a newer value replaces it.
+static int path_covers(const llg_module_path_t* path, uint32_t bit) {
+    return bit >= path->dest_lsb && bit - path->dest_lsb < path->dest_width;
+}
+
+// When the input of path `index` last started it, for destination bit `bit`:
+// an edge-sensitive path at the last edge of its kind on the least
+// significant bit of its input terminal (30.4.3), a full path at the latest
+// change of its source range, a parallel path at the change of its own bit.
+static uint64_t path_input_time(const llg_module_path_set_t* set,
+                                const llg_module_path_dest_t* dest,
+                                uint32_t index, uint32_t bit) {
+    const llg_module_path_t* path = &dest->paths[index];
+    if (path->edge && set->rise_stamps) {
+        uint64_t rise = set->rise_stamps[path->source][path->source_lsb];
+        uint64_t fall = set->fall_stamps[path->source][path->source_lsb];
+        switch (path->edge) {
+        case 1: return rise;
+        case 2: return fall;
+        default: return rise > fall ? rise : fall;
+        }
+    }
+    if (path->full) return dest->path_stamps[index];
+    return set->stamps[path->source][path->source_lsb + (bit - path->dest_lsb)];
+}
+
+// A conditional path applies while the least significant bit of its
+// condition is 1, x or z (30.4.4.1); the generated evaluator reads the
+// conditions in the instance's scope when a transition is being scheduled.
+static int path_enabled(llg_module_path_set_t* set,
+                        const llg_module_path_t* path, int* evaluated) {
+    if (!path->condition || path->ifnone) return 1;
+    if (!*evaluated) {
+        set->conditions(set->condition_values, NULL);
+        *evaluated = 1;
+    }
+    const sv4_t* value = &set->condition_values[path->condition - 1u];
+    return llg_sv4_width(*value) == 0 || llg_sv4_state(*value, 0) != 0u;
+}
+
+typedef struct {
+    uint64_t due;    // absolute time of the transition
+    uint64_t reject; // pulse limits of the chosen path for it
+    uint64_t error;
+} path_choice_t;
+
+// Choose the delay of one transition of destination bit `bit` (30.5.3):
+// among the enabled paths into the bit, those whose input started most
+// recently are active, an `ifnone` path yielding to another active path of
+// its group (30.4.4.4); the smallest delay of the transition wins and its
+// path gives the pulse limits. The transition is due at the later of now
+// (the distributed delays have elapsed) and that input time plus the
+// delay (30.6). Returns 0 when no path is active: the transition then has
+// no path delay.
+static int path_choose(llg_module_path_set_t* set, llg_module_path_dest_t* dest,
+                       uint32_t bit, int transition, int* evaluated,
+                       path_choice_t* choice) {
+    int found = 0;
+    uint64_t latest = 0;
+    for (uint32_t index = 0; index < dest->n_paths; index++) {
+        const llg_module_path_t* path = &dest->paths[index];
+        if (!path_covers(path, bit) || !path_enabled(set, path, evaluated))
+            continue;
+        uint64_t time = path_input_time(set, dest, index, bit);
+        if (!found || time > latest) latest = time;
+        found = 1;
+    }
+    if (!found) return 0;
+    const llg_module_path_t* chosen = NULL;
+    for (uint32_t index = 0; index < dest->n_paths; index++) {
+        const llg_module_path_t* path = &dest->paths[index];
+        if (!path_covers(path, bit) || !path_enabled(set, path, evaluated) ||
+            path_input_time(set, dest, index, bit) != latest)
+            continue;
+        if (path->ifnone) {
+            int yields = 0;
+            for (uint32_t other = 0; other < dest->n_paths && !yields; other++) {
+                const llg_module_path_t* peer = &dest->paths[other];
+                yields = peer->group == path->group && !peer->ifnone &&
+                         path_covers(peer, bit) &&
+                         path_enabled(set, peer, evaluated) &&
+                         path_input_time(set, dest, other, bit) == latest;
+            }
+            if (yields) continue;
+        }
+        if (!chosen || path->delays[transition] < chosen->delays[transition])
+            chosen = path;
+    }
+    if (!chosen) return 0;
+    uint64_t delay = chosen->delays[transition];
+    if (delay > UINT64_MAX - latest) {
+        fprintf(stderr, "llg: fatal: simulation time overflow while scheduling a module path delay\n");
+        abort();
+    }
+    choice->due = latest + delay > g.now ? latest + delay : g.now;
+    if (chosen->limits) {
+        choice->reject = chosen->limits[transition];
+        choice->error = chosen->limits[LLG_PATH_TRANSITIONS + transition];
+    } else {
+        // Truncated percentages of the delay (30.7.2); a delay this large
+        // cannot be scheduled, so the division first keeps them exact enough.
+        choice->reject = delay / 100u * path_pulse.reject_percent +
+                         delay % 100u * path_pulse.reject_percent / 100u;
+        choice->error = delay / 100u * path_pulse.error_percent +
+                        delay % 100u * path_pulse.error_percent / 100u;
+    }
+    return 1;
+}
+
+static void path_queue_push(llg_inertial_t* driver, uint64_t time,
+                            unsigned state) {
+    llg_path_queue_t* queue = driver->queue;
+    if (!queue) {
+        queue = llg_checked_calloc(1, sizeof(*queue), "module path queue");
+        driver->queue = queue;
+    }
+    if (queue->count == queue->capacity) {
+        uint32_t capacity = queue->capacity ? queue->capacity * 2u : 4u;
+        uint64_t* times = realloc(queue->times, capacity * sizeof(*times));
+        if (!times) {
+            fprintf(stderr, "llg: fatal: out of memory for a module path queue\n");
+            abort();
+        }
+        queue->times = times;
+        uint8_t* states = realloc(queue->states, capacity * sizeof(*states));
+        if (!states) {
+            fprintf(stderr, "llg: fatal: out of memory for a module path queue\n");
+            abort();
+        }
+        queue->states = states;
+        queue->capacity = capacity;
+    }
+    queue->times[queue->count] = time;
+    queue->states[queue->count] = (uint8_t)state;
+    queue->count++;
+}
+
+// Make (state, time) the record's pending update (the head).
+static void path_head_schedule(llg_inertial_t* driver, uint64_t time,
+                               unsigned state) {
+    sv4_replace(&driver->value, sv4_fill((uint8_t)state, 1u, 0));
+    driver->time = time;
+    driver->pending = 1;
+    driver->region = region_is_reactive(g.current_region) ? LLG_REGION_REACTIVE
+                                                          : LLG_REGION_ACTIVE;
+    inertial_pending_insert(driver);
+}
+
+// Move the last scheduled update of a destination bit to (state, time).
+static void path_last_replace(llg_inertial_t* driver, uint64_t time,
+                              unsigned state) {
+    llg_path_queue_t* queue = driver->queue;
+    if (queue && queue->count) {
+        queue->times[queue->count - 1u] = time;
+        queue->states[queue->count - 1u] = (uint8_t)state;
+        return;
+    }
+    inertial_pending_remove(driver);
+    path_head_schedule(driver, time, state);
+}
+
+// The time of the update before the last one; `now` when the last update is
+// the pending head.
+static uint64_t path_previous_time(const llg_inertial_t* driver) {
+    const llg_path_queue_t* queue = driver->queue;
+    if (!queue || !queue->count) return g.now;
+    return queue->count > 1u ? queue->times[queue->count - 2u] : driver->time;
+}
+
+// The pending head committed: the next queued update becomes the head.
+static void path_queue_advance(llg_inertial_t* driver) {
+    llg_path_queue_t* queue = driver->queue;
+    if (!queue || !queue->count || driver->pending) return;
+    uint64_t time = queue->times[0];
+    unsigned state = queue->states[0];
+    queue->count--;
+    memmove(queue->times, queue->times + 1, queue->count * sizeof(*queue->times));
+    memmove(queue->states, queue->states + 1, queue->count * sizeof(*queue->states));
+    path_head_schedule(driver, time, state);
+}
+
+// Schedule destination bit `bit` toward `state` (30.7). Two consecutive
+// scheduled transitions form a pulse whose width is the difference of their
+// times; the limits of the trailing transition's path decide it: below the
+// reject limit the pulse vanishes, below the error limit its leading edge
+// turns into x (on-detect: at once), otherwise both transitions remain. A
+// trailing edge due no later than the leading one cancels the leading
+// edge, or with showcancelled turns the interval into x. With the default
+// limits (both equal to the delay) every overlap is rejected, which is the
+// inertial update: a changed value replaces the pending one and a return
+// to the committed value cancels it.
+static void path_bit_schedule(llg_module_path_set_t* set,
+                              llg_module_path_dest_t* dest, uint32_t bit,
+                              llg_inertial_t* driver, unsigned state,
+                              int* evaluated) {
+    unsigned flags = dest->styles ? dest->styles[bit] : 0u;
+    int on_detect = path_pulse.style >= 0
+                        ? path_pulse.style == 1
+                        : (flags & LLG_PATH_STYLE_ON_DETECT) != 0u;
+    int show_cancelled = path_pulse.show_cancelled >= 0
+                             ? path_pulse.show_cancelled == 1
+                             : (flags & LLG_PATH_STYLE_SHOW_CANCELLED) != 0u;
+    for (;;) {
+        llg_path_queue_t* queue = driver->queue;
+        int queued = queue && queue->count;
+        unsigned projected = queued ? queue->states[queue->count - 1u]
+                             : driver->pending ? llg_sv4_state(driver->value, 0)
+                                               : llg_sv4_state(driver->current, 0);
+        if (state == projected) return;
+        path_choice_t choice = {g.now, 0, 0};
+        int transition = path_transition_index(projected, state);
+        if (transition < 0 ||
+            !path_choose(set, dest, bit, transition, evaluated, &choice)) {
+            choice.due = g.now;
+            choice.reject = 0;
+            choice.error = 0;
+        }
+        if (!driver->pending) {
+            path_head_schedule(driver, choice.due, state);
+            return;
+        }
+        uint64_t last = queued ? queue->times[queue->count - 1u] : driver->time;
+        if (choice.due <= last) {
+            if (show_cancelled && (on_detect || choice.due < last)) {
+                uint64_t previous = path_previous_time(driver);
+                uint64_t start = on_detect ? (g.now > previous ? g.now : previous)
+                                           : (choice.due > previous ? choice.due : previous);
+                path_last_replace(driver, start, 2u);
+                if (state != 2u) path_queue_push(driver, last, state);
+                return;
+            }
+        } else if (choice.due - last >= choice.reject) {
+            if (choice.due - last < choice.error) {
+                uint64_t previous = path_previous_time(driver);
+                uint64_t start = on_detect ? (g.now > previous ? g.now : previous) : last;
+                path_last_replace(driver, start, 2u);
+            }
+            if (state != 2u || choice.due - last >= choice.error)
+                path_queue_push(driver, choice.due, state);
+            return;
+        }
+        // The last scheduled update is cancelled or rejected; the new value
+        // is then weighed against the update before it.
+        if (queued) {
+            queue->count--;
+        } else {
+            inertial_unlink_pending(driver);
+        }
+    }
+}
+
+// A destination bit transition is scheduled from the paths into the bit
+// (path_choose) and filtered as a pulse against the bit's earlier scheduled
+// transitions (path_bit_schedule). A net delay declared on the destination
+// then applies to the path-delayed value (decision A7-D1).
 static void llg_net_propagate_paths(llg_net_t* net, sv4_t resolved) {
     if (!region_can_mutate("inertial scheduling")) return;
     llg_module_path_dest_t* dest = net->path_dest;
@@ -1133,66 +1416,51 @@ static void llg_net_propagate_paths(llg_net_t* net, sv4_t resolved) {
                                            path->source_width)
                        : 0;
     }
+    int evaluated = set->conditions == NULL;
     for (uint32_t bit = 0; bit < net->width; bit++) {
         llg_inertial_t* driver = llg_net_bit_record(net, bit);
-        sv4_t value = sv4_bit_select(resolved, bit);
-        if (driver->pending ? sv4_same(driver->value, value)
-                            : sv4_same(driver->current, value)) {
-            sv4_destroy(&value);
-            continue;
-        }
-        unsigned from = llg_sv4_state(driver->current, 0);
-        unsigned to = llg_sv4_state(value, 0);
-        uint64_t ticks = 0;
-        int transition = path_transition_index(from, to);
-        if (transition >= 0) {
-            int found = 0;
-            uint64_t stamp = 0;
-            uint64_t delay = 0;
-            for (uint32_t index = 0; index < dest->n_paths; index++) {
-                const llg_module_path_t* path = &dest->paths[index];
-                if (bit < path->dest_lsb || bit - path->dest_lsb >= path->dest_width)
-                    continue;
-                uint64_t latest = path->full
-                    ? dest->path_stamps[index]
-                    : set->stamps[path->source][path->source_lsb + (bit - path->dest_lsb)];
-                uint64_t candidate = path->delays[transition];
-                if (!found || latest > stamp ||
-                    (latest == stamp && candidate < delay)) {
-                    found = 1;
-                    stamp = latest;
-                    delay = candidate;
-                }
-            }
-            if (found) {
-                if (delay > UINT64_MAX - stamp) {
-                    fprintf(stderr, "llg: fatal: simulation time overflow while scheduling a module path delay\n");
-                    abort();
-                }
-                uint64_t due = stamp + delay;
-                if (due > g.now) ticks = due - g.now;
-            }
-        }
-        inertial_update(driver->handle, NULL, NULL, 0, value, NULL, ticks, ticks,
-                        ticks);
-        sv4_destroy(&value);
+        path_bit_schedule(set, dest, bit, driver, llg_sv4_state(resolved, bit),
+                          &evaluated);
     }
 }
 
 void llg_module_paths_start(llg_module_path_set_t* set) {
     if (!set || set->last) return;
+    int edges = 0;
+    for (uint32_t index = 0; index < set->n_dests; index++) {
+        for (uint32_t path = 0; path < set->dests[index].n_paths; path++)
+            edges |= set->dests[index].paths[path].edge != 0;
+    }
     if (set->n_sources) {
         set->last = llg_checked_calloc(set->n_sources, sizeof(*set->last),
                                        "module path sources");
         set->stamps = llg_checked_calloc(set->n_sources, sizeof(*set->stamps),
                                          "module path stamps");
+        if (edges) {
+            set->rise_stamps = llg_checked_calloc(
+                set->n_sources, sizeof(*set->rise_stamps), "module path stamps");
+            set->fall_stamps = llg_checked_calloc(
+                set->n_sources, sizeof(*set->fall_stamps), "module path stamps");
+        }
         for (uint32_t index = 0; index < set->n_sources; index++) {
             uint32_t width = llg_sv4_width(*set->sources[index]);
             set->last[index] = (sv4_t)SV4_EMPTY;
             sv4_copy(&set->last[index], set->sources[index]);
             set->stamps[index] = llg_checked_calloc(
                 width ? width : 1u, sizeof(**set->stamps), "module path stamps");
+            if (edges) {
+                set->rise_stamps[index] = llg_checked_calloc(
+                    width ? width : 1u, sizeof(**set->rise_stamps), "module path stamps");
+                set->fall_stamps[index] = llg_checked_calloc(
+                    width ? width : 1u, sizeof(**set->fall_stamps), "module path stamps");
+            }
         }
+    }
+    if (set->n_conditions) {
+        set->condition_values = llg_checked_calloc(
+            set->n_conditions, sizeof(*set->condition_values), "module path conditions");
+        for (uint32_t index = 0; index < set->n_conditions; index++)
+            set->condition_values[index] = (sv4_t)SV4_EMPTY;
     }
     for (uint32_t index = 0; index < set->n_dests; index++) {
         llg_module_path_dest_t* dest = &set->dests[index];
@@ -1210,12 +1478,24 @@ llg_module_path_set_t* llg_module_path_sets(void) { return g.module_path_sets; }
 
 int llg_net_path_pending(const llg_net_t* net, uint32_t bit, uint64_t* time,
                          int* state) {
+    return llg_net_path_event(net, bit, 0, time, state);
+}
+
+int llg_net_path_event(const llg_net_t* net, uint32_t bit, uint32_t index,
+                       uint64_t* time, int* state) {
     if (!net || !net->path_dest || !net->propagation_bits || bit >= net->width)
         return 0;
     const llg_inertial_t* driver = net->propagation_bits[bit];
     if (!driver || !driver->pending) return 0;
-    if (time) *time = driver->time;
-    if (state) *state = (int)llg_sv4_state(driver->value, 0);
+    if (index == 0) {
+        if (time) *time = driver->time;
+        if (state) *state = (int)llg_sv4_state(driver->value, 0);
+        return 1;
+    }
+    const llg_path_queue_t* queue = driver->queue;
+    if (!queue || index - 1u >= queue->count) return 0;
+    if (time) *time = queue->times[index - 1u];
+    if (state) *state = (int)queue->states[index - 1u];
     return 1;
 }
 
@@ -1236,13 +1516,31 @@ static void module_paths_release(void) {
             for (uint32_t index = 0; index < set->n_sources; index++) {
                 sv4_destroy(&set->last[index]);
                 free(set->stamps[index]);
+                if (set->rise_stamps) {
+                    free(set->rise_stamps[index]);
+                    free(set->fall_stamps[index]);
+                }
             }
         }
+        if (set->condition_values) {
+            for (uint32_t index = 0; index < set->n_conditions; index++)
+                sv4_destroy(&set->condition_values[index]);
+        }
+        free(set->condition_values);
         free(set->last);
         free(set->stamps);
+        free(set->rise_stamps);
+        free(set->fall_stamps);
+        set->condition_values = NULL;
         set->last = NULL;
         set->stamps = NULL;
+        set->rise_stamps = NULL;
+        set->fall_stamps = NULL;
     }
+    path_pulse.reject_percent = 100u;
+    path_pulse.error_percent = 100u;
+    path_pulse.style = -1;
+    path_pulse.show_cancelled = -1;
 }
 
 // A force publishes directly; it drops every pending net-delay update.
@@ -1254,8 +1552,10 @@ static void llg_net_cancel_propagation(llg_net_t* net) {
     }
     if (!net->propagation_bits) return;
     for (uint32_t bit = 0; bit < net->width; bit++) {
-        if (net->propagation_bits[bit])
-            inertial_unlink_pending(net->propagation_bits[bit]);
+        llg_inertial_t* driver = net->propagation_bits[bit];
+        if (!driver) continue;
+        inertial_unlink_pending(driver);
+        if (driver->queue) driver->queue->count = 0;
     }
 }
 
@@ -1316,6 +1616,7 @@ static void commit_inertial(llg_region_t region) {
     }
     if (driver->bit_publication) {
         sv4_copy(&driver->current, &value);
+        if (driver->path_stage) path_queue_advance(driver);
         if (driver->path_stage && publication_net->net_delayed) {
             llg_net_path_stage_commit(publication_net);
             sv4_destroy(&mask);

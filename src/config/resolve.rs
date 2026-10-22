@@ -11,8 +11,8 @@ use super::schema::{
 };
 use super::{
     AnalysisConfig, BuildConfig, CompileConfig, ConfigError, LibrariesConfig, LintRunConfig,
-    LlgConfig, OutputConfig, SimulatorConfig, SourcesConfig, StopPolicy, WaveformConfig,
-    DEFAULT_EXCLUDE_GLOBS, DEFAULT_INCLUDE_GLOBS, DEFAULT_MAX_FILE_BYTES,
+    LlgConfig, OutputConfig, PulseStyle, SimulatorConfig, SourcesConfig, StopPolicy,
+    WaveformConfig, DEFAULT_EXCLUDE_GLOBS, DEFAULT_INCLUDE_GLOBS, DEFAULT_MAX_FILE_BYTES,
     DEFAULT_MAX_TOTAL_INPUT_BYTES, SCHEMA_VERSION,
 };
 use crate::core::compile::{CompilationUnitMode, DelaySelection, LanguageEdition};
@@ -258,9 +258,37 @@ fn resolve_simulator(raw: &RawSimulator) -> Result<SimulatorConfig, ConfigError>
                 .map_err(|error| ConfigError::new(format!("simulator.stop_policy: {error}")))
         })
         .transpose()?;
+    let percent = |value: Option<u64>, key: &str| -> Result<Option<u8>, ConfigError> {
+        value
+            .map(|value| {
+                u8::try_from(value)
+                    .ok()
+                    .filter(|percent| *percent <= 100)
+                    .ok_or_else(|| {
+                        ConfigError::new(format!(
+                            "simulator.{key}: expected an integer from 0 to 100"
+                        ))
+                    })
+            })
+            .transpose()
+    };
+    let pulse_reject = percent(raw.pulse_reject, "pulse_reject")?;
+    let pulse_error = percent(raw.pulse_error, "pulse_error")?;
+    let pulse_style = raw
+        .pulse_style
+        .as_deref()
+        .map(|value| {
+            PulseStyle::parse(value)
+                .map_err(|error| ConfigError::new(format!("simulator.pulse_style: {error}")))
+        })
+        .transpose()?;
     Ok(SimulatorConfig {
         stop_policy,
         optimize: raw.optimize,
+        pulse_reject,
+        pulse_error,
+        pulse_style,
+        show_cancelled: raw.show_cancelled,
         plusargs: raw.plusargs.clone(),
     })
 }

@@ -333,7 +333,26 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         ));
     }
     // Module path sets take the initialized source values as their change
-    // reference; the runtime releases their state at cleanup.
+    // reference; the runtime releases their state at cleanup. Global pulse
+    // controls that differ from the defaults are set first.
+    let pulse = model.path_pulse();
+    if !model.module_paths().is_empty() && pulse != crate::sim::ir::IrPathPulseOptions::default() {
+        let tristate = |value: Option<bool>| match value {
+            None => -1,
+            Some(value) => i32::from(value),
+        };
+        initialize.push_str(&format!(
+            "    llg_module_paths_configure({}u, {}u, {}, {});\n",
+            pulse.reject_percent,
+            pulse.error_percent,
+            tristate(
+                pulse
+                    .style
+                    .map(|style| style == crate::sim::ir::IrPulseStyle::OnDetect)
+            ),
+            tristate(pulse.show_cancelled),
+        ));
+    }
     for index in 0..model.module_paths().len() {
         initialize.push_str(&format!(
             "    llg_module_paths_start(&llg_path_set_{index});\n"

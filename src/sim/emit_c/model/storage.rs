@@ -315,11 +315,15 @@ fn path_source_storage(model: &IrModel, index: usize) -> String {
     }
 }
 
-/// Module path tables: one `llg_module_path_set_t` per instance with simple
-/// paths, after every net group they name. Delay tables are writable so
-/// back-annotation can replace them. Nothing is emitted for a design without
-/// paths.
+/// Module path tables: one `llg_module_path_set_t` per instance with paths,
+/// after every net group they name. Delay and limit tables are writable so
+/// back-annotation can replace them. Fields beyond the simple-path ones are
+/// emitted only when a path, destination or set uses them, and nothing is
+/// emitted for a design without paths. A set with path conditions points at
+/// its generated evaluator, defined with the model's functions
+/// (`render_path_condition_evaluators`).
 fn render_module_paths(model: &IrModel, out: &mut String) {
+    use crate::sim::ir::IrPathCondition;
     for (index, set) in model.module_paths().iter().enumerate() {
         let name = format!("llg_path_set_{index}");
         let sources = set
@@ -338,46 +342,120 @@ fn render_module_paths(model: &IrModel, out: &mut String) {
         };
         let mut dests = Vec::with_capacity(set.destinations().len());
         for (dest_index, destination) in set.destinations().iter().enumerate() {
-            let rows = destination
-                .paths()
-                .iter()
-                .map(|path| {
-                    let delays = path
-                        .delays()
+            let mut rows = Vec::with_capacity(destination.paths().len());
+            for (path_index, path) in destination.paths().iter().enumerate() {
+                let delays = path
+                    .delays()
+                    .iter()
+                    .map(|delay| format!("{delay}ULL"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let mut extra = String::new();
+                if path.edge().code() != 0 {
+                    extra.push_str(&format!(", .edge = {}", path.edge().code()));
+                }
+                match path.condition() {
+                    IrPathCondition::None => {}
+                    IrPathCondition::If(condition) => {
+                        extra.push_str(&format!(", .condition = {}", condition + 1))
+                    }
+                    IrPathCondition::IfNone => extra.push_str(", .ifnone = 1"),
+                }
+                if path.group() != 0 {
+                    extra.push_str(&format!(", .group = {}", path.group()));
+                }
+                if let Some(limits) = path.limits() {
+                    let table = format!("{name}__limits_{dest_index}_{path_index}");
+                    let values = limits
+                        .reject()
                         .iter()
-                        .map(|delay| format!("{delay}ULL"))
+                        .chain(limits.error())
+                        .map(|limit| format!("{limit}ULL"))
                         .collect::<Vec<_>>()
                         .join(", ");
-                    format!(
-                        "{{ {}, {}, {}, {}, {}, {}, {}, {{ {delays} }}, {} }}",
-                        path.source,
-                        path.source_lsb,
-                        path.source_width,
-                        path.dest_lsb,
-                        path.dest_width,
-                        u8::from(path.full),
-                        path.polarity.code(),
-                        crate::sim::emit_c::constants::c_string_literal(&path.origin),
-                    )
-                })
-                .collect::<Vec<_>>();
+                    out.push_str(&format!(
+                        "static uint64_t {table}[2 * LLG_PATH_TRANSITIONS] = {{ {values} }};\n"
+                    ));
+                    extra.push_str(&format!(", .limits = {table}"));
+                }
+                rows.push(format!(
+                    "{{ {}, {}, {}, {}, {}, {}, {}, {{ {delays} }}, {}{extra} }}",
+                    path.source,
+                    path.source_lsb,
+                    path.source_width,
+                    path.dest_lsb,
+                    path.dest_width,
+                    u8::from(path.full),
+                    path.polarity.code(),
+                    crate::sim::emit_c::constants::c_string_literal(&path.origin),
+                ));
+            }
             out.push_str(&format!(
                 "static llg_module_path_t {name}__paths_{dest_index}[] = {{ {} }};\n",
                 rows.join(", ")
             ));
+            let styles = match destination.styles() {
+                Some(styles) => {
+                    let table = format!("{name}__styles_{dest_index}");
+                    out.push_str(&format!(
+                        "static const uint8_t {table}[] = {{ {} }};\n",
+                        styles
+                            .iter()
+                            .map(u8::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                    format!(", .styles = {table}")
+                }
+                None => String::new(),
+            };
             dests.push(format!(
-                "{{ &{}, {name}__paths_{dest_index}, {}, NULL, NULL }}",
+                "{{ &{}, {name}__paths_{dest_index}, {}, NULL, NULL{styles} }}",
                 model.net_group(destination.group()).c_name,
                 destination.paths().len()
             ));
         }
+        let conditions = if set.conditions().is_empty() {
+            String::new()
+        } else {
+            out.push_str(&format!(
+                "static void {name}__conditions(sv4_t* out, void* context);\n"
+            ));
+            format!(
+                ", .conditions = {name}__conditions, .n_conditions = {}",
+                set.conditions().len()
+            )
+        };
         out.push_str(&format!(
             "static llg_module_path_dest_t {name}__dests[] = {{ {} }};\n\
-             static llg_module_path_set_t {name} = {{ {}, {sources}, {}, {name}__dests, {}, NULL, NULL, NULL }};\n",
+             static llg_module_path_set_t {name} = {{ {}, {sources}, {}, {name}__dests, {}, NULL, NULL, NULL{conditions} }};\n",
             dests.join(", "),
             crate::sim::emit_c::constants::c_string_literal(set.scope()),
             set.sources().len(),
             set.destinations().len(),
         ));
     }
+}
+
+/// The generated condition evaluator of every module path set with
+/// state-dependent paths: `out[k]` receives condition `k`, read in the
+/// instance's scope when the runtime schedules a destination transition.
+pub(super) fn render_path_condition_evaluators(
+    ctx: &RCtx<'_>,
+    out: &mut String,
+) -> Result<(), String> {
+    for (index, set) in ctx.model.module_paths().iter().enumerate() {
+        if set.conditions().is_empty() {
+            continue;
+        }
+        let evaluator = crate::sim::ir::IrPreFn::MonEval {
+            c_name: format!("llg_path_set_{index}__conditions"),
+            args: set.conditions().to_vec(),
+            context: None,
+            item: false,
+            real_item: false,
+        };
+        out.push_str(&super::super::owned::model::pre_function(ctx, &evaluator)?);
+    }
+    Ok(())
 }

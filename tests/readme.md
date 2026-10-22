@@ -364,6 +364,19 @@ tests: `core::db::database::specify::tests`, the ffi specify decode test,
 with `LLG_CC=gcc LLG_CFLAGS='-fsanitize=address,undefined
 -fno-omit-frame-pointer -fno-sanitize-recover=all -DLLG_CO_DEBUG'`.
 
+ADV-008's state-dependent, edge-sensitive and pulse-filtering fixtures use
+`-E 'binary(sim_feature_completion) & test(adv_008::)'`
+([readme](fixtures/sim/feature_completion/adv_008/readme.md)): Verilog sources
+in both editions, `edge_any.sv` in sv2009, both optimizer modes and every
+value backend, outputs hand-derived from V §§14.2.3-14.2.4, 14.6 and SV
+§§30.4.3-30.4.4, 30.7; `options.v` also runs with `--pulse-reject`,
+`--pulse-error`, `--pulse-style`, `--show-cancelled` and the `[simulator]`
+keys. Decisions A8-D1-D9 are in `sim_lrm_decisions` (`-E 'test(/a8_d/)'`).
+Unit tests: `path_pulses_keep_limits_and_resolved_terminals`, the IR
+validation and emitter tests above plus
+`module_path_triggers_limits_styles_and_options_are_emitted`, the settings and
+config pulse tests, and the runtime selftest `test_module_path_pulses`.
+
 ADV-016's randsequence fixtures use
 `-E 'binary(sim_feature_completion) & test(adv_016::)'`. Positives run in both
 optimizer modes on every backend with oracles from SV 18.17 (fixture readme):

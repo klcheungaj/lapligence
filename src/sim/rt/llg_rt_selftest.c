@@ -2042,6 +2042,100 @@ static void test_module_paths(void) {
     sv4_destroy(&path_source);
 }
 
+// Pulse limits (30.7): one-bit source `b`, destination `q`, path b => q with
+// delay 10. Row 0 has PATHPULSE$-style limits of 0 (every pulse passes), so
+// transitions queue; the second set takes configured percentages.
+static sv4_t pulse_source = SV4_EMPTY;
+static sv4_t pulse_cell = SV4_EMPTY;
+static llg_inertial_t* pulse_bits[1];
+static llg_net_t pulse_net;
+static uint64_t pulse_limits[2 * LLG_PATH_TRANSITIONS];
+static llg_module_path_t pulse_rows[1] = {
+    { 0, 0, 1, 0, 1, 0, 0, { 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10 },
+      "t.v:3:1", .limits = pulse_limits },
+};
+static llg_module_path_dest_t pulse_dest = { &pulse_net, pulse_rows, 1, NULL, NULL };
+static sv4_t* const pulse_sources[] = { &pulse_source };
+static llg_module_path_set_t pulse_set = { "tb.p", pulse_sources, 1, &pulse_dest, 1,
+                                           NULL, NULL, NULL };
+
+static void pulse_check_event(uint32_t index, uint64_t time, int state) {
+    uint64_t due = 0;
+    int value = -1;
+    CHECK(llg_net_path_event(&pulse_net, 0, index, &due, &value));
+    CHECK(due == time);
+    CHECK(value == state);
+}
+
+static void pulse_drive(unsigned value) {
+    sv4_replace(&pulse_source, SV4_C(value, 1));
+    llg_module_path_stamp(&pulse_set);
+    llg_net_write(&pulse_net, 0, test_temp(SV4_C(value, 1)));
+}
+
+LLG_SELFTEST_PROCESS(pulse_queue_proc, 3) {
+    LLG_SELFTEST_BEGIN(3);
+    // t=1, 2: two transitions 1 apart both stay scheduled.
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 1));
+    pulse_drive(1);
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 1));
+    pulse_drive(0);
+    pulse_drive(0); // an unchanged value schedules nothing
+    pulse_check_event(0, 11, 1);
+    pulse_check_event(1, 12, 0);
+    CHECK(!llg_net_path_event(&pulse_net, 0, 2, NULL, NULL));
+    LLG_SELFTEST_AWAIT(3, llg_arm_time(self, 9));
+    // t=11: the head committed and the queued transition became the head.
+    CHECK(sv4_same(pulse_net.resolved, test_temp(SV4_C(1, 1))));
+    pulse_check_event(0, 12, 0);
+    CHECK(!llg_net_path_event(&pulse_net, 0, 1, NULL, NULL));
+    LLG_SELFTEST_FINISH();
+}
+
+LLG_SELFTEST_PROCESS(pulse_percent_proc, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    // Reject 0%, error 50% of 10: a pulse of width 2 turns x at its leading
+    // edge's time (on-event), then returns to 0 at its trailing edge's time.
+    pulse_drive(1);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 2));
+    pulse_drive(0);
+    pulse_check_event(0, 10, 2);
+    pulse_check_event(1, 12, 0);
+    LLG_SELFTEST_FINISH();
+}
+
+static void pulse_run(const llg_co_desc_t* desc, uint64_t* limits,
+                      uint32_t error_percent) {
+    llg_rt_init();
+    // Cleanup restores the default percentages, so configure after init.
+    llg_module_paths_configure(0, error_percent, -1, -1);
+    pulse_rows[0].limits = limits;
+    sv4_replace(&pulse_source, SV4_C(0, 1));
+    sv4_replace(&pulse_cell, SV4_C(0, 1));
+    pulse_net = (llg_net_t){ .resolved = SV4_EMPTY, .width = 1,
+                             .resolution = LLG_RESOLVE_WIRE, .n_drivers = 1,
+                             .drivers = (sv4_t* const[]){ &pulse_cell },
+                             .strength0 = (const uint8_t[]){ 6 },
+                             .strength1 = (const uint8_t[]){ 6 },
+                             .index_root = -1, .propagation_enabled = 1,
+                             .propagation_bits = pulse_bits };
+    sv4_replace(&pulse_net.resolved, SV4_C(0, 1));
+    llg_module_paths_start(&pulse_set);
+    llg_spawn(desc, "module-path-pulses");
+    llg_rt_run();
+    CHECK(!llg_rt_failed());
+    llg_rt_cleanup();
+    CHECK(pulse_net.path_dest == NULL && pulse_bits[0] == NULL);
+    sv4_destroy(&pulse_net.resolved);
+}
+
+static void test_module_path_pulses(void) {
+    pulse_run(&pulse_queue_proc_desc, pulse_limits, 100);
+    pulse_run(&pulse_percent_proc_desc, NULL, 50);
+    sv4_destroy(&pulse_cell);
+    sv4_destroy(&pulse_source);
+}
+
 static int run_time_overflow_probe(void) {
     llg_rt_init();
     llg_spawn(&time_overflow_proc_desc, "time-overflow");
@@ -2538,6 +2632,8 @@ static int run_selftests(int argc, char** argv) {
     test_clear_temporaries();
     test_inertial_lifetime();
     test_module_paths();
+    test_clear_temporaries();
+    test_module_path_pulses();
     test_clear_temporaries();
     test_time_scaled_rounding();
     test_clear_temporaries();

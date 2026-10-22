@@ -185,8 +185,47 @@ impl Validator<'_> {
                     if !module_path.full && module_path.source_width != module_path.dest_width {
                         return self.fail(path, "parallel module path terminals differ in width");
                     }
+                    match module_path.condition {
+                        IrPathCondition::If(condition) if condition >= set.conditions.len() => {
+                            return self.fail(path, "module path names no condition of its set");
+                        }
+                        IrPathCondition::IfNone if module_path.group == 0 => {
+                            return self.fail(path, "an ifnone module path needs a path group");
+                        }
+                        _ => {}
+                    }
+                    if let Some(limits) = &module_path.limits {
+                        if limits.error.iter().zip(&limits.reject).any(|(e, r)| e < r) {
+                            return self
+                                .fail(path, "module path error limit below its reject limit");
+                        }
+                    }
+                }
+                if destination
+                    .styles
+                    .as_ref()
+                    .is_some_and(|styles| styles.len() != group.width as usize)
+                {
+                    return self.fail(path, "module path styles must cover the destination bits");
                 }
             }
+            for (condition_index, condition) in set.conditions.iter().enumerate() {
+                self.validate_expr(
+                    condition,
+                    &[],
+                    &format!("{path}.conditions[{condition_index}]"),
+                )?;
+            }
+        }
+        let options = self.model.path_pulse;
+        if options.reject_percent > 100
+            || options.error_percent > 100
+            || options.error_percent < options.reject_percent
+        {
+            return self.fail(
+                "path_pulse".to_owned(),
+                "pulse limit percentages must be at most 100, error no lower than reject",
+            );
         }
         Ok(())
     }

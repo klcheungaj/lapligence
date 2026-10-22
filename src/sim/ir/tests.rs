@@ -204,4 +204,75 @@ fn module_path_sets_check_sources_destinations_and_ranges() {
         .unwrap_err()
         .detail()
         .contains("names no module path set"));
+    // ADV-008 triggers, limits, styles and options.
+    use super::{IrPathCondition, IrPathEdge, IrPathLimits};
+    let mut model = model_with(
+        vec![
+            path(0, 4, 0, 4, false)
+                .with_trigger(IrPathEdge::Posedge, IrPathCondition::If(0))
+                .with_group(1)
+                .with_limits(IrPathLimits::uniform(2, 5)),
+            path(0, 4, 0, 4, false)
+                .with_trigger(IrPathEdge::None, IrPathCondition::IfNone)
+                .with_group(1),
+        ],
+        0,
+    );
+    model.module_paths[0] =
+        model.module_paths[0]
+            .clone()
+            .with_conditions(vec![super::IrExpr::try_new(
+                super::IrExprKind::SigRead(0),
+                4,
+                false,
+                None,
+            )
+            .unwrap()]);
+    model.module_paths[0].destinations[0].styles = Some(vec![0, 1, 2, 3]);
+    model
+        .validate()
+        .expect("conditions, groups, limits and styles");
+    let broken = |edit: &dyn Fn(&mut IrModel), detail: &str| {
+        let mut broken = model.clone();
+        edit(&mut broken);
+        let error = broken.validate().unwrap_err();
+        assert!(error.detail().contains(detail), "{detail}: {error:?}");
+    };
+    broken(
+        &|model| model.module_paths[0].conditions.clear(),
+        "names no condition of its set",
+    );
+    broken(
+        &|model| {
+            model.module_paths[0].conditions[0] =
+                super::IrExpr::try_new(super::IrExprKind::SigRead(9), 1, false, None).unwrap()
+        },
+        "signal index 9 is out of bounds",
+    );
+    broken(
+        &|model| model.module_paths[0].destinations[0].paths[1].group = 0,
+        "an ifnone module path needs a path group",
+    );
+    broken(
+        &|model| {
+            model.module_paths[0].destinations[0].paths[0].limits =
+                Some(Box::new(IrPathLimits::uniform(5, 2)))
+        },
+        "error limit below its reject limit",
+    );
+    broken(
+        &|model| model.module_paths[0].destinations[0].styles = Some(vec![0; 3]),
+        "styles must cover the destination bits",
+    );
+    broken(
+        &|model| model.path_pulse.reject_percent = 101,
+        "pulse limit percentages",
+    );
+    broken(
+        &|model| {
+            model.path_pulse.reject_percent = 60;
+            model.path_pulse.error_percent = 40;
+        },
+        "pulse limit percentages",
+    );
 }

@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use llg::config::StopPolicy;
+use llg::config::{PulseStyle, StopPolicy};
 use llg::core::compile;
 use llg::sim;
 
@@ -20,6 +20,7 @@ build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dp
 output:   --out-dir <dir>  --runtime-cache <dir>
 append:   --append-<list> <value>  # adds to the list instead of replacing it; see --help
 stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)
+pulse:    --pulse-reject <0-100>  --pulse-error <0-100>  --pulse-style <onevent|ondetect>  --show-cancelled  --no-show-cancelled
 config:   llg.toml is read only when named with --config (see docs/config.md)";
 
 /// Values of the `--append-<list>` options. They extend the list that the
@@ -86,6 +87,14 @@ pub(crate) struct Cli {
     /// `--vpi`: emit the VPI object catalog for run-time applications.
     pub vpi: bool,
     pub stop_policy: Option<StopPolicy>,
+    /// `--pulse-reject`/`--pulse-error`: module path pulse limits in percent
+    /// of each path delay.
+    pub pulse_reject: Option<u8>,
+    pub pulse_error: Option<u8>,
+    /// `--pulse-style`/`--show-cancelled`: replace every specify-block
+    /// pulse style or showcancelled declaration.
+    pub pulse_style: Option<PulseStyle>,
+    pub show_cancelled: Option<bool>,
 }
 
 pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
@@ -126,6 +135,10 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut optimize: Option<bool> = None;
     let mut vpi = false;
     let mut stop_policy: Option<StopPolicy> = None;
+    let mut pulse_reject: Option<u8> = None;
+    let mut pulse_error: Option<u8> = None;
+    let mut pulse_style: Option<PulseStyle> = None;
+    let mut show_cancelled: Option<bool> = None;
     let mut it = args.into_iter().peekable();
     while let Some(a) = it.next() {
         if a == "--" {
@@ -200,6 +213,16 @@ Options:
                               --define-system-task call sites)
       --stop-policy <resume|exit>
                               Handle `$stop` by resuming (default) or exiting
+      --pulse-reject <0-100> Module path reject limit in percent of each path
+                              delay (default: 100; PATHPULSE$ specparams win)
+      --pulse-error <0-100>  Module path error limit in percent of each path
+                              delay (default: 100; not below --pulse-reject)
+      --pulse-style <onevent|ondetect>
+                              Pulse style of every module path output
+                              (default: the pulsestyle_* declarations, else onevent)
+      --show-cancelled       Show cancelled module path pulses as x on every output
+      --no-show-cancelled    Never show cancelled pulses (default: the
+                              showcancelled declarations)
       --                    Pass remaining arguments to the generated simulator
                               (replaces the llg.toml plusargs, even when empty)
       --generator <backend>  Select the CMake generator
@@ -509,6 +532,35 @@ Options:
                     return Err(2);
                 }
             },
+            "--pulse-reject" | "--pulse-error" => {
+                let Some(value) = it.next() else {
+                    eprintln!("llg: {a} requires an integer from 0 to 100");
+                    return Err(2);
+                };
+                match llg::config::parse_pulse_percent(&value) {
+                    Ok(percent) if a == "--pulse-reject" => pulse_reject = Some(percent),
+                    Ok(percent) => pulse_error = Some(percent),
+                    Err(error) => {
+                        eprintln!("llg: {a}: {error}");
+                        return Err(2);
+                    }
+                }
+            }
+            "--pulse-style" => match it.next() {
+                Some(value) => match PulseStyle::parse(&value) {
+                    Ok(style) => pulse_style = Some(style),
+                    Err(error) => {
+                        eprintln!("llg: --pulse-style: {error}");
+                        return Err(2);
+                    }
+                },
+                None => {
+                    eprintln!("llg: --pulse-style requires onevent or ondetect");
+                    return Err(2);
+                }
+            },
+            "--show-cancelled" => show_cancelled = Some(true),
+            "--no-show-cancelled" => show_cancelled = Some(false),
             "--lint-only" => lint_only = Some(true),
             "--no-lint-only" => {
                 lint_only = Some(false);
@@ -571,6 +623,10 @@ Options:
         optimize,
         vpi,
         stop_policy,
+        pulse_reject,
+        pulse_error,
+        pulse_style,
+        show_cancelled,
     })
 }
 

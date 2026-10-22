@@ -392,6 +392,9 @@ pub struct CodegenOptions {
     /// only through this catalog; without it the model carries no catalog
     /// data and keeps no storage alive for VPI visibility.
     pub vpi: bool,
+    /// Global module path pulse controls (`--pulse-reject`, `--pulse-error`,
+    /// `--pulse-style`, `--show-cancelled`; IEEE 1800-2009 30.7.2, 30.7.4).
+    pub path_pulse: crate::sim::ir::IrPathPulseOptions,
 }
 
 /// Lower an owned Slang semantic database with default optimizations.
@@ -462,7 +465,8 @@ pub fn generate_from_owned_db_with_codegen_options(
     db: Db,
     options: &CodegenOptions,
 ) -> Result<GeneratedModel, CodegenError> {
-    let lowered = lower_model(&db, options.waveform.as_ref()).map_err(CodegenError::new)?;
+    let lowered = lower_model(&db, options.waveform.as_ref(), options.path_pulse)
+        .map_err(CodegenError::new)?;
     drop(db);
     finish_generation(lowered, options).map_err(CodegenError::new)
 }
@@ -471,7 +475,10 @@ fn generate_from_db_with_codegen_options_impl(
     db: &Db,
     options: &CodegenOptions,
 ) -> Result<GeneratedModel, String> {
-    finish_generation(lower_model(db, options.waveform.as_ref())?, options)
+    finish_generation(
+        lower_model(db, options.waveform.as_ref(), options.path_pulse)?,
+        options,
+    )
 }
 
 struct LoweredModel {
@@ -482,7 +489,11 @@ struct LoweredModel {
     coverage_api_used: bool,
 }
 
-fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredModel, String> {
+fn lower_model(
+    db: &Db,
+    waveform: Option<&WaveformOptions>,
+    path_pulse: crate::sim::ir::IrPathPulseOptions,
+) -> Result<LoweredModel, String> {
     let semantic_stage = crate::profile::Stage::new("semantic");
     let semantic = crate::sim::semantic::SemanticModel::from_db(db);
     // Constructs rejected by design report first and together, ahead of the
@@ -529,6 +540,7 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
     cg.collect_timescales();
     cg.build_net_groups()?;
     // Module paths name net groups and their structural driver sites.
+    cg.model.path_pulse = path_pulse;
     cg.lower_module_paths()?;
     cg.collect_clocking_storage()?;
     cg.validate_const_method_writes()?;
@@ -3754,7 +3766,8 @@ mod startup_spawn_tests {
         )
         .expect("compile startup-order source");
         let db = Db::from_slang(&result.snapshot).expect("owned database");
-        let lowered = lower_model(&db, None).expect("lower startup-order source");
+        let lowered =
+            lower_model(&db, None, Default::default()).expect("lower startup-order source");
         lowered
             .model
             .spawn_list()

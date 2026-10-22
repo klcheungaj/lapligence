@@ -1225,6 +1225,7 @@ fn render_model(
             out.push_str(&super::owned::model::process(&ctx, p, executable)?);
         }
     }
+    storage::render_path_condition_evaluators(&ctx, &mut out)?;
     // Every body has been moved into the model text; release the artifacts
     // and their frame layouts before the remaining sections and the
     // identifier pass.

@@ -130,7 +130,7 @@ impl<'a> Codegen<'a> {
             }) => Some((source.clone(), *scale)),
             _ => None,
         };
-        let (ticks, unit_fs) = match self
+        let value = self
             .eval_decl_value_without_time_rounding(expression)
             .map_err(|error| {
                 format!(
@@ -138,7 +138,20 @@ impl<'a> Codegen<'a> {
                  constant expression: {error}",
                     self.instance_path_of(self.inst)
                 )
-            })? {
+            })?;
+        self.delay_value_ticks(value, exact_literal, timescale)
+    }
+
+    /// A delay value in scheduler ticks: an integer counts time units, a
+    /// real is rounded to the time precision (an exact time literal by its
+    /// own spelling).
+    fn delay_value_ticks(
+        &self,
+        value: Val,
+        exact_literal: Option<(String, crate::core::db::TimeLiteralScale)>,
+        timescale: Timescale,
+    ) -> Result<u64, String> {
+        let (ticks, unit_fs) = match value {
             Val::Bits(value) => {
                 let raw = if value.signed {
                     let signed = value
@@ -173,6 +186,20 @@ impl<'a> Codegen<'a> {
             self.design_precision_fs,
             &self.instance_path_of(self.inst),
         )
+    }
+
+    /// A `PATHPULSE$` pulse limit of the specparam `node` in scheduler
+    /// ticks, in the time unit of its module like a path delay; a negative
+    /// limit is zero.
+    pub(super) fn path_limit_ticks(&self, node: NodeId, value: &Val) -> Result<u64, String> {
+        match value {
+            Val::Bits(bits) if bits.signed && bits.to_i128().is_some_and(|value| value < 0) => {
+                return Ok(0)
+            }
+            Val::Real(value) if *value < 0.0 => return Ok(0),
+            _ => {}
+        }
+        self.delay_value_ticks(value.clone(), None, self.timescale_of_node(node))
     }
 
     /// One module path delay value in scheduler ticks. Path delays are
