@@ -263,7 +263,7 @@ pub fn collect_reads(db: &Db, root: NodeId) -> Vec<NodeId> {
 pub fn collect_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    walk_writes(db, root, false, &mut seen, &mut out);
+    walk_writes(db, root, LhsTargets::Whole, &mut seen, &mut out);
     out
 }
 
@@ -273,8 +273,43 @@ pub fn collect_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
 pub fn collect_writes_with_members(db: &Db, root: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
-    walk_writes(db, root, true, &mut seen, &mut out);
+    walk_writes(db, root, LhsTargets::Members, &mut seen, &mut out);
     out
+}
+
+/// [`collect_writes`] that also resolves a write to an unpacked-array element
+/// (`assign w[1] = ...`, `v[i][3] = ...`) to its array, for rules that count
+/// drivers per array (`multi-driver`). Kept apart so that per-variable data
+/// flow (`combinational-loop`) keeps its established behavior.
+pub fn collect_element_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    walk_writes(db, root, LhsTargets::Elements, &mut seen, &mut out);
+    out
+}
+
+/// How [`walk_writes`] resolves an assignment target to signals.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LhsTargets {
+    /// The target's base through packed selects only ([`signal_of_ref`]).
+    Whole,
+    /// Each member of a concatenation, streaming or pattern target.
+    Members,
+    /// As `Whole`, also through unpacked-array element selects.
+    Elements,
+}
+
+/// [`signal_of_ref`] through unpacked-array element selects as well.
+fn element_signal_of_lhs(db: &Db, id: NodeId) -> Option<NodeId> {
+    match db.node_kind(id) {
+        NodeKind::Expr(
+            ExprKind::ArraySelect { base, .. }
+            | ExprKind::BitSelect { base, .. }
+            | ExprKind::PartSelect { base, .. }
+            | ExprKind::IndexedPartSelect { base, .. },
+        ) => element_signal_of_lhs(db, *base),
+        _ => signal_of_ref(db, id),
+    }
 }
 
 /// Every signal actively driven in the tree rooted at `root`.
@@ -428,7 +463,7 @@ fn add_read(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<Nod
 fn walk_writes(
     db: &Db,
     node: NodeId,
-    members: bool,
+    targets: LhsTargets,
     seen: &mut HashSet<NodeId>,
     out: &mut Vec<NodeId>,
 ) {
@@ -439,25 +474,25 @@ fn walk_writes(
             | StmtKind::Release { lhs }
             | StmtKind::Deassign { lhs },
         ) => {
-            add_lhs_write(db, *lhs, members, seen, out);
+            add_lhs_write(db, *lhs, targets, seen, out);
             return;
         }
         NodeKind::Stmt(StmtKind::VariableDecl { declaration }) => {
             if db.var_initializer(*declaration).is_some() {
-                add_lhs_write(db, *declaration, members, seen, out);
+                add_lhs_write(db, *declaration, targets, seen, out);
             }
             return;
         }
         NodeKind::Stmt(StmtKind::Assign { .. }) | NodeKind::ContAssign { .. } => {
             if let Some(lhs) = db.node(node).children.first() {
-                add_lhs_write(db, *lhs, members, seen, out);
+                add_lhs_write(db, *lhs, targets, seen, out);
             }
             return;
         }
         _ => {}
     }
     for c in &db.node(node).children {
-        walk_writes(db, *c, members, seen, out);
+        walk_writes(db, *c, targets, seen, out);
     }
 }
 
@@ -669,13 +704,19 @@ fn call_assigned_actuals(db: &Db, actuals: &[NodeId]) -> Vec<NodeId> {
 fn add_lhs_write(
     db: &Db,
     lhs: NodeId,
-    members: bool,
+    targets: LhsTargets,
     seen: &mut HashSet<NodeId>,
     out: &mut Vec<NodeId>,
 ) {
-    if members {
-        add_lhs_members(db, lhs, |db, id| [signal_of_ref(db, id), None], seen, out);
-    } else if let Some(sig) = signal_of_ref(db, lhs) {
+    let sig = match targets {
+        LhsTargets::Members => {
+            add_lhs_members(db, lhs, |db, id| [signal_of_ref(db, id), None], seen, out);
+            return;
+        }
+        LhsTargets::Whole => signal_of_ref(db, lhs),
+        LhsTargets::Elements => element_signal_of_lhs(db, lhs),
+    };
+    if let Some(sig) = sig {
         if seen.insert(sig) {
             out.push(sig);
         }

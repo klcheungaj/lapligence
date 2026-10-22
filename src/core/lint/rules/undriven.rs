@@ -229,6 +229,18 @@ mod tests {
     }
 
     #[test]
+    fn continuous_assignment_to_an_unpacked_element_is_a_driver() {
+        let diags = run_rule(
+            "module top;\n  logic [3:0] a;\n  wire [3:0] driven [2];\n  wire [3:0] floating [2];\n\
+             \x20 wire [3:0] sink, other;\n  assign driven[1] = a;\n  assign sink = driven[1];\n\
+             \x20 assign other = floating[0];\n  initial a = 1;\nendmodule\n",
+            "top",
+        );
+        assert_eq!(diags.len(), 1, "only the array without a driver: {diags:?}");
+        assert!(diags[0].message.contains("`floating`"), "{diags:?}");
+    }
+
+    #[test]
     fn procedural_and_continuous_drivers_are_quiet() {
         let diags = run_rule(
             "module top;\n  logic procedural, continuous;\n  always @* procedural = continuous;\n  assign continuous = procedural;\nendmodule\n",
