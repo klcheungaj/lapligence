@@ -1,8 +1,8 @@
-tb.v natural=9 bin=1x0z0101zzzz oct=XZZz hex=X5z dec=X int=2128
-tb.xs natural=9 bin=xxxxxx oct=xx hex=xx dec=x int=0
-tb.zs natural=9 bin=zzzz oct=zz hex=z dec=z int=0
-tb.pz natural=9 bin=10z1 oct=1Z hex=Z dec=Z int=9
-tb.s natural=9 bin=1111111011010100 oct=177324 hex=fed4 dec=-300 int=-300
+tb.v natural=9 bin=1x0z0101zzzz oct=XZZz hex=X5z dec=   0 int=2128
+tb.xs natural=9 bin=xxxxxx oct=xx hex=xx dec= 0 int=0
+tb.zs natural=9 bin=zzzz oct=zz hex=z dec= 0 int=0
+tb.pz natural=9 bin=10z1 oct=1Z hex=Z dec= 0 int=9
+tb.s natural=9 bin=1111111011010100 oct=177324 hex=fed4 dec=       -300 int=-300
 tb.s real=-300.00 vector=0000fed4/00000000
 tb.wide hex=81xxxxxxxxxxxxxxxx vector=00000081/00000000 ffffffff/ffffffff ffffffff/ffffffff
 tb.str string="Hi!" hex=00486921
@@ -19,7 +19,7 @@ put tb.r fmt=8 "1.0" -> null level=3
 put tb.wide fmt=4 "fe_dcba_9876_5432_10ff" -> null level=0
 strength to vector -> null level=3
 scalar to vector -> null level=3
-after: xs=111111 zs=zzzz s=7 v=0000000010xz pz=10zx wide=fedcba9876543210ff
+after: xs=111111 zs=zzzz s=          7 v=0000000010xz pz=10zx wide=fedcba9876543210ff
 inertial=null
 event type=vpiSchedEvent scheduled=1
 cancel -> null level=0 stale=1

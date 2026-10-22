@@ -927,29 +927,36 @@ static char* format_radix(const s_vpi_vecval* words, uint32_t width, unsigned bi
     return text;
 }
 
-/* Decimal digits of an X/Z-free value; signed values print a '-' sign. An
- * unknown value is x/z when all bits are x/z, else X/Z, as %d (21.2.1.3). */
-static char* format_decimal(const s_vpi_vecval* source, uint32_t width, int is_signed) {
+/* Field width of a vpiDecStrVal string (decision S42-D6): the number of
+ * decimal digits of the largest unsigned value of `width` bits, as %d sizes
+ * its field (21.2.1.3), except that a signed object of 2 to 32 bits takes
+ * the 11 characters of a 32-bit integer and a negative constant adds one
+ * character for its sign. floor(width * log10(2)) + 1 counts the digits of
+ * 2^width - 1 (2^width is never a power of ten); in double precision the
+ * product is exact enough for every supported width, whose distance from an
+ * integer stays far above the rounding error. */
+static size_t decimal_field_width(uint32_t width, int is_signed, int constant, int negative) {
+    size_t digits = (size_t)((double)width * 0.30102999566398119521) + 1u;
+    if (constant) return digits + (negative ? 1u : 0u);
+    if (is_signed && width >= 2u && width <= 32u) return 11u;
+    return digits;
+}
+
+/* Decimal digits of a value, right-justified in its field width; signed
+ * values print a '-' sign. A value with any x or z bit reads as 0 (decision
+ * S42-D6; Table 38-3 lists no x/z digits for vpiDecStrVal). */
+static char* format_decimal(const s_vpi_vecval* source, uint32_t width, int is_signed,
+                            int constant) {
     size_t count = word_count(width);
-    unsigned xs = 0, zs = 0;
-    for (uint32_t bit = 0; bit < width; ++bit) {
-        unsigned state = word_state(source, bit);
-        xs += state == 2;
-        zs += state == 3;
-    }
-    if (xs || zs) {
-        char* text = text_buffer(2);
-        if (!text) return NULL;
-        text[0] = xs == width ? 'x' : zs == width ? 'z' : xs ? 'X' : 'Z';
-        text[1] = '\0';
-        return text;
-    }
+    int unknown = 0;
+    for (size_t i = 0; i < count && !unknown; ++i) unknown = source[i].bval != 0;
     uint32_t* magnitude = (uint32_t*)calloc(count, sizeof(uint32_t));
     if (!magnitude) return NULL;
-    for (size_t i = 0; i < count; ++i) magnitude[i] = source[i].aval;
+    if (!unknown)
+        for (size_t i = 0; i < count; ++i) magnitude[i] = source[i].aval;
     uint32_t top_bits = width % 32u;
     if (top_bits) magnitude[count - 1u] &= (1u << top_bits) - 1u;
-    int negative = is_signed && width && word_state(source, width - 1u) == 1u;
+    int negative = !unknown && is_signed && width && word_state(source, width - 1u) == 1u;
     if (negative) {
         if (top_bits) magnitude[count - 1u] |= ~((1u << top_bits) - 1u);
         uint64_t carry = 1;
@@ -984,9 +991,13 @@ static char* format_decimal(const s_vpi_vecval* source, uint32_t width, int is_s
         }
     } while (active);
     while (length > 1 && digits[length - 1u] == '0') --length;
-    char* text = text_buffer(length + 2u);
+    size_t used = length + (negative ? 1u : 0u);
+    size_t field = decimal_field_width(width, is_signed, constant, negative);
+    size_t pad = field > used ? field - used : 0u;
+    char* text = text_buffer(pad + used + 1u);
     if (text) {
         size_t at = 0;
+        while (at < pad) text[at++] = ' ';
         if (negative) text[at++] = '-';
         for (size_t i = length; i-- > 0;) text[at++] = digits[i];
         text[at] = '\0';
@@ -1094,7 +1105,7 @@ static void fill_value(llg_vpi_datum_t* datum, int is_signed, int type, p_vpi_va
             return;
         }
         case vpiDecStrVal: {
-            char* text = format_decimal(words, width, is_signed);
+            char* text = format_decimal(words, width, is_signed, type == vpiConstant);
             if (!text) vpi_error("LLG_VPI_NOMEM", "VPI text allocation failed");
             else output->value.str = (PLI_BYTE8*)text;
             return;

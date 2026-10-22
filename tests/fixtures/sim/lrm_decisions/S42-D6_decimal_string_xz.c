@@ -8,7 +8,7 @@ static void show(const char* name) {
     memset(&v, 0, sizeof(v));
     v.format = vpiDecStrVal;
     vpi_get_value(vpi_handle_by_name((PLI_BYTE8*)name, NULL), &v);
-    vpi_printf(" %s=%s", name + 3, v.value.str ? (const char*)v.value.str : "<null>");
+    vpi_printf(" %s=[%s]", name + 3, v.value.str ? (const char*)v.value.str : "<null>");
 }
 
 static PLI_INT32 d6(PLI_BYTE8* data) {
@@ -20,6 +20,9 @@ static PLI_INT32 d6(PLI_BYTE8* data) {
     show("tb.e");
     show("tb.m");
     show("tb.s");
+    show("tb.u");
+    show("tb.w");
+    show("tb.one");
     vpi_printf("\n");
     return 0;
 }

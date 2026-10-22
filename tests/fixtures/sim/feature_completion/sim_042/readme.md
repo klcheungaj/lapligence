@@ -29,8 +29,10 @@ checked against a run; no line was accepted only because the run printed it.
   `r` (`vpiRealVar`, `vpiSize` 64, S42-D8), `t` (`vpiTimeVar`), `up` and `v`
   (`vpiReg`); the net `w`.
 - **Parameters.** `L = W * 2 = 8` is a localparam (`vpiLocalParam` 1); `P`
-  keeps its four-state value `1010x1z0`, whose decimal string is `X` (some
-  bits unknown, S42-D6). Integer parameters are 32 bits.
+  keeps its four-state value `1010x1z0`, whose decimal string is `  0` (a
+  value with unknown bits reads as 0, right-justified in the 3 digits of an
+  8-bit value, S42-D6). Integer parameters are 32 bits, so their decimal
+  strings take the 11 characters of a signed 32-bit value (`          8`).
 - **Ports** are returned by `vpiPortIndex`: `a` input (1), `y` output (2),
   both 4 bits; `vpiLowConn` is the port's internal object `tb.u1.a`/`tb.u1.y`.
 - **Lookup.** `vpi_handle_by_name("gv", gen[1])` finds `tb.gen[1].gv`
@@ -43,15 +45,22 @@ checked against a run; no line was accepted only because the run printed it.
   (38.15, Table 38-3) so it is 8; its hex digit has an x and a z bit, so it is
   `X`. `vpiObjTypeVal` gives `vpiVectorVal` (9) for vectors, `vpiIntVal` (6)
   for `int`/`byte`/`integer`, `vpiRealVal` (7) for real and `vpiTimeVal` (11)
-  for time (38.15). `ii` is all X: binary all `x`, decimal `x`, integer 0.
-  `r = 1.25` reads as integer 1 (rounded).
+  for time (38.15). `ii` is all X: binary all `x`, decimal `0` padded to 11
+  characters, integer 0. Decimal strings are right-justified (S42-D6): an
+  unsigned value in the digits of its largest value (` 60` for 8 bits, 20
+  characters for the 64-bit `t`), a signed 2-32 bit value in 11 characters
+  (`         -5`, `         -2`). `r = 1.25` reads as integer 1 (rounded).
 - **Bounds.** `vpiLeftRange`/`vpiRightRange` are `[7:0]` for `v`, `[0:3]` for
   `up`, `[5:2]` for `bv`, `[0:3]` for `mem` and `[5:2]` for the part-select
-  `v[5:2]`; `grid[1:0][2:0]` iterates two `vpiRange` objects.
+  `v[5:2]`; `grid[1:0][2:0]` iterates two `vpiRange` objects. The bounds are
+  32-bit constants, whose decimal strings take the 10 digits of the largest
+  32-bit value (`         7`; a negative constant adds its sign, S42-D6).
 - **Elements.** `mem[2] = 1x0z_0000` is a `vpiReg` with `vpiArrayMember` 1,
-  name `mem[2]`, `vpiIndex` 2, hex `X0` and decimal `X`; index 4 is outside
+  name `mem[2]`, `vpiIndex` 2 (a constant: `         2`), hex `X0` and
+  decimal `  0`; index 4 is outside
   `[0:3]` and returns NULL with an error (S42-D7). `grid[0][1]` by
-  `vpi_handle_by_multi_index` is -1; `tb.grid[1][2]` by name is 3 and is a
+  `vpi_handle_by_multi_index` is -1 (`         -1`, an 11-character signed
+  field); `tb.grid[1][2]` by name is 3 (`          3`) and is a
   different object (`vpi_compare_objects` 0).
 - **Selects.** `v[5:2]` of `8'h3c` is `1111`; `v[0]` is a `vpiRegBit` 0; bit
   2 of `up` (`[0:3]`) is `x`; `vpi_iterate(vpiBit, v)` returns the bits from
@@ -67,10 +76,14 @@ checked against a run; no line was accepted only because the run printed it.
 
 - **Formats (Table 38-3).** `v = 1x0z_0101_zzzz`: octal digits from the
   least significant group are `zzz` → `z`, `z10`/`01z` mixed → `Z`, `1x0` →
-  `X`, so `XZZz`; hex `X5z`; decimal `X`; integer `0x850 = 2128`. All-x `xs`
-  gives `x` everywhere and integer 0; all-z `zs` gives `z`. `pz = 10z1` gives
-  octal `1Z`, hex `Z`, decimal `Z` (S42-D6) and integer 9. `s = -300` is
-  `fed4`, octal `177324`, real -300. The 72-bit `wide` vector has three
+  `X`, so `XZZz`; hex `X5z`; decimal `   0`; integer `0x850 = 2128`. All-x
+  `xs` gives `x` in the radix strings and integer 0; all-z `zs` gives `z`.
+  `pz = 10z1` gives octal `1Z`, hex `Z` and integer 9. A decimal string reads
+  a value with any x or z bit as 0, right-justified in the digits of the
+  largest unsigned value of its width (S42-D6): ` 0` for the 4-bit `pz` and
+  `zs`, ` 0` for the 6-bit `xs`, `   0` for the 12-bit `v`. `s = -300` is
+  `fed4`, octal `177324`, decimal `       -300` (a signed 16-bit value takes
+  11 characters), real -300. The 72-bit `wide` vector has three
   `aval/bval` words, the top one `00000081/00000000`. `"Hi!"` in 32 bits reads
   back as the string `Hi!` (leading zero bytes skipped). A real object rejects
   `vpiBinStrVal` (S42-D9) and rounds -2.5 to -3 for `vpiIntVal`.
@@ -80,7 +93,8 @@ checked against a run; no line was accepted only because the run printed it.
   (fills the value), decimal `-1` and binary `10xz` (zero-extended) are
   accepted; every `vpiNoDelay` put returns NULL (S42-D1). A string to a real
   and `vpiStrengthVal` to a vector are illegal (38.34) and a scalar to a
-  vector is an error (S42-D13). The real 6.5 put to `s` rounds to 7.
+  vector is an error (S42-D13). The real 6.5 put to `s` rounds to 7, read
+  back as the 11-character decimal `          7`.
 - **Delays (38.34).** At time 0: inertial 1@2, then inertial 2@3 removes it;
   transport 4@6, then transport 5@5 removes the later 4@6; pure transport 6@4
   with `vpiReturnEvent` returns a `vpiSchedEvent` that is scheduled; 7@7 is

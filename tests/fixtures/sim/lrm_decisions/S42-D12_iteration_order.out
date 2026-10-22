@@ -1,4 +1,4 @@
 regs: a b q up
 ports: zz aa mm
 bits of up: up[2]=1 up[3]=1 up[4]=0 up[5]=0
-elements of grid: grid[1][0]=10 grid[1][1]=11 grid[0][0]=0 grid[0][1]=1
+elements of grid: grid[1][0]=10 grid[1][1]=11 grid[0][0]= 0 grid[0][1]= 1
