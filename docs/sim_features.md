@@ -2405,8 +2405,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `LLG_VPI_PLUGIN` (a Windows DLL links against the model's import library,
   `llg --dpi-import-lib`) or link as a static archive with `--dpi-lib`. Decisions S42-D1..D13 in `docs/lrm_decisions.md`; limits in
   `docs/known_issues.md` ("VPI object model limits"). Callbacks (SIM-043):
-  `cbValueChange` on variables, nets, ports, array elements and bit/part
-  selects (value, time and index per `s_cb_data`, at every changing write);
+  `cbValueChange` on variables, nets, ports, array elements, whole unpacked
+  arrays (each element write, with its index) and bit/part selects (value,
+  time and index per `s_cb_data`, at every changing write);
   the time reasons in their Table 4-1 PLI regions (`cbAtStartOfSimTime`,
   `cbAfterDelay`, `cbNextSimTime` Pre-Active, a late zero-delay
   `cbAfterDelay` Inactive; `cbReadWriteSynch` Pre-NBA, then `cbNBASynch`
@@ -2416,7 +2417,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpi_get_cb_info`, including registration and removal inside running
   callbacks. Read-only regions reject `vpi_put_value` and zero-delay time
   callbacks; `vpi_control(vpiStop/vpiFinish, level)` goes through the
-  `$stop`/`$finish` lifecycle. Decisions S43-D1..D9. The object catalog is
+  `$stop`/`$finish` lifecycle, also from `cbStartOfSimulation`. Decisions S43-D1..D10. The object catalog is
   emitted only with `--vpi`, `--dpi-lib` or a user system task call site.
   Registered packed/real system-function calls have direct
   expression-evaluation paths and may be `$strobe`/`$monitor` arguments (their

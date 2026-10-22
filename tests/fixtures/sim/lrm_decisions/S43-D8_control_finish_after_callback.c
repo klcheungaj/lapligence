@@ -5,7 +5,8 @@
 static int ends;
 
 static PLI_INT32 finish(p_cb_data data) {
-    PLI_INT32 status = vpi_control(vpiFinish, 0);
+    /* Level 7 is outside the $finish levels 0-2; it is still honoured. */
+    PLI_INT32 status = vpi_control(vpiFinish, 7);
     vpi_printf("vpiFinish at %u -> %d\n", (unsigned)data->time->low, (int)status);
     return 0;
 }
@@ -22,15 +23,6 @@ static PLI_INT32 end(p_cb_data data) {
 
 static PLI_INT32 start(p_cb_data data) {
     (void)data;
-    PLI_INT32 status = vpi_control(vpiStop, 0);
-    PLI_INT32 level = vpi_chk_error(NULL);
-    vpi_printf("vpiStop before the run -> %d, error %d\n", (int)status, (int)level);
-    status = vpi_control(vpiFinish, 7);
-    level = vpi_chk_error(NULL);
-    vpi_printf("vpiFinish level 7 -> %d, error %d\n", (int)status, (int)level);
-    status = vpi_control(vpiReset, 0, 0, 0);
-    level = vpi_chk_error(NULL);
-    vpi_printf("vpiReset -> %d, error %d\n", (int)status, (int)level);
     s_vpi_time t;
     s_cb_data cb;
     memset(&t, 0, sizeof(t));

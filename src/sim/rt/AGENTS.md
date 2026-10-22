@@ -809,6 +809,11 @@ model emits the table and the call only when it calls built-ins.
 
 VPI callbacks (SIM-043) are records owned by the registry from registration
 until removal or, for time and action reasons, retirement after they run.
+A retired one-shot whose handle was not released leaves a compact copy of its
+registration (`SLOT_FIRED_CB`) so the handle stays valid for
+`vpi_get_cb_info`/`vpi_remove_cb` (S43-D4); late action registrations get one
+directly. At most `LLG_VPI_MAX_FIRED_CALLBACKS` copies live; the oldest is
+freed first.
 Time reasons are one-shot region callbacks in their Table 4-1 PLI region
 (`cbNextSimTime` through `llg_time_slot_hook` at each Pre-Active pass);
 `cbReadWriteSynch` takes `LLG_REGION_PRE_NBA_PLI` and `cbNBASynch` the
@@ -818,14 +823,18 @@ Pre-Active goes to `LLG_REGION_INACTIVE` (S43-D2).
 `cbValueChange` uses `llg_value_watch_add`: a waiter-less subscription on the
 address's wait row that `sig_publish_changed`/`real_write` already look up,
 whose hook runs after every runtime consumer; never add a separate per-store
-lookup. Dispatch collects records in registration order before running any
+lookup. A whole-array record holds one watch entry per element (bounded by
+`LLG_VPI_MAX_ARRAY_WATCH_ELEMENTS`), so element writes stay on that path. Dispatch collects records in registration order before running any
 (value changes then run newest first, S43-D6) and frees removed ones only when
 the outermost dispatch ends, so callbacks may register/remove any callback.
 Watches end with the runtime lifetime (`free_value_watches`), so VPI removal
 after cleanup is a no-op.
 `vpi_put_value` fails in read-only regions without touching the runtime's
 fatal region check; zero-delay time callbacks are refused there before
-scheduling. `vpi_control` stop/finish use `llg_rt_control_stop/finish`;
+scheduling. `vpi_control` stop/finish use `llg_rt_control_stop/finish`
+(levels outside 0-2 report as 1, S43-D8); a stop from the start callbacks uses
+`llg_rt_control_stop_before_run`, which under the EXIT policy suspends before
+the first `llg_rt_run` (the generated `main` then skips the advance, S43-D10);
 `cbEndOfSimulation` runs once, from advance or close.
 
 Waveforms record end-of-step values (SIM-047, S47-D1/D2): a publication only

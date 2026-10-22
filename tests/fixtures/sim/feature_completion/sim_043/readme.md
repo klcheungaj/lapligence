@@ -92,7 +92,8 @@ All time callbacks are registered from `cbStartOfSimulation` at time 0 with a
 delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
 
 - `[0] cbEndOfCompile`, then a second `cbEndOfCompile` registered inside it is
-  refused (`null LLG_VPI_CALLBACK`, the action already occurred, S43-D4), then
+  accepted but never runs (`handle none`: the action already occurred, and
+  the handle stays valid until it is removed, S43-D4), then
   `[0] cbStartOfSimulation` (38.36.3).
 - Time 5, Pre-Active: `cbAtStartOfSimTime`, then `cbNextSimTime #1`: the slot
   after its registration time (S43-D3); both Pre-Active, in queue order.
@@ -123,16 +124,24 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
 - `vpi_get_cb_info` returns the registration (reason 1, user data, value
   format 6 = vpiIntVal). Releasing a callback handle does not remove the
   callback (`release kept handle -> 1`, and `kept` runs at 2).
-- `cbStmt` and `cbForce` are not provided, a whole array and a parameter are
-  not watchable, a NULL object is an invalid handle and a `vpiSuppressTime`
-  time callback is an error (L64969-64970); each returns NULL.
+- `cbStmt` and `cbForce` are not provided, a parameter is not watchable, a
+  NULL object is an invalid handle and a `vpiSuppressTime` time callback is
+  an error (L64969-64970); each returns NULL. A value-change callback on the
+  whole unpacked array `m` is accepted (S43-D7); a second one is removed at
+  once (`1`), which drops its watch on every element.
 - At 1 and 2: `second` then `first`, the newest registration first (S43-D6).
   At v=2, `second` has already run when `first` removes it; removing it again
   fails (`0 LLG_VPI_HANDLE`, 38.39). `first` registers `third`, which starts
   with the next change.
 - At 3: `canceller` removes the pending `doomed` (never prints). The handle of
-  `kept-1`, a one-shot that ran at 1, is stale (S43-D4). Then `third v=3`,
-  `first v=3`.
+  `kept-1`, a one-shot that ran at 1, is still valid (S43-D4): its info gives
+  reason 9 (`cbAfterDelay`) and user data `kept-1`; `vpi_remove_cb` then frees
+  it (`1`) and the handle is stale (`LLG_VPI_HANDLE`). 65544 late
+  `cbEndOfCompile` registrations are accepted; the runtime keeps at most 65536
+  fired callback handles (`LLG_VPI_MAX_FIRED_CALLBACKS`), so the oldest is
+  freed and stale while the newest still reads reason 10. Then `third v=3`,
+  `first v=3`, and the write `m[0] = 0` runs the whole-array callback with
+  the element's index: `[3] m[0] v=0`.
 - End: `first=3 second=2 third=1`.
 
 ## readonly (A02)
@@ -160,10 +169,8 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
 
 ## control (A03)
 
-- In `cbStartOfSimulation`: `vpiStop` has no running simulation to stop
-  (`0 LLG_VPI_CONTROL`), `vpiReset` is not provided (`0
-  LLG_VPI_UNSUPPORTED`), and a `vpiFinish` level of 3 is not a `$finish`
-  level (`0 LLG_VPI_ARGUMENT`) (S43-D8).
+- In `cbStartOfSimulation`: `vpiReset` is not provided (`0
+  LLG_VPI_UNSUPPORTED`, S43-D8).
 - 3: `vpiStop` from a Pre-Active callback returns 1; stderr reports `$stop at
   time 3` and the default `resume` policy continues the same slot, so the HDL
   prints `after the stop`.
@@ -172,9 +179,26 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
   the callback returns: the `cbAfterDelay` at 9 and the HDL display at 27 never
   run. The final procedure prints `steps=2`, then `cbEndOfSimulation` runs once
   at 7; inside it control requests return 1 and change nothing, and a new
-  `cbEndOfSimulation` registration is refused.
+  `cbEndOfSimulation` registration is accepted but never runs (`handle none`,
+  S43-D4).
 - With `--stop-policy exit` (test only) the stop at 3 suspends the run; closing
   the model runs `cbEndOfSimulation` once at 3 and no final procedure.
+
+## start_control (A03)
+
+`vpi_control` from `cbStartOfSimulation` is honoured when the callback returns
+(S43-D10); `SIM043_START_CONTROL` selects the request (the tests set it).
+
+- `stop`: `vpiStop` returns 1 and stderr reports `$stop at time 0`. Under the
+  default `resume` policy the run continues: `[0] hdl: initial`, `[2] hdl:
+  later`, the final procedure at 2 and `cbEndOfSimulation` at 2.
+- `stop` with `--stop-policy exit`: the run is suspended before any process
+  runs; closing the model runs `cbEndOfSimulation` once at 0 and no final
+  procedure.
+- `finish`: `vpiFinish` with level 7, outside the `$finish` levels 0-2, is
+  accepted (S43-D8) and returns 1; stderr reports `$finish at time 0` (level
+  1, the default), no process runs, the final procedure prints `[0] final` and
+  `cbEndOfSimulation` runs at 0.
 
 ## catalog
 

@@ -2,7 +2,8 @@ info: reason=1 user=second value format=6
 release kept handle -> 1
 cbStmt -> null LLG_VPI_CALLBACK
 cbForce -> null LLG_VPI_CALLBACK
-whole array -> null LLG_VPI_CALLBACK
+whole array -> handle none
+remove a whole-array callback -> 1
 parameter -> null LLG_VPI_CALLBACK
 null object -> null LLG_VPI_HANDLE
 suppressed time -> null LLG_VPI_TIME
@@ -14,8 +15,13 @@ suppressed time -> null LLG_VPI_TIME
 [2] first v=2
   remove second -> 1, again -> 0 LLG_VPI_HANDLE
 [3] canceller: remove pending time callback -> 1
-  info of a fired one-shot -> LLG_VPI_HANDLE
+  info of a fired one-shot -> none reason=9 user=kept-1
+  remove the fired one-shot -> 1 none
+  info after removal -> LLG_VPI_HANDLE
+  oldest of 65544 late actions -> LLG_VPI_HANDLE
+  newest -> none reason=10
 [3] third v=3
 [3] first v=3
+[3] m[0] v=0
 [13] hdl: v=3 m0=0 P=3
 [13] end: first=3 second=2 third=1

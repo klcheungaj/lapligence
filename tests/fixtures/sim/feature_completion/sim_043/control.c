@@ -50,12 +50,8 @@ static PLI_INT32 never(p_cb_data data) {
 
 static PLI_INT32 started(p_cb_data data) {
     vpi_printf("[%u] start\n", now_of(data));
-    PLI_INT32 status = vpi_control(vpiStop, 1);
-    vpi_printf("vpiStop before the run -> %d %s\n", (int)status, error_code());
-    status = vpi_control(vpiReset, 0, 0, 0);
+    PLI_INT32 status = vpi_control(vpiReset, 0, 0, 0);
     vpi_printf("vpiReset -> %d %s\n", (int)status, error_code());
-    status = vpi_control(vpiFinish, 3);
-    vpi_printf("vpiFinish level 3 -> %d %s\n", (int)status, error_code());
     register_cb(cbAfterDelay, stop_now, 3, "after delay 3");
     register_cb(cbReadWriteSynch, finish_now, 7, "read-write 7");
     register_cb(cbAfterDelay, never, 9, "after delay 9");

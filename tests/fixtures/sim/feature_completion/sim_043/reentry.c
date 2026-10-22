@@ -89,12 +89,45 @@ static PLI_INT32 canceller(p_cb_data data) {
     memset(&info, 0, sizeof(info));
     vpi_get_cb_info(keep, &info);
     const char* code = error_code();
-    vpi_printf("  info of a fired one-shot -> %s\n", code);
+    vpi_printf("  info of a fired one-shot -> %s reason=%d user=%s\n", code, (int)info.reason,
+               info.user_data ? info.user_data : "-");
+    removed = vpi_remove_cb(keep);
+    code = error_code();
+    vpi_printf("  remove the fired one-shot -> %d %s\n", (int)removed, code);
+    vpi_get_cb_info(keep, &info);
+    vpi_printf("  info after removal -> %s\n", error_code());
+    /* Registrations of an action that already occurred never run, but
+     * their handles stay valid; past the runtime's bound of 65536 kept
+     * handles the oldest ones are freed. */
+    enum { FLOOD = 65536 + 8 };
+    vpiHandle oldest = NULL, newest = NULL;
+    for (int i = 0; i < FLOOD; ++i) {
+        s_cb_data late;
+        memset(&late, 0, sizeof(late));
+        late.reason = cbEndOfCompile;
+        late.cb_rtn = never;
+        late.user_data = (PLI_BYTE8*)"late";
+        newest = vpi_register_cb(&late);
+        if (!oldest) oldest = newest;
+    }
+    vpi_get_cb_info(oldest, &info);
+    code = error_code();
+    vpi_printf("  oldest of %d late actions -> %s\n", (int)FLOOD, code);
+    memset(&info, 0, sizeof(info));
+    vpi_get_cb_info(newest, &info);
+    code = error_code();
+    vpi_printf("  newest -> %s reason=%d\n", code, (int)info.reason);
     return 0;
 }
 
 static PLI_INT32 kept(p_cb_data data) {
     vpi_printf("[%u] %s: runs although its handle was released\n", now_of(data), data->user_data);
+    return 0;
+}
+
+static PLI_INT32 element_changed(p_cb_data data) {
+    vpi_printf("[%u] %s[%d] v=%d\n", now_of(data), data->user_data, (int)data->index,
+               (int)data->value->value.integer);
     return 0;
 }
 
@@ -134,7 +167,13 @@ static PLI_INT32 started(p_cb_data data) {
     after(3, canceller, "canceller");
     try_reason(cbStmt, v, vpiSimTime, "cbStmt");
     try_reason(cbForce, v, vpiSimTime, "cbForce");
-    try_reason(cbValueChange, vpi_handle_by_name("tb.m", NULL), vpiSimTime, "whole array");
+    /* A whole unpacked array reports each element write with its index;
+     * removing such a record drops the watch of every element. */
+    vpiHandle m = vpi_handle_by_name("tb.m", NULL);
+    vpiHandle whole = watch(m, element_changed, "m");
+    vpi_printf("whole array -> %s %s\n", whole ? "handle" : "null", error_code());
+    vpiHandle dropped = watch(m, never, "dropped");
+    vpi_printf("remove a whole-array callback -> %d\n", (int)vpi_remove_cb(dropped));
     try_reason(cbValueChange, vpi_handle_by_name("tb.P", NULL), vpiSimTime, "parameter");
     try_reason(cbValueChange, NULL, vpiSimTime, "null object");
     try_reason(cbAfterDelay, NULL, vpiSuppressTime, "suppressed time");

@@ -24,6 +24,14 @@ static PLI_INT32 d9(PLI_BYTE8* data) {
         vpi_get_value(r, &v);
         vpi_printf("format %d level=%d\n", (int)formats[k], (int)vpi_chk_error(NULL));
     }
+    vpiHandle p = vpi_handle_by_name((PLI_BYTE8*)"tb.p", NULL);
+    memset(&v, 0, sizeof(v));
+    v.format = vpiBinStrVal;
+    vpi_get_value(p, &v);
+    vpi_printf("p bin=%s\n", v.value.str ? (const char*)v.value.str : "<null>");
+    v.format = vpiDecStrVal;
+    vpi_get_value(p, &v);
+    vpi_printf("p dec=[%s]\n", v.value.str ? (const char*)v.value.str : "<null>");
     return 0;
 }
 

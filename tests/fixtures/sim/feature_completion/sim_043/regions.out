@@ -1,5 +1,5 @@
 [0] cbEndOfCompile
-late cbEndOfCompile: null LLG_VPI_CALLBACK
+late cbEndOfCompile: handle none
 [0] cbStartOfSimulation
 [5] pre-active: cbAtStartOfSimTime
 [5] pre-active: cbNextSimTime #1

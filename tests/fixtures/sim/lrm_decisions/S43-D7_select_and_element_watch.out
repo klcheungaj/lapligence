@@ -1,3 +1,5 @@
-whole array: NULL, error 3
+whole array: handle, error 0
 tb.v[7:4]=0001 index=0 at 2
+tb.m=1001 index=4 at 3
 tb.m[4]=1001 index=4 at 3
+tb.m=0010 index=3 at 3

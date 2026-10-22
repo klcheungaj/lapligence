@@ -1050,6 +1050,12 @@ void llg_rt_action_stop(int verbosity, const char* location);
 // llg_rt_action_stop. Both return 0, reporting nothing, when no running and
 // unfinished scheduler can take the request. `verbosity` must be 0..2.
 int llg_rt_control_stop(int verbosity);
+// vpi_control(vpiStop) from cbEndOfCompile/cbStartOfSimulation, before the
+// first llg_rt_run: reports `$stop` at time 0 and, under the EXIT policy,
+// suspends so that llg_rt_run returns before any process runs (the RESUME
+// policy continues at once). Returns 0 when the scheduler is not initialized
+// or is already running, finishing or suspended. `verbosity` must be 0..2.
+int llg_rt_control_stop_before_run(int verbosity);
 // Report the `$finish` message for `verbosity` (0..2) once and request
 // termination like llg_rt_request_finish. Returns 0 when a finish is already
 // pending.

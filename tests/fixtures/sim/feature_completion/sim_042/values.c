@@ -141,8 +141,8 @@ static PLI_INT32 formats(PLI_BYTE8* data) {
     memset(&scalar, 0, sizeof(scalar));
     scalar.format = vpiScalarVal;
     scalar.value.scalar = vpi1;
-    vpiHandle refused = vpi_put_value(named("tb.v"), &scalar, NULL, vpiNoDelay);
-    vpi_printf("scalar to vector -> %s level=%d\n", refused ? "handle" : "null",
+    vpiHandle returned = vpi_put_value(named("tb.v"), &scalar, NULL, vpiNoDelay);
+    vpi_printf("scalar to vector -> %s level=%d\n", returned ? "handle" : "null",
                (int)vpi_chk_error(NULL));
     s_vpi_value real;
     memset(&real, 0, sizeof(real));

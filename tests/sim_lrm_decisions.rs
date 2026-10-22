@@ -1912,6 +1912,15 @@ fn s43_d8_control_finish_after_callback() {
 }
 
 #[test]
+fn s43_d10_control_from_start_of_simulation() {
+    run_vpi_decision(
+        "S43-D10_control_from_start_of_simulation",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D10_control_from_start_of_simulation.out"),
+    );
+}
+
+#[test]
 fn s43_d9_postponed_systf_read_only() {
     run_vpi_decision(
         "S43-D9_postponed_systf_read_only",

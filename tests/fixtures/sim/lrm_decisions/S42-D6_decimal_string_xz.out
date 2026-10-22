@@ -1,2 +1,2 @@
-vpiDecStrVal: a=x b=X c=z e=Z m=X s=-5
+vpiDecStrVal: a=[ 0] b=[ 0] c=[ 0] e=[ 0] m=[ 0] s=[         -5] u=[   7] w=[           -5] one=[-1]
 %d: a=x b=X c=z e=Z m=X s=-5
