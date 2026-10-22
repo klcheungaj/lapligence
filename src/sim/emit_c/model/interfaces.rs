@@ -25,10 +25,13 @@ pub(super) fn render_virtual_interface_runtime(model: &IrModel, out: &mut String
              sv4_t *members[LLG_VIF_MAX_MEMBERS];\n\
          }} llg_vif_env_t;\n\n\
          static sv4_t llg_vif_invalid = SV4_EMPTY;\n\n\
+         /* A null virtual interface access ends the run without the final\n\
+          * procedures (decision S99-D8; a null class handle runs them). */\n\
          static void llg_vif_fail(const char *site) {{\n\
              if (llg_rt_exiting()) return;\n\
              fprintf(stderr, \"llg: virtual interface access failed: %s\\n\", site);\n\
              llg_rt_mark_failed();\n\
+             llg_rt_skip_finals();\n\
              llg_rt_fatal_typed(0, \"virtual interface access failed\", NULL, 0, \"\", site);\n\
          }}\n\n\
          static void *llg_vif_require(void *raw, const char *site) {{\n\

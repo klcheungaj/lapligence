@@ -2796,9 +2796,28 @@ fn s99_d8_null_access_stops() {
             label,
             output,
             expected,
-            "virtual interface access failed: virtual interface member access at tb:26:45",
+            "virtual interface access failed: virtual interface member access at tb:28:45",
         );
     });
+}
+
+#[test]
+fn s99_d11_null_class_access_runs_finals() {
+    let expected =
+        include_str!("fixtures/sim/lrm_decisions/S99-D11_null_class_access_runs_finals.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S99-D11_null_class_access_runs_finals",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "null class handle access: property access at tb:22:",
+            );
+        },
+    );
 }
 
 #[test]

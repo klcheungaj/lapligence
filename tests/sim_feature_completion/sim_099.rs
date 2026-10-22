@@ -590,7 +590,11 @@ fn implicit_sensitivity_virtual_interface_limits_are_located() {
 /// array elements and class properties.
 #[test]
 fn null_handle_accesses_stop_at_once() {
-    let expected =
+    // A null virtual interface access skips the final procedure (S99-D8); a
+    // null class handle access runs it (S99-D11).
+    let vif_expected =
+        include_str!("../fixtures/sim/feature_completion/sim_099/null_handle_access.vif.out");
+    let class_expected =
         include_str!("../fixtures/sim/feature_completion/sim_099/null_handle_access.out");
     let vif = "virtual interface access failed: virtual interface";
     let class = "null class handle access: property access at tb:";
@@ -606,6 +610,11 @@ fn null_handle_accesses_stop_at_once() {
         ("8", format!("{class}41:40")),
     ];
     for (case, diagnostic) in cases {
+        let expected = if diagnostic.starts_with(vif) {
+            vif_expected
+        } else {
+            class_expected
+        };
         sim_cli::run_case_failing_at_runtime(
             SUITE,
             "null_handle_access",

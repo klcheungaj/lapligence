@@ -303,7 +303,12 @@ collector setting instead of comparing it with a fixed value.
   method call, a function that reads `v.a`, and a class property read stored
   and displayed. Every case prints `before`, reports the error at the access
   and exits with status 1; `k` keeps 5, and neither the display that made the
-  access nor `after` prints.
+  access nor `after` prints. The final procedure prints `final k=5` after a
+  null class handle access (cases 7 and 8, `null_handle_access.out`, decision
+  S99-D11) and does not run after a null virtual interface access (cases 0 to
+  6, `null_handle_access.vif.out`, decision S99-D8, changed: it ran before);
+  neither clause says whether final procedures run, and llg follows
+  industry-standard behaviour.
 
 - Implicit `$finish` ordering (gate-fixes-2 item 3, decision S99-D9): no
   fixture here and no change. SV 24.3 L43228-43232 ends the simulation

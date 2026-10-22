@@ -3,8 +3,8 @@
 // the run at its source position. Nothing after the failed access runs: not
 // the rest of its statement (the store or the display), not the statements
 // after it, and not the rest of a statement whose called function failed
-// (decision S99-D8). The final procedure shows that `k` was not written.
-// `+case=<n>` selects the access.
+// (S99-D8). The final procedure runs only after a class handle (S99-D11)
+// and shows that `k` was not written. `+case=<n>` selects the access.
 interface bus_if;
   logic [7:0] a;
   logic [7:0] mem [0:3];

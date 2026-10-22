@@ -2077,7 +2077,8 @@ These are bounded implementations, not full verification-infrastructure support.
   ([sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md)).
   A null receiver, property access or copy
   source is a run-time error at its source position that ends the run before
-  the rest of the statement runs (S99-D8)
+  the rest of the statement runs; the final procedures still run (S99-D8,
+  S99-D11)
   ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).
   Methods hold named `begin`-`end` and `fork`-`join` blocks with automatic
   and static locals; a `disable` of such a block or of a class task, from the
@@ -2114,7 +2115,8 @@ These are bounded implementations, not full verification-infrastructure support.
   stay on the instance named at the call while the variable is rebound; event
   formals of every direction keep their identity; a method call or member
   access through a null handle is a fatal run-time error at its source
-  position that ends the run before the rest of the statement runs (S99-D8)
+  position that ends the run before the rest of the statement runs, without
+  the final procedures (S99-D8)
   ([sim_012](../tests/fixtures/sim/feature_completion/sim_012/readme.md)).
   Synchronous drives through handles, views, class properties and array
   elements (output, skewed, cycle-delayed, selected and inout-net drives) go
