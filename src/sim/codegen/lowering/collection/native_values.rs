@@ -1831,7 +1831,7 @@ impl Codegen<'_> {
             pieces.push((lsb, IrExpr::convert_to(read, member_width, false)));
         }
         // The leaves tile the packed value exactly once (no union overlay).
-        pieces.sort_by(|left, right| right.0.cmp(&left.0));
+        pieces.sort_by_key(|piece| std::cmp::Reverse(piece.0));
         let mut top = width;
         for (lsb, piece) in &pieces {
             if lsb.checked_add(piece.width) != Some(top) {
