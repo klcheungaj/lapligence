@@ -7,6 +7,7 @@
 // nothing, like weak ones (only s_eventually fails there, A13-D7). Same
 // stimulus as flow.sv plus x, y, rst and rst2; expected lines are derived
 // in readme.md.
+`timescale 1ns/1ps
 module tb;
   logic c1 = 0, c2 = 0, a = 0, b = 0, d = 0, e = 0, rst = 0, rst2 = 0;
   logic [2:0] x = 0, y = 0;

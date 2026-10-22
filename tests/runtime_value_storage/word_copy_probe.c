@@ -206,18 +206,14 @@ static void streaming_and_shifts(sv4_t source) {
     for (size_t i = 0; i < sizeof(slices) / sizeof(*slices); ++i) {
         uint32_t slice = slices[i];
         for (int reverse = 0; reverse < 2; ++reverse) {
-            for (int inverse = 0; inverse < 2; ++inverse) {
-                ref_t expected = ref_new(source.width, 0, 0);
-                for (uint32_t bit = 0; bit < source.width; ++bit) {
-                    uint64_t end = ((uint64_t)bit / slice + 1) * slice;
-                    if (end > source.width) end = source.width;
-                    uint32_t other = reverse ? source.width - (uint32_t)end + bit % slice : bit;
-                    if (inverse) put(&expected, bit, digit(&src, other));
-                    else put(&expected, other, digit(&src, bit));
-                }
-                check(inverse ? sv4_unstream(source, slice, reverse)
-                              : sv4_stream(source, slice, reverse), &expected);
+            ref_t expected = ref_new(source.width, 0, 0);
+            for (uint32_t bit = 0; bit < source.width; ++bit) {
+                uint64_t end = ((uint64_t)bit / slice + 1) * slice;
+                if (end > source.width) end = source.width;
+                uint32_t other = reverse ? source.width - (uint32_t)end + bit % slice : bit;
+                put(&expected, other, digit(&src, bit));
             }
+            check(sv4_stream(source, slice, reverse), &expected);
         }
         sv4_t amount = sv4_from_u64(slice, 64, 0);
         for (int right = 0; right < 2; ++right) {

@@ -80,9 +80,6 @@ void sv4_repeat_to(sv4_t* dst, const sv4_t* pattern, uint64_t n) {
 void sv4_stream_to(sv4_t* dst, const sv4_t* v, uint32_t slice, int right_to_left) {
     sv4_replace(dst, sv4_stream(*v, slice, right_to_left));
 }
-void sv4_unstream_to(sv4_t* dst, const sv4_t* v, uint32_t slice, int right_to_left) {
-    sv4_replace(dst, sv4_unstream(*v, slice, right_to_left));
-}
 
 void sv4_part_select_to(sv4_t* dst, const sv4_t* v, int64_t left, int64_t right) {
     sv4_replace(dst, sv4_part_select(*v, left, right));

@@ -165,7 +165,9 @@ fn stream_slice_tail() {
     sim_cli::run_case(
         "feature_completion/g1_26",
         "stream_slice_tail",
-        concat!("rhs 1d983a\n", "lhs a1 b2 c3\n"),
+        // The unpack slices the source from its right-most bit as the pack
+        // does, so it is not the inverse of the uneven pack (decision S20-7).
+        concat!("rhs 1d983a\n", "lhs d0 4d b1\n"),
         "",
         &[],
     );

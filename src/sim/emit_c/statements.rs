@@ -64,7 +64,7 @@ fn render_stream_assignment(
 ) -> Result<String, String> {
     let source = render_expr(ctx, source)?;
     let mut code = format!(
-        "{{ sv4_t _stream_value = sv4_unstream({}, {slice}, {}); \
+        "{{ sv4_t _stream_value = sv4_stream({}, {slice}, {}); \
          int64_t _stream_cursor = (int64_t)llg_sv4_width(_stream_value); ",
         source.code,
         matches!(direction, IrStreamDirection::RightToLeft) as u8

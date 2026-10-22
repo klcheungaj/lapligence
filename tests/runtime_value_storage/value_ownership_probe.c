@@ -44,8 +44,9 @@ static void check_operations(void) {
         sv4_t out = sv4_resize(left, width, left.is_signed);
         sv4_replace(&out, sv4_cast(out, width + 70, 1));
         sv4_replace(&out, sv4_mux(right, left, before));
-        sv4_replace(&out, sv4_stream(left, 3, 1));
-        sv4_replace(&out, sv4_unstream(out, 3, 1));
+        // A bit reversal is its own inverse.
+        sv4_replace(&out, sv4_stream(left, 1, 1));
+        sv4_replace(&out, sv4_stream(out, 1, 1));
         CHECK(sv4_same(out, left));
         sv4_replace(&out, sv4_repeat(left, 2));
         sv4_replace(&out, sv4_part_select(left, 130, -2));

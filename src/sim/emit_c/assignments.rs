@@ -480,7 +480,7 @@ fn render_nba_inner(
     {
         let value = packed_value(&value, *width, false, false);
         let mut text = format!(
-            "{{ sv4_t _stream_value=sv4_unstream({value}, {slice}, {});",
+            "{{ sv4_t _stream_value=sv4_stream({value}, {slice}, {});",
             matches!(direction, IrStreamDirection::RightToLeft) as u8
         );
         let mut cursor = *width;

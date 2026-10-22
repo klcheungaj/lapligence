@@ -68,7 +68,7 @@ pub(in super::super) fn render_assign(
             cursor = right;
         }
         return Ok(format!(
-            "{{ sv4_t _stream_value = sv4_unstream({value}, {slice}, {}); {statements} }}",
+            "{{ sv4_t _stream_value = sv4_stream({value}, {slice}, {}); {statements} }}",
             matches!(direction, IrStreamDirection::RightToLeft) as u8
         ));
     }

@@ -4,6 +4,7 @@
 // actuals, two recursive call sites, recursion under a second clock and the
 // F.7 dependency example. Same stimulus as flow.sv; expected lines are
 // derived in readme.md.
+`timescale 1ns/1ps
 module tb;
   logic c1 = 0, c2 = 0, a = 0, b = 0, d = 0, e = 0;
   initial begin

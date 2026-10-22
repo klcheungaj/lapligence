@@ -8,19 +8,19 @@ d_lr a1b2c3d4
 d_rl8 d4c3b2a1
 d_rl3 8b996532
 u_rl12 56723401
-d_set f7 be 54 d1
-u_set d1 54 be f7
+d_set 7b e7 7d 12
+u_set 12 7d e7 7b
 o_lr a9e52da9
 o_rl4 9ad25e9a
-o_set 1e f7 9d 28 9
+o_set 17 db de 1a 1
 cast_n f c 8
 cast_back fedcba98
 cast_o 04 8d 15 4e 1
 cast_t 5 5 0 7 4
 mixed_lr 6 00f fee42
-mixed_rl5 5 01c f7c78
-wide_u d154bef70000
-wide_rl4 c1a000000000
+mixed_rl5 0 14b 7f783
+wide_u 127de77b0000
+wide_rl4 b41000000000
 left_lr de
 left_rl8 bb aa
 left_rl4 21
@@ -29,7 +29,7 @@ four 00111x0zzx0110xz00111x0zzx0110xz
 swap 34 12
 rev 04 03 02 01
 inner 04 02 03 01
-arg bef7d154
+arg e77b127d
 out_arg ca fe f00d
 port 55bf
 port_lvalue cd ab

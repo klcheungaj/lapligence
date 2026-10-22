@@ -317,11 +317,10 @@ static void llg_bitstream_copy(llg_bitstream_t* target,
     }
 }
 
-/* Reverse the order of `slice`-bit blocks (SV 11.4.14.2). A pack (`<<` on
- * the right-hand side) slices from the right, leaving any short block last;
- * an unpack inverts it by slicing from the left. */
-void llg_bitstream_reverse(llg_bitstream_t* stream, uint32_t slice,
-                           int from_left) {
+/* Reverse the order of `slice`-bit blocks (SV 11.4.14.2), slicing from the
+ * right-most bit so that a short block ends up first. An unpack reorders the
+ * source it consumes the same way (SV 11.4.14.3). */
+void llg_bitstream_reverse(llg_bitstream_t* stream, uint32_t slice) {
     if (!slice) llg_container_fatal("streaming slice size must be positive");
     if (stream->length <= slice) return;
     llg_bitstream_t result;
@@ -329,21 +328,11 @@ void llg_bitstream_reverse(llg_bitstream_t* stream, uint32_t slice,
     llg_bitstream_reserve(&result, stream->length);
     uint64_t length = stream->length;
     uint64_t blocks = (length + slice - 1u) / slice;
-    uint64_t tail = length % slice;
     for (uint64_t block = 0; block < blocks; ++block) {
-        uint64_t start;
         uint64_t size = slice;
-        if (from_left) {
-            // Block `block` from the end of the left-sliced source.
-            uint64_t source_block = blocks - 1u - block;
-            start = source_block * slice;
-            if (tail && source_block == blocks - 1u) size = tail;
-        } else {
-            uint64_t end = length - block * slice;
-            if (end < slice) size = end;
-            start = end - size;
-        }
-        llg_bitstream_copy(&result, stream, start, size);
+        uint64_t end = length - block * slice;
+        if (end < slice) size = end;
+        llg_bitstream_copy(&result, stream, end - size, size);
     }
     llg_bitstream_destroy(stream);
     *stream = result;
@@ -410,9 +399,9 @@ sv4_t llg_bitstream_value(const llg_bitstream_t* stream) {
 }
 
 /* Element count for a resizable destination of `width`-bit elements. An
- * assignment (`exact` 0) left-aligns the stream and zero-fills the last
- * element (SV 11.4.14); a bit-stream cast or whole unpack (`exact` 1)
- * requires whole elements (SV 6.24.3, 11.4.14.4). */
+ * assignment or a whole unpack (`exact` 0) left-aligns the stream and
+ * zero-fills the last element (SV 11.4.14, 11.4.14.4); a bit-stream cast
+ * (`exact` 1) requires whole elements (SV 6.24.3). */
 static size_t llg_bitstream_elements(const llg_bitstream_t* stream,
                                      uint32_t width, int exact) {
     if (!width) llg_container_fatal("streaming destination has an empty element type");

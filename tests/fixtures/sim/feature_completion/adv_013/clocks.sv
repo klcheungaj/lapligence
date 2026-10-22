@@ -4,6 +4,7 @@
 // per time step (16.5), `$global_clock` names the global clocking event, and
 // `$inferred_clock`/`$inferred_disable` defaults take the clock and disable
 // condition at the instance. Expected lines are derived in readme.md.
+`timescale 1ns/1ps
 module dmod(input logic c1, c2, a);
   default clocking @(posedge c1 or posedge c2); endclocking
   k9: assert property (a) $display("k9 P %0t", $time); else $display("k9 F %0t", $time);

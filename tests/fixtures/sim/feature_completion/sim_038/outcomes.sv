@@ -5,6 +5,7 @@
 // simulation ends. Ticks 1..8 are the posedges at 5, 15, ..., 75; stimulus
 // changes at 0, 10, ..., 70 and $finish ends the run at 80. The expected
 // lines are derived in readme.md.
+`timescale 1ns/1ps
 module tb;
   logic clk = 1'b0;
   logic s1 = 1'b0, b = 1'b0, c = 1'b0;

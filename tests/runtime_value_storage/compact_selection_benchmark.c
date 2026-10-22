@@ -54,7 +54,7 @@ static double run(int compact, unsigned op, unsigned count, sv4_t old, g4_t valu
                 result = llg_gmp_sv4_stream(value, 7, 1);
                 break;
             case 7:
-                result = llg_gmp_sv4_unstream(value, 7, 1);
+                result = llg_gmp_sv4_stream(value, 3, 1);
                 break;
             case 8:
                 result = llg_gmp_sv4_array_conditional_merge(value, value, def);
@@ -102,7 +102,7 @@ static double run(int compact, unsigned op, unsigned count, sv4_t old, g4_t valu
                 result = sv4_stream(old, 7, 1);
                 break;
             case 7:
-                result = sv4_unstream(old, 7, 1);
+                result = sv4_stream(old, 3, 1);
                 break;
             case 8:
                 result = sv4_array_conditional_merge(old, old, old_def);
@@ -143,7 +143,7 @@ int main(int argc, char** argv) {
                            "concat",
                            "repeat",
                            "stream",
-                           "unstream",
+                           "stream3",
                            "array",
                            "repeat-count",
                            "indexed-write-clone",

@@ -1021,8 +1021,8 @@ fn outcomes_distinguish_no_else_failures_disables_aborts_and_end_of_simulation()
             .collect();
         assert_eq!(failures.len(), 2, "{label}: {stderr}");
         assert!(
-            failures[0].ends_with("outcomes.sv:22:3 (n1)")
-                && failures[1].ends_with("outcomes.sv:48:3 (ens)"),
+            failures[0].ends_with("outcomes.sv:23:3 (n1)")
+                && failures[1].ends_with("outcomes.sv:49:3 (ens)"),
             "{label}: {stderr}"
         );
     });

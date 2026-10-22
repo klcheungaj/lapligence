@@ -4,6 +4,7 @@
 // adjointness examples of 16.14.3, and juxtaposed clocking events. Clock c1
 // and c2 ticks coincide at 30 and 90. Expected lines are derived in
 // readme.md.
+`timescale 1ns/1ps
 module tb;
   logic c1 = 0, c2 = 0, a = 0, b = 0, d = 0, e = 0;
   initial begin

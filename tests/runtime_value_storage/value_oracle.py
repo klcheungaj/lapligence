@@ -32,7 +32,6 @@ for lib,T in [(d,D)] + ([(l,L)] if l is not None else []):
  lib.sv4_cast.argtypes=[T,C.c_uint32,C.c_int8];lib.sv4_cast.restype=T
  lib.sv4_mux.argtypes=[T,T,T];lib.sv4_mux.restype=T
  lib.sv4_stream.argtypes=[T,C.c_uint32,C.c_int];lib.sv4_stream.restype=T
- lib.sv4_unstream.argtypes=[T,C.c_uint32,C.c_int];lib.sv4_unstream.restype=T
  lib.sv4_part_select.argtypes=[T,C.c_int64,C.c_int64];lib.sv4_part_select.restype=T
  lib.sv4_part_select_set.argtypes=[C.POINTER(T),C.c_int64,C.c_int64,T]
 d.sv4_destroy.argtypes=[C.POINTER(D)]
@@ -67,7 +66,7 @@ for rep in range(1800 if l is not None else 0):
   r=getattr(d,'sv4_'+name)(a,wb,sb);rr=getattr(l,'sv4_'+name)(aa,wb,sb)
   assert vals(r)==vals(rr),(rep,name,vals(r),vals(rr))
   d.sv4_destroy(C.byref(r));count+=1
- for name in ['stream','unstream']:
+ for name in ['stream']:
   sl=rng.randrange(1,1000);dr=rng.randrange(2)
   r=getattr(d,'sv4_'+name)(a,sl,dr);rr=getattr(l,'sv4_'+name)(aa,sl,dr)
   assert vals(r)==vals(rr),(rep,name)

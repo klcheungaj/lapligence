@@ -1,6 +1,7 @@
 // IEEE 1800-2009 11.4.14.2-11.4.14.3: a streaming concatenation on
-// the assignment target reverses the stream operation. Short left-most
-// slices are neither padded nor truncated.
+// the assignment target reorders the consumed source as the stream
+// operator does: blocks are sliced from the right-most source bit, so a
+// short block is the left-most one, and are neither padded nor truncated.
 module tb;
     logic [5:0] six_target;
     logic [9:0] ten_target;
@@ -20,7 +21,7 @@ module tb;
     initial begin
         {<<4{six_target}} = 6'b01_0111;
         {<<4{ten_target}} = 10'b00_1101_0111;
-        if (six_target !== 6'b11_0101 || ten_target !== 10'b11_0101_0011) begin
+        if (six_target !== 6'b01_1101 || ten_target !== 10'b01_1111_0100) begin
             $display("FAIL streaming_lhs nondivisible_slices");
             $finish;
         end
@@ -32,9 +33,9 @@ module tb;
         };
         {<<64{wide_target}} = wide_source;
         if (wide_target !== {
-                2'b10,
-                64'hfedc_ba98_7654_3210,
-                64'h0123_4567_89ab_cdef
+                2'b11,
+                64'hedcb_a987_6543_2108,
+                64'h1234_5678_9abc_defc
             }) begin
             $display("FAIL streaming_lhs wide_nondivisible");
             $finish;

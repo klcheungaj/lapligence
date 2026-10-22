@@ -52,7 +52,6 @@
 #define sv4_repeat_count_to llg_gmp_sv4_repeat_count_to
 #define sv4_repeat_to llg_gmp_sv4_repeat_to
 #define sv4_stream_to llg_gmp_sv4_stream_to
-#define sv4_unstream_to llg_gmp_sv4_unstream_to
 #define sv4_part_select_to llg_gmp_sv4_part_select_to
 #define sv4_bit_select_to llg_gmp_sv4_bit_select_to
 #define sv4_idx_part_select_to llg_gmp_sv4_idx_part_select_to
@@ -137,7 +136,6 @@ void sv4_onehot_to(sv4_t* dst, const sv4_t* v, int allow_zero);
 void sv4_repeat_count_to(sv4_t* dst, const sv4_t* v);
 void sv4_repeat_to(sv4_t* dst, const sv4_t* pattern, uint64_t n);
 void sv4_stream_to(sv4_t* dst, const sv4_t* v, uint32_t slice, int right_to_left);
-void sv4_unstream_to(sv4_t* dst, const sv4_t* v, uint32_t slice, int right_to_left);
 
 /* Selections. */
 void sv4_part_select_to(sv4_t* dst, const sv4_t* v, int64_t left, int64_t right);

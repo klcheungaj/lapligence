@@ -93,7 +93,7 @@ g4_t llg_gmp_sv4_repeat_count_wide(g4_t value) {
     value.is_signed = 0;
     return llg_gmp_sv4_clone(&value);
 }
-static g4_t g4_stream(g4_t value, uint32_t slice, int reverse, int inverse) {
+static g4_t g4_stream(g4_t value, uint32_t slice, int reverse) {
     if (!slice)
         llg_gmp_sv4_fail("zero streaming slice size");
     if (!reverse || !value.width || slice >= value.width) {
@@ -107,7 +107,7 @@ static g4_t g4_stream(g4_t value, uint32_t slice, int reverse, int inverse) {
     }
     const uint64_t *a = g4_a(&value), *b = g4_b(&value);
     uint64_t *out_a = g4_mut_a(&result), *out_b = g4_mut_b(&result);
-    uint32_t remaining = inverse ? slice : value.width % slice;
+    uint32_t remaining = value.width % slice;
     if (!remaining)
         remaining = slice;
     uint32_t source_start = value.width - remaining, source_bit = source_start;
@@ -142,8 +142,5 @@ static g4_t g4_stream(g4_t value, uint32_t slice, int reverse, int inverse) {
     return result;
 }
 g4_t llg_gmp_sv4_stream_wide(g4_t value, uint32_t slice, int right_to_left) {
-    return g4_stream(value, slice, right_to_left, 0);
-}
-g4_t llg_gmp_sv4_unstream_wide(g4_t value, uint32_t slice, int right_to_left) {
-    return g4_stream(value, slice, right_to_left, 1);
+    return g4_stream(value, slice, right_to_left);
 }

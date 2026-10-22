@@ -4,6 +4,7 @@
 // record/concatenation stores, named/default and const-ref arguments, and
 // fixed-array/record operands. Equal results after operand changes are no
 // events (9.4.2); edges use the least significant bit.
+`timescale 1ns/1ps
 module tb;
   typedef logic [7:0] arr_t [0:3];
   typedef struct { logic [7:0] lo; logic [7:0] hi; } rec_t;

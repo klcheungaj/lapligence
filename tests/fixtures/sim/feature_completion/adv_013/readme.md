@@ -8,6 +8,8 @@ These public HDL fixtures cover multiclocked sequences and properties (IEEE
 Positive cases run in both optimizer modes on the legacy, compact/portable and
 compact/GMP value backends. Action lines of different assertions in one time
 step have no defined order, so each `.out` file is compared as a set of lines.
+`clocks`, `domains`, `flow` and `recursion` declare `` `timescale 1ns/1ps ``
+so that the printed times do not depend on a tool's default time unit.
 Every expected line was derived by hand from the stimulus and the clauses
 quoted below, not copied from a simulator transcript. Line numbers refer to
 the `pdftotext -layout` extraction `SystemVerilog-1800-2009.txt`.
