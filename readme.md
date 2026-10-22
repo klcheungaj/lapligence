@@ -29,8 +29,10 @@ The language implementation is incomplete. See
 [simulator feature status](docs/sim_features.md) for supported forms/limits and
 [lint rules](src/core/lint/readme.md) for linting. Semantic choices where the
 standard needed interpretation are listed, with portable test cases, in the
-[LRM decision register](docs/lrm_decisions.md). The first native frontend build
-can take several minutes and use several gigabytes.
+[LRM decision register](docs/lrm_decisions.md); what a design sees at time 0
+is explained in [time-zero initialization](docs/time_zero_initialization.md).
+The first native frontend build can take
+several minutes and use several gigabytes.
 
 ## Platform support
 
