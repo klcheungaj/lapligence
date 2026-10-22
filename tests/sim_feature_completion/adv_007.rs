@@ -45,6 +45,19 @@ fn the_latest_input_selects_the_path_and_vectors_connect_per_bit() {
 }
 
 #[test]
+fn duplicate_and_overlapping_paths_take_the_smallest_delay() {
+    for edition in BOTH {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "duplicate_paths.v",
+            fixture!("duplicate_paths.out"),
+            &["--edition", edition],
+            &[],
+        );
+    }
+}
+
+#[test]
 fn the_larger_of_path_and_distributed_delays_is_used() {
     for edition in BOTH {
         sim_cli::run_case_backend_parity(
@@ -187,23 +200,11 @@ fn unsupported_destinations_are_rejected_with_their_location() {
     );
 }
 
-/// Specparam scoping, terminal and duplicate-path errors carry the frontend's
-/// source location; llg makes two frontend warnings errors (A7-D4, A7-D5).
+/// Specparam scoping and terminal errors carry the frontend's source
+/// location; llg makes the parameter-in-specify warning an error (A7-D5).
 #[test]
 fn specify_errors_are_reported_at_their_source() {
     for edition in BOTH {
-        sim_cli::reject_case_with_args(
-            SUITE,
-            "neg_duplicate_path.v",
-            "neg_duplicate_path.v:6:6 duplicate timing path",
-            &["--edition", edition],
-        );
-        sim_cli::reject_case_with_args(
-            SUITE,
-            "neg_overlapping_path.v",
-            "neg_overlapping_path.v:7:6 duplicate timing path",
-            &["--edition", edition],
-        );
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_parameter_in_specify.v",

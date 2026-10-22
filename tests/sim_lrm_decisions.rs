@@ -2902,15 +2902,10 @@ fn a7_d3_unchanged_input_time_zero() {
 }
 
 #[test]
-fn a7_d4_duplicate_path_rejected() {
-    // Negative case: the expected stdout is empty because compilation fails.
-    assert!(
-        include_str!("fixtures/sim/lrm_decisions/A7-D4_duplicate_path_rejected.out").is_empty()
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "A7-D4_duplicate_path_rejected",
-        "duplicate timing path",
+fn a7_d4_duplicate_paths_smallest_delay() {
+    run_decision(
+        "A7-D4_duplicate_paths_smallest_delay",
+        include_str!("fixtures/sim/lrm_decisions/A7-D4_duplicate_paths_smallest_delay.out"),
     );
 }
 

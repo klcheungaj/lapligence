@@ -1466,8 +1466,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   the module body and in specify blocks give constant values (min:typ:max
   takes typical, or the `--delay-select` value) and stay distinct from parameters (`Db::specparam`); a
   specparam in a parameter value or a declaration range, a use before the
-  declaration, a `parameter` inside a specify block (A7-D5) and duplicate or
-  overlapping paths (A7-D4) are errors. Simple full (`*>`) and parallel (`=>`)
+  declaration and a `parameter` inside a specify block (A7-D5) are errors;
+  duplicate or overlapping paths are further active paths (A7-D4). Simple
+  full (`*>`) and parallel (`=>`)
   paths with 1, 2, 3, 6 or 12 delays select the delay of each 0/1/x/z
   transition (Tables 30-2 and 30-3, negative delays are zero), choose the
   smallest delay among the inputs that changed last and take the larger of

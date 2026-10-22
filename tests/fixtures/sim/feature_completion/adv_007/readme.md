@@ -107,6 +107,13 @@ on the destination then delays that result like any net delay (A7-D1).
   min(5, 1) = 1 (1401) and `f[1]` rises after 5 (1405). `a[3:2]` excludes
   `a[0]`: the change of `a[0]` at 1200 (bits 0 and 2 of `v` change from 0101
   to 1100) does not change `f`.
+- `duplicate_paths.v`: a path declared twice and a full path over bits of an
+  earlier parallel path are further active paths between the same bits; the
+  example 2 of SV 30.5.3 (L50184-50196) declares `A => Y` five times. In
+  `overlap`, `o[0]` has `a => y` (3) and `a[0] *> y[0]` (1): min(3, 1) = 1;
+  `o[1]` has only 3. In `twice`, `t` has `(1, 4)` and `(3, 2)`: rise
+  min(1, 3) = 1, fall min(4, 2) = 2. x->0 at 0 (falls): `o[0]` 1, `t` 2,
+  `o[1]` 3; rise at 10: 11, 11, 13; fall at 20: 21, 22, 23 (decision A7-D4).
 - `distributed.v`: `fig3` (gates 0 and 1, path 22, Figure 30-3): Q follows D
   at 22, 122, 222. `fig4` (gates 10 and 20, path 22, Figure 30-4): Q follows D
   after the distributed 30: 30, 130, 230; its gate output starts X (decision
@@ -144,8 +151,8 @@ on the destination then delays that result like any net delay (A7-D1).
 
 ## Negative cases
 
-- Frontend errors, located at the offending token: `neg_duplicate_path.v` and
-  `neg_overlapping_path.v` (A7-D4), `neg_parameter_in_specify.v` (A7-D5; the
+- Frontend errors, located at the offending token:
+  `neg_parameter_in_specify.v` (A7-D5; the
   frontend warns, llg promotes), `neg_specparam_in_parameter.v`,
   `neg_specparam_in_range.v`, `neg_specparam_before_declaration.v`,
   `neg_source_not_port.v`, `neg_destination_input.v`,
