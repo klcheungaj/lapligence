@@ -13,8 +13,10 @@
 //   away from zero."
 //
 // The text is silent on real counts; llg applies the 6.12.2 conversion.
-// Expected: 2.5 waits three events (2, 4, 6); -1.5 rounds to -2 and waits
-// none; 1.4 waits one event (8).
+// Expected: 2.5 waits three events (2, 4, 6); 1.4 waits one event (8).
+// A negative real count (llg: rounds and waits for nothing) is left out:
+// simulators differ on it, so llg's choice is pinned by the llg-only case
+// llg_policy/S14-D1_negative_real_repeat_count.
 `timescale 1ns / 1ns
 module tb;
   event e;
@@ -27,10 +29,7 @@ module tb;
     #1 r = 2.5;
     repeat (r) @e;
     $display("%0t repeat 2.5", $time);
-    #1 r = -1.5;
-    repeat (r) @e;
-    $display("%0t repeat -1.5", $time);
-    r = 1.4;
+    #1 r = 1.4;
     a = repeat (r) @e 5;
     $display("%0t a=%0d", $time, a);
     $finish;
