@@ -172,14 +172,12 @@ index). The emitter resolves them once when the task runs (decisions
 S27-D19/D20); other fixed-array views carry only `Index` selectors. A
 container whose elements are fixed arrays of packed words takes one element
 through a leading `Row` selector (`root_dims` are the element's dimensions and
-the remaining selectors view inside it, `IrMemoryAccess::view_selectors`), or
-the whole container or a slice of its elements with empty `root_dims`: the
-first view dimension is the outer one (`[0:0]` placeholder when whole),
-`row_cells` cells apart, followed by the element dimensions (S27-D21). An integral-index associative array of packed words has no
+the remaining selectors view inside it, `IrMemoryAccess::view_selectors`;
+S27-D21). An integral-index associative array of packed words has no
 geometry: its addresses are keys. When its elements are fixed arrays it takes
-the same `Row` selector (the key) for one element, or the whole-container
-view with the `[0:0]` placeholder first dimension, and never a slice
-(S27-D22..D25).
+the same `Row` selector (the key) for one element (S27-D23..D25). The whole
+container of fixed arrays, or a slice of its elements, is not a memory
+(S27-D22).
 The view geometry (`origin`, `selectors`, `dims`, `strides`, `total`) is the
 one fixed-array memory views use and is validated by the same
 `validate_memory_geometry`. Module and static memories keep their existing

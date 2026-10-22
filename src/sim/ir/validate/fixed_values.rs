@@ -512,13 +512,10 @@ impl Validator<'_> {
     /// placeholder first dimension: one indexed-slice position with
     /// `[0:width-1]`, or a left and a right queue bound with `[0:0]`.
     fn resizable_slice_selectors(&self, task: &crate::sim::ir::IrMemoryAccess) -> bool {
-        task.dims.len() == 1 && self.resizable_slice_shape(task, 1)
-    }
-
-    /// The runtime slice selectors of a runtime-sized view's first dimension
-    /// and its placeholder bounds; `unit` cells per outer index.
-    fn resizable_slice_shape(&self, task: &crate::sim::ir::IrMemoryAccess, unit: u64) -> bool {
         use crate::sim::ir::IrMemorySelectorKind as Kind;
+        if task.dims.len() != 1 {
+            return false;
+        }
         let packed = |selector: &crate::sim::ir::IrMemorySelector| {
             selector.dimension == 0
                 && selector.left == 0
@@ -533,7 +530,7 @@ impl Validator<'_> {
                     packed(base)
                         && i32::try_from(width - 1)
                             .is_ok_and(|span| task.dims.first() == Some(&(0, span)))
-                        && u64::from(width).checked_mul(unit) == Some(task.total)
+                        && u64::from(width) == task.total
                 }
                 _ => false,
             },
@@ -543,17 +540,16 @@ impl Validator<'_> {
                     && packed(left)
                     && packed(right)
                     && task.dims.first() == Some(&(0, 0))
-                    && task.total == unit
+                    && task.total == 1
             }
             _ => false,
         }
     }
 
-    /// A memory task over a dynamic array or queue whose elements are fixed
-    /// arrays of packed words: one element (a leading row selector, with the
-    /// element's dimensions as `root_dims`), or the whole container or a
-    /// slice of it (empty `root_dims`; the first view dimension is the outer
-    /// one, `row_cells` cells apart, followed by the element dimensions).
+    /// A memory task over one element of a dynamic array, queue or
+    /// integral-index associative array whose elements are fixed arrays of
+    /// packed words: a leading row selector, with the element's dimensions
+    /// as `root_dims` (the whole container is not a memory, decision S27-D22).
     fn validate_memory_rows(
         &self,
         task: &crate::sim::ir::IrMemoryAccess,
@@ -563,17 +559,14 @@ impl Validator<'_> {
         path: &str,
     ) -> ValidationResult {
         use crate::sim::ir::IrMemorySelectorKind as Kind;
-        let associative = matches!(
+        let keyed = matches!(
             container.kind,
             IrContainerKind::Associative {
                 key: crate::sim::ir::IrAssocKey::Integral { .. }
-            }
+            } | IrContainerKind::Dynamic
+                | IrContainerKind::Queue { .. }
         );
-        if !(associative
-            || matches!(
-                container.kind,
-                IrContainerKind::Dynamic | IrContainerKind::Queue { .. }
-            ))
+        if !keyed
             || *element
                 != (IrContainerElement::Packed {
                     width: task.element_width,
@@ -586,59 +579,17 @@ impl Validator<'_> {
                 "memory rows must be packed fixed-array elements of a dynamic array, queue or integral-index associative array",
             );
         }
-        let Some(row_cells) = dimensions.iter().try_fold(1u64, |total, (left, right)| {
-            total.checked_mul((i64::from(*left) - i64::from(*right)).unsigned_abs() + 1)
-        }) else {
-            return self.fail(path, "memory row cell count overflows");
+        let Some(row) = task.selectors.first().filter(|row| row.kind == Kind::Row) else {
+            return self.fail(path, "a memory over container rows needs one element");
         };
-        if let Some(row) = task.selectors.first().filter(|row| row.kind == Kind::Row) {
-            // The view inside the element is checked as a fixed geometry.
-            if task.root_dims != dimensions
-                || row.dimension != 0
-                || row.left != 0
-                || row.right != 0
-                || row.stride != 1
-            {
-                return self.fail(path, "memory container row disagrees with its element");
-            }
-            return Ok(());
-        }
-        let mut strides = vec![1u64; dimensions.len() + 1];
-        let mut inner = 1u64;
-        for (offset, (left, right)) in dimensions.iter().enumerate().rev() {
-            strides[offset + 1] = inner;
-            inner = inner.saturating_mul((i64::from(*left) - i64::from(*right)).unsigned_abs() + 1);
-        }
-        strides[0] = row_cells;
-        let shape = task.root_dims.is_empty()
-            && task.dims.len() == dimensions.len() + 1
-            && task.dims[1..] == *dimensions
-            && task.strides == strides;
-        if !shape {
-            return self.fail(
-                path,
-                "memory container rows view disagrees with its element",
-            );
-        }
-        let whole = !task.sliced
-            && task.selectors.is_empty()
-            && task.dims[0] == (0, 0)
-            && task.origin == 0
-            && task.total == 0;
-        let constant_slice = task.sliced
-            && task.selectors.is_empty()
-            && matches!(task.dims[0], (low, high) if 0 <= low
-                && low <= high
-                && Some(task.origin) == u64::from(low.unsigned_abs()).checked_mul(row_cells)
-                && Some(task.total) == (u64::from(high.abs_diff(low)) + 1).checked_mul(row_cells));
-        let runtime_slice =
-            task.sliced && task.origin == 0 && self.resizable_slice_shape(task, row_cells);
-        // Keys cannot be sliced: an associative array is addressed whole.
-        if !(whole || (!associative && (constant_slice || runtime_slice))) {
-            return self.fail(
-                path,
-                "memory container rows view disagrees with its element",
-            );
+        // The view inside the element is checked as a fixed geometry.
+        if task.root_dims != dimensions
+            || row.dimension != 0
+            || row.left != 0
+            || row.right != 0
+            || row.stride != 1
+        {
+            return self.fail(path, "memory container row disagrees with its element");
         }
         Ok(())
     }

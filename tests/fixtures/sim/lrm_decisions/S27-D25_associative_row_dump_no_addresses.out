@@ -5,10 +5,6 @@ s27_d25_cell.mem:
   0b
 s27_d25_start.mem:
   0b
-s27_d25_all.mem:
-  @00000003
-  0a
-  0b
-  @00000004
+s27_d25_four.mem:
   xx
   0a

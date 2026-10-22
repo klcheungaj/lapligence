@@ -1358,10 +1358,16 @@ fn s27_d21_container_row_memory() {
 }
 
 #[test]
-fn s27_d22_associative_rows_whole() {
-    run_decision(
-        "S27-D22_associative_rows_whole",
-        include_str!("fixtures/sim/lrm_decisions/S27-D22_associative_rows_whole.out"),
+fn s27_d22_container_of_arrays_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S27-D22_container_of_arrays_rejected.out")
+            .is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "S27-D22_container_of_arrays_rejected",
+        "$readmemh memory_name cannot be a whole dynamic, queue or associative array of unpacked arrays, or a slice of one; name one of its elements, at ",
     );
 }
 

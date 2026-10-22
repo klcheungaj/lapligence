@@ -585,12 +585,14 @@ impl EmitCtx<'_, '_> {
         .then_some((container, row, inner))
     }
 
-    /// A memory file task over a dynamic array or queue whose elements are
-    /// fixed arrays of packed words, addressed in place: one element `row`
-    /// (with any further selection inside it), or the whole container or a
-    /// slice of it, whose outer dimension is the current size (IEEE
+    /// A memory file task over one element `row` of a dynamic array, queue or
+    /// associative array whose elements are fixed arrays of packed words,
+    /// addressed in place with any further selection inside it (IEEE
     /// 1800-2009 21.4: "a partially indexed multidimensional unpacked array
-    /// that resolves to a lesser dimensioned unpacked array").
+    /// that resolves to a lesser dimensioned unpacked array"). The whole
+    /// container, or a slice of its elements, is a multidimensional memory
+    /// with a variable-size dimension, which the text does not describe;
+    /// like industry-standard tools llg rejects it (decision S27-D22).
     #[allow(clippy::too_many_arguments)]
     fn lower_container_rows_task(
         &mut self,
@@ -608,23 +610,18 @@ impl EmitCtx<'_, '_> {
             let container = &self.cg.model.containers[container];
             (container.kind.clone(), container.element.clone())
         };
-        // An associative array of unpacked arrays is addressed by key: one
-        // element (`aa[k]`) or the whole array (S27-D22..D24).
-        let associative = match &kind {
-            IrContainerKind::Associative {
-                key: IrAssocKey::Integral { .. },
-            } => true,
-            IrContainerKind::Associative { key } => {
+        if let IrContainerKind::Associative { key } = &kind {
+            if !matches!(key, IrAssocKey::Integral { .. }) {
                 return Err(self.associative_key_error(name, args, key));
             }
-            IrContainerKind::Dynamic | IrContainerKind::Queue { .. } => false,
-        };
-        if associative && row.is_none() && (!selectors.is_empty() || slice.is_some()) {
+        }
+        let Some(row) = row else {
             return Err(format!(
-                "{name} requires a whole associative array or one of its elements, not a selection of its keys, in `{}`",
+                "{name} memory_name cannot be a whole dynamic, queue or associative array of unpacked arrays, or a slice of one; name one of its elements, at {} in `{}`",
+                self.cg.source_location(args[1]),
                 self.path
             ));
-        }
+        };
         let packed_elements = || {
             format!(
                 "{name} requires packed integral or packed-struct memory elements in `{}`",
@@ -662,71 +659,24 @@ impl EmitCtx<'_, '_> {
             return Err(packed_elements());
         }
         let operands = self.lower_memory_operands(name, args, &descriptor)?;
-        let row_cells = Self::memory_extent_product(name, &dimensions, &self.path)?;
-        let (root_dims, mut ir_selectors, geometry) = match row {
-            Some(row) => {
-                let row = self
-                    .cg
-                    .lower_container_top_index(&self.path, container, row)?;
-                if row.is_real() || row.width == 0 {
-                    return Err(format!(
-                        "{name} memory view selectors must be packed integral indices in `{}`",
-                        self.path
-                    ));
-                }
-                let geometry = self.memory_geometry(name, &dimensions, selectors, slice)?;
-                let row = IrMemorySelector {
-                    dimension: 0,
-                    left: 0,
-                    right: 0,
-                    stride: 1,
-                    value: row,
-                    kind: IrMemorySelectorKind::Row,
-                };
-                (dimensions.clone(), vec![row], geometry)
-            }
-            None => {
-                if !selectors.is_empty() {
-                    return Err(format!(
-                        "{name} requires a whole dynamic array or queue or a slice of one, not an element, in `{}`",
-                        self.path
-                    ));
-                }
-                let outer = match slice {
-                    Some(slice) => self.resizable_memory_slice(name, slice, container, &kind)?,
-                    None => MemoryGeometry {
-                        origin: 0,
-                        selectors: Vec::new(),
-                        sliced: false,
-                        dims: vec![(0, 0)],
-                        strides: vec![1],
-                        total: 0,
-                    },
-                };
-                let scale = |value: u64| {
-                    value.checked_mul(row_cells).ok_or_else(|| {
-                        format!("{name} memory view extent overflow in `{}`", self.path)
-                    })
-                };
-                let mut dims = outer.dims;
-                dims.extend_from_slice(&dimensions);
-                let mut strides = vec![row_cells];
-                strides.extend(Self::memory_dimension_strides(
-                    name,
-                    &dimensions,
-                    &self.path,
-                )?);
-                let geometry = MemoryGeometry {
-                    origin: scale(outer.origin)?,
-                    selectors: outer.selectors,
-                    sliced: outer.sliced,
-                    dims,
-                    strides,
-                    total: scale(outer.total)?,
-                };
-                (Vec::new(), Vec::new(), geometry)
-            }
-        };
+        let row = self
+            .cg
+            .lower_container_top_index(&self.path, container, row)?;
+        if row.is_real() || row.width == 0 {
+            return Err(format!(
+                "{name} memory view selectors must be packed integral indices in `{}`",
+                self.path
+            ));
+        }
+        let geometry = self.memory_geometry(name, &dimensions, selectors, slice)?;
+        let mut ir_selectors = vec![IrMemorySelector {
+            dimension: 0,
+            left: 0,
+            right: 0,
+            stride: 1,
+            value: row,
+            kind: IrMemorySelectorKind::Row,
+        }];
         self.check_memory_edition(name, dimensions.len() + 1, geometry.sliced)?;
         ir_selectors.extend(geometry.selectors);
         let MemorySource { path, text } = source;
@@ -735,7 +685,7 @@ impl EmitCtx<'_, '_> {
             path,
             text,
             storage: IrMemoryStorage::Container(container),
-            root_dims,
+            root_dims: dimensions,
             element_width: width,
             signed,
             two_state,

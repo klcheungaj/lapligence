@@ -728,21 +728,18 @@ and region rules and published once like `sig_write_ranges`) and dynamic arrays 
 (`llg_dyn_memory_*`/`llg_queue_memory_*`, current size, never resized; a
 `total` 0 slice must lie within that size, and reversed bounds select no
 element; one contents notification after a load), and dynamic arrays or
-queues of fixed arrays (`llg_*_rows_memory_*`: one `llg_value_t` element, the
-whole container or a slice of its elements; cell `i` is item `i % row_cells`
-of row `i / row_cells`) through one storage abstraction, so parsing, addressing and range checks
+queues of fixed arrays (`llg_*_rows_memory_*`: one `llg_value_t` element;
+cell `i` is item `i` of that row) through one storage abstraction, so parsing, addressing and range checks
 stay shared. Integral-index associative arrays (`llg_assoc_memory_*`) share
 the tokenizer and word conversion but address by key: start, finish and wide
 `@` addresses are cast to the index type, each word is an
 `llg_assoc_set_integral`, and a dump writes `@key` before every entry in index
 order (S27-D15..D17). Associative arrays of fixed arrays
-(`llg_assoc_rows_memory_*`, an `llg_assoc_value_t`) take `LLG_MEMORY_ROWS_ONE`
-(`row` is the key; a load creates a missing element after the file and range
-are validated through `llg_memory_storage_resolve`, a dump of a missing or
-unknown key writes nothing) or `LLG_MEMORY_ROWS_ALL`: an address is a key, the
-words fill the element's cells through `llg_memory_view_index` over the
-placeholder outer dimension, and a dump writes `@key` plus the cells
-(S27-D22..D25). Report through
+(`llg_assoc_rows_memory_*`, an `llg_assoc_value_t`) take one element (`row`
+is the key; a load creates a missing element after the file and range are
+validated through `llg_memory_storage_resolve`, a dump of a missing or
+unknown key writes the default value, S27-D23..D25); the whole container is
+not a memory (S27-D22). Report through
 `llg_memory_warning` (missing file, word-count mismatch, X/Z conversion, empty
 resizable array) or `llg_memory_error` (malformed token, address outside the
 task range or memory, enum value, invalid range, a generated `origin` of

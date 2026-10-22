@@ -1734,15 +1734,15 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   whole dynamic array or queue at its current size, never resized (S27-D10),
   a slice of one checked against that size (S27-D14), an element of a
   dynamic array or queue of unpacked arrays (`da[k]`, also selected further
-  inside), or the whole array or a slice of its elements (S27-D21), or an
+  inside, S27-D21), or an
   associative array with an integral index (S27-D15/D16: entries created or
   updated at each address, addresses cast to the index type, index 0 by
-  default; a wildcard index is rejected, S27-D18). When the elements of an
-  associative array are unpacked arrays, the whole array maps an address to a
-  key and the words after it to that element's cells in row-major order
-  (S27-D22), and one element (`aa[k]`, also selected further inside) is a
-  fixed unpacked array that a load creates when missing (S27-D23); a string
-  or wildcard index is rejected with its location. The memory_name is
+  default; a wildcard index is rejected, S27-D18). One element of an
+  associative array of unpacked arrays (`aa[k]`, also selected further
+  inside) is a fixed unpacked array that a load creates when missing
+  (S27-D23); a string or wildcard index is rejected with its location. The
+  whole dynamic, queue or associative array of unpacked arrays, or a slice
+  of its elements, is rejected with its location (S27-D22). The memory_name is
   evaluated once per call; whole variables and locals, and constant members
   of them, load in place (S27-D13).
   Fixed packed memories may have multiple unpacked dimensions and selected
@@ -1796,9 +1796,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `@` addresses (S27-D11); a range outside the memory is rejected before the
   file is opened (S27-D12). Associative arrays dump their existing entries in
   index order, each word after its own `@` address with the digits of the
-  index width (S27-D17); an associative
-  array of unpacked arrays writes an `@` key before each element's cells
-  (S27-D22), while one element of it writes its cells without addresses and a
+  index width (S27-D17); one element of an
+  associative array of unpacked arrays writes its cells without addresses and a
   missing or unknown key warns and dumps the array's default value without
   creating the element (S27-D24, S27-D25).
   The same element/view restrictions apply; writers
