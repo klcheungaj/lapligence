@@ -107,14 +107,14 @@ module tb;
     pool[0].srandom(wide_seed);
     $display("wide seed truncates %0d", pool[0].get_randstate() == seven);
 
-    // A shallow copy copies the RNG state (8.11) and takes no thread value
-    // (S28-D6).
+    // A shallow copy copies the RNG state (8.11) and, created by `new`, takes
+    // one thread value (S28-D6).
     process::self().srandom(11);
     x = $urandom;
     process::self().srandom(11);
     copy = new a;
     y = $urandom;
-    $display("copy keeps state %0d %0d", copy.get_randstate() == seven, x == y);
+    $display("copy keeps state %0d %0d", copy.get_randstate() == seven, x != y);
     copy.srandom(8);
     $display("copy independent %0d", a.get_randstate() == seven);
     $finish;

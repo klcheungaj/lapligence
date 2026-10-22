@@ -5,9 +5,10 @@
 // states for randomization include the random number generator (RNG)
 // state". 18.14.1 L31162-31163: "When an object is created using new, its
 // RNG is seeded with the next random value from the thread".
-// Decision (LRM text for the copied state; that the copy takes no value from
-// the thread is an llg choice, since 8.11 lists no seeding step): `new h`
-// copies h's RNG state and leaves the thread's stream unchanged.
+// Decision (LRM text for the copied state; that the copy, being created with
+// `new`, takes one value from the thread is an llg reading of 18.14.1, since
+// 8.11 lists no seeding step): `new h` takes the creating thread's next
+// value, as `new` does, and then copies h's RNG state.
 // The object states are compared through the values randomize() draws from
 // them; the form of get_randstate() strings is not specified.
 class item_c;
@@ -29,7 +30,7 @@ module tb;
     void'(a.randomize());
     void'(b.randomize());
     $display("state copied %0d", a.v == b.v);
-    $display("thread unchanged %0d", x == y);
+    $display("copy takes a thread value %0d", x != y);
     c.srandom(6);
     void'(c.randomize());
     $display("copy independent %0d", a.v != c.v);

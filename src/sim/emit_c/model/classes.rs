@@ -289,8 +289,10 @@ static void llg_class_handle_store(void* handle, uint32_t expected, size_t index
         out.push_str("    return object;\n}\n");
         // `new` seeds the object from the creating thread's next value; a
         // model that never inspects object streams still consumes it when
-        // thread streams are observable (SV 18.14.1). A shallow copy only
-        // allocates (llg_class_alloc_*) and copies the state (SV 8.11).
+        // thread streams are observable (SV 18.14.1). A shallow copy is
+        // created with `new` too, so it also takes the thread's next value
+        // (S28-D6), and then copies the state, the RNG state included
+        // (SV 8.11).
         if model.random.objects || model.random.threads {
             let target = if model.random.objects {
                 "&object->rng"
@@ -305,7 +307,8 @@ static void llg_class_handle_store(void* handle, uint32_t expected, size_t index
     }
 }
 
-/// Shallow copy `new h` (SV 8.11): allocate class `index` without running
+/// Shallow copy `new h` (SV 8.11): allocate class `index` as `new` does
+/// (taking the creating thread's next value, S28-D6) without running
 /// constructors or initializers and copy each field from `source`, whose
 /// object is of this class or a derived one (derived layouts start with the
 /// base fields). Packed, real and string values and nested containers and
@@ -318,13 +321,8 @@ fn render_class_copy(
     out: &mut String,
 ) {
     use crate::sim::ir::IrClassFieldType;
-    let allocate = if model.random.objects || model.random.threads {
-        "alloc"
-    } else {
-        "new"
-    };
     out.push_str(&format!(
-        "static void* llg_class_copy_{index}(void* source) {{\n    const llg_class_object_t* from = (const llg_class_object_t*)source;\n    if (!from) return NULL;\n    llg_class_object_t* object = (llg_class_object_t*)llg_class_{allocate}_{index}();\n"
+        "static void* llg_class_copy_{index}(void* source) {{\n    const llg_class_object_t* from = (const llg_class_object_t*)source;\n    if (!from) return NULL;\n    llg_class_object_t* object = (llg_class_object_t*)llg_class_new_{index}();\n"
     ));
     if model.random.objects {
         out.push_str("    object->rng = from->rng;\n");
