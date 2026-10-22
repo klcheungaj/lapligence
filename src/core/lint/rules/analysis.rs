@@ -16,7 +16,7 @@
 //! - `collect_driver_writes` is the active-driver variant used by rules that
 //!   must distinguish `force` from `release`/`deassign`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::core::db::Operation;
 use crate::core::db::{
@@ -919,7 +919,7 @@ pub fn port_connected_signals(db: &Db) -> HashSet<NodeId> {
         for c in &db.node(id).children {
             if let NodeKind::Port { high, low, .. } = db.node_kind(*c) {
                 out.extend(high.iter().copied());
-                out.extend(low.iter().copied());
+                out.extend(port_internal_signals(db, *c, *low));
             }
         }
     }
@@ -943,39 +943,140 @@ pub fn port_unconnected(db: &Db, id: NodeId) -> bool {
     }
 }
 
-/// Driver counts contributed by port links: an input port's low connection
-/// (child-side signal) is driven by the parent, an output port's high
-/// connection (parent-side signal) is driven by the child, and inout ports
-/// drive both sides.
-pub fn port_link_drivers(db: &Db) -> HashMap<NodeId, u32> {
-    let mut out: HashMap<NodeId, u32> = HashMap::new();
+/// Constant bit interval `(low, high)` in declared indices that a driver
+/// target selects from its signal; `None` for a whole signal or a select
+/// whose bounds are not constants.
+pub type DrivenBits = Option<(i128, i128)>;
+
+/// The bits of `signal` that the target expression `expr` drives: a
+/// constant bit, part or indexed part select directly on the signal, or
+/// the whole signal.
+pub fn driven_bit_interval(db: &Db, expr: NodeId, signal: NodeId) -> DrivenBits {
+    let direct = |base: &NodeId| {
+        matches!(db.node_kind(*base), NodeKind::Expr(ExprKind::Ref { .. }))
+            && signal_of_ref(db, *base) == Some(signal)
+    };
+    match db.node_kind(expr) {
+        NodeKind::Expr(ExprKind::BitSelect { base, index }) if direct(base) => {
+            const_i128(db, *index).map(|index| (index, index))
+        }
+        NodeKind::Expr(ExprKind::PartSelect { base, left, right }) if direct(base) => {
+            let (left, right) = (const_i128(db, *left)?, const_i128(db, *right)?);
+            Some((left.min(right), left.max(right)))
+        }
+        NodeKind::Expr(ExprKind::IndexedPartSelect {
+            base,
+            base_expr,
+            width_expr,
+            neg,
+        }) if direct(base) => {
+            let (start, width) = (const_i128(db, *base_expr)?, const_i128(db, *width_expr)?);
+            if width < 1 {
+                return None;
+            }
+            Some(if *neg {
+                (start.checked_sub(width - 1)?, start)
+            } else {
+                (start, start.checked_add(width - 1)?)
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The signals a port expression target names, each with the bits it
+/// selects: every member of a concatenation, a select's base signal or a
+/// whole signal (SV 23.2.2.1 port references, 23.2.2.2 explicit ports).
+fn port_expression_targets(db: &Db, expr: NodeId, out: &mut Vec<(NodeId, DrivenBits)>) {
+    if let NodeKind::Expr(ExprKind::Operation {
+        op: Operation::Concat,
+        operands,
+        ..
+    }) = db.node_kind(expr)
+    {
+        for member in operands {
+            port_expression_targets(db, *member, out);
+        }
+        return;
+    }
+    if let Some(signal) = signal_of_ref(db, expr) {
+        out.push((signal, driven_bit_interval(db, expr, signal)));
+    }
+}
+
+/// The child-side signals of a port: its whole internal symbol `low`, or
+/// every signal its select or concatenation port expression names
+/// (`Db::port_internal_expression`), with the bits it covers.
+pub fn port_internal_targets(
+    db: &Db,
+    port: NodeId,
+    low: Option<NodeId>,
+) -> Vec<(NodeId, DrivenBits)> {
+    if let Some(low) = low {
+        return vec![(low, None)];
+    }
+    let mut out = Vec::new();
+    if let Some(expr) = db.port_internal_expression(port) {
+        port_expression_targets(db, expr, &mut out);
+    }
+    out
+}
+
+/// The parent-side signals an output or inout connection drives: each
+/// member of a concatenation actual and the base of a select actual, with
+/// the bits it covers, or the resolved whole `high` signal.
+pub fn port_actual_targets(
+    db: &Db,
+    high: Option<NodeId>,
+    high_expr: Option<NodeId>,
+) -> Vec<(NodeId, DrivenBits)> {
+    let mut out = Vec::new();
+    if let Some(expr) = high_expr {
+        port_expression_targets(db, expr, &mut out);
+    }
+    if out.is_empty() {
+        out.extend(high.map(|high| (high, None)));
+    }
+    out
+}
+
+/// [`port_internal_targets`] without the bit intervals.
+pub fn port_internal_signals(db: &Db, port: NodeId, low: Option<NodeId>) -> Vec<NodeId> {
+    port_internal_targets(db, port, low)
+        .into_iter()
+        .map(|(signal, _)| signal)
+        .collect()
+}
+
+/// Drivers contributed by port links, with the bits each drives: an input
+/// port drives its child-side signals, an output port its parent-side
+/// signal, and an inout port both sides.  A parent-side bits interval comes
+/// from a constant select actual (`.p(v[3])`).
+pub fn port_link_drivers(db: &Db) -> Vec<(NodeId, DrivenBits)> {
+    let mut out = Vec::new();
     for (id, _) in iter_instances(db) {
         for c in &db.node(id).children {
             let NodeKind::Port {
                 direction,
                 high,
                 low,
+                high_expr,
                 ..
             } = db.node_kind(*c)
             else {
                 continue;
             };
-            let (a, b) = match direction {
-                Direction::Input => (*low, None),
-                Direction::Output => (*high, None),
+            let parent = || port_actual_targets(db, *high, *high_expr);
+            match direction {
+                Direction::Input => out.extend(port_internal_targets(db, *c, *low)),
+                Direction::Output => out.extend(parent()),
                 Direction::Inout => {
-                    if low == high {
-                        (*low, None)
-                    } else {
-                        (*low, *high)
+                    out.extend(port_internal_targets(db, *c, *low));
+                    if low.is_none() || low != high {
+                        out.extend(parent());
                     }
                 }
-                Direction::Mixed | Direction::None | Direction::Ref | Direction::Unsupported => {
-                    (None, None)
-                }
-            };
-            for sig in [a, b].into_iter().flatten() {
-                *out.entry(sig).or_insert(0) += 1;
+                Direction::Mixed | Direction::None | Direction::Ref | Direction::Unsupported => {}
             }
         }
     }
@@ -986,8 +1087,8 @@ pub fn port_link_drivers(db: &Db) -> HashMap<NodeId, u32> {
 /// external ports or ports already classified as unconnected.
 ///
 /// This set intentionally has different semantics from [`port_link_drivers`],
-/// whose historical counts are used by `multi-driver` and include every
-/// resolved side.  It is the active-flow view needed by `undriven-signal`.
+/// whose driver list is used by `multi-driver` and includes every resolved
+/// side.  It is the active-flow view needed by `undriven-signal`.
 pub fn connected_port_link_drivers(db: &Db) -> HashSet<NodeId> {
     let mut out = HashSet::new();
     for (id, _) in iter_instances(db) {
@@ -1000,6 +1101,7 @@ pub fn connected_port_link_drivers(db: &Db) -> HashSet<NodeId> {
                 direction,
                 high,
                 low,
+                high_expr,
                 ..
             } = db.node_kind(*c)
             else {
@@ -1010,27 +1112,27 @@ pub fn connected_port_link_drivers(db: &Db) -> HashSet<NodeId> {
             }
             match direction {
                 Direction::Input => {
-                    if let Some(sig) = low {
-                        out.insert(*sig);
-                    }
+                    out.extend(port_internal_signals(db, *c, *low));
                 }
                 Direction::Output => {
-                    if let Some(sig) = high {
-                        out.insert(*sig);
-                    }
+                    out.extend(
+                        port_actual_targets(db, *high, *high_expr)
+                            .into_iter()
+                            .map(|t| t.0),
+                    );
                 }
                 Direction::Inout => {
-                    if let Some(sig) = low {
-                        out.insert(*sig);
-                    }
-                    if let Some(sig) = high {
-                        out.insert(*sig);
-                    }
+                    out.extend(port_internal_signals(db, *c, *low));
+                    out.extend(
+                        port_actual_targets(db, *high, *high_expr)
+                            .into_iter()
+                            .map(|t| t.0),
+                    );
                 }
                 // A `ref` port aliases the actual: either side may write it
                 // (IEEE 1800-2009 23.3.3 shared variable behavior), so both count as driven.
                 Direction::Ref => {
-                    out.extend(low.iter().copied());
+                    out.extend(port_internal_signals(db, *c, *low));
                     out.extend(high.iter().copied());
                 }
                 Direction::Mixed | Direction::None | Direction::Unsupported => {}
@@ -1075,14 +1177,10 @@ pub fn port_link_reads(db: &Db) -> HashSet<NodeId> {
                     }
                 }
                 Direction::Output => {
-                    if let Some(sig) = low {
-                        out.insert(*sig);
-                    }
+                    out.extend(port_internal_signals(db, *c, *low));
                 }
                 Direction::Inout => {
-                    if let Some(sig) = low {
-                        out.insert(*sig);
-                    }
+                    out.extend(port_internal_signals(db, *c, *low));
                     if let Some(expr) = high_expr {
                         out.extend(collect_reads(db, *expr));
                     }
@@ -1109,9 +1207,7 @@ pub fn top_external_port_signals(db: &Db) -> HashSet<NodeId> {
                 continue;
             };
             if matches!(direction, Direction::Input | Direction::Inout) {
-                if let Some(sig) = low {
-                    out.insert(*sig);
-                }
+                out.extend(port_internal_signals(db, *c, *low));
             }
         }
     }
@@ -1137,9 +1233,7 @@ pub fn unconnected_port_signals(db: &Db) -> HashSet<NodeId> {
             if let Some(sig) = high {
                 out.insert(*sig);
             }
-            if let Some(sig) = low {
-                out.insert(*sig);
-            }
+            out.extend(port_internal_signals(db, *c, *low));
         }
     }
     out
@@ -1518,14 +1612,35 @@ mod tests {
         // An input port drives the child-side signal (`low`), not the parent
         // net `in_a`; an output port drives the parent-side signal `out_b`.
         assert!(
-            !drivers.contains_key(&in_a),
+            !drivers.iter().any(|(signal, _)| *signal == in_a),
             "input port must not drive the parent net"
         );
-        assert!(
-            drivers.contains_key(&out_b),
-            "output port drives the parent net"
+        let out_b_drivers: Vec<_> = drivers
+            .iter()
+            .filter(|(signal, _)| *signal == out_b)
+            .collect();
+        assert_eq!(
+            out_b_drivers,
+            [&(out_b, None)],
+            "output port drives the whole parent net once"
         );
-        assert_eq!(drivers[&out_b], 1);
+    }
+
+    #[test]
+    fn port_link_drivers_record_constant_bit_ranges() {
+        let db = db_of(
+            "module child(input wire a, output wire b); endmodule \
+             module top; wire [3:0] n; child u0 (.a(n[0]), .b(n[2])); \
+             child u1 (.a(n[0]), .b(n[3:3])); endmodule",
+        );
+        let n = find_signal(&db, "n");
+        let mut bits: Vec<_> = port_link_drivers(&db)
+            .into_iter()
+            .filter(|(signal, _)| *signal == n)
+            .map(|(_, bits)| bits)
+            .collect();
+        bits.sort();
+        assert_eq!(bits, [Some((2, 2)), Some((3, 3))]);
     }
 
     #[test]

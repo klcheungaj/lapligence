@@ -5,13 +5,15 @@
 //! continuous assignment whose LHS base is the signal, and each port link
 //! that drives it (input ports drive the child-side signal, output ports
 //! drive the parent-side signal).  More than one driver for a net or variable
-//! is a Warning.
+//! is a Warning, unless every driver is a constant select of disjoint bits
+//! (continuous assignments and port links such as `.p(v[3])`).
 
 use std::collections::HashMap;
 
 use crate::core::db::{NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
-    all_nodes, collect_writes, port_link_drivers, signal_scope_path,
+    all_nodes, collect_writes, driven_bit_interval, port_link_drivers, signal_scope_path,
+    DrivenBits,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -29,24 +31,33 @@ impl LintRule for MultiDriverRule {
 
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
-        let mut drivers: HashMap<NodeId, u32> = port_link_drivers(db);
+        let mut drivers: HashMap<NodeId, Vec<DrivenBits>> = HashMap::new();
+        for (signal, bits) in port_link_drivers(db) {
+            drivers.entry(signal).or_default().push(bits);
+        }
         for id in all_nodes(db) {
             match db.node_kind(id) {
-                NodeKind::Process { .. } | NodeKind::ContAssign { .. } => {
+                NodeKind::Process { .. } => {
                     // collect_writes dedupes per root, so a process counts as
                     // one driver even when it assigns the signal several times.
                     for w in collect_writes(db, id) {
-                        *drivers.entry(w).or_insert(0) += 1;
+                        drivers.entry(w).or_default().push(None);
+                    }
+                }
+                NodeKind::ContAssign { .. } => {
+                    let target = db.node(id).children.first().copied();
+                    for w in collect_writes(db, id) {
+                        let bits = target.and_then(|target| driven_bit_interval(db, target, w));
+                        drivers.entry(w).or_default().push(bits);
                     }
                 }
                 _ => {}
             }
         }
-        let mut signals: Vec<NodeId> = drivers
-            .iter()
-            .filter(|(_, count)| **count > 1)
-            .map(|(sig, _)| *sig)
-            .collect();
+        // Drivers of disjoint constant bit ranges (`assign n[0] = ...` and
+        // `.y(n[1])`) do not drive the same bits.
+        drivers.retain(|_, bits| bits.len() > 1 && drivers_overlap(bits));
+        let mut signals: Vec<NodeId> = drivers.keys().copied().collect();
         signals.sort_by_key(|s| s.0);
         signals
             .into_iter()
@@ -63,12 +74,26 @@ impl LintRule for MultiDriverRule {
                         "signal `{}` in `{}` has {} drivers",
                         node.name,
                         signal_scope_path(db, sig),
-                        drivers[&sig]
+                        drivers[&sig].len()
                     ),
                 }
             })
             .collect()
     }
+}
+
+/// True when two of the drivers can drive a common bit; a driver without a
+/// constant interval covers the whole signal.
+fn drivers_overlap(bits: &[DrivenBits]) -> bool {
+    let mut intervals = Vec::with_capacity(bits.len());
+    for interval in bits {
+        let Some(interval) = interval else {
+            return true;
+        };
+        intervals.push(*interval);
+    }
+    intervals.sort_unstable();
+    intervals.windows(2).any(|pair| pair[1].0 <= pair[0].1)
 }
 
 #[cfg(test)]
@@ -125,5 +150,65 @@ mod tests {
         let got2 = rule_diags(&diags2, "multi-driver");
         assert_eq!(got2.len(), 1, "one multi-driver finding: {:?}", diags2);
         assert!(got2[0].message.contains("out_b"));
+    }
+
+    const INVERTER: &str = "module inv(input a, output y);\n  assign y = ~a;\nendmodule\n";
+
+    #[test]
+    fn bit_select_port_links_to_disjoint_bits_are_separate_drivers() {
+        let source = format!(
+            "{INVERTER}module top;\n  wire [3:0] n;\n  logic [3:0] v;\n\
+             \x20 assign n[0] = 1'b0;\n\
+             \x20 inv g0(.a(n[0]), .y(n[1]));\n\
+             \x20 inv g1(.a(n[1]), .y(n[2]));\n\
+             \x20 inv g2(n[2], v[3]);\nendmodule\n"
+        );
+        let diags = lint_design(&source, "top");
+        let got = rule_diags(&diags, "multi-driver");
+        assert!(got.is_empty(), "disjoint bits: {:?}", diags);
+    }
+
+    #[test]
+    fn bit_select_port_link_overlapping_another_driver_warns() {
+        let source = format!(
+            "{INVERTER}module top;\n  wire [3:0] n;\n\
+             \x20 assign n[1] = 1'b0;\n\
+             \x20 inv g0(.a(n[0]), .y(n[1]));\nendmodule\n"
+        );
+        let diags = lint_design(&source, "top");
+        let got = rule_diags(&diags, "multi-driver");
+        assert_eq!(got.len(), 1, "same bit twice: {:?}", diags);
+        assert!(got[0].message.contains("`n`") && got[0].message.contains("2 drivers"));
+
+        // A whole-signal driver overlaps every bit-select driver.
+        let source = format!(
+            "{INVERTER}module top;\n  wire [3:0] n;\n  wire a;\n\
+             \x20 assign n = 4'b0;\n\
+             \x20 inv g0(.a(a), .y(n[3]));\nendmodule\n"
+        );
+        let diags = lint_design(&source, "top");
+        assert_eq!(
+            rule_diags(&diags, "multi-driver").len(),
+            1,
+            "whole and bit: {:?}",
+            diags
+        );
+    }
+
+    #[test]
+    fn output_port_expression_parts_drive_their_bits() {
+        let diags = lint_design(
+            "module m(.p(r[1:0]), .q(r[3:2]));\n  output logic [3:0] r;\n\
+             \x20 initial r = 4'b0110;\nendmodule\n\
+             module top;\n  wire [3:0] w;\n\
+             \x20 m c(.p(w[1:0]), .q(w[3:2]));\nendmodule\n",
+            "top",
+        );
+        let got = rule_diags(&diags, "multi-driver");
+        assert!(
+            got.is_empty(),
+            "two output parts, disjoint bits: {:?}",
+            diags
+        );
     }
 }

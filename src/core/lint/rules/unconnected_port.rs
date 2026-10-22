@@ -36,7 +36,11 @@ impl LintRule for UnconnectedPortRule {
             let inst = db.node(inst_id);
             let module = def_name;
             for c in &inst.children {
-                if !matches!(db.node_kind(*c), NodeKind::Port { .. }) {
+                // A multi-port's components share its connection and are
+                // reported through the multi-port.
+                if !matches!(db.node_kind(*c), NodeKind::Port { .. })
+                    || db.multi_port_of(*c).is_some()
+                {
                     continue;
                 }
                 if !port_unconnected(db, *c) {
@@ -263,5 +267,25 @@ mod tests {
         let got = rule_diags(&diags, "unconnected-port");
         assert_eq!(got.len(), 1, "{diags:?}");
         assert_eq!(got[0].severity, LintSeverity::Error);
+    }
+
+    #[test]
+    fn connected_concatenated_port_is_quiet() {
+        let diags = lint_design(
+            "module m(.p({a, b}), .q(c[1:0]));\n  input a, b;\n  input [3:0] c;\nendmodule\n\
+             module top;\n  logic [1:0] d, e;\n  m u(.p(d), .q(e));\nendmodule\n",
+            "top",
+        );
+        let got = rule_diags(&diags, "unconnected-port");
+        assert!(got.is_empty(), "all ports connected: {:?}", diags);
+
+        let diags = lint_design(
+            "module m(.p({a, b}), .q(c[1:0]));\n  input a, b;\n  input [3:0] c;\nendmodule\n\
+             module top;\n  logic [1:0] e;\n  m u(.q(e));\nendmodule\n",
+            "top",
+        );
+        let got = rule_diags(&diags, "unconnected-port");
+        assert_eq!(got.len(), 1, "the concatenated port is open: {:?}", diags);
+        assert!(got[0].message.contains("port `p`"), "{}", got[0].message);
     }
 }

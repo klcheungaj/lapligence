@@ -730,4 +730,21 @@ mod tests {
         );
         assert_eq!(names, ["floating"], "{names:?}");
     }
+
+    #[test]
+    fn port_expression_inputs_and_concatenated_actuals_are_driven() {
+        let diags = run_rule(
+            "module m(a[3], a[2:0], .r({b, c}));\n  input [3:0] a;\n  input b, c;\n\
+             \x20 wire [5:0] sink;\n  assign sink = {a, b, c};\nendmodule\n\
+             module o(output logic [3:0] y);\n  initial y = 4'b1010;\nendmodule\n\
+             module top;\n  logic [1:0] va, vb;\n  wire [3:0] sink;\n\
+             \x20 o u0(.y({va, vb}));\n  assign sink = {va, vb};\n\
+             \x20 m u1(1'b1, va + vb, 2'b01);\nendmodule\n",
+            "top",
+        );
+        assert!(
+            diags.is_empty(),
+            "every read signal has a port driver: {diags:?}"
+        );
+    }
 }
