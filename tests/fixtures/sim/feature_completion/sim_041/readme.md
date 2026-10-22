@@ -184,14 +184,21 @@ and the noncontext `cell_peek`. `tb` has `u1` (ID 1), `u2` (ID 2) and
 - `ch_byte(-5)`: SV sees `b = -5` whatever the signedness of `char`; `o = -6`,
   result -10.
 - `ch_rec(50)`: SV -> C -> SV 50 levels deep, `ch_down(n) = n + ch_rec(n-1)`:
-  1275.
+  1275. `ch_down` is automatic, so each level has its own `n` (13.4.2
+  L18862-18863: "An automatic function is reentrant, with all the function
+  declarations allocated dynamically for each concurrent function call"); with
+  a static `ch_down` the deeper calls overwrite the shared `n`, and the result
+  would depend on whether `n` is read before the call, which 11.4.2
+  L14499-14501 leaves undefined ("The ordering of assignment operations
+  relative to any other operation within an expression is undefined").
 - `ch_alias`: C passes one address for both outputs of `ch_pair(3)`;
   copy-back runs in declaration order, so `y = 4` is written last (S41-D2).
 - `ch_task(7, out)`: the context import task calls the exported task
   `ch_tick(i)` for i = 1..7, each returning 0 (no disable; 35.9 a) with
   `o = 2i`: 56; `acc` = 1000 + 28 = 1028.
-- `$time` is 5 ns (5000 at the default 1 ps precision) before and after:
-  the chains take no simulation time.
+- `$time` is 5 ns (5000 in the fixture's 1 ps precision, set by its
+  `` `timescale 1ns/1ps `` so the printed time does not depend on a tool's
+  default time unit) before and after: the chains take no simulation time.
 
 ### `disables` (35.9)
 
