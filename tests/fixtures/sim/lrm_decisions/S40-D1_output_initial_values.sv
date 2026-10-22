@@ -1,9 +1,11 @@
 // Decision S40-D1: an imported subroutine sees each output formal at its
 // type's default value, whatever the actual held before the call: every bit
-// of a 4-state output is X, a 2-state output is 0, and unpacked or
-// structured outputs hold those values per element. The lines the C side
-// prints (labelled `llg`) are llg's choice; the SystemVerilog lines are what
-// every conforming simulator prints.
+// of a 4-state output is X, a 2-state output is 0, and unpacked arrays hold
+// those values per element. An unpacked structure output, or an array of
+// them, starts with every byte zero, so its 4-state members read 0, not X,
+// as in industry-standard implementations. The lines the C side prints
+// (labelled `llg`) are this choice; the SystemVerilog lines are what every
+// conforming simulator prints.
 //
 // IEEE 1800-2009 35.5.1.2 (SystemVerilog-1800-2009.txt L55643-55644):
 //   "The imported function shall not assume anything about the initial values

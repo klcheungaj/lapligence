@@ -2325,8 +2325,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   The C side gets a thunk-owned copy, never simulator storage;
   inputs are copied in before the call, outputs and inouts copied out in
   declaration order after it (each copy a cancellation boundary) and the
-  result assigned last; output formals start at X or 0 (decisions
-  S40-D1..D4 in [lrm_decisions.md](lrm_decisions.md)). An imported task that
+  result assigned last; output formals start at X or 0, and record outputs
+  with every byte zero (decisions S40-D1..D4 in
+  [lrm_decisions.md](lrm_decisions.md)). An imported task that
   returns nonzero without a disable is a fatal error (35.9, S40-D5). An import
   no `--dpi-lib` library defines, a library calling an `svdpi.h` routine llg
   does not provide (`svGetTime*`; the SV3.1a H.13 forms) or a library calling

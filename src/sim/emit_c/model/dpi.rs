@@ -79,6 +79,18 @@ pub(super) fn is_aggregate(ty: &IrDpiType) -> bool {
     )
 }
 
+/// Whether an output formal of type `ty` is a record or an array of records,
+/// whose C image starts all zero (decision S40-D1).
+fn struct_output(ty: &IrDpiType) -> bool {
+    match ty {
+        IrDpiType::Struct(_) => true,
+        IrDpiType::Array { element, .. } | IrDpiType::Open { element, .. } => {
+            struct_output(element)
+        }
+        _ => false,
+    }
+}
+
 pub(super) fn chunks(width: u32) -> u64 {
     u64::from(width).div_ceil(32)
 }
@@ -502,6 +514,13 @@ pub(super) fn render_dpi_thunk(model: &IrModel, f: &IrFunc) -> Result<String, St
                 if copy_in {
                     out.push_str(&format!(
                         "    llg_dpi_to_c(&{table}, {source}, _dpi_b{index});\n"
+                    ));
+                } else if struct_output(ty) {
+                    // An output record, or array of records, starts with every
+                    // byte zero, so its 4-state members read 0, not X (decision
+                    // S40-D1; 35.5.1.2 leaves output initial values open).
+                    out.push_str(&format!(
+                        "    memset(_dpi_b{index}, 0, sizeof({c_type}));\n"
                     ));
                 } else {
                     out.push_str(&format!("    llg_dpi_init_c(&{table}, _dpi_b{index});\n"));
