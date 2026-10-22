@@ -197,6 +197,17 @@ fn index_case(sel: IrExpr, arms: Vec<(u32, Vec<IrStmt>)>) -> Result<IrStmt, Stri
 }
 
 /// The productions an element generates, in source order.
+/// One step of a sequence that `rand join` interleaves.
+#[derive(Clone, Copy)]
+enum JoinStep {
+    /// A production item or code block of the joined rule.
+    Element(NodeId),
+    /// The joined rule is itself a `rand join`: one step.
+    Join,
+    /// The rule's weight code block, after its last element.
+    Weight(NodeId),
+}
+
 fn element_items(kind: &ProductionKind, out: &mut Vec<NodeId>) {
     match kind {
         ProductionKind::If {
@@ -499,7 +510,11 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
 
     /// `rand join` interleaves the production lists of its items, so their
     /// automatic values are live at the same time: each must be generated
-    /// inline and none may generate another (or itself).
+    /// inline and none may generate another (or itself). Each item names a
+    /// production of one rule whose elements are production items and code
+    /// blocks: 18.17.5 interleaves "production sequences" without saying how
+    /// alternatives or if, case and repeat items take part, and
+    /// industry-standard tools reject them (decision S16-D5).
     fn check_joins(&self, grammar: &Grammar) -> Result<(), String> {
         let db = self.cg.db;
         let reaches = |from: NodeId| {
@@ -529,6 +544,32 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 .collect::<Vec<_>>();
             for (index, (item, production)) in rule.elements.iter().zip(&productions).enumerate() {
                 let name = self.production_name(*production);
+                let rules = &grammar.decls[production].rules;
+                let control = rules
+                    .iter()
+                    .flat_map(|rule| &grammar.rules[rule].elements)
+                    .any(|element| {
+                        matches!(
+                            self.cg.kind(*element),
+                            NodeKind::Production(
+                                ProductionKind::If { .. }
+                                    | ProductionKind::Case { .. }
+                                    | ProductionKind::Repeat { .. }
+                            )
+                        )
+                    });
+                if rules.len() != 1 || control {
+                    let what = if rules.len() != 1 {
+                        "has more than one rule"
+                    } else {
+                        "contains an if, case or repeat item"
+                    };
+                    return Err(format!(
+                        "rand join at {}: production `{name}` {what}; a production that rand \
+                         join interleaves must have one rule of production items and code blocks",
+                        self.production_location(*item)
+                    ));
+                }
                 if grammar.segmented.contains(production) {
                     return Err(format!(
                         "rand join at {}: production `{name}` is recursive or generates a \
@@ -1088,10 +1129,10 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         }
     }
 
-    /// `rand join [(ratio)] S1 S2 ...` (18.17.5). Each item's production
-    /// chooses its rule first, in item order; its production list is one
-    /// sequence (a rand join rule is one element). Each step advances one
-    /// sequence chosen by `llg_randsequence_join_pick` (S16-D5, S16-D6).
+    /// `rand join [(ratio)] S1 S2 ...` (18.17.5). Each item's production has
+    /// one rule (`check_joins`); its production list is one sequence (a rand
+    /// join rule is one element). Each step advances one sequence chosen by
+    /// `llg_randsequence_join_pick` (S16-D5, S16-D6).
     fn lower_rand_join(&mut self, rule_node: NodeId) -> Result<Vec<IrStmt>, String> {
         let grammar = self.grammar();
         let rule = &grammar.rules[&rule_node];
@@ -1158,49 +1199,50 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
         struct Sequence {
             item: NodeId,
             production: NodeId,
-            rule: String,
+            /// The production's one rule (`check_joins`).
+            rule: NodeId,
             length: String,
             position: String,
-            /// Per rule: its sequence elements (a rand join rule is one).
-            elements: Vec<Vec<Option<NodeId>>>,
+            /// The rule's sequence steps.
+            elements: Vec<JoinStep>,
         }
         let mut sequences = Vec::with_capacity(rule.elements.len());
         for item in &rule.elements {
             let production = grammar.production_of(*item);
             let decl = &grammar.decls[&production];
+            let [chosen_rule] = decl.rules[..] else {
+                return Err(format!(
+                    "rand join at {}: production `{}` must have one rule",
+                    self.production_location(*item),
+                    self.production_name(production)
+                ));
+            };
             statements.extend(self.bind_formals(*item, None)?);
             if let Some(result) = decl.result {
                 statements.push(self.production_assignment(result.reset)?);
             }
-            let chosen = self.new_label("rjs");
             let length = self.new_label("rjl");
             let position = self.new_label("rjp");
-            let selection = if decl.rules.len() == 1 {
-                int_expr(0, 32, true)?
+            let info = &grammar.rules[&chosen_rule];
+            let mut elements = if info.rand_join.is_some() {
+                vec![JoinStep::Join]
             } else {
-                let weights = decl
-                    .rules
+                info.elements
                     .iter()
-                    .map(|rule| grammar.rules[rule].weight)
-                    .collect::<Vec<_>>();
-                let origin = self.cg.origin(production);
-                self.lower_weighted_selection(
-                    &weights,
-                    origin,
-                    true,
-                    &format!(
-                        "randsequence production `{}`",
-                        self.production_name(production)
-                    ),
-                )?
+                    .copied()
+                    .map(JoinStep::Element)
+                    .collect::<Vec<_>>()
             };
-            statements.push(int_local(&chosen, Some(selection)));
+            // The weight code block is the rule's last element (S16-D2) and
+            // one step of the interleaving of its own (S16-D5).
+            elements.extend(info.weight_code.map(JoinStep::Weight));
+            statements.extend(self.rule_resets(info)?);
             statements.push(IrStmt::DeclLocal {
                 name: length.clone(),
                 width: 32,
                 signed: false,
                 two_state: true,
-                init: Some(Box::new(int_expr(0, 32, false)?)),
+                init: Some(Box::new(int_expr(elements.len() as i64, 32, false)?)),
             });
             statements.push(IrStmt::DeclLocal {
                 name: position.clone(),
@@ -1209,28 +1251,10 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 two_state: true,
                 init: Some(Box::new(int_expr(0, 32, false)?)),
             });
-            let mut elements = Vec::with_capacity(decl.rules.len());
-            let mut arms = Vec::with_capacity(decl.rules.len());
-            for (index, chosen_rule) in decl.rules.iter().enumerate() {
-                let info = &grammar.rules[chosen_rule];
-                let list = if info.rand_join.is_some() {
-                    vec![None]
-                } else {
-                    info.elements.iter().copied().map(Some).collect::<Vec<_>>()
-                };
-                let mut arm = self.rule_resets(info)?;
-                arm.push(assign(
-                    local_lhs(&length, 32, false),
-                    int_expr(list.len() as i64, 32, false)?,
-                ));
-                arms.push((index as u32, arm));
-                elements.push(list);
-            }
-            statements.push(index_case(local_read(&chosen, 32, true), arms)?);
             sequences.push(Sequence {
                 item: *item,
                 production,
-                rule: chosen,
+                rule: chosen_rule,
                 length,
                 position,
                 elements,
@@ -1248,29 +1272,19 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                 result: decl.result.map(|result| result.reference),
             });
             let lowered = (|| -> Result<Vec<IrStmt>, String> {
-                let mut rule_arms = Vec::with_capacity(decl.rules.len());
-                let mut weight_arms = Vec::new();
-                for (rule_index, chosen_rule) in decl.rules.iter().enumerate() {
-                    let mut element_arms = Vec::new();
-                    for (position, element) in sequence.elements[rule_index].iter().enumerate() {
-                        let body = match element {
-                            Some(element) => self.inline_element(*element)?,
-                            None => self.lower_rand_join(*chosen_rule)?,
-                        };
-                        element_arms.push((position as u32, body));
-                    }
-                    rule_arms.push((
-                        rule_index as u32,
-                        vec![index_case(
-                            local_read(&sequence.position, 32, false),
-                            element_arms,
-                        )?],
-                    ));
-                    if let Some(code) = grammar.rules[chosen_rule].weight_code {
-                        weight_arms.push((rule_index as u32, self.code_block(code)?));
-                    }
+                let mut element_arms = Vec::with_capacity(sequence.elements.len());
+                for (position, element) in sequence.elements.iter().enumerate() {
+                    let body = match element {
+                        JoinStep::Element(element) => self.inline_element(*element)?,
+                        JoinStep::Join => self.lower_rand_join(sequence.rule)?,
+                        JoinStep::Weight(code) => self.code_block(*code)?,
+                    };
+                    element_arms.push((position as u32, body));
                 }
-                let mut step = vec![index_case(local_read(&sequence.rule, 32, true), rule_arms)?];
+                let mut step = vec![index_case(
+                    local_read(&sequence.position, 32, false),
+                    element_arms,
+                )?];
                 step.push(assign(
                     local_lhs(&sequence.position, 32, false),
                     bin_expr(
@@ -1279,22 +1293,6 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                         int_expr(1, 32, false)?,
                     ),
                 ));
-                if !weight_arms.is_empty() {
-                    // The chosen rule's weight code block follows its
-                    // production list (S16-D2).
-                    step.push(if_then(
-                        cmp_expr_ir(
-                            IrBinOp::Eq,
-                            local_read(&sequence.position, 32, false),
-                            local_read(&sequence.length, 32, false),
-                        ),
-                        vec![index_case(
-                            local_read(&sequence.rule, 32, true),
-                            weight_arms,
-                        )?],
-                        None,
-                    ));
-                }
                 Ok(step)
             })();
             let used = match self.randseq().returns.pop() {

@@ -2586,6 +2586,20 @@ fn s16_d5_rand_join_steps() {
 }
 
 #[test]
+fn s16_d10_rand_join_rule_forms_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S16-D10_rand_join_rule_forms_rejected.out")
+            .is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "S16-D10_rand_join_rule_forms_rejected",
+        "S16-D10_rand_join_rule_forms_rejected.sv:20:23: production `s1` has more than one rule",
+    );
+}
+
+#[test]
 fn s16_d6_rand_join_ratio() {
     run_decision(
         "S16-D6_rand_join_ratio",

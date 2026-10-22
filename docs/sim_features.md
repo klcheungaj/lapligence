@@ -2569,7 +2569,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   the run at once (X/Z weight bits read as 0); negative or unknown repeat
   counts and a join ratio outside 0.0 to 1.0 are located run-time errors
   ([adv_016](../tests/fixtures/sim/feature_completion/adv_016/readme.md),
-  decisions S16-D1 to S16-D9 in [lrm_decisions](lrm_decisions.md)). Output
+  decisions S16-D1 to S16-D10 in [lrm_decisions](lrm_decisions.md)). A
+  production that rand join names directly has one rule without if, case or
+  repeat items (S16-D10). Output
   arguments, rand join of recursive or overlapping productions and recursive
   handle or array values are located errors
   ([known issues](known_issues.md#randsequence-limits-adv-016)).
