@@ -26,7 +26,7 @@ checked against a run; no line was accepted only because the run printed it.
   `gen[1]` (generate block names per 27.4) and `main`; the variables `b`
   (`vpiByteVar`), `bv` (`vpiBitVar`), `grid` and `mem` (`vpiRegArray`, size =
   element count, 37.17 detail 9), `i` (`vpiIntVar`), `ii` (`vpiIntegerVar`),
-  `r` (`vpiRealVar`, no `vpiSize`, S42-D8), `t` (`vpiTimeVar`), `up` and `v`
+  `r` (`vpiRealVar`, `vpiSize` 64, S42-D8), `t` (`vpiTimeVar`), `up` and `v`
   (`vpiReg`); the net `w`.
 - **Parameters.** `L = W * 2 = 8` is a localparam (`vpiLocalParam` 1); `P`
   keeps its four-state value `1010x1z0`, whose decimal string is `X` (some
@@ -123,9 +123,9 @@ status; `vpi_chk_error` returns the level `vpiError` (3), and a second call
 returns the same level because `vpi_chk_error` does not reset it (38.2,
 S42-D2). An empty but supported iteration (no nets, no submodules in `tb`)
 returns NULL without an error (38.23), and so do a name lookup that finds
-no object (S42-D11) and a bit index outside a vector's range (S42-D7); a
-part-select written in reverse order inside a name is still an error.
-Released handles, handles of a
+no object (S42-D11), a bit index outside a vector's range (S42-D7) and
+`vpiSize` of a real, which is 64 (S42-D8); a part-select written in reverse
+order inside a name is still an error. Released handles, handles of a
 finished iterator (38.40), a reused slot's old handle and argument handles of
 a returned call are stale; releasing a catalog object is accepted and leaves
 it valid. The call handle persists between calls (38.14). `$stress` makes

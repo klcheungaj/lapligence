@@ -1,4 +1,4 @@
-/* Companion of S42-D8_size_of_real_undefined.sv: a VPI application (vlog_startup_routines). */
+/* Companion of S42-D8_size_of_real_bits.sv: a VPI application (vlog_startup_routines). */
 #include "vpi_user.h"
 #include <stdio.h>
 #include <string.h>

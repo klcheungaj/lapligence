@@ -2581,7 +2581,10 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 return (PLI_INT32)(extent + 1);
             }
             if (slot->kind == SLOT_ITERATOR) return (PLI_INT32)slot->count;
-            if (!has_value || real) return unsupported_property();
+            if (!has_value) return unsupported_property();
+            /* 37.17 leaves vpiSize of a real undefined; it reports the bits of
+             * its IEEE 754 storage (decision S42-D8). */
+            if (real) return type == vpiShortRealVar ? 32 : 64;
             return (PLI_INT32)width;
         case vpiSigned:
             if (!has_value && !(object && object->type == vpiPort)) return unsupported_property();

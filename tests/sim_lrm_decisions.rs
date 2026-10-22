@@ -1784,11 +1784,11 @@ fn s42_d7_index_out_of_range() {
 }
 
 #[test]
-fn s42_d8_size_of_real_undefined() {
+fn s42_d8_size_of_real_bits() {
     run_vpi_decision(
-        "S42-D8_size_of_real_undefined",
+        "S42-D8_size_of_real_bits",
         &["task $d8()"],
-        include_str!("fixtures/sim/lrm_decisions/S42-D8_size_of_real_undefined.out"),
+        include_str!("fixtures/sim/lrm_decisions/S42-D8_size_of_real_bits.out"),
     );
 }
 
