@@ -1803,6 +1803,11 @@ impl Codegen<'_> {
         descriptor: &TypeDescriptor,
         value: usize,
     ) -> Result<Option<IrStmt>, String> {
+        // Records only: a whole unpacked-array message stays an explicit
+        // rejection (SIM-017).
+        if !matches!(descriptor.shape, TypeShape::Aggregate(_)) {
+            return Ok(None);
+        }
         let Some(width) = Self::fixed_descriptor_width(descriptor) else {
             return Ok(None);
         };
@@ -1872,6 +1877,11 @@ impl Codegen<'_> {
         source: NodeId,
         nba: bool,
     ) -> Result<Option<IrStmt>, String> {
+        // Records only: a whole unpacked-array message stays an explicit
+        // rejection (SIM-017).
+        if !matches!(descriptor.shape, TypeShape::Aggregate(_)) {
+            return Ok(None);
+        }
         let Some(width) = Self::fixed_descriptor_width(descriptor) else {
             return Ok(None);
         };
