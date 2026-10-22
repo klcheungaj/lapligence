@@ -3153,7 +3153,9 @@ void vpi_get_time(vpiHandle object, p_vpi_time time) {
         vpi_error("LLG_VPI_TIME", "unsupported VPI time format");
         return;
     }
-    uint64_t now = llg_time();
+    /* cbEndOfSimulation may run after the scheduler state is released; the
+     * current time is then the time the simulation ended. */
+    uint64_t now = llg_rt_end_time();
     if (time->type == vpiSimTime) {
         time->high = (PLI_UINT32)(now >> 32);
         time->low = (PLI_UINT32)now;

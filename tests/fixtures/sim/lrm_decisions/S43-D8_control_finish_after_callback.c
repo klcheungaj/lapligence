@@ -11,7 +11,12 @@ static PLI_INT32 finish(p_cb_data data) {
 }
 
 static PLI_INT32 end(p_cb_data data) {
-    vpi_printf("cbEndOfSimulation %d at %u\n", ++ends, (unsigned)data->time->low);
+    /* An action callback need not carry a time (38.36.3); ask for it. */
+    (void)data;
+    s_vpi_time now;
+    now.type = vpiSimTime;
+    vpi_get_time(NULL, &now);
+    vpi_printf("cbEndOfSimulation %d at %u\n", ++ends, (unsigned)now.low);
     return 0;
 }
 
