@@ -168,3 +168,11 @@ companion's arithmetic, then compared with llg.
 | `svdpi_index_count` | Element pointer, get and put accesses with a wrong number of indices: the first reports one error and abandons the C function, so the later accesses and its last `printf` do not run, `after the call` never prints, the final procedure shows the arrays unchanged; exit status 1 (A03). | H.12.4 L73337-73340; decision S40-D6. |
 | `scopes_types` | One C function imported from two scopes, including an open-array import whose actual shape differs per scope; `pure` imports; enum, packed-struct and `integer` formals. | 35.5.4: one C function per C name. |
 | `neg_*` | Explicit errors: dynamic actuals of open formals, string or real elements in aggregates, aggregates over 1048575 payload bits, packed results, `ref`/`event`/class/unpacked-union formals, open arrays in exports, conflicting signatures, a missing import symbol (with `neg_missing_symbol.c`) and an unprovided routine `svGetTime` (with `neg_unprovided_routine.c`) (A03). | 35.5.5, 35.5.6, 35.5.6.1; llg limits in docs/known_issues.md. |
+
+## Other implementations
+
+In `roundtrip_xz` some simulators pass a whole `int` actual by reference, so
+`rt_result(r)` shows the actual (`c result o=5`) instead of the output's
+starting value, and assign the string result before copying the output out
+(`string s=output`). llg keeps copy-in/copy-out (decision S40-D2, whose row
+quotes 35.6.1 and 13.5).

@@ -178,6 +178,14 @@ are whole `initial` procedures and start one attempt on tick 1 (S38-D6),
 passing at 15. The static `s1` (`a ##1 b`) passes at 15 (tick-1 attempt) and
 fails at 25 (tick 2), 35 (tick 3) and 35 (tick 4, `a` 0).
 
+Other simulators were seen to differ from `outcomes` in two ways, which the
+expected lines keep. Some skip the pass actions of the vacuous successes
+(`ab1` at 15, 25 and 35-75, and every `ew pass`); llg runs them
+(decision S38-D11; 20.12 L35137-35139: "By default, the pass action is
+executed on vacuous success"). Some evaluate the `accept_on`/`reject_on`
+condition with its current value, so `ab1` and `rj1` resolve at 27 instead
+of 28; llg uses the sampled value (decision S38-D2; 16.13.14 L25265-25267).
+
 ## A03 negatives
 
 - `neg_s_always_unbounded`, `neg_weak_eventually_unbounded`: `s_always` and

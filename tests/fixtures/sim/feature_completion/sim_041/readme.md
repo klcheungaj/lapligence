@@ -240,3 +240,20 @@ consume time: ADV-018) and `neg_reserved_c_name` (C identifier `svGetScope`).
 The frontend rejects `neg_duplicate_c_name` (35.7), `neg_conflicting_export`
 (35.4), `neg_import_and_export` (one C identifier imported and exported) and
 `neg_undeclared_export`.
+
+## Other implementations
+
+The expected lines follow the clause text. Other simulators were seen to
+differ as follows; the fixtures keep llg's lines.
+
+- `chains`, `disables`, `task_from_function`: some simulators return a value
+  other than 0 from an exported task that was not disabled (`c unexpected
+  disable`, `after r=1`), and no 1 with `svIsDisabledState` 0 from one that
+  was (`dt_kill returned <garbage> disabled=0`, `df_kill returned
+  disabled=0`). llg follows 35.9 a) (decisions S41-D5 and S41-D8).
+- `scopes`: some simulators run `u2.cell_visit(4)` in the caller's scope `tb`
+  (decision S41-D1: the context is "the instantiated scope of the import
+  declaration", 35.5.3 L55801-55802) and return 0 from `svPutUserData` with
+  NULL data (decision S41-D4; H.9.3 L72711-72713: "It is illegal to pass in
+  NULL values for either the scope or userData arguments. [...] This function
+  returns -1 for all error cases").

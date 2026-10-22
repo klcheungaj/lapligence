@@ -391,3 +391,26 @@ A13-D7) and the tested properties contain none.
 | `neg_rec_args.sv` | `cannot refer to argument 'x' in an argument to a recursive property ...` (frontend) | 16.13.17 L25526-25530 (restriction 4). |
 | `neg_rec_local_formal.sv` | `recursive property `count` with local variable formal arguments at ... is not supported (SV 16.13.17)` (llg limit) | Legal by L25530 ("e is bound to a local variable formal argument of q"); llg calls an earlier expansion for a recursive re-entry, which needs the same actual values, and a local formal changes its value per call. Rejected with a location instead of approximated. |
 | `neg_local_two_clocks.sv` | `local variable `v` of the property declared at ... is initialized at the property attempt's start, which this property form does not support` (llg limit) | Legal by 16.10 L26329-26337 (one copy per semantic leading clock, initialized at that clock's first tick); llg supports the explicit equivalent form of L26363-26369 (`l3`) and rejects the declaration-assignment form with a location. |
+
+## Other implementations
+
+The expected lines follow the clause text. Other simulators were seen to
+differ in three ways, which the fixtures keep:
+
+- Some simulators skip the pass action of a vacuous success (an implication
+  whose antecedent has no match, an `if` without `else` whose condition is
+  false). llg runs it (decision S38-D11), because 20.12 L35137-35139 says "By
+  default, the pass action is executed on vacuous success". This gives the
+  extra `P` lines of `clocks.sv`, `domains.sv`, `flow.sv`, `oracle.sv` and
+  `recursion.sv`.
+- Some simulators treat the declaration initializers of `c1` and `c2` as a
+  change at time 0, which would add `g3 0`, `k1 F 0` and `k2 F 0` to
+  `clocks.sv` and end the four `g3` ticks at 30. llg applies them before any
+  procedure starts (decision T0-D1; 6.8 L5286-5288).
+- Some simulators keep clocking a recursive instance by the clock that
+  started the attempt even when its recursive call has its own clocking event
+  (`r10` in `recursion.sv` and `p14` in `oracle.sv`:
+  `x and (1'b1 |=> @(posedge c2) on_c2(x))`), so they report `r10` F50 for
+  the attempt at 10 instead of F45. llg checks the recursive call at the
+  `posedge c2` ticks, because 16.14.3 L26027-26030 says the scope of a
+  clocking event flows "until it is replaced by a new clocking event".
