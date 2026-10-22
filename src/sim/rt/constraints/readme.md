@@ -75,7 +75,7 @@ per size combination, which is why this cache is larger than one.
    enabled block or an active variable's domain becomes K (known before
    solving), R (depends on an unsolved random variable) or E (evaluation
    error: null handle, X/Z input (S29-D1), division by zero, select index out
-   of range, a negative `dist` weight (S30-D8), an empty `and`/`or`/`xor`
+   of range, an empty `and`/`or`/`xor`
    reduction (S30-D6)). `&&`, `||`, `!` and
    implication follow Figure 18-3; every other operator is E if any operand
    is E, else R if any operand is R. A root that is E fails with

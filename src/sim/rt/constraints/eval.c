@@ -600,7 +600,8 @@ static void cr_eval_call(llg_cr_session_t* s, uint32_t n) {
     cr_copy_input(s, n, result, call->bit_width, call->sign_flag);
 }
 
-/* A dist node: weights must be known and non-negative (S30-D8); the value
+/* A dist node: weights must be known; a weight is read as an unsigned value
+ * of its own width, so a negative one is a large weight (S30-D8). The value
  * is the disjunction (Figure 18-3) of the matches of nonzero-weight items. */
 static void cr_classify_dist(llg_cr_session_t* s, uint32_t n) {
     const llg_cr_problem_t* p = s->p;
@@ -614,9 +615,7 @@ static void cr_classify_dist(llg_cr_session_t* s, uint32_t n) {
                 cr_inherit_error(s, n, w);
                 return;
             }
-            const llg_cr_node_t* nw = &p->nodes[w];
-            if (s->status[w] != CR_K ||
-                (nw->sign_flag && bv_bit(cr_node_val(s, w), nw->bit_width - 1u))) {
+            if (s->status[w] != CR_K) {
                 cr_set_error(s, n, LLG_CR_REASON_WEIGHT, n);
                 return;
             }

@@ -72,8 +72,7 @@ unpacked structure or union, which is not a singular variable". S22-D3 must
 fail with "calls `watch`, whose fork at" and S22-D4 with "`push_back` modifies
 `limits`, which is declared const". S30-D10 must fail with "a dist item
 value, range bound or weight that reads a random variable is not supported".
-S30-D8 must end with exit status 1 after its line, reporting "negative or
-unevaluated dist weight", and S30-D11 after both lines, reporting "select
+S30-D11 must end with exit status 1 after both lines, reporting "select
 index out of range in a constraint". S29-D1 must end with exit status
 1 after its first line, reporting "X or Z value in a constraint", and S29-D9 after
 its first line, reporting "null class handle access". S30-D6 must end with
@@ -274,7 +273,7 @@ values. S29-D1, S29-D9 and S30-D6 end with exit status 1.
 
 These cases print whether frequencies lie within five standard deviations of
 the values the decision predicts (`1`), or relations every legal solution
-satisfies. S30-D8 and S30-D11 end with exit status 1; S30-D10 is a negative
+satisfies. S30-D11 ends with exit status 1; S30-D10 is a negative
 case.
 
 | ID | Decision | Clause (SV) | Case | Kind |
@@ -286,7 +285,7 @@ case.
 | S30-D5 | **Array sizes are solved first.** The sizes of random dynamic arrays and queues are drawn first, uniformly over the sizes that have a legal completion, from the constraints that do not read the elements of an array whose size is random; the element constraints are then solved with those sizes as state. A size that no enabled constraint mentions keeps the current size. | 18.5.7.1 L29929-29932; 18.4 L29370-29371 | `S30-D5_sizes_first` | llg reading (the text orders sizes first but does not say which constraints decide them) |
 | S30-D6 | **Reductions of an empty array.** In a constraint, `sum` of no elements is 0 and `product` 1, in the result type; `and`, `or` and `xor` of no elements are evaluation errors: the call returns 0, keeps the variables, reports `and(), or() or xor() of an empty array in a constraint` and the run continues with exit status 1 (S29-D5). Procedural reductions of an empty array give the identity values (all ones for `and`, 0 for `or` and `xor`). | 18.5.7.2 L29939-29940; 7.12.3 L9403-9404 | `S30-D6_empty_reductions` | industry-standard behaviour (the text is silent); changed from identities for every reduction |
 | S30-D7 | **Hook order across objects.** `pre_randomize` runs on the randomized object first, then on its random members in depth-first preorder over their `rand` handles (declaration order, base class properties first), once per object at its first visit; `post_randomize` follows the same order after every value is committed. | 18.6.2 L30445-30447 | `S30-D7_hook_order` | llg choice (the text does not order the objects) |
-| S30-D8 | **A negative dist weight is an error.** randomize() returns 0, the variables keep their values, `negative or unevaluated dist weight` is reported and the run ends with exit status 1. | 18.5.4 L29683 | `S30-D8_negative_weight_error` | llg choice (the text is silent) |
+| S30-D8 | **A dist weight is unsigned.** A weight is read as an unsigned value of its own width, so a negative weight is a large positive one (`int` -1 weighs 2**32 - 1, a 4-bit signed -1 weighs 15). | 18.5.4 L29683 | `S30-D8_negative_weight_unsigned` | llg choice (the text is silent) |
 | S30-D9 | **Fallbacks ignore weights and orders.** When a component exceeds the exact engine's budgets, rejection sampling and the search fallback satisfy the constraints but apply no dist weight or solve-before order; a component with a randc variable reports the exhausted budget instead. The run prints one warning per call site when such a component loses a weight or an order, naming the site and the budget variable to raise. | 18.5.4 L29676-29677 | no portable case: an implementation limit tied to the solver budgets | llg limit |
 | S30-D10 | **dist items and weights are state.** A dist item value, range bound or weight that reads a random variable is a located compile error. | 18.5.4 L29681-29683 | `S30-D10_dist_random_weight` (negative: llg must fail with "a dist item value, range bound or weight that reads a random variable is not supported") | llg restriction |
 | S30-D11 | **Array indices outside the array.** A constant, state or loop index outside the array is an evaluation error: randomize() returns 0, the variables keep their values, `select index out of range in a constraint` is reported and the run ends with exit status 1; a false guard removes the constraint first. A random index selects only existing elements: an assignment whose index is outside the array is not a solution. | 18.5.7.1 L29919-29921, L29926-29927 | `S30-D11_array_index_outside` | llg reading (the text does not say what a random index outside the array selects) |

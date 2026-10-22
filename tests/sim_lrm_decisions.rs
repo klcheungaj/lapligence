@@ -1554,20 +1554,10 @@ fn s30_d7_hook_order() {
 }
 
 #[test]
-fn s30_d8_negative_weight_error() {
-    let expected = include_str!("fixtures/sim/lrm_decisions/S30-D8_negative_weight_error.out");
-    sim_cli::run_case_checked_matrix(
-        SUITE,
-        "S30-D8_negative_weight_error",
-        &[],
-        &|label, output| {
-            runtime_error(
-                label,
-                output,
-                expected,
-                "negative or unevaluated dist weight",
-            );
-        },
+fn s30_d8_negative_weight_unsigned() {
+    run_decision(
+        "S30-D8_negative_weight_unsigned",
+        include_str!("fixtures/sim/lrm_decisions/S30-D8_negative_weight_unsigned.out"),
     );
 }
 

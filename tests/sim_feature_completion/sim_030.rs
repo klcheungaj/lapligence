@@ -220,15 +220,13 @@ fn runtime_failure<'a>(stdout: &'a str, diagnostic: &'a str) -> impl Fn(&str, &O
 }
 
 #[test]
-fn negative_dist_weight_fails_randomize() {
-    sim_cli::run_case_checked_matrix(
+fn negative_dist_weight_is_unsigned() {
+    sim_cli::run_case_backend_parity(
         SUITE,
-        "rt_negative_weight",
+        "negative_weight",
+        include_str!("../fixtures/sim/feature_completion/sim_030/negative_weight.out"),
         &[],
-        &runtime_failure(
-            "ok=0 x=7\n",
-            "llg: error: randomize() at tb:12:10: negative or unevaluated dist weight",
-        ),
+        &[],
     );
 }
 

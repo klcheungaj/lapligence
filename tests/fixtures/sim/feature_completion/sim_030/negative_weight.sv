@@ -1,4 +1,5 @@
-// S30-D8: a negative dist weight makes randomize fail with an error.
+// S30-D8: a dist weight is unsigned, so the `int` weight -1 is 2**32 - 1
+// against 1 (x is 2 only with probability 2**-32).
 class c_c;
   rand bit [3:0] x;
   int w = -1;

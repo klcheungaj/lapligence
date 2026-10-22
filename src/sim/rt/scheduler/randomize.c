@@ -140,7 +140,7 @@ static const char* randomize_reason_text(int reason) {
     case LLG_CR_REASON_INDEX: return "select index out of range in a constraint";
     case LLG_CR_REASON_ORDER: return "circular function-argument order";
     case LLG_CR_REASON_SOLVE_BEFORE: return "circular solve-before order";
-    case LLG_CR_REASON_WEIGHT: return "negative or unevaluated dist weight";
+    case LLG_CR_REASON_WEIGHT: return "unevaluated dist weight or bound";
     case LLG_CR_REASON_EMPTY_REDUCTION:
         return "and(), or() or xor() of an empty array in a constraint";
     default: return "evaluation error";

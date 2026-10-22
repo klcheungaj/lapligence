@@ -50,6 +50,6 @@ Run-time error fixtures (`rt_*`) exit with status 1:
 
 | Fixture | Clause |
 | --- | --- |
-| `rt_negative_weight` | S30-D8: a negative dist weight is an error; the call returns 0 and the variable keeps its value |
+| `negative_weight` | S30-D8: a dist weight is read as an unsigned value of its own width; the `int` weight -1 is 2**32 - 1 against 1 |
 | `rt_foreach_index` | S30-D11: an unguarded `A[k + 1]` selects outside the array for the last `k` (18.5.7.1 L29926-29927 "Invalid or out or bound array indices are not automatically eliminated; users must explicitly exclude these indices using predicates."); with the block disabled the call succeeds |
 | `rt_circular_solve_before` | 18.5.9 L30077-30078 "There shall be no circular dependencies in the ordering"; the cycle is checked over the enabled blocks, so disabling one block makes the call succeed |

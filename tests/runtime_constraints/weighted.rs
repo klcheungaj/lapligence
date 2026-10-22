@@ -637,7 +637,7 @@ fn constraint_solver_matches_lrm_dist_and_solve_before_examples_on_wide_variable
 }
 
 #[test]
-fn constraint_solver_reports_circular_orders_and_negative_weights() {
+fn constraint_solver_reports_circular_orders_and_reads_weights_unsigned() {
     let mut rng = Rng(3);
     let mut g = Gen {
         rng: &mut rng,
@@ -681,18 +681,19 @@ fn constraint_solver_reports_circular_orders_and_negative_weights() {
         return;
     };
     let outcomes = parse(&run_probe(&executable, 8, &[]), problems.len());
-    // LLG_CR_ERROR with LLG_CR_REASON_SOLVE_BEFORE (9) and LLG_CR_REASON_WEIGHT (8).
+    // LLG_CR_ERROR with LLG_CR_REASON_SOLVE_BEFORE (9).
     assert_eq!(outcomes[0].statuses, vec![3]);
     assert!(
         outcomes[0].detail.starts_with("r9 "),
         "{}",
         outcomes[0].detail
     );
-    assert_eq!(outcomes[1].statuses, vec![3]);
+    // The 4-bit signed weight -1 reads as 15 (S30-D8): its item holds.
+    assert_eq!(outcomes[1].samples.len(), 8, "{}", outcomes[1].detail);
     assert!(
-        outcomes[1].detail.starts_with("r8 "),
-        "{}",
-        outcomes[1].detail
+        outcomes[1].samples.iter().all(|s| s[0] == 1),
+        "{:?}",
+        outcomes[1].samples
     );
     assert_eq!(outcomes[2].samples.len(), 8, "{}", outcomes[2].detail);
 }
