@@ -11,6 +11,9 @@
  * - A dist constraint adds one selector level per weighted item below the
  *   variable bits; a selector's 1-literal carries the item's integer weight
  *   (per-literal weighted model counting), every variable bit weighs 1.
+ * - A layer drawn by item (an unconditional dist, S30-D1) first chooses an
+ *   item by its mass; its selector then weighs 1 and the others 0 while the
+ *   layer is drawn.
  *
  * Counts depend on the fixed bits, so they are recomputed for each layer of
  * each sample over the compact model's nodes. Decisions draw a fresh
@@ -25,6 +28,11 @@ typedef struct {
     uint8_t* selector;       /* per level: a dist selector bit */
     uint64_t* weight;        /* per level: limbs words, the 1-literal weight */
     uint32_t* cyclic;        /* per layer: randc variable or LLG_CR_NONE */
+    /* Per layer: the selector levels [pick_first, pick_first + pick_count)
+     * of the dist drawn by item there (S30-D1; the first is the guard-fail
+     * selector, the others' weights are the item masses), or pick_count 0. */
+    uint32_t* pick_first;
+    uint32_t* pick_count;
 } cr_layout_t;
 
 static void cr_layout_free(cr_layout_t* l) {
@@ -32,6 +40,8 @@ static void cr_layout_free(cr_layout_t* l) {
     free(l->selector);
     free(l->weight);
     free(l->cyclic);
+    free(l->pick_first);
+    free(l->pick_count);
     memset(l, 0, sizeof(*l));
 }
 
@@ -46,6 +56,13 @@ static void cr_layout_copy(cr_layout_t* d, const cr_layout_t* s) {
     memcpy(d->selector, s->selector, s->levels);
     memcpy(d->weight, s->weight, (size_t)s->levels * s->limbs * sizeof(uint64_t));
     memcpy(d->cyclic, s->cyclic, s->layer_count * sizeof(uint32_t));
+    d->pick_first = d->pick_count = NULL;
+    if (s->pick_first) {
+        d->pick_first = (uint32_t*)cr_alloc(s->layer_count, sizeof(uint32_t));
+        d->pick_count = (uint32_t*)cr_alloc(s->layer_count, sizeof(uint32_t));
+        memcpy(d->pick_first, s->pick_first, s->layer_count * sizeof(uint32_t));
+        memcpy(d->pick_count, s->pick_count, s->layer_count * sizeof(uint32_t));
+    }
 }
 
 /* d = a * b (limbs words, the product must fit). d must not alias. */
@@ -72,6 +89,7 @@ typedef struct {
     const cr_layout_t* l;
     uint32_t layer;          /* layer being drawn */
     const int8_t* fixed;     /* per level: -1 or the fixed bit */
+    const uint64_t* weight;  /* per level, limbs words: the 1-literal weights in use */
     uint64_t* cnt;           /* per node, limbs words */
     uint32_t* count_prefix;  /* per level + 1: counted variable levels before */
     uint64_t* t1;
@@ -92,7 +110,7 @@ static void cr_gap(cr_wcount_t* c, uint64_t* out, uint32_t from, uint32_t to) {
     uint32_t vars = c->count_prefix[to] - c->count_prefix[from];
     for (uint32_t level = from; level < to; ++level) {
         if (!c->l->selector[level] || !cr_level_counted(c, level)) continue;
-        const uint64_t* w = c->l->weight + (size_t)level * limbs;
+        const uint64_t* w = c->weight + (size_t)level * limbs;
         memcpy(c->t1, w, limbs * sizeof(uint64_t));
         uint64_t one[1] = {1};
         bn_add(c->t1, one, 1u);
@@ -114,7 +132,7 @@ static void cr_branch_weight(cr_wcount_t* c, uint64_t* out, uint32_t n, int bit)
     bn_mul(out, gap, c->cnt + (size_t)child * limbs, limbs);
     if (bit && c->l->selector[level]) {
         memcpy(gap, out, limbs * sizeof(uint64_t));
-        bn_mul(out, gap, c->l->weight + (size_t)level * limbs, limbs);
+        bn_mul(out, gap, c->weight + (size_t)level * limbs, limbs);
     }
     free(gap);
 }

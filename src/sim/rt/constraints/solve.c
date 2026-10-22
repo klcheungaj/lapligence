@@ -658,16 +658,19 @@ typedef struct {
     uint32_t* cyclic;       /* per layer: randc variable or LLG_CR_NONE; NULL when plain */
     cr_u32vec_t dists;      /* R dist nodes in the cone */
     uint32_t* dist_layer;   /* per entry of dists */
+    uint32_t* pick;         /* per layer: entry of dists drawn by item there, or LLG_CR_NONE */
     uint32_t selectors;     /* selector levels: one per weighted item + one per dist */
     int layered;            /* not the plain uniform measure */
 } cr_plan_t;
 
 static void cr_plan_free(cr_plan_t* plan) {
-    if (!plan->layer && !plan->cyclic && !plan->dists.data && !plan->dist_layer) return;
+    if (!plan->layer && !plan->cyclic && !plan->dists.data && !plan->dist_layer && !plan->pick)
+        return;
     free(plan->layer);
     free(plan->cyclic);
     free(plan->dists.data);
     free(plan->dist_layer);
+    free(plan->pick);
     memset(plan, 0, sizeof(*plan));
 }
 
@@ -829,13 +832,18 @@ static llg_cr_status_t cr_plan_build(cr_solve_t* st, cr_plan_t* plan, const uint
         if (p->vars[v].cyclic) continue;
         plan->layer[v] = pre && st->pre[v] ? cyclic : cyclic + (uint32_t)pre + max_height - height[v];
     }
-    plan->layer_count = cyclic + (uint32_t)pre + max_height + 1u;
-    plan->cyclic = (uint32_t*)cr_alloc(plan->layer_count, sizeof(uint32_t));
-    for (uint32_t l = 0; l < plan->layer_count; ++l) plan->cyclic[l] = LLG_CR_NONE;
-    for (uint32_t i = 0; i < nvars; ++i)
-        if (p->vars[vars[i]].cyclic) plan->cyclic[plan->layer[vars[i]]] = vars[i];
-    /* Weighted dists: each weighs the layer of its latest variable. */
+    uint32_t base_count = cyclic + (uint32_t)pre + max_height + 1u;
+    /* Dists (S30-D1). A dist that applies unconditionally (no guard, or a
+     * known true one) is drawn by item: its own layer, at the start of the
+     * set of its latest variables, holds those of its expression's
+     * variables still unclaimed there, so the expression's value follows the
+     * item weights before the other variables of that set are drawn. Any
+     * other dist weighs the layer of its latest variable by density. */
     cr_u32vec_t support = {0, 0, 0}, stack = {0, 0, 0};
+    uint32_t* claim = (uint32_t*)cr_alloc(p->var_count ? p->var_count : 1u, sizeof(uint32_t));
+    uint32_t* dist_base = NULL;
+    for (uint32_t i = 0; i < nvars; ++i) claim[vars[i]] = LLG_CR_NONE;
+    uint32_t picks = 0;
     for (uint32_t n = 0; n < p->node_count; ++n) {
         if (!in_cone[n] || p->nodes[n].op != LLG_CR_DIST) continue;
         const llg_cr_dist_t* d = &p->dists[p->nodes[n].a];
@@ -844,21 +852,83 @@ static llg_cr_status_t cr_plan_build(cr_solve_t* st, cr_plan_t* plan, const uint
         uint32_t items = 0;
         for (uint32_t i = 0; i < d->item_count; ++i)
             if (!cr_dist_item_zero(s, &p->dist_items[d->item_first + i])) ++items;
+        cr_u32_push(&plan->dists, n);
+        size_t k = plan->dists.len - 1u;
+        plan->dist_layer = (uint32_t*)realloc(plan->dist_layer, plan->dists.len * sizeof(uint32_t));
+        dist_base = (uint32_t*)realloc(dist_base, plan->dists.len * sizeof(uint32_t));
+        if (!plan->dist_layer || !dist_base) cr_fatal("out of memory");
+        plan->dist_layer[k] = LLG_CR_NONE;
+        dist_base[k] = LLG_CR_NONE;
+        plan->selectors += items + 1u;
+        int unconditional = d->guard == LLG_CR_NONE ||
+                            (s->status[d->guard] == CR_K && cr_truth(s, d->guard));
+        /* Layer numbers are 8-bit (cr_layout_t). */
+        if (!unconditional || !items || base_count + picks >= 255u) continue;
         support.len = 0;
-        cr_support(s, n, 0, &support, NULL, &stack);
+        cr_support(s, d->expr, 0, &support, NULL, &stack);
+        uint32_t latest = 0;
+        int any = 0;
+        for (size_t i = 0; i < support.len; ++i) {
+            uint32_t v = support.data[i];
+            if (p->vars[v].cyclic) continue;
+            if (!any || plan->layer[v] > latest) latest = plan->layer[v];
+            any = 1;
+        }
+        int claimed = 0;
+        for (size_t i = 0; i < support.len && any; ++i) {
+            uint32_t v = support.data[i];
+            if (p->vars[v].cyclic || plan->layer[v] != latest || claim[v] != LLG_CR_NONE) continue;
+            claim[v] = (uint32_t)k;
+            claimed = 1;
+        }
+        if (claimed) {
+            dist_base[k] = latest;
+            ++picks;
+        }
+    }
+    /* Final layers: per base set, its item-drawn dists in order, then its
+     * remaining variables. */
+    uint32_t* base_id = (uint32_t*)cr_alloc(base_count, sizeof(uint32_t));
+    uint8_t* base_used = (uint8_t*)cr_alloc(base_count, 1u);
+    for (uint32_t i = 0; i < nvars; ++i)
+        if (claim[vars[i]] == LLG_CR_NONE) base_used[plan->layer[vars[i]]] = 1;
+    uint32_t next = 0;
+    for (uint32_t b = 0; b < base_count; ++b) {
+        for (size_t k = 0; k < plan->dists.len; ++k)
+            if (dist_base[k] == b) plan->dist_layer[k] = next++;
+        base_id[b] = base_used[b] ? next++ : LLG_CR_NONE;
+    }
+    for (uint32_t i = 0; i < nvars; ++i) {
+        uint32_t v = vars[i];
+        plan->layer[v] = claim[v] != LLG_CR_NONE ? plan->dist_layer[claim[v]] : base_id[plan->layer[v]];
+    }
+    plan->layer_count = next ? next : 1u;
+    free(base_id);
+    free(base_used);
+    free(claim);
+    plan->cyclic = (uint32_t*)cr_alloc(plan->layer_count, sizeof(uint32_t));
+    plan->pick = (uint32_t*)cr_alloc(plan->layer_count, sizeof(uint32_t));
+    for (uint32_t l = 0; l < plan->layer_count; ++l) plan->cyclic[l] = plan->pick[l] = LLG_CR_NONE;
+    for (uint32_t i = 0; i < nvars; ++i)
+        if (p->vars[vars[i]].cyclic) plan->cyclic[plan->layer[vars[i]]] = vars[i];
+    for (size_t k = 0; k < plan->dists.len; ++k) {
+        if (dist_base[k] != LLG_CR_NONE) {
+            plan->pick[plan->dist_layer[k]] = (uint32_t)k;
+            continue;
+        }
+        /* A density dist weighs the layer of its latest variable. */
+        support.len = 0;
+        cr_support(s, plan->dists.data[k], 0, &support, NULL, &stack);
         uint32_t layer = 0;
         for (size_t i = 0; i < support.len; ++i)
             if (plan->layer[support.data[i]] > layer) layer = plan->layer[support.data[i]];
-        cr_u32_push(&plan->dists, n);
-        plan->dist_layer = (uint32_t*)realloc(plan->dist_layer, plan->dists.len * sizeof(uint32_t));
-        if (!plan->dist_layer) cr_fatal("out of memory");
-        plan->dist_layer[plan->dists.len - 1u] = layer;
-        plan->selectors += items + 1u;
+        plan->dist_layer[k] = layer;
     }
+    free(dist_base);
     free(support.data);
     free(stack.data);
     free(height);
-    plan->layered = plan->layer_count > 1u || plan->dists.len > 0u;
+    plan->layered = plan->layer_count > 1u || plan->dists.len > 0u || cyclic > 0u;
     return LLG_CR_OK;
 }
 
@@ -965,6 +1035,8 @@ static void cr_comp_aig_build(cr_solve_t* st, cr_comp_aig_t* c, const uint32_t* 
         lay->weight = (uint64_t*)cr_alloc((size_t)(levels ? levels : 1u) * limbs, sizeof(uint64_t));
         lay->cyclic = (uint32_t*)cr_alloc(plan->layer_count, sizeof(uint32_t));
         memcpy(lay->cyclic, plan->cyclic, plan->layer_count * sizeof(uint32_t));
+        lay->pick_first = (uint32_t*)cr_alloc(plan->layer_count, sizeof(uint32_t));
+        lay->pick_count = (uint32_t*)cr_alloc(plan->layer_count, sizeof(uint32_t));
         for (uint32_t lv = 0; lv < var_levels; ++lv) lay->layer[lv] = (uint8_t)plan->layer[c->level_var[lv]];
         uint64_t* scale = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
         uint64_t* size = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
@@ -1064,6 +1136,35 @@ static void cr_comp_aig_build(cr_solve_t* st, cr_comp_aig_t* c, const uint32_t* 
                 out = cr_and(g, out, cr_or(g, sel ^ 1u,
                                           cr_and(g, guard, cr_conjunct_lit(s, &c->blast, item->match))));
                 ++level;
+            }
+            if (plan->pick[plan->dist_layer[d]] == (uint32_t)d) {
+                /* Drawn by item (S30-D1): an item is chosen with probability
+                 * proportional to its mass (w * n for `:=`, w for `:/`)
+                 * among the items with a legal value, then a value of it
+                 * uniformly; the layout keeps the masses. */
+                uint32_t layer = plan->dist_layer[d];
+                lay->pick_first[layer] = first;
+                lay->pick_count[layer] = level - first;
+                memset(lay->weight + (size_t)first * limbs, 0, limbs * sizeof(uint64_t));
+                uint32_t sel = first + 1u;
+                for (uint32_t i = 0; i < dist->item_count; ++i) {
+                    const llg_cr_dist_item_t* item = &p->dist_items[dist->item_first + i];
+                    if (cr_dist_item_zero(s, item)) continue;
+                    uint64_t* w = lay->weight + (size_t)(sel++) * limbs;
+                    for (uint32_t k = 0; k < limbs; ++k) w[k] = 0;
+                    if (item->weight == LLG_CR_NONE) {
+                        w[0] = 1;
+                    } else {
+                        const uint64_t* wv = cr_node_val(s, item->weight);
+                        for (uint32_t k = 0; k < CR_WORDS(p->nodes[item->weight].bit_width) && k < limbs; ++k)
+                            w[k] = wv[k];
+                    }
+                    if (!item->per_range) {
+                        cr_item_size(s, item, size, limbs);
+                        bn_mul(t, w, size, limbs);
+                        memcpy(w, t, limbs * sizeof(uint64_t));
+                    }
+                }
             }
             free(support);
             free(mass);
@@ -1380,6 +1481,58 @@ static uint64_t cr_component_signature(llg_cr_session_t* s, const uint32_t* conj
 
 #define CR_CYCLIC_TRIES 64u
 
+/* Draw a layer whose dist is drawn by item (S30-D1). Its selector levels are
+ * [first, first + count): the guard-fail selector (never taken: the dist
+ * applies unconditionally), then one per nonzero-weight item, whose layout
+ * weight is the item's mass. An item is chosen with probability
+ * proportional to its mass among those not yet excluded; with only its
+ * selector weighted 1, the weighted draw is uniform over the item's values
+ * that have a legal completion. An item with none is excluded and the
+ * choice repeats. `*work` holds the modified weights (allocated once). */
+static llg_cr_status_t cr_pick_draw(cr_wcount_t* c, cr_solve_t* st, uint32_t root, uint32_t first,
+                                    uint32_t count, uint64_t** work, uint8_t* bits) {
+    const cr_layout_t* lay = c->l;
+    uint32_t limbs = lay->limbs;
+    size_t words = (size_t)lay->levels * limbs;
+    if (!*work) *work = (uint64_t*)cr_alloc(words ? words : 1u, sizeof(uint64_t));
+    memcpy(*work, lay->weight, words * sizeof(uint64_t));
+    c->weight = *work;
+    uint8_t* excluded = (uint8_t*)cr_alloc(count, 1u);
+    uint64_t* total = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
+    uint64_t* r = (uint64_t*)cr_alloc(limbs, sizeof(uint64_t));
+    llg_cr_status_t status = LLG_CR_UNSAT;
+    for (;;) {
+        for (uint32_t k = 0; k < limbs; ++k) total[k] = 0;
+        for (uint32_t i = 1; i < count; ++i)
+            if (!excluded[i]) bn_add(total, lay->weight + (size_t)(first + i) * limbs, limbs);
+        if (!bn_bits(total, limbs)) break;
+        bn_uniform(st->rng, r, total, limbs);
+        uint32_t chosen = 0;
+        for (uint32_t i = 1; i < count && !chosen; ++i) {
+            if (excluded[i]) continue;
+            const uint64_t* m = lay->weight + (size_t)(first + i) * limbs;
+            if (bn_cmp(r, m, limbs) < 0) chosen = i;
+            else bn_sub(r, m, limbs);
+        }
+        if (!chosen) cr_fatal("item draw found no item");
+        for (uint32_t i = 0; i < count; ++i) {
+            uint64_t* w = *work + (size_t)(first + i) * limbs;
+            memset(w, 0, limbs * sizeof(uint64_t));
+            w[0] = i == chosen;
+        }
+        cr_wcount_prepare(c);
+        if (cr_wcount_draw(c, root, st->rng, bits)) {
+            status = LLG_CR_OK;
+            break;
+        }
+        excluded[chosen] = 1;
+    }
+    free(excluded);
+    free(total);
+    free(r);
+    return status;
+}
+
 /* Draw one sample from a layered exact model (S30-D1 to S30-D3). Returns
  * LLG_CR_OK or LLG_CR_UNSAT (no value of a layer has a completion). */
 static llg_cr_status_t cr_layered_sample(cr_solve_t* st, const cr_exact_t* e,
@@ -1399,15 +1552,23 @@ static llg_cr_status_t cr_layered_sample(cr_solve_t* st, const cr_exact_t* e,
     c.count_prefix = (uint32_t*)cr_alloc((size_t)levels + 1u, sizeof(uint32_t));
     c.t1 = (uint64_t*)cr_alloc(lay->limbs, sizeof(uint64_t));
     c.t2 = (uint64_t*)cr_alloc(lay->limbs, sizeof(uint64_t));
+    c.weight = lay->weight;
+    uint64_t* work = NULL; /* weights of an item-drawn layer */
     llg_cr_status_t status = LLG_CR_OK;
     for (uint32_t layer = 0; layer < lay->layer_count && status == LLG_CR_OK; ++layer) {
         uint32_t root = layer + 1u < lay->layer_count ? e->roots[layer + 1u] : e->roots[0];
         c.layer = layer;
-        cr_wcount_prepare(&c);
         uint32_t var = lay->cyclic[layer];
-        if (var == LLG_CR_NONE) {
+        uint32_t picks = lay->pick_count ? lay->pick_count[layer] : 0u;
+        if (picks) {
+            if (cr_pick_draw(&c, st, root, lay->pick_first[layer], picks, &work, bits) != LLG_CR_OK)
+                status = LLG_CR_UNSAT;
+            c.weight = lay->weight;
+        } else if (var == LLG_CR_NONE) {
+            cr_wcount_prepare(&c);
             if (!cr_wcount_draw(&c, root, st->rng, bits)) status = LLG_CR_UNSAT;
         } else {
+            cr_wcount_prepare(&c);
             cr_cyc_check(s, var, cr_mix(signature ^ cr_hash_text(s->p->vars[var].name)));
             uint64_t value = 0;
             int found = 0;
@@ -1462,6 +1623,7 @@ static llg_cr_status_t cr_layered_sample(cr_solve_t* st, const cr_exact_t* e,
         for (uint32_t l = 0; l < levels; ++l)
             if (level_var[l] != LLG_CR_NONE)
                 bv_set_bit(s->sol + s->var_off[level_var[l]], level_bit[l], fixed[l] > 0);
+    free(work);
     free(fixed);
     free(bits);
     free(c.cnt);

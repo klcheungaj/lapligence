@@ -1,3 +1,4 @@
-guard uniform=1 y0 half=1
+guard false y0 sixteenth=1
 overlap one half=1
-completions x3 two thirds=1
+completions x3 half=1
+partial item x1 half=1

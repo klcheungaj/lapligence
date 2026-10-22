@@ -4,9 +4,12 @@
 //! A01: generated small problems with weighted items, guards, disabled
 //! blocks and orders are enumerated by an independent evaluator that
 //! computes each solution's probability under the layered weighted measure
-//! (decisions S30-D1 and S30-D2; a dist whose guard holds weighs a legal
-//! combination by its weights' density relative to uniform over its
-//! support, |S| * w(v) / W): the solver's samples must stay inside the
+//! (decisions S30-D1 and S30-D2): a dist that applies unconditionally is
+//! drawn first within the set of its latest variables, choosing an item by
+//! its mass among the items that can still hold and then a value of that
+//! item; any other dist whose guard holds weighs a legal combination by its
+//! weights' density relative to uniform over its support, |S| * w(v) / W.
+//! The solver's samples must stay inside the
 //! solutions and pass a chi-square bound fixed before the run. Larger
 //! seeded problems check the LRM examples against predeclared tolerances.
 //!
@@ -321,6 +324,46 @@ fn dist_density(p: &Problem, d: &Dist, val_of: &dyn Fn(u32, u32) -> u128) -> f64
     support as f64 * matched / mass
 }
 
+/// Items of `d` holding the expression's value, with their masses (w * n
+/// for `:=` over n values, w for `:/`); zero-weight items are left out.
+fn item_hits(p: &Problem, d: &Dist, val_of: &dyn Fn(u32, u32) -> u128) -> Vec<(usize, f64)> {
+    let ne = p.nodes[d.expr as usize];
+    let value = val_of(d.expr, ne.width);
+    let mut hits = Vec::new();
+    for (i, item) in d.items.iter().enumerate() {
+        let lo = val_of(item.lo, ne.width);
+        let hi = val_of(item.hi, ne.width);
+        let (v, lo, hi) = if item.signed {
+            (
+                signed_value(value, ne.width),
+                signed_value(lo, ne.width),
+                signed_value(hi, ne.width),
+            )
+        } else {
+            (value as i128, lo as i128, hi as i128)
+        };
+        let weight = item
+            .weight
+            .map_or(1, |w| val_of(w, p.nodes[w as usize].width)) as f64;
+        if weight == 0.0 || v < lo || v > hi {
+            continue;
+        }
+        let mass = if item.per_range {
+            weight
+        } else {
+            weight * (hi - lo + 1) as f64
+        };
+        hits.push((i, mass));
+    }
+    hits
+}
+
+/// One layer of the S30-D1/S30-D2 measure: for a layer drawn by item, its
+/// dist.
+struct LayerSpec {
+    pick: Option<u32>,
+}
+
 /// Probability of every solution under the layered weighted measure, or
 /// None when the problem is not satisfiable.
 fn weighted_expectation(p: &Problem) -> Option<BTreeMap<Vec<u128>, f64>> {
@@ -328,12 +371,79 @@ fn weighted_expectation(p: &Problem) -> Option<BTreeMap<Vec<u128>, f64>> {
         return None;
     };
     let active: Vec<usize> = (0..p.vars.len()).filter(|&v| p.vars[v].active).collect();
-    let layer = layers(p);
-    let layer_count = active.iter().map(|&v| layer[v]).max().unwrap_or(0) + 1;
-    // Each live dist weighs the layer of its latest variable.
-    let dists: Vec<(u32, usize)> = live_dists(p)
-        .into_iter()
-        .map(|n| {
+    let base = layers(p);
+    // S30-D1: an unconditional dist with a nonzero-weight item claims those
+    // of its expression's variables that sit unclaimed in the latest base
+    // layer of its expression; its own layer precedes the rest of that base
+    // layer. Dists claim in problem order.
+    let mut live = live_dists(p);
+    live.sort_unstable();
+    let mut claim: Vec<Option<u32>> = vec![None; p.vars.len()];
+    let mut pick_base: BTreeMap<u32, usize> = BTreeMap::new();
+    for &n in &live {
+        let d = p.nodes[n as usize].a;
+        let dist = &p.dists[d as usize];
+        let nonzero = dist.items.iter().any(|item| {
+            item.weight.is_none_or(|w| {
+                let node = p.nodes[w as usize];
+                node.op != CONST || p.consts[node.a as usize] & mask(node.width) as u64 != 0
+            })
+        });
+        if dist.guard.is_some() || !nonzero {
+            continue;
+        }
+        let mut support = BTreeSet::new();
+        node_support(p, dist.expr, &mut support);
+        let Some(latest) = support.iter().map(|&v| base[v as usize]).max() else {
+            continue;
+        };
+        let mut claimed = false;
+        for &v in &support {
+            if base[v as usize] == latest && claim[v as usize].is_none() {
+                claim[v as usize] = Some(d);
+                claimed = true;
+            }
+        }
+        if claimed {
+            pick_base.insert(d, latest);
+        }
+    }
+    let max_base = active.iter().map(|&v| base[v]).max().unwrap_or(0);
+    let mut specs: Vec<LayerSpec> = Vec::new();
+    let mut pick_layer: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut base_layer: Vec<Option<usize>> = vec![None; max_base + 1];
+    for (b, slot) in base_layer.iter_mut().enumerate() {
+        for &n in &live {
+            let d = p.nodes[n as usize].a;
+            if pick_base.get(&d) == Some(&b) {
+                pick_layer.insert(d, specs.len());
+                specs.push(LayerSpec { pick: Some(d) });
+            }
+        }
+        if active.iter().any(|&v| base[v] == b && claim[v].is_none()) {
+            *slot = Some(specs.len());
+            specs.push(LayerSpec { pick: None });
+        }
+    }
+    let layer: Vec<usize> = (0..p.vars.len())
+        .map(|v| match claim[v] {
+            Some(d) => pick_layer[&d],
+            None => base_layer[base[v]].unwrap_or(0),
+        })
+        .collect();
+    let layer_count = specs.len().max(1);
+    // Every other live dist weighs the layer of its latest variable by
+    // density.
+    let dists: Vec<(u32, usize)> = live
+        .iter()
+        .map(|&n| p.nodes[n as usize].a)
+        .filter(|d| !pick_layer.contains_key(d))
+        .map(|d| {
+            let n = live
+                .iter()
+                .copied()
+                .find(|&n| p.nodes[n as usize].a == d)
+                .unwrap();
             let mut support = BTreeSet::new();
             node_support(p, n, &mut support);
             let l = support
@@ -341,15 +451,18 @@ fn weighted_expectation(p: &Problem) -> Option<BTreeMap<Vec<u128>, f64>> {
                 .map(|&v| layer[v as usize])
                 .max()
                 .unwrap_or(0);
-            (p.nodes[n as usize].a, l)
+            (d, l)
         })
         .collect();
-    let weight = |solution: &[u128], l: usize| -> f64 {
+    let values = |solution: &[u128]| -> Vec<St> {
         let mut assignment = vec![None; p.vars.len()];
         for (k, &v) in active.iter().enumerate() {
             assignment[v] = Some(solution[k]);
         }
-        let st = classify(p, &assignment);
+        classify(p, &assignment)
+    };
+    let weight = |solution: &[u128], l: usize| -> f64 {
+        let st = values(solution);
         let val_of = |x: u32, to: u32| -> u128 {
             let nx = p.nodes[x as usize];
             match st[x as usize] {
@@ -370,6 +483,17 @@ fn weighted_expectation(p: &Problem) -> Option<BTreeMap<Vec<u128>, f64>> {
         }
         w
     };
+    let hits = |solution: &[u128], d: u32| -> Vec<(usize, f64)> {
+        let st = values(solution);
+        let val_of = |x: u32, to: u32| -> u128 {
+            let nx = p.nodes[x as usize];
+            match st[x as usize] {
+                St::K(v) => extend(v, nx.width, nx.signed, to),
+                other => panic!("node {x} is {other:?} under a full assignment"),
+            }
+        };
+        item_hits(p, &p.dists[d as usize], &val_of)
+    };
     let project = |solution: &[u128], upto: usize| -> Vec<Option<u128>> {
         active
             .iter()
@@ -380,22 +504,55 @@ fn weighted_expectation(p: &Problem) -> Option<BTreeMap<Vec<u128>, f64>> {
     let mut result = BTreeMap::new();
     for x in &solutions {
         let mut probability = 1.0;
-        for l in 0..layer_count {
+        for (l, spec) in specs.iter().enumerate().take(layer_count) {
             let earlier = if l == 0 {
                 vec![None; active.len()]
             } else {
                 project(x, l - 1)
             };
-            // Distinct values of this layer that extend x's earlier layers.
-            let mut options: BTreeMap<Vec<Option<u128>>, f64> = BTreeMap::new();
+            // Distinct values of this layer that extend x's earlier layers:
+            // their density weight and, in an item layer, the items they hit.
+            let mut options: BTreeMap<Vec<Option<u128>>, (f64, Vec<(usize, f64)>)> =
+                BTreeMap::new();
             for y in &solutions {
                 let matches_prefix = l == 0 || project(y, l - 1) == earlier;
                 if matches_prefix {
-                    options.entry(project(y, l)).or_insert_with(|| weight(y, l));
+                    options.entry(project(y, l)).or_insert_with(|| {
+                        (weight(y, l), spec.pick.map_or(Vec::new(), |d| hits(y, d)))
+                    });
                 }
             }
-            let total: f64 = options.values().sum();
-            probability *= options[&project(x, l)] / total;
+            let own = &options[&project(x, l)];
+            match spec.pick {
+                None => {
+                    let total: f64 = options.values().map(|(w, _)| w).sum();
+                    probability *= own.0 / total;
+                }
+                Some(_) => {
+                    // An item is chosen by mass among those with a value of
+                    // positive weight, then a value of it by weight.
+                    let mut item_weight: BTreeMap<usize, (f64, f64)> = BTreeMap::new();
+                    for (w, items) in options.values() {
+                        for &(i, mass) in items {
+                            let e = item_weight.entry(i).or_insert((mass, 0.0));
+                            e.1 += w;
+                        }
+                    }
+                    let feasible_mass: f64 = item_weight
+                        .values()
+                        .filter(|(_, w)| *w > 0.0)
+                        .map(|(m, _)| m)
+                        .sum();
+                    let mut px = 0.0;
+                    for &(i, _) in &own.1 {
+                        let (mass, total) = item_weight[&i];
+                        if total > 0.0 {
+                            px += mass / feasible_mass * own.0 / total;
+                        }
+                    }
+                    probability *= px;
+                }
+            }
         }
         result.insert(x.clone(), probability);
     }

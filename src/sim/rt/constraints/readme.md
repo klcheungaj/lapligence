@@ -111,15 +111,22 @@ per size combination, which is why this cache is larger than one.
      sink over the whole problem), largest first; unordered variables join
      the last set (S30-D2). Layer i is drawn from Q_i = exists(later
      layers).F with the earlier layers fixed, so its values are weighted by
-     their own layer only. Each `dist` adds one-hot selector levels below the
-     variable bits: one for "the guard fails" and one per nonzero-weight
-     item. Their 1-literals carry integer weights proportional to 1 and to
-     |S| * w(v) / W respectively (the density of the weights relative to
-     uniform over the support S of the items; w is the item's per-value
-     weight, W the total), so a combination where the guard holds weighs its
-     density and scaling all weights changes nothing; a draw counts weighted
-     models per node and walks down with fresh uniform integers, so it is
-     exact (S30-D1). A `randc` layer draws until
+     their own layer only. A `dist` that applies unconditionally (no guard,
+     or a known true one) gets a layer of its own at the start of the set of
+     its latest variables, holding those of its expression's variables still
+     unclaimed there (S30-D1): its draw chooses an item with probability
+     proportional to its mass (w * n for `:=`, w for `:/`) among the items
+     not yet excluded, then a value of that item; an item with no legal value
+     is excluded and the choice repeats. Each `dist` adds one-hot selector
+     levels below the variable bits: one for "the guard fails" and one per
+     nonzero-weight item. In an item layer the chosen item's selector weighs
+     1 and the others 0; elsewhere their 1-literals carry integer weights
+     proportional to 1 and to |S| * w(v) / W (the density of the weights
+     relative to uniform over the support S of the items; w is the item's
+     per-value weight, W the total), so a combination where the guard holds
+     weighs its density and scaling all weights changes nothing; such a dist
+     weighs the layer of its latest variable. A draw counts weighted models
+     per node and walks down with fresh uniform integers, so it is exact. A `randc` layer draws until
      it hits an unused value (64 tries), then enumerates the unused feasible
      values; with none left a new cycle starts (S30-D3).
    - *Rejection*: uniform draws of every component variable, accepted only
