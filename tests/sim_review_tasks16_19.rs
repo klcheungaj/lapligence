@@ -122,7 +122,7 @@ fn memory_tokens_and_partial_address_errors_work_in_both_editions() {
             &[],
             &["--edition", edition],
             &[
-                ("tokens.hex", "/* based digits */ x z 0x x7 0z z0 f 1_ff\n"),
+                ("tokens.hex", "/* based digits */ x z 0x x7 0z z0 f f_f\n"),
                 ("tokens.bin", "// binary digits\nx z 0x x1 0z z0 1 1_01\n"),
             ],
         );
@@ -161,10 +161,10 @@ fn sparse_memory_warning_and_negative_declared_ranges_keep_edition_policy() {
 }
 
 #[test]
-fn two_state_enum_load_checks_full_numeric_word_before_truncation() {
+fn two_state_enum_load_checks_word_digits_before_truncation() {
     sim_cli::run_case_with_files(
         "continuation_16_19", "memory_enum_conversion", "MEMORY_ENUM_CONVERSION_PASS\n",
-        "llg: error: memory file `enum.hex`: numeric memory data does not fit the enum base type; load terminated\n",
+        "llg: error: memory file `enum.hex`: memory word has more digits than the element holds; load terminated\n",
         &[
             "memory file `two_state.hex`: X/Z memory data converted to a two-state element",
             "memory file `enum_unknown.hex`: X/Z memory data converted to a two-state element",
@@ -172,7 +172,7 @@ fn two_state_enum_load_checks_full_numeric_word_before_truncation() {
         &["--edition", "sv2009"],
         &[
             ("enum.hex", "1 4x 0\n"),
-            ("signed.hex", "ff 0\n"),
+            ("signed.hex", "f 0\n"),
             ("two_state.hex", "x7 z1\n"),
             ("enum_unknown.hex", "x 1 z\n"),
         ],

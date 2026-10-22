@@ -127,8 +127,8 @@ unsized-literal rules (SV §§21.4, 5.7.1), two-state words read X/Z as 0
 same-slot readers are tested against the allowed interleavings (V §§5.3–5.4;
 SV §§4.3–4.7) in the
 [sim_027 conformance fixtures](../tests/fixtures/sim/feature_completion/sim_027/readme.md).
-Enum width/X membership and malformed-token recovery remain llg readings or
-choices (S27-D4, S27-D5). Q03
+Enum words are not checked for membership (S27-D4, industry-standard
+behaviour); malformed-token recovery remains an llg choice (S27-D5). Q03
 member-NBA retagging is resolved from SV §§4.9.4, 10.4.2, 7.3.2 and 11.9: the
 member write is checked against the tag at commit (§2). Comparisons with
 other simulators are corroboration, not a normative resolution. Their
@@ -1752,11 +1752,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   jumps outside a selected view diagnose before another write.
   Incomplete rows leave unread subwords unchanged.
   Words are unsized unsigned numbers: a leading X/Z pads with that state, known
-  digits zero-extend, wider numbers truncate (S27-D2); two-state words read X/Z
+  digits zero-extend, and a number with a digit more than the word holds is an
+  error that ends the load (S27-D2); two-state words read X/Z
   as 0 (S27-D3). Diagnostics print as `llg: warning: memory file ...` (missing
   file, word-count mismatch, X/Z conversion, empty resizable array) or
-  `llg: error: memory file ...` (malformed token, address outside the task range
-  or the memory, enum value, invalid range); neither changes the exit status
+  `llg: error: memory file ...` (malformed or too long token, address outside
+  the task range or the memory, invalid range); neither changes the exit status
   (S27-D5..D9). Erroneous files never write outside the selected memory.
   **Scheduling (S27-D1):** each word is stored when the task reaches it; a
   changed word wakes its waiters once in the same time slot, an unchanged word
@@ -1765,9 +1766,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   accepts every permitted order rather than one transcript.
   V §17.2.8; SV §21.4 **[1995/SV-2005]**.
 
-  Enum words are checked at the base width, allowing redundant signed
-  extension; invalid words diagnose and stop without undoing earlier writes
-  (S27-D4, an llg reading kept as a `q02_enum_*` characterization in
+  An enum element takes any word, member or not, truncated to the base width
+  like any other packed word; a word with more digits than the element needs
+  diagnoses and stops without undoing earlier writes (S27-D2, S27-D4,
+  industry-standard behaviour, characterized by the `q02_enum_*` fixtures in
   `sim_undefined_behavior`). Sparse addressed 2009 files omit the no-address
   short-file warning; 2001 count warnings remain, including excess data from
   repeated in-range addresses.

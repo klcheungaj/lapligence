@@ -507,35 +507,6 @@ static int llg_memory_in_requested_range(int64_t address, int64_t first,
                          : address <= first && address >= last;
 }
 
-static int llg_memory_enum_value_allowed(sv4_t value,
-                                         const sv4_t* enum_values,
-                                         uint32_t enum_count) {
-    if (!enum_values || enum_count == 0) return 1;
-    for (uint32_t index = 0; index < enum_count; ++index) {
-        sv4_t match = sv4_case_eq(value, enum_values[index]);
-        int allowed = sv4_to_bool(match);
-        sv4_destroy(&match);
-        if (allowed) return 1;
-    }
-    return 0;
-}
-
-// Memory-file words carry no signed marker. When a known word is wider than an
-// enum base, its discarded bits must be redundant for that base: zeroes for an
-// unsigned base, or copies of the retained sign bit for a signed base.
-static int llg_memory_enum_word_fits_width(sv4_t value, uint32_t width,
-                                            int8_t is_signed) {
-    if (sv4_is_unknown(value) || llg_sv4_width(value) <= width) return 1;
-    int sign = is_signed && width != 0
-                   ? (int)((llg_sv4_word(value, (width - 1u) / 64u, LLG_SV4_BITS) >> ((width - 1u) % 64u)) & 1u)
-                   : 0;
-    for (uint32_t bit = width; bit < llg_sv4_width(value); ++bit) {
-        int high = (int)((llg_sv4_word(value, bit / 64u, LLG_SV4_BITS) >> (bit % 64u)) & 1u);
-        if (high != sign) return 0;
-    }
-    return 1;
-}
-
 // Memory words are unsigned based digits. Only a leading X/Z digit pads with
 // its state; a known leading one still zero-extends, even into signed storage.
 static sv4_t llg_memory_word_cast(sv4_t word, uint32_t width, int8_t is_signed) {
@@ -701,38 +672,32 @@ static int llg_memory_storage_valid(const char* path,
     return 1;
 }
 
-// Convert one file word to an element: two-state data read X/Z as 0 (one
-// warning per load), the word is an unsized unsigned literal at the element
-// width, and an enum word must fit the base and equal a member. Returns 0,
-// with the error reported, when the load must terminate.
+// Convert one file word to an element: it may not have more digits than the
+// element holds, two-state data read X/Z as 0 (one warning per load), and the
+// word is an unsized unsigned literal at the element width. An enum element
+// takes any such word, member or not (S27-D4, industry-standard behaviour).
+// Returns 0, with the error reported, when the load must terminate.
 static int llg_memory_convert_word(const char* filename, llg_memory_value_t* token,
                                    uint32_t elem_width, int8_t elem_signed,
-                                   int8_t two_state, const sv4_t* enum_values,
-                                   uint32_t enum_count, int* warned_unknown,
+                                   int8_t two_state, int* warned_unknown,
                                    sv4_t* converted) {
-    // Normalize two-state data before a narrowing conversion so a low X/Z
-    // digit cannot hide a known out-of-range enum high bit. Four-state enum
-    // membership remains an exact state comparison.
+    // A number with a whole digit more than the element holds, leading zeros
+    // included, is an error that ends the load (S27-D2, industry-standard
+    // behaviour); the unused bits of a partly used leading digit are dropped.
+    uint64_t digit_bits = token->digits ? llg_sv4_width(token->value) / token->digits : 0u;
+    if (digit_bits && token->digits * digit_bits >= (uint64_t)elem_width + digit_bits) {
+        llg_memory_error(filename,
+            "memory word has more digits than the element holds; load terminated");
+        return 0;
+    }
     int had_unknown = sv4_is_unknown(token->value);
     if (two_state && had_unknown) {
         sv4_replace(&token->value, sv4_to_two_state(token->value));
-    }
-    if (enum_count != 0 &&
-        !llg_memory_enum_word_fits_width(token->value, elem_width, elem_signed)) {
-        llg_memory_error(filename,
-            "numeric memory data does not fit the enum base type; load terminated");
-        return 0;
     }
     *converted = llg_memory_word_cast(token->value, elem_width, elem_signed);
     if (two_state && had_unknown && !*warned_unknown) {
         llg_memory_warning(filename, "X/Z memory data converted to a two-state element");
         *warned_unknown = 1;
-    }
-    if (!llg_memory_enum_value_allowed(*converted, enum_values, enum_count)) {
-        llg_memory_error(filename,
-            "memory data value is not a member of the enum; load terminated");
-        sv4_destroy(converted);
-        return 0;
     }
     return 1;
 }
@@ -743,7 +708,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
-                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
+                          int radix) {
     char* filename = llg_memory_path_copy(path);
     llg_memory_stream_t stream_storage;
     llg_memory_stream_t* stream = &stream_storage;
@@ -828,8 +793,7 @@ static uint64_t fixed_memory_read_view(llg_string_t path, llg_memory_storage_t* 
             } else {
                 sv4_t converted;
                 if (!llg_memory_convert_word(filename, &token, elem_width, elem_signed,
-                                             two_state, enum_values, enum_count,
-                                             &warned_unknown, &converted)) {
+                                             two_state, &warned_unknown, &converted)) {
                     sv4_destroy(&token.value);
                     llg_memory_close(stream);
                     free(filename);
@@ -872,10 +836,8 @@ static void fixed_memory_write_view(llg_string_t path, const llg_memory_storage_
                            const uint64_t* strides, uint64_t origin,
                            uint64_t view_total, sv4_t start, sv4_t finish,
                            int has_start, int has_finish, int addressing_policy,
-                           const sv4_t* enum_values, uint32_t enum_count, int radix) {
+                           int radix) {
     (void)two_state;
-    (void)enum_values;
-    (void)enum_count;
     char* requested = llg_memory_path_copy(path);
     char* filename = llg_output_path(requested);
     free(requested);
@@ -938,24 +900,24 @@ void llg_memory_read(llg_string_t path, sv4_t* memory, uint64_t total,
                      uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                      const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
                      int has_start, int has_finish, int addressing_policy,
-                     const sv4_t* enum_values, uint32_t enum_count, int radix) {
+                     int radix) {
     uint64_t stride = 1;
     llg_memory_read_view(path, memory, total, elem_width, elem_signed, two_state,
                          dims, n_dims, n_dims == 1 ? &stride : NULL, 0, total,
                          start, finish, has_start, has_finish, addressing_policy,
-                         enum_values, enum_count, radix);
+                         radix);
 }
 
 void llg_memory_write(llg_string_t path, sv4_t* memory, uint64_t total,
                       uint32_t elem_width, int8_t elem_signed, int8_t two_state,
                       const int32_t* dims, int n_dims, sv4_t start, sv4_t finish,
                       int has_start, int has_finish, int addressing_policy,
-                      const sv4_t* enum_values, uint32_t enum_count, int radix) {
+                      int radix) {
     uint64_t stride = 1;
     llg_memory_write_view(path, memory, total, elem_width, elem_signed, two_state,
                           dims, n_dims, n_dims == 1 ? &stride : NULL, 0, total,
                           start, finish, has_start, has_finish, addressing_policy,
-                          enum_values, enum_count, radix);
+                          radix);
 }
 
 static void llg_file_cleanup(void) {
@@ -976,10 +938,10 @@ void llg_memory_read_view(llg_string_t path, sv4_t* memory, uint64_t total,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
-                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
+                          int radix) {
     llg_memory_storage_t storage = {0};
     storage.memory = memory;
-    fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+    fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
 }
 void llg_fixed_memory_read_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
@@ -987,10 +949,10 @@ void llg_fixed_memory_read_view(llg_string_t path, llg_fixed_array_t* memory, ui
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
-                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
+                          int radix) {
     llg_memory_storage_t storage = {0};
     storage.fixed = memory;
-    fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+    fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
 }
 void llg_image_memory_read_view(llg_string_t path, const llg_memory_image_t* memory,
                           uint64_t total,
@@ -999,13 +961,13 @@ void llg_image_memory_read_view(llg_string_t path, const llg_memory_image_t* mem
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
-                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
+                          int radix) {
     llg_memory_storage_t storage = {0};
     storage.image = memory->storage;
     storage.image_offset = memory->offset;
     storage.publish = memory->publish != 0;
     llg_memory_image_begin(&storage);
-    fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+    fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
     llg_memory_image_end(&storage);
 }
 
@@ -1015,10 +977,10 @@ void llg_memory_write_view(llg_string_t path, sv4_t* memory, uint64_t total,
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
-                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
+                          int radix) {
     llg_memory_storage_t storage = {0};
     storage.memory = memory;
-    fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+    fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
 }
 void llg_fixed_memory_write_view(llg_string_t path, llg_fixed_array_t* memory, uint64_t total,
                           uint32_t elem_width, int8_t elem_signed, int8_t two_state,
@@ -1026,10 +988,10 @@ void llg_fixed_memory_write_view(llg_string_t path, llg_fixed_array_t* memory, u
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
-                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
+                          int radix) {
     llg_memory_storage_t storage = {0};
     storage.fixed = memory;
-    fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+    fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
 }
 void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* memory,
                           uint64_t total,
@@ -1038,11 +1000,11 @@ void llg_image_memory_write_view(llg_string_t path, const llg_memory_image_t* me
                           const uint64_t* strides, uint64_t origin,
                           uint64_t view_total, sv4_t start, sv4_t finish,
                           int has_start, int has_finish, int addressing_policy,
-                          const sv4_t* enum_values, uint32_t enum_count, int radix) {
+                          int radix) {
     llg_memory_storage_t storage = {0};
     storage.image = memory->storage;
     storage.image_offset = memory->offset;
-    fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+    fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
 }
 
 // Whether a runtime-sized container of `size` elements can be addressed;
@@ -1103,7 +1065,6 @@ static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
                                       const uint64_t* strides, uint64_t origin,
                                       uint64_t view_total, sv4_t start, sv4_t finish,
                                       int has_start, int has_finish, int addressing_policy,
-                                      const sv4_t* enum_values, uint32_t enum_count,
                                       int radix) {
     int32_t runtime_dims[2];
     uint64_t runtime_stride = 1;
@@ -1130,8 +1091,8 @@ static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
     llg_memory_storage_t storage = {0};
     storage.memory = data;
     if (write) {
-        fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
-    } else if (fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix) != 0 &&
+        fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
+    } else if (fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix) != 0 &&
                notify) {
         notify(contents, shape, LLG_CONTAINER_CHANGED_CONTENTS);
     }
@@ -1142,15 +1103,14 @@ static void llg_container_memory_view(int write, llg_string_t path, sv4_t* data,
               int8_t elem_signed, int8_t two_state, const int32_t* dims, int n_dims, \
               const uint64_t* strides, uint64_t origin, uint64_t view_total,         \
               sv4_t start, sv4_t finish, int has_start, int has_finish,              \
-              int addressing_policy, const sv4_t* enum_values, uint32_t enum_count,  \
+              int addressing_policy, \
               int radix) {                                                           \
         llg_container_memory_view(write, path, memory->data, memory->size,           \
                                   memory->notify, memory->contents_dependency,       \
                                   memory->shape_dependency, total, elem_width,       \
                                   elem_signed, two_state, dims, n_dims, strides,     \
                                   origin, view_total, start, finish, has_start,      \
-                                  has_finish, addressing_policy, enum_values,        \
-                                  enum_count, radix);                                \
+                                  has_finish, addressing_policy, radix);                                \
     }
 LLG_CONTAINER_MEMORY_ENTRY(llg_dyn_memory_read_view, struct llg_dyn_array_t, 0)
 LLG_CONTAINER_MEMORY_ENTRY(llg_dyn_memory_write_view, struct llg_dyn_array_t, 1)
@@ -1187,8 +1147,7 @@ static void llg_rows_memory_view(int write, llg_string_t path, llg_value_t* data
                                  const int32_t* dims, int n_dims, const uint64_t* strides,
                                  uint64_t origin, uint64_t view_total, sv4_t start,
                                  sv4_t finish, int has_start, int has_finish,
-                                 int addressing_policy, const sv4_t* enum_values,
-                                 uint32_t enum_count, int radix) {
+                                 int addressing_policy, int radix) {
     if (!llg_rows_descriptor_valid(element, row_cells, elem_width, dims, n_dims, mode)) {
         char* filename = llg_memory_path_copy(path);
         llg_memory_error(filename, "memory descriptor does not match its container");
@@ -1237,8 +1196,8 @@ static void llg_rows_memory_view(int write, llg_string_t path, llg_value_t* data
         view_total = ((uint64_t)high - (uint64_t)low + 1u) * row_cells;
     }
     if (write) {
-        fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
-    } else if (fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix) != 0 &&
+        fixed_memory_write_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
+    } else if (fixed_memory_read_view(path, &storage, total, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix) != 0 &&
                notify) {
         notify(contents, shape, LLG_CONTAINER_CHANGED_CONTENTS);
     }
@@ -1250,14 +1209,13 @@ static void llg_rows_memory_view(int write, llg_string_t path, llg_value_t* data
               uint32_t elem_width, int8_t elem_signed, int8_t two_state,                 \
               const int32_t* dims, int n_dims, const uint64_t* strides, uint64_t origin, \
               uint64_t view_total, sv4_t start, sv4_t finish, int has_start,             \
-              int has_finish, int addressing_policy, const sv4_t* enum_values,           \
-              uint32_t enum_count, int radix) {                                          \
+              int has_finish, int addressing_policy, int radix) {                                          \
         llg_rows_memory_view(write, path, memory->data, memory->size, memory->element,   \
                              memory->notify, memory->contents_dependency,                \
                              memory->shape_dependency, mode, row, row_cells, elem_width, \
                              elem_signed, two_state, dims, n_dims, strides, origin,      \
                              view_total, start, finish, has_start, has_finish,           \
-                             addressing_policy, enum_values, enum_count, radix);         \
+                             addressing_policy, radix);         \
     }
 LLG_ROWS_MEMORY_ENTRY(llg_dyn_rows_memory_read_view, struct llg_dyn_value_array_t, 0)
 LLG_ROWS_MEMORY_ENTRY(llg_dyn_rows_memory_write_view, struct llg_dyn_value_array_t, 1)
@@ -1347,7 +1305,6 @@ static void llg_assoc_memory_read(llg_string_t path, llg_assoc_t* array,
                                   uint32_t elem_width, int8_t elem_signed,
                                   int8_t two_state, sv4_t start, sv4_t finish,
                                   int has_start, int has_finish,
-                                  const sv4_t* enum_values, uint32_t enum_count,
                                   int radix) {
     char* filename = llg_memory_path_copy(path);
     llg_memory_stream_t stream_storage;
@@ -1400,8 +1357,7 @@ static void llg_assoc_memory_read(llg_string_t path, llg_assoc_t* array,
         }
         sv4_t converted;
         if (!llg_memory_convert_word(filename, &token, elem_width, elem_signed,
-                                     two_state, enum_values, enum_count,
-                                     &warned_unknown, &converted)) {
+                                     two_state, &warned_unknown, &converted)) {
             terminated = 1;
             break;
         }
@@ -1496,13 +1452,11 @@ void llg_assoc_memory_read_view(llg_string_t path, struct llg_assoc_t* memory, u
                                 const int32_t* dims, int n_dims, const uint64_t* strides,
                                 uint64_t origin, uint64_t view_total, sv4_t start,
                                 sv4_t finish, int has_start, int has_finish,
-                                int addressing_policy, const sv4_t* enum_values,
-                                uint32_t enum_count, int radix) {
+                                int addressing_policy, int radix) {
     (void)total; (void)dims; (void)n_dims; (void)strides; (void)origin;
     (void)view_total; (void)addressing_policy;
     llg_assoc_memory_read(path, memory, elem_width, elem_signed, two_state, start,
-                          finish, has_start, has_finish, enum_values, enum_count,
-                          radix);
+                          finish, has_start, has_finish, radix);
 }
 
 void llg_assoc_memory_write_view(llg_string_t path, struct llg_assoc_t* memory, uint64_t total,
@@ -1510,11 +1464,9 @@ void llg_assoc_memory_write_view(llg_string_t path, struct llg_assoc_t* memory, 
                                  const int32_t* dims, int n_dims, const uint64_t* strides,
                                  uint64_t origin, uint64_t view_total, sv4_t start,
                                  sv4_t finish, int has_start, int has_finish,
-                                 int addressing_policy, const sv4_t* enum_values,
-                                 uint32_t enum_count, int radix) {
+                                 int addressing_policy, int radix) {
     (void)total; (void)elem_signed; (void)two_state; (void)dims; (void)n_dims;
     (void)strides; (void)origin; (void)view_total; (void)addressing_policy;
-    (void)enum_values; (void)enum_count;
     llg_assoc_memory_write(path, memory, elem_width, start, finish, has_start,
                            has_finish, radix);
 }
@@ -1538,7 +1490,7 @@ static void llg_assoc_rows_read(llg_string_t path, llg_assoc_value_t* array,
                                 int8_t elem_signed, int8_t two_state,
                                 const int32_t* dims, int n_dims, const uint64_t* strides,
                                 sv4_t start, sv4_t finish, int has_start, int has_finish,
-                                const sv4_t* enum_values, uint32_t enum_count, int radix) {
+                                int radix) {
     char* filename = llg_memory_path_copy(path);
     llg_memory_stream_t stream_storage;
     llg_memory_stream_t* stream = &stream_storage;
@@ -1596,8 +1548,7 @@ static void llg_assoc_rows_read(llg_string_t path, llg_assoc_value_t* array,
         }
         sv4_t converted;
         if (!llg_memory_convert_word(filename, &token, elem_width, elem_signed,
-                                     two_state, enum_values, enum_count,
-                                     &warned_unknown, &converted)) {
+                                     two_state, &warned_unknown, &converted)) {
             terminated = 1;
             break;
         }
@@ -1723,7 +1674,6 @@ static void llg_assoc_rows_memory_view(int write, llg_string_t path, llg_assoc_v
                                        const uint64_t* strides, uint64_t origin,
                                        uint64_t view_total, sv4_t start, sv4_t finish,
                                        int has_start, int has_finish, int addressing_policy,
-                                       const sv4_t* enum_values, uint32_t enum_count,
                                        int radix) {
     int whole = mode == LLG_MEMORY_ROWS_ALL;
     if (!llg_rows_descriptor_valid(array->element, row_cells, elem_width, dims, n_dims, mode) ||
@@ -1742,7 +1692,7 @@ static void llg_assoc_rows_memory_view(int write, llg_string_t path, llg_assoc_v
         } else {
             llg_assoc_rows_read(path, array, row_cells, elem_width, elem_signed, two_state,
                                 dims, n_dims, strides, start, finish, has_start, has_finish,
-                                enum_values, enum_count, radix);
+                                radix);
         }
         return;
     }
@@ -1759,12 +1709,12 @@ static void llg_assoc_rows_memory_view(int write, llg_string_t path, llg_assoc_v
     storage.row_cells = row_cells;
     if (write) {
         storage.rows = llg_assoc_value_element_integral(array, &row, 1, 0);
-        fixed_memory_write_view(path, &storage, row_cells, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix);
+        fixed_memory_write_view(path, &storage, row_cells, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
         return;
     }
     storage.assoc = array;
     storage.assoc_key = row;
-    if (fixed_memory_read_view(path, &storage, row_cells, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, enum_values, enum_count, radix) != 0 &&
+    if (fixed_memory_read_view(path, &storage, row_cells, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix) != 0 &&
         array->notify) {
         array->notify(array->contents_dependency, array->shape_dependency,
                       LLG_CONTAINER_CHANGED_CONTENTS);
@@ -1777,12 +1727,11 @@ static void llg_assoc_rows_memory_view(int write, llg_string_t path, llg_assoc_v
               int8_t two_state, const int32_t* dims, int n_dims, const uint64_t* strides, \
               uint64_t origin, uint64_t view_total, sv4_t start, sv4_t finish,           \
               int has_start, int has_finish, int addressing_policy,                      \
-              const sv4_t* enum_values, uint32_t enum_count, int radix) {                \
+              int radix) {                \
         llg_assoc_rows_memory_view(write, path, memory, mode, row, row_cells, elem_width, \
                                    elem_signed, two_state, dims, n_dims, strides,        \
                                    origin, view_total, start, finish, has_start,         \
-                                   has_finish, addressing_policy, enum_values,           \
-                                   enum_count, radix);                                   \
+                                   has_finish, addressing_policy, radix);                                   \
     }
 LLG_ASSOC_ROWS_MEMORY_ENTRY(llg_assoc_rows_memory_read_view, 0)
 LLG_ASSOC_ROWS_MEMORY_ENTRY(llg_assoc_rows_memory_write_view, 1)

@@ -1,2 +1,3 @@
-signed NEG NEG ONE ZERO
-four_state LOW UNKNOWN LOW LOW
+signed NEG ZERO ZERO ZERO
+four_state LOW UNKNOWN  LOW
+values 1 7 0 name=[]

@@ -309,7 +309,7 @@ Data files: `format.hex`, `format.bin`, `tokens.hex`, `tokens.bin`,
 
 The text prescribes a warning for a word count that differs from the range and
 an error that terminates the load for a file address outside the task range
-or an enum value out of range. `llg` prints them as
+or a numeric value out of range for the type. `llg` prints them as
 `llg: warning: memory file `<name>`: ...` and
 `llg: error: memory file `<name>`: ...`. Neither stops the simulation or
 changes its exit status. The remaining categories are `llg` decisions in the

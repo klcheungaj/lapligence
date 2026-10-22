@@ -1,5 +1,5 @@
 hex8 xxxxxxxx zzzzzzzz 0001xxxx xxxx0001 zzzzxxxx
 hex12 xxxxxxxxxxxx zzzzzzzzzzzz 00000001xxxx xxxxxxxx0001 zzzzzzzzxxxx
-hex4s xxxx zzzz xxxx 0001 xxxx
+hex4s xxxx zzzz xxxx xxxx xxxx
 bin8 xxxxxxxx zzzzzzzz 0000001x xxxxxxx1 zzzzzzzx
-bin1s x z x 1 x
+bin1s x z x x x

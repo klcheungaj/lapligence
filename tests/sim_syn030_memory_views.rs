@@ -108,12 +108,12 @@ fn selected_enum_load_stops_before_non_fitting_word() {
         "enum_selected_stop",
         "selected=1,0 other=0\n",
         concat!(
-            "llg: error: memory file `enum.mem`: numeric memory data does not fit the enum base type; load terminated\n",
+            "llg: error: memory file `enum.mem`: memory word has more digits than the element holds; load terminated\n",
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
         &["--edition", "sv2009"],
-        &[("enum.mem", "1\n4\n0\n")],
+        &[("enum.mem", "1\n14\n0\n")],
     );
 }
 

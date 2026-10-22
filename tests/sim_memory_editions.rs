@@ -78,7 +78,7 @@ fn signed_address_overflow_and_out_of_range_stop_before_writing() {
 }
 
 #[test]
-fn native_enum_memory_overflow_is_rejected_before_cast() {
+fn native_memory_word_drops_the_unused_bits_of_its_digit() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
@@ -113,14 +113,11 @@ fn native_enum_memory_overflow_is_rejected_before_cast() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.lines().any(|line| line == "enum_after_read: 1 0"),
-        "invalid and following enum words must leave memory unchanged: {stdout:?}"
+        stdout.lines().any(|line| line == "enum_after_read: 0 1"),
+        "a one-digit word fits a two-bit cell and keeps its low bits (S27-D2): {stdout:?}"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(
-        stderr,
-        "llg: error: memory file `enum_overflow.hex`: numeric memory data does not fit the enum base type; load terminated\n"
-    );
+    assert_eq!(stderr, "");
 }
 
 #[test]
@@ -227,14 +224,25 @@ fn invalid_address_terminates_after_already_loaded_values() {
     );
 }
 
+// S27-D4: an enum element takes a word that fits its base type whether or
+// not it is a member value; a word with a digit too many ends the load.
 #[test]
-fn enum_memory_data_stops_at_the_first_non_member() {
+fn enum_memory_data_takes_non_members_and_stops_at_a_word_too_long() {
+    sim_cli::run_case_with_files(
+        "memory_editions",
+        "enum_invalid",
+        "m0=00 m1=10\n",
+        "llg: simulation ended without $finish (no processes remain) at time 0\n",
+        &[],
+        &["--edition", "sv2009"],
+        &[("enum.mem", "0\n2\n")],
+    );
     sim_cli::run_case_with_files(
         "memory_editions",
         "enum_invalid",
         "m0=00 m1=01\n",
         concat!(
-            "llg: error: memory file `enum.mem`: memory data value is not a member of the enum; load terminated\n",
+            "llg: error: memory file `enum.mem`: memory word has more digits than the element holds; load terminated\n",
             "llg: simulation ended without $finish (no processes remain) at time 0\n",
         ),
         &[],
@@ -244,7 +252,7 @@ fn enum_memory_data_stops_at_the_first_non_member() {
 }
 
 #[test]
-fn enum_memory_overflow_is_rejected_before_truncation() {
+fn enum_memory_word_of_one_digit_is_truncated_to_the_base() {
     let cases = [
         (
             std::fs::read_to_string(
@@ -252,7 +260,8 @@ fn enum_memory_overflow_is_rejected_before_truncation() {
                     .join("tests/fixtures/sim/review_bundle/enum_overflow.hex"),
             )
             .expect("read original enum overflow input"),
-            "AFTER_ENUM_LOAD 1 0\n",
+            "AFTER_ENUM_LOAD 0 1\n",
+            None,
         ),
         (
             std::fs::read_to_string(
@@ -261,18 +270,18 @@ fn enum_memory_overflow_is_rejected_before_truncation() {
             )
             .expect("read enum overflow input after a valid word"),
             "AFTER_ENUM_LOAD 0 0\n",
+            Some("memory file `enum_overflow.hex`: memory file contains more words than the selected range"),
         ),
     ];
-    for (words, expected) in cases {
+    // `4` has one digit, which a two-bit base holds: it is truncated to 0
+    // like any word (S27-D2), and an enum takes it (S27-D4).
+    for (words, expected, warning) in cases {
         sim_cli::run_case_with_files(
             "review_bundle",
             "r08_enum_readmem_overflow",
             expected,
-            concat!(
-                "llg: error: memory file `enum_overflow.hex`: numeric memory data does not fit the enum base type; load terminated\n",
-                "llg: $finish at time 0 at tb:10:5\n",
-            ),
-            &[],
+            "llg: $finish at time 0 at tb:10:5\n",
+            &warning.into_iter().collect::<Vec<_>>(),
             &["--edition", "sv2009"],
             &[("enum_overflow.hex", words.as_str())],
         );
@@ -311,10 +320,10 @@ fn enum_memory_range_check_preserves_packed_truncation_and_signed_values() {
             "TWO_STATE_ENUM_CONTROL 0 0\n",
         ),
         concat!(
-            "llg: error: memory file `signed_enum_nonextension.hex`: numeric memory data does not fit the enum base type; load terminated\n",
-            // SV 21.4.2: `1x` becomes 0x10 before the enum range check, so its
-            // known high digit overflows and the load stops with the memory unchanged.
-            "llg: error: memory file `enum_unknown.hex`: numeric memory data does not fit the enum base type; load terminated\n",
+            // `3` fits the two-bit signed base and loads as -1 (S27-D4); `1x`
+            // has a digit more than the base holds, so the load stops with the
+            // memory unchanged (S27-D2).
+            "llg: error: memory file `enum_unknown.hex`: memory word has more digits than the element holds; load terminated\n",
             "llg: $finish at time 0 at tb:17:5\n",
         ),
         &[],
@@ -332,7 +341,7 @@ fn enum_memory_range_check_preserves_packed_truncation_and_signed_values() {
 }
 
 #[test]
-fn wide_enum_memory_uses_entry_count_for_emitted_table() {
+fn wide_enum_memory_loads_without_a_member_table() {
     sim_cli::run_case_with_files(
         "memory_editions",
         "enum_wide",
@@ -351,12 +360,8 @@ fn wide_enum_memory_uses_entry_count_for_emitted_table() {
     )
     .expect("wide enum memory simulation");
     assert_eq!(run.stdout, "PASS wide enum memory\n");
-    let declaration = run
-        .model_c
-        .lines()
-        .find(|line| line.contains("sv4_t _llg_memory_enum_values"))
-        .expect("generated enum table declaration");
-    assert!(declaration.contains("[4]"), "{declaration}");
+    // An enum memory needs no member table (S27-D4).
+    assert!(!run.model_c.contains("memory_enum_values"));
 }
 
 #[test]

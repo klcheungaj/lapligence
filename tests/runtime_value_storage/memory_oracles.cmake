@@ -5,8 +5,17 @@ foreach(mode IN ITEMS tokens enum sparse2009 sparse2001 repeated2009 repeated200
     message(FATAL_ERROR "${mode}: exit ${result}\n${output}\n${errors}")
   endif()
   set(expected "")
-  if(mode STREQUAL "enum")
-    set(expected "llg: error: memory file `enum.hex`: numeric memory data does not fit the enum base type; load terminated\n")
+  if(mode STREQUAL "tokens")
+    # A token with more digits than the word needs ends the load (S27-D2):
+    # `x1`/`101` for the 1-bit binary words and `0x`..`1ff` for the 1-, 7- and
+    # 8-bit hexadecimal words, each signed and unsigned.
+    set(bin_error "llg: error: memory file `tokens.bin`: memory word has more digits than the element holds; load terminated\n")
+    set(hex_error "llg: error: memory file `tokens.hex`: memory word has more digits than the element holds; load terminated\n")
+    string(REPEAT "${bin_error}" 2 bin_errors)
+    string(REPEAT "${hex_error}" 6 hex_errors)
+    set(expected "${bin_errors}${hex_errors}")
+  elseif(mode STREQUAL "enum")
+    set(expected "llg: error: memory file `enum.hex`: memory word has more digits than the element holds; load terminated\n")
   elseif(mode STREQUAL "sparse2001")
     set(expected "llg: warning: memory file `sparse.hex`: memory file contains too few words for the selected range\n")
   elseif(mode STREQUAL "repeated2001")

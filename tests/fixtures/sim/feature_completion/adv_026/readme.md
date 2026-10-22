@@ -185,9 +185,9 @@ contain `@` addresses. Both editions warn "more words" for `F`.
 - `C`, two-state 12-bit binary: aaa, f0f; `x01` becomes 001 and `1z1` 101 (x/z
   read as 0, 21.4.2) with one conversion warning; 0000_0001_1111 is 01f; the
   sixth cell is unwritten (0) and five of six words warn "too few" (no `@`).
-- `I`, signed `int`: `ffffffff` is -1; `7fffffff` is 2147483647; `123456789` is
-  nine digits and is truncated from the left to `23456789` = 591751049 (5.7.1
-  L3923-3924); `80000000` is -2147483648.
+- `I`, signed `int`: `ffffffff` is -1; `7fffffff` is 2147483647; `123456789`
+  has nine digits, one more than an `int` holds: an error that ends the load,
+  so the last two cells keep 0 (S27-D2).
 - `P`, packed-struct `{hi, lo}` nibbles: `a5`, `x1` (hi is x), `0f`.
 - `N`, enum: 1, 2, 0 are GREEN, BLUE, RED.
 - `M`, `logic [3:0] [2][3]`: six words fill the cells row-major: `1 2 3 4 5 6`.
@@ -240,7 +240,7 @@ diagnostic and the printed cells.
 | D12 | `"11 @zz 22"` | `@zz` is not an address: error after 11 |
 | D13 | `$sreadmemb(..., "1 2")` | `2` is not a binary digit: error after 01 |
 | D14 | `(mem, 3, 0, "11 22 33 44 55")` | 11 at 3 ... 44 at 0; 55 past the finish: warning |
-| E1 | enum `"1 2 3 0"` | 1 and 2 are members; 3 is not: error, load ends (21.4.2 L37369-37370) |
+| E1 | enum `"1 2 3 10"` | 1 and 2 are members and 3, which fits the base, loads as a non-member (S27-D4); `10` has a digit more than the base holds: error, load ends (S27-D2) |
 | S1 | slice `g[4:7]`, 6 words | cells 4..7 loaded, guards 3 and 8 unchanged: warning |
 | S2 | slice `g[4:7]`, finish 9 | outside the memory: error, nothing loaded |
 | S3 | slice, `@3` | `@3` outside the slice: error after 11 |
@@ -251,7 +251,7 @@ diagnostic and the printed cells.
 | R4 | queue 7 8 9, start 2 finish 1, `"a b c"` | 7, b, a: 0xb at 1, 0xa at 2; c dropped with a warning |
 | A1 | associative array, `(0, 2)`, 4 words | entries 0, 1, 2 created with 1 2 3 (L37359-37360); warning |
 | W1 | two-state `"1x 2z 3"` | 10 20 03, cell 3 unchanged 77; conversion warning, then too few |
-| W2 | 8-bit cell, `"123"` | truncated from the left to 23, no diagnostic (5.7.1) |
+| W2 | 8-bit cell, `"123"` | a digit more than the cell holds: error, the cell stays x (S27-D2) |
 
 ### `notify.sv`, `notify.c` (step 3)
 

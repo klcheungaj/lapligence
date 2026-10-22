@@ -2187,7 +2187,6 @@ fn memory_slice_position_selector_must_match_its_view() {
         view: Box::new(view),
         radix: IrMemoryRadix::Hex,
         addressing: IrMemoryAddressingPolicy::SystemVerilog2009,
-        enum_values: None,
         start: None,
         finish: None,
     };
@@ -2269,7 +2268,6 @@ fn memory_rows_of_an_associative_array_are_whole_or_one_element() {
             total,
             radix: IrMemoryRadix::Hex,
             addressing: IrMemoryAddressingPolicy::SystemVerilog2009,
-            enum_values: None,
             start: None,
             finish: None,
         }))
@@ -2384,7 +2382,6 @@ fn memory_dump_cannot_carry_source_text() {
         }),
         radix: IrMemoryRadix::Hex,
         addressing: IrMemoryAddressingPolicy::SystemVerilog2009,
-        enum_values: None,
         start: None,
         finish: None,
     };

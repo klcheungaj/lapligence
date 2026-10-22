@@ -224,7 +224,10 @@ fn q02_words_follow_unsized_literal_extension_and_truncation() {
             &[data!("tokens.hex"), data!("tokens.bin")],
             &exact(
                 include_str!("../fixtures/sim/feature_completion/sim_027/q02_tokens.out"),
-                &[],
+                &[
+                    "error: memory file `tokens.hex`: memory word has more digits than the element holds; load terminated",
+                    "error: memory file `tokens.bin`: memory word has more digits than the element holds; load terminated",
+                ],
             ),
         );
     }

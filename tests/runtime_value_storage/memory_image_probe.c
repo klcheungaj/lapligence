@@ -15,12 +15,12 @@ static unsigned bit_state(sv4_t value, uint32_t bit) {
 
 static void load(const char* name, sv4_t* memory, uint32_t count, uint32_t width,
                  int8_t sign, int8_t two_state, const int32_t* dims, int policy,
-                 const sv4_t* enums, uint32_t enum_count, int radix) {
+                 int radix) {
     const uint64_t strides[] = {1};
     const sv4_t omitted = SV4_EMPTY;
     llg_memory_read_view(llg_string_bytes(name, strlen(name)), memory, count,
                         width, sign, two_state, dims, 1, strides, 0, count,
-                        omitted, omitted, 0, 0, policy, enums, enum_count, radix);
+                        omitted, omitted, 0, 0, policy, radix);
 }
 
 static void token_values(void) {
@@ -36,19 +36,33 @@ static void token_values(void) {
                 for (int i = 0; i < 8; ++i) memory[i] = sv4_zero(width, (int8_t)sign);
                 load(radix == 2 ? "tokens.bin" : "tokens.hex", memory, 8, width,
                      (int8_t)sign, 0, dims, LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009,
-                     NULL, 0, radix);
+                     radix);
+                // A token with more digits than the word needs ends the load;
+                // the words from it on keep their zero value (S27-D2).
+                const unsigned token_digits[8] = {1, 1, 2, 2, 2, 2, 1, 3};
+                uint32_t digit = radix == 2 ? 1u : 4u;
+                uint32_t limit = (width + digit - 1u) / digit;
+                int stop = 8;
+                for (int i = 0; i < 8; ++i) {
+                    if (token_digits[i] > limit) {
+                        stop = i;
+                        break;
+                    }
+                }
+                for (int i = stop; i < 8; ++i) {
+                    for (uint32_t bit = 0; bit < width; ++bit) CHECK(bit_state(memory[i], bit) == 0);
+                }
                 for (uint32_t bit = 0; bit < width; ++bit) {
-                    uint32_t digit = radix == 2 ? 1u : 4u;
                     CHECK(bit_state(memory[0], bit) == 2);
-                    CHECK(bit_state(memory[1], bit) == 3);
-                    CHECK(bit_state(memory[2], bit) == (bit < digit ? 2u : 0u));
+                    CHECK(1 >= stop || bit_state(memory[1], bit) == 3);
+                    CHECK(2 >= stop || bit_state(memory[2], bit) == (bit < digit ? 2u : 0u));
                     unsigned low = radix == 2 ? 1u : 7u;
-                    CHECK(bit_state(memory[3], bit) == (bit < digit ? ((low >> bit) & 1u) : 2u));
-                    CHECK(bit_state(memory[4], bit) == (bit < digit ? 3u : 0u));
-                    CHECK(bit_state(memory[5], bit) == (bit < digit ? 0u : 3u));
-                    CHECK(bit_state(memory[6], bit) == (bit < digit ? 1u : 0u));
+                    CHECK(3 >= stop || bit_state(memory[3], bit) == (bit < digit ? ((low >> bit) & 1u) : 2u));
+                    CHECK(4 >= stop || bit_state(memory[4], bit) == (bit < digit ? 3u : 0u));
+                    CHECK(5 >= stop || bit_state(memory[5], bit) == (bit < digit ? 0u : 3u));
+                    CHECK(6 >= stop || bit_state(memory[6], bit) == (bit < digit ? 1u : 0u));
                     uint64_t number = radix == 2 ? 5u : 511u;
-                    CHECK(bit_state(memory[7], bit) == (bit < 64 ? ((number >> bit) & 1u) : 0u));
+                    CHECK(7 >= stop || bit_state(memory[7], bit) == (bit < 64 ? ((number >> bit) & 1u) : 0u));
                 }
                 for (int i = 0; i < 8; ++i) {
                     CHECK(memory[i].is_signed == sign);
@@ -59,18 +73,18 @@ static void token_values(void) {
     }
 }
 
+// `4x` has a digit more than a two-bit word holds, so the load stops after
+// `1` and the later words keep their value (S27-D2).
 static void enum_overflow(void) {
     const int32_t dims[] = {0, 2};
-    sv4_t values[] = {sv4_from_u64(0, 2, 0), sv4_from_u64(1, 2, 0)};
     sv4_t memory[] = {sv4_from_u64(0, 2, 0), sv4_from_u64(1, 2, 0), sv4_from_u64(1, 2, 0)};
     write_input("enum.hex", "1 4x 0\n");
     load("enum.hex", memory, 3, 2, 0, 1, dims,
-         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, values, 2, 16);
+         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, 16);
     for (int i = 0; i < 3; ++i) {
         CHECK(sv4_to_u64(memory[i]) == 1u && !sv4_is_unknown(memory[i]));
         sv4_destroy(&memory[i]);
     }
-    for (int i = 0; i < 2; ++i) sv4_destroy(&values[i]);
 }
 
 static void sparse(int policy) {
@@ -78,7 +92,7 @@ static void sparse(int policy) {
     sv4_t memory[4];
     for (int i = 0; i < 4; ++i) memory[i] = sv4_from_u64(7, 8, 0);
     write_input("sparse.hex", "@2 aa @0 bb\n");
-    load("sparse.hex", memory, 4, 8, 0, 0, dims, policy, NULL, 0, 16);
+    load("sparse.hex", memory, 4, 8, 0, 0, dims, policy, 16);
     const uint64_t expected[] = {7, 0xaa, 7, 0xbb};
     for (int i = 0; i < 4; ++i) {
         CHECK(sv4_to_u64(memory[i]) == expected[i]);
@@ -90,7 +104,7 @@ static void repeated_addresses(int policy) {
     const int32_t dims[] = {0, 1};
     sv4_t memory[] = {sv4_zero(8, 0), sv4_zero(8, 0)};
     write_input("repeated.hex", "@0 aa @0 bb @0 cc\n");
-    load("repeated.hex", memory, 2, 8, 0, 0, dims, policy, NULL, 0, 16);
+    load("repeated.hex", memory, 2, 8, 0, 0, dims, policy, 16);
     CHECK(sv4_to_u64(memory[0]) == 0xcc && sv4_to_u64(memory[1]) == 0);
     sv4_destroy(&memory[0]);
     sv4_destroy(&memory[1]);
@@ -106,8 +120,7 @@ static void signed_address_spellings(void) {
     llg_memory_read_view(llg_string_bytes("signed_addresses.hex", 20), memory, 19,
                          8, 0, 0, dims, 1, strides, 0, 19,
                          selected, selected, 1, 1,
-                         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009,
-                         NULL, 0, 16);
+                         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, 16);
     CHECK(sv4_to_u64(memory[0]) == 0xcc);
     for (int i = 1; i < 19; ++i) CHECK(sv4_to_u64(memory[i]) == 0);
     sv4_destroy(&selected);
@@ -119,20 +132,18 @@ static void conversion_controls(void) {
     sv4_t memory[] = {sv4_zero(7, 0), sv4_zero(7, 0)};
     write_input("two_state.hex", "x7 z1\n");
     load("two_state.hex", memory, 2, 7, 0, 1, dims,
-         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, NULL, 0, 16);
+         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, 16);
     CHECK(sv4_to_u64(memory[0]) == 7u && sv4_to_u64(memory[1]) == 1u);
     CHECK(!sv4_is_unknown(memory[0]) && !sv4_is_unknown(memory[1]));
     sv4_destroy(&memory[0]);
     sv4_destroy(&memory[1]);
     const int32_t one[] = {0, 0};
-    sv4_t value = sv4_from_u64(7, 3, 1);
     sv4_t target = sv4_zero(3, 1);
-    write_input("signed.hex", "ff\n");
+    write_input("signed.hex", "f\n");
     load("signed.hex", &target, 1, 3, 1, 0, one,
-         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, &value, 1, 16);
+         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, 16);
     CHECK(sv4_to_i64(target) == -1);
     sv4_destroy(&target);
-    sv4_destroy(&value);
 }
 
 // `$sreadmemh` text (IEEE 1800-2009 D.14) reaches the file parser: the load
@@ -145,13 +156,13 @@ static void text_source(void) {
     const char buffer[] = "11 22\n33 44 55";
     llg_memory_text_begin(buffer, 10);
     load("no_such_file.hex", memory, 4, 8, 0, 0, dims,
-         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, NULL, 0, 16);
+         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, 16);
     llg_memory_text_end();
     const uint64_t expected[] = {0x11, 0x22, 0x33, 0x04};
     for (int i = 0; i < 4; ++i) CHECK(sv4_to_u64(memory[i]) == expected[i]);
     write_input("after_text.hex", "aa bb cc dd\n");
     load("after_text.hex", memory, 4, 8, 0, 0, dims,
-         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, NULL, 0, 16);
+         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, 16);
     CHECK(sv4_to_u64(memory[0]) == 0xaa && sv4_to_u64(memory[3]) == 0xdd);
     for (int i = 0; i < 4; ++i) sv4_destroy(&memory[i]);
 }
@@ -162,7 +173,7 @@ static void text_malformed(void) {
     for (int i = 0; i < 4; ++i) memory[i] = sv4_zero(8, 0);
     llg_memory_text_begin("11 1g 22", 8);
     load("$sreadmemh at tb:1:1", memory, 4, 8, 0, 0, dims,
-         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, NULL, 0, 16);
+         LLG_MEMORY_ADDRESSING_SYSTEMVERILOG_2009, 16);
     llg_memory_text_end();
     CHECK(sv4_to_u64(memory[0]) == 0x11 && sv4_to_u64(memory[1]) == 0);
     for (int i = 0; i < 4; ++i) sv4_destroy(&memory[i]);
