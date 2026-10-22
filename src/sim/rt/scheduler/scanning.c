@@ -755,7 +755,10 @@ int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target) {
     llg_file_slot_t* slot;
     if (!target || !llg_file_single_ordinary(descriptor, &slot) || target->width == 0)
         return 0;
-    sv4_t value = llg_ref_read(target);
+    // The bytes fill the variable from its most significant byte down; the
+    // bytes the file could not supply become zero, also when it supplied
+    // none (S26-D7, industry-standard behaviour).
+    sv4_t value = sv4_zero(target->width, target->is_signed);
     size_t bytes = ((size_t)target->width + 7u) / 8u;
     int read = 0;
     for (size_t index = 0; index < bytes; index++) {
@@ -766,8 +769,7 @@ int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target) {
             llg_scan_set_bit(&value, (uint32_t)(bit_base + bit), (byte >> bit) & 1u);
         read++;
     }
-    if (read) llg_ref_write_owned(target, value);
-    else sv4_destroy(&value);
+    llg_ref_write_owned(target, value);
     return read;
 }
 
@@ -824,7 +826,13 @@ static int fixed_file_read_array(uint32_t descriptor, sv4_t* values, llg_fixed_a
                 llg_scan_set_bit(&value, (uint32_t)(bit_base + bit), (byte >> bit) & 1u);
             read++;
         }
-        if (!read) { sv4_destroy(&value); break; }
+        // An element the file ends inside keeps its value; its bytes still
+        // count as read (S26-D7).
+        if ((size_t)read < bytes_per_element) {
+            sv4_destroy(&value);
+            result += read;
+            break;
+        }
         llg_sv4_set_signed(&value, (int8_t)elem_signed);
         if (elem_two_state) sv4_replace(&value, sv4_to_two_state(value));
         llg_value_scope_t* value_scope = llg_value_scope_begin(1);
@@ -833,7 +841,6 @@ static int fixed_file_read_array(uint32_t descriptor, sv4_t* values, llg_fixed_a
         llg_ba(fixed ? llg_fixed_array_cell(fixed, position) : &values[position], owned[0]);
         llg_value_scope_end(value_scope);
         result += read;
-        if ((size_t)read < bytes_per_element) break;
     }
     return result;
 }

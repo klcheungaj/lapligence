@@ -97,8 +97,9 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
     per memory word ... The data are read from the file in a big endian
     manner; the first byte read is used to fill the most significant location
     in the memory element." `start` and `count` select `mem[1:2]` (L37057-37061).
-  - A short final word fills only its most significant bytes and keeps the
-    rest (`w24=000007`; llg policy, S26-D7).
+  - A short final word fills its most significant bytes and zeroes the
+    rest (`w24=000000`), and a read at end of file zeroes the variable
+    (`p8=00`) (industry-standard behaviour, S26-D7).
   - `%u` (L36944-36958) and `%z` (L36979-36990) read 32-bit words in the
     host's little-endian order. `%z` reads an aval word then a bval word per
     32 bits, as in `s_vpi_vecval` (SV L62602: aval/bval `00`=0, `10`=1,

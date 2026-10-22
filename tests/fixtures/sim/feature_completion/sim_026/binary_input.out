@@ -5,9 +5,9 @@ D c=3 w24=050607
 E c=1 u32=740a0908
 F c=9 same=1
 G ch=-1 eof=1
-H c=0 p8=xx
+H c=0 p8=00
 I c=4 f32=efcdab89
 J c=1 z8=1x0z01xz
 K c=2 w16=3412
-L c=2 w24=000007
+L c=2 w24=000000
 M c=-1 u32=740a0908
