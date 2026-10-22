@@ -105,6 +105,36 @@ impl StopPolicy {
     }
 }
 
+/// The pulse handling style of module path outputs (IEEE 1800-2009
+/// 30.7.4.1): an invocation choice replaces every `pulsestyle_*` declaration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PulseStyle {
+    OnEvent,
+    OnDetect,
+}
+
+impl PulseStyle {
+    /// Parse the name used by `llg --pulse-style` and `simulator.pulse_style`.
+    pub fn parse(value: &str) -> Result<Self, &'static str> {
+        match value {
+            "onevent" => Ok(Self::OnEvent),
+            "ondetect" => Ok(Self::OnDetect),
+            _ => Err("expected onevent or ondetect"),
+        }
+    }
+}
+
+/// Parse a pulse limit percentage (`--pulse-reject`, `--pulse-error`,
+/// `simulator.pulse_reject`, `simulator.pulse_error`): an integer from 0 to
+/// 100 (IEEE 1800-2009 30.7.2).
+pub fn parse_pulse_percent(value: &str) -> Result<u8, &'static str> {
+    value
+        .parse::<u8>()
+        .ok()
+        .filter(|percent| *percent <= 100)
+        .ok_or("expected an integer from 0 to 100")
+}
+
 /// A validated, resolved `llg.toml`.
 ///
 /// Optional fields are `None` when the file did not set them, so the driver
@@ -216,6 +246,13 @@ pub struct LintRunConfig {
 pub struct SimulatorConfig {
     pub stop_policy: Option<StopPolicy>,
     pub optimize: Option<bool>,
+    /// Module path reject and error limits in percent of each delay.
+    pub pulse_reject: Option<u8>,
+    pub pulse_error: Option<u8>,
+    /// Pulse style and showcancelled setting replacing every specify-block
+    /// declaration.
+    pub pulse_style: Option<PulseStyle>,
+    pub show_cancelled: Option<bool>,
     /// Arguments passed to the generated simulator.
     pub plusargs: Option<Vec<String>>,
 }

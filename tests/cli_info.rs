@@ -67,6 +67,18 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("--library-order"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--default-library"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--stop-policy <resume|exit>"));
+    for option in [
+        "--pulse-reject <0-100>",
+        "--pulse-error <0-100>",
+        "--pulse-style <onevent|ondetect>",
+        "--show-cancelled",
+        "--no-show-cancelled",
+    ] {
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains(option),
+            "{option}"
+        );
+    }
     assert!(String::from_utf8_lossy(&output.stdout).contains("--launcher"));
     for option in [
         "--out-dir <dir>",
@@ -310,6 +322,30 @@ fn simulator_removed_options_are_usage_errors() {
         assert!(output.stdout.is_empty(), "{output:?}");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains(&format!("unknown option `{option}`")),
+            "{output:?}"
+        );
+    }
+}
+
+#[test]
+fn pulse_controls_reject_missing_and_invalid_values() {
+    for (args, expected) in [
+        (&["--pulse-reject"][..], "requires an integer from 0 to 100"),
+        (
+            &["--pulse-error", "101"][..],
+            "--pulse-error: expected an integer from 0 to 100",
+        ),
+        (&["--pulse-style"][..], "requires onevent or ondetect"),
+        (
+            &["--pulse-style", "late"][..],
+            "--pulse-style: expected onevent or ondetect",
+        ),
+    ] {
+        let output = invoke(env!("CARGO_BIN_EXE_llg"), args);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
             "{output:?}"
         );
     }

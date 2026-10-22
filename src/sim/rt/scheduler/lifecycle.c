@@ -293,6 +293,11 @@ void llg_rt_cleanup(void) {
         llg_inertial_t* driver = g.inertial_drivers;
         g.inertial_drivers = driver->next_all;
         *driver->handle = NULL;
+        if (driver->queue) {
+            free(driver->queue->times);
+            free(driver->queue->states);
+            free(driver->queue);
+        }
         sv4_destroy(&driver->current);
         sv4_destroy(&driver->value);
         sv4_destroy(&driver->mask);

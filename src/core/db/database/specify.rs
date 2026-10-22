@@ -145,13 +145,43 @@ pub struct Specparam {
     pub pathpulse: bool,
 }
 
+/// The module paths a `PATHPULSE$` specparam applies to (V 14.6.1,
+/// SV 30.7.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PathPulseScope {
+    /// `PATHPULSE$`: every path of the module without a path-specific one.
+    Module,
+    /// `PATHPULSE$in$out`: the input and output terminal declarations the
+    /// name resolves to.
+    Path { input: NodeId, output: NodeId },
+    /// A name whose terminals do not resolve; it applies to no path.
+    Unresolved,
+}
+
+/// One `PATHPULSE$` pulse-limit specparam with its evaluated limits (the
+/// `min:typ:max` operand is the compilation's delay selection).
+#[derive(Clone, Debug, PartialEq)]
+pub struct PathPulse {
+    /// The specparam declaration.
+    pub node: NodeId,
+    /// The enclosing specify block.
+    pub block: NodeId,
+    pub scope: PathPulseScope,
+    /// The reject limit, `None` when it did not evaluate.
+    pub reject: Option<Val>,
+    /// The error limit; `None` when only the reject limit is given (it then
+    /// applies to both) or it did not evaluate.
+    pub error: Option<Val>,
+}
+
 /// Every specify fact of a design, in capture order.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct SpecifyTables {
     pub(super) blocks: Vec<NodeId>,
     pub(super) paths: Vec<ModulePath>,
     pub(super) items: Vec<SpecifyItem>,
     pub(super) specparams: HashMap<NodeId, Specparam>,
+    pub(super) path_pulses: Vec<PathPulse>,
 }
 
 /// Dense, unique `role[i]` targets in index order.
@@ -208,6 +238,55 @@ fn timing_check_kind(code: u64) -> TimingCheckKind {
         .unwrap_or(Unknown)
 }
 
+/// The limits and terminals of one `PATHPULSE$` specparam node: its constant
+/// is the reject limit, its auxiliary one more than the error limit's constant
+/// id, and OPERAND[0]/LHS[0] the resolved terminals.
+fn path_pulse_from_slang(
+    snapshot: &SlangSnapshot,
+    ids: &SemanticIds,
+    semantic: &SemanticNode,
+    node: NodeId,
+) -> Result<PathPulse, DbError> {
+    let constant = |id: u64| -> Result<Option<Val>, DbError> {
+        let constant = snapshot.constants.get(id as usize).ok_or_else(|| {
+            DbError::InvalidSnapshot("PATHPULSE$ limit names a missing constant".into())
+        })?;
+        Ok(val_from_slang(&constant.value))
+    };
+    let reject = match semantic.constant_id() {
+        Some(id) => constant(id)?,
+        None => None,
+    };
+    let error = match semantic.auxiliary.checked_sub(1) {
+        Some(id) => constant(id)?,
+        None => None,
+    };
+    let edges = semantic_edges(snapshot, semantic)?;
+    let input = edge_target(ids, edges, SemanticEdgeRole::Operand)?;
+    let output = edge_target(ids, edges, SemanticEdgeRole::Lhs)?;
+    let scope = match (input, output) {
+        (Some(input), Some(output)) => PathPulseScope::Path { input, output },
+        _ if semantic.name == "PATHPULSE$" => PathPulseScope::Module,
+        _ => PathPulseScope::Unresolved,
+    };
+    let block = semantic
+        .parent_id()
+        .and_then(|parent| snapshot.semantic_nodes.get(parent as usize))
+        .filter(|parent| parent.kind == SemanticKind::Specify)
+        .map(|parent| semantic_id(ids, parent.id))
+        .transpose()?
+        .ok_or_else(|| {
+            DbError::InvalidSnapshot("PATHPULSE$ specparam is outside a specify block".into())
+        })?;
+    Ok(PathPulse {
+        node,
+        block,
+        scope,
+        reject,
+        error,
+    })
+}
+
 /// Import the specify side tables. The ABI layer has validated subkinds and
 /// auxiliary fields; this checks the edge shapes. Language rules (terminal
 /// directions, delay counts) are the frontend's and lowering's: an
@@ -254,6 +333,11 @@ pub(super) fn specify_tables_from_slang(
                     pathpulse,
                 },
             );
+            if pathpulse {
+                tables
+                    .path_pulses
+                    .push(path_pulse_from_slang(snapshot, ids, semantic, node)?);
+            }
             continue;
         }
         if semantic.kind != SemanticKind::Specify {
@@ -342,6 +426,12 @@ impl Db {
     /// elaboration parameter.
     pub fn specparam(&self, node: NodeId) -> Option<Specparam> {
         self.specify.specparams.get(&node).copied()
+    }
+
+    /// Every `PATHPULSE$` specparam, in capture order (each elaborated
+    /// instance has its own records).
+    pub fn path_pulses(&self) -> &[PathPulse] {
+        &self.specify.path_pulses
     }
 
     /// Every specparam declaration, in node order.
@@ -483,11 +573,67 @@ endmodule
     }
 
     #[test]
+    fn path_pulses_keep_limits_and_resolved_terminals() {
+        let db = compile(
+            "module c(input a, b, output y);
+  assign y = a & b;
+  specify
+    (a => y) = 4;
+    (b => y) = 5;
+    specparam PATHPULSE$a$y = (1, 3);
+    specparam PATHPULSE$ = 2;
+    specparam PATHPULSE$q$y = 1;
+  endspecify
+endmodule
+module tb;
+  reg a, b; wire y;
+  c u(.a(a), .b(b), .y(y));
+endmodule
+",
+        );
+        let pulses = db.path_pulses();
+        assert_eq!(pulses.len(), 3);
+        assert!(pulses
+            .iter()
+            .all(|pulse| pulse.block == db.specify_blocks()[0]));
+        let names = |pulse: &PathPulse| match pulse.scope {
+            PathPulseScope::Path { input, output } => {
+                format!("{}->{}", db.node(input).name, db.node(output).name)
+            }
+            other => format!("{other:?}"),
+        };
+        let int = |value: &Option<Val>| match value {
+            Some(Val::Bits(bits)) => bits.to_i128(),
+            _ => None,
+        };
+        assert_eq!(names(&pulses[0]), "a->y");
+        assert_eq!(
+            (int(&pulses[0].reject), int(&pulses[0].error)),
+            (Some(1), Some(3))
+        );
+        assert_eq!(names(&pulses[1]), "Module");
+        assert_eq!(
+            (int(&pulses[1].reject), pulses[1].error.clone()),
+            (Some(2), None)
+        );
+        // A name whose input does not exist applies to no path.
+        assert_eq!(names(&pulses[2]), "Unresolved");
+        assert!(
+            db.specparams()
+                .iter()
+                .filter(|(_, specparam)| specparam.pathpulse)
+                .count()
+                == 3
+        );
+    }
+
+    #[test]
     fn designs_without_specify_blocks_have_empty_tables() {
         let db = compile("module tb; parameter p = 1; wire w = p; endmodule\n");
         assert!(db.specify_blocks().is_empty());
         assert!(db.module_paths().is_empty());
         assert!(db.specify_items().is_empty());
         assert!(db.specparams().is_empty());
+        assert!(db.path_pulses().is_empty());
     }
 }

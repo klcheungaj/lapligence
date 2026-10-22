@@ -1559,6 +1559,40 @@ uint64_t specifyPathAuxiliary(const TimingPathSymbol& path) {
   return auxiliary;
 }
 
+// A pulse-limit specparam (30.7.1). Slang marks only the two-value form
+// (`isPathPulse`); `PATHPULSE$name = r;` declared in a specify block is a
+// pulse limit as well, with the error limit equal to the reject limit.
+bool isPulseLimitSpecparam(const SpecparamSymbol& symbol) {
+  if (symbol.isPathPulse)
+    return true;
+  const Scope* parent = symbol.getParentScope();
+  return symbol.name.starts_with("PATHPULSE$") && parent != nullptr &&
+         parent->asSymbol().kind == SymbolKind::SpecifyBlock;
+}
+
+// The input (`source`) or output terminal named by a pulse-limit specparam
+// `PATHPULSE$in$out`, or null for the module-wide `PATHPULSE$` and for a
+// name that does not resolve to a value. Slang resolves the two-value form
+// itself; the single-value form is resolved here the same way (first `$`
+// after the prefix separates the names, lookup in the module scope) without
+// diagnostics, since a pulse limit naming no path simply applies to none.
+const Symbol* pulseLimitTerminal(const SpecparamSymbol& symbol, bool source) {
+  if (symbol.isPathPulse)
+    return source ? symbol.getPathSource() : symbol.getPathDest();
+  constexpr std::string_view prefix = "PATHPULSE$";
+  const std::string_view path = symbol.name.substr(prefix.size());
+  const size_t index = path.find('$');
+  if (index == std::string_view::npos || index == 0 || index + 1 == path.size())
+    return nullptr;
+  const Scope* block = symbol.getParentScope();
+  const Scope* module = block == nullptr ? nullptr : block->asSymbol().getParentScope();
+  if (module == nullptr)
+    return nullptr;
+  const std::string_view name = source ? path.substr(0, index) : path.substr(index + 1);
+  const Symbol* terminal = Lookup::unqualified(*module, name);
+  return terminal != nullptr && terminal->isValue() ? terminal : nullptr;
+}
+
 uint64_t specifyPulseStyleCode(PulseStyleKind kind) {
   switch (kind) {
     case PulseStyleKind::OnEvent: return LLG_SLANG_SPECIFY_PULSE_ONEVENT;
@@ -2484,6 +2518,18 @@ public:
     if constexpr (std::same_as<T, SpecparamSymbol>) {
       if (symbol.isPathPulse) {
         result.subkind = LLG_SLANG_PARAMETER_PATHPULSE;
+        const ConstantValue& reject = symbol.getPulseRejectLimit();
+        if (!reject.bad())
+          result.constant_id = capture.constant(reject);
+        const ConstantValue& error = symbol.getPulseErrorLimit();
+        if (!error.bad())
+          result.auxiliary = capture.constant(error) + 1;
+      }
+      else if (isPulseLimitSpecparam(symbol)) {
+        result.subkind = LLG_SLANG_PARAMETER_PATHPULSE;
+        const ConstantValue& reject = symbol.getValue();
+        if (!reject.bad())
+          result.constant_id = capture.constant(reject);
       }
       else {
         result.subkind = LLG_SLANG_PARAMETER_SPECPARAM;
@@ -2766,6 +2812,15 @@ public:
         uint32_t index = 0;
         for (const Expression* terminal : symbol.getTerminals())
           specifyOperand(id, *terminal, LLG_SLANG_EDGE_OPERAND, index++);
+      }
+    }
+    // The terminals a `PATHPULSE$in$out` name resolves to (30.7.1).
+    if constexpr (std::same_as<T, SpecparamSymbol>) {
+      if (!capture.declarationOnly && isPulseLimitSpecparam(symbol)) {
+        if (const Symbol* source = pulseLimitTerminal(symbol, true))
+          capture.semanticRole(id, source, LLG_SLANG_EDGE_OPERAND);
+        if (const Symbol* dest = pulseLimitTerminal(symbol, false))
+          capture.semanticRole(id, dest, LLG_SLANG_EDGE_LHS);
       }
     }
     if constexpr (std::same_as<T, CovergroupType> ||

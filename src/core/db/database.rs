@@ -130,8 +130,8 @@ use shared::{DenseShared, DenseSharedBuilder};
 mod specify;
 use specify::{specify_tables_from_slang, SpecifyTables};
 pub use specify::{
-    ModulePath, PathCondition, PathConnection, PathEdge, PathPolarity, PulseStyle, SpecifyItem,
-    SpecifyItemKind, Specparam, TimingCheckKind,
+    ModulePath, PathCondition, PathConnection, PathEdge, PathPolarity, PathPulse, PathPulseScope,
+    PulseStyle, SpecifyItem, SpecifyItemKind, Specparam, TimingCheckKind,
 };
 
 /// Arena index of one [`Node`].

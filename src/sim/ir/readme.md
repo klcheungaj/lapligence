@@ -12,13 +12,18 @@ validation covers each variant and its cross-table constraints.
 row arity, scalar inputs and the unsigned one-bit result. Optimizer and execution
 walkers retain every input; row evaluation stays out of expression trees.
 
-`timing.rs` holds simple module paths: `IrModel::module_paths` sets of
+`timing.rs` holds module paths: `IrModel::module_paths` sets of
 destination net groups with storage-bit terminal ranges, full/parallel
 connection, polarity metadata and twelve-transition delays in scheduler ticks
 (`expand_path_delays` applies Tables 30-2 and 30-3). Validation checks packed
 sources, unique existing destination groups, ranges within storage and equal
 parallel widths; `ModulePathStamp` names a set. The storage audit reads every
-source.
+source. ADV-008 adds per-path `IrPathEdge`, `IrPathCondition` (index into the
+set's `conditions` expressions, or `IfNone`), an `ifnone` group and optional
+`IrPathLimits` (reject/error ticks per transition), per-bit destination style
+flags and the model-wide `IrPathPulseOptions`; validation checks condition
+indices, groups, limit order, style width, percentages and the condition
+expressions, which the optimizer traversals and storage audit also walk.
 
 `coverage.rs` holds functional coverage (SIM-044, SIM-045): `covergroups` and
 `coverage_types` are static coverpoint bin tables (validated for width, key

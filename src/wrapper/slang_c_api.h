@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 31u
+#define LLG_SLANG_ABI_VERSION 36u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -984,8 +984,12 @@ enum {
    * they are programwide items. */
   LLG_SLANG_SCOPE_ANONYMOUS_PROGRAM = 235,
   /* A specparam (V 3.11.3, SV 6.20.5): a PARAMETER node whose constant_id
-   * is its value. PATHPULSE marks a `PATHPULSE$` pulse-limit specparam,
-   * which carries no constant. */
+   * is its value. PATHPULSE marks a `PATHPULSE$` pulse-limit specparam
+   * (ABI v36): constant_id is its reject limit, auxiliary is one more than
+   * the constant id of its error limit (0 when it has none), and OPERAND[0]
+   * and LHS[0] name the input and output terminal declarations the name
+   * resolves to (absent for the module-wide `PATHPULSE$` and for a name
+   * that resolves to nothing). */
   LLG_SLANG_PARAMETER_SPECPARAM = 236,
   LLG_SLANG_PARAMETER_PATHPULSE = 237
 };

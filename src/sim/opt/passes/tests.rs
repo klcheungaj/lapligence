@@ -178,6 +178,7 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         udp_tables: Vec::new(),
         udp_states: Vec::new(),
         module_paths: Vec::new(),
+        path_pulse: Default::default(),
         events: Vec::new(),
         funcs: Vec::new(),
         assertions: Vec::new(),

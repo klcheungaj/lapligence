@@ -64,8 +64,11 @@ Specify blocks (IEEE 1364-2001 14, IEEE 1800-2009 30) keep their nodes as
 polarity, edge, condition, ordered input/output terminal and delay
 expressions, one record per elaborated instance), `Db::specify_items`
 (pulse-style declarations with their terminals, timing checks with their
-kind) and `Db::specparam`/`Db::specparams`, which mark specparams (and
-`PATHPULSE$` ones) apart from elaboration parameters. A specparam's value is
+kind), `Db::specparam`/`Db::specparams`, which mark specparams (and
+`PATHPULSE$` ones) apart from elaboration parameters, and `Db::path_pulses`
+(`PATHPULSE$` reject/error limit values and the input/output terminal
+declarations a `PATHPULSE$in$out` name resolves to, `Module` for the
+module-wide one, `Unresolved` otherwise; single-value forms included). A specparam's value is
 its parameter constant; its node and each path node are the stable source
 identities later annotation and timing-check work keys on.
 Modport expression ports `.p(expr)` keep their port expression in a side

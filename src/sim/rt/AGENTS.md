@@ -310,19 +310,30 @@ the union of old and new ranges against overlapping drivers. Keep full-net waite
 identity and notification behavior. Pending delayed drivers start X, not driverless
 Z. Fixed-array delayed sites retain per-element identity.
 
-Module paths (`llg_module_path_set_t`, one per instance with simple paths)
+Module paths (`llg_module_path_set_t`, one per instance with paths)
 borrow the model's source storage and own, between `llg_module_paths_start`
 and `llg_rt_cleanup`, a last value per source and a last-change time per
 source bit. A bound destination net (`llg_net_t.path_dest`, NULL otherwise, so
 undelayed nets keep their single flag test) always has `propagation_enabled`
 and per-bit path-stage records (`propagation_bits`): `llg_net_propagate_paths`
 first refreshes the stamps (order-independent within a slot), then schedules
-each changed bit at `max(now, latest stamp + smallest path delay of the latest
-inputs)` (A7-D1). A matured path stage publishes directly, or, on a net with a
+each changed bit at `max(now, latest input time + smallest path delay)` over
+the enabled paths whose input time is latest (A7-D1, A8-D1): conditions come
+from the set's generated evaluator, read lazily once per publication; edge
+paths use per-bit rise/fall stamps (allocated only for sets with edge paths);
+an `ifnone` path yields to an active path of its group. `path_bit_schedule`
+then filters pulses (30.7): the record's pending event is the head and further
+events live in its `llg_path_queue_t` (allocated on the first passed or
+x-filtered overlap, freed at cleanup); reject/error limits come from the path's
+`limits` table or the `llg_module_paths_configure` percentages; styles from
+the destination flags or the configured overrides. With default limits no
+queue is allocated and the stage is the ADV-007 inertial update.
+`commit_inertial` promotes the next queued event after a path-stage commit; a
+force clears the queue. A matured path stage publishes directly, or, on a net with a
 net delay (`net_delayed`), feeds the net-delay stage above, so the net delay
 adds to the path delay. Delay tables
-are writable for annotation; `llg_net_path_pending` reports a scheduled path
-event. A force or release resynchronizes the propagation records'
+and limit tables are writable for annotation; `llg_net_path_pending` and
+`llg_net_path_event` report scheduled path events. A force or release resynchronizes the propagation records'
 committed values (`llg_net_propagation_sync`), so the next delayed
 transition starts from the published value.
 

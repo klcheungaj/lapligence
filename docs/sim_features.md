@@ -64,14 +64,14 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 5. Procedural statements | 5 | 7 | 0 | 1 | 0 | 0 | 13 |
 | 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 0 | 7 |
 | 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 0 | 17 |
-| 8. Continuous/structural | 5 | 6 | 2 | 1 | 0 | 0 | 14 |
+| 8. Continuous/structural | 5 | 7 | 2 | 1 | 0 | 0 | 15 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 0 | 7 |
 | 10. System tasks/functions | 12 | 8 | 2 | 4 | 0 | 0 | 26 |
 | 11. Compiler directives | 6 | 1 | 0 | 1 | 0 | 0 | 8 |
 | 12. Verification/foreign interfaces | 1 | 14 | 0 | 1 | 3 | 0 | 19 |
-| **Total** | **49** | **79** | **5** | **8** | **3** | **1** | **145** |
+| **Total** | **49** | **80** | **5** | **8** | **3** | **1** | **146** |
 
-**129 rows have some source implementation; 79 of those remain partial and one
+**130 rows have some source implementation; 80 of those remain partial and one
 is accepted.** The accepted row (`always_ff` and writer rules) carries
 post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
@@ -1481,25 +1481,38 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   transition (Tables 30-2 and 30-3, negative delays are zero), choose the
   smallest delay among the inputs that changed last and take the larger of
   the path and the distributed delays; a net delay on the destination then
-  adds to that (A7-D1). The destination is inertial with the default pulse
-  limits, delays the net itself (A7-D2) and starts x when driven (A7-D6). The owned Db keeps every specify
+  adds to that (A7-D1). The destination delays the net itself (A7-D2) and
+  starts x when driven (A7-D6). The owned Db keeps every specify
   block, path (terminals, connection, polarity, delays) and specify item with
   its stable source node; the generated model keeps a writable per-path delay
   table and reports scheduled path events (`llg_module_path_sets`,
-  `llg_net_path_pending`). IEEE 1364-2001 rejects a destination with two
-  drivers inside the module (14.2.1). Located errors reject state-dependent
-  and edge-sensitive paths, `PATHPULSE$`, pulse-style/showcancelled
-  declarations (ADV-008), timing checks (ADV-009/010), variable destinations,
+  `llg_net_path_pending`, `llg_net_path_event`). IEEE 1364-2001 rejects a
+  destination with two drivers inside the module (14.2.1). Located errors
+  reject timing checks (ADV-009/010), variable destinations,
   inout destinations also driven outside the module and selects of
   multidimensional packed terminals. No `vpiModPath` objects yet (ADV-019)
   ([ADV-007 fixtures](../tests/fixtures/sim/feature_completion/adv_007/readme.md)).
   V §§3.11.3, 14.1–14.4; SV §§6.20.5, 30.1–30.6 **[1995/SV-2009 restored]**.
-- ❌ **Timing checks, pulse control and SDF** — State-dependent and
-  edge-sensitive paths, `PATHPULSE$`, pulse styles, notifiers, timing-check
-  `&&&`, `$setup/$hold/$setuphold`, `$recovery/$removal/$recrem`,
+- 🟨 **State-dependent and edge-sensitive paths, pulse control** —
+  `if (cond)` paths read their condition when the destination transition is
+  scheduled (least significant bit, x and z true; A8-D1, A8-D2), `ifnone`
+  paths apply when no path with their terminals is active (A8-D3), and
+  `posedge`/`negedge`/`edge` paths start at the last such edge of the input's
+  least significant bit (A8-D4; `edge` is SystemVerilog only). Each pair of
+  consecutive scheduled destination transitions is a pulse (A8-D8): below the
+  reject limit it vanishes, below the error limit it becomes x, otherwise it
+  passes. Limits come from `PATHPULSE$` specparams (path-specific, then
+  module-wide, first-terminal rule; A8-D5) or from `--pulse-reject` /
+  `--pulse-error` percentages (default 100). `pulsestyle_onevent/ondetect`
+  and `showcancelled/noshowcancelled` declarations, or `--pulse-style` and
+  `--show-cancelled`, place the x of filtered and cancelled pulses (A8-D6,
+  A8-D7); pulse limits do not change delay composition (A8-D9)
+  ([ADV-008 fixtures](../tests/fixtures/sim/feature_completion/adv_008/readme.md)).
+  V §§14.2.3–14.2.4, 14.6; SV §§30.4.3–30.4.4, 30.7 **[1995/SV-2009 restored]**.
+- ❌ **Timing checks and SDF** — Notifiers, timing-check `&&&`, `$setup/$hold/$setuphold`, `$recovery/$removal/$recrem`,
   `$skew/$timeskew/$fullskew`, `$period/$width/$nochange` and `$sdf_annotate`
   delay/check application are not implemented.
-  V §§14.2.3–14.2.4, 14.6, ch.15–16; SV §§30.4.3–30.4.4, 30.7, ch.31–32
+  V ch.15–16; SV ch.31–32
   **[1995/SV-2009 restored]**.
 
 ## 9. Functions & tasks

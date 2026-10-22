@@ -401,6 +401,9 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
                 | CLOCKING_EDGE_MASK << CLOCKING_OUTPUT_EDGE_SHIFT;
             node.auxiliary & !(CLOCKING_BLOCK_DEFAULT | CLOCKING_BLOCK_GLOBAL | edge_mask) == 0
         }
+        // A `PATHPULSE$` specparam carries its error-limit constant id plus
+        // one; the Db checks that the constant exists.
+        (12, super::SEMANTIC_PARAMETER_PATHPULSE, _) => true,
         // Parameter auxiliary metadata carries the frontend's override bit.
         (12, _, _) => node.auxiliary <= 1,
         // Subroutine qualifiers carry method and DPI-C metadata. Context and

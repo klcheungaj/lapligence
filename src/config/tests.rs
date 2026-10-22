@@ -636,6 +636,10 @@ json_file = "out/lint.json"
 [simulator]
 stop_policy = "exit"
 optimize = false
+pulse_reject = 40
+pulse_error = 80
+pulse_style = "ondetect"
+show_cancelled = true
 plusargs = ["+seed=1"]
 [waveform]
 file = "waves/run.FST"
@@ -705,6 +709,10 @@ runtime_cache = "../cache"
     );
     assert_eq!(config.simulator.optimize, Some(false));
     assert_eq!(config.simulator.plusargs, Some(vec!["+seed=1".to_owned()]));
+    assert_eq!(config.simulator.pulse_reject, Some(40));
+    assert_eq!(config.simulator.pulse_error, Some(80));
+    assert_eq!(config.simulator.pulse_style, Some(PulseStyle::OnDetect));
+    assert_eq!(config.simulator.show_cancelled, Some(true));
     assert_eq!(config.build.gen_only, Some(true));
     assert_eq!(config.build.cc.as_deref(), Some("gcc"));
     assert_eq!(
@@ -773,6 +781,19 @@ fn invalid_driver_values_name_their_key() {
         (
             "[simulator]\nmax_export_mib = 4096\n",
             "simulator.max_export_mib",
+        ),
+        (
+            "[simulator]\npulse_reject = 101\n",
+            "simulator.pulse_reject",
+        ),
+        ("[simulator]\npulse_error = -1\n", "simulator.pulse_error"),
+        (
+            "[simulator]\npulse_style = \"both\"\n",
+            "simulator.pulse_style",
+        ),
+        (
+            "[simulator]\nshow_cancelled = \"yes\"\n",
+            "simulator.show_cancelled",
         ),
         ("[lint]\nrun = true\n", "lint.run"),
         ("[waveform]\nfile = \"dump.txt\"\n", "waveform.file"),
@@ -877,4 +898,16 @@ fn stop_policy_names_round_trip() {
         assert_eq!(policy.env_value(), name);
     }
     assert!(StopPolicy::parse("stop").is_err());
+}
+
+#[test]
+fn pulse_controls_parse_and_round_trip() {
+    assert_eq!(PulseStyle::parse("onevent"), Ok(PulseStyle::OnEvent));
+    assert_eq!(PulseStyle::parse("ondetect"), Ok(PulseStyle::OnDetect));
+    assert!(PulseStyle::parse("on_detect").is_err());
+    assert_eq!(parse_pulse_percent("0"), Ok(0));
+    assert_eq!(parse_pulse_percent("100"), Ok(100));
+    for rejected in ["101", "-1", "", "50%", "1.5"] {
+        assert!(parse_pulse_percent(rejected).is_err(), "{rejected}");
+    }
 }

@@ -163,6 +163,9 @@ server, accepted and ignored by `llg`.
 | `analysis.max_file_bytes`, `analysis.max_total_input_bytes` | integers | ls | input budgets |
 | `simulator.stop_policy` | `"resume"` \| `"exit"` | llg | `--stop-policy` |
 | `simulator.optimize` | bool | llg | `--no-opt` is `optimize = false` |
+| `simulator.pulse_reject`, `simulator.pulse_error` | integers 0 to 100 | llg | `--pulse-reject`, `--pulse-error` |
+| `simulator.pulse_style` | `"onevent"` \| `"ondetect"` | llg | `--pulse-style` |
+| `simulator.show_cancelled` | bool | llg | `--show-cancelled` / `--no-show-cancelled` |
 | `simulator.plusargs` | strings | llg | arguments after `--` (they replace; `--append-plusarg` adds) |
 | `waveform.file` | `.vcd`/`.fst` path | llg | `--wave` |
 | `waveform.depth` | integer 0 to 4294967295 | llg | `--wave-depth`; requires `file` |
@@ -377,6 +380,23 @@ severity = "error"
 - `stop_policy` (`"resume"` or `"exit"`) — `$stop` handling (`--stop-policy`,
   default `resume`).
 - `optimize` (bool) — simulator IR optimization passes; `false` is `--no-opt`.
+- `pulse_reject`, `pulse_error` (integers 0 to 100, default 100) — the reject
+  and error limits of module paths without a `PATHPULSE$` specparam, in percent
+  of the path delay of each transition, truncated to whole time units
+  (`--pulse-reject`, `--pulse-error`; IEEE 1800-2009 30.7.2). A pulse narrower
+  than the reject limit is removed, one narrower than the error limit becomes
+  x. The error limit must not be below the reject limit; `PATHPULSE$`
+  specparams take precedence.
+- `pulse_style` (`"onevent"` or `"ondetect"`) — the pulse style of every module
+  path destination, replacing the `pulsestyle_onevent`/`pulsestyle_ondetect`
+  declarations (`--pulse-style`; 30.7.4.1). Unset, the declarations decide and
+  the default is on-event.
+- `show_cancelled` (bool) — show cancelled pulses as x on every module path
+  destination (`true`, `--show-cancelled`) or never (`false`,
+  `--no-show-cancelled`), replacing the `showcancelled`/`noshowcancelled`
+  declarations (30.7.4.2). Unset, the declarations decide. Some simulators
+  turn cancelled-pulse x on together with an on-event or on-detect option;
+  with llg pass both options for that behaviour.
 - `plusargs` (array of strings) — arguments passed to the generated simulator
   (the arguments after `--`).
 

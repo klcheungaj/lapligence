@@ -449,12 +449,92 @@ fn module_path_tables_bind_only_their_destination_nets() {
     assert!(source.contains(
         "static llg_module_path_t llg_path_set_0__paths_0[] = { { 0, 1, 1, 3, 2, 1, 2, \
          { 1ULL, 2ULL, 3ULL, 4ULL, 5ULL, 6ULL, 7ULL, 8ULL, 9ULL, 10ULL, 11ULL, 12ULL }, \
-         \"f.v:7:5\" } };"
+         \"f.v:7:5\", .edge = 0 } };"
     ));
     assert!(source.contains(
         "static llg_module_path_set_t llg_path_set_0 = { \"tb.u\", llg_path_set_0__sources, 1, \
-         llg_path_set_0__dests, 1, NULL, NULL, NULL };"
+         llg_path_set_0__dests, 1, NULL, NULL, NULL, .conditions = NULL };"
     ));
     let defaults = lifecycle(&source, "llg_model_storage_defaults");
     assert!(defaults.contains("llg_module_paths_start(&llg_path_set_0);"));
+}
+
+#[test]
+fn module_path_triggers_limits_styles_and_options_are_emitted() {
+    use crate::sim::ir::{
+        IrExpr, IrExprKind, IrModulePath, IrModulePathDestination, IrModulePathSet,
+        IrPathCondition, IrPathEdge, IrPathLimits, IrPathPolarity, IrPathPulseOptions,
+        IrPulseStyle,
+    };
+    let mut model = net_model(2, 1);
+    model.signals.push(
+        IrSignal::new(
+            "G_tb_a".to_owned(),
+            Some("tb.a".to_owned()),
+            IrType::Packed {
+                width: 1,
+                signed: false,
+                two_state: false,
+            },
+            None,
+        )
+        .unwrap(),
+    );
+    let path = || {
+        IrModulePath::new(
+            0,
+            0,
+            1,
+            0,
+            1,
+            true,
+            IrPathPolarity::Unknown,
+            [4; 12],
+            "f.v:3:5".to_owned(),
+        )
+    };
+    let mut destination = IrModulePathDestination::new(
+        1,
+        vec![
+            path()
+                .with_trigger(IrPathEdge::Negedge, IrPathCondition::If(0))
+                .with_group(1)
+                .with_limits(IrPathLimits::uniform(1, 3)),
+            path()
+                .with_trigger(IrPathEdge::None, IrPathCondition::IfNone)
+                .with_group(1),
+        ],
+    );
+    destination.styles = Some(vec![3; 65]);
+    let condition = IrExpr::try_new(IrExprKind::SigRead(0), 1, false, None).unwrap();
+    model.module_paths.push(
+        IrModulePathSet::new("tb.u".to_owned(), vec![0], vec![destination])
+            .with_conditions(vec![condition]),
+    );
+    model.path_pulse = IrPathPulseOptions {
+        reject_percent: 40,
+        error_percent: 80,
+        style: Some(IrPulseStyle::OnDetect),
+        show_cancelled: Some(false),
+    };
+    let source = render(model);
+    assert!(source.contains(
+        "static uint64_t llg_path_set_0__limits_0_0[2 * LLG_PATH_TRANSITIONS] = { 1ULL, 1ULL,"
+    ));
+    assert!(source.contains(
+        "\"f.v:3:5\", .edge = 2, .condition = 1, .group = 1, \
+         .limits = llg_path_set_0__limits_0_0 }"
+    ));
+    assert!(source.contains("\"f.v:3:5\", .edge = 0, .ifnone = 1, .group = 1 } };"));
+    assert!(source.contains("static const uint8_t llg_path_set_0__styles_0[] = { 3, 3,"));
+    assert!(source.contains("NULL, NULL, .styles = llg_path_set_0__styles_0 }"));
+    assert!(source.contains(
+        "NULL, NULL, NULL, .conditions = llg_path_set_0__conditions, .n_conditions = 1 };"
+    ));
+    assert!(source.contains("static void llg_path_set_0__conditions(sv4_t* out, void* context)"));
+    let defaults = lifecycle(&source, "llg_model_storage_defaults");
+    assert!(
+        defaults.contains("llg_module_paths_configure(40u, 80u, 1, 0);"),
+        "{defaults}"
+    );
 }

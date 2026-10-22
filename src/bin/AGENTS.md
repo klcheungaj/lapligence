@@ -79,6 +79,10 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
   reach codegen as `CodegenOptions::waveform`: the model registers every signal
   and calls `llg_wave_start` at startup, after which design
   `$dumpfile`/`$dumpvars` are ignored. `--no-wave` cancels a configured file.
+- `--pulse-reject`/`--pulse-error <0-100>`, `--pulse-style <onevent|ondetect>`
+  and `--show-cancelled`/`--no-show-cancelled` (`[simulator] pulse_*`,
+  `show_cancelled`) reach codegen as `CodegenOptions::path_pulse`; an error
+  limit below the merged reject limit is a settings error.
 - `--stop-policy <resume|exit>` defaults to same-time coroutine resumption.
   `exit` returns from the child without draining work or running finals; embedders
   also have an explicit runtime resume hook.

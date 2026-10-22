@@ -3063,6 +3063,78 @@ fn a7_d6_path_destination_initial_x() {
 }
 
 #[test]
+fn a8_d1_conditional_path_selection() {
+    run_decision(
+        "A8-D1_conditional_path_selection",
+        include_str!("fixtures/sim/lrm_decisions/A8-D1_conditional_path_selection.out"),
+    );
+}
+
+#[test]
+fn a8_d2_multibit_condition_lsb() {
+    run_decision(
+        "A8-D2_multibit_condition_lsb",
+        include_str!("fixtures/sim/lrm_decisions/A8-D2_multibit_condition_lsb.out"),
+    );
+}
+
+#[test]
+fn a8_d3_ifnone_default_path() {
+    run_decision(
+        "A8-D3_ifnone_default_path",
+        include_str!("fixtures/sim/lrm_decisions/A8-D3_ifnone_default_path.out"),
+    );
+}
+
+#[test]
+fn a8_d4_edge_path_last_edge() {
+    run_decision(
+        "A8-D4_edge_path_last_edge",
+        include_str!("fixtures/sim/lrm_decisions/A8-D4_edge_path_last_edge.out"),
+    );
+}
+
+#[test]
+fn a8_d5_pathpulse_limits() {
+    run_decision(
+        "A8-D5_pathpulse_limits",
+        include_str!("fixtures/sim/lrm_decisions/A8-D5_pathpulse_limits.out"),
+    );
+}
+
+#[test]
+fn a8_d6_showcancelled_windows() {
+    run_decision(
+        "A8-D6_showcancelled_windows",
+        include_str!("fixtures/sim/lrm_decisions/A8-D6_showcancelled_windows.out"),
+    );
+}
+
+#[test]
+fn a8_d7_ondetect_filtered_pulse() {
+    run_decision(
+        "A8-D7_ondetect_filtered_pulse",
+        include_str!("fixtures/sim/lrm_decisions/A8-D7_ondetect_filtered_pulse.out"),
+    );
+}
+
+#[test]
+fn a8_d8_pulse_trains() {
+    run_decision(
+        "A8-D8_pulse_trains",
+        include_str!("fixtures/sim/lrm_decisions/A8-D8_pulse_trains.out"),
+    );
+}
+
+#[test]
+fn a8_d9_pulse_limits_keep_net_delay() {
+    run_decision(
+        "A8-D9_pulse_limits_keep_net_delay",
+        include_str!("fixtures/sim/lrm_decisions/A8-D9_pulse_limits_keep_net_delay.out"),
+    );
+}
+
+#[test]
 fn a13_d1_consequent_clock() {
     run_decision(
         "A13-D1_consequent_clock",

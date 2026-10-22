@@ -1064,6 +1064,11 @@ pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut 
     for domain in &mut model.sampled_domains {
         walk_expr_mut(&mut domain.sample, f);
     }
+    for set in &mut model.module_paths {
+        for condition in &mut set.conditions {
+            walk_expr_mut(condition, f);
+        }
+    }
 }
 
 pub(super) fn walk_execution_exprs_mut(
