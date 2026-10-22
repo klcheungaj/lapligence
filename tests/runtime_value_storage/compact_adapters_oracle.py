@@ -31,11 +31,15 @@ def from_real(value, width, sign, rtoi=False):
     expected.append(("from", (width, sign, int(unknown), number)))
 
 
+def unknown(x, z, mask):
+    return "x" if x & mask == mask else "z" if z & mask == mask else "X" if x & mask else "Z"
+
+
 def groups(bits, x, z, width, size, limit):
     result = []
     for bit in range(((width + size - 1) // size - 1) * size, -1, -size):
-        mask = ((1 << size) - 1) << bit
-        result.append("x" if x & mask else "z" if z & mask else format((bits & mask) >> bit, "x"))
+        mask = ((1 << size) - 1) << bit & ((1 << width) - 1)
+        result.append(unknown(x, z, mask) if (x | z) & mask else format((bits & mask) >> bit, "x"))
         if len(result) >= limit:
             break
     return "".join(result)
@@ -58,7 +62,7 @@ def inspect(bits, x, z, width, sign, cap):
         real = -math.inf if integer < 0 else math.inf
     bitreal = struct.unpack("=d", struct.pack("=Q", bits & ((1 << 64) - 1)))[0]
     shortreal = float(struct.unpack("=f", struct.pack("=I", bits & ((1 << 32) - 1)))[0])
-    decimal = "x" if x | z else str(integer)
+    decimal = unknown(x, z, mask) if x | z else str(integer)
     binary = "".join("x" if (x >> i) & 1 else "z" if (z >> i) & 1 else str((bits >> i) & 1)
                      for i in range(width - 1, max(-1, width - 1 - max(1, cap)), -1))
     texts = [decimal, groups(bits, x, z, width, 4, max(1, cap)), binary, groups(bits, x, z, width, 3, max(1, cap))]
