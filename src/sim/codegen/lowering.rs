@@ -284,7 +284,6 @@ mod clocking_context;
 mod delays;
 mod initialization;
 mod net_delay_layout;
-mod net_time0_samples;
 mod packed_geometry;
 mod references;
 mod selections;
@@ -616,7 +615,6 @@ fn lower_model(db: &Db, waveform: Option<&WaveformOptions>) -> Result<LoweredMod
     cg.build_init_steps(&mut model)?;
     // Every driver site and delayed-driver start now exists.
     net_delay_layout::assign_net_delay_layouts(&mut model);
-    net_time0_samples::assign_net_time0_samples(&mut model, &cg.continuous_drivers);
     check_wave_variable_targets(&cg.wave_variable_targets, &model)?;
     cg.populate_vpi_metadata(&mut model, &tops)?;
     cg.populate_vpi_builtin_calls(&mut model);
@@ -1673,10 +1671,6 @@ struct Codegen<'a> {
     /// (`always @(e) s`), in emission order. They start before every other
     /// time-zero process so they already wait when time-zero values settle.
     armed_procs: HashSet<String>,
-    /// Continuous assignment and port connection processes (not gates):
-    /// their drivers give a net its time-zero sampled value (decision
-    /// T0-D5).
-    continuous_drivers: HashSet<String>,
     /// `$dumpvars` arguments naming a variable, net or array element:
     /// (waveform name, dotted source path, calling scope). Checked against the
     /// finished storage catalog.
@@ -2004,7 +1998,6 @@ impl<'a> Codegen<'a> {
             structural_driver_terminal_sites: HashMap::new(),
             final_procs: Vec::new(),
             armed_procs: HashSet::new(),
-            continuous_drivers: HashSet::new(),
             wave_variable_targets: Vec::new(),
             assertion_action_procs: HashSet::new(),
             assertion_display_scope: None,

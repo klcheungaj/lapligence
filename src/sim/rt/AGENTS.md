@@ -547,12 +547,6 @@ the step), growing up to its registered `$past` depth plus the current step and
 then reused in place; status functions compare a step-cached Preponed
 evaluation with the latest strictly earlier tick. Never retain history for an
 undeclared reader: memory must not grow with simulated time.
-`llg_sampled_start` gives a slot its time-zero Preponed value (a net's folded
-continuous driver, decision T0-D5): a registered slot takes it at once, so a
-domain registered later evaluates its initial value with it; otherwise it
-waits in a pending list that registration consults. The first Preponed sample
-copies the start instead of the storage and then releases every start, so
-later steps pay one pointer test per slot.
 
 Slot history retains any/positive/negative occurrence independently, so a later
 opposite edge cannot erase an earlier match. Time advance drops all entries except

@@ -16,9 +16,7 @@ Rules used throughout (§16.9.3):
   step is never counted; several ticks in one step count once. With fewer than
   k such steps it returns `e` evaluated on initial values: a variable's
   declaration value, otherwise its type default (X for `logic`, z for an
-  undriven net). A net whose one continuous driver folds over those initial
-  values samples that value (decision T0-D5); another driven net samples X,
-  its value until its drivers first evaluate (T0-D3).
+  undriven net; a driven net holds X until its drivers first evaluate, T0-D3).
 - `$rose/$fell/$stable/$changed(e, ev)` compare the Preponed value of the
   calling step with the sample of the most recent strictly earlier step in
   which `ev` occurred, or with the initial value before the first tick. `$rose`
@@ -41,7 +39,7 @@ is 1), so the gated clock ticks at 2, 7 and 9 only.
 
 | Line | Time | Values |
 | --- | --- | --- |
-| `Z` | 0 | No tick yet: `$past(v)` = 3 (declaration), `$past(u)` = x, `$past(w)` = 3 (`assign w = v` evaluated on the initial value of `v`, decision T0-D5; 6.7 L5199-5200 "Nets with drivers shall assume the output value of their drivers"); `$rose(v[0])`: Preponed `v` = 3 against initial 3 gives 0; `$stable(v)` = 1; `$sampled(u)` = x (the write `u[0] = 1` at 0 is not Preponed) |
+| `Z` | 0 | No tick yet: `$past(v)` = 3 (declaration), `$past(u)` = x, `$past(w)` = x (a driven net holds X until its drivers first evaluate, and its time-0 sample is that value, decisions T0-D3 and T0-D5; some simulators give the driver's value 3 for a net that only procedural code samples; 6.7 L5199-5200 "Nets with drivers shall assume the output value of their drivers"); `$rose(v[0])`: Preponed `v` = 3 against initial 3 gives 0; `$stable(v)` = 1; `$sampled(u)` = x (the write `u[0] = 1` at 0 is not Preponed) |
 | `S` | 0 | `$sampled(v)` = 3, live `v` = 5 |
 | `E2` | 2 | edge step: `$past(v)` and gated `$past` have no earlier tick: 3, 3 |
 | `A` | 4 | between edges: `$past(v,1)` = 5 (tick 2), `$past(v,2)` = 3 (initial); Preponed `v` = 6 against 5: changed 1, rose 0 (LSB 0), fell 1 (LSB 1 to 0); `$sampled(v)` = 6; `$past(u)` = sample at 2 = `xxx1` |

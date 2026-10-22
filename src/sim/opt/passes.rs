@@ -42,12 +42,6 @@ pub(in crate::sim) use traversal::walk_expr_mut;
 use traversal::{walk_execution_exprs_mut, walk_lhs_mut, walk_model_exprs_mut};
 mod folding;
 use folding::fold_expr;
-
-/// Fold one expression node whose operands are already constant (the
-/// optimizer's constant folding, one node at a time).
-pub(in crate::sim) fn fold_constant_node(expression: &mut IrExpr) {
-    fold_expr(expression);
-}
 mod identities;
 use identities::ident_expr;
 mod control_flow;

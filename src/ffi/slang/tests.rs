@@ -742,6 +742,41 @@ fn language_edition_parser_and_default_are_explicit() {
 }
 
 #[test]
+fn delay_selection_round_trips_its_flags_and_spelling() {
+    for (selection, operand, compile, snapshot) in [
+        (
+            DelaySelection::Min,
+            0,
+            COMPILE_DELAY_SELECT_MIN,
+            SNAPSHOT_DELAY_SELECT_MIN,
+        ),
+        (DelaySelection::Typical, 1, 0, 0),
+        (
+            DelaySelection::Max,
+            2,
+            COMPILE_DELAY_SELECT_MAX,
+            SNAPSHOT_DELAY_SELECT_MAX,
+        ),
+    ] {
+        assert_eq!(selection.operand(), operand);
+        assert_eq!(selection.compile_flag(), compile);
+        assert_eq!(DelaySelection::from_snapshot_flags(snapshot), Ok(selection));
+        assert_eq!(
+            selection.to_string().parse::<DelaySelection>(),
+            Ok(selection)
+        );
+    }
+    assert_eq!(DelaySelection::default(), DelaySelection::Typical);
+    assert!(DelaySelection::from_snapshot_flags(
+        SNAPSHOT_DELAY_SELECT_MIN | SNAPSHOT_DELAY_SELECT_MAX
+    )
+    .is_err());
+    for rejected in ["typical", "MIN", "", "minimum"] {
+        assert!(rejected.parse::<DelaySelection>().is_err(), "{rejected}");
+    }
+}
+
+#[test]
 fn sequential_predicate_pattern_edge_decodes_and_unknown_roles_still_fail() {
     let tables = |edge| Tables {
         semantic_edges: vec![edge],

@@ -22,6 +22,36 @@ fn min_typ_max_expressions_select_the_typical_value() {
     }
 }
 
+// `--delay-select` picks one operand of every min:typ:max expression for the
+// whole compilation, including the frontend's constants (specparam, parameter).
+#[test]
+fn delay_select_picks_the_operand_of_every_min_typ_max_expression() {
+    for (selection, expected) in [
+        (
+            "min",
+            include_str!("../fixtures/sim/feature_completion/adv_002/delay_select_min.out"),
+        ),
+        (
+            "typ",
+            include_str!("../fixtures/sim/feature_completion/adv_002/delay_select_typ.out"),
+        ),
+        (
+            "max",
+            include_str!("../fixtures/sim/feature_completion/adv_002/delay_select_max.out"),
+        ),
+    ] {
+        for edition in BOTH {
+            sim_cli::run_case_backend_parity(
+                SUITE,
+                "delay_select.v",
+                expected,
+                &["--edition", edition, "--delay-select", selection],
+                &[],
+            );
+        }
+    }
+}
+
 #[test]
 fn vector_targets_take_one_delay_for_the_whole_value() {
     let expected =

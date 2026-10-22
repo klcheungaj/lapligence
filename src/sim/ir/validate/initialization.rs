@@ -200,14 +200,6 @@ impl Validator<'_> {
                     return self.fail(path, "sampled real source must be a variable");
                 }
             }
-            IrInitStep::SampledStart { sig, value } => {
-                let Some(signal) = self.model.signals.get(*sig) else {
-                    return self.fail(path, format!("sampled signal index {sig} is out of bounds"));
-                };
-                if signal.net_driver.is_none() || value.width() != signal.ty.width() {
-                    return self.fail(path, "a time-zero sample needs a net of the value's width");
-                }
-            }
             IrInitStep::RegisterSampledHistory { sig, ticks } => {
                 let Some(signal) = self.model.signals.get(*sig) else {
                     return self.fail(path, format!("sampled signal index {sig} is out of bounds"));
@@ -276,7 +268,6 @@ impl Validator<'_> {
         match step {
             IrInitStep::SetArrayElem { value, .. }
             | IrInitStep::SetScalar { value, .. }
-            | IrInitStep::SampledStart { value, .. }
             | IrInitStep::WriteNet { value, .. } => self.validate_const(value, path),
             IrInitStep::FillArrayX(_) => Ok(()),
             IrInitStep::RegisterSampled(_)

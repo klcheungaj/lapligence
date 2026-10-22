@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 29;
+const ABI_VERSION: u32 = 30;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -55,17 +55,23 @@ const COMPILE_LIBRARY_UNITS: u32 = 1 << 0;
 const COMPILE_EDITION_VERILOG_2001: u32 = 1 << 1;
 const COMPILE_EDITION_SYSTEMVERILOG_2009: u32 = 1 << 2;
 const COMPILE_MERGED_COMPILATION_UNITS: u32 = 1 << 3;
+const COMPILE_DELAY_SELECT_MIN: u32 = 1 << 4;
+const COMPILE_DELAY_SELECT_MAX: u32 = 1 << 5;
 const SNAPSHOT_HAS_ERRORS: u32 = 1 << 0;
 const SNAPSHOT_ANALYSIS_RAN: u32 = 1 << 1;
 const SNAPSHOT_EDITION_VERILOG_2001: u32 = 1 << 8;
 const SNAPSHOT_EDITION_SYSTEMVERILOG_2009: u32 = 1 << 9;
 const SNAPSHOT_MERGED_COMPILATION_UNITS: u32 = 1 << 10;
+const SNAPSHOT_DELAY_SELECT_MIN: u32 = 1 << 11;
+const SNAPSHOT_DELAY_SELECT_MAX: u32 = 1 << 12;
 const SNAPSHOT_EDITION_MASK: u32 =
     SNAPSHOT_EDITION_VERILOG_2001 | SNAPSHOT_EDITION_SYSTEMVERILOG_2009;
 const SNAPSHOT_KNOWN_FLAGS: u32 = SNAPSHOT_HAS_ERRORS
     | SNAPSHOT_ANALYSIS_RAN
     | SNAPSHOT_EDITION_MASK
-    | SNAPSHOT_MERGED_COMPILATION_UNITS;
+    | SNAPSHOT_MERGED_COMPILATION_UNITS
+    | SNAPSHOT_DELAY_SELECT_MIN
+    | SNAPSHOT_DELAY_SELECT_MAX;
 const MAX_DEFINES: usize = 4_096;
 const MAX_TOP_MODULES: usize = 4_096;
 const MAX_INCLUDE_DIRS: usize = 4_096;
@@ -277,6 +283,74 @@ impl str::FromStr for CompilationUnitMode {
     }
 }
 
+/// Which operand of every `min:typ:max` expression a compilation uses
+/// (IEEE 1800-2009 11.12, 28.16.1: the choice is left to the tool). It is a
+/// compile-time choice: the frontend's constant evaluation and the
+/// simulator's lowering both read it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum DelaySelection {
+    Min,
+    /// The middle value; the default.
+    #[default]
+    Typical,
+    Max,
+}
+
+impl DelaySelection {
+    /// The selected operand index of a `min:typ:max` expression.
+    pub fn operand(self) -> usize {
+        match self {
+            Self::Min => 0,
+            Self::Typical => 1,
+            Self::Max => 2,
+        }
+    }
+
+    fn compile_flag(self) -> u32 {
+        match self {
+            Self::Min => COMPILE_DELAY_SELECT_MIN,
+            Self::Typical => 0,
+            Self::Max => COMPILE_DELAY_SELECT_MAX,
+        }
+    }
+
+    fn from_snapshot_flags(flags: u32) -> Result<Self, SlangError> {
+        match flags & (SNAPSHOT_DELAY_SELECT_MIN | SNAPSHOT_DELAY_SELECT_MAX) {
+            0 => Ok(Self::Typical),
+            SNAPSHOT_DELAY_SELECT_MIN => Ok(Self::Min),
+            SNAPSHOT_DELAY_SELECT_MAX => Ok(Self::Max),
+            _ => Err(invalid_native(
+                "snapshot selects both minimum and maximum delays",
+            )),
+        }
+    }
+}
+
+impl fmt::Display for DelaySelection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Min => "min",
+            Self::Typical => "typ",
+            Self::Max => "max",
+        })
+    }
+}
+
+impl str::FromStr for DelaySelection {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "min" => Ok(Self::Min),
+            "typ" => Ok(Self::Typical),
+            "max" => Ok(Self::Max),
+            _ => Err(format!(
+                "unsupported delay selection `{value}` (expected min, typ or max)"
+            )),
+        }
+    }
+}
+
 /// Native and Rust-side capture limits for one compilation.
 ///
 /// [`Limits::default`] suits interactive and library callers.
@@ -383,6 +457,8 @@ pub struct CompileOptions {
     /// Group admitted compilation-unit buffers before preprocessing. The
     /// default keeps each buffer as an independent compilation unit.
     pub compilation_unit_mode: CompilationUnitMode,
+    /// The operand of every `min:typ:max` expression; typical by default.
+    pub delay_selection: DelaySelection,
     pub limits: Limits,
 }
 
@@ -1527,6 +1603,8 @@ pub struct Snapshot {
     pub edition: LanguageEdition,
     /// Compilation-unit grouping selected for this snapshot.
     pub compilation_unit_mode: CompilationUnitMode,
+    /// The `min:typ:max` selection the frontend evaluated with.
+    pub delay_selection: DelaySelection,
     pub files: Vec<File>,
     pub diagnostics: Vec<Diagnostic>,
     pub instances: Vec<Instance>,
@@ -2105,7 +2183,8 @@ fn call_native(request: &CompileRequest<'_>, sink: &RawSink) -> (u32, ErrorOwner
         } else {
             0
         }) | request.options.edition.compile_flag()
-            | request.options.compilation_unit_mode.compile_flag(),
+            | request.options.compilation_unit_mode.compile_flag()
+            | request.options.delay_selection.compile_flag(),
         sources: raw_sources.as_ptr(),
         source_count: raw_sources.len() as u64,
         defines: raw_defines.as_ptr(),

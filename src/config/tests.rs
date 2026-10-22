@@ -621,6 +621,7 @@ files = ["rtl/top.sv", "../shared/pkg.sv"]
 [compile]
 edition = "v2001"
 compilation_units = "merged"
+delay_select = "min"
 system_tasks = ["$my_task(input int)"]
 [libraries]
 map_files = ["libs/lib.map"]
@@ -671,6 +672,7 @@ runtime_cache = "../cache"
         config.compile.compilation_units,
         Some(CompilationUnitMode::Merged)
     );
+    assert_eq!(config.compile.delay_select, Some(DelaySelection::Min));
     assert_eq!(config.compile.system_tasks, vec!["$my_task(input int)"]);
     assert_eq!(
         config.libraries.map_files,
@@ -724,6 +726,7 @@ runtime_cache = "../cache"
 fn unset_driver_keys_stay_none_so_precedence_can_fall_through() {
     let config = parse("schema_version = 1\n").unwrap().config;
     assert_eq!(config.compile.edition, None);
+    assert_eq!(config.compile.delay_select, None);
     assert_eq!(config.simulator, SimulatorConfig::default());
     assert_eq!(config.build, BuildConfig::default());
     assert_eq!(config.output, OutputConfig::default());
@@ -752,6 +755,10 @@ fn invalid_driver_values_name_their_key() {
         (
             "[compile]\ncompilation_units = \"split\"\n",
             "compile.compilation_units",
+        ),
+        (
+            "[compile]\ndelay_select = \"typical\"\n",
+            "compile.delay_select",
         ),
         ("[compile]\ntop = \"\"\n", "compile.top"),
         ("[compile]\nsystem_tasks = [\"\"]\n", "compile.system_tasks"),

@@ -460,31 +460,50 @@ fn erroneous_systemverilog_storage_reports_and_never_writes_outside() {
     );
 }
 
-// Decision S26-D17: only string literals are data arguments, in both editions.
+// Decision S26-D17: a data argument may be any string expression (variable,
+// parameter, concatenation, formatted string) or an integral value holding
+// text, read each time the task runs, in both editions.
 #[test]
-fn dynamic_string_arguments_are_rejected_with_their_location() {
-    let rejected = "a data argument of $sreadmemh must be a string literal (IEEE 1800-2009 D.14)";
-    sim_cli::reject_case(
+fn string_expression_arguments_load_their_current_text() {
+    sim_cli::run_case_checked_matrix_with_files(
         SUITE,
-        "neg_variable_string",
-        &format!("neg_variable_string.sv:6:33: {rejected}"),
+        "string_expressions",
+        &[],
+        &[],
+        &|label, output| {
+            assert_eq!(
+                stdout_text(label, output),
+                fixture!("string_expressions.out"),
+                "{label}: stdout"
+            );
+            assert_eq!(memory_diagnostics(output), Vec::<String>::new(), "{label}");
+        },
     );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_parameter_string",
-        &format!("neg_parameter_string.sv:5:33: {rejected}"),
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_concatenation",
-        &format!("neg_concatenation.sv:5:39: {rejected}"),
-    );
-    sim_cli::reject_case_with_args(
-        SUITE,
-        "neg_variable_vector.v",
-        &format!("neg_variable_vector.v:8:27: {rejected}"),
-        &["--edition", "v2001"],
-    );
+    for edition in EDITIONS {
+        sim_cli::run_case_checked_matrix_with_files(
+            SUITE,
+            "string_expressions_v2001.v",
+            &["--edition", edition],
+            &[],
+            &|label, output| {
+                assert_eq!(
+                    stdout_text(label, output),
+                    fixture!("string_expressions_v2001.out"),
+                    "{label}: stdout"
+                );
+                // The `@` addresses of the second load leave holes, which are
+                // a Verilog-2001 warning only.
+                let expected: Vec<String> = if edition == "v2001" {
+                    vec![format!(
+                        "warning: memory string `$sreadmemh at tb:14:5`: {TOO_FEW}"
+                    )]
+                } else {
+                    Vec::new()
+                };
+                assert_eq!(memory_diagnostics(output), expected, "{label}");
+            },
+        );
+    }
 }
 
 // A02: wrong argument order, count and type, and memories that cannot be

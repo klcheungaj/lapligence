@@ -211,14 +211,16 @@ impl Validator<'_> {
                 if *write && text.is_some() {
                     return self.fail(path.to_owned(), "a memory dump has no source text");
                 }
-                file.validate(self.model, self.string_return.get())?;
-                let mut result = Ok(());
-                file.expressions(&mut |child| {
-                    result = result
-                        .clone()
-                        .and_then(|_| self.validate_expr(child, formals, path));
-                });
-                result?;
+                for string in std::iter::once(file).chain(text.as_ref()) {
+                    string.validate(self.model, self.string_return.get())?;
+                    let mut result = Ok(());
+                    string.expressions(&mut |child| {
+                        result = result
+                            .clone()
+                            .and_then(|_| self.validate_expr(child, formals, path));
+                    });
+                    result?;
+                }
                 self.validate_memory_view(view, formals, path)?;
                 for (name, bound) in [("start", start), ("finish", finish)] {
                     if let Some(bound) = bound {
@@ -237,14 +239,16 @@ impl Validator<'_> {
                     return self.fail(path.to_owned(), "a memory dump has no source text");
                 }
                 self.validate_memory_image_root(task, formals, path)?;
-                task.path.validate(self.model, self.string_return.get())?;
-                let mut result = Ok(());
-                task.path.expressions(&mut |child| {
-                    result = result
-                        .clone()
-                        .and_then(|_| self.validate_expr(child, formals, path));
-                });
-                result?;
+                for string in std::iter::once(&task.path).chain(task.text.as_ref()) {
+                    string.validate(self.model, self.string_return.get())?;
+                    let mut result = Ok(());
+                    string.expressions(&mut |child| {
+                        result = result
+                            .clone()
+                            .and_then(|_| self.validate_expr(child, formals, path));
+                    });
+                    result?;
+                }
                 self.validate_memory_access_storage(task, path)?;
                 if let Some(cells) = task.cells() {
                     self.validate_memory_geometry(

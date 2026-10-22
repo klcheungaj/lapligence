@@ -1319,6 +1319,7 @@ impl Db {
         let db = Self {
             nodes,
             edition: snapshot.edition(),
+            delay_selection: snapshot.delay_selection,
             overridden_parameters,
             semantic_kinds,
             semantic_details,

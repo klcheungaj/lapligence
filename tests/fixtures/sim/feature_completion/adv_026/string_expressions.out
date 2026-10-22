@@ -1,0 +1,6 @@
+parameter 11 22 00 00
+variable 11 22 33 44
+changed 11 55 33 44
+concatenation 66 77 33 44
+vector 66 77 88 99
+formatted a0 a1 88 99

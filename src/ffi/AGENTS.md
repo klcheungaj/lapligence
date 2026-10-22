@@ -76,6 +76,10 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   auxiliary bit `LLG_SLANG_ASSERTION_PARENTHESIZED`
   (`Db::is_parenthesized_assertion`): Slang binds the parentheses away, and a
   clocking event inside them does not flow out (16.14.3, decision A13-D1).
+- ABI v30 adds compile request bits 4/5 (`LLG_SLANG_COMPILE_DELAY_SELECT_MIN`/
+  `_MAX`, both together invalid) setting Slang's `minTypMax`, echoed as
+  snapshot bits 11/12 and decoded into `DelaySelection` (`Db::delay_selection`),
+  so the frontend's constants and the simulator's lowering use one operand.
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

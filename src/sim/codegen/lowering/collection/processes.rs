@@ -351,14 +351,13 @@ impl<'a> Codegen<'a> {
         };
         let origin = self.origin(ca);
         self.model.processes.push(IrProcess::new_with_origin(
-            fn_name.clone(),
+            fn_name,
             format!("{}.assign", self.source_path(path)),
             shape,
             Vec::new(),
             body,
             origin,
         ));
-        self.continuous_drivers.insert(fn_name);
         Ok(())
     }
 
@@ -495,14 +494,13 @@ impl<'a> Codegen<'a> {
             };
             let origin = self.origin(ca);
             self.model.processes.push(IrProcess::new_with_origin(
-                fn_name.clone(),
+                fn_name,
                 format!("{}.assign", self.source_path(path)),
                 shape,
                 Vec::new(),
                 body,
                 origin,
             ));
-            self.continuous_drivers.insert(fn_name);
             return Ok(());
         }
         // A zero-delay continuous driver of descriptor-backed variable storage
@@ -532,14 +530,13 @@ impl<'a> Codegen<'a> {
                 };
                 let origin = self.origin(ca);
                 self.model.processes.push(IrProcess::new_with_origin(
-                    fn_name.clone(),
+                    fn_name,
                     format!("{}.assign", self.source_path(path)),
                     shape,
                     Vec::new(),
                     body,
                     origin,
                 ));
-                self.continuous_drivers.insert(fn_name);
                 return Ok(());
             }
         }
@@ -632,14 +629,13 @@ impl<'a> Codegen<'a> {
         };
         let origin = self.origin(ca);
         self.model.processes.push(IrProcess::new_with_origin(
-            fn_name.clone(),
+            fn_name,
             format!("{}.assign", self.source_path(path)),
             shape,
             Vec::new(),
             body,
             origin,
         ));
-        self.continuous_drivers.insert(fn_name);
         Ok(())
     }
 

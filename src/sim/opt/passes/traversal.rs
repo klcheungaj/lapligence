@@ -434,6 +434,7 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         }
         IrStmt::Memory {
             path,
+            text,
             view,
             start,
             finish,
@@ -448,6 +449,9 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
             }
             if let Some(finish) = finish {
                 walk_expr_mut(finish, f);
+            }
+            if let Some(text) = text {
+                text.expressions_mut(&mut |child| walk_expr_mut(child, f));
             }
         }
         IrStmt::Container(operation) => {
@@ -1000,7 +1004,6 @@ pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut 
             | crate::sim::ir::IrInitStep::RegisterSampled(_)
             | crate::sim::ir::IrInitStep::RegisterSampledHistory { .. }
             | crate::sim::ir::IrInitStep::RegisterSampledValue(_)
-            | crate::sim::ir::IrInitStep::SampledStart { .. }
             | crate::sim::ir::IrInitStep::WriteNet { .. } => {}
         }
     }

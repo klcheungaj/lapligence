@@ -13,7 +13,7 @@ use llg::sim;
 /// Usage printed when `llg` is run without arguments. `llg` never discovers
 /// `llg.toml`, so there is nothing else to run from.
 pub(crate) const USAGE: &str = "usage: llg [generate options] [build options] <file.sv>... [-- <plusargs>...]
-generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi
+generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi
 lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error  # lint always runs
 wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave
 build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dpi-import-lib <path>  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
@@ -46,6 +46,7 @@ pub(crate) struct Cli {
     pub top: Option<String>,
     pub edition: Option<compile::LanguageEdition>,
     pub compilation_unit_mode: Option<compile::CompilationUnitMode>,
+    pub delay_selection: Option<compile::DelaySelection>,
     pub include_dirs: Vec<String>,
     pub defines: Vec<String>,
     pub param_overrides: Vec<String>,
@@ -91,6 +92,7 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut top: Option<String> = None;
     let mut edition: Option<compile::LanguageEdition> = None;
     let mut compilation_unit_mode: Option<compile::CompilationUnitMode> = None;
+    let mut delay_selection: Option<compile::DelaySelection> = None;
     let mut include_dirs: Vec<String> = Vec::new();
     let mut defines: Vec<String> = Vec::new();
     let mut system_subroutines: Vec<String> = Vec::new();
@@ -161,6 +163,9 @@ Options:
                               Select the language edition (default: sv2009)
       --compilation-units <separate|merged>
                               Select compilation-unit grouping (default: separate)
+      --delay-select <min|typ|max>
+                              Use this value of every min:typ:max expression
+                              (default: typ)
   -I, --include-dir <path>   Search directory for `include files and for the
                               definitions of modules the sources do not define
                               (repeatable)
@@ -267,6 +272,19 @@ Options:
                 },
                 None => {
                     eprintln!("llg: --compilation-units requires separate or merged");
+                    return Err(2);
+                }
+            },
+            "--delay-select" => match it.next() {
+                Some(value) => match value.parse() {
+                    Ok(value) => delay_selection = Some(value),
+                    Err(error) => {
+                        eprintln!("llg: --delay-select: {error}");
+                        return Err(2);
+                    }
+                },
+                None => {
+                    eprintln!("llg: --delay-select requires min, typ or max");
                     return Err(2);
                 }
             },
@@ -520,6 +538,7 @@ Options:
         top,
         edition,
         compilation_unit_mode,
+        delay_selection,
         include_dirs,
         defines,
         param_overrides,

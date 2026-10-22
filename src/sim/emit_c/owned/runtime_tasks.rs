@@ -77,7 +77,7 @@ impl Frame<'_, '_> {
             rows: None,
             element,
             path,
-            text: text.as_deref(),
+            text: text.as_ref(),
             origin: view.origin,
             selectors: &view.selectors,
             dims: &view.dims,
@@ -222,7 +222,7 @@ impl Frame<'_, '_> {
                 two_state: task.two_state,
             },
             path: &task.path,
-            text: task.text.as_deref(),
+            text: task.text.as_ref(),
             origin: task.origin,
             selectors: &task.selectors,
             dims: &task.dims,
@@ -368,6 +368,22 @@ impl Frame<'_, '_> {
             .finish
             .map(|expression| self.expression(expression))
             .transpose()?;
+        // `$sreadmem*` data follows the bounds in source order. Literal-only
+        // data is a C string in the model; other data is evaluated into one
+        // owned string that lives until the load returns.
+        let text = match call.text {
+            Some(IrStringExpr::Literal(bytes)) => {
+                Some((format!("{}, {}u", c_byte_string(bytes), bytes.len()), None))
+            }
+            Some(expression) => {
+                let value = self.string(expression)?;
+                Some((
+                    format!("({0})->data, ({0})->len", value.address),
+                    Some(value),
+                ))
+            }
+            None => None,
+        };
         let first = start_value
             .as_ref()
             .map(|value| value.code.as_str())
@@ -438,19 +454,18 @@ impl Frame<'_, '_> {
         // The words of `$sreadmemb/$sreadmemh` are text in the model; the
         // runtime serves them to the same parser that reads a file for the
         // duration of this one call.
-        if let Some(text) = call.text {
-            self.line(format!(
-                "llg_memory_text_begin({}, {}u);",
-                c_byte_string(text),
-                text.len()
-            ));
+        if let Some((arguments, _)) = &text {
+            self.line(format!("llg_memory_text_begin({arguments});"));
         }
         self.line(format!("{}({}, {storage}, {}u, {}, {}, {dimensions}, {}, {strides}, {origin}, {view_total}, {first}, {last}, {}, {}, {addressing}, {enum_pointer}, {enum_count}, {radix});",
             call.runtime, path.take_string(), element.width,
             u8::from(element.signed), u8::from(element.two_state), call.dims.len(),
             u8::from(call.start.is_some()), u8::from(call.finish.is_some())));
-        if call.text.is_some() {
+        if let Some((_, value)) = text {
             self.line("llg_memory_text_end();");
+            if let Some(value) = value {
+                self.native_discard(value);
+            }
         }
         if let Some(enum_name) = enum_name {
             self.line(format!("sv4_destroy_array({enum_name}, {enum_count});"));
@@ -770,7 +785,7 @@ struct MemoryCall<'a> {
     element: MemoryElement,
     path: &'a IrStringExpr,
     /// The text a load reads instead of the file `path` names.
-    text: Option<&'a [u8]>,
+    text: Option<&'a IrStringExpr>,
     origin: u64,
     selectors: &'a [IrMemorySelector],
     dims: &'a [(i32, i32)],

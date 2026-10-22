@@ -202,7 +202,7 @@ fn owned_memory_emitter_brackets_a_string_sourced_load_with_its_text() {
         activation_label: None,
         constants: None,
     };
-    let statement = |text: Option<Vec<u8>>| IrStmt::Memory {
+    let statement = |text: Option<IrStringExpr>| IrStmt::Memory {
         write: false,
         path: IrStringExpr::Literal(b"$sreadmemh at tb:3:5".to_vec()),
         text,
@@ -227,7 +227,7 @@ fn owned_memory_emitter_brackets_a_string_sourced_load_with_its_text() {
     let text = b"1 \"2\\ ??= \n\x003\xff".to_vec();
     let mut frame = Frame::new(&ctx);
     frame
-        .memory_task(&statement(Some(text.clone())))
+        .memory_task(&statement(Some(IrStringExpr::Literal(text.clone()))))
         .expect("owned string memory rendering");
     let rendered = frame.body();
     let begin = format!(
@@ -244,6 +244,35 @@ fn owned_memory_emitter_brackets_a_string_sourced_load_with_its_text() {
         .find("llg_memory_text_end();")
         .expect("the end call");
     assert!(begin_at < call_at && call_at < end_at, "{rendered}");
+
+    // Data that is not one literal (a string variable, decision S26-D17) is
+    // evaluated into an owned string that outlives the load.
+    let mut frame = Frame::new(&ctx);
+    frame
+        .memory_task(&statement(Some(IrStringExpr::Concat(vec![
+            IrStringExpr::Literal(b"11".to_vec()),
+            IrStringExpr::Literal(b"\n22".to_vec()),
+        ]))))
+        .expect("owned evaluated string memory rendering");
+    let rendered = frame.body();
+    let begin_at = rendered
+        .find("llg_memory_text_begin((")
+        .unwrap_or_else(|| panic!("evaluated text in {rendered}"));
+    assert!(rendered[begin_at..].contains(")->data, ("), "{rendered}");
+    let call_at = rendered
+        .find("llg_memory_read_view(")
+        .expect("the load call");
+    let end_at = rendered
+        .find("llg_memory_text_end();")
+        .expect("the end call");
+    let release_at = rendered[end_at..]
+        .find("llg_value_scope_end(")
+        .map(|offset| end_at + offset)
+        .unwrap_or_else(|| panic!("the text is released after the load in {rendered}"));
+    assert!(
+        begin_at < call_at && call_at < end_at && end_at < release_at,
+        "{rendered}"
+    );
 
     let mut frame = Frame::new(&ctx);
     frame

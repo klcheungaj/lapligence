@@ -765,8 +765,10 @@ void* svGetArrElemPtr3(const svOpenArrayHandle h, int indx1, int indx2, int indx
     return llg_dpi_element_at(h, 3, index);
 }
 
-/* Copy one packed element to canonical chunks. An unknown bit read as 2-state
- * is 0; an invalid index reads the element type's default (SV 7.4.6). */
+/* Copy one packed element to canonical chunks. A 2-state (svBit) read of a
+ * 4-state element returns its value (aval) bits, so X reads 1 and Z reads 0
+ * (S40-D4; Annex H is silent). An invalid index reads the element type's
+ * default (SV 7.4.6), which is 0 through the svBit accessors. */
 static void llg_dpi_get_vec(const svOpenArrayHandle h, const unsigned char* element,
                             svLogicVecVal* out, int logic) {
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
@@ -778,8 +780,8 @@ static void llg_dpi_get_vec(const svOpenArrayHandle h, const unsigned char* elem
     int four_state = type->kind == LLG_DPI_LOGIC || type->kind == LLG_DPI_LOGICVEC;
     if (!element) {
         for (size_t i = 0; i < count; ++i) {
-            out[i].aval = four_state ? UINT32_MAX : 0u;
-            out[i].bval = four_state ? UINT32_MAX : 0u;
+            out[i].aval = four_state && logic ? UINT32_MAX : 0u;
+            out[i].bval = four_state && logic ? UINT32_MAX : 0u;
         }
     } else {
         memset(out, 0, count * sizeof(svLogicVecVal));
@@ -791,7 +793,7 @@ static void llg_dpi_get_vec(const svOpenArrayHandle h, const unsigned char* elem
         }
     }
     if (!logic)
-        for (size_t i = 0; i < count; ++i) out[i].aval &= ~out[i].bval, out[i].bval = 0;
+        for (size_t i = 0; i < count; ++i) out[i].bval = 0;
 }
 
 static void llg_dpi_put_vec(const svOpenArrayHandle h, unsigned char* element,

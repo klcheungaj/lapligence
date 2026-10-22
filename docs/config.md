@@ -146,6 +146,7 @@ server, accepted and ignored by `llg`.
 | `compile.top` | module name | both | `--top`; no `library.` prefix or `:config` suffix |
 | `compile.edition` | `"v2001"` \| `"sv2009"` | llg | `--edition`; the server compiles sv2009 |
 | `compile.compilation_units` | `"separate"` \| `"merged"` | llg | `--compilation-units`; the server always separates |
+| `compile.delay_select` | `"min"` \| `"typ"` \| `"max"` | llg | `--delay-select`; the server uses `typ` |
 | `compile.include_dirs` | strings | both | `-I` |
 | `compile.defines` | `NAME[=VALUE]` strings | both | `-D` |
 | `compile.param_overrides` | table | both | `--param-override`/`-G`; string, integer, float or boolean values |
@@ -241,6 +242,13 @@ Required integer; must be `1`.
   source buffer's identity while sharing preprocessing and `$unit` scope;
   library sources group per library, in admission order, separately from work
   sources. `llg_ls` always uses `separate`.
+- `delay_select` (`"min"`, `"typ"` or `"max"`, `llg` only) — which value of
+  every `min:typ:max` expression the design uses (`--delay-select`, default
+  `typ`; IEEE 1800-2009 11.12 and 28.16.1 leave the choice to the tool). It
+  applies everywhere such an expression appears: gate, UDP, net,
+  continuous-assignment and procedural delays, specify paths, specparams,
+  parameters and other constant or run-time expressions. It is fixed when the
+  design is compiled, so the model has no run-time cost. `llg_ls` uses `typ`.
 - `include_dirs` (array of strings) — additional include-search directories
   (may be external); source directories are already include dirs. In `llg`
   they are also searched for module definitions: a module, interface, program

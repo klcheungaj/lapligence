@@ -294,9 +294,6 @@ A procedural `$sampled` registers every signal its argument reads: reals
 through `IrInitStep::RegisterSampled`, packed signals through
 `IrInitStep::RegisterSampledValue`, which keeps the Preponed value without the
 per-slot history that clocking input skews read.
-`IrInitStep::SampledStart`, appended after every registration step by
-`net_time0_samples`, gives a net's resolved storage its time-zero Preponed
-value (decision T0-D5).
 
 ## Bounded packed selection chains
 

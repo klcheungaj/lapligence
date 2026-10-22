@@ -1369,7 +1369,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (S2-D6); aliased nets with different net delays reject (S2-D8).
   SV §10.11 **[SV-2005]**.
 - 🟨 **Continuous, gate and net delays** — Constant single/rise-fall/turn-off
-  delays, with min:typ:max values selecting the typical value (S2-D1),
+  delays, with min:typ:max values selecting the typical value (S2-D1) or the
+  value `--delay-select min|typ|max` names,
   schedule captured Active-region inertial updates for admitted whole,
   constant-selected and fixed-array-element drivers. A one-bit target follows
   the from/to table; a wider target takes one delay for its whole value
@@ -1454,7 +1455,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   **[1995]**.
 - 🟨 **Specify blocks, specparams and simple module paths** — Specparams in
   the module body and in specify blocks give constant values (min:typ:max
-  takes typical) and stay distinct from parameters (`Db::specparam`); a
+  takes typical, or the `--delay-select` value) and stay distinct from parameters (`Db::specparam`); a
   specparam in a parameter value or a declaration range, a use before the
   declaration, a `parameter` inside a specify block (A7-D5) and duplicate or
   overlapping paths (A7-D4) are errors. Simple full (`*>`) and parallel (`=>`)
@@ -1800,9 +1801,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   that is not a number are errors that end the load (S26-D19); a `//` comment
   ends with its string and an open `/*` continues in the next (S26-D20).
   Diagnostics print as `llg: warning: memory string `$sreadmemh at tb:<line>:<col>`: ...`
-  or `llg: error: memory string ...`. **Limit (S26-D17):** the data arguments
-  must be string literals, as SV D.14 says; a string variable, parameter,
-  concatenation or reg vector is rejected at compile time with its location.
+  or `llg: error: memory string ...`. A data argument may be any string
+  expression (variable, parameter, concatenation) or an integral value holding
+  text, read when the task runs (S26-D17); literal-only data is compiled into
+  the model.
   A wrong argument order, count or type is a located compile error. A VPI
   registration of either name while the design calls it stops the run at
   startup (S99-D6). Optional informative service (V Annex C.13; SV Annex D.14).

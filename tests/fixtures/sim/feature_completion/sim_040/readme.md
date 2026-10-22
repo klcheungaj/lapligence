@@ -143,7 +143,10 @@ Where the text leaves a result open, llg's choice has a portable case in
 - S40-D3: `svDimensions` counts the integral packed part; absent dimensions
   query as 0.
 - S40-D4: out-of-range element indices read the default, write nothing, and
-  give a NULL pointer; svBit reads of X/Z give 0.
+  give a NULL pointer (an out-of-range svBit read gives 0); an svBit read of
+  a valid logic element returns its value (aval) bits, so X reads 1 and Z
+  reads 0 (`svdpi_access` line `bit view of logic=10`: `l1[0]` is X,
+  `l2[0][1]` is Z).
 - S40-D5: a nonzero imported-task result with no disable is a fatal error.
 - S40-D6: an element access with a wrong number of indices is a fatal error;
   the access does nothing and the run ends when the import returns.

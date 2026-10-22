@@ -2836,18 +2836,10 @@ fn s26_d16_strings_form_one_image() {
 }
 
 #[test]
-fn s26_d17_string_variable_data_rejected() {
-    // Negative case: llg rejects the string variable, so the expected stdout
-    // is empty.
-    assert!(
-        include_str!("fixtures/sim/lrm_decisions/S26-D17_string_variable_data_rejected.out")
-            .is_empty()
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "S26-D17_string_variable_data_rejected",
-        "S26-D17_string_variable_data_rejected.sv:16:25: a data argument of $sreadmemh must be a \
-         string literal (IEEE 1800-2009 D.14)",
+fn s26_d17_string_variable_data() {
+    run_decision(
+        "S26-D17_string_variable_data",
+        include_str!("fixtures/sim/lrm_decisions/S26-D17_string_variable_data.out"),
     );
 }
 
@@ -3027,5 +3019,13 @@ fn t0_d5_driven_net_time0_sample() {
     run_decision(
         "T0-D5_driven_net_time0_sample",
         include_str!("fixtures/sim/lrm_decisions/T0-D5_driven_net_time0_sample.out"),
+    );
+}
+
+#[test]
+fn t0_d5_assertion_net_time0_sample() {
+    run_decision(
+        "T0-D5_assertion_net_time0_sample",
+        include_str!("fixtures/sim/lrm_decisions/T0-D5_assertion_net_time0_sample.out"),
     );
 }
