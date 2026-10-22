@@ -226,6 +226,26 @@ Attempts start at the `posedge c1` ticks 10, 30, 50, 70, 90 unless noted.
 - `i5` `p5(a)` in `tb`, which has no default disable: r is 1'b0, so nothing
   is disabled: F30, then 30→b50=1 P50, 50 vacuous P50, 70→ P90.
 
+## `restrict.sv`
+
+16.15.4 (L26658-26659): "the restrict property statement is not verified in
+simulation and has no action block". Module-level, generate, `initial` and
+procedural `restrict property` statements whose properties fail produce no
+output and no assertion; the ordinary `a1` beside them passes.
+
+## `mc_segment.sv`
+
+16.14.1 (L25903-25904): "When concatenating differently clocked sequences,
+the maximal singly clocked subsequences are required to admit only nonempty
+matches." The subsequence before `@(posedge c2)` is `a ##1 b[*0:1]`, which
+cannot match empty, so the form is legal; only a subsequence whose every
+element can match empty is rejected (`neg_mc_empty.sv`). `c1` rises at 5,
+15, ..., 95 and `c2` at 7, 21, ..., 91; a and d stay 1 and b is 1 from 52.
+Each `c1` attempt from 5 to 85 matches through the `b[*0]` branch
+(`a ##0 1`, 16.9.2.1), the attempt at 95 has no later `c2` tick (n1=9); the
+attempts from 45 to 75 also match with b sampled 1 at the next `c1` tick
+(n2=4).
+
 ## `recursion.sv`
 
 All assertions are clocked by `posedge c1` (ticks 10, 30, 50, 70, 90, with no

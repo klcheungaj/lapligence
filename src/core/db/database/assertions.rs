@@ -20,6 +20,10 @@ pub enum ConcurrentAssertionKind {
     /// 1800-2009 16.15.3), not at most one success per attempt.
     CoverSequence,
     Expect,
+    /// `restrict property` (16.15.4): it constrains formal verification and
+    /// "is not verified in simulation", so the simulator creates nothing
+    /// for it.
+    Restrict,
 }
 
 /// Operators in the owned assertion-expression graph.  Keeping these

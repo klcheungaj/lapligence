@@ -1742,7 +1742,10 @@ impl<'a> Codegen<'a> {
                 }
                 continue;
             }
-            if matches!(direction, DbDirection::Inout | DbDirection::Ref) {
+            // A multi-port is connected through its component ports.
+            if matches!(direction, DbDirection::Inout | DbDirection::Ref)
+                || !self.db.multi_port_components(port).is_empty()
+            {
                 continue;
             }
             let Some(actual) = high_expr.or(high) else {
@@ -1774,6 +1777,18 @@ impl<'a> Codegen<'a> {
                 }
                 continue;
             };
+            if let (None, Some(internal)) = (low, self.db.port_internal_expression(port)) {
+                self.emit_port_expression_link(
+                    parent_path,
+                    &child_path,
+                    child_inst,
+                    port,
+                    direction,
+                    actual,
+                    internal,
+                )?;
+                continue;
+            }
             let Some(internal) = low else {
                 return Err(format!(
                     "port `{}` of `{child_path}` has an actual connection but no child-side storage at {}:{}:{}",
@@ -1832,9 +1847,18 @@ impl<'a> Codegen<'a> {
             let alias_bindings = self.alias_lvalue_bindings(port, alias_target)?;
             let (lhs, rhs, reads) = if direction == DbDirection::Input {
                 self.collect_static_hierarchical_port_actual(actual)?;
-                let rhs = self.lower_expr(parent_path, actual)?;
+                let (lhs, rhs) = if self.db.multi_port_of(port).is_some()
+                    && alias_bindings.is_none()
+                {
+                    self.port_expression_input(parent_path, actual, IrLhs::Whole(child_info.ir))?
+                } else {
+                    (
+                        IrLhs::Whole(child_info.ir),
+                        self.lower_expr(parent_path, actual)?,
+                    )
+                };
                 let reads = self.collect_read_signals(parent_path, actual)?;
-                let lhs = self.remap_structural_lhs(IrLhs::Whole(child_info.ir), port);
+                let lhs = self.remap_structural_lhs(lhs, port);
                 if let Some(group) = self.unmapped_structural_group(&lhs, port) {
                     return Err(format!(
                         "input port `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
@@ -1871,55 +1895,201 @@ impl<'a> Codegen<'a> {
                 )?;
                 (lhs, sig_read_expr_full(&child_info), reads)
             };
-            let rhs = apply_lhs_assignment_context(&self.model, &lhs, rhs);
-            let shape = if reads.is_empty() {
-                IrShape::RunOnce
-            } else {
-                IrShape::SensLoop { reads }
-            };
-            let fn_name = self.new_fn_name(parent_path, "link");
-            let origin = self.origin(port);
-            let body = if let Some(bindings) = alias_bindings {
-                let rhs_name = format!("_alias_port_rhs_{}", port.index());
-                let rhs_value = IrExpr::new(
-                    IrExprKind::LocalRead(rhs_name.clone()),
-                    rhs.width(),
-                    rhs.signed(),
-                    None,
-                );
-                let mut body = vec![IrStmt::DeclLocal {
-                    name: rhs_name,
-                    width: rhs.width(),
-                    signed: rhs.signed(),
-                    init: Some(Box::new(rhs)),
-                    two_state: false,
-                }];
-                for (driver, value) in
-                    self.alias_driver_assignments(port, &bindings, &rhs_value, |_| 0)?
-                {
-                    body.push(IrStmt::Assign {
-                        lhs: IrLhs::Whole(driver),
-                        rhs: value,
-                        nba: false,
-                    });
-                }
-                body
-            } else {
-                vec![IrStmt::Assign {
-                    lhs,
-                    rhs,
-                    nba: false,
-                }]
-            };
-            self.model.processes.push(IrProcess::new_with_origin(
-                fn_name,
-                format!("{child_path}.link"),
-                shape,
-                Vec::new(),
-                body,
-                origin,
-            ));
+            self.push_port_link(
+                parent_path,
+                &child_path,
+                port,
+                lhs,
+                rhs,
+                reads,
+                alias_bindings,
+            )?;
         }
+        Ok(())
+    }
+
+    /// A port whose port expression selects or concatenates internal signals
+    /// (SV 23.2.2.1 port references, 23.2.2.2 explicit ANSI expressions) is
+    /// a continuous assignment between that expression and the actual (SV
+    /// 23.3.3): an input writes the expression in the child instance, an
+    /// output reads it there and writes the actual. Bits of the internal
+    /// signals outside the expression keep their other drivers. When the
+    /// widths differ, only the low bits both sides have are connected
+    /// ([`Self::port_expression_input`]).
+    #[allow(clippy::too_many_arguments)]
+    fn emit_port_expression_link(
+        &mut self,
+        parent_path: &str,
+        child_path: &str,
+        child_inst: NodeId,
+        port: NodeId,
+        direction: DbDirection,
+        actual: NodeId,
+        internal: NodeId,
+    ) -> Result<(), String> {
+        let parent_inst = self.inst;
+        let alias_target = if direction == DbDirection::Input {
+            internal
+        } else {
+            actual
+        };
+        let alias_bindings = self.alias_lvalue_bindings(port, alias_target)?;
+        let (lhs, rhs, reads) = if direction == DbDirection::Input {
+            self.collect_static_hierarchical_port_actual(actual)?;
+            let reads = self.collect_read_signals(parent_path, actual)?;
+            self.inst = child_inst;
+            let lhs = self.lower_lhs(child_path, internal);
+            self.inst = parent_inst;
+            let (lhs, rhs) = if alias_bindings.is_none() {
+                self.port_expression_input(parent_path, actual, lhs?)?
+            } else {
+                (lhs?, self.lower_expr(parent_path, actual)?)
+            };
+            let lhs = self.remap_structural_lhs(lhs, port);
+            if let Some(group) = self.unmapped_structural_group(&lhs, port) {
+                return Err(format!(
+                    "input port `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
+                    self.display_name(port),
+                    group,
+                    self.node(port).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(port).line,
+                    self.node(port).col,
+                ));
+            }
+            (lhs, rhs, reads)
+        } else {
+            let lhs = self.lower_lhs(parent_path, actual)?;
+            if let Some(group) = self.unmapped_structural_group(&lhs, port) {
+                return Err(format!(
+                    "output port `{}` has no structural driver mapping for resolved net group {} at {}:{}:{}",
+                    self.display_name(port),
+                    group,
+                    self.node(port).file.as_deref().unwrap_or("<unknown>"),
+                    self.node(port).line,
+                    self.node(port).col,
+                ));
+            }
+            self.inst = child_inst;
+            let child = self
+                .lower_expr(child_path, internal)
+                .and_then(|rhs| Ok((rhs, self.collect_read_signals(child_path, internal)?)));
+            self.inst = parent_inst;
+            let (rhs, mut reads) = child?;
+            // A wider actual keeps its bits above the port expression
+            // unconnected, as an input does below.
+            let lhs = match packed_lhs_width(&self.model, &lhs) {
+                Some(width)
+                    if alias_bindings.is_none() && !rhs.is_real() && rhs.width() < width =>
+                {
+                    narrow_lhs_low_bits(&self.model, &lhs, rhs.width()).unwrap_or(lhs)
+                }
+                _ => lhs,
+            };
+            let lhs = self.remap_structural_lhs(lhs, port);
+            let mut seen = reads.iter().cloned().collect::<HashSet<_>>();
+            self.walk_lhs_select_reads(
+                parent_path,
+                actual,
+                &mut seen,
+                &mut HashSet::new(),
+                &mut reads,
+            )?;
+            (lhs, rhs, reads)
+        };
+        self.push_port_link(
+            parent_path,
+            child_path,
+            port,
+            lhs,
+            rhs,
+            reads,
+            alias_bindings,
+        )
+    }
+
+    /// The target and value of an input link into a port expression or a
+    /// component of a concatenated port. A port expression connects bit by
+    /// bit from the LSB: when the actual (captured without the frontend's
+    /// implicit conversion to the port type) is narrower than the
+    /// expression, only the expression's low bits are written and its higher
+    /// bits stay unconnected. A whole port widens the actual instead (SV
+    /// 23.3.3).
+    fn port_expression_input(
+        &mut self,
+        parent_path: &str,
+        actual: NodeId,
+        lhs: IrLhs,
+    ) -> Result<(IrLhs, IrExpr), String> {
+        let value = self.lower_expr(parent_path, actual)?;
+        let narrow = match packed_lhs_width(&self.model, &lhs) {
+            Some(width) if !value.is_real() && value.width() > 0 && value.width() < width => {
+                narrow_lhs_low_bits(&self.model, &lhs, value.width())
+            }
+            _ => None,
+        };
+        Ok((narrow.unwrap_or(lhs), value))
+    }
+
+    /// Emit the continuous process of one input or output port link.
+    #[allow(clippy::too_many_arguments)]
+    fn push_port_link(
+        &mut self,
+        parent_path: &str,
+        child_path: &str,
+        port: NodeId,
+        lhs: IrLhs,
+        rhs: IrExpr,
+        reads: Vec<IrDependency>,
+        alias_bindings: Option<Vec<(IrNetAliasBinding, u32)>>,
+    ) -> Result<(), String> {
+        let rhs = apply_lhs_assignment_context(&self.model, &lhs, rhs);
+        let shape = if reads.is_empty() {
+            IrShape::RunOnce
+        } else {
+            IrShape::SensLoop { reads }
+        };
+        let fn_name = self.new_fn_name(parent_path, "link");
+        let origin = self.origin(port);
+        let body = if let Some(bindings) = alias_bindings {
+            let rhs_name = format!("_alias_port_rhs_{}", port.index());
+            let rhs_value = IrExpr::new(
+                IrExprKind::LocalRead(rhs_name.clone()),
+                rhs.width(),
+                rhs.signed(),
+                None,
+            );
+            let mut body = vec![IrStmt::DeclLocal {
+                name: rhs_name,
+                width: rhs.width(),
+                signed: rhs.signed(),
+                init: Some(Box::new(rhs)),
+                two_state: false,
+            }];
+            for (driver, value) in
+                self.alias_driver_assignments(port, &bindings, &rhs_value, |_| 0)?
+            {
+                body.push(IrStmt::Assign {
+                    lhs: IrLhs::Whole(driver),
+                    rhs: value,
+                    nba: false,
+                });
+            }
+            body
+        } else {
+            vec![IrStmt::Assign {
+                lhs,
+                rhs,
+                nba: false,
+            }]
+        };
+        self.model.processes.push(IrProcess::new_with_origin(
+            fn_name,
+            format!("{child_path}.link"),
+            shape,
+            Vec::new(),
+            body,
+            origin,
+        ));
         Ok(())
     }
 }
@@ -2073,4 +2243,102 @@ pub(super) fn is_class_handle_descriptor(descriptor: &TypeDescriptor) -> bool {
             descriptor.name.as_str(),
             "semaphore" | "mailbox" | "process"
         )
+}
+
+/// The low `width` bits of a packed lvalue, or `None` for a target shape
+/// that has no constant low slice (the caller then keeps the whole target).
+fn narrow_lhs_low_bits(model: &IrModel, lhs: &IrLhs, width: u32) -> Option<IrLhs> {
+    let current = packed_lhs_width(model, lhs)?;
+    if width == 0 || width >= current {
+        return (width == current).then(|| lhs.clone());
+    }
+    let span = i64::from(width) - 1;
+    match lhs {
+        IrLhs::Whole(index) => Some(IrLhs::Part(
+            *index,
+            span,
+            0,
+            model.signal(*index).ty.two_state(),
+        )),
+        IrLhs::Part(index, left, right, two_state) => {
+            let low = (*left).min(*right);
+            Some(IrLhs::Part(*index, low + span, low, *two_state))
+        }
+        IrLhs::IdxPart(index, base, _, _, false, two_state) => Some(IrLhs::IdxPart(
+            *index,
+            base.clone(),
+            Box::new(lhs_integer_expr(i128::from(width))),
+            width,
+            false,
+            *two_state,
+        )),
+        IrLhs::ArrayElem {
+            arr,
+            indices,
+            elem_sel,
+        } => {
+            let elem_sel = match elem_sel {
+                IrElemSel::Whole => IrElemSel::Part(span, 0),
+                IrElemSel::Part(left, right) => {
+                    let low = (*left).min(*right);
+                    IrElemSel::Part(low + span, low)
+                }
+                _ => return None,
+            };
+            Some(IrLhs::ArrayElem {
+                arr: *arr,
+                indices: indices.clone(),
+                elem_sel,
+            })
+        }
+        IrLhs::PackedSelect {
+            target,
+            steps,
+            two_state,
+            ..
+        } => {
+            let mut steps = steps.clone();
+            steps.push(crate::sim::ir::IrPackedSelect {
+                base: lhs_integer_expr(0),
+                width,
+            });
+            Some(IrLhs::PackedSelect {
+                target: target.clone(),
+                steps,
+                signed: false,
+                two_state: *two_state,
+            })
+        }
+        // A concatenation target keeps its low parts; parts are listed MSB
+        // first.
+        IrLhs::Stream {
+            parts,
+            slice: 1,
+            direction: crate::sim::ir::IrStreamDirection::LeftToRight,
+            ..
+        } => {
+            let mut kept = Vec::new();
+            let mut remaining = width;
+            for (part, part_width) in parts.iter().rev() {
+                if remaining == 0 {
+                    break;
+                }
+                if *part_width <= remaining {
+                    kept.push((part.clone(), *part_width));
+                    remaining -= part_width;
+                } else {
+                    kept.push((narrow_lhs_low_bits(model, part, remaining)?, remaining));
+                    remaining = 0;
+                }
+            }
+            kept.reverse();
+            Some(IrLhs::Stream {
+                parts: kept,
+                width,
+                slice: 1,
+                direction: crate::sim::ir::IrStreamDirection::LeftToRight,
+            })
+        }
+        _ => None,
+    }
 }

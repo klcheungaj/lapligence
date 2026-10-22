@@ -323,3 +323,70 @@ fn illegal_rules_weights_and_results_are_rejected_by_the_frontend() {
         "neg_void_result_read.sv:5:32 use of undeclared identifier 'a'",
     );
 }
+
+/// Every generation of the same source writes the same C. The order of a
+/// rule's implicit result variables once followed the frontend's allocation
+/// addresses, which change between runs; several generations make a
+/// coincidental match unlikely.
+#[test]
+fn generated_model_is_identical_across_generations() {
+    let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim")
+        .join(SUITE)
+        .join("implicit_order.sv");
+    for (optimized, generations) in [(true, 6), (false, 3)] {
+        let mut first: Option<Vec<(String, Vec<u8>)>> = None;
+        for generation in 0..generations {
+            let directory =
+                super::sim_harness::TempDir::new("implicit_order").expect("generation directory");
+            let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_llg"));
+            command.current_dir(directory.path()).args([
+                "--top",
+                "tb",
+                "--gen-only",
+                "--out-dir",
+                "gen",
+            ]);
+            if !optimized {
+                command.arg("--no-opt");
+            }
+            let output = command.arg(&source).output().expect("run llg");
+            assert!(output.status.success(), "{output:?}");
+            let model = directory.path().join("gen/sim/tb");
+            let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(&model)
+                .unwrap_or_else(|error| panic!("{}: {error}", model.display()))
+                .map(|entry| {
+                    let path = entry.expect("model entry").path();
+                    let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                    (name, std::fs::read(&path).unwrap_or_default())
+                })
+                .collect();
+            files.sort();
+            assert!(files.iter().any(|(name, _)| name == "model.c"), "{files:?}");
+            match &first {
+                None => first = Some(files),
+                Some(first) => {
+                    for ((name, bytes), (first_name, first_bytes)) in files.iter().zip(first) {
+                        assert_eq!(name, first_name);
+                        assert!(
+                            bytes == first_bytes,
+                            "{name} differs in generation {generation} (optimized={optimized})"
+                        );
+                    }
+                    assert_eq!(files.len(), first.len());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn implicit_result_variables_of_many_types() {
+    sim_cli::run_case(
+        SUITE,
+        "implicit_order",
+        include_str!("../fixtures/sim/feature_completion/adv_016/implicit_order.out"),
+        "llg: $finish at time 0 at tb:19:5\n",
+        &[],
+    );
+}

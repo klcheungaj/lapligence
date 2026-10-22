@@ -508,9 +508,11 @@ Mailboxes retain bounded/unbounded FIFO/peek rules and nominal typed identity
 Mismatched try calls return -1 without assignment/consumption; blocking mismatches
 fail. A blocked get is serviced by type check, then removal (a peek clones), then
 wake: the put completes the get (AB-O3). A destination marked by
-`llg_mailbox_delivery_target` (whole variables of static or waiting-activation
-storage) is written then; any other goes to the waiter's `mailbox_delivery` and is
-written when it resumes (`llg_mailbox_delivery_take`). A waiter killed first keeps
+`llg_mailbox_delivery_target` (whole storage that stays valid for the wait, and
+class handles) is written then; any other goes to the waiter's `mailbox_delivery` and is
+written when it resumes (`llg_mailbox_delivery_take`). A handle destination with
+a change marker (`llg_mailbox_published_target`) publishes a changed handle on
+every write, at the put included. A waiter killed first keeps
 what it was delivered: its pending delivery is dropped, never returned.
 `LLG_MAILBOX_VALUE` messages own a descriptor-backed `llg_value_t` matched by the model's static
 equivalence key; `llg_mailbox_trace` enumerates queued, blocked-put and pending

@@ -63,7 +63,9 @@ impl Codegen<'_> {
                     low,
                     ..
                 } => match direction {
-                    DbDirection::Input => low.iter().copied().collect(),
+                    DbDirection::Input => {
+                        self.port_child_target(*source, *low).into_iter().collect()
+                    }
                     DbDirection::Output => high_expr.or(*high).into_iter().collect(),
                     _ => Vec::new(),
                 },

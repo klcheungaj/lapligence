@@ -238,6 +238,7 @@ impl Codegen<'_> {
             });
         }
         let lhs = self.lower_lhs(path, node)?;
+        let lhs = self.collapse_concat_reference(lhs);
         self.mailbox_target_from_lhs(&lhs)
     }
 
@@ -547,28 +548,33 @@ impl Codegen<'_> {
     /// handle that is rebound (and its object reclaimed) during the wait,
     /// and a handle destination publishes its change from the receiver, so
     /// both are written on resume.
+    /// Whether a blocked `get`/`peek` writes `target` when the put delivers
+    /// the message (decision AB-O3): whole packed, real and string storage
+    /// (variables, unpacked-record members held as their own leaves, class
+    /// properties, locals, formals and `ref` formals) and user class handles,
+    /// whose change the runtime publishes. The storage stays valid for the
+    /// whole wait: static storage, the waiting activation's own frame, or a
+    /// property of the object the call captured. Selected, aggregate and
+    /// other handle destinations are written when the receiver resumes.
     fn mailbox_target_at_delivery(&self, node: NodeId, target: &IrMailboxTarget) -> bool {
         let direct = match target {
             IrMailboxTarget::Typed { target, .. } => target.as_ref(),
             target => target,
         };
-        if !matches!(
-            direct,
+        match direct {
             IrMailboxTarget::Packed { .. }
-                | IrMailboxTarget::Real { .. }
-                | IrMailboxTarget::Ref { .. }
-                | IrMailboxTarget::String { .. }
-        ) {
-            return false;
-        }
-        let node = match self.kind(node) {
-            NodeKind::Expr(ExprKind::Cast { operand, ty, .. }) if ty.kind == "string" => *operand,
-            _ => node,
-        };
-        match self.kind(node) {
-            NodeKind::Expr(ExprKind::Ref {
-                target: Some(variable),
-            }) => !self.class_fields.contains_key(variable),
+            | IrMailboxTarget::Real { .. }
+            | IrMailboxTarget::Ref { .. }
+            | IrMailboxTarget::String { .. } => true,
+            IrMailboxTarget::Handle { .. } => {
+                self.query_descriptor(node).is_some_and(|descriptor| {
+                    matches!(&descriptor.shape, TypeShape::Opaque { kind } if kind == "Class")
+                        && !matches!(
+                            descriptor.name.as_str(),
+                            "semaphore" | "mailbox" | "process"
+                        )
+                })
+            }
             _ => false,
         }
     }
@@ -581,8 +587,11 @@ impl Codegen<'_> {
         {
             return false;
         }
+        // A member of an unpacked record held as separate leaves is the
+        // leaf's whole storage.
         !matches!(
-            self.lower_lhs(path, node),
+            self.lower_lhs(path, node)
+                .map(|lhs| self.collapse_concat_reference(lhs)),
             Ok(IrLhs::Whole(_) | IrLhs::WholeRef { .. } | IrLhs::Ref { bit: None, .. })
         )
     }

@@ -45,35 +45,50 @@ impl LintRule for WidthMismatchRule {
                     direction,
                     high,
                     low,
+                    high_expr,
+                    ty,
                     ..
                 } => {
-                    // Port link: input ports are driven by the parent (low is
-                    // the LHS), output ports drive the parent (high is the
-                    // LHS).
-                    let (lhs, rhs) = match direction {
-                        Direction::Input => (*low, *high),
-                        Direction::Output => (*high, *low),
-                        Direction::Inout
-                        | Direction::Mixed
-                        | Direction::None
-                        | Direction::Ref
-                        | Direction::Unsupported => (None, None),
-                    };
-                    let (Some(lhs), Some(rhs)) = (lhs, rhs) else {
-                        continue;
-                    };
-                    if lhs == rhs {
+                    // Port link: input ports are driven by the parent (the
+                    // port is the LHS), output ports drive the parent (the
+                    // actual is the LHS).  The actual's width is its own
+                    // expression's (`.p(v[3])` is one bit), and the port's is
+                    // its internal symbol's or port expression's.
+                    if !matches!(direction, Direction::Input | Direction::Output) {
                         continue;
                     }
-                    if let Some(diag) = width_diag(
-                        db,
-                        id,
-                        &db.node(lhs).name,
-                        object_width(db, lhs),
-                        object_width(db, rhs),
-                    ) {
-                        out.push(diag);
+                    let Some(actual) = high_expr.or(*high) else {
+                        continue;
+                    };
+                    if low.is_some() && *low == *high {
+                        continue;
                     }
+                    let actual_width = if high_expr.is_some() {
+                        expr_width(db, actual)
+                    } else {
+                        object_width(db, actual)
+                    };
+                    let port_width = match low {
+                        Some(low) => object_width(db, *low),
+                        None => db
+                            .port_internal_expression(id)
+                            .and_then(|expr| expr_width(db, expr))
+                            .or(ty.width),
+                    };
+                    let port_name = low
+                        .map_or_else(|| db.node(id).name.clone(), |low| db.node(low).name.clone());
+                    let actual_name = high
+                        .map(|high| db.node(high).name.clone())
+                        .or_else(|| signal_of_ref(db, actual).map(|s| db.node(s).name.clone()));
+                    let diag = if *direction == Direction::Input {
+                        width_diag(db, id, &port_name, port_width, actual_width)
+                    } else {
+                        let Some(actual_name) = actual_name else {
+                            continue; // concatenation actual: not named
+                        };
+                        width_diag(db, id, &actual_name, actual_width, port_width)
+                    };
+                    out.extend(diag);
                 }
                 _ => {}
             }
@@ -205,5 +220,75 @@ mod tests {
             .message
             .contains("`a` is 4 bits, RHS is 8 bits"));
         assert!(warn.unwrap().message.contains("truncation"));
+    }
+
+    #[test]
+    fn bit_select_connection_to_scalar_port_is_quiet() {
+        let diags = lint_design(
+            "module inv(input a, output y);\n  assign y = ~a;\nendmodule\n\
+             module top;\n  wire [3:0] n;\n  logic [3:0] v;\n\
+             \x20 assign n[0] = 1'b0;\n\
+             \x20 inv g0(.a(n[0]), .y(n[1]));\n\
+             \x20 inv g1(n[1], v[3]);\nendmodule\n",
+            "top",
+        );
+        let got = rule_diags(&diags, "width-mismatch");
+        assert!(got.is_empty(), "one bit to one bit: {:?}", diags);
+    }
+
+    #[test]
+    fn select_connection_wider_than_its_port_still_warns() {
+        let diags = lint_design(
+            "module buf1(input a, output y);\n  assign y = a;\nendmodule\n\
+             module top;\n  wire [3:0] n;\n  wire y;\n\
+             \x20 assign n = 4'b0;\n\
+             \x20 buf1 g0(.a(n[2:0]), .y(y));\nendmodule\n",
+            "top",
+        );
+        let got = rule_diags(&diags, "width-mismatch");
+        assert_eq!(got.len(), 1, "3 bits into 1: {:?}", diags);
+        assert_eq!(got[0].severity, LintSeverity::Warning);
+        assert!(
+            got[0].message.contains("`a` is 1 bits, RHS is 3 bits"),
+            "{}",
+            got[0].message
+        );
+    }
+
+    #[test]
+    fn port_expression_width_is_the_expression_width() {
+        let module = "module m(.p({a, b}), .q(c[2:1]));\n  input [1:0] a;\n  input b;\n\
+                      \x20 input [3:0] c;\nendmodule\n";
+        let diags = lint_design(
+            &format!(
+                "{module}module top;\n  logic [2:0] d;\n  logic [1:0] e;\n\
+                 \x20 m u(.p(d), .q(e));\nendmodule\n"
+            ),
+            "top",
+        );
+        let got = rule_diags(&diags, "width-mismatch");
+        assert!(got.is_empty(), "3 and 2 bits match: {:?}", diags);
+
+        let diags = lint_design(
+            &format!(
+                "{module}module top;\n  logic [1:0] d;\n  logic [1:0] e;\n\
+                 \x20 m u(.p(d), .q(e));\nendmodule\n"
+            ),
+            "top",
+        );
+        // The concatenation connects bit by bit: `b` takes bit 0 and `a`
+        // only bit 1, so `a` is the part that is not fully connected.
+        let got = rule_diags(&diags, "width-mismatch");
+        assert_eq!(
+            got.len(),
+            1,
+            "2 bits into the 3-bit concatenation: {:?}",
+            diags
+        );
+        assert!(
+            got[0].message.contains("`a` is 2 bits, RHS is 1 bits"),
+            "{}",
+            got[0].message
+        );
     }
 }

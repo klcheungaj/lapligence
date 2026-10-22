@@ -1274,6 +1274,7 @@ impl<'a> Codegen<'a> {
             let Some(inst) = self.owning_inst(id) else {
                 continue;
             };
+            let low = self.port_child_target(id, low);
             let targets = match direction {
                 DbDirection::Input => vec![low],
                 DbDirection::Output => vec![high_expr.or(high)],

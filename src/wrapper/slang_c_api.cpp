@@ -2658,6 +2658,13 @@ public:
       if (const Expression* connection = symbol.getConnectionExpr())
         connection->visit(*this);
     }
+    // Likewise a port whose port expression is a select (`a[1:0]`, IEEE
+    // 1800-2009 23.2.2.1) or an explicit ANSI expression (23.2.2.2): capture
+    // the internal expression under the port for its low-connection role.
+    if constexpr (std::same_as<T, PortSymbol>) {
+      if (const Expression* internal = symbol.getInternalExpr())
+        internal->visit(*this);
+    }
     if constexpr (std::same_as<T, UninstantiatedDefSymbol>) {
       for (const auto* parameter : symbol.paramExpressions)
         parameter->visit(*this);
@@ -2794,6 +2801,14 @@ public:
                   std::same_as<T, GenerateBlockSymbol>)
       disableScopes.pop_back();
     parents.pop_back();
+    // The component ports of a concatenated port expression (`.p({a, b})`,
+    // IEEE 1800-2009 23.2.2.1) are not scope members, but each one carries
+    // its own direction, internal connection and (Slang splits the actual)
+    // instance connection. Capture them beside the multi-port.
+    if constexpr (std::same_as<T, MultiPortSymbol>) {
+      for (const PortSymbol* component : symbol.ports)
+        handle(*component);
+    }
     captureSourceReferences(symbol);
     if constexpr (std::same_as<T, InstanceBodySymbol> ||
                   std::same_as<T, GenerateBlockSymbol>)
@@ -3190,6 +3205,9 @@ public:
           break;
         case AssertionKind::Expect:
           result.subkind = LLG_SLANG_STMT_CONCURRENT_EXPECT;
+          break;
+        case AssertionKind::Restrict:
+          result.subkind = LLG_SLANG_STMT_CONCURRENT_RESTRICT;
           break;
         default:
           result.subkind = LLG_SLANG_SUBKIND_NONE;
@@ -4413,6 +4431,13 @@ private:
       if (const Expression* initializer = symbol.getInitializer())
         capture.semanticRole(id, initializer, LLG_SLANG_EDGE_INITIALIZER);
     }
+    // A multi-port connects internally through its component ports, most
+    // significant first; it has no internal symbol or connection of its own.
+    if constexpr (std::same_as<T, MultiPortSymbol>) {
+      uint32_t index = 0;
+      for (const PortSymbol* component : symbol.ports)
+        capture.semanticRole(id, component, LLG_SLANG_EDGE_LOW_CONNECTION, index++);
+    }
     if constexpr (std::same_as<T, SubroutineSymbol>) {
       capture.semanticRole(id, &symbol.getBody(), LLG_SLANG_EDGE_BODY);
     }
@@ -4581,6 +4606,54 @@ private:
       return;
     const auto& instanceSyntax = syntaxNode->as<syntax::HierarchicalInstanceSyntax>();
     const auto semanticConnections = symbol.getPortConnections();
+    // Slang expands the connection of a multi-port (a concatenated port
+    // expression, IEEE 1800-2009 23.2.2.1) into one connection per component
+    // port, so the expanded list is longer than the port list. Each port-list
+    // entry owns `count` consecutive expanded connections.
+    struct ConnectionGroup {
+      const Symbol* port;
+      size_t first;
+      size_t count;
+    };
+    std::vector<ConnectionGroup> groups;
+    size_t expanded = 0;
+    for (const Symbol* port : symbol.body.getPortList()) {
+      const size_t count = port->kind == SymbolKind::MultiPort
+          ? port->as<MultiPortSymbol>().ports.size()
+          : 1;
+      groups.push_back({port, expanded, count});
+      expanded += count;
+    }
+    // Marks the group's port and, for a multi-port, each component as
+    // connected; a component Slang left without an actual (the actual is
+    // narrower than the port) is an open connection. Returns the node of the
+    // port named in the instance syntax.
+    auto markGroup = [&](const ConnectionGroup& group, bool referenceTarget) {
+      auto portNode = [&](const Symbol& port) {
+        return referenceTarget && capture.declarationOnly
+            ? captureReferenceTarget(port)
+            : capture.ensureSemantic(&port);
+      };
+      bool anyActual = false;
+      for (size_t index = group.first;
+           index < group.first + group.count && index < semanticConnections.size();
+           index++) {
+        const PortConnection* connection = semanticConnections[index];
+        auto& node = capture.output.semantic_nodes[static_cast<size_t>(
+            portNode(connection->port))];
+        node.flags |= LLG_SLANG_SEMANTIC_PORT_CONNECTION_PRESENT;
+        if (connection->getExpression())
+          anyActual = true;
+        else
+          node.flags |= LLG_SLANG_SEMANTIC_PORT_CONNECTION_OPEN;
+      }
+      const uint64_t portId = portNode(*group.port);
+      auto& node = capture.output.semantic_nodes[static_cast<size_t>(portId)];
+      node.flags |= LLG_SLANG_SEMANTIC_PORT_CONNECTION_PRESENT;
+      if (!anyActual)
+        node.flags |= LLG_SLANG_SEMANTIC_PORT_CONNECTION_OPEN;
+      return portId;
+    };
     uint32_t orderedIndex = 0;
     for (const syntax::PortConnectionSyntax* syntaxConnection :
          instanceSyntax.connections) {
@@ -4597,31 +4670,17 @@ private:
           throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
                               "unknown Slang port connection syntax");
         }
-        if (orderedIndex < semanticConnections.size()) {
-          const PortConnection* connection = semanticConnections[orderedIndex];
-          auto& portNode = capture.output.semantic_nodes[static_cast<size_t>(
-              capture.ensureSemantic(&connection->port))];
-          portNode.flags |= LLG_SLANG_SEMANTIC_PORT_CONNECTION_PRESENT;
-          if (!connection->getExpression())
-            portNode.flags |= LLG_SLANG_SEMANTIC_PORT_CONNECTION_OPEN;
-        }
+        if (orderedIndex < groups.size())
+          markGroup(groups[orderedIndex], false);
         orderedIndex++;
         continue;
       }
       const auto& named = syntaxConnection->as<syntax::NamedPortConnectionSyntax>();
       if (named.expr)
         capture.connectionActual(named.expr->sourceRange());
-      for (const PortConnection* connection : semanticConnections) {
-        if (connection->port.name == named.name.valueText()) {
-          const uint64_t portId = capture.declarationOnly
-              ? captureReferenceTarget(connection->port)
-              : capture.ensureSemantic(&connection->port);
-          auto& portNode =
-              capture.output.semantic_nodes[static_cast<size_t>(portId)];
-          portNode.flags |= LLG_SLANG_SEMANTIC_PORT_CONNECTION_PRESENT;
-          if (!connection->getExpression())
-            portNode.flags |= LLG_SLANG_SEMANTIC_PORT_CONNECTION_OPEN;
-          capture.lexicalBinding(named.name, portId,
+      for (const ConnectionGroup& group : groups) {
+        if (group.port->name == named.name.valueText()) {
+          capture.lexicalBinding(named.name, markGroup(group, true),
                                  LLG_SLANG_LEXICAL_ROLE_CONNECTION_LABEL);
           break;
         }

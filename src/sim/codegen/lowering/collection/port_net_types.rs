@@ -41,16 +41,22 @@ impl Codegen<'_> {
         plan.insert(point, self.collapse_net_type(point.owner())?)
     }
 
+    /// `low` is the internal declaration, or with `selected_formal` the
+    /// select/concatenation port expression (SV 23.2.2.1) that always
+    /// connects bit by bit.
+    #[allow(clippy::too_many_arguments)]
     fn inout_type_points(
         &self,
         port: NodeId,
         high: Option<NodeId>,
         low: NodeId,
+        selected_formal: bool,
         actual: Option<NodeId>,
         bit_nets: &HashSet<NodeId>,
         cells: &NetCellPlan,
     ) -> Result<Vec<(NetPoint, NetPoint)>, String> {
         if let Some(pairs) = actual
+            .filter(|_| !selected_formal)
             .map(|actual| self.net_array_inout_pairs(port, actual, low))
             .transpose()?
             .flatten()
@@ -105,7 +111,8 @@ impl Codegen<'_> {
                 })
                 .collect());
         }
-        if high.is_none()
+        if selected_formal
+            || high.is_none()
             || high.is_some_and(|high| bit_nets.contains(&high))
             || bit_nets.contains(&low)
         {
@@ -203,9 +210,10 @@ impl Codegen<'_> {
                         direction: DbDirection::Inout,
                         high,
                         high_expr,
-                        low: Some(_),
+                        low,
                         ..
-                    } if high.is_some() || high_expr.is_some()
+                    } if (high.is_some() || high_expr.is_some())
+                        && (low.is_some() || self.db.port_internal_expression(*node).is_some())
                 )
             })
             .map(|port| {
@@ -232,15 +240,26 @@ impl Codegen<'_> {
             for &(_, port) in &ports[level_start..level_end] {
                 let NodeKind::Port {
                     high,
-                    low: Some(low),
+                    low,
                     high_expr,
                     ..
                 } = self.kind(port)
                 else {
                     return Err("inout type plan lost its port endpoints".into());
                 };
-                let points =
-                    self.inout_type_points(port, *high, *low, *high_expr, bit_nets, cells)?;
+                let expression = self.db.port_internal_expression(port);
+                let Some(internal) = low.or(expression) else {
+                    return Err("inout type plan lost its port endpoints".into());
+                };
+                let points = self.inout_type_points(
+                    port,
+                    *high,
+                    internal,
+                    low.is_none(),
+                    *high_expr,
+                    bit_nets,
+                    cells,
+                )?;
                 for (internal, external) in points {
                     self.insert_collapse_point(&mut plan, internal)?;
                     self.insert_collapse_point(&mut plan, external)?;

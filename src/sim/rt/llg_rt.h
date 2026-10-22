@@ -834,6 +834,10 @@ typedef struct {
     // when put delivers the message (decision AB-O3).
     int8_t at_delivery;
     llg_ref_t* reference; // optional packed destination descriptor
+    // Optional change marker of a handle destination: every write of the
+    // destination that changes the handle publishes it (SV 9.4.2), also a
+    // write at the put (llg_mailbox_published_target).
+    sv4_t* changed;
     union {
         sv4_t* packed;
         double* real;
@@ -848,6 +852,10 @@ llg_mailbox_target_t llg_mailbox_typed_target(llg_mailbox_target_t target, uint6
 // Marks storage that stays valid while its process waits (static storage or
 // the waiting activation's own frame) and publishes no change marker.
 llg_mailbox_target_t llg_mailbox_delivery_target(llg_mailbox_target_t target);
+// A handle destination whose changes publish `changed` (NULL: storage no
+// other process can observe).
+llg_mailbox_target_t llg_mailbox_published_target(llg_mailbox_target_t target,
+                                                  sv4_t* changed);
 llg_mailbox_target_t llg_mailbox_target_ref(llg_ref_t* target);
 llg_mailbox_value_t llg_mailbox_value_packed(sv4_t value, uint32_t width,
                                               int is_signed, int two_state);

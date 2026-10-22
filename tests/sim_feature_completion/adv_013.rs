@@ -67,6 +67,33 @@ fn multiclocked_sequences_and_clock_flow() {
     });
 }
 
+/// A02 / 16.14.1: a maximal singly clocked subsequence made of several
+/// elements is checked as a whole for an empty match, not by its last
+/// element (`a ##1 b[*0:1] ##1 @(c2) d` is legal).
+#[test]
+fn multiclocked_subsequence_with_an_empty_last_element() {
+    sim_cli::run_case(
+        SUITE,
+        "mc_segment",
+        fixture!("mc_segment.out"),
+        "llg: $finish at time 102000 at tb:16:5\n",
+        &[],
+    );
+}
+
+/// 16.15.4: `restrict property` is not verified in simulation, in every
+/// position a concurrent assertion may take.
+#[test]
+fn restrict_property_is_not_simulated() {
+    sim_cli::run_case(
+        SUITE,
+        "restrict",
+        fixture!("restrict.out"),
+        "llg: $finish at time 22000 at tb:21:5\n",
+        &[],
+    );
+}
+
 /// A02 / 16.5, 14.13, 14.14, 16.15.7: value-change, `edge`, `or`-list,
 /// clocking-block, bit-select, gated and default event-list clocks tick once
 /// per time step; `$global_clock` clocks assertions and event controls;

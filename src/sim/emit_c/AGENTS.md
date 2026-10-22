@@ -384,8 +384,11 @@ the `llg_gc_handle_cell_drop` destructor tag so value scopes trace them.
 
 Mailbox payload capture follows all user operand effects. Remove a consumed node
 before callbacks; peek clones. A blocking get into an `AtDelivery` target
-(lowering marks whole variables of static or waiting-activation storage) wraps it
+(lowering marks whole storage that stays valid for the wait, and class handles) wraps it
 in `llg_mailbox_delivery_target`, and the runtime writes it at the put (AB-O3).
+A handle destination with a change marker is wrapped in
+`llg_mailbox_published_target`, so the runtime publishes a changed handle
+whenever it writes it (sync, at the put, `try_get` or on resume).
 Any other blocking get emits `llg_mailbox_delivery_take` with the same destination
 right after its arm, so a suspended get writes only live storage on resume. Never cast an integer to a target pointer.
 

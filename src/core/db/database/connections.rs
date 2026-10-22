@@ -78,6 +78,24 @@ pub(super) fn connection_source_expression(
     ))
 }
 
+/// The internal expression of a port whose port expression is not a plain
+/// reference to one internal symbol: a select in a non-ANSI port reference
+/// or an explicit ANSI port expression (SV 23.2.2.1-23.2.2.2).
+pub(super) fn port_internal_expression(
+    snapshot: &SlangSnapshot,
+    ids: &SemanticIds,
+    edges: &[crate::ffi::slang::SemanticEdge],
+) -> Result<Option<NodeId>, DbError> {
+    let Some(internal) = edge_target(ids, edges, SemanticEdgeRole::LowConnection)? else {
+        return Ok(None);
+    };
+    let is_expression = snapshot
+        .semantic_nodes
+        .get(internal.index())
+        .is_some_and(|node| node.kind == SemanticKind::Expression && node.detail != "NamedValue");
+    Ok(is_expression.then_some(internal))
+}
+
 pub(super) fn direction_from_slang(node: &SemanticNode) -> Direction {
     if node.is_input() {
         Direction::Input
