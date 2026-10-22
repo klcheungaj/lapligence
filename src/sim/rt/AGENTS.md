@@ -814,9 +814,11 @@ model emits the table and the call only when it calls built-ins.
 VPI callbacks (SIM-043) are records owned by the registry from registration
 until removal or, for time and action reasons, retirement after they run.
 Time reasons are one-shot region callbacks in their Table 4-1 PLI region
-(`cbNextSimTime` through `llg_time_slot_hook` at each Pre-Active pass); a
-zero-delay `cbAfterDelay` registered after Pre-Active goes to
-`LLG_REGION_INACTIVE` (S43-D2).
+(`cbNextSimTime` through `llg_time_slot_hook` at each Pre-Active pass);
+`cbReadWriteSynch` takes `LLG_REGION_PRE_NBA_PLI` and `cbNBASynch` the
+following `LLG_REGION_PRE_NBA`, so work a read-write callback wakes runs
+before `cbNBASynch` (S43-D1); a zero-delay `cbAfterDelay` registered after
+Pre-Active goes to `LLG_REGION_INACTIVE` (S43-D2).
 `cbValueChange` uses `llg_value_watch_add`: a waiter-less subscription on the
 address's wait row that `sig_publish_changed`/`real_write` already look up,
 whose hook runs after every runtime consumer; never add a separate per-store

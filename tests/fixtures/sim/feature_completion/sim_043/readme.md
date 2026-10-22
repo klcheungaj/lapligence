@@ -99,11 +99,12 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
 - Active: `initial` prints, writes `a=1`; the value-change callback runs at
   the write (S43-D6) and prints `00000001` (vpiBinStrVal of 8 bits), registers
   a second watch on `a` and removes itself (`remove first watch: 1`).
-- Pre-NBA: `cbNBASynch`; NBA: `b<=2` and `clk<=1` commit; `value: b=2` at the
-  commit; the woken `always @(b)` prints `active: b=2`.
-- Post-NBA: `cbReadWriteSynch` (S43-D1) puts `c=7`: the select watch on `c[0]`
-  prints `1 index=0` (bit 0 changed, S43-D7) inside the put, then the callback
-  prints `put c=7 (none)`; the write wakes `always @(c)`: `active: c=7`.
+- Pre-NBA: `cbReadWriteSynch` (S43-D1) runs first and puts `c=7`: the select
+  watch on `c[0]` prints `1 index=0` (bit 0 changed, S43-D7) inside the put,
+  then the callback prints `put c=7 (none)`; the write wakes `always @(c)`,
+  which runs before the slot goes on: `active: c=7`. Then `cbNBASynch`, last
+  before NBA; NBA: `b<=2` and `clk<=1` commit; `value: b=2` at the commit; the
+  woken `always @(b)` prints `active: b=2`.
 - Observed: the clocking event of `cb` (posedge `clk`) wakes the module
   process, which prints before the Reactive set (SIM-034 S34-D4).
 - Reactive: `program` prints (its thread stays alive, so 24.3 does not end
@@ -145,9 +146,10 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
   `LLG_VPI_READ_ONLY` (4.4.2.9), the monitor prints `peek=101 x=1`.
 - 2.5: the real watch prints `r=1.50` with a scaled time `2.5` (the time type
   of the registration, L64740-64743).
-- Post-NBA: the read-write callback puts `d=5` with no error; the continuous
-  assignment updates `e=6`, `always @(e)` prints and issues `q<=12`, which
-  commits in NBA and wakes `always @(q)`: ordinary downstream events.
+- Pre-NBA: the read-write callback (S43-D1) puts `d=5` with no error; the
+  continuous assignment updates `e=6`, `always @(e)` prints and issues
+  `q<=12`, which commits in NBA and wakes `always @(q)`: ordinary downstream
+  events.
 - Postponed: `$strobe` and `$monitor` evaluate `$peek(2)=102`; both writes
   are rejected.
 - Postponed PLI: `cbReadOnlySynch` (L64947-64948): a no-delay put, a delayed

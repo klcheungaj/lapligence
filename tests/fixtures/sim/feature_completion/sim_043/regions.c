@@ -132,7 +132,7 @@ static PLI_INT32 started(p_cb_data data) {
     on_change(vpi_handle_by_name("tb.mem[2]", NULL), vpiHexStrVal, change, "value: mem[2]");
     on_time(cbAtStartOfSimTime, time_cb, 5, "pre-active: cbAtStartOfSimTime");
     on_time(cbNBASynch, time_cb, 5, "pre-nba: cbNBASynch");
-    on_time(cbReadWriteSynch, read_write, 5, "post-nba: cbReadWriteSynch");
+    on_time(cbReadWriteSynch, read_write, 5, "pre-nba: cbReadWriteSynch");
     on_time(cbAtEndOfSimTime, end_of_time, 5, "pre-postponed: cbAtEndOfSimTime");
     on_time(cbReadOnlySynch, read_only, 5, "postponed: cbReadOnlySynch");
     on_time(cbNextSimTime, next_time, 0, "pre-active: cbNextSimTime");

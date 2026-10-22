@@ -1,4 +1,4 @@
-/* Companion of S43-D1_read_write_synch_after_nba.sv: a VPI application. */
+/* Companion of S43-D1_read_write_synch_before_nba.sv: a VPI application. */
 #include "vpi_user.h"
 #include <string.h>
 

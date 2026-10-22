@@ -1840,11 +1840,11 @@ fn s42_d13_scalar_format_vector() {
 // SIM-043: VPI callbacks, control and Postponed system functions.
 
 #[test]
-fn s43_d1_read_write_synch_after_nba() {
+fn s43_d1_read_write_synch_before_nba() {
     run_vpi_decision(
-        "S43-D1_read_write_synch_after_nba",
+        "S43-D1_read_write_synch_before_nba",
         &[],
-        include_str!("fixtures/sim/lrm_decisions/S43-D1_read_write_synch_after_nba.out"),
+        include_str!("fixtures/sim/lrm_decisions/S43-D1_read_write_synch_before_nba.out"),
     );
 }
 

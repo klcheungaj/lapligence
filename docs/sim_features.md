@@ -2400,8 +2400,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   selects (value, time and index per `s_cb_data`, at every changing write);
   the time reasons in their Table 4-1 PLI regions (`cbAtStartOfSimTime`,
   `cbAfterDelay`, `cbNextSimTime` Pre-Active, a late zero-delay
-  `cbAfterDelay` Inactive; `cbNBASynch` Pre-NBA;
-  `cbReadWriteSynch` Post-NBA; `cbAtEndOfSimTime` Pre-Postponed;
+  `cbAfterDelay` Inactive; `cbReadWriteSynch` Pre-NBA, then `cbNBASynch`
+  last before NBA; `cbAtEndOfSimTime` Pre-Postponed;
   `cbReadOnlySynch` Postponed) with relative delays; `cbEndOfCompile`,
   `cbStartOfSimulation` and `cbEndOfSimulation` (once); `vpi_remove_cb` and
   `vpi_get_cb_info`, including registration and removal inside running

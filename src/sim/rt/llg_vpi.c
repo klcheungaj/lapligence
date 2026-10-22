@@ -3627,8 +3627,11 @@ static int schedule_time_cb(llg_vpi_cb_t* cb, uint64_t ticks) {
     switch (cb->data.reason) {
         case cbAtStartOfSimTime:
         case cbAfterDelay: region = LLG_REGION_PRE_ACTIVE_PLI; break;
-        case cbNBASynch: region = LLG_REGION_PRE_NBA_PLI; break;
-        case cbReadWriteSynch: region = LLG_REGION_POST_NBA_PLI; break;
+        /* cbReadWriteSynch runs Pre-NBA, once the Active and Inactive work
+         * is done; what it wakes runs before cbNBASynch, which runs last,
+         * immediately before the NBA region (decision S43-D1). */
+        case cbReadWriteSynch: region = LLG_REGION_PRE_NBA_PLI; break;
+        case cbNBASynch: region = LLG_REGION_PRE_NBA; break;
         case cbAtEndOfSimTime: region = LLG_REGION_PRE_POSTPONED_PLI; break;
         default: region = LLG_REGION_POSTPONED_PLI; break; /* cbReadOnlySynch */
     }
