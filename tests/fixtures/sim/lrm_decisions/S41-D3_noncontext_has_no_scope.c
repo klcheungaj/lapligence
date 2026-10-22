@@ -9,7 +9,7 @@ DPI_DLLESPEC int d3_plain(void)
     const char *file = NULL;
     int line = 0;
     int known = svGetCallerInfo(&file, &line);
-    printf("plain scope %s caller %d\n", svGetScope() ? "set" : "NULL", known);
+    printf("plain scope %s caller %d line %d\n", svGetScope() ? "set" : "NULL", known, line);
     return 1;
 }
 

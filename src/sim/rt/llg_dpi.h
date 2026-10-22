@@ -101,7 +101,7 @@ typedef struct llg_dpi_scope {
     llg_dpi_user_t* user;                 /* svPutUserData entries */
 } llg_dpi_scope_t;
 
-/* Source position of a context import call (svGetCallerInfo, H.9.3). */
+/* Source position of an import call (svGetCallerInfo, H.9.3). */
 typedef struct llg_dpi_site {
     const char* file;
     int line;
@@ -117,8 +117,9 @@ typedef struct llg_dpi_call {
     uint8_t task; /* the innermost import is a task */
 } llg_dpi_call_t;
 
-/* Set by a context import's call site just before the call, consumed by
- * the import thunk. */
+/* Set by an import's call site just before the call and consumed by the
+ * import thunk (cleared after the call when the model keeps no call-chain
+ * state). */
 extern const llg_dpi_site_t* llg_dpi_next_site;
 
 /* Register the model's scope table, sorted by strcmp of `name`. */

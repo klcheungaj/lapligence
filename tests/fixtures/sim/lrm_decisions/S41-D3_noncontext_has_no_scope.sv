@@ -1,7 +1,7 @@
-// Decision S41-D3: a noncontext import has no context scope and no caller
-// information, also when a context call chain reaches it through an export:
-// svGetScope returns NULL and svGetCallerInfo returns 0. A context import
-// called from SystemVerilog gets its call site.
+// Decision S41-D3: a noncontext import has no context scope, also when a
+// context call chain reaches it through an export: svGetScope returns NULL.
+// Every import, context or not, gets the file and line of its call site from
+// svGetCallerInfo, which returns 1; the case prints the line.
 //
 // IEEE 1800-2009 35.5.3 (SystemVerilog-1800-2009.txt L55783-55785):
 //   "This implies that the context property at the root of the DPI import
@@ -10,11 +10,12 @@
 //   chain."
 // H.9.3 (L72673-72674): svGetScope: "The return value is undefined if this
 //   function is invoked from a noncontext imported function."
-// H.9.3 (L72730-72736): svGetCallerInfo: "Whether this information is
-//   available or not is implementation-specific."
-// The values in noncontext imports are undefined by the text; llg returns
-// NULL and 0. The caller line is an llg choice of the availability H.9.3
-// leaves open.
+// H.9.3 (L72730-72736): svGetCallerInfo: "Returns the file and line number in
+//   the SV code from which the import call was made. [...] Whether this
+//   information is available or not is implementation-specific."
+// The scope in a noncontext import is undefined by the text; llg returns
+// NULL. The caller information is available for every import call, as in
+// industry-standard implementations.
 //
 // Build S41-D3_noncontext_has_no_scope.c into a shared library and load it
 // with the simulator's DPI library option.

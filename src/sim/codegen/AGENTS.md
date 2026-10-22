@@ -416,7 +416,7 @@ simulation and retain packed/open-array/ref guards. Exports (`IrFunc::dpi_export
 keep the import formal/result rules, reject time-consuming tasks (ADV-018),
 reserved or colliding C identifiers and duplicate (scope, C identifier) pairs;
 `finish_dpi` sorts `IrModel::dpi_scopes` by name (the runtime binary-searches
-them) and context-import call sites carry `dpi_site` for `svGetCallerInfo`.
+them) and import call sites carry `dpi_site` for `svGetCallerInfo` (S41-D3).
 Static exported subroutines name their persistent formal storage in
 `IrDpiExport::storage`, which the export thunk reads and writes around the call.
 

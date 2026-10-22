@@ -2350,7 +2350,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   saves and restores the chain's scope, so after an export returns the chain
   is back in the scope it had (35.5.3, S41-D1). `svGetScope`, `svSetScope`,
   `svGetScopeFromName`, `svGetNameFromScope`, `svPutUserData`,
-  `svGetUserData`, `svGetCallerInfo` (context imports: file and line),
+  `svGetUserData`, `svGetCallerInfo` (every import: file and line, S41-D3),
   `svIsDisabledState` and `svAckDisabledState` are provided. Exports nest
   (SV -> C -> SV -> C) under the 256-call recursion limit, convert arguments
   with the import layout tables and copy outputs back in declaration order

@@ -357,7 +357,7 @@ void llg_dpi_import_enter(llg_dpi_call_t* saved, llg_dpi_scope_t* scope, int tas
     *saved = llg_dpi_now;
     llg_dpi_now.task = (uint8_t)(task != 0);
     llg_dpi_now.scope = scope;
-    llg_dpi_now.site = scope ? llg_dpi_next_site : NULL;
+    llg_dpi_now.site = llg_dpi_next_site;
     llg_dpi_now.depth = depth;
     llg_dpi_now.chain = scope ? LLG_DPI_CHAIN_CONTEXT : LLG_DPI_CHAIN_NONCONTEXT;
     llg_dpi_now.acked = 0;
@@ -523,9 +523,14 @@ void* svGetUserData(const svScope scope, void* userKey) {
     return NULL;
 }
 
+/* Any import call has a caller position (decision S41-D3; H.9.3 leaves its
+ * availability open). A model without context imports or exports does not
+ * track the chain: its import thunk leaves the position in
+ * `llg_dpi_next_site` for the call alone. */
 int svGetCallerInfo(const char** fileName, int* lineNumber) {
-    const llg_dpi_site_t* site = llg_dpi_now.site;
-    if (llg_dpi_now.chain != LLG_DPI_CHAIN_CONTEXT || !site) return 0;
+    const llg_dpi_site_t* site =
+        llg_dpi_now.chain == LLG_DPI_CHAIN_NONE ? llg_dpi_next_site : llg_dpi_now.site;
+    if (!site) return 0;
     if (fileName) *fileName = site->file;
     if (lineNumber) *lineNumber = site->line;
     return 1;

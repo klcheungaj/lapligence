@@ -570,6 +570,10 @@ pub(super) fn render_dpi_thunk(model: &IrModel, f: &IrFunc) -> Result<String, St
             "    llg_dpi_import_leave(&_dpi_call, {c_name_literal}, {});\n",
             u8::from(f.is_task)
         ));
+    } else {
+        // Without call-chain state the caller position stays readable
+        // through `llg_dpi_next_site` for the call alone (svGetCallerInfo).
+        out.push_str("    llg_dpi_next_site = NULL;\n");
     }
     let has_outputs = f.formals.iter().any(|formal| formal.is_address());
     if f.is_task {
