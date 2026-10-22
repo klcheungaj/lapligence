@@ -1,0 +1,6 @@
+infinite: 1
+NaN: 2
+too large: 3
+in range: 10000000003
+wide: 10000005003
+wrapped: 4071254073142933 ns

@@ -85,7 +85,8 @@ S16-D4 after all its lines, reporting "randsequence repeat count is negative or
 unknown", and S16-D7 after both lines, reporting "rand join expression is not a
 real number in 0.0 to 1.0". S99-D6 is linked with its `.c` file as `--dpi-lib` and must
 stop at startup with exit status 1 and empty stdout, reporting "a VPI
-application registers `$random`, which llg implements as a built-in". S11-D1 must end with exit status 1 after its
+application registers `$random`, which llg implements as a built-in". S01-D2 must end with exit status 1 after all its lines, reporting
+"simulation time overflow". S11-D1 must end with exit status 1 after its
 second line and S11-D2 after both lines, reporting "$cast failed to assign an
 incompatible value". S99-D8 must
 end with exit status 1 after its first line, reporting "virtual interface access
@@ -680,6 +681,13 @@ Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | PX-D2 | **Indexed part-selects are port references.** `a[0+:2]` and `a[3-:2]` with constant bases are constant selects, so they may appear in a module header like `a[1:0]`. | 23.2.2.1 L40425-40426; A.8.4 L69126-69128; A.8.3 L69007-69013 | `PX-D2_indexed_port_reference` | LRM text (the grammar admits them). Some simulators report a syntax error. |
 | PX-D3 | **Explicitly named ANSI ports take expressions.** `output .P1(r[3:0])` and `input .Y({x, y})` connect exactly the bits their expressions name in body-declared variables. | 23.2.2.2 L40678-40680, L40711-40713 | `PX-D3_explicit_ansi_port_expression` | LRM text. Some simulators do not implement explicitly named ANSI port declarations. |
 | PX-D4 | **A port expression connects bit by bit.** When an actual and a port expression (a part-select or concatenation in the header) differ in width, only the low bits both sides have are connected: the expression's higher bits stay unconnected for a narrower actual, and a wider actual's higher bits stay undriven (z on a net, the default x on a variable). A whole port is a continuous assignment that widens or truncates. An inout width difference is an error. | 23.3.3 L41452-41454; 23.2.2.1 L40430-40434 | `PX-D4_port_expression_width_mismatch` | llg choice, industry-standard behaviour (23.3.3 makes every port connection a continuous assignment but gives no rule for the width of a port expression's connection). A port reference select outside the declared range is a warning and its out-of-range bits read x and ignore writes (11.5.1 L15784-15788); some simulators reject it, but 23.2.2.1 admits any part-select of a declared vector and 11.5.1 defines the out-of-range bits. |
+
+## Delays and the end of time (SIM-001)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S01-D1 | **Delay tick counts.** A real delay whose count of design ticks has no 64-bit value (infinite, NaN, or too large once rounded at the local precision and scaled) waits one tick, with a warning. An integral delay keeps its low 64 bits, like a time variable (a negative one is its two's complement, 9.4.1), and its count of design ticks wraps modulo 2^64. | 9.4.1 L11747-11751 | `S01-D1_delay_tick_counts` | industry-standard behaviour (the text does not cover a delay without a 64-bit tick count; changed: such delays aborted the model). Some simulators read a negative delay as zero; llg follows 9.4.1 L11749-11750, which makes it a two's-complement unsigned time, so the case leaves negative delays out |
+| S01-D2 | **The end of time.** A nonblocking update whose time would pass 2^64-1 ticks takes effect in the NBA region of the current time slot; one that reaches 2^64-1 exactly is scheduled there. A blocking delay that would pass 2^64-1 is a run-time error that ends the simulation: the final procedures run and the exit status is 1. | 3.14 L2807-2809; 9.4.1 L11749-11750 | `S01-D2_end_of_time` (negative at run time) | industry-standard behaviour (the text gives simulation time no range; changed: both cases aborted the model without final procedures) |
 
 ## Class handles and dynamic casts (SIM-011)
 

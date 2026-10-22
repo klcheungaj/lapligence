@@ -53,6 +53,13 @@ fn assert_partial_order(label: &str, lines: &[String], expected: &str, chains: &
 
 /// A runtime failure after some output: exact stdout, nonzero exit and the
 /// named diagnostic.
+fn assert_runtime_success(label: &str, output: &Output, stdout: &str, diagnostic: &str) {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{label}: {stderr}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), stdout, "{label}");
+    assert!(stderr.contains(diagnostic), "{label}: {stderr}");
+}
+
 fn assert_runtime_failure(label: &str, output: &Output, stdout: &str, diagnostic: &str) {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success(), "{label}: unexpected success");
@@ -157,6 +164,9 @@ fn negative_real_delays_become_unsigned_time() {
 
 #[test]
 fn tick_range_failures_precede_queue_insertion() {
+    // Decision S01-D2: a blocking delay past the last 64-bit time is a fatal
+    // error and the final procedure runs; a nonblocking update past it takes
+    // effect in the current slot.
     let delay = include_str!("../fixtures/sim/feature_completion/sim_001/time_limit.out");
     sim_cli::run_case_checked_matrix(SUITE, "time_limit", &[], &|label, output| {
         assert_runtime_failure(
@@ -168,35 +178,31 @@ fn tick_range_failures_precede_queue_insertion() {
     });
     let nba = include_str!("../fixtures/sim/feature_completion/sim_001/time_limit_nba.out");
     sim_cli::run_case_checked_matrix(SUITE, "time_limit_nba", &[], &|label, output| {
-        assert_runtime_failure(
+        assert_runtime_success(label, output, nba, "");
+    });
+    // Decision S01-D1: a delay without a 64-bit tick count waits one tick.
+    let negative =
+        include_str!("../fixtures/sim/feature_completion/sim_001/negative_real_overflow.out");
+    sim_cli::run_case_checked_matrix(SUITE, "negative_real_overflow", &[], &|label, output| {
+        assert_runtime_success(
             label,
             output,
-            nba,
-            "nonblocking assignment time or sequence overflow",
+            negative,
+            "llg: warning: real delay -1 exceeds the 64-bit tick range; using 1 tick",
         );
     });
-    let negative =
-        include_str!("../fixtures/sim/feature_completion/sim_001/neg_negative_real_overflow.out");
-    sim_cli::run_case_checked_matrix(
-        SUITE,
-        "neg_negative_real_overflow",
-        &[],
-        &|label, output| {
-            assert_runtime_failure(
-                label,
-                output,
-                negative,
-                "delay exceeds the 64-bit tick range",
-            );
-        },
-    );
 }
 
 #[test]
-fn nonfinite_and_illegal_delays_reject() {
-    let stdout = include_str!("../fixtures/sim/feature_completion/sim_001/neg_nonfinite_delay.out");
-    sim_cli::run_case_checked_matrix(SUITE, "neg_nonfinite_delay", &[], &|label, output| {
-        assert_runtime_failure(label, output, stdout, "real delay must be finite");
+fn nonfinite_delays_wait_one_tick_and_illegal_delays_reject() {
+    let stdout = include_str!("../fixtures/sim/feature_completion/sim_001/nonfinite_delay.out");
+    sim_cli::run_case_checked_matrix(SUITE, "nonfinite_delay", &[], &|label, output| {
+        assert_runtime_success(
+            label,
+            output,
+            stdout,
+            "llg: warning: real delay is infinite; using 1 tick",
+        );
     });
     sim_cli::reject_case(
         SUITE,

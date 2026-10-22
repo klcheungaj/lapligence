@@ -2046,7 +2046,8 @@ static int run_time_overflow_probe(void) {
     llg_rt_init();
     llg_spawn(&time_overflow_proc_desc, "time-overflow");
     llg_rt_run();
-    return 2; // the second wait must abort before the scheduler returns
+    // The second wait ends the run with a fatal error (decision S01-D2).
+    return llg_rt_failed() ? 2 : 0;
 }
 
 LLG_SELFTEST_PROCESS(scaled_time_overflow_proc, 1) {

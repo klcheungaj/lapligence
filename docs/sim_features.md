@@ -916,12 +916,16 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Delays and precision** — Integer, fractional, scientific, unit-suffixed,
   parameter and runtime packed/real expressions, function results and task inputs
   are evaluated once for statement/intra-assignment delays. Local precision
-  rounding (halves away from zero) precedes checked 64-bit femtosecond
+  rounding (halves away from zero) precedes 64-bit femtosecond
   scheduling (1fs–100s units, all of which `%t` reports). Sub-precision delays
   round to zero; X/Z means zero. Negative packed values convert to unsigned
   64-bit time before scaling; finite negative reals, constant or runtime,
-  convert the same way after local rounding. Nonfinite reals reject, and a delay
-  past the 64-bit tick range fails before it is queued
+  convert the same way after local rounding. A real delay without a 64-bit
+  tick count (nonfinite or too large) waits one tick with a warning, and an
+  integral delay's tick count wraps modulo 2^64 (S01-D1). A blocking delay
+  past the last 64-bit time is a fatal error before it is queued (final
+  procedures run); a nonblocking update past it takes effect in the current
+  slot (S01-D2)
   ([SIM-001](../tests/sim_feature_completion/sim_001.rs)). Continuous/gate delays
   are separately bounded in §8.
   V §9.7.1; SV §§3.14, 5.8 **[1995/SV-2005]**.

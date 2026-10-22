@@ -178,56 +178,52 @@ sv4_t sv4_repeat_count(sv4_t v) {
 
 uint64_t sv4_to_u64(sv4_t v) { return v.width ? v.bits[0] & LLG_MASK(v.width) : 0; }
 
-static uint64_t checked_delay_product(uint64_t value, uint64_t scale) {
-    if (!scale || value > UINT64_MAX / scale) {
-        fprintf(stderr, "llg runtime fatal: delay exceeds the 64-bit tick range\n");
-        abort();
-    }
-    return value * scale;
-}
-
+/* Delay values become 64-bit simulation ticks (decision S01-D1). An integral
+ * delay is read as a 64-bit time value (a negative one as its two's
+ * complement, SV 9.4.1; wider values keep their low 64 bits) and its scaled
+ * tick count wraps modulo 2^64, as industry-standard simulators do. */
 uint64_t sv4_delay_ticks(sv4_t value, uint64_t unit_ticks) {
     if (sv4_is_unknown(value)) return 0;
     int negative = value.is_signed && value.width &&
         ((value.bits[(value.width - 1) / 64] >> ((value.width - 1) % 64)) & 1);
     uint64_t raw = sv4_to_u64(value);
     if (negative && value.width < 64) raw |= ~LLG_MASK(value.width);
-    if (!negative) {
-        for (int i = 1; i < sv4_nlimbs(value.width); i++) {
-            if (value.bits[i]) {
-                fprintf(stderr, "llg runtime fatal: delay exceeds the 64-bit tick range\n");
-                abort();
-            }
-        }
-    }
-    return checked_delay_product(raw, unit_ticks);
+    return raw * unit_ticks;
+}
+
+/* A real delay whose tick count has no 64-bit value (infinite, NaN, or too
+ * large after rounding and scaling) waits one tick, with a warning. */
+static uint64_t unrepresentable_real_delay(double value) {
+    if (isnan(value))
+        fprintf(stderr, "llg: warning: real delay is NaN; using 1 tick\n");
+    else if (isinf(value))
+        fprintf(stderr, "llg: warning: real delay is infinite; using 1 tick\n");
+    else
+        fprintf(stderr,
+                "llg: warning: real delay %.17g exceeds the 64-bit tick range; using 1 tick\n",
+                value);
+    return 1;
 }
 
 uint64_t sv4_real_delay_ticks(double value, uint64_t unit_ticks,
                               uint64_t precision_ticks) {
-    if (!isfinite(value) || !precision_ticks || !unit_ticks) {
-        fprintf(stderr, "llg runtime fatal: real delay must be finite\n");
-        abort();
-    }
+    if (!isfinite(value) || !precision_ticks || !unit_ticks)
+        return unrepresentable_real_delay(value);
     // Round once in local precision units (halves away from zero). A negative
-    // result is a 64-bit two's-complement unsigned time (V 9.7.1, SV 9.4.1);
-    // magnitudes beyond the signed 64-bit range are a resource limit.
+    // result is a 64-bit two's-complement unsigned time (V 9.7.1, SV 9.4.1).
     double rounded = round(value * ((double)unit_ticks / (double)precision_ticks));
     uint64_t local;
     if (rounded >= 0.0) {
-        if (!isfinite(rounded) || rounded >= 18446744073709551616.0) {
-            fprintf(stderr, "llg runtime fatal: delay exceeds the 64-bit tick range\n");
-            abort();
-        }
+        if (!isfinite(rounded) || rounded >= 18446744073709551616.0)
+            return unrepresentable_real_delay(value);
         local = (uint64_t)rounded;
     } else {
-        if (!isfinite(rounded) || rounded < -9223372036854775808.0) {
-            fprintf(stderr, "llg runtime fatal: delay exceeds the 64-bit tick range\n");
-            abort();
-        }
+        if (!isfinite(rounded) || rounded < -9223372036854775808.0)
+            return unrepresentable_real_delay(value);
         local = UINT64_C(0) - (uint64_t)(-rounded);
     }
-    return checked_delay_product(local, precision_ticks);
+    if (local > UINT64_MAX / precision_ticks) return unrepresentable_real_delay(value);
+    return local * precision_ticks;
 }
 
 uint64_t sv4_to_index(sv4_t v) {

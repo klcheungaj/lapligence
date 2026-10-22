@@ -2789,6 +2789,27 @@ fn s99_d7_vif_implicit_sensitivity() {
 }
 
 #[test]
+fn s01_d1_delay_tick_counts() {
+    run_decision(
+        "S01-D1_delay_tick_counts",
+        include_str!("fixtures/sim/lrm_decisions/S01-D1_delay_tick_counts.out"),
+    );
+}
+
+#[test]
+fn s01_d2_end_of_time() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S01-D2_end_of_time.out");
+    sim_cli::run_case_checked_matrix(SUITE, "S01-D2_end_of_time", &[], &|label, output| {
+        runtime_error(
+            label,
+            output,
+            expected,
+            "simulation time overflow at 18446744073709551615 while scheduling a delay of 1 tick(s)",
+        );
+    });
+}
+
+#[test]
 fn s11_d1_task_cast_class_failure() {
     let expected = include_str!("fixtures/sim/lrm_decisions/S11-D1_task_cast_class_failure.out");
     sim_cli::run_case_checked_matrix(
