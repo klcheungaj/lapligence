@@ -1302,7 +1302,6 @@ static uint64_t cr_node_hash(llg_cr_session_t* s, uint32_t n) {
         for (uint32_t i = 0; i < CR_WORDS(nd->bit_width); ++i) h = cr_mix(h ^ p->consts[nd->a + i]);
         break;
     case LLG_CR_VAR: h = cr_mix(h ^ cr_hash_text(p->vars[nd->a].name)); break;
-    case LLG_CR_STATE: h = cr_mix(h ^ cr_hash_text(p->leaves[nd->a].name)); break;
     case LLG_CR_CALL: h = cr_mix(h ^ cr_hash_text(p->calls[nd->a].name)); break;
     case LLG_CR_SLICE:
     case LLG_CR_REPL: h = cr_mix(h ^ nd->b); break;
@@ -1318,10 +1317,29 @@ static uint64_t cr_node_hash(llg_cr_session_t* s, uint32_t n) {
     return h;
 }
 
-/* randc signature of a component: its conjuncts' structure (S30-D3). */
-static uint64_t cr_component_signature(llg_cr_session_t* s, const uint32_t* conj, uint32_t ncon) {
+/* randc signature of a component (S30-D3): its conjuncts' structure and the
+ * values of the known operands they read (state variables, inline
+ * constraint operands, constants). A state leaf is hashed by value, never
+ * by name: leaf names carry source positions, and the same constraint at
+ * another call site is the same constraint. */
+static uint64_t cr_component_signature(llg_cr_session_t* s, const uint32_t* conj, uint32_t ncon,
+                                       const uint8_t* in_cone, cr_u32vec_t* scratch) {
+    const llg_cr_problem_t* p = s->p;
     uint64_t sum = 0;
     for (uint32_t i = 0; i < ncon; ++i) sum += cr_mix(cr_node_hash(s, conj[i]));
+    for (uint32_t n = 0; n < p->node_count; ++n) {
+        if (!in_cone[n]) continue;
+        scratch->len = 0;
+        cr_push_live(s, n, scratch);
+        for (size_t i = 0; i < scratch->len; ++i) {
+            uint32_t x = scratch->data[i];
+            if (s->status[x] != CR_K) continue;
+            uint64_t h = cr_mix(cr_node_hash(s, n) * (i + 1u) ^ p->nodes[x].bit_width);
+            const uint64_t* v = cr_node_val(s, x);
+            for (uint32_t w = 0; w < CR_WORDS(p->nodes[x].bit_width); ++w) h = cr_mix(h ^ v[w]);
+            sum += h;
+        }
+    }
     return cr_mix(sum ^ ncon);
 }
 
@@ -1601,7 +1619,7 @@ static llg_cr_status_t cr_solve_component(cr_solve_t* st, const uint32_t* vars, 
     }
     int cyclic = 0;
     for (uint32_t l = 0; plan.cyclic && l < plan.layer_count; ++l) cyclic |= plan.cyclic[l] != LLG_CR_NONE;
-    uint64_t signature = cyclic ? cr_component_signature(s, conj, ncon) : 0u;
+    uint64_t signature = cyclic ? cr_component_signature(s, conj, ncon, in_cone, stack) : 0u;
     result = LLG_CR_RESOURCE;
     int done = 0;
     cr_comp_aig_t aig;

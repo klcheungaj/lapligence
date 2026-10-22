@@ -216,10 +216,13 @@ failed solve still consumes the draws it made (S29-D6).
 ## randc state
 
 A `randc` variable's cycle state is one "used in this cycle" bit per value
-plus a 64-bit structural signature of its component's conjuncts (operators,
-widths, constants, variable, state and call names; never state values),
-`LLG_CR_CYCLIC_WORDS(width)` words, at most 16 bits wide. The caller passes
+plus a 64-bit signature of its component's conjuncts (operators, widths,
+variable and call names, and the values of the known operands they read:
+state variables, inline-constraint operands and constants; never the source
+positions in state leaf names, so the same constraint at another call site
+matches), `LLG_CR_CYCLIC_WORDS(width)` words, at most 16 bits wide. The caller passes
 the object's state in before solving and stores `llg_cr_cyclic` back only
 after `LLG_CR_OK`, so a failed randomize leaves it unchanged. A different
-signature (constraint blocks enabled or disabled, other constraints) starts a
-new cycle; so does a cycle with no unused feasible value left (S30-D3).
+signature (constraint blocks enabled or disabled, other constraints, a state
+value read by the component that changed since the last call) starts a new
+cycle; so does a cycle with no unused feasible value left (S30-D3).

@@ -1,2 +1,4 @@
 fails=0 cycle=0111
-continued=1
+restored state continues=1
+changed state restarts=1
+same inline elsewhere continues=1
