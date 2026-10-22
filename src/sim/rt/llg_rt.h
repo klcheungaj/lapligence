@@ -1756,21 +1756,15 @@ LLG_CONTAINER_MEMORY_DECL(llg_assoc_memory_read_view, struct llg_assoc_t)
 LLG_CONTAINER_MEMORY_DECL(llg_assoc_memory_write_view, struct llg_assoc_t)
 #undef LLG_CONTAINER_MEMORY_DECL
 
-// Row entry points address a dynamic array or queue whose elements are fixed
-// arrays of `row_cells` packed words, in place. `LLG_MEMORY_ROWS_ONE` loads or
-// dumps element `row` (an unknown or missing element is an error) through the
-// view `dims`/`strides`/`origin`/`view_total` inside it. `LLG_MEMORY_ROWS_ALL`
-// addresses every element of the current size, `LLG_MEMORY_ROWS_SLICE` the
-// ascending slice `dims[0]:dims[1]` of it; the outer bounds, `origin` and
-// `view_total` then come from the size, `strides[0]` is `row_cells` and
-// `dims[2..]` are the element dimensions.
-enum {
-    LLG_MEMORY_ROWS_ONE = 0,
-    LLG_MEMORY_ROWS_ALL = 1,
-    LLG_MEMORY_ROWS_SLICE = 2,
-};
+// Row entry points load or dump element `row` of a dynamic array, queue or
+// integral-index associative array (`row` is then the key) whose elements are
+// fixed arrays of `row_cells` packed words, in place, through the view
+// `dims`/`strides`/`origin`/`view_total` inside it. An unknown or missing
+// element is an error, except that an associative load creates a missing
+// element and a dump of one writes the default value (decisions
+// S27-D23, S27-D24). The whole container is not a memory (S27-D22).
 #define LLG_ROWS_MEMORY_DECL(name, type)                                                 \
-    void name(llg_string_t path, type* memory, int mode, sv4_t row, uint64_t row_cells,  \
+    void name(llg_string_t path, type* memory, sv4_t row, uint64_t row_cells,            \
               uint32_t elem_width, int8_t elem_signed, int8_t two_state,                 \
               const int32_t* dims, int n_dims, const uint64_t* strides, uint64_t origin, \
               uint64_t view_total, sv4_t start, sv4_t finish, int has_start,             \
@@ -1779,9 +1773,6 @@ LLG_ROWS_MEMORY_DECL(llg_dyn_rows_memory_read_view, struct llg_dyn_value_array_t
 LLG_ROWS_MEMORY_DECL(llg_dyn_rows_memory_write_view, struct llg_dyn_value_array_t)
 LLG_ROWS_MEMORY_DECL(llg_queue_rows_memory_read_view, struct llg_queue_value_array_t)
 LLG_ROWS_MEMORY_DECL(llg_queue_rows_memory_write_view, struct llg_queue_value_array_t)
-// An associative array with an integral index takes `ROWS_ONE` (`row` is the
-// key) or `ROWS_ALL` only; the latter ignores `origin` and `view_total`, and
-// its `dims[0]` is the placeholder (0, 0) (decisions S27-D22..D24).
 LLG_ROWS_MEMORY_DECL(llg_assoc_rows_memory_read_view, struct llg_assoc_value_t)
 LLG_ROWS_MEMORY_DECL(llg_assoc_rows_memory_write_view, struct llg_assoc_value_t)
 #undef LLG_ROWS_MEMORY_DECL

@@ -6,14 +6,15 @@
 //! that drives it (input ports drive the child-side signal, output ports
 //! drive the parent-side signal).  More than one driver for a net or variable
 //! is a Warning, unless every driver is a constant select of disjoint bits
-//! or unpacked elements (continuous assignments and port links such as
-//! `.p(v[3])` or `.p(w[1])` on an unpacked `w`).
+//! or unpacked elements (continuous assignments such as `assign w[0] = ...`
+//! and port links such as `.p(v[3])` or `.p(w[1])` on an unpacked `w`). A
+//! process drives the whole signal it writes, element or not.
 
 use std::collections::HashMap;
 
 use crate::core::db::{NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
-    all_nodes, collect_writes, driven_bit_interval, port_link_drivers, signal_scope_path,
+    all_nodes, collect_element_writes, driven_bit_interval, port_link_drivers, signal_scope_path,
     DrivenBits,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
@@ -39,15 +40,16 @@ impl LintRule for MultiDriverRule {
         for id in all_nodes(db) {
             match db.node_kind(id) {
                 NodeKind::Process { .. } => {
-                    // collect_writes dedupes per root, so a process counts as
-                    // one driver even when it assigns the signal several times.
-                    for w in collect_writes(db, id) {
+                    // collect_element_writes dedupes per root, so a process
+                    // counts as one driver even when it assigns the signal
+                    // several times.
+                    for w in collect_element_writes(db, id) {
                         drivers.entry(w).or_default().push(None);
                     }
                 }
                 NodeKind::ContAssign { .. } => {
                     let target = db.node(id).children.first().copied();
-                    for w in collect_writes(db, id) {
+                    for w in collect_element_writes(db, id) {
                         let bits = target.and_then(|target| driven_bit_interval(db, target, w));
                         drivers.entry(w).or_default().push(bits);
                     }
@@ -231,6 +233,47 @@ mod tests {
         );
         let got = rule_diags(&diags, "multi-driver");
         assert!(got.is_empty(), "disjoint elements and bits: {:?}", diags);
+    }
+
+    #[test]
+    fn continuous_assignments_to_distinct_unpacked_elements_are_one_driver_each() {
+        let diags = lint_design(
+            "module top;\n  logic [3:0] a, b;\n  wire [3:0] w [2];\n  wire [3:0] v [2][2];\n\
+             \x20 wire [3:0] p [2];\n\
+             \x20 assign w[0] = a;\n  assign w[1] = b;\n\
+             \x20 assign v[0][1] = a;\n  assign v[1][1] = b;\n\
+             \x20 assign p[1][1:0] = a[1:0];\n  assign p[1][3:2] = b[3:2];\n  assign p[0] = a;\n\
+             \x20 initial begin a = 1; b = 2; end\nendmodule\n",
+            "top",
+        );
+        let got = rule_diags(&diags, "multi-driver");
+        assert!(got.is_empty(), "disjoint elements and bits: {:?}", diags);
+    }
+
+    #[test]
+    fn writes_to_the_same_unpacked_element_warn() {
+        let diags = lint_design(
+            "module inv4(input logic [3:0] a, output wire [3:0] y);\n  assign y = ~a;\nendmodule\n\
+             module top;\n  logic [3:0] a, b;\n  wire [3:0] twice [2];\n  wire [3:0] linked [2];\n\
+             \x20 wire [3:0] inner [2];\n  logic [3:0] procs [2];\n\
+             \x20 assign twice[1] = a;\n  assign twice[1] = b;\n\
+             \x20 assign linked[0] = a;\n  inv4 g(.a(b), .y(linked[0]));\n\
+             \x20 assign inner[0] = a;\n  assign inner[0][2] = b[0];\n\
+             \x20 always @* procs[0] = a;\n  always @* procs[1] = b;\n\
+             \x20 initial begin a = 1; b = 2; end\nendmodule\n",
+            "top",
+        );
+        let mut names: Vec<_> = rule_diags(&diags, "multi-driver")
+            .iter()
+            .map(|d| d.message.clone())
+            .collect();
+        names.sort();
+        // A process write counts as a driver of the whole array.
+        assert_eq!(names.len(), 4, "{:?}", diags);
+        assert!(names[0].contains("`inner`"), "{names:?}");
+        assert!(names[1].contains("`linked`"), "{names:?}");
+        assert!(names[2].contains("`procs`"), "{names:?}");
+        assert!(names[3].contains("`twice`"), "{names:?}");
     }
 
     #[test]

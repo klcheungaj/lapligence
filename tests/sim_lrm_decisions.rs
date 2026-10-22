@@ -1358,10 +1358,16 @@ fn s27_d21_container_row_memory() {
 }
 
 #[test]
-fn s27_d22_associative_rows_whole() {
-    run_decision(
-        "S27-D22_associative_rows_whole",
-        include_str!("fixtures/sim/lrm_decisions/S27-D22_associative_rows_whole.out"),
+fn s27_d22_container_of_arrays_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S27-D22_container_of_arrays_rejected.out")
+            .is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "S27-D22_container_of_arrays_rejected",
+        "$readmemh memory_name cannot be a whole dynamic, queue or associative array of unpacked arrays, or a slice of one; name one of its elements, at ",
     );
 }
 
@@ -2567,6 +2573,20 @@ fn s16_d5_rand_join_steps() {
 }
 
 #[test]
+fn s16_d10_rand_join_rule_forms_rejected() {
+    // Negative case: the expected stdout is empty because compilation fails.
+    assert!(
+        include_str!("fixtures/sim/lrm_decisions/S16-D10_rand_join_rule_forms_rejected.out")
+            .is_empty()
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "S16-D10_rand_join_rule_forms_rejected",
+        "S16-D10_rand_join_rule_forms_rejected.sv:20:23: production `s1` has more than one rule",
+    );
+}
+
+#[test]
 fn s16_d6_rand_join_ratio() {
     run_decision(
         "S16-D6_rand_join_ratio",
@@ -2665,16 +2685,10 @@ fn s2_d9_runtime_delay_evaluation() {
 }
 
 #[test]
-fn s2_d8_alias_conflicting_net_delays() {
-    // Negative case: the expected stdout is empty because compilation fails.
-    assert!(
-        include_str!("fixtures/sim/lrm_decisions/S2-D8_alias_conflicting_net_delays.out")
-            .is_empty()
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "S2-D8_alias_conflicting_net_delays",
-        "has conflicting member delays",
+fn s2_d8_alias_first_member_delay() {
+    run_decision(
+        "S2-D8_alias_first_member_delay",
+        include_str!("fixtures/sim/lrm_decisions/S2-D8_alias_first_member_delay.out"),
     );
 }
 
@@ -2895,15 +2909,10 @@ fn a7_d3_unchanged_input_time_zero() {
 }
 
 #[test]
-fn a7_d4_duplicate_path_rejected() {
-    // Negative case: the expected stdout is empty because compilation fails.
-    assert!(
-        include_str!("fixtures/sim/lrm_decisions/A7-D4_duplicate_path_rejected.out").is_empty()
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "A7-D4_duplicate_path_rejected",
-        "duplicate timing path",
+fn a7_d4_duplicate_paths_smallest_delay() {
+    run_decision(
+        "A7-D4_duplicate_paths_smallest_delay",
+        include_str!("fixtures/sim/lrm_decisions/A7-D4_duplicate_paths_smallest_delay.out"),
     );
 }
 

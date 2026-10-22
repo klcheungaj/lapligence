@@ -32,9 +32,9 @@ native traversal or I/O.
   continuous assignment or port link; drivers of disjoint constant bit ranges
   (`assign n[0] = ...`, `.y(n[1])`) or of different constant unpacked
   elements (`.y(w[0])`, `.y(w[1])`, also with a bit range inside an element)
-  do not count as overlapping. A continuous assignment to an unpacked element
-  is not yet counted as a driver (`collect_writes` resolves only packed
-  selects).
+  do not count as overlapping. Writes resolve through unpacked element
+  selects (`collect_element_writes`): a continuous assignment drives its
+  constant element region, a process write drives the whole array.
 - `casez.rs` — `casez-misuse`: overlapping wildcard case items and constant selectors.
 - `if_latch.rs` — `if-latch`: incomplete combinational `if` assignments that may infer a latch.
 - `style.rs` — `naming-style`: configured naming-convention violations.

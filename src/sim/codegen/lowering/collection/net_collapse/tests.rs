@@ -174,21 +174,40 @@ fn port_net_type_does_not_legalize_mixed_alias_declarations() {
 }
 
 #[test]
-fn port_net_type_aliases_keep_delay_checks_until_a_port_selects_another_type() {
+fn port_net_type_aliases_keep_delay_owners_until_a_port_selects_another_type() {
     let mut plan = NetCollapsePlan::default();
     let a = add(&mut plan, 8, NetType::Wire);
     let b = add(&mut plan, 2, NetType::Tri);
     plan.alias(a, b).unwrap();
+    // Alias-statement order, not declaration order (decision S2-D8).
     assert_eq!(
         plan.resolved(a).unwrap().delay_members,
-        vec![b.owner(), a.owner()]
+        vec![a.owner(), b.owner()]
     );
+    assert_eq!(plan.resolved(a).unwrap().aliased_delay_members, 2);
     let parent = add(&mut plan, 10, NetType::Tri1);
     plan.port(a, parent).unwrap();
     assert_eq!(
         plan.resolved(b).unwrap().delay_members,
         vec![parent.owner()]
     );
+}
+
+#[test]
+fn alias_delay_owners_follow_first_appearance_in_alias_statements() {
+    // `alias w3 = w2; alias w1 = w2;` with w1, w2, w3 declared in that order.
+    let mut plan = NetCollapsePlan::default();
+    let w1 = add(&mut plan, 1, NetType::Wire);
+    let w2 = add(&mut plan, 2, NetType::Wire);
+    let w3 = add(&mut plan, 3, NetType::Wire);
+    plan.alias(w3, w2).unwrap();
+    plan.alias(w1, w2).unwrap();
+    let resolved = plan.resolved(w2).unwrap();
+    assert_eq!(
+        resolved.delay_members,
+        vec![w3.owner(), w2.owner(), w1.owner()]
+    );
+    assert_eq!(resolved.aliased_delay_members, 3);
 }
 
 #[test]

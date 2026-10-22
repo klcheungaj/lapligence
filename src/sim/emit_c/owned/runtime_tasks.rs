@@ -178,21 +178,16 @@ impl Frame<'_, '_> {
                         "llg_assoc_rows_memory_write_view"
                     }
                 };
-                let one = task
+                if task
                     .selectors
                     .first()
-                    .is_some_and(|row| row.kind == IrMemorySelectorKind::Row);
-                let mode = if one {
-                    "LLG_MEMORY_ROWS_ONE"
-                } else if task.sliced {
-                    "LLG_MEMORY_ROWS_SLICE"
-                } else {
-                    "LLG_MEMORY_ROWS_ALL"
-                };
-                rows = Some((mode, row_cells));
+                    .is_none_or(|row| row.kind != IrMemorySelectorKind::Row)
+                {
+                    return Err("a memory over container rows needs one element".to_owned());
+                }
+                rows = Some(row_cells);
                 let memory = format!("&{}", self.container_name(*container)?);
-                // A whole container or a slice of it is sized at run time.
-                (runtime, memory, if one { row_cells } else { 0 })
+                (runtime, memory, row_cells)
             }
             IrMemoryStorage::Container(container) => {
                 let runtime = match (&self.ctx.model.containers[*container].kind, task.write) {
@@ -424,11 +419,11 @@ impl Frame<'_, '_> {
             )
         };
         let element = call.element;
-        // A row-container call names its mode, row and cells per row where
-        // the other entry points take the cell count.
+        // A row-container call names its row and cells per row where the
+        // other entry points take the cell count.
         let storage = match call.rows {
-            Some((mode, row_cells)) => format!(
-                "{}, {mode}, {}, {row_cells}ULL",
+            Some(row_cells) => format!(
+                "{}, {}, {row_cells}ULL",
                 call.memory,
                 row.as_deref().unwrap_or("(sv4_t)SV4_EMPTY")
             ),
@@ -759,8 +754,8 @@ fn memory_image_constant(constant: &IrConst) -> Option<u32> {
 struct MemoryCall<'a> {
     runtime: &'static str,
     memory: String,
-    /// The row mode and cells per row of a container of fixed arrays.
-    rows: Option<(&'static str, u64)>,
+    /// The cells per row of a container of fixed arrays (one element).
+    rows: Option<u64>,
     element: MemoryElement,
     path: &'a IrStringExpr,
     /// The text a load reads instead of the file `path` names.

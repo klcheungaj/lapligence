@@ -114,14 +114,14 @@ module tb;
 
     // Joined productions take arguments and return values; their results
     // are read in the weight code block of the joining rule. Each element of
-    // a rule is one step: if, case, repeat and a nested join.
+    // a rule is one step, a nested join included.
     for (int seed = 1; seed <= 100; seed++) begin
       process::self().srandom(seed);
       trace = "";
       randsequence (top)
         top : rand join p(2) q(5) r := 1 { results = p * 100 + q * 10 + r; } ;
-        int p (int k) : x if (k > 1) y else z { return k; } ;
-        int q (int k) : case (k) 5 : y ; default : z ; endcase repeat (2) x { return k; } ;
+        int p (int k) : x y { return k; } ;
+        int q (int k) : y x x { return k; } ;
         int r : inner { return 7; } ;
         inner : rand join x y ;
         x : { trace = {trace, "x"}; } ;

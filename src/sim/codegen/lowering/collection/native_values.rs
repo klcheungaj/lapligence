@@ -1980,6 +1980,11 @@ impl Codegen<'_> {
             return Ok(None);
         }
         let Some((target, descriptor)) = self.native_endpoint(lhs)? else {
+            // A record element or pop into a fixed record held as one packed
+            // value (a procedural-block local).
+            if op == Operation::Assignment {
+                return self.container_record_to_fixed(path, lhs, rhs, nba);
+            }
             return Ok(None);
         };
         // Only module record targets are persistent leaf objects; native

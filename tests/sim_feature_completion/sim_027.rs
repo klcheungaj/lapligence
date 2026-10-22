@@ -446,22 +446,19 @@ fn associative_memories_load_and_dump_by_index() {
     );
 }
 
-// A03: associative arrays of unpacked arrays: the whole array maps an address
-// to a key and the words after it to the element's cells (S27-D22); one
-// element is created by a load once its range is valid (S27-D23) and a dump
-// of a missing or unknown key writes nothing (S27-D24); a dump of one element
-// has no `@` addresses (S27-D25).
+// A03: elements of associative arrays of unpacked arrays: one element is
+// created by a load once its range is valid (S27-D23), a dump of a missing or
+// unknown key writes the default value (S27-D24) and a dump of one element has
+// no `@` addresses (S27-D25). The whole array is rejected (S27-D22).
 #[test]
 fn associative_arrays_of_unpacked_arrays_load_and_dump() {
     let diagnostics = [
-        too_few_words("v.mem"),
-        "error: memory file `r.mem`: address jump is outside the destination memory or selected range; load terminated".to_owned(),
-        more_words("f.mem"),
+        too_few_words("p.mem"),
+        no_cell("v.mem"),
         no_cell("v.mem"),
         "error: memory file `p.mem`: selected range includes an address outside the memory"
             .to_owned(),
         "error: memory file `p.mem`: selected index or slice is outside the memory".to_owned(),
-        more_words("g.mem"),
         too_few_words("blank.mem"),
     ];
     sim_cli::run_case_checked_matrix_with_files(
@@ -516,9 +513,9 @@ fn variable_position_slices_resolve_when_the_task_runs() {
 
 // A03: dynamic arrays and queues whose elements are unpacked arrays: one
 // element (also with a further index or slice inside it, a runtime index
-// evaluated once, `$`), the whole array and slices of its elements, a class
-// property through a handle; an invalid element or slice changes nothing and
-// an empty array loads nothing (S27-D21, S27-D19, S27-D10).
+// evaluated once, `$`), a class property through a handle; an invalid or
+// missing element changes nothing (S27-D21). The whole array and slices of
+// its elements are rejected (S27-D22, `neg_container_rows_*`).
 #[test]
 fn rows_of_dynamic_arrays_and_queues_of_unpacked_arrays() {
     let outside = |file: &str| {
@@ -532,10 +529,8 @@ fn rows_of_dynamic_arrays_and_queues_of_unpacked_arrays() {
         no_cell("four.mem"),
         outside("four.mem"),
         outside("four.mem"),
-        "error: memory file `four.mem`: slice is outside the current size of the array".to_owned(),
         outside("dump.mem"),
-        "warning: memory file `four.mem`: destination memory has no elements; nothing loaded"
-            .to_owned(),
+        outside("four.mem"),
     ];
     sim_cli::run_case_checked_matrix_with_files(
         SUITE,
@@ -641,6 +636,24 @@ fn neg_memory_names_that_are_not_variable_memories() {
         SUITE,
         "neg_associative_rows_slice",
         "cannot take a slice of an associative array",
+    );
+    // A whole container of unpacked arrays, or a slice of its elements, is
+    // not a memory (decision S27-D22).
+    let whole = "memory_name cannot be a whole dynamic, queue or associative array of unpacked arrays, or a slice of one; name one of its elements, at ";
+    sim_cli::reject_case(
+        SUITE,
+        "neg_container_rows_whole",
+        &format!("$readmemh {whole}"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_container_rows_slice",
+        &format!("$readmemh {whole}"),
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_associative_rows_whole",
+        &format!("$writememh {whole}"),
     );
     sim_cli::reject_case(
         SUITE,

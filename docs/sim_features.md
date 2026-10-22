@@ -1373,7 +1373,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Self/duplicate/overlapping/variable/incompatible/width-mismatched aliases,
   runtime selects, hierarchical (cross-scope) references and unmapped writes
   reject. A delayed driver split over alias groups is one vector driver
-  (S2-D6); aliased nets with different net delays reject (S2-D8).
+  (S2-D6); aliased nets with different net delays take the first aliased
+  member's delay (S2-D8).
   SV §10.11 **[SV-2005]**.
 - 🟨 **Continuous, gate and net delays** — Constant single/rise-fall/turn-off
   delays, with min:typ:max values selecting the typical value (S2-D1) or the
@@ -1397,8 +1398,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   reached through inout ports and aliases. SystemVerilog runtime-valued
   driver, gate and net delays use the values current when an update is
   scheduled or the net changes (S2-D9); Verilog-2001 rejects them (V §7.14.1).
-  Aliased nets with different net delays reject (S2-D8), as do a runtime net
-  delay with another declared delay on its net and delayed pattern members
+  Aliased nets with different net delays take the first aliased member's
+  delay (S2-D8); a runtime net delay with another declared delay on its net
+  rejects, as do delayed pattern members
   that are descriptor-backed variable rows; unsupported terminals remain
   restricted.
   V §§4.3, 6.1.3, 7.14; SV §§10.3.3, 11.12, 28.16 **[1995]**.
@@ -1464,8 +1466,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   the module body and in specify blocks give constant values (min:typ:max
   takes typical, or the `--delay-select` value) and stay distinct from parameters (`Db::specparam`); a
   specparam in a parameter value or a declaration range, a use before the
-  declaration, a `parameter` inside a specify block (A7-D5) and duplicate or
-  overlapping paths (A7-D4) are errors. Simple full (`*>`) and parallel (`=>`)
+  declaration and a `parameter` inside a specify block (A7-D5) are errors;
+  duplicate or overlapping paths are further active paths (A7-D4). Simple
+  full (`*>`) and parallel (`=>`)
   paths with 1, 2, 3, 6 or 12 delays select the delay of each 0/1/x/z
   transition (Tables 30-2 and 30-3, negative delays are zero), choose the
   smallest delay among the inputs that changed last and take the larger of
@@ -1731,15 +1734,15 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   whole dynamic array or queue at its current size, never resized (S27-D10),
   a slice of one checked against that size (S27-D14), an element of a
   dynamic array or queue of unpacked arrays (`da[k]`, also selected further
-  inside), or the whole array or a slice of its elements (S27-D21), or an
+  inside, S27-D21), or an
   associative array with an integral index (S27-D15/D16: entries created or
   updated at each address, addresses cast to the index type, index 0 by
-  default; a wildcard index is rejected, S27-D18). When the elements of an
-  associative array are unpacked arrays, the whole array maps an address to a
-  key and the words after it to that element's cells in row-major order
-  (S27-D22), and one element (`aa[k]`, also selected further inside) is a
-  fixed unpacked array that a load creates when missing (S27-D23); a string
-  or wildcard index is rejected with its location. The memory_name is
+  default; a wildcard index is rejected, S27-D18). One element of an
+  associative array of unpacked arrays (`aa[k]`, also selected further
+  inside) is a fixed unpacked array that a load creates when missing
+  (S27-D23); a string or wildcard index is rejected with its location. The
+  whole dynamic, queue or associative array of unpacked arrays, or a slice
+  of its elements, is rejected with its location (S27-D22). The memory_name is
   evaluated once per call; whole variables and locals, and constant members
   of them, load in place (S27-D13).
   Fixed packed memories may have multiple unpacked dimensions and selected
@@ -1793,9 +1796,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `@` addresses (S27-D11); a range outside the memory is rejected before the
   file is opened (S27-D12). Associative arrays dump their existing entries in
   index order, each word after its own `@` address with the digits of the
-  index width (S27-D17); an associative
-  array of unpacked arrays writes an `@` key before each element's cells
-  (S27-D22), while one element of it writes its cells without addresses and a
+  index width (S27-D17); one element of an
+  associative array of unpacked arrays writes its cells without addresses and a
   missing or unknown key warns and dumps the array's default value without
   creating the element (S27-D24, S27-D25).
   The same element/view restrictions apply; writers
@@ -2567,7 +2569,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   the run at once (X/Z weight bits read as 0); negative or unknown repeat
   counts and a join ratio outside 0.0 to 1.0 are located run-time errors
   ([adv_016](../tests/fixtures/sim/feature_completion/adv_016/readme.md),
-  decisions S16-D1 to S16-D9 in [lrm_decisions](lrm_decisions.md)). Output
+  decisions S16-D1 to S16-D10 in [lrm_decisions](lrm_decisions.md)). A
+  production that rand join names directly has one rule without if, case or
+  repeat items (S16-D10). Output
   arguments, rand join of recursive or overlapping productions and recursive
   handle or array values are located errors
   ([known issues](known_issues.md#randsequence-limits-adv-016)).

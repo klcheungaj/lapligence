@@ -1,10 +1,10 @@
 // Decision S27-D21: an element of a dynamic array or queue whose elements are
-// unpacked arrays (`da[k]`) is a memory_name, and so is the whole array or a
-// slice of its elements, whose first dimension is the current size. The
-// element index is evaluated once when the task runs; the array is never
-// resized. An element index outside the current size, or with an X or Z
-// bit, is an error: nothing is loaded, and a dump writes no file, so an
-// existing file keeps its contents.
+// unpacked arrays (`da[k]`) is a memory_name: a fixed unpacked array addressed
+// in place. The element index is evaluated once when the task runs; the
+// array is never resized. An element index outside the current size, or
+// with an X or Z bit, is an error: nothing is loaded, and a dump writes no
+// file, so an existing file keeps its contents. The whole array, or a slice
+// of its elements, is not a memory_name (S27-D22).
 //
 // IEEE 1800-2009 21.4 (SystemVerilog-1800-2009.txt L37251-37254):
 //   "The memory_name can be an unpacked array or a partially indexed
@@ -22,11 +22,8 @@
 // The text does not say what a memory task does with an invalid element
 // index; llg rejects the call, as it rejects a slice outside the array
 // (S27-D14, S27-D19).
-// The element values are shown through a dump of the whole array read back
-// into a fixed array (S27-D11: lowest address first, no addresses).
 module tb;
   logic [7:0] da [][2];
-  logic [7:0] flat [0:5];
   logic [7:0] back [0:1];
   integer fd;
   integer k;
@@ -37,11 +34,18 @@ module tb;
     return value;
   endfunction
 
+  // The element values are shown through a dump of each element read back
+  // into a fixed array.
+  logic [7:0] seen [0:2][0:1];
   task show(input string label);
-    $writememh("s27_d21_all.mem", da);
-    $readmemh("s27_d21_all.mem", flat);
-    $display("%s %h %h %h %h %h %h size %0d", label, flat[0], flat[1], flat[2], flat[3],
-             flat[4], flat[5], da.size());
+    $writememh("s27_d21_e0.mem", da[0]);
+    $writememh("s27_d21_e1.mem", da[1]);
+    $writememh("s27_d21_e2.mem", da[2]);
+    $readmemh("s27_d21_e0.mem", seen[0]);
+    $readmemh("s27_d21_e1.mem", seen[1]);
+    $readmemh("s27_d21_e2.mem", seen[2]);
+    $display("%s %h %h %h %h %h %h size %0d", label, seen[0][0], seen[0][1], seen[1][0],
+             seen[1][1], seen[2][0], seen[2][1], da.size());
   endtask
 
   initial begin
@@ -53,7 +57,7 @@ module tb;
     $readmemh("s27_d21.mem", da[at(1)]);
     show("row");
     $display("calls %0d", calls);
-    $readmemh("s27_d21.mem", da, 2, 2);
+    $readmemh("s27_d21.mem", da[2]);
     show("last");
     $writememh("s27_d21_dump.mem", da[1]);
     k = 3;

@@ -142,6 +142,26 @@ fn receivers_killed_after_the_put_keep_what_it_wrote() {
     );
 }
 
+/// Whole record elements and pops of queues, dynamic and associative arrays
+/// read into fixed records declared in procedural blocks keep every member,
+/// four-state bits included; a missing associative key reads the default.
+#[test]
+fn container_record_elements_read_into_block_local_records() {
+    sim_cli::run_case(
+        "mailboxes",
+        "block_record_reads",
+        "q1 a=7 l=10100101 n=0011 p=1001 s=4\n\
+         da a=7 l=10100101 s=4\n\
+         aa a=-5 l=10x1z0x1 n=1x0z\n\
+         pop a=-5 l=10x1z0x1 size=1\n\
+         missing a=0 l=xxxxxxxx p=0000 exists=0\n\
+         auto a=0 l=xxxxxxxx\n",
+        "llg container warning: associative-array read of a nonexistent entry returns the default\n\
+         llg: $finish at time 0 at tb:37:5\n",
+        &[],
+    );
+}
+
 #[test]
 fn block_local_records_travel_through_mailboxes_and_containers() {
     sim_cli::run_case(

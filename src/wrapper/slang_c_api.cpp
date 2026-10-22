@@ -7141,11 +7141,10 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   // lowering failure.
   engine.setSeverity(diag::BadProceduralForce, DiagnosticSeverity::Error);
   // IEEE 1364-2001 Table 8 and 1800-2009 Table 6-11: a parameter "May not be
-  // used inside specify blocks"; the frontend only warns. Two declarations
-  // of the same (or an overlapping) module path give that path two delays,
-  // which neither standard orders; llg rejects them (decision A7-D4).
+  // used inside specify blocks"; the frontend only warns. Duplicate or
+  // overlapping module paths stay a warning: each is an active path and the
+  // smallest delay applies (1800-2009 30.5.3, decision A7-D4).
   engine.setSeverity(diag::SpecifyBlockParam, DiagnosticSeverity::Error);
-  engine.setSeverity(diag::DupTimingPath, DiagnosticSeverity::Error);
   Diagnostics pragmaDiagnostics = engine.setMappingsFromPragmas();
   for (const Diagnostic& diagnostic : pragmaDiagnostics)
     compilationClient->issue(engine, diagnostic);

@@ -68,11 +68,12 @@ diagnostic labels remain separate from C symbols. The
   (packed, real through its bits, and strings in a string queue) and check
   `RANDSEQUENCE_DEPTH_LIMIT`. Two or more rules select with
   `IrSysFunc::Randcase { strict: true }`; one rule evaluates no weight.
-  `rand join` binds every item, chooses its rule, then steps with
-  `IrSysFunc::RandJoinPick`. `break` exits through `CtrlScope::RandSequence`;
+  `rand join` binds every item (each names a production of one rule without
+  if/case/repeat items, S16-D10), then steps with `IrSysFunc::RandJoinPick`;
+  a rule's weight code block is a step of its own. `break` exits through `CtrlScope::RandSequence`;
   `return` jumps to the current production's exit. Unsupported forms (non-input
   formals, recursive or overlapping joins, unsaveable recursive values) are
-  located errors. Decisions S16-D1 to S16-D9.
+  located errors. Decisions S16-D1 to S16-D10.
 - Get selectors, for-loop relationships, extents and delays from owned typed
   fields, not source names or frontend numeric codes. Widen signed/X/Z-aware
   coordinate arithmetic before subtraction/multiplication; unsigned high bits

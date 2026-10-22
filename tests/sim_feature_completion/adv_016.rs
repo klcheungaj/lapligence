@@ -262,6 +262,17 @@ fn unsupported_grammars_are_located_compile_errors() {
     );
     sim_cli::reject_case(
         SUITE,
+        "neg_join_alternatives",
+        "neg_join_alternatives.sv:5:22: production `a` has more than one rule; a production \
+         that rand join interleaves must have one rule of production items and code blocks",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_join_control",
+        "neg_join_control.sv:5:22: production `a` contains an if, case or repeat item",
+    );
+    sim_cli::reject_case(
+        SUITE,
         "neg_join_recursive",
         "neg_join_recursive.sv:5:22: production `a` is recursive or generates a recursive \
          production",

@@ -59,16 +59,20 @@ impl<'a> Codegen<'a> {
     /// gets no group because it never transitions). A runtime-valued delay
     /// (SystemVerilog, IEEE 1800-2009 28.16.1) is registered for an updater
     /// process and starts at zero; it must be the group's only declared delay.
+    /// Among the first `aliased` members (alias-statement members, in their
+    /// order of first appearance) the first declared delay wins (decision
+    /// S2-D8); any other member with a different delay is rejected.
     pub(super) fn net_propagation_delay_for_members(
         &mut self,
         members: &[NodeId],
+        aliased: usize,
         shown: &str,
         group: Option<usize>,
     ) -> Result<Option<crate::sim::ir::IrTransitionDelay>, String> {
-        let mut selected = None;
+        let mut selected: Option<(usize, crate::sim::ir::IrTransitionDelay)> = None;
         let mut runtime = None;
         let mut declared = 0usize;
-        for &member in members {
+        for (index, &member) in members.iter().enumerate() {
             let Some(delay) = self.db.net_delay(member) else {
                 continue;
             };
@@ -98,8 +102,8 @@ impl<'a> Codegen<'a> {
             else {
                 continue;
             };
-            if let Some(existing) = selected {
-                if existing != converted {
+            if let Some((first, existing)) = selected {
+                if existing != converted && !(first < aliased && index < aliased) {
                     return Err(format!(
                         "net propagation delay for `{shown}` has conflicting member delays at {}:{}:{}",
                         self.node(member).file.as_deref().unwrap_or("<unknown>"),
@@ -108,7 +112,7 @@ impl<'a> Codegen<'a> {
                     ));
                 }
             } else {
-                selected = Some(converted);
+                selected = Some((index, converted));
             }
         }
         if let Some((member, delay)) = runtime {
@@ -127,7 +131,7 @@ impl<'a> Codegen<'a> {
             self.runtime_net_delays.push((group, member, delay));
             return Ok(Some(crate::sim::ir::IrTransitionDelay::uniform(0)));
         }
-        Ok(selected)
+        Ok(selected.map(|(_, delay)| delay))
     }
 
     /// One process per runtime-valued net delay that stores the delay in
@@ -1665,6 +1669,7 @@ impl<'a> Codegen<'a> {
             let gidx = self.model.net_groups.len();
             let propagation_delay = self.net_propagation_delay_for_members(
                 &resolved_type.delay_members,
+                resolved_type.aliased_delay_members,
                 &shown,
                 Some(gidx),
             )?;
@@ -1846,6 +1851,7 @@ impl<'a> Codegen<'a> {
             }
             let propagation_delay = self.net_propagation_delay_for_members(
                 &resolved_type.delay_members,
+                resolved_type.aliased_delay_members,
                 &joined,
                 Some(self.model.net_groups.len()),
             )?;
@@ -2635,6 +2641,7 @@ impl<'a> Codegen<'a> {
             }
             let propagation_delay = self.net_propagation_delay_for_members(
                 std::slice::from_ref(&net),
+                0,
                 &shown,
                 Some(self.model.net_groups.len()),
             )?;

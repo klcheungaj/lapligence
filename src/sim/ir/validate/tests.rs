@@ -2211,7 +2211,7 @@ fn memory_slice_position_selector_must_match_its_view() {
 }
 
 #[test]
-fn memory_rows_of_an_associative_array_are_whole_or_one_element() {
+fn memory_rows_of_an_associative_array_are_one_element() {
     use crate::sim::ir::{
         IrAssocKey, IrContainer, IrContainerElement, IrContainerKind, IrMemoryAccess,
         IrMemoryAddressingPolicy, IrMemoryRadix, IrMemorySelector, IrMemorySelectorKind,
@@ -2291,9 +2291,10 @@ fn memory_rows_of_an_associative_array_are_whole_or_one_element() {
             0,
         )
     };
+    // The whole container is not a memory (decision S27-D22).
     model
         .validate_stmt(&whole(0), None)
-        .expect("the whole array of an integral-index associative array");
+        .expect_err("the whole array of an integral-index associative array");
     model
         .validate_stmt(
             &task(
@@ -2308,8 +2309,17 @@ fn memory_rows_of_an_associative_array_are_whole_or_one_element() {
             None,
         )
         .expect("one element selected by key");
+    let by_string = task(
+        1,
+        vec![(0, 3)],
+        vec![selector(IrMemorySelectorKind::Row)],
+        false,
+        vec![(0, 3)],
+        vec![1],
+        4,
+    );
     model
-        .validate_stmt(&whole(1), None)
+        .validate_stmt(&by_string, None)
         .expect_err("a string index has no address type");
     // Keys cannot be sliced: a sliced view of the whole array is invalid.
     model
@@ -2317,7 +2327,7 @@ fn memory_rows_of_an_associative_array_are_whole_or_one_element() {
             &task(0, vec![], vec![], true, vec![(1, 2), (0, 3)], vec![4, 1], 8),
             None,
         )
-        .expect_err("an associative array is addressed whole or by one key");
+        .expect_err("an associative array is addressed by one key");
 }
 
 #[test]
