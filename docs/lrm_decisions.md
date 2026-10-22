@@ -663,6 +663,12 @@ Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | --- | --- | --- | --- | --- |
 | F2-D2 | **`$unit` time scale.** A compilation unit without `timeunit`/`timeprecision` uses the default unit 1ns whatever `timescale directive precedes its declarations. Its precision is the finest precision the design declares, capped at 1ns (1ps when nothing is declared), so a `$unit` class does not make the global precision finer than the declared scales. | 3.14.2.3 L2956-2960, L2962; 3.14.3 L2978-2980 | `F2-D2_unit_default_timescale` | LRM text for the unit (observed through the module time a class delay advances; the text of `$printtimescale` is not compared, its form is not specified); llg choice for the implementation-specific default precision (llg formerly used 1ps, which made the design tick 1ps) |
 
+## Display formatting (SIM-024)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S24-D1 | **An unsized `%d` field fits the largest unsigned value of the width; a signed value of 2 to 32 bits takes 11 characters.** Without a field width, `%d` pads to ceil(width x log10(2)) characters. A signed argument of 2 to 32 bits (`byte`, `shortint`, `int`, a signed vector) takes the field of a 32-bit integer, 11 characters; a wider signed argument takes the digits of its width with no column for the sign, and a value that needs more characters expands the field. A 1-bit argument takes one character. X and Z digits are padded the same way; an explicit width, including `%0d`, is kept for known values. | 21.2.1.3 L36149-36156, L36184-36187 | `S24-D1_signed_decimal_field_width` | industry-standard behaviour (the text sizes the field by the largest possible value and does not say how the sign counts; changed: a signed field was the unsigned digits plus one). For an X or Z signed value with an explicit width, another implementation ignores the width; llg keeps it. Constant `$sformatf` folded by the frontend in a constant expression keeps the frontend's sizing. |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named

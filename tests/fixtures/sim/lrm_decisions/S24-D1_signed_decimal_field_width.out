@@ -1,0 +1,10 @@
+1-bit :-1: 4-bit :         -3: unsigned : 3:
+byte :       -128: shortint :       1000: integer :         -5:
+33-bit :        -1: 48-bit :140737488355327:
+longint :                  -5: 65-bit :                   2:
+expression :         -2: :       -256:
+constant :          3: :         -2:
+unknown :          x: :              z:
+partial :          X:
+explicit :   -3: :1000: :-3:
+sformatf :       -128:

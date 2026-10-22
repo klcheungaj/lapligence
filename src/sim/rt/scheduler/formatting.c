@@ -489,12 +489,15 @@ static size_t llg_format_pattern_packed(sv4_t value, char* raw, size_t cap) {
 #define LLG_FORMAT_INLINE_SCRATCH 1024u
 #define LLG_FORMAT_INLINE_FIELD 256u
 
-// Slang SFormat::formatInt: an unsized decimal field holds the largest value
-// of `width` bits, ceil(width / log2(10)) digits, plus one for a signed sign.
+// An unsized decimal field holds the largest unsigned value of `width` bits,
+// ceil(width / log2(10)) digits (SV 21.2.1.3). A signed value of 2 to 32 bits
+// takes the field of a 32-bit integer, 11 characters, and a wider signed
+// value the digits of its width with no extra column for the sign (decision
+// S24-D1, industry-standard behaviour).
 static int llg_decimal_field_width(uint32_t width, int is_signed) {
     if (width == 0) return 0;
-    int digits = (int)ceil((double)width / 3.32192809488736234787);
-    return digits + (is_signed ? 1 : 0);
+    if (is_signed && width >= 2u && width <= 32u) return 11;
+    return (int)ceil((double)width / 3.32192809488736234787);
 }
 
 // The packed operand of an integral conversion: the argument itself, or an

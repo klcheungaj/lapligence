@@ -1640,8 +1640,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Typed formatting** — `%d/%h/%x/%b/%o/%c/%u/%z/%v/%t`, `%f/%e/%g`, `%s`,
   `%m`, `%l`, `%p/%0p`, `%%` and width/precision/`-`/`%0` flags share one typed
   formatter for display, file, monitor/strobe and string outputs. Unsized `%d`
-  uses the type's maximum decimal width, `%0` the minimum, explicit widths are
-  minimums; X/Z digits follow SV §21.2.1.4. Real arguments of integral
+  uses the maximum unsigned decimal width of the argument's width, and 11
+  characters for a signed argument of 2 to 32 bits (S24-D1); `%0` the minimum,
+  explicit widths are minimums; X/Z digits follow SV §21.2.1.4. Real arguments of integral
   conversions round to 64-bit integers and integral `%e/%f/%g` arguments
   convert to real. String literals in argument lists start format segments;
   empty arguments print a space. `%m` names the enclosing named block,
