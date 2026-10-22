@@ -200,6 +200,61 @@ fn syntax_diagnostics_remain_owned_and_checked_compile_rejects_them() {
 }
 
 #[test]
+fn statements_after_a_failed_loop_header_keep_their_blocks() {
+    // A `for` whose header fails to bind skips its body, so the labeled and
+    // named blocks inside it are never consumed. Later labeled statements,
+    // named blocks and `foreach` loops must still find their own blocks: the
+    // frontend used to dereference a missing block and crash here.
+    let source = "module t; integer y; initial begin\n\
+                  for (x = 0; x < 3; x = x + 1) begin : inner l1: y = 1; end\n\
+                  named: begin l2: y = 2; z = 1; end\n\
+                  l3: y = 3;\n\
+                  foreach (q[i]) l4: y = 4;\n\
+                  end endmodule\n";
+    // The IEEE 1364-2001 form of the original report: `cover`/`assert` are
+    // plain identifiers there (and `int` is not a type), so the loop header
+    // fails and the labeled items are malformed statements.
+    let legacy = "module tb; int x; initial begin\n\
+                  for (x = -1; x < 3; x++) begin dc: cover #0 (x == 0); end\n\
+                  im2: assert (x == 7) else $display(\"im2 failed\");\n\
+                  end endmodule\n";
+    for (name, text, edition, undeclared) in [
+        (
+            "skipped-loop.sv",
+            source,
+            slang::LanguageEdition::SystemVerilog2009,
+            vec!["'x'", "'z'", "'q'"],
+        ),
+        (
+            "skipped-loop-2001.v",
+            legacy,
+            slang::LanguageEdition::Verilog2001,
+            Vec::new(),
+        ),
+    ] {
+        let sources = [Source::compilation_unit(name, text)];
+        let options = CompileOptions {
+            edition,
+            ..CompileOptions::default()
+        };
+        let snapshot = slang::compile(&request(&sources, &options))
+            .expect("HDL errors belong in a successful snapshot");
+        assert!(snapshot.has_errors(), "{name}: {:?}", snapshot.diagnostics);
+        for identifier in undeclared {
+            let message = format!("use of undeclared identifier {identifier}");
+            assert!(
+                snapshot
+                    .diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.message == message),
+                "{name}: missing `{message}` in {:?}",
+                snapshot.diagnostics
+            );
+        }
+    }
+}
+
+#[test]
 fn malformed_and_semantically_invalid_sources_report_exact_slang_diagnostics() {
     struct RejectionCase {
         name: &'static str,

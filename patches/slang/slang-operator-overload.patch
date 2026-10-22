@@ -363,10 +363,107 @@ index 6545485a1..8520120ce 100644
              addMember(TypeAliasType::fromSyntax(*this, syntax.as<TypedefDeclarationSyntax>()));
              break;
 diff --git a/source/ast/Statement.cpp b/source/ast/Statement.cpp
-index e683111b5..26f974184 100644
+index e683111b5..94b6f301e 100644
 --- a/source/ast/Statement.cpp
 +++ b/source/ast/Statement.cpp
-@@ -608,6 +608,7 @@ std::span<const StatementBlockSymbol* const> Statement::createAndAddBlockItems(
+@@ -75,6 +75,24 @@ const Statement* Statement::StatementContext::tryGetBlock(const ASTContext& cont
+     return nullptr;
+ }
+ 
++// findBlocks always creates a block for a labeled or named statement, in the
++// order statements are bound. A statement that fails before binding its
++// children (a bad for-loop header, for example) leaves the blocks inside it
++// unconsumed, so skip those to reach this statement's block. Lookups that may
++// legitimately find no block keep the constant-time front check above.
++static const Statement* getRequiredBlock(const ASTContext& context,
++                                         Statement::StatementContext& stmtCtx,
++                                         const SyntaxNode& target) {
++    auto& blocks = stmtCtx.blocks;
++    for (size_t i = 0; i < blocks.size(); i++) {
++        if (blocks[i]->getSyntax() == &target) {
++            stmtCtx.blocks = blocks.subspan(i);
++            return stmtCtx.tryGetBlock(context, target);
++        }
++    }
++    return nullptr;
++}
++
+ void Statement::StatementContext::observeTiming(const TimingControl& timing) {
+     auto proc = rootAstContext.getProceduralBlock();
+     if (!proc || proc->procedureKind != ProceduralBlockKind::AlwaysFF || timing.bad())
+@@ -113,8 +131,10 @@ const Statement& Statement::bind(const StatementSyntax& syntax, const ASTContext
+     auto& comp = context.getCompilation();
+ 
+     if (!labelHandled && hasSimpleLabel(syntax)) {
+-        auto block = stmtCtx.tryGetBlock(context, syntax);
++        auto block = getRequiredBlock(context, stmtCtx, syntax);
+         SLANG_ASSERT(block);
++        if (!block)
++            return badStmt(comp, nullptr);
+         return *block;
+     }
+ 
+@@ -150,14 +170,20 @@ const Statement& Statement::bind(const StatementSyntax& syntax, const ASTContext
+             result = &CaseStatement::fromSyntax(comp, syntax.as<CaseStatementSyntax>(), context,
+                                                 stmtCtx);
+             break;
+-        case SyntaxKind::ForLoopStatement:
++        case SyntaxKind::ForLoopStatement: {
+             // We might have an implicit block here; check for that first.
+-            if (auto block = stmtCtx.tryGetBlock(context, syntax))
++            auto& forLoop = syntax.as<ForLoopStatementSyntax>();
++            const bool hasBlock = (!forLoop.initializers.empty() &&
++                                   forLoop.initializers[0]->kind ==
++                                       SyntaxKind::ForVariableDeclaration) ||
++                                  (syntax.label && !labelHandled);
++            if (auto block = hasBlock ? getRequiredBlock(context, stmtCtx, syntax)
++                                      : stmtCtx.tryGetBlock(context, syntax))
+                 return *block;
+ 
+-            result = &ForLoopStatement::fromSyntax(comp, syntax.as<ForLoopStatementSyntax>(),
+-                                                   context, stmtCtx);
++            result = &ForLoopStatement::fromSyntax(comp, forLoop, context, stmtCtx);
+             break;
++        }
+         case SyntaxKind::LoopStatement: {
+             auto& loop = syntax.as<LoopStatementSyntax>();
+             if (loop.repeatOrWhile.kind == TokenKind::RepeatKeyword)
+@@ -168,7 +194,8 @@ const Statement& Statement::bind(const StatementSyntax& syntax, const ASTContext
+         }
+         case SyntaxKind::ForeachLoopStatement:
+             // We might have an implicit block here; check for that first.
+-            if (auto block = stmtCtx.tryGetBlock(context, syntax))
++            if (auto block = !labelHandled ? getRequiredBlock(context, stmtCtx, syntax)
++                                           : stmtCtx.tryGetBlock(context, syntax))
+                 return *block;
+ 
+             result = &ForeachLoopStatement::fromSyntax(comp,
+@@ -197,8 +224,13 @@ const Statement& Statement::bind(const StatementSyntax& syntax, const ASTContext
+             // A block statement may or may not match up with a hierarchy node. Handle both cases
+             // here. We traverse statements in the same order as the findBlocks call below, so this
+             // should always sync up exactly.
+-            if (auto block = stmtCtx.tryGetBlock(context, syntax))
++            if (auto& bss = syntax.as<BlockStatementSyntax>(); bss.blockName || bss.label) {
++                if (auto block = getRequiredBlock(context, stmtCtx, syntax))
++                    return *block;
++            }
++            else if (auto block = stmtCtx.tryGetBlock(context, syntax)) {
+                 return *block;
++            }
+ 
+             result = &BlockStatement::fromSyntax(comp, syntax.as<BlockStatementSyntax>(), context,
+                                                  stmtCtx);
+@@ -260,7 +292,8 @@ const Statement& Statement::bind(const StatementSyntax& syntax, const ASTContext
+             break;
+         case SyntaxKind::RandSequenceStatement:
+             // We might have an implicit block here; check for that first.
+-            if (auto block = stmtCtx.tryGetBlock(context, syntax))
++            if (auto block = !labelHandled ? getRequiredBlock(context, stmtCtx, syntax)
++                                           : stmtCtx.tryGetBlock(context, syntax))
+                 return *block;
+ 
+             result = &RandSequenceStatement::fromSyntax(comp,
+@@ -608,6 +641,7 @@ std::span<const StatementBlockSymbol* const> Statement::createAndAddBlockItems(
              case SyntaxKind::ParameterDeclarationStatement:
              case SyntaxKind::LetDeclaration:
              case SyntaxKind::NetTypeDeclaration:
