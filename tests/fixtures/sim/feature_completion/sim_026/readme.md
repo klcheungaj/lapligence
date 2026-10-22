@@ -56,9 +56,10 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
   functions, a select of a ref formal, and a method's own properties.
 - `container_destinations`: elements of queues, dynamic arrays, fixed string
   arrays and associative arrays (integral, string and real elements), and bit
-  and part selects of dynamic-array elements. Selector expressions are
-  evaluated once, when the call starts, so `$sscanf("1 omega", "%d %s", i,
-  sq[i])` writes `sq[0]` (llg policy, S26-D1). A conversion that fails leaves
+  and part selects of dynamic-array elements. A selector that reads an
+  earlier destination of the same call is evaluated when its element is
+  stored, so `$sscanf("1 omega", "%d %s", i, sq[i])` writes `sq[1]`
+  (industry-standard behaviour, S26-D1). A conversion that fails leaves
   its element unchanged. A write to an index outside a dynamic array is
   dropped and creates nothing (SV 7.4.6), but the conversion still counts.
 - `scan_conversions`: every conversion of Table 21-8.

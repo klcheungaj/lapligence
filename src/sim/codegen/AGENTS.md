@@ -745,9 +745,12 @@ assignment through the same resolved target (decision S27-D13). Binary rank-one 
 addresses independently of declaration order. Packed `$fread` optional bounds
 are evaluated/disposed but their values are ignored; memory bounds remain active.
 File-input destinations (`expressions/external_input.rs`) evaluate selectors once
-at call entry. String and real container elements and container selects are
-staged through locals declared in an `IrExprKind::Sequence`. The staged value is
-stored only when the call's result exceeds that destination's ordinal.
+at call entry, except a `$fscanf`/`$sscanf` destination whose selectors read an
+earlier destination of the call (`lhs_selectors_read_lvalue_writes`): it is
+staged and selected by its store (S26-D1). String and real container elements
+and container selects are staged through locals declared in an
+`IrExprKind::Sequence`. The staged value is stored only when the call's result
+exceeds that destination's ordinal.
 Unpacked aggregates other than 1-D byte arrays reject before C generation.
 
 ## Constrained randomization

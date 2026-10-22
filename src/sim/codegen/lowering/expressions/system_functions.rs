@@ -642,7 +642,8 @@ impl<'a> Codegen<'a> {
                 };
                 let destination = self.file_input_actual(*destination)?;
                 let tag = format!("{}_0", call.0);
-                let (target, stage) = self.lower_scan_destination(scope_path, destination, &tag)?;
+                let (target, stage) =
+                    self.lower_scan_destination(scope_path, destination, &tag, false)?;
                 if matches!(target, IrFileInputTarget::Real { .. }) {
                     return Err(format!(
                         "$fgets destination must be packed or string storage in `{scope_path}`"
@@ -697,10 +698,18 @@ impl<'a> Codegen<'a> {
                 let format = self.lower_scan_text(scope_path, args[1], &format_context)?;
                 let mut targets = Vec::with_capacity(args.len() - 2);
                 let mut stages = Vec::new();
+                let mut actuals = Vec::with_capacity(args.len() - 2);
                 for (ordinal, argument) in args[2..].iter().enumerate() {
                     let actual = self.file_input_actual(*argument)?;
                     let tag = format!("{}_{ordinal}", call.0);
-                    let (target, stage) = self.lower_scan_destination(scope_path, actual, &tag)?;
+                    // A selector that reads an earlier destination of the
+                    // same call names the element chosen by the value that
+                    // destination received (S26-D1).
+                    let late =
+                        self.lhs_selectors_read_lvalue_writes(scope_path, actual, &actuals)?;
+                    let (target, stage) =
+                        self.lower_scan_destination(scope_path, actual, &tag, late)?;
+                    actuals.push(actual);
                     targets.push(target);
                     if let Some(stage) = stage {
                         stages.push((ordinal, stage));

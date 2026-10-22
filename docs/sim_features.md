@@ -1689,9 +1689,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   %u %z %m`, `%*`, field widths, X/Z digits) into whole and selected packed
   variables, memory elements, structure members, strings, reals, task and
   function formals, class properties and the integral, string and real
-  elements of queues, dynamic, fixed and associative arrays. Destination
-  selectors are evaluated when the call starts; only converted items are
-  written. `%t` scales by `$timeformat` into the scope unit, integer
+  elements of queues, dynamic, fixed and associative arrays. A destination
+  selector that reads an earlier destination of the call is evaluated when its
+  value is stored; only converted items are written. `%t` scales by `$timeformat` into the scope unit, integer
   conversions convert into reals, `$sscanf` reads string, packed and byte-array
   sources, `$ungetc` returns 0 and invalid descriptors return EOF. Unpacked
   aggregates other than byte arrays reject; a string character and a nested
