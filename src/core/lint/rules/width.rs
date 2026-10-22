@@ -57,6 +57,15 @@ impl LintRule for WidthMismatchRule {
                     if !matches!(direction, Direction::Input | Direction::Output) {
                         continue;
                     }
+                    // A concatenated port is judged as a whole: its
+                    // components each connect only their slice of the actual.
+                    if db.multi_port_of(id).is_some() {
+                        continue;
+                    }
+                    if !db.multi_port_components(id).is_empty() {
+                        out.extend(multi_port_diag(db, id, *direction, ty.width));
+                        continue;
+                    }
                     let Some(actual) = high_expr.or(*high) else {
                         continue;
                     };
@@ -94,6 +103,74 @@ impl LintRule for WidthMismatchRule {
             }
         }
         out
+    }
+}
+
+/// The width finding of a concatenated port `{a, b}` (SV 23.2.2.1), named
+/// by the port (or its expression) and the whole actual: each component
+/// connects its slice of the actual, so the actual width is the sum of the
+/// slices; an actual wider than the port is not visible in them. An output
+/// to a concatenation actual is not named, as for other ports.
+fn multi_port_diag(
+    db: &Db,
+    port: NodeId,
+    direction: Direction,
+    port_width: Option<u32>,
+) -> Option<LintDiag> {
+    let components = db.multi_port_components(port);
+    let mut connected = 0u32;
+    let mut actual = None;
+    let mut names = Vec::with_capacity(components.len());
+    for component in components {
+        let NodeKind::Port {
+            high,
+            low,
+            high_expr,
+            high_open,
+            ..
+        } = db.node_kind(*component)
+        else {
+            return None;
+        };
+        names.push(low.map_or_else(
+            || db.node(*component).name.clone(),
+            |low| db.node(low).name.clone(),
+        ));
+        if *high_open {
+            continue;
+        }
+        let width = match (high_expr, high) {
+            (Some(expr), _) => expr_width(db, *expr)?,
+            (None, Some(high)) => object_width(db, *high)?,
+            (None, None) => continue,
+        };
+        connected = connected.checked_add(width)?;
+        // The actual is named when every component connects to one signal.
+        actual = match (actual, high) {
+            (None, Some(high)) => Some(Some(*high)),
+            (Some(Some(previous)), Some(high)) if previous == *high => Some(Some(previous)),
+            _ => Some(None),
+        };
+    }
+    let port_width = port_width.or_else(|| {
+        components
+            .iter()
+            .try_fold(0u32, |sum, component| match db.node_kind(*component) {
+                NodeKind::Port { ty, .. } => sum.checked_add(ty.width?),
+                _ => None,
+            })
+    })?;
+    if direction == Direction::Input {
+        let name = &db.node(port).name;
+        let port_name = if name.is_empty() {
+            format!("{{{}}}", names.join(", "))
+        } else {
+            name.clone()
+        };
+        width_diag(db, port, &port_name, Some(port_width), Some(connected))
+    } else {
+        let actual = db.node(actual.flatten()?).name.clone();
+        width_diag(db, port, &actual, Some(connected), Some(port_width))
     }
 }
 
@@ -276,8 +353,8 @@ mod tests {
             ),
             "top",
         );
-        // The concatenation connects bit by bit: `b` takes bit 0 and `a`
-        // only bit 1, so `a` is the part that is not fully connected.
+        // The concatenation is judged as a whole: the 2-bit actual against
+        // the 3-bit port `p`, not its component `a` against its slice.
         let got = rule_diags(&diags, "width-mismatch");
         assert_eq!(
             got.len(),
@@ -286,9 +363,37 @@ mod tests {
             diags
         );
         assert!(
-            got[0].message.contains("`a` is 2 bits, RHS is 1 bits"),
+            got[0].message.contains("`p` is 3 bits, RHS is 2 bits"),
             "{}",
             got[0].message
+        );
+    }
+
+    #[test]
+    fn concatenated_port_widths_name_the_port_and_the_actual() {
+        let module = "module mi({a, b});\n  input [1:0] a;\n  input b;\nendmodule\n\
+                      module mo(.p({a, b}));\n  output [1:0] a;\n  output b;\n\
+                      \x20 assign a = 2'b10;\n  assign b = 1'b1;\nendmodule\n";
+        let diags = lint_design(
+            &format!(
+                "{module}module top;\n  logic d;\n  wire [1:0] f;\n  wire g;\n  wire [1:0] h;\n\
+                 \x20 mi u(d);\n  mo v(.p(f));\n  mo w(.p({{g, h}}));\nendmodule\n"
+            ),
+            "top",
+        );
+        let mut got: Vec<_> = rule_diags(&diags, "width-mismatch")
+            .iter()
+            .map(|d| d.message.clone())
+            .collect();
+        got.sort();
+        assert_eq!(got.len(), 2, "{:?}", diags);
+        assert!(
+            got[0].contains("`f` is 2 bits, RHS is 3 bits (truncation)"),
+            "{got:?}"
+        );
+        assert!(
+            got[1].contains("`{a, b}` is 3 bits, RHS is 1 bits (extension)"),
+            "{got:?}"
         );
     }
 }

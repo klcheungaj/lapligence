@@ -488,12 +488,11 @@ impl<'a> Codegen<'a> {
             ));
         }
 
-        // Without an unselected resizable target, a `<<` unpack resolves
-        // every selector before it reorders the consumed source.
-        let greedy_target = streams
-            .iter()
-            .any(|stream| stream.with_expr.is_none() && self.container_of(stream.value).is_some());
-        let reversed_fixed = direction == DbStreamingDirection::RightToLeft && !greedy_target;
+        // Without a resizable target, a `<<` unpack resolves every selector
+        // before it reorders the consumed source. With one (selected or
+        // not), the whole source is reordered first and the targets take it
+        // in stream order (decision S20-5).
+        let reversed_fixed = direction == DbStreamingDirection::RightToLeft && !has_container;
         let mut targets = Vec::new();
         // Lvalue nodes of the targets already unpacked, for the selector
         // dependence check below.

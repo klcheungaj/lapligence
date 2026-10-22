@@ -26,7 +26,7 @@ DPI_DLLESPEC int err_scope(int n)
     return err_inc(n);
 }
 
-/* 35.8: an imported function may not call an exported task. */
+/* 35.8: an imported function calls an exported task; it runs (S41-D8). */
 DPI_DLLESPEC int err_task_from_function(void)
 {
     return err_tick();

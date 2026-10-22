@@ -101,7 +101,7 @@ typedef struct llg_dpi_scope {
     llg_dpi_user_t* user;                 /* svPutUserData entries */
 } llg_dpi_scope_t;
 
-/* Source position of a context import call (svGetCallerInfo, H.9.3). */
+/* Source position of an import call (svGetCallerInfo, H.9.3). */
 typedef struct llg_dpi_site {
     const char* file;
     int line;
@@ -114,11 +114,11 @@ typedef struct llg_dpi_call {
     int depth;
     uint8_t chain;
     uint8_t acked;
-    uint8_t task; /* the innermost import is a task */
 } llg_dpi_call_t;
 
-/* Set by a context import's call site just before the call, consumed by
- * the import thunk. */
+/* Set by an import's call site just before the call and consumed by the
+ * import thunk (cleared after the call when the model keeps no call-chain
+ * state). */
 extern const llg_dpi_site_t* llg_dpi_next_site;
 
 /* Register the model's scope table, sorted by strcmp of `name`. */
@@ -142,9 +142,10 @@ int llg_dpi_task_status(int status, const char* c_name);
 
 /* C -> SV: the entry point of exported C identifier `id` (a task when
  * `task` is 1) finds the export thunk of the current context scope. Calls
- * from outside a context import chain, of a task from an imported function
- * (35.8), after the calling import was disabled (35.9 item d) or into a
- * scope that does not export `c_name` are fatal errors that return NULL. */
+ * from outside a context import chain, after the calling import was
+ * disabled (35.9 item d) or into a scope that does not export `c_name` are
+ * fatal errors that return NULL. A task called from an imported function
+ * runs (decision S41-D8). */
 llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int task);
 /* An export thunk saves the chain state and returns the recursion depth of
  * the SystemVerilog call it makes. */

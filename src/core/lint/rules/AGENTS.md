@@ -20,6 +20,8 @@ native traversal or I/O.
 - `width.rs` — `width-mismatch`: assignments and port links with different known widths;
   a port link compares the port or port expression with the connected
   expression (`.a(n[0])` is one bit), not with the whole signal it selects.
+  A concatenated port (`.p({a, b})`) is judged once, by its name (or its
+  expression) against the sum of the slices its components connect.
 - `latch.rs` — `incomplete-case`: exact cases without a default in combinational/latch logic.
 - `combloop.rs` — `combinational-loop`: combinational feedback paths. A
   process's inputs are its exposed reads (read before a definite write on every
@@ -28,7 +30,11 @@ native traversal or I/O.
   variable, so bit-level self reads (`v[0] = v[1]`) still report.
 - `multidriver.rs` — `multi-driver`: signals driven by more than one process,
   continuous assignment or port link; drivers of disjoint constant bit ranges
-  (`assign n[0] = ...`, `.y(n[1])`) do not count as overlapping.
+  (`assign n[0] = ...`, `.y(n[1])`) or of different constant unpacked
+  elements (`.y(w[0])`, `.y(w[1])`, also with a bit range inside an element)
+  do not count as overlapping. A continuous assignment to an unpacked element
+  is not yet counted as a driver (`collect_writes` resolves only packed
+  selects).
 - `casez.rs` — `casez-misuse`: overlapping wildcard case items and constant selectors.
 - `if_latch.rs` — `if-latch`: incomplete combinational `if` assignments that may infer a latch.
 - `style.rs` — `naming-style`: configured naming-convention violations.

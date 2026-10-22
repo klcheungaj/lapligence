@@ -28,7 +28,10 @@ When the actual and a port expression differ in width, only the low bits both
 sides have are connected; a whole port widens or truncates instead (decision
 PX-D4). An inout connection with a width difference is an error. A port
 reference select outside the declared range is a frontend warning; its
-out-of-range bits read x and ignore writes (11.5.1).
+out-of-range bits read x and ignore writes (11.5.1). Some simulators reject
+such a select; llg keeps it, because 23.2.2.1 admits any part-select of a
+vector declared within the module and 11.5.1 gives an out-of-range
+part-select a meaning instead of making it illegal.
 
 ## Clauses
 
@@ -45,6 +48,14 @@ IEEE 1800-2009 23.2.2.1 (`SystemVerilog-1800-2009.txt` L40422-40434):
        -      A bit-select of a vector declared within the module
        -      A part-select of a vector declared within the module
        -      A concatenation of any of the above
+
+IEEE 1800-2009 11.5.1 (L15784-15788):
+
+    A part-select that addresses a range of bits that are completely out of the address bounds of the vector,
+    packed array, packed structure, parameter or concatenation, or a part-select that is x or z shall yield the value
+    x when read and shall have no effect on the data stored when written. Part-selects that are partially out of
+    range shall, when read, return x for the bits that are out of range and shall, when written, only affect the bits
+    that are in range.
 
 IEEE 1800-2009 23.2.2.1 (L40589-40593):
 

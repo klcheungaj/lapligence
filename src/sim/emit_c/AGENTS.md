@@ -399,8 +399,9 @@ converts with the import layout helpers, calls `<fn>` with `depth + 1` and
 copies outputs back in declaration order. Export string outputs and results
 stay in per-thunk retained strings until that thunk runs again (H.8.10). When
 a model has any context import or export, every import thunk brackets the
-call with `llg_dpi_import_enter/leave`; a context call site sets
-`llg_dpi_next_site` just before the call. Context imports carry the effects of
+call with `llg_dpi_import_enter/leave`; every import call site sets
+`llg_dpi_next_site` just before the call (decision S41-D3), and an
+uninstrumented thunk clears it after the call. Context imports carry the effects of
 every exported body (`execution::effects_for_function`), so cancellation
 checks follow them.
 DPI input strings remain borrowed for the call. Snapshot the foreign return and

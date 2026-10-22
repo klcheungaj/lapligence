@@ -5,7 +5,8 @@
 //! its own recursive descriptor when it is a subroutine formal, result or
 //! local. Module records keep their declaration-owned leaf storage; values
 //! cross between the two representations leaf by leaf, never through packed
-//! vectors or `IrFixedValue`.
+//! vectors or `IrFixedValue`. A fixed record that is one packed value (a
+//! procedural-block local) exchanges each leaf with its bits of that value.
 use super::super::expressions::AggregateSelection;
 use super::aggregates::NATIVE_TAG_MEMBER;
 use super::*;
@@ -1774,10 +1775,171 @@ impl Codegen<'_> {
         if let Some(statement) = self.container_record_into(path, target, source, nba)? {
             return Ok(statement);
         }
-        let (source, _) = self
-            .native_endpoint(source)?
-            .ok_or_else(|| format!("native record assignment in `{path}` has no record source"))?;
-        self.native_transfer(path, target, &source, nba)
+        if let Some((source, _)) = self.native_endpoint(source)? {
+            return self.native_transfer(path, target, &source, nba);
+        }
+        // A fixed record is one packed value where it is not leaf storage
+        // (a procedural-block local, a packed function result); each leaf
+        // takes its bits of that value.
+        if let Some(statement) =
+            self.native_fixed_source_into(path, target, descriptor, source, nba)?
+        {
+            return Ok(statement);
+        }
+        Err(format!(
+            "native record assignment in `{path}` has no record source"
+        ))
+    }
+
+    /// Write native value `value` to `destination`, a fixed record held as
+    /// one packed value (a procedural-block local): its leaves are
+    /// concatenated in the record's packed layout (the first member most
+    /// significant, SV 7.2). `None` when `destination` is not such a value or
+    /// a leaf is not integral.
+    pub(in super::super) fn native_fixed_destination(
+        &mut self,
+        path: &str,
+        destination: NodeId,
+        descriptor: &TypeDescriptor,
+        value: usize,
+    ) -> Result<Option<IrStmt>, String> {
+        // Records only: a whole unpacked-array message stays an explicit
+        // rejection (SIM-017).
+        if !matches!(descriptor.shape, TypeShape::Aggregate(_)) {
+            return Ok(None);
+        }
+        let Some(width) = Self::fixed_descriptor_width(descriptor) else {
+            return Ok(None);
+        };
+        // A whole variable: a selector would be evaluated after the
+        // operation instead of being frozen before it.
+        if !matches!(self.kind(destination), NodeKind::Expr(ExprKind::Ref { .. }))
+            || self.fixed_value_width(destination) != Some(width)
+        {
+            return Ok(None);
+        }
+        let layout = self.native_layout_of_value(value)?.clone();
+        if !layout.containers.is_empty() || layout.leaves.is_empty() {
+            return Ok(None);
+        }
+        let mut pieces = Vec::with_capacity(layout.leaves.len());
+        for leaf in &layout.leaves {
+            let Some((member, lsb)) = Self::fixed_descriptor_path(descriptor, &leaf.path) else {
+                return Ok(None);
+            };
+            let Some(member_width) = Self::fixed_descriptor_width(&member) else {
+                return Ok(None);
+            };
+            let LeafValue::Packed(read) = self.native_leaf_read(value, leaf) else {
+                return Ok(None);
+            };
+            pieces.push((lsb, IrExpr::convert_to(read, member_width, false)));
+        }
+        // The leaves tile the packed value exactly once (no union overlay).
+        pieces.sort_by_key(|piece| std::cmp::Reverse(piece.0));
+        let mut top = width;
+        for (lsb, piece) in &pieces {
+            if lsb.checked_add(piece.width) != Some(top) {
+                return Ok(None);
+            }
+            top = *lsb;
+        }
+        if top != 0 {
+            return Ok(None);
+        }
+        let packed = IrExpr::new(
+            IrExprKind::Concat {
+                parts: pieces.into_iter().map(|(_, piece)| piece).collect(),
+            },
+            width,
+            false,
+            None,
+        );
+        let analyzed = self.analyze_lhs(path, destination)?;
+        let lhs = self.lhs_to_ir(analyzed)?;
+        let rhs = apply_lhs_assignment_context(&self.model, &lhs, packed);
+        Ok(Some(IrStmt::Assign {
+            lhs,
+            rhs,
+            nba: false,
+        }))
+    }
+
+    /// Assign a fixed record source held as one packed value to the leaves
+    /// of `target`, whose type `descriptor` gives the bits of each leaf in
+    /// that value (the first member most significant, SV 7.2). `None` when
+    /// the source is not such a value or a leaf is not integral.
+    fn native_fixed_source_into(
+        &mut self,
+        path: &str,
+        target: &NativeEndpoint,
+        descriptor: &TypeDescriptor,
+        source: NodeId,
+        nba: bool,
+    ) -> Result<Option<IrStmt>, String> {
+        // Records only: a whole unpacked-array message stays an explicit
+        // rejection (SIM-017).
+        if !matches!(descriptor.shape, TypeShape::Aggregate(_)) {
+            return Ok(None);
+        }
+        let Some(width) = Self::fixed_descriptor_width(descriptor) else {
+            return Ok(None);
+        };
+        let leaves = self.endpoint_leaves(target)?;
+        let mut slices = Vec::with_capacity(leaves.len());
+        for (relative, leaf) in &leaves {
+            if !matches!(
+                self.endpoint_leaf_type(leaf),
+                Ok(IrClassFieldType::Packed { .. })
+            ) {
+                return Ok(None);
+            }
+            let Some((member, lsb)) = Self::fixed_descriptor_path(descriptor, relative) else {
+                return Ok(None);
+            };
+            let Some(member_width) = Self::fixed_descriptor_width(&member) else {
+                return Ok(None);
+            };
+            slices.push((lsb, member_width));
+        }
+        if leaves.is_empty() || self.fixed_value_width(source) != Some(width) {
+            return Ok(None);
+        }
+        let value = self.lower_expr(path, source)?;
+        if value.is_real() || value.width != width {
+            return Ok(None);
+        }
+        // One capture, so the source is evaluated once before any leaf is
+        // written.
+        let name = format!("_llg_native_fixed_{}", self.native_copy_sequence);
+        self.native_copy_sequence += 1;
+        let captured = IrExpr::new(
+            IrExprKind::LocalRead(name.clone()),
+            value.width,
+            value.signed,
+            None,
+        );
+        let mut statements = vec![IrStmt::DeclLocal {
+            name,
+            width: value.width,
+            signed: value.signed,
+            init: Some(Box::new(value)),
+            two_state: false,
+        }];
+        for ((_, leaf), (lsb, member_width)) in leaves.iter().zip(slices) {
+            let bits = IrExpr::new(
+                IrExprKind::PartSel {
+                    base: Box::new(captured.clone()),
+                    left: i64::from(lsb) + i64::from(member_width) - 1,
+                    right: i64::from(lsb),
+                },
+                member_width,
+                false,
+                None,
+            );
+            statements.push(self.endpoint_leaf_write(path, leaf, LeafValue::Packed(bits), nba)?);
+        }
+        Ok(Some(IrStmt::Block(statements)))
     }
 
     /// Whether `node` is a call whose result is a native record.

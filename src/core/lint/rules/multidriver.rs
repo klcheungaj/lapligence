@@ -6,7 +6,8 @@
 //! that drives it (input ports drive the child-side signal, output ports
 //! drive the parent-side signal).  More than one driver for a net or variable
 //! is a Warning, unless every driver is a constant select of disjoint bits
-//! (continuous assignments and port links such as `.p(v[3])`).
+//! or unpacked elements (continuous assignments and port links such as
+//! `.p(v[3])` or `.p(w[1])` on an unpacked `w`).
 
 use std::collections::HashMap;
 
@@ -83,17 +84,19 @@ impl LintRule for MultiDriverRule {
 }
 
 /// True when two of the drivers can drive a common bit; a driver without a
-/// constant interval covers the whole signal.
+/// constant region covers the whole signal. Sorted by elements, a region is
+/// followed by the regions inside it, and regions of the same elements by
+/// their bit intervals' low ends, so checking neighbours finds any overlap.
 fn drivers_overlap(bits: &[DrivenBits]) -> bool {
-    let mut intervals = Vec::with_capacity(bits.len());
-    for interval in bits {
-        let Some(interval) = interval else {
+    let mut regions = Vec::with_capacity(bits.len());
+    for region in bits {
+        let Some(region) = region else {
             return true;
         };
-        intervals.push(*interval);
+        regions.push(region);
     }
-    intervals.sort_unstable();
-    intervals.windows(2).any(|pair| pair[1].0 <= pair[0].1)
+    regions.sort_unstable();
+    regions.windows(2).any(|pair| pair[0].overlaps(pair[1]))
 }
 
 #[cfg(test)]
@@ -210,5 +213,49 @@ mod tests {
             "two output parts, disjoint bits: {:?}",
             diags
         );
+    }
+
+    #[test]
+    fn port_links_to_distinct_unpacked_elements_are_one_driver_each() {
+        let diags = lint_design(
+            "module inv(input logic a, output wire y);\n  assign y = ~a;\nendmodule\n\
+             module inv4(input logic [3:0] a, output wire [3:0] y);\n  assign y = ~a;\nendmodule\n\
+             module top;\n  logic d;\n  logic [3:0] d4;\n\
+             \x20 wire w [2];\n  wire [3:0] w4 [2];\n  wire [3:0] w2 [2][2];\n  wire [3:0] wb [2];\n\
+             \x20 inv g0(.a(d), .y(w[0]));\n  inv g1(.a(d), .y(w[1]));\n\
+             \x20 inv4 h0(.a(d4), .y(w4[0]));\n  inv4 h1(.a(d4), .y(w4[1]));\n\
+             \x20 inv4 k0(.a(d4), .y(w2[0][1]));\n  inv4 k1(.a(d4), .y(w2[1][1]));\n\
+             \x20 inv b0(.a(d), .y(wb[1][0]));\n  inv b1(.a(d), .y(wb[1][1]));\n\
+             \x20 assign wb[0] = d4;\nendmodule\n",
+            "top",
+        );
+        let got = rule_diags(&diags, "multi-driver");
+        assert!(got.is_empty(), "disjoint elements and bits: {:?}", diags);
+    }
+
+    #[test]
+    fn overlapping_unpacked_element_links_still_warn() {
+        let diags = lint_design(
+            "module inv4(input logic [3:0] a, output wire [3:0] y);\n  assign y = ~a;\nendmodule\n\
+             module inv2(input logic [1:0] a, output wire [1:0] y);\n  assign y = ~a;\nendmodule\n\
+             module pair(input logic [3:0] a, output wire [3:0] y [2]);\n\
+             \x20 assign y[0] = a;\n  assign y[1] = ~a;\nendmodule\n\
+             module top;\n  logic [3:0] d4;\n\
+             \x20 wire [3:0] same [2];\n  wire [3:0] sub [2][2];\n  wire [3:0] bit_in [2];\n\
+             \x20 inv4 s0(.a(d4), .y(same[1]));\n  inv4 s1(.a(d4), .y(same[1]));\n\
+             \x20 inv4 u0(.a(d4), .y(sub[1][0]));\n  pair u1(.a(d4), .y(sub[1]));\n\
+             \x20 inv4 b0(.a(d4), .y(bit_in[0]));\n  inv2 b1(.a(d4[1:0]), .y(bit_in[0][3:2]));\n\
+             endmodule\n",
+            "top",
+        );
+        let mut names: Vec<_> = rule_diags(&diags, "multi-driver")
+            .iter()
+            .map(|d| d.message.clone())
+            .collect();
+        names.sort();
+        assert_eq!(names.len(), 3, "{:?}", diags);
+        assert!(names[0].contains("`bit_in`"), "{names:?}");
+        assert!(names[1].contains("`same`"), "{names:?}");
+        assert!(names[2].contains("`sub`"), "{names:?}");
     }
 }

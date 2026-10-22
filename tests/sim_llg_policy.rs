@@ -1,8 +1,9 @@
 //! llg-specific policy cases. Every fixture under
 //! `tests/fixtures/sim/llg_policy/` pins a choice that llg makes where the
 //! LRM leaves the result open and that has no portable form: an RNG draw
-//! mapping, the draws a failed randomize() makes, the spelling of `%m` for class scopes, and the results of NULL
-//! arguments of the DPI scope routines. They are not in the portable
+//! mapping, the draws a failed randomize() makes, the spelling of `%m` for
+//! class scopes, the results of NULL arguments of the DPI scope routines and
+//! negative real repeat counts. They are not in the portable
 //! `lrm_decisions` set, so they are not meant to be rerun on another
 //! simulator. Each runs through the public CLI in both optimizer modes on
 //! the legacy, compact/portable and compact/GMP value backends, like the
@@ -40,6 +41,14 @@ fn run_dpi_policy(case: &str, expected: &str) {
     .unwrap_or_else(|error| panic!("{case}.c: {error}"));
     let library = library.link.to_string_lossy().into_owned();
     sim_cli::run_case_backend_parity(SUITE, case, expected, &["--dpi-lib", &library], &[]);
+}
+
+#[test]
+fn s14_d1_negative_real_repeat_count() {
+    run_policy(
+        "S14-D1_negative_real_repeat_count",
+        include_str!("fixtures/sim/llg_policy/S14-D1_negative_real_repeat_count.out"),
+    );
 }
 
 #[test]

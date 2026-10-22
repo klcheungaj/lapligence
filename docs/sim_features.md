@@ -1205,8 +1205,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   dynamic/queue-element streams capture one RHS, then publish destinations in
   stream order with overlap-safe snapshots. A stream assigned to a wider fixed
   target is left-aligned and zero-filled on the right; oversize streams reject.
-  Unpacking consumes the leftmost required bits, also for `<<` with runtime
-  ranges; undersized sources reject.
+  Unpacking into fixed-size targets consumes the leftmost required bits, also
+  for `<<` with runtime ranges; with a queue or dynamic-array target, selected
+  or not, a `<<` unpack reverses the whole source first and the targets take
+  it in order (S20-5); undersized sources reject.
   `with` follows slice/declaration order, including descending arrays and `-:`
   ranges, and requires a one-dimensional operand: model and descriptor arrays,
   ref/const-ref formals, automatic locals, members, rows and call results. A
@@ -1223,8 +1225,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   packed width, as sources, unpack targets and bit-stream casts in both
   directions; a stream assigned to a dynamic array, queue or string resizes it
   (left-aligned, zero-filled), strings drop zero bytes, explicit casts to
-  dynamic types need whole elements, and a `<<` unpack resolves `with`
-  extents before reordering the consumed bits. Queue operands (plain or
+  dynamic types need whole elements, and a `<<` unpack into fixed-size
+  targets resolves `with` extents before reordering the consumed bits. Queue operands (plain or
   `with`-selected) of oversized descriptor streams and oversized whole fixed
   unpack targets use the same segments
   ([SIM-020](../tests/fixtures/sim/feature_completion/sim_020/readme.md),
@@ -1232,8 +1234,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Output copy-out from a task or void-function call statement unpacks into
   runtime or out-of-range `with` targets with selectors fixed at the call, and
   elements mixing two-state and four-state members convert member-wise
-  (RTL-103). Nonblocking, right-to-left or copy-out selectors that read an
-  earlier target of the same unpack, and such targets of a function call inside
+  (RTL-103). Nonblocking, copy-out or fixed-target right-to-left selectors
+  that read an earlier target of the same unpack, and such targets of a function call inside
   an expression or of an intra-assignment-delayed assignment, reject.
   Compound streaming assignments are outside the assignment grammar
   (SV §11.4.14.3, Annex A.6.2). Fixed-size cast mismatches, unpacked-union
@@ -2333,8 +2335,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   The C side gets a thunk-owned copy, never simulator storage;
   inputs are copied in before the call, outputs and inouts copied out in
   declaration order after it (each copy a cancellation boundary) and the
-  result assigned last; output formals start at X or 0 (decisions
-  S40-D1..D4 in [lrm_decisions.md](lrm_decisions.md)). An imported task that
+  result assigned last; output formals start at X or 0, and record outputs
+  with every byte zero (decisions S40-D1..D4 in
+  [lrm_decisions.md](lrm_decisions.md)). An imported task that
   returns nonzero without a disable is a fatal error (35.9, S40-D5). An import
   no `--dpi-lib` library defines, a library calling an `svdpi.h` routine llg
   does not provide (`svGetTime*`; the SV3.1a H.13 forms) or a library calling
@@ -2357,19 +2360,19 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   saves and restores the chain's scope, so after an export returns the chain
   is back in the scope it had (35.5.3, S41-D1). `svGetScope`, `svSetScope`,
   `svGetScopeFromName`, `svGetNameFromScope`, `svPutUserData`,
-  `svGetUserData`, `svGetCallerInfo` (context imports: file and line),
+  `svGetUserData`, `svGetCallerInfo` (every import: file and line, S41-D3),
   `svIsDisabledState` and `svAckDisabledState` are provided. Exports nest
   (SV -> C -> SV -> C) under the 256-call recursion limit, convert arguments
   with the import layout tables and copy outputs back in declaration order
   (S41-D2); a noncontext import has no scope (S41-D3). An export task that
   disables the caller returns 1 and the disable protocol is checked (35.9;
   S41-D5): a missing acknowledgement, an export call after a disable, an
-  export call from a noncontext import (S41-D6), from a scope that does not
-  export it (S41-D7) or of a task from an imported function (S41-D8) is a
-  fatal error. Context imports carry the effects of every exported body
-  (stores, disables, `$finish`), so the optimizer and process cancellation
-  treat them as barriers; noncontext and pure imports keep their declared
-  properties. An exported task that can consume time is rejected (ADV-018).
+  export call from a noncontext import (S41-D6) or from a scope that does not
+  export it (S41-D7) is a fatal error. An exported task called from an
+  imported function runs (S41-D8). Context imports carry the effects of every
+  exported body (stores, disables, `$finish`), so the optimizer and process
+  cancellation treat them as barriers; noncontext and pure imports keep their
+  declared properties. An exported task that can consume time is rejected (ADV-018).
   On Windows a companion DLL links against the model's import library
   (`llg --dpi-import-lib`) and `--dpi-lib` takes the DLL's import library; a
   static archive works on every host; limits:

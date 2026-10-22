@@ -467,16 +467,11 @@ impl Codegen<'_> {
     }
 
     /// The `model.dpi_sites` entry of call node `call` when callee `function`
-    /// is a context import, whose foreign code may ask for it through
-    /// `svGetCallerInfo` (H.9.3). Other calls record nothing.
+    /// is an import, whose foreign code may ask for it through
+    /// `svGetCallerInfo` (H.9.3; decision S41-D3: noncontext imports too).
+    /// Other calls record nothing.
     pub(in super::super) fn dpi_call_site(&mut self, function: usize, call: NodeId) -> Option<u32> {
-        if !self.model.funcs[function]
-            .dpi
-            .as_ref()
-            .is_some_and(IrDpiImport::is_context)
-        {
-            return None;
-        }
+        self.model.funcs[function].dpi.as_ref()?;
         let node = self.node(call);
         let key = (node.file.as_deref()?.to_owned(), node.line);
         if let Some(index) = self.dpi_site_ids.get(&key) {

@@ -137,7 +137,8 @@ Where the text leaves a result open, llg's choice has a portable case in
 [docs/lrm_decisions.md](../../../../../docs/lrm_decisions.md):
 
 - S40-D1: output formals start at the type default (X for 4-state, 0 for
-  2-state).
+  2-state); a structure output, or an array of structures, starts with every
+  byte zero.
 - S40-D2: copy-in of every input, then the call, then copy-out in declaration
   order, then the function result.
 - S40-D3: `svDimensions` counts the integral packed part; absent dimensions

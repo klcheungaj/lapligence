@@ -306,7 +306,7 @@ const llg_dpi_site_t* llg_dpi_next_site = NULL;
 static llg_dpi_scope_t* llg_dpi_table = NULL;
 static size_t llg_dpi_table_count = 0;
 /* The live call-chain state; each crossing keeps the state it replaced. */
-static llg_dpi_call_t llg_dpi_now = {NULL, NULL, 0, LLG_DPI_CHAIN_NONE, 0, 0};
+static llg_dpi_call_t llg_dpi_now = {NULL, NULL, 0, LLG_DPI_CHAIN_NONE, 0};
 
 void llg_dpi_model_init(llg_dpi_scope_t* scopes, size_t count) {
     llg_dpi_table = scopes;
@@ -355,9 +355,9 @@ static void llg_dpi_fatal(const char* what, const char* c_name, const char* deta
 
 void llg_dpi_import_enter(llg_dpi_call_t* saved, llg_dpi_scope_t* scope, int task, int depth) {
     *saved = llg_dpi_now;
-    llg_dpi_now.task = (uint8_t)(task != 0);
+    (void)task;
     llg_dpi_now.scope = scope;
-    llg_dpi_now.site = scope ? llg_dpi_next_site : NULL;
+    llg_dpi_now.site = llg_dpi_next_site;
     llg_dpi_now.depth = depth;
     llg_dpi_now.chain = scope ? LLG_DPI_CHAIN_CONTEXT : LLG_DPI_CHAIN_NONCONTEXT;
     llg_dpi_now.acked = 0;
@@ -413,13 +413,10 @@ llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int task) {
         llg_dpi_fatal("DPI-C export ", c_name, detail);
         return NULL;
     }
-    if (task && !llg_dpi_now.task) {
-        snprintf(detail, sizeof(detail),
-                 "task `%s` was called from an imported function; only imported "
-                 "tasks may call exported tasks (SV 35.8)", c_name);
-        llg_dpi_fatal("DPI-C export ", c_name, detail);
-        return NULL;
-    }
+    /* 35.8 makes an exported task called from an imported function illegal
+     * without a mandated check; exported tasks never suspend, so the call
+     * runs (decision S41-D8). */
+    (void)task;
     if (llg_activation_cancelled()) {
         snprintf(detail, sizeof(detail),
                  "`%s` was called after a disable cancelled the calling import "
@@ -523,9 +520,14 @@ void* svGetUserData(const svScope scope, void* userKey) {
     return NULL;
 }
 
+/* Any import call has a caller position (decision S41-D3; H.9.3 leaves its
+ * availability open). A model without context imports or exports does not
+ * track the chain: its import thunk leaves the position in
+ * `llg_dpi_next_site` for the call alone. */
 int svGetCallerInfo(const char** fileName, int* lineNumber) {
-    const llg_dpi_site_t* site = llg_dpi_now.site;
-    if (llg_dpi_now.chain != LLG_DPI_CHAIN_CONTEXT || !site) return 0;
+    const llg_dpi_site_t* site =
+        llg_dpi_now.chain == LLG_DPI_CHAIN_NONE ? llg_dpi_next_site : llg_dpi_now.site;
+    if (!site) return 0;
     if (fileName) *fileName = site->file;
     if (lineNumber) *lineNumber = site->line;
     return 1;

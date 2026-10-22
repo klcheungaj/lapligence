@@ -169,11 +169,6 @@ impl Frame<'_, '_> {
             .iter()
             .filter(|target| matches!(target, IrStreamTarget::Container { .. }))
             .count();
-        // The first unselected resizable target takes the remaining source;
-        // later ones are left empty (SV 11.4.14.4).
-        let greedy_target = targets
-            .iter()
-            .any(|target| matches!(target, IrStreamTarget::Container { selector: None, .. }));
         if nba && containers != 0 {
             return Err("nonblocking streaming assignment cannot resize a container".to_owned());
         }
@@ -184,13 +179,17 @@ impl Frame<'_, '_> {
         let width = value.width;
         let right_to_left = direction == IrStreamDirection::RightToLeft;
         let mut owners = Vec::new();
-        // A `<<` unpack reorders only the bits it consumes from the left of
-        // the source (SV 11.4.14.3), so their count must be known first:
-        // every selector is resolved before any target is written.
-        // Lowering rejects a `<<` selector that reads an earlier target. An
-        // unselected resizable target consumes the remaining source either way.
+        // A `<<` unpack of fixed-size targets reorders only the bits it
+        // consumes from the left of the source (SV 11.4.14.3), so their
+        // count must be known first: every selector is resolved before any
+        // target is written, and lowering rejects a `<<` selector that reads
+        // an earlier target. With a resizable target, selected or not, the
+        // whole source is reordered and the targets take it in stream order,
+        // each selector evaluated just before its array (SV 11.4.14.4,
+        // decision S20-5); the first unselected resizable target takes the
+        // remaining source and later ones are left empty.
         let mut resolved = Vec::new();
-        let (value, cursor) = if right_to_left && !greedy_target {
+        let (value, cursor) = if right_to_left && containers == 0 {
             let mut total = String::from("(uint64_t)0");
             for target in targets {
                 let selection = match target {

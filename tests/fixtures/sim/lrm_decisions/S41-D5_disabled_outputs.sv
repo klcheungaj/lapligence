@@ -15,17 +15,19 @@
 //   values to the calling SystemVerilog code if a disable is in effect."
 // 9.6.2 (L12400-12402) leaves a function's disable of a block that called it
 // undefined; 35.9 c) is the DPI protocol for exactly that case and is
-// followed here. Not propagating is an llg choice the text permits.
+// followed here. Not propagating is an llg choice the text permits. Some
+// simulators neither report the disable to the C side nor return 1 from the
+// exported task; llg follows 35.9 a) and H.9.3.
 //
 // Build S41-D5_disabled_outputs.c into a shared library and load it with the
 // simulator's DPI library option.
 module tb;
-    import "DPI-C" context task d5_task(output int o);
-    import "DPI-C" context function int d5_func(output int o);
+    import "DPI-C" context task d5_task(output logic [7:0] o);
+    import "DPI-C" context function int d5_func(output logic [7:0] o);
     export "DPI-C" task d5_kill_task;
     export "DPI-C" function d5_kill_func;
 
-    int o = 1;
+    logic [7:0] o = 1;
     int r = 2;
 
     task d5_kill_task();

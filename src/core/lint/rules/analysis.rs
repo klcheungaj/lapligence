@@ -943,42 +943,142 @@ pub fn port_unconnected(db: &Db, id: NodeId) -> bool {
     }
 }
 
-/// Constant bit interval `(low, high)` in declared indices that a driver
-/// target selects from its signal; `None` for a whole signal or a select
-/// whose bounds are not constants.
-pub type DrivenBits = Option<(i128, i128)>;
+/// The constant part of its signal that a driver target selects: the
+/// unpacked element indices, outermost first (fewer than the array has
+/// select a whole sub-array), and within them a bit interval `(low, high)`
+/// in declared indices (`None` for every bit).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DrivenRegion {
+    pub elements: Vec<i128>,
+    pub bits: Option<(i128, i128)>,
+}
 
-/// The bits of `signal` that the target expression `expr` drives: a
-/// constant bit, part or indexed part select directly on the signal, or
-/// the whole signal.
+impl DrivenRegion {
+    /// A bit interval of a signal without unpacked dimensions.
+    pub fn bits(low: i128, high: i128) -> Self {
+        Self {
+            elements: Vec::new(),
+            bits: Some((low, high)),
+        }
+    }
+
+    /// Whether the two regions share a bit: one's elements contain the
+    /// other's, and their bit intervals (if both have one) intersect.
+    pub fn overlaps(&self, other: &Self) -> bool {
+        let common = self.elements.len().min(other.elements.len());
+        if self.elements[..common] != other.elements[..common] {
+            return false;
+        }
+        if self.elements.len() != other.elements.len() {
+            return true;
+        }
+        match (self.bits, other.bits) {
+            (Some(left), Some(right)) => left.0 <= right.1 && right.0 <= left.1,
+            _ => true,
+        }
+    }
+}
+
+/// The part of its signal a driver target drives; `None` for a whole signal
+/// or a select whose indices or bounds are not constants.
+pub type DrivenBits = Option<DrivenRegion>;
+
+/// Whether `base` names `signal` itself: a reference to it, or the signal
+/// node an unpacked element select hangs off.
+fn names_signal(db: &Db, base: NodeId, signal: NodeId) -> bool {
+    matches!(
+        db.node_kind(base),
+        NodeKind::Expr(ExprKind::Ref { .. })
+            | NodeKind::Net { .. }
+            | NodeKind::Var { .. }
+            | NodeKind::Array { .. }
+    ) && signal_of_ref(db, base) == Some(signal)
+}
+
+/// The elements of `signal` that `expr` selects with constant unpacked
+/// indices (empty for the signal itself); `None` for any other expression.
+fn driven_elements(db: &Db, expr: NodeId, signal: NodeId) -> Option<Vec<i128>> {
+    if names_signal(db, expr, signal) {
+        return Some(Vec::new());
+    }
+    let NodeKind::Expr(ExprKind::ArraySelect { base, indices }) = db.node_kind(expr) else {
+        return None;
+    };
+    let mut elements = driven_elements(db, *base, signal)?;
+    for index in indices {
+        elements.push(const_i128(db, *index)?);
+    }
+    Some(elements)
+}
+
+/// The part of `signal` that the target expression `expr` drives: constant
+/// unpacked element selects, then a constant bit, part or indexed part
+/// select, or the whole signal (`None`).
 pub fn driven_bit_interval(db: &Db, expr: NodeId, signal: NodeId) -> DrivenBits {
-    let direct = |base: &NodeId| {
-        matches!(db.node_kind(*base), NodeKind::Expr(ExprKind::Ref { .. }))
-            && signal_of_ref(db, *base) == Some(signal)
+    let region = |base: &NodeId, bits: Option<(i128, i128)>| {
+        let elements = driven_elements(db, *base, signal)?;
+        Some(DrivenRegion { elements, bits })
     };
     match db.node_kind(expr) {
-        NodeKind::Expr(ExprKind::BitSelect { base, index }) if direct(base) => {
-            const_i128(db, *index).map(|index| (index, index))
+        NodeKind::Expr(ExprKind::ArraySelect { .. }) => {
+            let elements = driven_elements(db, expr, signal)?;
+            Some(DrivenRegion {
+                elements,
+                bits: None,
+            })
         }
-        NodeKind::Expr(ExprKind::PartSelect { base, left, right }) if direct(base) => {
+        NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+            let index = const_i128(db, *index)?;
+            region(base, Some((index, index)))
+        }
+        NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
             let (left, right) = (const_i128(db, *left)?, const_i128(db, *right)?);
-            Some((left.min(right), left.max(right)))
+            region(base, Some((left.min(right), left.max(right))))
         }
         NodeKind::Expr(ExprKind::IndexedPartSelect {
             base,
             base_expr,
             width_expr,
             neg,
-        }) if direct(base) => {
+        }) => {
             let (start, width) = (const_i128(db, *base_expr)?, const_i128(db, *width_expr)?);
             if width < 1 {
                 return None;
             }
-            Some(if *neg {
+            let bits = if *neg {
                 (start.checked_sub(width - 1)?, start)
             } else {
                 (start, start.checked_add(width - 1)?)
-            })
+            };
+            region(base, Some(bits))
+        }
+        _ => None,
+    }
+}
+
+/// The signal an unpacked element select (with optional bit selects inside
+/// the element) is rooted at.
+fn element_select_signal(db: &Db, expr: NodeId) -> Option<NodeId> {
+    match db.node_kind(expr) {
+        NodeKind::Expr(
+            ExprKind::ArraySelect { base, .. }
+            | ExprKind::BitSelect { base, .. }
+            | ExprKind::PartSelect { base, .. }
+            | ExprKind::IndexedPartSelect { base, .. },
+        ) => {
+            if matches!(
+                db.node_kind(*base),
+                NodeKind::Expr(ExprKind::ArraySelect { .. })
+            ) {
+                element_select_signal(db, *base)
+            } else if matches!(
+                db.node_kind(expr),
+                NodeKind::Expr(ExprKind::ArraySelect { .. })
+            ) {
+                signal_of_ref(db, *base)
+            } else {
+                None
+            }
         }
         _ => None,
     }
@@ -999,7 +1099,7 @@ fn port_expression_targets(db: &Db, expr: NodeId, out: &mut Vec<(NodeId, DrivenB
         }
         return;
     }
-    if let Some(signal) = signal_of_ref(db, expr) {
+    if let Some(signal) = signal_of_ref(db, expr).or_else(|| element_select_signal(db, expr)) {
         out.push((signal, driven_bit_interval(db, expr, signal)));
     }
 }
@@ -1640,7 +1740,13 @@ mod tests {
             .map(|(_, bits)| bits)
             .collect();
         bits.sort();
-        assert_eq!(bits, [Some((2, 2)), Some((3, 3))]);
+        assert_eq!(
+            bits,
+            [
+                Some(DrivenRegion::bits(2, 2)),
+                Some(DrivenRegion::bits(3, 3))
+            ]
+        );
     }
 
     #[test]

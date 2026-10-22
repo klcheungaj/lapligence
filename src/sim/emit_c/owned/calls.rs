@@ -844,9 +844,9 @@ impl Frame<'_, '_> {
         }
         parameters.push(depth.code().to_owned());
         if let Some(site) = dpi_site {
-            // The context import thunk takes its caller position from here
-            // at entry (svGetCallerInfo, SV Annex H.9.3); every argument has
-            // already been evaluated, so no other import call intervenes.
+            // The import thunk takes its caller position from here at entry
+            // (svGetCallerInfo, SV Annex H.9.3); every argument has already
+            // been evaluated, so no other import call intervenes.
             self.line(format!("llg_dpi_next_site = &llg_dpi_sites[{site}];"));
         }
         let call_mark = self.cancellation_mark();

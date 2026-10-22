@@ -1,0 +1,4 @@
+1 loop -1.5 n=0
+1 control -1.5
+1 intra -0.4 a=5
+2 control 0.6
