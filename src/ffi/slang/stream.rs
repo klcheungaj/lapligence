@@ -275,6 +275,7 @@ impl StreamBuilder {
             flags: header.flags,
             edition: LanguageEdition::from_snapshot_flags(header.flags)?,
             compilation_unit_mode: CompilationUnitMode::from_snapshot_flags(header.flags),
+            delay_selection: DelaySelection::from_snapshot_flags(header.flags)?,
             files: self.files,
             diagnostics: self.diagnostics,
             instances: self.instances,

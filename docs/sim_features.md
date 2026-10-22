@@ -1369,7 +1369,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (S2-D6); aliased nets with different net delays reject (S2-D8).
   SV §10.11 **[SV-2005]**.
 - 🟨 **Continuous, gate and net delays** — Constant single/rise-fall/turn-off
-  delays, with min:typ:max values selecting the typical value (S2-D1),
+  delays, with min:typ:max values selecting the typical value (S2-D1) or the
+  value `--delay-select min|typ|max` names,
   schedule captured Active-region inertial updates for admitted whole,
   constant-selected and fixed-array-element drivers. A one-bit target follows
   the from/to table; a wider target takes one delay for its whole value
@@ -1454,7 +1455,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   **[1995]**.
 - 🟨 **Specify blocks, specparams and simple module paths** — Specparams in
   the module body and in specify blocks give constant values (min:typ:max
-  takes typical) and stay distinct from parameters (`Db::specparam`); a
+  takes typical, or the `--delay-select` value) and stay distinct from parameters (`Db::specparam`); a
   specparam in a parameter value or a declaration range, a use before the
   declaration, a `parameter` inside a specify block (A7-D5) and duplicate or
   overlapping paths (A7-D4) are errors. Simple full (`*>`) and parallel (`=>`)

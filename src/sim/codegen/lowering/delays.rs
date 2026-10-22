@@ -6,10 +6,10 @@ impl<'a> Codegen<'a> {
     /// The operand of every `min:typ:max` expression that the simulation
     /// uses (IEEE 1364-2001 4.3, IEEE 1800-2009 11.12). Constant folding,
     /// runtime lowering and driver/net delays all select through this one
-    /// choice, which matches the frontend's own (typical) selection for
-    /// elaborated parameters.
+    /// choice, which is the compilation's `--delay-select` (typical by
+    /// default) that the frontend also used for elaborated parameters.
     pub(super) fn min_typ_max_operand(&self) -> usize {
-        1
+        self.db.delay_selection().operand()
     }
 
     /// Lower a delayed continuous driver whose target is not one packed

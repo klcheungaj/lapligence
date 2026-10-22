@@ -88,6 +88,15 @@ Line numbers are those of the `pdftotext -layout` extractions
 - `mintypmax_select`: continuous, gate (`and`, `bufif1`), net, parameter,
   summed (`(1:2:3) + (4:5:6)`), procedural variable and procedural constant
   min:typ:max delays all take the typical value (S2-D1).
+- `delay_select`: one min:typ:max delay of every form (continuous assignment,
+  gate, UDP, net, parameter, specify path with a specparam, procedural
+  constant and run-time delays) and a parameter expression
+  `(1:2:3) + (10:20:30)`, run with `--delay-select min`, `typ` and `max`. With
+  delays 1-6, 11-16 and 21-26 (in declaration order) each output falls from X
+  to 0 at its delay after `a = 0` at time 0 and rises at 40 plus its delay;
+  the procedural delays then end at 81/82/83 (`#(d1:d2:d3)` with 1, 2, 3) and
+  82/84/86 (`#(1:2:3)`); `Q` is 11, 22 or 33. Expected outputs
+  `delay_select_<min|typ|max>.out` are derived from those delays alone.
 - `vector_transitions`: a whole vector and a two-bit part-select take one
   delay per change by the 6.1.3 rules (nonzero to zero falls, all-Z turns off,
   partly X or Z values rise); a one-bit select follows Table 39, so 0 to X

@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 29u
+#define LLG_SLANG_ABI_VERSION 30u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -101,7 +101,12 @@ enum {
   LLG_SLANG_COMPILE_EDITION_SYSTEMVERILOG_2009 = 1u << 2,
   /* Parse all admitted compilation-unit buffers in source order as one unit.
    * When absent, each compilation-unit buffer is parsed separately. */
-  LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS = 1u << 3
+  LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS = 1u << 3,
+  /* Select the minimum or maximum operand of every min:typ:max expression
+   * (IEEE 1800-2009 11.12, 28.16.1). Neither bit selects the typical value;
+   * both together are invalid. */
+  LLG_SLANG_COMPILE_DELAY_SELECT_MIN = 1u << 4,
+  LLG_SLANG_COMPILE_DELAY_SELECT_MAX = 1u << 5
 };
 
 typedef struct {
@@ -146,7 +151,10 @@ enum {
   LLG_SLANG_SNAPSHOT_ANALYSIS_RAN = 1u << 1,
   LLG_SLANG_SNAPSHOT_EDITION_VERILOG_2001 = 1u << 8,
   LLG_SLANG_SNAPSHOT_EDITION_SYSTEMVERILOG_2009 = 1u << 9,
-  LLG_SLANG_SNAPSHOT_MERGED_COMPILATION_UNITS = 1u << 10
+  LLG_SLANG_SNAPSHOT_MERGED_COMPILATION_UNITS = 1u << 10,
+  /* The min:typ:max selection of the compilation; neither bit is typical. */
+  LLG_SLANG_SNAPSHOT_DELAY_SELECT_MIN = 1u << 11,
+  LLG_SLANG_SNAPSHOT_DELAY_SELECT_MAX = 1u << 12
 };
 
 enum {

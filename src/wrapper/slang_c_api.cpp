@@ -6580,10 +6580,17 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
       LLG_SLANG_COMPILE_LIBRARY_UNITS |
       LLG_SLANG_COMPILE_EDITION_VERILOG_2001 |
       LLG_SLANG_COMPILE_EDITION_SYSTEMVERILOG_2009 |
-      LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS;
+      LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS |
+      LLG_SLANG_COMPILE_DELAY_SELECT_MIN |
+      LLG_SLANG_COMPILE_DELAY_SELECT_MAX;
   if ((request.flags & ~knownFlags) != 0)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
                         "unknown compile request flags");
+  constexpr uint32_t delaySelectFlags =
+      LLG_SLANG_COMPILE_DELAY_SELECT_MIN | LLG_SLANG_COMPILE_DELAY_SELECT_MAX;
+  if ((request.flags & delaySelectFlags) == delaySelectFlags)
+    throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
+                        "compile request selects both min and max delays");
   const EditionPolicy edition = editionPolicy(request.flags);
   if (request.source_count != 0 && request.sources == nullptr)
     throw BridgeFailure(LLG_SLANG_STATUS_INVALID_ARGUMENT,
@@ -6740,6 +6747,10 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
 
   CompilationOptions compilationOptions;
   compilationOptions.languageVersion = edition.languageVersion;
+  if ((request.flags & LLG_SLANG_COMPILE_DELAY_SELECT_MIN) != 0)
+    compilationOptions.minTypMax = MinTypMax::Min;
+  else if ((request.flags & LLG_SLANG_COMPILE_DELAY_SELECT_MAX) != 0)
+    compilationOptions.minTypMax = MinTypMax::Max;
   if ((request.flags & LLG_SLANG_COMPILE_LIBRARY_UNITS) != 0)
     compilationOptions.flags |= CompilationFlags::IgnoreUninstantiatedModules;
   compilationOptions.defaultTimeScale = TimeScale(
@@ -7018,6 +7029,10 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   output->flags |= edition.snapshotFlag;
   if ((request.flags & LLG_SLANG_COMPILE_MERGED_COMPILATION_UNITS) != 0)
     output->flags |= LLG_SLANG_SNAPSHOT_MERGED_COMPILATION_UNITS;
+  if ((request.flags & LLG_SLANG_COMPILE_DELAY_SELECT_MIN) != 0)
+    output->flags |= LLG_SLANG_SNAPSHOT_DELAY_SELECT_MIN;
+  if ((request.flags & LLG_SLANG_COMPILE_DELAY_SELECT_MAX) != 0)
+    output->flags |= LLG_SLANG_SNAPSHOT_DELAY_SELECT_MAX;
   output->output_byte_limit = effectiveLimit(request.limits.max_output_bytes,
       kDefaultMaxOutputBytes, kHardMaxOutputBytes);
   Capture capture{*output, sourceManager, request.limits,

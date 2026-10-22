@@ -220,6 +220,10 @@ Common options:
 - `--edition <v2001|sv2009>`: select the compilation language edition (default `sv2009`).
 - `--compilation-units <separate|merged>`: select per-file or shared
   preprocessing and `$unit` scope (default `separate`).
+- `--delay-select <min|typ|max>`: select which value of every `min:typ:max`
+  expression is used (gate, net, continuous-assignment, procedural and
+  specify-path delays, specparams and parameters; default `typ`). The choice
+  is made at compile time.
 - `--include-dir <path>` / `-I <path>`: add a search directory for both
   `` `include `` files and module definitions. Pass only the top-level source:
   a module, interface, program or package the given sources use but do not

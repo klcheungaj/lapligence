@@ -39,6 +39,7 @@ pub(crate) struct DriverOptions {
     pub top: Option<String>,
     pub edition: compile::LanguageEdition,
     pub compilation_unit_mode: compile::CompilationUnitMode,
+    pub delay_selection: compile::DelaySelection,
     pub include_dirs: Vec<String>,
     pub defines: Vec<String>,
     pub param_overrides: Vec<String>,
@@ -426,6 +427,10 @@ pub(crate) fn resolve(
             .compilation_unit_mode
             .or(config.compile.compilation_units)
             .unwrap_or_default(),
+        delay_selection: cli
+            .delay_selection
+            .or(config.compile.delay_select)
+            .unwrap_or_default(),
         include_dirs,
         defines,
         param_overrides,
@@ -521,6 +526,7 @@ mod tests {
 top = "cfg_top"
 edition = "v2001"
 compilation_units = "merged"
+delay_select = "max"
 include_dirs = ["inc"]
 defines = ["CFG_A", "CFG_B=2"]
 system_tasks = ["$cfg_task()"]
@@ -619,6 +625,7 @@ files = ["a.sv"]
             options.compilation_unit_mode,
             compile::CompilationUnitMode::Merged
         );
+        assert_eq!(options.delay_selection, compile::DelaySelection::Max);
         assert_eq!(options.include_dirs, [path_string(&dir.join("inc"))]);
         assert_eq!(options.defines, ["CFG_A", "CFG_B=2"]);
         assert_eq!(options.param_overrides, ["DEPTH=8"]);
@@ -664,6 +671,8 @@ files = ["a.sv"]
                 "sv2009",
                 "--compilation-units",
                 "separate",
+                "--delay-select",
+                "min",
                 "--default-library",
                 "clilib",
                 "--stop-policy",
@@ -703,6 +712,7 @@ files = ["a.sv"]
             options.compilation_unit_mode,
             compile::CompilationUnitMode::Separate
         );
+        assert_eq!(options.delay_selection, compile::DelaySelection::Min);
         assert_eq!(options.default_library.as_deref(), Some("clilib"));
         assert_eq!(options.stop_policy, StopPolicy::Resume);
         assert_eq!(

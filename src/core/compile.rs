@@ -11,8 +11,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub use crate::ffi::slang::{
-    CompilationUnitMode, Diagnostic as SlangDiagnostic, DiagnosticProvider, DiagnosticSeverity,
-    DiagnosticSubsystem, LanguageEdition, Snapshot, Source, SourceRange,
+    CompilationUnitMode, DelaySelection, Diagnostic as SlangDiagnostic, DiagnosticProvider,
+    DiagnosticSeverity, DiagnosticSubsystem, LanguageEdition, Snapshot, Source, SourceRange,
 };
 mod definition_search;
 mod editions;
@@ -135,6 +135,9 @@ pub struct CompileOpts {
     /// Select whether admitted compilation-unit buffers share preprocessing and
     /// `$unit` scope. The default keeps each buffer independent.
     pub compilation_unit_mode: CompilationUnitMode,
+    /// The operand of every `min:typ:max` expression (`--delay-select`);
+    /// typical by default.
+    pub delay_selection: DelaySelection,
     pub limits: Limits,
 }
 
@@ -1089,6 +1092,7 @@ fn compile_source_groups(
         library_order: opts.library_order.clone(),
         default_library: opts.default_library.clone(),
         compilation_unit_mode: opts.compilation_unit_mode,
+        delay_selection: opts.delay_selection,
         edition: opts.edition,
         limits: opts.limits,
     };

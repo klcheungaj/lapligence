@@ -58,6 +58,7 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("--compilation-units <separate|merged>")
     );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("--delay-select <min|typ|max>"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--include-dir <path>"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--define <NAME[=VALUE]>"));
     assert!(String::from_utf8_lossy(&output.stdout).contains("--define-system-task <prototype>"));
@@ -220,6 +221,28 @@ fn simulator_compilation_unit_mode_rejects_missing_and_unknown_values() {
         (
             &["--compilation-units", "grouped"][..],
             "expected separate or merged",
+        ),
+    ] {
+        let output = invoke(env!("CARGO_BIN_EXE_llg"), args);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{output:?}"
+        );
+    }
+}
+
+#[test]
+fn simulator_delay_selection_rejects_missing_and_unknown_values() {
+    for (args, expected) in [
+        (
+            &["--delay-select"][..],
+            "--delay-select requires min, typ or max",
+        ),
+        (
+            &["--delay-select", "typical"][..],
+            "--delay-select: unsupported delay selection `typical` (expected min, typ or max)",
         ),
     ] {
         let output = invoke(env!("CARGO_BIN_EXE_llg"), args);

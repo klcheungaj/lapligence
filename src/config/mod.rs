@@ -43,7 +43,7 @@ mod schema;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use crate::core::compile::{CompilationUnitMode, LanguageEdition};
+use crate::core::compile::{CompilationUnitMode, DelaySelection, LanguageEdition};
 use crate::core::lint::LintConfig;
 use crate::sim::build::ModelOptLevel;
 
@@ -152,6 +152,8 @@ pub struct CompileConfig {
     pub edition: Option<LanguageEdition>,
     /// Compilation-unit grouping. Driver only.
     pub compilation_units: Option<CompilationUnitMode>,
+    /// The operand of every `min:typ:max` expression. Driver only.
+    pub delay_select: Option<DelaySelection>,
     /// Normalized absolute include-search directories (may be external).
     pub include_dirs: Vec<PathBuf>,
     /// Validated preprocessor defines (`NAME` or `NAME=VALUE`), raw.

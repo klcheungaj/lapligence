@@ -1,0 +1,16 @@
+Q=22
+0 assign=x gate=x udp=x net=x param=x path=x
+11 assign=0 gate=x udp=x net=x param=x path=x
+12 assign=0 gate=0 udp=x net=x param=x path=x
+13 assign=0 gate=0 udp=0 net=x param=x path=x
+14 assign=0 gate=0 udp=0 net=0 param=x path=x
+15 assign=0 gate=0 udp=0 net=0 param=0 path=x
+16 assign=0 gate=0 udp=0 net=0 param=0 path=0
+51 assign=1 gate=0 udp=0 net=0 param=0 path=0
+52 assign=1 gate=1 udp=0 net=0 param=0 path=0
+53 assign=1 gate=1 udp=1 net=0 param=0 path=0
+54 assign=1 gate=1 udp=1 net=1 param=0 path=0
+55 assign=1 gate=1 udp=1 net=1 param=1 path=0
+56 assign=1 gate=1 udp=1 net=1 param=1 path=1
+82 runtime
+84 constant

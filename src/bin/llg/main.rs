@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! llg [generate options] [lint options] [wave options] [build options] [<file.sv>...] [-- <plusargs>...]
-//! generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --stop-policy <resume|exit>
+//! generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --stop-policy <resume|exit>
 //! lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error
 //! wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave
 //! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dpi-import-lib <path>  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
@@ -144,6 +144,7 @@ fn run(options: DriverOptions) -> i32 {
         top,
         edition,
         compilation_unit_mode,
+        delay_selection,
         include_dirs,
         defines,
         param_overrides,
@@ -185,6 +186,7 @@ fn run(options: DriverOptions) -> i32 {
         top,
         edition,
         compilation_unit_mode,
+        delay_selection,
         include_dirs,
         defines,
         param_overrides,

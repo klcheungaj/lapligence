@@ -19,7 +19,7 @@ use crate::core::elab::Val;
 use crate::core::model::TypeInfo;
 use crate::core::value::ValueData;
 use crate::ffi::slang::{
-    ConstantValue as SlangConstantValue, LanguageEdition, SemanticDefinitionKind,
+    ConstantValue as SlangConstantValue, DelaySelection, LanguageEdition, SemanticDefinitionKind,
     SemanticDriveStrength, SemanticEdgeRole, SemanticKind, SemanticNode, SemanticOperation,
     SemanticTimeScale, SemanticTimeUnit, Snapshot as SlangSnapshot, CLOCKING_BLOCK_DEFAULT,
     CLOCKING_BLOCK_GLOBAL, CLOCKING_EDGE_MASK, CLOCKING_INPUT_EDGE_SHIFT,
@@ -199,6 +199,8 @@ pub struct Db {
     nodes: Vec<Node>,
     /// Complete language policy selected for the owned frontend snapshot.
     edition: LanguageEdition,
+    /// The `min:typ:max` operand the frontend evaluated constants with.
+    delay_selection: DelaySelection,
     overridden_parameters: HashSet<NodeId>,
     /// Native semantic categories retained for coverage checks when the
     /// frontend-neutral [`NodeKind`] intentionally has no direct variant.
@@ -370,6 +372,7 @@ impl Db {
         Self {
             nodes: Vec::new(),
             edition: LanguageEdition::SystemVerilog2009,
+            delay_selection: DelaySelection::Typical,
             overridden_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
             semantic_details: DenseShared::default(),
@@ -451,6 +454,7 @@ impl Db {
         let db = Self {
             nodes,
             edition: LanguageEdition::SystemVerilog2009,
+            delay_selection: DelaySelection::Typical,
             overridden_parameters: HashSet::new(),
             semantic_kinds: Vec::new(),
             semantic_details: DenseShared::default(),
@@ -1177,6 +1181,13 @@ impl Db {
     /// Complete language policy selected when this database was captured.
     pub fn edition(&self) -> LanguageEdition {
         self.edition
+    }
+
+    /// The operand of every `min:typ:max` expression selected for this
+    /// compilation (IEEE 1800-2009 11.12), shared by the frontend's constant
+    /// evaluation and every consumer of the owned database.
+    pub fn delay_selection(&self) -> DelaySelection {
+        self.delay_selection
     }
 
     /// Whether Slang replaced this parameter's declaration initializer with

@@ -15,7 +15,7 @@ use super::{
     DEFAULT_EXCLUDE_GLOBS, DEFAULT_INCLUDE_GLOBS, DEFAULT_MAX_FILE_BYTES,
     DEFAULT_MAX_TOTAL_INPUT_BYTES, SCHEMA_VERSION,
 };
-use crate::core::compile::{CompilationUnitMode, LanguageEdition};
+use crate::core::compile::{CompilationUnitMode, DelaySelection, LanguageEdition};
 use crate::core::lint::{LintConfig, LintSeverity, RuleConfig};
 use crate::sim::build::ModelOptLevel;
 
@@ -147,6 +147,15 @@ fn resolve_compile(
                 .map_err(|error| ConfigError::new(format!("compile.compilation_units: {error}")))
         })
         .transpose()?;
+    let delay_select = raw
+        .delay_select
+        .as_deref()
+        .map(|value| {
+            value
+                .parse::<DelaySelection>()
+                .map_err(|error| ConfigError::new(format!("compile.delay_select: {error}")))
+        })
+        .transpose()?;
     let (defines, mut warnings) = validate_defines(&raw.defines);
     let (param_overrides, mut override_warnings) = resolve_param_overrides(raw)?;
     warnings.append(&mut override_warnings);
@@ -162,6 +171,7 @@ fn resolve_compile(
             top,
             edition,
             compilation_units,
+            delay_select,
             include_dirs,
             defines,
             param_overrides,
