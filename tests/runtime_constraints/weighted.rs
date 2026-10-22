@@ -358,6 +358,10 @@ fn item_hits(p: &Problem, d: &Dist, val_of: &dyn Fn(u32, u32) -> u128) -> Vec<(u
     hits
 }
 
+/// A value of one layer: its density weight and the items it hits with
+/// their masses.
+type LayerOption = (f64, Vec<(usize, f64)>);
+
 /// One layer of the S30-D1/S30-D2 measure: for a layer drawn by item, its
 /// dist.
 struct LayerSpec {
@@ -512,8 +516,7 @@ fn weighted_expectation(p: &Problem) -> Option<BTreeMap<Vec<u128>, f64>> {
             };
             // Distinct values of this layer that extend x's earlier layers:
             // their density weight and, in an item layer, the items they hit.
-            let mut options: BTreeMap<Vec<Option<u128>>, (f64, Vec<(usize, f64)>)> =
-                BTreeMap::new();
+            let mut options: BTreeMap<Vec<Option<u128>>, LayerOption> = BTreeMap::new();
             for y in &solutions {
                 let matches_prefix = l == 0 || project(y, l - 1) == earlier;
                 if matches_prefix {
