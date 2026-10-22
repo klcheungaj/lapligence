@@ -125,14 +125,14 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
 - `cbStmt` and `cbForce` are not provided, a whole array and a parameter are
   not watchable, a NULL object is an invalid handle and a `vpiSuppressTime`
   time callback is an error (L64969-64970); each returns NULL.
-- At 1 and 2: `first` then `second`, registration order (S43-D6). At v=2,
-  `first` removes `second`, which then misses this change although it was due
-  in the same dispatch; removing it again fails (`0 LLG_VPI_HANDLE`, 38.39).
-  `first` registers `third`, which starts with the next change.
+- At 1 and 2: `second` then `first`, the newest registration first (S43-D6).
+  At v=2, `second` has already run when `first` removes it; removing it again
+  fails (`0 LLG_VPI_HANDLE`, 38.39). `first` registers `third`, which starts
+  with the next change.
 - At 3: `canceller` removes the pending `doomed` (never prints). The handle of
-  `kept-1`, a one-shot that ran at 1, is stale (S43-D4). Then `first v=3`,
-  `third v=3`.
-- End: `first=3 second=1 third=1`.
+  `kept-1`, a one-shot that ran at 1, is stale (S43-D4). Then `third v=3`,
+  `first v=3`.
+- End: `first=3 second=2 third=1`.
 
 ## readonly (A02)
 

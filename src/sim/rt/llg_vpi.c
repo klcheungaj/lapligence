@@ -3584,7 +3584,8 @@ static void vpi_value_changed(const void* key) {
     llg_vpi_cb_t** items =
         collect_cbs(g_vpi.watch_buckets[watch_bucket(key, g_vpi.watch_capacity)], 1, matches_key,
                     key, buffer, &count);
-    for (size_t i = 0; i < count; ++i) {
+    /* The newest registration runs first (decision S43-D6). */
+    for (size_t i = count; i-- > 0;) {
         llg_vpi_cb_t* cb = items[i];
         if (cb->removed) continue;
         llg_vpi_datum_t datum;

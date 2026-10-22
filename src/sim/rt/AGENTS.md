@@ -819,9 +819,10 @@ Time reasons are one-shot region callbacks in their Table 4-1 PLI region
 address's wait row that `sig_publish_changed`/`real_write` already look up,
 whose hook runs after every runtime consumer; never add a separate per-store
 lookup. Dispatch collects records in registration order before running any
-and frees removed ones only when the outermost dispatch ends, so callbacks may
-register/remove any callback. Watches end with the runtime lifetime
-(`free_value_watches`), so VPI removal after cleanup is a no-op.
+(value changes then run newest first, S43-D6) and frees removed ones only when
+the outermost dispatch ends, so callbacks may register/remove any callback.
+Watches end with the runtime lifetime (`free_value_watches`), so VPI removal
+after cleanup is a no-op.
 `vpi_put_value` fails in read-only regions without touching the runtime's
 fatal region check; zero-delay time callbacks are refused there before
 scheduling. `vpi_control` stop/finish use `llg_rt_control_stop/finish`;
