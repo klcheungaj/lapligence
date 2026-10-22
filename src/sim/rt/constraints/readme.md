@@ -89,6 +89,12 @@ per size combination, which is why this cache is larger than one.
    values then become state and the function is called through the generated
    thunk. A cycle is `LLG_CR_ERROR` (reason `ORDER`); a circular
    `solve...before` among enabled blocks is reason `SOLVE_BEFORE`.
+   A `dist` whose item values, range bounds or weights read unsolved random
+   variables is R (S30-D10). A first pass then solves the whole problem with
+   those variables in a layer before the others, the dist acting only as the
+   constraint that some item with a nonzero weight matches, keeps them (and
+   randc variables, whose cycles advanced) and drops the rest of their
+   components; the second pass solves with known items and weights.
 3. **Components.** Each layer splits into independent components (union-find
    over conjunct supports), solved in order of their smallest variable.
    Variables in no constraint are drawn directly.

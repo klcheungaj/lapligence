@@ -1,0 +1,3 @@
+x=1 or 2: 1, zero weight excludes 1: 1
+w=3: x1 three quarters=1
+x=w or 9: 1, 9 half=1

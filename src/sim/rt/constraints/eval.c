@@ -600,9 +600,23 @@ static void cr_eval_call(llg_cr_session_t* s, uint32_t n) {
     cr_copy_input(s, n, result, call->bit_width, call->sign_flag);
 }
 
-/* A dist node: weights must be known; a weight is read as an unsigned value
- * of its own width, so a negative one is a large weight (S30-D8). The value
- * is the disjunction (Figure 18-3) of the matches of nonzero-weight items. */
+/* Whether a dist item value, bound or weight still reads an unsolved random
+ * variable (S30-D10). Such a dist is R; its variables are solved first
+ * (cr_solve_inner), after which it classifies as usual. */
+static int cr_dist_pending(llg_cr_session_t* s, const llg_cr_dist_t* d) {
+    for (uint32_t i = 0; i < d->item_count; ++i) {
+        const llg_cr_dist_item_t* item = &s->p->dist_items[d->item_first + i];
+        if (s->status[item->lo] == CR_R || s->status[item->hi] == CR_R ||
+            (item->weight != LLG_CR_NONE && s->status[item->weight] == CR_R))
+            return 1;
+    }
+    return 0;
+}
+
+/* A dist node: a weight is read as an unsigned value of its own width, so a
+ * negative one is a large weight (S30-D8). With every item operand known,
+ * the value is the disjunction (Figure 18-3) of the matches of
+ * nonzero-weight items. */
 static void cr_classify_dist(llg_cr_session_t* s, uint32_t n) {
     const llg_cr_problem_t* p = s->p;
     const llg_cr_dist_t* d = &p->dists[p->nodes[n].a];
@@ -610,26 +624,25 @@ static void cr_classify_dist(llg_cr_session_t* s, uint32_t n) {
     for (uint32_t i = 0; i < d->item_count; ++i) {
         const llg_cr_dist_item_t* item = &p->dist_items[d->item_first + i];
         if (item->weight != LLG_CR_NONE) {
-            uint32_t w = item->weight;
-            if (s->status[w] == CR_E) {
-                cr_inherit_error(s, n, w);
+            if (s->status[item->weight] == CR_E) {
+                cr_inherit_error(s, n, item->weight);
                 return;
             }
-            if (s->status[w] != CR_K) {
-                cr_set_error(s, n, LLG_CR_REASON_WEIGHT, n);
-                return;
-            }
-            if (cr_dist_item_zero(s, item)) continue;
+            if (s->status[item->weight] == CR_K && cr_dist_item_zero(s, item)) continue;
         }
         /* The bounds size a `:/` weight: they must be evaluated. */
         if (s->status[item->lo] == CR_E || s->status[item->hi] == CR_E) {
             cr_inherit_error(s, n, s->status[item->lo] == CR_E ? item->lo : item->hi);
             return;
         }
-        if (s->status[item->lo] != CR_K || s->status[item->hi] != CR_K) {
-            cr_set_error(s, n, LLG_CR_REASON_WEIGHT, n);
-            return;
-        }
+    }
+    if (cr_dist_pending(s, d)) {
+        s->status[n] = CR_R;
+        return;
+    }
+    for (uint32_t i = 0; i < d->item_count; ++i) {
+        const llg_cr_dist_item_t* item = &p->dist_items[d->item_first + i];
+        if (cr_dist_item_zero(s, item)) continue;
         uint32_t m = item->match;
         if (s->status[m] == CR_K) {
             if (cr_truth(s, m)) dominant = 1;

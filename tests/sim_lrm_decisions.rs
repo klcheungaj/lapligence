@@ -1581,12 +1581,9 @@ fn s30_d11_array_index_outside() {
 
 #[test]
 fn s30_d10_dist_random_weight() {
-    // Negative case: the expected stdout is empty because compilation fails.
-    assert!(include_str!("fixtures/sim/lrm_decisions/S30-D10_dist_random_weight.out").is_empty());
-    sim_cli::reject_case(
-        SUITE,
+    run_decision(
         "S30-D10_dist_random_weight",
-        "a dist item value, range bound or weight that reads a random variable is not supported",
+        include_str!("fixtures/sim/lrm_decisions/S30-D10_dist_random_weight.out"),
     );
 }
 

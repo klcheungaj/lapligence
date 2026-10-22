@@ -290,7 +290,7 @@ impl ProblemBuilder {
     /// `value dist { items }` under `guard` (18.5.4): a 1-bit node that holds
     /// when the value matches an item of nonzero weight, with the weights
     /// recorded for the sampler (S30-D1). Item values, bounds and weights
-    /// must not read random variables.
+    /// that read random variables are solved first by the runtime (S30-D10).
     pub(super) fn dist(
         &mut self,
         value: &IrExpr,
@@ -300,21 +300,6 @@ impl ProblemBuilder {
         let value = self.expr(value)?;
         let mut bounds = Vec::with_capacity(specs.len());
         for spec in specs {
-            let random = match &spec.item {
-                IrInsideItem::Value(item) => has_placeholder(item),
-                IrInsideItem::Range { low, high } => has_placeholder(low) || has_placeholder(high),
-                IrInsideItem::OpenRange { low, high } => {
-                    low.as_ref().is_some_and(has_placeholder)
-                        || high.as_ref().is_some_and(has_placeholder)
-                }
-                _ => return Err("a dist item must be a value or a range (18.5.4)".into()),
-            } || spec.weight.as_ref().is_some_and(has_placeholder);
-            if random {
-                return Err(
-                    "a dist item value, range bound or weight that reads a random variable is not supported (S30-D10)"
-                        .into(),
-                );
-            }
             bounds.push(match &spec.item {
                 IrInsideItem::Value(item) => {
                     if let IrExprKind::Const(constant) = &item.kind {
@@ -335,7 +320,7 @@ impl ProblemBuilder {
                     high.as_ref().map(|high| self.expr(high)).transpose()?,
                     false,
                 ),
-                _ => unreachable!("checked above"),
+                _ => return Err("a dist item must be a value or a range (18.5.4)".into()),
             });
         }
         // The value and every bound compare in one type (11.4.13), which

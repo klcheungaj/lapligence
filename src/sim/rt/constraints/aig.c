@@ -424,9 +424,19 @@ static void cr_blast_node(llg_cr_session_t* s, cr_blast_t* b, uint32_t n,
         cr_u32vec_t t = {0, 0, 0}, e = {0, 0, 0};
         for (uint32_t i = 0; i < d->item_count; ++i) {
             const llg_cr_dist_item_t* item = &p->dist_items[d->item_first + i];
-            if (cr_dist_item_zero(s, item)) continue;
-            cr_u32_push(&t, cr_operand_truth(s, b, item->match));
-            cr_u32_push(&e, cr_node_err(b, item->match));
+            uint32_t truth = cr_operand_truth(s, b, item->match);
+            uint32_t error = cr_node_err(b, item->match);
+            if (item->weight != LLG_CR_NONE && s->status[item->weight] == CR_R) {
+                /* A random weight (S30-D10): the item holds where its weight
+                 * is nonzero. */
+                uint32_t ww = p->nodes[item->weight].bit_width;
+                truth = cr_and(g, truth, cr_blast_any(g, cr_node_lits(s, b, item->weight), ww));
+                error = cr_or(g, error, cr_node_err(b, item->weight));
+            } else if (cr_dist_item_zero(s, item)) {
+                continue;
+            }
+            cr_u32_push(&t, truth);
+            cr_u32_push(&e, error);
         }
         out[0] = cr_blast_logic(g, t.data, e.data, (uint32_t)t.len, 1, &err);
         free(t.data);

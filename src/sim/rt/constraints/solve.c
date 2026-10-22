@@ -10,6 +10,7 @@ static const uint64_t* cr_tpl_value(const cr_tpl_t* t, uint32_t inst, uint32_t v
 static llg_cr_session_t* cr_tpl_flat_session(const llg_cr_session_t* s);
 static uint64_t* cr_cyc_slot(const llg_cr_session_t* s, uint32_t inst, uint32_t var);
 static void cr_cnf_cache_free(llg_cr_session_t* s);
+static void cr_push_operands(const llg_cr_problem_t* p, uint32_t n, cr_u32vec_t* out);
 
 struct cr_cache_entry {
     cr_u64vec_t key;
@@ -226,6 +227,27 @@ static llg_cr_session_t* cr_session_new(const llg_cr_problem_t* p) {
     }
     s->cyc = (uint64_t*)cr_alloc(words ? words : 1u, sizeof(uint64_t));
     s->node_hash = (uint64_t*)cr_alloc(nodes, sizeof(uint64_t));
+    /* Dist items that read random variables need the two-pass solve of
+     * cr_solve_inner; decided once from the structure. */
+    if (p->dist_count) {
+        cr_u32vec_t stack = {0, 0, 0};
+        uint8_t* seen = (uint8_t*)cr_alloc(nodes, 1u);
+        for (uint32_t i = 0; i < p->dist_item_count; ++i) {
+            const llg_cr_dist_item_t* item = &p->dist_items[i];
+            cr_u32_push(&stack, item->lo);
+            cr_u32_push(&stack, item->hi);
+            if (item->weight != LLG_CR_NONE) cr_u32_push(&stack, item->weight);
+        }
+        while (stack.len && !s->dist_random) {
+            uint32_t n = stack.data[--stack.len];
+            if (seen[n]) continue;
+            seen[n] = 1;
+            if (p->nodes[n].op == LLG_CR_VAR) s->dist_random = 1;
+            else cr_push_operands(p, n, &stack);
+        }
+        free(seen);
+        free(stack.data);
+    }
     s->scratch.reach = (uint8_t*)cr_alloc(nodes, 1u);
     s->scratch.in_cone = (uint8_t*)cr_alloc(nodes, 1u);
     s->scratch.var_flags = (uint8_t*)cr_alloc(3u * (size_t)vars, 1u);
@@ -515,6 +537,9 @@ typedef struct {
     /* solve-before height of each variable (longest order path to a sink
      * over the whole problem), or NULL without orders (S30-D2). */
     uint32_t* height;
+    /* Variables read by dist items, solved before the others in the first
+     * pass of a dist with random items (S30-D10), or NULL. */
+    const uint8_t* pre;
 } cr_solve_t;
 
 /* Mark the R nodes below the conjuncts (ascending index order is post-order). */
@@ -763,6 +788,9 @@ static llg_cr_status_t cr_plan_build(cr_solve_t* st, cr_plan_t* plan, const uint
      * of per-solve allocation and node scans. */
     int plain = !st->height && !p->dist_count;
     for (uint32_t i = 0; i < nvars && plain; ++i) plain = !p->vars[vars[i]].cyclic;
+    int pre = 0;
+    for (uint32_t i = 0; i < nvars && st->pre; ++i) pre |= st->pre[vars[i]];
+    plain = plain && !pre;
     if (plain) {
         plan->layer_count = 1u;
         return LLG_CR_OK;
@@ -794,9 +822,14 @@ static llg_cr_status_t cr_plan_build(cr_solve_t* st, cr_plan_t* plan, const uint
         }
         free(distinct);
     }
-    for (uint32_t i = 0; i < nvars; ++i)
-        if (!p->vars[vars[i]].cyclic) plan->layer[vars[i]] = cyclic + max_height - height[vars[i]];
-    plan->layer_count = cyclic + max_height + 1u;
+    /* The first pass of a dist with random items (S30-D10) draws the
+     * variables its items read in a layer of their own, before the rest. */
+    for (uint32_t i = 0; i < nvars; ++i) {
+        uint32_t v = vars[i];
+        if (p->vars[v].cyclic) continue;
+        plan->layer[v] = pre && st->pre[v] ? cyclic : cyclic + (uint32_t)pre + max_height - height[v];
+    }
+    plan->layer_count = cyclic + (uint32_t)pre + max_height + 1u;
     plan->cyclic = (uint32_t*)cr_alloc(plan->layer_count, sizeof(uint32_t));
     for (uint32_t l = 0; l < plan->layer_count; ++l) plan->cyclic[l] = LLG_CR_NONE;
     for (uint32_t i = 0; i < nvars; ++i)
@@ -806,6 +839,8 @@ static llg_cr_status_t cr_plan_build(cr_solve_t* st, cr_plan_t* plan, const uint
     for (uint32_t n = 0; n < p->node_count; ++n) {
         if (!in_cone[n] || p->nodes[n].op != LLG_CR_DIST) continue;
         const llg_cr_dist_t* d = &p->dists[p->nodes[n].a];
+        /* Items that read random variables only constrain this pass. */
+        if (cr_dist_pending(s, d)) continue;
         uint32_t items = 0;
         for (uint32_t i = 0; i < d->item_count; ++i)
             if (!cr_dist_item_zero(s, &p->dist_items[d->item_first + i])) ++items;
@@ -2087,6 +2122,36 @@ static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
             }
         }
 
+        /* A dist whose item values, bounds or weights read random variables
+         * (S30-D10): a first pass solves the whole problem with those
+         * variables drawn first, over the values that leave the rest
+         * satisfiable (the dist holds where some item matches with a
+         * nonzero weight), and keeps only them; the second pass then sees
+         * known items and weights. */
+        int dist_pass = 0;
+        if (!pending && s->dist_random) {
+            memset(in_p, 0, vars);
+            for (uint32_t n = 0; n < p->node_count; ++n) {
+                if (!reach[n] || p->nodes[n].op != LLG_CR_DIST || s->status[n] != CR_R) continue;
+                const llg_cr_dist_t* d = &p->dists[p->nodes[n].a];
+                if (!cr_dist_pending(s, d)) continue;
+                for (uint32_t i = 0; i < d->item_count; ++i) {
+                    const llg_cr_dist_item_t* item = &p->dist_items[d->item_first + i];
+                    uint32_t ops[3] = {item->lo, item->hi, item->weight};
+                    for (uint32_t k = 0; k < 3u; ++k) {
+                        if (ops[k] == LLG_CR_NONE) continue;
+                        support->len = 0;
+                        cr_support(s, ops[k], 1, support, NULL, stack);
+                        for (size_t j = 0; j < support->len; ++j) {
+                            in_p[support->data[j]] = 1;
+                            dist_pass = 1;
+                        }
+                    }
+                }
+            }
+        }
+        st->pre = dist_pass ? in_p : NULL;
+
         memset(in_layer, 0, vars);
         uint32_t layer_vars = 0;
         if (!pending) {
@@ -2192,11 +2257,23 @@ static llg_cr_status_t cr_solve_inner(cr_solve_t* st, uint8_t* reach) {
             }
             status = cr_solve_component(st, comp_vars->data + vfirst, vcount,
                                         comp_conj->data + cfirst, ccount);
+            if (dist_pass) {
+                /* Keep the item variables (and randc ones, whose cycles
+                 * advanced) of a component holding such a dist; its other
+                 * variables are drawn again in the second pass. */
+                int has_pre = 0;
+                for (uint32_t i = 0; i < vcount; ++i) has_pre |= in_p[comp_vars->data[vfirst + i]];
+                for (uint32_t i = 0; i < vcount && has_pre; ++i) {
+                    uint32_t v = comp_vars->data[vfirst + i];
+                    if (!in_p[v] && !p->vars[v].cyclic) in_layer[v] = 0;
+                }
+            }
         }
+        st->pre = NULL;
         if (status != LLG_CR_OK) break;
         for (uint32_t v = 0; v < p->var_count; ++v)
             if (in_layer[v]) s->var_fixed[v] = 1;
-        if (pending) continue;
+        if (pending || dist_pass) continue;
 
         /* Verify the complete assignment with the reference evaluator. */
         cr_prepare_classify(s, reach);

@@ -202,6 +202,8 @@ struct llg_cr_session {
     /* randc cycle state (LLG_CR_CYCLIC_WORDS per cyclic variable). */
     uint32_t* cyc_off;
     uint64_t* cyc;
+    /* A dist item value, bound or weight reads a random variable (S30-D10). */
+    int dist_random;
     /* Structural hash of each node (randc signatures), 0 until computed. */
     uint64_t* node_hash;
     /* Exact-engine cache (most recent components). */

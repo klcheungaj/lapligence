@@ -22,6 +22,17 @@ fn dist_weights_partition_by_density() {
 }
 
 #[test]
+fn dist_items_that_read_random_variables_solve_them_first() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "dist_random_items",
+        include_str!("../fixtures/sim/feature_completion/sim_030/dist_random_items.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn solve_before_orders_the_draws() {
     sim_cli::run_case_backend_parity(
         SUITE,
@@ -194,12 +205,6 @@ fn unsupported_and_later_edition_forms_are_located_errors() {
         "`randc` property `r` of class `c_c` must be a packed integral value of at most 16 bits",
     );
     names_source_position("neg_randc_wide");
-    sim_cli::reject_case(
-        SUITE,
-        "neg_dist_random_weight",
-        "a dist item value, range bound or weight that reads a random variable is not supported (S30-D10)",
-    );
-    names_source_position("neg_dist_random_weight");
     sim_cli::reject_case(
         SUITE,
         "neg_dist_default",

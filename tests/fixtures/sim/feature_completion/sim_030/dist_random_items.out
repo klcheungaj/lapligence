@@ -1,0 +1,3 @@
+bound: legal=1 9 half=1 w3 quarter=1 x0|w3 eighth=1
+all-zero weights avoided: ok=1 w0=0
+expression: w1 half=1 x1|w2 two thirds=1
