@@ -20,6 +20,8 @@ native traversal or I/O.
 - `width.rs` — `width-mismatch`: assignments and port links with different known widths;
   a port link compares the port or port expression with the connected
   expression (`.a(n[0])` is one bit), not with the whole signal it selects.
+  A concatenated port (`.p({a, b})`) is judged once, by its name (or its
+  expression) against the sum of the slices its components connect.
 - `latch.rs` — `incomplete-case`: exact cases without a default in combinational/latch logic.
 - `combloop.rs` — `combinational-loop`: combinational feedback paths. A
   process's inputs are its exposed reads (read before a definite write on every
