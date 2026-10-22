@@ -10,7 +10,8 @@
 //! output that is only consumed at a port).
 //!
 //! Input terminals of gate and UDP instances count as reads and output
-//! terminals as continuous drivers.
+//! terminals as continuous drivers. Timing check terminals and conditions
+//! count as reads; a notifier counts as read and written.
 //!
 //! Reads and writes inside any subroutine body count as well (a variable read
 //! only by a DPI-exported function is used); a write there alone leaves the
@@ -26,7 +27,7 @@ use crate::core::db::{Db, Direction, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
     all_design_nodes, collect_reads, collect_writes_with_members, gate_terminal_drivers,
     gate_terminal_reads, is_signal, iter_instances, port_connected_signals, signal_scope_path,
-    subroutine_body, subroutine_formal_defaults,
+    subroutine_body, subroutine_formal_defaults, timing_check_activity,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -80,6 +81,11 @@ impl LintRule for UnusedSignalRule {
         for group in db.covergroups().keys() {
             reads.extend(collect_reads(db, *group));
         }
+        // Timing checks read their terminals and conditions and toggle their
+        // notifiers.
+        let (timing_reads, timing_writes) = timing_check_activity(db);
+        reads.extend(timing_reads);
+        writes.extend(timing_writes);
         let mut out = Vec::new();
         for inst_id in instances {
             for sig in &db.node(inst_id).children {
@@ -200,6 +206,19 @@ mod tests {
         );
         assert_eq!(d.severity, LintSeverity::Warning);
         assert_eq!(d.line, 4, "declaration line of b");
+    }
+
+    #[test]
+    fn timing_check_terminals_conditions_and_notifiers_are_used() {
+        // Timing checks read their terminals and conditions and toggle their
+        // notifiers (IEEE 1800-2009 31.3-31.7).
+        let diags = lint_design(
+            "module top;\n  reg d, c, en, n;\n  initial begin d = 0; c = 0; en = 1; end\n  \
+             specify\n    $setup(d, posedge c &&& en, 10, n);\n  endspecify\nendmodule\n",
+            "top",
+        );
+        let got = rule_diags(&diags, "unused-signal");
+        assert!(got.is_empty(), "no unused-signal finding: {got:?}");
     }
 
     #[test]

@@ -13,6 +13,10 @@
 //! destination transition is scheduled) and their edge. Pulse limits
 //! (30.7) come from a `PATHPULSE$` table on the path, else from the model's
 //! global percentages of the delays ([`IrPathPulseOptions`]).
+//!
+//! System timing checks (IEEE 1364-2001 15, IEEE 1800-2009 31) of one
+//! instance form one [`IrTimingCheckSet`]: terminals, checks with their
+//! events, limits and notifier index, and event conditions.
 
 use super::IrExpr;
 
@@ -353,6 +357,251 @@ impl IrModulePathSet {
 
     pub fn destinations(&self) -> &[IrModulePathDestination] {
         &self.destinations
+    }
+}
+
+/// A system timing check kind simulated by the runtime (IEEE 1364-2001
+/// 15.2-15.3, IEEE 1800-2009 31.3-31.4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IrTimingCheckKind {
+    Setup,
+    Hold,
+    Recovery,
+    Removal,
+    Skew,
+    Period,
+    Width,
+    NoChange,
+}
+
+impl IrTimingCheckKind {
+    /// The runtime code, `LLG_TIMING_*` (1 through 8).
+    pub fn code(self) -> u8 {
+        match self {
+            Self::Setup => 1,
+            Self::Hold => 2,
+            Self::Recovery => 3,
+            Self::Removal => 4,
+            Self::Skew => 5,
+            Self::Period => 6,
+            Self::Width => 7,
+            Self::NoChange => 8,
+        }
+    }
+
+    /// `$period` and `$width` derive their data event from the reference
+    /// terminal (31.4.4, 31.4.5).
+    pub fn single_signal(self) -> bool {
+        matches!(self, Self::Period | Self::Width)
+    }
+}
+
+/// The six transitions of a timing check event mask, in bit order: 0->1,
+/// 0->x, 1->0, 1->x, x->0, x->1 (z counts as x, 31.5).
+pub const TIMING_EDGE_MASK: u8 = 0x3f;
+
+/// The `&&&` condition of a timing check event (31.7): index `index` of
+/// [`IrTimingCheckSet::conditions`]. Its least significant bit decides; x or
+/// z enables the event only for a nondeterministic (`==`, `!=`) condition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IrTimingCondition {
+    pub(in crate::sim) index: u32,
+    pub(in crate::sim) nondeterministic: bool,
+}
+
+impl IrTimingCondition {
+    pub fn new(index: u32, nondeterministic: bool) -> Self {
+        Self {
+            index,
+            nondeterministic,
+        }
+    }
+}
+
+/// The reference or data event of a check: a terminal of the set, the
+/// transitions that count (an empty mask counts every transition) and an
+/// optional condition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IrTimingEvent {
+    pub(in crate::sim) terminal: u32,
+    pub(in crate::sim) edges: u8,
+    pub(in crate::sim) condition: Option<IrTimingCondition>,
+}
+
+impl IrTimingEvent {
+    pub fn new(terminal: u32, edges: u8, condition: Option<IrTimingCondition>) -> Self {
+        Self {
+            terminal,
+            edges,
+            condition,
+        }
+    }
+}
+
+/// One timing check of an instance. `limit` and `limit2` are design-precision
+/// ticks: the limit (the start-edge offset of `$nochange`) and the `$width`
+/// threshold or `$nochange` end-edge offset; both stay writable in the
+/// emitted tables for back-annotation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrTimingCheck {
+    pub(in crate::sim) kind: IrTimingCheckKind,
+    pub(in crate::sim) reference: IrTimingEvent,
+    pub(in crate::sim) data: IrTimingEvent,
+    pub(in crate::sim) limit: u64,
+    pub(in crate::sim) limit2: u64,
+    /// Index into the set's notifiers; `None` without a notifier.
+    pub(in crate::sim) notifier: Option<u32>,
+    /// `file:line:col` of the check, its stable source identity.
+    pub(in crate::sim) origin: String,
+    /// The check as reported: its text with `\x01` where the reference event
+    /// time goes and `\x02` where the data event time goes.
+    pub(in crate::sim) text: String,
+}
+
+impl IrTimingCheck {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        kind: IrTimingCheckKind,
+        reference: IrTimingEvent,
+        data: IrTimingEvent,
+        limit: u64,
+        limit2: u64,
+        notifier: Option<u32>,
+        origin: String,
+        text: String,
+    ) -> Self {
+        Self {
+            kind,
+            reference,
+            data,
+            limit,
+            limit2,
+            notifier,
+            origin,
+            text,
+        }
+    }
+
+    pub fn kind(&self) -> IrTimingCheckKind {
+        self.kind
+    }
+
+    pub fn reference(&self) -> IrTimingEvent {
+        self.reference
+    }
+
+    pub fn data(&self) -> IrTimingEvent {
+        self.data
+    }
+
+    pub fn limits(&self) -> (u64, u64) {
+        (self.limit, self.limit2)
+    }
+
+    pub fn notifier(&self) -> Option<u32> {
+        self.notifier
+    }
+
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+/// A timing check terminal: `width` storage bits of packed signal `signal`
+/// from `lsb`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IrTimingTerminal {
+    pub(in crate::sim) signal: usize,
+    pub(in crate::sim) lsb: u32,
+    pub(in crate::sim) width: u32,
+}
+
+impl IrTimingTerminal {
+    pub fn new(signal: usize, lsb: u32, width: u32) -> Self {
+        Self { signal, lsb, width }
+    }
+
+    pub fn signal(&self) -> usize {
+        self.signal
+    }
+}
+
+/// The timing checks of one module instance. One hidden process per set runs
+/// [`IrStmt::TimingCheckStep`](super::IrStmt) when a terminal changes and
+/// toggles each notifier whose [`IrRuntimeQuery::TimingNotify`] holds.
+///
+/// [`IrRuntimeQuery::TimingNotify`]: super::IrRuntimeQuery::TimingNotify
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrTimingCheckSet {
+    /// Hierarchical name of the instance, for reports.
+    pub(in crate::sim) scope: String,
+    pub(in crate::sim) terminals: Vec<IrTimingTerminal>,
+    pub(in crate::sim) checks: Vec<IrTimingCheck>,
+    /// Event conditions, read in the instance's scope when a step evaluates
+    /// a conditioned event.
+    pub(in crate::sim) conditions: Vec<IrExpr>,
+    /// Distinct notifier variables of the set's checks.
+    pub(in crate::sim) notifiers: u32,
+}
+
+impl IrTimingCheckSet {
+    pub fn new(
+        scope: String,
+        terminals: Vec<IrTimingTerminal>,
+        checks: Vec<IrTimingCheck>,
+        conditions: Vec<IrExpr>,
+        notifiers: u32,
+    ) -> Self {
+        Self {
+            scope,
+            terminals,
+            checks,
+            conditions,
+            notifiers,
+        }
+    }
+
+    pub fn scope(&self) -> &str {
+        &self.scope
+    }
+
+    pub fn terminals(&self) -> &[IrTimingTerminal] {
+        &self.terminals
+    }
+
+    pub fn checks(&self) -> &[IrTimingCheck] {
+        &self.checks
+    }
+
+    pub fn conditions(&self) -> &[IrExpr] {
+        &self.conditions
+    }
+
+    pub fn notifiers(&self) -> u32 {
+        self.notifiers
+    }
+}
+
+/// Global timing check controls: whether checks are simulated at all,
+/// whether violations toggle notifiers and whether they are reported.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrTimingCheckOptions {
+    pub checks: bool,
+    pub notifiers: bool,
+    pub messages: bool,
+}
+
+impl Default for IrTimingCheckOptions {
+    fn default() -> Self {
+        Self {
+            checks: true,
+            notifiers: true,
+            messages: true,
+        }
     }
 }
 

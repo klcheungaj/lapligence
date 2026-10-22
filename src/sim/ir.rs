@@ -70,8 +70,10 @@ pub use fixed_array_reductions::{IrFixedArrayReduction, IrFixedArrayReductionSou
 mod timing;
 pub use timing::{
     expand_path_delays, IrModulePath, IrModulePathDestination, IrModulePathSet, IrPathCondition,
-    IrPathEdge, IrPathLimits, IrPathPolarity, IrPathPulseOptions, IrPulseStyle,
-    PATH_STYLE_ON_DETECT, PATH_STYLE_SHOW_CANCELLED, PATH_TRANSITIONS,
+    IrPathEdge, IrPathLimits, IrPathPolarity, IrPathPulseOptions, IrPulseStyle, IrTimingCheck,
+    IrTimingCheckKind, IrTimingCheckOptions, IrTimingCheckSet, IrTimingCondition, IrTimingEvent,
+    IrTimingTerminal, PATH_STYLE_ON_DETECT, PATH_STYLE_SHOW_CANCELLED, PATH_TRANSITIONS,
+    TIMING_EDGE_MASK,
 };
 mod udp;
 pub use udp::{
@@ -565,6 +567,11 @@ pub struct IrModel {
     pub(in crate::sim) module_paths: Vec<IrModulePathSet>,
     /// Global pulse controls of every module path (30.7.2, 30.7.4).
     pub(in crate::sim) path_pulse: IrPathPulseOptions,
+    /// System timing checks, one set per module instance that declares any
+    /// (IEEE 1800-2009 31). Empty for designs without timing checks.
+    pub(in crate::sim) timing_checks: Vec<IrTimingCheckSet>,
+    /// Global timing check controls.
+    pub(in crate::sim) timing_check_options: IrTimingCheckOptions,
     pub(in crate::sim) events: Vec<IrEvent>,
     pub(in crate::sim) funcs: Vec<IrFunc>,
     /// Concurrent assertion instances, kept outside ordinary process IR.
@@ -736,6 +743,8 @@ impl IrModel {
             udp_states: Vec::new(),
             module_paths: Vec::new(),
             path_pulse: IrPathPulseOptions::default(),
+            timing_checks: Vec::new(),
+            timing_check_options: IrTimingCheckOptions::default(),
             events: parts.events,
             funcs: parts.funcs,
             assertions: parts.assertions,
@@ -792,6 +801,14 @@ impl IrModel {
     /// Global pulse controls of the module paths.
     pub fn path_pulse(&self) -> IrPathPulseOptions {
         self.path_pulse
+    }
+    /// Timing check sets, one per module instance with timing checks.
+    pub fn timing_checks(&self) -> &[IrTimingCheckSet] {
+        &self.timing_checks
+    }
+    /// Global timing check controls.
+    pub fn timing_check_options(&self) -> IrTimingCheckOptions {
+        self.timing_check_options
     }
     pub fn net_groups(&self) -> &[IrNetGroup] {
         &self.net_groups

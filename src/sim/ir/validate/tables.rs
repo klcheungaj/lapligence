@@ -13,6 +13,7 @@ impl Validator<'_> {
         }
 
         self.validate_module_paths()?;
+        self.validate_timing_checks()?;
 
         for (idx, problem) in self.model.rand_problems.iter().enumerate() {
             problem.validate(&format!("rand_problems[{idx}]"))?;

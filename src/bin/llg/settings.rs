@@ -80,6 +80,8 @@ pub(crate) struct DriverOptions {
     pub stop_policy: StopPolicy,
     /// Module path pulse limits, style and showcancelled setting.
     pub path_pulse: sim::ir::IrPathPulseOptions,
+    /// System timing check, notifier and violation report switches.
+    pub timing_checks: sim::ir::IrTimingCheckOptions,
     /// Whether the command line itself named a build-tool option, so
     /// `--gen-only` can warn that it is ignored. Config values do not warn.
     pub cli_build_options: bool,
@@ -492,6 +494,17 @@ pub(crate) fn resolve(
             .or(config.simulator.stop_policy)
             .unwrap_or(StopPolicy::Resume),
         path_pulse,
+        timing_checks: sim::ir::IrTimingCheckOptions {
+            checks: cli
+                .timing_checks
+                .or(config.simulator.timing_checks)
+                .unwrap_or(true),
+            notifiers: cli.notifiers.or(config.simulator.notifiers).unwrap_or(true),
+            messages: cli
+                .timing_check_messages
+                .or(config.simulator.timing_check_messages)
+                .unwrap_or(true),
+        },
         cli_build_options,
     })
 }

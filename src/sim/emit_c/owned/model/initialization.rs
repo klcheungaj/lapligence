@@ -358,6 +358,16 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             "    llg_module_paths_start(&llg_path_set_{index});\n"
         ));
     }
+    // Timing check sets take the initialized terminal values as their change
+    // reference; reporting is on unless turned off.
+    if !model.timing_checks().is_empty() && !model.timing_check_options().messages {
+        initialize.push_str("    llg_timing_checks_configure(0);\n");
+    }
+    for index in 0..model.timing_checks().len() {
+        initialize.push_str(&format!(
+            "    llg_timing_checks_start(&llg_timing_set_{index});\n"
+        ));
+    }
     net_delay_starts(model, &mut tables, &mut initialize);
     emitted.clear();
     // Function return slots and static locals are independent persistent

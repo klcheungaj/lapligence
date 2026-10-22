@@ -758,6 +758,103 @@ void llg_module_paths_start(llg_module_path_set_t* set);
 void llg_module_path_stamp(llg_module_path_set_t* set);
 /* The bound sets, most recently started first, linked through `next`. */
 llg_module_path_set_t* llg_module_path_sets(void);
+
+/* System timing checks (IEEE 1364-2001 15, IEEE 1800-2009 31). Kinds: */
+#define LLG_TIMING_SETUP 1u
+#define LLG_TIMING_HOLD 2u
+#define LLG_TIMING_RECOVERY 3u
+#define LLG_TIMING_REMOVAL 4u
+#define LLG_TIMING_SKEW 5u
+#define LLG_TIMING_PERIOD 6u
+#define LLG_TIMING_WIDTH 7u
+#define LLG_TIMING_NOCHANGE 8u
+/* Event transition bits (31.5; z counts as x, x<->z is no transition). */
+#define LLG_TIMING_EDGE_01 0x01u
+#define LLG_TIMING_EDGE_0X 0x02u
+#define LLG_TIMING_EDGE_10 0x04u
+#define LLG_TIMING_EDGE_1X 0x08u
+#define LLG_TIMING_EDGE_X0 0x10u
+#define LLG_TIMING_EDGE_X1 0x20u
+
+/* A terminal: `n_bits` bits of the borrowed model storage from `lsb`. */
+typedef struct llg_timing_terminal {
+    sv4_t* value;
+    uint32_t lsb;
+    uint32_t n_bits;
+} llg_timing_terminal_t;
+
+/* The reference or data event of a check: a change of terminal `terminal`
+ * making one of the `edges` transitions on any bit (0: any transition),
+ * while condition `condition` - 1 holds (0: unconditional). A condition
+ * holds when its least significant bit is 1, or x or z for a
+ * nondeterministic (`==`, `!=`) condition (31.7). */
+typedef struct llg_timing_event {
+    uint32_t terminal;
+    uint8_t edges;
+    uint8_t nondeterministic;
+    uint32_t condition;
+} llg_timing_event_t;
+
+/* One check. `limit` and `limit2` are design-precision ticks (the `$width`
+ * threshold, or the `$nochange` start and end offsets) and may be rewritten
+ * before simulation starts. `notifier` is 0 or the set's notifier k + 1.
+ * `text` is the check as reported, with \001 where the reference event time
+ * goes and \002 where the data event time goes. */
+typedef struct llg_timing_check {
+    uint8_t kind;
+    llg_timing_event_t reference;
+    llg_timing_event_t data;
+    uint64_t limit;
+    uint64_t limit2;
+    uint32_t notifier;
+    const char* origin;
+    const char* text;
+    /* Runtime state; 0 is no event (events at time 0 never stamp). */
+    uint64_t reference_time;
+    uint64_t data_time;
+    uint64_t trail_time;
+    uint8_t open;
+} llg_timing_check_t;
+
+typedef struct llg_timing_check_set llg_timing_check_set_t;
+
+struct llg_timing_check_set {
+    const char* scope; /* hierarchical instance name */
+    llg_timing_terminal_t* terminals;
+    uint32_t n_terminals;
+    llg_timing_check_t* checks;
+    uint32_t n_checks;
+    /* Generated evaluator of the set's event conditions, read in the
+     * instance's scope; it stores condition k in out[k]. NULL without
+     * conditions. */
+    void (*conditions)(sv4_t* out, void* context);
+    uint32_t n_conditions;
+    uint32_t n_notifiers;
+    /* Runtime state, owned between llg_timing_checks_start and cleanup. */
+    uint8_t* last;           /* per terminal bit: 0, 1 or 2 (x or z) */
+    uint32_t* offsets;       /* per terminal: its first bit in `last` */
+    uint8_t* events;         /* per terminal: transitions of this step */
+    sv4_t* condition_values;
+    uint8_t* notify;         /* per notifier: toggle after this step */
+    llg_timing_check_set_t* next;
+};
+
+/* Turn violation reports on or off (default on); called before
+ * llg_timing_checks_start when a model turns them off. */
+void llg_timing_checks_configure(int messages);
+/* Take the current terminal values as the reference for change detection.
+ * Called once per set during model initialization; the runtime releases the
+ * state in llg_rt_cleanup. */
+void llg_timing_checks_start(llg_timing_check_set_t* set);
+/* Detect the terminal transitions since the last step and run every check
+ * of the set at the current time. Generated hidden processes call it when a
+ * terminal changes, then toggle each notifier llg_timing_notify names. */
+void llg_timing_check_step(llg_timing_check_set_t* set);
+/* 1 when a check with notifier `notifier` of the set reported a violation
+ * in the last step. */
+int llg_timing_notify(const llg_timing_check_set_t* set, uint32_t notifier);
+/* The started sets, most recently started first, linked through `next`. */
+llg_timing_check_set_t* llg_timing_check_sets(void);
 /* 1 when bit `bit` of a path destination has a scheduled update; then its
  * absolute time and four-state value (0, 1, 2 = x, 3 = z) are stored. */
 int llg_net_path_pending(const llg_net_t* net, uint32_t bit, uint64_t* time,

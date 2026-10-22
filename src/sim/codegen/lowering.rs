@@ -395,6 +395,9 @@ pub struct CodegenOptions {
     /// Global module path pulse controls (`--pulse-reject`, `--pulse-error`,
     /// `--pulse-style`, `--show-cancelled`; IEEE 1800-2009 30.7.2, 30.7.4).
     pub path_pulse: crate::sim::ir::IrPathPulseOptions,
+    /// Global timing check controls (`--no-timing-checks`, `--no-notifiers`,
+    /// `--no-timing-check-messages`; IEEE 1800-2009 31).
+    pub timing_checks: crate::sim::ir::IrTimingCheckOptions,
 }
 
 /// Lower an owned Slang semantic database with default optimizations.
@@ -465,8 +468,7 @@ pub fn generate_from_owned_db_with_codegen_options(
     db: Db,
     options: &CodegenOptions,
 ) -> Result<GeneratedModel, CodegenError> {
-    let lowered = lower_model(&db, options.waveform.as_ref(), options.path_pulse)
-        .map_err(CodegenError::new)?;
+    let lowered = lower_model(&db, options).map_err(CodegenError::new)?;
     drop(db);
     finish_generation(lowered, options).map_err(CodegenError::new)
 }
@@ -475,10 +477,7 @@ fn generate_from_db_with_codegen_options_impl(
     db: &Db,
     options: &CodegenOptions,
 ) -> Result<GeneratedModel, String> {
-    finish_generation(
-        lower_model(db, options.waveform.as_ref(), options.path_pulse)?,
-        options,
-    )
+    finish_generation(lower_model(db, options)?, options)
 }
 
 struct LoweredModel {
@@ -489,11 +488,8 @@ struct LoweredModel {
     coverage_api_used: bool,
 }
 
-fn lower_model(
-    db: &Db,
-    waveform: Option<&WaveformOptions>,
-    path_pulse: crate::sim::ir::IrPathPulseOptions,
-) -> Result<LoweredModel, String> {
+fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String> {
+    let waveform = options.waveform.as_ref();
     let semantic_stage = crate::profile::Stage::new("semantic");
     let semantic = crate::sim::semantic::SemanticModel::from_db(db);
     // Constructs rejected by design report first and together, ahead of the
@@ -540,8 +536,11 @@ fn lower_model(
     cg.collect_timescales();
     cg.build_net_groups()?;
     // Module paths name net groups and their structural driver sites.
-    cg.model.path_pulse = path_pulse;
+    cg.model.path_pulse = options.path_pulse;
     cg.lower_module_paths()?;
+    // Timing checks read the same terminals and the instance's variables.
+    cg.model.timing_check_options = options.timing_checks;
+    cg.lower_timing_checks()?;
     cg.collect_clocking_storage()?;
     cg.validate_const_method_writes()?;
     cg.validate_process_semantics()?;
@@ -3767,7 +3766,7 @@ mod startup_spawn_tests {
         .expect("compile startup-order source");
         let db = Db::from_slang(&result.snapshot).expect("owned database");
         let lowered =
-            lower_model(&db, None, Default::default()).expect("lower startup-order source");
+            lower_model(&db, &CodegenOptions::default()).expect("lower startup-order source");
         lowered
             .model
             .spawn_list()

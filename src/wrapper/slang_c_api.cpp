@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <span>
 #include <exception>
 #include <filesystem>
 #include <iterator>
@@ -1624,6 +1625,109 @@ uint64_t specifyTimingCheckCode(SystemTimingCheckKind kind) {
   return 0;
 }
 
+// The formal argument kinds of each timing check, in signature order (IEEE
+// 1800-2009 Syntax 31-3..31-14, the frontend's own table): events, limits,
+// the notifier, and the $setuphold/$recrem conditions and delayed signals.
+enum class TimingArg : uint8_t { Event, Limit, Notifier, Other };
+
+std::span<const TimingArg> timingCheckFormals(SystemTimingCheckKind kind) {
+  using enum TimingArg;
+  static constexpr TimingArg pair[] = {Event, Event, Limit, Notifier};
+  static constexpr TimingArg combined[] = {Event, Event, Limit, Limit, Notifier,
+                                           Other, Other, Other, Other};
+  static constexpr TimingArg timeSkew[] = {Event, Event, Limit, Notifier, Limit, Limit};
+  static constexpr TimingArg fullSkew[] = {Event, Event, Limit, Limit, Notifier,
+                                           Limit, Limit};
+  static constexpr TimingArg period[] = {Event, Limit, Notifier};
+  static constexpr TimingArg width[] = {Event, Limit, Limit, Notifier};
+  static constexpr TimingArg noChange[] = {Event, Event, Limit, Limit, Notifier};
+  switch (kind) {
+    case SystemTimingCheckKind::Setup:
+    case SystemTimingCheckKind::Hold:
+    case SystemTimingCheckKind::Recovery:
+    case SystemTimingCheckKind::Removal:
+    case SystemTimingCheckKind::Skew: return pair;
+    case SystemTimingCheckKind::SetupHold:
+    case SystemTimingCheckKind::RecRem: return combined;
+    case SystemTimingCheckKind::TimeSkew: return timeSkew;
+    case SystemTimingCheckKind::FullSkew: return fullSkew;
+    case SystemTimingCheckKind::Period: return period;
+    case SystemTimingCheckKind::Width: return width;
+    case SystemTimingCheckKind::NoChange: return noChange;
+    case SystemTimingCheckKind::Unknown: return {};
+  }
+  return {};
+}
+
+// The LLG_SLANG_SPECIFY_EDGE_* bit of one edge descriptor (31.5); z counts
+// as x. Zero for a pair that is not a transition.
+uint64_t specifyEdgeDescriptorBit(char from, char to) {
+  auto state = [](char c) {
+    switch (c) {
+      case '0': return 0;
+      case '1': return 1;
+      case 'x': case 'X': case 'z': case 'Z': return 2;
+      default: return 3;
+    }
+  };
+  static constexpr uint64_t bits[3][3] = {
+      {0, LLG_SLANG_SPECIFY_EDGE_01, LLG_SLANG_SPECIFY_EDGE_0X},
+      {LLG_SLANG_SPECIFY_EDGE_10, 0, LLG_SLANG_SPECIFY_EDGE_1X},
+      {LLG_SLANG_SPECIFY_EDGE_X0, LLG_SLANG_SPECIFY_EDGE_X1, 0}};
+  const int f = state(from), t = state(to);
+  return f < 3 && t < 3 ? bits[f][t] : 0;
+}
+
+// The transition mask of one timing check event (31.5): posedge and negedge
+// are their edge-control shorthands, `edge` without a list is either edge.
+uint64_t specifyTimingEventMask(const SystemTimingCheckSymbol::Arg& arg) {
+  constexpr uint64_t rise =
+      LLG_SLANG_SPECIFY_EDGE_01 | LLG_SLANG_SPECIFY_EDGE_0X | LLG_SLANG_SPECIFY_EDGE_X1;
+  constexpr uint64_t fall =
+      LLG_SLANG_SPECIFY_EDGE_10 | LLG_SLANG_SPECIFY_EDGE_1X | LLG_SLANG_SPECIFY_EDGE_X0;
+  switch (arg.edge) {
+    case EdgeKind::None: return 0;
+    case EdgeKind::PosEdge: return rise;
+    case EdgeKind::NegEdge: return fall;
+    case EdgeKind::BothEdges: break;
+  }
+  if (arg.edgeDescriptors.empty())
+    return rise | fall;
+  uint64_t mask = 0;
+  for (const auto& descriptor : arg.edgeDescriptors)
+    mask |= specifyEdgeDescriptorBit(descriptor[0], descriptor[1]);
+  return mask;
+}
+
+// TIMING_CHECK auxiliary (see LLG_SLANG_SPECIFY_CHECK_*): kind, the edge
+// masks of the event arguments, and the actual argument count and empty
+// positions from the syntax (the bound arguments drop both on an error).
+uint64_t specifyTimingCheckAuxiliary(const SystemTimingCheckSymbol& check) {
+  uint64_t auxiliary = specifyTimingCheckCode(check.timingCheckKind);
+  const auto formals = timingCheckFormals(check.timingCheckKind);
+  const auto args = check.getArguments();
+  uint32_t event = 0;
+  for (size_t index = 0; index < args.size() && index < formals.size(); index++) {
+    if (formals[index] != TimingArg::Event)
+      continue;
+    if (args[index].expr && event < 2)
+      auxiliary |= specifyTimingEventMask(args[index])
+                   << LLG_SLANG_SPECIFY_CHECK_EVENT_SHIFT(event);
+    event++;
+  }
+  if (const syntax::SyntaxNode* node = check.getSyntax();
+      node && node->kind == syntax::SyntaxKind::SystemTimingCheck) {
+    const auto& actuals = node->as<syntax::SystemTimingCheckSyntax>().args;
+    const size_t count = std::min<size_t>(actuals.size(), 0xff);
+    for (size_t index = 0; index < count && index < 16; index++) {
+      if (actuals[index]->kind == syntax::SyntaxKind::EmptyTimingCheckArg)
+        auxiliary |= uint64_t{1} << (LLG_SLANG_SPECIFY_CHECK_EMPTY_SHIFT + index);
+    }
+    auxiliary |= uint64_t{count} << LLG_SLANG_SPECIFY_CHECK_COUNT_SHIFT;
+  }
+  return auxiliary;
+}
+
 // Repository codes for Slang constraint kinds; 0 for an invalid constraint,
 // which is exported as an unsupported node.
 uint32_t semanticConstraintKind(ConstraintKind kind) {
@@ -2513,7 +2617,7 @@ public:
     }
     if constexpr (std::same_as<T, SystemTimingCheckSymbol>) {
       result.subkind = LLG_SLANG_SPECIFY_TIMING_CHECK;
-      result.auxiliary = specifyTimingCheckCode(symbol.timingCheckKind);
+      result.auxiliary = specifyTimingCheckAuxiliary(symbol);
     }
     if constexpr (std::same_as<T, SpecparamSymbol>) {
       if (symbol.isPathPulse) {
@@ -2806,6 +2910,10 @@ public:
     if constexpr (std::same_as<T, TimingPathSymbol>) {
       if (!capture.declarationOnly)
         captureTimingPath(id, symbol);
+    }
+    if constexpr (std::same_as<T, SystemTimingCheckSymbol>) {
+      if (!capture.declarationOnly)
+        captureTimingCheck(id, symbol);
     }
     if constexpr (std::same_as<T, PulseStyleSymbol>) {
       if (!capture.declarationOnly) {
@@ -3655,6 +3763,43 @@ private:
       specifyOperand(id, *condition, LLG_SLANG_EDGE_CONDITION);
     if (const Expression* source = path.getEdgeSourceExpr())
       specifyOperand(id, *source, LLG_SLANG_EDGE_RHS);
+  }
+
+  // Timing check arguments (IEEE 1800-2009 31): each event terminal and its
+  // condition, each limit and the notifier, under the check node. Slang's
+  // visitor does not descend into them either.
+  void captureTimingCheck(uint64_t id, const SystemTimingCheckSymbol& check) {
+    const auto formals = timingCheckFormals(check.timingCheckKind);
+    const auto args = check.getArguments();
+    uint32_t event = 0, limit = 0;
+    for (size_t index = 0; index < args.size() && index < formals.size(); index++) {
+      const SystemTimingCheckSymbol::Arg& arg = args[index];
+      switch (formals[index]) {
+        case TimingArg::Event:
+          if (arg.expr)
+            specifyOperand(id, *arg.expr, LLG_SLANG_EDGE_OPERAND, event);
+          if (arg.condition)
+            specifyOperand(id, *arg.condition, LLG_SLANG_EDGE_CONDITION, event);
+          event++;
+          break;
+        case TimingArg::Limit:
+          if (arg.expr)
+            specifyOperand(id, *arg.expr, LLG_SLANG_EDGE_DELAY, limit);
+          limit++;
+          break;
+        case TimingArg::Notifier:
+          // The frontend binds the notifier as an output argument: an
+          // assignment whose left side is the variable.
+          if (arg.expr) {
+            const Expression* target = arg.expr;
+            if (target->kind == ExpressionKind::Assignment)
+              target = &target->as<AssignmentExpression>().left();
+            specifyOperand(id, *target, LLG_SLANG_EDGE_LHS, 0);
+          }
+          break;
+        case TimingArg::Other: break;
+      }
+    }
   }
 
   // Randsequence capture (IEEE 1800-2009 18.17). Rules and production-list

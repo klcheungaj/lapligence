@@ -142,6 +142,8 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         udp_states: _,
         module_paths,
         path_pulse: _,
+        timing_checks,
+        timing_check_options: _,
         events: _,
         funcs,
         assertions,
@@ -187,6 +189,16 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
     for set in module_paths {
         for &signal in &set.sources {
             rw.read(signal);
+        }
+        for condition in &set.conditions {
+            collect_expr_reads(condition, model, &mut rw);
+        }
+    }
+    // The runtime reads timing check terminals through their storage address
+    // and evaluates the event conditions when a step needs them.
+    for set in timing_checks {
+        for terminal in &set.terminals {
+            rw.read(terminal.signal);
         }
         for condition in &set.conditions {
             collect_expr_reads(condition, model, &mut rw);
@@ -941,6 +953,8 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         | IrStmt::SetNetDelay { .. }
         // Its sources are read through `IrModel::module_paths` (below).
         | IrStmt::ModulePathStamp { .. }
+        // Its terminals are read through `IrModel::timing_checks` (below).
+        | IrStmt::TimingCheckStep { .. }
         | IrStmt::Nop => {}
         // `$dumpvars` names scopes; waveform models keep every HDL-visible
         // signal (`model.waveform`).

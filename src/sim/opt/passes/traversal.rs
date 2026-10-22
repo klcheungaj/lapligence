@@ -861,6 +861,8 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         | IrStmt::SetNetDelay { .. }
         // Sources live in `IrModel::module_paths`, not in the statement.
         | IrStmt::ModulePathStamp { .. }
+        // Terminals and conditions live in `IrModel::timing_checks`.
+        | IrStmt::TimingCheckStep { .. }
         | IrStmt::System(None)
         | IrStmt::DeclLocal { init: None, .. }
         | IrStmt::SharedLocal { init: None, .. }
@@ -1065,6 +1067,11 @@ pub(super) fn walk_model_exprs_mut(model: &mut IrModel, f: &mut impl FnMut(&mut 
         walk_expr_mut(&mut domain.sample, f);
     }
     for set in &mut model.module_paths {
+        for condition in &mut set.conditions {
+            walk_expr_mut(condition, f);
+        }
+    }
+    for set in &mut model.timing_checks {
         for condition in &mut set.conditions {
             walk_expr_mut(condition, f);
         }

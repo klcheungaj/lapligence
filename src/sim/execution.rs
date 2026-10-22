@@ -823,6 +823,9 @@ fn collect_effects(
             }
             // Updates the runtime-owned source stamps of a module path set.
             IrStmt::ModulePathStamp { .. } => effects.push(ExecutionEffect::RuntimeService),
+            // Updates the runtime-owned stamps of a timing check set and
+            // reports violations; notifier toggles are separate assignments.
+            IrStmt::TimingCheckStep { .. } => effects.push(ExecutionEffect::RuntimeService),
             IrStmt::PlusArg(_) | IrStmt::Stochastic(_) => {
                 effects.push(ExecutionEffect::ImmediateStore);
                 effects.push(ExecutionEffect::RuntimeService);

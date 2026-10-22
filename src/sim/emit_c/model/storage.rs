@@ -227,6 +227,7 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
         ));
     }
     render_module_paths(model, out);
+    render_timing_checks(model, out);
     // Named events use a stable waiter-table object plus an assignable handle.
     for ev in &model.events {
         if ev.is_array() {
@@ -434,6 +435,104 @@ fn render_module_paths(model: &IrModel, out: &mut String) {
             set.destinations().len(),
         ));
     }
+}
+
+/// Timing check tables: one `llg_timing_check_set_t` per instance with
+/// checks, after the signals its terminals name. Limits stay writable for
+/// back-annotation; each check row uses designated fields so the runtime
+/// state fields start zero. Nothing is emitted for a design without checks.
+fn render_timing_checks(model: &IrModel, out: &mut String) {
+    use crate::sim::emit_c::constants::c_string_literal;
+    let event = |event: crate::sim::ir::IrTimingEvent| {
+        let (condition, nondeterministic) = event.condition.map_or((0, 0), |condition| {
+            (condition.index + 1, u8::from(condition.nondeterministic))
+        });
+        format!(
+            "{{ {}u, {}, {nondeterministic}, {condition}u }}",
+            event.terminal, event.edges
+        )
+    };
+    for (index, set) in model.timing_checks().iter().enumerate() {
+        let name = format!("llg_timing_set_{index}");
+        let terminals = set
+            .terminals()
+            .iter()
+            .map(|terminal| {
+                format!(
+                    "{{ {}, {}u, {}u }}",
+                    path_source_storage(model, terminal.signal),
+                    terminal.lsb,
+                    terminal.width
+                )
+            })
+            .collect::<Vec<_>>();
+        out.push_str(&format!(
+            "static llg_timing_terminal_t {name}__terminals[] = {{ {} }};\n",
+            terminals.join(", ")
+        ));
+        let checks = set
+            .checks()
+            .iter()
+            .map(|check| {
+                let (limit, limit2) = check.limits();
+                format!(
+                    "{{ .kind = {}, .reference = {}, .data = {}, .limit = {limit}ULL, \
+                     .limit2 = {limit2}ULL, .notifier = {}u, .origin = {}, .text = {} }}",
+                    check.kind().code(),
+                    event(check.reference()),
+                    event(check.data()),
+                    check.notifier().map_or(0, |notifier| notifier + 1),
+                    c_string_literal(check.origin()),
+                    c_string_literal(check.text()),
+                )
+            })
+            .collect::<Vec<_>>();
+        out.push_str(&format!(
+            "static llg_timing_check_t {name}__checks[] = {{ {} }};\n",
+            checks.join(", ")
+        ));
+        let conditions = if set.conditions().is_empty() {
+            "NULL".to_owned()
+        } else {
+            out.push_str(&format!(
+                "static void {name}__conditions(sv4_t* out, void* context);\n"
+            ));
+            format!("{name}__conditions")
+        };
+        out.push_str(&format!(
+            "static llg_timing_check_set_t {name} = {{ .scope = {}, .terminals = {name}__terminals, \
+             .n_terminals = {}u, .checks = {name}__checks, .n_checks = {}u, .conditions = \
+             {conditions}, .n_conditions = {}u, .n_notifiers = {}u }};\n",
+            c_string_literal(set.scope()),
+            set.terminals().len(),
+            set.checks().len(),
+            set.conditions().len(),
+            set.notifiers(),
+        ));
+    }
+}
+
+/// The generated condition evaluator of every timing check set with
+/// conditioned events: `out[k]` receives condition `k`, read in the
+/// instance's scope when a step evaluates a conditioned event.
+pub(super) fn render_timing_condition_evaluators(
+    ctx: &RCtx<'_>,
+    out: &mut String,
+) -> Result<(), String> {
+    for (index, set) in ctx.model.timing_checks().iter().enumerate() {
+        if set.conditions().is_empty() {
+            continue;
+        }
+        let evaluator = crate::sim::ir::IrPreFn::MonEval {
+            c_name: format!("llg_timing_set_{index}__conditions"),
+            args: set.conditions().to_vec(),
+            context: None,
+            item: false,
+            real_item: false,
+        };
+        out.push_str(&super::super::owned::model::pre_function(ctx, &evaluator)?);
+    }
+    Ok(())
 }
 
 /// The generated condition evaluator of every module path set with

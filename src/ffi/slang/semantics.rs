@@ -472,9 +472,19 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         (33, super::SEMANTIC_SPECIFY_PULSE_STYLE, _) => (super::SPECIFY_PULSE_ONEVENT
             ..=super::SPECIFY_PULSE_NOSHOWCANCELLED)
             .contains(&node.auxiliary),
-        // Zero is a timing check the frontend could not classify.
+        // Zero is a timing check the frontend could not classify. Two event
+        // edge masks, sixteen empty-argument bits and an argument count
+        // follow the kind.
         (33, super::SEMANTIC_SPECIFY_TIMING_CHECK, _) => {
-            node.auxiliary <= super::SPECIFY_CHECK_NOCHANGE
+            let event =
+                |k: u32| super::SPECIFY_EDGE_MASK << (super::SPECIFY_CHECK_EVENT_BITS * (k + 1));
+            let allowed = super::SPECIFY_CHECK_KIND_MASK
+                | event(0)
+                | event(1)
+                | 0xffff << super::SPECIFY_CHECK_EMPTY_SHIFT
+                | 0xff << super::SPECIFY_CHECK_COUNT_SHIFT;
+            node.auxiliary & !allowed == 0
+                && node.auxiliary & super::SPECIFY_CHECK_KIND_MASK <= super::SPECIFY_CHECK_NOCHANGE
         }
         (33, _, _) => node.auxiliary == 0,
         (31, super::SEMANTIC_COVERAGE_CROSS, _) => {

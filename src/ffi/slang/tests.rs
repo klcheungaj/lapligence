@@ -1688,12 +1688,29 @@ fn specify_nodes_validate_subkind_and_auxiliary_fields() {
             SPECIFY_CHECK_NOCHANGE + 1,
             "timing check 13",
         ),
+        (
+            SEMANTIC_SPECIFY_TIMING_CHECK,
+            1 | 1 << 14,
+            "a transition bit outside event 0's mask",
+        ),
+        (
+            SEMANTIC_SPECIFY_TIMING_CHECK,
+            1 | 1 << 24,
+            "a third event mask",
+        ),
         (SEMANTIC_SPECIFY_BLOCK, 1, "block auxiliary"),
     ] {
         let error = decoded(subkind, auxiliary).expect_err(what);
         assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData, "{what}");
     }
     decoded(SEMANTIC_SPECIFY_TIMING_CHECK, 0).expect("an unclassified timing check decodes");
+    // $width(posedge c, 10, , n): event 0 rises, position 2 empty, 4 actuals.
+    let width = 11
+        | 0b10_0011 << SPECIFY_CHECK_EVENT_BITS
+        | 1 << (SPECIFY_CHECK_EMPTY_SHIFT + 2)
+        | 4 << SPECIFY_CHECK_COUNT_SHIFT;
+    let node = decoded(SEMANTIC_SPECIFY_TIMING_CHECK, width).expect("timing check fields decode");
+    assert_eq!(node.semantic_nodes[0].auxiliary, width);
 
     let mut specparam = raw_semantic_node(0);
     specparam.kind = 12;

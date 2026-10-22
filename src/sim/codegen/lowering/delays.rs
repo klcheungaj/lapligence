@@ -223,6 +223,25 @@ impl<'a> Codegen<'a> {
         self.procedural_delay_ticks(path_node, expression)
     }
 
+    /// One timing check limit in scheduler ticks, in the check's module time
+    /// unit with min:typ:max selection as for path delays; `true` with zero
+    /// ticks for a negative value, which each check treats by its own rule.
+    pub(super) fn timing_limit_ticks(
+        &mut self,
+        check_node: NodeId,
+        expression: NodeId,
+    ) -> Result<(u64, bool), String> {
+        let negative = match self.eval_decl_value_without_time_rounding(expression) {
+            Ok(Val::Bits(value)) => value.signed && value.to_i128().is_some_and(|value| value < 0),
+            Ok(Val::Real(value)) => value < 0.0,
+            _ => false,
+        };
+        if negative {
+            return Ok((0, true));
+        }
+        Ok((self.procedural_delay_ticks(check_node, expression)?, false))
+    }
+
     fn lower_expr_for_delay(&mut self, path: &str, expression: NodeId) -> Result<IrExpr, String> {
         let previous = self.round_time_literals;
         self.round_time_literals = false;

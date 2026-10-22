@@ -1226,6 +1226,7 @@ fn render_model(
         }
     }
     storage::render_path_condition_evaluators(&ctx, &mut out)?;
+    storage::render_timing_condition_evaluators(&ctx, &mut out)?;
     // Every body has been moved into the model text; release the artifacts
     // and their frame layouts before the remaining sections and the
     // identifier pass.

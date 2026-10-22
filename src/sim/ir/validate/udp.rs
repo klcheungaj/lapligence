@@ -229,4 +229,91 @@ impl Validator<'_> {
         }
         Ok(())
     }
+
+    /// Timing check sets: packed terminals with ranges inside their storage,
+    /// events naming terminals and conditions of their set, known edge bits,
+    /// derived data events of `$period`/`$width` on the reference terminal,
+    /// edge-triggered references where the kind needs one, and notifier
+    /// indices below the set's count.
+    pub(super) fn validate_timing_checks(&self) -> ValidationResult {
+        for (index, set) in self.model.timing_checks.iter().enumerate() {
+            let path = format!("timing_checks[{index}]");
+            if set.checks.is_empty() {
+                return self.fail(path, "timing check set has no check");
+            }
+            for (terminal_index, terminal) in set.terminals.iter().enumerate() {
+                let fits = match self.model.signals.get(terminal.signal).map(|s| &s.ty) {
+                    Some(IrType::Packed { width, .. }) => {
+                        terminal.width != 0
+                            && terminal
+                                .lsb
+                                .checked_add(terminal.width)
+                                .is_some_and(|end| end <= *width)
+                    }
+                    _ => false,
+                };
+                if !fits {
+                    return self.fail(
+                        format!("{path}.terminals[{terminal_index}]"),
+                        "timing check terminal must be a range of a packed signal",
+                    );
+                }
+            }
+            for (check_index, check) in set.checks.iter().enumerate() {
+                let path = format!("{path}.checks[{check_index}]");
+                for event in [&check.reference, &check.data] {
+                    if event.terminal as usize >= set.terminals.len() {
+                        return self.fail(path, "timing check event names no terminal of its set");
+                    }
+                    if event.edges & !TIMING_EDGE_MASK != 0 {
+                        return self.fail(path, "timing check event has an unknown edge bit");
+                    }
+                    if event
+                        .condition
+                        .is_some_and(|condition| condition.index as usize >= set.conditions.len())
+                    {
+                        return self.fail(path, "timing check event names no condition of its set");
+                    }
+                }
+                let edge_triggered = matches!(
+                    check.kind,
+                    IrTimingCheckKind::Period
+                        | IrTimingCheckKind::Width
+                        | IrTimingCheckKind::NoChange
+                );
+                if edge_triggered && check.reference.edges == 0 {
+                    return self.fail(path, "timing check reference event needs an edge");
+                }
+                if check.kind.single_signal()
+                    && (check.data.terminal != check.reference.terminal
+                        || check.data.condition != check.reference.condition)
+                {
+                    return self.fail(
+                        path,
+                        "a derived data event must share the reference terminal",
+                    );
+                }
+                if check
+                    .notifier
+                    .is_some_and(|notifier| notifier >= set.notifiers)
+                {
+                    return self.fail(path, "timing check names no notifier of its set");
+                }
+            }
+            for (condition_index, condition) in set.conditions.iter().enumerate() {
+                if condition.is_real() {
+                    return self.fail(
+                        format!("{path}.conditions[{condition_index}]"),
+                        "timing check condition must be a packed value",
+                    );
+                }
+                self.validate_expr(
+                    condition,
+                    &[],
+                    &format!("{path}.conditions[{condition_index}]"),
+                )?;
+            }
+        }
+        Ok(())
+    }
 }

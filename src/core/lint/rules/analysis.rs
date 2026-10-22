@@ -1425,6 +1425,30 @@ fn read_signal_of_expr(db: &Db, id: NodeId) -> Option<NodeId> {
     }
 }
 
+/// Reads and writes of the system timing checks (V 15, SV 31): each check
+/// reads its event terminals and conditions and, when it toggles its
+/// notifier, reads the notifier's value and writes it.
+pub fn timing_check_activity(db: &Db) -> (HashSet<NodeId>, HashSet<NodeId>) {
+    let mut reads = HashSet::new();
+    let mut writes = HashSet::new();
+    for check in db.timing_checks() {
+        for event in check.events.iter().flatten() {
+            reads.extend(collect_reads(db, event.terminal));
+            if let Some(condition) = event.condition {
+                reads.extend(collect_reads(db, condition));
+            }
+        }
+        if let Some(notifier) = check
+            .notifier
+            .and_then(|notifier| signal_of_ref(db, notifier))
+        {
+            reads.insert(notifier);
+            writes.insert(notifier);
+        }
+    }
+    (reads, writes)
+}
+
 /// Signals driven by output/inout terminals of captured structural
 /// primitives.  Primitive-array objects are skipped because their terminal
 /// expressions are unavailable.

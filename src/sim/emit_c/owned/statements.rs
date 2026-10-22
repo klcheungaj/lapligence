@@ -339,6 +339,9 @@ impl Frame<'_, '_> {
             IrStmt::ModulePathStamp { set } => {
                 self.line(format!("llg_module_path_stamp(&llg_path_set_{set});"))
             }
+            IrStmt::TimingCheckStep { set } => {
+                self.line(format!("llg_timing_check_step(&llg_timing_set_{set});"))
+            }
             IrStmt::Force {
                 lhs,
                 eval,

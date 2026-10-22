@@ -138,6 +138,11 @@ impl Validator<'_> {
                     return self.fail(path, "module path stamp names no module path set");
                 }
             }
+            IrStmt::TimingCheckStep { set } => {
+                if *set >= self.model.timing_checks.len() {
+                    return self.fail(path, "timing check step names no timing check set");
+                }
+            }
             IrStmt::UdpStep { state, inputs } => {
                 self.validate_udp_step(*state, inputs, formals, path)?
             }
