@@ -296,11 +296,17 @@ impl Frame<'_, '_> {
         {
             let target = self.native_address(address, super::super::native::NativeKind::Chandle)?;
             let source = self.chandle(source)?;
+            let source = self.scalar("void*", source);
             let publish = self.handle_store_publish(address, &target.address)?;
-            let success = self.scalar("int", format!("llg_class_is_a({source}, {expected})"));
+            // A null source handle is a successful cast that assigns null
+            // (decision S11-D1).
+            let success = self.scalar(
+                "int",
+                format!("!{source} || llg_class_is_a({source}, {expected})"),
+            );
             self.line(format!("if ({success}) *({}) = {source};", target.address));
             self.finish_handle_store_publish(publish);
-            self.report_cast_failure(&success, cast);
+            self.report_cast_failure(&success, cast, true);
             return Ok(self.value(format!("sv4_from_u64({success}, 1, 0)"), 1, false));
         }
         if cast.class_target.is_some() || cast.class_source.is_some() {
@@ -347,15 +353,17 @@ impl Frame<'_, '_> {
         };
         self.store(&target, copy, false, "0")?;
         self.line("}");
-        self.report_cast_failure(&success, cast);
+        self.report_cast_failure(&success, cast, false);
         self.discard(source);
         self.release_target(target);
         Ok(self.value(format!("sv4_from_u64({success}, 1, 0)"), 1, false))
     }
 
-    /// Task-form `$cast` failure is a simulator run-time error; the
-    /// destination has already been left unchanged.
-    fn report_cast_failure(&mut self, success: &str, cast: &IrDynamicCast) {
+    /// Task-form `$cast` failure is a simulator run-time error that ends the
+    /// run; the destination has already been left unchanged. A failed class
+    /// handle cast also skips the final procedures (decision S11-D1); the
+    /// statement's `Terminate` effect leaves the process after it.
+    fn report_cast_failure(&mut self, success: &str, cast: &IrDynamicCast, class: bool) {
         let Some(location) = &cast.failure_location else {
             return;
         };
@@ -366,6 +374,12 @@ impl Frame<'_, '_> {
             "fprintf(stderr, \"llg: runtime error: $cast failed to assign an incompatible value at %s\\n\", {location});"
         ));
         self.line("fflush(stderr);");
+        if class {
+            self.line("llg_rt_skip_finals();");
+        }
+        self.line(format!(
+            "llg_rt_fatal_typed(0, \"$cast failed to assign an incompatible value\", NULL, 0, \"\", {location});"
+        ));
         self.line("}");
     }
 }

@@ -32,10 +32,25 @@ permitted outcome at each racy line.
   delay is evaluated once.
 - `negative_real_delay`, `negative_real_constant`: finite negative real delays
   are two's-complement unsigned 64-bit time after local rounding.
-- `time_limit`, `time_limit_nba`: a delay reaching exactly 2^64-1 schedules;
-  one past it fails before queue insertion (owner resource policy).
-- `neg_negative_real_overflow`: a negative real whose unsigned time cannot be
-  scaled to the design tick reports the tick-range limit, not illegality.
-- `neg_nonfinite_delay`: a nonfinite real delay is rejected at run time.
+- `time_limit`: a delay reaching exactly 2^64-1 schedules; one past it is a
+  fatal run-time error before queue insertion, and the final procedure still
+  prints `final 18446744073709551615` (decision S01-D2; changed: the model
+  aborted without final procedures).
+- `time_limit_nba`: a nonblocking update reaching exactly 2^64-1 is scheduled
+  there (`q=1 at 18446744073709551615`); one whose time would pass it takes
+  effect in the current slot's NBA region (`q=2 at 18446744073709551600`,
+  decision S01-D2; changed: the model aborted). The text gives no rule past
+  the last time value (SV 9.4.1 L11747-11751 defines delays, not the end of
+  time); llg follows industry-standard behaviour.
+- `negative_real_overflow`: tb's -1.0 is 2^64-1 units of 1ns (SV 9.4.1
+  L11749-11750: "If the delay expression evaluates to a negative value, it
+  shall be interpreted as a twos-complement unsigned integer of the same size
+  as a time variable."), which has no 64-bit count of 1ps design ticks: the
+  process waits one tick with a warning and prints `after` (decision S01-D1;
+  changed: the model aborted). Some simulators read a negative delay as zero;
+  llg follows the clause text.
+- `nonfinite_delay`: an infinite real delay has no tick count; the process
+  waits one tick with a warning (`after 1`, decision S01-D1; changed: the
+  model aborted).
 - `neg_function_delay`, `neg_program_always`: language-illegal neighbours
   (a delay in a function, an always procedure in a program).

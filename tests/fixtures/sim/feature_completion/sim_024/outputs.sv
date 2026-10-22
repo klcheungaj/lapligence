@@ -1,5 +1,5 @@
 // SIM-024: file and string outputs share the display formatter; writing to
-// a closed descriptor records an error for `$ferror` (SV 21.3).
+// a closed descriptor writes nothing, and `$ferror` of it is 0 (S25-D7).
 module tb;
   int fd, n, err;
   string line, msg;

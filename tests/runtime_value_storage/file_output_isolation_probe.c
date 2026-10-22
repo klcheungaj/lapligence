@@ -46,7 +46,10 @@ static int check_file_io(void) {
     llg_file_display_typed(descriptors[0] | 1u, "probe=%0d", &arg, 1, "probe", 1);
     for (int i = 0; i < 30; i++) llg_file_close(descriptors[i]);
     llg_file_close(descriptor);
-    if (llg_file_error(descriptor, NULL) != 1) return fail("closed descriptor status");
+    // A descriptor that is not open has no error status (decision S25-D7);
+    // descriptor 0 still reports the last failure.
+    if (llg_file_error(descriptor, NULL) != 0) return fail("closed descriptor status");
+    if (llg_file_error(0, NULL) != 1) return fail("global failure status");
     llg_rt_cleanup();
     return 0;
 }

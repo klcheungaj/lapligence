@@ -2,8 +2,12 @@
 static llg_nba_t* new_nba_in_region(uint64_t ticks, llg_region_t region) {
     if (!region_can_mutate("nonblocking scheduling")) return NULL;
     llg_proc_t* owner = g.in_deferred_action ? NULL : llg_current();
-    if (ticks > UINT64_MAX - g.now || g.nba_sequence == UINT64_MAX) {
-        fprintf(stderr, "llg: fatal: nonblocking assignment time or sequence overflow\n");
+    // An update whose time would pass the last 64-bit time takes effect in
+    // the current time slot's NBA region, as industry-standard simulators
+    // do (decision S01-D2).
+    if (ticks > UINT64_MAX - g.now) ticks = 0;
+    if (g.nba_sequence == UINT64_MAX) {
+        fprintf(stderr, "llg: fatal: nonblocking assignment sequence overflow\n");
         abort();
     }
     llg_nba_t* n = (llg_nba_t*)llg_checked_calloc(1, sizeof(llg_nba_t), "nonblocking assignment");

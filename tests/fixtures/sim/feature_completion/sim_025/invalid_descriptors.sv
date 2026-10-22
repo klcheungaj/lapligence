@@ -1,6 +1,6 @@
 // SIM-025 A03: a monitor or strobe on an invalid, unknown or closed
-// descriptor is ignored; the failure is reported through $ferror and the
-// simulation continues with its other monitors (SV 21.3.1, 21.3.7).
+// descriptor is ignored and the simulation continues with its other monitors;
+// $ferror of a closed multichannel descriptor is 0 (S25-D7; SV 21.3.1, 21.3.7).
 module tb;
   integer f, err;
   string msg;
@@ -11,9 +11,9 @@ module tb;
     $fmonitor(0, "zero %0d", a);
     $fmonitor(unknown, "unknown %0d", a);
     $fmonitor(32'h4000_0000, "unopened channel %0d", a);
-    $fmonitor(32'h8000_007f, "unopened fd %0d", a);
+    $fmonitor(32'h8000_0011, "unopened fd %0d", a);
     $fstrobe(0, "zero strobe %0d", a);
-    $fstrobe(32'h8000_007f, "unopened fd strobe %0d", a);
+    $fstrobe(32'h8000_0011, "unopened fd strobe %0d", a);
     f = $fopen("sim025_c.txt");
     $fclose(f);
     $fmonitor(f, "closed %0d", a);

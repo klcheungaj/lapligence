@@ -1655,6 +1655,10 @@ fn collect_expression_effects(
         }
         IrExprKind::DynamicCast(cast) => {
             effects.push(ExecutionEffect::ImmediateStore);
+            // A failed task-form cast ends the run (decision S11-D1).
+            if cast.failure_location.is_some() {
+                effects.push(ExecutionEffect::Terminate);
+            }
             collect_lhs_expression_effects(ir, &cast.lhs, effects, visited_calls);
             collect_expression_effects(ir, &cast.rhs, effects, visited_calls);
             if let Some(source) = &cast.class_source {
@@ -2128,6 +2132,8 @@ fn collect_expression_effects(
                         count,
                     } => {
                         effects.push(ExecutionEffect::ImmediateStore);
+                        // A descriptor that is not open ends the run (S26-D2).
+                        effects.push(ExecutionEffect::Terminate);
                         collect_expression_effects(ir, descriptor, effects, visited_calls);
                         if let Some(start) = start {
                             collect_expression_effects(ir, start, effects, visited_calls);
@@ -2358,7 +2364,9 @@ fn collect_object_query_effects(
             collect_mailbox_expr_effects(ir, a, effects, visited_calls);
             collect_mailbox_expr_effects(ir, b, effects, visited_calls);
         }
-        IrObjectQuery::ProcessEq(_, _) | IrObjectQuery::ProcessStatus(_) => {}
+        IrObjectQuery::ProcessEq(_, _) => {}
+        // A null handle ends the simulation (SV 8.4).
+        IrObjectQuery::ProcessStatus(_) => effects.push(ExecutionEffect::Terminate),
         IrObjectQuery::ArrayQuery(query) => {
             effects.push(ExecutionEffect::RuntimeService);
             if let IrArrayQueryTarget::String { value, .. } = &query.target {

@@ -153,6 +153,23 @@ fn null_handle_method_ends_the_simulation() {
 }
 
 #[test]
+fn null_handle_status_ends_the_statement() {
+    sim_cli::run_case_checked_matrix(SUITE, "neg_null_status", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "before\nfinal\n",
+            "{label}"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .starts_with("llg: null process handle access: process::status\n"),
+            "{label}: {output:?}"
+        );
+    });
+}
+
+#[test]
 fn self_await_is_an_error() {
     sim_cli::run_case_checked_matrix(SUITE, "neg_self_await", &[], &|label, output| {
         assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");

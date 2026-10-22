@@ -103,6 +103,11 @@ Verilog-2001 defaults (V2001 17.2.8, L19338-19343, L19364-19365):
 > continue towards the right-hand address given in the declaration of the
 > memory.
 
+`contexts_v2001.v` run under the 2001 edition follows this text and loads a
+descending memory from its left-hand address. Some simulators use the
+SystemVerilog rule (lowest address first) under every edition; llg follows
+the edition's text.
+
 > A warning message shall be issued if the number of data words in the file
 > differs from the number of words in the range implied by the start through
 > finish addresses.

@@ -121,26 +121,35 @@ static void delays(void) {
         sv4_destroy(&old); llg_gmp_sv4_destroy(&value);
     }
     CHECK(llg_gmp_sv4_delay_ticks(llg_gmp_sv4_from_u64(UINT64_MAX, 64, 0), 1) == UINT64_MAX);
-}
-int main(int argc, char** argv) {
-    if (argc > 1) {
-        if (!strcmp(argv[1], "packed-wide")) {
-            g4_t v = llg_gmp_sv4_zero(65, 0); llg_gmp_sv4_set_state(&v, 64, 1);
-            (void)llg_gmp_sv4_delay_ticks(v, 1);
-        } else if (!strcmp(argv[1], "packed-overflow"))
-            (void)llg_gmp_sv4_delay_ticks(llg_gmp_sv4_from_u64(UINT64_MAX, 64, 0), 2);
-        else if (!strcmp(argv[1], "packed-scale"))
-            (void)llg_gmp_sv4_delay_ticks(llg_gmp_sv4_zero(1, 0), 0);
-        else if (!strcmp(argv[1], "real-negative"))
-            (void)llg_gmp_sv4_real_delay_ticks(-0x1p64, 1, 1);
-        else if (!strcmp(argv[1], "real-nan"))
-            (void)llg_gmp_sv4_real_delay_ticks(NAN, 1, 1);
-        else if (!strcmp(argv[1], "real-scale"))
-            (void)llg_gmp_sv4_real_delay_ticks(0, 1, 0);
-        else
-            (void)llg_gmp_sv4_real_delay_ticks(0x1p64, 1, 1);
-        return 1;
+    // Decision S01-D1: integral delays keep their low 64 bits and their
+    // scaled tick count wraps; real delays without a 64-bit tick count wait
+    // one tick.
+    {
+        g4_t wide = llg_gmp_sv4_zero(65, 0);
+        sv4_t old_wide = sv4_zero(65, 0);
+        llg_gmp_sv4_set_state(&wide, 64, 1); llg_sv4_set_state(&old_wide, 64, 1);
+        llg_gmp_sv4_set_state(&wide, 3, 1); llg_sv4_set_state(&old_wide, 3, 1);
+        CHECK(llg_gmp_sv4_delay_ticks(wide, 1) == 8);
+        CHECK(sv4_delay_ticks(old_wide, 1) == 8);
+        sv4_destroy(&old_wide); llg_gmp_sv4_destroy(&wide);
+        g4_t max = llg_gmp_sv4_from_u64(UINT64_MAX, 64, 0);
+        sv4_t old_max = sv4_from_u64(UINT64_MAX, 64, 0);
+        CHECK(llg_gmp_sv4_delay_ticks(max, 2) == UINT64_MAX - 1u);
+        CHECK(sv4_delay_ticks(old_max, 1000) == UINT64_MAX - 999u);
+        sv4_destroy(&old_max); llg_gmp_sv4_destroy(&max);
     }
+    const double unrepresentable[] = {-0x1p64, NAN, INFINITY, -INFINITY, 0x1p64, 1e300};
+    for (size_t i = 0; i < sizeof(unrepresentable) / sizeof(unrepresentable[0]); ++i) {
+        CHECK(llg_gmp_sv4_real_delay_ticks(unrepresentable[i], 1, 1) == 1);
+        CHECK(sv4_real_delay_ticks(unrepresentable[i], 1, 1) == 1);
+    }
+    CHECK(llg_gmp_sv4_real_delay_ticks(0, 1, 0) == 1);
+    CHECK(sv4_real_delay_ticks(0, 1, 0) == 1);
+    // In range in local units, past 64 bits once scaled to design ticks.
+    CHECK(llg_gmp_sv4_real_delay_ticks(0x1p62, 4, 4) == 1);
+    CHECK(sv4_real_delay_ticks(-1.0, 1, 1000) == 1);
+}
+int main(void) {
     small_tables(); conversions(); delays();
     printf("real/time: %zu checks passed\n", checks);
     return 0;

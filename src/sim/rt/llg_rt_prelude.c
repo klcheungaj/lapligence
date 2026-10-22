@@ -18,6 +18,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <math.h>
+#include <float.h>
 #include <limits.h>
 #include <ctype.h>
 #include <errno.h>

@@ -150,7 +150,8 @@ Where the text leaves a result open, llg's choice has a portable case in
   `l2[0][1]` is Z).
 - S40-D5: a nonzero imported-task result with no disable is a fatal error.
 - S40-D6: an element access with a wrong number of indices is a fatal error;
-  the access does nothing and the run ends when the import returns.
+  the import's C code is abandoned at the access, nothing is copied out and
+  the run ends.
 
 ## Fixtures and oracles
 
@@ -164,6 +165,6 @@ companion's arithmetic, then compared with llg.
 | `aggregates` | Sized unpacked structures and arrays nested in each other, with reversed ranges, logic members carrying X/Z, string input/output/inout and result (A01, A02). | H.7.8 C layout: lowest index first, members in declaration order. |
 | `roundtrip_xz` | X and Z in every chunk of 70-bit vectors, output initial values, aliased input/output/inout actuals, a selected actual `mem[k][7:0]`, result assigned after copy-out, string result order, task outputs, 5000-bit vectors (heap staging) and logic scalars (A02). | Decisions S40-D1 and S40-D2. |
 | `svdpi_access` | Every `svdpi.h` routine llg provides: `svDpiVersion`, bit and part selects, all array queries for dims 0..4 and invalid dims, `svGetArrayPtr`, `svSizeOfArray`, `svGetArrElemPtr{,1,2,3}`, `svGet/Put{Bit,Logic}ArrElem{,1,2,3}[VecVal]` with in-range and out-of-range indices (A03). | H.11, H.12; decisions S40-D3 and S40-D4. |
-| `svdpi_index_count` | Element pointer, get and put accesses with a wrong number of indices: the first reports one error, the rest are quiet; all return NULL or the default and write nothing, `after the call` never prints, the final procedure shows the arrays unchanged; exit status 1 (A03). | H.12.4 L73337-73340; decision S40-D6. |
+| `svdpi_index_count` | Element pointer, get and put accesses with a wrong number of indices: the first reports one error and abandons the C function, so the later accesses and its last `printf` do not run, `after the call` never prints, the final procedure shows the arrays unchanged; exit status 1 (A03). | H.12.4 L73337-73340; decision S40-D6. |
 | `scopes_types` | One C function imported from two scopes, including an open-array import whose actual shape differs per scope; `pure` imports; enum, packed-struct and `integer` formals. | 35.5.4: one C function per C name. |
 | `neg_*` | Explicit errors: dynamic actuals of open formals, string or real elements in aggregates, aggregates over 1048575 payload bits, packed results, `ref`/`event`/class/unpacked-union formals, open arrays in exports, conflicting signatures, a missing import symbol (with `neg_missing_symbol.c`) and an unprovided routine `svGetTime` (with `neg_unprovided_routine.c`) (A03). | 35.5.5, 35.5.6, 35.5.6.1; llg limits in docs/known_issues.md. |

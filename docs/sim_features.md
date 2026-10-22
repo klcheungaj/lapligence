@@ -916,12 +916,16 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Delays and precision** — Integer, fractional, scientific, unit-suffixed,
   parameter and runtime packed/real expressions, function results and task inputs
   are evaluated once for statement/intra-assignment delays. Local precision
-  rounding (halves away from zero) precedes checked 64-bit femtosecond
+  rounding (halves away from zero) precedes 64-bit femtosecond
   scheduling (1fs–100s units, all of which `%t` reports). Sub-precision delays
   round to zero; X/Z means zero. Negative packed values convert to unsigned
   64-bit time before scaling; finite negative reals, constant or runtime,
-  convert the same way after local rounding. Nonfinite reals reject, and a delay
-  past the 64-bit tick range fails before it is queued
+  convert the same way after local rounding. A real delay without a 64-bit
+  tick count (nonfinite or too large) waits one tick with a warning, and an
+  integral delay's tick count wraps modulo 2^64 (S01-D1). A blocking delay
+  past the last 64-bit time is a fatal error before it is queued (final
+  procedures run); a nonblocking update past it takes effect in the current
+  slot (S01-D2)
   ([SIM-001](../tests/sim_feature_completion/sim_001.rs)). Continuous/gate delays
   are separately bounded in §8.
   V §9.7.1; SV §§3.14, 5.8 **[1995/SV-2005]**.
@@ -1099,8 +1103,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   state and conversion boundaries in admitted scalar/vector and fixed contexts.
   `$cast` supports packed/real values, enum membership against the complete
   source value and nominal class checks. Selectors and the source are evaluated
-  once and only a successful cast writes; a failed task-form `$cast` reports a
-  run-time error. Non-singular destinations reject. Fixed bit-stream casts are
+  once and only a successful cast writes; a failed task-form `$cast` is a
+  run-time error that ends the run (final procedures run after an enum
+  failure, not after a class one), and a null class source casts to null
+  (S11-D1, S11-D2). Non-singular destinations reject. Fixed bit-stream casts are
   described below; descriptor-backed arrays reshape and clear X/Z for two-state
   targets before comparison or storage. Real-source enum `$cast` and unsupported
   aggregate/net/reference targets remain restricted.
@@ -1712,7 +1718,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   value differs from the printed one, governed by the `$monitoron/$monitoroff`
   flag, which outlives the list. Any number of `$fmonitor` lists are
   independent, and `$fclose` cancels them per channel (also pending `$fstrobe`s);
-  an invalid or closed descriptor registers nothing and sets `$ferror`. Packed,
+  a closed or invalid descriptor registers nothing, and a multichannel descriptor
+  keeps only its channels that are open (S25-D7). Packed,
   real, string and `%p` container/record arguments, nested expressions, function
   calls, `%m`/`%t`/`$time` work, also in static tasks and functions (module
   variables, static formals and locals); arguments that read through a class or
@@ -1753,7 +1760,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Packed reads ignore start/count; the memory argument is legal in 2001
   without admitting other whole-array uses. `%u`/`%z` read and `$fwrite`
   writes 32-bit little-endian vecval words.
-  Text and binary reads mix on one stream
+  Text and binary reads mix on one stream. `$fread` from a descriptor that is
+  not open ends the run with a fatal error; final procedures run (S26-D2)
   ([sim_026](../tests/fixtures/sim/feature_completion/sim_026/readme.md)).
   V §17.2.4.4; SV §21.3.4.4 **[2001/SV-2005]**.
 - 🟦 **File position/status** — `$ftell/$fseek/$rewind/$fflush/$ferror/$feof`
@@ -2111,7 +2119,8 @@ These are bounded implementations, not full verification-infrastructure support.
   ([sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md)).
   A null receiver, property access or copy
   source is a run-time error at its source position that ends the run before
-  the rest of the statement runs (S99-D8)
+  the rest of the statement runs; the final procedures still run (S99-D8,
+  S99-D11)
   ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).
   Methods hold named `begin`-`end` and `fork`-`join` blocks with automatic
   and static locals; a `disable` of such a block or of a class task, from the
@@ -2148,7 +2157,8 @@ These are bounded implementations, not full verification-infrastructure support.
   stay on the instance named at the call while the variable is rebound; event
   formals of every direction keep their identity; a method call or member
   access through a null handle is a fatal run-time error at its source
-  position that ends the run before the rest of the statement runs (S99-D8)
+  position that ends the run before the rest of the statement runs, without
+  the final procedures (S99-D8)
   ([sim_012](../tests/fixtures/sim/feature_completion/sim_012/readme.md)).
   Synchronous drives through handles, views, class properties and array
   elements (output, skewed, cycle-delayed, selected and inout-net drives) go
@@ -2363,7 +2373,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   as `svOpenArrayHandle` with the actual's ranges (35.5.6.1, H.12). Every
   `svdpi.h` canonical-access, bit/part-select, array-query and open-array
   element routine of H.11-H.12 is provided, plus `svDpiVersion`
-  ("1800-2005"). DPI-C libraries compile against the `svdpi.h` that llg
+  ("1800-2005"). An element access with the wrong number of indices ends the
+  run and abandons the import's C code at the access (S40-D6). DPI-C libraries compile against the `svdpi.h` that llg
   writes beside the generated model (`--gen-only` shows it); it is the Annex I
   header with `<inttypes.h>` for the fixed-width types on every host (I.2).
   `byte` is C `char` (Table H.1) in llg's prototypes; its signedness is the

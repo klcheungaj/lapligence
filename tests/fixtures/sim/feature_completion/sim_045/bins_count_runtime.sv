@@ -5,7 +5,7 @@
 // S45-D5). A positive size gives that many bins.
 module tb;
   bit [3:0] a;
-  covergroup g_count(int n);
+  covergroup g_count(int n); option.per_instance = 1;
     cp: coverpoint a { bins b[n] = {[0:3]}; bins other = {9}; }
   endgroup
   g_count two;

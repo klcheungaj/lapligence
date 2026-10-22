@@ -461,6 +461,16 @@ static uint64_t llg_memory_range_length(int64_t first, int64_t last) {
     return distance == UINT64_MAX ? UINT64_MAX : distance + 1u;
 }
 
+/* X and Z bits of a start or finish address read as 0 (decision S27-D26,
+ * industry-standard behaviour; 21.4 gives no meaning to an unknown
+ * address). */
+static int llg_memory_address_index(sv4_t address, int64_t* index) {
+    sv4_t known = sv4_to_two_state(address);
+    int converted = sv4_to_index_i64(known, index);
+    sv4_destroy(&known);
+    return converted;
+}
+
 static int llg_memory_bounds(const char* path, uint64_t total,
                              const int32_t* dims, int n_dims,
                              const uint64_t* strides, uint64_t origin,
@@ -474,12 +484,12 @@ static int llg_memory_bounds(const char* path, uint64_t total,
     }
     int32_t left_value = dims[0], right_value = dims[1];
     int64_t left = left_value, right = right_value;
-    if (has_start && !sv4_to_index_i64(start, first)) {
-        llg_memory_error(path, "start address is unknown or outside the index range");
+    if (has_start && !llg_memory_address_index(start, first)) {
+        llg_memory_error(path, "start address is outside the index range");
         return 0;
     }
-    if (has_finish && !sv4_to_index_i64(finish, last)) {
-        llg_memory_error(path, "finish address is unknown or outside the index range");
+    if (has_finish && !llg_memory_address_index(finish, last)) {
+        llg_memory_error(path, "finish address is outside the index range");
         return 0;
     }
     if (!has_start) {
@@ -1250,17 +1260,21 @@ static int llg_assoc_memory_bounds(const char* filename, llg_assoc_keys_t keys,
         llg_memory_error(filename, "associative memory needs an integral index type");
         return 0;
     }
-    if (has_start && sv4_is_unknown(start)) {
-        llg_memory_error(filename, "start address is unknown or outside the index range");
-        return 0;
+    // X and Z address bits read as 0, as for other memories (S27-D26).
+    if (has_start) {
+        sv4_t known = sv4_to_two_state(start);
+        *first = llg_assoc_memory_key(keys, known);
+        sv4_destroy(&known);
+    } else {
+        *first = sv4_from_u64(0, keys.index_width, keys.index_signed);
     }
-    if (has_finish && sv4_is_unknown(finish)) {
-        llg_memory_error(filename, "finish address is unknown or outside the index range");
-        return 0;
+    if (has_finish) {
+        sv4_t known = sv4_to_two_state(finish);
+        *last = llg_assoc_memory_key(keys, known);
+        sv4_destroy(&known);
+    } else {
+        *last = (sv4_t)SV4_EMPTY;
     }
-    *first = has_start ? llg_assoc_memory_key(keys, start)
-                       : sv4_from_u64(0, keys.index_width, keys.index_signed);
-    *last = has_finish ? llg_assoc_memory_key(keys, finish) : (sv4_t)SV4_EMPTY;
     return 1;
 }
 

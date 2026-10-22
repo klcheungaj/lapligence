@@ -21,7 +21,9 @@ backends, and (except the adopted witness) after snapshot/Db destruction.
   destinations, aliasing, two-state/sign/real conversion, and static width/sign
   and unpacked bit-stream casts with state conversion.
 - `cast_task_failure` writes its values to stderr: the failed task-form cast is
-  a run-time error, leaves the destination unchanged and execution continues.
+  a run-time error that leaves the destination unchanged and ends the run, so
+  `B 5` no longer prints (decision S11-D2, industry-standard behaviour; SV
+  6.24.2 L7430-7431 does not say whether the error ends the simulation).
 - `descriptor_casts` uses 65,537-cell and 5,000-cell arrays. Reshaping and
   two-state casts, conditionals and calls stay descriptor values; the test also
   bounds the generated model size.

@@ -298,6 +298,13 @@ static void llg_scan_store_real(const llg_file_input_target_t* target, double va
     llg_ba_d(target->real, target->shortreal ? (double)(float)value : value);
 }
 
+/* A real field too large for a double reads as the largest finite double of
+ * its sign (decision S26-D22, industry-standard behaviour; Table 21-8 gives
+ * the syntax only). The field syntax admits no infinity of its own. */
+static double llg_scan_finite_real(double value) {
+    return isinf(value) ? copysign(DBL_MAX, value) : value;
+}
+
 static int llg_scan_assign(const unsigned char* bytes, size_t length, char conversion,
                            const llg_file_input_target_t* target, uint32_t width,
                            int is_signed) {
@@ -320,7 +327,7 @@ static int llg_scan_assign(const unsigned char* bytes, size_t length, char conve
         memcpy(text, bytes, length);
         text[length] = 0;
         char* end = NULL;
-        double value = strtod(text, &end);
+        double value = llg_scan_finite_real(strtod(text, &end));
         int valid = end == text + length;
         free(text);
         if (!valid) return 0;
@@ -450,6 +457,7 @@ static int llg_scan_store_time(const unsigned char* bytes, size_t length,
                                const llg_file_input_target_t* target) {
     double value;
     if (!target || !llg_scan_time_value(bytes, length, input, &value)) return 0;
+    value = llg_scan_finite_real(value);
     if (target->kind == LLG_FILE_INPUT_REAL && target->real) {
         llg_scan_store_real(target, value);
         return 1;
@@ -753,7 +761,7 @@ static int llg_file_read_byte(llg_file_slot_t* slot, unsigned char* output) {
 
 int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target) {
     llg_file_slot_t* slot;
-    if (!target || !llg_file_single_ordinary(descriptor, &slot) || target->width == 0)
+    if (!llg_file_read_source(descriptor, &slot) || !target || target->width == 0)
         return 0;
     // The bytes fill the variable from its most significant byte down; the
     // bytes the file could not supply become zero, also when it supplied
@@ -778,8 +786,8 @@ static int fixed_file_read_array(uint32_t descriptor, sv4_t* values, llg_fixed_a
                         const int32_t* dimensions, int dimension_count,
                         int has_start, sv4_t start, int has_count, sv4_t count) {
     llg_file_slot_t* slot;
-    if ((!values && !fixed) || total == 0 || elem_width == 0 || !dimensions || dimension_count <= 0 ||
-        !llg_file_single_ordinary(descriptor, &slot)) return 0;
+    if (!llg_file_read_source(descriptor, &slot) || (!values && !fixed) || total == 0 ||
+        elem_width == 0 || !dimensions || dimension_count <= 0) return 0;
     /* IEEE 1364-2001 17.2.4.4 / 1800-2009 21.3.4.4: a memory
        is read from its lowest address toward its highest, not in declaration
        order. Rank-one descending storage therefore walks backward. */
@@ -847,7 +855,8 @@ static int fixed_file_read_array(uint32_t descriptor, sv4_t* values, llg_fixed_a
 
 static void llg_file_write_typed(uint32_t descriptor, const char* output,
                                  size_t length, int newline) {
-    if (!llg_file_mask_valid(descriptor)) return;
+    descriptor = llg_file_output_descriptor(descriptor);
+    if (!descriptor) return;
     for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
         if (!llg_file_selected(descriptor, i)) continue;
         llg_file_slot_t* slot = &llg_file_slots[i];
@@ -958,7 +967,12 @@ static int llg_file_read_resizable(uint32_t descriptor, sv4_t* values, size_t si
         llg_file_global_failure("file read destination is too large");
         return 0;
     }
-    if (size == 0) return 0;
+    if (size == 0) {
+        // An empty destination still requires an open file (S26-D2).
+        llg_file_slot_t* slot;
+        (void)llg_file_read_source(descriptor, &slot);
+        return 0;
+    }
     const int32_t dimensions[2] = {0, (int32_t)(size - 1u)};
     int result = fixed_file_read_array(descriptor, values, NULL, elem_width, elem_signed,
                                        elem_two_state, size, dimensions, 1, has_start,

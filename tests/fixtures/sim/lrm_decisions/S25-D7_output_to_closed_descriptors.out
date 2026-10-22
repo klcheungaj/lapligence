@@ -1,0 +1,5 @@
+stdout of a partly closed multichannel descriptor
+closed fd: err=0 msg=kept
+multichannel: err=0 msg=kept
+stdout channel: err=0 msg=kept
+done

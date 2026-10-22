@@ -1,0 +1,5 @@
+line c=2 s=[ab]
+at end c=0 s=[] len=0
+empty file c=0 s=[]
+write-only c=0 s=[]
+closed c=0 s=[keep]

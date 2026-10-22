@@ -3,29 +3,29 @@
 module tb;
   logic clk = 0;
   bit [2:0] v;
-  covergroup at_event @(posedge clk);
+  covergroup at_event @(posedge clk); option.per_instance = 1;
     option.at_least = 2;
     lo: coverpoint v { bins b = {[0:3]}; }
     hi: coverpoint v { bins b = {[4:7]}; }
   endgroup
-  covergroup strobed @(posedge clk);
+  covergroup strobed @(posedge clk); option.per_instance = 1;
     type_option.strobe = 1;
     lo: coverpoint v { bins b = {[0:3]}; }
     hi: coverpoint v { bins b = {[4:7]}; }
   endgroup
-  covergroup strobed_twice @(posedge clk);
+  covergroup strobed_twice @(posedge clk); option.per_instance = 1;
     type_option.strobe = 1;
     option.at_least = 2;
     coverpoint v { bins hi = {[4:7]}; }
   endgroup
-  covergroup called;
+  covergroup called; option.per_instance = 1;
     type_option.strobe = 1;
     coverpoint v { bins lo = {[0:3]}; }
   endgroup
   class Box;
     logic c = 0;
     bit [2:0] x;
-    covergroup cg @(posedge c);
+    covergroup cg @(posedge c); option.per_instance = 1;
       type_option.strobe = 1;
       four: coverpoint x { bins b = {4}; }
       six: coverpoint x { bins b = {6}; }

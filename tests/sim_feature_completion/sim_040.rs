@@ -281,8 +281,8 @@ fn svdpi_routines_handle_valid_boundary_and_invalid_arguments() {
     );
 }
 
-/// A wrong number of element indices ends the run when the import returns;
-/// the final procedure runs (S40-D6).
+/// A wrong number of element indices abandons the import's C code and ends
+/// the run; the final procedure runs (S40-D6).
 #[test]
 fn a_wrong_element_index_count_ends_the_run() {
     let directory = sim_harness::TempDir::new("sim040").expect("temporary directory");

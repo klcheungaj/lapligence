@@ -1,4 +1,5 @@
-use super::{reject_case, run_case};
+use super::run_case;
+use crate::sim_cli;
 
 #[test]
 fn runtime_delays_capture_values_and_keep_function_and_task_dependencies() {
@@ -43,12 +44,15 @@ fn negative_packed_delays_convert_to_unsigned_time_width() {
 }
 
 #[test]
-fn runtime_delay_overflow_and_nonfinite_values_fail_explicitly() {
-    for fixture in [
-        "dynamic_delay_wide_overflow",
-        "dynamic_delay_scale_overflow",
-    ] {
-        reject_case(fixture, "delay exceeds the 64-bit tick range");
-    }
-    reject_case("dynamic_delay_nonfinite", "real delay must be finite");
+fn runtime_delays_without_a_tick_count_wait_one_tick_and_integral_delays_wrap() {
+    // Decision S01-D1.
+    run_case("dynamic_delay_wide_overflow", "after 0\n");
+    run_case("dynamic_delay_scale_overflow", "after 1\n");
+    sim_cli::run_case(
+        "partial_features",
+        "dynamic_delay_nonfinite",
+        "after 1\n",
+        "",
+        &["real delay is NaN; using 1 tick"],
+    );
 }

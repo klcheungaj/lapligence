@@ -34,7 +34,8 @@ so Windows text mode maps newlines and its positions differ.
 for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
 (`$fwrite("%u", 16'h1234)`). `input_failures.sv` writes `failures.txt`
 (`1 2 zz`) and `short.bin` (`41 42 43`). `invalid_descriptors.sv` writes
-`closed.txt` and `writeonly.txt`.
+`closed.txt` and `writeonly.txt`; `fread_invalid_descriptor.sv` writes
+`fread_closed.txt`.
 
 ## A01: legal destinations, byte counts, bit order and unread suffix
 
@@ -114,8 +115,10 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
     right-justified in a wider packed destination (S26-D8).
   - `$ungetc` returns 0 on success (L36817-36818: "Otherwise, code is set to
     zero."; S26-D14).
-  - At end of file `$fgets` returns 0 and leaves its destination unchanged
-    (L36844).
+  - At end of file `$fgets` returns 0 (L36844), and its string destination
+    becomes empty (line E): the text does not say what the destination
+    holds when nothing is read, and llg follows industry-standard behaviour
+    (S26-D21).
   - `$rewind is equivalent to $fseek (fd,0,0)` (L37141). `$fseek` beyond the
     end is allowed (L37145-37146), and repositioning clears the end-of-file
     and error state (S26-D11).
@@ -137,6 +140,9 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
     return 0;
   - overlong integral fields keep their least significant bits; `%s` into a
     24-bit vector keeps its last three characters;
+  - a real field beyond the range of a double (lines I and J, and `r4` of
+    `scan_conversions` line D) reads as the largest finite double of its sign
+    (S26-D22; Table 21-8 gives the syntax only);
   - `%d` reading a single `z` assigns all-Z and leaves the second `z` unread;
   - `%u` with three bytes left stores them in the low three bytes, keeps the
     top byte and returns 0, then returns -1 at end of file (S26-D3);
@@ -147,9 +153,18 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
   write-only file. `$fgetc` and `$ungetc` return EOF. `$fscanf` returns 0
   on every descriptor that is not an open file (lines D, I and J) and EOF on
   the write-only file (line K), whose input ends at once (S26-D2).
-  `$fgets` and `$fread` return 0 (L36844, L37090). `$ftell` and `$fseek`
+  `$fgets` returns 0 (L36844). `$ftell` and `$fseek`
   return -1 (L37125, L37154). `$feof` returns -1 (S26-D2). Destinations stay
-  unchanged, and `$ferror` reports a nonzero code with a message (L37203-37205).
+  unchanged. `$ferror` of the closed descriptor (line H) returns 0 and leaves
+  its string empty: the text gives no result for a descriptor that is not
+  open, and llg follows industry-standard behaviour (S25-D7). `$fgetc` of
+  descriptor 0 or of a multichannel descriptor (lines I and J) returns EOF,
+  as 21.3.4.1 states for a read error (L36806); some simulators return 0.
+- `fread_invalid_descriptor`: `$fread` from a descriptor that is not open
+  ends the run with a fatal error; the memory keeps its contents and the
+  final procedures run (S26-D2, industry-standard behaviour: the text gives
+  no result for a descriptor that is not open, and L37090 covers only read
+  errors on an open file).
 
 ## A03: illegal destinations
 

@@ -13,10 +13,10 @@ module tb;
   endclass
   class Agent;
     bit [3:0] level;
-    covergroup on_clock @(posedge clk);
+    covergroup on_clock @(posedge clk); option.per_instance = 1;
       coverpoint level;
     endgroup
-    covergroup on_call with function sample(bit [1:0] k);
+    covergroup on_call with function sample(bit [1:0] k); option.per_instance = 1;
       ck: coverpoint k;
       cl: coverpoint level { bins low = {[0:7]}; bins high = {[8:15]}; }
     endgroup
@@ -29,7 +29,7 @@ module tb;
       on_call.sample(k);
     endfunction
   endclass
-  covergroup held(Item item, string tag);
+  covergroup held(Item item, string tag); option.per_instance = 1;
     coverpoint item.p;
   endgroup
   Agent a1, a2;

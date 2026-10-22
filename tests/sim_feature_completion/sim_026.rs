@@ -115,6 +115,22 @@ fn invalid_descriptors_fail_without_side_effects() {
     );
 }
 
+#[test]
+fn fread_from_invalid_descriptor_ends_the_run() {
+    sim_cli::run_case_checked_matrix(SUITE, "fread_invalid_descriptor", &[], &|label, output| {
+        assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            include_str!("../fixtures/sim/feature_completion/sim_026/fread_invalid_descriptor.out"),
+            "{label}"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("$fread: invalid file descriptor"),
+            "{label}: {output:?}"
+        );
+    });
+}
+
 // A03: illegal destinations are rejected before a model is built.
 #[test]
 fn neg_unpacked_aggregate_destinations() {

@@ -6,7 +6,7 @@ class Source;
 endclass
 class Monitor;
   Source src;
-  covergroup cg @(posedge src.clk);
+  covergroup cg @(posedge src.clk); option.per_instance = 1;
     coverpoint src.val;
   endgroup
   function new(Source s);

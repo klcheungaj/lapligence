@@ -384,6 +384,30 @@ fn s26_d2_invalid_descriptor_input() {
 }
 
 #[test]
+fn s26_d2_fread_ends_run() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S26-D2_fread_ends_run.out");
+    sim_cli::run_case_checked_matrix(SUITE, "S26-D2_fread_ends_run", &[], &|label, output| {
+        runtime_error(label, output, expected, "$fread: invalid file descriptor");
+    });
+}
+
+#[test]
+fn s26_d21_fgets_nothing_read() {
+    run_decision(
+        "S26-D21_fgets_nothing_read",
+        include_str!("fixtures/sim/lrm_decisions/S26-D21_fgets_nothing_read.out"),
+    );
+}
+
+#[test]
+fn s26_d22_real_field_overflow() {
+    run_decision(
+        "S26-D22_real_field_overflow",
+        include_str!("fixtures/sim/lrm_decisions/S26-D22_real_field_overflow.out"),
+    );
+}
+
+#[test]
 fn s26_d3_unformatted_words() {
     run_decision(
         "S26-D3_unformatted_words",
@@ -548,6 +572,14 @@ fn s25_d6_report_order_in_slot() {
     run_decision(
         "S25-D6_report_order_in_slot",
         include_str!("fixtures/sim/lrm_decisions/S25-D6_report_order_in_slot.out"),
+    );
+}
+
+#[test]
+fn s25_d7_output_to_closed_descriptors() {
+    run_decision(
+        "S25-D7_output_to_closed_descriptors",
+        include_str!("fixtures/sim/lrm_decisions/S25-D7_output_to_closed_descriptors.out"),
     );
 }
 
@@ -2789,6 +2821,63 @@ fn s99_d7_vif_implicit_sensitivity() {
 }
 
 #[test]
+fn s01_d1_delay_tick_counts() {
+    run_decision(
+        "S01-D1_delay_tick_counts",
+        include_str!("fixtures/sim/lrm_decisions/S01-D1_delay_tick_counts.out"),
+    );
+}
+
+#[test]
+fn s01_d2_end_of_time() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S01-D2_end_of_time.out");
+    sim_cli::run_case_checked_matrix(SUITE, "S01-D2_end_of_time", &[], &|label, output| {
+        runtime_error(
+            label,
+            output,
+            expected,
+            "simulation time overflow at 18446744073709551615 while scheduling a delay of 1 tick(s)",
+        );
+    });
+}
+
+#[test]
+fn s11_d1_task_cast_class_failure() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S11-D1_task_cast_class_failure.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S11-D1_task_cast_class_failure",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "$cast failed to assign an incompatible value at tb:36:5",
+            );
+        },
+    );
+}
+
+#[test]
+fn s11_d2_task_cast_enum_failure() {
+    let expected = include_str!("fixtures/sim/lrm_decisions/S11-D2_task_cast_enum_failure.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S11-D2_task_cast_enum_failure",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "$cast failed to assign an incompatible value at tb:22:5",
+            );
+        },
+    );
+}
+
+#[test]
 fn s99_d8_null_access_stops() {
     let expected = include_str!("fixtures/sim/lrm_decisions/S99-D8_null_access_stops.out");
     sim_cli::run_case_checked_matrix(SUITE, "S99-D8_null_access_stops", &[], &|label, output| {
@@ -2796,9 +2885,28 @@ fn s99_d8_null_access_stops() {
             label,
             output,
             expected,
-            "virtual interface access failed: virtual interface member access at tb:26:45",
+            "virtual interface access failed: virtual interface member access at tb:28:45",
         );
     });
+}
+
+#[test]
+fn s99_d11_null_class_access_runs_finals() {
+    let expected =
+        include_str!("fixtures/sim/lrm_decisions/S99-D11_null_class_access_runs_finals.out");
+    sim_cli::run_case_checked_matrix(
+        SUITE,
+        "S99-D11_null_class_access_runs_finals",
+        &[],
+        &|label, output| {
+            runtime_error(
+                label,
+                output,
+                expected,
+                "null class handle access: property access at tb:22:",
+            );
+        },
+    );
 }
 
 #[test]
@@ -2881,6 +2989,14 @@ fn s26_d19_errors_end_the_load() {
     run_decision(
         "S26-D19_errors_end_the_load",
         include_str!("fixtures/sim/lrm_decisions/S26-D19_errors_end_the_load.out"),
+    );
+}
+
+#[test]
+fn s27_d26_unknown_address_bits() {
+    run_decision(
+        "S27-D26_unknown_address_bits",
+        include_str!("fixtures/sim/lrm_decisions/S27-D26_unknown_address_bits.out"),
     );
 }
 

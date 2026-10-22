@@ -8,6 +8,15 @@ numbers refer to the `pdftotext -layout` extraction
 are the register decisions
 [S45-D1 and later](../../../../../docs/lrm_decisions.md#coverpoint-bins-transitions-crosses-and-options-sim-045).
 
+## Portability of instance coverage
+
+Every covergroup in `bins_count_runtime`, `cross_illegal`, `crosses`,
+`illegal`, `illegal_default` and `transition_illegal` sets
+`option.per_instance = 1` on its header line (so no other line moves).
+Without it, 19.7 (L33285-33289) does not require an implementation to keep
+instance-specific information, and some simulators then return 0 from
+`get_inst_coverage()`; llg's results are the same either way.
+
 ## Clauses relied on
 
 - 19.5, L32409-32411: "The bins for a coverage point can be automatically

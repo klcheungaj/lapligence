@@ -307,6 +307,8 @@ static llg_dpi_scope_t* llg_dpi_table = NULL;
 static size_t llg_dpi_table_count = 0;
 /* The live call-chain state; each crossing keeps the state it replaced. */
 static llg_dpi_call_t llg_dpi_now = {NULL, NULL, 0, LLG_DPI_CHAIN_NONE, 0};
+/* Innermost guarded foreign call (llg_dpi_guard_t). */
+static llg_dpi_guard_t* llg_dpi_guard_top = NULL;
 
 void llg_dpi_model_init(llg_dpi_scope_t* scopes, size_t count) {
     llg_dpi_table = scopes;
@@ -328,6 +330,7 @@ void llg_dpi_shutdown(void) {
     llg_dpi_table_count = 0;
     llg_dpi_next_site = NULL;
     memset(&llg_dpi_now, 0, sizeof(llg_dpi_now));
+    llg_dpi_guard_top = NULL;
 }
 
 /* The table entry `scope` designates, or NULL for any other value: user
@@ -362,6 +365,28 @@ void llg_dpi_import_enter(llg_dpi_call_t* saved, llg_dpi_scope_t* scope, int tas
     llg_dpi_now.chain = scope ? LLG_DPI_CHAIN_CONTEXT : LLG_DPI_CHAIN_NONCONTEXT;
     llg_dpi_now.acked = 0;
     llg_dpi_next_site = NULL;
+}
+
+void llg_dpi_guard_push(llg_dpi_guard_t* guard) {
+    guard->outer = llg_dpi_guard_top;
+    llg_dpi_guard_top = guard;
+}
+
+void llg_dpi_guard_pop(llg_dpi_guard_t* guard) {
+    llg_dpi_guard_top = guard->outer;
+}
+
+/* Abandon the foreign code of the innermost guarded import after a fatal
+ * error it caused; without a guard the access only does nothing. */
+static void llg_dpi_abandon_foreign_code(void) {
+    llg_dpi_guard_t* guard = llg_dpi_guard_top;
+    if (!guard) return;
+    llg_dpi_guard_top = guard->outer;
+    longjmp(guard->jump, 1);
+}
+
+void llg_dpi_import_abort(const llg_dpi_call_t* saved) {
+    llg_dpi_now = *saved;
 }
 
 void llg_dpi_import_leave(const llg_dpi_call_t* saved, const char* c_name, int task) {
@@ -709,9 +734,10 @@ int svSizeOfArray(const svOpenArrayHandle h) {
 
 /* Element address for exactly `count` original-range indices, else NULL. */
 /* An element access whose number of indices differs from the array's
- * unpacked dimensions is a fatal error (S40-D6): the access does nothing and
- * the run ends when the import returns, like a protocol violation. An index
- * outside its dimension only selects no element (SV 7.4.6, S40-D4). */
+ * unpacked dimensions is a fatal error (S40-D6): the foreign code of the
+ * import that received the handle is abandoned at the access, and the run
+ * ends. An index outside its dimension only selects no element (SV 7.4.6,
+ * S40-D4). */
 static unsigned char* llg_dpi_element_at(const svOpenArrayHandle h, int count, const int* index) {
     const llg_dpi_open_t* open = (const llg_dpi_open_t*)h;
     if (open && count != open->dims && !llg_rt_exiting()) {
@@ -721,6 +747,7 @@ static unsigned char* llg_dpi_element_at(const svOpenArrayHandle h, int count, c
                 count, open->dims);
         llg_rt_mark_failed();
         llg_rt_fatal_typed(0, "DPI-C open array index count", NULL, 0, "", "svdpi.h");
+        llg_dpi_abandon_foreign_code();
     }
     if (!open || count != open->dims || count < 1) return NULL;
     const llg_dpi_type_t* level = open->type;

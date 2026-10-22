@@ -35,7 +35,7 @@ for the boundaries these tests do not cover.
 | `activation_frames.sv` | Reentrant automatic subroutines, loop variables shared by their `join_none` branches (one per loop execution), shadowed declarations and retained fork activations |
 | `real_activation_capture.sv` | Automatic real locals shared with `join_none` branches after the declaring block continues |
 | `inertial_*.sv` | Pulse cancellation, captured driver values, unchanged deadlines, scalar/net strengths, region settling, module precision, lifetime, overflow, vector transition selection and per-element array cancellation |
-| `dynamic_delay_*.sv`, `blocking_real_delay.sv`, `unknown_delay_zero.sv`, `negative_*delay*.sv` | Runtime delay capture, module precision, real blocking captures, X/Z and negative packed delays, overflow diagnostics |
+| `dynamic_delay_*.sv`, `blocking_real_delay.sv`, `unknown_delay_zero.sv`, `negative_*delay*.sv` | Runtime delay capture, module precision, real blocking captures, X/Z and negative packed delays; integral delays keep their low 64 bits and their scaled tick count wraps, and a real delay without a 64-bit tick count waits one tick with a warning (decision S01-D1) |
 | `*select_ranges.sv` | Ascending/nonzero ranges, array-element selection and invalid indices |
 | `array_indexed_*.sv` | Multidimensional element indexed selections, two-state/real conversion, limb boundaries and captured NBA masks |
 | `math_*.sv` | Runtime real math, numeric conversion, one-time argument evaluation and C domain results |

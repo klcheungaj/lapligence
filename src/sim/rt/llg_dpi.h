@@ -7,10 +7,17 @@
 #ifndef LLG_DPI_H
 #define LLG_DPI_H
 
+#include <setjmp.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #include "llg_rt.h"
+
+#if defined(_MSC_VER)
+/* Import thunks with open-array formals call setjmp (llg_dpi_guard_t);
+ * generated models contain no C++ objects whose destruction it could skip. */
+#pragma warning(disable : 4611)
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -115,6 +122,24 @@ typedef struct llg_dpi_call {
     uint8_t chain;
     uint8_t acked;
 } llg_dpi_call_t;
+
+/* The foreign call of an import with open-array formals runs under a guard
+ * on the thunk's C stack. A fatal svdpi.h access in that foreign code
+ * (S40-D6) abandons it: the runtime pops the innermost guard and jumps back
+ * to its thunk, which restores the chain state, releases its value scopes
+ * from `mark` and returns without copying anything out. Imports run
+ * synchronously on one native stack (an exported task cannot consume time),
+ * so the guards nest like the calls. */
+typedef struct llg_dpi_guard {
+    jmp_buf jump;
+    struct llg_dpi_guard* outer;
+    llg_value_scope_t* mark;
+} llg_dpi_guard_t;
+void llg_dpi_guard_push(llg_dpi_guard_t* guard);
+void llg_dpi_guard_pop(llg_dpi_guard_t* guard);
+/* Restore the chain state saved by llg_dpi_import_enter after the foreign
+ * code was abandoned; no protocol check applies. */
+void llg_dpi_import_abort(const llg_dpi_call_t* saved);
 
 /* Set by an import's call site just before the call and consumed by the
  * import thunk (cleared after the call when the model keeps no call-chain

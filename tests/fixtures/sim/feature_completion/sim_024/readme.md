@@ -141,8 +141,12 @@ library binding `work.leaf`.
 
 `$monitor` reprints when a formatted container or record member changes;
 `$strobe` formats at the end of its time step. `$fdisplay`/`$fwrite` use the
-same formatter; writing to a closed descriptor writes nothing and records
-`invalid or closed file descriptor` for `$ferror`.
+same formatter; writing to a closed descriptor writes nothing, and `$ferror`
+of a descriptor that is not open returns 0 and leaves its string unchanged
+(`C|0||`; decision S25-D7, industry-standard behaviour: SV 21.3.7
+L37203-37205 gives the error status of "the most recent operation" without
+covering a descriptor that is not open; changed: it returned 1 and
+`invalid or closed file descriptor`).
 
 ## Run-time format errors (`dynamic_missing`)
 

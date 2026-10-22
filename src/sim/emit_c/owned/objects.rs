@@ -360,13 +360,12 @@ impl Frame<'_, '_> {
             }
             ProcessStatus(handle) => {
                 let handle = self.process_value(handle)?;
-                let result = self.value(
-                    format!("sv4_from_u64(llg_process_status({}), 32, 1)", handle.code()),
-                    32,
-                    true,
-                );
+                let status = self.scalar("int", format!("llg_process_status({})", handle.code()));
                 self.native_discard(handle);
-                result
+                // A null handle reports KILLED after its fatal error (SV 8.4,
+                // S99-D11): the rest of the statement must not run.
+                self.exit_on_failed_access(&format!("{status} == LLG_PROCESS_KILLED"));
+                self.value(format!("sv4_from_u64((uint64_t){status}, 32, 1)"), 32, true)
             }
             ArrayQuery(query) => self.array_query(query, expression)?,
             HandleCapture(_) | EventCapture(_) | StringCapture(_) => {

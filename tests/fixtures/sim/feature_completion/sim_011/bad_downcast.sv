@@ -1,6 +1,6 @@
 // SIM-011 A03: an invalid downcast (SV 8.16): the function form of `$cast`
 // returns 0 and leaves the destination unchanged; the task form is a
-// run-time error at the call.
+// run-time error at the call that ends the run (S11-D1).
 class A;
     int a = 1;
 endclass

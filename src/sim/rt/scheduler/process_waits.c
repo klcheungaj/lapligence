@@ -180,17 +180,21 @@ llg_co_arm_t llg_arm_time(llg_proc_t* self, uint64_t ticks) {
     llg_runtime_service_enter(self, "delay");
     if (!self || !region_can_mutate("wait scheduling"))
         return LLG_CO_ARM_READY;
+    // A delay past the last 64-bit time is a fatal run-time error; the final
+    // procedures still run (decision S01-D2).
+    if (ticks > UINT64_MAX - g.now) {
+        fprintf(stderr,
+                "llg: error: simulation time overflow at %llu while scheduling a delay of %llu tick(s)\n",
+                (unsigned long long)g.now, (unsigned long long)ticks);
+        llg_rt_mark_failed();
+        llg_rt_fatal_typed(0, "simulation time overflow", NULL, 0, "", "delay");
+        return LLG_CO_ARM_EXIT;
+    }
     llg_wait_t* w = &self->wait;
     w->kind = W_TIME;
     w->resume_region = region_is_reactive(self->region)
                            ? LLG_REGION_REACTIVE
                            : LLG_REGION_ACTIVE;
-    if (ticks > UINT64_MAX - g.now) {
-        fprintf(stderr,
-                "llg: fatal: simulation time overflow at %llu while scheduling a delay of %llu tick(s)\n",
-                (unsigned long long)g.now, (unsigned long long)ticks);
-        abort();
-    }
     w->payload.timer.time = g.now + ticks;
     if (ticks == 0) {
         // `#0` yields into the INACTIVE region of the current time step

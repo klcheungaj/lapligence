@@ -4,7 +4,7 @@
 // the final procedures run and the run exits with a failure status.
 module tb;
   bit [3:0] a;
-  covergroup g;
+  covergroup g; option.per_instance = 1;
     cp: coverpoint a {
       bins lo = {[0:7]};
       illegal_bins rest = default;

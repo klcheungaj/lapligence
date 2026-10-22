@@ -555,6 +555,23 @@ pub(super) fn render_dpi_thunk(model: &IrModel, f: &IrFunc) -> Result<String, St
             u8::from(f.is_task)
         ));
     }
+    // Only an open-array handle can reach the fatal svdpi.h access that
+    // abandons the foreign code (S40-D6), so other imports pay no setjmp.
+    let guarded = (0..f.formals.len())
+        .map(|index| formal_type(dpi, index))
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|ty| matches!(ty, IrDpiType::Open { .. }));
+    if guarded {
+        let restore = if instrumented {
+            "llg_dpi_import_abort(&_dpi_call);"
+        } else {
+            "llg_dpi_next_site = NULL;"
+        };
+        out.push_str(&format!(
+            "    llg_dpi_guard_t _dpi_guard;\n    _dpi_guard.mark = _dpi_mark;\n    llg_dpi_guard_push(&_dpi_guard);\n    if (setjmp(_dpi_guard.jump) != 0) {{\n        /* The foreign code was abandoned at a fatal svdpi.h access:\n         * nothing is copied out. */\n        {restore}\n        llg_value_scopes_end_since(_dpi_guard.mark);\n        {guard}\n    }}\n"
+        ));
+    }
     if let Some(scalar) = ret {
         out.push_str(&format!(
             "    {} _dpi_ret = {call};\n",
@@ -564,6 +581,9 @@ pub(super) fn render_dpi_thunk(model: &IrModel, f: &IrFunc) -> Result<String, St
         out.push_str(&format!("    int _dpi_status = {call};\n"));
     } else {
         out.push_str(&format!("    {call};\n"));
+    }
+    if guarded {
+        out.push_str("    llg_dpi_guard_pop(&_dpi_guard);\n");
     }
     if instrumented {
         out.push_str(&format!(

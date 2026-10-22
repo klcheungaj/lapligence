@@ -1,6 +1,6 @@
 /* SIM-040 A03 companion: element accesses with a wrong number of indices.
- * The first one ends the run (S40-D6); the later ones are quiet and do
- * nothing. Portable C11. */
+ * The first one ends the run and abandons this function (S40-D6), so the
+ * later ones and the last printf do not run. Portable C11. */
 #include "svdpi.h"
 #include <stdio.h>
 

@@ -1,11 +1,10 @@
 #include "internal.h"
 #include <math.h>
+#include <stdio.h>
 
-static uint64_t checked_product(uint64_t value, uint64_t scale) {
-    if (!scale || value > UINT64_MAX / scale)
-        llg_gmp_sv4_fail("delay exceeds the 64-bit tick range");
-    return value * scale;
-}
+/* Same conversions as legacy (decision S01-D1): an integral delay is a
+ * 64-bit time value whose scaled tick count wraps modulo 2^64; a real delay
+ * without a 64-bit tick count waits one tick, with a warning. */
 uint64_t llg_gmp_sv4_delay_ticks(g4_t value, uint64_t unit_ticks) {
     if (llg_gmp_sv4_is_unknown(value))
         return 0;
@@ -15,29 +14,38 @@ uint64_t llg_gmp_sv4_delay_ticks(g4_t value, uint64_t unit_ticks) {
     uint64_t raw = llg_gmp_sv4_to_u64(value);
     if (negative && value.width < 64)
         raw |= ~g4_mask(value.width);
-    if (!negative)
-        for (size_t i = 1; i < llg_gmp_sv4_words(value); ++i)
-            if (a[i])
-                llg_gmp_sv4_fail("delay exceeds the 64-bit tick range");
-    return checked_product(raw, unit_ticks);
+    return raw * unit_ticks;
+}
+static uint64_t unrepresentable_real_delay(double value) {
+    if (isnan(value))
+        fprintf(stderr, "llg: warning: real delay is NaN; using 1 tick\n");
+    else if (isinf(value))
+        fprintf(stderr, "llg: warning: real delay is infinite; using 1 tick\n");
+    else
+        fprintf(stderr,
+                "llg: warning: real delay %.17g exceeds the 64-bit tick range; using 1 tick\n",
+                value);
+    return 1;
 }
 uint64_t llg_gmp_sv4_real_delay_ticks(double value, uint64_t unit_ticks, uint64_t precision_ticks) {
     if (!isfinite(value) || !unit_ticks || !precision_ticks)
-        llg_gmp_sv4_fail("real delay must be finite");
-    // Same conversion as legacy: local-precision rounding, then a negative
-    // result as 64-bit two's-complement unsigned time.
+        return unrepresentable_real_delay(value);
+    // Local-precision rounding, then a negative result as 64-bit
+    // two's-complement unsigned time.
     double rounded = round(value * ((double)unit_ticks / (double)precision_ticks));
     uint64_t local;
     if (rounded >= 0.0) {
         if (!isfinite(rounded) || rounded >= 18446744073709551616.0)
-            llg_gmp_sv4_fail("delay exceeds the 64-bit tick range");
+            return unrepresentable_real_delay(value);
         local = (uint64_t)rounded;
     } else {
         if (!isfinite(rounded) || rounded < -9223372036854775808.0)
-            llg_gmp_sv4_fail("delay exceeds the 64-bit tick range");
+            return unrepresentable_real_delay(value);
         local = UINT64_C(0) - (uint64_t)(-rounded);
     }
-    return checked_product(local, precision_ticks);
+    if (local > UINT64_MAX / precision_ticks)
+        return unrepresentable_real_delay(value);
+    return local * precision_ticks;
 }
 
 double llg_gmp_sv4_to_real_wide(g4_t value) {
