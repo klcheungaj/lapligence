@@ -14,7 +14,10 @@ typedef, and enum elements; `locals.sv` checks nested and automatic local
 mailbox storage; `block_records.sv` checks that a fixed unpacked record
 declared in a procedural block (static or automatic) travels through `put`,
 `try_put`, `get`, queue, dynamic-array and associative-array element writes
-with its four-state bits; and `scoped_typedefs.sv` checks that same-named module,
+with its four-state bits; `block_record_reads.sv` checks that whole record
+elements and pops of queues, dynamic and associative arrays read into such
+locals keep every member (a missing associative key reads the default); and
+`scoped_typedefs.sv` checks that same-named module,
 package and compilation-unit typedef elements keep their own widths, on both
 value backends. `tests/sim_mailboxes.rs` runs each fixture in both optimizer modes and compares exact output.
 

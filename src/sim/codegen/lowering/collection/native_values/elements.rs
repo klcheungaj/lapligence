@@ -478,6 +478,51 @@ impl Codegen<'_> {
         Ok(Some(IrStmt::Block(statements)))
     }
 
+    /// Copy a whole record element, or the record removed by a pop, into
+    /// `destination`, a whole fixed record held as one packed value (a
+    /// procedural-block local): the element is copied once into a temporary
+    /// and its leaves are concatenated in the record's packed layout. `None`
+    /// for other sources or destinations.
+    pub(super) fn container_record_to_fixed(
+        &mut self,
+        path: &str,
+        destination: NodeId,
+        source: NodeId,
+        nba: bool,
+    ) -> Result<Option<IrStmt>, String> {
+        let source = self.p30_unwrap_cast(source);
+        if !self.is_container_record(source)
+            || !matches!(self.kind(destination), NodeKind::Expr(ExprKind::Ref { .. }))
+        {
+            return Ok(None);
+        }
+        let Some(descriptor) = self.query_descriptor(destination).cloned() else {
+            return Ok(None);
+        };
+        let Some(width) = Self::fixed_descriptor_width(&descriptor) else {
+            return Ok(None);
+        };
+        if self.fixed_value_width(destination) != Some(width) {
+            return Ok(None);
+        }
+        let Some((temporary, mut statements)) = self.element_copy(path, source)? else {
+            return Ok(None);
+        };
+        let Some(mut write) =
+            self.native_fixed_destination(path, destination, &descriptor, temporary)?
+        else {
+            return Err(format!(
+                "record element read into `{}` in `{path}` needs integral record members",
+                self.node(destination).name
+            ));
+        };
+        if let IrStmt::Assign { nba: write_nba, .. } = &mut write {
+            *write_nba = nba;
+        }
+        statements.push(write);
+        Ok(Some(IrStmt::Block(statements)))
+    }
+
     /// Statements that copy a whole record element, or the record removed by
     /// a pop, into a fresh lexical temporary of the element type, with its
     /// queue and dynamic-array members in the temporary's companions;
