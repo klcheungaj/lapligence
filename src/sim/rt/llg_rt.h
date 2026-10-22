@@ -2468,11 +2468,6 @@ void llg_sampled_register_history(sv4_t* signal, uint64_t ticks);
 // IEEE 1800-2009 16.9.3). It keeps no per-slot history, so its memory stays
 // constant. A later history registration promotes it.
 void llg_sampled_register_value(sv4_t* signal);
-// The value `signal` presents to Preponed sampling at time 0 instead of its
-// storage (decision T0-D5: a net's continuous driver evaluated over initial
-// values). Call after the signal's registrations, or before them; the value
-// is copied and released once the time-zero sample is taken.
-void llg_sampled_start(const sv4_t* signal, sv4_t value);
 const sv4_t* llg_sampled_value(const sv4_t* signal);
 int llg_sampled_copy(const sv4_t* signal, sv4_t* out);
 // Real variables keep their own numeric Preponed snapshot. Reading an

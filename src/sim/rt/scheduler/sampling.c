@@ -47,28 +47,6 @@ static void sampled_record_write(sv4_t* signal) {
     if (item) sampled_history_record(item, signal);
 }
 
-// Give a slot its time-zero Preponed value: a pending start for its signal
-// moves into the slot, and a slot with a start presents it until the first
-// Preponed sample has been taken (decision T0-D5).
-static void sampled_apply_start(llg_sampled_value_t* item, int history) {
-    for (llg_sampled_start_t** link = &g.sampled_starts; *link; link = &(*link)->next) {
-        if ((*link)->signal != item->signal) continue;
-        llg_sampled_start_t* pending = *link;
-        *link = pending->next;
-        if (item->start) {
-            sv4_destroy(item->start);
-            free(item->start);
-        }
-        item->start = (sv4_t*)llg_checked_malloc(1, sizeof(sv4_t), "sampled start");
-        *item->start = pending->value;
-        free(pending);
-        break;
-    }
-    if (!item->start) return;
-    sv4_copy(&item->value, item->start);
-    if (history) sampled_history_record(item, item->start);
-}
-
 static void sampled_register(sv4_t* signal, uint64_t history_ticks) {
     if (!signal) {
         fprintf(stderr, "llg: cannot register a null sampled signal\n");
@@ -93,18 +71,15 @@ static void sampled_register(sv4_t* signal, uint64_t history_ticks) {
             break;
         }
     }
-    if (!item) {
+    if (!item)
         item = (llg_sampled_value_t*)llg_checked_malloc(1, sizeof(*item),
                                                         "sampled value");
-        item->start = NULL;
-    }
     item->signal = signal;
     item->value = sv4_clone(signal);
     item->history = NULL;
     item->history_tail = NULL;
     item->history_ticks = history_ticks;
     sampled_history_record(item, signal);
-    sampled_apply_start(item, 1);
     item->next = g.sampled;
     g.sampled = item;
 }
@@ -133,34 +108,8 @@ void llg_sampled_register_value(sv4_t* signal) {
     item->signal = signal;
     item->value = sv4_clone(signal);
     item->history = NULL;
-    item->start = NULL;
-    sampled_apply_start(item, 0);
     item->next = g.sampled_values;
     g.sampled_values = item;
-}
-
-void llg_sampled_start(const sv4_t* signal, sv4_t value) {
-    if (!signal) return;
-    g.sampled_starts_live = 1;
-    llg_sampled_start_t* pending = (llg_sampled_start_t*)llg_checked_malloc(
-        1, sizeof(*pending), "sampled start");
-    pending->signal = signal;
-    pending->value = sv4_clone(&value);
-    pending->next = g.sampled_starts;
-    g.sampled_starts = pending;
-    // An already registered slot takes the value now, so sampled-value
-    // domains registered later evaluate their initial value with it.
-    llg_sampled_value_t* item = find_sampled_value(signal);
-    if (item) {
-        sampled_apply_start(item, 1);
-        return;
-    }
-    for (item = g.sampled_values; item; item = item->next) {
-        if (item->signal == signal) {
-            sampled_apply_start(item, 0);
-            return;
-        }
-    }
 }
 
 const sv4_t* llg_sampled_value(const sv4_t* signal) {
@@ -512,13 +461,11 @@ static void sample_preponed_values(void) {
     for (llg_sampled_real_t* item = g.sampled_reals; item; item = item->next)
         item->value = *item->signal;
     for (llg_sampled_value_t* item = g.sampled_values; item; item = item->next)
-        sv4_copy(&item->value, item->start ? item->start : item->signal);
+        sv4_copy(&item->value, item->signal);
     for (llg_sampled_value_t* item = g.sampled; item; item = item->next) {
-        sv4_copy(&item->value, item->start ? item->start : item->signal);
+        sv4_copy(&item->value, item->signal);
         sampled_history_record(item, &item->value);
     }
-    // Start values describe time 0 only; the first sample has used them.
-    if (g.sampled_starts_live) release_sampled_starts();
 }
 
 // Clockvar samples publish like signal writes, so `@(cb.x)` and edges of a

@@ -782,16 +782,6 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
                 frame.canonical_signal(*sig)
             ));
         }
-        IrInitStep::SampledStart { sig, value } => {
-            let mut result = frame.constant(value, false);
-            result.fill = value.fill;
-            frame.line(format!(
-                "llg_sampled_start({}, {});",
-                frame.canonical_signal(*sig),
-                result.code
-            ));
-            frame.discard(result);
-        }
         IrInitStep::RegisterSampledValue(index) => {
             frame.line(format!(
                 "llg_sampled_register_value({});",

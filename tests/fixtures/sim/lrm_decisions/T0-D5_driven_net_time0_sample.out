@@ -1,3 +1,4 @@
-t0 sampled wk=9 wv=3 wd=7 wp=zz10 wu=x wm=x wg=x
-t0 past wk=9 wv=3
-t2 past wk=9 wv=6 changed=1
+t0 sampled wk=x wv=x wc=x wd=x wp=zzxx wz=z v=3 u=x
+t0 past wk=x wv=x wc=x v=3
+t0 rose wk0=0 stable wv=1 changed wc=0
+t2 past wk=9 wv=6 wc=6 changed=1

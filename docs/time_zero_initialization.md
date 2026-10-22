@@ -84,6 +84,59 @@ endmodule
 The `always` procedure fires once, when `clk` falls at time 10. The initializer
 `clk = 0` is no X to 0 transition, so there is no negedge at time 0.
 
+## Time-0 sampled values of nets
+
+Sampled value functions (`$sampled`, `$past`, `$rose`, `$fell`, `$stable`,
+`$changed`) and concurrent assertions read values sampled in the Preponed
+region. At time 0 that region comes before any process runs, continuous
+assignments included, so a net is sampled as the value it holds then: X on the
+bits a driver writes and z on undriven bits. A static variable is sampled as
+its declaration initializer (or its type's default), because the initializer
+is applied before simulation starts. The rule is the same in every context:
+assertions, covers, sequences, deferred assertions and procedural code.
+
+```systemverilog
+`timescale 1ns/1ns
+module tb;
+  logic a = 1'b1, b = 1'b1;
+  logic clk = 1'b0;
+  wire w = a & b;
+  initial begin
+    $display("t=0 sampled=%b past=%b", $sampled(w), $past(w, 1, , @(posedge clk)));
+    #1 clk = 1'b1;
+    #1 $display("t=2 sampled=%b past=%b", $sampled(w), $past(w, 1, , @(posedge clk)));
+    $finish;
+  end
+endmodule
+```
+
+llg prints:
+
+```
+t=0 sampled=x past=x
+t=2 sampled=1 past=1
+```
+
+At time 0, `$sampled(w)` and `$past(w)` (no clock tick yet) give X, not
+`a & b`: the net declaration assignment has not run in the Preponed region of
+time 0. From the tick at time 1 on, `w` is sampled as 1. IEEE 1800-2009 16.9.3
+states the time-0 rule:
+
+> The value of an expression sampled in the Preponed region corresponding to
+> time 0 is the result of evaluating the expression using the initial values
+> of the variables comprising the expression. The initial value of a static
+> variable is the value assigned in its declaration, or, in the absence of such
+> an assignment, it is the default (or uninitialized) value of the
+> corresponding type (see 6.8, Table 6-7). The initial value of any other
+> variable or signal is the default value of the corresponding type (see 6.8,
+> Table 6-7).
+
+Some simulators give the driver's value (here 1) for a net that no assertion
+reads, while they give X when an assertion reads it. llg uses one rule for
+every net and context. Do not rely on the time-0 sample of a net: start
+checking after the first clock edge, or sample a variable with a known
+initial value.
+
 ## Portable style
 
 - Use `always_comb` (or `always_latch`) for combinational logic. It evaluates

@@ -3021,3 +3021,11 @@ fn t0_d5_driven_net_time0_sample() {
         include_str!("fixtures/sim/lrm_decisions/T0-D5_driven_net_time0_sample.out"),
     );
 }
+
+#[test]
+fn t0_d5_assertion_net_time0_sample() {
+    run_decision(
+        "T0-D5_assertion_net_time0_sample",
+        include_str!("fixtures/sim/lrm_decisions/T0-D5_assertion_net_time0_sample.out"),
+    );
+}

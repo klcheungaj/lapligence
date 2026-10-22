@@ -1,7 +1,7 @@
 //! Public façade for conservative simulator-IR optimization passes.
 
 mod passes;
-pub(in crate::sim) use passes::{fold_constant_node, walk_expr_mut};
+pub(in crate::sim) use passes::walk_expr_mut;
 
 pub use passes::OptConfig;
 

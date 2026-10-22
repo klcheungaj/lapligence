@@ -3,8 +3,7 @@
 // at X; bits no driver writes keep the default z. A driver whose first value
 // is X makes no time-0 change, so an `always @(w)` that is already waiting
 // (T0-D2) does not wake for it; a driver whose first value is 0 or 1 is a
-// change. The value sampled at time 0 is the driver evaluated on initial
-// values (T0-D5): X here, since `r` and `r4` have no initializer.
+// change. The value sampled at time 0 is the start value (T0-D5).
 //
 // IEEE 1800-2009 6.7 (SystemVerilog-1800-2009.txt L5199-5200):
 //   "The default initialization value for a net shall be the value z. Nets
