@@ -270,6 +270,11 @@ impl EmitCtx<'_, '_> {
             NodeKind::Stmt(assertion @ StmtKind::ImmediateAssertion { .. }) => {
                 self.lower_immediate_assertion(h, assertion)
             }
+            // `restrict property` is not verified in simulation (16.15.4).
+            NodeKind::Stmt(StmtKind::ConcurrentAssertion {
+                kind: ConcurrentAssertionKind::Restrict,
+                ..
+            }) => Ok(Vec::new()),
             NodeKind::Stmt(StmtKind::ConcurrentAssertion {
                 kind,
                 if_true,

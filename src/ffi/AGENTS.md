@@ -80,6 +80,10 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   `_MAX`, both together invalid) setting Slang's `minTypMax`, echoed as
   snapshot bits 11/12 and decoded into `DelaySelection` (`Db::delay_selection`),
   so the frontend's constants and the simulator's lowering use one operand.
+- ABI v31 adds statement tag 71 (`LLG_SLANG_STMT_CONCURRENT_RESTRICT`) for
+  `restrict property`, which the Db keeps as
+  `ConcurrentAssertionKind::Restrict` and the simulator does not verify
+  (16.15.4).
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

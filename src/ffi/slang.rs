@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 30;
+const ABI_VERSION: u32 = 31;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -919,6 +919,8 @@ pub const SEMANTIC_STMT_CONCURRENT_COVER_SEQUENCE: u32 = 68;
 pub const SEMANTIC_STMT_RANDCASE: u32 = 69;
 /// `randsequence` (IEEE 1800-2009 18.17).
 pub const SEMANTIC_STMT_RANDSEQUENCE: u32 = 70;
+/// `restrict property` (IEEE 1800-2009 16.15.4: not verified in simulation).
+pub const SEMANTIC_STMT_CONCURRENT_RESTRICT: u32 = 71;
 /// Pattern-matching case statements are tagged apart from ordinary case so
 /// lowering rejects them with their source location instead of treating a
 /// surviving pattern as an empty case.

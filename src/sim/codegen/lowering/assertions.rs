@@ -450,6 +450,17 @@ impl Codegen<'_> {
         path: &str,
         assertion: NodeId,
     ) -> Result<(), String> {
+        // `restrict property` "is not verified in simulation" (IEEE
+        // 1800-2009 16.15.4): it creates no assertion.
+        if matches!(
+            self.kind(assertion),
+            NodeKind::Stmt(StmtKind::ConcurrentAssertion {
+                kind: ConcurrentAssertionKind::Restrict,
+                ..
+            })
+        ) {
+            return Ok(());
+        }
         // The frontend wraps a labeled assertion in a named block (SV 16.15
         // names it by label), which the suffix includes; an unlabeled
         // assertion reports its enclosing scope, the LRM leaving the
@@ -548,6 +559,11 @@ impl Codegen<'_> {
             ConcurrentAssertionKind::Cover => IrConcurrentAssertionKind::Cover,
             ConcurrentAssertionKind::CoverSequence => IrConcurrentAssertionKind::CoverSequence,
             ConcurrentAssertionKind::Expect => IrConcurrentAssertionKind::Expect,
+            ConcurrentAssertionKind::Restrict => {
+                return Err(format!(
+                    "`restrict property` at {location} is not simulated (IEEE 1800-2009 16.15.4)"
+                ))
+            }
         };
         if self.property_requires_engine(property) {
             let strong_default = matches!(

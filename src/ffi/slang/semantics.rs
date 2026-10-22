@@ -303,7 +303,7 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
         13 => matches!(subkind, 0..=6),
         14 => matches!(subkind, 0 | 228),
         15 => matches!(subkind, 0 | 160..=164 | 200..=227),
-        18 => matches!(subkind, 0 | 32..=70 | SEMANTIC_STMT_PATTERN_CASE),
+        18 => matches!(subkind, 0 | 32..=71 | SEMANTIC_STMT_PATTERN_CASE),
         19 => matches!(subkind, 0 | 64..=78 | 80..=95),
         25 => matches!(
             subkind,

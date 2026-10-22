@@ -1736,9 +1736,6 @@ other items need small hand-written cases.
   rejected ("is initialized at the property attempt's start, which this
   property form does not support"); the equivalent explicit form with a local
   assignment in each operand works.
-- `restrict property` stops with the generic "unsupported executable node
-  ConcurrentAssertion" instead of a clause-linked message; 16.15.4 does not
-  verify it in simulation.
 
 ### Cause
 

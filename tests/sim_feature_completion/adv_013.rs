@@ -81,6 +81,19 @@ fn multiclocked_subsequence_with_an_empty_last_element() {
     );
 }
 
+/// 16.15.4: `restrict property` is not verified in simulation, in every
+/// position a concurrent assertion may take.
+#[test]
+fn restrict_property_is_not_simulated() {
+    sim_cli::run_case(
+        SUITE,
+        "restrict",
+        fixture!("restrict.out"),
+        "llg: $finish at time 22000 at tb:21:5\n",
+        &[],
+    );
+}
+
 /// A02 / 16.5, 14.13, 14.14, 16.15.7: value-change, `edge`, `or`-list,
 /// clocking-block, bit-select, gated and default event-list clocks tick once
 /// per time step; `$global_clock` clocks assertions and event controls;

@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 30u
+#define LLG_SLANG_ABI_VERSION 31u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -841,6 +841,9 @@ enum {
   LLG_SLANG_STMT_RANDCASE = 69,
   /* `randsequence` (IEEE 1800-2009 18.17); see LLG_SLANG_PRODUCTION_*. */
   LLG_SLANG_STMT_RANDSEQUENCE = 70,
+  /* `restrict property` (IEEE 1800-2009 16.15.4) is not verified in
+   * simulation; it keeps its own tag so the database can keep it inert. */
+  LLG_SLANG_STMT_CONCURRENT_RESTRICT = 71,
   /* Pattern-matching case statements are kept distinct from ordinary case so
    * the owned database cannot reduce a surviving pattern to an empty case
    * before G3-01 implements matching. */

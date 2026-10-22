@@ -226,6 +226,13 @@ Attempts start at the `posedge c1` ticks 10, 30, 50, 70, 90 unless noted.
 - `i5` `p5(a)` in `tb`, which has no default disable: r is 1'b0, so nothing
   is disabled: F30, then 30→b50=1 P50, 50 vacuous P50, 70→ P90.
 
+## `restrict.sv`
+
+16.15.4 (L26658-26659): "the restrict property statement is not verified in
+simulation and has no action block". Module-level, generate, `initial` and
+procedural `restrict property` statements whose properties fail produce no
+output and no assertion; the ordinary `a1` beside them passes.
+
 ## `mc_segment.sv`
 
 16.14.1 (L25903-25904): "When concatenating differently clocked sequences,

@@ -3206,6 +3206,9 @@ public:
         case AssertionKind::Expect:
           result.subkind = LLG_SLANG_STMT_CONCURRENT_EXPECT;
           break;
+        case AssertionKind::Restrict:
+          result.subkind = LLG_SLANG_STMT_CONCURRENT_RESTRICT;
+          break;
         default:
           result.subkind = LLG_SLANG_SUBKIND_NONE;
           result.flags |= LLG_SLANG_SEMANTIC_BAD;

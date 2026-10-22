@@ -458,7 +458,8 @@ fn current_statement_and_expression_subkinds_are_admitted() {
     assert!(validate_semantic_subkind(9, SEMANTIC_VARIABLE_CLOCKING).is_ok());
     assert!(validate_semantic_subkind(26, SEMANTIC_TIMING_ONE_STEP_DELAY).is_ok());
     assert!(validate_semantic_subkind(18, SEMANTIC_STMT_RANDSEQUENCE).is_ok());
-    assert!(validate_semantic_subkind(18, 71).is_err());
+    assert!(validate_semantic_subkind(18, SEMANTIC_STMT_CONCURRENT_RESTRICT).is_ok());
+    assert!(validate_semantic_subkind(18, 72).is_err());
     assert!(validate_semantic_subkind(32, SEMANTIC_PRODUCTION_DECLARATION).is_ok());
     assert!(validate_semantic_subkind(32, SEMANTIC_PRODUCTION_CASE).is_ok());
     assert!(validate_semantic_subkind(32, 0).is_err());
