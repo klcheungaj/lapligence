@@ -136,7 +136,7 @@ fn later_specify_constructs_are_rejected_with_their_location() {
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_timing_check.v",
-            "unsupported timing check `$setup` (not simulated yet) at",
+            "unsupported timing check `$setuphold` (not simulated yet) at",
             &["--edition", edition],
         );
     }

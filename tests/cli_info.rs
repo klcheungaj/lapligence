@@ -73,6 +73,12 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
         "--pulse-style <onevent|ondetect>",
         "--show-cancelled",
         "--no-show-cancelled",
+        "--no-timing-checks",
+        "--timing-checks",
+        "--no-notifiers",
+        "--notifiers",
+        "--no-timing-check-messages",
+        "--timing-check-messages",
     ] {
         assert!(
             String::from_utf8_lossy(&output.stdout).contains(option),

@@ -1,0 +1,7 @@
+0 nochange00=xxxxxx nochange23=xxxx
+100 toggled
+100 nochange00=xxxxxx nochange23=xx0x
+101 toggled
+101 nochange00=xxx0xx nochange23=xx0x
+121 toggled
+121 nochange00=xxx0xx nochange23=x00x

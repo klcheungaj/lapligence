@@ -493,11 +493,25 @@ impl Codegen<'_> {
                 self.terminal_text(event.terminal)
             )
         };
+        let reference_event = reference;
         let reference = event(reference, REFERENCE_TIME);
         let mut arguments = match (kind, data) {
             (IrTimingCheckKind::Setup, Some(data)) => vec![event(data, DATA_TIME), reference],
             (_, Some(data)) => vec![reference, event(data, DATA_TIME)],
-            (_, None) => vec![reference, format!(":{DATA_TIME}")],
+            // The derived data event: the same edge for `$period`, the
+            // opposite one for `$width`.
+            (_, None) => {
+                let edges = match kind {
+                    IrTimingCheckKind::Width => opposite_edges(reference_event.edges.bits()),
+                    _ => reference_event.edges.bits(),
+                };
+                let derived = format!(
+                    "{}{}:{DATA_TIME}",
+                    edges_text(edges),
+                    self.terminal_text(reference_event.terminal)
+                );
+                vec![reference, derived]
+            }
         };
         arguments.push(first.to_string());
         if matches!(kind, IrTimingCheckKind::Width | IrTimingCheckKind::NoChange) {

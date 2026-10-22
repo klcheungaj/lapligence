@@ -538,3 +538,74 @@ fn module_path_triggers_limits_styles_and_options_are_emitted() {
         "{defaults}"
     );
 }
+
+#[test]
+fn timing_check_tables_are_emitted_only_for_designs_with_checks() {
+    use crate::sim::ir::{
+        IrTimingCheck, IrTimingCheckKind, IrTimingCheckOptions, IrTimingCheckSet, IrTimingEvent,
+        IrTimingTerminal,
+    };
+    let plain = render(net_model(2, 1));
+    assert!(!plain.contains("llg_timing"));
+
+    let mut model = net_model(2, 1);
+    model.signals.push(
+        IrSignal::new(
+            "G_tb_d".to_owned(),
+            Some("tb.d".to_owned()),
+            IrType::Packed {
+                width: 4,
+                signed: false,
+                two_state: false,
+            },
+            None,
+        )
+        .unwrap(),
+    );
+    let signal = model.signals.len() - 1;
+    model.timing_checks.push(IrTimingCheckSet::new(
+        "tb.u".to_owned(),
+        vec![
+            IrTimingTerminal::new(signal, 0, 1),
+            IrTimingTerminal::new(signal, 1, 3),
+        ],
+        vec![IrTimingCheck::new(
+            IrTimingCheckKind::Setup,
+            IrTimingEvent::new(1, 0x23, None),
+            IrTimingEvent::new(0, 0, None),
+            10,
+            0,
+            Some(0),
+            "f.v:7:5".to_owned(),
+            "$setup(d:\u{2}, posedge c:\u{1}, 10)".to_owned(),
+        )],
+        Vec::new(),
+        1,
+    ));
+    model.timing_check_options = IrTimingCheckOptions {
+        checks: true,
+        notifiers: true,
+        messages: false,
+    };
+    let source = render(model);
+    assert!(source.contains(
+        "static llg_timing_terminal_t llg_timing_set_0__terminals[] = { { &G_tb_d, 0u, 1u }, \
+         { &G_tb_d, 1u, 3u } };"
+    ));
+    assert!(source.contains(
+        "static llg_timing_check_t llg_timing_set_0__checks[] = { { .kind = 1, .reference = \
+         { 1u, 35, 0, 0u }, .data = { 0u, 0, 0, 0u }, .limit = 10ULL, .limit2 = 0ULL, \
+         .notifier = 1u, .origin = \"f.v:7:5\", .text = \"$setup(d:\\002, posedge c:\\001, 10)\" } };"
+    ));
+    assert!(source.contains(
+        "static llg_timing_check_set_t llg_timing_set_0 = { .scope = \"tb.u\", .terminals = \
+         llg_timing_set_0__terminals, .n_terminals = 2u, .checks = llg_timing_set_0__checks, \
+         .n_checks = 1u, .conditions = NULL, .n_conditions = 0u, .n_notifiers = 1u };"
+    ));
+    let defaults = lifecycle(&source, "llg_model_storage_defaults");
+    let configure = defaults.find("llg_timing_checks_configure(0);").unwrap();
+    let start = defaults
+        .find("llg_timing_checks_start(&llg_timing_set_0);")
+        .unwrap();
+    assert!(configure < start, "{defaults}");
+}

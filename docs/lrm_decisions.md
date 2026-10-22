@@ -656,6 +656,40 @@ invocation controls of 30.7.2 and 30.7.4 are `--pulse-reject`,
 | A8-D8 | **Every pair of consecutive scheduled transitions is a pulse.** With limits below the delay any number of transitions can be pending; every one the limits pass reaches the destination. | 30.7 L50256-50257, L50266-50267 | `A8-D8_pulse_trains` | LRM text. Some simulators keep at most two pending transitions per destination, so a later one replaces an earlier one; llg follows the clause text, under which pulses at or above the error limit "pass unfiltered". |
 | A8-D9 | **Pulse limits do not change how delays compose.** The path stage filters its transitions and a net delay on the destination then applies, as in A7-D1. | 30.7 L50260-50262; 30.7.1 L50331 | `A8-D9_pulse_limits_keep_net_delay` | llg choice, as A7-D1. Some simulators drop the destination net delay when `PATHPULSE$` limits apply; llg keeps one composition rule because the clause text gives pulse limits no effect on delays. |
 
+## System timing checks and notifiers (ADV-009)
+
+`$setup`, `$hold`, `$recovery`, `$removal`, `$skew`, `$period`, `$width` and
+`$nochange` with `&&&` conditions, edge-control specifiers and notifiers (SV
+31.1-31.8, V2001 15.1-15.7). The fixtures and the derivation of every
+expected value are in
+[`adv_009`](../tests/fixtures/sim/feature_completion/adv_009/readme.md). The
+invocation controls are `--no-timing-checks`, `--no-notifiers` and
+`--no-timing-check-messages` ([config](config.md)). Line numbers refer to
+`SystemVerilog-1800-2009.txt`.
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| A9-D1 | **A data event at the time of the reference event violates `$hold` and `$recovery`, never `$setup` or `$removal`**, whichever event comes first in the time step, also across a `#0`. | 31.3.1 L50983-50988; 31.3.2 L51026-51028; 31.3.5 L51254-51256 | `A9-D1_simultaneous_events` | LRM text |
+| A9-D2 | **`$removal` stamps the data event and checks at the reference event in both editions.** | 31.3.4 Table 31-4 L51182-51183, L51200-51202 | `A9-D2_removal_roles` | LRM text; IEEE 1364-2001 Table 52 swaps the roles while keeping the same window, and llg follows the 1800-2009 table, as is industry-standard behaviour |
+| A9-D3 | **Transitions at time 0 are neither timestamp nor timecheck events.** | 31.3.1 L50983-50985 | `A9-D3_time_zero_events` | industry-standard behaviour (the text does not address time 0) |
+| A9-D4 | **`$width` honours its threshold**: only pulses wider than the threshold and narrower than the limit are reported. | 31.4.4 L51818-51824 | `A9-D4_width_threshold` | LRM text. Some simulators report every pulse narrower than the limit; llg follows the clause, under which "no violation is reported for glitches smaller than the threshold". |
+| A9-D5 | **A violation moves the notifier x to 0, 0 to 1, 1 to 0 and leaves z**, as an ordinary variable update that sequential UDPs and processes see in the same time step. | 31.6 Table 31-13 L52048-52054 | `A9-D5_notifier_toggle_udp` | LRM text (x to 0 per IEEE 1364-2001 Table 61) |
+| A9-D6 | **Of duplicate checks (same kind and events) only the one with the larger limit runs**, the first of equal limits; the others never report or change their notifiers, and llg warns when generating the model. | 31.3.1 L50983-50985 | `A9-D6_duplicate_checks` | industry-standard behaviour (the text does not address duplicates) |
+| A9-D7 | **A notifier shared by several checks violating at one event changes once.** | 31.6 L52040-52041; 31.8 L52273-52275 | `A9-D7_shared_notifier` | industry-standard behaviour |
+| A9-D8 | **A multi-bit condition is decided by its least significant bit.** | 31.7 L52196-52197 | `A9-D8_multibit_condition_lsb` | LRM text. Some simulators enable the check only for 2'b01 (2'bx1 disables it); llg follows the clause, which names the least significant bit (as A8-D2). |
+| A9-D9 | **Conditions are read when their event occurs, after the time step's statements have settled them.** A false timestamp condition records no timestamp; `$width` and `$period` conditions gate both edges; `$nochange` edges always open and close the window and its conditions are read at the data event; `==`/`!=` with x enable, `===`, `!==`, `~` and a plain expression with x disable. | 31.7 L52190-52194 | `A9-D9_condition_timing` | LRM text for x; when conditions are read is industry-standard behaviour |
+| A9-D10 | **z counts as x and x<->z is no transition; a vector terminal makes one event per change**, an edge event when any bit makes one of the edge's transitions. | 31.5 L52010; 31.8 L52242-52244 | `A9-D10_vector_and_xz_edges` | LRM text; the any-bit edge rule is industry-standard behaviour |
+| A9-D11 | **The `$nochange` window excludes its end points**; a data change in the step of an edge is outside a zero-offset window; data before the leading edge is reported at the leading edge, data after the trailing edge when it occurs. | 31.4.6 L51959-51962, L51971-51972 | `A9-D11_nochange_window` | LRM text; reporting times are industry-standard behaviour |
+| A9-D12 | **`$skew` reports every data event beyond the limit after a reference event**, a new reference event restarts it, simultaneous events never violate and a zero limit is exceeded one tick later. | 31.4.1 L51438-51456 | `A9-D12_skew_repeats` | LRM text |
+| A9-D13 | **A negative limit counts as zero** (the frontend warns), so the check never reports. | 31.3.1 Table 31-1 L50962, L50987-50988 | `A9-D13_negative_limit` | industry-standard behaviour |
+
+Rejected with a located error (not decision cases): a notifier that is not a
+scalar variable (31.6), a `$width` notifier without a threshold (31.4.4
+L51843-51844; some simulators accept it), a `$period` or `$width` edge list
+with both rising and falling transitions, and the ADV-010 forms
+(`$setuphold`, `$recrem`, `$timeskew`, `$fullskew`, negative `$nochange`
+offsets).
+
 ## Native initialization and let environments (SIM-022)
 
 | ID | Decision | Clause (SV) | Case | Kind |

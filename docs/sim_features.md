@@ -64,14 +64,14 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 5. Procedural statements | 5 | 7 | 0 | 1 | 0 | 0 | 13 |
 | 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 0 | 7 |
 | 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 0 | 17 |
-| 8. Continuous/structural | 5 | 7 | 2 | 1 | 0 | 0 | 15 |
+| 8. Continuous/structural | 5 | 8 | 2 | 1 | 0 | 0 | 16 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 0 | 7 |
 | 10. System tasks/functions | 12 | 8 | 2 | 4 | 0 | 0 | 26 |
 | 11. Compiler directives | 6 | 1 | 0 | 1 | 0 | 0 | 8 |
 | 12. Verification/foreign interfaces | 1 | 14 | 0 | 1 | 3 | 0 | 19 |
-| **Total** | **49** | **80** | **5** | **8** | **3** | **1** | **146** |
+| **Total** | **49** | **81** | **5** | **8** | **3** | **1** | **147** |
 
-**130 rows have some source implementation; 80 of those remain partial and one
+**131 rows have some source implementation; 81 of those remain partial and one
 is accepted.** The accepted row (`always_ff` and writer rules) carries
 post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
@@ -1482,7 +1482,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   table and reports scheduled path events (`llg_module_path_sets`,
   `llg_net_path_pending`, `llg_net_path_event`). IEEE 1364-2001 rejects a
   destination with two drivers inside the module (14.2.1). Located errors
-  reject timing checks (ADV-009/010), variable destinations,
+  reject variable destinations,
   inout destinations also driven outside the module and selects of
   multidimensional packed terminals. No `vpiModPath` objects yet (ADV-019)
   ([ADV-007 fixtures](../tests/fixtures/sim/feature_completion/adv_007/readme.md)).
@@ -1503,10 +1503,31 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   A8-D7); pulse limits do not change delay composition (A8-D9)
   ([ADV-008 fixtures](../tests/fixtures/sim/feature_completion/adv_008/readme.md)).
   V §§14.2.3–14.2.4, 14.6; SV §§30.4.3–30.4.4, 30.7 **[1995/SV-2009 restored]**.
-- ❌ **Timing checks and SDF** — Notifiers, timing-check `&&&`, `$setup/$hold/$setuphold`, `$recovery/$removal/$recrem`,
-  `$skew/$timeskew/$fullskew`, `$period/$width/$nochange` and `$sdf_annotate`
-  delay/check application are not implemented.
-  V ch.15–16; SV ch.31–32
+- 🟨 **System timing checks and notifiers** — `$setup`, `$hold`,
+  `$recovery`, `$removal`, `$skew`, `$period`, `$width` and `$nochange` run
+  per instance on their terminals' transitions (z as x, x<->z none, any bit
+  of a vector; A9-D10) with `edge[...]`/`posedge`/`negedge` control, `&&&`
+  conditions (least significant bit, x enables only `==`/`!=`; A9-D8,
+  A9-D9) and limits in the module's time unit (min:typ:max selected, a
+  negative limit is zero; A9-D13). Windows follow 31.3-31.4 exactly (A9-D1,
+  A9-D2, A9-D4, A9-D11, A9-D12); events at time 0 do not count (A9-D3);
+  duplicate checks keep the larger limit with a warning (A9-D6). A violation
+  is reported on stderr with the check's source, instance, time and event
+  times, and moves its notifier x->0, 0->1, 1->0 (z stays) once per event
+  through an ordinary variable write that sequential UDPs consume (A9-D5,
+  A9-D7). `--no-timing-checks`, `--no-notifiers` and
+  `--no-timing-check-messages` (and `[simulator]` keys) turn them off. The
+  owned Db keeps every check with its events, limits and notifier and the
+  model keeps writable limits per check for later annotation. Located errors
+  reject non-scalar notifiers, a `$width` notifier without threshold and
+  mixed `$period`/`$width` edge lists; `$setuphold`, `$recrem`, `$timeskew`,
+  `$fullskew`, negative `$nochange` offsets and delayed signals are ADV-010
+  ([ADV-009 fixtures](../tests/fixtures/sim/feature_completion/adv_009/readme.md)).
+  V §§15.1–15.7; SV §§31.1–31.8 **[1995/SV-2009 restored]**.
+- ❌ **Combined and negative timing checks, SDF** — `$setuphold`, `$recrem`,
+  `$timeskew`, `$fullskew`, negative limits with delayed signals and
+  `$sdf_annotate` delay/check application are not implemented.
+  V §15.8, ch.16; SV §§31.3.3, 31.3.6, 31.4.2–31.4.3, 31.9, ch.32
   **[1995/SV-2009 restored]**.
 
 ## 9. Functions & tasks

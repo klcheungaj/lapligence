@@ -24,6 +24,17 @@ set's `conditions` expressions, or `IfNone`), an `ifnone` group and optional
 flags and the model-wide `IrPathPulseOptions`; validation checks condition
 indices, groups, limit order, style width, percentages and the condition
 expressions, which the optimizer traversals and storage audit also walk.
+It also holds the ADV-009 timing checks: `IrModel::timing_checks` sets of
+storage-bit terminals, `IrTimingCheck` rows (kind, reference and data
+`IrTimingEvent` with terminal, transition mask and optional
+`IrTimingCondition`, limits in ticks, notifier index, source origin and report
+text), condition expressions and a notifier count, plus the model-wide
+`IrTimingCheckOptions`. `TimingCheckStep` names a set and the one-bit
+`TimingNotify` runtime query a set's notifier. Validation checks terminal
+ranges, event terminals, edge bits, condition and notifier indices, edges on
+`$period`/`$width`/`$nochange` references and the derived data event of
+single-signal checks; traversals and the storage audit walk the conditions and
+read every terminal.
 
 `coverage.rs` holds functional coverage (SIM-044, SIM-045): `covergroups` and
 `coverage_types` are static coverpoint bin tables (validated for width, key

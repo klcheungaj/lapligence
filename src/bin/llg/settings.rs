@@ -1359,6 +1359,60 @@ files = ["a.sv"]
     }
 
     #[test]
+    fn timing_check_controls_follow_the_precedence_rules() {
+        let dir = temp("timing");
+        let defaults = resolve_no_env(cli(&["x.sv"]), None).unwrap();
+        assert_eq!(
+            defaults.timing_checks,
+            sim::ir::IrTimingCheckOptions::default()
+        );
+        let cfg = config(
+            &dir,
+            "schema_version = 1\n[simulator]\ntiming_checks = false\nnotifiers = false\n\
+             timing_check_messages = false\n",
+        );
+        let options = resolve_no_env(cli(&["x.sv"]), Some(&cfg)).unwrap();
+        assert_eq!(
+            options.timing_checks,
+            sim::ir::IrTimingCheckOptions {
+                checks: false,
+                notifiers: false,
+                messages: false,
+            }
+        );
+        let options =
+            resolve_no_env(cli(&["--timing-checks", "--notifiers", "x.sv"]), Some(&cfg)).unwrap();
+        assert_eq!(
+            options.timing_checks,
+            sim::ir::IrTimingCheckOptions {
+                checks: true,
+                notifiers: true,
+                messages: false,
+            }
+        );
+        let options = resolve_no_env(
+            cli(&[
+                "--no-timing-checks",
+                "--no-notifiers",
+                "--no-timing-check-messages",
+                "--timing-check-messages",
+                "x.sv",
+            ]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            options.timing_checks,
+            sim::ir::IrTimingCheckOptions {
+                checks: false,
+                notifiers: false,
+                messages: true,
+            }
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn top_accepts_a_module_name_only() {
         assert_eq!(cli(&["--top", "tb", "x.sv"]).top.as_deref(), Some("tb"));
         for rejected in ["work.tb", "cfg:config", "a b", ""] {

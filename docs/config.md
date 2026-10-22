@@ -166,6 +166,7 @@ server, accepted and ignored by `llg`.
 | `simulator.pulse_reject`, `simulator.pulse_error` | integers 0 to 100 | llg | `--pulse-reject`, `--pulse-error` |
 | `simulator.pulse_style` | `"onevent"` \| `"ondetect"` | llg | `--pulse-style` |
 | `simulator.show_cancelled` | bool | llg | `--show-cancelled` / `--no-show-cancelled` |
+| `simulator.timing_checks`, `simulator.notifiers`, `simulator.timing_check_messages` | bools | llg | `--[no-]timing-checks`, `--[no-]notifiers`, `--[no-]timing-check-messages` |
 | `simulator.plusargs` | strings | llg | arguments after `--` (they replace; `--append-plusarg` adds) |
 | `waveform.file` | `.vcd`/`.fst` path | llg | `--wave` |
 | `waveform.depth` | integer 0 to 4294967295 | llg | `--wave-depth`; requires `file` |
@@ -397,6 +398,15 @@ severity = "error"
   declarations (30.7.4.2). Unset, the declarations decide. Some simulators
   turn cancelled-pulse x on together with an on-event or on-detect option;
   with llg pass both options for that behaviour.
+- `timing_checks` (bool, default `true`) — simulate system timing checks
+  (`$setup`, `$hold`, ..., IEEE 1800-2009 31); `false` (`--no-timing-checks`)
+  removes them from the model: no reports and no notifier changes. Invalid
+  checks are still diagnosed.
+- `notifiers` (bool, default `true`) — a violation toggles the check's
+  notifier (31.6); `false` (`--no-notifiers`) keeps the reports only.
+- `timing_check_messages` (bool, default `true`) — report each violation on
+  stderr; `false` (`--no-timing-check-messages`) keeps the notifier changes
+  only.
 - `plusargs` (array of strings) — arguments passed to the generated simulator
   (the arguments after `--`).
 

@@ -1,8 +1,8 @@
-// Timing checks are ADV-009/010: rejected with their location.
+// `$setuphold` is ADV-010: rejected with its location.
 module m(input c, input d, output q);
   assign q = d;
   specify
-    $setup(d, posedge c, 2);
+    $setuphold(posedge c, d, 2, 1);
   endspecify
 endmodule
 module tb;

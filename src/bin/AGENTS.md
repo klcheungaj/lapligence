@@ -83,6 +83,10 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
   and `--show-cancelled`/`--no-show-cancelled` (`[simulator] pulse_*`,
   `show_cancelled`) reach codegen as `CodegenOptions::path_pulse`; an error
   limit below the merged reject limit is a settings error.
+- `--[no-]timing-checks`, `--[no-]notifiers` and
+  `--[no-]timing-check-messages` (`[simulator] timing_checks`, `notifiers`,
+  `timing_check_messages`, all default on) reach codegen as
+  `CodegenOptions::timing_checks`.
 - `--stop-policy <resume|exit>` defaults to same-time coroutine resumption.
   `exit` returns from the child without draining work or running finals; embedders
   also have an explicit runtime resume hook.

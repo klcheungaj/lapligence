@@ -3019,6 +3019,110 @@ fn a8_d9_pulse_limits_keep_net_delay() {
 }
 
 #[test]
+fn a9_d1_simultaneous_events() {
+    run_decision(
+        "A9-D1_simultaneous_events",
+        include_str!("fixtures/sim/lrm_decisions/A9-D1_simultaneous_events.out"),
+    );
+}
+
+#[test]
+fn a9_d2_removal_roles() {
+    run_decision(
+        "A9-D2_removal_roles",
+        include_str!("fixtures/sim/lrm_decisions/A9-D2_removal_roles.out"),
+    );
+}
+
+#[test]
+fn a9_d3_time_zero_events() {
+    run_decision(
+        "A9-D3_time_zero_events",
+        include_str!("fixtures/sim/lrm_decisions/A9-D3_time_zero_events.out"),
+    );
+}
+
+#[test]
+fn a9_d4_width_threshold() {
+    run_decision(
+        "A9-D4_width_threshold",
+        include_str!("fixtures/sim/lrm_decisions/A9-D4_width_threshold.out"),
+    );
+}
+
+#[test]
+fn a9_d5_notifier_toggle_udp() {
+    run_decision(
+        "A9-D5_notifier_toggle_udp",
+        include_str!("fixtures/sim/lrm_decisions/A9-D5_notifier_toggle_udp.out"),
+    );
+}
+
+#[test]
+fn a9_d6_duplicate_checks() {
+    run_decision(
+        "A9-D6_duplicate_checks",
+        include_str!("fixtures/sim/lrm_decisions/A9-D6_duplicate_checks.out"),
+    );
+}
+
+#[test]
+fn a9_d7_shared_notifier() {
+    run_decision(
+        "A9-D7_shared_notifier",
+        include_str!("fixtures/sim/lrm_decisions/A9-D7_shared_notifier.out"),
+    );
+}
+
+#[test]
+fn a9_d8_multibit_condition_lsb() {
+    run_decision(
+        "A9-D8_multibit_condition_lsb",
+        include_str!("fixtures/sim/lrm_decisions/A9-D8_multibit_condition_lsb.out"),
+    );
+}
+
+#[test]
+fn a9_d9_condition_timing() {
+    run_decision(
+        "A9-D9_condition_timing",
+        include_str!("fixtures/sim/lrm_decisions/A9-D9_condition_timing.out"),
+    );
+}
+
+#[test]
+fn a9_d10_vector_and_xz_edges() {
+    run_decision(
+        "A9-D10_vector_and_xz_edges",
+        include_str!("fixtures/sim/lrm_decisions/A9-D10_vector_and_xz_edges.out"),
+    );
+}
+
+#[test]
+fn a9_d11_nochange_window() {
+    run_decision(
+        "A9-D11_nochange_window",
+        include_str!("fixtures/sim/lrm_decisions/A9-D11_nochange_window.out"),
+    );
+}
+
+#[test]
+fn a9_d12_skew_repeats() {
+    run_decision(
+        "A9-D12_skew_repeats",
+        include_str!("fixtures/sim/lrm_decisions/A9-D12_skew_repeats.out"),
+    );
+}
+
+#[test]
+fn a9_d13_negative_limit() {
+    run_decision(
+        "A9-D13_negative_limit",
+        include_str!("fixtures/sim/lrm_decisions/A9-D13_negative_limit.out"),
+    );
+}
+
+#[test]
 fn a13_d1_consequent_clock() {
     run_decision(
         "A13-D1_consequent_clock",

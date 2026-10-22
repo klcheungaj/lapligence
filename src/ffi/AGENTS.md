@@ -88,6 +88,15 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   `constant_id` is the reject limit, its auxiliary is one more than the error
   limit's constant id (0: none), and OPERAND[0]/LHS[0] name the resolved input
   and output terminal declarations (`Db::path_pulses`, 30.7.1).
+- ABI v38 exports a timing check's arguments (TIMING_CHECK, semantic kind 33
+  subkind 4): auxiliary bits 0-7 keep the check code, bits 8-13 and 16-21 the
+  6-bit transition masks of event arguments 0 and 1 (01, 0x, 10, 1x, x0, x1;
+  z folds into x; 0 is no edge control), bits 32-47 the empty argument
+  positions and bits 48-55 the actual argument count. OPERAND[k] and
+  CONDITION[k] are event k's terminal and `&&&` condition, DELAY[i] limit
+  argument i (empty ones have no edge) and LHS[0] the notifier
+  (`Db::timing_checks`, 31.3-31.7). `$setuphold`/`$recrem` conditions and
+  delayed signals are not exported yet (ADV-010).
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;

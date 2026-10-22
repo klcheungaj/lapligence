@@ -337,6 +337,19 @@ and limit tables are writable for annotation; `llg_net_path_pending` and
 committed values (`llg_net_propagation_sync`), so the next delayed
 transition starts from the published value.
 
+Timing check sets (`scheduler/timing_checks.c`, `llg_timing_check_set_t`, one
+per instance with checks) borrow the model's terminal storage and own, between
+`llg_timing_checks_start` and `llg_rt_cleanup`, a 0/1/x state per terminal
+bit, per-step transition masks, condition values and notifier flags; each
+check row keeps its timestamps (0 is none: time-0 transitions never count,
+A9-D3) and `$nochange` window state. `llg_timing_check_step` derives every
+terminal's transitions since the last step (z as x, x<->z none), evaluates
+the generated condition evaluator lazily once per step, records timestamps
+and checks the windows of 31.3-31.4 in check order, reports a violation on
+stderr unless `llg_timing_checks_configure(0)` and flags its notifier;
+`llg_timing_notify` tells the hidden process which notifiers to toggle.
+Limits are writable for annotation; the step allocates nothing.
+
 Opaque activation slots may hold event object identities, valid until model
 teardown, or a parent coroutine's event handle address for a synchronous join.
 Cancel joined children before releasing that parent frame. Detached event

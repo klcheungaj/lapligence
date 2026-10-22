@@ -276,3 +276,181 @@ fn module_path_sets_check_sources_destinations_and_ranges() {
         "pulse limit percentages",
     );
 }
+
+#[test]
+fn timing_check_sets_check_terminals_events_and_notifiers() {
+    use super::{
+        IrExpr, IrExprKind, IrModel, IrProcess, IrRuntimeQuery, IrShape, IrSignal, IrStmt,
+        IrTimingCheck, IrTimingCheckKind, IrTimingCheckSet, IrTimingCondition, IrTimingEvent,
+        IrTimingTerminal, IrType,
+    };
+    let packed = |name: &str, width: u32| {
+        IrSignal::new(
+            name.to_owned(),
+            None,
+            IrType::Packed {
+                width,
+                signed: false,
+                two_state: false,
+            },
+            None,
+        )
+        .unwrap()
+    };
+    let check = |kind, reference: IrTimingEvent, data: IrTimingEvent, notifier| {
+        IrTimingCheck::new(
+            kind,
+            reference,
+            data,
+            10,
+            0,
+            notifier,
+            "f.v:1:1".to_owned(),
+            "$setup".to_owned(),
+        )
+    };
+    let enabled = Some(IrTimingCondition::new(0, false));
+    let model_with = |checks: Vec<IrTimingCheck>, terminal: IrTimingTerminal, notify: u32| {
+        let mut model = IrModel::new("checks".to_owned(), 1).unwrap();
+        model.signals.push(packed("d", 4));
+        model.signals.push(packed("n", 1));
+        model.timing_checks.push(IrTimingCheckSet::new(
+            "tb.u".to_owned(),
+            vec![IrTimingTerminal::new(0, 0, 1), terminal],
+            checks,
+            vec![IrExpr::try_new(IrExprKind::SigRead(0), 4, false, None).unwrap()],
+            1,
+        ));
+        let query = IrExpr::try_new(
+            IrExprKind::RuntimeQuery(IrRuntimeQuery::TimingNotify {
+                set: 0,
+                notifier: notify,
+            }),
+            1,
+            false,
+            None,
+        )
+        .unwrap();
+        model.processes.push(IrProcess::new(
+            "p_check".to_owned(),
+            "tb.u.specify".to_owned(),
+            IrShape::RunOnce,
+            Vec::new(),
+            vec![
+                IrStmt::TimingCheckStep { set: 0 },
+                IrStmt::If {
+                    cond: query,
+                    then_: Vec::new(),
+                    els: None,
+                    check: super::IrUniquePriorityCheck::None,
+                },
+            ],
+        ));
+        model
+    };
+    let setup = check(
+        IrTimingCheckKind::Setup,
+        IrTimingEvent::new(1, 0x23, enabled),
+        IrTimingEvent::new(0, 0, None),
+        Some(0),
+    );
+    let width = check(
+        IrTimingCheckKind::Width,
+        IrTimingEvent::new(1, 0x23, None),
+        IrTimingEvent::new(1, 0x1c, None),
+        None,
+    );
+    model_with(
+        vec![setup.clone(), width],
+        IrTimingTerminal::new(0, 1, 3),
+        0,
+    )
+    .validate()
+    .expect("well-formed timing checks");
+    let derived = check(
+        IrTimingCheckKind::Period,
+        IrTimingEvent::new(1, 0x23, None),
+        IrTimingEvent::new(0, 0x23, None),
+        None,
+    );
+    let unedged = check(
+        IrTimingCheckKind::NoChange,
+        IrTimingEvent::new(1, 0, None),
+        IrTimingEvent::new(0, 0, None),
+        None,
+    );
+    let mut stray = setup.clone();
+    stray.reference.edges = 0x40;
+    let mut unconditioned = setup.clone();
+    unconditioned.data.condition = Some(IrTimingCondition::new(3, true));
+    let mut unnamed = setup.clone();
+    unnamed.notifier = Some(1);
+    let mut far = setup.clone();
+    far.data.terminal = 2;
+    for (checks, terminal, notify, detail) in [
+        (
+            vec![setup.clone()],
+            IrTimingTerminal::new(0, 2, 3),
+            0,
+            "range of a packed signal",
+        ),
+        (
+            vec![setup.clone()],
+            IrTimingTerminal::new(1, 0, 1),
+            1,
+            "does not exist",
+        ),
+        (
+            vec![far],
+            IrTimingTerminal::new(0, 1, 3),
+            0,
+            "names no terminal",
+        ),
+        (
+            vec![stray],
+            IrTimingTerminal::new(0, 1, 3),
+            0,
+            "unknown edge bit",
+        ),
+        (
+            vec![unconditioned],
+            IrTimingTerminal::new(0, 1, 3),
+            0,
+            "names no condition",
+        ),
+        (
+            vec![unnamed],
+            IrTimingTerminal::new(0, 1, 3),
+            0,
+            "names no notifier",
+        ),
+        (
+            vec![derived],
+            IrTimingTerminal::new(0, 1, 3),
+            0,
+            "share the reference terminal",
+        ),
+        (
+            vec![unedged],
+            IrTimingTerminal::new(0, 1, 3),
+            0,
+            "needs an edge",
+        ),
+        (
+            Vec::new(),
+            IrTimingTerminal::new(0, 1, 3),
+            0,
+            "has no check",
+        ),
+    ] {
+        let error = model_with(checks, terminal, notify).validate().unwrap_err();
+        assert!(error.detail().contains(detail), "{detail}: {error:?}");
+    }
+    let mut model = model_with(vec![setup], IrTimingTerminal::new(0, 1, 3), 0);
+    model.processes[0].body[0] = IrStmt::TimingCheckStep { set: 1 };
+    assert!(model
+        .validate()
+        .unwrap_err()
+        .detail()
+        .contains("timing check set"));
+}
