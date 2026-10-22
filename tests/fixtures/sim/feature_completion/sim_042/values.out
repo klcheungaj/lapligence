@@ -6,7 +6,7 @@ tb.s natural=9 bin=1111111011010100 oct=177324 hex=fed4 dec=       -300 int=-300
 tb.s real=-300.00 vector=0000fed4/00000000
 tb.wide hex=81xxxxxxxxxxxxxxxx vector=00000081/00000000 ffffffff/ffffffff ffffffff/ffffffff
 tb.str string="Hi!" hex=00486921
-tb.r real=-2.50 int=-3 natural=-2.50 bin=<error 3>
+tb.r real=-2.50 int=-3 natural=-2.50 bin=1111111111111111111111111111111111111111111111111111111111111110
 tb.pz strength=1:40:40 0:40:40 z:01:01 1:40:40
 tb.d time=0:0
 put tb.str fmt=8 "OK" -> null level=0

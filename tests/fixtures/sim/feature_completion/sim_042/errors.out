@@ -11,7 +11,7 @@ iterate params of tb: ok level=0 again=0 code=-
 iterate modules of tb (none): refused level=0 again=0 code=-
 lookup missing: refused level=0 again=0 code=-
 size of real: ok level=0 again=0 code=-
-bin of real: refused level=3 again=3 code=LLG_VPI_FORMAT
+scalar of real: refused level=3 again=3 code=LLG_VPI_FORMAT
 unknown format: refused level=3 again=3 code=LLG_VPI_FORMAT
 value of whole array: refused level=3 again=3 code=LLG_VPI_VALUE
 index out of range: refused level=3 again=3 code=LLG_VPI_INDEX

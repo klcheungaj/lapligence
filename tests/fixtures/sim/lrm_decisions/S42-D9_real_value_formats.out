@@ -1,7 +1,9 @@
 real=-2.50
 int=-3
 objtype format=7 real=-2.50
-format 1 level=3
-format 3 level=3
-format 8 level=3
-format 9 level=3
+format 1 level=0
+format 3 level=0
+format 8 level=0
+format 9 level=0
+p bin=0000000000000000000000000000000000000000000000000000000001000001
+p dec=[                  65]

@@ -85,8 +85,9 @@ checked against a run; no line was accepted only because the run printed it.
   `fed4`, octal `177324`, decimal `       -300` (a signed 16-bit value takes
   11 characters), real -300. The 72-bit `wide` vector has three
   `aval/bval` words, the top one `00000081/00000000`. `"Hi!"` in 32 bits reads
-  back as the string `Hi!` (leading zero bytes skipped). A real object rejects
-  `vpiBinStrVal` (S42-D9) and rounds -2.5 to -3 for `vpiIntVal`.
+  back as the string `Hi!` (leading zero bytes skipped). A real object rounds
+  -2.5 to -3 for `vpiIntVal`; its `vpiBinStrVal` is the real truncated toward
+  zero as a signed 64-bit value, -2 = 63 ones and a 0 (S42-D9).
   `vpiStrengthVal` reports strong (0x40) for 0/1 and high impedance (0x01) for
   z (38.15).
 - **Puts.** String `"OK"`, octal `7_7` (underscores ignored), hex `z`
@@ -138,7 +139,8 @@ returns the same level because `vpi_chk_error` does not reset it (38.2,
 S42-D2). An empty but supported iteration (no nets, no submodules in `tb`)
 returns NULL without an error (38.23), and so do a name lookup that finds
 no object (S42-D11), a bit index outside a vector's range (S42-D7) and
-`vpiSize` of a real, which is 64 (S42-D8); a part-select written in reverse
+`vpiSize` of a real, which is 64 (S42-D8); `vpiScalarVal` of a real is an
+error (S42-D9); a part-select written in reverse
 order inside a name is still an error. Released handles, handles of a
 finished iterator (38.40), a reused slot's old handle and argument handles of
 a returned call are stale; releasing a catalog object is accepted and leaves

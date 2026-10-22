@@ -43,9 +43,10 @@ static PLI_INT32 errors(PLI_BYTE8* data) {
     report("size of real", vpi_get(vpiSize, named("tb.r")) != vpiUndefined);
     s_vpi_value value;
     memset(&value, 0, sizeof(value));
-    value.format = vpiBinStrVal;
+    /* A real has no scalar representation (S42-D9). */
+    value.format = vpiScalarVal;
     vpi_get_value(named("tb.r"), &value);
-    report("bin of real", value.value.str != NULL);
+    report("scalar of real", 0);
     value.format = 77;
     vpi_get_value(v, &value);
     report("unknown format", 0);

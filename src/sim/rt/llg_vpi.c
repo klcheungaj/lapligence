@@ -1077,8 +1077,25 @@ static void fill_value(llg_vpi_datum_t* datum, int is_signed, int type, p_vpi_va
                 output->value.integer = (PLI_INT32)rounded;
                 return;
             }
+            case vpiBinStrVal:
+            case vpiOctStrVal:
+            case vpiDecStrVal:
+            case vpiHexStrVal:
+            case vpiStringVal:
+            case vpiVectorVal: {
+                /* Decision S42-D9: the string and vector formats read the
+                 * real truncated toward zero as a signed 64-bit value. */
+                double truncated = datum->real != datum->real ? 0.0 : trunc(datum->real);
+                llg_vpi_datum_t integral;
+                memset(&integral, 0, sizeof(integral));
+                integral.packed = sv4_from_real(truncated, 64, 1);
+                fill_value(&integral, 1, vpiLongIntVar, output);
+                datum_destroy(&integral);
+                return;
+            }
             default:
-                vpi_error("LLG_VPI_FORMAT", "a real value supports only vpiRealVal and vpiIntVal");
+                vpi_error("LLG_VPI_FORMAT",
+                          "a real value has no scalar, time or strength representation");
                 return;
         }
     }
