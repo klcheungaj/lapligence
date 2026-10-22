@@ -1739,9 +1739,6 @@ other items need small hand-written cases.
 - `restrict property` stops with the generic "unsupported executable node
   ConcurrentAssertion" instead of a clause-linked message; 16.15.4 does not
   verify it in simulation.
-- The frontend rejects the legal multiclocked `a ##1 b[*0:1] ##1 @(c2) d`
-  (16.14.1: the maximal singly clocked subsequence `a ##1 b[*0:1]` admits only
-  nonempty matches) with "sequence admits an empty match".
 
 ### Cause
 

@@ -1,0 +1,46 @@
+diff --git a/source/analysis/AnalyzedAssertion.cpp b/source/analysis/AnalyzedAssertion.cpp
+index 121c7522a..8a70b825c 100644
+--- a/source/analysis/AnalyzedAssertion.cpp
++++ b/source/analysis/AnalyzedAssertion.cpp
+@@ -527,8 +527,12 @@ struct AssertionVisitor {
+         const AssertionExpr* lastExpr = nullptr;
+         bool lastWasMulticlocked = false;
+         bool isMulticlockedSeq = false;
++        // The elements since the last clock change: together they form the
++        // maximal singly clocked subsequence that ends at `lastExpr`.
++        size_t segmentStart = 0;
+ 
+-        for (auto& elem : expr.elements) {
++        for (size_t i = 0; i < expr.elements.size(); i++) {
++            auto& elem = expr.elements[i];
+             auto result = elem.sequence->visit(*this, outerClock, flags | VF::RequireSequence);
+             if (!result.clocks.empty()) {
+                 endClock = result.endClock == nullptr ? result.clocks.back() : result.endClock;
+@@ -538,13 +542,24 @@ struct AssertionVisitor {
+                 else if (result.isMulticlockedSeq ||
+                          !firstClock->isEquivalentTo(*result.clocks[0])) {
+                     // When concatenating differently clocked sequences, the maximal single-clocked
+-                    // subsequences must not admit an empty match.
+-                    if (!lastWasMulticlocked)
+-                        requireOnlyNonEmptyMatch(*lastExpr);
++                    // subsequences must not admit an empty match (IEEE 1800-2009 16.14.1). The
++                    // subsequence before the clock change is every element since the last
++                    // change, which admits an empty match only if each of them does.
++                    if (!lastWasMulticlocked) {
++                        bool segmentAdmitsEmpty = true;
++                        for (size_t j = segmentStart; j < i && segmentAdmitsEmpty; j++) {
++                            segmentAdmitsEmpty = expr.elements[j]
++                                                     .sequence->checkNondegeneracy()
++                                                     .status.has(NondegeneracyStatus::AdmitsEmpty);
++                        }
++                        if (segmentAdmitsEmpty)
++                            requireOnlyNonEmptyMatch(*lastExpr);
++                    }
+                     if (!result.isMulticlockedSeq)
+                         requireOnlyNonEmptyMatch(*elem.sequence);
+ 
+                     isMulticlockedSeq = true;
++                    segmentStart = i;
+                     if (elem.delay.min > 1 || elem.delay.max != elem.delay.min)
+                         badMulticlockedSeq(*elem.sequence, *lastExpr, elem.delayRange);
+                 }
