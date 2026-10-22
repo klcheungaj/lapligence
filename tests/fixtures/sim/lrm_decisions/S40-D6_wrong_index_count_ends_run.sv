@@ -2,9 +2,8 @@
 // indices differs from the array's number of unpacked dimensions is a
 // run-time error that ends the simulation: the import does not complete in
 // SystemVerilog, nothing after the call runs, and the final procedures run
-// (llg: an error on stderr, exit status 1). The access itself does nothing;
-// llg cannot unwind the foreign frame, so C code after the access still
-// runs in llg, and this case performs the access last.
+// (llg: an error on stderr, exit status 1). The foreign code is abandoned at
+// the access: C code after it does not run, and nothing is copied out.
 //
 // IEEE 1800-2009 H.12.4 (SystemVerilog-1800-2009.txt L73337-73340):
 //   "Nonetheless, the addresses of individual elements of an array shall be
@@ -19,7 +18,7 @@ module tb;
     bit b [0:1][3:2];
 
     final begin
-        $display("final block");
+        $display("final block b[0][3]=%0d", b[0][3]);
     end
 
     initial begin

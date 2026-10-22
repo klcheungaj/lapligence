@@ -2339,7 +2339,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   as `svOpenArrayHandle` with the actual's ranges (35.5.6.1, H.12). Every
   `svdpi.h` canonical-access, bit/part-select, array-query and open-array
   element routine of H.11-H.12 is provided, plus `svDpiVersion`
-  ("1800-2005"). DPI-C libraries compile against the `svdpi.h` that llg
+  ("1800-2005"). An element access with the wrong number of indices ends the
+  run and abandons the import's C code at the access (S40-D6). DPI-C libraries compile against the `svdpi.h` that llg
   writes beside the generated model (`--gen-only` shows it); it is the Annex I
   header with `<inttypes.h>` for the fixed-width types on every host (I.2).
   `byte` is C `char` (Table H.1) in llg's prototypes; its signedness is the
