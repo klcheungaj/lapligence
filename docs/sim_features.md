@@ -1788,7 +1788,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   index width (S27-D17); an associative
   array of unpacked arrays writes an `@` key before each element's cells
   (S27-D22), while one element of it writes its cells without addresses and a
-  missing or unknown key is an error that writes no file (S27-D24, S27-D25).
+  missing or unknown key warns and dumps the array's default value without
+  creating the element (S27-D24, S27-D25).
   The same element/view restrictions apply; writers
   reject in 2001 mode. SV §21.5 **[SV-2005]**.
 

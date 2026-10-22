@@ -66,7 +66,12 @@ e3.mem:
 e6.mem:
   0b
 miss.mem:
-  keep
+  00
+  00
+  00
+miss.mem:
+  00
+  00
 missing n=8 exists99=0
 H '{0:'{11, 10}}
 hd.mem:

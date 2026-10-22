@@ -461,9 +461,6 @@ fn associative_arrays_of_unpacked_arrays_load_and_dump() {
         "error: memory file `p.mem`: selected range includes an address outside the memory"
             .to_owned(),
         "error: memory file `p.mem`: selected index or slice is outside the memory".to_owned(),
-        "error: memory file `miss.mem`: selected associative array element does not exist"
-            .to_owned(),
-        "error: memory file `miss.mem`: selected index or slice is outside the memory".to_owned(),
         more_words("g.mem"),
         too_few_words("blank.mem"),
     ];

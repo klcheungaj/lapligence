@@ -1683,8 +1683,8 @@ static void llg_assoc_rows_write(llg_string_t path, const llg_assoc_value_t* arr
 // Entry points for an associative array of fixed arrays. `LLG_MEMORY_ROWS_ONE`
 // is element `row` (a key), a fixed memory addressed through the view inside
 // it; a load creates a missing element once its range is valid (S27-D23), a
-// dump of a missing or unknown key is an error that writes no file and
-// creates nothing (S27-D24). `LLG_MEMORY_ROWS_ALL` is the whole array (S27-D22).
+// dump of a missing or unknown key writes the default value and creates
+// nothing (S27-D24). `LLG_MEMORY_ROWS_ALL` is the whole array (S27-D22).
 static void llg_assoc_rows_memory_view(int write, llg_string_t path, llg_assoc_value_t* array,
                                        int mode, sv4_t row, uint64_t row_cells,
                                        uint32_t elem_width, int8_t elem_signed,
@@ -1714,20 +1714,30 @@ static void llg_assoc_rows_memory_view(int write, llg_string_t path, llg_assoc_v
         }
         return;
     }
-    if (sv4_is_unknown(row) ||
-        (write && !llg_assoc_value_exists_integral(array, row))) {
-        char* filename = llg_memory_path_copy(path);
-        llg_memory_error(filename, sv4_is_unknown(row)
-                                       ? "selected index or slice is outside the memory"
-                                       : "selected associative array element does not exist");
-        free(filename);
-        return;
-    }
     llg_memory_storage_t storage = {0};
     storage.row_cells = row_cells;
     if (write) {
+        // A missing or unknown key reads like any associative element (IEEE
+        // 1800-2009 7.8.6): a warning, and the array's default value is
+        // dumped without creating the element (S27-D24, industry-standard
+        // behaviour for a missing key).
         storage.rows = llg_assoc_value_element_integral(array, &row, 1, 0);
+        llg_value_t fallback = {0};
+        if (!storage.rows) {
+            llg_native_value_init(&fallback, array->element);
+            llg_value_element_read(&fallback, array->has_default_value
+                                                  ? &array->default_value
+                                                  : NULL);
+            storage.rows = &fallback;
+        }
         fixed_memory_write_view(path, &storage, row_cells, elem_width, elem_signed, two_state, dims, n_dims, strides, origin, view_total, start, finish, has_start, has_finish, addressing_policy, radix);
+        if (storage.rows == &fallback) llg_native_value_destroy(&fallback);
+        return;
+    }
+    if (sv4_is_unknown(row)) {
+        char* filename = llg_memory_path_copy(path);
+        llg_memory_error(filename, "selected index or slice is outside the memory");
+        free(filename);
         return;
     }
     storage.assoc = array;
