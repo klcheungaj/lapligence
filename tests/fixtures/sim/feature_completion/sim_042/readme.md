@@ -35,7 +35,8 @@ checked against a run; no line was accepted only because the run printed it.
   both 4 bits; `vpiLowConn` is the port's internal object `tb.u1.a`/`tb.u1.y`.
 - **Lookup.** `vpi_handle_by_name("gv", gen[1])` finds `tb.gen[1].gv`
   (relative to the scope, 38.21); `"v"` relative to `u1` is not found because a
-  scoped lookup searches only that scope (S42-D11).
+  scoped lookup searches only that scope, and the miss sets no error status
+  (S42-D11).
 - **Tool information.** `vpi_get_vlog_info` returns 1 with the model's
   command line (`argv[0]` set) and the product name `lapligence` (38.17).
 - **Values.** `up` is `logic [0:3]` = `10xz`: `vpiIntVal` reads X/Z bits as 0
@@ -121,7 +122,10 @@ Every refused operation returns NULL, `vpiUndefined` or 0 and sets the error
 status; `vpi_chk_error` returns the level `vpiError` (3), and a second call
 returns the same level because `vpi_chk_error` does not reset it (38.2,
 S42-D2). An empty but supported iteration (no nets, no submodules in `tb`)
-returns NULL without an error (38.23). Released handles, handles of a
+returns NULL without an error (38.23), and so do a name lookup that finds
+no object (S42-D11) and a bit index outside a vector's range (S42-D7); a
+part-select written in reverse order inside a name is still an error.
+Released handles, handles of a
 finished iterator (38.40), a reused slot's old handle and argument handles of
 a returned call are stale; releasing a catalog object is accepted and leaves
 it valid. The call handle persists between calls (38.14). `$stress` makes

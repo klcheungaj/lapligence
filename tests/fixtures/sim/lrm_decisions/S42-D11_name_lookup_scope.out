@@ -1,7 +1,7 @@
 tb.v -> tb.v = a5
-v -> not found level=3
+v -> not found level=0
 c -> tb.u.c = 9
-v -> not found level=3
+v -> not found level=0
 tb.mem[1] -> tb.mem[1] = 3c
 tb.v[7:4] -> tb.v[7:4] = a
 tb.v[0] -> tb.v[0] = 1

@@ -1586,7 +1586,10 @@ static vpiHandle assertion_by_name(const char* name, vpiHandle scope);
 /* Resolve `name` with optional trailing `[i]`, `[i][j]` or `[l:r]` selects
  * after a catalog name. Catalog names themselves may contain brackets
  * (generate blocks), so the longest catalog prefix wins. */
-static vpiHandle lookup_full_name(const char* name) {
+/* `*selected` reports whether `name` names an object followed by a select
+ * that does not resolve (an index outside the declared range). */
+static vpiHandle lookup_full_name(const char* name, int* selected) {
+    *selected = 0;
     uint32_t row = find_row(name);
     if (row != LLG_VPI_NONE) return object_handle(row);
     size_t length = strlen(name);
@@ -1598,7 +1601,10 @@ static vpiHandle lookup_full_name(const char* name) {
         if (name[cut] != '[') continue;
         prefix[cut] = '\0';
         row = find_row(prefix);
-        if (row != LLG_VPI_NONE) found = select_from_suffix(row, name + cut);
+        if (row != LLG_VPI_NONE) {
+            *selected = 1;
+            found = select_from_suffix(row, name + cut);
+        }
         prefix[cut] = name[cut];
     }
     free(prefix);
@@ -1624,6 +1630,9 @@ static int parse_index(const char** cursor, int64_t* value) {
 }
 
 static vpiHandle element_by_indices(uint32_t row, const int64_t* indices, int count, int quiet);
+/* How bit_by_index reports a failure: every error, none, or every error
+ * except an index outside the declared range. */
+enum { BIT_ERRORS = 0, BIT_QUIET = 1, BIT_QUIET_RANGE = 2 };
 static vpiHandle bit_by_index(uint32_t row, uint64_t element, int64_t index, int quiet);
 
 static vpiHandle select_from_suffix(uint32_t row, const char* suffix) {
@@ -1678,11 +1687,11 @@ static vpiHandle select_from_suffix(uint32_t row, const char* suffix) {
             if (!slot) return NULL;
             uint64_t element = slot->element;
             vpi_release_handle(base);
-            return bit_by_index(row, element, indices[count - 1], 1);
+            return bit_by_index(row, element, indices[count - 1], BIT_QUIET);
         }
         return NULL;
     }
-    return count == 1 ? bit_by_index(row, LLG_VPI_NO_ELEMENT, indices[0], 1) : NULL;
+    return count == 1 ? bit_by_index(row, LLG_VPI_NO_ELEMENT, indices[0], BIT_QUIET) : NULL;
 }
 
 vpiHandle vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope) {
@@ -1693,6 +1702,7 @@ vpiHandle vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope) {
         return NULL;
     }
     vpiHandle result = NULL;
+    int selected = 0;
     if (scope) {
         llg_vpi_slot_t* slot = checked_handle(scope, NULL);
         if (!slot) return NULL;
@@ -1709,10 +1719,10 @@ vpiHandle vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope) {
             return NULL;
         }
         snprintf(full, length, "%s.%s", parent->full_name, (const char*)name);
-        result = lookup_full_name(full);
+        result = lookup_full_name(full, &selected);
         free(full);
     } else {
-        result = lookup_full_name((const char*)name);
+        result = lookup_full_name((const char*)name, &selected);
     }
     /* A labelled assertion is also a named scope of the catalog; the name
      * denotes the assertion (39.3.1). */
@@ -1724,9 +1734,12 @@ vpiHandle vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope) {
             if (assertion) result = assertion;
         }
     }
-    if (!result && !g_vpi.error_pending)
-        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_NOT_FOUND", "VPI object `%s` was not found",
-                       (const char*)name);
+    /* A name that denotes no object is an ordinary negative answer: NULL
+     * with no error status (decision S42-D2). A select outside the range of
+     * an existing object is an error (decision S42-D11). */
+    if (!result && selected && !g_vpi.error_pending)
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_NOT_FOUND",
+                       "VPI object `%s` has no such element or select", (const char*)name);
     return result;
 }
 
@@ -1755,12 +1768,14 @@ static vpiHandle bit_by_index(uint32_t row, uint64_t element, int64_t index, int
     llg_vpi_model_object_t* object = row_object(row);
     if (object->is_real || !object->packed ||
         object->type == vpiPackedArrayVar || object->width < 1) {
-        if (!quiet) vpi_error("LLG_VPI_INDEX", "object has no bit-selectable packed value");
+        if (quiet != BIT_QUIET)
+            vpi_error("LLG_VPI_INDEX", "object has no bit-selectable packed value");
         return NULL;
     }
     uint32_t offset;
     if (!packed_offset(object, index, &offset)) {
-        if (!quiet) vpi_error("LLG_VPI_INDEX", "bit index is outside the declared range");
+        if (quiet == BIT_ERRORS)
+            vpi_error("LLG_VPI_INDEX", "bit index is outside the declared range");
         return NULL;
     }
     return make_select(row, element, offset, 1, index, index, NULL);
@@ -1785,10 +1800,12 @@ vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
             vpi_error("LLG_VPI_INDEX", "object has no access by index");
             return NULL;
         }
-        return bit_by_index(slot->object, LLG_VPI_NO_ELEMENT, value, 0);
+        /* A bit index outside a vector's range is a plain NULL answer; one
+         * outside an element's range stays an error (decision S42-D7). */
+        return bit_by_index(slot->object, LLG_VPI_NO_ELEMENT, value, BIT_QUIET_RANGE);
     }
     if (slot->kind == SLOT_ELEMENT)
-        return bit_by_index(slot->object, slot->element, value, 0);
+        return bit_by_index(slot->object, slot->element, value, BIT_ERRORS);
     vpi_error("LLG_VPI_INDEX", "object has no access by index");
     return NULL;
 }
@@ -1805,14 +1822,14 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
     for (int i = 0; i < count; ++i) values[i] = indices[i];
     if (slot->kind != SLOT_OBJECT) {
         if (slot->kind == SLOT_ELEMENT && count == 1)
-            return bit_by_index(slot->object, slot->element, values[0], 0);
+            return bit_by_index(slot->object, slot->element, values[0], BIT_ERRORS);
         vpi_error("LLG_VPI_INDEX", "object has no access by index");
         return NULL;
     }
     uint32_t row = slot->object;
     llg_vpi_model_object_t* base = row_object(row);
     if (!is_array_type(base->type)) {
-        if (count == 1) return bit_by_index(row, LLG_VPI_NO_ELEMENT, values[0], 0);
+        if (count == 1) return bit_by_index(row, LLG_VPI_NO_ELEMENT, values[0], BIT_QUIET_RANGE);
         vpi_error("LLG_VPI_INDEX", "too many indices for a packed object");
         return NULL;
     }
@@ -1825,7 +1842,7 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
         uint32_t element_index;
         decode_handle(element, &element_index);
         release_slot(element_index);
-        return bit_by_index(row, flat, values[count - 1], 0);
+        return bit_by_index(row, flat, values[count - 1], BIT_ERRORS);
     }
     vpi_error("LLG_VPI_INDEX", "index count does not match the array dimensions");
     return NULL;

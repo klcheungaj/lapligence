@@ -345,7 +345,8 @@ L66756-66771.
   `tb.im` (vpiImmediateAssert) and `tb.d` (vpiImmediateAssert, deferred).
   `vpiScope` is the owning instance, `vpiDefName` its definition. `tb.u1`
   owns two items. `vpi_handle_by_name("tb.u1.p")` and `("p", tb.u1)` find
-  the same assertion; a missing name is `LLG_VPI_NOT_FOUND`. Stopping `u1`
+  the same assertion; a missing name is NULL with no error status (`none`,
+  S42-D11). Stopping `u1`
   (an instance handle) and `tb.u2.c` (an assertion handle) return SV_COV_OK
   (1); CHECK of `u1` is 1. Statement coverage: CHECK 0 (NOCOV), STOP 1
   (S46-D5). An unknown coverage type is -1 with `LLG_VPI_ARGUMENT`.

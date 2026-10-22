@@ -5,7 +5,7 @@
 
 static PLI_INT32 d2(PLI_BYTE8* data) {
     (void)data;
-    vpiHandle missing = vpi_handle_by_name((PLI_BYTE8*)"tb.none", NULL);
+    vpiHandle missing = vpi_handle_by_name((PLI_BYTE8*)"tb.v[9]", NULL);
     PLI_INT32 level = vpi_chk_error(NULL);
     PLI_INT32 again = vpi_chk_error(NULL);
     PLI_INT32 size = vpi_get(vpiSize, vpi_handle_by_name((PLI_BYTE8*)"tb.v", NULL));

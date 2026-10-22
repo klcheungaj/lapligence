@@ -155,9 +155,10 @@ static void hierarchy(void) {
     PLI_INT32 got = vpi_get_vlog_info(&info);
     vpi_printf("vlog_info=%d product=%s argv0=%s\n", (int)got, text(info.product),
                info.argc >= 1 && info.argv && info.argv[0] ? "set" : "missing");
-    /* Relative lookup is confined to the scope (38.21). */
+    /* Relative lookup is confined to the scope (38.21); a name that denotes
+     * no object is NULL without an error status (S42-D11). */
     vpi_printf("relative miss=%d\n", vpi_handle_by_name((PLI_BYTE8*)"v", u1) == NULL &&
-                                         vpi_chk_error(NULL) == vpiError);
+                                         vpi_chk_error(NULL) == 0);
 }
 
 static void types_and_values(void) {

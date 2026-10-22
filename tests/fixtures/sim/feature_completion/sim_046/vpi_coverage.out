@@ -6,7 +6,7 @@ vpiImmediateAssert name=im full=tb.im scope=tb def=tb deferred=0
 vpiImmediateAssert name=d full=tb.d scope=tb def=tb deferred=1
 u1 items=2
 by name vpiAssert same=1
-missing LLG_VPI_NOT_FOUND
+missing none
 stop u1 1 stop u2.c 1 check u1 1
 statement check 0 stop 1
 bad type -1 LLG_VPI_ARGUMENT

@@ -1991,7 +1991,8 @@ None: the decision is to reject. Reproduce with the files in
 
 These VPI requests return NULL, `vpiUndefined` or 0 with a `vpi_chk_error`
 error (`LLG_VPI_UNSUPPORTED`, `LLG_VPI_INDEX` or `LLG_VPI_NOT_FOUND`) instead
-of a handle or value:
+of a handle or value; `vpi_handle_by_name` of such an object returns NULL
+with no error status, as for a name that denotes nothing (S42-D11):
 
 - objects outside the generated catalog: sparse fixed arrays (stored in a keyed
   container), dynamic arrays, queues, associative arrays, strings, class

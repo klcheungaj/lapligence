@@ -9,14 +9,14 @@ iterate nets of reg: refused level=3 again=3 code=LLG_VPI_UNSUPPORTED
 iterate nets of tb: refused level=0 again=0 code=-
 iterate params of tb: ok level=0 again=0 code=-
 iterate modules of tb (none): refused level=0 again=0 code=-
-lookup missing: refused level=3 again=3 code=LLG_VPI_NOT_FOUND
+lookup missing: refused level=0 again=0 code=-
 size of real: refused level=3 again=3 code=LLG_VPI_UNSUPPORTED
 bin of real: refused level=3 again=3 code=LLG_VPI_FORMAT
 unknown format: refused level=3 again=3 code=LLG_VPI_FORMAT
 value of whole array: refused level=3 again=3 code=LLG_VPI_VALUE
 index out of range: refused level=3 again=3 code=LLG_VPI_INDEX
 too many indices: refused level=3 again=3 code=LLG_VPI_INDEX
-bit index out of range: refused level=3 again=3 code=LLG_VPI_INDEX
+bit index out of range: refused level=0 again=0 code=-
 part select reversed: refused level=3 again=3 code=LLG_VPI_NOT_FOUND
 put to parameter: refused level=3 again=3 code=LLG_VPI_VALUE
 put to net array element: refused level=3 again=3 code=LLG_VPI_VALUE
