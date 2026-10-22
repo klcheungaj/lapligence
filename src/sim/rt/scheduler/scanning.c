@@ -298,6 +298,13 @@ static void llg_scan_store_real(const llg_file_input_target_t* target, double va
     llg_ba_d(target->real, target->shortreal ? (double)(float)value : value);
 }
 
+/* A real field too large for a double reads as the largest finite double of
+ * its sign (decision S26-D22, industry-standard behaviour; Table 21-8 gives
+ * the syntax only). The field syntax admits no infinity of its own. */
+static double llg_scan_finite_real(double value) {
+    return isinf(value) ? copysign(DBL_MAX, value) : value;
+}
+
 static int llg_scan_assign(const unsigned char* bytes, size_t length, char conversion,
                            const llg_file_input_target_t* target, uint32_t width,
                            int is_signed) {
@@ -320,7 +327,7 @@ static int llg_scan_assign(const unsigned char* bytes, size_t length, char conve
         memcpy(text, bytes, length);
         text[length] = 0;
         char* end = NULL;
-        double value = strtod(text, &end);
+        double value = llg_scan_finite_real(strtod(text, &end));
         int valid = end == text + length;
         free(text);
         if (!valid) return 0;
@@ -450,6 +457,7 @@ static int llg_scan_store_time(const unsigned char* bytes, size_t length,
                                const llg_file_input_target_t* target) {
     double value;
     if (!target || !llg_scan_time_value(bytes, length, input, &value)) return 0;
+    value = llg_scan_finite_real(value);
     if (target->kind == LLG_FILE_INPUT_REAL && target->real) {
         llg_scan_store_real(target, value);
         return 1;

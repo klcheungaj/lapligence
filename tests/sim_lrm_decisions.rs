@@ -400,6 +400,14 @@ fn s26_d21_fgets_nothing_read() {
 }
 
 #[test]
+fn s26_d22_real_field_overflow() {
+    run_decision(
+        "S26-D22_real_field_overflow",
+        include_str!("fixtures/sim/lrm_decisions/S26-D22_real_field_overflow.out"),
+    );
+}
+
+#[test]
 fn s26_d3_unformatted_words() {
     run_decision(
         "S26-D3_unformatted_words",

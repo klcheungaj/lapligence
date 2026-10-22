@@ -140,6 +140,9 @@ for `8'b1x0z_01xz` (aval word then bval word, see below), and `34 12 00 00`
     return 0;
   - overlong integral fields keep their least significant bits; `%s` into a
     24-bit vector keeps its last three characters;
+  - a real field beyond the range of a double (lines I and J, and `r4` of
+    `scan_conversions` line D) reads as the largest finite double of its sign
+    (S26-D22; Table 21-8 gives the syntax only);
   - `%d` reading a single `z` assigns all-Z and leaves the second `z` unread;
   - `%u` with three bytes left stores them in the low three bytes, keeps the
     top byte and returns 0, then returns -1 at end of file (S26-D3);
