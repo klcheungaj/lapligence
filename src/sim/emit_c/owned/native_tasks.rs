@@ -133,17 +133,17 @@ impl Frame<'_, '_> {
         args: &[IrExpr],
     ) -> Result<Value, String> {
         let seed_target = seed.map(|lhs| self.target(lhs)).transpose()?;
-        let seed_name = if let Some(target) = &seed_target {
+        // The variable's old value stays live until the write-back, which
+        // replaces only the bits the seed was read from (S28-D2).
+        let (seed_name, seed_old) = if let Some(target) = &seed_target {
             if target.width == 0 {
                 return Err("legacy random seed must be packed storage".to_owned());
             }
             let value = self.read_target(target);
-            let value = self.convert(value, 32, true, false, false);
-            let scalar = self.scalar("int32_t", format!("(int32_t)sv4_to_i64({})", value.code));
-            self.discard(value);
-            Some(scalar)
+            let scalar = self.scalar("int32_t", format!("llg_random_seed_read({})", value.code));
+            (Some(scalar), Some(value))
         } else {
-            None
+            (None, None)
         };
         let mut parameters = Vec::new();
         for argument in args {
@@ -165,8 +165,13 @@ impl Frame<'_, '_> {
             return Err("legacy distribution requires a seed".to_owned());
         };
         let result = self.scalar("int32_t", call);
-        if let (Some(target), Some(seed)) = (seed_target, seed_name) {
-            let value = self.value(format!("sv4_from_i64((int64_t){seed}, 32)"), 32, true);
+        if let (Some(target), Some(seed), Some(old)) = (seed_target, seed_name, seed_old) {
+            let value = self.value(
+                format!("llg_random_seed_merge({}, {seed})", old.code),
+                old.width,
+                old.signed,
+            );
+            self.discard(old);
             self.store(&target, value, false, "0")?;
             self.release_target(target);
         }

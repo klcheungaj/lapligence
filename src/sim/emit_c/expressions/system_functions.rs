@@ -17,11 +17,16 @@ pub(super) fn render_legacy_random(
             return Err("legacy random seed must be packed storage".to_owned());
         }
         let value = render_lhs_value(ctx, &captured, width, signed)?;
+        // The write-back replaces only the bits the seed was read from
+        // (S28-D2).
         declarations.push_str(&format!(
-            "int32_t _llg_random_seed = (int32_t)sv4_to_i64(sv4_cast({}, 32, 1)); ",
+            "sv4_t _llg_random_seed_old = {}; int32_t _llg_random_seed = llg_random_seed_read(_llg_random_seed_old); ",
             value.code
         ));
-        (Some(captured), Some("&_llg_random_seed".to_owned()))
+        (
+            Some((captured, width, signed)),
+            Some("&_llg_random_seed".to_owned()),
+        )
     } else {
         (None, None)
     };
@@ -49,15 +54,15 @@ pub(super) fn render_legacy_random(
         format!("{name}({})", arguments.join(", "))
     };
     declarations.push_str(&format!("int32_t _llg_random_result = {call}; "));
-    if let Some(seed_lhs) = seed_lhs {
+    if let Some((seed_lhs, width, signed)) = seed_lhs {
         let result = IrExpr::new(
             IrExprKind::Verbatim {
-                code: "sv4_from_i64((int64_t)_llg_random_seed, 32)".to_owned(),
-                width: 32,
-                signed: true,
+                code: "llg_random_seed_merge(_llg_random_seed_old, _llg_random_seed)".to_owned(),
+                width,
+                signed,
             },
-            32,
-            true,
+            width,
+            signed,
             None,
         );
         declarations.push_str(&render_assign(ctx, &seed_lhs, &result, false)?);

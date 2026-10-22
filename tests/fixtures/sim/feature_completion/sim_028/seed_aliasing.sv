@@ -3,7 +3,8 @@
 // Annex N code: it is read from and written back to the named variable,
 // whatever its storage, width or the formal it reaches the call through.
 // Expected values come from annex_n_reference.c vectors (seed 1 -> result
-// -2147414528, seed 69070; seed -1 -> 2147415551, seed -69068; seed 0 ->
+// -2147414528, seed 69070; seed -1 -> 2147415551, seed -69068; seed 65535
+// -> -1916013541, seed 231469620; seed 0 ->
 // 303379748, seed -1844104698; $dist_uniform from seed 7 -> 0 then, with
 // bounds -5..5, 3 and seed 483484 then -965981971) and the width rules of S28-D2/S28-D3.
 class holder_c;

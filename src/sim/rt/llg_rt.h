@@ -1157,6 +1157,13 @@ void llg_q_exam(sv4_t q_id, sv4_t stat_code, sv4_t* stat_value,
 // thread's stream.
 sv4_t llg_urandom(void);
 sv4_t llg_urandom_seed(sv4_t seed);
+// Seed variables of `$random` and the `$dist_*` functions (Annex N passes a
+// 32-bit seed): the seed is the variable's low min(width, 32) bits,
+// zero-extended, and 0 when any of them is X or Z; the merge returns a new
+// value shaped like `old` (borrowed) with those bits replaced by `seed` and
+// the upper bits kept.
+int32_t llg_random_seed_read(sv4_t seed);
+sv4_t llg_random_seed_merge(sv4_t old, int32_t seed);
 sv4_t llg_urandom_range(sv4_t max, sv4_t min, int has_min);
 // `randcase` (IEEE 1800-2009 18.16): picks the index of the item whose share
 // of the exact weight sum contains one draw from the calling process stream,

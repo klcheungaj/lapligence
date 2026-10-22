@@ -342,6 +342,27 @@ sv4_t llg_urandom_seed(sv4_t seed) {
     return llg_urandom();
 }
 
+/* Legacy seed variables (S28-D2, S28-D3). The low min(width, 32) bits are
+ * the seed, zero-extended whatever the variable's signedness; an X or Z among
+ * them makes the whole seed 0. */
+int32_t llg_random_seed_read(sv4_t seed) {
+    uint32_t width = llg_sv4_width(seed);
+    if (width == 0) return 0;
+    uint64_t mask = width >= 32u ? UINT64_C(0xffffffff) : (UINT64_C(1) << width) - 1u;
+    return (int32_t)(uint32_t)(llg_sv4_word(seed, 0, LLG_SV4_BITS) & mask);
+}
+
+/* The returned seed replaces only those low bits; wider variables keep their
+ * upper bits. */
+sv4_t llg_random_seed_merge(sv4_t old, int32_t seed) {
+    sv4_t merged = sv4_clone(&old);
+    uint64_t low = UINT64_C(0xffffffff);
+    llg_sv4_set_word(&merged, 0,
+                     (llg_sv4_word(old, 0, LLG_SV4_BITS) & ~low) | (uint64_t)(uint32_t)seed,
+                     llg_sv4_word(old, 0, LLG_SV4_X) & ~low, llg_sv4_word(old, 0, LLG_SV4_Z) & ~low);
+    return merged;
+}
+
 sv4_t llg_urandom_range(sv4_t max, sv4_t min, int has_min) {
     uint32_t high = llg_rng_argument(max);
     uint32_t low = has_min ? llg_rng_argument(min) : 0;

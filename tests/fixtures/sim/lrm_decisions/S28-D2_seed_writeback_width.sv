@@ -3,11 +3,12 @@
 // that is, a value is passed to the function, and a different value is
 // returned." Annex N.2 declares the seed as the 32-bit `long *seed`.
 // Decision (llg choice; the text does not say how a seed variable of
-// another width converts): the variable is read as a 32-bit integer
-// (truncated, or extended by its own signedness) and the signed 32-bit result
-// seed is assigned back like an integer (sign-extended or truncated).
-// Annex N: seed 1 -> -2147414528, seed 69070; seed -1 -> 2147415551, seed
-// -69068 (32'hfffef234).
+// another width converts): the seed is the variable's low min(width, 32)
+// bits, zero-extended whatever the variable's signedness, and the returned
+// seed replaces only those bits; a wider variable keeps its upper bits.
+// Annex N: seed 1 -> -2147414528, seed 69070 (32'h00010dce); seed -1 ->
+// 2147415551, seed -69068 (32'hfffef234); seed 65535 -> -1916013541, seed
+// 32'h0dcbf234.
 module tb;
   integer r;
   time t;
