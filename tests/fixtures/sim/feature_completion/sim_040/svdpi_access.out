@@ -27,7 +27,7 @@ l3 get=0132 out=3
 b1 get=101 out=0
 b2 get=0110
 b3 get=1100
-bit view of logic=00
+bit view of logic=10
 l1=z11 l2=zx10 l3=11xz
 b1=011 b2=1110 b3=1010
 l1[2]=296/cc
