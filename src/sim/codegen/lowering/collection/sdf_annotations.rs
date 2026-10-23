@@ -11,11 +11,14 @@
 //! nothing and is reported as a warning (decision A12-D5).
 
 use super::*;
-use crate::sim::ir::{IrSdfAnnotation, IrSdfOp, IrSdfTarget, SDF_INCREMENT, SDF_PERCENT};
+use crate::sim::ir::{
+    IrModulePath, IrModulePathDestination, IrModulePathSet, IrPathPolarity, IrSdfAnnotation,
+    IrSdfLoad, IrSdfOp, IrSdfTarget, PATH_TRANSITIONS, SDF_INCREMENT, SDF_MIPD_SHIFT, SDF_PERCENT,
+};
 use crate::sim::sdf::{
     apply, parse_config, parse_scale_factors, resolve, SdfAnnotation, SdfAppliedTarget,
-    SdfCallOptions, SdfLimitSlot, SdfLimits, SdfMtm, SdfScaleType, SdfTargets, SdfTimebase,
-    SdfWarning,
+    SdfCallOptions, SdfLimitSlot, SdfLimits, SdfMipdPolicy, SdfMtm, SdfPortTarget, SdfScaleType,
+    SdfTargets, SdfTimebase, SdfTimingCheckKind, SdfWarning,
 };
 
 /// Warnings a file reports on standard error before they are summarized;
@@ -89,8 +92,9 @@ pub(in super::super) struct SdfState {
     /// Each call: the annotation it applies, or `None` when it annotates
     /// nothing.
     calls: HashMap<NodeId, Option<u32>>,
-    /// The valued file of each annotation, by index.
-    annotations: Vec<(String, SdfAnnotation)>,
+    /// The valued file of each annotation and its INTERCONNECT_MIPD
+    /// policy, by index.
+    annotations: Vec<(String, SdfAnnotation, SdfMipdPolicy)>,
     /// Annotations applied before simulation starts (`--sdf`).
     startup: Vec<u32>,
     /// Requests already read: their annotation, or `None`.
@@ -99,9 +103,36 @@ pub(in super::super) struct SdfState {
     nodes: Vec<NodeId>,
     /// The writable delay slot of each gate a DEVICE entry annotates.
     gates: HashMap<NodeId, u32>,
+    /// Instances whose `$setuphold`/`$recrem` limits an annotation rewrites
+    /// while negative timing checks are enabled.
+    pairs: HashSet<NodeId>,
     gate_order: Vec<NodeId>,
+    /// Interconnect loads: each annotated load port bit (instance, port
+    /// index, bit offset in the port), its distinct sources (entries from 1)
+    /// and, once lowered, its interconnect path.
+    loads: HashMap<(NodeId, u32, u32), u32>,
+    load_order: Vec<SdfLoadState>,
     /// Log files and their contents, in the order first written.
     logs: Vec<(String, String)>,
+}
+
+/// The load port bits of one net group: the port net's signal, each load
+/// and its bit in the net, and the port's name.
+struct LoadGroup {
+    group: usize,
+    signal: usize,
+    bits: Vec<(usize, u32)>,
+    name: String,
+}
+
+/// One interconnect load port bit.
+struct SdfLoadState {
+    instance: NodeId,
+    port: u32,
+    bit: u32,
+    sources: HashMap<SdfPortTarget, u32>,
+    /// The load's `IrModel::sdf_loads` index once its path exists.
+    load: Option<u32>,
 }
 
 impl Codegen<'_> {
@@ -290,15 +321,18 @@ impl Codegen<'_> {
         if let Some(known) = state.read.get(&request) {
             return *known;
         }
-        let mut log = format!("$sdf_annotate(\"{}\") at {origin}\n", request.file);
+        let mut log = String::new();
         let result = self.value_sdf_request(state, catalog, scope_of, &request, &mut log);
         let annotation = match result {
             Ok(annotation) => Some(annotation),
             Err(message) => {
-                let message =
-                    format!("$sdf_annotate at {origin}: {message}; the call annotates nothing");
-                log.push_str(&format!("error: {message}\n"));
-                self.warnings.push(message);
+                log.push_str(&format!(
+                    "$sdf_annotate(\"{}\"): {message}; nothing is annotated\n",
+                    request.file
+                ));
+                self.warnings.push(format!(
+                    "$sdf_annotate at {origin}: {message}; the call annotates nothing"
+                ));
                 None
             }
         };
@@ -326,10 +360,11 @@ impl Codegen<'_> {
                 self.node(request.scope).name
             ));
         };
-        let mut options = SdfCallOptions {
+        let mut call_options = SdfCallOptions {
             tool_member: self.db.delay_selection().operand(),
             ..SdfCallOptions::default()
         };
+        let options = &mut call_options;
         if let Some(path) = &request.config {
             let text = std::fs::read_to_string(path)
                 .map_err(|error| format!("cannot read the configuration file `{path}`: {error}"))?;
@@ -365,6 +400,22 @@ impl Codegen<'_> {
                 )
             })?;
         }
+        let scale = options
+            .scale
+            .iter()
+            .map(|factor| factor.to_string())
+            .collect::<Vec<_>>()
+            .join(":");
+        let header = format!(
+            "$sdf_annotate(\"{}\") into {}: mtm_spec {}, scale_factors {scale}, scale_type {}, \
+             INTERCONNECT_MIPD {}, TURNOFF_DELAY {}\n",
+            request.file,
+            catalog.path_of(scope),
+            options.mtm.keyword(),
+            options.scale_type.keyword(),
+            options.mipd.keyword(),
+            options.turnoff.keyword(),
+        );
         let file = std::fs::File::open(&request.file)
             .map_err(|error| format!("cannot open the SDF file `{}`: {error}", request.file))?;
         let plan = resolve(
@@ -377,11 +428,12 @@ impl Codegen<'_> {
         let annotation = apply(
             &plan,
             catalog,
-            &options,
+            &call_options,
             SdfTimebase {
                 design_precision_fs: self.design_precision_fs,
             },
         );
+        log.push_str(&header);
         log.push_str(&plan.render(catalog));
         let warnings = plan
             .warnings
@@ -409,18 +461,184 @@ impl Codegen<'_> {
                 }
             ));
         }
+        let options = self.model.timing_check_options;
+        let options_mipd = call_options.mipd;
         for op in &annotation.ops {
-            if let SdfAppliedTarget::Primitive { scope } = op.target {
-                let gate = state.nodes[scope as usize];
-                if !state.gates.contains_key(&gate) {
-                    state.gates.insert(gate, state.gate_order.len() as u32);
-                    state.gate_order.push(gate);
+            match op.target {
+                SdfAppliedTarget::Primitive { scope } => {
+                    let gate = state.nodes[scope as usize];
+                    if !state.gates.contains_key(&gate) {
+                        state.gates.insert(gate, state.gate_order.len() as u32);
+                        state.gate_order.push(gate);
+                    }
                 }
+                SdfAppliedTarget::Port { load, source } => {
+                    let instance = state.nodes[load.scope as usize];
+                    for bit in sdf_port_bits(catalog, &load) {
+                        let key = (instance, load.port, bit);
+                        let index = *state.loads.entry(key).or_insert_with(|| {
+                            state.load_order.push(SdfLoadState {
+                                instance,
+                                port: load.port,
+                                bit,
+                                sources: HashMap::new(),
+                                load: None,
+                            });
+                            (state.load_order.len() - 1) as u32
+                        });
+                        if let Some(source) = source {
+                            let sources = &mut state.load_order[index as usize].sources;
+                            let next = sources.len() as u32 + 1;
+                            sources.entry(source).or_insert(next);
+                        }
+                    }
+                }
+                SdfAppliedTarget::Check { scope, check, .. }
+                    if options.checks
+                        && options.negative
+                        && matches!(
+                            catalog.scope(scope).checks[check as usize].kind,
+                            SdfTimingCheckKind::SetupHold | SdfTimingCheckKind::RecRem
+                        ) =>
+                {
+                    state.pairs.insert(state.nodes[scope as usize]);
+                }
+                _ => {}
             }
         }
         let index = state.annotations.len() as u32;
-        state.annotations.push((request.file.clone(), annotation));
+        state
+            .annotations
+            .push((request.file.clone(), annotation, options_mipd));
         Ok(index)
+    }
+
+    /// Give every interconnect load port bit a path stage on the port's own
+    /// net group: an interconnect path whose delays start at 0 (32.4.4,
+    /// 32.4.5). Runs after the module paths are lowered; a load whose net
+    /// cannot take the stage is reported and not annotated.
+    pub(in super::super) fn lower_sdf_loads(&mut self) -> Result<(), String> {
+        let Some(mut state) = self.sdf.take() else {
+            return Ok(());
+        };
+        let result = self.lower_sdf_loads_in(&mut state);
+        self.sdf = Some(state);
+        result
+    }
+
+    fn lower_sdf_loads_in(&mut self, state: &mut SdfState) -> Result<(), String> {
+        if state.load_order.is_empty() {
+            return Ok(());
+        }
+        let taken = self
+            .model
+            .module_paths
+            .iter()
+            .flat_map(|set| set.destinations())
+            .map(|destination| destination.group())
+            .collect::<HashSet<_>>();
+        // Loads by net group, in first-annotated order.
+        let mut groups: Vec<LoadGroup> = Vec::new();
+        for (index, load) in state.load_order.iter().enumerate() {
+            let port = self
+                .node(load.instance)
+                .children
+                .iter()
+                .copied()
+                .filter(|child| matches!(self.kind(*child), NodeKind::Port { .. }))
+                .nth(load.port as usize);
+            let Some(port) = port else { continue };
+            let name = format!(
+                "{}.{}",
+                self.source_path(&self.instance_path_of(load.instance)),
+                self.node(port).name
+            );
+            let NodeKind::Port { low, .. } = self.kind(port) else {
+                continue;
+            };
+            let terminal = self
+                .port_child_target(port, *low)
+                .ok_or_else(|| "the port has no internal net".to_owned())
+                .and_then(|expression| self.path_terminal(expression));
+            let group = terminal.as_ref().ok().and_then(|terminal| {
+                let signal = self.model.signal(terminal.info.ir);
+                let (group, _) = signal.net_driver?;
+                (signal.net_alias.is_empty()
+                    && signal.alias.is_none()
+                    && self.model.net_groups[group].width == terminal.info.width
+                    && load.bit < terminal.width
+                    && !taken.contains(&group))
+                .then_some((group, terminal.info.ir, terminal.lsb + load.bit))
+            });
+            let Some((group, signal, bit)) = group else {
+                let message = format!(
+                    "the interconnect delays into `{name}` are not annotated: llg delays the \
+                     values of an input or inout port net of its own that no module path \
+                     drives"
+                );
+                if !self.warnings.contains(&message) {
+                    self.warnings.push(message);
+                }
+                continue;
+            };
+            match groups.iter_mut().find(|known| known.group == group) {
+                Some(known) => known.bits.push((index, bit)),
+                None => groups.push(LoadGroup {
+                    group,
+                    signal,
+                    bits: vec![(index, bit)],
+                    name,
+                }),
+            }
+        }
+        for LoadGroup {
+            group,
+            signal,
+            bits,
+            name,
+        } in groups
+        {
+            let set = self.model.module_paths.len() as u32;
+            let mut paths = Vec::with_capacity(bits.len());
+            for (position, (index, bit)) in bits.iter().enumerate() {
+                paths.push(
+                    IrModulePath::new(
+                        0,
+                        *bit,
+                        1,
+                        *bit,
+                        1,
+                        false,
+                        IrPathPolarity::Unknown,
+                        [0; PATH_TRANSITIONS],
+                        name.clone(),
+                    )
+                    .with_interconnect(),
+                );
+                let load = &mut state.load_order[*index];
+                load.load = Some(self.model.sdf_loads.len() as u32);
+                self.model.sdf_loads.push(IrSdfLoad {
+                    set,
+                    destination: 0,
+                    path: position as u32,
+                    entries: load.sources.len() as u32 + 1,
+                });
+            }
+            self.model.module_paths.push(IrModulePathSet::new(
+                name,
+                vec![signal],
+                vec![IrModulePathDestination::new(group, paths)],
+            ));
+        }
+        Ok(())
+    }
+
+    /// Whether an annotation rewrites a `$setuphold`/`$recrem` limit of
+    /// `instance` while negative timing checks are enabled.
+    pub(in super::super) fn sdf_pair_instance(&self, instance: NodeId) -> bool {
+        self.sdf
+            .as_ref()
+            .is_some_and(|state| state.pairs.contains(&instance))
     }
 
     /// The writable delay slot of `gate` when an annotation targets it.
@@ -442,7 +660,8 @@ impl Codegen<'_> {
         };
         let (catalog, _) = self.build_sdf_catalog(tops);
         let mut unmapped = Vec::new();
-        for (file, annotation) in &state.annotations {
+        let mut negative_limits = Vec::new();
+        for (file, annotation, mipd) in &state.annotations {
             let mut ir = IrSdfAnnotation {
                 file: file.clone(),
                 ops: Vec::new(),
@@ -451,7 +670,8 @@ impl Codegen<'_> {
             for op in &annotation.ops {
                 let values = annotation.values_of(op);
                 let flags = if op.increment { SDF_INCREMENT } else { 0 }
-                    | if op.percent { SDF_PERCENT } else { 0 };
+                    | if op.percent { SDF_PERCENT } else { 0 }
+                    | (mipd.code() << SDF_MIPD_SHIFT);
                 let before = ir.ops.len();
                 let mut push = |target: IrSdfTarget, values: &[i64]| {
                     let first = ir.values.len() as u32;
@@ -487,7 +707,34 @@ impl Codegen<'_> {
                         }
                     }
                     SdfAppliedTarget::Check { scope, check, slot } => {
-                        for row in &catalog.scope(scope).checks[check as usize].rows {
+                        let declared = &catalog.scope(scope).checks[check as usize];
+                        let combined = matches!(
+                            declared.kind,
+                            SdfTimingCheckKind::SetupHold | SdfTimingCheckKind::RecRem
+                        );
+                        // A resettled pair takes the declared limit itself.
+                        if let Some(pair) = declared.rows.iter().find_map(|row| row.pair) {
+                            let set = declared.rows[0].set;
+                            let after = (declared.kind == SdfTimingCheckKind::SetupHold)
+                                == (slot == SdfLimitSlot::Second);
+                            push(IrSdfTarget::Pair { set, pair, after }, values);
+                            continue;
+                        }
+                        // Without negative timing checks a negative limit of
+                        // a combined check counts as 0 (31.9.4).
+                        let clamped = [values[0].max(0)];
+                        let values = if combined && values[0] < 0 {
+                            negative_limits.push(format!(
+                                "{file}:{}: the negative limit is annotated as 0: negative \
+                                 limits count as 0 unless negative timing checks are \
+                                 enabled (--neg-timing-checks; IEEE 1800-2009 31.9.4)",
+                                op.pos
+                            ));
+                            &clamped[..]
+                        } else {
+                            values
+                        };
+                        for row in &declared.rows {
                             let second = match (slot, row.slot) {
                                 (SdfLimitSlot::First, SdfLimitSlot::First | SdfLimitSlot::Both)
                                 | (SdfLimitSlot::Second, SdfLimitSlot::Second) => false,
@@ -510,7 +757,24 @@ impl Codegen<'_> {
                             push(IrSdfTarget::Gate { slot }, values);
                         }
                     }
-                    SdfAppliedTarget::Port { .. } => {}
+                    SdfAppliedTarget::Port { load, source } => {
+                        let instance = state.nodes[load.scope as usize];
+                        for bit in sdf_port_bits(&catalog, &load) {
+                            let Some(&index) = state.loads.get(&(instance, load.port, bit)) else {
+                                continue;
+                            };
+                            let entry = &state.load_order[index as usize];
+                            let Some(load) = entry.load else { continue };
+                            let source = source.map_or(0, |source| entry.sources[&source]);
+                            push(
+                                IrSdfTarget::Load {
+                                    load,
+                                    entry: source,
+                                },
+                                values,
+                            );
+                        }
+                    }
                 }
                 if ir.ops.len() == before {
                     unmapped.push(format!(
@@ -527,7 +791,7 @@ impl Codegen<'_> {
             }
             self.model.sdf_annotations.push(ir);
         }
-        for message in unmapped {
+        for message in unmapped.into_iter().chain(negative_limits) {
             if !self.warnings.contains(&message) {
                 self.warnings.push(message);
             }
@@ -543,4 +807,26 @@ impl Codegen<'_> {
         self.sdf = Some(state);
         Ok(())
     }
+}
+
+/// The bit offsets in its port (0 = least significant) a load port target
+/// selects: every bit of the port, or the selected bits of its declared
+/// range.
+fn sdf_port_bits(catalog: &SdfTargets, target: &SdfPortTarget) -> Vec<u32> {
+    let port = &catalog.scope(target.scope).ports[target.port as usize];
+    let Some((left, right)) = port.range else {
+        return vec![0];
+    };
+    let offset = |bit: i64| {
+        if left >= right {
+            bit - right
+        } else {
+            right - bit
+        }
+    };
+    let (high, low) = target.bits.unwrap_or((left, right));
+    let (first, last) = (high.min(low), high.max(low));
+    (first..=last)
+        .map(|bit| offset(bit) as u32)
+        .collect::<Vec<_>>()
 }

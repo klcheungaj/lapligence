@@ -32,7 +32,29 @@ pub enum IrSdfTarget {
     /// Rise, fall and turn-off delays of annotated gate `slot`
     /// ([`super::IrModel::sdf_gate_delays`]).
     Gate { slot: u32 },
+    /// The interconnect delays into load `load` ([`IrSdfLoad`]) from source
+    /// entry `entry`; entry 0 is every source (PORT, NETDELAY, or an
+    /// INTERCONNECT whose source was not found).
+    Load { load: u32, entry: u32 },
 }
+
+/// One load port bit with interconnect delays: path `path` of destination
+/// `destination` of module path set `set`, an interconnect path
+/// ([`super::IrModulePath::interconnect`]) whose delays combine the
+/// annotated delays of its `entries` sources by the annotation's
+/// INTERCONNECT_MIPD policy (entry 0: from every source).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrSdfLoad {
+    pub set: u32,
+    pub destination: u32,
+    pub path: u32,
+    pub entries: u32,
+}
+
+/// INTERCONNECT_MIPD policy of an op, in bits 3 and 4 of its flags: the
+/// largest, smallest or average annotated source delay, or the last one
+/// annotated.
+pub const SDF_MIPD_SHIFT: u8 = 3;
 
 /// One op: a target, the delay, reject and error masks of the transitions
 /// it gives (bit `t` for transition `t`; one bit for a check limit, three

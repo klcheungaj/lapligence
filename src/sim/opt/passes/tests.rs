@@ -185,6 +185,7 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         sdf_annotations: Vec::new(),
         sdf_startup: Vec::new(),
         sdf_gate_delays: Vec::new(),
+        sdf_loads: Vec::new(),
         events: Vec::new(),
         funcs: Vec::new(),
         assertions: Vec::new(),

@@ -697,6 +697,9 @@ typedef struct llg_module_path {
     /* Nonzero for the paths sharing their terminals with an `ifnone` path. */
     uint32_t group;
     uint64_t* limits;      /* NULL or 2 * LLG_PATH_TRANSITIONS ticks */
+    /* 1 for an SDF interconnect delay into a load port: each new value of
+     * the destination is delayed from the time it arrives (32.4.4). */
+    uint8_t interconnect;
 } llg_module_path_t;
 
 typedef struct llg_module_path_set llg_module_path_set_t;
@@ -784,6 +787,9 @@ llg_module_path_set_t* llg_module_path_sets(void);
 /* `$timeskew`/`$fullskew` flags (31.4.2, 31.4.3). */
 #define LLG_TIMING_EVENT_BASED 0x01u
 #define LLG_TIMING_REMAIN_ACTIVE 0x02u
+/* A `$setuphold`/`$recrem` row whose settled window cannot report (31.9.1
+ * a); set and cleared when an SDF annotation resettles its pair. */
+#define LLG_TIMING_DISABLED 0x80u
 
 /* A terminal: `n_bits` bits of the borrowed model storage from `lsb`.
  * `line` is k + 1 when the terminal is the delayed signal of the set's line
@@ -878,6 +884,26 @@ typedef struct llg_timing_line {
     llg_timing_check_set_t* set;
 } llg_timing_line_t;
 
+/* A `$setuphold`/`$recrem` whose limits SDF annotation may rewrite with
+ * negative timing checks enabled: `before` (setup, removal) and `after`
+ * (hold, recovery) are the limits before settlement; rows `before_row` and
+ * `after_row` (-1: none) hold the settled limits and report `text` while a
+ * limit stays negative, else their own text. Reference and data name the
+ * undelayed terminals and the edges of the check's events. */
+typedef struct llg_timing_pair {
+    uint32_t reference;
+    uint8_t reference_edges;
+    uint32_t data;
+    uint8_t data_edges;
+    int64_t before;
+    int64_t after;
+    int32_t before_row;
+    int32_t after_row;
+    const char* text;
+    const char* before_text;
+    const char* after_text;
+} llg_timing_pair_t;
+
 struct llg_timing_check_set {
     const char* scope; /* hierarchical instance name */
     llg_timing_terminal_t* terminals;
@@ -894,6 +920,9 @@ struct llg_timing_check_set {
     uint32_t n_notifiers;
     llg_timing_line_t* lines;
     uint32_t n_lines;
+    /* NULL unless an SDF annotation rewrites combined check limits. */
+    llg_timing_pair_t* pairs;
+    uint32_t n_pairs;
     /* Runtime state, owned between llg_timing_checks_start and cleanup. */
     uint8_t* last;           /* per terminal bit: 0, 1 or 2 (x or z) */
     uint32_t* offsets;       /* per terminal: its first bit in `last` */
@@ -938,11 +967,25 @@ llg_timing_check_set_t* llg_timing_check_sets(void);
 #define LLG_SDF_PATH 1u  /* twelve delays and pulse limits of `path` */
 #define LLG_SDF_CHECK 2u /* `limit` (or `limit2`) of `check` in `checks` */
 #define LLG_SDF_GATE 3u  /* rise, fall and turn-off delays at `gate` */
-#define LLG_SDF_PAIR 4u  /* a limit of combined check `pair` of `checks` */
+#define LLG_SDF_PAIR 4u  /* a limit of combined check `index` of `checks` */
+#define LLG_SDF_LOAD 5u  /* source entry `index` (0: every source) of `load` */
 /* Flags: */
 #define LLG_SDF_INCREMENT 1u /* add to the current values (INCREMENT) */
 #define LLG_SDF_PERCENT 2u   /* limits in millionths of a percent of the delay */
 #define LLG_SDF_SECOND 4u    /* the check's limit2; the pair's later limit */
+/* Bits 3-4: how a load combines its sources' delays (INTERCONNECT_MIPD):
+ * 0 the largest, 1 the smallest, 2 the average, 3 the last annotated. */
+#define LLG_SDF_MIPD_SHIFT 3u
+
+/* An interconnect load port bit: the delays of each source entry (entry 0:
+ * from every source) and whether it was annotated; `path` is the port net's
+ * interconnect path, whose delays combine the annotated entries. */
+typedef struct llg_sdf_load {
+    llg_module_path_t* path;
+    uint64_t* entries; /* n_entries * LLG_PATH_TRANSITIONS */
+    uint8_t* annotated;
+    uint32_t n_entries;
+} llg_sdf_load_t;
 
 /* One operation. Bit t of `delay`, `reject` and `error` marks a value of
  * transition t (path), of rise, fall, turn-off (gate) or of the limit
@@ -958,11 +1001,12 @@ typedef struct llg_sdf_op {
     uint16_t error;
     uint16_t derive;
     uint32_t first;
-    uint32_t pair;
+    uint32_t index;
     llg_module_path_t* path;
     llg_timing_check_t* check;
     llg_timing_check_set_t* checks;
     uint64_t* gate;
+    llg_sdf_load_t* load;
 } llg_sdf_op_t;
 
 typedef struct llg_sdf_annotation {

@@ -151,6 +151,9 @@ pub struct SdfCheckRow {
     pub set: u32,
     pub check: u32,
     pub slot: SdfLimitSlot,
+    /// The set's pair (`IrTimingPair`) the row belongs to, when an SDF
+    /// annotation resettles its limits at run time.
+    pub pair: Option<u32>,
 }
 
 /// A declared timing check. `rows` is empty when lowering kept no row (a

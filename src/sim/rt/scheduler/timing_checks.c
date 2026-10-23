@@ -893,7 +893,8 @@ static void timing_check_step(llg_timing_check_set_t* set) {
                 while (!(bits & (UINT64_C(1) << offset))) offset++;
                 bits &= bits - 1u;
                 uint32_t index = (uint32_t)(word * 64u) + offset;
-                timing_check_run(&step, index, &set->checks[index]);
+                if (!(set->checks[index].flags & LLG_TIMING_DISABLED))
+                    timing_check_run(&step, index, &set->checks[index]);
             }
         }
     }

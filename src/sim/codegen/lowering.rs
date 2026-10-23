@@ -539,15 +539,18 @@ fn lower_timing_metadata(
     // Timescales must be fixed before any `#delay`/`$time` is lowered so the
     // design precision (scheduler tick unit) is consistent across the model.
     cg.collect_timescales();
+    cg.model.path_pulse = options.path_pulse;
+    cg.model.timing_check_options = options.timing_checks;
     // SDF files are read against the design before the targets are
-    // lowered, which give annotated gates writable delays.
+    // lowered, which give annotated gates writable delays and annotated
+    // combined checks runtime resettlement.
     cg.read_sdf_annotations(tops, &options.sdf)?;
     cg.build_net_groups()?;
     // Module paths name net groups and their structural driver sites.
-    cg.model.path_pulse = options.path_pulse;
     cg.lower_module_paths()?;
+    // SDF interconnect delays add a path stage to their load port nets.
+    cg.lower_sdf_loads()?;
     // Timing checks read the same terminals and the instance's variables.
-    cg.model.timing_check_options = options.timing_checks;
     cg.lower_timing_checks()?;
     cg.map_sdf_annotations(tops)
 }

@@ -1160,6 +1160,7 @@ static uint64_t path_input_time(const llg_module_path_set_t* set,
                                 const llg_module_path_dest_t* dest,
                                 uint32_t index, uint32_t bit) {
     const llg_module_path_t* path = &dest->paths[index];
+    if (path->interconnect) return g.now;
     if (path->edge && set->rise_stamps) {
         uint64_t rise = set->rise_stamps[path->source][path->source_lsb];
         uint64_t fall = set->fall_stamps[path->source][path->source_lsb];

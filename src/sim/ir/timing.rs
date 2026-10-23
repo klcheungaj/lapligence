@@ -207,6 +207,10 @@ pub struct IrModulePath {
     pub(in crate::sim) group: u32,
     /// `PATHPULSE$` limits; `None` takes the global percentages.
     pub(in crate::sim) limits: Option<Box<IrPathLimits>>,
+    /// An SDF interconnect delay into a load port (32.4.4, 32.4.5): every
+    /// new value of the port's net is delayed from the time it arrives, so
+    /// the source's stamps are not read.
+    pub(in crate::sim) interconnect: bool,
 }
 
 impl IrModulePath {
@@ -236,7 +240,17 @@ impl IrModulePath {
             condition: IrPathCondition::None,
             group: 0,
             limits: None,
+            interconnect: false,
         }
+    }
+
+    pub fn with_interconnect(mut self) -> Self {
+        self.interconnect = true;
+        self
+    }
+
+    pub fn interconnect(&self) -> bool {
+        self.interconnect
     }
 
     /// The path waits for `edge` on its source and applies under `condition`.
@@ -414,6 +428,10 @@ pub const TIMING_EDGE_MASK: u8 = 0x3f;
 /// timer-based, and remain active after a false timestamp condition.
 pub const TIMING_EVENT_BASED: u8 = 1;
 pub const TIMING_REMAIN_ACTIVE: u8 = 2;
+/// A `$setuphold`/`$recrem` row whose settled window is under two precision
+/// units does not run (31.9.1 a); only sets an SDF annotation can resettle
+/// keep such rows ([`IrTimingPair`]).
+pub const TIMING_DISABLED: u8 = 0x80;
 
 /// The `&&&` condition of a timing check event (31.7), or a `$setuphold` /
 /// `$recrem` timestamp or timecheck condition (31.9.2): index `index` of
@@ -667,6 +685,31 @@ pub struct IrTimingCheckSet {
     /// signals), written by the runtime.
     pub(in crate::sim) notifiers: Vec<usize>,
     pub(in crate::sim) lines: Vec<IrTimingLine>,
+    /// The `$setuphold`/`$recrem` checks whose limits SDF annotation may
+    /// rewrite while negative timing checks are enabled; empty otherwise.
+    pub(in crate::sim) pairs: Vec<IrTimingPair>,
+}
+
+/// A `$setuphold` or `$recrem` whose limits an SDF annotation rewrites
+/// with negative timing checks enabled. The runtime then settles the limits
+/// of every pair of the set and solves its delayed signal delays again as
+/// lowering does (31.3.3, 31.3.6, 31.9.1): `before` (setup, removal) and
+/// `after` (hold, recovery) are the declared or annotated limits before
+/// settlement, the rows hold the settled limits (`None`: no row), and a row
+/// reports `text` while a limit stays negative, else its own text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrTimingPair {
+    pub reference: u32,
+    pub reference_edges: u8,
+    pub data: u32,
+    pub data_edges: u8,
+    pub before: i64,
+    pub after: i64,
+    pub before_row: Option<u32>,
+    pub after_row: Option<u32>,
+    pub text: String,
+    pub before_text: String,
+    pub after_text: String,
 }
 
 impl IrTimingCheckSet {
@@ -684,11 +727,17 @@ impl IrTimingCheckSet {
             conditions,
             notifiers,
             lines: Vec::new(),
+            pairs: Vec::new(),
         }
     }
 
     pub fn with_lines(mut self, lines: Vec<IrTimingLine>) -> Self {
         self.lines = lines;
+        self
+    }
+
+    pub fn with_pairs(mut self, pairs: Vec<IrTimingPair>) -> Self {
+        self.pairs = pairs;
         self
     }
 
@@ -714,6 +763,10 @@ impl IrTimingCheckSet {
 
     pub fn lines(&self) -> &[IrTimingLine] {
         &self.lines
+    }
+
+    pub fn pairs(&self) -> &[IrTimingPair] {
+        &self.pairs
     }
 }
 

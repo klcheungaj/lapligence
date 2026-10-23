@@ -365,6 +365,9 @@ fn render_module_paths(model: &IrModel, out: &mut String) {
                 if path.group() != 0 {
                     extra.push_str(&format!(", .group = {}", path.group()));
                 }
+                if path.interconnect() {
+                    extra.push_str(", .interconnect = 1");
+                }
                 if let Some(limits) = path.limits() {
                     let table = format!("{name}__limits_{dest_index}_{path_index}");
                     let values = limits
@@ -575,11 +578,47 @@ fn render_timing_checks(model: &IrModel, out: &mut String) {
             ));
             format!("{name}__lines")
         };
+        // Pairs SDF annotation resettles (only in annotated designs).
+        let pairs = if set.pairs().is_empty() {
+            String::new()
+        } else {
+            let row = |row: Option<u32>| row.map_or(-1, i64::from);
+            let rows = set
+                .pairs()
+                .iter()
+                .map(|pair| {
+                    format!(
+                        "{{ .reference = {}u, .reference_edges = {}, .data = {}u, .data_edges = \
+                         {}, .before = {}LL, .after = {}LL, .before_row = {}, .after_row = {}, \
+                         .text = {}, .before_text = {}, .after_text = {} }}",
+                        pair.reference,
+                        pair.reference_edges,
+                        pair.data,
+                        pair.data_edges,
+                        pair.before,
+                        pair.after,
+                        row(pair.before_row),
+                        row(pair.after_row),
+                        c_string_literal(&pair.text),
+                        c_string_literal(&pair.before_text),
+                        c_string_literal(&pair.after_text),
+                    )
+                })
+                .collect::<Vec<_>>();
+            out.push_str(&format!(
+                "static llg_timing_pair_t {name}__pairs[] = {{ {} }};\n",
+                rows.join(", ")
+            ));
+            format!(
+                ", .pairs = {name}__pairs, .n_pairs = {}u",
+                set.pairs().len()
+            )
+        };
         out.push_str(&format!(
             "static llg_timing_check_set_t {name} = {{ .scope = {}, .terminals = {name}__terminals, \
              .n_terminals = {}u, .checks = {checks}, .n_checks = {}u, .conditions = \
              {conditions}, .n_conditions = {}u, .notifiers = {notifiers}, .n_notifiers = {}u, \
-             .lines = {lines}, .n_lines = {}u }};\n",
+             .lines = {lines}, .n_lines = {}u{pairs} }};\n",
             c_string_literal(set.scope()),
             set.terminals().len(),
             set.checks().len(),
@@ -611,6 +650,22 @@ fn render_sdf_annotations(model: &IrModel, out: &mut String) {
             "static uint64_t llg_sdf_gate_delays[{}] = {{ {} }};\n",
             3 * gates.len(),
             values.join(", ")
+        ));
+    }
+    // Each interconnect load keeps the delays of its sources; its path
+    // takes their combination.
+    for (index, load) in model.sdf_loads().iter().enumerate() {
+        let name = format!("llg_sdf_load_{index}");
+        out.push_str(&format!(
+            "static uint64_t {name}__entries[{}];\nstatic uint8_t {name}__annotated[{}];\n\
+             static llg_sdf_load_t {name} = {{ .path = &llg_path_set_{}__paths_{}[{}], \
+             .entries = {name}__entries, .annotated = {name}__annotated, .n_entries = {}u }};\n",
+            12 * load.entries,
+            load.entries,
+            load.set,
+            load.destination,
+            load.path,
+            load.entries,
         ));
     }
     for (index, annotation) in model.sdf_annotations().iter().enumerate() {
@@ -675,7 +730,12 @@ fn render_sdf_annotations(model: &IrModel, out: &mut String) {
                         IrSdfTarget::Pair { set, pair, after } => (
                             "LLG_SDF_PAIR",
                             if after { 4 } else { 0 },
-                            format!(".pair = {pair}u, .checks = &llg_timing_set_{set}"),
+                            format!(".index = {pair}u, .checks = &llg_timing_set_{set}"),
+                        ),
+                        IrSdfTarget::Load { load, entry } => (
+                            "LLG_SDF_LOAD",
+                            0,
+                            format!(".index = {entry}u, .load = &llg_sdf_load_{load}"),
                         ),
                         IrSdfTarget::Gate { slot } => (
                             "LLG_SDF_GATE",

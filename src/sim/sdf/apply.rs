@@ -112,6 +112,15 @@ impl SdfMipdPolicy {
         })
     }
 
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Self::Maximum => "MAXIMUM",
+            Self::Minimum => "MINIMUM",
+            Self::Average => "AVERAGE",
+            Self::Last => "LAST",
+        }
+    }
+
     /// The runtime code, `LLG_SDF_MIPD_*`.
     pub fn code(self) -> u8 {
         match self {
@@ -134,6 +143,15 @@ pub enum SdfTurnoff {
 }
 
 impl SdfTurnoff {
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Self::FromFile => "FROM_FILE",
+            Self::Minimum => "MINIMUM",
+            Self::Maximum => "MAXIMUM",
+            Self::Average => "AVERAGE",
+        }
+    }
+
     pub fn parse(text: &str) -> Option<Self> {
         Some(match text.trim().to_ascii_uppercase().as_str() {
             "FROM_FILE" => Self::FromFile,

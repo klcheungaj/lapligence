@@ -148,6 +148,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         sdf_annotations: _,
         sdf_startup: _,
         sdf_gate_delays: _,
+        sdf_loads: _,
         events: _,
         funcs,
         assertions,

@@ -72,12 +72,14 @@ pub use timing::{
     expand_path_delays, IrModulePath, IrModulePathDestination, IrModulePathSet, IrPathCondition,
     IrPathEdge, IrPathLimits, IrPathPolarity, IrPathPulseOptions, IrPulseStyle, IrTimingCheck,
     IrTimingCheckKind, IrTimingCheckOptions, IrTimingCheckSet, IrTimingCondition, IrTimingEvent,
-    IrTimingLine, IrTimingLineStorage, IrTimingTerminal, PATH_STYLE_ON_DETECT,
-    PATH_STYLE_SHOW_CANCELLED, PATH_TRANSITIONS, TIMING_EDGE_MASK, TIMING_EVENT_BASED,
-    TIMING_REMAIN_ACTIVE,
+    IrTimingLine, IrTimingLineStorage, IrTimingPair, IrTimingTerminal, PATH_STYLE_ON_DETECT,
+    PATH_STYLE_SHOW_CANCELLED, PATH_TRANSITIONS, TIMING_DISABLED, TIMING_EDGE_MASK,
+    TIMING_EVENT_BASED, TIMING_REMAIN_ACTIVE,
 };
 mod sdf;
-pub use sdf::{IrSdfAnnotation, IrSdfOp, IrSdfTarget, SDF_INCREMENT, SDF_PERCENT};
+pub use sdf::{
+    IrSdfAnnotation, IrSdfLoad, IrSdfOp, IrSdfTarget, SDF_INCREMENT, SDF_MIPD_SHIFT, SDF_PERCENT,
+};
 mod udp;
 pub use udp::{
     IrUdpEdge, IrUdpInput, IrUdpNext, IrUdpOutput, IrUdpRow, IrUdpSequential, IrUdpSequentialRow,
@@ -586,6 +588,8 @@ pub struct IrModel {
     /// The writable rise, fall and turn-off delays of each gate an SDF
     /// annotation targets, initialized with the gate's own delays.
     pub(in crate::sim) sdf_gate_delays: Vec<IrTransitionDelay>,
+    /// The load port bits SDF interconnect delays annotate.
+    pub(in crate::sim) sdf_loads: Vec<IrSdfLoad>,
     pub(in crate::sim) events: Vec<IrEvent>,
     pub(in crate::sim) funcs: Vec<IrFunc>,
     /// Concurrent assertion instances, kept outside ordinary process IR.
@@ -763,6 +767,7 @@ impl IrModel {
             sdf_annotations: Vec::new(),
             sdf_startup: Vec::new(),
             sdf_gate_delays: Vec::new(),
+            sdf_loads: Vec::new(),
             events: parts.events,
             funcs: parts.funcs,
             assertions: parts.assertions,
@@ -843,6 +848,11 @@ impl IrModel {
     /// Writable delays of the annotated gates, by slot.
     pub fn sdf_gate_delays(&self) -> &[IrTransitionDelay] {
         &self.sdf_gate_delays
+    }
+    /// Load port bits with interconnect delays, by [`IrSdfTarget::Load`]
+    /// index.
+    pub fn sdf_loads(&self) -> &[IrSdfLoad] {
+        &self.sdf_loads
     }
     pub fn net_groups(&self) -> &[IrNetGroup] {
         &self.net_groups
