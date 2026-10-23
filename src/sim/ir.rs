@@ -181,7 +181,7 @@ pub const LLG_DENSE_FIXED_ARRAY_CELLS: u64 = 4096;
 /// `owned/dense_cells.rs`); lowering captures whole-array sources of at least
 /// this many cells as one image so their element stores form such a run.
 /// See `docs/sim_performance_tradeoffs.md` for the measurement behind it.
-pub const LLG_DENSE_CELL_RUN_MIN: usize = 8;
+pub const LLG_DENSE_CELL_RUN_MIN: usize = 6;
 
 fn validate_width(path: &str, width: u32) -> Result<(), IrValidationError> {
     if width != 0 {

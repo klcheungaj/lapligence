@@ -46,9 +46,8 @@ Expected values are computed by hand from the clauses below.
 - `m2`, `m0`: `m[i][j] = 16i + j` over 4 rows of 8; `m2 = m[1:2]` copies rows
   1 and 2 (`m2[0][0] = 'h10`, `m2[0][4] = 'h14`, `m2[1][4] = 'h24`), and
   `m[0] = m[3]` copies one row (`'h30`, `'h34`), leaving row 1 (`'h10`).
-- `overlap`: `src = 1..8`, then the six-cell `src[1:6] = src[0:5]` (below the
-  run threshold) reads every source element before writing, giving
-  `1, 1, 2, 3, 4, 5, 6, 8`.
+- `overlap`: `src = 1..8`, then the six-cell `src[1:6] = src[0:5]` reads every
+  source element before writing, giving `1, 1, 2, 3, 4, 5, 6, 8`.
 - `cont`: `assign w = src` follows the overlapped value one step later.
 - `inout`, `func`: an inout formal adds 1 to every element; a function
   returns the elements reversed.
@@ -56,8 +55,8 @@ Expected values are computed by hand from the clauses below.
   `'{default: 'h33}` with element 2 then set to `'h44` (68), and a
   type-keyed `'{rec_t: '{'hc, 7}}` fill.
 - `bits`: a two-state array copy (`100..107`) compares equal (1).
-- `short`: seven-element (below the eight-cell run threshold) and
-  eight-element (at it) copies.
+- `short`: five-element (below the six-cell run threshold) and six-element
+  (at it) copies.
 - `wide`: 100-bit cells (two limbs) `wa[k] = k << 70 | (k + 1)`, with
   `wa[2][67:64] = z` and `wa[5][99:96] = x`, copied whole: `wb[2]` is
   `00000008z0000000000000003` (bit 71, a Z nibble, 3), `wb[5]` is
