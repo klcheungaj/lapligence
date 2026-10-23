@@ -1794,8 +1794,8 @@ static vpiHandle element_by_indices(uint32_t row, const int64_t* indices, int co
     for (int d = 0; d < count; ++d) {
         int64_t left, right;
         uint64_t offset;
-        array_dim(object, (uint32_t)d, &left, &right);
-        if (!index_offset(left, right, indices[d], &offset)) {
+        if (!array_dim(object, (uint32_t)d, &left, &right) ||
+            !index_offset(left, right, indices[d], &offset)) {
             if (!quiet) vpi_error("LLG_VPI_INDEX", "array index is outside the declared range");
             return NULL;
         }
@@ -1877,11 +1877,10 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
     if ((uint32_t)count == base->dim_count) return element_by_indices(row, values, count, 0);
     if ((uint32_t)count == base->dim_count + 1u) {
         vpiHandle element = element_by_indices(row, values, count - 1, 0);
-        llg_vpi_slot_t* element_slot = decode_handle(element, NULL);
+        uint32_t element_index;
+        llg_vpi_slot_t* element_slot = decode_handle(element, &element_index);
         if (!element_slot) return NULL;
         uint64_t flat = element_slot->element;
-        uint32_t element_index;
-        decode_handle(element, &element_index);
         release_slot(element_index);
         return bit_by_index(row, flat, values[count - 1], BIT_ERRORS);
     }
@@ -2803,7 +2802,7 @@ static char* composed_name(const llg_vpi_slot_t* slot, int full) {
         uint32_t dims = object->dim_count < 16 ? object->dim_count : 16;
         for (uint32_t d = dims; d-- > 0;) {
             int64_t left, right;
-            array_dim(object, d, &left, &right);
+            if (!array_dim(object, d, &left, &right)) return NULL;
             uint64_t extent = (uint64_t)(left > right ? left - right : right - left) + 1u;
             uint64_t offset = rest % extent;
             rest /= extent;
