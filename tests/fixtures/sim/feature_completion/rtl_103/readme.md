@@ -14,8 +14,10 @@ after Db destruction.
   model array (both directions, a descending array), an automatic local and a
   mixed-state record array, from automatic, static, expanded (event formal),
   timed and void-function calls, and a disabled call that copies nothing. The
-  range is fixed when the call starts, so a callee that changes the selector
-  does not move the target.
+  range is evaluated at the copy-out, like every selector of an output actual
+  (decision S13-D1): `get_bump` changes `n` from 1 to 4, so `a1 b2 c3` land in
+  `arr[4..6]` and `arr[1..4]` print `00 11 22 a1` (changed: the range was
+  fixed when the call started, giving `a1 b2 c3 33`).
 - `copyout_bounds` (results on stderr): a range partly outside the target
   writes the in-range elements and reports; an unknown selector writes nothing.
 - `mixed_state` (results on stderr): `with` targets whose elements mix `bit` and

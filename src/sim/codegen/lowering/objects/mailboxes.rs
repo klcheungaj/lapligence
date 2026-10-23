@@ -382,7 +382,13 @@ impl Codegen<'_> {
             .cloned()
             .ok_or_else(|| "mailbox destination has no owned type descriptor".to_owned())?;
         let tag = format!("mbx{}", node.index());
-        let (mut writeback, _, captures) = self.lower_call_writeback(path, node, &tag, false)?;
+        let (mut writeback, _, captures) = self.lower_call_writeback(
+            path,
+            node,
+            &tag,
+            false,
+            collection::TargetSelectors::AtCall,
+        )?;
         let mut before = Vec::new();
         for (name, width, signed, two_state, init) in captures {
             before.push(IrStmt::DeclLocal {

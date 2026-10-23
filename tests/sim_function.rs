@@ -358,8 +358,10 @@ fn sim_static_function_output_inout_expression_copyout_and_real() {
     .expect("static function output/inout expression copy-out must match in both modes");
 }
 
+/// Decision S13-D1: an inout actual is read at the call and written as an
+/// assignment at the return, so its selector function runs twice.
 #[test]
-fn sim_subroutine_inout_selected_actual_evaluates_index_once() {
+fn sim_subroutine_inout_selected_actual_evaluates_index_at_call_and_return() {
     if !llg::sim::build::cmake_available() {
         eprintln!("SKIP: cmake not available");
         return;
@@ -368,9 +370,9 @@ fn sim_subroutine_inout_selected_actual_evaluates_index_once() {
     run_fixture_both_opts(
         "subroutine_inout_index_once.sv",
         "subroutine_inout_index_once",
-        "value=5 index_calls=1\n",
+        "value=5 index_calls=2\n",
     )
-    .expect("inout selected actual must bind its index once in both modes");
+    .expect("inout selected actual must evaluate its index at the call and the return");
 }
 
 #[test]

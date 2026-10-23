@@ -65,9 +65,12 @@ module tb;
         if (port_view.first(values[0]) !== word_t'(-2)) $fatal(1, "interface const ref");
         snapshot = call_types::copied(values[0]);
         if (snapshot !== values[0]) $fatal(1, "package return");
+        // Decision S13-D1: the inout reads values[0] at the call; its copy-back
+        // evaluates choose() again after the callee set index to 1.
         copy_back(values[choose()], snapshot);
-        if (values[0].data[0] !== word_t'(17) || values[1].data[0] !== word_t'(4) ||
-            snapshot.data[0] !== word_t'(17) || calls != 1) $fatal(1, "copy-back destination");
+        if (values[0].data[0] !== word_t'(9) || values[1].data[0] !== word_t'(17) ||
+            values[1].valid !== 1'b1 || snapshot.data[0] !== word_t'(17) || calls != 2)
+            $fatal(1, "copy-back destination");
         result = activations(.seed(5));
         if (result != 108) $fatal(1, "automatic local initial value");
         result = activations(.extra(9), .seed(0));

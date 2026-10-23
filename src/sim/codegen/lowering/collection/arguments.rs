@@ -987,10 +987,10 @@ impl<'a> Codegen<'a> {
 
     /// Lower one output/inout actual's copy-out target once. A streaming
     /// concatenation whose `with` range is runtime-valued or partly outside
-    /// its bounds needs the checked unpack of a `StreamAssign` (SV 11.4.14.4);
-    /// its selectors and lvalue coordinates are frozen at the call like any
-    /// other actual, and the formal's value is unpacked after the callee
-    /// returns. Every other actual keeps its ordinary lvalue.
+    /// its bounds needs the checked unpack of a `StreamAssign` (SV 11.4.14.4),
+    /// and the formal's value is unpacked after the callee returns. Every
+    /// other actual keeps its ordinary lvalue. `selectors` says when the
+    /// target's selectors, keys and lvalue coordinates are evaluated.
     #[allow(clippy::type_complexity)]
     pub(in super::super) fn lower_call_writeback(
         &mut self,
@@ -998,6 +998,7 @@ impl<'a> Codegen<'a> {
         actual: NodeId,
         tag: &str,
         read_actual: bool,
+        selectors: TargetSelectors,
     ) -> Result<
         (
             CallWriteback,
@@ -1016,16 +1017,22 @@ impl<'a> Codegen<'a> {
                 ));
             }
             let mut captures = Vec::new();
-            let mut sequence = 0usize;
-            let plan = self.freeze_stream_targets(plan, tag, &mut sequence, &mut captures)?;
+            let plan = match selectors {
+                TargetSelectors::AtCall => {
+                    let mut sequence = 0usize;
+                    self.freeze_stream_targets(plan, tag, &mut sequence, &mut captures)?
+                }
+                TargetSelectors::AtCopyOut => plan,
+            };
             return Ok((CallWriteback::Stream(plan), None, captures));
         }
         if let Some((writeback, read)) =
-            self.container_element_writeback(path, actual, tag, read_actual)?
+            self.container_element_writeback(path, actual, tag, read_actual, selectors)?
         {
             return Ok((writeback, read, Vec::new()));
         }
-        let (lhs, read, captures) = self.lower_call_actual(path, actual, tag, read_actual)?;
+        let (lhs, read, captures) =
+            self.lower_call_actual(path, actual, tag, read_actual, selectors)?;
         Ok((CallWriteback::Lhs(lhs), read, captures))
     }
 
@@ -1101,10 +1108,12 @@ impl<'a> Codegen<'a> {
         Ok(plan)
     }
 
-    /// Lower one output/inout actual once.  Runtime selector expressions are
-    /// captured in caller-side locals before the callee starts; the returned
-    /// read and writeback LHS then use those locals rather than re-evaluating
-    /// an index after the call.
+    /// Lower one output/inout actual once. With `TargetSelectors::AtCall`
+    /// runtime selector expressions are captured in caller-side locals before
+    /// the callee starts, and the returned read and writeback LHS use those
+    /// locals. With `AtCopyOut` the LHS keeps its live selectors, which the
+    /// copy-out evaluates after the callee returns; an inout's read captures
+    /// them at the call, so they are evaluated twice.
     #[allow(clippy::type_complexity)]
     pub(in super::super) fn lower_call_actual(
         &mut self,
@@ -1112,6 +1121,7 @@ impl<'a> Codegen<'a> {
         actual: NodeId,
         tag: &str,
         read_actual: bool,
+        selectors: TargetSelectors,
     ) -> Result<
         (
             IrLhs,
@@ -1126,7 +1136,19 @@ impl<'a> Codegen<'a> {
         };
         let mut captures = Vec::new();
         let mut sequence = 0usize;
-        let (lhs, read) = self.freeze_call_lhs(lhs, tag, &mut sequence, &mut captures)?;
+        let (lhs, read) = match selectors {
+            TargetSelectors::AtCall => {
+                self.freeze_call_lhs(lhs, tag, &mut sequence, &mut captures)?
+            }
+            // An inout reads its actual at the call through a frozen copy of
+            // the selectors, and writes the live LHS at the copy-out.
+            TargetSelectors::AtCopyOut if read_actual => {
+                let (_, read) =
+                    self.freeze_call_lhs(lhs.clone(), tag, &mut sequence, &mut captures)?;
+                (lhs, read)
+            }
+            TargetSelectors::AtCopyOut => (lhs, None),
+        };
         let read = if read_actual {
             Some(match read {
                 Some(read) => read,
@@ -1516,13 +1538,24 @@ impl<'a> Codegen<'a> {
 #[cfg(test)]
 mod tests;
 
+/// When the selectors of an output/inout actual's target are evaluated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in super::super) enum TargetSelectors {
+    /// Once, before the callee starts (a mailbox `ref` destination, Annex G.4).
+    AtCall,
+    /// When the formal's value is copied out after the callee returns, as an
+    /// assignment to the actual would (decision S13-D1; 13.5 is silent).
+    AtCopyOut,
+}
+
 /// Where an output/inout actual receives the formal's final value.
 pub(in super::super) enum CallWriteback {
     Lhs(IrLhs),
     /// A checked streaming unpack whose selectors are already frozen.
     Stream(super::super::containers::StreamTargetPlan),
     /// One whole packed or real element of a resizable container; `prelude`
-    /// freezes its keys before the call (SIM-008).
+    /// freezes its keys before the call when they are evaluated at the call
+    /// (SIM-008), and is empty otherwise.
     Container {
         container: usize,
         keys: super::super::containers::ElementKeys,

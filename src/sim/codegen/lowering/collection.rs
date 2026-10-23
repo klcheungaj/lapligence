@@ -13,7 +13,7 @@ mod aggregates;
 mod arguments;
 mod block_natives;
 mod block_records;
-pub(super) use arguments::CallWriteback;
+pub(super) use arguments::{CallWriteback, TargetSelectors};
 mod call_contracts;
 pub(super) use call_contracts::{EventEvaluation, PostponedEvaluation};
 mod calls;

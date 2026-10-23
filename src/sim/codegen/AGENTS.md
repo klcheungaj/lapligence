@@ -407,7 +407,10 @@ No subroutine/captured RHS admission without an owned activation environment.
 Capture each input once before dependent defaults. Preserve exact fixed activation
 payloads; automatic locals/returns are independent, static formals/locals/returns
 persist definition-wide. Input/inout copy in per call, output/inout copy out at
-return; freeze composite destinations before invocation. Explicit local lifetimes
+return as an assignment whose selectors, keys and handles are evaluated then
+(decision S13-D1, `TargetSelectors::AtCopyOut`; the emitter resolves the target
+after the callee returns). A whole class property, column-layout record
+destinations and mailbox `ref` destinations still bind before invocation. Explicit local lifetimes
 apply individually (static-in-automatic and automatic-in-static). Static output
 formals are not implicitly reset/copied in. Static return storage is ordinary
 hidden model storage, not an opportunistic expression substitute.
@@ -700,7 +703,7 @@ results) use their whole image (`FixedImageStream`/`FixedImageSelector`), and
 constant in-bounds target ranges unpack into element parts. A runtime or
 out-of-bounds target range needs the checked `StreamAssign` (`stream_mixed_targets`):
 a direct streaming assignment, or a statement call's output copy-out
-(`lower_call_writeback`, selectors frozen at the call); expression calls and
+(`lower_call_writeback`, selectors evaluated at the copy-out); expression calls and
 intra-assignment delays reject. Image elements mixing two-state and four-state
 members carry their two-state runs: constant parts become one lvalue per run,
 runtime selections convert the selected segment. Each blocking `>>` selector may

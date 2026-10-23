@@ -82,6 +82,24 @@ fn chains_reenter_repeatedly_without_advancing_time() {
     );
 }
 
+/// Decision S13-D1: the output and inout actuals of an import are written
+/// after it returns, into the targets their selectors name then; the C side
+/// changes the selector through an export first.
+#[test]
+fn import_copy_out_targets_are_selected_at_the_return() {
+    let directory = sim_harness::TempDir::new("sim041-copyout").expect("temporary directory");
+    let Some(library) = companion(&directory, "copy_out_targets") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "copy_out_targets",
+        include_str!("../fixtures/sim/feature_completion/sim_041/copy_out_targets.out"),
+        &["--dpi-lib", &library],
+        &[],
+    );
+}
+
 /// `byte` formals and results of an export are C `char` (Table H.1), whose
 /// signedness is the ABI's. `-funsigned-char` (MSVC `/J`) on the companion
 /// and the model reproduces the AArch64 Linux ABI; SystemVerilog must see

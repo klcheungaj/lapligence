@@ -1240,7 +1240,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([SIM-020](../tests/fixtures/sim/feature_completion/sim_020/readme.md),
   decisions S20-1 to S20-6 in [the register](lrm_decisions.md)).
   Output copy-out from a task or void-function call statement unpacks into
-  runtime or out-of-range `with` targets with selectors fixed at the call, and
+  runtime or out-of-range `with` targets with selectors evaluated at the
+  copy-out (decision S13-D1), and
   elements mixing two-state and four-state members convert member-wise
   (RTL-103). Nonblocking, copy-out or fixed-target right-to-left selectors
   that read an earlier target of the same unpack, and such targets of a function call inside

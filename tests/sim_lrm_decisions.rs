@@ -331,6 +331,14 @@ fn s20_5_reverse_unpack_consumed() {
 }
 
 #[test]
+fn s13_d1_copy_out_target_at_return() {
+    run_decision(
+        "S13-D1_copy_out_target_at_return",
+        include_str!("fixtures/sim/lrm_decisions/S13-D1_copy_out_target_at_return.out"),
+    );
+}
+
+#[test]
 fn r11_d1_sibling_port_net_types() {
     run_decision(
         "R11-D1_sibling_port_net_types",

@@ -45,15 +45,17 @@ module output_case #(parameter W = 65, parameter SEED = 11)(output bit done);
         rows = '{default:'0};
         carry = word_t'(40);
         result = retained(1, records[pick()], rows[0], carry);
-        if (records[0].data !== word_t'(SEED) || records[0].present !== 1 ||
-            records[1].present !== 0 || rows[0][1] !== word_t'(SEED + 1) ||
+        // Decision S13-D1: the output's selector is evaluated at its
+        // copy-out, after the callee set `selected` to 1.
+        if (records[1].data !== word_t'(SEED) || records[1].present !== 1 ||
+            records[0].present !== 0 || rows[0][1] !== word_t'(SEED + 1) ||
             rows[0][0] !== word_t'(SEED + 2) || carry !== word_t'(41) || result != 41)
-            $fatal(1, "static output first call / selected capture");
-        selected = 1;
+            $fatal(1, "static output first call / selector at copy-out");
+        records[1] = '{default:'0};
         carry = word_t'(7);
         result = retained(0, records[pick()], rows[1], carry);
-        if (records[1] !== records[0] || rows[1] !== rows[0] ||
-            carry !== word_t'(8) || result != 8 || selector_calls != 2)
+        if (records[1].data !== word_t'(SEED) || records[1].present !== 1 ||
+            rows[1] !== rows[0] || carry !== word_t'(8) || result != 8 || selector_calls != 2)
             $fatal(1, "retained output versus inout copy-in");
         actual = 99;
         observed = default_reader(actual, 0, 1);

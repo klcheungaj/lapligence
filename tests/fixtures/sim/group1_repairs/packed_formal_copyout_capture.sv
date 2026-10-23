@@ -9,14 +9,17 @@ module tb;
         emit_byte(copy.lanes[index++]);
         if (index != 1 || copy.lanes[0] !== 8'ha5 || copy.lanes[1] !== 8'h20)
             $fatal(1, "output address capture");
+        index = 0;
+        // Decision S13-D1: the inout reads lanes[0] at the call and its
+        // copy-out, an assignment at the return, writes lanes[1].
         modify_byte(copy.lanes[index++]);
-        if (index != 2) $fatal(1, "inout destination evaluated twice");
+        if (index != 2) $fatal(1, "inout actual evaluated at the call and the return");
         return copy;
     endfunction
     initial begin
         source = 24'h7e2010;
         result = make(source);
-        if (result !== 24'h7e21a5 || source !== 24'h7e2010)
+        if (result !== 24'h7ea6a5 || source !== 24'h7e2010)
             $fatal(1, "selected formal copyout");
         $display("packed copyout capture passed");
         $finish(0);

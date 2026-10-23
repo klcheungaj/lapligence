@@ -1,8 +1,8 @@
 // IEEE 1800-2009 11.4.14.3, 11.4.14.4, 13.5: an output formal copies out
 // into a streaming concatenation whose `with` range is runtime-valued. The
 // formal's value is unpacked into the selected elements in storage order,
-// consuming the leftmost bits; the range is selected when the call starts,
-// and a disabled call copies nothing out.
+// consuming the leftmost bits; the range is selected at the copy-out
+// (decision S13-D1), and a disabled call copies nothing out.
 module tb;
   timeunit 1ns;
   timeprecision 1ns;
