@@ -31,7 +31,13 @@ permitted outcome at each racy line.
   changes between loop iterations is re-evaluated each time and a function
   delay is evaluated once.
 - `negative_real_delay`, `negative_real_constant`: finite negative real delays
-  are two's-complement unsigned 64-bit time after local rounding.
+  are two's-complement unsigned 64-bit time after local rounding (SV 9.4.1
+  L11749-11750: "If the delay expression evaluates to a negative value, it
+  shall be interpreted as a twos-complement unsigned integer of the same size
+  as a time variable."; decision S01-D1). Some simulators read a negative real
+  delay, or a constant negative delay, as zero with a warning while they keep
+  a negative integral variable delay as a large unsigned time; llg follows the
+  clause text, which makes no exception for real or constant delays.
 - `time_limit`: a delay reaching exactly 2^64-1 schedules; one past it is a
   fatal run-time error before queue insertion, and the final procedure still
   prints `final 18446744073709551615` (decision S01-D2; changed: the model
