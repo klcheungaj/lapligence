@@ -52,6 +52,8 @@ mod sdf_annotations;
 pub use sdf_annotations::SdfCommand;
 pub(super) use sdf_annotations::SdfState;
 mod sdf_targets;
+mod signal_names;
+pub(super) use signal_names::SignalNameIndex;
 mod timing_checks;
 mod vpi;
 pub(super) use packed_elements::Select;

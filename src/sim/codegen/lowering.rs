@@ -1321,6 +1321,8 @@ struct Codegen<'a> {
     /// node index. Reverse lookups take the first (lowest-index) node, which
     /// keeps them deterministic without sorting every global per lookup.
     sig_global_by_ir: HashMap<usize, BTreeMap<usize, NodeId>>,
+    /// First model signal per dependency name (see `signal_names.rs`).
+    signal_names: std::cell::RefCell<collection::SignalNameIndex>,
     /// Clocking block variable → synthesized sampled storage and source.
     clocking_samples: HashMap<NodeId, ClockingSampleInfo>,
     /// Expression-backed clockvars whose images are evaluated by synthetic
@@ -1943,6 +1945,7 @@ impl<'a> Codegen<'a> {
             signals: Vec::new(),
             sig_globals: HashMap::new(),
             sig_global_by_ir: HashMap::new(),
+            signal_names: Default::default(),
             clocking_samples: HashMap::new(),
             clocking_expression_sources: Vec::new(),
             clocking_history_ticks: HashMap::new(),

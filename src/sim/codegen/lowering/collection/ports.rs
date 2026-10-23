@@ -174,6 +174,7 @@ impl<'a> Codegen<'a> {
                 let canonical = self.model.signals[target].clone();
                 self.model.signals[child].alias = Some(target);
                 self.model.signals[child].c_name = canonical.c_name;
+                self.invalidate_signal_names();
             }
         }
         let mut array_bindings = self.reference_arrays.keys().copied().collect::<Vec<_>>();

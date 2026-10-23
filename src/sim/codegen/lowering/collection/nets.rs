@@ -1716,6 +1716,7 @@ impl<'a> Codegen<'a> {
                             )
                         })?;
                         self.model.signals[info.ir].net_alias.push(binding);
+                        self.invalidate_signal_names();
                     }
                     AliasBit::Array { owner, element, .. } => {
                         let array = self
@@ -1874,6 +1875,7 @@ impl<'a> Codegen<'a> {
                     if let Some(sig) = self.model.signals.get_mut(info.ir) {
                         sig.c_name = format!("{name}.resolved");
                         sig.net_driver = Some((gidx, slot));
+                        self.invalidate_signal_names();
                     }
                 }
                 if let Some(g) = old_global {
@@ -2684,6 +2686,7 @@ impl<'a> Codegen<'a> {
             if let Some(signal) = self.model.signals.get_mut(info.ir) {
                 signal.c_name = resolved.clone();
                 signal.net_driver = Some((group, 0));
+                self.invalidate_signal_names();
             }
             self.retarget_signal_global(&global_index, &old_global, &resolved, (&name, 0), false);
 
