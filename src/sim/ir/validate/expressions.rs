@@ -428,20 +428,6 @@ impl Validator<'_> {
                         }
                         1
                     }
-                    IrRuntimeQuery::TimingNotify { set, notifier } => {
-                        let known = self
-                            .model
-                            .timing_checks
-                            .get(*set as usize)
-                            .is_some_and(|known| *notifier < known.notifiers);
-                        if !known {
-                            return self.fail(
-                                path,
-                                format!("timing notifier {notifier} of set {set} does not exist"),
-                            );
-                        }
-                        1
-                    }
                 };
                 if expr.width != width || expr.signed || expr.fill.is_some() {
                     return self.fail(path, "runtime query has an invalid result shape");

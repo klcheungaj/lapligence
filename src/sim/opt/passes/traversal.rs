@@ -862,7 +862,7 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         // Sources live in `IrModel::module_paths`, not in the statement.
         | IrStmt::ModulePathStamp { .. }
         // Terminals and conditions live in `IrModel::timing_checks`.
-        | IrStmt::TimingCheckStep { .. }
+        | IrStmt::TimingCheckStep
         | IrStmt::System(None)
         | IrStmt::DeclLocal { init: None, .. }
         | IrStmt::SharedLocal { init: None, .. }

@@ -108,11 +108,6 @@ pub enum IrRuntimeQuery {
     /// (1-bit unsigned two-state): it matched in this time step (IEEE
     /// 1800-2009 16.9.11). Procedural reads use the endpoint's event instead.
     SequenceTriggered(u32),
-    /// Whether the last [`IrStmt::TimingCheckStep`](crate::sim::ir::IrStmt)
-    /// of timing check set `set` found a violation of a check with notifier
-    /// `notifier` (1-bit unsigned two-state). Checks sharing a notifier that
-    /// violate in one step toggle it once.
-    TimingNotify { set: u32, notifier: u32 },
 }
 
 /// Structural expression kinds.  The self-determined width/signedness/fill of

@@ -504,6 +504,10 @@ pub(crate) fn resolve(
                 .timing_check_messages
                 .or(config.simulator.timing_check_messages)
                 .unwrap_or(true),
+            negative: cli
+                .neg_timing_checks
+                .or(config.simulator.neg_timing_checks)
+                .unwrap_or(false),
         },
         cli_build_options,
     })
@@ -1369,7 +1373,7 @@ files = ["a.sv"]
         let cfg = config(
             &dir,
             "schema_version = 1\n[simulator]\ntiming_checks = false\nnotifiers = false\n\
-             timing_check_messages = false\n",
+             timing_check_messages = false\nneg_timing_checks = true\n",
         );
         let options = resolve_no_env(cli(&["x.sv"]), Some(&cfg)).unwrap();
         assert_eq!(
@@ -1378,16 +1382,26 @@ files = ["a.sv"]
                 checks: false,
                 notifiers: false,
                 messages: false,
+                negative: true,
             }
         );
-        let options =
-            resolve_no_env(cli(&["--timing-checks", "--notifiers", "x.sv"]), Some(&cfg)).unwrap();
+        let options = resolve_no_env(
+            cli(&[
+                "--timing-checks",
+                "--notifiers",
+                "--no-neg-timing-checks",
+                "x.sv",
+            ]),
+            Some(&cfg),
+        )
+        .unwrap();
         assert_eq!(
             options.timing_checks,
             sim::ir::IrTimingCheckOptions {
                 checks: true,
                 notifiers: true,
                 messages: false,
+                negative: false,
             }
         );
         let options = resolve_no_env(
@@ -1396,6 +1410,7 @@ files = ["a.sv"]
                 "--no-notifiers",
                 "--no-timing-check-messages",
                 "--timing-check-messages",
+                "--neg-timing-checks",
                 "x.sv",
             ]),
             None,
@@ -1407,6 +1422,7 @@ files = ["a.sv"]
                 checks: false,
                 notifiers: false,
                 messages: true,
+                negative: true,
             }
         );
         let _ = std::fs::remove_dir_all(dir);

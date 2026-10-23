@@ -72,8 +72,9 @@ pub use timing::{
     expand_path_delays, IrModulePath, IrModulePathDestination, IrModulePathSet, IrPathCondition,
     IrPathEdge, IrPathLimits, IrPathPolarity, IrPathPulseOptions, IrPulseStyle, IrTimingCheck,
     IrTimingCheckKind, IrTimingCheckOptions, IrTimingCheckSet, IrTimingCondition, IrTimingEvent,
-    IrTimingTerminal, PATH_STYLE_ON_DETECT, PATH_STYLE_SHOW_CANCELLED, PATH_TRANSITIONS,
-    TIMING_EDGE_MASK,
+    IrTimingLine, IrTimingLineStorage, IrTimingTerminal, PATH_STYLE_ON_DETECT,
+    PATH_STYLE_SHOW_CANCELLED, PATH_TRANSITIONS, TIMING_EDGE_MASK, TIMING_EVENT_BASED,
+    TIMING_REMAIN_ACTIVE,
 };
 mod udp;
 pub use udp::{
@@ -572,6 +573,9 @@ pub struct IrModel {
     pub(in crate::sim) timing_checks: Vec<IrTimingCheckSet>,
     /// Global timing check controls.
     pub(in crate::sim) timing_check_options: IrTimingCheckOptions,
+    /// The hidden one-bit two-state signal the runtime toggles to wake the
+    /// timing process; present exactly when `timing_checks` is not empty.
+    pub(in crate::sim) timing_doorbell: Option<usize>,
     pub(in crate::sim) events: Vec<IrEvent>,
     pub(in crate::sim) funcs: Vec<IrFunc>,
     /// Concurrent assertion instances, kept outside ordinary process IR.
@@ -745,6 +749,7 @@ impl IrModel {
             path_pulse: IrPathPulseOptions::default(),
             timing_checks: Vec::new(),
             timing_check_options: IrTimingCheckOptions::default(),
+            timing_doorbell: None,
             events: parts.events,
             funcs: parts.funcs,
             assertions: parts.assertions,
@@ -809,6 +814,10 @@ impl IrModel {
     /// Global timing check controls.
     pub fn timing_check_options(&self) -> IrTimingCheckOptions {
         self.timing_check_options
+    }
+    /// The signal that wakes the timing process.
+    pub fn timing_doorbell(&self) -> Option<usize> {
+        self.timing_doorbell
     }
     pub fn net_groups(&self) -> &[IrNetGroup] {
         &self.net_groups

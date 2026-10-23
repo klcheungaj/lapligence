@@ -144,6 +144,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         path_pulse: _,
         timing_checks,
         timing_check_options: _,
+        timing_doorbell,
         events: _,
         funcs,
         assertions,
@@ -195,7 +196,9 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         }
     }
     // The runtime reads timing check terminals through their storage address
-    // and evaluates the event conditions when a step needs them.
+    // and evaluates the event conditions when a step needs them. It writes
+    // the notifiers, the delayed signals and the doorbell of the timing
+    // process.
     for set in timing_checks {
         for terminal in &set.terminals {
             rw.read(terminal.signal);
@@ -203,6 +206,19 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         for condition in &set.conditions {
             collect_expr_reads(condition, model, &mut rw);
         }
+        for &notifier in &set.notifiers {
+            rw.read(notifier);
+            rw.write(notifier);
+        }
+        for line in &set.lines {
+            if let Some(target) = set.terminals.get(line.target as usize) {
+                rw.write(target.signal);
+            }
+        }
+    }
+    if let Some(doorbell) = *timing_doorbell {
+        rw.read(doorbell);
+        rw.write(doorbell);
     }
     // A net-array cell observes its canonical resolved net signal.
     for (_, signal) in arrays.iter().flat_map(|array| &array.net_elements) {
@@ -954,7 +970,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         // Its sources are read through `IrModel::module_paths` (below).
         | IrStmt::ModulePathStamp { .. }
         // Its terminals are read through `IrModel::timing_checks` (below).
-        | IrStmt::TimingCheckStep { .. }
+        | IrStmt::TimingCheckStep
         | IrStmt::Nop => {}
         // `$dumpvars` names scopes; waveform models keep every HDL-visible
         // signal (`model.waveform`).

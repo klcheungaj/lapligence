@@ -111,6 +111,7 @@ pub(super) struct RawSimulator {
     pub timing_checks: Option<bool>,
     pub notifiers: Option<bool>,
     pub timing_check_messages: Option<bool>,
+    pub neg_timing_checks: Option<bool>,
     pub plusargs: Option<Vec<String>>,
 }
 

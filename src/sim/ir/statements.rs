@@ -591,15 +591,12 @@ pub enum IrStmt {
     ModulePathStamp {
         set: usize,
     },
-    /// Detect the events of timing check set `set` (an index of
-    /// `IrModel::timing_checks`) since its last step, record their stamps,
-    /// evaluate its checks at the current time and report violations; the
-    /// notifiers to toggle are then read with
-    /// [`IrRuntimeQuery::TimingNotify`](super::IrRuntimeQuery). Its process
-    /// wakes on every terminal change.
-    TimingCheckStep {
-        set: usize,
-    },
+    /// Run every timing check set (`IrModel::timing_checks`) whose terminals
+    /// changed since its last step: detect the events, record their stamps,
+    /// evaluate the checks at the current time, report violations and toggle
+    /// the notifiers. The model's one timing process runs it whenever the
+    /// runtime rings `IrModel::timing_doorbell`.
+    TimingCheckStep,
     /// Advance sequential UDP instance state `state` (an index of
     /// `IrModel::udp_states`) from its scalar inputs, in port order. The
     /// state keeps the inputs it last saw; each input whose 0/1/X value

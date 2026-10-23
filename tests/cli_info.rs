@@ -79,6 +79,8 @@ fn simulator_information_exits_without_compiling_or_installing_memory_limits() {
         "--notifiers",
         "--no-timing-check-messages",
         "--timing-check-messages",
+        "--neg-timing-checks",
+        "--no-neg-timing-checks",
     ] {
         assert!(
             String::from_utf8_lossy(&output.stdout).contains(option),

@@ -3,21 +3,22 @@
 //!
 //! Every module instance with checks becomes one [`IrTimingCheckSet`]: the
 //! resolved terminals, each check's reference and data events (edge mask,
-//! condition), limits in scheduler ticks and notifier index, plus one hidden
-//! process that runs the runtime step whenever a terminal changes and then
-//! toggles each notifier the step flagged with an ordinary blocking
-//! assignment, so `@(notifier)`, continuous readers and UDP inputs wake as
-//! for any variable write. `$setuphold`, `$recrem`, `$timeskew`,
-//! `$fullskew` and negative `$nochange` offsets (ADV-010) are rejected with
-//! their location.
+//! conditions), limits in scheduler ticks and notifier signal. The runtime
+//! watches the terminals' storage; the model's one timing process wakes on a
+//! hidden doorbell variable once per batch of terminal changes, runs the
+//! changed sets and lets the runtime toggle the notifiers of violated checks
+//! with ordinary variable writes, so `@(notifier)`, continuous readers and
+//! UDP inputs wake as for any variable write. `$setuphold`, `$recrem`,
+//! `$timeskew`, `$fullskew` and negative `$nochange` offsets (ADV-010) are
+//! rejected with their location.
 
 use super::*;
 use crate::core::db::{
     ExprKind, Operation, TimingCheck, TimingCheckKind, TimingEdges, TimingEvent,
 };
 use crate::sim::ir::{
-    IrBinOp, IrConst, IrRuntimeQuery, IrTimingCheck, IrTimingCheckKind, IrTimingCheckSet,
-    IrTimingCondition, IrTimingEvent, IrTimingTerminal, IrUniquePriorityCheck,
+    IrTimingCheck, IrTimingCheckKind, IrTimingCheckSet, IrTimingCondition, IrTimingEvent,
+    IrTimingTerminal,
 };
 
 /// Placeholders of [`IrTimingCheck::text`] for the reference and the data
@@ -28,8 +29,8 @@ const DATA_TIME: &str = "\u{2}";
 /// One lowered check of an instance before duplicates are removed.
 struct LoweredCheck {
     check: IrTimingCheck,
-    /// The notifier variable and its expression, if any.
-    notifier: Option<(NodeId, NodeId)>,
+    /// The IR signal of the notifier variable, if any.
+    notifier: Option<usize>,
     name: &'static str,
 }
 
@@ -71,14 +72,54 @@ impl Codegen<'_> {
             });
             instances[slot].1.push(check);
         }
+        let mut first_block = None;
         for (instance, checks) in instances {
+            first_block.get_or_insert(checks[0].block);
             let previous_inst = self.inst;
             self.inst = instance;
             let result = self.lower_instance_timing_checks(instance, &checks);
             self.inst = previous_inst;
             result?;
         }
+        if let (false, Some(block)) = (self.model.timing_checks.is_empty(), first_block) {
+            self.add_timing_check_process(block);
+        }
         Ok(())
+    }
+
+    /// The model's one timing process: the runtime rings the hidden doorbell
+    /// variable once per batch of terminal changes, and the process then runs
+    /// every set whose terminals changed. One wake per batch replaces one per
+    /// instance and terminal change.
+    fn add_timing_check_process(&mut self, block: NodeId) {
+        let doorbell = self.model.signals.len();
+        let c_name = "llg_timing_doorbell".to_owned();
+        self.model.signals.push(IrSignal {
+            fixed_default: None,
+            c_name: c_name.clone(),
+            hdl_name: None,
+            ty: IrType::Packed {
+                width: 1,
+                signed: false,
+                two_state: true,
+            },
+            net_driver: None,
+            net_alias: Vec::new(),
+            alias: None,
+            omit: false,
+        });
+        self.model.timing_doorbell = Some(doorbell);
+        let origin = self.origin(block);
+        self.model.processes.push(IrProcess::new_with_origin(
+            "llg_timing_checks".to_owned(),
+            "specify".to_owned(),
+            IrShape::SensLoop {
+                reads: vec![IrDependency::scalar(c_name)],
+            },
+            Vec::new(),
+            vec![IrStmt::TimingCheckStep],
+            origin,
+        ));
     }
 
     fn lower_instance_timing_checks(
@@ -88,7 +129,6 @@ impl Codegen<'_> {
     ) -> Result<(), String> {
         let scope = self.instance_path_of(instance);
         let mut terminals: Vec<IrTimingTerminal> = Vec::new();
-        let mut reads = Vec::new();
         let mut conditions: Vec<IrExpr> = Vec::new();
         let mut lowered = Vec::with_capacity(checks.len());
         for check in checks {
@@ -96,7 +136,6 @@ impl Codegen<'_> {
                 &scope,
                 check,
                 &mut terminals,
-                &mut reads,
                 &mut conditions,
             )?);
         }
@@ -107,7 +146,9 @@ impl Codegen<'_> {
             return Ok(());
         }
         let lowered = self.drop_duplicate_timing_checks(&scope, lowered);
-        let mut notifiers: Vec<(NodeId, NodeId)> = Vec::new();
+        // `--no-notifiers`: violations are still reported, notifiers keep
+        // their values.
+        let mut notifiers: Vec<usize> = Vec::new();
         let mut set_checks = Vec::with_capacity(lowered.len());
         for LoweredCheck {
             mut check,
@@ -115,45 +156,21 @@ impl Codegen<'_> {
             ..
         } in lowered
         {
-            check.notifier = notifier.map(|(target, expression)| {
+            check.notifier = notifier.filter(|_| options.notifiers).map(|signal| {
                 let index = notifiers
                     .iter()
-                    .position(|(known, _)| *known == target)
+                    .position(|known| *known == signal)
                     .unwrap_or_else(|| {
-                        notifiers.push((target, expression));
+                        notifiers.push(signal);
                         notifiers.len() - 1
                     });
                 index as u32
             });
             set_checks.push(check);
         }
-        let set = self.model.timing_checks.len();
         let label = self.source_path(&scope);
-        let mut body = vec![IrStmt::TimingCheckStep { set }];
-        if options.notifiers {
-            for (index, (_, expression)) in notifiers.iter().enumerate() {
-                body.push(self.notifier_toggle(&scope, set, index, *expression)?);
-            }
-        }
         self.model.timing_checks.push(IrTimingCheckSet::new(
-            label.clone(),
-            terminals,
-            set_checks,
-            conditions,
-            notifiers.len() as u32,
-        ));
-        reads.sort_by_key(|dependency| self.dependency_sort_key(dependency));
-        reads.dedup();
-        let block = checks[0].block;
-        let name = self.new_fn_name(&scope, "timing_check");
-        let origin = self.origin(block);
-        self.model.processes.push(IrProcess::new_with_origin(
-            name,
-            format!("{label}.specify"),
-            IrShape::SensLoop { reads },
-            Vec::new(),
-            body,
-            origin,
+            label, terminals, set_checks, conditions, notifiers,
         ));
         Ok(())
     }
@@ -166,7 +183,6 @@ impl Codegen<'_> {
         scope: &str,
         check: &TimingCheck,
         terminals: &mut Vec<IrTimingTerminal>,
-        reads: &mut Vec<IrDependency>,
         conditions: &mut Vec<IrExpr>,
     ) -> Result<LoweredCheck, String> {
         let location = self.specify_location(check.node);
@@ -247,7 +263,6 @@ impl Codegen<'_> {
                     Some(index) => index,
                     None => {
                         terminals.push(entry);
-                        reads.push(codegen.signal_dependency(&terminal.info));
                         terminals.len() - 1
                     }
                 };
@@ -293,10 +308,7 @@ impl Codegen<'_> {
         };
         let notifier = match check.notifier {
             None => None,
-            Some(expression) => Some((
-                self.notifier_target(expression).map_err(&error)?,
-                expression,
-            )),
+            Some(expression) => Some(self.notifier_target(expression).map_err(&error)?),
         };
         let text = self.timing_check_text(check, kind, &reference, data.as_ref(), first, second);
         Ok(LoweredCheck {
@@ -304,8 +316,8 @@ impl Codegen<'_> {
                 kind,
                 reference_event,
                 data_event,
-                first,
-                second,
+                first as i64,
+                second as i64,
                 None,
                 location,
                 text,
@@ -353,7 +365,7 @@ impl Codegen<'_> {
     /// The variable a notifier argument names: a scalar (one-bit) variable
     /// of the instance (31.6; vector and integer notifiers are rejected, as
     /// is common practice for `notify_reg`).
-    fn notifier_target(&self, expression: NodeId) -> Result<NodeId, String> {
+    fn notifier_target(&self, expression: NodeId) -> Result<usize, String> {
         let target = match self.kind(expression) {
             NodeKind::Expr(ExprKind::Ref {
                 target: Some(target),
@@ -376,78 +388,7 @@ impl Codegen<'_> {
                 self.display_name(target)
             ));
         }
-        Ok(target)
-    }
-
-    /// `if (notify) n = (n === 1'b0) ? 1'b1 : (n === 1'bz) ? 1'bz : 1'b0;` --
-    /// Table 31-13 with x becoming 0 (V Table 61, decision A9-D5).
-    fn notifier_toggle(
-        &mut self,
-        scope: &str,
-        set: usize,
-        notifier: usize,
-        expression: NodeId,
-    ) -> Result<IrStmt, String> {
-        let lhs = self.lower_lhs(scope, expression)?;
-        let current = IrExpr::convert_to(self.lower_expr(scope, expression)?, 1, false);
-        let bit = |bits: u64, z: u64| -> Result<IrExpr, String> {
-            let constant = IrConst::packed(vec![bits], vec![0], vec![z], 1, false, None)
-                .map_err(|error| error.to_string())?;
-            Ok(IrExpr::new(IrExprKind::Const(constant), 1, false, None))
-        };
-        let is = |value: IrExpr| {
-            IrExpr::new(
-                IrExprKind::Bin {
-                    op: IrBinOp::CaseEq,
-                    a: Box::new(current.clone()),
-                    b: Box::new(value),
-                },
-                1,
-                false,
-                None,
-            )
-        };
-        let mux = |sel: IrExpr, a: IrExpr, b: IrExpr| {
-            IrExpr::new(
-                IrExprKind::Mux {
-                    sel: Box::new(sel),
-                    a: Box::new(a),
-                    b: Box::new(b),
-                },
-                1,
-                false,
-                None,
-            )
-        };
-        let next = mux(
-            is(bit(0, 0)?),
-            bit(1, 0)?,
-            mux(is(bit(0, 1)?), bit(0, 1)?, bit(0, 0)?),
-        );
-        let signed = self
-            .notifier_target(expression)
-            .ok()
-            .and_then(|target| self.signal_of(target))
-            .is_some_and(|info| info.signed);
-        let query = IrExpr::new(
-            IrExprKind::RuntimeQuery(IrRuntimeQuery::TimingNotify {
-                set: set as u32,
-                notifier: notifier as u32,
-            }),
-            1,
-            false,
-            None,
-        );
-        Ok(IrStmt::If {
-            cond: query,
-            then_: vec![IrStmt::Assign {
-                lhs,
-                rhs: IrExpr::convert_to(next, 1, signed),
-                nba: false,
-            }],
-            els: None,
-            check: IrUniquePriorityCheck::None,
-        })
+        Ok(info.ir)
     }
 
     /// A `==` or `!=` condition is nondeterministic: an x or z result
