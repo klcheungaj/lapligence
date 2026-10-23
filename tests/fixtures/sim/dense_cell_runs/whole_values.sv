@@ -13,6 +13,8 @@ module tb;
   bit [7:0] ba [0:7], bb [0:7];
   logic [7:0] seven [0:6], seven2 [0:6];
   logic [7:0] eight [0:7], eight2 [0:7];
+  logic [99:0] wa [0:7], wb [0:7];
+  bit [69:0] ta [0:7], tb [0:7];
   bytes_t src, w, v;
   bytes_t filled = '{default: 8'h5a};
   logic c;
@@ -91,6 +93,14 @@ module tb;
     foreach (eight[k]) eight[k] = 8'(k + 8);
     eight2 = eight;
     $display("short %p %p", seven2, eight2);
+
+    foreach (wa[k]) wa[k] = (100'(k) << 70) | 100'(k + 1);
+    wa[2][67:64] = 4'hz;
+    wa[5][99:96] = 4'hx;
+    wb = wa;
+    foreach (ta[k]) ta[k] = (70'(k) << 66) | 70'(k);
+    tb = ta;
+    $display("wide %h %h %h %h", wb[2], wb[5], wb[7], tb[3]);
     #20 $finish(0);
   end
 

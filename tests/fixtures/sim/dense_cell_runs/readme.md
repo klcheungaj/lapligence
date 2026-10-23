@@ -58,6 +58,12 @@ Expected values are computed by hand from the clauses below.
 - `bits`: a two-state array copy (`100..107`) compares equal (1).
 - `short`: seven-element (below the eight-cell run threshold) and
   eight-element (at it) copies.
+- `wide`: 100-bit cells (two limbs) `wa[k] = k << 70 | (k + 1)`, with
+  `wa[2][67:64] = z` and `wa[5][99:96] = x`, copied whole: `wb[2]` is
+  `00000008z0000000000000003` (bit 71, a Z nibble, 3), `wb[5]` is
+  `x000001400000000000000006` (bits 72 and 70) and `wb[7]` is
+  `0000001c00000000000000008`. Two-state 70-bit cells `ta[k] = k << 66 | k`:
+  `tb[3]` is `0c0000000000000003`.
 - `nba-before`, `nba-after`: `rn <= ra` at time 10 leaves the default 0 until
   the NBA region, then shows `ra[6].i` (60) and `ra[3].a` (`x01z`).
 
