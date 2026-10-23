@@ -4,8 +4,11 @@ use super::super::packed_geometry::PackedSelectDim;
 use super::net_collapse::NetPoint;
 use super::*;
 
+mod global_index;
 #[cfg(test)]
 mod tests;
+mod writer_index;
+use writer_index::NetWriterIndex;
 
 /// The logical MSB-to-LSB bits of one alias lvalue.
 ///
@@ -1595,6 +1598,7 @@ impl<'a> Codegen<'a> {
         let mut array_alias_bindings: HashMap<(usize, u64), Vec<IrNetAliasBinding>> =
             HashMap::new();
         let alias_runs = self.partition_electrical_bits(alias_groups, &nodes, &type_plan)?;
+        let writers = self.net_writer_index(&nodes);
         for run in alias_runs {
             let width = run.len() as u32;
             let bits = run.iter().flatten().copied().collect::<Vec<_>>();
@@ -1730,7 +1734,7 @@ impl<'a> Codegen<'a> {
                 .iter()
                 .filter_map(|(member, element)| element.is_none().then_some(*member))
                 .collect::<Vec<_>>();
-            let sources = self.structural_site_sources(&normal_members)?;
+            let sources = self.structural_site_sources(&nodes, &writers, &normal_members)?;
             let fallback = run.iter().flatten().copied().collect::<Vec<_>>();
             self.note_uwire_drivers(&type_plan, &fallback, &sources, &mut uwire_drivers);
             for (source, strengths) in sources {
@@ -1770,6 +1774,7 @@ impl<'a> Codegen<'a> {
 
         let mut member_slots: HashMap<NodeId, (String, usize)> = HashMap::new();
         let mut old_globals: HashMap<String, NodeId> = HashMap::new();
+        let global_index = self.signal_global_index();
         for members in &groups {
             let names = members
                 .iter()
@@ -1841,7 +1846,7 @@ impl<'a> Codegen<'a> {
             // 5. Constant packed selects are admitted as masked contributions
             //    to the member's dedicated slot. Dynamic selects, NBA writes
             //    and task `sv4_t*` actuals would bypass the resolution cell.
-            if let Some(reason) = self.unsupported_member_write(members) {
+            if let Some(reason) = self.unsupported_member_write(&nodes, &writers, members) {
                 return Err(format!(
                     "{joined}: {reason} at {}:{}:{}",
                     self.node(members[0]).file.as_deref().unwrap_or("<unknown>"),
@@ -1860,6 +1865,7 @@ impl<'a> Codegen<'a> {
             // order) and redirect every member's storage to the resolved cell.
             let name = format!("g_net_{}", self.model.net_groups.len());
             let gidx = self.model.net_groups.len();
+            let mut renamed = Vec::new();
             for (slot, m) in members.iter().enumerate() {
                 let old_global = self.sig_globals.get(m).map(|i| i.global.clone());
                 if let Some(info) = self.sig_globals.get_mut(m) {
@@ -1871,33 +1877,30 @@ impl<'a> Codegen<'a> {
                     }
                 }
                 if let Some(g) = old_global {
-                    old_globals.insert(g, *m);
+                    old_globals.insert(g.clone(), *m);
+                    renamed.push(g);
                 }
                 member_slots.insert(*m, (name.clone(), slot));
             }
             // Keep the deterministic emission Vec (`signals`) in sync with
-            // the global map so `emit_signals` skips members.
-            for info in &mut self.signals {
-                if info.net_driver.is_none() {
-                    if let Some(m) = old_globals.get(&info.global) {
-                        if let Some((n, slot)) = member_slots.get(m) {
-                            info.global = format!("{n}.resolved");
-                            info.net_driver = Some((n.clone(), *slot));
-                        }
-                    }
-                }
-            }
-            // Name fallbacks (refs resolved by name) must see the resolved
-            // cell too.
-            for map in self.scope_sig_names.values_mut() {
-                for info in map.values_mut() {
-                    if let Some(m) = old_globals.get(&info.global) {
-                        if let Some((n, slot)) = member_slots.get(m) {
-                            info.global = format!("{n}.resolved");
-                            info.net_driver = Some((n.clone(), *slot));
-                        }
-                    }
-                }
+            // the global map so `emit_signals` skips members, and point the
+            // name fallbacks (refs resolved by name) at the resolved cell.
+            // Records of earlier groups' globals were renamed with them.
+            for old_global in &renamed {
+                let Some((n, slot)) = old_globals
+                    .get(old_global)
+                    .and_then(|m| member_slots.get(m))
+                    .cloned()
+                else {
+                    continue;
+                };
+                self.retarget_signal_global(
+                    &global_index,
+                    old_global,
+                    &format!("{n}.resolved"),
+                    (&n, slot),
+                    true,
+                );
             }
             self.model.net_groups.push(crate::sim::ir::IrNetGroup {
                 c_name: name.clone(),
@@ -1923,7 +1926,7 @@ impl<'a> Codegen<'a> {
                     id,
                 );
             }
-            let sources = self.structural_site_sources(members)?;
+            let sources = self.structural_site_sources(&nodes, &writers, members)?;
             if let Some(component) = type_plan
                 .contains_uwire(point)
                 .then(|| type_plan.component(point))
@@ -1956,7 +1959,7 @@ impl<'a> Codegen<'a> {
             }
         }
         self.scalar_inits = keep;
-        self.build_wired_net_groups(&nodes)?;
+        self.build_wired_net_groups(&nodes, &writers)?;
         self.publish_array_net_cells(
             array_endpoints,
             &nodes,
@@ -2311,11 +2314,14 @@ impl<'a> Codegen<'a> {
     #[allow(clippy::type_complexity)]
     fn structural_site_sources(
         &self,
+        nodes: &[NodeId],
+        writers: &NetWriterIndex,
         members: &[NodeId],
     ) -> Result<Vec<(NodeId, (u8, u8))>, String> {
         let member_set: HashSet<NodeId> = members.iter().copied().collect();
         let mut sources: HashMap<NodeId, (u8, u8)> = HashMap::new();
-        for id in self.design_nodes() {
+        for position in writers.candidates(members) {
+            let id = nodes[position];
             if let Some(site) = self.clocking_net_site(id, &member_set)? {
                 sources.insert(id, site);
                 continue;
@@ -2415,7 +2421,11 @@ impl<'a> Codegen<'a> {
     /// ...` statements must retain two contributions even though both target
     /// the same net object. Ordinary nets participating in module ports or
     /// interfaces stay on the existing link/inout path.
-    fn build_wired_net_groups(&mut self, nodes: &[NodeId]) -> Result<(), String> {
+    fn build_wired_net_groups(
+        &mut self,
+        nodes: &[NodeId],
+        writers: &NetWriterIndex,
+    ) -> Result<(), String> {
         let grouped_members: HashSet<NodeId> = nodes
             .iter()
             .filter_map(|id| {
@@ -2456,11 +2466,13 @@ impl<'a> Codegen<'a> {
             })
             .collect();
 
+        let global_index = self.signal_global_index();
         for (net, kind) in standalone {
             let shown = self.display_name(net);
             let member_set = HashSet::from([net]);
             let mut sites: HashMap<NodeId, (u8, u8)> = HashMap::new();
-            for id in nodes {
+            for position in writers.candidates(&[net]) {
+                let id = &nodes[position];
                 if let Some(site) = self.clocking_net_site(*id, &member_set)? {
                     sites.insert(*id, site);
                     continue;
@@ -2673,20 +2685,7 @@ impl<'a> Codegen<'a> {
                 signal.c_name = resolved.clone();
                 signal.net_driver = Some((group, 0));
             }
-            for signal in &mut self.signals {
-                if signal.global == old_global {
-                    signal.global = resolved.clone();
-                    signal.net_driver = Some((name.clone(), 0));
-                }
-            }
-            for names in self.scope_sig_names.values_mut() {
-                for signal in names.values_mut() {
-                    if signal.global == old_global {
-                        signal.global = resolved.clone();
-                        signal.net_driver = Some((name.clone(), 0));
-                    }
-                }
-            }
+            self.retarget_signal_global(&global_index, &old_global, &resolved, (&name, 0), false);
 
             if sites.is_empty() {
                 let id = self.record_structural_driver(info.ir)?;
@@ -2759,12 +2758,18 @@ impl<'a> Codegen<'a> {
     }
 
     /// The reason a candidate inout-net group cannot be supported, from a
-    /// design-wide scan of every write targeting its members. Constant packed
+    /// scan of every indexed write that may target its members. Constant packed
     /// selected continuous drivers are admitted; procedural and dynamic
     /// writes still fail closed.
-    fn unsupported_member_write(&self, members: &[NodeId]) -> Option<String> {
+    fn unsupported_member_write(
+        &self,
+        nodes: &[NodeId],
+        writers: &NetWriterIndex,
+        members: &[NodeId],
+    ) -> Option<String> {
         let member_set: HashSet<NodeId> = members.iter().copied().collect();
-        for id in self.design_nodes() {
+        for position in writers.candidates(members) {
+            let id = nodes[position];
             match self.kind(id) {
                 NodeKind::ContAssign { .. } => {
                     let Some(lhs) = self.node(id).children.first().copied() else {
