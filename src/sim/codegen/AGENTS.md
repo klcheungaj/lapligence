@@ -19,6 +19,15 @@ Keep internal dependency sort keys separate from these display labels. Function
 diagnostic labels remain separate from C symbols. The
 [emitter guide](../emit_c/AGENTS.md) owns escaping, collision and length contracts.
 
+Keep generation linear in the instance count; gate-level netlists hold 10^5+
+cells (`tests/sim_scale.rs` guards it). Per-net, per-signal and per-name lookups
+during collection use one-pass indexes, not design or signal scans:
+`nets/writer_index.rs` (candidate writers per net, a superset in design order),
+`nets/global_index.rs` (records per storage name) and `collection/signal_names.rs`
+(first signal per dependency name). Each returns what the scan returned. A step
+that renames a signal's `c_name` or adds `net_alias` bindings in place calls
+`invalidate_signal_names`.
+
 ## Values and selections
 
 - Allocate exact-width values; `LLG_MAX_WIDTH` is the exclusive backend limit

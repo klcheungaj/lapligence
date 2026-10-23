@@ -576,6 +576,12 @@ emitter. Use [ownership validation](../../../tests/readme.md#dynamic-ownership-v
 and its generated-C sanitizer configuration; do not infer feature acceptance from
 component tests.
 
+A name no frame scope binds resolves to model storage (first subprogram local,
+then signal or alias-visible cell, then change marker). Model-wide renderers
+build `owned/storage_names.rs::StorageNames` once and pass it to their frames;
+frames without one scan, with the same result. Do not add per-access scans of
+model signals, functions or objects: rendering must stay linear in instances.
+
 ## Instance body sharing
 
 `model/sharing.rs` groups compiler-owned emitted bodies by source location,
