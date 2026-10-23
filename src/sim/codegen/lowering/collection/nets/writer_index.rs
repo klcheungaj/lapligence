@@ -88,15 +88,8 @@ impl Codegen<'_> {
                 roots.extend(self.node(id).children.first().copied());
                 false
             }
-            NodeKind::Gate { terms, .. } => {
-                roots.extend(
-                    terms
-                        .iter()
-                        .filter(|term| {
-                            matches!(term.direction, DbDirection::Output | DbDirection::Inout)
-                        })
-                        .map(|term| term.expr),
-                );
+            NodeKind::Gate { .. } => {
+                roots.extend(self.gate_driven_terms(id));
                 false
             }
             NodeKind::Port {

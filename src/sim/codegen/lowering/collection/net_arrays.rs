@@ -419,13 +419,7 @@ impl Codegen<'_> {
                 } => vec![*target],
                 // Gate outputs, including pullup/pulldown, drive cells or
                 // selected cell bits like any other structural source.
-                NodeKind::Gate { terms, .. } => terms
-                    .iter()
-                    .filter(|term| {
-                        matches!(term.direction, DbDirection::Output | DbDirection::Inout)
-                    })
-                    .map(|term| term.expr)
-                    .collect(),
+                NodeKind::Gate { .. } => self.gate_driven_terms(*source),
                 _ => continue,
             };
             let mut cells = Vec::new();

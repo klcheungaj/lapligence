@@ -28,6 +28,8 @@ METADATA = {
     'rt/scheduler/mailboxes.c': ('mailbox', 'ref', 'result', 'target', 'value'),
     'rt/scheduler/nets.c': ('driver->net', 'net', 'part->net'),
     'rt/scheduler/process_waits.c': ('deps[i]',),
+    # Switch-network startup checks node bits against the net width.
+    'rt/scheduler/switches.c': ('net',),
     'rt/scheduler/reference_writes.c': ('part', 'ref'),
     'rt/scheduler/scanning.c': ('spec', 'target', 'target->packed'),
     'rt/scheduler/sequences.c': ('from', 'local'),

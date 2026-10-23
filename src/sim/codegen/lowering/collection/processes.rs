@@ -1234,18 +1234,16 @@ impl<'a> Codegen<'a> {
         // A structural gate is also a driver of its output terminal. Include
         // it so an always-family process cannot silently share that storage.
         for id in self.db.node_ids() {
-            let NodeKind::Gate { terms, .. } = self.kind(id) else {
+            if !matches!(self.kind(id), NodeKind::Gate { .. }) {
                 continue;
-            };
+            }
             let Some(inst) = self.owning_inst(id) else {
                 continue;
             };
             self.inst = inst;
             let mut writes = HashSet::new();
-            for term in terms {
-                if matches!(term.direction, DbDirection::Output | DbDirection::Inout) {
-                    self.add_process_lhs_write(term.expr, &mut writes);
-                }
+            for term in self.gate_driven_terms(id) {
+                self.add_process_lhs_write(term, &mut writes);
             }
             if !writes.is_empty() {
                 writers.push(ProcessWriter {

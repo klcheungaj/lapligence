@@ -69,13 +69,7 @@ impl Codegen<'_> {
                     DbDirection::Output => high_expr.or(*high).into_iter().collect(),
                     _ => Vec::new(),
                 },
-                NodeKind::Gate { terms, .. } => terms
-                    .iter()
-                    .filter(|term| {
-                        matches!(term.direction, DbDirection::Output | DbDirection::Inout)
-                    })
-                    .map(|term| term.expr)
-                    .collect(),
+                NodeKind::Gate { .. } => self.gate_driven_terms(*source),
                 NodeKind::Stmt(StmtKind::Force { lhs, .. } | StmtKind::Release { lhs }) => {
                     if let Some(bits) = self.partition_target_bits(*source, *lhs) {
                         for bit in bits {

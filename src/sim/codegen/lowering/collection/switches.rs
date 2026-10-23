@@ -37,6 +37,35 @@ pub(super) fn is_pass_switch(prim_type: PrimitiveType) -> bool {
 }
 
 impl Codegen<'_> {
+    /// The terminal expressions through which a gate drives nets: its
+    /// outputs and bidirectional terminals. Every element of a pass-switch
+    /// instance array is bound to the same whole terminal expressions (the
+    /// frontend slices only inputs), and a switch terminal's contribution is
+    /// never written, so only the element owning the least significant
+    /// slice reports them; otherwise an array of n switches on n-bit
+    /// terminals would give each net n all-Z contributions of n bits.
+    pub(in super::super) fn gate_driven_terms(&self, gate: NodeId) -> Vec<NodeId> {
+        let NodeKind::Gate {
+            prim_type, terms, ..
+        } = self.kind(gate)
+        else {
+            return Vec::new();
+        };
+        if is_pass_switch(*prim_type)
+            && self
+                .db
+                .primitive_array_position(gate)
+                .is_some_and(|element| element.slice != 0)
+        {
+            return Vec::new();
+        }
+        terms
+            .iter()
+            .filter(|term| matches!(term.direction, DbDirection::Output | DbDirection::Inout))
+            .map(|term| term.expr)
+            .collect()
+    }
+
     /// Lower one pass switch instance: resolve its two terminals to nodes and,
     /// for a `tranif`, emit the process that keeps its state.
     pub(super) fn emit_switch(
@@ -55,12 +84,14 @@ impl Codegen<'_> {
             unreachable!("non-gate node passed to emit_switch");
         };
         let (prim_type, delay, terms) = (*prim_type, *delay, terms.clone());
+        // Instance array elements are unnamed; the location identifies them.
         let name = self.node(g).name.clone();
-        let shown = if name.is_empty() {
-            "switch"
+        let name = if name.is_empty() {
+            "switch".to_owned()
         } else {
-            name.as_str()
+            name
         };
+        let shown = name.as_str();
         let location = self.source_location(g);
         let scope = self.source_path(path);
         let unsupported = |message: String| {

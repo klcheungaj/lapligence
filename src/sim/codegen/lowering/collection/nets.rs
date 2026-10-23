@@ -2063,11 +2063,7 @@ impl<'a> Codegen<'a> {
                 .copied()
                 .into_iter()
                 .collect(),
-            NodeKind::Gate { terms, .. } => terms
-                .iter()
-                .filter(|term| matches!(term.direction, DbDirection::Output | DbDirection::Inout))
-                .map(|term| term.expr)
-                .collect(),
+            NodeKind::Gate { .. } => self.gate_driven_terms(source),
             NodeKind::Port {
                 direction,
                 high,
@@ -2356,13 +2352,13 @@ impl<'a> Codegen<'a> {
                     prim_type,
                     strength0,
                     strength1,
-                    terms,
                     ..
                 } => {
-                    if terms.iter().any(|term| {
-                        matches!(term.direction, DbDirection::Output | DbDirection::Inout)
-                            && self.nested_member_target(term.expr, &member_set).is_some()
-                    }) {
+                    if self
+                        .gate_driven_terms(id)
+                        .into_iter()
+                        .any(|term| self.nested_member_target(term, &member_set).is_some())
+                    {
                         let strengths = gate_driver_strengths(
                             *prim_type,
                             *strength0,
@@ -2585,13 +2581,13 @@ impl<'a> Codegen<'a> {
                         prim_type,
                         strength0,
                         strength1,
-                        terms,
                         ..
                     } => {
-                        if terms.iter().any(|term| {
-                            matches!(term.direction, DbDirection::Output | DbDirection::Inout)
-                                && self.nested_member_target(term.expr, &member_set).is_some()
-                        }) {
+                        if self
+                            .gate_driven_terms(*id)
+                            .into_iter()
+                            .any(|term| self.nested_member_target(term, &member_set).is_some())
+                        {
                             let strengths = gate_driver_strengths(
                                 *prim_type,
                                 *strength0,
