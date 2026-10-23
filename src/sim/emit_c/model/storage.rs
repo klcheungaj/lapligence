@@ -228,6 +228,7 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
     }
     render_module_paths(model, out);
     render_timing_checks(model, out);
+    render_sdf_annotations(model, out);
     // Named events use a stable waiter-table object plus an assignable handle.
     for ev in &model.events {
         if ev.is_array() {
@@ -363,6 +364,9 @@ fn render_module_paths(model: &IrModel, out: &mut String) {
                 }
                 if path.group() != 0 {
                     extra.push_str(&format!(", .group = {}", path.group()));
+                }
+                if path.interconnect() {
+                    extra.push_str(", .interconnect = 1");
                 }
                 if let Some(limits) = path.limits() {
                     let table = format!("{name}__limits_{dest_index}_{path_index}");
@@ -574,17 +578,193 @@ fn render_timing_checks(model: &IrModel, out: &mut String) {
             ));
             format!("{name}__lines")
         };
+        // Pairs SDF annotation resettles (only in annotated designs).
+        let pairs = if set.pairs().is_empty() {
+            String::new()
+        } else {
+            let row = |row: Option<u32>| row.map_or(-1, i64::from);
+            let rows = set
+                .pairs()
+                .iter()
+                .map(|pair| {
+                    format!(
+                        "{{ .reference = {}u, .reference_edges = {}, .data = {}u, .data_edges = \
+                         {}, .before = {}LL, .after = {}LL, .before_row = {}, .after_row = {}, \
+                         .text = {}, .text_after = {}, .before_text = {}, .after_text = {} }}",
+                        pair.reference,
+                        pair.reference_edges,
+                        pair.data,
+                        pair.data_edges,
+                        pair.before,
+                        pair.after,
+                        row(pair.before_row),
+                        row(pair.after_row),
+                        c_string_literal(&pair.text),
+                        c_string_literal(&pair.text_after),
+                        c_string_literal(&pair.before_text),
+                        c_string_literal(&pair.after_text),
+                    )
+                })
+                .collect::<Vec<_>>();
+            out.push_str(&format!(
+                "static llg_timing_pair_t {name}__pairs[] = {{ {} }};\n",
+                rows.join(", ")
+            ));
+            format!(
+                ", .pairs = {name}__pairs, .n_pairs = {}u",
+                set.pairs().len()
+            )
+        };
         out.push_str(&format!(
             "static llg_timing_check_set_t {name} = {{ .scope = {}, .terminals = {name}__terminals, \
              .n_terminals = {}u, .checks = {checks}, .n_checks = {}u, .conditions = \
              {conditions}, .n_conditions = {}u, .notifiers = {notifiers}, .n_notifiers = {}u, \
-             .lines = {lines}, .n_lines = {}u }};\n",
+             .lines = {lines}, .n_lines = {}u{pairs} }};\n",
             c_string_literal(set.scope()),
             set.terminals().len(),
             set.checks().len(),
             set.conditions().len(),
             set.notifiers().len(),
             set.lines().len(),
+        ));
+    }
+}
+
+/// SDF annotation tables (IEEE 1800-2009 32): the writable delays of the
+/// annotated gates, and per annotation its values and operations, each
+/// pointing at the path row, timing check or gate delays it changes.
+/// Nothing is emitted for a design without `$sdf_annotate` and `--sdf`.
+fn render_sdf_annotations(model: &IrModel, out: &mut String) {
+    use crate::sim::ir::IrSdfTarget;
+    let gates = model.sdf_gate_delays();
+    if !gates.is_empty() {
+        let values = gates
+            .iter()
+            .map(|delay| {
+                format!(
+                    "{}ULL, {}ULL, {}ULL",
+                    delay.rise, delay.fall, delay.turn_off
+                )
+            })
+            .collect::<Vec<_>>();
+        out.push_str(&format!(
+            "static uint64_t llg_sdf_gate_delays[{}] = {{ {} }};\n",
+            3 * gates.len(),
+            values.join(", ")
+        ));
+    }
+    // Each interconnect load keeps the delays of its sources; its path
+    // takes their combination.
+    for (index, load) in model.sdf_loads().iter().enumerate() {
+        let name = format!("llg_sdf_load_{index}");
+        out.push_str(&format!(
+            "static uint64_t {name}__entries[{}];\nstatic uint8_t {name}__annotated[{}];\n\
+             static llg_sdf_load_t {name} = {{ .path = &llg_path_set_{}__paths_{}[{}], \
+             .entries = {name}__entries, .annotated = {name}__annotated, .n_entries = {}u }};\n",
+            12 * load.entries,
+            load.entries,
+            load.set,
+            load.destination,
+            load.path,
+            load.entries,
+        ));
+    }
+    for (index, annotation) in model.sdf_annotations().iter().enumerate() {
+        let name = format!("llg_sdf_annotation_{index}");
+        let file = annotation
+            .file
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || "._/-".contains(ch) {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        out.push_str(&format!("/* SDF file {file} */\n"));
+        let values = if annotation.values.is_empty() {
+            "NULL".to_owned()
+        } else {
+            let values = annotation
+                .values
+                .iter()
+                .map(|value| {
+                    if *value == i64::MIN {
+                        "(-9223372036854775807LL - 1)".to_owned()
+                    } else {
+                        format!("{value}LL")
+                    }
+                })
+                .collect::<Vec<_>>();
+            out.push_str(&format!(
+                "static const int64_t {name}__values[] = {{ {} }};\n",
+                values.join(", ")
+            ));
+            format!("{name}__values")
+        };
+        let ops = if annotation.ops.is_empty() {
+            "NULL".to_owned()
+        } else {
+            let rows = annotation
+                .ops
+                .iter()
+                .map(|op| {
+                    let (kind, flags, target) = match op.target {
+                        IrSdfTarget::Path {
+                            set,
+                            destination,
+                            path,
+                        } => (
+                            "LLG_SDF_PATH",
+                            0,
+                            format!(".path = &llg_path_set_{set}__paths_{destination}[{path}]"),
+                        ),
+                        IrSdfTarget::Check { set, check, second } => (
+                            "LLG_SDF_CHECK",
+                            if second { 4 } else { 0 },
+                            format!(
+                                ".check = &llg_timing_set_{set}__checks[{check}], .checks = \
+                                 &llg_timing_set_{set}"
+                            ),
+                        ),
+                        IrSdfTarget::Pair { set, pair, after } => (
+                            "LLG_SDF_PAIR",
+                            if after { 4 } else { 0 },
+                            format!(".index = {pair}u, .checks = &llg_timing_set_{set}"),
+                        ),
+                        IrSdfTarget::Load { load, entry } => (
+                            "LLG_SDF_LOAD",
+                            0,
+                            format!(".index = {entry}u, .load = &llg_sdf_load_{load}"),
+                        ),
+                        IrSdfTarget::Gate { slot } => (
+                            "LLG_SDF_GATE",
+                            0,
+                            format!(".gate = &llg_sdf_gate_delays[{}]", 3 * slot),
+                        ),
+                    };
+                    format!(
+                        "{{ .kind = {kind}, .flags = {}u, .delay = 0x{:x}u, .reject = 0x{:x}u, \
+                         .error = 0x{:x}u, .derive = 0x{:x}u, .first = {}u, {target} }}",
+                        op.flags | flags,
+                        op.delay,
+                        op.reject,
+                        op.error,
+                        op.derive,
+                        op.first
+                    )
+                })
+                .collect::<Vec<_>>();
+            out.push_str(&format!(
+                "static const llg_sdf_op_t {name}__ops[] = {{ {} }};\n",
+                rows.join(",\n    ")
+            ));
+            format!("{name}__ops")
+        };
+        out.push_str(&format!(
+            "static const llg_sdf_annotation_t {name} = {{ {ops}, {}u, {values} }};\n",
+            annotation.ops.len()
         ));
     }
 }

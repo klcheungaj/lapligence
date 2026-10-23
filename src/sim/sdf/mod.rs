@@ -14,10 +14,14 @@
 //!   ports, specify paths and timing checks with their model indices.
 //! * [`resolve`] turns a file into an [`SdfPlan`]: every record matched to
 //!   its targets in file order, unmatched records as warnings, or no plan
-//!   at all when the file is malformed. Applying a plan is a separate step;
-//!   resolution never changes the model and never opens a file: SDF names
-//!   are matched against the in-memory targets only.
+//!   at all when the file is malformed. Resolution never changes the model
+//!   and never opens a file: SDF names are matched against the in-memory
+//!   targets only.
+//! * [`apply`] values a plan for one `$sdf_annotate` call ([`SdfCallOptions`],
+//!   from its arguments and [`parse_config`]): selected, scaled and rounded
+//!   tick values per target, ready to be written into the model's tables.
 
+mod apply;
 mod expr;
 mod lexer;
 mod number;
@@ -27,6 +31,11 @@ mod resolve;
 mod syntax;
 mod targets;
 
+pub use apply::{
+    apply, parse_config, parse_scale_factors, SdfAnnotation, SdfAppliedOp, SdfAppliedTarget,
+    SdfCallOptions, SdfConfig, SdfConfigError, SdfMasks, SdfMipdPolicy, SdfMtm, SdfScaleType,
+    SdfTimebase, SdfTurnoff,
+};
 pub use expr::{parse_hdl_condition, BinaryOp, CondExpr, SdfBits, UnaryOp};
 pub use number::{SdfNumber, SdfValue};
 pub use parser::{parse, SdfFile, SdfReader};
@@ -42,9 +51,9 @@ pub use syntax::{
     SdfTimingSpec, SdfVersion,
 };
 pub use targets::{
-    SdfCheckEvent, SdfCheckRow, SdfPathRow, SdfPortDirection, SdfScope, SdfScopeKind,
-    SdfTargetCheck, SdfTargetCondition, SdfTargetEdge, SdfTargetPath, SdfTargetPort, SdfTargets,
-    SdfTerminal, SdfTimingCheckKind,
+    SdfCheckEvent, SdfCheckRow, SdfNetLoad, SdfPathRow, SdfPortDirection, SdfScope, SdfScopeKind,
+    SdfTargetCheck, SdfTargetCondition, SdfTargetEdge, SdfTargetNet, SdfTargetPath, SdfTargetPort,
+    SdfTargets, SdfTerminal, SdfTimingCheckKind,
 };
 
 use std::fmt;

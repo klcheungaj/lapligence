@@ -54,6 +54,8 @@ pub fn resolve<R: BufRead>(
         root,
         limits,
         children: HashMap::new(),
+        ports: HashMap::new(),
+        nets: HashMap::new(),
         by_cell_type: None,
         plan: SdfPlan {
             version: header.version,
@@ -70,6 +72,18 @@ pub fn resolve<R: BufRead>(
                 .children
                 .entry((parent, scope.name.as_str(), scope.index))
                 .or_insert(index as u32);
+        }
+        for (port, declared) in scope.ports.iter().enumerate() {
+            resolver
+                .ports
+                .entry((index as u32, declared.name.as_str()))
+                .or_insert(port as u32);
+        }
+        for (net, declared) in scope.nets.iter().enumerate() {
+            resolver
+                .nets
+                .entry((index as u32, declared.name.as_str()))
+                .or_insert(net as u32);
         }
     }
     while let Some(cell) = reader.next_cell()? {
@@ -88,6 +102,12 @@ struct Resolver<'t> {
     limits: SdfLimits,
     /// `(parent, name, index)` to child scope.
     children: HashMap<(u32, &'t str, Option<i64>), u32>,
+    /// `(scope, name)` to the scope's first port of that name: top and
+    /// hierarchical scopes can have many ports, and every PORT,
+    /// INTERCONNECT and NETDELAY record looks one up.
+    ports: HashMap<(u32, &'t str), u32>,
+    /// `(scope, name)` to the scope's NETDELAY target net of that name.
+    nets: HashMap<(u32, &'t str), u32>,
     /// Scopes at or below the root by cell type, built at the first
     /// wildcard cell.
     by_cell_type: Option<HashMap<&'t str, Vec<u32>>>,
@@ -175,6 +195,17 @@ impl<'t> Resolver<'t> {
         self.children
             .get(&(scope, component.name.as_str(), index))
             .copied()
+    }
+
+    /// The index of `scope`'s first port named `name`.
+    fn port_index(&self, scope: u32, name: &str) -> Option<usize> {
+        self.ports.get(&(scope, name)).map(|&port| port as usize)
+    }
+
+    /// `scope`'s first port named `name`.
+    fn port_named(&self, scope: u32, name: &str) -> Option<&'t SdfTargetPort> {
+        let port = self.port_index(scope, name)?;
+        Some(&self.targets.scope(scope).ports[port])
     }
 
     fn walk(&self, from: u32, components: &[SdfIdent]) -> Option<u32> {
@@ -390,13 +421,7 @@ impl<'t> Resolver<'t> {
         condition: Option<&SdfPathCondition>,
     ) -> Vec<(u32, u32, u32)> {
         let entry = self.targets.scope(scope);
-        let whole = |name: &str| {
-            entry
-                .ports
-                .iter()
-                .find(|port| port.name == name)
-                .and_then(|port| port.range)
-        };
+        let whole = |name: &str| self.port_named(scope, name).and_then(|port| port.range);
         let mut found = Vec::new();
         for (index, path) in entry.paths.iter().enumerate() {
             let edge_ok = match edge {
@@ -447,6 +472,83 @@ impl<'t> Resolver<'t> {
     }
 
     /// A port of an instance below `region`, with its direction checked.
+    /// The load ports a NETDELAY naming a net annotates (32.4.4: every
+    /// load port connected to the net, or to its selected bits); `None`
+    /// when the name is a port of its scope or no net, which
+    /// [`Self::port_target`] then resolves.
+    fn net_loads(
+        &mut self,
+        region: u32,
+        net: &SdfPortRef,
+        pos: SdfPos,
+    ) -> Option<Vec<SdfPortTarget>> {
+        let scope = self.walk(region, &net.path)?;
+        if self.port_index(scope, &net.port.name).is_some() {
+            return None;
+        }
+        let net_index = *self.nets.get(&(scope, net.port.name.as_str()))?;
+        let declared = &self.targets.scope(scope).nets[net_index as usize];
+        let selected = match net.port.bits {
+            None => None,
+            Some(bits) => {
+                let (msb, lsb) = bits.bounds();
+                let (msb, lsb) = (msb as i64, lsb as i64);
+                let inside = |bit: i64| match declared.range {
+                    Some((a, b)) => bit >= a.min(b) && bit <= a.max(b),
+                    None => false,
+                };
+                if !inside(msb) || !inside(lsb) {
+                    let message = format!(
+                        "NETDELAY `{net}` selects bits outside the net's declared range; the \
+                         NETDELAY is not annotated"
+                    );
+                    self.warn(pos, message);
+                    return Some(Vec::new());
+                }
+                Some((msb.min(lsb), msb.max(lsb)))
+            }
+        };
+        let mut loads = Vec::new();
+        for load in &declared.loads {
+            let port = &self.targets.scope(load.scope).ports[load.port as usize];
+            let bits = match (selected, load.net_bits) {
+                (None, _) => None,
+                (Some(_), None) => None,
+                (Some((low, high)), Some((left, right))) => {
+                    let first = low.max(left.min(right));
+                    let last = high.min(left.max(right));
+                    if first > last {
+                        continue;
+                    }
+                    // Net index to port index: the actual's bits connect
+                    // to the port's bits from left to right.
+                    let port_bit = |bit: i64| match port.range {
+                        Some((port_left, port_right)) => {
+                            let distance = (bit - left).abs();
+                            if port_left >= port_right {
+                                port_left - distance
+                            } else {
+                                port_left + distance
+                            }
+                        }
+                        None => 0,
+                    };
+                    port.range.map(|_| (port_bit(last), port_bit(first)))
+                }
+            };
+            loads.push(SdfPortTarget {
+                scope: load.scope,
+                port: load.port,
+                bits,
+            });
+        }
+        if loads.is_empty() {
+            let message = format!("net `{net}` has no load ports; the NETDELAY is not annotated");
+            self.warn(pos, message);
+        }
+        Some(loads)
+    }
+
     fn port_target(
         &mut self,
         region: u32,
@@ -467,7 +569,7 @@ impl<'t> Resolver<'t> {
             return None;
         };
         let entry = self.targets.scope(scope);
-        let Some(index) = entry.ports.iter().position(|p| p.name == port.port.name) else {
+        let Some(index) = self.port_index(scope, &port.port.name) else {
             if warn {
                 let message = format!(
                     "{role} `{port}`: `{}` has no port `{}`",
@@ -632,11 +734,17 @@ impl<'t> Resolver<'t> {
                 )?;
             }
             SdfDelDef::NetDelay { pos, net, delays } => {
-                let Some(load) = self.port_target(region, net, LOADS, "NETDELAY", true) else {
-                    return Ok(());
+                let loads = match self.net_loads(region, net, *pos) {
+                    Some(loads) => loads,
+                    None => match self.port_target(region, net, LOADS, "NETDELAY", true) {
+                        Some(load) => vec![load],
+                        None => return Ok(()),
+                    },
                 };
                 let delay = self.delay_op(mode, delays);
-                self.push(*pos, SdfOpKind::NetDelay { load, delay })?;
+                for load in loads {
+                    self.push(*pos, SdfOpKind::NetDelay { load, delay })?;
+                }
             }
             SdfDelDef::Device { pos, port, delays } => {
                 self.device(region, mode, *pos, port, delays)?
@@ -687,8 +795,7 @@ impl<'t> Resolver<'t> {
                     self.warn(pos, message);
                     return Ok(());
                 };
-                let entry = self.targets.scope(scope);
-                if let Some(declared) = entry.ports.iter().find(|p| p.name == port.port.name) {
+                if let Some(declared) = self.port_named(scope, &port.port.name) {
                     if !matches!(
                         declared.direction,
                         SdfPortDirection::Output | SdfPortDirection::Inout
@@ -724,14 +831,44 @@ impl<'t> Resolver<'t> {
         };
         let found = self.all_paths(scope, output);
         if found.is_empty() {
-            let message =
-                format!(
-                "`{}` has no specify paths{}; DEVICE delays on the primitives driving its outputs \
-                 are not resolved",
-                self.scope_name(scope),
-                output.map(|name| format!(" to `{name}`")).unwrap_or_default()
-            );
-            self.warn(pos, message);
+            // Without specify paths, the primitives driving the outputs
+            // (Table 32-1).
+            let entry = self.targets.scope(scope);
+            let port = output.and_then(|name| self.port_index(scope, name));
+            let primitives = entry
+                .children
+                .iter()
+                .copied()
+                .filter(|child| {
+                    let child = self.targets.scope(*child);
+                    child.kind == SdfScopeKind::Primitive
+                        && !child.drives.is_empty()
+                        && port.is_none_or(|port| child.drives.contains(&(port as u32)))
+                })
+                .collect::<Vec<_>>();
+            if primitives.is_empty() {
+                let message = format!(
+                    "`{}` has no specify paths{} and no primitive driving {}; the DEVICE is \
+                     not annotated",
+                    self.scope_name(scope),
+                    output
+                        .map(|name| format!(" to `{name}`"))
+                        .unwrap_or_default(),
+                    output.map_or_else(|| "its outputs".to_owned(), |name| format!("`{name}`"))
+                );
+                self.warn(pos, message);
+                return Ok(());
+            }
+            let delay = self.delay_op(mode, delays);
+            for primitive in primitives {
+                self.push(
+                    pos,
+                    SdfOpKind::PrimitiveDelay {
+                        scope: primitive,
+                        delay,
+                    },
+                )?;
+            }
             return Ok(());
         }
         let delay = self.delay_op(mode, delays);
@@ -810,13 +947,7 @@ impl<'t> Resolver<'t> {
             _ => (&check.ports[0], check.ports.get(1)),
         };
         let entry = self.targets.scope(scope);
-        let whole = |name: &str| {
-            entry
-                .ports
-                .iter()
-                .find(|port| port.name == name)
-                .and_then(|port| port.range)
-        };
+        let whole = |name: &str| self.port_named(scope, name).and_then(|port| port.range);
         let event_matches =
             |sdf: &SdfPortTchk, declared: &SdfCheckEvent, stamp: Option<&SdfCondition>| {
                 if !terminal_matches(
@@ -1117,6 +1248,87 @@ mod tests {
                 .expect_err("too many operations")
                 .to_string(),
             "1:79: the annotation has more than 3 operations"
+        );
+    }
+
+    /// NETDELAY naming a net (32.4.4): every load port connected to the
+    /// net, or to its selected bits, mapped to port indices left to right.
+    #[test]
+    fn netdelay_to_a_net_annotates_its_load_ports() {
+        use super::super::{SdfNetLoad, SdfTargetNet};
+        let mut targets = SdfTargets::new();
+        let mut top = SdfScope::new("top".into(), None, SdfScopeKind::Module, "top".into());
+        // `wire [7:0] n`: `a` (port [0:3]) takes n[7:4], `b` (port [1:0])
+        // takes n[1:0], `c` (scalar) takes n[5].
+        top.nets.push(SdfTargetNet {
+            name: "n".into(),
+            range: Some((7, 0)),
+            loads: vec![
+                SdfNetLoad {
+                    scope: 1,
+                    port: 0,
+                    net_bits: Some((7, 4)),
+                },
+                SdfNetLoad {
+                    scope: 2,
+                    port: 0,
+                    net_bits: Some((1, 0)),
+                },
+                SdfNetLoad {
+                    scope: 3,
+                    port: 0,
+                    net_bits: Some((5, 5)),
+                },
+            ],
+        });
+        let top = targets.add_scope(None, top);
+        for (name, range) in [("a", Some((0, 3))), ("b", Some((1, 0))), ("c", None)] {
+            let mut cell = SdfScope::new(name.into(), None, SdfScopeKind::Module, "C".into());
+            cell.ports.push(SdfTargetPort {
+                name: "i".into(),
+                direction: SdfPortDirection::Input,
+                range,
+            });
+            targets.add_scope(Some(top), cell);
+        }
+        let loads = |net: &str| {
+            let text = format!(
+                "(DELAYFILE (SDFVERSION \"2.1\") (CELL (CELLTYPE \"top\") (INSTANCE) \
+                 (DELAY (ABSOLUTE (NETDELAY {net} (1))))))"
+            );
+            let plan =
+                resolve(text.as_bytes(), &targets, 0, SdfLimits::default()).expect("resolves");
+            plan.ops
+                .iter()
+                .map(|op| match &op.kind {
+                    SdfOpKind::NetDelay { load, .. } => {
+                        format!("{} {:?}", targets.scope(load.scope).name, load.bits)
+                    }
+                    other => format!("{other:?}"),
+                })
+                .chain(
+                    plan.warnings
+                        .iter()
+                        .map(|w| format!("warning {}", w.message)),
+                )
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(loads("n"), ["a None", "b None", "c None"]);
+        assert_eq!(loads("n[6]"), ["a Some((1, 1))"]);
+        assert_eq!(
+            loads("n[5:0]"),
+            ["a Some((2, 3))", "b Some((1, 0))", "c None"]
+        );
+        assert_eq!(
+            loads("n[3:2]"),
+            ["warning net `n[3:2]` has no load ports; the NETDELAY is not annotated"]
+        );
+        assert_eq!(
+            loads("n[8]"),
+            [
+                "warning NETDELAY `n[8]` selects bits outside the net's declared range; the \
+              NETDELAY is not annotated"
+            ]
         );
     }
 }

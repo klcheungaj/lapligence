@@ -470,7 +470,9 @@ can have no RSS sample; sampled RSS includes earlier retained data and allocator
 pages. Frontend stages are `native` (Slang compilation and wrapper capture),
 `ffi.stream` (native tables delivered to and decoded by the Rust receiver, with
 the nested wrapper-side `wrapper.stream`) and `db.import`. Generation stages are
-`semantic`, `lowering`, `execution`, `optimization` and `render`, whose nested
+`semantic`, `lowering`, `execution`, `optimization` and `render`. Nested
+`lowering.sdf_read` (reading and resolving SDF files) and `lowering.sdf_map`
+(mapping annotations to model rows) time SDF annotation; nested
 `render.artifacts`, `render.sharing`, `render.assemble` and
 `render.identifiers` split C emission. Compare medians and retain individual runs because host contention affects
 wall time. See [known issues](../docs/known_issues.md) for remaining limits.

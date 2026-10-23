@@ -893,6 +893,15 @@ impl Validator<'_> {
                         "nonblocking assignment requires persistent target storage",
                     );
                 }
+                if let IrStmt::InertialAssign {
+                    delay: crate::sim::ir::IrInertialDelay::Annotated(slot),
+                    ..
+                } = stmt
+                {
+                    if *slot as usize >= self.model.sdf_gate_delays.len() {
+                        return self.fail(path, "annotated gate delay slot out of range");
+                    }
+                }
                 if matches!(stmt, IrStmt::InertialAssign { .. }) {
                     let packed_driver = match lhs {
                         IrLhs::Whole(index)
@@ -1602,6 +1611,11 @@ impl Validator<'_> {
             } => {
                 if *unit_fs == 0 || *precision_fs == 0 {
                     return self.fail(path, "timescale units must be non-zero");
+                }
+            }
+            IrStmt::SdfAnnotate { annotation } => {
+                if *annotation as usize >= self.model.sdf_annotations.len() {
+                    return self.fail(path, "SDF annotation index out of range");
                 }
             }
             IrStmt::TimeFormat {

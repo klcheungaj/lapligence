@@ -904,9 +904,10 @@ fn scope_reference_is_metadata(db: &Db, owner: NodeId, reference: NodeId, target
                     || db.semantic_detail(target) == Some("CompilationUnit"))
         }
         NodeKind::SysCall { name } if name == "$sdf_annotate" || name == "$list" => {
-            // The scope operand of these VPI-provided services (SV 32.9
-            // `module_instance`, informative D.6) reaches the application as
-            // its catalog object; its value is never read.
+            // The scope operand names the annotation scope of the built-in
+            // `$sdf_annotate` (SV 32.9 `module_instance`) or reaches the VPI
+            // application providing `$list` (informative D.6) as its catalog
+            // object; its value is never read.
             let position = usize::from(name == "$sdf_annotate");
             owner_node.children().get(position) == Some(&reference)
                 && matches!(

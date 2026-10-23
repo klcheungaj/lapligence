@@ -45,7 +45,10 @@ CMake build → execution. [Lowering](codegen/AGENTS.md),
   errors positioned and deterministic, and rule violations that keep one
   meaning as warnings (fixture readme `adv_011`). Plans name declared paths
   and checks, not IR rows, so applying one can re-settle combined limits and
-  re-solve delayed signals.
+  re-solve delayed signals. `apply.rs` values a plan for one call (member
+  selection, scaling, per-module rounding, Table 32-4 expansion, pulse
+  limits, configuration files) into target-named ops; codegen maps them to
+  model rows (fixture readme `adv_012`).
 
 ## IR and optimization
 

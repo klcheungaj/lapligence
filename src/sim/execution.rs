@@ -969,6 +969,7 @@ fn collect_effects(
             | IrStmt::WaveFlush
             | IrStmt::WaveLimit(_)
             | IrStmt::PrintTimescale { .. }
+            | IrStmt::SdfAnnotate { .. }
             | IrStmt::TimeFormat { .. } => effects.push(ExecutionEffect::RuntimeService),
             IrStmt::Severity { level, .. } => {
                 effects.push(ExecutionEffect::RuntimeService);

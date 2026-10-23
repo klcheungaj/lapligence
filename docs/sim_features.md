@@ -1557,14 +1557,26 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([ADV-010 fixtures](../tests/fixtures/sim/feature_completion/adv_010/readme.md)).
   V §§15.2.3, 15.2.6, 15.3.2–15.3.3, 15.5, 15.8; SV §§31.3.3, 31.3.6,
   31.4.2–31.4.3, 31.9 **[1995/SV-2009 restored]**.
-- ❌ **SDF** — `$sdf_annotate` delay and timing check application is not
-  implemented; check limits stay writable in the model for it (the delayed
-  signal delays are fixed when the model is generated). The library reads
-  OVI SDF 2.1 and 3.0 files (streaming, with limits) and resolves them
-  against a model's specify paths, timing checks, ports and primitives into
-  an owned annotation plan with warnings for unmatched records; nothing in
-  a simulation uses it yet
-  ([ADV-011 fixtures](../tests/fixtures/sim/feature_completion/adv_011/readme.md)).
+- 🟨 **SDF** — `$sdf_annotate` (every argument of SV 32.9: scope, configuration
+  file, log file, mtm_spec, scale_factors, scale_type) and `--sdf
+  [min:|typ:|max:][<scope>=]<file>` read OVI SDF 2.1 and 3.0 files when the
+  model is generated and apply them, whole or not at all (A12-D5), when the
+  call executes: IOPATH (COND, CONDELSE; RETAIN ignored), PATHPULSE,
+  PATHPULSEPERCENT and delval pulse limits (A12-D7), DEVICE on paths and on
+  the primitives and UDPs behind cells without paths (A12-D11), PORT,
+  INTERCONNECT and NETDELAY to ports and nets as interconnect stages with
+  pulse limits and INTERCONNECT_MIPD (A12-D8 to A12-D10), every Table 32-2
+  timing check entry with violation reports naming the new limits, and
+  negative SETUPHOLD/RECREM limits that settle and re-solve the delayed
+  signal delays at run time. ABSOLUTE and INCREMENT (floored at 0, A12-D12)
+  values, min:typ:max selection, scale factors and types, TIMESCALE and
+  per-module rounding follow 32.5-32.9; events already scheduled keep their
+  times, and calls that lead an initial procedure apply before time 0
+  (A12-D1). Not applied: IEEE 1497 LABEL (specparams, SV 32.4.3) and
+  BIDIRECTSKEW, and separate per-source delays on multisource nets
+  ([known issue](known_issues.md#sdf-reading-and-annotation-limits-adv-011-adv-012);
+  [ADV-011](../tests/fixtures/sim/feature_completion/adv_011/readme.md) and
+  [ADV-012 fixtures](../tests/fixtures/sim/feature_completion/adv_012/readme.md)).
   V ch.16; SV ch.32 **[1995/SV-2009 restored]**.
 
 ## 9. Functions & tasks
@@ -2034,8 +2046,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   [runtime bridge](../src/sim/rt/llg_vpi.c) stops the run at startup with
   `llg: VPI error: no VPI registration for `$reset_count` (called at
   <file>:<line>)`, never a no-op. A `string`-typed formal (such as `$input`'s
-  file name) or a scope argument (`$sdf_annotate`) is rejected at compile time
-  instead, naming the argument's position. Pinned, with
+  file name) is rejected at compile time instead, naming the argument's
+  position. Pinned, with
   [`builtin_inventory.tsv`](../tests/fixtures/sim/feature_completion/sim_099/builtin_inventory.tsv)
   classifying every built-in no fixture calls, by
   [sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md). This
@@ -2528,8 +2540,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   built-ins llg does not implement are provided by such a registration
   ([sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md)).
   String literal actuals of `string` formals reach the application as string
-  constants and the scope operands of `$sdf_annotate` and `$list` as module
-  handles; string variables passed to VPI are a located compile error.
+  constants and the scope operand of `$list` as a module handle; string variables passed to VPI are a located compile error.
   SV ch.36-38, V ch.20–27 **[1995/2001]**.
 - ⬜ **Checkers** — Checker execution and checker bind are not implemented;
   module/interface structural bind and ordinary assertion instances do not imply

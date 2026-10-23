@@ -276,6 +276,7 @@ static void free_mailboxes(void) {
 
 static void module_paths_release(void); // scheduler/nets.c
 static void timing_checks_release(void); // scheduler/timing_checks.c
+static void sdf_release(void); // scheduler/sdf.c
 
 void llg_rt_cleanup(void) {
     gc_release_registrations();
@@ -291,6 +292,7 @@ void llg_rt_cleanup(void) {
     for (int i = 0; i < g.force_count; i++) force_free_entry(&g.force_table[i]);
     module_paths_release();
     timing_checks_release();
+    sdf_release();
     while (g.inertial_drivers) {
         llg_inertial_t* driver = g.inertial_drivers;
         g.inertial_drivers = driver->next_all;

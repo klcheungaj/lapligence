@@ -26,7 +26,8 @@ use crate::core::db::{
 };
 use crate::sim::ir::{
     IrTimingCheck, IrTimingCheckKind, IrTimingCheckSet, IrTimingCondition, IrTimingEvent,
-    IrTimingLine, IrTimingLineStorage, IrTimingTerminal, TIMING_EVENT_BASED, TIMING_REMAIN_ACTIVE,
+    IrTimingLine, IrTimingLineStorage, IrTimingPair, IrTimingTerminal, TIMING_DISABLED,
+    TIMING_EVENT_BASED, TIMING_REMAIN_ACTIVE,
 };
 use std::collections::BTreeMap;
 
@@ -34,6 +35,10 @@ use std::collections::BTreeMap;
 /// event time of a reported violation.
 const REFERENCE_TIME: &str = "\u{1}";
 const DATA_TIME: &str = "\u{2}";
+/// Placeholders of the row's current `limit` and `limit2`, used in the
+/// instances whose limits an SDF annotation rewrites.
+const LIMIT: &str = "\u{3}";
+const LIMIT2: &str = "\u{4}";
 
 /// One lowered check row of an instance before duplicates are removed.
 struct LoweredCheck {
@@ -66,8 +71,10 @@ struct CombinedCheck {
     /// Resolved delayed_reference and delayed_data signals.
     delayed: [Option<DelayedTarget>; 2],
     /// The report text naming the combined check, used while a limit stays
-    /// negative.
+    /// negative: as the part before the reference event reports it, and as
+    /// the part after it does (they differ only with limit placeholders).
     text: String,
+    text_after: String,
 }
 
 /// An explicit delayed signal (31.9.1).
@@ -208,8 +215,13 @@ impl Codegen<'_> {
         // Disabled checks leave only the explicit delayed signals, as copies
         // (31.9.4).
         if !options.checks {
-            let lines =
-                self.timing_lines(&mut terminals, &explicit, &SignalDelays::default(), false)?;
+            let lines = self.timing_lines(
+                &mut terminals,
+                &explicit,
+                &SignalDelays::default(),
+                false,
+                false,
+            )?;
             if !lines.is_empty() {
                 self.model.timing_checks.push(
                     IrTimingCheckSet::new(label, terminals, Vec::new(), Vec::new(), Vec::new())
@@ -218,6 +230,16 @@ impl Codegen<'_> {
             }
             return Ok(());
         }
+        // An SDF annotation of a combined check's limits makes the runtime
+        // settle the limits and solve the delays again (`IrTimingPair`):
+        // every combined terminal then gets a delay line, and a row whose
+        // window cannot report is kept but disabled.
+        let annotated =
+            options.negative && !combined.is_empty() && self.sdf_pair_instance(instance);
+        let declared = combined
+            .iter()
+            .map(|check| (check.before, check.after))
+            .collect::<Vec<_>>();
         self.settle_combined_limits(options.negative, &mut combined);
         // With negative timing checks every combined check's limits enter
         // the module's delayed signal solve, even when it yields zero delays
@@ -259,32 +281,52 @@ impl Codegen<'_> {
         } else {
             SignalDelays::default()
         };
-        let delayed = delays
-            .delays
-            .values()
-            .any(|&(rise, fall)| rise != 0 || fall != 0);
-        let lines = self.timing_lines(&mut terminals, &explicit, &delays, delayed)?;
+        let delayed = annotated
+            || delays
+                .delays
+                .values()
+                .any(|&(rise, fall)| rise != 0 || fall != 0);
+        let lines = self.timing_lines(&mut terminals, &explicit, &delays, delayed, annotated)?;
         // A check whose negative limits sum to 0 or 1 has a window of under
         // two units, which "cannot yield timing violations" (31.9.1 a); its
         // limits still shaped the delays, but its rows do not run, since a
         // delayed data event on the delayed reference event would otherwise
         // violate the hold or recovery row.
+        let reports = |check: &CombinedCheck| {
+            (check.before >= 0 && check.after >= 0) || check.before + check.after > 1
+        };
         lowered.retain(|row| {
-            row.combined.is_none_or(|(index, _)| {
-                let check = &combined[index];
-                (check.before >= 0 && check.after >= 0) || check.before + check.after > 1
-            })
+            annotated
+                || row
+                    .combined
+                    .is_none_or(|(index, _)| reports(&combined[index]))
         });
         // The limits as settled, and the combined text while a limit stays
         // negative (the report then names the combined check).
+        let mut part_texts: HashMap<(usize, bool), String> = HashMap::new();
         for row in &mut lowered {
             let Some((index, before)) = row.combined else {
                 continue;
             };
             let check = &combined[index];
+            part_texts.insert((index, before), row.check.text.clone());
             row.check.limit = if before { check.before } else { check.after };
+            if annotated {
+                // The other part's limit, which the combined text names.
+                row.check.limit2 = if before { check.after } else { check.before };
+            }
             if check.before < 0 || check.after < 0 {
-                row.check.text = check.text.clone();
+                row.check.text = if before {
+                    check.text.clone()
+                } else {
+                    check.text_after.clone()
+                };
+            }
+            if !reports(check) {
+                row.check = row
+                    .check
+                    .clone()
+                    .with_flags(row.check.flags() | TIMING_DISABLED);
             }
         }
         // Once a delay is nonzero, the checks 31.9.1 names read the delayed
@@ -307,6 +349,39 @@ impl Codegen<'_> {
             }
         }
         let lowered = self.drop_duplicate_timing_checks(&scope, lowered);
+        let mut pairs = if annotated {
+            combined
+                .iter()
+                .zip(&declared)
+                .enumerate()
+                .map(|(index, (check, &(before, after)))| IrTimingPair {
+                    reference: check.reference.terminal,
+                    reference_edges: check.reference.edges,
+                    data: check.data.terminal,
+                    data_edges: check.data.edges,
+                    before,
+                    after,
+                    before_row: None,
+                    after_row: None,
+                    text: check.text.clone(),
+                    text_after: check.text_after.clone(),
+                    before_text: part_texts.remove(&(index, true)).unwrap_or_default(),
+                    after_text: part_texts.remove(&(index, false)).unwrap_or_default(),
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        for (position, row) in lowered.iter().enumerate() {
+            if let (Some((index, before)), false) = (row.combined, pairs.is_empty()) {
+                let pair = &mut pairs[index];
+                if before {
+                    pair.before_row = Some(position as u32);
+                } else {
+                    pair.after_row = Some(position as u32);
+                }
+            }
+        }
         // `--no-notifiers`: violations are still reported, notifiers keep
         // their values.
         let mut notifiers: Vec<usize> = Vec::new();
@@ -317,6 +392,7 @@ impl Codegen<'_> {
             notifier,
             node,
             slot,
+            combined: pair,
             ..
         } in lowered
         {
@@ -326,6 +402,7 @@ impl Codegen<'_> {
                     set,
                     check: set_checks.len() as u32,
                     slot,
+                    pair: pair.filter(|_| annotated).map(|(index, _)| index as u32),
                 },
             ));
             check.notifier = notifier.filter(|_| options.notifiers).map(|signal| {
@@ -342,7 +419,8 @@ impl Codegen<'_> {
         }
         self.model.timing_checks.push(
             IrTimingCheckSet::new(label, terminals, set_checks, conditions, notifiers)
-                .with_lines(lines),
+                .with_lines(lines)
+                .with_pairs(pairs),
         );
         Ok(())
     }
@@ -501,18 +579,20 @@ impl Codegen<'_> {
 
     /// The delay lines of an instance: one per explicit delayed signal and,
     /// once some delay is nonzero, one hidden variable per other delayed
-    /// terminal. Targets join `terminals`.
+    /// terminal (with `every`, per other solved terminal, so the runtime can
+    /// give it a delay later). Targets join `terminals`.
     fn timing_lines(
         &mut self,
         terminals: &mut Vec<IrTimingTerminal>,
         explicit: &BTreeMap<u32, DelayedTarget>,
         delays: &SignalDelays,
         delayed: bool,
+        every: bool,
     ) -> Result<Vec<IrTimingLine>, String> {
         let mut sources = explicit.keys().copied().collect::<Vec<_>>();
         if delayed {
             for (&terminal, &(rise, fall)) in &delays.delays {
-                if (rise != 0 || fall != 0) && !explicit.contains_key(&terminal) {
+                if (every || rise != 0 || fall != 0) && !explicit.contains_key(&terminal) {
                     sources.push(terminal);
                 }
             }
@@ -752,7 +832,33 @@ impl Codegen<'_> {
             None => None,
             Some(expression) => Some(self.notifier_target(expression).map_err(&error)?),
         };
-        let text = self.timing_check_text(name, kind, &reference, data.as_ref(), &[first, second]);
+        // With limit placeholders the row prints its current limits; a
+        // combined text then names this row's limit and the other part's
+        // (held in limit2).
+        let placeholders = self.sdf_check_instance(self.inst);
+        let limit_text =
+            |first: &str, second: &str| placeholders.then(|| [first.to_owned(), second.to_owned()]);
+        let (own_first, own_second) = if is_combined && check.kind == TimingCheckKind::RecRem {
+            ((LIMIT2, LIMIT), (LIMIT, LIMIT2))
+        } else {
+            ((LIMIT, LIMIT2), (LIMIT2, LIMIT))
+        };
+        let text = self.timing_check_text(
+            name,
+            kind,
+            &reference,
+            data.as_ref(),
+            &[first, second],
+            limit_text(own_first.0, own_first.1),
+        );
+        let text_after = self.timing_check_text(
+            name,
+            kind,
+            &reference,
+            data.as_ref(),
+            &[first, second],
+            limit_text(own_second.0, own_second.1),
+        );
         if !is_combined {
             lowered.push(LoweredCheck {
                 check: IrTimingCheck::new(
@@ -835,6 +941,7 @@ impl Codegen<'_> {
             after,
             delayed,
             text,
+            text_after,
         });
         for (part, part_kind, limit) in [(true, before_kind, before), (false, after_kind, after)] {
             let (reference_condition, data_condition) = if part {
@@ -848,6 +955,7 @@ impl Codegen<'_> {
                 &reference,
                 Some(&data),
                 &[limit.max(0)],
+                limit_text(LIMIT, LIMIT2),
             );
             lowered.push(LoweredCheck {
                 check: IrTimingCheck::new(
@@ -1018,6 +1126,7 @@ impl Codegen<'_> {
         reference: &TimingEvent,
         data: Option<&TimingEvent>,
         limits: &[i64],
+        placeholders: Option<[String; 2]>,
     ) -> String {
         let event = |event: &TimingEvent, time: &str| {
             let condition = if event.condition.is_some() {
@@ -1055,7 +1164,10 @@ impl Codegen<'_> {
             "$setuphold" | "$recrem" | "$width" | "$nochange" | "$fullskew" => 2,
             _ => 1,
         };
-        arguments.extend(limits.iter().take(count).map(i64::to_string));
+        match placeholders {
+            Some(placeholders) => arguments.extend(placeholders.into_iter().take(count)),
+            None => arguments.extend(limits.iter().take(count).map(i64::to_string)),
+        }
         format!("{name}({})", arguments.join(", "))
     }
 

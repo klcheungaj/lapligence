@@ -854,6 +854,7 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
         | IrStmt::ProgramExit
         | IrStmt::StopControl { .. }
         | IrStmt::PrintTimescale { .. }
+        | IrStmt::SdfAnnotate { .. }
         | IrStmt::Label(_)
         | IrStmt::Goto(_)
         | IrStmt::Nop

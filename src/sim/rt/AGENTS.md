@@ -360,6 +360,23 @@ region (stale entries are skipped by deadline);
 `llg_timing_check_limits_changed` re-arms them after an annotation.
 Limits are writable for annotation; steady-state steps allocate nothing
 (deferred `$nochange` data and pending delay transitions grow on demand).
+A row flagged `LLG_TIMING_DISABLED` never reports; a report text may carry
+`\003`/`\004` placeholders that print the row's current `limit`/`limit2`.
+
+SDF annotations (`scheduler/sdf.c`, `llg_sdf_annotation_t`) are generated op
+lists: `llg_sdf_apply` writes path delays and pulse limits (allocating a
+path's limit table on first use, deriving limits from the configured pulse
+percentages and clamping them to the delay), gate delay triples
+(`llg_sdf_gate_delays`), interconnect load entries combined by the op's
+INTERCONNECT_MIPD policy into the load's interconnect path (a
+`llg_module_path_t` with `.interconnect`, whose input time is the current
+time), and check limits; a set with annotated combined checks
+(`llg_timing_pair_t`) is settled and its delayed-signal delays solved again
+(the codegen settlement and Bellman-Ford solve), disabling rows whose window
+is shorter than two units. Pending events keep their times. Startup
+annotations run in the storage defaults before the path sets, delayed nets
+and timing checks start; `sdf_release` frees the allocated limit tables at
+cleanup.
 
 Opaque activation slots may hold event object identities, valid until model
 teardown, or a parent coroutine's event handle address for a synchronous join.

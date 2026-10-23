@@ -719,6 +719,9 @@ typedef struct llg_module_path {
     /* Nonzero for the paths sharing their terminals with an `ifnone` path. */
     uint32_t group;
     uint64_t* limits;      /* NULL or 2 * LLG_PATH_TRANSITIONS ticks */
+    /* 1 for an SDF interconnect delay into a load port: each new value of
+     * the destination is delayed from the time it arrives (32.4.4). */
+    uint8_t interconnect;
 } llg_module_path_t;
 
 typedef struct llg_module_path_set llg_module_path_set_t;
@@ -806,6 +809,9 @@ llg_module_path_set_t* llg_module_path_sets(void);
 /* `$timeskew`/`$fullskew` flags (31.4.2, 31.4.3). */
 #define LLG_TIMING_EVENT_BASED 0x01u
 #define LLG_TIMING_REMAIN_ACTIVE 0x02u
+/* A `$setuphold`/`$recrem` row whose settled window cannot report (31.9.1
+ * a); set and cleared when an SDF annotation resettles its pair. */
+#define LLG_TIMING_DISABLED 0x80u
 
 /* A terminal: `n_bits` bits of the borrowed model storage from `lsb`.
  * `line` is k + 1 when the terminal is the delayed signal of the set's line
@@ -841,7 +847,9 @@ typedef struct llg_timing_event {
  * terminals is adjusted by the delays of the transitions it compares and an
  * adjusted nonnegative limit stops at 0. `notifier` is 0 or the set's
  * notifier k + 1. `text` is the check as reported, with \001 where the
- * reference event time goes and \002 where the data event time goes. */
+ * reference event time goes, \002 where the data event time goes, and \003
+ * and \004 where the current limit and limit2 go (instances whose limits SDF
+ * annotation rewrites). */
 typedef struct llg_timing_check {
     uint8_t kind;
     uint8_t flags;
@@ -900,6 +908,29 @@ typedef struct llg_timing_line {
     llg_timing_check_set_t* set;
 } llg_timing_line_t;
 
+/* A `$setuphold`/`$recrem` whose limits SDF annotation may rewrite with
+ * negative timing checks enabled: `before` (setup, removal) and `after`
+ * (hold, recovery) are the limits before settlement; rows `before_row` and
+ * `after_row` (-1: none) hold the settled limits and report `text` while a
+ * limit stays negative, else their own text. Reference and data name the
+ * undelayed terminals and the edges of the check's events. `text` is the
+ * combined text of the before row, `text_after` that of the after row; each
+ * row holds the other part's limit in limit2. */
+typedef struct llg_timing_pair {
+    uint32_t reference;
+    uint8_t reference_edges;
+    uint32_t data;
+    uint8_t data_edges;
+    int64_t before;
+    int64_t after;
+    int32_t before_row;
+    int32_t after_row;
+    const char* text;
+    const char* text_after;
+    const char* before_text;
+    const char* after_text;
+} llg_timing_pair_t;
+
 struct llg_timing_check_set {
     const char* scope; /* hierarchical instance name */
     llg_timing_terminal_t* terminals;
@@ -916,6 +947,9 @@ struct llg_timing_check_set {
     uint32_t n_notifiers;
     llg_timing_line_t* lines;
     uint32_t n_lines;
+    /* NULL unless an SDF annotation rewrites combined check limits. */
+    llg_timing_pair_t* pairs;
+    uint32_t n_pairs;
     /* Runtime state, owned between llg_timing_checks_start and cleanup. */
     uint8_t* last;           /* per terminal bit: 0, 1 or 2 (x or z) */
     uint32_t* offsets;       /* per terminal: its first bit in `last` */
@@ -952,6 +986,67 @@ void llg_timing_checks_run(void);
 void llg_timing_check_limits_changed(llg_timing_check_set_t* set);
 /* The started sets, most recently started first, linked through `next`. */
 llg_timing_check_set_t* llg_timing_check_sets(void);
+
+/* SDF back-annotation (IEEE 1800-2009 32). The model generator reads,
+ * resolves and values every `$sdf_annotate` file; an annotation is the
+ * resulting list of operations, applied in order when the call executes.
+ * Values are design-precision ticks. Kinds: */
+#define LLG_SDF_PATH 1u  /* twelve delays and pulse limits of `path` */
+#define LLG_SDF_CHECK 2u /* `limit` (or `limit2`) of `check` in `checks` */
+#define LLG_SDF_GATE 3u  /* rise, fall and turn-off delays at `gate` */
+#define LLG_SDF_PAIR 4u  /* a limit of combined check `index` of `checks` */
+#define LLG_SDF_LOAD 5u  /* source entry `index` (0: every source) of `load` */
+/* Flags: */
+#define LLG_SDF_INCREMENT 1u /* add to the current values (INCREMENT) */
+#define LLG_SDF_PERCENT 2u   /* limits in millionths of a percent of the delay */
+#define LLG_SDF_SECOND 4u    /* the check's limit2; the pair's later limit */
+/* Bits 3-4: how a load combines its sources' delays (INTERCONNECT_MIPD):
+ * 0 the largest, 1 the smallest, 2 the average, 3 the last annotated. */
+#define LLG_SDF_MIPD_SHIFT 3u
+
+/* An interconnect load port bit: the delays of each source entry (entry 0:
+ * from every source) and whether it was annotated; `path` is the port net's
+ * interconnect path, whose delays combine the annotated entries. */
+typedef struct llg_sdf_load {
+    llg_module_path_t* path;
+    uint64_t* entries; /* n_entries * LLG_PATH_TRANSITIONS */
+    uint8_t* annotated;
+    uint32_t n_entries;
+} llg_sdf_load_t;
+
+/* One operation. Bit t of `delay`, `reject` and `error` marks a value of
+ * transition t (path), of rise, fall, turn-off (gate) or of the limit
+ * (check); the values start at `first` in the annotation's `values`:
+ * delays, then reject limits, then error limits. Bit t of `derive` sets
+ * both limits of transition t from the new delay by the global pulse
+ * percentages (32.7). */
+typedef struct llg_sdf_op {
+    uint8_t kind;
+    uint8_t flags;
+    uint16_t delay;
+    uint16_t reject;
+    uint16_t error;
+    uint16_t derive;
+    uint32_t first;
+    uint32_t index;
+    llg_module_path_t* path;
+    llg_timing_check_t* check;
+    llg_timing_check_set_t* checks;
+    uint64_t* gate;
+    llg_sdf_load_t* load;
+} llg_sdf_op_t;
+
+typedef struct llg_sdf_annotation {
+    const llg_sdf_op_t* ops;
+    uint32_t n_ops;
+    const int64_t* values;
+} llg_sdf_annotation_t;
+
+/* Apply an annotation. Absolute values replace, incremented ones add; a
+ * delay or limit never drops below 0, and a path's pulse limits never
+ * exceed its delay. Pending events keep their scheduled times; later events
+ * use the new values. */
+void llg_sdf_apply(const llg_sdf_annotation_t* annotation);
 /* 1 when bit `bit` of a path destination has a scheduled update; then its
  * absolute time and four-state value (0, 1, 2 = x, 3 = z) are stored. */
 int llg_net_path_pending(const llg_net_t* net, uint32_t bit, uint64_t* time,

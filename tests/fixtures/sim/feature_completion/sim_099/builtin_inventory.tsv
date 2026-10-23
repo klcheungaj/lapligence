@@ -17,7 +17,8 @@
 # calls both), so they are not listed and a registration of one the design
 # calls stops the run like any other built-in.
 # String literal and scope actuals reach the application (vpi_string_scope_args.sv
-# calls $input, $log and $sdf_annotate); string variables are a located error.
+# calls $input, $log and $list); string variables are a located error.
+# $sdf_annotate is a built-in since ADV-012 (feature_completion/adv_012).
 # name	status	reference
 $key	vpi-only	IEEE 1800-2009 D.5 (informative; a VPI application may provide it, 36.3.2)
 $nokey	vpi-only	IEEE 1800-2009 D.5 (informative; a VPI application may provide it, 36.3.2)

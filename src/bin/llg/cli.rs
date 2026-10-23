@@ -22,6 +22,7 @@ append:   --append-<list> <value>  # adds to the list instead of replacing it; s
 stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)
 pulse:    --pulse-reject <0-100>  --pulse-error <0-100>  --pulse-style <onevent|ondetect>  --show-cancelled  --no-show-cancelled
 timing:   --no-timing-checks  --timing-checks  --no-notifiers  --notifiers  --no-timing-check-messages  --timing-check-messages  --[no-]neg-timing-checks
+sdf:      --sdf [min:|typ:|max:][<scope>=]<file.sdf>...  # annotate before simulation starts
 config:   llg.toml is read only when named with --config (see docs/config.md)";
 
 /// Values of the `--append-<list>` options. They extend the list that the
@@ -106,6 +107,9 @@ pub(crate) struct Cli {
     /// limits and `$nochange` offsets through delayed signals (default off:
     /// they count as 0).
     pub neg_timing_checks: Option<bool>,
+    /// `--sdf [min:|typ:|max:][scope=]file`, repeatable: SDF files annotated
+    /// before simulation starts, in order (IEEE 1800-2009 32).
+    pub sdf: Vec<sim::codegen::SdfCommand>,
 }
 
 pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
@@ -154,6 +158,7 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut notifiers: Option<bool> = None;
     let mut timing_check_messages: Option<bool> = None;
     let mut neg_timing_checks: Option<bool> = None;
+    let mut sdf: Vec<sim::codegen::SdfCommand> = Vec::new();
     let mut it = args.into_iter().peekable();
     while let Some(a) = it.next() {
         if a == "--" {
@@ -255,6 +260,11 @@ Options:
                               negative limits count as 0)
       --no-neg-timing-checks Count negative timing check limits as 0
                               (overrides llg.toml)
+      --sdf [min:|typ:|max:][<scope>=]<file.sdf>
+                              Annotate the SDF file into <scope> (default: the
+                              top instance) before simulation starts, with the
+                              minimum, typical or maximum values (default: as
+                              --delay-select); repeatable, applied in order
       --                    Pass remaining arguments to the generated simulator
                               (replaces the llg.toml plusargs, even when empty)
       --generator <backend>  Select the CMake generator
@@ -599,6 +609,19 @@ Options:
             "--no-notifiers" => notifiers = Some(false),
             "--timing-check-messages" => timing_check_messages = Some(true),
             "--no-timing-check-messages" => timing_check_messages = Some(false),
+            "--sdf" => {
+                let Some(value) = it.next() else {
+                    eprintln!("llg: --sdf requires [min:|typ:|max:][scope=]file");
+                    return Err(2);
+                };
+                match sim::codegen::SdfCommand::parse(&value) {
+                    Ok(command) => sdf.push(command),
+                    Err(error) => {
+                        eprintln!("llg: {error}");
+                        return Err(2);
+                    }
+                }
+            }
             "--neg-timing-checks" => neg_timing_checks = Some(true),
             "--no-neg-timing-checks" => neg_timing_checks = Some(false),
             "--lint-only" => lint_only = Some(true),
@@ -671,6 +694,7 @@ Options:
         notifiers,
         timing_check_messages,
         neg_timing_checks,
+        sdf,
     })
 }
 

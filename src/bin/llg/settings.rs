@@ -82,6 +82,8 @@ pub(crate) struct DriverOptions {
     pub path_pulse: sim::ir::IrPathPulseOptions,
     /// System timing check, notifier and violation report switches.
     pub timing_checks: sim::ir::IrTimingCheckOptions,
+    /// `--sdf` files annotated before simulation starts, in order.
+    pub sdf: Vec<sim::codegen::SdfCommand>,
     /// Whether the command line itself named a build-tool option, so
     /// `--gen-only` can warn that it is ignored. Config values do not warn.
     pub cli_build_options: bool,
@@ -509,6 +511,7 @@ pub(crate) fn resolve(
                 .or(config.simulator.neg_timing_checks)
                 .unwrap_or(false),
         },
+        sdf: cli.sdf.clone(),
         cli_build_options,
     })
 }

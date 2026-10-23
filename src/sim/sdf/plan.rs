@@ -75,7 +75,7 @@ pub struct SdfPulseOp {
 }
 
 /// A port of a scope, or the selected declared indices of it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SdfPortTarget {
     pub scope: u32,
     pub port: u32,

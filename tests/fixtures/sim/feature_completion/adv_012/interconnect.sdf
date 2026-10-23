@@ -1,0 +1,10 @@
+(DELAYFILE
+ (SDFVERSION "3.0")
+ (DESIGN "tb")
+ (TIMESCALE 1ns)
+ (CELL (CELLTYPE "tb") (INSTANCE)
+  (DELAY (ABSOLUTE
+   (PORT l1.a (3))
+   (INTERCONNECT s2.y l2.a (4) (5))
+   (INTERCONNECT nosuch.y l6.a (1)))))
+)

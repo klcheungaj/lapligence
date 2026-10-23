@@ -3482,3 +3482,166 @@ fn px_d4_port_expression_width_mismatch() {
         include_str!("fixtures/sim/lrm_decisions/PX-D4_port_expression_width_mismatch.out"),
     );
 }
+
+/// [`run_decision`] for an SDF annotation case: its companion files
+/// (`<case>.sdf`, further SDF and configuration files) are written into the
+/// run directory, where the case's `$sdf_annotate` calls name them.
+fn run_sdf_decision(case: &str, expected: &str, files: &[(&str, &str)]) {
+    sim_cli::run_case_backend_parity_with_files(SUITE, case, expected, &[], &[], files);
+}
+
+#[test]
+fn a12_d1_leading_call_time0() {
+    run_sdf_decision(
+        "A12-D1_leading_call_time0",
+        include_str!("fixtures/sim/lrm_decisions/A12-D1_leading_call_time0.out"),
+        &[(
+            "A12-D1_leading_call_time0.sdf",
+            include_str!("fixtures/sim/lrm_decisions/A12-D1_leading_call_time0.sdf"),
+        )],
+    );
+}
+
+#[test]
+fn a12_d2_repeated_calls() {
+    run_sdf_decision(
+        "A12-D2_repeated_calls",
+        include_str!("fixtures/sim/lrm_decisions/A12-D2_repeated_calls.out"),
+        &[(
+            "A12-D2_repeated_calls.sdf",
+            include_str!("fixtures/sim/lrm_decisions/A12-D2_repeated_calls.sdf"),
+        )],
+    );
+}
+
+#[test]
+fn a12_d3_out_of_range_value() {
+    run_sdf_decision(
+        "A12-D3_out_of_range_value",
+        include_str!("fixtures/sim/lrm_decisions/A12-D3_out_of_range_value.out"),
+        &[(
+            "A12-D3_out_of_range_value.sdf",
+            include_str!("fixtures/sim/lrm_decisions/A12-D3_out_of_range_value.sdf"),
+        )],
+    );
+}
+
+#[test]
+fn a12_d4_scale_factors_argument() {
+    run_sdf_decision(
+        "A12-D4_scale_factors_argument",
+        include_str!("fixtures/sim/lrm_decisions/A12-D4_scale_factors_argument.out"),
+        &[(
+            "A12-D4_scale_factors_argument.sdf",
+            include_str!("fixtures/sim/lrm_decisions/A12-D4_scale_factors_argument.sdf"),
+        )],
+    );
+}
+
+#[test]
+fn a12_d5_file_applies_whole() {
+    run_sdf_decision(
+        "A12-D5_file_applies_whole",
+        include_str!("fixtures/sim/lrm_decisions/A12-D5_file_applies_whole.out"),
+        &[
+            (
+                "A12-D5_file_applies_whole.sdf",
+                include_str!("fixtures/sim/lrm_decisions/A12-D5_file_applies_whole.sdf"),
+            ),
+            (
+                "A12-D5_file_applies_whole_v.sdf",
+                include_str!("fixtures/sim/lrm_decisions/A12-D5_file_applies_whole_v.sdf"),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a12_d6_config_file_per_call() {
+    run_sdf_decision(
+        "A12-D6_config_file_per_call",
+        include_str!("fixtures/sim/lrm_decisions/A12-D6_config_file_per_call.out"),
+        &[
+            (
+                "A12-D6_config_file_per_call.cfg",
+                include_str!("fixtures/sim/lrm_decisions/A12-D6_config_file_per_call.cfg"),
+            ),
+            (
+                "A12-D6_config_file_per_call.sdf",
+                include_str!("fixtures/sim/lrm_decisions/A12-D6_config_file_per_call.sdf"),
+            ),
+        ],
+    );
+}
+
+#[test]
+fn a12_d7_iopath_after_pathpulse() {
+    run_sdf_decision(
+        "A12-D7_iopath_after_pathpulse",
+        include_str!("fixtures/sim/lrm_decisions/A12-D7_iopath_after_pathpulse.out"),
+        &[(
+            "A12-D7_iopath_after_pathpulse.sdf",
+            include_str!("fixtures/sim/lrm_decisions/A12-D7_iopath_after_pathpulse.sdf"),
+        )],
+    );
+}
+
+#[test]
+fn a12_d8_interconnect_unknown_source() {
+    run_sdf_decision(
+        "A12-D8_interconnect_unknown_source",
+        include_str!("fixtures/sim/lrm_decisions/A12-D8_interconnect_unknown_source.out"),
+        &[(
+            "A12-D8_interconnect_unknown_source.sdf",
+            include_str!("fixtures/sim/lrm_decisions/A12-D8_interconnect_unknown_source.sdf"),
+        )],
+    );
+}
+
+#[test]
+fn a12_d9_interconnect_pulse_limits() {
+    run_sdf_decision(
+        "A12-D9_interconnect_pulse_limits",
+        include_str!("fixtures/sim/lrm_decisions/A12-D9_interconnect_pulse_limits.out"),
+        &[(
+            "A12-D9_interconnect_pulse_limits.sdf",
+            include_str!("fixtures/sim/lrm_decisions/A12-D9_interconnect_pulse_limits.sdf"),
+        )],
+    );
+}
+
+#[test]
+fn a12_d10_multisource_load_delay() {
+    run_sdf_decision(
+        "A12-D10_multisource_load_delay",
+        include_str!("fixtures/sim/lrm_decisions/A12-D10_multisource_load_delay.out"),
+        &[(
+            "A12-D10_multisource_load_delay.sdf",
+            include_str!("fixtures/sim/lrm_decisions/A12-D10_multisource_load_delay.sdf"),
+        )],
+    );
+}
+
+#[test]
+fn a12_d11_device_replaces_primitive() {
+    run_sdf_decision(
+        "A12-D11_device_replaces_primitive",
+        include_str!("fixtures/sim/lrm_decisions/A12-D11_device_replaces_primitive.out"),
+        &[(
+            "A12-D11_device_replaces_primitive.sdf",
+            include_str!("fixtures/sim/lrm_decisions/A12-D11_device_replaces_primitive.sdf"),
+        )],
+    );
+}
+
+#[test]
+fn a12_d12_increment_floor() {
+    run_sdf_decision(
+        "A12-D12_increment_floor",
+        include_str!("fixtures/sim/lrm_decisions/A12-D12_increment_floor.out"),
+        &[(
+            "A12-D12_increment_floor.sdf",
+            include_str!("fixtures/sim/lrm_decisions/A12-D12_increment_floor.sdf"),
+        )],
+    );
+}
