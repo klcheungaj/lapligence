@@ -785,6 +785,46 @@ void llg_fixed_array_merge(llg_fixed_array_t* dst, const llg_fixed_array_t* left
     llg_value_scope_end(scope);
 }
 
+sv4_t llg_dense_cells_image(const sv4_t* cells, uint64_t count) {
+    uint32_t width = cells && count ? llg_sv4_width(cells[0]) : 0;
+    if (!width || count > (uint64_t)(LLG_SUPPORTED_WIDTH_LIMIT - 1u) / width)
+        fixed_bad_state("invalid dense cell image");
+    uint64_t high = count * width;
+    /* One allocation of the final width; appending cell by cell would copy
+     * the growing prefix once per cell. */
+    sv4_t image = sv4_zero((uint32_t)high, 0);
+    for (uint64_t i = 0; i < count; ++i, high -= width) {
+        if (llg_sv4_width(cells[i]) != width) fixed_bad_state("dense cell width mismatch");
+        sv4_part_select_set(&image, (int64_t)high - 1, (int64_t)(high - width), cells[i]);
+    }
+    return image;
+}
+
+void llg_dense_cells_store(sv4_t* cells, uint64_t count, const sv4_t* image, int64_t left,
+                           uint32_t width, int is_signed, int two_state, int nba) {
+    if (!cells || !image || !width || left < (int64_t)width - 1 ||
+        (uint64_t)left >= llg_sv4_width(*image) ||
+        count > ((uint64_t)left + 1u) / width)
+        fixed_bad_state("invalid dense cell store");
+    for (uint64_t i = 0; i < count; ++i, left -= (int64_t)width) {
+        sv4_t part = sv4_part_select(*image, left, left - (int64_t)width + 1);
+        sv4_t value = sv4_cast(part, width, (int8_t)is_signed);
+        sv4_destroy(&part);
+        if (two_state) sv4_replace(&value, sv4_to_two_state(value));
+        if (nba) llg_nba_after(&cells[i], value, 0);
+        else llg_ba(&cells[i], value);
+        sv4_destroy(&value);
+    }
+}
+
+void llg_dense_cells_fill(sv4_t* cells, uint64_t count, const sv4_t* value, int nba) {
+    if (!cells || !value) fixed_bad_state("invalid dense cell fill");
+    for (uint64_t i = 0; i < count; ++i) {
+        if (nba) llg_nba_after(&cells[i], *value, 0);
+        else llg_ba(&cells[i], *value);
+    }
+}
+
 void llg_real_cells_order(double* cells, uint64_t count, uint64_t element_cells,
                           int method) {
     if (!cells || count < 2 || !element_cells) return;

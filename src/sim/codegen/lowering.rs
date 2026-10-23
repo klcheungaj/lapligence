@@ -3473,6 +3473,25 @@ fn cmp_expr_ir(op: IrBinOp, a: IrExpr, b: IrExpr) -> IrExpr {
     )
 }
 
+/// The logical AND of `terms` as a balanced tree, keeping their left-to-right
+/// order. `&&` over 0/1/X truths is associative, and the balanced form keeps
+/// the IR depth logarithmic in the number of terms (a record with thousands
+/// of leaves would otherwise nest thousands deep).
+fn balanced_log_and(mut terms: Vec<IrExpr>) -> Option<IrExpr> {
+    match terms.len() {
+        0 => None,
+        1 => terms.pop(),
+        length => {
+            let right = terms.split_off(length / 2);
+            Some(cmp_expr_ir(
+                IrBinOp::LogAnd,
+                balanced_log_and(terms)?,
+                balanced_log_and(right)?,
+            ))
+        }
+    }
+}
+
 /// A unary reduction/logical node (result shape per the pre-IR emitter).
 fn un_expr(op: IrUnOp, a: IrExpr) -> IrExpr {
     IrExpr::new(IrExprKind::Un { op, a: Box::new(a) }, 1, false, None)

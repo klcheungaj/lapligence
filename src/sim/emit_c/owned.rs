@@ -22,6 +22,7 @@ mod clocking;
 pub(super) mod containers;
 mod control;
 pub(super) mod coverage;
+mod dense_cells;
 mod event_waits;
 mod events;
 mod expressions;

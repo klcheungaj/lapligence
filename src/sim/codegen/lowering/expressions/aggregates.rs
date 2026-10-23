@@ -1136,10 +1136,7 @@ impl<'a> Codegen<'a> {
                     equalities,
                     tags,
                 )?,
-                None => equalities
-                    .into_iter()
-                    .map(|(_, equal)| equal)
-                    .reduce(|previous, next| cmp_expr_ir(IrBinOp::LogAnd, previous, next))
+                None => balanced_log_and(equalities.into_iter().map(|(_, equal)| equal).collect())
                     .ok_or_else(|| format!("aggregate equality has no value leaves in `{path}"))?,
             }
         };

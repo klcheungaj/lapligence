@@ -34,6 +34,7 @@ mod sim_data_types_completion;
 mod sim_data_types_extended;
 mod sim_data_types_next;
 mod sim_delay;
+mod sim_dense_cell_runs;
 mod sim_directive_effects;
 mod sim_disable;
 mod sim_dpi;
