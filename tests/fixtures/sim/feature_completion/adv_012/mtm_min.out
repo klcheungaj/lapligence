@@ -1,0 +1,27 @@
+log: $sdf_annotate("mtm.sdf") into tb.m7: mtm_spec TOOL_CONTROL, scale_factors 1:1:1, scale_type FROM_MTM, INTERCONNECT_MIPD MAXIMUM, TURNOFF_DELAY FROM_FILE
+log: SDF 3.0 timescale 1ns from tb.m7
+log: 5:21: path delay absolute tb.m7 path 0 (a => y) = (2:4:6) (3:5:7)
+log: $sdf_annotate("partial.sdf") into tb.m9: mtm_spec TYPICAL, scale_factors 1:1:1, scale_type FROM_MTM, INTERCONNECT_MIPD MAXIMUM, TURNOFF_DELAY FROM_FILE
+log: SDF 3.0 timescale 1ns from tb.m9
+log: 5:21: path delay absolute tb.m9 path 0 (a => y) = (2::6) (3:5:7)
+0 a=0 y=xxxxxxxxxx
+1000 a=0 y=x0xxxxxxxx
+1500 a=0 y=x0xxx0xxxx
+3000 a=0 y=x00xx0xx00
+5000 a=0 y=000xx0xx00
+7000 a=0 y=0000x0x000
+10000 a=1 y=0000x00000
+10667 a=1 y=0100x00000
+11000 a=1 y=1100x10000
+12000 a=1 y=1110x10011
+16000 a=1 y=1111x10111
+18000 a=1 y=1111x11111
+28000 a=1 y=1111111111
+40000 a=0 y=1111111111
+41000 a=0 y=1011111111
+41500 a=0 y=1011101111
+43000 a=0 y=1001101100
+45000 a=0 y=0001101100
+47000 a=0 y=0000101000
+50000 a=0 y=0000100000
+61000 a=0 y=0000000000

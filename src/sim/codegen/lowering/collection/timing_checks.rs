@@ -35,6 +35,10 @@ use std::collections::BTreeMap;
 /// event time of a reported violation.
 const REFERENCE_TIME: &str = "\u{1}";
 const DATA_TIME: &str = "\u{2}";
+/// Placeholders of the row's current `limit` and `limit2`, used in the
+/// instances whose limits an SDF annotation rewrites.
+const LIMIT: &str = "\u{3}";
+const LIMIT2: &str = "\u{4}";
 
 /// One lowered check row of an instance before duplicates are removed.
 struct LoweredCheck {
@@ -67,8 +71,10 @@ struct CombinedCheck {
     /// Resolved delayed_reference and delayed_data signals.
     delayed: [Option<DelayedTarget>; 2],
     /// The report text naming the combined check, used while a limit stays
-    /// negative.
+    /// negative: as the part before the reference event reports it, and as
+    /// the part after it does (they differ only with limit placeholders).
     text: String,
+    text_after: String,
 }
 
 /// An explicit delayed signal (31.9.1).
@@ -305,8 +311,16 @@ impl Codegen<'_> {
             let check = &combined[index];
             part_texts.insert((index, before), row.check.text.clone());
             row.check.limit = if before { check.before } else { check.after };
+            if annotated {
+                // The other part's limit, which the combined text names.
+                row.check.limit2 = if before { check.after } else { check.before };
+            }
             if check.before < 0 || check.after < 0 {
-                row.check.text = check.text.clone();
+                row.check.text = if before {
+                    check.text.clone()
+                } else {
+                    check.text_after.clone()
+                };
             }
             if !reports(check) {
                 row.check = row
@@ -350,6 +364,7 @@ impl Codegen<'_> {
                     before_row: None,
                     after_row: None,
                     text: check.text.clone(),
+                    text_after: check.text_after.clone(),
                     before_text: part_texts.remove(&(index, true)).unwrap_or_default(),
                     after_text: part_texts.remove(&(index, false)).unwrap_or_default(),
                 })
@@ -817,7 +832,33 @@ impl Codegen<'_> {
             None => None,
             Some(expression) => Some(self.notifier_target(expression).map_err(&error)?),
         };
-        let text = self.timing_check_text(name, kind, &reference, data.as_ref(), &[first, second]);
+        // With limit placeholders the row prints its current limits; a
+        // combined text then names this row's limit and the other part's
+        // (held in limit2).
+        let placeholders = self.sdf_check_instance(self.inst);
+        let limit_text =
+            |first: &str, second: &str| placeholders.then(|| [first.to_owned(), second.to_owned()]);
+        let (own_first, own_second) = if is_combined && check.kind == TimingCheckKind::RecRem {
+            ((LIMIT2, LIMIT), (LIMIT, LIMIT2))
+        } else {
+            ((LIMIT, LIMIT2), (LIMIT2, LIMIT))
+        };
+        let text = self.timing_check_text(
+            name,
+            kind,
+            &reference,
+            data.as_ref(),
+            &[first, second],
+            limit_text(own_first.0, own_first.1),
+        );
+        let text_after = self.timing_check_text(
+            name,
+            kind,
+            &reference,
+            data.as_ref(),
+            &[first, second],
+            limit_text(own_second.0, own_second.1),
+        );
         if !is_combined {
             lowered.push(LoweredCheck {
                 check: IrTimingCheck::new(
@@ -900,6 +941,7 @@ impl Codegen<'_> {
             after,
             delayed,
             text,
+            text_after,
         });
         for (part, part_kind, limit) in [(true, before_kind, before), (false, after_kind, after)] {
             let (reference_condition, data_condition) = if part {
@@ -913,6 +955,7 @@ impl Codegen<'_> {
                 &reference,
                 Some(&data),
                 &[limit.max(0)],
+                limit_text(LIMIT, LIMIT2),
             );
             lowered.push(LoweredCheck {
                 check: IrTimingCheck::new(
@@ -1083,6 +1126,7 @@ impl Codegen<'_> {
         reference: &TimingEvent,
         data: Option<&TimingEvent>,
         limits: &[i64],
+        placeholders: Option<[String; 2]>,
     ) -> String {
         let event = |event: &TimingEvent, time: &str| {
             let condition = if event.condition.is_some() {
@@ -1120,7 +1164,10 @@ impl Codegen<'_> {
             "$setuphold" | "$recrem" | "$width" | "$nochange" | "$fullskew" => 2,
             _ => 1,
         };
-        arguments.extend(limits.iter().take(count).map(i64::to_string));
+        match placeholders {
+            Some(placeholders) => arguments.extend(placeholders.into_iter().take(count)),
+            None => arguments.extend(limits.iter().take(count).map(i64::to_string)),
+        }
         format!("{name}({})", arguments.join(", "))
     }
 

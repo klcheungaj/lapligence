@@ -507,6 +507,9 @@ static void timing_violation(llg_timing_check_set_t* set, const llg_timing_check
         if (*text == '\001' || *text == '\002')
             llg_report_printf(&report, "%llu",
                               (unsigned long long)(*text == '\001' ? reference : data));
+        else if (*text == '\003' || *text == '\004')
+            llg_report_printf(&report, "%lld",
+                              (long long)(*text == '\003' ? check->limit : check->limit2));
         else
             llg_report_bytes(&report, text, 1);
     }

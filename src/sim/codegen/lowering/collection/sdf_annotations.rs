@@ -106,6 +106,8 @@ pub(in super::super) struct SdfState {
     /// Instances whose `$setuphold`/`$recrem` limits an annotation rewrites
     /// while negative timing checks are enabled.
     pairs: HashSet<NodeId>,
+    /// Instances with an annotated timing check limit.
+    checks: HashSet<NodeId>,
     gate_order: Vec<NodeId>,
     /// Interconnect loads: each annotated load port bit (instance, port
     /// index, bit offset in the port), its distinct sources (entries from 1)
@@ -493,17 +495,11 @@ impl Codegen<'_> {
                         }
                     }
                 }
-                SdfAppliedTarget::Check { scope, check, .. }
-                    if options.checks
-                        && options.negative
-                        && matches!(
-                            catalog.scope(scope).checks[check as usize].kind,
-                            SdfTimingCheckKind::SetupHold | SdfTimingCheckKind::RecRem
-                        ) =>
-                {
-                    state.pairs.insert(state.nodes[scope as usize]);
+                SdfAppliedTarget::Check { scope, .. } => {
+                    state.checks.insert(state.nodes[scope as usize]);
+                    self.sdf_note_pair(state, catalog, op, options);
                 }
-                _ => {}
+                SdfAppliedTarget::Path { .. } => {}
             }
         }
         let index = state.annotations.len() as u32;
@@ -511,6 +507,28 @@ impl Codegen<'_> {
             .annotations
             .push((request.file.clone(), annotation, options_mipd));
         Ok(index)
+    }
+
+    /// Record the instance of an annotated `$setuphold`/`$recrem` limit when
+    /// negative timing checks are enabled.
+    fn sdf_note_pair(
+        &self,
+        state: &mut SdfState,
+        catalog: &SdfTargets,
+        op: &crate::sim::sdf::SdfAppliedOp,
+        options: crate::sim::ir::IrTimingCheckOptions,
+    ) {
+        if let SdfAppliedTarget::Check { scope, check, .. } = op.target {
+            if options.checks
+                && options.negative
+                && matches!(
+                    catalog.scope(scope).checks[check as usize].kind,
+                    SdfTimingCheckKind::SetupHold | SdfTimingCheckKind::RecRem
+                )
+            {
+                state.pairs.insert(state.nodes[scope as usize]);
+            }
+        }
     }
 
     /// Give every interconnect load port bit a path stage on the port's own
@@ -631,6 +649,13 @@ impl Codegen<'_> {
             ));
         }
         Ok(())
+    }
+
+    /// Whether an annotation rewrites a timing check limit of `instance`.
+    pub(in super::super) fn sdf_check_instance(&self, instance: NodeId) -> bool {
+        self.sdf
+            .as_ref()
+            .is_some_and(|state| state.checks.contains(&instance))
     }
 
     /// Whether an annotation rewrites a `$setuphold`/`$recrem` limit of

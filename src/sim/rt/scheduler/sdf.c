@@ -302,7 +302,9 @@ static void sdf_pairs_resolve(llg_timing_check_set_t* set) {
             if (row < 0) continue;
             llg_timing_check_t* check = &set->checks[row];
             check->limit = part ? a : b;
-            check->text = negative ? pair->text : (part ? pair->after_text : pair->before_text);
+            check->limit2 = part ? b : a;
+            check->text = negative ? (part ? pair->text_after : pair->text)
+                                   : (part ? pair->after_text : pair->before_text);
             if (reports)
                 check->flags &= (uint8_t)~LLG_TIMING_DISABLED;
             else

@@ -590,7 +590,7 @@ fn render_timing_checks(model: &IrModel, out: &mut String) {
                     format!(
                         "{{ .reference = {}u, .reference_edges = {}, .data = {}u, .data_edges = \
                          {}, .before = {}LL, .after = {}LL, .before_row = {}, .after_row = {}, \
-                         .text = {}, .before_text = {}, .after_text = {} }}",
+                         .text = {}, .text_after = {}, .before_text = {}, .after_text = {} }}",
                         pair.reference,
                         pair.reference_edges,
                         pair.data,
@@ -600,6 +600,7 @@ fn render_timing_checks(model: &IrModel, out: &mut String) {
                         row(pair.before_row),
                         row(pair.after_row),
                         c_string_literal(&pair.text),
+                        c_string_literal(&pair.text_after),
                         c_string_literal(&pair.before_text),
                         c_string_literal(&pair.after_text),
                     )

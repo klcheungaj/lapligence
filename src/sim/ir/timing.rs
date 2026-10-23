@@ -695,8 +695,10 @@ pub struct IrTimingCheckSet {
 /// of every pair of the set and solves its delayed signal delays again as
 /// lowering does (31.3.3, 31.3.6, 31.9.1): `before` (setup, removal) and
 /// `after` (hold, recovery) are the declared or annotated limits before
-/// settlement, the rows hold the settled limits (`None`: no row), and a row
-/// reports `text` while a limit stays negative, else its own text.
+/// settlement, the rows hold the settled limits (`None`: no row) and, in
+/// `limit2`, the other part's, and a row reports `text` (the part before
+/// the reference event) or `text_after` while a limit stays negative, else
+/// its own text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrTimingPair {
     pub reference: u32,
@@ -708,6 +710,7 @@ pub struct IrTimingPair {
     pub before_row: Option<u32>,
     pub after_row: Option<u32>,
     pub text: String,
+    pub text_after: String,
     pub before_text: String,
     pub after_text: String,
 }

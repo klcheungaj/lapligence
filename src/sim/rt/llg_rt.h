@@ -825,7 +825,9 @@ typedef struct llg_timing_event {
  * terminals is adjusted by the delays of the transitions it compares and an
  * adjusted nonnegative limit stops at 0. `notifier` is 0 or the set's
  * notifier k + 1. `text` is the check as reported, with \001 where the
- * reference event time goes and \002 where the data event time goes. */
+ * reference event time goes, \002 where the data event time goes, and \003
+ * and \004 where the current limit and limit2 go (instances whose limits SDF
+ * annotation rewrites). */
 typedef struct llg_timing_check {
     uint8_t kind;
     uint8_t flags;
@@ -889,7 +891,9 @@ typedef struct llg_timing_line {
  * (hold, recovery) are the limits before settlement; rows `before_row` and
  * `after_row` (-1: none) hold the settled limits and report `text` while a
  * limit stays negative, else their own text. Reference and data name the
- * undelayed terminals and the edges of the check's events. */
+ * undelayed terminals and the edges of the check's events. `text` is the
+ * combined text of the before row, `text_after` that of the after row; each
+ * row holds the other part's limit in limit2. */
 typedef struct llg_timing_pair {
     uint32_t reference;
     uint8_t reference_edges;
@@ -900,6 +904,7 @@ typedef struct llg_timing_pair {
     int32_t before_row;
     int32_t after_row;
     const char* text;
+    const char* text_after;
     const char* before_text;
     const char* after_text;
 } llg_timing_pair_t;
