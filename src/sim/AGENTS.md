@@ -39,6 +39,14 @@ CMake build → execution. [Lowering](codegen/AGENTS.md),
   errors, never legacy-fragment fallbacks. Detached string-only APIs cannot
   represent setup/cleanup and remain fail-closed.
 
+- `sdf/` reads SDF into owned plans without file system access beyond the
+  caller's reader: names only match the in-memory `SdfTargets`. Keep the
+  parser streaming (memory bounded by the longest token and `SdfLimits`),
+  errors positioned and deterministic, and rule violations that keep one
+  meaning as warnings (fixture readme `adv_011`). Plans name declared paths
+  and checks, not IR rows, so applying one can re-settle combined limits and
+  re-solve delayed signals.
+
 ## IR and optimization
 
 Keep `OptConfig`'s `fold_constants`, `identities`, `prune_branches` and

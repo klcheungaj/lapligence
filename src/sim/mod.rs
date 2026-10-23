@@ -18,6 +18,7 @@ pub mod ir;
 pub mod legacy_unsupported;
 pub mod opt;
 pub mod rt;
+pub mod sdf;
 pub mod semantic;
 pub mod value_backend;
 

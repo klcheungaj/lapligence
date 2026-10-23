@@ -46,10 +46,15 @@ struct LoweredCheck {
     /// The `$setuphold`/`$recrem` the row belongs to and whether it is the
     /// part before the reference event (`$setup`, `$removal`).
     combined: Option<(usize, bool)>,
+    /// The declaration and the limit of it this row holds, for the SDF
+    /// annotation targets.
+    node: NodeId,
+    slot: crate::sim::sdf::SdfLimitSlot,
 }
 
 /// One `$setuphold` or `$recrem` of an instance.
 struct CombinedCheck {
+    node: NodeId,
     origin: String,
     name: &'static str,
     reference: IrTimingEvent,
@@ -214,6 +219,13 @@ impl Codegen<'_> {
             return Ok(());
         }
         self.settle_combined_limits(options.negative, &mut combined);
+        // With negative timing checks every combined check's limits enter
+        // the module's delayed signal solve, even when it yields zero delays
+        // here: a limit annotated later changes them.
+        if options.negative {
+            self.sdf_delayed_checks
+                .extend(combined.iter().map(|check| check.node));
+        }
         let delays = if options.negative {
             let mut constraints = combined
                 .iter()
@@ -299,12 +311,23 @@ impl Codegen<'_> {
         // their values.
         let mut notifiers: Vec<usize> = Vec::new();
         let mut set_checks = Vec::with_capacity(lowered.len());
+        let set = self.model.timing_checks.len() as u32;
         for LoweredCheck {
             mut check,
             notifier,
+            node,
+            slot,
             ..
         } in lowered
         {
+            self.sdf_check_rows.push((
+                node,
+                crate::sim::sdf::SdfCheckRow {
+                    set,
+                    check: set_checks.len() as u32,
+                    slot,
+                },
+            ));
             check.notifier = notifier.filter(|_| options.notifiers).map(|signal| {
                 let index = notifiers
                     .iter()
@@ -746,6 +769,13 @@ impl Codegen<'_> {
                 notifier,
                 source: check.kind,
                 combined: None,
+                node: check.node,
+                slot: match kind {
+                    IrTimingCheckKind::Width
+                    | IrTimingCheckKind::NoChange
+                    | IrTimingCheckKind::FullSkew => crate::sim::sdf::SdfLimitSlot::Both,
+                    _ => crate::sim::sdf::SdfLimitSlot::First,
+                },
             });
             return Ok(());
         }
@@ -796,6 +826,7 @@ impl Codegen<'_> {
         }
         let index = combined.len();
         combined.push(CombinedCheck {
+            node: check.node,
             origin: location.clone(),
             name,
             reference: reference_event,
@@ -832,6 +863,14 @@ impl Codegen<'_> {
                 notifier,
                 source: check.kind,
                 combined: Some((index, part)),
+                node: check.node,
+                // The part before the reference event holds the setup
+                // limit of `$setuphold` (its first) and the removal limit
+                // of `$recrem` (its second).
+                slot: match (check.kind == TimingCheckKind::SetupHold, part) {
+                    (true, true) | (false, false) => crate::sim::sdf::SdfLimitSlot::First,
+                    _ => crate::sim::sdf::SdfLimitSlot::Second,
+                },
             });
         }
         Ok(())

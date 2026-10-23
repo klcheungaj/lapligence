@@ -1558,8 +1558,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   31.4.2–31.4.3, 31.9 **[1995/SV-2009 restored]**.
 - ❌ **SDF** — `$sdf_annotate` delay and timing check application is not
   implemented; check limits stay writable in the model for it (the delayed
-  signal delays are fixed when the model is generated). V ch.16; SV ch.32
-  **[1995/SV-2009 restored]**.
+  signal delays are fixed when the model is generated). The library reads
+  OVI SDF 2.1 and 3.0 files (streaming, with limits) and resolves them
+  against a model's specify paths, timing checks, ports and primitives into
+  an owned annotation plan with warnings for unmatched records; nothing in
+  a simulation uses it yet
+  ([ADV-011 fixtures](../tests/fixtures/sim/feature_completion/adv_011/readme.md)).
+  V ch.16; SV ch.32 **[1995/SV-2009 restored]**.
 
 ## 9. Functions & tasks
 

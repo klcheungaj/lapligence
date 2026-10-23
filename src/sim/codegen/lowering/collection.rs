@@ -48,6 +48,7 @@ mod net_partition;
 mod nets;
 mod packed_elements;
 pub(super) mod packed_formals;
+mod sdf_targets;
 mod timing_checks;
 mod vpi;
 pub(super) use packed_elements::Select;

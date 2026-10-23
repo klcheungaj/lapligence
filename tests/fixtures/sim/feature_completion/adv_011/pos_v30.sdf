@@ -1,0 +1,102 @@
+// Every SDF 3.0 production llg reads, resolved from tb (see readme.md).
+(DELAYFILE
+  (SDFVERSION "OVI 3.0")
+  (DESIGN "tb")
+  (DATE "October 22, 2026")
+  (VENDOR "lapligence")
+  (PROGRAM "hand written")
+  (VERSION "1")
+  (DIVIDER .)
+  (VOLTAGE 1.1:1.0:0.9)
+  (PROCESS "typical")
+  (TEMPERATURE -40:25:125)
+  (TIMESCALE 100 ps)
+  (CELL
+    (CELLTYPE "DFF")
+    (INSTANCE ff1)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH (posedge clk) q (1:2:3) (4:5:6))
+        (COND "rst low" (rst == 1'b0) (IOPATH rst q (7)))
+      )
+      (INCREMENT (IOPATH clk q ((1) (0.5)) ((2) (0.5) (1))))
+    )
+    (TIMINGCHECK
+      (SETUPHOLD d (posedge clk) (3) (-1))
+      (WIDTH (posedge clk) (5))
+      (RECREM (posedge rst) (posedge clk) (1) (2))
+      (SETUP d (COND rst (negedge clk)) (6))
+      (HOLD d (posedge clk) ())
+    )
+  )
+  (CELL
+    (CELLTYPE "DFF")
+    (INSTANCE ffs[1])
+    (TIMINGCHECK
+      (SETUPHOLD d (posedge clk) (2) (2) (SCOND "s" rst) (CCOND rst))
+      (RECOVERY (posedge rst) (posedge clk) (4))
+      (REMOVAL (posedge rst) (posedge clk) (5))
+    )
+  )
+  (CELL
+    (CELLTYPE "AND2")
+    (INSTANCE *)
+    (DELAY (ABSOLUTE (IOPATH a y (1) (2))))
+  )
+  (CELL
+    (CELLTYPE "AND2")
+    (INSTANCE esc\.inst)
+    (DELAY (PATHPULSE a y (0.5) (0.75)) (PATHPULSEPERCENT (25)))
+  )
+  (CELL
+    (CELLTYPE "MUX")
+    (INSTANCE mux1)
+    (DELAY
+      (ABSOLUTE
+        (COND s (IOPATH a y (1)))
+        (COND (!s) (IOPATH a y (2)))
+        (CONDELSE (IOPATH a y (3)))
+        (IOPATH s y (RETAIN (0.5)) (4))
+        (DEVICE y (5:6:7))
+      )
+    )
+  )
+  (CELL
+    (CELLTYPE "BUS")
+    (INSTANCE bus1)
+    (DELAY (ABSOLUTE (IOPATH a[0] y[0] (1)) (IOPATH a[3:1] y[3:1] (2)) (DEVICE (3))))
+  )
+  (CELL
+    (CELLTYPE "buf")
+    (INSTANCE b1)
+    (DELAY (ABSOLUTE (DEVICE (1) (2) (3))))
+  )
+  (CELL
+    (CELLTYPE "tb")
+    (INSTANCE)
+    (DELAY
+      (ABSOLUTE
+        (INTERCONNECT ff1.q and1.a (0.25))
+        (PORT bus1.a[2] (0.5))
+        (DEVICE u1 (1:2:3))
+        (DEVICE g[1].u.g (4))
+      )
+    )
+    (TIMINGENV
+      (PATHCONSTRAINT (NAME "p") ff1.clk ff1.q (1) (2))
+      (PERIODCONSTRAINT ff1.clk (10) (EXCEPTION (INSTANCE ffs[0])))
+      (SUM (and1.a and1.y) (mux1.a mux1.y) (5))
+      (DIFF (and1.a and1.y) (mux1.a mux1.y) (1) (2))
+      (SKEWCONSTRAINT (posedge ff1.clk) (1))
+      (ARRIVAL (posedge ff1.clk) ff1.d (1) (2) (3) (4))
+      (DEPARTURE ff1.q (1) (2) (3) (4))
+      (SLACK ff1.d (1) (2) (3) (4) 10)
+      (WAVEFORM ff1.clk 10 (posedge 0 1) (negedge 5))
+    )
+  )
+  (CELL
+    (CELLTYPE "DFFD")
+    (INSTANCE ffd)
+    (TIMINGCHECK (SETUPHOLD d (posedge clk) (2) (-1) (SCOND en) (CCOND en)))
+  )
+)

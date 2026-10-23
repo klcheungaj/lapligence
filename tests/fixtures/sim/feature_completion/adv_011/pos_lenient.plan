@@ -1,0 +1,31 @@
+SDF 3.0 timescale 1ns from tb
+11:10: path delay absolute tb.ff1 path 0 (clk => q) = (3)
+15:8: check limit tb.ff1 check 1 $width first = (0:2:0)
+16:8: check limit tb.ff1 check 0 $setuphold first = (2)
+16:8: check limit tb.ff1 check 0 $setuphold second = (-2)
+18:8: check limit tb.ff1 check 0 $setuphold first = (0)
+24:10: net delay absolute tb.and1.a = (1)
+27:10: port delay absolute tb.mux1.s = (4)
+33:13: path pulse percent tb.g[0].u path 0 (a => y) = (40) (60)
+warning 5:3: instance `ffs[1:0]` not found in `tb`; the CELL is not annotated
+warning 5:36: the instance path `ffs[1:0]` selects a range of instances, not one instance
+warning 10:34: the triple `::` has no number; it is read as an empty value
+warning 10:82: IOPATH has more than 12 delay values; it is not annotated
+warning 11:10: RETAIN delays are not simulated and are ignored (IEEE 1800-2009 Table 32-1)
+warning 11:46: consecutive RETAIN delays must increase strictly (2 then 1)
+warning 15:29: the value `-1` must not be negative; 0 is used
+warning 15:29: the value `-3` must not be negative; 0 is used
+warning 15:29: single values and min:typ:max triples are mixed in one file; a single value applies to every data set
+warning 16:8: the SETUPHOLD limits 2 and -2 have a sum that is not greater than zero
+warning 17:17: the NOCHANGE control port needs an edge specification; the entry is not annotated
+warning 18:31: the value `-1` must not be negative; 0 is used
+warning 24:10: NETDELAY belongs to SDF 2.1, not SDF 3.0; it is read as SDF 2.1 defines it
+warning 25:15: the port `.and1.a` has an empty hierarchy level (divider `.`)
+warning 25:15: instance `.and1` of PORT `.and1.a` not found in `tb`
+warning 26:15: the port `and1/a` has an unescaped `/`, which is read as part of a name (the hierarchy divider is `.`)
+warning 26:15: PORT `and1\/a`: `tb` has no port `and1/a`
+warning 27:15: a port path `(INSTANCE path) port` belongs to SDF 2.1, not SDF 3.0; it is read as SDF 2.1 defines it
+warning 31:44: a repeated INSTANCE entry belongs to SDF 2.1, not SDF 3.0; it is read as SDF 2.1 defines it
+warning 32:6: CORRELATION belongs to SDF 2.1, not SDF 3.0; it is read as SDF 2.1 defines it
+warning 33:13: GLOBALPATHPULSE belongs to SDF 2.1, not SDF 3.0; it is read as SDF 2.1 defines it
+warning 34:19: PATHCONSTRAINT in TIMINGCHECK belongs to SDF 2.1, not SDF 3.0; it is read as SDF 2.1 defines it

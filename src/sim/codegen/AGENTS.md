@@ -406,7 +406,13 @@ terminals. Invalid checks fail with their location whatever the options;
 `CodegenOptions::timing_checks` (`--no-timing-checks`, `--no-notifiers`,
 `--no-timing-check-messages`, `--neg-timing-checks`) then omits the sets,
 the toggles or the reports, or enables negative limits; with checks off an
-instance keeps only its explicit delayed signals as copies. Specify-block specparams are collected with the instance's
+instance keeps only its explicit delayed signals as copies. Both
+collections record, per declaration, the model rows it became
+(`sdf_path_rows`, `sdf_check_rows`, `sdf_delayed_checks`); `sdf_targets`
+runs the same metadata lowering and builds the SDF annotation catalog from
+them (`collection/sdf_targets.rs`, `sim::sdf::SdfTargets`). The side tables
+never reach the IR, so models are byte-identical with or without SDF use.
+Specify-block specparams are collected with the instance's
 parameters. A design without specify blocks costs one emptiness test.
 Force overlays visible storage while ordinary writes/driver slots remain live;
 release retains variable value or recomputes current net resolution. Releasing a

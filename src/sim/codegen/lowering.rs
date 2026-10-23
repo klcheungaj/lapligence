@@ -488,8 +488,8 @@ struct LoweredModel {
     coverage_api_used: bool,
 }
 
-fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String> {
-    let waveform = options.waveform.as_ref();
+/// The semantic model of a design that passed the simulation checks.
+fn checked_semantic(db: &Db) -> Result<crate::sim::semantic::SemanticModel<'_>, String> {
     let semantic_stage = crate::profile::Stage::new("semantic");
     let semantic = crate::sim::semantic::SemanticModel::from_db(db);
     // Constructs rejected by design report first and together, ahead of the
@@ -505,13 +505,62 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
         return Err("simulation validation failed without an issue".to_owned());
     }
     drop(semantic_stage);
-    let lowering_stage = crate::profile::Stage::new("lowering");
-    let mut cg = Codegen::new(&semantic);
+    Ok(semantic)
+}
+
+/// The design's top instances after the program checks.
+fn collect_tops(cg: &mut Codegen<'_>) -> Result<Vec<NodeId>, String> {
     cg.validate_program_constructs()?;
     let tops = cg.collect_design()?;
     if tops.is_empty() {
         return Err("no top modules in the elaborated design".to_string());
     }
+    Ok(tops)
+}
+
+/// Net groups, module paths and timing checks: everything SDF annotation
+/// targets, lowered before any process.
+fn lower_timing_metadata(cg: &mut Codegen<'_>, options: &CodegenOptions) -> Result<(), String> {
+    // Collapse inout-port net groups (parent + child nets → one resolved
+    // simulated net) before any signal/process lowering so member reads and
+    // writes use the resolution cell.
+    cg.bind_reference_ports()?;
+    // Timescales must be fixed before any `#delay`/`$time` is lowered so the
+    // design precision (scheduler tick unit) is consistent across the model.
+    cg.collect_timescales();
+    cg.build_net_groups()?;
+    // Module paths name net groups and their structural driver sites.
+    cg.model.path_pulse = options.path_pulse;
+    cg.lower_module_paths()?;
+    // Timing checks read the same terminals and the instance's variables.
+    cg.model.timing_check_options = options.timing_checks;
+    cg.lower_timing_checks()
+}
+
+/// The SDF annotation targets of a design: its instance tree, ports, and
+/// the specify paths and timing checks the model built with `options` has,
+/// with their model rows. Only the lowering steps that produce timing
+/// metadata run; no model is generated.
+pub fn sdf_targets(
+    db: &Db,
+    options: &CodegenOptions,
+) -> Result<crate::sim::sdf::SdfTargets, CodegenError> {
+    let result = (|| -> Result<crate::sim::sdf::SdfTargets, String> {
+        let semantic = checked_semantic(db)?;
+        let mut cg = Codegen::new(&semantic);
+        let tops = collect_tops(&mut cg)?;
+        lower_timing_metadata(&mut cg, options)?;
+        Ok(cg.build_sdf_targets(&tops))
+    })();
+    result.map_err(CodegenError::new)
+}
+
+fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String> {
+    let waveform = options.waveform.as_ref();
+    let semantic = checked_semantic(db)?;
+    let lowering_stage = crate::profile::Stage::new("lowering");
+    let mut cg = Codegen::new(&semantic);
+    let tops = collect_tops(&mut cg)?;
     if let Some(waveform) = waveform {
         // A depth applies below each top instance, like `$dumpvars(depth, top)`;
         // depth 0 with no scopes selects the complete design.
@@ -527,20 +576,7 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
         ));
     }
     let compilation_units = cg.compilation_unit_scopes();
-    // Collapse inout-port net groups (parent + child nets → one resolved
-    // simulated net) before any signal/process lowering so member reads and
-    // writes use the resolution cell.
-    cg.bind_reference_ports()?;
-    // Timescales must be fixed before any `#delay`/`$time` is lowered so the
-    // design precision (scheduler tick unit) is consistent across the model.
-    cg.collect_timescales();
-    cg.build_net_groups()?;
-    // Module paths name net groups and their structural driver sites.
-    cg.model.path_pulse = options.path_pulse;
-    cg.lower_module_paths()?;
-    // Timing checks read the same terminals and the instance's variables.
-    cg.model.timing_check_options = options.timing_checks;
-    cg.lower_timing_checks()?;
+    lower_timing_metadata(&mut cg, options)?;
     cg.collect_clocking_storage()?;
     cg.validate_const_method_writes()?;
     cg.validate_process_semantics()?;
@@ -1674,6 +1710,15 @@ struct Codegen<'a> {
     /// source/group key remains terminal zero for compatibility with the
     /// existing structural-driver inventory.
     structural_driver_terminal_sites: HashMap<(NodeId, NodeId, usize, usize), DriverId>,
+    /// Model rows of each specify path declaration, for the SDF annotation
+    /// targets (`collection/sdf_targets.rs`): the declaration node and its
+    /// row (terminal pair and model path indices).
+    sdf_path_rows: Vec<(NodeId, crate::sim::sdf::SdfPathRow)>,
+    /// Model rows of each timing check declaration.
+    sdf_check_rows: Vec<(NodeId, crate::sim::sdf::SdfCheckRow)>,
+    /// `$setuphold`/`$recrem` declarations whose limits set the delays of
+    /// delayed signals (31.9).
+    sdf_delayed_checks: HashSet<NodeId>,
     /// Final-block process function names (`ProcessKind::Final`), in
     /// emission order — spawned into [`IrModel::final_spawns`] instead of
     /// the t=0 spawn list.
@@ -2007,6 +2052,9 @@ impl<'a> Codegen<'a> {
             structural_driver_sources: HashSet::new(),
             structural_drivers: Vec::new(),
             structural_driver_terminal_sites: HashMap::new(),
+            sdf_path_rows: Vec::new(),
+            sdf_check_rows: Vec::new(),
+            sdf_delayed_checks: HashSet::new(),
             final_procs: Vec::new(),
             armed_procs: HashSet::new(),
             wave_variable_targets: Vec::new(),

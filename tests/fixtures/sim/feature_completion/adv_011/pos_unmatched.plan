@@ -1,0 +1,25 @@
+SDF 3.0 timescale 1ns from tb
+23:10: interconnect absolute * -> tb.ff1.d = (1)
+28:8: check limit tb.ff1 check 0 $setuphold first = (1)
+29:8: check limit tb.ff1 check 3 $setup first = (1)
+37:19: check limit tb.ff1 check 1 $width first = (1)
+warning 6:3: instance `\.\.\/\.\.\/etc\/passwd` not found in `tb`; the CELL is not annotated
+warning 8:3: `tb.ff1` is an instance of `DFF`, not cell type "AND2"; the CELL is not annotated
+warning 10:3: `tb.g[0]` is a generate block, not cell type ""; the CELL is not annotated
+warning 12:3: no instance of cell type "NAND3" in `tb`; the CELL is not annotated
+warning 17:10: no specify path from `(negedge clk)` to `q` in `tb.ff1`; the IOPATH is not annotated
+warning 18:10: no specify path from `d` to `q` in `tb.ff1`; the IOPATH is not annotated
+warning 19:10: no specify path from `rst` to `q` with condition `(rst == 1)` in `tb.ff1`; the IOPATH is not annotated
+warning 20:10: no specify path from `rst` to `q` that is `ifnone` in `tb.ff1`; the IOPATH is not annotated
+warning 21:15: PORT `q` must be an input or inout port
+warning 22:15: PORT `clk[0]` selects bits outside the port's declared range
+warning 23:10: the INTERCONNECT source was not found; the delay applies from every source of the load (IEEE 1800-2009 32.4.4)
+warning 23:23: instance `nowhere` of the INTERCONNECT source `nowhere.x` not found in `tb.ff1`
+warning 24:10: the DEVICE port `d` is not an output
+warning 30:8: no timing check in `tb.ff1` matches (WIDTH (negedge clk)); it is not annotated
+warning 31:8: no timing check in `tb.ff1` matches (PERIOD (posedge clk)); it is not annotated
+warning 32:8: no timing check in `tb.ff1` matches (SKEW (posedge clk) d); it is not annotated
+warning 36:23: no specify path from `a` to `b` in `tb`; the IOPATH is not annotated
+warning 36:45: instance `nowhere` of PORT `nowhere.a` not found in `tb`
+warning 36:61: `tb` has no specify paths; DEVICE delays on the primitives driving its outputs are not resolved
+warning 37:49: the SETUP ports are in different instances; it is not annotated

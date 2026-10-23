@@ -411,6 +411,14 @@ the settings and config timing tests and the runtime selftests `test_timing_chec
 (delayed line, doorbell run) and `test_timing_skew_timers` (an annotated
 limit moves or expires an open skew window without a stale report).
 
+ADV-011's SDF reader uses `-E 'binary(sim_feature_completion) & test(adv_011::)'`
+([readme](fixtures/sim/feature_completion/adv_011/readme.md)): the annotation
+targets of `cells.v`, accepted SDF 2.1/3.0 files resolved to plans, files
+read with warnings and malformed files with their exact first error;
+`LLG_SDF_BLESS=1` rewrites the goldens for review. Unit tests:
+`--lib -E 'test(/sim::sdf::/)'` (lexer, numbers, conditions, parser, resolver
+Table 32-2 mapping, catalog names, small read buffers).
+
 ADV-016's randsequence fixtures use
 `-E 'binary(sim_feature_completion) & test(adv_016::)'`. Positives run in both
 optimizer modes on every backend with oracles from SV 18.17 (fixture readme):

@@ -1,0 +1,43 @@
+/* The SDF 2.1 forms llg reads: the "/" divider, repeated INSTANCE
+   entries, (INSTANCE path) port paths, CORRELATION, GLOBALPATHPULSE,
+   NETDELAY, constraints among the timing checks and negative SETUP, HOLD
+   and RECOVERY limits. */
+(DELAYFILE
+(SDFVERSION "2.1")
+(DESIGN "tb")
+(DIVIDER /)
+(TIMESCALE 1ns)
+(CELL
+  (CELLTYPE "AND2")
+  (INSTANCE g[0])
+  (INSTANCE u)
+  (CORRELATION "corr" 0.5)
+  (DELAY
+    (ABSOLUTE (IOPATH b y (1:1:1) (2:2:2)))
+    (GLOBALPATHPULSE a y (10) (20))
+  )
+)
+(CELL
+  (CELLTYPE "tb")
+  (INSTANCE)
+  (DELAY
+    (INCREMENT
+      (NETDELAY (INSTANCE g[1]/u) a (0.1:0.2:0.3))
+      (INTERCONNECT (INSTANCE ff1) q mux1/s (1))
+    )
+  )
+)
+(CELL
+  (CELLTYPE "DFF")
+  (INSTANCE ffs[0])
+  (TIMINGCHECK
+    (SETUP d (posedge clk) (-1))
+    (HOLD d (posedge clk) (-2))
+    (RECOVERY (posedge rst) (posedge clk) (-3))
+    (SKEW (posedge clk) d (1))
+    (PERIOD (posedge clk) (2))
+    (NOCHANGE (posedge clk) d (1) (1))
+    (PATHCONSTRAINT clk q (1) (2))
+  )
+)
+)

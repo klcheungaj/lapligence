@@ -1,0 +1,142 @@
+Malformed SDF files. Each case starts with a line `=== <name>`; the next
+line `error: <line>:<column>: <message>` is the exact error, with positions
+counted from the first line after it. The derivation of every case is in
+readme.md.
+=== empty file
+error: 1:1: expected `(` starting the DELAYFILE, found the end of the file
+=== not a delay file
+error: 1:2: expected `DELAYFILE`, found `DELAYFILES`
+(DELAYFILES (SDFVERSION "3.0"))
+=== version missing
+error: 1:13: the header must start with SDFVERSION, found `DESIGN`
+(DELAYFILE (DESIGN "x"))
+=== no cell
+error: 2:16: the DELAYFILE has no CELL entry (it needs at least one)
+(DELAYFILE (SDFVERSION "3.0")
+  (DESIGN "tb"))
+=== header order
+error: 3:4: the header entry DESIGN comes after DIVIDER (the header order is fixed)
+(DELAYFILE (SDFVERSION "3.0")
+  (DIVIDER /)
+  (DESIGN "tb"))
+=== header repeated
+error: 1:45: the header entry DESIGN repeats DESIGN (the header order is fixed)
+(DELAYFILE (SDFVERSION "3.0") (DESIGN "a") (DESIGN "b"))
+=== divider
+error: 1:40: the hierarchy divider must be `.` or `/`, not `:`
+(DELAYFILE (SDFVERSION "3.0") (DIVIDER :))
+=== timescale number
+error: 1:42: the timescale number must be 1, 10 or 100 (or 1.0, 10.0, 100.0), not `5`
+(DELAYFILE (SDFVERSION "3.0") (TIMESCALE 5ns))
+=== timescale unit
+error: 1:44: the timescale unit must be us, ns or ps, not `fs`
+(DELAYFILE (SDFVERSION "3.0") (TIMESCALE 1 fs))
+=== unterminated string
+error: 1:29: a QSTRING cannot contain a newline (the string is not closed)
+(DELAYFILE (SDFVERSION "3.0)
+)
+=== unclosed cell
+error: 4:1: expected a timing specification or `)` closing the CELL, found the end of the file
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "AND2") (INSTANCE and1)
+    (DELAY (ABSOLUTE (IOPATH a y (1))))
+
+=== unclosed delay file
+error: 4:1: the file ends before the DELAYFILE is closed
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "AND2") (INSTANCE and1)
+    (DELAY (ABSOLUTE (IOPATH a y (1)))))
+
+=== text after the delay file
+error: 4:1: unexpected `)` after the end of the DELAYFILE
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "AND2") (INSTANCE and1)
+    (DELAY (ABSOLUTE (IOPATH a y (1))))))
+)
+=== missing delay values
+error: 3:33: expected the delay values of IOPATH, found `)`
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "AND2") (INSTANCE and1)
+    (DELAY (ABSOLUTE (IOPATH a y)))))
+=== misplaced instance
+error: 2:28: CELLTYPE must be followed by INSTANCE, found `DELAY`
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "AND2") (DELAY (ABSOLUTE (IOPATH a y (1))))))
+=== number with two points
+error: 3:35: `1.2.3` is not a number
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "AND2") (INSTANCE and1)
+    (DELAY (ABSOLUTE (IOPATH a y (1.2.3))))))
+=== number out of range
+error: 3:35: the number `1e999` is out of range (exponent beyond 300)
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "AND2") (INSTANCE and1)
+    (DELAY (ABSOLUTE (IOPATH a y (1e999))))))
+=== number with too many digits
+error: 3:35: the number `1234567890123456789012345678901234567890` has more than 18 significant digits
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "AND2") (INSTANCE and1)
+    (DELAY (ABSOLUTE (IOPATH a y (1234567890123456789012345678901234567890))))))
+=== triple with one colon
+error: 3:35: the triple `1:2` must have exactly two colons
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "AND2") (INSTANCE and1)
+    (DELAY (ABSOLUTE (IOPATH a y (1:2))))))
+=== wildcard inside a path
+error: 2:36: the instance path `ffs.*`: the wildcard `*` cannot be part of a hierarchical path
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "DFF") (INSTANCE ffs.*)))
+=== malformed bit spec
+error: 2:36: the bit spec `[1` of the instance path `ffs[1` is not `[n]` or `[m:n]` with non-negative integers
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "DFF") (INSTANCE ffs[1)))
+=== unbalanced condition
+error: 3:33: expected `)` closing the parenthesized condition, found `(`
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "MUX") (INSTANCE mux1)
+    (DELAY (ABSOLUTE (COND ((s) (IOPATH a y (1))))))))
+=== RETAIN after the delays
+error: 3:39: RETAIN entries must come before the IOPATH delays
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "AND2") (INSTANCE and1)
+    (DELAY (ABSOLUTE (IOPATH a y (5) (RETAIN (1)))))))
+=== CCOND before SCOND
+error: 3:56: SCOND is out of order or repeated (SCOND comes before CCOND, once each)
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "DFF") (INSTANCE ff1)
+    (TIMINGCHECK (SETUPHOLD d clk (1) (1) (CCOND rst) (SCOND rst)))))
+=== unknown edge
+error: 3:31: `rise` is not an edge identifier (posedge, negedge, 01, 10, 0z, z1, 1z, z0)
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "DFF") (INSTANCE ff1)
+    (DELAY (ABSOLUTE (IOPATH (rise clk) q (1))))))
+=== WAVEFORM edges not alternating
+error: 3:50: WAVEFORM edges must alternate between posedge and negedge
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "tb") (INSTANCE)
+    (TIMINGENV (WAVEFORM ff1.clk 10 (posedge 0) (posedge 5)))))
+=== non-ASCII text
+error: 1:25: the character 0xc3 is not an SDF character (SDF files are ASCII)
+(DELAYFILE (SDFVERSION "é3.0"))
+=== unknown header entry
+error: 1:32: `AUTHOR` is not a header entry
+(DELAYFILE (SDFVERSION "3.0") (AUTHOR "me"))
+=== unknown delay definition
+error: 3:23: expected IOPATH, COND, CONDELSE, PORT, INTERCONNECT or DEVICE, found `PATH`
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "AND2") (INSTANCE and1)
+    (DELAY (ABSOLUTE (PATH a y (1))))))
+=== timing check in DELAY
+error: 3:23: expected IOPATH, COND, CONDELSE, PORT, INTERCONNECT or DEVICE, found `SETUP`
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "DFF") (INSTANCE ff1)
+    (DELAY (ABSOLUTE (SETUP d clk (1))))))
+=== special character in a name
+error: 2:36: the character `+` in the instance path `a+b` must be escaped with `\`
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "DFF") (INSTANCE a+b)))
+=== SCOND repeated
+error: 3:56: SCOND is out of order or repeated (SCOND comes before CCOND, once each)
+(DELAYFILE (SDFVERSION "3.0")
+  (CELL (CELLTYPE "DFF") (INSTANCE ff1)
+    (TIMINGCHECK (SETUPHOLD d clk (1) (1) (SCOND rst) (SCOND rst)))))

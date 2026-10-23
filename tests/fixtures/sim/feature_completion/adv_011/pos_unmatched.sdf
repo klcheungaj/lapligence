@@ -1,0 +1,39 @@
+// Records that name nothing in the design: each is a warning and adds no
+// operation. Names are compared with the elaborated hierarchy only, so a
+// path that looks like a file system path is just an unknown instance.
+(DELAYFILE
+  (SDFVERSION "3.0")
+  (CELL (CELLTYPE "DFF") (INSTANCE \.\.\/\.\.\/etc\/passwd)
+    (DELAY (ABSOLUTE (IOPATH clk q (1)))))
+  (CELL (CELLTYPE "AND2") (INSTANCE ff1)
+    (DELAY (ABSOLUTE (IOPATH clk q (1)))))
+  (CELL (CELLTYPE "") (INSTANCE g[0])
+    (DELAY (ABSOLUTE (IOPATH a y (1)))))
+  (CELL (CELLTYPE "NAND3") (INSTANCE *)
+    (DELAY (ABSOLUTE (IOPATH a y (1)))))
+  (CELL (CELLTYPE "DFF") (INSTANCE ff1)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH (negedge clk) q (1))
+        (IOPATH d q (1))
+        (COND (rst == 1'b1) (IOPATH rst q (1)))
+        (CONDELSE (IOPATH rst q (1)))
+        (PORT q (1))
+        (PORT clk[0] (1))
+        (INTERCONNECT nowhere.x d (1))
+        (DEVICE d (1))
+      )
+    )
+    (TIMINGCHECK
+      (SETUP d (posedge clk) (1))
+      (SETUPHOLD d (negedge clk) (1) (1))
+      (WIDTH (negedge clk) (1))
+      (PERIOD (posedge clk) (1))
+      (SKEW (posedge clk) d (1))
+    )
+  )
+  (CELL (CELLTYPE "tb") (INSTANCE)
+    (DELAY (ABSOLUTE (IOPATH a b (1)) (PORT nowhere.a (1)) (DEVICE (1))))
+    (TIMINGCHECK (WIDTH (posedge ff1.clk) (1)) (SETUP ff1.d (posedge ffs[0].clk) (1)))
+  )
+)

@@ -860,6 +860,48 @@ of ADV-008 and the VPI objects of ADV-019 on the same per-path tables.
 scripts/run-tests.sh -E 'binary(sim_feature_completion) & test(adv_007::)'
 ```
 
+## SDF reading limits (ADV-011)
+
+**Status:** open (ADV-011 reads and resolves SDF; ADV-012 applies it). The
+library API `llg::sim::sdf` reads a file into an owned annotation plan;
+`$sdf_annotate` does not use it yet, so no simulation changes.
+
+### Symptom
+
+- Only the OVI SDF 2.1 and 3.0 grammars are implemented. Files declaring
+  1.0 or 2.0 are read with the 2.1 grammar and 4.0 (IEEE 1497) files with
+  the 3.0 grammar, with a warning; IEEE 1497 constructs such as LABEL
+  (specparam annotation, IEEE 1800-2009 32.4.3) and BIDIRECTSKEW
+  (`$fullskew`) are syntax errors.
+- Numbers keep 18 significant digits and decimal exponents up to 300
+  exactly; longer numbers are rejected rather than rounded.
+- DEVICE on a module without specify paths warns instead of reaching the
+  primitives that drive the module's outputs (Table 32-1).
+- INTERCONNECT does not check that its source and load are on one net;
+  NETDELAY resolves to input or inout ports only, not to nets.
+- RETAIN is read and ignored with a warning.
+- A `$setuphold` or `$recrem` whose negative limits sum to 0 or 1 has no
+  rows in the model (ADV-010), so a plan can name it but nothing can apply
+  a new limit to it.
+
+### Cause
+
+The published grammars of the other versions are not available here, and
+applying a plan (data set selection, scaling, the twelve-transition
+expansion, re-solving delayed signal delays) is ADV-012.
+
+### Intended direction
+
+ADV-012 applies the plan to the model's path, interconnect and check tables
+atomically, including the primitives behind DEVICE and the delayed signal
+solve.
+
+### Reproduce
+
+```sh
+scripts/run-tests.sh -E 'binary(sim_feature_completion) & test(adv_011::)'
+```
+
 ## Process handles in plain handle storage stay allocated until teardown
 
 **Status:** open (SIM-015). The SIM-018 collector reclaims class objects but

@@ -1,0 +1,36 @@
+// SDF 3.0 entries that break a rule of the specification but still have one
+// meaning: each is read with a warning instead of rejecting the file.
+(DELAYFILE
+  (SDFVERSION "3.0")
+  (CELL (CELLTYPE "DFF") (INSTANCE ffs[1:0])
+    (DELAY (ABSOLUTE (IOPATH clk q (1)))))
+  (CELL (CELLTYPE "DFF") (INSTANCE ff1)
+    (DELAY
+      (ABSOLUTE
+        (IOPATH (posedge clk) q (::) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1) (1))
+        (IOPATH (posedge clk) q (RETAIN (2)) (RETAIN (1)) (3))
+      )
+    )
+    (TIMINGCHECK
+      (WIDTH (posedge clk) (-1:2:-3))
+      (SETUPHOLD d (posedge clk) (2) (-2))
+      (NOCHANGE clk d (1) (1))
+      (SETUP d (posedge clk) (-1))
+    )
+  )
+  (CELL (CELLTYPE "tb") (INSTANCE)
+    (DELAY
+      (ABSOLUTE
+        (NETDELAY and1.a (1))
+        (PORT .and1.a (2))
+        (PORT and1/a (3))
+        (PORT (INSTANCE mux1) s (4))
+      )
+    )
+  )
+  (CELL (CELLTYPE "AND2") (INSTANCE g[0]) (INSTANCE u)
+    (CORRELATION "c" 1)
+    (DELAY (GLOBALPATHPULSE a y (40) (60)))
+    (TIMINGCHECK (PATHCONSTRAINT a y (1) (2)))
+  )
+)

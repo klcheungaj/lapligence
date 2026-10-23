@@ -14,6 +14,7 @@ it is not a Rust runtime dependency.
 | `opt/` | Shape- and four-state-aware execution-model optimizations. |
 | `emit_c/` | Ordered C setup/evaluation/cleanup and model lifecycle. |
 | `rt/` | Exact-width values, scheduler, native services and optional waveform output. |
+| `sdf/` | Streaming OVI SDF 2.1/3.0 reader and resolution of a file against `codegen::sdf_targets` into an owned annotation plan (ADV-011; applying it is ADV-012). |
 
 `generate_from_db_with_opts` reuses one owned DB across optimization variants.
 The driver uses `generate_from_owned_db_with_codegen_options` to retain all

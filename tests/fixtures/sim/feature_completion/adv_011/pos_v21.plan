@@ -1,0 +1,12 @@
+SDF 2.1 timescale 1ns from tb
+16:16: path delay absolute tb.g[0].u path 1 (b => y) = (1:1:1) (2:2:2)
+17:6: path pulse percent tb.g[0].u path 0 (a => y) = (10) (20)
+25:8: net delay increment tb.g[1].u.a = (0.1:0.2:0.3)
+26:8: interconnect increment tb.ff1.q -> tb.mux1.s = (1)
+34:6: check limit tb.ffs[0] check 0 $setuphold first = (-1)
+35:6: check limit tb.ffs[0] check 0 $setuphold second = (-2)
+36:6: check limit tb.ffs[0] check 2 $recrem first = (-3)
+warning 17:27: single values and min:typ:max triples are mixed in one file; a single value applies to every data set
+warning 37:6: no timing check in `tb.ffs[0]` matches (SKEW (posedge clk) d); it is not annotated
+warning 38:6: no timing check in `tb.ffs[0]` matches (PERIOD (posedge clk)); it is not annotated
+warning 39:6: no timing check in `tb.ffs[0]` matches (NOCHANGE (posedge clk) d); it is not annotated
