@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 42u
+#define LLG_SLANG_ABI_VERSION 41u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1256,7 +1256,7 @@ typedef struct {
    * Variable and NamedEvent nodes store an
    * LLG_SLANG_VARIABLE_LIFETIME_* value. Conditional/case statements store
    * an LLG_SLANG_UNIQUE_PRIORITY_* qualifier. An element of a primitive
-   * instance array (ABI v42) stores the element count of the whole array in
+   * instance array (ABI v41) stores the element count of the whole array in
    * bits 32-63 and, in bits 0-31, its slice of a connection as wide as the
    * array: 0 is the least significant slice, owned by the right-hand indices
    * (IEEE 1800-2009 28.3.6). Zero for every other primitive instance. */

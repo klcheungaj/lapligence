@@ -2559,7 +2559,7 @@ public:
       result.flags |= LLG_SLANG_SEMANTIC_PRIMITIVE_INSTANCE;
       addDriveStrength(result, symbol.getDriveStrength());
       if (!symbol.arrayPath.empty()) {
-        // An instance array element (ABI v42): which slice of a connection
+        // An instance array element (ABI v41): which slice of a connection
         // as wide as the whole array is its own (IEEE 1800-2009 28.3.6).
         // Slang slices only input connections itself; this exports the same
         // position for the bidirectional terminals it binds whole.

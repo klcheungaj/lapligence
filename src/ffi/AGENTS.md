@@ -99,7 +99,7 @@ remain on the calling thread; do not implement `Send` or `Sync`.
 - ABI v40 adds the `$setuphold`/`$recrem` optional arguments: CONDITION[2] is
   the timestamp_condition, CONDITION[3] the timecheck_condition, LHS[1] the
   delayed_reference and LHS[2] the delayed_data signal (31.9).
-- ABI v42 exports the position of every primitive instance array element: its
+- ABI v41 exports the position of every primitive instance array element: its
   auxiliary holds the array's element count in bits 32-63 and, in bits 0-31,
   its slice of a connection as wide as the array, 0 for the right-hand
   indices (28.3.6; `Db::primitive_array_position`). Slang slices input
