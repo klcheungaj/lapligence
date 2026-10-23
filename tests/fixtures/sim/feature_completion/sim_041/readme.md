@@ -184,14 +184,21 @@ and the noncontext `cell_peek`. `tb` has `u1` (ID 1), `u2` (ID 2) and
 - `ch_byte(-5)`: SV sees `b = -5` whatever the signedness of `char`; `o = -6`,
   result -10.
 - `ch_rec(50)`: SV -> C -> SV 50 levels deep, `ch_down(n) = n + ch_rec(n-1)`:
-  1275.
+  1275. `ch_down` is automatic, so each level has its own `n` (13.4.2
+  L18862-18863: "An automatic function is reentrant, with all the function
+  declarations allocated dynamically for each concurrent function call"); with
+  a static `ch_down` the deeper calls overwrite the shared `n`, and the result
+  would depend on whether `n` is read before the call, which 11.4.2
+  L14499-14501 leaves undefined ("The ordering of assignment operations
+  relative to any other operation within an expression is undefined").
 - `ch_alias`: C passes one address for both outputs of `ch_pair(3)`;
   copy-back runs in declaration order, so `y = 4` is written last (S41-D2).
 - `ch_task(7, out)`: the context import task calls the exported task
   `ch_tick(i)` for i = 1..7, each returning 0 (no disable; 35.9 a) with
   `o = 2i`: 56; `acc` = 1000 + 28 = 1028.
-- `$time` is 5 ns (5000 at the default 1 ps precision) before and after:
-  the chains take no simulation time.
+- `$time` is 5 ns (5000 in the fixture's 1 ps precision, set by its
+  `` `timescale 1ns/1ps `` so the printed time does not depend on a tool's
+  default time unit) before and after: the chains take no simulation time.
 
 ### `disables` (35.9)
 
@@ -233,3 +240,20 @@ consume time: ADV-018) and `neg_reserved_c_name` (C identifier `svGetScope`).
 The frontend rejects `neg_duplicate_c_name` (35.7), `neg_conflicting_export`
 (35.4), `neg_import_and_export` (one C identifier imported and exported) and
 `neg_undeclared_export`.
+
+## Other implementations
+
+The expected lines follow the clause text. Other simulators were seen to
+differ as follows; the fixtures keep llg's lines.
+
+- `chains`, `disables`, `task_from_function`: some simulators return a value
+  other than 0 from an exported task that was not disabled (`c unexpected
+  disable`, `after r=1`), and no 1 with `svIsDisabledState` 0 from one that
+  was (`dt_kill returned <garbage> disabled=0`, `df_kill returned
+  disabled=0`). llg follows 35.9 a) (decisions S41-D5 and S41-D8).
+- `scopes`: some simulators run `u2.cell_visit(4)` in the caller's scope `tb`
+  (decision S41-D1: the context is "the instantiated scope of the import
+  declaration", 35.5.3 L55801-55802) and return 0 from `svPutUserData` with
+  NULL data (decision S41-D4; H.9.3 L72711-72713: "It is illegal to pass in
+  NULL values for either the scope or userData arguments. [...] This function
+  returns -1 for all error cases").

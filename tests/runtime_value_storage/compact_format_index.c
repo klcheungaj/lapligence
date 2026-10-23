@@ -36,20 +36,25 @@ static void exhaustive(void) {
         for (unsigned code = 0; code < (1u << (2u * width)); ++code) {
             g4_t v = llg_gmp_sv4_zero(width, (int8_t)sign); sv4_t old = sv4_zero(width, (int8_t)sign);
             char expected[8] = {0}; uint64_t known = 0; int unknown = 0, has_x = 0;
+            uint32_t xs = 0, zs = 0;
             for (uint32_t bit = 0; bit < width; ++bit) {
                 unsigned state = (code >> (2u * bit)) & 3;
                 llg_sv4_set_state(&old, bit, state); llg_gmp_sv4_set_state(&v, bit, state);
                 expected[width - 1u - bit] = "01xz"[state];
                 if (state == 1) known |= UINT64_C(1) << bit;
                 unknown |= state >= 2; has_x |= state == 2;
+                xs += state == 2; zs += state == 3;
             }
+            // IEEE 1800-2009 21.2.1.4: all x or all z prints lowercase, a
+            // partly unknown value X (any x bit) or Z.
+            char unknown_char = xs == width ? 'x' : zs == width ? 'z' : has_x ? 'X' : 'Z';
             char buf[24]; llg_gmp_sv4_format('b', v, buf, sizeof(buf)); CHECK(!strcmp(buf, expected));
             llg_gmp_sv4_format('h', v, buf, sizeof(buf));
-            if (width) CHECK(buf[0] == (has_x ? 'x' : unknown ? 'z' : "0123456789abcdef"[known]));
+            if (width) CHECK(buf[0] == (unknown ? unknown_char : "0123456789abcdef"[known]));
             int64_t number = (int64_t)known;
             if (sign && width && (known >> (width - 1u))) number -= INT64_C(1) << width;
             snprintf(expected, sizeof(expected), "%" PRId64, number);
-            llg_gmp_sv4_to_dec_string(v, buf, sizeof(buf)); CHECK(!strcmp(buf, unknown ? "x" : expected));
+            llg_gmp_sv4_to_dec_string(v, buf, sizeof(buf)); CHECK(unknown ? buf[0] == unknown_char && !buf[1] : !strcmp(buf, expected));
             CHECK(llg_gmp_sv4_fits_i64(v) == !unknown);
             CHECK(llg_gmp_sv4_to_index(v) == (unknown || number < 0 ? UINT64_MAX : known));
             check_adapters(old, v); format_buffers(old, v, 1); sv4_destroy(&old);

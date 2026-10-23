@@ -142,7 +142,9 @@ indexed part selects, blocking and nonblocking, once with an equal value.
   event."
 - SV 4.7 L3465-3466: "active events can be taken off the Active or Reactive event
   region and processed in any order", so the test compares the lines of one time
-  step as a set.
+  step as a set. Other simulators were seen to update `seen` and `low`, and run
+  their callbacks, before the processes woken by the same write, and to wake
+  the `bus.data[3]` waiter first; llg keeps its own order within the step.
 - SV 10.4.2 L13107: nonblocking assignments "are the last assignments executed in
   a time step".
 

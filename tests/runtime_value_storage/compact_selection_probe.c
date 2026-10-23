@@ -145,8 +145,8 @@ static void streams(g4_t v, sv4_t old) {
                 uint32_t dst = reverse ? v.width - start - take + bit - start : bit;
                 expect_state(r, dst, state_at(v, bit));
             }
-            compare(sv4_stream(old, slice, reverse), r);
-            // Whole blocks make the reordering its own inverse.
+            // Whole blocks make the reordering its own inverse. `compare`
+            // releases `r`, so the round trip reads it first.
             if (!reverse || slice >= v.width || v.width % slice == 0) {
                 g4_t restored = llg_gmp_sv4_stream(r, slice, reverse);
                 for (uint32_t bit = 0; bit < v.width; ++bit)
@@ -155,6 +155,7 @@ static void streams(g4_t v, sv4_t old) {
                 unsigned_old.is_signed = 0;
                 compare(unsigned_old, restored);
             }
+            compare(sv4_stream(old, slice, reverse), r);
         }
     }
 }

@@ -271,6 +271,12 @@ L3465-3466):
 - 7: the same for `ms` with `"11 99", "33"`.
 - 8: final cells `11 99 33 77` in both.
 
+Other simulators were seen to print these lines in another order within a time
+step and to update `tot` while the load is still writing cells, so their
+callback also reports an intermediate `tot` (033) before 044. Both are orders
+4.7 leaves open; llg evaluates the continuous assignment after the load and
+the test compares sets.
+
 ### String expression data (S26-D17)
 
 - `string_expressions.sv` (`.out` hand-derived): a `localparam string` loads

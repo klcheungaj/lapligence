@@ -147,7 +147,8 @@ static void delays(void) {
     CHECK(sv4_real_delay_ticks(0, 1, 0) == 1);
     // In range in local units, past 64 bits once scaled to design ticks.
     CHECK(llg_gmp_sv4_real_delay_ticks(0x1p62, 4, 4) == 1);
-    CHECK(sv4_real_delay_ticks(-1.0, 1, 1000) == 1);
+    CHECK(llg_gmp_sv4_real_delay_ticks(-1.0, 1000, 1000) == 1);
+    CHECK(sv4_real_delay_ticks(-1.0, 1000, 1000) == 1);
 }
 int main(void) {
     small_tables(); conversions(); delays();

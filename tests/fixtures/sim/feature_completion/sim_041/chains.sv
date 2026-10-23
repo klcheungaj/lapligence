@@ -2,6 +2,7 @@
 // and inout copy-back (including C passing one address for two outputs),
 // string, byte and packed formals and results, an exported zero-time task under an imported
 // task, and simulation time that stays still across the chains.
+`timescale 1ns/1ps
 module tb;
     import "DPI-C" context function int ch_loop(input int n);
     import "DPI-C" context function int ch_rec(input int n);
@@ -25,8 +26,11 @@ module tb;
         return i + 1;
     endfunction
 
-    // SV -> C -> SV -> C ... n levels deep.
-    function int ch_down(input int n);
+    // SV -> C -> SV -> C ... n levels deep. Automatic, so each level keeps
+    // its own n: in a static function the inner levels overwrite the shared
+    // n, and whether the sum reads it before or after the call is not
+    // defined (IEEE 1800-2009 11.4.2, 13.4.2).
+    function automatic int ch_down(input int n);
         return n <= 0 ? 0 : n + ch_rec(n - 1);
     endfunction
 

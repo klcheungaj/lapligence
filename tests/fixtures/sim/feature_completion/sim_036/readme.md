@@ -96,3 +96,32 @@ source delays. Line numbers refer to `SystemVerilog-1800-2009.txt`, the
 | `neg_automatic_ref`, `neg_class_property_ref` | A03 | automatic local and class property to `ref`: located frontend error. |
 | `neg_dynamic_array_ref` | A03 | dynamic array element to `ref` (S36-D8): located llg error. |
 | `neg_assert_final` | A03 | `assert final` is post-2009: edition error. |
+
+## Other implementations
+
+The expected lines follow the clause text. Other simulators were seen to
+differ as follows; the fixtures keep llg's lines.
+
+- `native_arguments`: some simulators read real, unpacked-struct, class-handle
+  and unpacked-array arguments when the report matures (`r=2.50`,
+  `pair=30/4`, `box=second/70`, `arr=9 9 9`) and give `ref` formals their
+  issue-time values (`x=1 y=issue`). 16.4 L21223-21226: "Actual argument
+  expressions that are passed by value use the values of the underlying
+  variables at the instant the deferred assertion expression was evaluated.
+  Actual argument expressions that are passed by reference use or assign the
+  current values of the underlying variables in the Reactive region."
+- `disable_flush`: some simulators still report `a1` at 3 after `disable a1`
+  and `a3` at 5 after `disable b2`. 16.4.4 L21359-21364: "Any pending
+  assertion reports for that assertion are cancelled", and a disable of the
+  outermost scope flushes the queue.
+- `assert_control`: some simulators drop the report queued before
+  `$assertoff`. 20.11 L35050-35051: "currently queued reports are not flushed
+  and may still mature".
+- `flush_points`, `function_two_processes`, `subroutine_contexts`: some
+  simulators do not flush pending reports when a process resumes from an
+  event control or `wait`, or when an `always_comb` is re-triggered (decision
+  S36-D2; 16.4.2 L21276-21281).
+- `control_actions`, `fatal_action` and `subroutine_contexts` also differ
+  only in the order of the reports of one time step, which the Reactive
+  region leaves open, and in where the severity tasks print; under `$stop`
+  some simulators enter an interactive prompt.
