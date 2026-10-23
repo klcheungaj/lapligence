@@ -289,6 +289,9 @@ fn render_stmt_scoped(
         IrStmt::ModulePathStamp { .. } => {
             return Err("module path delays require the structured owned emitter".to_owned())
         }
+        IrStmt::SwitchControl { .. } => {
+            return Err("bidirectional switches require the structured owned emitter".to_owned())
+        }
         IrStmt::TimingCheckStep => {
             return Err("timing checks require the structured owned emitter".to_owned())
         }

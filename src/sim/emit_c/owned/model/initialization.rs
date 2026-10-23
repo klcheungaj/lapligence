@@ -368,6 +368,16 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         ));
     }
     net_delay_starts(model, &mut tables, &mut initialize);
+    // Switch networks bind their member nets once every net, alias, path and
+    // net delay is set up, and solve each network once.
+    let network = model.switch_network();
+    if !network.is_empty() {
+        initialize.push_str(&format!(
+            "    llg_switches_start(llg_switch_nodes, {}u, llg_switches, {}u);\n",
+            network.nodes().len(),
+            network.switches().len()
+        ));
+    }
     // Timing check sets take the initialized terminal values as their change
     // reference and start their delayed signals once the nets are set up;
     // reporting is on unless turned off.

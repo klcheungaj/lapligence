@@ -76,6 +76,8 @@ pub use timing::{
     PATH_STYLE_SHOW_CANCELLED, PATH_TRANSITIONS, TIMING_DISABLED, TIMING_EDGE_MASK,
     TIMING_EVENT_BASED, TIMING_REMAIN_ACTIVE,
 };
+mod switches;
+pub use switches::{IrSwitch, IrSwitchNetwork, IrSwitchNode};
 mod sdf;
 pub use sdf::{
     IrSdfAnnotation, IrSdfLoad, IrSdfOp, IrSdfTarget, SDF_INCREMENT, SDF_MIPD_SHIFT, SDF_PERCENT,
@@ -577,6 +579,9 @@ pub struct IrModel {
     /// Simple module paths, one set per module instance that declares any
     /// (IEEE 1800-2009 30.4). Empty for designs without specify paths.
     pub(in crate::sim) module_paths: Vec<IrModulePathSet>,
+    /// Bidirectional pass switches (IEEE 1800-2009 28.8); empty for designs
+    /// without them.
+    pub(in crate::sim) switch_network: IrSwitchNetwork,
     /// Global pulse controls of every module path (30.7.2, 30.7.4).
     pub(in crate::sim) path_pulse: IrPathPulseOptions,
     /// System timing checks, one set per module instance that declares any
@@ -767,6 +772,7 @@ impl IrModel {
             udp_tables: parts.udp_tables,
             udp_states: Vec::new(),
             module_paths: Vec::new(),
+            switch_network: IrSwitchNetwork::default(),
             path_pulse: IrPathPulseOptions::default(),
             timing_checks: Vec::new(),
             timing_check_options: IrTimingCheckOptions::default(),
@@ -827,6 +833,10 @@ impl IrModel {
     /// Module path sets, one per module instance with simple paths.
     pub fn module_paths(&self) -> &[IrModulePathSet] {
         &self.module_paths
+    }
+    /// The design's bidirectional pass switches.
+    pub fn switch_network(&self) -> &IrSwitchNetwork {
+        &self.switch_network
     }
     /// Global pulse controls of the module paths.
     pub fn path_pulse(&self) -> IrPathPulseOptions {

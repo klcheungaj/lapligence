@@ -146,6 +146,21 @@ impl Validator<'_> {
             IrStmt::UdpStep { state, inputs } => {
                 self.validate_udp_step(*state, inputs, formals, path)?
             }
+            IrStmt::SwitchControl { switch, state } => {
+                if !self
+                    .model
+                    .switch_network
+                    .switches
+                    .get(*switch)
+                    .is_some_and(|switch| switch.controlled)
+                {
+                    return self.fail(path, "switch control names no controlled switch");
+                }
+                if state.is_real() || state.width() != 1 {
+                    return self.fail(path, "switch control state must be one packed bit");
+                }
+                self.validate_expr(state, formals, path)?;
+            }
             IrStmt::System(command) => {
                 if let Some(command) = command {
                     command.validate(self.model, self.string_return.get())?;

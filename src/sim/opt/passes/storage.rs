@@ -141,6 +141,8 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         udp_tables: _,
         udp_states: _,
         module_paths,
+        // Switch nodes name net groups, never pruned signals.
+        switch_network: _,
         path_pulse: _,
         timing_checks,
         timing_check_options: _,
@@ -510,6 +512,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
                 collect_expr_reads(arg, model, rw);
             }
         }
+        IrStmt::SwitchControl { state, .. } => collect_expr_reads(state, model, rw),
         IrStmt::MemoryAccess(task) => {
             // A load reads the cells outside its range and stores the root.
             if let Some(lhs) = task.image_target() {

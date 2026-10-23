@@ -591,6 +591,14 @@ pub enum IrStmt {
     ModulePathStamp {
         set: usize,
     },
+    /// Set the conduction of switch `switch` (an index of
+    /// `IrModel::switch_network`'s switches) from the one-bit `state`: 1
+    /// conducts, 0 blocks, x or z is unknown (IEEE 1800-2009 28.8, 4.9.5).
+    /// The lowering inverts a `tranif0` control into `state`.
+    SwitchControl {
+        switch: usize,
+        state: IrExpr,
+    },
     /// Run every timing check set (`IrModel::timing_checks`) whose terminals
     /// changed since its last step: detect the events, record their stamps,
     /// evaluate the checks at the current time, report violations and toggle

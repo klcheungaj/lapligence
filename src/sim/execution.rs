@@ -823,6 +823,9 @@ fn collect_effects(
             }
             // Updates the runtime-owned source stamps of a module path set.
             IrStmt::ModulePathStamp { .. } => effects.push(ExecutionEffect::RuntimeService),
+            // Changes a runtime-owned switch state and, at the end of the
+            // drain, republishes the member nets of its network.
+            IrStmt::SwitchControl { .. } => effects.push(ExecutionEffect::RuntimeService),
             // Runs the changed timing check sets: runtime-owned stamps and
             // reports, plus blocking writes of notifiers and delayed signals.
             IrStmt::TimingCheckStep => {
@@ -1127,6 +1130,9 @@ fn collect_statement_expression_effects(
             for arg in args {
                 collect_expression_effects(ir, arg, effects, visited_calls);
             }
+        }
+        IrStmt::SwitchControl { state, .. } => {
+            collect_expression_effects(ir, state, effects, visited_calls);
         }
         IrStmt::RandomSeed { seed } => {
             collect_expression_effects(ir, seed, effects, visited_calls);

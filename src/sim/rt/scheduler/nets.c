@@ -1,6 +1,13 @@
 
 // ── Collapsed inout nets ──────────────────────────────────────────────────────
 
+// Bidirectional switch networks (scheduler/switches.c).
+static void llg_switch_net_changed(llg_net_t* net);
+static void switch_overlay_value(const llg_net_t* net, sv4_t* value, uint32_t low,
+                                 uint32_t width);
+static void switch_overlay_strength(llg_net_t* net, uint64_t* out);
+static int switches_flush(void);
+
 static uint32_t llg_net_index_priority(int index) {
     uint32_t value = (uint32_t)index + UINT32_C(0x9e3779b9);
     value ^= value >> 16;
@@ -193,10 +200,12 @@ static sv4_t llg_net_compute_range(llg_net_t* net, uint32_t low,
                                    uint32_t width) {
     int count = 0;
     llg_net_index_collect(net, net->index_root, low, low + width - 1u, &count);
-    return sv4_resolve_strengths_range(
+    sv4_t value = sv4_resolve_strengths_range(
         (const sv4_t* const*)net->drivers, net->strength0, net->strength1,
         net->overlap_scratch, count, net->width, low, width,
         net->is_signed, net->resolution);
+    if (net->switch_net) switch_overlay_value(net, &value, low, width);
+    return value;
 }
 
 // ── Start X of undelayed driven nets (T0-D3) ─────────────────────────────────
@@ -270,6 +279,8 @@ static sv4_t llg_net_compute(llg_net_t* net) {
               (const sv4_t* const*)net->drivers, net->strength0, net->strength1,
               net->n_drivers, net->width, net->is_signed, net->resolution);
     if (net->start_pending) llg_net_pending_overlay(net, &value);
+    // A switch network's own solve already counts pending bits as StX.
+    if (net->switch_net) switch_overlay_value(net, &value, 0, net->width);
     return value;
 }
 
@@ -420,6 +431,7 @@ static sv4_t llg_net_strength_levels(llg_net_t* net) {
             out[net_bit / 8u] |= (uint64_t)code << ((net_bit % 8u) * 8u);
         }
     }
+    if (net->switch_net) switch_overlay_strength(net, out);
     sv4_t view = sv4_from_limbs(out, NULL, NULL, width * 8u, 0);
     free(out);
     return view;
@@ -611,11 +623,20 @@ static void llg_net_publish_computed_range(llg_net_t* net, uint32_t low, uint32_
 }
 
 static void llg_net_commit_whole(llg_net_t* net) {
+    // A switch network member resolves through its network.
+    if (net->switch_net) {
+        llg_switch_net_changed(net);
+        return;
+    }
     if (llg_net_defer(net, 1, 0, net->width ? net->width - 1u : 0)) return;
     llg_net_resolve(net);
 }
 
 static void llg_net_commit_range(llg_net_t* net, uint32_t low, uint32_t high) {
+    if (net->switch_net) {
+        llg_switch_net_changed(net);
+        return;
+    }
     if (llg_net_defer(net, 0, low, high)) return;
     llg_net_publish_computed_range(net, low, high);
 }
@@ -624,7 +645,7 @@ static void llg_net_commit_range(llg_net_t* net, uint32_t low, uint32_t high) {
 // into their region queues; writes made by callbacks meanwhile publish at
 // once.
 static int llg_net_flush_deferred(void) {
-    if (!net_deferred_count) return 0;
+    if (!net_deferred_count) return switches_flush();
     int outer = net_defer_active;
     net_defer_active = 0;
     for (size_t i = 0; i < net_deferred_count; i++) {
@@ -639,6 +660,7 @@ static int llg_net_flush_deferred(void) {
     }
     net_deferred_count = 0;
     net_defer_active = outer;
+    switches_flush();
     return 1;
 }
 
@@ -794,6 +816,10 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
     if (!old_active && !new_active) return;
     if (old_active && new_active &&
         (old_high + 1u < new_low || new_high + 1u < old_low)) {
+        if (net->switch_net) {
+            llg_switch_net_changed(net);
+            return;
+        }
         if (llg_net_defer(net, 0, old_low < new_low ? old_low : new_low,
                           old_high > new_high ? old_high : new_high))
             return;

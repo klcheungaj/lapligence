@@ -126,6 +126,7 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
             include_str!("scheduler/stochastic.c"),
             include_str!("scheduler/reference_writes.c"),
             include_str!("scheduler/nets.c"),
+            include_str!("scheduler/switches.c"),
             include_str!("scheduler/timing_checks.c"),
             include_str!("scheduler/sdf.c"),
             include_str!("scheduler/nba_commit.c"),

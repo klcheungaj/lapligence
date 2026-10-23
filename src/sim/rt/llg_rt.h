@@ -624,6 +624,10 @@ struct llg_net {
      * its start X because no driver covering it has written yet. NULL once
      * every such bit is written, and for every other net. */
     uint64_t* start_pending;
+    /* The bits of this net that are nodes of a bidirectional switch network
+     * (scheduler/switches.c), bound by llg_switches_start; NULL for every
+     * other net, so generated initializers leave it out. */
+    struct llg_switch_net* switch_net;
 };
 
 /* One contiguous run: view bits [signal_bit, signal_bit + bit_count) map to
@@ -681,6 +685,39 @@ void llg_net_alias_bind(llg_net_alias_t* alias);
 void llg_net_alias_clear(llg_net_t* net); /* release a model net's alias list */
 sv4_t llg_net_alias_read(llg_net_alias_t* alias);
 void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value);
+
+// ── Bidirectional pass switches (IEEE 1800-2009 28.8, 28.13-28.14, 4.9.5) ────
+//
+// A node is one bit of one net; a switch joins two nodes. The generated
+// tables list the nodes of each connected switch network contiguously and
+// stay owned by the model; llg_switches_start binds them until
+// llg_rt_cleanup. A tran or rtran is always on; a tranif's state is set by
+// llg_switch_control. Every member net then resolves through its network:
+// its member bits take the network's value and strength.
+typedef struct {
+    llg_net_t* net;
+    uint32_t bit;
+} llg_switch_node_t;
+
+enum {
+    // rtran, rtranif0, rtranif1: Table 28-8 strength reduction (28.14).
+    LLG_SWITCH_RESISTIVE = 1,
+    // tranif0, tranif1, rtranif0, rtranif1: the state follows a control and
+    // is unknown until the first llg_switch_control call.
+    LLG_SWITCH_CONTROLLED = 2,
+};
+
+typedef struct {
+    uint32_t a;
+    uint32_t b;
+    uint8_t flags;
+} llg_switch_t;
+
+void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
+                        const llg_switch_t* switches, uint32_t n_switches);
+// `state` is the switch's conduction: 1 on, 0 off, x or z unknown (the
+// generated expression already inverts a tranif0 control).
+void llg_switch_control(uint32_t index, sv4_t state);
 
 // The runtime owns each inertial driver and its pending event. The caller's
 // initially NULL handle, target and net must persist until cleanup, which

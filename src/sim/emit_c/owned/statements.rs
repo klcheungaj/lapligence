@@ -343,6 +343,11 @@ impl Frame<'_, '_> {
                 self.line(format!("llg_module_path_stamp(&llg_path_set_{set});"))
             }
             IrStmt::TimingCheckStep => self.line("llg_timing_checks_run();"),
+            IrStmt::SwitchControl { switch, state } => {
+                let state = self.expression(state)?;
+                self.line(format!("llg_switch_control({switch}u, {});", state.code));
+                self.discard(state);
+            }
             IrStmt::Force {
                 lhs,
                 eval,

@@ -5,6 +5,7 @@ static void llg_net_alias_refresh_all(llg_net_t* net);
 static void llg_net_cancel_propagation(llg_net_t* net);
 static void llg_net_propagation_sync(llg_net_t* net);
 static void llg_net_strength_publish(llg_net_t* net);
+static void llg_switch_net_changed(llg_net_t* net);
 
 // Grow one live-binding table to hold at least `needed` entries. The grown copy
 // is completed before it replaces the old table, so an allocation failure
@@ -226,7 +227,11 @@ static void force_entry_targets(const llg_force_entry_t* entry) {
         int seen = 0;
         for (int j = 0; j < i; j++)
             if (entry->parts[j].target == target) seen = 1;
-        if (!seen) force_recompute_target(target, entry->parts[i].net);
+        if (seen) continue;
+        llg_net_t* net = force_net_for_target(target, entry->parts[i].net);
+        force_recompute_target(target, net);
+        // A forced switch network node is a fixed source of its network.
+        if (net && net->switch_net) llg_switch_net_changed(net);
     }
 }
 
@@ -333,6 +338,7 @@ void llg_release_parts(const llg_force_part_t* parts, int n_parts,
             if (parts[j].target == target) seen = 1;
         if (seen) continue;
         force_recompute_target(target, nets[i]);
+        if (nets[i] && nets[i]->switch_net) llg_switch_net_changed(nets[i]);
     }
     free(nets);
 }

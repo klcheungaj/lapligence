@@ -227,6 +227,7 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
         ));
     }
     render_module_paths(model, out);
+    render_switch_network(model, out);
     render_timing_checks(model, out);
     render_sdf_annotations(model, out);
     // Named events use a stable waiter-table object plus an assignable handle.
@@ -315,6 +316,45 @@ fn path_source_storage(model: &IrModel, index: usize) -> String {
     } else {
         format!("&llg_net_alias_{index}.visible")
     }
+}
+
+/// Bidirectional switch tables (`llg_switch_node_t`, `llg_switch_t`), after
+/// every net group they name; nothing for a design without switches. The
+/// nodes of one connected network are adjacent.
+fn render_switch_network(model: &IrModel, out: &mut String) {
+    let network = model.switch_network();
+    if network.is_empty() {
+        return;
+    }
+    out.push_str("static const llg_switch_node_t llg_switch_nodes[] = {\n");
+    for node in network.nodes() {
+        out.push_str(&format!(
+            "    {{ &{}, {}u }},\n",
+            model.net_group(node.group()).c_name,
+            node.bit()
+        ));
+    }
+    out.push_str("};\nstatic const llg_switch_t llg_switches[] = {\n");
+    for switch in network.switches() {
+        let mut flags = Vec::new();
+        if switch.resistive() {
+            flags.push("LLG_SWITCH_RESISTIVE");
+        }
+        if switch.controlled() {
+            flags.push("LLG_SWITCH_CONTROLLED");
+        }
+        let flags = if flags.is_empty() {
+            "0".to_owned()
+        } else {
+            flags.join(" | ")
+        };
+        out.push_str(&format!(
+            "    {{ {}u, {}u, {flags} }},\n",
+            switch.a(),
+            switch.b()
+        ));
+    }
+    out.push_str("};\n");
 }
 
 /// Module path tables: one `llg_module_path_set_t` per instance with paths,

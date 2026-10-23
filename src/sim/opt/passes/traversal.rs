@@ -426,6 +426,7 @@ fn walk_stmt_mut(s: &mut IrStmt, f: &mut impl FnMut(&mut IrExpr)) {
                 walk_expr_mut(arg, f);
             }
         }
+        IrStmt::SwitchControl { state, .. } => walk_expr_mut(state, f),
         IrStmt::MemoryAccess(task) => {
             if let Some(lhs) = task.image_target_mut() {
                 walk_lhs_mut(lhs, f);
