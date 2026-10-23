@@ -72,6 +72,22 @@ impl Frame<'_, '_> {
     }
 
     pub(super) fn constant(&mut self, constant: &IrConst, borrow: bool) -> Value {
+        if let (Some(pool), Some((period, count))) =
+            (self.ctx.constants, periodic_constant(constant))
+        {
+            // One period and a startup-time replication instead of a limb
+            // table spelling every repetition. The period is interned first,
+            // so it is initialized before the constant that copies it.
+            let period_width = period.width;
+            let base = pool.intern(emit_const(&period), period_width, false);
+            let code = pool.intern(
+                format!("sv4_repeat({base}, {count}ULL)"),
+                constant.width,
+                false,
+            );
+            let value = Self::borrow(code, constant.width, false);
+            return if borrow { value } else { self.own(value) };
+        }
         self.constant_value(
             emit_const(constant),
             constant.width,

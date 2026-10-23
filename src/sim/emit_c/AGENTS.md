@@ -192,7 +192,10 @@ borrow its immutable owners or clone when a retained result is required. Initial
 constants before model defaults/initializers and destroy them after runtime queues
 and model storage at close. One-limb literals use the initializer directly,
 keeping them cheap with inline small values and avoiding extra startup owners.
-Registration follows deterministic typed emission, never generated
+An unsigned constant of at least `PERIODIC_CONSTANT_MIN_BITS` (4096) bits that
+repeats its shortest exact period at least four times (such as a dense array's
+default value) registers that period and a startup `sv4_repeat` of it, so its
+table does not grow with the element count. Registration follows deterministic typed emission, never generated
 C parsing or corpus-specific rules. Ending a local scope drops its lexical cell
 reference; pending NBA/clocking records retain the descriptor until commit/discard.
 This protects identity, not shared/COW packed values. Preserve procedure-root

@@ -7,10 +7,12 @@ use llg::core::{compile, db::Db};
 use llg::sim::{self, opt::OptConfig};
 
 const SUITE: &str = "dense_cell_runs";
-/// Generated C budget for the 4096-element fixture. Per-element emission
-/// produced 12 MB for one whole read of a 4096-record array; the range
-/// calls keep the model near 100 KB, most of it constant default tables.
-const MODEL_C_CAP_BYTES: usize = 200 * 1024;
+/// Generated C budget for the 4096-element fixture, about twice its size.
+/// Per-element emission produced 42 MB for this fixture (12 MB for one whole
+/// read of a 4096-record array) and the formal's default value as a limb
+/// table another 60 KB; with range calls and a periodic default the model
+/// is about 31 KB.
+const MODEL_C_CAP_BYTES: usize = 64 * 1024;
 
 #[test]
 fn whole_values_keep_element_semantics() {
