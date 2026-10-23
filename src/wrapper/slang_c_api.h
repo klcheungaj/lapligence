@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 38u
+#define LLG_SLANG_ABI_VERSION 40u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -462,15 +462,16 @@ enum {
  *   Auxiliary: LLG_SLANG_SPECIFY_PATH_* bits and fields.
  * PULSE_STYLE: a pulsestyle/showcancelled declaration; OPERAND[i] is
  *   terminal i and the auxiliary is an LLG_SLANG_SPECIFY_PULSE_* code.
- * TIMING_CHECK: a system timing check (ABI v38). Auxiliary bits 0-7 hold an
+ * TIMING_CHECK: a system timing check (ABI v38, v40). Auxiliary bits 0-7 hold an
  *   LLG_SLANG_SPECIFY_CHECK_* code; LLG_SLANG_SPECIFY_CHECK_EVENT_SHIFT(k)
  *   places event argument k's LLG_SLANG_SPECIFY_EDGE_* transition mask (0:
  *   no edge control, any change); bits 32-47 mark the empty argument
  *   positions and bits 48-55 count the actual arguments. OPERAND[k] is the
  *   terminal of event argument k (signature order), CONDITION[k] its `&&&`
  *   condition, DELAY[i] limit argument i (no edge for an empty one) and
- *   LHS[0] the notifier. The condition and delayed-signal arguments of
- *   $setuphold and $recrem are not exported. */
+ *   LHS[0] the notifier. For $setuphold and $recrem (ABI v40), CONDITION[2]
+ *   is the timestamp_condition, CONDITION[3] the timecheck_condition, LHS[1]
+ *   the delayed_reference and LHS[2] the delayed_data signal. */
 enum {
   LLG_SLANG_SPECIFY_BLOCK = 1,
   LLG_SLANG_SPECIFY_PATH = 2,

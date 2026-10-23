@@ -176,6 +176,13 @@ pub struct TimingCheck {
     /// `None` for an empty position.
     pub limits: Vec<Option<NodeId>>,
     pub notifier: Option<NodeId>,
+    /// `$setuphold`/`$recrem` timestamp_condition and timecheck_condition
+    /// (31.9.2); `None` when absent or empty.
+    pub stamp_condition: Option<NodeId>,
+    pub check_condition: Option<NodeId>,
+    /// `$setuphold`/`$recrem` delayed_reference and delayed_data signals
+    /// (31.9.1), the declared variable or net expressions.
+    pub delayed: [Option<NodeId>; 2],
     /// Actual arguments in the source, empty positions included.
     pub argument_count: u8,
     /// Bit `i`: argument position `i` is empty (`$width(c, l, , n)`).
@@ -302,7 +309,7 @@ fn timing_check_kind(code: u64) -> TimingCheckKind {
         .unwrap_or(Unknown)
 }
 
-/// The arguments of one TIMING_CHECK node (ABI v38 fields; the edge roles
+/// The arguments of one TIMING_CHECK node (ABI v38 and v40 fields; the edge roles
 /// are documented with `LLG_SLANG_SPECIFY_TIMING_CHECK`).
 fn timing_check_from_slang(
     ids: &SemanticIds,
@@ -345,7 +352,13 @@ fn timing_check_from_slang(
         kind: timing_check_kind(auxiliary & SPECIFY_CHECK_KIND_MASK),
         events,
         limits,
-        notifier: edge_target(ids, edges, SemanticEdgeRole::Lhs)?,
+        notifier: edge_target_at(ids, edges, SemanticEdgeRole::Lhs, 0)?,
+        stamp_condition: edge_target_at(ids, edges, SemanticEdgeRole::Condition, 2)?,
+        check_condition: edge_target_at(ids, edges, SemanticEdgeRole::Condition, 3)?,
+        delayed: [
+            edge_target_at(ids, edges, SemanticEdgeRole::Lhs, 1)?,
+            edge_target_at(ids, edges, SemanticEdgeRole::Lhs, 2)?,
+        ],
         argument_count: ((auxiliary >> SPECIFY_CHECK_COUNT_SHIFT) & 0xff) as u8,
         empty_arguments: ((auxiliary >> SPECIFY_CHECK_EMPTY_SHIFT) & 0xffff) as u16,
     })
@@ -816,6 +829,58 @@ endmodule
         assert_eq!(checks[3].kind, TimingCheckKind::Hold);
         // The check node is the stable source identity.
         assert_eq!(db.node(setup.node).line, 5);
+    }
+
+    #[test]
+    fn combined_checks_keep_conditions_and_delayed_signals() {
+        let db = compile(
+            "module c(input d, input clk, input en, input ts);
+  reg n;
+  wire dd, dclk;
+  specify
+    $setuphold(posedge clk, d, -2, 5, n, ts, en, dclk, dd);
+    $recrem(posedge clk, d, 3, 4, , , en);
+    $setuphold(posedge clk, d, 1, 2);
+  endspecify
+endmodule
+module tb;
+  reg d, clk, en, ts;
+  c u(.d(d), .clk(clk), .en(en), .ts(ts));
+endmodule
+",
+        );
+        let checks = db.timing_checks();
+        assert_eq!(checks.len(), 3);
+        let full = &checks[0];
+        assert_eq!(full.kind, TimingCheckKind::SetupHold);
+        assert_eq!(full.limits.len(), 2);
+        assert_eq!(target_name(&db, full.notifier.expect("notifier")), "n");
+        assert_eq!(
+            target_name(&db, full.stamp_condition.expect("timestamp_condition")),
+            "ts"
+        );
+        assert_eq!(
+            target_name(&db, full.check_condition.expect("timecheck_condition")),
+            "en"
+        );
+        assert_eq!(
+            target_name(&db, full.delayed[0].expect("delayed_reference")),
+            "dclk"
+        );
+        assert_eq!(
+            target_name(&db, full.delayed[1].expect("delayed_data")),
+            "dd"
+        );
+        let empty = &checks[1];
+        assert_eq!(empty.kind, TimingCheckKind::RecRem);
+        assert!(empty.notifier.is_none() && empty.stamp_condition.is_none());
+        assert_eq!(
+            target_name(&db, empty.check_condition.expect("timecheck")),
+            "en"
+        );
+        assert_eq!(empty.delayed, [None, None]);
+        assert_eq!(checks[2].delayed, [None, None]);
+        assert!(checks[2].check_condition.is_none());
     }
 
     #[test]

@@ -1627,14 +1627,15 @@ uint64_t specifyTimingCheckCode(SystemTimingCheckKind kind) {
 
 // The formal argument kinds of each timing check, in signature order (IEEE
 // 1800-2009 Syntax 31-3..31-14, the frontend's own table): events, limits,
-// the notifier, and the $setuphold/$recrem conditions and delayed signals.
-enum class TimingArg : uint8_t { Event, Limit, Notifier, Other };
+// the notifier, and the $setuphold/$recrem timestamp/timecheck conditions and
+// delayed reference/data signals.
+enum class TimingArg : uint8_t { Event, Limit, Notifier, Condition, Delayed };
 
 std::span<const TimingArg> timingCheckFormals(SystemTimingCheckKind kind) {
   using enum TimingArg;
   static constexpr TimingArg pair[] = {Event, Event, Limit, Notifier};
   static constexpr TimingArg combined[] = {Event, Event, Limit, Limit, Notifier,
-                                           Other, Other, Other, Other};
+                                           Condition, Condition, Delayed, Delayed};
   static constexpr TimingArg timeSkew[] = {Event, Event, Limit, Notifier, Limit, Limit};
   static constexpr TimingArg fullSkew[] = {Event, Event, Limit, Limit, Notifier,
                                            Limit, Limit};
@@ -3766,12 +3767,20 @@ private:
   }
 
   // Timing check arguments (IEEE 1800-2009 31): each event terminal and its
-  // condition, each limit and the notifier, under the check node. Slang's
-  // visitor does not descend into them either.
+  // condition, each limit, the notifier and the $setuphold/$recrem
+  // timestamp/timecheck conditions and delayed signals, under the check
+  // node. Slang's visitor does not descend into them either.
   void captureTimingCheck(uint64_t id, const SystemTimingCheckSymbol& check) {
     const auto formals = timingCheckFormals(check.timingCheckKind);
     const auto args = check.getArguments();
-    uint32_t event = 0, limit = 0;
+    // The frontend binds the notifier and the delayed signals as output
+    // arguments: assignments whose left side is the variable or net.
+    auto target = [](const Expression& expression) -> const Expression& {
+      if (expression.kind == ExpressionKind::Assignment)
+        return expression.as<AssignmentExpression>().left();
+      return expression;
+    };
+    uint32_t event = 0, limit = 0, condition = 2, delayed = 1;
     for (size_t index = 0; index < args.size() && index < formals.size(); index++) {
       const SystemTimingCheckSymbol::Arg& arg = args[index];
       switch (formals[index]) {
@@ -3788,16 +3797,19 @@ private:
           limit++;
           break;
         case TimingArg::Notifier:
-          // The frontend binds the notifier as an output argument: an
-          // assignment whose left side is the variable.
-          if (arg.expr) {
-            const Expression* target = arg.expr;
-            if (target->kind == ExpressionKind::Assignment)
-              target = &target->as<AssignmentExpression>().left();
-            specifyOperand(id, *target, LLG_SLANG_EDGE_LHS, 0);
-          }
+          if (arg.expr)
+            specifyOperand(id, target(*arg.expr), LLG_SLANG_EDGE_LHS, 0);
           break;
-        case TimingArg::Other: break;
+        case TimingArg::Condition:
+          if (arg.expr)
+            specifyOperand(id, *arg.expr, LLG_SLANG_EDGE_CONDITION, condition);
+          condition++;
+          break;
+        case TimingArg::Delayed:
+          if (arg.expr)
+            specifyOperand(id, target(*arg.expr), LLG_SLANG_EDGE_LHS, delayed);
+          delayed++;
+          break;
       }
     }
   }

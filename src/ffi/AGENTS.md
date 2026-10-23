@@ -95,8 +95,10 @@ remain on the calling thread; do not implement `Send` or `Sync`.
   positions and bits 48-55 the actual argument count. OPERAND[k] and
   CONDITION[k] are event k's terminal and `&&&` condition, DELAY[i] limit
   argument i (empty ones have no edge) and LHS[0] the notifier
-  (`Db::timing_checks`, 31.3-31.7). `$setuphold`/`$recrem` conditions and
-  delayed signals are not exported yet (ADV-010).
+  (`Db::timing_checks`, 31.3-31.7).
+- ABI v40 adds the `$setuphold`/`$recrem` optional arguments: CONDITION[2] is
+  the timestamp_condition, CONDITION[3] the timecheck_condition, LHS[1] the
+  delayed_reference and LHS[2] the delayed_data signal (31.9).
 - The source library-map flag requires a compilation-unit flag and parses the
   original admitted buffer with Slang's map preprocessor and grammar.
 - Library include directories are ordered name/path pairs in the request;
