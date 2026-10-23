@@ -83,6 +83,13 @@ Array- and record-conditional helpers borrow inputs and return independent
 owners with leaf defaults. Strength resolution retains both X endpoints, strict
 opposite-endpoint dominance, neutral Z and wired-AND/OR tie rules; pull/supply
 biases are sources. A highz endpoint makes an X contribution one-sided (L/H).
+A model describes its nets as data: `llg_net_layout` configures a zeroed
+`llg_net_t` from an immutable `llg_net_shape_t` (width, sign, resolution,
+fill, delays, driver count, strength, segment and driven-run tables) and takes
+its arrays from the front of exact-size `llg_net_pools_t` pools, advancing
+them; the model calls it once per net, in net order, at every start before
+any other net service, and runtime state (aliases, strength view, path
+binding, start state) is left as it is.
 `llg_net_t.strength` (scheduler `nets.c`) is an optional per-bit strength view
 for `%v`: the hull of every level choice, published after the value (with a
 pending net delay, at the delayed commit), forced bits at strong; nets without
@@ -320,8 +327,14 @@ the union of old and new ranges against overlapping drivers. Keep full-net waite
 identity and notification behavior. Pending delayed drivers start X, not driverless
 Z. Fixed-array delayed sites retain per-element identity.
 
-Module paths (`llg_module_path_set_t`, one per instance with paths)
-borrow the model's source storage and own, between `llg_module_paths_start`
+Module paths (`llg_module_path_set_t`, one per instance with paths) are laid
+out by `llg_module_paths_layout` from an immutable per-module
+`llg_module_path_template_t` (rows, destination paths, styles, limits,
+condition evaluator) plus the instance's source and destination references,
+copying the template rows and limits into the model's writable pools in set
+order (SDF annotation then edits those copies). The set's `condition_context`
+is passed to its condition evaluator, so one evaluator serves every instance.
+They borrow the model's source storage and own, between `llg_module_paths_start`
 and `llg_rt_cleanup`, a last value per source and a last-change time per
 source bit. A bound destination net (`llg_net_t.path_dest`, NULL otherwise, so
 undelayed nets keep their single flag test) always has `propagation_enabled`
@@ -348,7 +361,11 @@ committed values (`llg_net_propagation_sync`), so the next delayed
 transition starts from the published value.
 
 Timing check sets (`scheduler/timing_checks.c`, `llg_timing_check_set_t`, one
-per instance with checks) borrow the model's terminal storage and own, between
+per instance with checks) are laid out the same way by
+`llg_timing_checks_layout` from an `llg_timing_template_t` (terminals, checks,
+delayed-signal lines, condition evaluator) plus the instance's terminal,
+notifier and line-net references and `condition_context`. They borrow the
+model's terminal storage and own, between
 `llg_timing_checks_start` and `llg_rt_cleanup`, a 0/1/x state per terminal
 bit, per-step transition masks, condition values and notifier flags; each
 check row keeps its timestamps (0 is none: time-0 transitions never count,
@@ -916,7 +933,9 @@ Only the simulation thread prints waveform reports, each in one stdio call: the
 writer stores its single error report and `llg_wave_slot_end`/close print it
 (S47-D11). Every other runtime diagnostic is also one stdio call: multi-part
 messages (severity tasks, assertion failures, `$finish`/`$stop`, memory-file
-diagnostics, the coroutine backtrace) are assembled in an `llg_report_t`
+diagnostics, the coroutine backtrace, whose frame without a descriptor name, the
+shared root of a body class, is named after the running process) are
+assembled in an `llg_report_t`
 (`llg_rt_prelude.c`; inline buffer, heap growth, truncation instead of abort)
 and written with one `fwrite`. Error paths only; `$display` output is untouched.
 Separate hierarchy components with ASCII 0x1f and reversibly encode punctuation to

@@ -6,7 +6,9 @@
 //! quadruple time for doubled instances. This guard generates the same
 //! netlist shape at two sizes and bounds the time ratio, and requires the
 //! cells' process bodies to stay shared, so the C does not grow with
-//! instances x body.
+//! instances x body. The C added per cell is bounded too: per-instance
+//! netlist data (nets, path and timing check sets, process records and
+//! spawns) is emitted as compact table rows, not as initializer code.
 
 use crate::sim_harness;
 
@@ -22,6 +24,10 @@ const LARGE_CELLS: usize = 4 * SMALL_CELLS;
 /// loaded hosts; each size takes the fastest of `REPETITIONS` runs.
 const MAX_TIME_RATIO: f64 = 8.0;
 const REPETITIONS: usize = 2;
+/// `model.c` bytes added per cell pair (an inverter, a UDP flop, their nets,
+/// path sets, links and gates): 1409 measured, 13468 when each instance
+/// emitted its own initializer code and descriptors.
+const MAX_C_BYTES_PER_CELL: usize = 2000;
 
 const CELLS: &str = r#"`timescale 1ns/1ps
 primitive udp_dff (q, d, clk);
@@ -87,8 +93,8 @@ fn database(cells: usize) -> Db {
     .expect("netlist database")
 }
 
-/// One generation's wall time and its coroutine body count.
-fn generate(db: &Db) -> (Duration, usize) {
+/// One generation's wall time, coroutine body count and `model.c` size.
+fn generate(db: &Db) -> (Duration, usize, usize) {
     let started = Instant::now();
     let model = sim::codegen::generate_from_db_with_opts(db, &OptConfig::default())
         .expect("netlist generation");
@@ -96,6 +102,7 @@ fn generate(db: &Db) -> (Duration, usize) {
     (
         elapsed,
         model.model_c.matches("LLG_CO_DISPATCH_BEGIN").count(),
+        model.model_c.len(),
     )
 }
 
@@ -106,14 +113,17 @@ fn netlist_generation_grows_linearly_with_instances() {
     let mut small_time = Duration::MAX;
     let mut large_time = Duration::MAX;
     let mut bodies = (0, 0);
+    let mut bytes = (0, 0);
     // Alternate the sizes so host load affects both alike.
     for _ in 0..REPETITIONS {
-        let (time, count) = generate(&small);
+        let (time, count, size) = generate(&small);
         small_time = small_time.min(time);
         bodies.0 = count;
-        let (time, count) = generate(&large);
+        bytes.0 = size;
+        let (time, count, size) = generate(&large);
         large_time = large_time.min(time);
         bodies.1 = count;
+        bytes.1 = size;
     }
     let ratio = large_time.as_secs_f64() / small_time.as_secs_f64();
     assert!(
@@ -123,5 +133,13 @@ fn netlist_generation_grows_linearly_with_instances() {
     assert_eq!(
         bodies.0, bodies.1,
         "coroutine bodies must stay shared across instances"
+    );
+    // Deterministic: the generated text does not depend on the host.
+    let per_cell = (bytes.1 - bytes.0) / (LARGE_CELLS - SMALL_CELLS);
+    assert!(
+        per_cell <= MAX_C_BYTES_PER_CELL,
+        "model.c grows by {per_cell} bytes per cell ({} -> {} bytes), above {MAX_C_BYTES_PER_CELL}",
+        bytes.0,
+        bytes.1
     );
 }

@@ -10,12 +10,12 @@ use std::collections::BTreeMap;
 type ProcessBody = (
     String,
     Option<super::super::frame_layout::FrameLayout>,
-    Vec<super::net_batches::NetBatch>,
+    super::net_batches::ProcessTables,
 );
 type CoroutineProcessBody = (
     String,
     super::super::frame_layout::FrameLayout,
-    Vec<super::net_batches::NetBatch>,
+    super::net_batches::ProcessTables,
 );
 
 mod callbacks;

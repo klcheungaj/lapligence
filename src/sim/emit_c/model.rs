@@ -203,7 +203,7 @@ struct CoroutineArtifact {
     owner: CoroutineId,
     root: bool,
     shared_entry: Option<String>,
-    net_batches: Vec<super::owned::net_batches::NetBatch>,
+    net_batches: super::owned::net_batches::ProcessTables,
     /// Resume points of a recursive subprogram's coroutine, numbered during
     /// emission; other coroutines take their sites from the analysis.
     recursive_sites: Option<usize>,
@@ -267,7 +267,7 @@ fn render_coroutine_functions(
                 owner: CoroutineId::Function(index),
                 root: false,
                 shared_entry: None,
-                net_batches: Vec::new(),
+                net_batches: Default::default(),
                 recursive_sites: None,
             },
         );
@@ -316,7 +316,7 @@ fn render_recursive_functions(
                 owner: CoroutineId::Function(index),
                 root: false,
                 shared_entry: None,
-                net_batches: Vec::new(),
+                net_batches: Default::default(),
                 recursive_sites: Some(sites),
             },
         );
@@ -488,7 +488,7 @@ fn render_coroutine_branches(
                     owner,
                     root: true,
                     shared_entry: None,
-                    net_batches: Vec::new(),
+                    net_batches: Default::default(),
                     recursive_sites: None,
                 },
             );
@@ -521,7 +521,7 @@ fn render_coroutine_branches(
                     owner,
                     root: true,
                     shared_entry: None,
-                    net_batches: Vec::new(),
+                    net_batches: Default::default(),
                     recursive_sites: None,
                 },
             );
@@ -1009,6 +1009,7 @@ fn render_model(
         threshold,
         sharing::AdditionalOperands {
             net_tables: &net_tables.operands,
+            site_statics: &net_tables.site_statics,
             constants: &constants,
             evaluators: &mut evaluators,
         },

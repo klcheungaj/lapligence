@@ -30,26 +30,24 @@ impl Frame<'_, '_> {
             target.binding.two_state,
             false,
         );
-        let driver = self.name("inertial");
         // One handle per source site AND array element. Selecting a new element
         // must not cancel a pending update to the previously selected element.
         let handle = if let IrLhs::ArrayElem { arr, .. } = lhs {
             let array = self.ctx.model.array(*arr);
             if array.sparse() {
-                self.line(format!("static const char {driver} = 0;"));
+                let driver = self.site_static("const char", "inertial", None);
                 format!(
                     "llg_fixed_array_inertial({}, &{driver})",
                     target.binding.address
                 )
             } else {
-                self.line(format!(
-                    "static llg_inertial_t* {driver}[{}] = {{0}};",
-                    array.total
-                ));
-                format!("&{driver}[{} - {}]", target.binding.address, array.c_name)
+                let total = array.total;
+                let c_name = array.c_name.clone();
+                let driver = self.site_static("llg_inertial_t*", "inertial", Some(total));
+                format!("&{driver}[{} - {c_name}]", target.binding.address)
             }
         } else {
-            self.line(format!("static llg_inertial_t* {driver} = NULL;"));
+            let driver = self.site_static("llg_inertial_t*", "inertial", None);
             format!("&{driver}")
         };
         let delays = match delay {

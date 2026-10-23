@@ -220,7 +220,7 @@ pub(super) struct Frame<'a, 'm> {
     frame_upper_bounds: BTreeMap<usize, usize>,
     coroutine_functions: BTreeSet<usize>,
     cached_fields: cached_fields::CachedFields,
-    net_batches: Vec<net_batches::NetBatch>,
+    net_batches: net_batches::ProcessTables,
     /// Process C name that owns this frame's file-scope batch tables.
     batch_owner: Option<String>,
     cell_eligibility: frame_cells::CellEligibility,
@@ -439,7 +439,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             frame_upper_bounds: BTreeMap::new(),
             coroutine_functions: BTreeSet::new(),
             cached_fields: cached_fields::CachedFields::default(),
-            net_batches: Vec::new(),
+            net_batches: net_batches::ProcessTables::default(),
             batch_owner: None,
             cell_eligibility: frame_cells::CellEligibility::default(),
             stack_cells: String::new(),

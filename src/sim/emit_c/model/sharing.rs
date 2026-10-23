@@ -325,6 +325,16 @@ fn registry(
     registry
 }
 
+/// Whether a body belongs to one iteration of a loop generate construct (or
+/// one element of an instance array), whose genvar or index payloads differ
+/// per instance. Labels and diagnostic names spell such a scope as written,
+/// `tb.g[3].always` (see the lowering's generate-scope collection); only the
+/// C identifiers encode the brackets. A false positive only turns literals
+/// of one sharing class into record fields.
+fn generate_iteration(label: &str) -> bool {
+    label.contains('[')
+}
+
 fn is_port_link(execution: &ExecutionModel, artifact: &CoroutineArtifact) -> bool {
     match artifact.owner {
         CoroutineId::Process(index) => execution
@@ -447,17 +457,25 @@ fn normalize(
         } else if bytes[index].is_ascii_digit() {
             index = word_end(bytes, index);
             let value = &source[start..index];
-            let identity = arguments
-                .last()
-                .is_some_and(|(call, arg)| match call.as_str() {
-                    "llg_net_write"
-                    | "llg_net_write_selected"
-                    | "llg_nba_net_after"
-                    | "llg_nba_net_selected_after" => *arg == 1,
-                    "llg_activation_enter" => *arg < 2,
-                    "llg_disable_target" | "llg_fork_group_new_target" => (1..=2).contains(arg),
-                    _ => false,
-                });
+            // A net driver slot (`.drivers[slot]` or a write/inertial slot
+            // argument) is the instance's contribution identity: drivers of
+            // one net in different generate iterations differ only here. An
+            // SDF-annotated gate's delay slot is likewise its own.
+            let preceding = &source[..start];
+            let identity = preceding.ends_with(".drivers[")
+                || preceding.ends_with("llg_sdf_gate_delays[")
+                || arguments
+                    .last()
+                    .is_some_and(|(call, arg)| match call.as_str() {
+                        "llg_net_write"
+                        | "llg_net_write_selected"
+                        | "llg_nba_net_after"
+                        | "llg_nba_net_selected_after" => *arg == 1,
+                        "llg_inertial_net" | "llg_inertial_selected_net" => *arg == 2,
+                        "llg_activation_enter" => *arg < 2,
+                        "llg_disable_target" | "llg_fork_group_new_target" => (1..=2).contains(arg),
+                        _ => false,
+                    });
             if identity {
                 operand = Some(scalars.operand(
                     if value.ends_with("ULL") {
@@ -533,6 +551,8 @@ struct Candidate {
 
 pub(super) struct AdditionalOperands<'a> {
     pub net_tables: &'a [(String, String, String)],
+    /// Hoisted per-site process state `(name, element type, element count)`.
+    pub site_statics: &'a [(String, &'static str, Option<u64>)],
     pub constants: &'a super::super::constants::PackedConstants,
     /// Condition evaluators (`static void <name>(sv4_t* out, void* context)`)
     /// of module path and timing check sets, by name. Shared ones read their
@@ -607,6 +627,20 @@ pub(super) fn share(
             ),
         );
     }
+    // Each process's own state: a scalar is addressed (`&name`), an array
+    // decays to its first element (`&name[index]`).
+    for (name, ty, len) in additional.site_statics {
+        let operand = match len {
+            None => Operand::pointer(ty, format!("site:{ty}"), name),
+            Some(len) => Operand::new(
+                format!("{ty}* @"),
+                format!("site:{ty}[{len}]"),
+                name.clone(),
+                "I->@",
+            ),
+        };
+        registry.insert(name.clone(), operand);
+    }
     let frame_names = functions
         .values()
         .map(|artifact| {
@@ -640,7 +674,8 @@ pub(super) fn share(
         // Literal payloads may vary per instance in generate-scope bodies
         // and in port links, whose selected actual bits are the instance's
         // connection rather than its module's code.
-        let generated = artifact.display_name.contains('[') || is_port_link(execution, artifact);
+        let generated =
+            generate_iteration(&artifact.display_name) || is_port_link(execution, artifact);
         if let Some(normalized) = normalize(
             &artifact.source,
             name,
@@ -671,6 +706,9 @@ pub(super) fn share(
             );
         }
     }
+    // Module path and timing check conditions come from specify blocks,
+    // which are module items and never inside a generate scope (1800-2009
+    // A.1.4 `non_port_module_item`): their payloads are the module's parameters and stay structural.
     for (name, source) in additional.evaluators.iter() {
         if let Some(normalized) =
             normalize(source, name, false, &registry, &constants, &mut scalars)
@@ -698,7 +736,7 @@ pub(super) fn share(
         if let Some(normalized) = normalize(
             source,
             &function.c_name,
-            false,
+            generate_iteration(function.diagnostic_name()),
             &registry,
             &constants,
             &mut scalars,
