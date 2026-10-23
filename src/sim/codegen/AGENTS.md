@@ -37,7 +37,8 @@ diagnostic labels remain separate from C symbols. The
   `tests/fixtures/sim/feature_completion/sim_099/builtin_inventory.tsv` in step.
 - VPI call actuals go through `lower_vpi_argument`: a `string`-formal string
   literal passes its packed image (a `vpiConstant`), a scope operand of
-  `$sdf_annotate`/`$list` (admitted as metadata by `semantic.rs`) passes its
+  `$list` (admitted as metadata by `semantic.rs`, like `$sdf_annotate`'s,
+  which lowering reads itself) passes its
   catalog object with a placeholder value, and string variables are located
   errors. Every `$` built-in lowered natively is listed for the startup
   override check (`populate_vpi_builtin_calls`, decision S99-D6).
@@ -412,8 +413,17 @@ instance keeps only its explicit delayed signals as copies. Both
 collections record, per declaration, the model rows it became
 (`sdf_path_rows`, `sdf_check_rows`, `sdf_delayed_checks`); `sdf_targets`
 runs the same metadata lowering and builds the SDF annotation catalog from
-them (`collection/sdf_targets.rs`, `sim::sdf::SdfTargets`). The side tables
-never reach the IR, so models are byte-identical with or without SDF use.
+them (`collection/sdf_targets.rs`, `sim::sdf::SdfTargets`, including each
+net's load ports for NETDELAY). The side tables never reach the IR.
+`collection/sdf_annotations.rs` reads every `$sdf_annotate` call (constant
+arguments only) and `--sdf` file before net groups are built: annotated
+gates get writable delays (`IrInertialDelay::Annotated`), annotated
+combined checks get runtime pair tables, interconnect loads get an
+interconnect path set on their port net, and after the timing checks are
+lowered the valued ops become `IrSdfAnnotation`s applied by
+`IrStmt::SdfAnnotate` or, for `--sdf` and calls that lead an initial
+procedure (A12-D1), at startup. Log files are returned in
+`GeneratedModel::sdf_logs`. A design without SDF use is byte-identical.
 Specify-block specparams are collected with the instance's
 parameters. A design without specify blocks costs one emptiness test.
 Force overlays visible storage while ordinary writes/driver slots remain live;

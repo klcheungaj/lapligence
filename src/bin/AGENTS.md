@@ -87,6 +87,11 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
   `--[no-]timing-check-messages` (`[simulator] timing_checks`, `notifiers`,
   `timing_check_messages`, all default on) reach codegen as
   `CodegenOptions::timing_checks`.
+- `--sdf [min:|typ:|max:][<scope>=]<file>` (repeatable, command line only;
+  decision A12-D13) reaches codegen as `CodegenOptions::sdf`; files are read
+  relative to the working directory when the model is generated and applied
+  before simulation starts. The driver writes `$sdf_annotate` log files from
+  `GeneratedModel::sdf_logs` before running the model.
 - `--stop-policy <resume|exit>` defaults to same-time coroutine resumption.
   `exit` returns from the child without draining work or running finals; embedders
   also have an explicit runtime resume hook.

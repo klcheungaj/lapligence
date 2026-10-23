@@ -249,6 +249,16 @@ defaults, after `llg_timing_checks_doorbell(&<doorbell>)`; rows carry
 signals: source/target terminal, net and driver slot or none, rise/fall).
 `TimingCheckStep` emits `llg_timing_checks_run();`. Models without timing
 checks are unchanged byte for byte.
+SDF annotations (`model/storage.rs` `render_sdf_annotations`) emit, only
+when the model has any: the writable gate delay array
+`llg_sdf_gate_delays` (annotated gates read their triple from it),
+`llg_sdf_load_<n>` interconnect entry tables, and one
+`llg_sdf_annotation_<n>` per annotation (a `llg_sdf_op_t` array with
+designated `.kind/.flags/.delay/.reject/.error/.derive/.first` and target
+fields, and the value array); combined checks a negative annotation re-solves
+get a `.pairs` table on their set. `IrStmt::SdfAnnotate` emits
+`llg_sdf_apply(&llg_sdf_annotation_<n>);`; startup annotations emit the same
+call in the storage defaults before the first `llg_module_paths_start`.
 Only destination groups gain `.propagation_enabled = 1` and per-bit
 path-stage records; a model without paths emits exactly what it did
 before. A delayed group with separately driven parts emits its part bounds

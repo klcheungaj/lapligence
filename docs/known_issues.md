@@ -860,11 +860,11 @@ of ADV-008 and the VPI objects of ADV-019 on the same per-path tables.
 scripts/run-tests.sh -E 'binary(sim_feature_completion) & test(adv_007::)'
 ```
 
-## SDF reading limits (ADV-011)
+## SDF reading and annotation limits (ADV-011, ADV-012)
 
-**Status:** open (ADV-011 reads and resolves SDF; ADV-012 applies it). The
-library API `llg::sim::sdf` reads a file into an owned annotation plan;
-`$sdf_annotate` does not use it yet, so no simulation changes.
+**Status:** open. llg reads OVI SDF 2.1 and 3.0 files when it generates the
+model and applies them from `$sdf_annotate` and `--sdf` (ADV-012); the
+remaining limits are below.
 
 ### Symptom
 
@@ -872,34 +872,45 @@ library API `llg::sim::sdf` reads a file into an owned annotation plan;
   1.0 or 2.0 are read with the 2.1 grammar and 4.0 (IEEE 1497) files with
   the 3.0 grammar, with a warning; IEEE 1497 constructs such as LABEL
   (specparam annotation, IEEE 1800-2009 32.4.3) and BIDIRECTSKEW
-  (`$fullskew`) are syntax errors.
+  (`$fullskew`, Table 32-2) are syntax errors, so a file using them
+  annotates nothing.
 - Numbers keep 18 significant digits and decimal exponents up to 300
   exactly; longer numbers are rejected rather than rounded.
-- DEVICE on a module without specify paths warns instead of reaching the
-  primitives that drive the module's outputs (Table 32-1).
-- INTERCONNECT does not check that its source and load are on one net;
-  NETDELAY resolves to input or inout ports only, not to nets.
-- RETAIN is read and ignored with a warning.
+- INTERCONNECT does not check that its source and load are on one net.
+  NETDELAY naming a net annotates the input and inout ports of the scope's
+  instances whose connection is the net or a constant select of it; a port
+  connected through a concatenation or an expression is not reached.
+- A load port bit keeps one interconnect delay per transition: the delays
+  annotated from several sources of a multisource net combine by
+  INTERCONNECT_MIPD (decision A12-D10) instead of delaying each source
+  separately as 32.5 describes.
+- Interconnect delays apply only to an input or inout port with a net of its
+  own that no module path drives; other load ports are reported and not
+  annotated.
+- RETAIN is read and ignored with a warning (Table 32-1 allows it).
 - A `$setuphold` or `$recrem` whose negative limits sum to 0 or 1 has no
-  rows in the model (ADV-010), so a plan can name it but nothing can apply
-  a new limit to it.
+  rows in the model unless an SDF entry annotates it (ADV-010), so a plan
+  can name it but only an annotated instance applies a new limit to it.
+- `$sdf_annotate` arguments must be constant (literals or parameters), and
+  the files are read when the model is generated: changing a file after
+  generation has no effect until the model is generated again.
+- A gate whose delay is computed at run time cannot be annotated (generation
+  stops with an error naming it).
 
 ### Cause
 
-The published grammars of the other versions are not available here, and
-applying a plan (data set selection, scaling, the twelve-transition
-expansion, re-solving delayed signal delays) is ADV-012.
+The IEEE 1497 grammar is not available here; per-source interconnect delays
+on multisource nets and specparam re-evaluation need new runtime structures.
 
 ### Intended direction
 
-ADV-012 applies the plan to the model's path, interconnect and check tables
-atomically, including the primitives behind DEVICE and the delayed signal
-solve.
+Read IEEE 1497 files with LABEL and BIDIRECTSKEW, and keep one delay per
+source and load pair on multisource nets.
 
 ### Reproduce
 
 ```sh
-scripts/run-tests.sh -E 'binary(sim_feature_completion) & test(adv_011::)'
+scripts/run-tests.sh -E 'binary(sim_feature_completion) & (test(adv_011::) | test(adv_012::))'
 ```
 
 ## Process handles in plain handle storage stay allocated until teardown
@@ -2038,16 +2049,16 @@ System task and function registrations are also limited (SIM-099):
   built-in, the run stops at startup naming it and its call (decision
   S99-D6); a registration of a built-in the design does not call is
   accepted. Built-ins llg does not implement (the Annex D services such as
-  `$key`, `$reset_count` and `$sdf_annotate`) are dispatched to such a
-  registration; `$sreadmemb/$sreadmemh` are built-ins (ADV-026);
-- a `string` formal (`$input`, `$log`, `$sdf_annotate`'s file names, or a
+  `$key` and `$reset_count`) are dispatched to such a registration;
+  `$sreadmemb/$sreadmemh` (ADV-026) and `$sdf_annotate` (ADV-012) are
+  built-ins;
+- a `string` formal (`$input`, `$log`, or a
   `--define-system-task` `string` formal) accepts only a string literal, which
   the application reads as a `vpiConstant` string; a string variable or
   expression fails to compile with `<file>:<line>:<col>: argument of VPI
   system task `$input`: a string variable or expression is not supported`,
   because a string has no fixed-width argument image. Scope actuals reach the
-  application as module (or named generate scope) handles only for
-  `$sdf_annotate` and `$list`.
+  application as module (or named generate scope) handles only for `$list`.
 
 A model built without `--vpi`, `--dpi-lib` or a user system task call site
 has no object catalog: an application loaded with `LLG_VPI_PLUGIN` gets

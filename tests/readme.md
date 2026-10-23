@@ -419,6 +419,15 @@ read with warnings and malformed files with their exact first error;
 `--lib -E 'test(/sim::sdf::/)'` (lexer, numbers, conditions, parser, resolver
 Table 32-2 mapping, catalog names, small read buffers).
 
+ADV-012's SDF annotation uses `-E 'binary(sim_feature_completion) & test(adv_012::)'`
+([readme](fixtures/sim/feature_completion/adv_012/readme.md)): path delays and
+pulse limits, every timing check entry, negative limits re-solved, member
+selection, scaling, configuration and log files, DEVICE, interconnect,
+`--sdf` and diagnostics, with hand-derived expected output. The decision
+cases `A12-D*` (`-E 'test(/sim_lrm_decisions::a12_/)'`) carry their SDF and
+configuration files beside the `.sv`. Valuing unit tests:
+`--lib -E 'test(/sim::sdf::apply/)'`.
+
 ADV-016's randsequence fixtures use
 `-E 'binary(sim_feature_completion) & test(adv_016::)'`. Positives run in both
 optimizer modes on every backend with oracles from SV 18.17 (fixture readme):

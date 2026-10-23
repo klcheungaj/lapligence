@@ -41,24 +41,22 @@ fn warnings(output: &Output) -> Vec<String> {
     lines
 }
 
-/// Run `fixture` with input `files` on every backend and optimizer mode and
-/// require `expected` standard output and exactly the `expected_warnings`
-/// (`{path}` stands for the fixture's absolute path, `{any}` for text that
-/// differs between platforms, such as an operating system error).
-fn run_with_warnings(
+/// The check of one run of `fixture`: success, `expected` standard output
+/// and exactly the `expected_warnings` (`{path}` stands for the fixture's
+/// absolute path, `{any}` for text that differs between platforms, such as
+/// an operating system error).
+fn warnings_check(
     fixture: &str,
-    expected: &str,
-    args: &[&str],
-    files: &[(&str, &str)],
+    expected: &'static str,
     expected_warnings: &[&str],
-) {
+) -> impl Fn(&str, &Output) {
     let path = source_path(fixture);
     let mut expected_warnings = expected_warnings
         .iter()
         .map(|line| line.replace("{path}", &path))
         .collect::<Vec<_>>();
     expected_warnings.sort();
-    sim_cli::run_case_checked_matrix_with_files(SUITE, fixture, args, files, &|label, output| {
+    move |label: &str, output: &Output| {
         assert!(
             output.status.success(),
             "{label}: {}",
@@ -86,7 +84,7 @@ fn run_with_warnings(
             matches,
             "{label}: warnings\n  actual: {actual:#?}\n  expected: {expected_warnings:#?}"
         );
-    });
+    }
 }
 
 /// IOPATH delays, delval pulse limits, PATHPULSE and PATHPULSEPERCENT
@@ -112,11 +110,9 @@ fn path_delays_and_pulse_limits() {
 /// against its new limit, and the report names that limit.
 #[test]
 fn timing_check_limits() {
-    run_with_warnings(
+    let check = warnings_check(
         "checks.v",
         fixture!("checks.out"),
-        &[],
-        &[("checks.sdf", fixture!("checks.sdf"))],
         &[
             "timing violation at {path}:12:5 in tb.su at time 103000 (1ps): \
              $setup(d:100000, posedge clk:103000, 6000)",
@@ -144,6 +140,8 @@ fn timing_check_limits() {
              $nochange(posedge clk:1000000, d:1012000, 2000, 3000)",
         ],
     );
+    let files = [("checks.sdf", fixture!("checks.sdf"))];
+    sim_cli::run_case_checked_matrix_with_files(SUITE, "checks.v", &[], &files, &check);
 }
 
 /// With negative timing checks, annotated `$setuphold` limits settle and
@@ -152,17 +150,23 @@ fn timing_check_limits() {
 /// violate.
 #[test]
 fn negative_setuphold_limits() {
-    run_with_warnings(
+    let check = warnings_check(
         "negative.v",
         fixture!("negative.out"),
-        &["--neg-timing-checks"],
-        &[("negative.sdf", fixture!("negative.sdf"))],
         &[
             "timing violation at {path}:14:5 in tb.h at time 104000 (1ps): \
              $setuphold(posedge clk:100000, d:104000, -2000, 5000)",
             "timing violation at {path}:23:5 in tb.a at time 104000 (1ps): \
              $setuphold(posedge clk:100000, d:104000, -2000, 5000)",
         ],
+    );
+    let files = [("negative.sdf", fixture!("negative.sdf"))];
+    sim_cli::run_case_checked_matrix_with_files(
+        SUITE,
+        "negative.v",
+        &["--neg-timing-checks"],
+        &files,
+        &check,
     );
 }
 
@@ -224,18 +228,9 @@ fn device_delays() {
 /// exist, which applies from every source of the load with a warning.
 #[test]
 fn interconnect_delays() {
-    run_with_warnings(
+    let check = warnings_check(
         "interconnect.v",
         fixture!("interconnect.out"),
-        &[],
-        &[
-            ("interconnect.sdf", fixture!("interconnect.sdf")),
-            ("netdelay.sdf", fixture!("netdelay.sdf")),
-            ("ms.sdf", fixture!("ms.sdf")),
-            ("min.cfg", fixture!("min.cfg")),
-            ("average.cfg", fixture!("average.cfg")),
-            ("last.cfg", fixture!("last.cfg")),
-        ],
         &[
             "interconnect.sdf:9:5: the INTERCONNECT source was not found; the delay applies \
              from every source of the load (IEEE 1800-2009 32.4.4)",
@@ -243,6 +238,15 @@ fn interconnect_delays() {
              not found in `tb`",
         ],
     );
+    let files = [
+        ("interconnect.sdf", fixture!("interconnect.sdf")),
+        ("netdelay.sdf", fixture!("netdelay.sdf")),
+        ("ms.sdf", fixture!("ms.sdf")),
+        ("min.cfg", fixture!("min.cfg")),
+        ("average.cfg", fixture!("average.cfg")),
+        ("last.cfg", fixture!("last.cfg")),
+    ];
+    sim_cli::run_case_checked_matrix_with_files(SUITE, "interconnect.v", &[], &files, &check);
 }
 
 /// `--sdf` files are annotated in command-line order before simulation
@@ -280,17 +284,9 @@ fn command_line_annotation() {
 #[test]
 fn diagnostics() {
     let call = "$sdf_annotate at {path}";
-    run_with_warnings(
+    let check = warnings_check(
         "diagnostics.v",
         fixture!("diagnostics.out"),
-        &[],
-        &[
-            ("malformed.sdf", fixture!("malformed.sdf")),
-            ("unmatched.sdf", fixture!("unmatched.sdf")),
-            ("values.sdf", fixture!("values.sdf")),
-            ("override.sdf", fixture!("override.sdf")),
-            ("unknown.cfg", fixture!("unknown.cfg")),
-        ],
         &[
             &format!(
                 "{call}:32:5: cannot open the SDF file `missing.sdf`: {{any}}; the call \
@@ -336,4 +332,12 @@ fn diagnostics() {
              posedge clk:60000, 4000)",
         ],
     );
+    let files = [
+        ("malformed.sdf", fixture!("malformed.sdf")),
+        ("unmatched.sdf", fixture!("unmatched.sdf")),
+        ("values.sdf", fixture!("values.sdf")),
+        ("override.sdf", fixture!("override.sdf")),
+        ("unknown.cfg", fixture!("unknown.cfg")),
+    ];
+    sim_cli::run_case_checked_matrix_with_files(SUITE, "diagnostics.v", &[], &files, &check);
 }
