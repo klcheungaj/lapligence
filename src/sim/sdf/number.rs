@@ -13,9 +13,11 @@ use std::fmt;
 /// more than any delay calculator writes, and keeps a number at 16 bytes.
 pub const MAX_SIGNIFICANT_DIGITS: usize = 18;
 
-/// Largest magnitude of the decimal exponent. Delays beyond `1e300` time
-/// units or below `1e-300` have no representable tick value anyway.
-pub const MAX_DECIMAL_EXPONENT: i32 = 300;
+/// Largest magnitude of the decimal exponent. A value beyond the tick range
+/// is annotated as one precision unit with a warning and one below it
+/// rounds to 0 (decision A12-D3), so the bound only keeps the exponent in
+/// an `i16`.
+pub const MAX_DECIMAL_EXPONENT: i32 = 9999;
 
 /// An exact decimal number: `mantissa * 10^exponent`, normalized so that the
 /// mantissa has no trailing zero digit (zero is `0 * 10^0`).
@@ -333,8 +335,12 @@ mod tests {
             Err(NumberError::TooManyDigits)
         );
         assert_eq!(SdfNumber::parse("1e18"), Ok(SdfNumber::new(1, 18)));
-        assert_eq!(SdfNumber::parse("1e301"), Err(NumberError::ExponentRange));
-        assert_eq!(SdfNumber::parse("1000e-302"), Ok(SdfNumber::new(1, -299)));
+        assert_eq!(SdfNumber::parse("1e999"), Ok(SdfNumber::new(1, 999)));
+        assert_eq!(SdfNumber::parse("1e10000"), Err(NumberError::ExponentRange));
+        assert_eq!(
+            SdfNumber::parse("1000e-10002"),
+            Ok(SdfNumber::new(1, -9999))
+        );
         // Leading zeros are not significant digits.
         assert_eq!(
             SdfNumber::parse(&format!("0000{}", "1".repeat(18))).map(|_| ()),

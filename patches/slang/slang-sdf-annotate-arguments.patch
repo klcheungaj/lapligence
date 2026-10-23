@@ -1,0 +1,22 @@
+--- a/source/ast/builtins/SystemTasks.cpp
++++ b/source/ast/builtins/SystemTasks.cpp
+@@ -729,6 +729,9 @@
+ public:
+     SdfAnnotateTask() : SystemTaskBase(KnownSystemName::SdfAnnotate) {}
+ 
++    // Syntax 32-1: every argument after the file name may be left empty.
++    bool allowEmptyArgument(size_t argIndex) const final { return argIndex != 0; }
++
+     const Expression& bindArgument(size_t argIndex, const ASTContext& context,
+                                    const ExpressionSyntax& syntax, const Args& args) const final {
+         if (argIndex == 1) {
+@@ -763,7 +766,8 @@
+             return comp.getErrorType();
+ 
+         for (size_t i = 0; i < args.size(); i++) {
+-            if (i != 1 && !args[0]->type->canBeStringLike())
++            if (i != 1 && args[i]->kind != ExpressionKind::EmptyArgument &&
++                !args[i]->type->canBeStringLike())
+                 return badArg(context, *args[i]);
+         }
+ 

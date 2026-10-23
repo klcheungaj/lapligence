@@ -701,6 +701,18 @@ impl EmitCtx<'_, '_> {
                     minimum_field_width: Box::new(minimum_field_width),
                 }])
             }
+            // The file was read, resolved and valued when the model was
+            // generated (`collection/sdf_annotations.rs`); the call applies
+            // it, or nothing when its arguments or file were unusable.
+            "$sdf_annotate" => match self.cg.sdf_call_annotation(h) {
+                Some(Some(annotation)) => Ok(vec![IrStmt::SdfAnnotate { annotation }]),
+                Some(None) => Ok(Vec::new()),
+                None => Err(format!(
+                    "{}: $sdf_annotate was not read when the model was generated in `{}`",
+                    self.cg.source_location(h),
+                    self.path
+                )),
+            },
             "$displayon" | "$displayoff" => {
                 self.cg
                     .warnings

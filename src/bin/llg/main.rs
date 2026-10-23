@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! llg [generate options] [lint options] [wave options] [build options] [<file.sv>...] [-- <plusargs>...]
-//! generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --stop-policy <resume|exit>  --pulse-reject <0-100>  --pulse-error <0-100>  --pulse-style <onevent|ondetect>  --show-cancelled  --no-show-cancelled  --no-timing-checks  --timing-checks  --no-notifiers  --notifiers  --no-timing-check-messages  --timing-check-messages  --neg-timing-checks  --no-neg-timing-checks
+//! generate: --config <file>  --top <module>  --edition <v2001|sv2009>  --compilation-units <separate|merged>  --delay-select <min|typ|max>  --include-dir <path>  --define <NAME[=VALUE]>  --param-override <NAME=VALUE>  --define-system-task <prototype>  --libmap <file>  --libfile [<library>=]<file>  --library-order <library>[,<library>...]  --default-library <library>  --gen-only  --no-gen-only  --no-opt  --opt  --vpi  --stop-policy <resume|exit>  --pulse-reject <0-100>  --pulse-error <0-100>  --pulse-style <onevent|ondetect>  --show-cancelled  --no-show-cancelled  --no-timing-checks  --timing-checks  --no-notifiers  --notifiers  --no-timing-check-messages  --timing-check-messages  --neg-timing-checks  --no-neg-timing-checks  --sdf [min:|typ:|max:][<scope>=]<file.sdf>
 //! lint:     --lint-only  --no-lint-only  --lint-json [<path>]  -Werror  -Wno-error
 //! wave:     --wave <file.vcd|file.fst>  --wave-depth <N>  --no-wave
 //! build:    --generator <backend>  --launcher <program>  --dpi-lib <path>...  --dpi-import-lib <path>  --cc <program>  --cflags <flags>  --model-opt-level <O0|O1|O2|O3|Os>  --cmake <program>  --build-jobs <N>
@@ -178,6 +178,7 @@ fn run(options: DriverOptions) -> i32 {
         stop_policy,
         path_pulse,
         timing_checks,
+        sdf,
         cli_build_options,
     } = options;
     let _generation_stage = llg::profile::Stage::new("generation");
@@ -302,6 +303,7 @@ fn run(options: DriverOptions) -> i32 {
             vpi,
             path_pulse,
             timing_checks,
+            sdf,
             ..Default::default()
         },
     );
@@ -320,6 +322,13 @@ fn run(options: DriverOptions) -> i32 {
     };
     for w in &gen.warnings {
         eprintln!("llg: warning: {w}");
+    }
+    // `$sdf_annotate` log files describe the annotation read when the model
+    // was generated.
+    for (path, text) in &gen.sdf_logs {
+        if let Err(error) = std::fs::write(path, text) {
+            eprintln!("llg: warning: cannot write the SDF log file `{path}`: {error}");
+        }
     }
 
     // 4. Write sources (+ CMakeLists.txt).  With --gen-only, stop here: the

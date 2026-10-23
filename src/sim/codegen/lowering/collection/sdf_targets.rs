@@ -1,7 +1,9 @@
 //! SDF annotation targets ([`SdfTargets`]): the instance tree with cell
-//! types and ports, and each instance's declared specify paths and timing
-//! checks with the model rows lowering made of them. Built on request after
-//! module paths and timing checks are lowered; models are not affected.
+//! types, ports and time precisions, and each instance's declared specify
+//! paths and timing checks with the model rows lowering made of them. Built
+//! before module paths are lowered to resolve `$sdf_annotate` files (rows
+//! still empty), after timing checks are lowered to map the resolved
+//! operations onto model rows, and on request; models are not affected.
 
 use super::*;
 use crate::core::db::{PathCondition, PathEdge, PrimitiveType, TimingCheckKind, TimingEvent};
@@ -60,9 +62,15 @@ fn split_element(name: &str) -> (String, Option<i64>) {
 }
 
 impl Codegen<'_> {
-    /// Build the targets of the instance trees under `tops`. Runs after
-    /// [`Self::lower_module_paths`] and [`Self::lower_timing_checks`].
+    /// Build the targets of the instance trees under `tops`. Rows are those
+    /// [`Self::lower_module_paths`] and [`Self::lower_timing_checks`] made so
+    /// far.
     pub(in super::super) fn build_sdf_targets(&self, tops: &[NodeId]) -> SdfTargets {
+        self.build_sdf_catalog(tops).0
+    }
+
+    /// [`Self::build_sdf_targets`] and the design node of each scope.
+    pub(in super::super) fn build_sdf_catalog(&self, tops: &[NodeId]) -> (SdfTargets, Vec<NodeId>) {
         let db = self.db;
         let mut paths: HashMap<NodeId, Vec<&crate::core::db::ModulePath>> = HashMap::new();
         for path in db.module_paths() {
@@ -91,12 +99,13 @@ impl Codegen<'_> {
             check_rows,
             conditions: HashMap::new(),
             line_starts: HashMap::new(),
+            nodes: Vec::new(),
         };
         let mut targets = SdfTargets::new();
         for top in tops {
             self.add_sdf_scope(&mut targets, &mut tables, None, *top);
         }
-        targets
+        (targets, tables.nodes)
     }
 
     fn add_sdf_scope(
@@ -119,6 +128,7 @@ impl Codegen<'_> {
                 let (name, index) = split_element(&name);
                 let mut scope =
                     SdfScope::new(name, index, SdfScopeKind::Module, strip_lib(def_name));
+                scope.precision_fs = self.timescale_of_node(node).precision_fs;
                 scope.ports = self.sdf_ports(node);
                 scope.paths = self.sdf_paths(node, tables);
                 scope.checks = self.sdf_checks(node, tables);
@@ -139,17 +149,18 @@ impl Codegen<'_> {
                     None => primitive_name(*prim_type).to_owned(),
                 };
                 let (name, index) = split_element(&entry.name);
-                Some(SdfScope::new(
-                    name,
-                    index,
-                    SdfScopeKind::Primitive,
-                    cell_type,
-                ))
+                let mut scope = SdfScope::new(name, index, SdfScopeKind::Primitive, cell_type);
+                scope.precision_fs = self.timescale_of_node(node).precision_fs;
+                scope.drives = self.sdf_primitive_drives(node);
+                Some(scope)
             }
             _ => None,
         };
         let parent = match scope {
-            Some(scope) => Some(targets.add_scope(parent, scope)),
+            Some(scope) => {
+                tables.nodes.push(node);
+                Some(targets.add_scope(parent, scope))
+            }
             None => parent,
         };
         if matches!(entry.kind, NodeKind::Gate { .. }) {
@@ -166,6 +177,58 @@ impl Codegen<'_> {
             ) {
                 self.add_sdf_scope(targets, tables, parent, *child);
             }
+        }
+    }
+
+    /// The ports of the module instance owning gate `gate` that one of its
+    /// output terminals names, by port order: the outputs a DEVICE entry on
+    /// a module without paths annotates through the gate (decision A12-D?).
+    fn sdf_primitive_drives(&self, gate: NodeId) -> Vec<u32> {
+        let NodeKind::Gate { terms, .. } = self.kind(gate) else {
+            return Vec::new();
+        };
+        let Some(instance) = self.owning_inst(gate) else {
+            return Vec::new();
+        };
+        let outputs = terms
+            .iter()
+            .filter(|term| term.direction != crate::core::db::Direction::Input)
+            .filter_map(|term| self.sdf_root_target(term.expr))
+            .collect::<Vec<_>>();
+        if outputs.is_empty() {
+            return Vec::new();
+        }
+        let mut drives = Vec::new();
+        let ports = self
+            .node(instance)
+            .children
+            .iter()
+            .filter(|child| matches!(self.kind(**child), NodeKind::Port { .. }));
+        for (index, port) in ports.enumerate() {
+            let NodeKind::Port { low, .. } = self.kind(*port) else {
+                continue;
+            };
+            let target = self
+                .port_child_target(*port, *low)
+                .and_then(|expression| self.sdf_root_target(expression));
+            if target.is_some_and(|target| outputs.contains(&target)) {
+                drives.push(index as u32);
+            }
+        }
+        drives
+    }
+
+    /// The declaration an expression names, through selects.
+    fn sdf_root_target(&self, expression: NodeId) -> Option<NodeId> {
+        match self.kind(expression) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target,
+            NodeKind::Expr(
+                ExprKind::BitSelect { base, .. }
+                | ExprKind::PartSelect { base, .. }
+                | ExprKind::IndexedPartSelect { base, .. },
+            ) => self.sdf_root_target(*base),
+            NodeKind::Var { .. } | NodeKind::Net { .. } => Some(expression),
+            _ => None,
         }
     }
 
@@ -426,4 +489,6 @@ struct Tables<'d> {
     /// Keyed by file and span: (line, col, end line, end col).
     conditions: HashMap<(String, u32, u32, u32, u32), Option<CondExpr>>,
     line_starts: HashMap<String, Vec<usize>>,
+    /// The design node of each scope, by scope index.
+    nodes: Vec<NodeId>,
 }

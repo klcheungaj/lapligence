@@ -376,6 +376,12 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             "    llg_timing_checks_start(&llg_timing_set_{index});\n"
         ));
     }
+    // `--sdf` files annotate the started tables before simulation starts.
+    for index in model.sdf_startup() {
+        initialize.push_str(&format!(
+            "    llg_sdf_apply(&llg_sdf_annotation_{index});\n"
+        ));
+    }
     emitted.clear();
     // Function return slots and static locals are independent persistent
     // objects: tabled packed/real defaults first, then string/chandle resets

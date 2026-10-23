@@ -930,6 +930,52 @@ void llg_timing_checks_run(void);
 void llg_timing_check_limits_changed(llg_timing_check_set_t* set);
 /* The started sets, most recently started first, linked through `next`. */
 llg_timing_check_set_t* llg_timing_check_sets(void);
+
+/* SDF back-annotation (IEEE 1800-2009 32). The model generator reads,
+ * resolves and values every `$sdf_annotate` file; an annotation is the
+ * resulting list of operations, applied in order when the call executes.
+ * Values are design-precision ticks. Kinds: */
+#define LLG_SDF_PATH 1u  /* twelve delays and pulse limits of `path` */
+#define LLG_SDF_CHECK 2u /* `limit` (or `limit2`) of `check` in `checks` */
+#define LLG_SDF_GATE 3u  /* rise, fall and turn-off delays at `gate` */
+#define LLG_SDF_PAIR 4u  /* a limit of combined check `pair` of `checks` */
+/* Flags: */
+#define LLG_SDF_INCREMENT 1u /* add to the current values (INCREMENT) */
+#define LLG_SDF_PERCENT 2u   /* limits in millionths of a percent of the delay */
+#define LLG_SDF_SECOND 4u    /* the check's limit2; the pair's later limit */
+
+/* One operation. Bit t of `delay`, `reject` and `error` marks a value of
+ * transition t (path), of rise, fall, turn-off (gate) or of the limit
+ * (check); the values start at `first` in the annotation's `values`:
+ * delays, then reject limits, then error limits. Bit t of `derive` sets
+ * both limits of transition t from the new delay by the global pulse
+ * percentages (32.7). */
+typedef struct llg_sdf_op {
+    uint8_t kind;
+    uint8_t flags;
+    uint16_t delay;
+    uint16_t reject;
+    uint16_t error;
+    uint16_t derive;
+    uint32_t first;
+    uint32_t pair;
+    llg_module_path_t* path;
+    llg_timing_check_t* check;
+    llg_timing_check_set_t* checks;
+    uint64_t* gate;
+} llg_sdf_op_t;
+
+typedef struct llg_sdf_annotation {
+    const llg_sdf_op_t* ops;
+    uint32_t n_ops;
+    const int64_t* values;
+} llg_sdf_annotation_t;
+
+/* Apply an annotation. Absolute values replace, incremented ones add; a
+ * delay or limit never drops below 0, and a path's pulse limits never
+ * exceed its delay. Pending events keep their scheduled times; later events
+ * use the new values. */
+void llg_sdf_apply(const llg_sdf_annotation_t* annotation);
 /* 1 when bit `bit` of a path destination has a scheduled update; then its
  * absolute time and four-state value (0, 1, 2 = x, 3 = z) are stored. */
 int llg_net_path_pending(const llg_net_t* net, uint32_t bit, uint64_t* time,

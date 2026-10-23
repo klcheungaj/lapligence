@@ -68,10 +68,10 @@ error: 3:35: `1.2.3` is not a number
   (CELL (CELLTYPE "AND2") (INSTANCE and1)
     (DELAY (ABSOLUTE (IOPATH a y (1.2.3))))))
 === number out of range
-error: 3:35: the number `1e999` is out of range (exponent beyond 300)
+error: 3:35: the number `1e99999` is out of range (exponent beyond 9999)
 (DELAYFILE (SDFVERSION "3.0")
   (CELL (CELLTYPE "AND2") (INSTANCE and1)
-    (DELAY (ABSOLUTE (IOPATH a y (1e999))))))
+    (DELAY (ABSOLUTE (IOPATH a y (1e99999))))))
 === number with too many digits
 error: 3:35: the number `1234567890123456789012345678901234567890` has more than 18 significant digits
 (DELAYFILE (SDFVERSION "3.0")

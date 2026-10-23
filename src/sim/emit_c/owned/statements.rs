@@ -286,6 +286,9 @@ impl Frame<'_, '_> {
                 super::super::constants::fs_to_timescale_str(*precision_fs),
                 c_string_literal(label)
             )),
+            IrStmt::SdfAnnotate { annotation } => {
+                self.line(format!("llg_sdf_apply(&llg_sdf_annotation_{annotation});"))
+            }
             IrStmt::TimeFormat {
                 units,
                 precision,

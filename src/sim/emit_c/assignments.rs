@@ -43,6 +43,17 @@ pub(super) fn render_inertial(
                 delay.rise, delay.fall, delay.turn_off
             ),
         ),
+        IrInertialDelay::Annotated(slot) => {
+            let base = 3 * *slot;
+            (
+                String::new(),
+                format!(
+                    "llg_sdf_gate_delays[{base}], llg_sdf_gate_delays[{}], llg_sdf_gate_delays[{}]",
+                    base + 1,
+                    base + 2
+                ),
+            )
+        }
         // Runtime values are evaluated each time the site schedules.
         IrInertialDelay::Runtime(delay) => {
             let rise = super::statements::render_runtime_delay(ctx, &delay.rise)?;

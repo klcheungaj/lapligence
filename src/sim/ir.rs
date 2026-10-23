@@ -76,6 +76,8 @@ pub use timing::{
     PATH_STYLE_SHOW_CANCELLED, PATH_TRANSITIONS, TIMING_EDGE_MASK, TIMING_EVENT_BASED,
     TIMING_REMAIN_ACTIVE,
 };
+mod sdf;
+pub use sdf::{IrSdfAnnotation, IrSdfOp, IrSdfTarget, SDF_INCREMENT, SDF_PERCENT};
 mod udp;
 pub use udp::{
     IrUdpEdge, IrUdpInput, IrUdpNext, IrUdpOutput, IrUdpRow, IrUdpSequential, IrUdpSequentialRow,
@@ -576,6 +578,14 @@ pub struct IrModel {
     /// The hidden one-bit two-state signal the runtime toggles to wake the
     /// timing process; present exactly when `timing_checks` is not empty.
     pub(in crate::sim) timing_doorbell: Option<usize>,
+    /// SDF annotations (IEEE 1800-2009 32), applied by
+    /// [`IrStmt::SdfAnnotate`] or, listed in `sdf_startup`, before
+    /// simulation starts. Empty without `$sdf_annotate` and `--sdf`.
+    pub(in crate::sim) sdf_annotations: Vec<IrSdfAnnotation>,
+    pub(in crate::sim) sdf_startup: Vec<u32>,
+    /// The writable rise, fall and turn-off delays of each gate an SDF
+    /// annotation targets, initialized with the gate's own delays.
+    pub(in crate::sim) sdf_gate_delays: Vec<IrTransitionDelay>,
     pub(in crate::sim) events: Vec<IrEvent>,
     pub(in crate::sim) funcs: Vec<IrFunc>,
     /// Concurrent assertion instances, kept outside ordinary process IR.
@@ -750,6 +760,9 @@ impl IrModel {
             timing_checks: Vec::new(),
             timing_check_options: IrTimingCheckOptions::default(),
             timing_doorbell: None,
+            sdf_annotations: Vec::new(),
+            sdf_startup: Vec::new(),
+            sdf_gate_delays: Vec::new(),
             events: parts.events,
             funcs: parts.funcs,
             assertions: parts.assertions,
@@ -818,6 +831,18 @@ impl IrModel {
     /// The signal that wakes the timing process.
     pub fn timing_doorbell(&self) -> Option<usize> {
         self.timing_doorbell
+    }
+    /// SDF annotations, by [`IrStmt::SdfAnnotate`] index.
+    pub fn sdf_annotations(&self) -> &[IrSdfAnnotation] {
+        &self.sdf_annotations
+    }
+    /// Annotations applied before simulation starts (`--sdf`), in order.
+    pub fn sdf_startup(&self) -> &[u32] {
+        &self.sdf_startup
+    }
+    /// Writable delays of the annotated gates, by slot.
+    pub fn sdf_gate_delays(&self) -> &[IrTransitionDelay] {
+        &self.sdf_gate_delays
     }
     pub fn net_groups(&self) -> &[IrNetGroup] {
         &self.net_groups

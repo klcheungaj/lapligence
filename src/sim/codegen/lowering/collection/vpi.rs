@@ -456,7 +456,7 @@ impl Codegen<'_> {
     }
 
     /// Lower one actual of a VPI system task or function call (`routine` is
-    /// "task" or "function"). A scope actual (`$sdf_annotate(file, tb)`)
+    /// "task" or "function"). A scope actual (`$list(tb)`)
     /// passes its catalog object, so the value is a placeholder; a string
     /// literal converted to a `string` formal (`$input("cmds")`) passes its
     /// packed image, which `vpi_get_value(vpiStringVal)` reads as the text.

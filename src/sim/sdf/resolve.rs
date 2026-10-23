@@ -724,14 +724,44 @@ impl<'t> Resolver<'t> {
         };
         let found = self.all_paths(scope, output);
         if found.is_empty() {
-            let message =
-                format!(
-                "`{}` has no specify paths{}; DEVICE delays on the primitives driving its outputs \
-                 are not resolved",
-                self.scope_name(scope),
-                output.map(|name| format!(" to `{name}`")).unwrap_or_default()
-            );
-            self.warn(pos, message);
+            // Without specify paths, the primitives driving the outputs
+            // (Table 32-1).
+            let entry = self.targets.scope(scope);
+            let port = output.and_then(|name| entry.ports.iter().position(|p| p.name == name));
+            let primitives = entry
+                .children
+                .iter()
+                .copied()
+                .filter(|child| {
+                    let child = self.targets.scope(*child);
+                    child.kind == SdfScopeKind::Primitive
+                        && !child.drives.is_empty()
+                        && port.is_none_or(|port| child.drives.contains(&(port as u32)))
+                })
+                .collect::<Vec<_>>();
+            if primitives.is_empty() {
+                let message = format!(
+                    "`{}` has no specify paths{} and no primitive driving {}; the DEVICE is \
+                     not annotated",
+                    self.scope_name(scope),
+                    output
+                        .map(|name| format!(" to `{name}`"))
+                        .unwrap_or_default(),
+                    output.map_or_else(|| "its outputs".to_owned(), |name| format!("`{name}`"))
+                );
+                self.warn(pos, message);
+                return Ok(());
+            }
+            let delay = self.delay_op(mode, delays);
+            for primitive in primitives {
+                self.push(
+                    pos,
+                    SdfOpKind::PrimitiveDelay {
+                        scope: primitive,
+                        delay,
+                    },
+                )?;
+            }
             return Ok(());
         }
         let delay = self.delay_op(mode, delays);

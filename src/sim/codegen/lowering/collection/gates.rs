@@ -268,6 +268,28 @@ impl<'a> Codegen<'a> {
             })?),
             None => None,
         };
+        // An SDF DEVICE entry annotates the gate: it reads writable delays
+        // that start as its own (none: 0), so a delayed driver replaces an
+        // undelayed one (IEEE 1800-2009 32.4.3).
+        let scaled_delay = match (self.sdf_gate_slot(g), scaled_delay) {
+            (Some(slot), delay) => {
+                let initial = match delay {
+                    None => IrTransitionDelay::uniform(0),
+                    Some(IrInertialDelay::Constant(delay)) => delay,
+                    Some(_) => {
+                        return Err(format!(
+                            "delay of `{shown}` in `{path}` at {}: an SDF DEVICE entry \
+                             annotates this gate, whose delay is runtime-valued; llg annotates \
+                             constant gate delays",
+                            self.source_location(g)
+                        ))
+                    }
+                };
+                self.model.sdf_gate_delays[slot as usize] = initial;
+                Some(IrInertialDelay::Annotated(slot))
+            }
+            (None, delay) => delay,
+        };
 
         for (output_ordinal, out_pos) in out_positions.iter().enumerate() {
             let raw_lhs = terminal_lhs[*out_pos]

@@ -32,7 +32,8 @@ fn sampled_argument_error(name: &str, scope_path: &str, argument: &IrExpr) -> St
 /// defaults to (16.15.7). Anywhere else they are rejected at the call, never
 /// sent to VPI, which cannot provide them. Other built-ins without a lowering
 /// (the informative Annex D services such as `$key`, `$reset_count` and
-/// `$sdf_annotate`; `$sreadmemb/$sreadmemh` are built-ins since ADV-026) stay
+/// `$list`; `$sreadmemb/$sreadmemh` are built-ins since ADV-026 and
+/// `$sdf_annotate` since ADV-012) stay
 /// on the VPI path, where an application may provide them (IEEE 1800-2009
 /// 36.3.2) and a call nobody registers stops the run at startup naming its
 /// source position. Keep

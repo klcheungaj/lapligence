@@ -1033,6 +1033,12 @@ pub enum IrStmt {
         precision_fs: u64,
         label: String,
     },
+    /// `$sdf_annotate`: apply SDF annotation `annotation`
+    /// ([`super::IrModel::sdf_annotations`]), read when the model was
+    /// generated (IEEE 1800-2009 32.9).
+    SdfAnnotate {
+        annotation: u32,
+    },
     /// `$timeformat(units, precision, suffix, minimum_field_width)`.
     /// Arguments are evaluated at execution time in the owning process; the
     /// runtime stores the resulting design-wide formatting state.

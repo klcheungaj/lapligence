@@ -261,11 +261,12 @@ collector setting instead of comparing it with a fixed value.
   and `[2 +: 3]` is 111 = 7. At 2 `mv` = `b` writes `grid[0][1]` = 33 and `nv`
   schedules its `[0 +: 2]` <= 00, so `b.grid[0][1]` is 30 at 3.
 - `vpi_string_scope_args.sv` + `vpi_string_scope_args.c` (gate item G4), run with
-  `--define-system-task 'task $show(string s, logic [7:0] b)'`: SV 32.9 gives
-  `$sdf_annotate ( sdf_file [ , module_instance ...] )` and D.4/D.7 `$input` and
-  `$log` file-name arguments. Each string literal reaches the calltf as a
-  `vpiConstant` (type 7) whose `vpiStringVal` is the text, `8'h41` reads as "A",
-  and `tb`/`u_sub` reach it as module handles named `tb` and `tb.u_sub`.
+  `--define-system-task 'task $show(string s, logic [7:0] b)'`: D.6 gives
+  `$list [ ( hierarchical_name ) ]` and D.4/D.7 `$input` and `$log` file-name
+  arguments. Each string literal reaches the calltf as a `vpiConstant` (type 7)
+  whose `vpiStringVal` is the text, `8'h41` reads as "A", and `tb`/`u_sub` reach
+  it as module handles named `tb` and `tb.u_sub`. (`$sdf_annotate` is a built-in
+  since ADV-012.)
 - `builtin_override.sv` + `builtin_override.c` (gate item G3): the application
   registers `$random`, the example of SV 36.3.2 L56427-56431 ("a user could
   write a random number generator as a PLI application and then associate the

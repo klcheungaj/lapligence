@@ -1,5 +1,5 @@
 /* SIM-099 vpi_string_scope_args.sv companion (gate item G4): one calltf for
- * $sdf_annotate, $input, $log and the user task $show that prints each
+ * $list, $input, $log and the user task $show that prints each
  * argument: a scope as its module's full name, anything else as its
  * vpiStringVal. Portable C11. */
 #include "vpi_user.h"
@@ -41,7 +41,7 @@ static void register_task(const char* name)
 
 static void startup(void)
 {
-    register_task("$sdf_annotate");
+    register_task("$list");
     register_task("$input");
     register_task("$log");
     register_task("$show");

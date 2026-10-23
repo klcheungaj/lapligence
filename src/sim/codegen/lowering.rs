@@ -290,6 +290,7 @@ mod selections;
 
 mod assertions;
 mod collection;
+pub use collection::SdfCommand;
 mod containers;
 mod coverage;
 mod expressions;
@@ -349,6 +350,9 @@ pub struct GeneratedModel {
     pub design_name: String,
     /// Non-fatal diagnostics about supported lowering limitations.
     pub warnings: Vec<String>,
+    /// SDF log files (`$sdf_annotate` log_file argument) and their
+    /// contents, for the driver to write.
+    pub sdf_logs: Vec<(String, String)>,
 }
 
 impl GeneratedModel {
@@ -398,6 +402,8 @@ pub struct CodegenOptions {
     /// Global timing check controls (`--no-timing-checks`, `--no-notifiers`,
     /// `--no-timing-check-messages`; IEEE 1800-2009 31).
     pub timing_checks: crate::sim::ir::IrTimingCheckOptions,
+    /// SDF files annotated before simulation starts (`--sdf`), in order.
+    pub sdf: Vec<SdfCommand>,
 }
 
 /// Lower an owned Slang semantic database with default optimizations.
@@ -484,6 +490,7 @@ struct LoweredModel {
     model: IrModel,
     design_name: String,
     warnings: Vec<String>,
+    sdf_logs: Vec<(String, String)>,
     /// The design calls a `$coverage_*` function (40.3.2).
     coverage_api_used: bool,
 }
@@ -520,7 +527,11 @@ fn collect_tops(cg: &mut Codegen<'_>) -> Result<Vec<NodeId>, String> {
 
 /// Net groups, module paths and timing checks: everything SDF annotation
 /// targets, lowered before any process.
-fn lower_timing_metadata(cg: &mut Codegen<'_>, options: &CodegenOptions) -> Result<(), String> {
+fn lower_timing_metadata(
+    cg: &mut Codegen<'_>,
+    tops: &[NodeId],
+    options: &CodegenOptions,
+) -> Result<(), String> {
     // Collapse inout-port net groups (parent + child nets → one resolved
     // simulated net) before any signal/process lowering so member reads and
     // writes use the resolution cell.
@@ -528,13 +539,17 @@ fn lower_timing_metadata(cg: &mut Codegen<'_>, options: &CodegenOptions) -> Resu
     // Timescales must be fixed before any `#delay`/`$time` is lowered so the
     // design precision (scheduler tick unit) is consistent across the model.
     cg.collect_timescales();
+    // SDF files are read against the design before the targets are
+    // lowered, which give annotated gates writable delays.
+    cg.read_sdf_annotations(tops, &options.sdf)?;
     cg.build_net_groups()?;
     // Module paths name net groups and their structural driver sites.
     cg.model.path_pulse = options.path_pulse;
     cg.lower_module_paths()?;
     // Timing checks read the same terminals and the instance's variables.
     cg.model.timing_check_options = options.timing_checks;
-    cg.lower_timing_checks()
+    cg.lower_timing_checks()?;
+    cg.map_sdf_annotations(tops)
 }
 
 /// The SDF annotation targets of a design: its instance tree, ports, and
@@ -549,7 +564,7 @@ pub fn sdf_targets(
         let semantic = checked_semantic(db)?;
         let mut cg = Codegen::new(&semantic);
         let tops = collect_tops(&mut cg)?;
-        lower_timing_metadata(&mut cg, options)?;
+        lower_timing_metadata(&mut cg, &tops, options)?;
         Ok(cg.build_sdf_targets(&tops))
     })();
     result.map_err(CodegenError::new)
@@ -576,7 +591,7 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
         ));
     }
     let compilation_units = cg.compilation_unit_scopes();
-    lower_timing_metadata(&mut cg, options)?;
+    lower_timing_metadata(&mut cg, &tops, options)?;
     cg.collect_clocking_storage()?;
     cg.validate_const_method_writes()?;
     cg.validate_process_semantics()?;
@@ -718,6 +733,7 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     model.validate().map_err(|error| error.to_string())?;
     let design_name = std::mem::take(&mut cg.design_name);
     let warnings = std::mem::take(&mut cg.warnings);
+    let sdf_logs = std::mem::take(&mut cg.sdf_logs);
     let coverage_api_used = cg.coverage_api_used;
     drop(cg);
     drop(semantic);
@@ -726,6 +742,7 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
         model,
         design_name,
         warnings,
+        sdf_logs,
         coverage_api_used,
     })
 }
@@ -777,6 +794,7 @@ fn finish_generation(
         mut model,
         design_name,
         warnings,
+        sdf_logs,
         coverage_api_used,
     } = lowered;
     if !options.vpi && model.vpi_compile_calls.is_empty() {
@@ -806,6 +824,7 @@ fn finish_generation(
         model_c: rendered.source,
         symbols_tsv: rendered.symbols_tsv,
         warnings,
+        sdf_logs,
     })
 }
 
@@ -1719,6 +1738,11 @@ struct Codegen<'a> {
     /// `$setuphold`/`$recrem` declarations whose limits set the delays of
     /// delayed signals (31.9).
     sdf_delayed_checks: HashSet<NodeId>,
+    /// `$sdf_annotate` calls and `--sdf` files read before module paths are
+    /// lowered (`collection/sdf_annotations.rs`); `None` without either.
+    sdf: Option<Box<collection::SdfState>>,
+    /// SDF log files and their contents.
+    sdf_logs: Vec<(String, String)>,
     /// Final-block process function names (`ProcessKind::Final`), in
     /// emission order — spawned into [`IrModel::final_spawns`] instead of
     /// the t=0 spawn list.
@@ -2055,6 +2079,8 @@ impl<'a> Codegen<'a> {
             sdf_path_rows: Vec::new(),
             sdf_check_rows: Vec::new(),
             sdf_delayed_checks: HashSet::new(),
+            sdf: None,
+            sdf_logs: Vec::new(),
             final_procs: Vec::new(),
             armed_procs: HashSet::new(),
             wave_variable_targets: Vec::new(),

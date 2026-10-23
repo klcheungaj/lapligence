@@ -198,6 +198,12 @@ pub struct SdfScope {
     pub ports: Vec<SdfTargetPort>,
     pub paths: Vec<SdfTargetPath>,
     pub checks: Vec<SdfTargetCheck>,
+    /// The time precision of the scope's module in femtoseconds, which
+    /// annotated values round to; 0 for the design precision.
+    pub precision_fs: u64,
+    /// A primitive's output drives these ports of its parent module (by
+    /// index), which makes it a DEVICE target of that module (Table 32-1).
+    pub drives: Vec<u32>,
 }
 
 impl SdfScope {
@@ -212,6 +218,8 @@ impl SdfScope {
             ports: Vec::new(),
             paths: Vec::new(),
             checks: Vec::new(),
+            precision_fs: 0,
+            drives: Vec::new(),
         }
     }
 

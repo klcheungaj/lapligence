@@ -118,7 +118,9 @@ Line numbers are those of the `pdftotext -layout` extractions `sdf_3.0.txt`
   spec, an unescaped special character other than a hierarchy divider,
   RETAIN after the delays, SCOND/CCOND order, WAVEFORM edges, non-ASCII text
   and a file without a CELL (`rejections.txt`). Numbers keep 18 significant
-  digits and exponents up to 300 exactly; beyond that is an error.
+  digits and exponents up to 9999 exactly; beyond that is an error. A
+  value outside the simulation time range is annotated as one precision
+  unit with a warning (ADV-012 decision A12-D3).
 - A rule that the file breaks but whose meaning stays clear is a warning:
   a negative NUMBER counts as 0, `(::)` as `()`, more than 12 delay values
   leave the entry unannotated, NOCHANGE without a control edge is not

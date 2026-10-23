@@ -1266,6 +1266,9 @@ fn render_stmt_scoped(
             verbosity,
             c_string_literal(location)
         ),
+        IrStmt::SdfAnnotate { annotation } => {
+            format!("    llg_sdf_apply(&llg_sdf_annotation_{annotation});\n")
+        }
         IrStmt::PrintTimescale {
             unit_fs,
             precision_fs,

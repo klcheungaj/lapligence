@@ -145,6 +145,9 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         timing_checks,
         timing_check_options: _,
         timing_doorbell,
+        sdf_annotations: _,
+        sdf_startup: _,
+        sdf_gate_delays: _,
         events: _,
         funcs,
         assertions,
@@ -962,6 +965,7 @@ fn collect_stmt_rw(s: &IrStmt, model: &IrModel, rw: &mut Rw) {
         | IrStmt::ProgramExit
         | IrStmt::StopControl { .. }
         | IrStmt::PrintTimescale { .. }
+        | IrStmt::SdfAnnotate { .. }
         | IrStmt::Return { value: None }
         | IrStmt::Label(_)
         | IrStmt::Goto(_)

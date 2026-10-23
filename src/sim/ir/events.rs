@@ -163,6 +163,10 @@ pub enum IrInertialDelay {
     /// "These can be any three expressions"), evaluated in the driver each
     /// time it schedules an update.
     Runtime(Box<IrRuntimeTransitionDelay>),
+    /// The writable delays of SDF-annotated gate `slot`
+    /// ([`super::IrModel::sdf_gate_delays`]), read each time the driver
+    /// schedules an update.
+    Annotated(u32),
 }
 
 /// Source delay values of a runtime-valued driver delay. One value serves
@@ -205,21 +209,21 @@ impl IrInertialDelay {
     pub(in crate::sim) fn constant(&self) -> Option<IrTransitionDelay> {
         match self {
             Self::Constant(delay) => Some(*delay),
-            Self::Runtime(_) => None,
+            Self::Runtime(_) | Self::Annotated(_) => None,
         }
     }
 
     /// Runtime delay expressions, in rise, fall, turn-off order.
     pub(in crate::sim) fn expressions(&self) -> Vec<&IrExpr> {
         match self {
-            Self::Constant(_) => Vec::new(),
+            Self::Constant(_) | Self::Annotated(_) => Vec::new(),
             Self::Runtime(delay) => delay.expressions(),
         }
     }
 
     pub(in crate::sim) fn expressions_mut(&mut self) -> Vec<&mut IrExpr> {
         match self {
-            Self::Constant(_) => Vec::new(),
+            Self::Constant(_) | Self::Annotated(_) => Vec::new(),
             Self::Runtime(delay) => delay.expressions_mut(),
         }
     }
