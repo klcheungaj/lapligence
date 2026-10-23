@@ -620,6 +620,20 @@ IEEE 1364-2001 8 and IEEE 1800-2009 29 ([readme](fixtures/sim/feature_completion
 Negatives are single-fault sources that stop with the frontend's located
 diagnostic in both editions, plus a vector actual on a single instance.
 
+ADV-005's pass-switch fixtures use
+`-E 'binary(sim_feature_completion) & test(adv_005::)'`, together with
+`test(ir::validate::tests::switch_networks::)` and the `A5-D*` cases of
+`sim_lrm_decisions`. Positive `.sv` fixtures (plain Verilog-2001) run in both
+editions, both optimizer modes and on the legacy, compact/portable and
+compact/GMP value backends; the readme quotes IEEE 1364-2001 5.6.5 and 7.6 and
+IEEE 1800-2009 4.9.5, 28.8 and 28.12-28.15
+([readme](fixtures/sim/feature_completion/adv_005/readme.md)). The A01 test
+generates 160 random networks over four phases and compares every node's `%v`
+with an in-test oracle that solves each conducting/nonconducting combination
+of the unknown switches by a strongest-first simple-path search, in both
+optimizer modes. Negatives cover MOS switches, wired-logic nodes, wide and
+mis-sized array terminals, `tran` delays and variable terminals.
+
 RTL-099's gate fixtures use `-E 'binary(sim_feature_completion) & test(rtl_099::)'`.
 They pin the output-port writer rule for constant slices of descriptor-backed
 arrays: disjoint procedural writers execute in both optimizer modes on both

@@ -271,8 +271,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   drivers and supports whole/disjoint constant-selected drivers, undriven Z,
   ordinary ports, same-type aliases, uwire actuals (also concatenated) on inout
   ports and `inout uwire` formals, whose collapsed net keeps one driver per
-  bit. Pass-switch terminals reject. Wired/pull/supply nets and strengths are
-  detailed in §8.
+  bit. Pass-switch terminals are switch-network nodes (§8, bidirectional
+  switches). Wired/pull/supply nets and strengths are detailed in §8.
   V §§3.6–3.7; SV §6.6 **[1995/SV-2005]**.
 - 🟨 **Memories and fixed unpacked arrays** — Multidimensional storage, signed or
   reversed bounds, element selections, rows, slices, whole copies and overlapping
@@ -1368,7 +1368,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   same-depth warning-only tie selects the first in the decision R11-D1 order
   (wor, then tri0 and tri1, then wand) with a located warning. A uwire actual, concatenated uwire actual or `inout
   uwire` formal collapses with one driver per bit (SV §6.6.2). `trireg` (unsupported by
-  design) and pass switches (ADV-005) remain unsupported; a net-array
+  design) remains unsupported; a pass switch joins the collapsed nets, so a
+  port is one switch node and never reduces strength (ADV-005); a net-array
   declaration delay follows the same winning-declaration rule. Oversized net
   arrays still expand per cell (known issue).
   V §12.3.10 / Table 45; SV §§23.3.3.6–23.3.3.7 / Table 23-1 **[1995]**.
@@ -1467,10 +1468,28 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `nmos` primitive (MOS and resistive switch primitives) is not supported by
   llg` or `unsupported: `trireg` net `t` (trireg charge storage) is not
   supported by llg`. V §§3.7.3, 7.5–7.7, 7.13–7.14 **[1995]**.
-- ❌ **Bidirectional switches** — `tran/tranif0/tranif1` and
-  `rtran/rtranif0/rtranif1` have no simulator path; a design using one stops
-  with the generic `unsupported executable node` diagnostic. V §§7.5–7.6
-  **[1995]**.
+- 🟨 **Bidirectional switches** — `tran/tranif0/tranif1` and
+  `rtran/rtranif0/rtranif1`, single instances and instance arrays (each
+  element takes its bit of an array-wide terminal, the LSB going to the
+  right-hand index), between scalar nets and constant bit-selects, through
+  ports and inout collapse. Each statically connected network is solved
+  exactly whenever a driver, control, force or release changes it: strengths
+  pass unchanged through `tran*` except supply, which becomes strong, and
+  through `rtran*` by Table 28-8 (A5-D6); a node passes only what survives
+  its own resolution (A5-D2); an x/z control gives the union of the
+  conducting and nonconducting results with its strength range (A5-D1); a
+  forced node is a strong source (A5-D3); a `tranif` delay delays the switch
+  state, which starts unknown (A5-D4); a net delay on a member net delays only
+  its own value (A5-D5). Nets of a network update once per pass and notify
+  only real value changes. A solve costs O(nodes + switches) of the
+  network part that can conduct, with no iteration limit
+  ([ADV-005 fixtures](../tests/fixtures/sim/feature_completion/adv_005/readme.md)).
+  Rejected with their location: wired-logic (`wand/wor/triand/trior`) nets
+  in a network, terminals wider than one bit (or than one bit per array
+  element), SDF annotation of a switch, and variables or delays on
+  `tran/rtran` (frontend). A strength-only change of a switch node wakes no
+  event control (llg wakes event controls on value changes only).
+  V §§5.6.5, 7.6, 7.11–7.12; SV §§4.9.5, 28.8, 28.13–28.14 **[1995]**.
 - 🟨 **Specify blocks, specparams and simple module paths** — Specparams in
   the module body and in specify blocks give constant values (min:typ:max
   takes typical, or the `--delay-select` value) and stay distinct from parameters (`Db::specparam`); a
@@ -2681,7 +2700,7 @@ rows above remain the authority for scope and known gaps.
 | Elaboration, ports and hierarchy (§3) | [Design collection](../src/sim/codegen/lowering/collection/design.rs), [ports](../src/sim/codegen/lowering/collection/ports.rs), [library mapping](../src/core/compile/library_mapping.rs), [configs](../src/core/compile/library_configs.rs) | [Elaboration](../tests/sim_syn016_elaboration.rs), [library configurations](../tests/sim_syn032_library_configs.rs), [bind](../tests/sim_syn033_structural_bind.rs) |
 | Processes and timing (§§4, 6) | [Statement dispatch](../src/sim/codegen/lowering/statements/dispatch.rs), [event lowering](../src/sim/codegen/lowering/statements/events.rs), [scheduler](../src/sim/rt/scheduler/) | [Process semantics](../tests/sim_process_semantics.rs), [events](../tests/sim_events.rs), [timing/regions](../tests/sim_partial_features.rs) |
 | Statements, values and expressions (§§5, 7) | [Assignments](../src/sim/codegen/lowering/statements/assignments.rs), [expressions](../src/sim/codegen/lowering/expressions/), [container streaming](../src/sim/codegen/lowering/containers/streaming.rs) | [Loops](../tests/sim_loops.rs), [stream contexts](../tests/sim_syn015_stream_contexts.rs), [tagged patterns](../tests/sim_syn024_tagged_patterns.rs), [fixed reductions](../tests/sim_fixed_array_reductions.rs) |
-| Structural drivers (§8) | [Continuous processes](../src/sim/codegen/lowering/collection/processes.rs), [nets](../src/sim/codegen/lowering/collection/nets.rs), [gates/UDPs](../src/sim/codegen/lowering/collection/gates.rs) | [Resolution](../tests/sim_net_resolution.rs), [port types](../tests/sim_port_net_types.rs), [UDPs](../tests/sim_udp.rs) |
+| Structural drivers (§8) | [Continuous processes](../src/sim/codegen/lowering/collection/processes.rs), [nets](../src/sim/codegen/lowering/collection/nets.rs), [gates/UDPs](../src/sim/codegen/lowering/collection/gates.rs), [pass switches](../src/sim/codegen/lowering/collection/switches.rs), [switch runtime](../src/sim/rt/scheduler/switches.c) | [Resolution](../tests/sim_net_resolution.rs), [port types](../tests/sim_port_net_types.rs), [UDPs](../tests/sim_udp.rs), [switches](../tests/sim_feature_completion/adv_005.rs) |
 | Subroutines and callback limits (§9) | [Call contracts](../src/sim/codegen/lowering/collection/call_contracts.rs), [function bodies](../src/sim/codegen/lowering/collection/function_bodies.rs), [owned emitter](../src/sim/emit_c/owned/) | [Functions](../tests/sim_function.rs), [zero-time calls](../tests/sim_syn013_zero_time_calls.rs), [activation frames](../tests/sim_partial_features/activation_frames.rs) |
 | System tasks and memory I/O (§10) | [System tasks](../src/sim/codegen/lowering/statements/system_tasks.rs), [system functions](../src/sim/codegen/lowering/expressions/system_functions.rs), [runtime](../src/sim/rt/llg_rt.c) | [File I/O](../tests/sim_file_io.rs), [memory views](../tests/sim_memory_views.rs), [memory editions](../tests/sim_memory_editions.rs), [time reporting](../tests/sim_timescale.rs) |
 | Assertions, clocking and verification objects (§12) | [Immediate/deferred assertions](../src/sim/codegen/lowering/statements/assertions.rs), [concurrent assertions](../src/sim/codegen/lowering/assertions.rs), [clocking](../src/sim/codegen/lowering/clocking_context.rs), [class collection](../src/sim/codegen/lowering/collection/classes.rs) | [Concurrent assertions](../tests/sim_concurrent_assertions.rs), [deferred assertions](../tests/sim_partial_features/assertions.rs), [clocking](../tests/sim_partial_features/clocking.rs), [classes](../tests/sim_classes.rs), [virtual interfaces](../tests/sim_virtual_interfaces.rs) |

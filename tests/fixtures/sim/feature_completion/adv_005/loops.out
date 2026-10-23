@@ -1,0 +1,9 @@
+1 St1 St1 St1 St1 | Pu0 We0 We0 | St1 St1
+1 St0 St0 | St0 St0 St1 | Pu0 St0
+2 HiZ HiZ HiZ HiZ | HiZ HiZ HiZ | St1 HiZ
+2 St1 St1 | St1 St1 St1 | We0 Me0
+3 St0 St0 St0 St0 | Pu1 We1 We1 | St1 St1
+3 PuX PuX | StX StX St0 | Pu1 St1
+4 St0 St0 St0 St0 | Pu1 We1 We1 | HiZ HiZ
+4 StX StX | St0 St0 StX | PuX StX
+bits 0000 111 zz

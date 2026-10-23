@@ -242,6 +242,11 @@ still ends with one designated field (`.edge`, `.styles`, `.conditions`) so the
 omitted fields are zero without `-Wmissing-field-initializers` warnings.
 `llg_module_paths_configure` is emitted only when `IrModel::path_pulse`
 differs from its default. Models without paths are unchanged.
+Switch networks emit two constant tables after the net groups
+(`llg_switch_nodes`: net pointer and bit; `llg_switches`: node pair and
+flags) and one `llg_switches_start` after the net delays start; a
+`SwitchControl` statement is one `llg_switch_control` call. Models without
+switches emit neither, so their `model.c` is unchanged.
 Timing check sets emit after the module paths: a terminal table, a writable
 `llg_timing_check_t` row array with designated fields (limits stay writable
 for annotation), the set record, an optional MonEval-shaped condition

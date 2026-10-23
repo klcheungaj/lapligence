@@ -1,0 +1,7 @@
+1 Pu0 Pu0 Pu0 Pu0 | 1 1 1 1
+2 St1 St1 St1 St1 | 2 2 2 2
+3 St1 St1 St1 St1 | 2 2 2 2
+4 St1 St1 St1 HiZ | 2 2 2 3
+5 Pu0 Pu0 Pu0 HiZ | 3 3 3 3
+6 HiZ HiZ HiZ HiZ | 4 4 4 3
+7 St0 St0 St0 St0 | 5 5 5 4

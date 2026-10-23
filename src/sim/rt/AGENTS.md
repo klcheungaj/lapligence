@@ -320,6 +320,25 @@ the union of old and new ranges against overlapping drivers. Keep full-net waite
 identity and notification behavior. Pending delayed drivers start X, not driverless
 Z. Fixed-array delayed sites retain per-element identity.
 
+Pass-switch networks (`scheduler/switches.c`, ADV-005) are model-lifetime
+state built by `llg_switches_start` from the generated node and switch
+tables: CSR adjacency, per-net member lists (`llg_net_t.switch_net`, NULL for
+every other net, so unswitched nets pay one pointer test) and four strength
+levels per node (strongest known/possible 0 and 1). A driver-slot commit,
+force or release of a member net marks its nodes dirty and queues the net
+instead of resolving it; `llg_switch_control` marks a switch's ends. The
+solve of a dirty dynamic component (nodes joined by switches that are not
+off) is an 8-bucket strongest-first propagation: `tran*` keeps strength
+except supply to strong, `rtran*` uses Table 28-8, an unknown switch passes
+possible levels only (the union of A5-D1), a level leaves a node only if no
+stronger opposite known level holds it (A5-D2), and a forced bit is a fixed
+strong source (A5-D3). Each node entry rises at most once, so a solve is
+O(nodes + switches) with no iteration cap. Changed nets republish in queue
+order through `llg_net_resolve`, whose compute and strength paths overlay the
+member bits with the network result. Inside a process turn the solve waits for
+the region drain like S2-D11 (`llg_net_flush_deferred` flushes it); the first
+solve waits for the first region that may update nets (T0-D2).
+
 Module paths (`llg_module_path_set_t`, one per instance with paths)
 borrow the model's source storage and own, between `llg_module_paths_start`
 and `llg_rt_cleanup`, a last value per source and a last-change time per

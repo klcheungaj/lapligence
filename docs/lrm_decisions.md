@@ -436,6 +436,27 @@ satisfies. S30-D11 ends with exit status 1.
 | S3-D3 | **A change between Z and X is no transition.** The table is not evaluated when an input moves between z and x; 0/1 to or from z is the same transition as to or from x. | 29.3.5 L48808-48809 | `S3-D3_z_x_change_is_no_transition` | LRM text (llg's reading of "treated the same as x") |
 | S3-D4 | **Inputs start X at time zero.** When simulation begins every input is taken as x and the state is the initial value (else x); an input known at time zero, such as a constant terminal, is a transition from x then, while an undriven input makes none. The initial value is driven at time zero without the instance delay. | 29.3.3 L48761; 29.7 L49064-49066 | `S3-D4_time_zero_inputs_start_x` | llg choice for the inputs (not stated); LRM text for the undelayed initial value |
 
+## Bidirectional pass switches (ADV-005)
+
+`tran`, `tranif0`, `tranif1`, `rtran`, `rtranif0` and `rtranif1` (SV 28.8,
+V2001 7.6). The fixtures and the derivation of every expected value are in
+[adv_005](../tests/fixtures/sim/feature_completion/adv_005/readme.md).
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| A5-D1 | **An x or z control gives the union of both switch states.** Every node of the network takes the union of its results with the switch conducting and not conducting (for several unknown switches, of every combination), as a value and as a strength range: one logic level in every case is kept with the range of its strengths, a level in one case and high impedance in the other is L or H, and different levels are x. | 4.9.5 L3558-3570; 28.12.2 L47645-47652 | `A5-D1_unknown_control_union` | LRM text for the value; the strength range of the union is an llg choice (the text gives x only). Some simulators report a wider strength range for a few configurations whose drivers change procedurally (a strength of a node's own driver that its network overrides); llg reports the union of the enumerated cases |
+| A5-D2 | **A node passes only what survives its own resolution.** A signal reaching a node through a switch goes on through the node's other switches only if no stronger signal of the opposite value holds the node: a supply 1 and a strong 0 at one node pass St1 through a `tran` and Pu1 through an `rtran`, not x. | 4.9.5 L3552-3553; 28.12.1 L47610-47611 | `A5-D2_switch_node_blocking` | industry-standard behaviour (the text asks for the network to be solved as a whole without giving the rule) |
+| A5-D3 | **A forced switch node is a strong source of its forced value.** Signals arriving through its switches do not change it, its neighbours receive the forced value (a forced z isolates them), and release recomputes the network from its drivers. | 10.6.2 L13397-13399 | `A5-D3_forced_switch_node` | industry-standard behaviour (the text does not say what strength a forced net drives into a switch network) |
+| A5-D4 | **A `tranif` delay delays the switch state.** The state follows the control as an inertial copy: the turn-on delay to on, the turn-off delay to off, the smaller delay to unknown (x or z); a newer control change replaces a pending one. A delayed switch is unknown until its first delay elapses (S2-D4). Signals through the switch are never delayed. | 28.8 L47365, L47380-47384 | `A5-D4_tranif_delay_state` | LRM text for the delays; the initial unknown state and inertial replacement are industry-standard behaviour |
+| A5-D5 | **A net delay on a switch node delays only its own value.** The network is solved from the node's drivers, so the nodes beyond it change at once and the delayed net shows its value after its delay. | 10.3.3 L12911-12912; 28.8 L47365 | `A5-D5_member_net_delay` | industry-standard behaviour (the text does not combine net delays and switches) |
+| A5-D6 | **`tran*` reduces supply to strong whatever the driver's other strength.** Every other strength passes unchanged; `rtran*` reduces by Table 28-8. | 28.13 L48297-48298; 28.14 L48301-48325 | `A5-D6_tran_supply_reduction` | LRM text. Some simulators pass a supply strength through a `tran` unchanged when only one of the driver's two strengths is supply; llg follows 28.13, which reduces every supply strength |
+
+Rejected with a located error: wired-logic nets (`wand`, `wor`, `triand`,
+`trior`) in a switch network (some simulators merge the wired type across
+`tran` connections only, a rule the text does not state), a terminal wider than
+one bit or than one bit per array element (28.8, 28.3.6), and SDF annotation of
+a switch. MOS, CMOS and resistive MOS switches stay unsupported by design.
+
 ## Random sequence generation (ADV-016)
 
 | ID | Decision | Clause (SV) | Case | Kind |

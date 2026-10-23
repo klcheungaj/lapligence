@@ -1,0 +1,8 @@
+1 Pu0 Pu0 Pu0 | St1 St0 St1 St1 St1
+2 St1 St1 St1 | StX St0 StX StX StX
+3 St1 St1 St1 | St1 St0 St1 StX StX
+4 St1 St1 St1 | St0 St0 StX StX StX
+5 Pu0 Pu0 Pu0 | St0 St0 St0 St0 St0
+6 HiZ HiZ HiZ | St1 St0 St1 St1 St1
+7 Pu0 Pu0 Pu0 | St1 St0 HiZ Pu0 Pu0
+bits 000 10z00

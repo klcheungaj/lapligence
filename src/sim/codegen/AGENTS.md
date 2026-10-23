@@ -316,6 +316,16 @@ through the ordinary expression/lvalue paths; a bit select of a computed value
 type, as Slang's instance-array slicing requires. Vector or aggregate terminals
 of a single instance reject.
 
+Pass switches (`collection/switches.rs`) lower each terminal to one net-group
+bit (through inout collapse and true aliases; `Db::primitive_array_position`
+selects an array element's bit, since Slang binds bidirectional terminals
+whole) and a controlled one to a hidden process issuing
+`IrStmt::SwitchControl` with its normalized control (a delayed control goes
+through an inertial shadow signal that starts X). Terminals keep their
+never-written structural driver slot. `finish_switch_network` numbers the
+nodes of each statically connected network contiguously; wired-logic member
+nets, wide terminals and SDF-annotated switches reject with their location.
+
 Sequential UDP instances lower to one `UdpStep` at the start of the
 continuous gate body followed by the shared publication of `UdpState`; each
 instance owns one `IrModel::udp_states` record, so instance-array elements

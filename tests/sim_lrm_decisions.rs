@@ -3661,3 +3661,51 @@ fn a12_d12_increment_floor() {
         )],
     );
 }
+
+#[test]
+fn a5_d1_unknown_control_union() {
+    run_decision(
+        "A5-D1_unknown_control_union",
+        include_str!("fixtures/sim/lrm_decisions/A5-D1_unknown_control_union.out"),
+    );
+}
+
+#[test]
+fn a5_d2_switch_node_blocking() {
+    run_decision(
+        "A5-D2_switch_node_blocking",
+        include_str!("fixtures/sim/lrm_decisions/A5-D2_switch_node_blocking.out"),
+    );
+}
+
+#[test]
+fn a5_d3_forced_switch_node() {
+    run_decision(
+        "A5-D3_forced_switch_node",
+        include_str!("fixtures/sim/lrm_decisions/A5-D3_forced_switch_node.out"),
+    );
+}
+
+#[test]
+fn a5_d4_tranif_delay_state() {
+    run_decision(
+        "A5-D4_tranif_delay_state",
+        include_str!("fixtures/sim/lrm_decisions/A5-D4_tranif_delay_state.out"),
+    );
+}
+
+#[test]
+fn a5_d5_member_net_delay() {
+    run_decision(
+        "A5-D5_member_net_delay",
+        include_str!("fixtures/sim/lrm_decisions/A5-D5_member_net_delay.out"),
+    );
+}
+
+#[test]
+fn a5_d6_tran_supply_reduction() {
+    run_decision(
+        "A5-D6_tran_supply_reduction",
+        include_str!("fixtures/sim/lrm_decisions/A5-D6_tran_supply_reduction.out"),
+    );
+}

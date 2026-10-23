@@ -1,0 +1,15 @@
+su Su0 St0 Pu0
+st St1 St1 Pu1
+pu Pu0 Pu0 We0
+we We1 We1 Me1
+x  65X 65X 53X
+h  StH StH PuH
+z: HiZ HiZ HiZ HiZ HiZ HiZ HiZ
+1: St1 St1 St1 Pu1 We1 Me1 Sm1
+0: St0 St0 St0 Pu0 We0 Me0 Sm0
+x: StX StX StX PuX WeX MeX SmX
+z: HiZ HiZ HiZ HiZ HiZ HiZ HiZ
+supply Su1 St1 Pu1 We1 Me1 Sm1 Sm1 | Su0 StX PuX
+pull Pu0 Pu0 Pu1 We1 | Pu1 Pu1 | Pu1 Pu1
+supply Su0 St0 Pu0 | Pu1 Pu1
+bits zzzzzzz 01
