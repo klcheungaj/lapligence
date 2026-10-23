@@ -294,7 +294,7 @@ impl Codegen<'_> {
                 let port = edge_ports[tie.edge];
                 if tied.insert((port, tie.candidates.clone())) {
                     self.warnings.push(format!(
-                        "dissimilar inout port `{}`: same-depth connections choose {:?} among non-dominating {:?} by column order (IEEE 1800-2009 Table 23-1) at {}:{}:{}",
+                        "dissimilar inout port `{}`: same-depth connections choose {:?} among non-dominating {:?} (decision R11-D1; IEEE 1800-2009 Table 23-1) at {}:{}:{}",
                         self.display_name(port), tie.selected, tie.candidates,
                         self.node(port).file.as_deref().unwrap_or("<unknown>"),
                         self.node(port).line, self.node(port).col,

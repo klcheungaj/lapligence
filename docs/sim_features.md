@@ -1364,8 +1364,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   propagation delay, including no delay. Parent links precede descendants, and
   each hierarchy depth is one batch independent of instance and port order:
   edge winners reduce to the types no other winner strictly dominates, and a
-  same-depth warning-only tie selects the first in Table 23-1 column order with
-  a located warning. A uwire actual, concatenated uwire actual or `inout
+  same-depth warning-only tie selects the first in the decision R11-D1 order
+  (wor, then tri0 and tri1, then wand) with a located warning. A uwire actual, concatenated uwire actual or `inout
   uwire` formal collapses with one driver per bit (SV §6.6.2). `trireg` (unsupported by
   design) and pass switches (ADV-005) remain unsupported; a net-array
   declaration delay follows the same winning-declaration rule. Oversized net

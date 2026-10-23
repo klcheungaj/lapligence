@@ -19,7 +19,7 @@ module tb;
     reg db, lb;
     assign b = db;
     mid_tri0 mb(b, lb);
-    // wire with wand and wor siblings: a warning-only tie selects wand.
+    // wire with wand and wor siblings: a warning-only tie selects wor (R11-D1).
     wire c;
     reg dc1, dc2;
     drv_or c_or(c, dc2);

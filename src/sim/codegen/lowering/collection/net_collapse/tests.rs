@@ -278,8 +278,20 @@ fn port_net_type_same_kind_uwire_alias_keeps_its_declaration_contract() {
 
 /// Independent reading of the batch rule: winners from the transcribed table,
 /// reduced to types no other winner beats from both sides without a warning,
-/// then the first remaining type in column order.
+/// then the first remaining type in the decision R11-D1 order (probed sibling
+/// ties: wor over tri0, tri1 and wand; tri0 and tri1 over wand).
 fn reference_batch(parent: NetType, children: &[NetType]) -> NetType {
+    const TIE_ORDER: [NetType; 9] = [
+        NetType::TriReg,
+        NetType::Wor,
+        NetType::Tri0,
+        NetType::Tri1,
+        NetType::Wand,
+        NetType::Uwire,
+        NetType::Supply0,
+        NetType::Supply1,
+        NetType::Wire,
+    ];
     let table = [
         "EEEEEEEEE",
         "IEeeeeeEE",
@@ -301,7 +313,7 @@ fn reference_batch(parent: NetType, children: &[NetType]) -> NetType {
             _ => parent,
         })
         .collect::<Vec<_>>();
-    winners.sort_by_key(|kind| index(*kind));
+    winners.sort_by_key(|kind| TIE_ORDER.iter().position(|other| other == kind));
     winners.dedup();
     let beats = |a: NetType, b: NetType| cell(a, b) == b'I' && cell(b, a) == b'E';
     *winners
@@ -358,16 +370,40 @@ fn port_net_type_batch_tie_reports_candidates_and_joins_same_type_delays() {
         ties,
         vec![CollapseTie {
             edge: 0,
-            candidates: vec![NetType::Wand, NetType::Wor],
-            selected: NetType::Wand,
+            candidates: vec![NetType::Wor, NetType::Wand],
+            selected: NetType::Wor,
         }]
     );
     let resolved = plan.resolved(top).unwrap();
-    assert_eq!(resolved.kind, NetType::Wand);
-    assert_eq!(
-        resolved.delay_members,
-        vec![and_second.owner(), and_first.owner()]
-    );
+    assert_eq!(resolved.kind, NetType::Wor);
+    assert_eq!(resolved.delay_members, vec![or_child.owner()]);
+}
+
+/// Decision R11-D1: one external wire joined to sibling ports of wired types
+/// that Table 23-1 leaves tied takes wor over tri0, tri1 and wand, and tri0 or
+/// tri1 over wand, whichever sibling comes first.
+#[test]
+fn port_net_type_sibling_ties_follow_the_r11_d1_order() {
+    for (first, second, expected) in [
+        (NetType::Wand, NetType::Wor, NetType::Wor),
+        (NetType::Tri0, NetType::Wor, NetType::Wor),
+        (NetType::Tri1, NetType::Wor, NetType::Wor),
+        (NetType::Wand, NetType::Tri0, NetType::Tri0),
+        (NetType::Wand, NetType::Tri1, NetType::Tri1),
+        (NetType::Tri1, NetType::Tri0, NetType::Tri0),
+    ] {
+        for edges in [[0, 1], [1, 0]] {
+            let mut plan = NetCollapsePlan::default();
+            let top = add(&mut plan, 0, NetType::Wire);
+            let children = [add(&mut plan, 1, first), add(&mut plan, 2, second)];
+            let (_, ties) = plan
+                .port_batch(&edges.map(|child| (children[child], top)))
+                .unwrap();
+            assert_eq!(plan.resolved(top).unwrap().kind, expected);
+            assert_eq!(ties.len(), 1);
+            assert_eq!(ties[0].selected, expected);
+        }
+    }
 }
 
 #[test]

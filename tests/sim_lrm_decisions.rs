@@ -331,6 +331,14 @@ fn s20_5_reverse_unpack_consumed() {
 }
 
 #[test]
+fn r11_d1_sibling_port_net_types() {
+    run_decision(
+        "R11-D1_sibling_port_net_types",
+        include_str!("fixtures/sim/lrm_decisions/R11-D1_sibling_port_net_types.out"),
+    );
+}
+
+#[test]
 fn s20_7_unpack_uneven_slices() {
     run_decision(
         "S20-7_unpack_uneven_slices",
