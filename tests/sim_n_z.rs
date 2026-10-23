@@ -58,6 +58,7 @@ mod sim_review_tasks24_27;
 mod sim_rtl_completion;
 mod sim_rtl_composition;
 mod sim_sampled_values;
+mod sim_scale;
 mod sim_semantic;
 mod sim_semaphore;
 mod sim_sequential_predicates;
