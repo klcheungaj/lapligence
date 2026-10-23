@@ -31,6 +31,8 @@
 #define LLG_SWITCH_ENTRIES 4u
 #define LLG_SWITCH_ITEMS_PER_NODE 8u
 #define LLG_SWITCH_NO_ITEM UINT32_MAX
+// A node not solved yet keeps its net's own strength view.
+#define LLG_SWITCH_NO_CODE 0xFFu
 
 enum { LLG_SWITCH_OFF = 0, LLG_SWITCH_ON = 1, LLG_SWITCH_UNKNOWN = 2 };
 
@@ -80,9 +82,17 @@ static struct {
     uint32_t tail[LLG_STRENGTH_SUPPLY + 1];
     llg_net_t** nets;
     uint32_t n_nets;
+    // Nets to republish, first queued first: publish[publish_head ..
+    // n_publish). A net is queued at most once at a time, so n_nets entries
+    // always hold the pending ones.
     llg_net_t** publish;
+    uint32_t publish_head;
     uint32_t n_publish;
     int solving;
+    // Set by llg_switches_start: the first solve waits for the first drain of
+    // a region queue, so its time-zero changes reach the procedures that are
+    // already waiting (decision T0-D2).
+    int held;
 } g_sw;
 
 static void switches_release(void) {
@@ -223,6 +233,13 @@ static void switch_queue_publish(llg_net_t* net) {
     struct llg_switch_net* members = net->switch_net;
     if (!members || members->queued) return;
     members->queued = 1;
+    if (g_sw.n_publish == g_sw.n_nets) {
+        uint32_t pending = g_sw.n_publish - g_sw.publish_head;
+        memmove(g_sw.publish, g_sw.publish + g_sw.publish_head,
+                pending * sizeof *g_sw.publish);
+        g_sw.publish_head = 0;
+        g_sw.n_publish = pending;
+    }
     g_sw.publish[g_sw.n_publish++] = net;
 }
 
@@ -297,19 +314,25 @@ static void switch_solve(uint32_t start) {
 // Solve every dirty component and republish the queued nets until nothing is
 // left; a callback reached from a publication only queues more work.
 static int switches_flush(void) {
-    if (g_sw.solving || (!g_sw.n_dirty && !g_sw.n_publish)) return 0;
+    if (g_sw.solving || (!g_sw.n_dirty && g_sw.publish_head == g_sw.n_publish)) return 0;
+    // The first solve waits for the first region that may update nets (the
+    // time-0 Preponed region drains before any process ran).
+    if (g_sw.held && region_is_read_only_now(g.current_region)) return 0;
+    g_sw.held = 0;
     g_sw.solving = 1;
-    while (g_sw.n_dirty || g_sw.n_publish) {
+    while (g_sw.n_dirty || g_sw.publish_head < g_sw.n_publish) {
         while (g_sw.n_dirty) {
             uint32_t node = g_sw.dirty_list[--g_sw.n_dirty];
             if (g_sw.dirty[node]) switch_solve(node);
         }
-        while (g_sw.n_publish && !g_sw.n_dirty) {
-            llg_net_t* net = g_sw.publish[--g_sw.n_publish];
+        while (g_sw.publish_head < g_sw.n_publish && !g_sw.n_dirty) {
+            llg_net_t* net = g_sw.publish[g_sw.publish_head++];
             net->switch_net->queued = 0;
             llg_net_resolve(net);
         }
     }
+    g_sw.publish_head = 0;
+    g_sw.n_publish = 0;
     g_sw.solving = 0;
     return 1;
 }
@@ -324,7 +347,7 @@ static void switch_mark_dirty(uint32_t node) {
 // drain, like a net with several drivers (decision S2-D11); otherwise it is
 // solved at once.
 static void switches_schedule(void) {
-    if (!net_defer_active) switches_flush();
+    if (!net_defer_active && !g_sw.held) switches_flush();
 }
 
 // A driver slot of `net` changed, or a force or release changed its forced
@@ -448,14 +471,14 @@ void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
     g_sw.n_nets = n_nets;
     g_sw.publish = (llg_net_t**)llg_checked_calloc((size_t)n_nets + 1u, sizeof(*g_sw.publish),
                                                  "switch publication list");
-    // Start every node from its net's current value, then solve everything.
+    // Every node keeps its net's start value until the first solve.
     for (uint32_t n = 0; n < n_nodes; n++) {
         g_sw.value[n] = (uint8_t)llg_sv4_state(nodes[n].net->resolved, nodes[n].bit);
-        g_sw.code[n] = 0xFFu;
+        g_sw.code[n] = LLG_SWITCH_NO_CODE;
         switch_mark_dirty(n);
     }
     for (uint32_t i = 0; i < n_nets; i++) switch_queue_publish(nets[i]);
-    switches_flush();
+    g_sw.held = 1;
 }
 
 // The member bits of `net` take their network's values.
@@ -478,7 +501,7 @@ static void switch_overlay_strength(llg_net_t* net, uint64_t* out) {
         if (forced && (force_mask_word(&net->resolved, bit / 64u) >> (bit % 64u) & 1u))
             continue;
         uint8_t code = g_sw.code[members->members[i].node];
-        if (code == 0xFFu) continue;
+        if (code == LLG_SWITCH_NO_CODE) continue;
         out[bit / 8u] = (out[bit / 8u] & ~(UINT64_C(0xFF) << ((bit % 8u) * 8u))) |
                         ((uint64_t)code << ((bit % 8u) * 8u));
     }

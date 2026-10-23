@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 40;
+const ABI_VERSION: u32 = 42;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1334,7 +1334,9 @@ pub struct SemanticNode {
     pub strength1: SemanticDriveStrength,
     /// Kind-specific scalar metadata. Streaming expressions store their exact
     /// Slang slice size; variables store their resolved lifetime tag;
-    /// conditional/case statements store a `SEMANTIC_UNIQUE_PRIORITY_*` tag.
+    /// conditional/case statements store a `SEMANTIC_UNIQUE_PRIORITY_*` tag;
+    /// a primitive instance array element stores the array's element count
+    /// (bits 32-63) and its least-significant-first slice (bits 0-31).
     pub auxiliary: u64,
     assertion: Option<Box<AssertionMetadata>>,
 }

@@ -279,6 +279,7 @@ impl Db {
                 Some((NodeId::from_index(index), drive))
             })
             .collect();
+        let primitive_array_positions = primitive_array_positions(snapshot);
         let mut arrays = HashMap::new();
         let mut event_arrays = HashMap::new();
         let mut subroutine_arrays = HashMap::new();
@@ -1360,6 +1361,7 @@ impl Db {
             conditional_pattern_fields,
             program_instances,
             unconnected_drives,
+            primitive_array_positions,
             source_libraries,
             declaration_time_scales,
             class_declaring_scopes,
@@ -1497,6 +1499,33 @@ fn legacy_directives(
         });
     }
     Ok(directives)
+}
+
+/// The slice of every primitive instance array element (IEEE 1800-2009
+/// 28.3.6), as the frontend exported it.
+fn primitive_array_positions(
+    snapshot: &SlangSnapshot,
+) -> HashMap<NodeId, super::PrimitiveArrayPosition> {
+    snapshot
+        .semantic_nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| {
+            node.kind == SemanticKind::Primitive
+                && node.is_primitive_instance()
+                && node.auxiliary != 0
+        })
+        .filter_map(|(index, node)| {
+            let count = u32::try_from(node.auxiliary >> 32).ok()?;
+            let slice = u32::try_from(node.auxiliary & u64::from(u32::MAX)).ok()?;
+            (slice < count).then(|| {
+                (
+                    NodeId::from_index(index),
+                    super::PrimitiveArrayPosition { slice, count },
+                )
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -23,8 +23,9 @@ impl<'a> Codegen<'a> {
     /// process continues watching its inputs. UDPs use their owned table and
     /// retain the same structural driver identity as builtin gates; a
     /// sequential UDP instance first advances its own persistent state
-    /// ([`IrStmt::UdpStep`]) and then publishes that state. Switches are
-    /// rejected explicitly.
+    /// ([`IrStmt::UdpStep`]) and then publishes that state. Pass switches
+    /// lower through [`Self::emit_switch`]; MOS switches never get here
+    /// (`legacy_unsupported`).
     pub(super) fn emit_gate(&mut self, inst: NodeId, path: &str, g: NodeId) -> Result<(), String> {
         let (class, prim_type, strength0, strength1, delay, terms, udp_table) = match self.kind(g) {
             NodeKind::Gate {
@@ -46,6 +47,9 @@ impl<'a> Codegen<'a> {
             ),
             _ => unreachable!("non-gate node passed to emit_gate"),
         };
+        if switches::is_pass_switch(prim_type) {
+            return self.emit_switch(inst, path, g);
+        }
         let gname = self.node(g).name.clone();
         let shown = if gname.is_empty() {
             "gate"

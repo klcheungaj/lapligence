@@ -2558,6 +2558,35 @@ public:
       capture.semanticEdge(id, LLG_SLANG_EDGE_REFERENCE, primitiveId);
       result.flags |= LLG_SLANG_SEMANTIC_PRIMITIVE_INSTANCE;
       addDriveStrength(result, symbol.getDriveStrength());
+      if (!symbol.arrayPath.empty()) {
+        // An instance array element (ABI v42): which slice of a connection
+        // as wide as the whole array is its own (IEEE 1800-2009 28.3.6).
+        // Slang slices only input connections itself; this exports the same
+        // position for the bidirectional terminals it binds whole.
+        SmallVector<ConstantRange, 8> dimensions;
+        symbol.getArrayDimensions(dimensions);
+        if (dimensions.size() != symbol.arrayPath.size())
+          throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                              "primitive array path and dimensions disagree");
+        uint64_t offset = 0;
+        uint64_t count = 1;
+        for (size_t i = 0; i < dimensions.size(); ++i) {
+          const uint64_t width = dimensions[i].width();
+          uint64_t index = symbol.arrayPath[i];
+          if (index >= width)
+            throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                                "primitive array position is outside its dimension");
+          // arrayPath counts from the lower bound; the right-hand index
+          // takes the least significant slice.
+          if (!dimensions[i].isDescending())
+            index = width - index - 1;
+          offset = offset * width + index;
+          count *= width;
+          if (count > UINT32_MAX) break;
+        }
+        if (count <= UINT32_MAX)
+          result.auxiliary = (count << 32) | offset;
+      }
     }
     if constexpr (std::same_as<T, PrimitivePortSymbol>) {
       result.flags |= LLG_SLANG_SEMANTIC_PRIMITIVE_PORT;

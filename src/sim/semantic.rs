@@ -1265,6 +1265,20 @@ fn is_simulation_gate(
             PrimitiveType::Combinational | PrimitiveType::Sequential
         );
     }
+    // Bidirectional pass switches; MOS switches stop in `legacy_unsupported`.
+    if matches!(class, PrimClass::Switch | PrimClass::Array)
+        && matches!(
+            prim_type,
+            PrimitiveType::Tran
+                | PrimitiveType::Tranif0
+                | PrimitiveType::Tranif1
+                | PrimitiveType::Rtran
+                | PrimitiveType::Rtranif0
+                | PrimitiveType::Rtranif1
+        )
+    {
+        return true;
+    }
     matches!(class, PrimClass::Gate | PrimClass::Array)
         && matches!(
             prim_type,

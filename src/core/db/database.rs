@@ -196,6 +196,17 @@ pub struct LegacyDirective {
     pub column: u32,
 }
 
+/// One element of a primitive instance array: of a connection as wide as
+/// `count` elements, the element owns slice `slice`, counted from the least
+/// significant one, which belongs to the right-hand indices of the array
+/// range (IEEE 1800-2009 28.3.6). Multidimensional arrays are flattened with
+/// the rightmost dimension varying fastest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrimitiveArrayPosition {
+    pub slice: u32,
+    pub count: u32,
+}
+
 #[derive(Debug)]
 pub struct Db {
     nodes: Vec<Node>,
@@ -226,6 +237,11 @@ pub struct Db {
     /// Definition-level pull behavior for omitted input ports, copied from
     /// the frontend's directive state while the snapshot is imported.
     unconnected_drives: HashMap<NodeId, UnconnectedDrive>,
+    /// Position of each element of a primitive instance array (IEEE
+    /// 1800-2009 28.3.5-28.3.6): the frontend binds every element to the
+    /// whole connection expressions, so consumers that need the element's
+    /// own part select (pass switches) derive it from this position.
+    primitive_array_positions: HashMap<NodeId, PrimitiveArrayPosition>,
     /// Source library of each elaborated instance (its selected definition's
     /// library), package and compilation unit, copied from the frontend's
     /// library binding so `%l` survives snapshot destruction.
@@ -390,6 +406,7 @@ impl Db {
             conditional_pattern_fields: HashMap::new(),
             program_instances: HashSet::new(),
             unconnected_drives: HashMap::new(),
+            primitive_array_positions: HashMap::new(),
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
@@ -474,6 +491,7 @@ impl Db {
             conditional_pattern_fields: HashMap::new(),
             program_instances: HashSet::new(),
             unconnected_drives: HashMap::new(),
+            primitive_array_positions: HashMap::new(),
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
@@ -647,6 +665,12 @@ impl Db {
 
     /// Return the definition-level pull value for omitted input ports on an
     /// elaborated instance.  Missing metadata means ordinary undriven behavior.
+    /// The position of a primitive instance inside its instance array, or
+    /// `None` for a single instance.
+    pub fn primitive_array_position(&self, id: NodeId) -> Option<PrimitiveArrayPosition> {
+        self.primitive_array_positions.get(&id).copied()
+    }
+
     pub fn unconnected_drive(&self, id: NodeId) -> UnconnectedDrive {
         self.unconnected_drives
             .get(&id)

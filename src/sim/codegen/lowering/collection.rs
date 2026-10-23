@@ -69,6 +69,8 @@ mod record_defaults;
 mod return_flow;
 mod signatures;
 mod strength_views;
+mod switches;
+pub(super) use switches::PendingSwitch;
 mod subroutine_containers;
 mod virtual_interfaces;
 

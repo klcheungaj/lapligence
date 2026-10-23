@@ -672,6 +672,7 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
         }
     }
     cg.attach_release_reevaluation();
+    cg.finish_switch_network()?;
     // Sampled-value event clocks may be requested by any body lowered above.
     let sampled_clock_processes = cg.emit_sampled_clock_processes();
     let mut model = std::mem::replace(
@@ -1308,6 +1309,9 @@ struct Codegen<'a> {
     task_specializations: HashMap<SpecializationKey, usize>,
     /// Specializations whose bodies are lowered after all call sites exist.
     pending_specializations: Vec<PendingSpecialization>,
+    /// Pass switches in lowering order; their networks are numbered after
+    /// every process is lowered (`finish_switch_network`).
+    pending_switches: Vec<collection::PendingSwitch>,
     /// Persistent native string storage for static delay-bearing task locals.
     static_string_task_locals: HashMap<(NodeId, NodeId), usize>,
     /// Persistent native-pointer storage for static chandle locals in
@@ -1940,6 +1944,7 @@ impl<'a> Codegen<'a> {
             static_task_locals: HashMap::new(),
             task_specializations: HashMap::new(),
             pending_specializations: Vec::new(),
+            pending_switches: Vec::new(),
             static_string_task_locals: HashMap::new(),
             static_task_chandle_locals: HashMap::new(),
             signals: Vec::new(),

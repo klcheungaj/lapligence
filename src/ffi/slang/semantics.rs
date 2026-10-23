@@ -556,6 +556,12 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
             node.auxiliary & !(CALL_SUPER | randomize) == 0
                 && (node.auxiliary & randomize).count_ones() <= 1
         }
+        // A primitive instance array element keeps its element count (bits
+        // 32-63) and its least-significant-first slice (bits 0-31).
+        (15, _, _) if node.flags & (1 << 25) != 0 => {
+            let (count, slice) = (node.auxiliary >> 32, node.auxiliary & u64::from(u32::MAX));
+            node.auxiliary == 0 || slice < count
+        }
         (19, 69, 40) => node.auxiliary == 0 || node.flags & 1 != 0,
         (19, 69, 41) => node.auxiliary > 0 || node.flags & 1 != 0,
         _ => node.auxiliary == 0,

@@ -13,6 +13,7 @@ impl Validator<'_> {
         }
 
         self.validate_module_paths()?;
+        self.validate_switch_network()?;
         self.validate_timing_checks()?;
 
         for (idx, problem) in self.model.rand_problems.iter().enumerate() {
@@ -1380,6 +1381,63 @@ impl Validator<'_> {
                 return self.fail(
                     format!("{path}.{name}.initializers[{initializer_index}]"),
                     "sequence local initializer must be packed",
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Validator<'_> {
+    /// Switch networks: distinct nodes inside their net groups, ascending
+    /// network starts that partition the nodes, and switches whose two
+    /// distinct terminals lie in one network.
+    fn validate_switch_network(&self) -> ValidationResult {
+        let network = &self.model.switch_network;
+        let path = "switch_network";
+        if network.nodes.is_empty() {
+            if !network.switches.is_empty() || !network.components.is_empty() {
+                return self.fail(path, "switches without nodes");
+            }
+            return Ok(());
+        }
+        if u32::try_from(network.nodes.len()).is_err()
+            || u32::try_from(network.switches.len()).is_err()
+        {
+            return self.fail(path, "switch network exceeds the runtime index range");
+        }
+        if network.components.first() != Some(&0)
+            || network.components.windows(2).any(|pair| pair[0] >= pair[1])
+            || network
+                .components
+                .last()
+                .is_some_and(|last| *last as usize >= network.nodes.len())
+        {
+            return self.fail(path, "switch networks must partition the nodes in order");
+        }
+        let mut seen = HashSet::new();
+        for (index, node) in network.nodes.iter().enumerate() {
+            let Some(group) = self.model.net_groups.get(node.group) else {
+                return self.fail(format!("{path}.nodes[{index}]"), "node names no net group");
+            };
+            if node.bit >= group.width {
+                return self.fail(format!("{path}.nodes[{index}]"), "node bit outside its net");
+            }
+            if !seen.insert(*node) {
+                return self.fail(format!("{path}.nodes[{index}]"), "node listed twice");
+            }
+        }
+        for (index, switch) in network.switches.iter().enumerate() {
+            let (Some(a), Some(b)) = (
+                network.component_of(switch.a),
+                network.component_of(switch.b),
+            ) else {
+                return self.fail(format!("{path}.switches[{index}]"), "switch names no node");
+            };
+            if switch.a == switch.b || a != b {
+                return self.fail(
+                    format!("{path}.switches[{index}]"),
+                    "switch must join two nodes of one network",
                 );
             }
         }
