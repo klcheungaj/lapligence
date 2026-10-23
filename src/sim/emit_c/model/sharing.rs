@@ -166,6 +166,14 @@ fn registry(
             Operand::pointer("llg_module_path_set_t", "module path set".to_owned(), &name),
         );
     }
+    // A sequential UDP instance steps its own state record; as an operand,
+    // the gates of one primitive definition share one body.
+    for state in 0..model.udp_states().len() {
+        if let Some(ty) = super::super::owned::udp::state_type(model, state) {
+            let name = format!("llg_udp_state_{state}");
+            registry.insert(name.clone(), Operand::pointer(&ty, ty.clone(), &name));
+        }
+    }
     for event in &model.events {
         if !event.is_array() {
             registry.insert(

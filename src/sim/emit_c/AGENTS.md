@@ -582,8 +582,11 @@ component tests.
 coroutine/ordinary ABI, exact canonical frame layout and typed operand shapes,
 then requires exact equality after normalization. Unrepresented
 references remain in the key. Widths, resume numbers, array extents and ordinary
-parameter payloads remain structural; generate-instance ULL payloads may become
-record fields.
+parameter payloads remain structural; ULL payloads and selected wait-dependency
+`.lsb` values of generate-instance bodies and port links (`IrProcess::port_link`,
+whose selections are the instance's connection) may become record fields. Module
+path sets and sequential UDP state records are pointer operands, so path-stamp
+processes and UDP gates of one definition share a body.
 Only known activation/net-contribution identities become scalar operands.
 Bodies with local static storage stay separate. Startup-external roots (assertion
 actions) stay separate because they do not receive the startup record initialization.

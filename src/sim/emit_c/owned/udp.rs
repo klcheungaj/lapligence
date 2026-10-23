@@ -375,6 +375,19 @@ pub(in crate::sim::emit_c) fn tables(model: &IrModel, out: &mut String) {
     }
 }
 
+/// The C type of sequential instance `state`'s record, `None` for a
+/// combinational instance, which keeps no state.
+pub(in crate::sim::emit_c) fn state_type(model: &IrModel, state: usize) -> Option<String> {
+    let table = *model.udp_states.get(state)?;
+    let definition = &model.udp_tables[table];
+    definition.sequential.as_ref()?;
+    Some(if dense_sequential(definition) {
+        "llg_udp_seq_t".to_owned()
+    } else {
+        format!("llg_udp_wide_{table}_t")
+    })
+}
+
 /// Whether sequential `table` uses the dense index (cheap size check).
 fn dense_sequential(table: &IrUdpTable) -> bool {
     table.sequential.as_ref().is_some_and(|sequential| {
