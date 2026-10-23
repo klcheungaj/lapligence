@@ -155,7 +155,7 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             IrInitStep::WriteNet { group, slot, value } => {
                 let g = model.net_group(*group);
                 out.push_str(&format!(
-                    "    llg_net_write(&{}, {}, {});\n",
+                    "    llg_net_write_driven(&{}, {}, {});\n",
                     g.c_name,
                     slot,
                     emit_const(value)

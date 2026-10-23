@@ -38,6 +38,14 @@ step values: 1:10, 4:11, 6:12, 7:40, 11:50, 13:61, 15:62, 40:63.
 `d` printed after `@(cb)` already holds the NBA result, equal to the `#0`
 sample.
 
+Some simulators sample an input whose skew reaches back past the previous
+clocking event at a later time (here `#SK` at 15 reads 61, the value after the
+edge at 13, while the same `#3` skew reads the correct step at 6 and 13); llg
+follows 14.13 L19909-19911 (`SystemVerilog-1800-2009.txt`): "If the input skew
+is not an explicit #0, then the value sampled corresponds to the signal value
+at the Postponed region of the time step skew time units prior to the clocking
+event", which at 15 is step 12 (50).
+
 ### `expressions` (A02, concrete)
 
 Inputs bound to `v[3:0]`, `v[7]`, `{a, b, v[1:0]}` (10 bits), the

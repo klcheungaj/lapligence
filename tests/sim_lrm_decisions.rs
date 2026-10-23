@@ -2765,6 +2765,14 @@ fn s2_d10_delayed_net_initial_x() {
 }
 
 #[test]
+fn s2_d11_driver_handover_one_update() {
+    run_decision(
+        "S2-D11_driver_handover_one_update",
+        include_str!("fixtures/sim/lrm_decisions/S2-D11_driver_handover_one_update.out"),
+    );
+}
+
+#[test]
 fn s3_d1_level_rows_use_prior_state() {
     run_decision(
         "S3-D1_level_rows_use_prior_state",
@@ -3424,6 +3432,14 @@ fn t0_d3_driven_net_starts_x() {
     run_decision(
         "T0-D3_driven_net_starts_x",
         include_str!("fixtures/sim/lrm_decisions/T0-D3_driven_net_starts_x.out"),
+    );
+}
+
+#[test]
+fn t0_d3_driver_bits_start_separately() {
+    run_decision(
+        "T0-D3_driver_bits_start_separately",
+        include_str!("fixtures/sim/lrm_decisions/T0-D3_driver_bits_start_separately.out"),
     );
 }
 

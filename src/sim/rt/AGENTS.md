@@ -297,13 +297,23 @@ net delay (`net_delayed == 2`) takes the whole-value vector rule instead (S2-D9)
 delayed net or path destination starts X with a strong-X strength view
 (`llg_net_start_unknown`, S2-D10) and reaches its resolved value through its
 delay. An undelayed driven wire, wand or wor holds X (strong-X view) on its
-driven bits (`llg_net_start_driven`, T0-D3) until the first driver write,
-which resolves the whole net once (`unsettled`; one byte test per write). A
+driven bits (`llg_net_start_driven`, T0-D3) until the first write of a
+driver covering them (`unsettled`; one byte test per write). With several
+drivers, `start_pending` keeps one bit per still-unwritten driven bit; while
+it is set every write resolves the whole net and those bits stay X (StX), so
+one driver's first write never exposes another driver's bits as z. A write
+covers the whole net, a selected write its range, an alias write its mapped
+bits and `llg_net_write_driven` (startup fills) its non-z bits. A
 runtime-valued net delay is the generated updater's store into
 `propagation_rise/fall/turn_off`; each later publication reads those fields and
 pending records keep their times. Reset
 model handles before freeing driver storage; reinitialization discards pending
-events. Zero-delay drivers drain Active. Generated nets provide exact-size
+events. Zero-delay drivers drain Active. A process's write to a net with several driver
+slots updates the slot at once but queues the net's resolution
+(`llg_net_defer`, slot `deferred_slot`) until its region queue is empty;
+`run_region_queue` flushes the table then and before returning, so the table
+is empty between drains (S2-D11). Writes outside a process turn (inertial
+commits, startup, callbacks) resolve at once. Generated nets provide exact-size
 driver interval nodes and overlap scratch storage. Selected writes replace their
 previous interval, release it to Z when a selector moves, and resolve/publish only
 the union of old and new ranges against overlapping drivers. Keep full-net waiter

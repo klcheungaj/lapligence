@@ -199,12 +199,78 @@ static sv4_t llg_net_compute_range(llg_net_t* net, uint32_t low,
         net->is_signed, net->resolution);
 }
 
+// ── Start X of undelayed driven nets (T0-D3) ─────────────────────────────────
+
+static size_t llg_net_pending_words(const llg_net_t* net) {
+    return ((size_t)net->width + 63u) / 64u;
+}
+
+// Each pending bit keeps its start X whatever the written drivers resolve
+// to: the drivers that cover it have not evaluated yet.
+static void llg_net_pending_overlay(const llg_net_t* net, sv4_t* value) {
+    const uint64_t* pending = net->start_pending;
+    size_t words = llg_net_pending_words(net);
+    for (size_t word = 0; word < words; word++) {
+        uint64_t mask = pending[word];
+        if (!mask) continue;
+        uint32_t base = (uint32_t)(word * 64u);
+        if (mask == UINT64_MAX) {
+            llg_sv4_range_fill(value, base, 64u, 2);
+            continue;
+        }
+        for (uint32_t bit = 0; bit < 64u; bit++)
+            if (mask >> bit & 1u) llg_sv4_range_fill(value, base + bit, 1u, 2);
+    }
+}
+
+static void llg_net_pending_mark(llg_net_t* net, uint32_t low, uint32_t count,
+                                 int pending) {
+    if (low >= net->width) return;
+    if (count > net->width - low) count = net->width - low;
+    while (count) {
+        uint32_t chunk = 64u - low % 64u;
+        if (chunk > count) chunk = count;
+        uint64_t mask = (UINT64_MAX >> (64u - chunk)) << (low % 64u);
+        if (pending)
+            net->start_pending[low / 64u] |= mask;
+        else
+            net->start_pending[low / 64u] &= ~mask;
+        low += chunk;
+        count -= chunk;
+    }
+}
+
+// A driver write covering [low, low + count) is the first write of those
+// bits' drivers. The net settles when no bit is left pending; a net without
+// a pending mask settles at its first write.
+static void llg_net_settle_cover(llg_net_t* net, uint32_t low, uint32_t count) {
+    uint64_t* pending = net->start_pending;
+    if (!pending) {
+        net->unsettled = 0;
+        return;
+    }
+    llg_net_pending_mark(net, low, count, 0);
+    size_t words = llg_net_pending_words(net);
+    for (size_t word = 0; word < words; word++)
+        if (pending[word]) return;
+    llg_net_start_release(net);
+}
+
+void llg_net_start_release(llg_net_t* net) {
+    if (!net) return;
+    free(net->start_pending);
+    net->start_pending = NULL;
+    net->unsettled = 0;
+}
+
 static sv4_t llg_net_compute(llg_net_t* net) {
-    if (llg_net_has_index(net))
-        return llg_net_compute_range(net, 0, net->width);
-    return sv4_resolve_strengths(
-        (const sv4_t* const*)net->drivers, net->strength0, net->strength1,
-        net->n_drivers, net->width, net->is_signed, net->resolution);
+    sv4_t value = llg_net_has_index(net)
+        ? llg_net_compute_range(net, 0, net->width)
+        : sv4_resolve_strengths(
+              (const sv4_t* const*)net->drivers, net->strength0, net->strength1,
+              net->n_drivers, net->width, net->is_signed, net->resolution);
+    if (net->start_pending) llg_net_pending_overlay(net, &value);
+    return value;
 }
 
 static void llg_net_alias_refresh(llg_net_alias_t* alias) {
@@ -382,6 +448,17 @@ static void llg_net_strength_publish(llg_net_t* net) {
     llg_value_scope_t* scope = value_scope_begin_private(1);
     sv4_t* owned = llg_value_scope_values(scope);
     sv4_replace(&owned[0], llg_net_strength_levels(net));
+    if (net->start_pending) {
+        // Pending bits keep the StX view llg_net_start_driven gave them.
+        uint64_t code = llg_net_strength_code(-LLG_STRENGTH_STRONG,
+                                              LLG_STRENGTH_STRONG);
+        for (uint32_t bit = 0; bit < net->width; bit++) {
+            if (!(net->start_pending[bit / 64u] >> (bit % 64u) & 1u)) continue;
+            sv4_t byte = sv4_from_u64(code, 8, 0);
+            sv4_part_select_set(&owned[0], (int64_t)bit * 8 + 7, (int64_t)bit * 8, byte);
+            sv4_destroy(&byte);
+        }
+    }
     sig_write(net->strength, owned[0]);
     llg_value_scope_end(scope);
 }
@@ -439,11 +516,18 @@ void llg_net_start_unknown(llg_net_t* net, int resolve) {
 
 void llg_net_start_driven(llg_net_t* net, const uint32_t* runs, uint32_t n_runs) {
     if (!net || !runs) return;
+    llg_net_start_release(net);
+    // One driver covers every driven bit at its first write; several drivers
+    // each settle their own bits.
+    if (net->n_drivers > 1)
+        net->start_pending = (uint64_t*)llg_checked_calloc(
+            llg_net_pending_words(net), sizeof(uint64_t), "net start bits");
     for (uint32_t run = 0; run < n_runs; run++) {
         uint32_t low = runs[2u * run];
         uint32_t count = runs[2u * run + 1u];
         if (count == 0 || low >= net->width || count > net->width - low) continue;
         llg_sv4_range_fill(&net->resolved, low, count, 2);
+        if (net->start_pending) llg_net_pending_mark(net, low, count, 1);
         if (net->strength) {
             uint64_t code = llg_net_strength_code(-LLG_STRENGTH_STRONG,
                                                   LLG_STRENGTH_STRONG);
@@ -472,25 +556,136 @@ void llg_net_resolve(llg_net_t* net) {
     llg_net_strength_publish(net);
 }
 
+// ── Deferred net updates ─────────────────────────────────────────────────────
+// The zero-delay drivers that one drain of a region queue runs write their
+// driver slots at once, but a net with several driver slots is resolved and
+// published only when that queue is empty. The drivers' evaluations then all
+// precede the net's update, an order IEEE 1800-2009 4.7 leaves open, so one
+// tri-state driver turning off before another turns on in the same pass is
+// no glitch on the net. The table is empty outside run_region_queue.
+typedef struct {
+    llg_net_t* net;
+    uint32_t low;
+    uint32_t high;
+    uint8_t whole;
+} llg_net_deferred_t;
+
+static llg_net_deferred_t* net_deferred;
+static size_t net_deferred_count;
+static size_t net_deferred_capacity;
+static int net_defer_active;
+
+// Queue the net's resolution of [low, high] (every bit when `whole`).
+static int llg_net_defer(llg_net_t* net, int whole, uint32_t low, uint32_t high) {
+    if (!net_defer_active || net->n_drivers < 2) return 0;
+    if (net->deferred_slot > 0) {
+        llg_net_deferred_t* entry = &net_deferred[net->deferred_slot - 1];
+        if (whole) entry->whole = 1;
+        if (low < entry->low) entry->low = low;
+        if (high > entry->high) entry->high = high;
+        return 1;
+    }
+    if (net_deferred_count >= (size_t)INT32_MAX) return 0;
+    if (net_deferred_count == net_deferred_capacity) {
+        size_t capacity = net_deferred_capacity ? net_deferred_capacity * 2u : 64u;
+        llg_net_deferred_t* grown = (llg_net_deferred_t*)llg_checked_calloc(
+            capacity, sizeof(*grown), "deferred net table");
+        if (net_deferred_count)
+            memcpy(grown, net_deferred, net_deferred_count * sizeof(*grown));
+        free(net_deferred);
+        net_deferred = grown;
+        net_deferred_capacity = capacity;
+    }
+    net_deferred[net_deferred_count] = (llg_net_deferred_t){net, low, high, (uint8_t)(whole != 0)};
+    net->deferred_slot = (int32_t)++net_deferred_count;
+    return 1;
+}
+
+static void llg_net_publish_computed_range(llg_net_t* net, uint32_t low, uint32_t high) {
+    llg_value_scope_t* scope = value_scope_begin_private(1);
+    sv4_t* owned = llg_value_scope_values(scope);
+    sv4_replace(owned, llg_net_compute_range(net, low, high - low + 1u));
+    llg_net_publish_range(net, low, owned[0]);
+    llg_value_scope_end(scope);
+    llg_net_strength_publish(net);
+}
+
+static void llg_net_commit_whole(llg_net_t* net) {
+    if (llg_net_defer(net, 1, 0, net->width ? net->width - 1u : 0)) return;
+    llg_net_resolve(net);
+}
+
+static void llg_net_commit_range(llg_net_t* net, uint32_t low, uint32_t high) {
+    if (llg_net_defer(net, 0, low, high)) return;
+    llg_net_publish_computed_range(net, low, high);
+}
+
+// Resolve every queued net in first-write order. Publication wakes waiters
+// into their region queues; writes made by callbacks meanwhile publish at
+// once.
+static int llg_net_flush_deferred(void) {
+    if (!net_deferred_count) return 0;
+    int outer = net_defer_active;
+    net_defer_active = 0;
+    for (size_t i = 0; i < net_deferred_count; i++) {
+        llg_net_deferred_t entry = net_deferred[i];
+        entry.net->deferred_slot = 0;
+        if (entry.whole || llg_is_forced(&entry.net->resolved) ||
+            !llg_net_has_index(entry.net) || entry.net->propagation_enabled ||
+            entry.net->unsettled)
+            llg_net_resolve(entry.net);
+        else
+            llg_net_publish_computed_range(entry.net, entry.low, entry.high);
+    }
+    net_deferred_count = 0;
+    net_defer_active = outer;
+    return 1;
+}
+
+static void llg_net_write_covering(llg_net_t* net, int idx, sv4_t value,
+                                   uint32_t cover_low, uint32_t cover_count);
+
 void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
+    llg_net_write_covering(net, idx, value, 0, net ? net->width : 0);
+}
+
+void llg_net_write_driven(llg_net_t* net, int idx, sv4_t value) {
+    if (!net) return;
+    if (net->start_pending) {
+        uint32_t width = llg_sv4_width(value);
+        if (width > net->width) width = net->width;
+        for (uint32_t low = 0; low < width; low += 64u) {
+            uint32_t count = width - low < 64u ? width - low : 64u;
+            uint64_t all = UINT64_MAX >> (64u - count);
+            uint64_t driven = ~llg_sv4_plane_slice(value, low, count, LLG_SV4_Z) & all;
+            net->start_pending[low / 64u] &= ~driven;
+        }
+    }
+    llg_net_write_covering(net, idx, value, 0, 0);
+}
+
+// A whole-slot write whose driver drives [cover_low, cover_low + cover_count)
+// of the net (the whole net except for a port alias).
+static void llg_net_write_covering(llg_net_t* net, int idx, sv4_t value,
+                                   uint32_t cover_low, uint32_t cover_count) {
     if (!net || !region_can_mutate("net write")) return;
     if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx]) return;
     sv4_t* slot = net->drivers[idx];
-    // The first driver write of a net that started X resolves it whole, even
-    // when the driver's value equals its all-Z slot (T0-D3).
+    // The first write of a driver of a net that started X resolves it whole,
+    // even when the driver's value equals its all-Z slot (T0-D3).
     int settle = net->unsettled;
-    net->unsettled = 0;
+    if (settle) llg_net_settle_cover(net, cover_low, cover_count);
     // A same-width value needs no resize to compare: an unchanged driver
     // (most gate and assignment wakes) returns without copying it.
     if (LLG_GATE_FAST_PATH && llg_sv4_width(value) == net->width &&
         sv4_same(*slot, value)) {
-        if (settle) llg_net_resolve(net);
+        if (settle) llg_net_commit_whole(net);
         return;
     }
     sv4_t replacement = sv4_resize(value, net->width, net->is_signed);
     if (sv4_same(*slot, replacement)) {
         sv4_destroy(&replacement);
-        if (settle) llg_net_resolve(net);
+        if (settle) llg_net_commit_whole(net);
         return;
     }
     uint32_t old_low = 0;
@@ -516,11 +711,11 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
     // A selected force may cover only part of the net. Recompute through the
     // force path so unforced bits still publish underlying driver changes.
     if (llg_is_forced(&net->resolved)) {
-        llg_net_resolve(net);
+        llg_net_commit_whole(net);
         return;
     }
     if (settle || !llg_net_has_index(net) || net->propagation_enabled) {
-        llg_net_resolve(net);
+        llg_net_commit_whole(net);
         return;
     }
     uint32_t low = old_active ? old_low : 0;
@@ -530,12 +725,7 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
         if (!old_active || low > new_low) low = new_low;
         if (!old_active || high < new_high) high = new_high;
     }
-    llg_value_scope_t* scope = value_scope_begin_private(1);
-    sv4_t* owned = llg_value_scope_values(scope);
-    sv4_replace(owned, llg_net_compute_range(net, low, high - low + 1u));
-    llg_net_publish_range(net, low, owned[0]);
-    llg_value_scope_end(scope);
-    llg_net_strength_publish(net);
+    llg_net_commit_range(net, low, high);
 }
 
 static int llg_net_range_same(const sv4_t* target, uint32_t offset,
@@ -568,11 +758,11 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
     int new_active = llg_sv4_width(selected) && !llg_net_all_z(&selected);
     uint32_t new_high = new_active ? new_low + llg_sv4_width(selected) - 1u : new_low;
     int settle = net->unsettled;
-    net->unsettled = 0;
+    if (settle) llg_net_settle_cover(net, new_low, llg_sv4_width(selected));
     if (old_active == new_active &&
         (!new_active || (old_low == new_low && old_high == new_high &&
                          llg_net_range_same(slot, new_low, &selected)))) {
-        if (settle) llg_net_resolve(net);
+        if (settle) llg_net_commit_whole(net);
         return;
     }
     // The index orders drivers by their driven range only: a new value over
@@ -594,16 +784,19 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
         if (llg_net_has_index(net)) llg_net_index_insert(net, idx, new_low, new_high);
     }
     if (llg_is_forced(&net->resolved)) {
-        llg_net_resolve(net);
+        llg_net_commit_whole(net);
         return;
     }
     if (settle || !llg_net_has_index(net) || net->propagation_enabled) {
-        llg_net_resolve(net);
+        llg_net_commit_whole(net);
         return;
     }
     if (!old_active && !new_active) return;
     if (old_active && new_active &&
         (old_high + 1u < new_low || new_high + 1u < old_low)) {
+        if (llg_net_defer(net, 0, old_low < new_low ? old_low : new_low,
+                          old_high > new_high ? old_high : new_high))
+            return;
         llg_value_scope_t* scope = value_scope_begin_private(2);
         sv4_t* owned = llg_value_scope_values(scope);
         sv4_replace(&owned[0], llg_net_compute_range(
@@ -621,12 +814,7 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
         if (!old_active || new_low < low) low = new_low;
         if (!old_active || new_high > high) high = new_high;
     }
-    llg_value_scope_t* scope = value_scope_begin_private(1);
-    sv4_t* owned = llg_value_scope_values(scope);
-    sv4_replace(owned, llg_net_compute_range(net, low, high - low + 1u));
-    llg_net_publish_range(net, low, owned[0]);
-    llg_value_scope_end(scope);
-    llg_net_strength_publish(net);
+    llg_net_commit_range(net, low, high);
 }
 
 void llg_net_write_selected(llg_net_t* net, int idx, sv4_t value,
@@ -713,6 +901,8 @@ void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
         }
         if (seen) continue;
         sv4_replace(&owned[1], sv4_fill(3, part->net->width, part->net->is_signed));
+        uint32_t cover_low = part->net->width;
+        uint32_t cover_high = 0;
         for (uint32_t j = i; j < alias->n_parts; j++) {
             const llg_net_alias_part_t* mapped = &alias->parts[j];
             if (mapped->net != part->net || mapped->slot != part->slot ||
@@ -726,8 +916,13 @@ void llg_net_alias_write(llg_net_alias_t* alias, sv4_t value) {
             sv4_part_select_set(&owned[1], (int64_t)mapped->group_bit + mapped->bit_count - 1,
                                 mapped->group_bit, bits);
             sv4_destroy(&bits);
+            if (mapped->group_bit < cover_low) cover_low = mapped->group_bit;
+            if (mapped->group_bit + mapped->bit_count - 1u > cover_high)
+                cover_high = mapped->group_bit + mapped->bit_count - 1u;
         }
-        llg_net_write(part->net, part->slot, owned[1]);
+        // The alias drives only its mapped bits of this slot.
+        llg_net_write_covering(part->net, part->slot, owned[1], cover_low,
+                               cover_low <= cover_high ? cover_high - cover_low + 1u : 0u);
         sv4_destroy(&owned[1]);
     }
     llg_value_scope_end(scope);

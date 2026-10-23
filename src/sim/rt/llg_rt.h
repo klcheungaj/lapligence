@@ -614,8 +614,16 @@ struct llg_net {
      * propagation_enabled and a per-bit propagation_bits array. */
     struct llg_module_path_dest* path_dest;
     /* Set by llg_net_start_driven: the net holds X on its driven bits until
-     * its first driver write, which then resolves the whole net once (T0-D3). */
+     * the first write of a driver covering them (T0-D3). Every write resolves
+     * the whole net while it is set. */
     int8_t unsettled;
+    /* 1 + this net's entry in the runtime's deferred-update table while a
+     * driver write waits for the end of the region queue drain; 0 otherwise. */
+    int32_t deferred_slot;
+    /* For a net with several drivers, one bit per net bit that still holds
+     * its start X because no driver covering it has written yet. NULL once
+     * every such bit is written, and for every other net. */
+    uint64_t* start_pending;
 };
 
 /* One contiguous run: view bits [signal_bit, signal_bit + bit_count) map to
@@ -648,12 +656,20 @@ void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */
  * delay resolves once its updater stored the delay. */
 void llg_net_start_unknown(llg_net_t* net, int resolve);
 /* Startup of an undelayed net with drivers: the `n_runs` pairs
- * (low bit, bit count) in `runs` are the bits its drivers write. They hold X
- * (strength StX) until the first driver write, the output of drivers that
- * have not evaluated yet (6.7), so a driver whose first value is X makes no
- * time-zero change; that first write resolves every bit (decision T0-D3). */
+ * (low bit, bit count) in `runs` are the bits its drivers write. Each holds X
+ * (strength StX), the output of drivers that have not evaluated yet (6.7),
+ * until the first write of a driver covering it, so a driver whose first
+ * value is X makes no time-zero change, also while other drivers of the net
+ * have not written (decision T0-D3). */
 void llg_net_start_driven(llg_net_t* net, const uint32_t* runs, uint32_t n_runs);
+/* Teardown: free the start state llg_net_start_driven left on a net whose
+ * drivers did not all write. */
+void llg_net_start_release(llg_net_t* net);
 void llg_net_write(llg_net_t* net, int idx, sv4_t value);
+/* A whole-slot write whose driver drives only the bits `value` does not
+ * leave Z: a startup fill of a collapsed-net member or a delayed driver's
+ * start value. Other drivers' bits keep their start X (T0-D3). */
+void llg_net_write_driven(llg_net_t* net, int idx, sv4_t value);
 // Selected writes replace the driver's previous range, so a moving selector
 // releases its old contribution to Z. `value` has plan.width bits; reverse is
 // true for ascending ordinary part-selects.

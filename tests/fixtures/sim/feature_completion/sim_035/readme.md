@@ -53,6 +53,13 @@ A twice-counted step 9 would give `C 7 7 7 1`; a sampled gate would give
 `E7 6 6`; comparing the two newest ticks between edges
 would give `A 5 3 1 0 0 6 xxx1`.
 
+Some simulators see no edge when a variable returns to its old value within
+one blocking sequence (`clk` is 1 before and after the four writes at 9), so
+they print no `E9` line and count no tick at 9 (`C 7 6 5 1`); llg follows
+9.4.2 L11773 (`SystemVerilog-1800-2009.txt`), "A posedge shall be detected on
+the transition from 0 to x, z, or 1", and the write `clk = 1'b1` after
+`clk = 1'b0` is such a transition.
+
 ### `complex_clocks` (A01)
 
 `a = 0, b = 1, c = 0, k = 0, g = 0, v = 0, r = 0.25` initially. The initial
