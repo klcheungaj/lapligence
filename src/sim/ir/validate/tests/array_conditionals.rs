@@ -1,4 +1,4 @@
-//! Array merge plans are checked at the public IR boundary.
+//! Array and record merge plans are checked at the public IR boundary.
 use super::*;
 
 fn default(width: u32) -> IrConst {
@@ -20,39 +20,16 @@ fn conditional() -> IrExpr {
 }
 
 fn structure_conditional() -> IrExpr {
-    let default = |width: u32, x: u64| {
-        IrConst::packed(
-            vec![],
-            (x != 0).then_some(vec![x]).unwrap_or_default(),
-            vec![],
-            width,
-            false,
-            None,
-        )
-        .unwrap()
-    };
     IrExpr::new(
         IrExprKind::StructMux {
             sel: Box::new(packed_const(0, 1)),
             a: Box::new(packed_const(0x12a5, 13)),
             b: Box::new(packed_const(0x14a6, 13)),
-            members: vec![
-                IrConditionalMember {
-                    offset: 0,
-                    width: 4,
-                    default: default(4, 0xf),
-                },
-                IrConditionalMember {
-                    offset: 4,
-                    width: 1,
-                    default: default(1, 0),
-                },
-                IrConditionalMember {
-                    offset: 5,
-                    width: 8,
-                    default: default(8, 0xff),
-                },
-            ],
+            // Leaves at bits 0 (4 bits, X), 4 (1 bit, 0) and 5 (8 bits, X).
+            leaves: Box::new(IrLeafMerge {
+                default: IrConst::packed(vec![], vec![0x1fef], vec![], 13, false, None).unwrap(),
+                starts: IrConst::packed(vec![0x31], vec![], vec![], 13, false, None).unwrap(),
+            }),
         },
         13,
         false,
@@ -130,30 +107,44 @@ fn array_conditional_checks_all_three_child_references() {
 }
 
 #[test]
-fn structure_conditional_validates_boundaries_and_defaults() {
+fn structure_conditional_validates_leaf_starts_and_defaults() {
     let model = valid_model();
     assert!(model.validate_expr(&structure_conditional(), None).is_ok());
 
-    let mut overlap = structure_conditional();
-    let IrExprKind::StructMux { members, .. } = &mut overlap.kind else {
+    // The payload is two periods of a 13-bit record default.
+    let mut repeated = structure_conditional();
+    repeated.width = 26;
+    let IrExprKind::StructMux { a, b, .. } = &mut repeated.kind else {
         unreachable!();
     };
-    members[1].offset = 3;
-    assert!(model.validate_expr(&overlap, None).is_err());
+    **a = packed_const(0x12a5, 26);
+    **b = packed_const(0x14a6, 26);
+    assert!(model.validate_expr(&repeated, None).is_ok());
 
-    let mut incomplete = structure_conditional();
-    let IrExprKind::StructMux { members, .. } = &mut incomplete.kind else {
-        unreachable!();
-    };
-    members.pop();
-    assert!(model.validate_expr(&incomplete, None).is_err());
-
-    let mut bad_default = structure_conditional();
-    let IrExprKind::StructMux { members, .. } = &mut bad_default.kind else {
-        unreachable!();
-    };
-    members[0].default.width = 3;
-    assert!(model.validate_expr(&bad_default, None).is_err());
+    let invalid: [fn(&mut IrLeafMerge); 6] = [
+        // No leaf starts at bit 0.
+        |leaves| leaves.starts.bits = vec![0x30],
+        // An unknown start bit.
+        |leaves| leaves.starts.x = vec![0x2],
+        // Starts and default disagree in width.
+        |leaves| leaves.starts.width = 12,
+        // A period that does not divide the payload.
+        |leaves| {
+            leaves.default.width = 12;
+            leaves.default.x = vec![0xfef];
+            leaves.starts.width = 12;
+        },
+        |leaves| leaves.default = IrConst::real(0.0),
+        |leaves| leaves.default.fill = Some(2),
+    ];
+    for change in invalid {
+        let mut expr = structure_conditional();
+        let IrExprKind::StructMux { leaves, .. } = &mut expr.kind else {
+            unreachable!();
+        };
+        change(leaves);
+        assert!(model.validate_expr(&expr, None).is_err());
+    }
 }
 
 #[test]

@@ -1,4 +1,4 @@
-// Immediate structure members merge independently; nested members default whole.
+// Structure leaves merge independently, also inside nested members (R05-D1).
 module record_conditional_check #(parameter int W = 7)(output bit done);
     typedef struct {
         logic [W-1:0] data = '1;
@@ -41,8 +41,8 @@ module record_conditional_check #(parameter int W = 7)(output bit done);
 
     task automatic check_merge(input record_t value);
         if (value.data !== {W{1'bx}} || value.flag !== 0 || value.stable !== 8'h5a
-            || value.row[0] !== 8'hxx || value.row[1] !== 8'hxx)
-            $fatal(1, "SYN004 W=%0d: member merge or type default", W);
+            || value.row[0] !== 8'h10 || value.row[1] !== 8'hxx)
+            $fatal(1, "SYN004 W=%0d: leaf merge or type default", W);
     endtask
     always_comb live = selector ? a : b;
     initial begin
@@ -54,9 +54,9 @@ module record_conditional_check #(parameter int W = 7)(output bit done);
         right_calls = 0;
         check_merge(FOLDED);
         if (KNOWN !== A || FROM_FUNCTION !== 8'h5a) $fatal(1, "SYN004 constant evaluation");
-        if (NESTED.child.flag !== 0 || NESTED.child.stable !== 8'hxx
+        if (NESTED.child.flag !== 0 || NESTED.child.stable !== 8'h5a
             || NESTED.child.data !== {W{1'bx}} || NESTED.stable !== 8'hc3)
-            $fatal(1, "SYN004 nested immediate default");
+            $fatal(1, "SYN004 nested leaf default");
         #1;
         if (live !== B) $fatal(1, "SYN004 false arm");
         selector = 4'b1xz0;

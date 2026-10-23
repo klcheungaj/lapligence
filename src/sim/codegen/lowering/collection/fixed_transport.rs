@@ -62,23 +62,12 @@ impl Codegen<'_> {
             let descriptor = self
                 .query_descriptor(node)
                 .ok_or("fixed conditional has no shape")?;
-            let element_cells = if let TypeShape::FixedArray { dimensions, .. } = &descriptor.shape
-            {
-                dimensions
-                    .iter()
-                    .skip(1)
-                    .try_fold(1u64, |total, (left, right)| {
-                        total.checked_mul(u64::from(left.abs_diff(*right)) + 1)
-                    })
-                    .ok_or("fixed conditional element count overflows")?
-            } else {
-                1
-            };
+            let cell_leaves = super::super::expressions::fixed_cell_leaves(descriptor)?;
             return Ok(IrFixedValue::Conditional {
                 selector: Box::new(selector),
                 left: Box::new(left),
                 right: Box::new(right),
-                element_cells,
+                cell_leaves,
             });
         }
         if let NodeKind::Expr(ExprKind::Streaming {
@@ -151,19 +140,15 @@ impl Codegen<'_> {
         node: NodeId,
         view: IrMemoryView,
     ) -> Result<IrFixedValue, String> {
-        let element_cells = view
-            .dims
-            .iter()
-            .skip(1)
-            .try_fold(1u64, |total, (left, right)| {
-                total.checked_mul(u64::from(left.abs_diff(*right)) + 1)
-            })
-            .ok_or("tagged member array element count overflows")?;
+        let cell_leaves = match self.query_descriptor(node) {
+            Some(descriptor) => super::super::expressions::fixed_cell_leaves(descriptor)?,
+            None => None,
+        };
         Ok(IrFixedValue::Conditional {
             selector: Box::new(Self::record_guard_check(guard, self.source_location(node))?),
             left: Box::new(IrFixedValue::Array(view.clone())),
             right: Box::new(IrFixedValue::Array(view)),
-            element_cells,
+            cell_leaves,
         })
     }
 

@@ -50,7 +50,7 @@ fn chandle_nbas_keep_borrowed_foreign_pointers() {
 }
 
 #[test]
-fn native_conditionals_merge_immediate_members() {
+fn native_conditionals_merge_record_leaves() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/sim_004/native_conditional.out");
     sim_cli::run_case_backend_parity(SUITE, "native_conditional", expected, &[], &[]);

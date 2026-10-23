@@ -29,8 +29,8 @@ pub(super) fn fold_expr(e: &mut IrExpr) {
             b,
             element_default,
         } => fold_array_mux(sel, a, b, element_default).map(Folded::Bits),
-        IrExprKind::StructMux { sel, a, b, members } => {
-            fold_struct_mux(sel, a, b, members).map(Folded::Bits)
+        IrExprKind::StructMux { sel, a, b, leaves } => {
+            fold_struct_mux(sel, a, b, leaves).map(Folded::Bits)
         }
         IrExprKind::Predicate { clauses } => fold_predicate(clauses).map(Folded::Bits),
         // Pattern matching has ordered binding side effects. Leave even
@@ -172,12 +172,7 @@ fn fold_array_mux(sel: &IrExpr, a: &IrExpr, b: &IrExpr, default: &IrConst) -> Op
     Some(Value::from_bits(bits, false))
 }
 
-fn fold_struct_mux(
-    sel: &IrExpr,
-    a: &IrExpr,
-    b: &IrExpr,
-    members: &[IrConditionalMember],
-) -> Option<Value> {
+fn fold_struct_mux(sel: &IrExpr, a: &IrExpr, b: &IrExpr, leaves: &IrLeafMerge) -> Option<Value> {
     let selector = as_packed_const(sel)?;
     if selector.bits.contains(&Bit::One) {
         return as_packed_const(a);
@@ -187,29 +182,36 @@ fn fold_struct_mux(
     }
     let a = as_packed_const(a)?;
     let b = as_packed_const(b)?;
-    if a.width() != b.width() {
+    let default = super::constants::const_to_value(&leaves.default)?;
+    let starts = super::constants::const_to_value(&leaves.starts)?;
+    let period = default.width();
+    if period == 0
+        || starts.width() != period
+        || a.width() != b.width()
+        || !a.width().is_multiple_of(period)
+    {
         return None;
     }
-    let mut lsb_bits = vec![Bit::X; a.width()];
-    for member in members {
-        let default = super::constants::const_to_value(&member.default)?;
-        let offset = usize::try_from(member.offset).ok()?;
-        let width = usize::try_from(member.width).ok()?;
-        let end = offset.checked_add(width)?;
-        if end > a.width() || default.width() != width {
-            return None;
-        }
-        let equal = (offset..end).all(|index| {
-            let left = a.bit_lsb(index);
-            let right = b.bit_lsb(index);
-            left == right && matches!(left, Bit::Zero | Bit::One)
-        });
-        for index in 0..width {
-            lsb_bits[offset + index] = if equal {
-                a.bit_lsb(offset + index)
-            } else {
-                default.bit_lsb(index)
-            };
+    let mut lsb_bits = Vec::with_capacity(a.width());
+    for base in (0..a.width()).step_by(period) {
+        let mut start = 0;
+        while start < period {
+            let end = (start + 1..period)
+                .find(|index| starts.bit_lsb(*index) == Bit::One)
+                .unwrap_or(period);
+            // A leaf survives only when known equal: X/Z never match.
+            let equal = (start..end).all(|index| {
+                let left = a.bit_lsb(base + index);
+                left == b.bit_lsb(base + index) && matches!(left, Bit::Zero | Bit::One)
+            });
+            lsb_bits.extend((start..end).map(|index| {
+                if equal {
+                    a.bit_lsb(base + index)
+                } else {
+                    default.bit_lsb(index)
+                }
+            }));
+            start = end;
         }
     }
     lsb_bits.reverse();

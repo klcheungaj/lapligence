@@ -58,8 +58,8 @@ call receivers, C-address actuals, runtime registrations). `Predicate`
 retains ordered true-only evaluation, not logical-AND identities; drop suffixes
 only when unreachable without discarding reached effects. Singleton concat still
 forces unsigned/self-determined semantics. Array/structure conditionals retain
-immediate boundaries and default-uninitialized values, not member initializers;
-equal flattened width does not imply equal shape.
+leaf boundaries (R05-D1) and default-uninitialized values, not member
+initializers; equal flattened width does not imply equal shape.
 
 `PackedChain` steps are relative to the preceding selected value. Validate
 nonempty/nonzero packed plans and unsigned read shape; preserve negative/X/Z

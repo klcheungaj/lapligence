@@ -767,7 +767,7 @@ impl Validator<'_> {
                     );
                 }
             }
-            IrExprKind::StructMux { sel, a, b, members } => {
+            IrExprKind::StructMux { sel, a, b, leaves } => {
                 self.validate_expr(sel, formals, &format!("{path}.sel"))?;
                 self.validate_expr(a, formals, &format!("{path}.a"))?;
                 self.validate_expr(b, formals, &format!("{path}.b"))?;
@@ -780,61 +780,13 @@ impl Validator<'_> {
                     || b.signed
                     || a.fill.is_some()
                     || b.fill.is_some()
-                    || members.is_empty()
                 {
                     return self.fail(
                         path,
-                        "structure conditional requires equal unsigned payload widths and members",
+                        "record conditional requires equal unsigned payload widths",
                     );
                 }
-                let mut covered = 0u32;
-                for (index, member) in members.iter().enumerate() {
-                    self.validate_const(
-                        &member.default,
-                        &format!("{path}.members[{index}].default"),
-                    )?;
-                    let Some(end) = member.offset.checked_add(member.width) else {
-                        return self.fail(
-                            format!("{path}.members[{index}]"),
-                            "structure conditional member range overflows",
-                        );
-                    };
-                    if member.width == 0
-                        || end > expr.width
-                        || member.default.real.is_some()
-                        || member.default.fill.is_some()
-                        || member.default.width != member.width
-                    {
-                        return self.fail(
-                            format!("{path}.members[{index}]"),
-                            "structure conditional member has an invalid boundary or default",
-                        );
-                    }
-                    for prior in &members[..index] {
-                        let Some(prior_end) = prior.offset.checked_add(prior.width) else {
-                            return self.fail(
-                                format!("{path}.members[{index}]"),
-                                "structure conditional member range overflows",
-                            );
-                        };
-                        if member.offset < prior_end && prior.offset < end {
-                            return self.fail(
-                                format!("{path}.members[{index}]"),
-                                "structure conditional members overlap",
-                            );
-                        }
-                    }
-                    let Some(next_covered) = covered.checked_add(member.width) else {
-                        return self.fail(path, "structure conditional member widths overflow");
-                    };
-                    covered = next_covered;
-                }
-                if covered != expr.width {
-                    return self.fail(
-                        path,
-                        "structure conditional members do not cover the payload",
-                    );
-                }
+                self.validate_leaf_merge(leaves, expr.width, &format!("{path}.leaves"))?;
             }
             IrExprKind::Concat { parts } | IrExprKind::Replicate { parts, .. } => {
                 if parts.is_empty() {

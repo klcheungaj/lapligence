@@ -1,16 +1,22 @@
-//! Immediate member defaults, including cross-limb payloads, own their storage.
+//! Record leaf defaults, including cross-limb payloads, own their storage.
 use super::*;
 
-fn constant(value: u64, width: u32) -> IrConst {
-    IrConst::packed(vec![value], vec![], vec![], width, false, None).unwrap()
-}
-
-fn unknown(width: u32) -> IrConst {
-    let mut mask = vec![u64::MAX; width.div_ceil(64) as usize];
-    if !width.is_multiple_of(64) {
-        *mask.last_mut().unwrap() = (1u64 << (width % 64)) - 1;
+/// Leaves at bit 0 (8 bits, X), bit 8 (1 bit, 0) and bit 9 (`width` bits,
+/// X) of a `width + 9`-bit record.
+fn leaves(width: u32) -> IrLeafMerge {
+    let total = width + 9;
+    let limbs = total.div_ceil(64) as usize;
+    let mut unknown = vec![u64::MAX; limbs];
+    if !total.is_multiple_of(64) {
+        *unknown.last_mut().unwrap() = (1u64 << (total % 64)) - 1;
     }
-    IrConst::packed(vec![], mask, vec![], width, false, None).unwrap()
+    unknown[0] &= !(1u64 << 8);
+    let mut starts = vec![0u64; limbs];
+    starts[0] = 1 | 1 << 8 | 1 << 9;
+    IrLeafMerge {
+        default: IrConst::packed(vec![], unknown, vec![], total, false, None).unwrap(),
+        starts: IrConst::packed(starts, vec![], vec![], total, false, None).unwrap(),
+    }
 }
 
 fn model(width: u32) -> IrModel {
@@ -45,23 +51,7 @@ fn merge(width: u32) -> IrExpr {
             sel: Box::new(read(0, 1)),
             a: Box::new(read(1, width + 9)),
             b: Box::new(read(2, width + 9)),
-            members: vec![
-                IrConditionalMember {
-                    offset: 0,
-                    width: 8,
-                    default: unknown(8),
-                },
-                IrConditionalMember {
-                    offset: 8,
-                    width: 1,
-                    default: constant(0, 1),
-                },
-                IrConditionalMember {
-                    offset: 9,
-                    width,
-                    default: unknown(width),
-                },
-            ],
+            leaves: Box::new(leaves(width)),
         },
         width + 9,
         false,
@@ -70,7 +60,7 @@ fn merge(width: u32) -> IrExpr {
 }
 
 #[test]
-fn cross_limb_structure_merge_owns_each_member_and_default() {
+fn cross_limb_structure_merge_owns_its_leaf_layout_and_default() {
     for width in [1, 7, 33, 65, 129] {
         let model = model(width);
         let ctx = RCtx {
@@ -87,11 +77,8 @@ fn cross_limb_structure_merge_owns_each_member_and_default() {
         let value = frame.expression(&expr).unwrap();
         frame.discard(value);
         assert_eq!(
-            frame
-                .body()
-                .matches("sv4_array_conditional_merge_to(")
-                .count(),
-            3
+            frame.body().matches("sv4_record_conditional_merge").count(),
+            1
         );
         assert!(!frame.body().contains("sv4_mux_to("));
         assert!(frame.slots.iter().all(|live| !live));
@@ -99,7 +86,7 @@ fn cross_limb_structure_merge_owns_each_member_and_default() {
 }
 
 #[test]
-fn generated_record_member_defaults_preserve_equal_members_and_limb_boundaries() {
+fn generated_record_leaf_defaults_preserve_equal_leaves_and_limb_boundaries() {
     assert!(crate::sim::build::cmake_available(), "CMake is required");
     for optimized in [false, true] {
         let mut model = model(129);

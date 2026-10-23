@@ -153,6 +153,47 @@ void llg_dyn_value_copy_range(llg_dyn_value_array_t* dst, sv4_t dst_start,
                changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0);
 }
 
+/* SV 11.4.11 combines aggregates element by element, recursively: record
+ * members and fixed-array items merge item by item and a nested container
+ * element by element, so only leaves (packed, real, string and handle
+ * values) are compared. A leaf that is not known equal takes its default. */
+static void llg_value_merge(llg_value_t* target, const llg_value_desc_t* desc,
+                            const llg_value_t* a, const llg_value_t* b) {
+    switch (desc->kind) {
+        case LLG_VALUE_AGGREGATE:
+        case LLG_VALUE_FIXED_ARRAY:
+            llg_value_copy(target, desc, NULL);
+            if (!target->value.items || !a->value.items || !b->value.items)
+                return;
+            for (size_t i = 0; i < desc->item_count; ++i)
+                llg_value_merge(&target->value.items[i],
+                                llg_value_item_desc(desc, i),
+                                &a->value.items[i], &b->value.items[i]);
+            return;
+        case LLG_VALUE_CONTAINER: {
+            llg_value_copy(target, desc, NULL);
+            if (!a->value.container && !b->value.container) return;
+            /* A null nested container is the empty default. */
+            llg_dyn_value_array_t empty = {0};
+            empty.element = desc->element;
+            llg_dyn_value_array_t* merged =
+                llg_alloc_items(1, sizeof(*merged));
+            llg_dyn_value_init(merged, desc->element);
+            llg_dyn_value_merge(merged,
+                                a->value.container ? a->value.container : &empty,
+                                b->value.container ? b->value.container : &empty);
+            target->value.container = merged;
+            return;
+        }
+        default:
+            llg_value_copy(target, desc,
+                           llg_value_equality(a, b, 0) == LLG_VALUE_EQUAL
+                               ? a
+                               : NULL);
+            return;
+    }
+}
+
 void llg_dyn_value_merge(llg_dyn_value_array_t* dst,
                          const llg_dyn_value_array_t* a,
                          const llg_dyn_value_array_t* b) {
@@ -163,13 +204,10 @@ void llg_dyn_value_merge(llg_dyn_value_array_t* dst,
     llg_value_t* data = llg_alloc_items(size, sizeof(*data));
     if (size) memset(data, 0, size * sizeof(*data));
     for (size_t i = 0; i < size; ++i) {
-        const llg_value_t* source =
-            i < a->size && i < b->size &&
-                    llg_value_equality(&a->data[i], &b->data[i], 0) ==
-                        LLG_VALUE_EQUAL
-                ? &a->data[i]
-                : NULL;
-        llg_value_copy(&data[i], dst->element, source);
+        if (i < a->size && i < b->size)
+            llg_value_merge(&data[i], dst->element, &a->data[i], &b->data[i]);
+        else
+            llg_value_copy(&data[i], dst->element, NULL);
     }
     llg_dyn_value_commit(dst, data, size);
 }

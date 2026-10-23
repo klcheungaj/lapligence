@@ -106,7 +106,9 @@ diagnostic labels remain separate from C symbols. The
   Match packed keys against the owned immediate element type, preserving nominal
   enum identity and non-nominal integral width/range/sign/state equivalence.
 - Lower array and direct unpacked-structure conditionals before flattening loses
-  immediate boundaries. Use default-uninitialized values, not declaration member
+  leaf boundaries: ambiguity merges leaf by leaf (R05-D1), with `ArrayMux` when
+  all leaves share a width and default and `StructMux` with one period's leaf
+  starts otherwise. Use default-uninitialized values, not declaration member
   initializers. Capture selector once; known truth evaluates one arm, ambiguity
   evaluates both with type-specific merging. Array assignment snapshots all RHS
   cells before writes and retains explicit conversions/casts on fallback paths.

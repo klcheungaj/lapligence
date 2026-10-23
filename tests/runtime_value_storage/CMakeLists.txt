@@ -256,6 +256,12 @@ foreach(mode IN ITEMS empty zero unequal remainder)
       -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
   set_tests_properties(array_conditional_reject_${mode} PROPERTIES TIMEOUT 60)
 endforeach()
+add_test(NAME array_conditional_reject_record_starts
+  COMMAND "${CMAKE_COMMAND}"
+    "-DPROBE=$<TARGET_FILE:array_conditional_probe>" "-DMODE=record"
+    "-DEXPECTED=invalid record conditional merge shape"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_failure.cmake")
+set_tests_properties(array_conditional_reject_record_starts PROPERTIES TIMEOUT 60)
 
 add_executable(packed_selection_probe packed_selection_probe.c)
 target_link_libraries(packed_selection_probe PRIVATE tracked_value)

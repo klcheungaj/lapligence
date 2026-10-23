@@ -5,10 +5,10 @@ use super::objects::object_query;
 use super::*;
 use crate::sim::ir::{
     IrArrayDimension, IrArrayQuery, IrArrayQueryKind, IrArrayQueryTarget, IrBinOp, IrBitStream,
-    IrChandleExpr, IrConditionalMember, IrConst, IrContainerExpr, IrContainerKind, IrFileInput,
-    IrFileInputTarget, IrFileReadTarget, IrInsideArrayElement, IrInsideItem, IrObjectQuery,
-    IrObjectStmt, IrObjectType, IrPlusArgTarget, IrPlusArgText, IrStreamSegment, IrStreamSelector,
-    IrStringExpr, IrStringInsideItem,
+    IrChandleExpr, IrConst, IrContainerExpr, IrContainerKind, IrFileInput, IrFileInputTarget,
+    IrFileReadTarget, IrInsideArrayElement, IrInsideItem, IrLeafMerge, IrObjectQuery, IrObjectStmt,
+    IrObjectType, IrPlusArgTarget, IrPlusArgText, IrStreamSegment, IrStreamSelector, IrStringExpr,
+    IrStringInsideItem,
 };
 
 mod aggregates;
@@ -16,6 +16,7 @@ pub(super) use aggregates::AggregateSelection;
 mod array_queries;
 mod casts;
 mod conditionals;
+pub(super) use conditionals::fixed_cell_leaves;
 mod dispatch;
 mod external_input;
 mod membership;

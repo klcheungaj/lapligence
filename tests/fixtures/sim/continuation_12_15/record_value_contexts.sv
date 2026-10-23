@@ -5,7 +5,7 @@ module tb;
     typedef struct { record_t child; logic [7:0] tail; } outer_t;
     localparam record_t A = '{data:7'h7f, flag:1, row:'{8'h10, 8'h11}};
     localparam record_t B = '{data:7'h00, flag:0, row:'{8'h10, 8'h12}};
-    // Ambiguous selector: equal members survive, others take their default.
+    // Ambiguous selector: equal leaves survive, others take their default.
     localparam record_t MERGED = 1'bx ? A : B;
     localparam outer_t OUTER = '{A, 8'hc3};
     record_t a, b;
@@ -20,7 +20,7 @@ module tb;
         b = MERGED;
         if (a.data !== 7'h7f || a.flag !== 1 || a.row[0] !== 8'h10 || a.row[1] !== 8'h11)
             $fatal(1, "whole structure parameter read");
-        if (b.data !== 7'bx || b.flag !== 0 || b.row[0] !== 8'hxx || b.row[1] !== 8'hxx)
+        if (b.data !== 7'bx || b.flag !== 0 || b.row[0] !== 8'h10 || b.row[1] !== 8'hxx)
             $fatal(1, "conditional structure parameter merge");
         if (OUTER.child.flag !== 1 || OUTER.child.row[1] !== 8'h11 || OUTER.tail !== 8'hc3)
             $fatal(1, "nested parameter member read");

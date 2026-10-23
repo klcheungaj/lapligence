@@ -10,8 +10,8 @@ recompute wake behavior. Key folding boundaries are:
 
 - Singleton concatenations retain unsignedness, self-determined sizing, and
   literal fill markers. Equal width alone does not make a child interchangeable.
-- `ArrayMux` folds immediate elements using captured defaults; `StructMux` uses
-  immediate unpacked-member boundaries. Both retain operand traversal, reads,
+- `ArrayMux` folds uniform leaves using captured defaults; `StructMux` uses the
+  leaf starts of each repeated period. Both retain operand traversal, reads,
   and effects; only a proven selector can discard an arm.
 - `Predicate` is neither logical AND nor concatenation. A constant false/X/Z
   prefix can discard an unreachable suffix, but a reached nonconstant/effectful

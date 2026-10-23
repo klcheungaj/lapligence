@@ -82,8 +82,9 @@ Reversed intervals use fixed 64-bit bit permutations and shifted range copies.
 Streams gather slices into destination words before storing each word once.
 `sv4_stream` preserves width (an unpack reorders with it too);
 assignment padding/truncation remains the caller's conversion before/after them.
-Array conditionals compare each immediate element with logical equality and use
-the supplied default for differing or X/Z-containing elements (SV2009 11.4.11).
+Array conditionals compare each leaf element (record conditionals each leaf the
+start mask marks) with logical equality and use the supplied default for
+differing or X/Z-containing leaves (SV2009 11.4.11).
 
 Shifts treat counts as unsigned, return X for any unknown count, and check all
 count words before narrowing. Arithmetic right shift repeats the sign-bit state,

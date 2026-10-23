@@ -1,4 +1,4 @@
-//! Folding must preserve immediate array boundaries and ordinary packed muxes.
+//! Folding must preserve leaf boundaries and ordinary packed muxes.
 use super::*;
 
 fn unknown(width: u32) -> IrExpr {
@@ -23,31 +23,21 @@ fn array(sel: IrExpr, a: IrExpr, b: IrExpr, default: IrExpr) -> IrExpr {
     )
 }
 
+/// Records of 13 bits with leaves at bits 0 (4 bits, X), 4 (1 bit, 0) and
+/// 5 (8 bits, X); the payload holds one or more of them.
 fn structure(sel: IrExpr, a: IrExpr, b: IrExpr) -> IrExpr {
+    let width = a.width;
     IrExpr::new(
         IrExprKind::StructMux {
             sel: Box::new(sel),
             a: Box::new(a),
             b: Box::new(b),
-            members: vec![
-                IrConditionalMember {
-                    offset: 0,
-                    width: 4,
-                    default: IrConst::packed(vec![], vec![0xf], vec![], 4, false, None).unwrap(),
-                },
-                IrConditionalMember {
-                    offset: 4,
-                    width: 1,
-                    default: IrConst::packed(vec![0], vec![], vec![], 1, false, None).unwrap(),
-                },
-                IrConditionalMember {
-                    offset: 5,
-                    width: 8,
-                    default: IrConst::packed(vec![], vec![0xff], vec![], 8, false, None).unwrap(),
-                },
-            ],
+            leaves: Box::new(IrLeafMerge {
+                default: IrConst::packed(vec![], vec![0x1fef], vec![], 13, false, None).unwrap(),
+                starts: IrConst::packed(vec![0x31], vec![], vec![], 13, false, None).unwrap(),
+            }),
         },
-        13,
+        width,
         false,
         None,
     )
@@ -84,10 +74,25 @@ fn array_conditional_fold_does_not_reuse_packed_bit_merging() {
 }
 
 #[test]
-fn structure_conditional_fold_preserves_equal_members_only() {
+fn structure_conditional_fold_preserves_equal_leaves_only() {
+    // Every leaf differs: the record default.
     check(
         structure(unknown(1), konst(0x12a5, 13), konst(0x14a6, 13)),
         masked_konst(0, 0x1fef, 0, 13),
+    );
+    // Only the low leaf differs; the flag and the high byte survive.
+    check(
+        structure(unknown(1), konst(0x12a5, 13), konst(0x12a6, 13)),
+        masked_konst(0x12a0, 0xf, 0, 13),
+    );
+    // Two records: the first (high) is equal, the second differs in its flag.
+    check(
+        structure(
+            unknown(1),
+            konst(0x12a5 << 13 | 0x0a53, 26),
+            konst(0x12a5 << 13 | 0x0a43, 26),
+        ),
+        konst(0x12a5 << 13 | 0x0a43, 26),
     );
 }
 

@@ -170,7 +170,7 @@ fn packed_policy_lowers_from_owned_sources_after_native_teardown() {
 }
 
 #[test]
-fn structure_conditionals_keep_immediate_members_across_constant_runtime_and_nba_paths() {
+fn structure_conditionals_keep_equal_leaves_across_constant_runtime_and_nba_paths() {
     sim_cli::run_case_with_args(
         "continuation_12_15",
         "struct_conditional_matrix",

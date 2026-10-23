@@ -14,15 +14,19 @@ column. Expected values are derived by hand below; none were captured from
   `4'h3` gives `0001`. The two-state member array equals its copy `arr`
   (`1 0`). After `s = r` the records are equal (`==` and `===` are `1`);
   writing `s.a[9]` makes `==` `0`. A known `0` selector copies `s`; an `x`
-  selector keeps each immediate member that is equal in both arms and gives
-  the others their uninitialized value (SV 11.4.11): member `a` differs, so
-  it becomes all zero (`bit`), while `tag` and `n` are kept. The NBA is
+  selector keeps each leaf that is equal in both arms and gives the others
+  their uninitialized value (decision R05-D1, SV 11.4.11): only `a[9]`
+  differs, so it becomes `00` (`bit`), while `a[5]` (`5b`), `tag` and `n` are
+  kept. The NBA is
   visible only after `#1`. The named pattern fills every element of `a` with
   `7`; `'{default: 0}` clears every member.
 - `oversized_values` (a 2,097,160-bit record): `f` returns a copy with
   `t = 9`, so `r == s` has a known mismatch in `t` (`0`) despite X cells in
-  `w`. The ambiguous conditional resets the unequal members to their
-  uninitialized values (`x`, and `0` for the two-state `t`). `g` copies `r`
+  `w`. The ambiguous conditional merges leaf by leaf (decision R05-D1):
+  `w[3]` is 5 in both arms and is kept, while the unequal two-state `t`
+  becomes its uninitialized value 0 (SV2009 11.4.11 L15215-15216). Other
+  simulators combine the bits of the differing `t` (1 and 9) as for a packed
+  conditional, which gives 1 once its X bit is stored in a two-state member. `g` copies `r`
   into `u`, sets `u.w[1] = 77` and increments the inout `s.t` from 9 to 10;
   `h` writes through a `ref` formal; the static `st` adds 3; `depth` recurses
   five times adding 1 to `t`. Ports and the continuous assignment copy `r`

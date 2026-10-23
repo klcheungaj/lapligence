@@ -1,5 +1,5 @@
 // V2001 4.1.13; SV2009 11.4.11 Table 11-20: reached arms, effect counts and
-// immediate element/member merges, independent of constant folding.
+// leaf-by-leaf aggregate merges (R05-D1), independent of constant folding.
 typedef struct { logic [3:0] a; bit [2:0] b; int i; } rec_t;
 typedef struct { rec_t r; logic [1:0] t [0:1]; } nest_t;
 typedef logic [3:0] row_t [0:1];

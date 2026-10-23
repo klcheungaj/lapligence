@@ -68,9 +68,10 @@ checked bounds and electrical target widths.
 Fixed formals carry recursive shapes and exact-width payloads. Union sizes use
 the largest member; structs/arrays follow declaration order. Defaults preserve
 unpacked leaf state domains and explicit member initializers. `StructMux`
-retains immediate unpacked-member boundaries and default-uninitialized constants
-over a flattened payload; validation requires disjoint complete coverage without
-changing packed mux or `ArrayMux` semantics.
+retains the leaf boundaries (an `IrLeafMerge` start mask) and the
+default-uninitialized constant of one period of a flattened payload; validation
+requires a known start mask with bit 0 set and a period that divides the
+payload, without changing packed mux or `ArrayMux` semantics.
 
 Reference bit writes carry typed indices through validation, traversal,
 optimization, and stack sizing. Unpacked member/element references can forward
@@ -103,7 +104,7 @@ meaning of an existing variant:
   the 4,096-cell dense threshold), `IrArray::element_uninitialized` defaults,
   and `IrNetArray`/`IrNetCellRun` constant runs for undriven net-array cells.
 - Values above packed capacity: `IrFixedValue` (`Array(IrMemoryView)`, `Call`,
-  `Conditional` with `element_cells`, `Stream`, `Convert`, and the additive
+  `Conditional` with record-cell `cell_leaves`, `Stream`, `Convert`, and the additive
   stream/pattern operands of RTL-103: `Dense` views of dense integral storage,
   `Packed` values split into cells, `Selected` runtime `with` selections of
   one-dimensional descriptor arrays; the last two may be runtime-sized and
@@ -264,8 +265,8 @@ the declared size and declared indices are normalized to storage positions at
 lowering (`fixed_view_ranges`). Whole-array `==`/`!=`/`===`/`!==` is
 `IrContainerExpr::Equal` (element-wise; sizes must match). Slice reads and
 writes are `IrContainerStmt::CopyRange`, ambiguous conditionals
-`IrContainerStmt::Merge` (equal immediate elements survive, others take the
-element default), and untimed NBAs `IrContainerStmt::Nonblocking`, which
+`IrContainerStmt::Merge` (elements merge leaf by leaf: equal leaves survive,
+others take their default), and untimed NBAs `IrContainerStmt::Nonblocking`, which
 copies the source at issue and commits at NBA time. The legacy emitter
 rejects `CopyRange`, `Merge` and `Nonblocking`.
 

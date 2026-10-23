@@ -222,11 +222,12 @@ void llg_dyn_value_new(llg_dyn_value_array_t* dst, sv4_t size,
 void llg_dyn_value_copy_range(llg_dyn_value_array_t* dst, sv4_t dst_start,
                               const llg_dyn_value_array_t* src,
                               sv4_t src_start, uint64_t count);
-/* Ambiguous-condition merge of two arrays (SV 11.4.11): each immediate
- * element that is known equal in both keeps that value, every other element
- * takes the element type's default-uninitialized value. Arrays of different
- * sizes merge to the larger size, unmatched positions taking the default.
- * `a` and `b` are borrowed and may alias `dst`. */
+/* Ambiguous-condition merge of two arrays (SV 11.4.11): elements merge leaf
+ * by leaf, recursing through record members, fixed-array items and nested
+ * containers; each leaf that is known equal in both keeps that value, every
+ * other leaf takes its type's default-uninitialized value. Arrays of
+ * different sizes merge to the larger size, unmatched positions taking the
+ * default. `a` and `b` are borrowed and may alias `dst`. */
 void llg_dyn_value_merge(llg_dyn_value_array_t* dst,
                          const llg_dyn_value_array_t* a,
                          const llg_dyn_value_array_t* b);

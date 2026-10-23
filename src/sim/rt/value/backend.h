@@ -378,12 +378,21 @@ sv4_t sv4_ge(sv4_t a, sv4_t b);
 // one comparison is definitively false.
 sv4_t sv4_inside_range(sv4_t value, sv4_t low, sv4_t high);
 sv4_t sv4_mux(sv4_t sel, sv4_t a, sv4_t b);
-// Ambiguous fixed-unpacked-array conditional: compare whole immediate elements
-// using logical equality; keep known-equal elements, default all others. Inputs
-// are borrowed declaration-order payloads with equal nonzero widths divisible by
-// element_default.width. The default is the element's uninitialized payload.
+// Ambiguous fixed-unpacked-array conditional whose leaves share one shape:
+// compare each element_default.width-bit leaf using logical equality; keep
+// known-equal leaves, default all others. Inputs are borrowed declaration-order
+// payloads with equal nonzero widths divisible by element_default.width. The
+// default is the leaf's uninitialized payload.
 // Returns one independent unsigned owner; performs no expression evaluation.
 sv4_t sv4_array_conditional_merge(sv4_t a, sv4_t b, sv4_t element_default);
+// Ambiguous conditional of a record, or a fixed array of records, whose leaves
+// differ in width or default: the payload is a sequence of periods of
+// period_default.width bits, and bit i of leaf_starts (same width, known) is set
+// where a leaf has its least-significant bit. Each leaf known equal in both
+// inputs is kept; every other leaf takes its bits of period_default. Inputs are
+// borrowed; returns one independent unsigned owner.
+sv4_t sv4_record_conditional_merge(sv4_t a, sv4_t b, sv4_t period_default,
+                                   sv4_t leaf_starts);
 sv4_t sv4_concat(sv4_t hi, sv4_t lo);     // hi is the MS part
 sv4_t sv4_repeat(sv4_t pat, uint64_t n);  // {n{pat}}
 // Packed streaming: right_to_left slices from the right-most bit (a short

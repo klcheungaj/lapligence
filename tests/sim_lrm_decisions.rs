@@ -339,6 +339,14 @@ fn s13_d1_copy_out_target_at_return() {
 }
 
 #[test]
+fn r05_d1_aggregate_conditional_leaves() {
+    run_decision(
+        "R05-D1_aggregate_conditional_leaves",
+        include_str!("fixtures/sim/lrm_decisions/R05-D1_aggregate_conditional_leaves.out"),
+    );
+}
+
+#[test]
 fn r11_d1_sibling_port_net_types() {
     run_decision(
         "R11-D1_sibling_port_net_types",

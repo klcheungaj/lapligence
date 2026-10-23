@@ -24,8 +24,8 @@ hand in the comments below; none were captured from `llg`.
   bits, beyond the packed limit) supports member writes, a whole copy, `==`
   and `!=` (the known mismatch in element 9 decides `0`/`1` despite X cells),
   an ambiguous conditional, a function input/return and an NBA. Element 7 is
-  equal in both arms and survives the X selector; element 9 differs, so the
-  whole record takes its uninitialized default (`xxxx`, two-state `0`) as the
-  §11.4.11 merge of an unpacked element. The NBA publishes `bump(m)`: element
+  equal in both arms and survives the X selector; in element 9 only `a`
+  differs, so the records merge leaf by leaf (decision R05-D1, §11.4.11):
+  `a` takes its uninitialized default `xxxx` and the equal `b` keeps 3. The NBA publishes `bump(m)`: element
   7 incremented to `0011`, element 9 and the last element copied from `m`.
   The test also bounds the generated `model.c`.

@@ -202,8 +202,8 @@ impl Frame<'_, '_> {
                 b,
                 element_default,
             } => self.mux(sel, a, b, expr, Some(element_default), None)?,
-            IrExprKind::StructMux { sel, a, b, members } => {
-                self.mux(sel, a, b, expr, None, Some(members))?
+            IrExprKind::StructMux { sel, a, b, leaves } => {
+                self.mux(sel, a, b, expr, None, Some(leaves))?
             }
             IrExprKind::UdpEval { table, inputs } => self.udp_eval(*table, inputs)?,
             IrExprKind::UdpState(state) => self.udp_state(*state),

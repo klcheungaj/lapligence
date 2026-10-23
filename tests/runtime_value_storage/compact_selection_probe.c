@@ -690,6 +690,55 @@ static void array_boundaries(void) {
         llg_gmp_sv4_destroy(&def);
     }
 }
+/* Records merge leaf by leaf: each period of `default` bits holds leaves of
+ * the listed widths (LSB first), marked in `starts`. */
+static void record_boundaries(void) {
+    static const uint32_t layouts[][4] = {
+        {4, 1, 8, 0}, {1, 64, 3, 0}, {63, 2, 65, 0}, {129, 0, 0, 0}, {1, 1, 1, 0}, {64, 64, 1, 7}};
+    for (size_t k = 0; k < sizeof(layouts) / sizeof(layouts[0]); ++k) {
+        uint32_t period = 0, leaves = 0;
+        while (leaves < 4 && layouts[k][leaves])
+            period += layouts[k][leaves++];
+        for (uint32_t count = 1; count <= 3; count += 2) {
+            uint32_t width = period * count;
+            g4_t a = llg_gmp_sv4_zero(width, 0), def = llg_gmp_sv4_zero(period, 0),
+                 starts = llg_gmp_sv4_zero(period, 0);
+            for (uint32_t bit = 0; bit < width; ++bit)
+                llg_gmp_sv4_set_state(&a, bit, (bit * 7u + 1u) % 5u % 2u);
+            for (uint32_t bit = 0; bit < period; ++bit)
+                llg_gmp_sv4_set_state(&def, bit, bit % 3u ? 2u : (bit % 2u ? 3u : 0u));
+            for (uint32_t i = 0, at = 0; i < leaves; at += layouts[k][i++])
+                llg_gmp_sv4_set_state(&starts, at, 1);
+            g4_t b = llg_gmp_sv4_clone(&a);
+            /* The last leaf of the first period differs in its top bit; the
+             * first leaf of the last period holds case-equal X. */
+            llg_gmp_sv4_set_state(&b, period - 1, 1u - (unsigned)state_at(a, period - 1));
+            llg_gmp_sv4_set_state(&a, width - period, 2);
+            llg_gmp_sv4_set_state(&b, width - period, 2);
+            sv4_t oa = legacy(a), ob = legacy(b), od = legacy(def), os = legacy(starts);
+            g4_t r = llg_gmp_sv4_record_conditional_merge(a, b, def, starts);
+            for (uint32_t base = 0; base < width; base += period)
+                for (uint32_t i = 0, at = 0; i < leaves; at += layouts[k][i++]) {
+                    int equal = 1;
+                    for (uint32_t j = at; j < at + layouts[k][i]; ++j) {
+                        int left = state_at(a, base + j), right = state_at(b, base + j);
+                        equal &= left < 2 && right < 2 && left == right;
+                    }
+                    for (uint32_t j = at; j < at + layouts[k][i]; ++j)
+                        expect_state(r, base + j, equal ? state_at(a, base + j) : state_at(def, j));
+                }
+            compare(sv4_record_conditional_merge(oa, ob, od, os), r);
+            sv4_destroy(&oa);
+            sv4_destroy(&ob);
+            sv4_destroy(&od);
+            sv4_destroy(&os);
+            llg_gmp_sv4_destroy(&a);
+            llg_gmp_sv4_destroy(&b);
+            llg_gmp_sv4_destroy(&def);
+            llg_gmp_sv4_destroy(&starts);
+        }
+    }
+}
 static void result_ownership(void) {
     g4_t v = llg_gmp_sv4_fill(1, 129, 1), base = llg_gmp_sv4_zero(65, 0);
     llg_gmp_sv4_set_state(&v, 1, 2);
@@ -783,6 +832,7 @@ int main(int argc, char** argv) {
     references();
     result_ownership();
     array_boundaries();
+    record_boundaries();
     stream_padding();
     word_boundaries();
     wide();
