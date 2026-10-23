@@ -166,6 +166,16 @@ sv4_t llg_dense_cells_image(const sv4_t* cells, uint64_t count);
 void llg_dense_cells_store(sv4_t* cells, uint64_t count, const sv4_t* image, int64_t left,
                            uint32_t width, int is_signed, int two_state, int nba);
 void llg_dense_cells_fill(sv4_t* cells, uint64_t count, const sv4_t* value, int nba);
+/* The same three operations on `count` consecutive cells of a descriptor
+ * array from linear cell `first`. Reads peek (unwritten cells read the
+ * array's initial value and stay unmaterialized); writes materialize. */
+sv4_t llg_fixed_array_cells_image(const llg_fixed_array_t* array, uint64_t first,
+                                  uint64_t count);
+void llg_fixed_array_cells_store(llg_fixed_array_t* array, uint64_t first, uint64_t count,
+                                 const sv4_t* image, int64_t left, uint32_t width,
+                                 int is_signed, int two_state, int nba);
+void llg_fixed_array_cells_fill(llg_fixed_array_t* array, uint64_t first, uint64_t count,
+                                const sv4_t* value, int nba);
 
 // Keep the library and every model translation unit on the host-allocation
 // declaration contract. CMake supplies the same definition when compiling
@@ -2983,6 +2993,8 @@ int llg_rt_command_line(char*** argv);
  * their address and left empty, like the returning forms' by-value strings. */
 void llg_fixed_array_compare_to(sv4_t* dst, const llg_fixed_array_t* p0, const llg_fixed_array_t* p1, int p2, int p3);
 void llg_dense_cells_image_to(sv4_t* dst, const sv4_t* cells, uint64_t count);
+void llg_fixed_array_cells_image_to(sv4_t* dst, const llg_fixed_array_t* array, uint64_t first,
+                                  uint64_t count);
 void llg_fixed_array_stream_source_to(sv4_t* dst, const llg_fixed_array_t* array, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
 void llg_net_alias_read_to(sv4_t* dst, llg_net_alias_t* alias);
 void llg_q_full_to(sv4_t* dst, const sv4_t* q_id, sv4_t* status);

@@ -1,17 +1,19 @@
-//! One runtime call per run of consecutive dense array cells.
+//! One runtime call per run of consecutive fixed-array cells.
 //!
 //! Lowering expresses a whole unpacked-array value element by element: a
 //! concatenation of constant-index reads, and a block of constant-index
 //! element stores taking slices of one captured value. Emitted one access at
 //! a time, both make `model.c` and its compile time grow with the element
-//! count. A run of consecutive cells of one dense array is instead one call
-//! over the cell range, so the C stays proportional to the aggregate's shape.
+//! count. A run of consecutive cells of one array is instead one call over
+//! the cell range, so the C stays proportional to the aggregate's shape:
+//! `llg_dense_cells_*` on directly addressed storage and
+//! `llg_fixed_array_cells_*` on descriptor (lazily allocated) arrays.
 use super::*;
 
 /// Shorter runs keep their per-element code.
 const DENSE_CELL_RUN_MIN: usize = LLG_DENSE_CELL_RUN_MIN;
 
-/// A constant-index whole-cell access of directly addressed dense storage.
+/// A constant-index whole-cell access of a packed fixed array.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Cell {
     array: usize,
@@ -111,9 +113,7 @@ impl Frame<'_, '_> {
     fn dense_cell(&self, array: usize, indices: &[IrExpr], selection: &IrElemSel) -> Option<Cell> {
         let info = self.ctx.model.array(array);
         if !matches!(selection, IrElemSel::Whole)
-            || info.sparse()
             || info.real
-            || info.activation
             || info.elem_width == 0
             || indices.len() != info.dims.len()
         {
@@ -131,6 +131,28 @@ impl Frame<'_, '_> {
             offset = offset.checked_mul(extent)?.checked_add(position)?;
         }
         Some(Cell { array, offset })
+    }
+
+    /// The runtime call family for a run starting at `first`, and the
+    /// arguments that locate the run: the first cell's address in dense
+    /// storage, or a descriptor array and the first cell's linear index.
+    fn cell_run(&self, first: Cell) -> Result<(&'static str, String), String> {
+        let info = self.ctx.model.array(first.array);
+        Ok(if info.sparse() {
+            (
+                "llg_fixed_array_cells",
+                format!(
+                    "{}, {}ULL",
+                    self.fixed_array_address(first.array)?,
+                    first.offset
+                ),
+            )
+        } else {
+            (
+                "llg_dense_cells",
+                info.cell_address(&format!("{}ULL", first.offset)),
+            )
+        })
     }
 
     fn dense_cell_read(&self, part: &IrExpr) -> Option<Cell> {
@@ -200,12 +222,8 @@ impl Frame<'_, '_> {
                     .ok()
                     .and_then(|count| info.elem_width.checked_mul(count))
                     .ok_or_else(|| "dense cell image width overflow".to_owned())?;
-                let cells = info.cell_address(&format!("{}ULL", first.offset));
-                let image = self.value(
-                    format!("llg_dense_cells_image({cells}, {run}ULL)"),
-                    width,
-                    false,
-                );
+                let (family, cells) = self.cell_run(first)?;
+                let image = self.value(format!("{family}_image({cells}, {run}ULL)"), width, false);
                 result = Some(match result {
                     None => image,
                     Some(prefix) => {
@@ -353,7 +371,7 @@ impl Frame<'_, '_> {
         let cancellation_mark = self.cancellation_mark();
         let info = self.ctx.model.array(first.cell.array);
         let (cell_width, signed, two_state) = (info.elem_width, info.signed, info.two_state);
-        let cells = info.cell_address(&format!("{}ULL", first.cell.offset));
+        let (family, cells) = self.cell_run(first.cell)?;
         let nba = u8::from(first.nba);
         match first.source {
             StoreSource::Slice {
@@ -363,7 +381,7 @@ impl Frame<'_, '_> {
             } => {
                 let source = self.expression(base)?;
                 self.line(format!(
-                    "llg_dense_cells_store({cells}, {count}ULL, {}, {left}LL, {cell_width}u, {}, {}, {nba});",
+                    "{family}_store({cells}, {count}ULL, {}, {left}LL, {cell_width}u, {}, {}, {nba});",
                     source.address(),
                     u8::from(signed),
                     u8::from(two_state || cleared)
@@ -374,7 +392,7 @@ impl Frame<'_, '_> {
                 let value = self.expression(constant)?;
                 let value = self.convert(value, cell_width, signed, two_state, false);
                 self.line(format!(
-                    "llg_dense_cells_fill({cells}, {count}ULL, {}, {nba});",
+                    "{family}_fill({cells}, {count}ULL, {}, {nba});",
                     value.address()
                 ));
                 self.discard(value);
@@ -447,11 +465,11 @@ impl Frame<'_, '_> {
         let info = self.ctx.model.array(first.array);
         let (cell_width, signed, two_state) = (info.elem_width, info.signed, info.two_state);
         let width = cell_width * u32::try_from(count).map_err(|_| "dense run too long")?;
-        let cells = info.cell_address(&format!("{}ULL", first.offset));
+        let (family, cells) = self.cell_run(first)?;
         // The stream takes the value's rightmost `width` bits, unsigned.
         let value = self.convert(value, width, false, false, false);
         self.line(format!(
-            "llg_dense_cells_store({cells}, {count}ULL, {}, {}LL, {cell_width}u, {}, {}, {});",
+            "{family}_store({cells}, {count}ULL, {}, {}LL, {cell_width}u, {}, {}, {});",
             value.address(),
             width - 1,
             u8::from(signed),

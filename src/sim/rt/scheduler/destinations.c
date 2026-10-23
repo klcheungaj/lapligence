@@ -8,6 +8,10 @@ void llg_fixed_array_compare_to(sv4_t* dst, const llg_fixed_array_t* p0, const l
 void llg_dense_cells_image_to(sv4_t* dst, const sv4_t* cells, uint64_t count) {
     sv4_replace(dst, llg_dense_cells_image(cells, count));
 }
+void llg_fixed_array_cells_image_to(sv4_t* dst, const llg_fixed_array_t* array, uint64_t first,
+                                  uint64_t count) {
+    sv4_replace(dst, llg_fixed_array_cells_image(array, first, count));
+}
 void llg_net_alias_read_to(sv4_t* dst, llg_net_alias_t* alias) {
     sv4_replace(dst, llg_net_alias_read(alias));
 }

@@ -148,6 +148,11 @@ const OPERATIONS: &[(&str, &str, &[Param])] = &[
     ),
     ("llg_dense_cells_image", "llg_dense_cells_image_to", &[S, S]),
     (
+        "llg_fixed_array_cells_image",
+        "llg_fixed_array_cells_image_to",
+        &[S, S, S],
+    ),
+    (
         "llg_fixed_array_stream_source",
         "llg_fixed_array_stream_source_to",
         &[S, S, S, S, P, S, P, P],

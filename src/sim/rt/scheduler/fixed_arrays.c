@@ -785,44 +785,116 @@ void llg_fixed_array_merge(llg_fixed_array_t* dst, const llg_fixed_array_t* left
     llg_value_scope_end(scope);
 }
 
-sv4_t llg_dense_cells_image(const sv4_t* cells, uint64_t count) {
-    uint32_t width = cells && count ? llg_sv4_width(cells[0]) : 0;
+/* Consecutive cells of dense storage (`dense`) or of a descriptor array
+ * (`array`, from cell `first`). Descriptor reads peek, so unwritten cells are
+ * not materialized; writes publish through the cell owner. */
+typedef struct {
+    sv4_t* dense;
+    llg_fixed_array_t* array;
+    uint64_t first;
+} fixed_cell_run_t;
+
+static const sv4_t* fixed_run_peek(const fixed_cell_run_t* run, uint64_t i) {
+    return run->dense ? &run->dense[i] : llg_fixed_array_peek(run->array, run->first + i);
+}
+
+static sv4_t* fixed_run_cell(const fixed_cell_run_t* run, uint64_t i) {
+    return run->dense ? &run->dense[i] : llg_fixed_array_cell(run->array, run->first + i);
+}
+
+static void fixed_run_check(const fixed_cell_run_t* run, uint64_t count) {
+    if (!run->dense && (!run->array || run->first > run->array->total ||
+                        count > run->array->total - run->first))
+        fixed_bad_state("invalid fixed cell run");
+}
+
+static sv4_t fixed_run_image(const fixed_cell_run_t* run, uint64_t count) {
+    fixed_run_check(run, count);
+    uint32_t width = count ? llg_sv4_width(*fixed_run_peek(run, 0)) : 0;
     if (!width || count > (uint64_t)(LLG_SUPPORTED_WIDTH_LIMIT - 1u) / width)
-        fixed_bad_state("invalid dense cell image");
+        fixed_bad_state("invalid cell run image");
     uint64_t high = count * width;
     /* One allocation of the final width; appending cell by cell would copy
-     * the growing prefix once per cell. */
+     * the growing prefix once per cell. A peeked cell is copied before the
+     * next peek, which may materialize a range cell. */
     sv4_t image = sv4_zero((uint32_t)high, 0);
     for (uint64_t i = 0; i < count; ++i, high -= width) {
-        if (llg_sv4_width(cells[i]) != width) fixed_bad_state("dense cell width mismatch");
-        sv4_part_select_set(&image, (int64_t)high - 1, (int64_t)(high - width), cells[i]);
+        const sv4_t* cell = fixed_run_peek(run, i);
+        if (llg_sv4_width(*cell) != width) fixed_bad_state("cell run width mismatch");
+        sv4_part_select_set(&image, (int64_t)high - 1, (int64_t)(high - width), *cell);
     }
     return image;
 }
 
-void llg_dense_cells_store(sv4_t* cells, uint64_t count, const sv4_t* image, int64_t left,
-                           uint32_t width, int is_signed, int two_state, int nba) {
-    if (!cells || !image || !width || left < (int64_t)width - 1 ||
+static void fixed_run_store(const fixed_cell_run_t* run, uint64_t count, const sv4_t* image,
+                            int64_t left, uint32_t width, int is_signed, int two_state,
+                            int nba) {
+    fixed_run_check(run, count);
+    if (!image || !width || left < (int64_t)width - 1 ||
         (uint64_t)left >= llg_sv4_width(*image) ||
         count > ((uint64_t)left + 1u) / width)
-        fixed_bad_state("invalid dense cell store");
+        fixed_bad_state("invalid cell run store");
     for (uint64_t i = 0; i < count; ++i, left -= (int64_t)width) {
         sv4_t part = sv4_part_select(*image, left, left - (int64_t)width + 1);
         sv4_t value = sv4_cast(part, width, (int8_t)is_signed);
         sv4_destroy(&part);
         if (two_state) sv4_replace(&value, sv4_to_two_state(value));
-        if (nba) llg_nba_after(&cells[i], value, 0);
-        else llg_ba(&cells[i], value);
+        sv4_t* cell = fixed_run_cell(run, i);
+        if (nba) llg_nba_after(cell, value, 0);
+        else llg_ba(cell, value);
         sv4_destroy(&value);
     }
 }
 
-void llg_dense_cells_fill(sv4_t* cells, uint64_t count, const sv4_t* value, int nba) {
-    if (!cells || !value) fixed_bad_state("invalid dense cell fill");
+static void fixed_run_fill(const fixed_cell_run_t* run, uint64_t count, const sv4_t* value,
+                           int nba) {
+    fixed_run_check(run, count);
+    if (!value) fixed_bad_state("invalid cell run fill");
     for (uint64_t i = 0; i < count; ++i) {
-        if (nba) llg_nba_after(&cells[i], *value, 0);
-        else llg_ba(&cells[i], *value);
+        sv4_t* cell = fixed_run_cell(run, i);
+        if (nba) llg_nba_after(cell, *value, 0);
+        else llg_ba(cell, *value);
     }
+}
+
+sv4_t llg_dense_cells_image(const sv4_t* cells, uint64_t count) {
+    if (!cells) fixed_bad_state("invalid dense cell image");
+    /* Read only: the run's cells are only peeked. */
+    fixed_cell_run_t run = {(sv4_t*)cells, NULL, 0};
+    return fixed_run_image(&run, count);
+}
+
+void llg_dense_cells_store(sv4_t* cells, uint64_t count, const sv4_t* image, int64_t left,
+                           uint32_t width, int is_signed, int two_state, int nba) {
+    if (!cells) fixed_bad_state("invalid dense cell store");
+    fixed_cell_run_t run = {cells, NULL, 0};
+    fixed_run_store(&run, count, image, left, width, is_signed, two_state, nba);
+}
+
+void llg_dense_cells_fill(sv4_t* cells, uint64_t count, const sv4_t* value, int nba) {
+    if (!cells) fixed_bad_state("invalid dense cell fill");
+    fixed_cell_run_t run = {cells, NULL, 0};
+    fixed_run_fill(&run, count, value, nba);
+}
+
+sv4_t llg_fixed_array_cells_image(const llg_fixed_array_t* array, uint64_t first,
+                                  uint64_t count) {
+    /* Read only: descriptor cells are only peeked. */
+    fixed_cell_run_t run = {NULL, (llg_fixed_array_t*)array, first};
+    return fixed_run_image(&run, count);
+}
+
+void llg_fixed_array_cells_store(llg_fixed_array_t* array, uint64_t first, uint64_t count,
+                                 const sv4_t* image, int64_t left, uint32_t width,
+                                 int is_signed, int two_state, int nba) {
+    fixed_cell_run_t run = {NULL, array, first};
+    fixed_run_store(&run, count, image, left, width, is_signed, two_state, nba);
+}
+
+void llg_fixed_array_cells_fill(llg_fixed_array_t* array, uint64_t first, uint64_t count,
+                                const sv4_t* value, int nba) {
+    fixed_cell_run_t run = {NULL, array, first};
+    fixed_run_fill(&run, count, value, nba);
 }
 
 void llg_real_cells_order(double* cells, uint64_t count, uint64_t element_cells,

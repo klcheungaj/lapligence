@@ -8,11 +8,11 @@ module tb;
   int A [10:1];
   int B [0:9];
   recs_t ra, rb, rc, rn, rt;
-  logic [7:0] m [0:3][0:4];
-  logic [7:0] m2 [0:1][0:4];
-  bit [7:0] ba [0:5], bb [0:5];
-  logic [7:0] three [0:2], three2 [0:2];
-  logic [7:0] four [0:3], four2 [0:3];
+  logic [7:0] m [0:3][0:7];
+  logic [7:0] m2 [0:1][0:7];
+  bit [7:0] ba [0:7], bb [0:7];
+  logic [7:0] seven [0:6], seven2 [0:6];
+  logic [7:0] eight [0:7], eight2 [0:7];
   bytes_t src, w, v;
   bytes_t filled = '{default: 8'h5a};
   logic c;
@@ -36,6 +36,8 @@ module tb;
     foreach (B[k]) B[k] = k * 3;
     A = B;
     $display("A %0d %0d %0d", A[10], A[5], A[1]);
+    B[1:8] = B[0:7];
+    $display("shift %0d %0d %0d %0d", B[0], B[1], B[8], B[9]);
 
     foreach (ra[k]) ra[k] = '{4'(k), k * 10};
     rb = ra;
@@ -84,11 +86,11 @@ module tb;
     bb = ba;
     $display("bits %p %b", bb, ba == bb);
 
-    three = '{8'd1, 8'd2, 8'd3};
-    three2 = three;
-    four = '{8'd4, 8'd5, 8'd6, 8'd7};
-    four2 = four;
-    $display("short %p %p", three2, four2);
+    foreach (seven[k]) seven[k] = 8'(k + 1);
+    seven2 = seven;
+    foreach (eight[k]) eight[k] = 8'(k + 8);
+    eight2 = eight;
+    $display("short %p %p", seven2, eight2);
     #20 $finish(0);
   end
 

@@ -1408,7 +1408,7 @@ with `--gen-only` on a quick build, a 4,096-cell member array gives 5.7 MB
 instead and stays at about 15-20 KB, so the cost peaks just below that
 threshold.
 
-codegen-size made whole-value reads and writes of dense unpacked arrays O(1)
+codegen-size made whole-value reads and writes of unpacked arrays O(1)
 in generated C (`emit_c/owned/dense_cells.rs`), and removed the lowering
 stack overflow that whole equality of such records hit from about 256 leaves
 (the leaf comparisons are now combined as a balanced tree). It did not change

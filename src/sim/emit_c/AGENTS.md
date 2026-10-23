@@ -300,20 +300,22 @@ and emit all braces through `Frame::line` so scope narrowing and C9 reloads hold
 
 `owned/dense_cells.rs` keeps whole unpacked-array values proportional to their
 shape. Lowering spells them per element; a run of at least
-`LLG_DENSE_CELL_RUN_MIN` consecutive cells of one directly addressed dense array
-(not descriptor, real or activation storage, nor a net for writes) is instead
-one runtime range call. Reads: concatenation operands, with nested
+`LLG_DENSE_CELL_RUN_MIN` consecutive cells of one packed fixed array (not real,
+nor a net for writes) is instead one runtime range call: `llg_dense_cells_*` on
+directly addressed storage, `llg_fixed_array_cells_*` on descriptor storage
+(sparse, activation or descriptor-flagged arrays), whose reads peek without
+materializing cells. Reads: concatenation operands, with nested
 concatenations spliced in, that are constant-index whole-cell `ArrayRead`s of
-consecutive storage offsets become one `llg_dense_cells_image` (not under
-sampled reads). Writes: consecutive `Assign`s in one statement sequence to
+consecutive storage offsets become one `*_image` call (not under sampled
+reads). Writes: consecutive `Assign`s in one statement sequence to
 consecutive whole cells, with one `nba` flag, whose right sides are one constant
-(`llg_dense_cells_fill`) or same-width slices of one captured local stepping
-down by the cell width, under same-width sign conversions or `ToTwoState`
-(`llg_dense_cells_store`); and a left-to-right streaming target, as an
-assignment or call copy-out, whose leaves are exactly such a run. The runtime
-writes cells in order through `llg_ba`/`llg_nba_after` after the same cast and
-two-state conversion as `store`, so publication, force and NBA behaviour are
-per cell as before. Shorter runs and any other shape keep per-element code.
+(`*_fill`) or same-width slices of one captured local stepping down by the cell
+width, under same-width sign conversions or `ToTwoState` (`*_store`); and a
+left-to-right streaming target, as an assignment or call copy-out, whose leaves
+are exactly such a run. The runtime writes cells in order through
+`llg_ba`/`llg_nba_after` after the same cast and two-state conversion as
+`store`, so publication, force and NBA behaviour are per cell as before.
+Shorter runs and any other shape keep per-element code.
 
 ## Storage, references and publication
 
