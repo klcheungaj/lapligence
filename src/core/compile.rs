@@ -18,6 +18,7 @@ mod definition_search;
 mod editions;
 mod library_configs;
 mod library_mapping;
+mod positions;
 use editions::edition_diagnostics;
 use library_mapping::{library_match_pattern, LibraryMapBuffers, LibrarySpecificity};
 
@@ -4652,19 +4653,39 @@ fn project_diagnostics(snapshot: &Snapshot) -> Vec<Diag> {
         .iter()
         .map(|source| (source.name.as_str(), source.text.as_str()))
         .collect();
-    snapshot
+    let reported: Vec<_> = snapshot
         .diagnostics
         .iter()
         .filter(|diagnostic| diagnostic.severity != DiagnosticSeverity::Ignored)
-        .map(|diagnostic| {
-            let (file, line, col) = diagnostic.primary.map_or((None, 0, 0), |range| {
-                let file = files.get(&range.file_id).copied();
-                let (line, col) = file
-                    .and_then(|file| texts.get(file).copied())
-                    .map(|text| one_based_utf16_position(text, range.start))
-                    .unwrap_or((0, 0));
-                (file.map(str::to_owned), line, col)
-            });
+        .collect();
+    // Positions per file in one pass: netlists report a warning per instance.
+    let mut offsets: HashMap<&str, (Vec<usize>, Vec<u64>)> = HashMap::new();
+    for (index, diagnostic) in reported.iter().enumerate() {
+        if let Some(range) = diagnostic.primary {
+            if let Some(file) = files.get(&range.file_id) {
+                let (indices, starts) = offsets.entry(file).or_default();
+                indices.push(index);
+                starts.push(range.start);
+            }
+        }
+    }
+    let mut positions = vec![(0, 0); reported.len()];
+    for (file, (indices, starts)) in &offsets {
+        if let Some(text) = texts.get(file) {
+            let found = positions::one_based_utf16_positions(text, starts);
+            for (index, position) in indices.iter().zip(found) {
+                positions[*index] = position;
+            }
+        }
+    }
+    reported
+        .into_iter()
+        .zip(positions)
+        .map(|(diagnostic, (line, col))| {
+            let file = diagnostic
+                .primary
+                .and_then(|range| files.get(&range.file_id))
+                .map(|file| (*file).to_owned());
             let severity = match diagnostic.severity {
                 DiagnosticSeverity::Ignored => Severity::Info,
                 DiagnosticSeverity::Note => Severity::Note,
@@ -4695,34 +4716,9 @@ fn project_diagnostics(snapshot: &Snapshot) -> Vec<Diag> {
         .collect()
 }
 
+#[cfg(test)]
 fn one_based_utf16_position(text: &str, offset: u64) -> (u32, u32) {
-    let requested = usize::try_from(offset)
-        .unwrap_or(usize::MAX)
-        .min(text.len());
-    let mut end = requested;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    let mut line = 1_u32;
-    let mut column = 1_u32;
-    let mut chars = text[..end].chars().peekable();
-    while let Some(character) = chars.next() {
-        match character {
-            '\r' => {
-                line = line.saturating_add(1);
-                column = 1;
-                if chars.peek() == Some(&'\n') {
-                    chars.next();
-                }
-            }
-            '\n' => {
-                line = line.saturating_add(1);
-                column = 1;
-            }
-            _ => column = column.saturating_add(character.len_utf16() as u32),
-        }
-    }
-    (line, column)
+    positions::Utf16Cursor::new(text).position(offset)
 }
 
 #[cfg(test)]

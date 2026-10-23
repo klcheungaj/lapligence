@@ -7,8 +7,7 @@
 //! names require an explicit prototype; they are never silently treated as a
 //! standard builtin of an older edition.
 use super::{
-    one_based_utf16_position, CompilationUnitMode, Diag, LanguageEdition, Severity, Snapshot,
-    Source,
+    positions::Utf16Cursor, CompilationUnitMode, Diag, LanguageEdition, Severity, Snapshot, Source,
 };
 use crate::ffi::slang::{
     LexicalKind, LexicalRole, SemanticDefinitionKind, SemanticEdgeRole, SemanticKind, SemanticNode,
@@ -1544,12 +1543,18 @@ pub(super) fn edition_diagnostics(
             .map(|finding| (Some(finding.range), finding.label.clone())),
     );
     let mut seen = HashSet::new();
+    // Violations arrive mostly in source order, so a resumed cursor per file
+    // avoids rescanning each file from its start.
+    let mut cursors = HashMap::new();
     violations.into_iter().filter_map(|(range, label)| {
         let key = (range.map(|r| (r.file_id, r.start)), label.clone());
         if !seen.insert(key) { return None; }
         let (file, line, col) = range.map_or((None, 0, 0), |range| {
             let Some(file) = files.get(&range.file_id) else { return (None, 0, 0); };
-            let (line, col) = one_based_utf16_position(&file.text, range.start);
+            let (line, col) = cursors
+                .entry(range.file_id)
+                .or_insert_with(|| Utf16Cursor::new(&file.text))
+                .position(range.start);
             (Some(file.name.clone()), line, col)
         });
         Some(Diag {
