@@ -244,8 +244,10 @@ omitted fields are zero without `-Wmissing-field-initializers` warnings.
 differs from its default. Models without paths are unchanged.
 Switch networks emit two constant tables after the net groups
 (`llg_switch_nodes`: net pointer and bit; `llg_switches`: node pair and
-flags) and one `llg_switches_start` after the net delays start; a
-`SwitchControl` statement is one `llg_switch_control` call. Models without
+flags), an optional direct-control table (`llg_switch_controls`: control
+storage, bit, switch, invert) and one `llg_switches_start` (then
+`llg_switch_controls_start`) after the net delays start; a `SwitchControl`
+statement is one `llg_switch_control` call. Models without
 switches emit neither, so their `model.c` is unchanged.
 Timing check sets emit after the module paths: a terminal table, a writable
 `llg_timing_check_t` row array with designated fields (limits stay writable

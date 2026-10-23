@@ -326,7 +326,14 @@ tables: CSR adjacency, per-net member lists (`llg_net_t.switch_net`, NULL for
 every other net, so unswitched nets pay one pointer test) and four strength
 levels per node (strongest known/possible 0 and 1). A driver-slot commit,
 force or release of a member net marks its nodes dirty and queues the net
-instead of resolving it; `llg_switch_control` marks a switch's ends. The
+instead of resolving it; `llg_switch_control` marks a switch's ends. Direct
+controls (`llg_switch_controls_start`) watch their signals' storage through a
+waiter-less wait-source subscription (`llg_wait_source.switches`, like timing
+checks); a publication compares the stored words with a per-signal shadow and
+updates only the switches of changed bits. Each node's adjacency lists its
+non-off switches first (`n_active`, swapped in O(1) on a state change), so a
+solve never visits off switches. A flush round that a publication re-dirties
+counts against the zero-delay guard (`LLG_ZERO_LOOP_LIMIT`). The
 solve of a dirty dynamic component (nodes joined by switches that are not
 off) is an 8-bucket strongest-first propagation: `tran*` keeps strength
 except supply to strong, `rtran*` uses Table 28-8, an unknown switch passes

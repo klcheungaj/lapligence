@@ -1,5 +1,7 @@
 use super::*;
-use crate::sim::ir::{IrNetGroup, IrNetKind, IrSwitch, IrSwitchNetwork, IrSwitchNode};
+use crate::sim::ir::{
+    IrNetGroup, IrNetKind, IrSwitch, IrSwitchControl, IrSwitchNetwork, IrSwitchNode,
+};
 
 fn model_with(network: IrSwitchNetwork) -> IrModel {
     let mut model = valid_model();
@@ -58,4 +60,35 @@ fn switch_networks_reject_malformed_tables() {
     .is_err());
     // Switches without nodes.
     assert!(check(Vec::new(), vec![plain(0, 1)], Vec::new()).is_err());
+}
+
+#[test]
+fn switch_controls_name_a_controlled_switch_and_a_signal_bit() {
+    // Switch 0 is a tran, switch 1 a tranif; signal 0 is one bit wide.
+    let check = |controls: Vec<IrSwitchControl>| {
+        model_with(
+            IrSwitchNetwork::new(
+                vec![node(0, 0), node(1, 0)],
+                vec![
+                    IrSwitch::new(0, 1, false, false),
+                    IrSwitch::new(0, 1, false, true),
+                ],
+                vec![0],
+            )
+            .with_controls(controls),
+        )
+        .validate()
+    };
+    assert!(check(vec![IrSwitchControl::new(1, 0, 0, true)]).is_ok());
+    // An uncontrolled or missing switch, a switch with two controls, a
+    // missing signal and a bit outside the signal.
+    assert!(check(vec![IrSwitchControl::new(0, 0, 0, false)]).is_err());
+    assert!(check(vec![IrSwitchControl::new(2, 0, 0, false)]).is_err());
+    assert!(check(vec![
+        IrSwitchControl::new(1, 0, 0, false),
+        IrSwitchControl::new(1, 0, 0, true)
+    ])
+    .is_err());
+    assert!(check(vec![IrSwitchControl::new(1, 1, 0, false)]).is_err());
+    assert!(check(vec![IrSwitchControl::new(1, 0, 1, false)]).is_err());
 }

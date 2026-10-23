@@ -77,7 +77,7 @@ pub use timing::{
     TIMING_EVENT_BASED, TIMING_REMAIN_ACTIVE,
 };
 mod switches;
-pub use switches::{IrSwitch, IrSwitchNetwork, IrSwitchNode};
+pub use switches::{IrSwitch, IrSwitchControl, IrSwitchNetwork, IrSwitchNode};
 mod sdf;
 pub use sdf::{
     IrSdfAnnotation, IrSdfLoad, IrSdfOp, IrSdfTarget, SDF_INCREMENT, SDF_MIPD_SHIFT, SDF_PERCENT,

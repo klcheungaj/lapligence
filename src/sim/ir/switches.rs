@@ -4,8 +4,10 @@
 //! A node is one bit of one net group; a switch joins two nodes. The nodes
 //! and switches of one statically connected network are numbered
 //! contiguously ([`IrSwitchNetwork`]), so the runtime's per-node state of a
-//! network is adjacent. A `tranif` sets its conduction state through
-//! [`IrStmt::SwitchControl`]; `tran` and `rtran` are always on.
+//! network is adjacent. `tran` and `rtran` are always on. A `tranif` whose
+//! undelayed control is one bit of a signal reads it directly
+//! ([`IrSwitchControl`], watched by the runtime); any other `tranif` sets
+//! its conduction state through [`IrStmt::SwitchControl`] in a process.
 //!
 //! [`IrStmt::SwitchControl`]: super::IrStmt::SwitchControl
 
@@ -64,6 +66,40 @@ impl IrSwitch {
     }
 }
 
+/// A controlled switch whose state the runtime reads from bit `bit` of
+/// signal `signal` whenever that signal changes: 1 conducts (0 with
+/// `invert`, for `tranif0` and `rtranif0`), x and z leave the state unknown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrSwitchControl {
+    pub(in crate::sim) switch: u32,
+    pub(in crate::sim) signal: usize,
+    pub(in crate::sim) bit: u32,
+    pub(in crate::sim) invert: bool,
+}
+
+impl IrSwitchControl {
+    pub fn new(switch: u32, signal: usize, bit: u32, invert: bool) -> Self {
+        Self {
+            switch,
+            signal,
+            bit,
+            invert,
+        }
+    }
+    pub fn switch(&self) -> u32 {
+        self.switch
+    }
+    pub fn signal(&self) -> usize {
+        self.signal
+    }
+    pub fn bit(&self) -> u32 {
+        self.bit
+    }
+    pub fn invert(&self) -> bool {
+        self.invert
+    }
+}
+
 /// Every switch of a design. `components` holds the first node of each
 /// statically connected network in ascending order: network `k` owns the
 /// nodes from `components[k]` up to the next start, and every switch joins
@@ -73,6 +109,8 @@ pub struct IrSwitchNetwork {
     pub(in crate::sim) nodes: Vec<IrSwitchNode>,
     pub(in crate::sim) switches: Vec<IrSwitch>,
     pub(in crate::sim) components: Vec<u32>,
+    /// Direct controls, at most one per controlled switch.
+    pub(in crate::sim) controls: Vec<IrSwitchControl>,
 }
 
 impl IrSwitchNetwork {
@@ -81,7 +119,12 @@ impl IrSwitchNetwork {
             nodes,
             switches,
             components,
+            controls: Vec::new(),
         }
+    }
+    pub fn with_controls(mut self, controls: Vec<IrSwitchControl>) -> Self {
+        self.controls = controls;
+        self
     }
     pub fn nodes(&self) -> &[IrSwitchNode] {
         &self.nodes
@@ -91,6 +134,9 @@ impl IrSwitchNetwork {
     }
     pub fn components(&self) -> &[u32] {
         &self.components
+    }
+    pub fn controls(&self) -> &[IrSwitchControl] {
+        &self.controls
     }
     pub fn is_empty(&self) -> bool {
         self.switches.is_empty()

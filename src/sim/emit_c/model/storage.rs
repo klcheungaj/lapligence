@@ -318,9 +318,10 @@ fn path_source_storage(model: &IrModel, index: usize) -> String {
     }
 }
 
-/// Bidirectional switch tables (`llg_switch_node_t`, `llg_switch_t`), after
-/// every net group they name; nothing for a design without switches. The
-/// nodes of one connected network are adjacent.
+/// Bidirectional switch tables (`llg_switch_node_t`, `llg_switch_t` and the
+/// direct controls `llg_switch_control_t`), after every net group they name;
+/// nothing for a design without switches. The nodes of one connected network
+/// are adjacent.
 fn render_switch_network(model: &IrModel, out: &mut String) {
     let network = model.switch_network();
     if network.is_empty() {
@@ -352,6 +353,20 @@ fn render_switch_network(model: &IrModel, out: &mut String) {
             "    {{ {}u, {}u, {flags} }},\n",
             switch.a(),
             switch.b()
+        ));
+    }
+    out.push_str("};\n");
+    if network.controls().is_empty() {
+        return;
+    }
+    out.push_str("static const llg_switch_control_t llg_switch_controls[] = {\n");
+    for control in network.controls() {
+        out.push_str(&format!(
+            "    {{ {}, {}u, {}u, {} }},\n",
+            path_source_storage(model, control.signal()),
+            control.bit(),
+            control.switch(),
+            u8::from(control.invert())
         ));
     }
     out.push_str("};\n");

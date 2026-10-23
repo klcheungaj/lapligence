@@ -319,9 +319,12 @@ of a single instance reject.
 Pass switches (`collection/switches.rs`) lower each terminal to one net-group
 bit (through inout collapse and true aliases; `Db::primitive_array_position`
 selects an array element's bit, since Slang binds bidirectional terminals
-whole) and a controlled one to a hidden process issuing
-`IrStmt::SwitchControl` with its normalized control (a delayed control goes
-through an inertial shadow signal that starts X). Terminals keep their
+whole). An undelayed control that is one bit of a packed net or variable
+(`path_terminal`) becomes an `IrSwitchControl` row the runtime watches, so
+arrays of switches emit no process per switch; any other controlled switch
+gets a hidden process issuing `IrStmt::SwitchControl` with its normalized
+control (a delayed control goes through an inertial shadow signal that starts
+X). Terminals keep their
 never-written structural driver slot. `finish_switch_network` numbers the
 nodes of each statically connected network contiguously; wired-logic member
 nets, wide terminals and SDF-annotated switches reject with their location.

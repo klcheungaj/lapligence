@@ -1482,7 +1482,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   state, which starts unknown (A5-D4); a net delay on a member net delays only
   its own value (A5-D5). Nets of a network update once per pass and notify
   only real value changes. A solve costs O(nodes + switches) of the
-  network part that can conduct, with no iteration limit
+  network part that can conduct, with no iteration limit; an undelayed
+  control that is one bit of a net or variable is watched directly (no
+  process per switch), and a network that keeps switching its own controls in
+  zero time stops with the zero-delay loop error
   ([ADV-005 fixtures](../tests/fixtures/sim/feature_completion/adv_005/readme.md)).
   Rejected with their location: wired-logic (`wand/wor/triand/trior`) nets
   in a network, terminals wider than one bit (or than one bit per array

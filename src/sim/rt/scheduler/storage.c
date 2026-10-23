@@ -250,6 +250,17 @@ typedef struct llg_timing_watch {
     struct llg_timing_watch* next;
 } llg_timing_watch_t;
 static void timing_terminals_changed(llg_timing_watch_t* watch);
+// The direct switch controls that read one watched storage address: the
+// entries [first, first + count) of the sorted control table and the last
+// seen words of the storage (scheduler/switches.c).
+typedef struct llg_switch_watch {
+    sv4_t* signal;
+    uint32_t first;
+    uint32_t count;
+    uint32_t words;
+    uint64_t* shadow;
+} llg_switch_watch_t;
+static void switch_controls_changed(llg_switch_watch_t* watch);
 typedef struct llg_wait_subscription {
     struct llg_wait_subscription* next;
     struct llg_wait_subscription** prev_link;
@@ -271,6 +282,10 @@ struct llg_wait_source {
     // subscription that keeps the row alive while they exist.
     llg_timing_watch_t* timing;
     llg_wait_subscription_t* timing_keep;
+    // Direct switch controls on this address and the waiter-less
+    // subscription that keeps the row alive while they exist.
+    llg_switch_watch_t* switches;
+    llg_wait_subscription_t* switches_keep;
 };
 
 // One limb covers scalar clocks and packed values through 64 bits. Larger

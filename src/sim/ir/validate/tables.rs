@@ -1441,6 +1441,27 @@ impl Validator<'_> {
                 );
             }
         }
+        let mut controlled = HashSet::new();
+        for (index, control) in network.controls.iter().enumerate() {
+            let at = format!("{path}.controls[{index}]");
+            if !network
+                .switches
+                .get(control.switch as usize)
+                .is_some_and(|switch| switch.controlled)
+            {
+                return self.fail(at, "control names no controlled switch");
+            }
+            if !controlled.insert(control.switch) {
+                return self.fail(at, "switch has two controls");
+            }
+            let Some(signal) = self.model.signals.get(control.signal) else {
+                return self.fail(at, "control names no signal");
+            };
+            match &signal.ty {
+                IrType::Packed { width, .. } if control.bit < *width => {}
+                _ => return self.fail(at, "control bit outside a packed signal"),
+            }
+        }
         Ok(())
     }
 }

@@ -145,6 +145,71 @@ fn only_changed_nodes_wake_their_waiters() {
 }
 
 #[test]
+fn direct_and_process_controls_follow_their_control() {
+    for edition in EDITIONS {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "controls",
+            include_str!("../fixtures/sim/feature_completion/adv_005/controls.out"),
+            &["--edition", edition],
+            &[],
+        );
+    }
+}
+
+/// An undelayed control that is one bit of a signal is a row of the direct
+/// control table, so an array of switches emits no process per switch; an
+/// expression control keeps its control process.
+#[test]
+fn bit_controls_need_no_control_process() {
+    let run = sim_harness::run_generated_sim(
+        "module tb; wire [7:0] s, d; reg [7:0] en; reg c; wire e, f;\n\
+         assign s = 8'h5a; assign e = 1'b1;\n\
+         tranif1 g[7:0] (s, d, en); tranif0 h(e, f, c & en[0]);\n\
+         initial begin en = 8'h0f; c = 0; #1 $display(\"%b %b\", d, f); $finish; end\n\
+         endmodule\n",
+        "tb",
+        "adv005_direct_controls",
+    )
+    .expect("direct controls");
+    assert_eq!(run.stdout, "zzzz1010 1\n");
+    assert!(
+        run.model_c.contains("llg_switch_controls[]"),
+        "{}",
+        run.model_c
+    );
+    assert_eq!(
+        run.model_c.matches("llg_switch_control(").count(),
+        1,
+        "{}",
+        run.model_c
+    );
+}
+
+/// A03: a solve always terminates; a network that keeps turning its own
+/// control off and on in zero time stops with the explicit zero-delay loop
+/// error (a low limit keeps the test fast).
+#[test]
+fn a_self_controlled_network_reports_a_zero_delay_loop() {
+    let expected = include_str!("../fixtures/sim/feature_completion/adv_005/oscillation.out");
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "oscillation",
+        &[],
+        &[("LLG_ZERO_LOOP_LIMIT", "10000")],
+        &|label, output| {
+            assert_eq!(output.status.code(), Some(1), "{label}: {output:?}");
+            assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("llg: zero-delay loop detected at time 1 "),
+                "{label}: {stderr}"
+            );
+        },
+    );
+}
+
+#[test]
 fn unsupported_switch_forms_are_located_errors() {
     for edition in EDITIONS {
         sim_cli::reject_case_with_args(

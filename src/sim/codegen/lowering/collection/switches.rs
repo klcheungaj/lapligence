@@ -2,9 +2,12 @@
 //!
 //! Each `tran`, `tranif0`, `tranif1`, `rtran`, `rtranif0` or `rtranif1`
 //! instance becomes one [`IrSwitch`] between two nodes, each node one bit of
-//! a resolved net group. A controlled switch gets a hidden process that sets
-//! its state from the control ([`IrStmt::SwitchControl`]); with a delay the
-//! state is first an inertial copy of the control on a hidden signal that
+//! a resolved net group. An undelayed controlled switch whose control is one
+//! bit of a packed signal reads that bit directly ([`IrSwitchControl`]; the
+//! runtime watches the signal), so a large array of switches costs no
+//! process per switch. Any other controlled switch gets a hidden process that
+//! sets its state from the control ([`IrStmt::SwitchControl`]); with a delay
+//! the state is first an inertial copy of the control on a hidden signal that
 //! starts X, so the switch is unknown until the first delay elapses
 //! (decision A5-D4). After every process is lowered,
 //! [`Codegen::finish_switch_network`] numbers the nodes per statically
@@ -13,7 +16,7 @@
 
 use super::*;
 use crate::core::db::PrimitiveArrayPosition;
-use crate::sim::ir::{IrNetKind, IrSwitch, IrSwitchNetwork, IrSwitchNode};
+use crate::sim::ir::{IrNetKind, IrSwitch, IrSwitchControl, IrSwitchNetwork, IrSwitchNode};
 
 /// One lowered switch before the networks are numbered.
 pub(in super::super) struct PendingSwitch {
@@ -21,6 +24,9 @@ pub(in super::super) struct PendingSwitch {
     b: IrSwitchNode,
     resistive: bool,
     controlled: bool,
+    /// A direct control: the signal and bit the switch follows, and whether
+    /// 0 conducts.
+    control: Option<(usize, u32, bool)>,
 }
 
 /// Whether a primitive is a bidirectional pass switch.
@@ -141,9 +147,17 @@ impl Codegen<'_> {
             b,
             resistive,
             controlled,
+            control: None,
         });
         if !controlled {
             return Ok(());
+        }
+        let invert = matches!(prim_type, PrimitiveType::Tranif0 | PrimitiveType::Rtranif0);
+        if delay.is_none() {
+            if let Some((signal, bit)) = self.direct_switch_control(terms[2].expr) {
+                self.pending_switches[index].control = Some((signal, bit, invert));
+                return Ok(());
+            }
         }
         let control = self.lower_expr(path, terms[2].expr).map_err(|error| {
             unsupported(format!("the control is not a legal expression: {error}"))
@@ -155,10 +169,10 @@ impl Codegen<'_> {
         // 1 conducts. `ctl ^ 0` and `~ctl` turn a z control into x, so the
         // delayed state never takes a turn-off (z) delay (28.8: the smaller
         // delay applies to x).
-        let state = if matches!(prim_type, PrimitiveType::Tranif1 | PrimitiveType::Rtranif1) {
-            bin_expr(IrBinOp::BitXor, control, const_bits_expr(1, false))
-        } else {
+        let state = if invert {
             bitneg_full_width(control)
+        } else {
+            bin_expr(IrBinOp::BitXor, control, const_bits_expr(1, false))
         };
         let reads = self.collect_read_signals(path, terms[2].expr)?;
         let body = match delay {
@@ -194,6 +208,28 @@ impl Codegen<'_> {
             origin,
         ));
         Ok(())
+    }
+
+    /// The signal and bit of a control that is one bit of a packed net or
+    /// variable: a 1-bit signal or a constant bit select. The runtime reads
+    /// that bit of the signal's storage, which is exactly what the control
+    /// process would evaluate.
+    fn direct_switch_control(&self, expression: NodeId) -> Option<(usize, u32)> {
+        let terminal = self.path_terminal(expression).ok()?;
+        if terminal.width != 1
+            || !matches!(
+                self.kind(terminal.node),
+                NodeKind::Net { .. } | NodeKind::Var { .. }
+            )
+        {
+            return None;
+        }
+        match self.model.signal(terminal.info.ir).ty {
+            IrType::Packed { width, .. } if width == terminal.info.width => {
+                Some((terminal.info.ir, terminal.lsb))
+            }
+            _ => None,
+        }
     }
 
     /// The node a terminal names: a scalar net or a constant bit select of a
@@ -264,7 +300,7 @@ impl Codegen<'_> {
     /// Number the nodes of every statically connected switch network
     /// contiguously, in order of first use, and store the network in the
     /// model. Switch indices keep their lowering order, which the control
-    /// processes already name.
+    /// processes and direct controls already name.
     pub(in super::super) fn finish_switch_network(&mut self) -> Result<(), String> {
         let pending = std::mem::take(&mut self.pending_switches);
         if pending.is_empty() {
@@ -327,7 +363,16 @@ impl Codegen<'_> {
                 IrSwitch::new(number[a], number[b], switch.resistive, switch.controlled)
             })
             .collect();
-        self.model.switch_network = IrSwitchNetwork::new(nodes, switches, components);
+        let controls = pending
+            .iter()
+            .enumerate()
+            .filter_map(|(position, switch)| {
+                let (signal, bit, invert) = switch.control?;
+                Some(index(position).map(|sw| IrSwitchControl::new(sw, signal, bit, invert)))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.model.switch_network =
+            IrSwitchNetwork::new(nodes, switches, components).with_controls(controls);
         Ok(())
     }
 }

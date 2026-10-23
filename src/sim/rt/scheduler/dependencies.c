@@ -696,6 +696,7 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
     llg_wait_source_t* source = wait_source_find(target);
     int watched = source && source->watchers;
     llg_timing_watch_t* timing = source ? source->timing : NULL;
+    llg_switch_watch_t* switches = source ? source->switches : NULL;
     llg_wait_subscription_t cursor = {0};
     if (source) {
         cursor.source = source;
@@ -773,6 +774,9 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
     // Timing check terminals only mark their sets; the checks run later in
     // the time step (llg_timing_checks_run).
     if (LLG_CO_UNLIKELY(timing != NULL)) timing_terminals_changed(timing);
+    // Direct switch controls set their switches' states; the networks are
+    // solved like any other switch change (scheduler/switches.c).
+    if (LLG_CO_UNLIKELY(switches != NULL)) switch_controls_changed(switches);
     // Watches run last, after every runtime consumer saw the new value.
     if (LLG_CO_UNLIKELY(watched) && value_watch_hook) value_watch_hook(target);
 }

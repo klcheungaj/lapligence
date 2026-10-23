@@ -142,7 +142,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         udp_states: _,
         module_paths,
         // Switch nodes name net groups, never pruned signals.
-        switch_network: _,
+        switch_network,
         path_pulse: _,
         timing_checks,
         timing_check_options: _,
@@ -200,6 +200,10 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         for condition in &set.conditions {
             collect_expr_reads(condition, model, &mut rw);
         }
+    }
+    // The runtime reads direct switch controls through their storage address.
+    for control in &switch_network.controls {
+        rw.read(control.signal);
     }
     // The runtime reads timing check terminals through their storage address
     // and evaluates the event conditions when a step needs them. It writes

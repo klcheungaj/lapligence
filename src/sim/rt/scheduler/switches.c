@@ -22,6 +22,16 @@
 // included. A forced bit is a fixed source with its forced value at strong
 // strength and takes no arrivals.
 //
+// The switches of a node that are not off come first in its adjacency
+// (`n_active`); a state change moves a switch across that boundary in O(1),
+// so a solve reaches only conducting or unknown switches and a hub node with
+// many off switches costs nothing for them.
+//
+// A direct control (llg_switch_control_t) watches its signal's storage: a
+// change compares the stored words with the last seen ones and updates only
+// the switches whose control bit changed. Other controls run in a process
+// that calls llg_switch_control.
+//
 // Termination: levels only rise, items are taken in non-increasing level
 // order and a reduction never raises a level, so the first raise of an entry
 // is its final level. Each of a node's four entries is raised at most once
@@ -60,9 +70,14 @@ static struct {
     uint32_t n_nodes;
     const llg_switch_t* switches;
     uint32_t n_switches;
-    // CSR adjacency: the switches of node n are adj[adj_start[n]..adj_start[n+1]).
+    // CSR adjacency: the switches of node n are adj[adj_start[n]..adj_start[n+1]),
+    // those not off first: adj[adj_start[n] .. adj_start[n] + n_active[n]).
+    // adj_pos[2s] and adj_pos[2s+1] are the positions of switch s at its a
+    // and b ends. A switch between a node and itself is not listed.
     uint32_t* adj_start;
     uint32_t* adj;
+    uint32_t* n_active;
+    uint32_t* adj_pos;
     uint8_t* state;
     // Per node: K0, K1, P0, P1 (-1 none, 1..7 small..supply).
     int8_t* level;
@@ -89,13 +104,41 @@ static struct {
     uint32_t publish_head;
     uint32_t n_publish;
     int solving;
+    // Direct controls sorted by signal, bit and switch; one watch per signal.
+    llg_switch_control_t* controls;
+    uint32_t n_controls;
+    llg_switch_watch_t* watches;
+    uint32_t n_watches;
     // Set by llg_switches_start: the first solve waits for the first drain of
     // a region queue, so its time-zero changes reach the procedures that are
     // already waiting (decision T0-D2).
     int held;
 } g_sw;
 
+static void switch_controls_release(void) {
+    for (uint32_t i = 0; i < g_sw.n_watches; i++) {
+        llg_switch_watch_t* watch = &g_sw.watches[i];
+        free(watch->shadow);
+        // A watch from an earlier runtime lifetime is already gone.
+        llg_wait_source_t* source = wait_source_find(watch->signal);
+        if (!source || source->switches != watch) continue;
+        llg_wait_subscription_t* node = source->switches_keep;
+        source->switches = NULL;
+        source->switches_keep = NULL;
+        // Unlinking the last subscriber frees the row itself.
+        wait_subscription_unlink(node);
+        free(node);
+    }
+    free(g_sw.watches);
+    free(g_sw.controls);
+    g_sw.watches = NULL;
+    g_sw.controls = NULL;
+    g_sw.n_watches = 0;
+    g_sw.n_controls = 0;
+}
+
 static void switches_release(void) {
+    switch_controls_release();
     for (uint32_t i = 0; i < g_sw.n_nets; i++) {
         free(g_sw.nets[i]->switch_net);
         g_sw.nets[i]->switch_net = NULL;
@@ -103,6 +146,8 @@ static void switches_release(void) {
     free(g_sw.nets);
     free(g_sw.adj_start);
     free(g_sw.adj);
+    free(g_sw.n_active);
+    free(g_sw.adj_pos);
     free(g_sw.state);
     free(g_sw.level);
     free(g_sw.value);
@@ -254,10 +299,9 @@ static void switch_solve(uint32_t start) {
     g_sw.mark[start] = g_sw.epoch;
     for (uint32_t i = 0; i < count; i++) {
         uint32_t node = g_sw.component[i];
-        for (uint32_t k = g_sw.adj_start[node]; k < g_sw.adj_start[node + 1u]; k++) {
-            uint32_t s = g_sw.adj[k];
-            if (g_sw.state[s] == LLG_SWITCH_OFF) continue;
-            uint32_t other = switch_other(s, node);
+        uint32_t end = g_sw.adj_start[node] + g_sw.n_active[node];
+        for (uint32_t k = g_sw.adj_start[node]; k < end; k++) {
+            uint32_t other = switch_other(g_sw.adj[k], node);
             if (g_sw.mark[other] == g_sw.epoch) continue;
             g_sw.mark[other] = g_sw.epoch;
             g_sw.component[count++] = other;
@@ -285,10 +329,10 @@ static void switch_solve(uint32_t start) {
             if (entries[item.entry] != level) continue;
             // Blocked: a stronger known opposite value wins at this node.
             if (entries[1u - side] > level) continue;
-            for (uint32_t k = g_sw.adj_start[item.node]; k < g_sw.adj_start[item.node + 1u]; k++) {
+            uint32_t end = g_sw.adj_start[item.node] + g_sw.n_active[item.node];
+            for (uint32_t k = g_sw.adj_start[item.node]; k < end; k++) {
                 uint32_t s = g_sw.adj[k];
                 uint8_t state = g_sw.state[s];
-                if (state == LLG_SWITCH_OFF) continue;
                 switch_offer(switch_other(s, item.node), side,
                              known && state == LLG_SWITCH_ON,
                              switch_reduce(level, g_sw.switches[s].flags));
@@ -311,6 +355,16 @@ static void switch_solve(uint32_t start) {
     }
 }
 
+static void report_zero_delay_loop(void); // scheduler/scheduler.c
+static void switch_controls_refresh(void);
+
+// Drop the pending work after a zero-delay loop stopped the run.
+static void switches_abandon(void) {
+    while (g_sw.n_dirty) g_sw.dirty[g_sw.dirty_list[--g_sw.n_dirty]] = 0;
+    while (g_sw.publish_head < g_sw.n_publish)
+        g_sw.publish[g_sw.publish_head++]->switch_net->queued = 0;
+}
+
 // Solve every dirty component and republish the queued nets until nothing is
 // left; a callback reached from a publication only queues more work.
 static int switches_flush(void) {
@@ -318,9 +372,21 @@ static int switches_flush(void) {
     // The first solve waits for the first region that may update nets (the
     // time-0 Preponed region drains before any process ran).
     if (g_sw.held && region_is_read_only_now(g.current_region)) return 0;
-    g_sw.held = 0;
+    if (g_sw.held) {
+        g_sw.held = 0;
+        switch_controls_refresh();
+    }
     g_sw.solving = 1;
+    int round = 0;
     while (g_sw.n_dirty || g_sw.publish_head < g_sw.n_publish) {
+        // A publication that changes a control re-dirties the network; a
+        // network that keeps turning its own switches over in zero time is a
+        // zero-delay loop (each round counts against the scheduler's guard).
+        if (round++ && g_sw.n_dirty && !consume_limit(&g.region_passes, g.zero_loop_limit)) {
+            report_zero_delay_loop();
+            switches_abandon();
+            break;
+        }
         while (g_sw.n_dirty) {
             uint32_t node = g_sw.dirty_list[--g_sw.n_dirty];
             if (g_sw.dirty[node]) switch_solve(node);
@@ -361,6 +427,35 @@ static void llg_switch_net_changed(llg_net_t* net) {
     switches_schedule();
 }
 
+// Move switch `s` across the active boundary of the adjacency of its `end`
+// (0: a, 1: b) node: to the active part when `active`, out of it otherwise.
+static void switch_adjacency_move(uint32_t s, unsigned end, int active) {
+    uint32_t node = end ? g_sw.switches[s].b : g_sw.switches[s].a;
+    uint32_t target = g_sw.adj_start[node] +
+        (active ? g_sw.n_active[node]++ : --g_sw.n_active[node]);
+    uint32_t from = g_sw.adj_pos[2u * s + end];
+    uint32_t other = g_sw.adj[target];
+    unsigned other_end = g_sw.switches[other].a == node ? 0u : 1u;
+    g_sw.adj[from] = other;
+    g_sw.adj_pos[2u * other + other_end] = from;
+    g_sw.adj[target] = s;
+    g_sw.adj_pos[2u * s + end] = target;
+}
+
+static void switch_set_state(uint32_t s, uint8_t next) {
+    uint8_t previous = g_sw.state[s];
+    if (previous == next) return;
+    g_sw.state[s] = next;
+    const llg_switch_t* sw = &g_sw.switches[s];
+    if (sw->a == sw->b) return;
+    if ((previous == LLG_SWITCH_OFF) != (next == LLG_SWITCH_OFF)) {
+        switch_adjacency_move(s, 0u, next != LLG_SWITCH_OFF);
+        switch_adjacency_move(s, 1u, next != LLG_SWITCH_OFF);
+    }
+    switch_mark_dirty(sw->a);
+    switch_mark_dirty(sw->b);
+}
+
 void llg_switch_control(uint32_t index, sv4_t state) {
     if (index >= g_sw.n_switches) {
         fputs("llg runtime fatal: invalid switch index\n", stderr);
@@ -374,10 +469,140 @@ void llg_switch_control(uint32_t index, sv4_t state) {
         if (bit == 1) next = LLG_SWITCH_ON;
     }
     if (g_sw.state[index] == next) return;
-    g_sw.state[index] = next;
-    switch_mark_dirty(g_sw.switches[index].a);
-    switch_mark_dirty(g_sw.switches[index].b);
+    switch_set_state(index, next);
     switches_schedule();
+}
+
+// ── Direct controls ──────────────────────────────────────────────────────────
+
+static uint8_t switch_control_state(const llg_switch_control_t* control) {
+    unsigned bit = llg_sv4_state(*control->signal, control->bit);
+    if (bit > 1u) return LLG_SWITCH_UNKNOWN;
+    return (bit ^ control->invert) & 1u ? LLG_SWITCH_ON : LLG_SWITCH_OFF;
+}
+
+static void switch_watch_snapshot(llg_switch_watch_t* watch) {
+    sv4_t value = *watch->signal;
+    for (uint32_t w = 0; w < watch->words; w++) {
+        watch->shadow[3u * w] = llg_sv4_word(value, w, LLG_SV4_BITS);
+        watch->shadow[3u * w + 1u] = llg_sv4_word(value, w, LLG_SV4_X);
+        watch->shadow[3u * w + 2u] = llg_sv4_word(value, w, LLG_SV4_Z);
+    }
+}
+
+// Set every switch of `watch` controlled by `bit` (all of them for
+// UINT32_MAX) from the stored value.
+static void switch_watch_apply(const llg_switch_watch_t* watch, uint32_t bit) {
+    uint32_t low = watch->first;
+    uint32_t high = watch->first + watch->count;
+    if (bit != UINT32_MAX) {
+        while (low < high) {
+            uint32_t middle = low + (high - low) / 2u;
+            if (g_sw.controls[middle].bit < bit) low = middle + 1u;
+            else high = middle;
+        }
+        high = watch->first + watch->count;
+    }
+    for (uint32_t i = low; i < high; i++) {
+        const llg_switch_control_t* control = &g_sw.controls[i];
+        if (bit != UINT32_MAX && control->bit != bit) break;
+        switch_set_state(control->sw, switch_control_state(control));
+    }
+}
+
+// The storage of `watch` changed: only the switches whose control bit
+// changed are updated, so a wide control vector costs its word count plus
+// the changed bits.
+static void switch_controls_changed(llg_switch_watch_t* watch) {
+    sv4_t value = *watch->signal;
+    if (llg_sv4_words(value) != watch->words) {
+        switch_watch_apply(watch, UINT32_MAX);
+    } else {
+        for (uint32_t w = 0; w < watch->words; w++) {
+            uint64_t bits = llg_sv4_word(value, w, LLG_SV4_BITS);
+            uint64_t x = llg_sv4_word(value, w, LLG_SV4_X);
+            uint64_t z = llg_sv4_word(value, w, LLG_SV4_Z);
+            uint64_t* shadow = &watch->shadow[3u * w];
+            uint64_t delta = (bits ^ shadow[0]) | (x ^ shadow[1]) | (z ^ shadow[2]);
+            if (!delta) continue;
+            shadow[0] = bits;
+            shadow[1] = x;
+            shadow[2] = z;
+            for (uint32_t i = 0; delta; i++, delta >>= 1)
+                if (delta & 1u) switch_watch_apply(watch, w * 64u + i);
+        }
+    }
+    switches_schedule();
+}
+
+// The first solve starts from the controls' current values, whatever was
+// stored before the watches existed.
+static void switch_controls_refresh(void) {
+    for (uint32_t i = 0; i < g_sw.n_watches; i++) {
+        switch_watch_snapshot(&g_sw.watches[i]);
+        switch_watch_apply(&g_sw.watches[i], UINT32_MAX);
+    }
+}
+
+static int switch_control_order(const void* left, const void* right) {
+    const llg_switch_control_t* a = (const llg_switch_control_t*)left;
+    const llg_switch_control_t* b = (const llg_switch_control_t*)right;
+    uintptr_t sa = (uintptr_t)a->signal;
+    uintptr_t sb = (uintptr_t)b->signal;
+    if (sa != sb) return sa < sb ? -1 : 1;
+    if (a->bit != b->bit) return a->bit < b->bit ? -1 : 1;
+    return a->sw < b->sw ? -1 : a->sw > b->sw;
+}
+
+void llg_switch_controls_start(const llg_switch_control_t* controls, uint32_t count) {
+    switch_controls_release();
+    if (!controls || !count) return;
+    g_sw.controls = (llg_switch_control_t*)llg_checked_calloc(
+        count, sizeof(*g_sw.controls), "switch controls");
+    memcpy(g_sw.controls, controls, (size_t)count * sizeof(*controls));
+    g_sw.n_controls = count;
+    qsort(g_sw.controls, count, sizeof(*g_sw.controls), switch_control_order);
+    uint32_t n_watches = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        const llg_switch_control_t* control = &g_sw.controls[i];
+        if (!control->signal || control->sw >= g_sw.n_switches ||
+            !(g_sw.switches[control->sw].flags & LLG_SWITCH_CONTROLLED) ||
+            control->bit >= llg_sv4_width(*control->signal) ||
+            (i && control->signal == g_sw.controls[i - 1u].signal &&
+             control->bit == g_sw.controls[i - 1u].bit &&
+             control->sw == g_sw.controls[i - 1u].sw)) {
+            fputs("llg runtime fatal: invalid switch control\n", stderr);
+            abort();
+        }
+        if (!i || control->signal != g_sw.controls[i - 1u].signal) n_watches++;
+    }
+    g_sw.watches = (llg_switch_watch_t*)llg_checked_calloc(
+        n_watches, sizeof(*g_sw.watches), "switch control watches");
+    for (uint32_t i = 0; i < count; i++) {
+        if (i && g_sw.controls[i].signal == g_sw.controls[i - 1u].signal) {
+            g_sw.watches[g_sw.n_watches - 1u].count++;
+            continue;
+        }
+        llg_switch_watch_t* watch = &g_sw.watches[g_sw.n_watches++];
+        watch->signal = g_sw.controls[i].signal;
+        watch->first = i;
+        watch->count = 1;
+    }
+    for (uint32_t i = 0; i < g_sw.n_watches; i++) {
+        llg_switch_watch_t* watch = &g_sw.watches[i];
+        watch->words = (uint32_t)llg_sv4_words(*watch->signal);
+        watch->shadow = (uint64_t*)llg_checked_calloc(
+            (size_t)watch->words * 3u + 1u, sizeof(uint64_t), "switch control watch");
+        llg_wait_source_t* source = wait_source_get(watch->signal);
+        llg_wait_subscription_t* node = (llg_wait_subscription_t*)llg_checked_calloc(
+            1, sizeof(*node), "switch control watch");
+        node->source = source;
+        wait_subscription_insert(node, &source->head);
+        source->switches_keep = node;
+        source->switches = watch;
+        switch_watch_snapshot(watch);
+        switch_watch_apply(watch, UINT32_MAX);
+    }
 }
 
 static int switch_member_order(const void* left, const void* right) {
@@ -403,6 +628,9 @@ void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
                                                  "switch adjacency");
     g_sw.adj = (uint32_t*)llg_checked_calloc((size_t)n_switches * 2u + 1u, sizeof(uint32_t),
                                            "switch adjacency");
+    g_sw.n_active = (uint32_t*)llg_checked_calloc(n_nodes, sizeof(uint32_t), "switch adjacency");
+    g_sw.adj_pos = (uint32_t*)llg_checked_calloc((size_t)n_switches * 2u + 1u, sizeof(uint32_t),
+                                               "switch adjacency");
     g_sw.state = (uint8_t*)llg_checked_calloc((size_t)n_switches + 1u, 1, "switch states");
     g_sw.level = (int8_t*)llg_checked_calloc((size_t)n_nodes * LLG_SWITCH_ENTRIES, 1,
                                            "switch levels");
@@ -423,16 +651,23 @@ void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
             fputs("llg runtime fatal: invalid switch terminal\n", stderr);
             abort();
         }
-        g_sw.adj_start[switches[s].a + 1u]++;
-        g_sw.adj_start[switches[s].b + 1u]++;
         g_sw.state[s] = switches[s].flags & LLG_SWITCH_CONTROLLED ? LLG_SWITCH_UNKNOWN
                                                                  : LLG_SWITCH_ON;
+        // A switch between a node and itself passes nothing anywhere.
+        if (switches[s].a == switches[s].b) continue;
+        g_sw.adj_start[switches[s].a + 1u]++;
+        g_sw.adj_start[switches[s].b + 1u]++;
     }
     for (uint32_t n = 0; n < n_nodes; n++) g_sw.adj_start[n + 1u] += g_sw.adj_start[n];
-    uint32_t* fill = (uint32_t*)llg_checked_calloc(n_nodes, sizeof(uint32_t), "switch adjacency");
+    // No switch starts off, so every listed switch starts in the active part.
     for (uint32_t s = 0; s < n_switches; s++) {
-        g_sw.adj[g_sw.adj_start[switches[s].a] + fill[switches[s].a]++] = s;
-        g_sw.adj[g_sw.adj_start[switches[s].b] + fill[switches[s].b]++] = s;
+        uint32_t a = switches[s].a;
+        uint32_t b = switches[s].b;
+        if (a == b) continue;
+        g_sw.adj_pos[2u * s] = g_sw.adj_start[a] + g_sw.n_active[a];
+        g_sw.adj[g_sw.adj_start[a] + g_sw.n_active[a]++] = s;
+        g_sw.adj_pos[2u * s + 1u] = g_sw.adj_start[b] + g_sw.n_active[b];
+        g_sw.adj[g_sw.adj_start[b] + g_sw.n_active[b]++] = s;
     }
     // Member lists: count the nodes of each net, then fill and sort them.
     llg_net_t** nets = (llg_net_t**)llg_checked_calloc(n_nodes, sizeof(*nets), "switch nets");
@@ -466,7 +701,6 @@ void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
     for (uint32_t i = 0; i < n_nets; i++)
         qsort(nets[i]->switch_net->members, nets[i]->switch_net->count,
               sizeof(llg_switch_member_t), switch_member_order);
-    free(fill);
     g_sw.nets = nets;
     g_sw.n_nets = n_nets;
     g_sw.publish = (llg_net_t**)llg_checked_calloc((size_t)n_nets + 1u, sizeof(*g_sw.publish),

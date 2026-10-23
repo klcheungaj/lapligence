@@ -377,6 +377,12 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             network.nodes().len(),
             network.switches().len()
         ));
+        if !network.controls().is_empty() {
+            initialize.push_str(&format!(
+                "    llg_switch_controls_start(llg_switch_controls, {}u);\n",
+                network.controls().len()
+            ));
+        }
     }
     // Timing check sets take the initialized terminal values as their change
     // reference and start their delayed signals once the nets are set up;

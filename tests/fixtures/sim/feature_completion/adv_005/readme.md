@@ -138,6 +138,16 @@ then 1-side for x; strongest then weakest for one value) for a range (V
 - `events`: event controls on every node of a network count only value
   changes; two driver changes in one pass that end at the old value wake
   nothing.
+- `controls`: undelayed controls that are one bit of a signal (a 1-bit reg,
+  bit 70 of a 100-bit reg, a net driven by a weak `buf`, one bit shared by
+  four switches) are read directly from the signal's storage; expression
+  controls (`c1 & c2`, `~c1`) run in a control process. Both follow x, z,
+  force, release and a nonblocking update alike.
+- `oscillation`: a tranif1 whose control is one of its own nodes turns
+  itself off and on in zero time; the run stops with the zero-delay loop
+  error (`LLG_ZERO_LOOP_LIMIT` keeps the test short). Each solve terminates
+  by construction: node levels only rise, so every node is queued at most
+  eight times per solve.
 
 ## Negative cases
 

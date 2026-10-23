@@ -703,7 +703,8 @@ enum {
     // rtran, rtranif0, rtranif1: Table 28-8 strength reduction (28.14).
     LLG_SWITCH_RESISTIVE = 1,
     // tranif0, tranif1, rtranif0, rtranif1: the state follows a control and
-    // is unknown until the first llg_switch_control call.
+    // is unknown until it is first set (llg_switch_control or a direct
+    // control).
     LLG_SWITCH_CONTROLLED = 2,
 };
 
@@ -718,6 +719,20 @@ void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
 // `state` is the switch's conduction: 1 on, 0 off, x or z unknown (the
 // generated expression already inverts a tranif0 control).
 void llg_switch_control(uint32_t index, sv4_t state);
+
+// A direct control: switch `sw` follows bit `bit` of the packed storage
+// `signal` (1 on, 0 off, or the reverse with `invert`; x and z unknown).
+// llg_switch_controls_start binds the table, which stays owned by the model,
+// after llg_switches_start; the runtime watches each signal's storage, so
+// the controls need no process.
+typedef struct {
+    sv4_t* signal;
+    uint32_t bit;
+    uint32_t sw;
+    uint8_t invert;
+} llg_switch_control_t;
+
+void llg_switch_controls_start(const llg_switch_control_t* controls, uint32_t count);
 
 // The runtime owns each inertial driver and its pending event. The caller's
 // initially NULL handle, target and net must persist until cleanup, which
