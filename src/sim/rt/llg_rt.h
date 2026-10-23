@@ -665,6 +665,49 @@ void llg_net_start_driven(llg_net_t* net, const uint32_t* runs, uint32_t n_runs)
 /* Teardown: free the start state llg_net_start_driven left on a net whose
  * drivers did not all write. */
 void llg_net_start_release(llg_net_t* net);
+
+/* Generated models describe their nets as shapes shared by every net with
+ * the same configuration, plus exact-size pools for the per-driver and
+ * per-bit arrays of all nets, instead of one initialized record and array
+ * set per net. `llg_net_layout` fills a net's configuration from its shape
+ * and takes its arrays from the front of the pools, advancing them; the
+ * model calls it once per net, in net order, at every start before any
+ * other net service. Runtime state (aliases, strength view, path binding,
+ * start and deferred state) is left as it is. `fill` is the start value of
+ * the resolved net (0, 1, 2 = X or 3 = Z code of sv4_fill_to) and
+ * `driven_runs` the (low bit, bit count) pairs of llg_net_start_driven, or
+ * NULL. */
+typedef struct llg_net_shape {
+    uint32_t width;
+    int8_t is_signed;
+    int8_t resolution;
+    int8_t propagation_enabled;
+    int8_t net_delayed;
+    uint8_t fill;
+    uint8_t path_destination; /* one path-stage record per bit */
+    int n_drivers;
+    const uint8_t* strength0;
+    const uint8_t* strength1;
+    uint64_t propagation_rise;
+    uint64_t propagation_fall;
+    uint64_t propagation_turn_off;
+    uint32_t n_segments;
+    const uint32_t* segment_lsb;
+    const uint32_t* driven_runs;
+    uint32_t n_driven_runs;
+} llg_net_shape_t;
+
+typedef struct llg_net_pools {
+    sv4_t* cells;                         /* one contribution cell per driver */
+    sv4_t** driver_slots;                 /* one pointer per driver */
+    llg_net_driver_index_t* index_nodes;  /* one node per driver */
+    int* overlap_scratch;                 /* one entry per driver */
+    llg_inertial_t** path_bits;           /* one per path destination bit */
+    llg_inertial_t** segment_records;     /* one per delayed net part */
+} llg_net_pools_t;
+
+void llg_net_layout(llg_net_t* net, const llg_net_shape_t* shape,
+                    llg_net_pools_t* pools);
 void llg_net_write(llg_net_t* net, int idx, sv4_t value);
 /* A whole-slot write whose driver drives only the bits `value` does not
  * leave Z: a startup fill of a collapsed-net member or a delayed driver's
@@ -779,7 +822,46 @@ struct llg_module_path_set {
      * negedge (10, 1x, 1z, x0, z0), kept only when an edge path exists. */
     uint64_t** rise_stamps;
     uint64_t** fall_stamps;
+    /* Passed to `conditions`: the instance record of an evaluator shared by
+     * every instance of one cell definition, NULL for an evaluator of its
+     * own. */
+    const void* condition_context;
 };
+
+/* Generated models describe module path sets as templates shared by every
+ * instance of one cell definition (the rows of every destination, in order,
+ * with their delays, limits and styles) plus per-instance references. One
+ * template row's `limits` is ignored; `row_limits` holds each row's limit
+ * table or NULL. */
+typedef struct llg_module_path_template {
+    uint32_t n_sources;
+    uint32_t n_dests;
+    const uint32_t* dest_paths;              /* rows of each destination */
+    const uint8_t* const* dest_styles;       /* per destination, or NULL */
+    const llg_module_path_t* rows;
+    const uint64_t* const* row_limits;       /* per row, or NULL */
+    void (*conditions)(sv4_t* out, void* context);
+    uint32_t n_conditions;
+} llg_module_path_template_t;
+
+/* Per-instance references and the writable tables of all sets, consumed in
+ * set order by llg_module_paths_layout. */
+typedef struct llg_module_path_pools {
+    sv4_t* const* sources;          /* n_sources source storages per set */
+    llg_net_t* const* dest_nets;    /* n_dests destination nets per set */
+    llg_module_path_dest_t* dests;  /* one per destination */
+    llg_module_path_t* rows;        /* one per path row */
+    uint64_t* limits;               /* 2 * LLG_PATH_TRANSITIONS per limited row */
+} llg_module_path_pools_t;
+
+/* Configure `set` from its template and take its references and tables from
+ * the front of the pools, advancing them. The model calls it once per set,
+ * in set order, at every start before startup back-annotation and
+ * llg_module_paths_start; rows and limits restart from the template. */
+void llg_module_paths_layout(llg_module_path_set_t* set, const char* scope,
+                             const llg_module_path_template_t* path_template,
+                             const void* condition_context,
+                             llg_module_path_pools_t* pools);
 
 /* Global pulse controls (30.7.2, 30.7.4): reject and error limits as
  * percentages of each path delay (truncated; defaults 100), and a pulse
@@ -981,7 +1063,48 @@ struct llg_timing_check_set {
     uint8_t queued;
     llg_timing_check_set_t* next;
     llg_timing_check_set_t* dirty_next;
+    /* Passed to `conditions`: the instance record of an evaluator shared by
+     * every instance of one cell definition, NULL for an evaluator of its
+     * own. */
+    const void* condition_context;
 };
+
+/* Generated models describe timing check sets as templates shared by every
+ * instance of one cell definition plus per-instance references, like module
+ * path sets. Template terminals leave `value` NULL and template lines leave
+ * `net` NULL; the references supply them. */
+typedef struct llg_timing_template {
+    uint32_t n_terminals;
+    const llg_timing_terminal_t* terminals;
+    uint32_t n_checks;
+    const llg_timing_check_t* checks;
+    void (*conditions)(sv4_t* out, void* context);
+    uint32_t n_conditions;
+    uint32_t n_notifiers;
+    uint32_t n_lines;
+    const llg_timing_line_t* lines;
+} llg_timing_template_t;
+
+/* Per-instance references and the writable tables of all sets, consumed in
+ * set order by llg_timing_checks_layout. */
+typedef struct llg_timing_pools {
+    sv4_t* const* values;          /* per set: terminal storages, then notifiers */
+    llg_net_t* const* line_nets;   /* per set: one per line, NULL for a variable */
+    llg_timing_terminal_t* terminals;
+    llg_timing_check_t* checks;
+    llg_timing_line_t* lines;
+} llg_timing_pools_t;
+
+/* Configure `set` from its template, `pairs` (NULL unless SDF annotation
+ * resettles combined checks) and the front of the pools, advancing them.
+ * The model calls it once per set, in set order, at every start before
+ * startup back-annotation and llg_timing_checks_start; check limits restart
+ * from the template. */
+void llg_timing_checks_layout(llg_timing_check_set_t* set, const char* scope,
+                              const llg_timing_template_t* checks_template,
+                              const void* condition_context,
+                              llg_timing_pair_t* pairs, uint32_t n_pairs,
+                              llg_timing_pools_t* pools);
 
 /* Turn violation reports on or off (default on); called before
  * llg_timing_checks_start when a model turns them off. */

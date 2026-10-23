@@ -256,6 +256,53 @@ static void llg_net_settle_cover(llg_net_t* net, uint32_t low, uint32_t count) {
     llg_net_start_release(net);
 }
 
+void llg_net_layout(llg_net_t* net, const llg_net_shape_t* shape,
+                    llg_net_pools_t* pools) {
+    int n_drivers = shape->n_drivers;
+    net->width = shape->width;
+    net->is_signed = shape->is_signed;
+    net->resolution = shape->resolution;
+    net->n_drivers = n_drivers;
+    if (n_drivers > 0) {
+        for (int slot = 0; slot < n_drivers; slot++)
+            pools->driver_slots[slot] = &pools->cells[slot];
+        net->drivers = pools->driver_slots;
+        net->strength0 = shape->strength0;
+        net->strength1 = shape->strength1;
+        net->driver_index = pools->index_nodes;
+        net->overlap_scratch = pools->overlap_scratch;
+        pools->cells += n_drivers;
+        pools->driver_slots += n_drivers;
+        pools->index_nodes += n_drivers;
+        pools->overlap_scratch += n_drivers;
+    } else {
+        net->drivers = NULL;
+        net->strength0 = NULL;
+        net->strength1 = NULL;
+        net->driver_index = NULL;
+        net->overlap_scratch = NULL;
+    }
+    net->index_root = -1;
+    net->propagation_enabled = shape->propagation_enabled;
+    net->propagation = NULL;
+    net->propagation_rise = shape->propagation_rise;
+    net->propagation_fall = shape->propagation_fall;
+    net->propagation_turn_off = shape->propagation_turn_off;
+    net->propagation_bits = NULL;
+    if (shape->path_destination) {
+        net->propagation_bits = pools->path_bits;
+        pools->path_bits += shape->width;
+    }
+    net->n_segments = shape->n_segments;
+    net->segment_lsb = shape->segment_lsb;
+    net->segment_records = NULL;
+    if (shape->n_segments) {
+        net->segment_records = pools->segment_records;
+        pools->segment_records += shape->n_segments;
+    }
+    net->net_delayed = shape->net_delayed;
+}
+
 void llg_net_start_release(llg_net_t* net) {
     if (!net) return;
     free(net->start_pending);
@@ -1376,7 +1423,7 @@ static int path_enabled(llg_module_path_set_t* set,
                         const llg_module_path_t* path, int* evaluated) {
     if (!path->condition || path->ifnone) return 1;
     if (!*evaluated) {
-        set->conditions(set->condition_values, NULL);
+        set->conditions(set->condition_values, (void*)set->condition_context);
         *evaluated = 1;
     }
     const sv4_t* value = &set->condition_values[path->condition - 1u];
@@ -1618,6 +1665,48 @@ static void llg_net_propagate_paths(llg_net_t* net, sv4_t resolved) {
         path_bit_schedule(set, dest, bit, driver, llg_sv4_state(resolved, bit),
                           &evaluated);
     }
+}
+
+void llg_module_paths_layout(llg_module_path_set_t* set, const char* scope,
+                             const llg_module_path_template_t* path_template,
+                             const void* condition_context,
+                             llg_module_path_pools_t* pools) {
+    memset(set, 0, sizeof(*set));
+    set->scope = scope;
+    set->n_sources = path_template->n_sources;
+    set->sources = path_template->n_sources ? pools->sources : NULL;
+    pools->sources += path_template->n_sources;
+    set->n_dests = path_template->n_dests;
+    set->dests = pools->dests;
+    set->conditions = path_template->conditions;
+    set->n_conditions = path_template->n_conditions;
+    set->condition_context = condition_context;
+    uint32_t row = 0;
+    for (uint32_t index = 0; index < path_template->n_dests; index++) {
+        llg_module_path_dest_t* dest = &pools->dests[index];
+        uint32_t n_paths = path_template->dest_paths[index];
+        memset(dest, 0, sizeof(*dest));
+        dest->net = pools->dest_nets[index];
+        dest->paths = pools->rows;
+        dest->n_paths = n_paths;
+        dest->styles = path_template->dest_styles ? path_template->dest_styles[index] : NULL;
+        for (uint32_t path = 0; path < n_paths; path++, row++) {
+            llg_module_path_t* copy = &pools->rows[path];
+            *copy = path_template->rows[row];
+            copy->limits = NULL;
+            const uint64_t* limits =
+                path_template->row_limits ? path_template->row_limits[row] : NULL;
+            if (limits) {
+                memcpy(pools->limits, limits,
+                       2u * LLG_PATH_TRANSITIONS * sizeof(*pools->limits));
+                copy->limits = pools->limits;
+                pools->limits += 2u * LLG_PATH_TRANSITIONS;
+            }
+        }
+        pools->rows += n_paths;
+    }
+    pools->dest_nets += path_template->n_dests;
+    pools->dests += path_template->n_dests;
 }
 
 void llg_module_paths_start(llg_module_path_set_t* set) {

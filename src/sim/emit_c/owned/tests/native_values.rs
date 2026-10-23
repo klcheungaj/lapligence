@@ -109,6 +109,7 @@ fn native_model_lifecycle_uses_typed_notification_and_release() {
         &model,
         &super::super::super::constants::PackedConstants::default(),
         crate::sim::value_backend::ValueBackend::Legacy,
+        &std::collections::HashMap::new(),
         &mut source,
     )
     .unwrap();

@@ -31,10 +31,20 @@ fn net_model(nets: usize, drivers: usize) -> IrModel {
 fn driver_cells_use_one_array_and_constant_lifecycle_bodies() {
     let small = render(net_model(1, 1));
     let large = render(net_model(1, 10000));
-    assert!(large.contains("sv4_t g_net_0__cells[10000] = {0};"));
-    assert_eq!(large.matches("sv4_t g_net_0__cells[").count(), 1);
-    assert!(large.contains("&g_net_0__cells[0], &g_net_0__cells[1]"));
-    assert!(large.contains("&g_net_0__cells[9999]"));
+    // Cells, driver pointers, index nodes and scratch come from exact-size
+    // pools that `llg_net_layout` slices at start.
+    for pool in [
+        "static sv4_t llg_net_cell_pool[10000];",
+        "static sv4_t* llg_net_driver_pool[10000];",
+        "static llg_net_driver_index_t llg_net_index_pool[10000];",
+        "static int llg_net_overlap_pool[10000];",
+    ] {
+        assert!(large.contains(pool), "{pool}");
+    }
+    assert!(large.contains("static llg_net_t g_net_0;"));
+    // Equal strength0 and strength1 vectors share one interned table.
+    assert!(large.contains(", 10000, llg_net_strength_0, llg_net_strength_0, "));
+    assert!(!large.contains("g_net_0__cells"));
     assert!(!large.contains("g_net_0_d0"));
     for name in ["llg_model_storage_defaults", "llg_model_storage_destroy"] {
         let body = lifecycle(&large, name);
@@ -72,12 +82,32 @@ fn heterogeneous_nets_use_descriptor_rows() {
         );
     }
     let source = render(model);
+    let kinds = [
+        IrNetKind::Wire,
+        IrNetKind::Wand,
+        IrNetKind::Wor,
+        IrNetKind::Tri0,
+        IrNetKind::Tri1,
+        IrNetKind::Supply0,
+        IrNetKind::Supply1,
+    ];
     for (index, fill) in [3, 3, 3, 0, 1, 0, 1].into_iter().enumerate() {
-        assert!(source.contains(&format!("{{ &g_net_{index}, {fill} }}")));
+        // Every net has its own shape row: width, signedness, resolution,
+        // propagation, net delay, start fill, path destination, drivers.
+        assert!(source.contains(&format!(
+            "    {{ {}u, {}, {}, 0, 0, {fill}, 0, {}, ",
+            index * 32 + 1,
+            index % 2,
+            kinds[index].c_value(),
+            index + 1
+        )));
+        assert!(source.contains(&format!("    {{ &g_net_{index}, {index}u }},\n")));
     }
     let small = render(net_model(1, 2));
     let large = render(net_model(1024, 2));
-    assert_eq!(large.matches(", 3 },\n").count(), 1024);
+    // Equal nets share one shape and cost one row each.
+    assert!(large.contains("static const llg_net_shape_t llg_net_shapes[1] = {"));
+    assert_eq!(large.matches("    { &g_net_").count(), 1024);
     for name in ["llg_model_storage_defaults", "llg_model_storage_destroy"] {
         assert_eq!(lifecycle(&small, name), lifecycle(&large, name));
     }
@@ -174,16 +204,15 @@ int main(void) {
             llg_sv4_word(g_pull.resolved, 1, LLG_SV4_BITS) != UINT64_MAX || llg_sv4_word(g_pull.resolved, 2, LLG_SV4_BITS) != 1) return 2;
         if (g_bit_0.n_aliases != 2 || g_bit_0.index_root != -1 ||
             g_bit_0.driver_index[0].active || g_bit_0.driver_index[1].active) return 3;
-        if (g_bit_0.drivers[0] != &g_bit_0__cells[0] ||
-            g_bit_0.drivers[1] != &g_bit_0__cells[1] ||
-            llg_sv4_word(g_bit_0__cells[0], 0, LLG_SV4_Z) != 1 || llg_sv4_word(g_bit_0__cells[1], 0, LLG_SV4_Z) != 1) return 4;
+        if (g_bit_0.drivers[1] != g_bit_0.drivers[0] + 1 ||
+            llg_sv4_word(*g_bit_0.drivers[0], 0, LLG_SV4_Z) != 1 || llg_sv4_word(*g_bit_0.drivers[1], 0, LLG_SV4_Z) != 1) return 4;
         sv4_t one = sv4_from_u64(1, 1, 0);
         llg_net_write(&g_bit_0, 1, one);
         sv4_destroy(&one);
         if (llg_sv4_word(g_bit_0.resolved, 0, LLG_SV4_BITS) != 1 || !g_bit_0.driver_index[1].active ||
             llg_sv4_word(G_array_0[2], 0, LLG_SV4_BITS) != 1 || llg_sv4_word(llg_array_net_0_2.visible, 0, LLG_SV4_BITS) != 1) return 5;
         if (llg_model_close()) return 6;
-        if (llg_sv4_width(g_bit_0__cells[0]) || llg_sv4_width(g_bit_0__cells[1]) ||
+        if (llg_sv4_width(*g_bit_0.drivers[0]) || llg_sv4_width(*g_bit_0.drivers[1]) ||
             llg_sv4_width(g_bit_0.resolved) || llg_sv4_width(g_pull.resolved) ||
             g_bit_0.aliases || g_bit_0.n_aliases || g_bit_0.alias_capacity ||
             llg_sv4_width(llg_array_net_0_2.visible)) return 7;
@@ -433,30 +462,44 @@ fn module_path_tables_bind_only_their_destination_nets() {
         )],
     ));
     let source = render(model);
-    let net = |index: usize| {
-        source
-            .lines()
-            .find(|line| line.starts_with(&format!("static llg_net_t g_net_{index} = ")))
-            .unwrap()
-            .to_owned()
-    };
-    assert!(net(0).contains(".propagation_enabled = 0"));
-    assert!(!net(0).contains("propagation_bits"));
-    assert!(net(1).contains(".propagation_enabled = 1"));
-    assert!(net(1).contains(".propagation_bits = g_net_1__propagation_bits"));
-    assert!(source.contains("static llg_inertial_t* g_net_1__propagation_bits[65];"));
-    assert!(source.contains("static sv4_t* const llg_path_set_0__sources[] = { &G_tb_a };"));
+    // Only the destination net gets a path-stage record per bit.
+    assert!(source.contains("static llg_inertial_t* llg_net_path_bit_pool[65];"));
+    assert!(source.contains("    { &g_net_0, 0u },\n    { &g_net_1, 1u },\n"));
+    let shapes = source
+        .split_once("llg_net_shapes[2] = {\n")
+        .unwrap()
+        .1
+        .split_once("};")
+        .unwrap()
+        .0;
+    let shapes = shapes.lines().collect::<Vec<_>>();
+    assert!(
+        shapes[0].contains("LLG_RESOLVE_WIRE, 0, 0, 3, 0, 1, "),
+        "{shapes:?}"
+    );
+    assert!(
+        shapes[1].contains("LLG_RESOLVE_WIRE, 1, 0, 3, 1, 1, "),
+        "{shapes:?}"
+    );
+    assert!(source.contains("static llg_module_path_set_t llg_path_set_0;"));
+    assert!(source.contains("static llg_module_path_t llg_path_row_pool[1];"));
+    assert!(source.contains("static sv4_t* const llg_path_source_refs[] = {\n    &G_tb_a,\n};"));
+    assert!(source.contains("static llg_net_t* const llg_path_dest_nets[] = {\n    &g_net_1,\n};"));
     assert!(source.contains(
-        "static llg_module_path_t llg_path_set_0__paths_0[] = { { 0, 1, 1, 3, 2, 1, 2, \
+        "static const llg_module_path_t llg_path_template_0_rows[] = { { 0, 1, 1, 3, 2, 1, 2, \
          { 1ULL, 2ULL, 3ULL, 4ULL, 5ULL, 6ULL, 7ULL, 8ULL, 9ULL, 10ULL, 11ULL, 12ULL }, \
          \"f.v:7:5\", .edge = 0 } };"
     ));
     assert!(source.contains(
-        "static llg_module_path_set_t llg_path_set_0 = { \"tb.u\", llg_path_set_0__sources, 1, \
-         llg_path_set_0__dests, 1, NULL, NULL, NULL, .conditions = NULL };"
+        "    { 1u, 1u, llg_path_template_0_dest_paths, NULL, llg_path_template_0_rows, NULL, NULL, 0u },"
     ));
+    assert!(source.contains("    { &llg_path_set_0, \"tb.u\", 0u, NULL },"));
     let defaults = lifecycle(&source, "llg_model_storage_defaults");
-    assert!(defaults.contains("llg_module_paths_start(&llg_path_set_0);"));
+    let layout = defaults.find("llg_module_paths_layout(").unwrap();
+    let start = defaults
+        .find("llg_module_paths_start(llg_path_sets[_llg_n].set);")
+        .unwrap();
+    assert!(layout < start);
 }
 
 #[test]
@@ -518,18 +561,22 @@ fn module_path_triggers_limits_styles_and_options_are_emitted() {
         show_cancelled: Some(false),
     };
     let source = render(model);
-    assert!(source.contains(
-        "static uint64_t llg_path_set_0__limits_0_0[2 * LLG_PATH_TRANSITIONS] = { 1ULL, 1ULL,"
-    ));
-    assert!(source.contains(
-        "\"f.v:3:5\", .edge = 2, .condition = 1, .group = 1, \
-         .limits = llg_path_set_0__limits_0_0 }"
-    ));
+    // Limits and styles are template tables; the runtime copies the limits
+    // into the writable pool, which back-annotation may rewrite.
+    assert!(source.contains("static const uint64_t llg_path_limits_1[] = { 1ULL, 1ULL,"));
+    assert!(source.contains("static uint64_t llg_path_limit_pool[24];"));
+    assert!(source.contains("\"f.v:3:5\", .edge = 2, .condition = 1, .group = 1 }, "));
     assert!(source.contains("\"f.v:3:5\", .edge = 0, .ifnone = 1, .group = 1 } };"));
-    assert!(source.contains("static const uint8_t llg_path_set_0__styles_0[] = { 3, 3,"));
-    assert!(source.contains("NULL, NULL, .styles = llg_path_set_0__styles_0 }"));
+    assert!(source.contains("static const uint8_t llg_path_styles_0[] = { 3, 3,"));
     assert!(source.contains(
-        "NULL, NULL, NULL, .conditions = llg_path_set_0__conditions, .n_conditions = 1 };"
+        "static const uint8_t* const llg_path_template_0_styles[] = { llg_path_styles_0 };"
+    ));
+    assert!(source.contains(
+        "static const uint64_t* const llg_path_template_0_limits[] = { llg_path_limits_1, NULL };"
+    ));
+    assert!(source.contains(
+        "    { 1u, 1u, llg_path_template_0_dest_paths, llg_path_template_0_styles, \
+         llg_path_template_0_rows, llg_path_template_0_limits, llg_path_set_0__conditions, 1u },"
     ));
     assert!(source.contains("static void llg_path_set_0__conditions(sv4_t* out, void* context)"));
     let defaults = lifecycle(&source, "llg_model_storage_defaults");
@@ -605,30 +652,37 @@ fn timing_check_tables_are_emitted_only_for_designs_with_checks() {
         negative: false,
     };
     let source = render(model);
+    // The set is a template plus per-instance references.
+    assert!(source.contains("static llg_timing_check_set_t llg_timing_set_0;"));
     assert!(source.contains(
-        "static llg_timing_terminal_t llg_timing_set_0__terminals[] = { { .value = &G_tb_d, \
-         .lsb = 0u, .n_bits = 1u }, { .value = &G_tb_d, .lsb = 1u, .n_bits = 3u } };"
+        "static const llg_timing_terminal_t llg_timing_template_0_terminals[] = { { .lsb = 0u, \
+         .n_bits = 1u }, { .lsb = 1u, .n_bits = 3u } };"
     ));
     assert!(source.contains(
-        "static llg_timing_check_t llg_timing_set_0__checks[] = { { .kind = 1, .reference = \
-         { .terminal = 1u, .edges = 35 }, .data = { .terminal = 0u, .edges = 0 }, .limit = \
-         10LL, .limit2 = -2LL, .notifier = 1u, .origin = \"f.v:7:5\", .text = \
+        "static const llg_timing_check_t llg_timing_template_0_checks[] = { { .kind = 1, \
+         .reference = { .terminal = 1u, .edges = 35 }, .data = { .terminal = 0u, .edges = 0 }, \
+         .limit = 10LL, .limit2 = -2LL, .notifier = 1u, .origin = \"f.v:7:5\", .text = \
          \"$setup(d:\\002, posedge c:\\001, 10)\" } };"
     ));
-    assert!(source.contains("static sv4_t* const llg_timing_set_0__notifiers[] = { &G_tb_n };"));
     assert!(source.contains(
-        "static llg_timing_check_set_t llg_timing_set_0 = { .scope = \"tb.u\", .terminals = \
-         llg_timing_set_0__terminals, .n_terminals = 2u, .checks = llg_timing_set_0__checks, \
-         .n_checks = 1u, .conditions = NULL, .n_conditions = 0u, .notifiers = \
-         llg_timing_set_0__notifiers, .n_notifiers = 1u, .lines = NULL, .n_lines = 0u };"
+        "    { 2u, llg_timing_template_0_terminals, 1u, llg_timing_template_0_checks, NULL, 0u, \
+         1u, 0u, NULL },"
     ));
+    // Terminal storages, then notifiers.
+    assert!(source.contains(
+        "static sv4_t* const llg_timing_values[] = {\n    &G_tb_d, &G_tb_d, &G_tb_n,\n};"
+    ));
+    assert!(source.contains("static llg_timing_check_t llg_timing_check_pool[1];"));
+    assert!(source.contains("    { &llg_timing_set_0, \"tb.u\", 0u, NULL, NULL, 0u },"));
     let defaults = lifecycle(&source, "llg_model_storage_defaults");
+    let layout = defaults.find("llg_timing_checks_layout(").unwrap();
     let configure = defaults.find("llg_timing_checks_configure(0);").unwrap();
     let doorbell = defaults
         .find("llg_timing_checks_doorbell(&llg_timing_doorbell);")
         .unwrap();
     let start = defaults
-        .find("llg_timing_checks_start(&llg_timing_set_0);")
+        .find("llg_timing_checks_start(llg_timing_sets[_llg_n].set);")
         .unwrap();
+    assert!(layout < configure, "{defaults}");
     assert!(configure < doorbell && doorbell < start, "{defaults}");
 }

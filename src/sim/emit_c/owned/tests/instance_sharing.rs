@@ -50,11 +50,15 @@ fn instances(count: usize) -> ExecutionModel {
 fn one_body_has_one_record_per_instance_and_spawn_initializes_root() {
     let execution = instances(8);
     let source = render_with_sharing_threshold(&execution, 4).unwrap();
-    assert_eq!(
-        source
-            .matches("static const llg_body_record_0_t llg_body_instance_")
-            .count(),
-        8
+    // One record row per instance in one array, one class descriptor and
+    // one spawn row for the run of members.
+    assert!(source.contains("static const llg_body_record_0_t llg_body_instances_0[8] = {"));
+    assert_eq!(source.matches("static const llg_co_desc_t").count(), 1);
+    assert!(source.contains(
+        "static const llg_co_desc_t llg_shared_body_0_desc = { llg_shared_body_0, NULL, "
+    ));
+    assert!(
+        source.contains("    { 0, 0, 8 },\n") || source.contains("llg_model_spawn_class(0, 0, 8);")
     );
     assert_eq!(
         source
@@ -193,11 +197,10 @@ fn shared_net_writers_keep_distinct_array_backed_contributions() {
     }
     let source = render_with_sharing_threshold(&ExecutionModel::lower(model).unwrap(), 4).unwrap();
     assert_eq!(source.matches("LLG_CO_DISPATCH_BEGIN").count(), 1);
-    assert!(source.contains("sv4_t g_net__cells[8] = {0};"));
+    assert!(source.contains("static sv4_t llg_net_cell_pool[8];"));
     assert!(source.contains("llg_net_write(&g_net, I->"), "{source}");
     for slot in 0..8 {
-        assert!(source.contains(&format!("&g_net__cells[{slot}]")));
-        assert!(source.contains(&format!("= {{ {slot} }};")), "{source}");
+        assert!(source.contains(&format!("    {{ {slot} }},\n")), "{source}");
     }
 }
 

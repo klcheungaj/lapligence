@@ -152,6 +152,10 @@ static llg_co_chain_t* llg_rt_current_chain(void) {
     return g.current ? &g.current->chain : NULL;
 }
 
+static const char* llg_rt_current_name(void) {
+    return g.current ? g.current->name : NULL;
+}
+
 // Do not recurse into cancellation while a tree is being unlinked. The
 // caller services completed programs after finishing the cancellation batch.
 static void release_program_process(llg_proc_t* process) {

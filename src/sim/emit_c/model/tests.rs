@@ -408,7 +408,7 @@ fn component_strength_view_descriptor_is_validated_and_emitted() {
     let model = model_with(signal("g_net_0__strength", 16, true, None));
     model.validate().unwrap();
     let c = render(&ExecutionModel::lower(model).unwrap()).unwrap();
-    assert!(c.contains(".strength = &g_net_0__strength }"));
+    assert!(c.contains("g_net_0.strength = &g_net_0__strength;"));
     assert!(c.contains("llg_net_strength_reset(net);"));
     for invalid in [
         signal("g_net_0__strength", 16, false, None),
