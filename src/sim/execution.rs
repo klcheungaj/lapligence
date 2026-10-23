@@ -158,6 +158,16 @@ pub struct ExecutionProcess {
     pub region: ScheduleRegion,
 }
 
+impl ExecutionProcess {
+    /// Release the typed operations once a consumer that visits each process
+    /// once (C emission) no longer needs them. The model no longer validates
+    /// afterwards, so only an owner that drops it after that pass may call
+    /// this; the process shell, region and analysis remain.
+    pub(crate) fn release_operations(&mut self) {
+        self.blocks = Vec::new();
+    }
+}
+
 /// Complete executable model consumed by optimization and C emission.
 #[derive(Clone, Debug)]
 pub struct ExecutionModel {
@@ -218,14 +228,21 @@ impl ExecutionModel {
         self.validate()
     }
 
-    /// Release the typed operations of one process once a consumer that
-    /// visits each process once (C emission) no longer needs them. The model
-    /// no longer validates afterwards, so only an owner that drops it after
-    /// that pass may call this; the process shell, region and analysis remain.
+    /// Release the typed operations of one process (see
+    /// [`ExecutionProcess::release_operations`]).
+    #[cfg(test)]
     pub(crate) fn release_process_operations(&mut self, index: usize) {
         if let Some(process) = self.processes.get_mut(index) {
-            process.blocks = Vec::new();
+            process.release_operations();
         }
+    }
+
+    /// The IR and analysis with mutable executable processes, so a renderer
+    /// can keep indexes of the IR while it releases each rendered body.
+    pub(crate) fn emission_parts(
+        &mut self,
+    ) -> (&IrModel, &mut [ExecutionProcess], &ExecutionAnalysis) {
+        (&self.ir, &mut self.processes, &self.analysis)
     }
 
     pub fn packed_capacity(&self) -> Result<u128, IrValidationError> {

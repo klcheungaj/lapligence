@@ -55,23 +55,28 @@ pub(in crate::sim::emit_c) fn persistent_returns(model: &IrModel, out: &mut Stri
     }
 }
 
-pub(in crate::sim::emit_c) fn function(
-    ctx: &RCtx<'_>,
+pub(in crate::sim::emit_c) fn function<'a, 'm>(
+    ctx: &'a RCtx<'m>,
     function: &IrFunc,
+    names: &'a StorageNames<'m>,
 ) -> Result<String, String> {
-    render_function(ctx, function, Frame::new(ctx), false).map(|(source, _, _)| source)
+    let mut frame = Frame::new(ctx);
+    frame.storage_names = Some(names);
+    render_function(ctx, function, frame, false).map(|(source, _, _)| source)
 }
 
 /// A recursive subprogram's coroutine `<fn>_co` followed by its plain-ABI
 /// entry `<fn>`, which runs the coroutine on a synchronous driver. Returns
 /// the source, the frame layout and the number of resume points.
-pub(in crate::sim::emit_c) fn recursive_function(
-    ctx: &RCtx<'_>,
+pub(in crate::sim::emit_c) fn recursive_function<'a, 'm>(
+    ctx: &'a RCtx<'m>,
     function: &IrFunc,
     function_index: usize,
     analysis: &ExecutionAnalysis,
+    names: &'a StorageNames<'m>,
 ) -> Result<(String, super::super::frame_layout::FrameLayout, usize), String> {
     let mut frame = Frame::new_recursive(ctx, analysis, function_index)?;
+    frame.storage_names = Some(names);
     for (ty, name) in super::super::model::owned_frame_param_fields(function) {
         frame.frame_field(&ty, &name)?;
     }
@@ -135,12 +140,13 @@ fn recursive_entry(function: &IrFunc) -> String {
     out
 }
 
-pub(in crate::sim::emit_c) fn coroutine_function(
-    ctx: &RCtx<'_>,
+pub(in crate::sim::emit_c) fn coroutine_function<'a, 'm>(
+    ctx: &'a RCtx<'m>,
     function: &IrFunc,
     function_index: usize,
     analysis: &ExecutionAnalysis,
     frame_upper_bounds: &BTreeMap<usize, usize>,
+    names: &'a StorageNames<'m>,
 ) -> Result<(String, super::super::frame_layout::FrameLayout), String> {
     let mut frame = Frame::new_coframe(
         ctx,
@@ -148,6 +154,7 @@ pub(in crate::sim::emit_c) fn coroutine_function(
         CoroutineId::Function(function_index),
         frame_upper_bounds,
     )?;
+    frame.storage_names = Some(names);
     for (ty, name) in super::super::model::owned_frame_param_fields(function) {
         frame.frame_field(&ty, &name)?;
     }
@@ -732,13 +739,14 @@ fn render_function(
     Ok((source, layout, sites))
 }
 
-pub(in crate::sim::emit_c) fn coroutine_process(
-    ctx: &RCtx<'_>,
+pub(in crate::sim::emit_c) fn coroutine_process<'a, 'm>(
+    ctx: &'a RCtx<'m>,
     process: &IrProcess,
     process_index: usize,
     execution: &ExecutionProcess,
     analysis: &ExecutionAnalysis,
     frame_upper_bounds: &BTreeMap<usize, usize>,
+    names: &'a StorageNames<'m>,
 ) -> Result<CoroutineProcessBody, String> {
     let mut frame = Frame::new_coframe(
         ctx,
@@ -746,6 +754,7 @@ pub(in crate::sim::emit_c) fn coroutine_process(
         CoroutineId::Process(process_index),
         frame_upper_bounds,
     )?;
+    frame.storage_names = Some(names);
     frame.batch_owner = Some(process.c_name.clone());
     let (source, layout, net_batches) = render_process(ctx, process, execution, frame, true)?;
     Ok((
@@ -755,12 +764,15 @@ pub(in crate::sim::emit_c) fn coroutine_process(
     ))
 }
 
-pub(in crate::sim::emit_c) fn process(
-    ctx: &RCtx<'_>,
+pub(in crate::sim::emit_c) fn process<'a, 'm>(
+    ctx: &'a RCtx<'m>,
     process: &IrProcess,
     execution: &ExecutionProcess,
+    names: &'a StorageNames<'m>,
 ) -> Result<String, String> {
-    render_process(ctx, process, execution, Frame::new(ctx), false).map(|(source, _, _)| source)
+    let mut frame = Frame::new(ctx);
+    frame.storage_names = Some(names);
+    render_process(ctx, process, execution, frame, false).map(|(source, _, _)| source)
 }
 
 fn render_process(
@@ -861,19 +873,21 @@ fn render_process(
     Ok((source, layout, net_batches))
 }
 
-pub(in crate::sim::emit_c) fn pre_function(
-    ctx: &RCtx<'_>,
+pub(in crate::sim::emit_c) fn pre_function<'a, 'm>(
+    ctx: &'a RCtx<'m>,
     pre: &IrPreFn,
+    names: &'a StorageNames<'m>,
 ) -> Result<String, String> {
-    callbacks::render(ctx, pre)
+    callbacks::render(ctx, pre, names)
 }
 
-pub(in crate::sim::emit_c) fn coroutine_branch(
-    ctx: &RCtx<'_>,
+pub(in crate::sim::emit_c) fn coroutine_branch<'a, 'm>(
+    ctx: &'a RCtx<'m>,
     pre: &IrPreFn,
     owner: CoroutineId,
     analysis: &ExecutionAnalysis,
     frame_upper_bounds: &BTreeMap<usize, usize>,
+    names: &'a StorageNames<'m>,
 ) -> Result<(String, super::super::frame_layout::FrameLayout), String> {
-    callbacks::coroutine_branch(ctx, pre, owner, analysis, frame_upper_bounds)
+    callbacks::coroutine_branch(ctx, pre, owner, analysis, frame_upper_bounds, names)
 }
