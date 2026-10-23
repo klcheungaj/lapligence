@@ -1,0 +1,19 @@
+SDF 2.1 timescale 1ns from tb
+7:18: path delay absolute tb.mux1 path 2 (a => y) = ((1) (2) (2))
+8:8: path pulse percent tb.mux1 path 0 (a => y) = (50) (50)
+8:8: path pulse percent tb.mux1 path 1 (a => y) = (50) (50)
+8:8: path pulse percent tb.mux1 path 2 (a => y) = (50) (50)
+8:8: path pulse percent tb.mux1 path 3 (s => y) = (50) (50)
+8:8: path pulse percent tb.mux1 path 3 (b => y) = (50) (50)
+14:8: check limit tb.ff1 check 2 $recrem second = (1)
+warning 7:18: CONDELSE belongs to SDF 3.0, not SDF 2.1; it is read as SDF 3.0 defines it
+warning 7:40: a delay value with pulse limits `((d) (r) (e))` belongs to SDF 3.0, not SDF 2.1; it is read as SDF 3.0 defines it
+warning 8:8: PATHPULSEPERCENT belongs to SDF 3.0, not SDF 2.1; it is read as SDF 3.0 defines it
+warning 13:28: an empty value for the WIDTH limit belongs to SDF 3.0, not SDF 2.1; it is read as SDF 3.0 defines it
+warning 14:8: REMOVAL belongs to SDF 3.0, not SDF 2.1; it is read as SDF 3.0 defines it
+warning 15:8: no timing check in `tb.ff1` matches (SETUPHOLD d (posedge clk) (SCOND rst)); it is not annotated
+warning 15:43: SCOND belongs to SDF 3.0, not SDF 2.1; it is read as SDF 3.0 defines it
+warning 17:6: TIMINGENV belongs to SDF 3.0, not SDF 2.1; it is read as SDF 3.0 defines it
+warning 20:23: no specify path from `a` to `y` with condition `b` in `tb.and1`; the IOPATH is not annotated
+warning 20:28: a condition label belongs to SDF 3.0, not SDF 2.1; it is read as SDF 3.0 defines it
+warning 20:51: RETAIN belongs to SDF 3.0, not SDF 2.1; it is read as SDF 3.0 defines it

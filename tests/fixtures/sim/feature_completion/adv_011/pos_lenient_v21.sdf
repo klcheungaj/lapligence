@@ -1,0 +1,22 @@
+// An SDF 2.1 file with SDF 3.0 entries: each is read as SDF 3.0 defines it,
+// with a warning.
+(DELAYFILE
+  (SDFVERSION "2.1")
+  (CELL (CELLTYPE "MUX") (INSTANCE mux1)
+    (DELAY
+      (ABSOLUTE (CONDELSE (IOPATH a y ((1) (2)))))
+      (PATHPULSEPERCENT (50))
+    )
+  )
+  (CELL (CELLTYPE "DFF") (INSTANCE ff1)
+    (TIMINGCHECK
+      (WIDTH (posedge clk) ())
+      (REMOVAL (posedge rst) (posedge clk) (1))
+      (SETUPHOLD d (posedge clk) (1) (1) (SCOND rst))
+    )
+    (TIMINGENV (SLACK d (1) (2) (3) (4)))
+  )
+  (CELL (CELLTYPE "AND2") (INSTANCE and1)
+    (DELAY (ABSOLUTE (COND "label" b (IOPATH a y (RETAIN (1)) (2)))))
+  )
+)

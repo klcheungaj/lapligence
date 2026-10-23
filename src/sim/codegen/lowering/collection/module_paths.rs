@@ -167,6 +167,9 @@ impl Codegen<'_> {
         let mut reads = Vec::new();
         let mut destinations: Vec<IrModulePathDestination> = Vec::new();
         let mut destination_index: HashMap<usize, usize> = HashMap::new();
+        // Per destination, the declaration and terminal pair of each path,
+        // for the SDF annotation targets.
+        let mut provenance: Vec<Vec<(NodeId, u32, u32)>> = Vec::new();
         let mut conditions = Vec::new();
         for path in paths {
             let location = self.specify_location(path.node);
@@ -226,7 +229,7 @@ impl Codegen<'_> {
                 .path_pulse_limits(path, &specify.pulses)
                 .map_err(error)?;
             let mut outputs = Vec::with_capacity(path.outputs.len());
-            for output in &path.outputs {
+            for (output_index, output) in path.outputs.iter().enumerate() {
                 let terminal = self.path_terminal(*output).map_err(error)?;
                 let Some(group) =
                     self.path_destination_group(instance, &terminal, drivers, &location)?
@@ -235,9 +238,9 @@ impl Codegen<'_> {
                     // paths have no effect.
                     continue;
                 };
-                outputs.push((terminal, group));
+                outputs.push((output_index as u32, terminal, group));
             }
-            for input in &inputs {
+            for (input_index, input) in inputs.iter().enumerate() {
                 let signal = input.info.ir;
                 let index = match source_index.get(&signal) {
                     Some(index) => *index,
@@ -248,7 +251,7 @@ impl Codegen<'_> {
                         sources.len() - 1
                     }
                 };
-                for (output, group) in &outputs {
+                for (output_index, output, group) in &outputs {
                     if !full && input.width != output.width {
                         return Err(error(format!(
                             "parallel connection terminals differ in width ({} and {})",
@@ -257,8 +260,10 @@ impl Codegen<'_> {
                     }
                     let slot = *destination_index.entry(*group).or_insert_with(|| {
                         destinations.push(IrModulePathDestination::new(*group, Vec::new()));
+                        provenance.push(Vec::new());
                         destinations.len() - 1
                     });
+                    provenance[slot].push((path.node, input_index as u32, *output_index));
                     let mut module_path = IrModulePath::new(
                         index,
                         input.lsb,
@@ -281,11 +286,30 @@ impl Codegen<'_> {
         if destinations.is_empty() {
             return Ok(());
         }
-        for destination in &mut destinations {
-            group_ifnone_paths(&mut destination.paths);
+        for (destination, provenance) in destinations.iter_mut().zip(&mut provenance) {
+            let kept = group_ifnone_paths(&mut destination.paths);
+            let mut index = 0;
+            provenance.retain(|_| {
+                index += 1;
+                kept[index - 1]
+            });
         }
         self.apply_pulse_styles(&specify.styles, &mut destinations, &destination_index)?;
         let set = self.model.module_paths.len();
+        for (destination, rows) in provenance.iter().enumerate() {
+            for (path, (node, input, output)) in rows.iter().enumerate() {
+                self.sdf_path_rows.push((
+                    *node,
+                    crate::sim::sdf::SdfPathRow {
+                        input: *input,
+                        output: *output,
+                        set: set as u32,
+                        destination: destination as u32,
+                        path: path as u32,
+                    },
+                ));
+            }
+        }
         let label = self.source_path(&scope);
         self.model.module_paths.push(
             IrModulePathSet::new(label.clone(), sources, destinations).with_conditions(conditions),
@@ -572,8 +596,9 @@ impl Codegen<'_> {
 /// group is active (30.4.4.4). An unconditional simple path with the same
 /// terminals as an `ifnone` path is dropped: the language makes the pair
 /// illegal and the `ifnone` path is the one kept; of several `ifnone`
-/// declarations of one path the last one is kept (decision A8-D3).
-fn group_ifnone_paths(paths: &mut Vec<IrModulePath>) {
+/// declarations of one path the last one is kept (decision A8-D3). Returns
+/// which of the original paths were kept.
+fn group_ifnone_paths(paths: &mut Vec<IrModulePath>) -> Vec<bool> {
     type Terminals = (usize, u32, u32, u32, u32);
     let terminals = |path: &IrModulePath| -> Terminals {
         (
@@ -590,8 +615,9 @@ fn group_ifnone_paths(paths: &mut Vec<IrModulePath>) {
             groups.push(terminals(path));
         }
     }
+    let mut kept = vec![true; paths.len()];
     if groups.is_empty() {
-        return;
+        return kept;
     }
     // The last `ifnone` declaration of a path replaces earlier ones.
     let mut last_ifnone = vec![0usize; groups.len()];
@@ -607,15 +633,18 @@ fn group_ifnone_paths(paths: &mut Vec<IrModulePath>) {
         let position = index;
         index += 1;
         let group = groups.iter().position(|group| *group == terminals(path));
-        match (path.condition, group) {
+        let keep = match (path.condition, group) {
             (IrPathCondition::IfNone, Some(group)) => last_ifnone[group] == position,
             (IrPathCondition::None, Some(_)) => path.edge != IrPathEdge::None,
             _ => true,
-        }
+        };
+        kept[position] = keep;
+        keep
     });
     for path in paths.iter_mut() {
         if let Some(index) = groups.iter().position(|group| *group == terminals(path)) {
             path.group = u32::try_from(index + 1).unwrap_or(u32::MAX);
         }
     }
+    kept
 }
