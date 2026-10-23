@@ -68,9 +68,12 @@ kind), `Db::specparam`/`Db::specparams`, which mark specparams (and
 `PATHPULSE$` ones) apart from elaboration parameters, and `Db::path_pulses`
 (`PATHPULSE$` reject/error limit values and the input/output terminal
 declarations a `PATHPULSE$in$out` name resolves to, `Module` for the
-module-wide one, `Unresolved` otherwise; single-value forms included). A specparam's value is
-its parameter constant; its node and each path node are the stable source
-identities later annotation and timing-check work keys on.
+module-wide one, `Unresolved` otherwise; single-value forms included), and
+`Db::timing_checks` (each check's events in signature order with their
+terminal, `TimingEdges` transition mask and `&&&` condition, its limit
+arguments with empty positions, its notifier and its argument shape). A
+specparam's value is its parameter constant; its node, each path node and
+each timing check node are the stable source identities annotation keys on.
 Modport expression ports `.p(expr)` keep their port expression in a side
 table (`Db::modport_port_expression`); references still target the port.
 Module, interface and program port expressions (IEEE 1800-2009 23.2.2.1,

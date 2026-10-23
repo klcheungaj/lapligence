@@ -1,0 +1,8 @@
+0 skew=xxxxx skew0=xx period=xxx width=xxxxxx
+101 skew=xxxxx skew0=0x period=xxx width=xxxxxx
+103 skew=xxxxx skew0=0x period=xxx width=xxx0xx
+106 skew=xxxxx skew0=0x period=xxx width=xx00xx
+109 skew=xxxxx skew0=0x period=xx0 width=xx00xx
+111 skew=xxx0x skew0=0x period=xx0 width=xx00xx
+113 skew=xxx1x skew0=0x period=xx0 width=xx00xx
+115 skew=xxx1x skew0=0x period=0x0 width=xx00xx

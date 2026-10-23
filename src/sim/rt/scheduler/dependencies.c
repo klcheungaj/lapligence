@@ -695,6 +695,7 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
 #endif
     llg_wait_source_t* source = wait_source_find(target);
     int watched = source && source->watchers;
+    llg_timing_watch_t* timing = source ? source->timing : NULL;
     llg_wait_subscription_t cursor = {0};
     if (source) {
         cursor.source = source;
@@ -769,6 +770,9 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
     }
     fixed_array_changed(target);
     force_dependency_changed(target, NULL, 0);
+    // Timing check terminals only mark their sets; the checks run later in
+    // the time step (llg_timing_checks_run).
+    if (LLG_CO_UNLIKELY(timing != NULL)) timing_terminals_changed(timing);
     // Watches run last, after every runtime consumer saw the new value.
     if (LLG_CO_UNLIKELY(watched) && value_watch_hook) value_watch_hook(target);
 }

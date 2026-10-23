@@ -817,7 +817,7 @@ scripts/run-tests.sh -E 'binary(sim_feature_completion) & test(adv_016::)'
 
 ## Module path limits (ADV-007)
 
-**Status:** open (ADV-007; later work in ADV-009 to ADV-012 and ADV-019); the
+**Status:** open (ADV-007; later work in ADV-010 to ADV-012 and ADV-019); the
 forms below stop code generation with a located error, and simple module
 paths otherwise run.
 
@@ -829,8 +829,12 @@ paths otherwise run.
   "the destination is also driven outside the module, so the path would delay
   that driver too".
 - A bit or part select of a multidimensional packed terminal is rejected.
-- Timing checks are rejected as not simulated yet. State-dependent and
-  edge-sensitive paths and pulse control run since ADV-008.
+- State-dependent and edge-sensitive paths and pulse control run since
+  ADV-008, the basic timing checks since ADV-009 and the combined and
+  negative ones since ADV-010. The delays of delayed timing check signals
+  are fixed when the model is generated: annotating new `$setuphold` or
+  `$recrem` limits changes the windows but not the delays, and a check whose
+  negative limits sum to 0 or 1 is not in the model at all.
 - A path whose terminals only partly overlap an `ifnone` path's (for example
   `ifnone (a *> y)` and `if (c) (a => y[0])`) does not suppress it: an
   `ifnone` path yields only to active paths with exactly its terminals.

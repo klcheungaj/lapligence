@@ -1,0 +1,9 @@
+0 q=x notifier=x x=x one=1 z=z shared=x duplicate=xx reordered=xx zero=x
+100 q=1 notifier=x x=x one=1 z=z shared=x duplicate=xx reordered=xx zero=x
+110 q=x notifier=0 x=x one=1 z=z shared=x duplicate=xx reordered=xx zero=x
+135 q=x notifier=1 x=x one=1 z=z shared=x duplicate=xx reordered=xx zero=x
+190 q=0 notifier=1 x=x one=1 z=z shared=x duplicate=xx reordered=xx zero=x
+191 q=x notifier=0 x=x one=1 z=z shared=x duplicate=xx reordered=xx zero=x
+239 q=x notifier=0 x=0 one=0 z=z shared=0 duplicate=0x reordered=0x zero=x
+259 q=x notifier=0 x=1 one=1 z=z shared=1 duplicate=1x reordered=1x zero=x
+279 q=x notifier=0 x=0 one=0 z=z shared=0 duplicate=0x reordered=0x zero=x

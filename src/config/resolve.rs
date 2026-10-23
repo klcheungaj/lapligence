@@ -289,6 +289,10 @@ fn resolve_simulator(raw: &RawSimulator) -> Result<SimulatorConfig, ConfigError>
         pulse_error,
         pulse_style,
         show_cancelled: raw.show_cancelled,
+        timing_checks: raw.timing_checks,
+        notifiers: raw.notifiers,
+        timing_check_messages: raw.timing_check_messages,
+        neg_timing_checks: raw.neg_timing_checks,
         plusargs: raw.plusargs.clone(),
     })
 }

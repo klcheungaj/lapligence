@@ -13,6 +13,10 @@
 //! destination transition is scheduled) and their edge. Pulse limits
 //! (30.7) come from a `PATHPULSE$` table on the path, else from the model's
 //! global percentages of the delays ([`IrPathPulseOptions`]).
+//!
+//! System timing checks (IEEE 1364-2001 15, IEEE 1800-2009 31) of one
+//! instance form one [`IrTimingCheckSet`]: terminals, checks with their
+//! events, limits and notifier index, and event conditions.
 
 use super::IrExpr;
 
@@ -353,6 +357,386 @@ impl IrModulePathSet {
 
     pub fn destinations(&self) -> &[IrModulePathDestination] {
         &self.destinations
+    }
+}
+
+/// A system timing check kind simulated by the runtime (IEEE 1364-2001
+/// 15.2-15.3, IEEE 1800-2009 31.3-31.4). `$setuphold` and `$recrem` lower to
+/// their `$setup`/`$hold` and `$removal`/`$recovery` parts (31.3.3, 31.3.6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IrTimingCheckKind {
+    Setup,
+    Hold,
+    Recovery,
+    Removal,
+    Skew,
+    Period,
+    Width,
+    NoChange,
+    TimeSkew,
+    FullSkew,
+}
+
+impl IrTimingCheckKind {
+    /// The runtime code, `LLG_TIMING_*` (1 through 10).
+    pub fn code(self) -> u8 {
+        match self {
+            Self::Setup => 1,
+            Self::Hold => 2,
+            Self::Recovery => 3,
+            Self::Removal => 4,
+            Self::Skew => 5,
+            Self::Period => 6,
+            Self::Width => 7,
+            Self::NoChange => 8,
+            Self::TimeSkew => 9,
+            Self::FullSkew => 10,
+        }
+    }
+
+    /// `$period` and `$width` derive their data event from the reference
+    /// terminal (31.4.4, 31.4.5).
+    pub fn single_signal(self) -> bool {
+        matches!(self, Self::Period | Self::Width)
+    }
+
+    /// The skew checks never read delayed signals (31.9.1).
+    pub fn skew(self) -> bool {
+        matches!(self, Self::Skew | Self::TimeSkew | Self::FullSkew)
+    }
+}
+
+/// The six transitions of a timing check event mask, in bit order: 0->1,
+/// 0->x, 1->0, 1->x, x->0, x->1 (z counts as x, 31.5).
+pub const TIMING_EDGE_MASK: u8 = 0x3f;
+
+/// `$timeskew`/`$fullskew` flags (31.4.2, 31.4.3): event-based instead of
+/// timer-based, and remain active after a false timestamp condition.
+pub const TIMING_EVENT_BASED: u8 = 1;
+pub const TIMING_REMAIN_ACTIVE: u8 = 2;
+
+/// The `&&&` condition of a timing check event (31.7), or a `$setuphold` /
+/// `$recrem` timestamp or timecheck condition (31.9.2): index `index` of
+/// [`IrTimingCheckSet::conditions`]. Its least significant bit decides; x or
+/// z enables the event only for a nondeterministic (`==`, `!=`) condition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IrTimingCondition {
+    pub(in crate::sim) index: u32,
+    pub(in crate::sim) nondeterministic: bool,
+}
+
+impl IrTimingCondition {
+    pub fn new(index: u32, nondeterministic: bool) -> Self {
+        Self {
+            index,
+            nondeterministic,
+        }
+    }
+}
+
+/// The reference or data event of a check: a terminal of the set, the
+/// transitions that count (an empty mask counts every transition), its
+/// `&&&` condition and the timestamp or timecheck condition of the combined
+/// check it belongs to; both conditions must hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IrTimingEvent {
+    pub(in crate::sim) terminal: u32,
+    pub(in crate::sim) edges: u8,
+    pub(in crate::sim) condition: Option<IrTimingCondition>,
+    pub(in crate::sim) condition2: Option<IrTimingCondition>,
+}
+
+impl IrTimingEvent {
+    pub fn new(terminal: u32, edges: u8, condition: Option<IrTimingCondition>) -> Self {
+        Self {
+            terminal,
+            edges,
+            condition,
+            condition2: None,
+        }
+    }
+
+    pub fn with_condition2(mut self, condition: Option<IrTimingCondition>) -> Self {
+        self.condition2 = condition;
+        self
+    }
+
+    pub fn terminal(&self) -> u32 {
+        self.terminal
+    }
+}
+
+/// One timing check of an instance. `limit` and `limit2` are design-precision
+/// ticks: the limit (the start-edge offset of `$nochange`) and the `$width`
+/// threshold, `$nochange` end-edge offset or `$fullskew` second limit; both
+/// stay writable in the emitted tables for back-annotation. They are negative
+/// only for a negative `$setuphold`/`$recrem` part or `$nochange` offset with
+/// negative timing checks enabled.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrTimingCheck {
+    pub(in crate::sim) kind: IrTimingCheckKind,
+    pub(in crate::sim) reference: IrTimingEvent,
+    pub(in crate::sim) data: IrTimingEvent,
+    pub(in crate::sim) limit: i64,
+    pub(in crate::sim) limit2: i64,
+    /// `TIMING_EVENT_BASED` and `TIMING_REMAIN_ACTIVE` of a skew check.
+    pub(in crate::sim) flags: u8,
+    /// Index into the set's notifiers; `None` without a notifier.
+    pub(in crate::sim) notifier: Option<u32>,
+    /// `file:line:col` of the check, its stable source identity.
+    pub(in crate::sim) origin: String,
+    /// The check as reported: its text with `\x01` where the reference event
+    /// time goes and `\x02` where the data event time goes.
+    pub(in crate::sim) text: String,
+}
+
+impl IrTimingCheck {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        kind: IrTimingCheckKind,
+        reference: IrTimingEvent,
+        data: IrTimingEvent,
+        limit: i64,
+        limit2: i64,
+        notifier: Option<u32>,
+        origin: String,
+        text: String,
+    ) -> Self {
+        Self {
+            kind,
+            reference,
+            data,
+            limit,
+            limit2,
+            flags: 0,
+            notifier,
+            origin,
+            text,
+        }
+    }
+
+    pub fn with_flags(mut self, flags: u8) -> Self {
+        self.flags = flags;
+        self
+    }
+
+    pub fn kind(&self) -> IrTimingCheckKind {
+        self.kind
+    }
+
+    pub fn reference(&self) -> IrTimingEvent {
+        self.reference
+    }
+
+    pub fn data(&self) -> IrTimingEvent {
+        self.data
+    }
+
+    pub fn limits(&self) -> (i64, i64) {
+        (self.limit, self.limit2)
+    }
+
+    pub fn flags(&self) -> u8 {
+        self.flags
+    }
+
+    pub fn notifier(&self) -> Option<u32> {
+        self.notifier
+    }
+
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
+
+/// A timing check terminal: `width` storage bits of packed signal `signal`
+/// from `lsb`. `line` names the delayed signal ([`IrTimingLine`]) whose
+/// delayed storage this terminal is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IrTimingTerminal {
+    pub(in crate::sim) signal: usize,
+    pub(in crate::sim) lsb: u32,
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) line: Option<u32>,
+}
+
+impl IrTimingTerminal {
+    pub fn new(signal: usize, lsb: u32, width: u32) -> Self {
+        Self {
+            signal,
+            lsb,
+            width,
+            line: None,
+        }
+    }
+
+    pub fn signal(&self) -> usize {
+        self.signal
+    }
+
+    pub fn lsb(&self) -> u32 {
+        self.lsb
+    }
+
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn line(&self) -> Option<u32> {
+        self.line
+    }
+}
+
+/// Where a delayed signal is stored: driver slot `slot` of net group `group`
+/// (an explicit `delayed_reference`/`delayed_data` net), or the target
+/// terminal's own signal written as a variable (a hidden implicit delayed
+/// signal).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrTimingLineStorage {
+    Net { group: usize, slot: usize },
+    Variable,
+}
+
+/// A delayed signal (31.9): terminal `target` follows terminal `source` of
+/// the same set through transport delays, `rise` for transitions to 1 and
+/// from 0 to x or z, `fall` for the others (design-precision ticks, writable
+/// for back-annotation). Zero delays make it a copy (31.9.4).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrTimingLine {
+    pub(in crate::sim) source: u32,
+    pub(in crate::sim) target: u32,
+    pub(in crate::sim) storage: IrTimingLineStorage,
+    pub(in crate::sim) rise: u64,
+    pub(in crate::sim) fall: u64,
+}
+
+impl IrTimingLine {
+    pub fn new(
+        source: u32,
+        target: u32,
+        storage: IrTimingLineStorage,
+        rise: u64,
+        fall: u64,
+    ) -> Self {
+        Self {
+            source,
+            target,
+            storage,
+            rise,
+            fall,
+        }
+    }
+
+    pub fn source(&self) -> u32 {
+        self.source
+    }
+
+    pub fn target(&self) -> u32 {
+        self.target
+    }
+
+    pub fn storage(&self) -> IrTimingLineStorage {
+        self.storage
+    }
+
+    pub fn delays(&self) -> (u64, u64) {
+        (self.rise, self.fall)
+    }
+}
+
+/// The timing checks of one module instance. The runtime watches the
+/// terminals; the model's one timing process ([`IrStmt::TimingCheckStep`])
+/// runs the sets whose terminals changed, and the runtime toggles the
+/// notifier variables of violated checks with ordinary writes.
+///
+/// [`IrStmt::TimingCheckStep`]: super::IrStmt::TimingCheckStep
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrTimingCheckSet {
+    /// Hierarchical name of the instance, for reports.
+    pub(in crate::sim) scope: String,
+    pub(in crate::sim) terminals: Vec<IrTimingTerminal>,
+    pub(in crate::sim) checks: Vec<IrTimingCheck>,
+    /// Event conditions, read in the instance's scope when a step evaluates
+    /// a conditioned event.
+    pub(in crate::sim) conditions: Vec<IrExpr>,
+    /// The distinct notifier variables of the set's checks (whole one-bit
+    /// signals), written by the runtime.
+    pub(in crate::sim) notifiers: Vec<usize>,
+    pub(in crate::sim) lines: Vec<IrTimingLine>,
+}
+
+impl IrTimingCheckSet {
+    pub fn new(
+        scope: String,
+        terminals: Vec<IrTimingTerminal>,
+        checks: Vec<IrTimingCheck>,
+        conditions: Vec<IrExpr>,
+        notifiers: Vec<usize>,
+    ) -> Self {
+        Self {
+            scope,
+            terminals,
+            checks,
+            conditions,
+            notifiers,
+            lines: Vec::new(),
+        }
+    }
+
+    pub fn with_lines(mut self, lines: Vec<IrTimingLine>) -> Self {
+        self.lines = lines;
+        self
+    }
+
+    pub fn scope(&self) -> &str {
+        &self.scope
+    }
+
+    pub fn terminals(&self) -> &[IrTimingTerminal] {
+        &self.terminals
+    }
+
+    pub fn checks(&self) -> &[IrTimingCheck] {
+        &self.checks
+    }
+
+    pub fn conditions(&self) -> &[IrExpr] {
+        &self.conditions
+    }
+
+    pub fn notifiers(&self) -> &[usize] {
+        &self.notifiers
+    }
+
+    pub fn lines(&self) -> &[IrTimingLine] {
+        &self.lines
+    }
+}
+
+/// Global timing check controls: whether checks are simulated at all,
+/// whether violations toggle notifiers and whether they are reported, and
+/// whether negative `$setuphold`/`$recrem` limits and `$nochange` offsets
+/// delay the signals (31.9.4); otherwise they count as 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrTimingCheckOptions {
+    pub checks: bool,
+    pub notifiers: bool,
+    pub messages: bool,
+    pub negative: bool,
+}
+
+impl Default for IrTimingCheckOptions {
+    fn default() -> Self {
+        Self {
+            checks: true,
+            notifiers: true,
+            messages: true,
+            negative: false,
+        }
     }
 }
 

@@ -242,6 +242,14 @@ typedef union {
 } llg_wait_rare_t;
 
 typedef struct llg_wait_source llg_wait_source_t;
+// One timing check terminal on a watched storage address
+// (scheduler/timing_checks.c).
+typedef struct llg_timing_watch {
+    llg_timing_check_set_t* set;
+    uint32_t terminal;
+    struct llg_timing_watch* next;
+} llg_timing_watch_t;
+static void timing_terminals_changed(llg_timing_watch_t* watch);
 typedef struct llg_wait_subscription {
     struct llg_wait_subscription* next;
     struct llg_wait_subscription** prev_link;
@@ -259,6 +267,10 @@ struct llg_wait_source {
     // already looks this row up, so unwatched storage pays nothing extra.
     llg_wait_subscription_t* watch;
     uint32_t watchers;
+    // Timing check terminals on this address and the waiter-less
+    // subscription that keeps the row alive while they exist.
+    llg_timing_watch_t* timing;
+    llg_wait_subscription_t* timing_keep;
 };
 
 // One limb covers scalar clocks and packed values through 64 bits. Larger

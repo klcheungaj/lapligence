@@ -337,6 +337,30 @@ and limit tables are writable for annotation; `llg_net_path_pending` and
 committed values (`llg_net_propagation_sync`), so the next delayed
 transition starts from the published value.
 
+Timing check sets (`scheduler/timing_checks.c`, `llg_timing_check_set_t`, one
+per instance with checks) borrow the model's terminal storage and own, between
+`llg_timing_checks_start` and `llg_rt_cleanup`, a 0/1/x state per terminal
+bit, per-step transition masks, condition values and notifier flags; each
+check row keeps its timestamps (0 is none: time-0 transitions never count,
+A9-D3), the delays of the stamped transitions and `$nochange`/skew window
+state. Terminals are watched on their wait-source rows: a change lists the
+terminal, queues the set once and rings the doorbell variable registered by
+`llg_timing_checks_doorbell`, which wakes the model's one hidden process;
+`llg_timing_checks_run` then derives each listed terminal's transitions (z
+as x, x<->z none), schedules delayed signals (`llg_timing_line_t`:
+transport delays per bit, a transition landing before a pending one cancels
+it; one Active-region callback for the earliest due transition; writes
+through the line's net driver slot or as a variable), evaluates the
+generated conditions lazily once per set, checks the rows reading a changed
+terminal in check order with limits adjusted by the stamped delays, reports
+undelayed times on stderr unless `llg_timing_checks_configure(0)` and
+toggles each violated notifier once per step with `llg_ba`. Timer-based
+`$timeskew`/`$fullskew` windows expire from one heap in the Pre-Postponed
+region (stale entries are skipped by deadline);
+`llg_timing_check_limits_changed` re-arms them after an annotation.
+Limits are writable for annotation; steady-state steps allocate nothing
+(deferred `$nochange` data and pending delay transitions grow on demand).
+
 Opaque activation slots may hold event object identities, valid until model
 teardown, or a parent coroutine's event handle address for a synchronous join.
 Cancel joined children before releasing that parent frame. Detached event

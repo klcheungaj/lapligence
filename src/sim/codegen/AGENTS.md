@@ -379,8 +379,7 @@ instance, terminals resolved to storage-bit ranges, delays folded through
 one hidden `ModulePathStamp` SensLoop process on the sources. A destination
 must be a whole net group driven only inside the instance subtree (Net-member
 slots of collapsed inout groups are storage, not drivers); IEEE 1364-2001
-also allows one driver site. Timing checks and variable destinations fail
-with their location. A condition is lowered once per declaration in the
+also allows one driver site. Variable destinations fail with their location. A condition is lowered once per declaration in the
 instance scope (`IrModulePathSet::conditions`); edges map to `IrPathEdge`;
 paths with exactly an `ifnone` path's terminals share a group, an
 unconditional duplicate of an `ifnone` path and all but the last duplicate
@@ -389,7 +388,27 @@ terminal, else module-wide; error below reject lowers reject; ticks through
 `path_limit_ticks`) attach per declaration, and pulse-style declarations set
 per-bit destination flags, first declaration of each kind winning.
 `CodegenOptions::path_pulse` (the driver's `--pulse-*`/`--show-cancelled`)
-becomes `IrModel::path_pulse`. Specify-block specparams are collected with the instance's
+becomes `IrModel::path_pulse`. Timing checks lower after the module paths
+(`collection/timing_checks.rs`): one `IrTimingCheckSet` per instance,
+terminals through the module-path terminal resolver, roles per Tables
+31-1..31-12 (`$removal` by Table 31-4 in both editions, A9-D2), the derived
+`$period`/`$width` data event, limits through `timing_limit_ticks` (module
+unit, min:typ:max, negative is zero), conditions lowered once per set and
+flagged nondeterministic for a top-level `==`/`!=`, duplicates dropped with a
+warning (A9-D6), and one hidden `TimingCheckStep` SensLoop process per
+design on the hidden doorbell variable (`IrModel::timing_doorbell`); the
+runtime toggles notifiers itself. `$setuphold`/`$recrem` lower to two rows
+(before/after the reference, with the timestamp and timecheck conditions as
+`condition2`); with `IrTimingCheckOptions::negative` the instance's limits
+are settled (negative sum to 0, sum 0 or 1 dropped), the delays solved per
+terminal and edge class (`solve_signal_delays`, ADV-010 A10-D3/D5), delayed
+signals lowered as `IrTimingLine`s into explicit nets (a structural driver
+slot) or hidden variables, and every non-skew row moved onto the delayed
+terminals. Invalid checks fail with their location whatever the options;
+`CodegenOptions::timing_checks` (`--no-timing-checks`, `--no-notifiers`,
+`--no-timing-check-messages`, `--neg-timing-checks`) then omits the sets,
+the toggles or the reports, or enables negative limits; with checks off an
+instance keeps only its explicit delayed signals as copies. Specify-block specparams are collected with the instance's
 parameters. A design without specify blocks costs one emptiness test.
 Force overlays visible storage while ordinary writes/driver slots remain live;
 release retains variable value or recomputes current net resolution. Releasing a

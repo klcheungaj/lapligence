@@ -33,6 +33,7 @@
 #include "scheduler/stochastic.c"
 #include "scheduler/reference_writes.c"
 #include "scheduler/nets.c"
+#include "scheduler/timing_checks.c"
 #include "scheduler/nba_commit.c"
 #include "scheduler/formatting.c"
 #include "scheduler/patterns.c"

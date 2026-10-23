@@ -239,6 +239,16 @@ still ends with one designated field (`.edge`, `.styles`, `.conditions`) so the
 omitted fields are zero without `-Wmissing-field-initializers` warnings.
 `llg_module_paths_configure` is emitted only when `IrModel::path_pulse`
 differs from its default. Models without paths are unchanged.
+Timing check sets emit after the module paths: a terminal table, a writable
+`llg_timing_check_t` row array with designated fields (limits stay writable
+for annotation), the set record, an optional MonEval-shaped condition
+evaluator `llg_timing_set_<n>__conditions`, `llg_timing_checks_configure(0)`
+when reports are off and one `llg_timing_checks_start` per set in the storage
+defaults, after `llg_timing_checks_doorbell(&<doorbell>)`; rows carry
+`condition2`, `flags`, notifier indices and the set its `.lines` (delayed
+signals: source/target terminal, net and driver slot or none, rise/fall).
+`TimingCheckStep` emits `llg_timing_checks_run();`. Models without timing
+checks are unchanged byte for byte.
 Only destination groups gain `.propagation_enabled = 1` and per-bit
 path-stage records; a model without paths emits exactly what it did
 before. A delayed group with separately driven parts emits its part bounds

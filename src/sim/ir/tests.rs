@@ -276,3 +276,209 @@ fn module_path_sets_check_sources_destinations_and_ranges() {
         "pulse limit percentages",
     );
 }
+
+#[test]
+fn timing_check_sets_check_terminals_events_and_notifiers() {
+    use super::{
+        IrExpr, IrExprKind, IrModel, IrProcess, IrShape, IrSignal, IrStmt, IrTimingCheck,
+        IrTimingCheckKind, IrTimingCheckSet, IrTimingCondition, IrTimingEvent, IrTimingLine,
+        IrTimingLineStorage, IrTimingTerminal, IrType,
+    };
+    let packed = |name: &str, width: u32| {
+        IrSignal::new(
+            name.to_owned(),
+            None,
+            IrType::Packed {
+                width,
+                signed: false,
+                two_state: false,
+            },
+            None,
+        )
+        .unwrap()
+    };
+    let check = |kind, reference: IrTimingEvent, data: IrTimingEvent, notifier| {
+        IrTimingCheck::new(
+            kind,
+            reference,
+            data,
+            10,
+            0,
+            notifier,
+            "f.v:1:1".to_owned(),
+            "$setup".to_owned(),
+        )
+    };
+    let enabled = Some(IrTimingCondition::new(0, false));
+    let model_with = |checks: Vec<IrTimingCheck>, terminal: IrTimingTerminal, notify: usize| {
+        let mut model = IrModel::new("checks".to_owned(), 1).unwrap();
+        model.signals.push(packed("d", 4));
+        model.signals.push(packed("n", 1));
+        model.signals.push(packed("doorbell", 1));
+        model.timing_checks.push(IrTimingCheckSet::new(
+            "tb.u".to_owned(),
+            vec![IrTimingTerminal::new(0, 0, 1), terminal],
+            checks,
+            vec![IrExpr::try_new(IrExprKind::SigRead(0), 4, false, None).unwrap()],
+            vec![notify],
+        ));
+        model.timing_doorbell = Some(2);
+        model.processes.push(IrProcess::new(
+            "p_check".to_owned(),
+            "specify".to_owned(),
+            IrShape::RunOnce,
+            Vec::new(),
+            vec![IrStmt::TimingCheckStep],
+        ));
+        model
+    };
+    let setup = check(
+        IrTimingCheckKind::Setup,
+        IrTimingEvent::new(1, 0x23, enabled),
+        IrTimingEvent::new(0, 0, None),
+        Some(0),
+    );
+    let width = check(
+        IrTimingCheckKind::Width,
+        IrTimingEvent::new(1, 0x23, None),
+        IrTimingEvent::new(1, 0x1c, None),
+        None,
+    );
+    model_with(
+        vec![setup.clone(), width],
+        IrTimingTerminal::new(0, 1, 3),
+        1,
+    )
+    .validate()
+    .expect("well-formed timing checks");
+    let derived = check(
+        IrTimingCheckKind::Period,
+        IrTimingEvent::new(1, 0x23, None),
+        IrTimingEvent::new(0, 0x23, None),
+        None,
+    );
+    let unedged = check(
+        IrTimingCheckKind::NoChange,
+        IrTimingEvent::new(1, 0, None),
+        IrTimingEvent::new(0, 0, None),
+        None,
+    );
+    let mut stray = setup.clone();
+    stray.reference.edges = 0x40;
+    let mut unconditioned = setup.clone();
+    unconditioned.data.condition = Some(IrTimingCondition::new(3, true));
+    let mut unnamed = setup.clone();
+    unnamed.notifier = Some(1);
+    let mut far = setup.clone();
+    far.data.terminal = 2;
+    for (checks, terminal, notify, detail) in [
+        (
+            vec![setup.clone()],
+            IrTimingTerminal::new(0, 2, 3),
+            1,
+            "range of a packed signal",
+        ),
+        (
+            vec![setup.clone()],
+            IrTimingTerminal::new(1, 0, 1),
+            0,
+            "notifier must be a 1-bit",
+        ),
+        (
+            vec![far],
+            IrTimingTerminal::new(0, 1, 3),
+            1,
+            "names no terminal",
+        ),
+        (
+            vec![stray],
+            IrTimingTerminal::new(0, 1, 3),
+            1,
+            "unknown edge bit",
+        ),
+        (
+            vec![unconditioned],
+            IrTimingTerminal::new(0, 1, 3),
+            1,
+            "names no condition",
+        ),
+        (
+            vec![unnamed],
+            IrTimingTerminal::new(0, 1, 3),
+            1,
+            "names no notifier",
+        ),
+        (
+            vec![derived],
+            IrTimingTerminal::new(0, 1, 3),
+            1,
+            "share the reference terminal",
+        ),
+        (
+            vec![unedged],
+            IrTimingTerminal::new(0, 1, 3),
+            1,
+            "needs an edge",
+        ),
+        (
+            Vec::new(),
+            IrTimingTerminal::new(0, 1, 3),
+            1,
+            "has no check",
+        ),
+    ] {
+        let error = model_with(checks, terminal, notify).validate().unwrap_err();
+        assert!(error.detail().contains(detail), "{detail}: {error:?}");
+    }
+    let mut model = model_with(vec![setup.clone()], IrTimingTerminal::new(0, 1, 3), 1);
+    model.timing_doorbell = None;
+    assert!(model.validate().unwrap_err().detail().contains("doorbell"));
+    let mut model = model_with(vec![setup.clone()], IrTimingTerminal::new(0, 1, 3), 1);
+    model.timing_doorbell = Some(0);
+    assert!(model.validate().unwrap_err().detail().contains("1-bit"));
+    let mut model = model_with(vec![setup.clone()], IrTimingTerminal::new(0, 1, 3), 1);
+    model.timing_checks.clear();
+    model.timing_doorbell = None;
+    assert!(model
+        .validate()
+        .unwrap_err()
+        .detail()
+        .contains("without timing checks"));
+    // Delayed signals: a line copies a terminal into a terminal of the same
+    // width that names it as its line.
+    let lined = |target: IrTimingTerminal, storage| {
+        let mut model = model_with(vec![setup.clone()], IrTimingTerminal::new(0, 1, 3), 1);
+        model.timing_checks[0].terminals.push(target);
+        model.timing_checks[0].lines = vec![IrTimingLine::new(0, 2, storage, 3, 4)];
+        model
+    };
+    let mut owned = IrTimingTerminal::new(0, 3, 1);
+    owned.line = Some(0);
+    lined(owned, IrTimingLineStorage::Variable)
+        .validate()
+        .expect("well-formed delayed signal");
+    for (target, storage, detail) in [
+        (
+            IrTimingTerminal::new(0, 3, 1),
+            IrTimingLineStorage::Variable,
+            "own its target",
+        ),
+        (
+            {
+                let mut wide = IrTimingTerminal::new(0, 2, 2);
+                wide.line = Some(0);
+                wide
+            },
+            IrTimingLineStorage::Variable,
+            "own its target",
+        ),
+        (
+            owned,
+            IrTimingLineStorage::Net { group: 0, slot: 0 },
+            "net driver slot",
+        ),
+    ] {
+        let error = lined(target, storage).validate().unwrap_err();
+        assert!(error.detail().contains(detail), "{detail}: {error:?}");
+    }
+}

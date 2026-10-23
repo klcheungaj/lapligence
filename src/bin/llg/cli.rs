@@ -21,6 +21,7 @@ output:   --out-dir <dir>  --runtime-cache <dir>
 append:   --append-<list> <value>  # adds to the list instead of replacing it; see --help
 stop:     --stop-policy <resume|exit>  # `$stop` handling (default: resume)
 pulse:    --pulse-reject <0-100>  --pulse-error <0-100>  --pulse-style <onevent|ondetect>  --show-cancelled  --no-show-cancelled
+timing:   --no-timing-checks  --timing-checks  --no-notifiers  --notifiers  --no-timing-check-messages  --timing-check-messages  --[no-]neg-timing-checks
 config:   llg.toml is read only when named with --config (see docs/config.md)";
 
 /// Values of the `--append-<list>` options. They extend the list that the
@@ -95,6 +96,16 @@ pub(crate) struct Cli {
     /// pulse style or showcancelled declaration.
     pub pulse_style: Option<PulseStyle>,
     pub show_cancelled: Option<bool>,
+    /// `--[no-]timing-checks`, `--[no-]notifiers`,
+    /// `--[no-]timing-check-messages`: simulate system timing checks, toggle
+    /// their notifiers and report their violations (all default on).
+    pub timing_checks: Option<bool>,
+    pub notifiers: Option<bool>,
+    pub timing_check_messages: Option<bool>,
+    /// `--[no-]neg-timing-checks`: simulate negative `$setuphold`/`$recrem`
+    /// limits and `$nochange` offsets through delayed signals (default off:
+    /// they count as 0).
+    pub neg_timing_checks: Option<bool>,
 }
 
 pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
@@ -139,6 +150,10 @@ pub(crate) fn parse_args(args: Vec<String>) -> Result<Cli, i32> {
     let mut pulse_error: Option<u8> = None;
     let mut pulse_style: Option<PulseStyle> = None;
     let mut show_cancelled: Option<bool> = None;
+    let mut timing_checks: Option<bool> = None;
+    let mut notifiers: Option<bool> = None;
+    let mut timing_check_messages: Option<bool> = None;
+    let mut neg_timing_checks: Option<bool> = None;
     let mut it = args.into_iter().peekable();
     while let Some(a) = it.next() {
         if a == "--" {
@@ -223,6 +238,23 @@ Options:
       --show-cancelled       Show cancelled module path pulses as x on every output
       --no-show-cancelled    Never show cancelled pulses (default: the
                               showcancelled declarations)
+      --no-timing-checks     Do not simulate system timing checks: no reports,
+                              no notifier changes (default: simulated)
+      --timing-checks        Simulate system timing checks (overrides llg.toml)
+      --no-notifiers         Report timing violations without changing their
+                              notifiers (default: notifiers toggle)
+      --notifiers            Toggle notifiers on timing violations (overrides
+                              llg.toml)
+      --no-timing-check-messages
+                              Change notifiers without reporting timing
+                              violations (default: reported on stderr)
+      --timing-check-messages
+                              Report timing violations (overrides llg.toml)
+      --neg-timing-checks    Simulate negative $setuphold/$recrem limits and
+                              $nochange offsets with delayed signals (default:
+                              negative limits count as 0)
+      --no-neg-timing-checks Count negative timing check limits as 0
+                              (overrides llg.toml)
       --                    Pass remaining arguments to the generated simulator
                               (replaces the llg.toml plusargs, even when empty)
       --generator <backend>  Select the CMake generator
@@ -561,6 +593,14 @@ Options:
             },
             "--show-cancelled" => show_cancelled = Some(true),
             "--no-show-cancelled" => show_cancelled = Some(false),
+            "--timing-checks" => timing_checks = Some(true),
+            "--no-timing-checks" => timing_checks = Some(false),
+            "--notifiers" => notifiers = Some(true),
+            "--no-notifiers" => notifiers = Some(false),
+            "--timing-check-messages" => timing_check_messages = Some(true),
+            "--no-timing-check-messages" => timing_check_messages = Some(false),
+            "--neg-timing-checks" => neg_timing_checks = Some(true),
+            "--no-neg-timing-checks" => neg_timing_checks = Some(false),
             "--lint-only" => lint_only = Some(true),
             "--no-lint-only" => {
                 lint_only = Some(false);
@@ -627,6 +667,10 @@ Options:
         pulse_error,
         pulse_style,
         show_cancelled,
+        timing_checks,
+        notifiers,
+        timing_check_messages,
+        neg_timing_checks,
     })
 }
 

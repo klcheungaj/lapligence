@@ -80,6 +80,8 @@ pub(crate) struct DriverOptions {
     pub stop_policy: StopPolicy,
     /// Module path pulse limits, style and showcancelled setting.
     pub path_pulse: sim::ir::IrPathPulseOptions,
+    /// System timing check, notifier and violation report switches.
+    pub timing_checks: sim::ir::IrTimingCheckOptions,
     /// Whether the command line itself named a build-tool option, so
     /// `--gen-only` can warn that it is ignored. Config values do not warn.
     pub cli_build_options: bool,
@@ -492,6 +494,21 @@ pub(crate) fn resolve(
             .or(config.simulator.stop_policy)
             .unwrap_or(StopPolicy::Resume),
         path_pulse,
+        timing_checks: sim::ir::IrTimingCheckOptions {
+            checks: cli
+                .timing_checks
+                .or(config.simulator.timing_checks)
+                .unwrap_or(true),
+            notifiers: cli.notifiers.or(config.simulator.notifiers).unwrap_or(true),
+            messages: cli
+                .timing_check_messages
+                .or(config.simulator.timing_check_messages)
+                .unwrap_or(true),
+            negative: cli
+                .neg_timing_checks
+                .or(config.simulator.neg_timing_checks)
+                .unwrap_or(false),
+        },
         cli_build_options,
     })
 }
@@ -1342,6 +1359,72 @@ files = ["a.sv"]
                 "{rejected:?}"
             );
         }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn timing_check_controls_follow_the_precedence_rules() {
+        let dir = temp("timing");
+        let defaults = resolve_no_env(cli(&["x.sv"]), None).unwrap();
+        assert_eq!(
+            defaults.timing_checks,
+            sim::ir::IrTimingCheckOptions::default()
+        );
+        let cfg = config(
+            &dir,
+            "schema_version = 1\n[simulator]\ntiming_checks = false\nnotifiers = false\n\
+             timing_check_messages = false\nneg_timing_checks = true\n",
+        );
+        let options = resolve_no_env(cli(&["x.sv"]), Some(&cfg)).unwrap();
+        assert_eq!(
+            options.timing_checks,
+            sim::ir::IrTimingCheckOptions {
+                checks: false,
+                notifiers: false,
+                messages: false,
+                negative: true,
+            }
+        );
+        let options = resolve_no_env(
+            cli(&[
+                "--timing-checks",
+                "--notifiers",
+                "--no-neg-timing-checks",
+                "x.sv",
+            ]),
+            Some(&cfg),
+        )
+        .unwrap();
+        assert_eq!(
+            options.timing_checks,
+            sim::ir::IrTimingCheckOptions {
+                checks: true,
+                notifiers: true,
+                messages: false,
+                negative: false,
+            }
+        );
+        let options = resolve_no_env(
+            cli(&[
+                "--no-timing-checks",
+                "--no-notifiers",
+                "--no-timing-check-messages",
+                "--timing-check-messages",
+                "--neg-timing-checks",
+                "x.sv",
+            ]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            options.timing_checks,
+            sim::ir::IrTimingCheckOptions {
+                checks: false,
+                notifiers: false,
+                messages: true,
+                negative: true,
+            }
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

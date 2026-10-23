@@ -119,6 +119,76 @@ impl TimingCheckKind {
     }
 }
 
+/// The transitions a timing check event detects (V 15.4, SV 31.5), one bit
+/// each in [`TimingEdges::T01`] .. [`TimingEdges::TX1`] order; z counts as
+/// x. An empty set is an event without edge control: any transition.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TimingEdges(u8);
+
+impl TimingEdges {
+    pub const T01: u8 = 1 << 0;
+    pub const T0X: u8 = 1 << 1;
+    pub const T10: u8 = 1 << 2;
+    pub const T1X: u8 = 1 << 3;
+    pub const TX0: u8 = 1 << 4;
+    pub const TX1: u8 = 1 << 5;
+    /// `posedge`: `edge[01, 0x, x1]`.
+    pub const RISING: u8 = Self::T01 | Self::T0X | Self::TX1;
+    /// `negedge`: `edge[10, x0, 1x]`.
+    pub const FALLING: u8 = Self::T10 | Self::T1X | Self::TX0;
+
+    pub fn from_bits(bits: u8) -> Self {
+        Self(bits & (Self::RISING | Self::FALLING))
+    }
+
+    pub fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// No edge control: every transition is an event.
+    pub fn is_any(self) -> bool {
+        self.0 == 0
+    }
+}
+
+/// One event argument of a timing check: its terminal expression, edge
+/// control and `&&&` condition (V 15.6, SV 31.7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TimingEvent {
+    pub terminal: NodeId,
+    pub edges: TimingEdges,
+    pub condition: Option<NodeId>,
+}
+
+/// One system timing check with its arguments (V 15, SV 31). The check node
+/// and its source range are the stable identity (back-annotation keys on it
+/// within an instance).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TimingCheck {
+    pub node: NodeId,
+    /// The enclosing specify block.
+    pub block: NodeId,
+    pub kind: TimingCheckKind,
+    /// The event arguments in signature order (`$setup` lists the data event
+    /// first); `None` for one the frontend could not bind.
+    pub events: [Option<TimingEvent>; 2],
+    /// The limit arguments in signature order (limit, threshold or offsets);
+    /// `None` for an empty position.
+    pub limits: Vec<Option<NodeId>>,
+    pub notifier: Option<NodeId>,
+    /// `$setuphold`/`$recrem` timestamp_condition and timecheck_condition
+    /// (31.9.2); `None` when absent or empty.
+    pub stamp_condition: Option<NodeId>,
+    pub check_condition: Option<NodeId>,
+    /// `$setuphold`/`$recrem` delayed_reference and delayed_data signals
+    /// (31.9.1), the declared variable or net expressions.
+    pub delayed: [Option<NodeId>; 2],
+    /// Actual arguments in the source, empty positions included.
+    pub argument_count: u8,
+    /// Bit `i`: argument position `i` is empty (`$width(c, l, , n)`).
+    pub empty_arguments: u16,
+}
+
 /// A specify item other than a path or specparam.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SpecifyItemKind {
@@ -182,6 +252,7 @@ pub(super) struct SpecifyTables {
     pub(super) items: Vec<SpecifyItem>,
     pub(super) specparams: HashMap<NodeId, Specparam>,
     pub(super) path_pulses: Vec<PathPulse>,
+    pub(super) timing_checks: Vec<TimingCheck>,
 }
 
 /// Dense, unique `role[i]` targets in index order.
@@ -236,6 +307,61 @@ fn timing_check_kind(code: u64) -> TimingCheckKind {
         .and_then(|index| usize::try_from(index).ok())
         .and_then(|index| KINDS.get(index).copied())
         .unwrap_or(Unknown)
+}
+
+/// The arguments of one TIMING_CHECK node (ABI v38 and v40 fields; the edge roles
+/// are documented with `LLG_SLANG_SPECIFY_TIMING_CHECK`).
+fn timing_check_from_slang(
+    ids: &SemanticIds,
+    edges: &[crate::ffi::slang::SemanticEdge],
+    semantic: &SemanticNode,
+    node: NodeId,
+    block: NodeId,
+) -> Result<TimingCheck, DbError> {
+    use crate::ffi::slang::{
+        SPECIFY_CHECK_COUNT_SHIFT, SPECIFY_CHECK_EMPTY_SHIFT, SPECIFY_CHECK_EVENT_BITS,
+        SPECIFY_CHECK_KIND_MASK, SPECIFY_EDGE_MASK,
+    };
+    let auxiliary = semantic.auxiliary;
+    let mut events = [None, None];
+    for (index, event) in events.iter_mut().enumerate() {
+        let index = index as u32;
+        let Some(terminal) = edge_target_at(ids, edges, SemanticEdgeRole::Operand, index)? else {
+            continue;
+        };
+        let mask = (auxiliary >> (SPECIFY_CHECK_EVENT_BITS * (index + 1))) & SPECIFY_EDGE_MASK;
+        *event = Some(TimingEvent {
+            terminal,
+            edges: TimingEdges::from_bits(mask as u8),
+            condition: edge_target_at(ids, edges, SemanticEdgeRole::Condition, index)?,
+        });
+    }
+    let slots = edges
+        .iter()
+        .filter(|edge| edge.role == SemanticEdgeRole::Delay)
+        .map(|edge| edge.index as usize + 1)
+        .max()
+        .unwrap_or(0);
+    let mut limits = vec![None; slots];
+    for (index, limit) in limits.iter_mut().enumerate() {
+        *limit = edge_target_at(ids, edges, SemanticEdgeRole::Delay, index as u32)?;
+    }
+    Ok(TimingCheck {
+        node,
+        block,
+        kind: timing_check_kind(auxiliary & SPECIFY_CHECK_KIND_MASK),
+        events,
+        limits,
+        notifier: edge_target_at(ids, edges, SemanticEdgeRole::Lhs, 0)?,
+        stamp_condition: edge_target_at(ids, edges, SemanticEdgeRole::Condition, 2)?,
+        check_condition: edge_target_at(ids, edges, SemanticEdgeRole::Condition, 3)?,
+        delayed: [
+            edge_target_at(ids, edges, SemanticEdgeRole::Lhs, 1)?,
+            edge_target_at(ids, edges, SemanticEdgeRole::Lhs, 2)?,
+        ],
+        argument_count: ((auxiliary >> SPECIFY_CHECK_COUNT_SHIFT) & 0xff) as u8,
+        empty_arguments: ((auxiliary >> SPECIFY_CHECK_EMPTY_SHIFT) & 0xffff) as u16,
+    })
 }
 
 /// The limits and terminals of one `PATHPULSE$` specparam node: its constant
@@ -390,11 +516,16 @@ pub(super) fn specify_tables_from_slang(
                     ),
                 });
             }
-            SEMANTIC_SPECIFY_TIMING_CHECK => tables.items.push(SpecifyItem {
-                node,
-                block: block_of(semantic)?,
-                kind: SpecifyItemKind::TimingCheck(timing_check_kind(semantic.auxiliary)),
-            }),
+            SEMANTIC_SPECIFY_TIMING_CHECK => {
+                let block = block_of(semantic)?;
+                let check = timing_check_from_slang(ids, edges, semantic, node, block)?;
+                tables.items.push(SpecifyItem {
+                    node,
+                    block,
+                    kind: SpecifyItemKind::TimingCheck(check.kind),
+                });
+                tables.timing_checks.push(check);
+            }
             _ => {
                 return Err(DbError::InvalidSnapshot(
                     "specify node has an unknown subkind".into(),
@@ -432,6 +563,12 @@ impl Db {
     /// instance has its own records).
     pub fn path_pulses(&self) -> &[PathPulse] {
         &self.specify.path_pulses
+    }
+
+    /// Every system timing check with its arguments, in capture order (each
+    /// elaborated instance has its own records).
+    pub fn timing_checks(&self) -> &[TimingCheck] {
+        &self.specify.timing_checks
     }
 
     /// Every specparam declaration, in node order.
@@ -628,6 +765,125 @@ endmodule
     }
 
     #[test]
+    fn timing_checks_keep_events_edges_conditions_limits_and_notifiers() {
+        let db = compile(
+            "module c(input d, input [1:0] c, input en);
+  reg n;
+  specify
+    specparam t = 4;
+    $setup(d, posedge c[1] &&& en, t, n);
+    $width(edge[01, x1, 0z] c[0], 6, , n);
+    $nochange(negedge c[0], d, 1, 2);
+    $hold(posedge c[0], d, 3);
+  endspecify
+endmodule
+module tb;
+  reg d, en; reg [1:0] c;
+  c u(.d(d), .c(c), .en(en));
+endmodule
+",
+        );
+        let checks = db.timing_checks();
+        assert_eq!(checks.len(), 4);
+        assert_eq!(db.specify_items().len(), 4);
+        let setup = &checks[0];
+        assert_eq!(setup.kind, TimingCheckKind::Setup);
+        assert_eq!(setup.block, db.specify_blocks()[0]);
+        assert_eq!((setup.argument_count, setup.empty_arguments), (4, 0));
+        let data = setup.events[0].expect("data event");
+        assert!(data.edges.is_any() && data.condition.is_none());
+        assert_eq!(target_name(&db, data.terminal), "d");
+        let reference = setup.events[1].expect("reference event");
+        assert_eq!(reference.edges.bits(), TimingEdges::RISING);
+        assert!(matches!(
+            db.node_kind(reference.terminal),
+            NodeKind::Expr(ExprKind::BitSelect { .. })
+        ));
+        assert_eq!(
+            target_name(&db, reference.condition.expect("&&& condition")),
+            "en"
+        );
+        assert_eq!(setup.limits.len(), 1);
+        assert_eq!(target_name(&db, setup.notifier.expect("notifier")), "n");
+
+        // The empty threshold leaves a gap that the argument fields record.
+        let width = &checks[1];
+        assert_eq!(width.kind, TimingCheckKind::Width);
+        assert_eq!(
+            width.events[0].expect("reference").edges.bits(),
+            TimingEdges::T01 | TimingEdges::TX1 | TimingEdges::T0X
+        );
+        assert!(width.events[1].is_none());
+        assert_eq!(width.limits.len(), 1);
+        assert_eq!((width.argument_count, width.empty_arguments), (4, 1 << 2));
+        assert!(width.notifier.is_some());
+
+        let nochange = &checks[2];
+        assert_eq!(
+            nochange.events[0].unwrap().edges.bits(),
+            TimingEdges::FALLING
+        );
+        assert_eq!(nochange.limits.len(), 2);
+        assert!(nochange.limits.iter().all(Option::is_some));
+        assert!(nochange.notifier.is_none());
+        assert_eq!(checks[3].kind, TimingCheckKind::Hold);
+        // The check node is the stable source identity.
+        assert_eq!(db.node(setup.node).line, 5);
+    }
+
+    #[test]
+    fn combined_checks_keep_conditions_and_delayed_signals() {
+        let db = compile(
+            "module c(input d, input clk, input en, input ts);
+  reg n;
+  wire dd, dclk;
+  specify
+    $setuphold(posedge clk, d, -2, 5, n, ts, en, dclk, dd);
+    $recrem(posedge clk, d, 3, 4, , , en);
+    $setuphold(posedge clk, d, 1, 2);
+  endspecify
+endmodule
+module tb;
+  reg d, clk, en, ts;
+  c u(.d(d), .clk(clk), .en(en), .ts(ts));
+endmodule
+",
+        );
+        let checks = db.timing_checks();
+        assert_eq!(checks.len(), 3);
+        let full = &checks[0];
+        assert_eq!(full.kind, TimingCheckKind::SetupHold);
+        assert_eq!(full.limits.len(), 2);
+        assert_eq!(target_name(&db, full.notifier.expect("notifier")), "n");
+        assert_eq!(
+            target_name(&db, full.stamp_condition.expect("timestamp_condition")),
+            "ts"
+        );
+        assert_eq!(
+            target_name(&db, full.check_condition.expect("timecheck_condition")),
+            "en"
+        );
+        assert_eq!(
+            target_name(&db, full.delayed[0].expect("delayed_reference")),
+            "dclk"
+        );
+        assert_eq!(
+            target_name(&db, full.delayed[1].expect("delayed_data")),
+            "dd"
+        );
+        let empty = &checks[1];
+        assert_eq!(empty.kind, TimingCheckKind::RecRem);
+        assert!(empty.notifier.is_none() && empty.stamp_condition.is_none());
+        assert_eq!(
+            target_name(&db, empty.check_condition.expect("timecheck")),
+            "en"
+        );
+        assert_eq!(empty.delayed, [None, None]);
+        assert_eq!(checks[2].delayed, [None, None]);
+        assert!(checks[2].check_condition.is_none());
+    }
+
+    #[test]
     fn designs_without_specify_blocks_have_empty_tables() {
         let db = compile("module tb; parameter p = 1; wire w = p; endmodule\n");
         assert!(db.specify_blocks().is_empty());
@@ -635,5 +891,6 @@ endmodule
         assert!(db.specify_items().is_empty());
         assert!(db.specparams().is_empty());
         assert!(db.path_pulses().is_empty());
+        assert!(db.timing_checks().is_empty());
     }
 }

@@ -1,0 +1,5 @@
+0 q=x notifier=x one=1 z=z
+50 q=1 notifier=x one=1 z=z
+100 q=x notifier=0 one=0 z=z
+130 q=0 notifier=0 one=0 z=z
+150 q=x notifier=1 one=1 z=z

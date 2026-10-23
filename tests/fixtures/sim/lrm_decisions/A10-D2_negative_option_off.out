@@ -1,0 +1,4 @@
+0 r=0 dr=0 d=0 dd=0 n=x | r=0 dr=0 d=0 dd=0 n=x
+100 r=1 dr=1 d=0 dd=0 n=x | r=1 dr=1 d=0 dd=0 n=x
+102 r=1 dr=1 d=1 dd=1 n=0 | r=1 dr=1 d=1 dd=1 n=0
+105 r=1 dr=1 d=0 dd=0 n=1 | r=1 dr=1 d=1 dd=1 n=0

@@ -227,6 +227,7 @@ pub(super) fn render_signal_decls(model: &IrModel, out: &mut String) {
         ));
     }
     render_module_paths(model, out);
+    render_timing_checks(model, out);
     // Named events use a stable waiter-table object plus an assignable handle.
     for ev in &model.events {
         if ev.is_array() {
@@ -434,6 +435,181 @@ fn render_module_paths(model: &IrModel, out: &mut String) {
             set.destinations().len(),
         ));
     }
+}
+
+/// Timing check tables: one `llg_timing_check_set_t` per instance with
+/// checks, after the signals its terminals name. Limits and delays stay
+/// writable for back-annotation; records use designated fields so the
+/// runtime state fields start zero. Nothing is emitted for a design without
+/// checks.
+fn render_timing_checks(model: &IrModel, out: &mut String) {
+    use crate::sim::emit_c::constants::c_string_literal;
+    use crate::sim::ir::IrTimingLineStorage;
+    let condition = |condition: Option<crate::sim::ir::IrTimingCondition>| {
+        condition.map_or((0, false), |condition| {
+            (condition.index + 1, condition.nondeterministic)
+        })
+    };
+    let event = |event: crate::sim::ir::IrTimingEvent| {
+        let (first, first_nondeterministic) = condition(event.condition);
+        let (second, second_nondeterministic) = condition(event.condition2);
+        let nondeterministic =
+            u8::from(first_nondeterministic) | (u8::from(second_nondeterministic) << 1);
+        let mut text = format!(
+            "{{ .terminal = {}u, .edges = {}",
+            event.terminal, event.edges
+        );
+        if nondeterministic != 0 {
+            text.push_str(&format!(", .nondeterministic = {nondeterministic}"));
+        }
+        if first != 0 {
+            text.push_str(&format!(", .condition = {first}u"));
+        }
+        if second != 0 {
+            text.push_str(&format!(", .condition2 = {second}u"));
+        }
+        text.push_str(" }");
+        text
+    };
+    for (index, set) in model.timing_checks().iter().enumerate() {
+        let name = format!("llg_timing_set_{index}");
+        let terminals = set
+            .terminals()
+            .iter()
+            .map(|terminal| {
+                let line = terminal
+                    .line()
+                    .map_or(String::new(), |line| format!(", .line = {}u", line + 1));
+                format!(
+                    "{{ .value = {}, .lsb = {}u, .n_bits = {}u{line} }}",
+                    path_source_storage(model, terminal.signal()),
+                    terminal.lsb(),
+                    terminal.width()
+                )
+            })
+            .collect::<Vec<_>>();
+        out.push_str(&format!(
+            "static llg_timing_terminal_t {name}__terminals[] = {{ {} }};\n",
+            terminals.join(", ")
+        ));
+        let checks = if set.checks().is_empty() {
+            "NULL".to_owned()
+        } else {
+            let rows = set
+                .checks()
+                .iter()
+                .map(|check| {
+                    let (limit, limit2) = check.limits();
+                    let flags = if check.flags() != 0 {
+                        format!(".flags = {}, ", check.flags())
+                    } else {
+                        String::new()
+                    };
+                    format!(
+                        "{{ .kind = {}, {flags}.reference = {}, .data = {}, .limit = {limit}LL, \
+                         .limit2 = {limit2}LL, .notifier = {}u, .origin = {}, .text = {} }}",
+                        check.kind().code(),
+                        event(check.reference()),
+                        event(check.data()),
+                        check.notifier().map_or(0, |notifier| notifier + 1),
+                        c_string_literal(check.origin()),
+                        c_string_literal(check.text()),
+                    )
+                })
+                .collect::<Vec<_>>();
+            out.push_str(&format!(
+                "static llg_timing_check_t {name}__checks[] = {{ {} }};\n",
+                rows.join(", ")
+            ));
+            format!("{name}__checks")
+        };
+        let conditions = if set.conditions().is_empty() {
+            "NULL".to_owned()
+        } else {
+            out.push_str(&format!(
+                "static void {name}__conditions(sv4_t* out, void* context);\n"
+            ));
+            format!("{name}__conditions")
+        };
+        let notifiers = if set.notifiers().is_empty() {
+            "NULL".to_owned()
+        } else {
+            let storage = set
+                .notifiers()
+                .iter()
+                .map(|notifier| path_source_storage(model, *notifier))
+                .collect::<Vec<_>>();
+            out.push_str(&format!(
+                "static sv4_t* const {name}__notifiers[] = {{ {} }};\n",
+                storage.join(", ")
+            ));
+            format!("{name}__notifiers")
+        };
+        let lines = if set.lines().is_empty() {
+            "NULL".to_owned()
+        } else {
+            let rows = set
+                .lines()
+                .iter()
+                .map(|line| {
+                    let storage = match line.storage() {
+                        IrTimingLineStorage::Net { group, slot } => format!(
+                            ".net = &{}, .slot = {slot}, ",
+                            model.net_groups()[group].c_name
+                        ),
+                        IrTimingLineStorage::Variable => String::new(),
+                    };
+                    let (rise, fall) = line.delays();
+                    format!(
+                        "{{ .source = {}u, .target = {}u, {storage}.rise = {rise}ULL, \
+                         .fall = {fall}ULL }}",
+                        line.source(),
+                        line.target()
+                    )
+                })
+                .collect::<Vec<_>>();
+            out.push_str(&format!(
+                "static llg_timing_line_t {name}__lines[] = {{ {} }};\n",
+                rows.join(", ")
+            ));
+            format!("{name}__lines")
+        };
+        out.push_str(&format!(
+            "static llg_timing_check_set_t {name} = {{ .scope = {}, .terminals = {name}__terminals, \
+             .n_terminals = {}u, .checks = {checks}, .n_checks = {}u, .conditions = \
+             {conditions}, .n_conditions = {}u, .notifiers = {notifiers}, .n_notifiers = {}u, \
+             .lines = {lines}, .n_lines = {}u }};\n",
+            c_string_literal(set.scope()),
+            set.terminals().len(),
+            set.checks().len(),
+            set.conditions().len(),
+            set.notifiers().len(),
+            set.lines().len(),
+        ));
+    }
+}
+
+/// The generated condition evaluator of every timing check set with
+/// conditioned events: `out[k]` receives condition `k`, read in the
+/// instance's scope when a step evaluates a conditioned event.
+pub(super) fn render_timing_condition_evaluators(
+    ctx: &RCtx<'_>,
+    out: &mut String,
+) -> Result<(), String> {
+    for (index, set) in ctx.model.timing_checks().iter().enumerate() {
+        if set.conditions().is_empty() {
+            continue;
+        }
+        let evaluator = crate::sim::ir::IrPreFn::MonEval {
+            c_name: format!("llg_timing_set_{index}__conditions"),
+            args: set.conditions().to_vec(),
+            context: None,
+            item: false,
+            real_item: false,
+        };
+        out.push_str(&super::super::owned::model::pre_function(ctx, &evaluator)?);
+    }
+    Ok(())
 }
 
 /// The generated condition evaluator of every module path set with

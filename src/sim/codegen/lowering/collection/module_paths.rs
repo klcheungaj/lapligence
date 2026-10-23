@@ -7,7 +7,7 @@
 //! the destination's pulse-style flags, plus one hidden process that records
 //! source transitions. The destination is the instance's own net group, so
 //! every reader of the net sees the path-delayed value (decision A7-D2).
-//! Timing checks are rejected with their location instead of being ignored.
+//! Timing checks are lowered separately (`timing_checks.rs`).
 
 use super::*;
 use crate::core::db::{
@@ -19,13 +19,14 @@ use crate::sim::ir::{
     IrPathEdge, IrPathLimits, IrPathPolarity, PATH_STYLE_ON_DETECT, PATH_STYLE_SHOW_CANCELLED,
 };
 
-/// One path terminal: `width` storage bits of IR signal `signal` from `lsb`.
-struct PathTerminal {
+/// One path or timing check terminal: `width` storage bits of IR signal
+/// `info.ir` from `lsb`.
+pub(super) struct PathTerminal {
     /// The declaration the terminal names.
-    node: NodeId,
-    info: SignalInfo,
-    lsb: u32,
-    width: u32,
+    pub(super) node: NodeId,
+    pub(super) info: SignalInfo,
+    pub(super) lsb: u32,
+    pub(super) width: u32,
 }
 
 /// Distinct `(owner, source)` structural driver sites of each net group.
@@ -45,7 +46,7 @@ const STYLE_DECIDED: u8 = 4;
 const CANCELLED_DECIDED: u8 = 8;
 
 impl Codegen<'_> {
-    fn specify_location(&self, node: NodeId) -> String {
+    pub(super) fn specify_location(&self, node: NodeId) -> String {
         format!(
             "{}:{}:{}",
             self.node(node).file.as_deref().unwrap_or("<unknown>"),
@@ -54,7 +55,7 @@ impl Codegen<'_> {
         )
     }
 
-    fn specify_unsupported(&self, node: NodeId, what: &str) -> String {
+    pub(super) fn specify_unsupported(&self, node: NodeId, what: &str) -> String {
         format!(
             "unsupported {what} at {} in `{}`",
             self.specify_location(node),
@@ -101,12 +102,8 @@ impl Codegen<'_> {
                         .styles
                         .push((item.node, *style, terminals));
                 }
-                SpecifyItemKind::TimingCheck(kind) => {
-                    return Err(self.specify_unsupported(
-                        item.node,
-                        &format!("timing check `{}` (not simulated yet)", kind.name()),
-                    ));
-                }
+                // Lowered by `lower_timing_checks` (timing_checks.rs).
+                SpecifyItemKind::TimingCheck(_) => {}
             }
         }
         for pulse in db.path_pulses() {
@@ -406,7 +403,7 @@ impl Codegen<'_> {
     /// Resolve a terminal expression to storage bits: a whole signal or a
     /// constant bit, part or indexed part select of a one-dimensional packed
     /// signal.
-    fn path_terminal(&self, expression: NodeId) -> Result<PathTerminal, String> {
+    pub(super) fn path_terminal(&self, expression: NodeId) -> Result<PathTerminal, String> {
         let target = |base: NodeId| -> Result<NodeId, String> {
             match self.kind(base) {
                 NodeKind::Net { .. } | NodeKind::Var { .. } => Ok(base),

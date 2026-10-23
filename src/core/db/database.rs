@@ -131,7 +131,8 @@ mod specify;
 use specify::{specify_tables_from_slang, SpecifyTables};
 pub use specify::{
     ModulePath, PathCondition, PathConnection, PathEdge, PathPolarity, PathPulse, PathPulseScope,
-    PulseStyle, SpecifyItem, SpecifyItemKind, Specparam, TimingCheckKind,
+    PulseStyle, SpecifyItem, SpecifyItemKind, Specparam, TimingCheck, TimingCheckKind, TimingEdges,
+    TimingEvent,
 };
 
 /// Arena index of one [`Node`].

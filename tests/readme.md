@@ -377,6 +377,40 @@ validation and emitter tests above plus
 `module_path_triggers_limits_styles_and_options_are_emitted`, the settings and
 config pulse tests, and the runtime selftest `test_module_path_pulses`.
 
+ADV-009's timing check fixtures use
+`-E 'binary(sim_feature_completion) & test(adv_009::)'`
+([readme](fixtures/sim/feature_completion/adv_009/readme.md)): Verilog sources
+in both editions, both optimizer modes and every value backend, outputs
+hand-derived from V §§15.1-15.7 and SV §§31.1-31.8 printing notifier values;
+the stderr violation reports, the duplicate-check warnings, the
+`--no-timing-checks`/`--no-notifiers`/`--no-timing-check-messages` options and
+their `[simulator]` keys and a Db-dropped run are checked as well. Decisions
+A9-D1-D13 are in `sim_lrm_decisions` (`-E 'test(/a9_d/)'`). Unit tests:
+`timing_checks_keep_events_edges_conditions_limits_and_notifiers`, the FFI
+timing check decode, the IR validation test `timing_check_sets_check_terminals_events_and_notifiers`,
+the emitter test `timing_check_tables_are_emitted_only_for_designs_with_checks`,
+the lint activity tests, the settings and config timing tests and the runtime
+selftest `test_timing_checks`.
+
+ADV-010's combined and negative timing check fixtures use
+`-E 'binary(sim_feature_completion) & test(adv_010::)'`
+([readme](fixtures/sim/feature_completion/adv_010/readme.md)): Verilog sources
+in both editions, both optimizer modes and every value backend, run with and
+without `--neg-timing-checks` (and with `--no-timing-checks` and the
+`[simulator] neg_timing_checks` key), outputs hand-derived from V §§15.2-15.8
+and SV §§31.3-31.9 printing notifier change counts, last change times and
+delayed signal traces; the violation report texts and times, the settlement
+and adjusted-limit warnings and the located errors for invalid delayed
+signals and skew flags are checked as well. Decisions A10-D1-D10 are in
+`sim_lrm_decisions` (`-E 'test(/a10_d/)'`; the "option" cases run with
+`--neg-timing-checks`). Unit tests: the delay solver tests in
+`codegen/lowering/collection/timing_checks.rs` (Figure 31-6 delays, edge
+classes, inconsistent limits), the Db test
+`combined_checks_keep_conditions_and_delayed_signals`, `neg_timing_checks` in
+the settings and config timing tests and the runtime selftests `test_timing_checks`
+(delayed line, doorbell run) and `test_timing_skew_timers` (an annotated
+limit moves or expires an open skew window without a stale report).
+
 ADV-016's randsequence fixtures use
 `-E 'binary(sim_feature_completion) & test(adv_016::)'`. Positives run in both
 optimizer modes on every backend with oracles from SV 18.17 (fixture readme):

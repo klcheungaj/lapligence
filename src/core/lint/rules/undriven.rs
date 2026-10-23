@@ -11,7 +11,7 @@ use crate::core::db::{ConstraintKind, Db, NodeId, NodeKind, RandQualifier};
 use crate::core::lint::rules::analysis::{
     all_nodes, collect_driver_writes, collect_reads, connected_port_link_drivers,
     gate_terminal_drivers, gate_terminal_reads, is_signal, port_link_reads, signal_scope_path,
-    subroutine_body, top_external_port_signals, unconnected_port_signals,
+    subroutine_body, timing_check_activity, top_external_port_signals, unconnected_port_signals,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -138,6 +138,10 @@ fn design_activity(db: &Db) -> (HashSet<NodeId>, HashSet<NodeId>) {
     drivers.extend(gate_terminal_drivers(db));
     reads.extend(port_link_reads(db));
     drivers.extend(connected_port_link_drivers(db));
+    // A timing check toggles its notifier like a procedural write.
+    let (timing_reads, timing_writes) = timing_check_activity(db);
+    reads.extend(timing_reads);
+    drivers.extend(timing_writes);
 
     // Variable and array declaration initializers are not process or
     // continuous-assignment nodes.  They are still active drivers, and their
@@ -330,6 +334,18 @@ mod tests {
             "cloned source declaration must produce one finding: {diags:?}"
         );
         assert!(diags[0].message.contains("`floating`"));
+    }
+
+    #[test]
+    fn timing_check_notifiers_are_driven() {
+        // A timing check toggles its notifier (IEEE 1800-2009 31.6); the
+        // notifier read by a UDP or process has that driver.
+        assert!(undriven_names(
+            "module top(input d, input c);\n  reg n;\n  wire seen = n;\n  specify\n    \
+             $setup(d, posedge c, 10, n);\n  endspecify\nendmodule\n",
+            "top",
+        )
+        .is_empty());
     }
 
     fn undriven_names(sv: &str, top: &str) -> Vec<String> {

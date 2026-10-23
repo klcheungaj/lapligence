@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 36u
+#define LLG_SLANG_ABI_VERSION 40u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -462,8 +462,16 @@ enum {
  *   Auxiliary: LLG_SLANG_SPECIFY_PATH_* bits and fields.
  * PULSE_STYLE: a pulsestyle/showcancelled declaration; OPERAND[i] is
  *   terminal i and the auxiliary is an LLG_SLANG_SPECIFY_PULSE_* code.
- * TIMING_CHECK: a system timing check; the auxiliary is an
- *   LLG_SLANG_SPECIFY_CHECK_* code. Its arguments are not exported. */
+ * TIMING_CHECK: a system timing check (ABI v38, v40). Auxiliary bits 0-7 hold an
+ *   LLG_SLANG_SPECIFY_CHECK_* code; LLG_SLANG_SPECIFY_CHECK_EVENT_SHIFT(k)
+ *   places event argument k's LLG_SLANG_SPECIFY_EDGE_* transition mask (0:
+ *   no edge control, any change); bits 32-47 mark the empty argument
+ *   positions and bits 48-55 count the actual arguments. OPERAND[k] is the
+ *   terminal of event argument k (signature order), CONDITION[k] its `&&&`
+ *   condition, DELAY[i] limit argument i (no edge for an empty one) and
+ *   LHS[0] the notifier. For $setuphold and $recrem (ABI v40), CONDITION[2]
+ *   is the timestamp_condition, CONDITION[3] the timecheck_condition, LHS[1]
+ *   the delayed_reference and LHS[2] the delayed_data signal. */
 enum {
   LLG_SLANG_SPECIFY_BLOCK = 1,
   LLG_SLANG_SPECIFY_PATH = 2,
@@ -503,6 +511,24 @@ enum {
   LLG_SLANG_SPECIFY_CHECK_WIDTH = 11,
   LLG_SLANG_SPECIFY_CHECK_NOCHANGE = 12
 };
+
+/* Timing check auxiliary fields and the transition bits of an event's edge
+ * mask (IEEE 1800-2009 31.5; z descriptors count as x). posedge is
+ * 01|0x|x1, negedge 10|1x|x0, `edge` without a list all six. */
+enum {
+  LLG_SLANG_SPECIFY_CHECK_KIND_MASK = 0xff,
+  LLG_SLANG_SPECIFY_CHECK_EVENT_BITS = 8,
+  LLG_SLANG_SPECIFY_CHECK_EMPTY_SHIFT = 32,
+  LLG_SLANG_SPECIFY_CHECK_COUNT_SHIFT = 48,
+  LLG_SLANG_SPECIFY_EDGE_01 = 1 << 0,
+  LLG_SLANG_SPECIFY_EDGE_0X = 1 << 1,
+  LLG_SLANG_SPECIFY_EDGE_10 = 1 << 2,
+  LLG_SLANG_SPECIFY_EDGE_1X = 1 << 3,
+  LLG_SLANG_SPECIFY_EDGE_X0 = 1 << 4,
+  LLG_SLANG_SPECIFY_EDGE_X1 = 1 << 5
+};
+#define LLG_SLANG_SPECIFY_CHECK_EVENT_SHIFT(k) \
+  (LLG_SLANG_SPECIFY_CHECK_EVENT_BITS * (1u + (k)))
 
 /* Pattern subtype tags carried by unsupported semantic nodes.  Keeping the
  * source kind explicit lets the owned importer admit only the primitive

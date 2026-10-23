@@ -1,0 +1,4 @@
+0 x: plain=x eq=x nce=x timestamp=xx width=xx nochange=xx
+100 x: plain=x eq=0 nce=0 timestamp=0x width=xx nochange=xx
+103 x: plain=x eq=0 nce=0 timestamp=0x width=xx nochange=x0
+105 x: plain=x eq=0 nce=0 timestamp=0x width=x0 nochange=x0

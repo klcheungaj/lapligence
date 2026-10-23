@@ -2043,6 +2043,183 @@ static void test_module_paths(void) {
     sv4_destroy(&path_source);
 }
 
+// Timing checks (31.3): data `d`, clock `c`, $setup(d, posedge c, 10) and
+// $hold(posedge c, d, 3) sharing notifier `n`, plus a delayed copy `dd` of
+// `d` (rise 4, fall 2; 31.9). Writes publish through the watched storage
+// rows; with no doorbell registered the test runs the queued sets itself.
+static sv4_t timing_d = SV4_EMPTY;
+static sv4_t timing_c = SV4_EMPTY;
+static sv4_t timing_dd = SV4_EMPTY;
+static sv4_t timing_n = SV4_EMPTY;
+static sv4_t* const timing_notifiers[] = { &timing_n };
+static llg_timing_terminal_t timing_terminals[] = {
+    { .value = &timing_d, .lsb = 0, .n_bits = 1 },
+    { .value = &timing_c, .lsb = 0, .n_bits = 1 },
+    { .value = &timing_dd, .lsb = 0, .n_bits = 1, .line = 1 },
+};
+static llg_timing_line_t timing_lines[] = {
+    { .source = 0, .target = 2, .rise = 4, .fall = 2 },
+};
+static llg_timing_check_t timing_rows[] = {
+    { .kind = LLG_TIMING_SETUP, .reference = { .terminal = 1, .edges = 0x23 },
+      .data = { .terminal = 0 }, .limit = 10, .notifier = 1, .origin = "t.v:4:1",
+      .text = "$setup(d:\002, posedge c:\001, 10)" },
+    { .kind = LLG_TIMING_HOLD, .reference = { .terminal = 1, .edges = 0x23 },
+      .data = { .terminal = 0 }, .limit = 3, .notifier = 1, .origin = "t.v:5:1",
+      .text = "$hold(posedge c:\001, d:\002, 3)" },
+};
+static llg_timing_check_set_t timing_set = { .scope = "tb.u", .terminals = timing_terminals,
+                                             .n_terminals = 3, .checks = timing_rows,
+                                             .n_checks = 2, .notifiers = timing_notifiers,
+                                             .n_notifiers = 1, .lines = timing_lines,
+                                             .n_lines = 1 };
+
+static unsigned timing_bit(const sv4_t* value) { return llg_sv4_state(*value, 0); }
+
+LLG_SELFTEST_PROCESS(timing_check_proc, 6) {
+    LLG_SELFTEST_BEGIN(6);
+    // t=0: the initial values are no events; the delayed copy follows d.
+    llg_ba(&timing_d, test_temp(SV4_C(1, 1)));
+    llg_timing_checks_run();
+    CHECK(timing_bit(&timing_n) == 2u && timing_bit(&timing_dd) == 2u);
+    CHECK(timing_rows[0].data_time == 0);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 95));
+    CHECK(timing_bit(&timing_dd) == 1u);
+    llg_ba(&timing_d, test_temp(SV4_C(0, 1)));
+    llg_timing_checks_run();
+    CHECK(timing_bit(&timing_n) == 2u);
+    CHECK(timing_rows[0].data_time == 95);
+    // t=100: posedge c, data 5 before: setup violates and n goes x -> 0;
+    // the delayed copy fell 2 after d.
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 5));
+    CHECK(timing_bit(&timing_dd) == 0u);
+    llg_ba(&timing_c, test_temp(SV4_C(1, 1)));
+    llg_timing_checks_run();
+    CHECK(timing_bit(&timing_n) == 0u);
+    CHECK(timing_rows[1].reference_time == 100);
+    // t=102: data 2 after the clock: hold violates, n goes 0 -> 1.
+    LLG_SELFTEST_AWAIT(3, llg_arm_time(self, 2));
+    llg_ba(&timing_d, test_temp(SV4_C(1, 1)));
+    llg_timing_checks_run();
+    CHECK(timing_bit(&timing_n) == 1u);
+    // t=110: the clock falls (no event) and d goes 1 -> x (a data event).
+    LLG_SELFTEST_AWAIT(4, llg_arm_time(self, 8));
+    llg_ba(&timing_c, test_temp(SV4_C(0, 1)));
+    llg_ba(&timing_d, test_temp(sv4_x(1, 0)));
+    llg_timing_checks_run();
+    CHECK(timing_bit(&timing_n) == 1u);
+    CHECK(timing_rows[0].data_time == 110);
+    // t=112: x -> z is no transition, so the timestamp stays at 110.
+    LLG_SELFTEST_AWAIT(5, llg_arm_time(self, 2));
+    llg_ba(&timing_d, test_temp(SV4_Z(1)));
+    llg_timing_checks_run();
+    CHECK(timing_rows[0].data_time == 110);
+    // t=121: 11 after the data event, within the limit rewritten to 12:
+    // both checks share n, which changes once (1 -> 0).
+    LLG_SELFTEST_AWAIT(6, llg_arm_time(self, 9));
+    llg_timing_check_sets()->checks[0].limit = 12;
+    llg_ba(&timing_c, test_temp(SV4_C(1, 1)));
+    llg_timing_checks_run();
+    CHECK(timing_bit(&timing_n) == 0u);
+    LLG_SELFTEST_FINISH();
+}
+
+static void test_timing_checks(void) {
+    llg_rt_init();
+    sv4_replace(&timing_d, sv4_x(1, 0));
+    sv4_replace(&timing_c, SV4_C(0, 1));
+    sv4_replace(&timing_dd, sv4_x(1, 0));
+    sv4_replace(&timing_n, sv4_x(1, 0));
+    llg_timing_checks_configure(0);
+    llg_timing_checks_start(&timing_set);
+    CHECK(llg_timing_check_sets() == &timing_set && timing_set.next == NULL);
+    llg_spawn(&timing_check_proc_desc, "timing-checks");
+    llg_rt_run();
+    CHECK(!llg_rt_failed());
+    llg_rt_cleanup();
+    CHECK(llg_timing_check_sets() == NULL && timing_set.last == NULL);
+    CHECK(timing_set.notify == NULL && timing_set.offsets == NULL);
+    CHECK(timing_lines[0].pending == NULL);
+    sv4_destroy(&timing_d);
+    sv4_destroy(&timing_c);
+    sv4_destroy(&timing_dd);
+    sv4_destroy(&timing_n);
+}
+
+// $timeskew(posedge a, negedge b, 10, n) timer-based (31.4.2): a limit
+// rewritten while the window is open moves its expiry, so the old expiry
+// leaves no stale report and a shortened one past expires at once.
+static sv4_t skew_a = SV4_EMPTY;
+static sv4_t skew_b = SV4_EMPTY;
+static sv4_t skew_n = SV4_EMPTY;
+static sv4_t* const skew_notifiers[] = { &skew_n };
+static llg_timing_terminal_t skew_terminals[] = {
+    { .value = &skew_a, .lsb = 0, .n_bits = 1 },
+    { .value = &skew_b, .lsb = 0, .n_bits = 1 },
+};
+static llg_timing_check_t skew_rows[] = {
+    { .kind = LLG_TIMING_TIMESKEW, .reference = { .terminal = 0, .edges = 0x23 },
+      .data = { .terminal = 1, .edges = 0x1c }, .limit = 10, .notifier = 1,
+      .origin = "t.v:9:1", .text = "$timeskew(posedge a:\001, negedge b:\002, 10)" },
+};
+static llg_timing_check_set_t skew_set = { .scope = "tb.s", .terminals = skew_terminals,
+                                           .n_terminals = 2, .checks = skew_rows,
+                                           .n_checks = 1, .notifiers = skew_notifiers,
+                                           .n_notifiers = 1 };
+
+LLG_SELFTEST_PROCESS(skew_timer_proc, 8) {
+    LLG_SELFTEST_BEGIN(8);
+    llg_ba(&skew_a, test_temp(SV4_C(0, 1)));
+    llg_ba(&skew_b, test_temp(SV4_C(1, 1)));
+    llg_timing_checks_run();
+    // t=5: the reference event opens the window until 15.
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 5));
+    llg_ba(&skew_a, test_temp(SV4_C(1, 1)));
+    llg_timing_checks_run();
+    CHECK(skew_rows[0].state == 1u && skew_rows[0].deadline == 15);
+    // t=8: back-annotation widens the limit to 20: the window ends at 25.
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 3));
+    skew_rows[0].limit = 20;
+    llg_timing_check_limits_changed(&skew_set);
+    CHECK(skew_rows[0].deadline == 25);
+    LLG_SELFTEST_AWAIT(3, llg_arm_time(self, 8));
+    CHECK(timing_bit(&skew_n) == 2u);
+    LLG_SELFTEST_AWAIT(4, llg_arm_time(self, 10));
+    CHECK(timing_bit(&skew_n) == 0u && skew_rows[0].state == 0u);
+    // t=35: a new window; at 40 the limit shrinks to 3, already past.
+    LLG_SELFTEST_AWAIT(5, llg_arm_time(self, 4));
+    llg_ba(&skew_a, test_temp(SV4_C(0, 1)));
+    llg_timing_checks_run();
+    LLG_SELFTEST_AWAIT(6, llg_arm_time(self, 5));
+    llg_ba(&skew_a, test_temp(SV4_C(1, 1)));
+    llg_timing_checks_run();
+    CHECK(skew_rows[0].deadline == 55);
+    LLG_SELFTEST_AWAIT(7, llg_arm_time(self, 5));
+    skew_rows[0].limit = 3;
+    llg_timing_check_limits_changed(&skew_set);
+    CHECK(skew_rows[0].deadline == 40);
+    LLG_SELFTEST_AWAIT(8, llg_arm_time(self, 1));
+    CHECK(timing_bit(&skew_n) == 1u && skew_rows[0].state == 0u);
+    LLG_SELFTEST_FINISH();
+}
+
+static void test_timing_skew_timers(void) {
+    llg_rt_init();
+    sv4_replace(&skew_a, sv4_x(1, 0));
+    sv4_replace(&skew_b, sv4_x(1, 0));
+    sv4_replace(&skew_n, sv4_x(1, 0));
+    llg_timing_checks_configure(0);
+    llg_timing_checks_start(&skew_set);
+    llg_spawn(&skew_timer_proc_desc, "timing-skew");
+    llg_rt_run();
+    CHECK(!llg_rt_failed());
+    llg_rt_cleanup();
+    CHECK(llg_timing_check_sets() == NULL);
+    sv4_destroy(&skew_a);
+    sv4_destroy(&skew_b);
+    sv4_destroy(&skew_n);
+}
+
 // Pulse limits (30.7): one-bit source `b`, destination `q`, path b => q with
 // delay 10. Row 0 has PATHPULSE$-style limits of 0 (every pulse passes), so
 // transitions queue; the second set takes configured percentages.
@@ -2635,6 +2812,8 @@ static int run_selftests(int argc, char** argv) {
     test_clear_temporaries();
     test_inertial_lifetime();
     test_module_paths();
+    test_timing_checks();
+    test_timing_skew_timers();
     test_clear_temporaries();
     test_module_path_pulses();
     test_clear_temporaries();

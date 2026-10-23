@@ -359,6 +359,23 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
         ));
     }
     net_delay_starts(model, &mut tables, &mut initialize);
+    // Timing check sets take the initialized terminal values as their change
+    // reference and start their delayed signals once the nets are set up;
+    // reporting is on unless turned off.
+    if !model.timing_checks().is_empty() && !model.timing_check_options().messages {
+        initialize.push_str("    llg_timing_checks_configure(0);\n");
+    }
+    if let Some(doorbell) = model.timing_doorbell() {
+        initialize.push_str(&format!(
+            "    llg_timing_checks_doorbell(&{});\n",
+            model.signal(doorbell).c_name
+        ));
+    }
+    for index in 0..model.timing_checks().len() {
+        initialize.push_str(&format!(
+            "    llg_timing_checks_start(&llg_timing_set_{index});\n"
+        ));
+    }
     emitted.clear();
     // Function return slots and static locals are independent persistent
     // objects: tabled packed/real defaults first, then string/chandle resets

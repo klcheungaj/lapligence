@@ -26,7 +26,8 @@ accessors of the same name; a unit test bounds `size_of::<SemanticNode>()`.
 Snapshot data includes source/lexical provenance, typed semantic edges, UDP tables,
 sequence metadata, aggregate defaults and specify items (semantic kind 33:
 blocks, module paths with their connection/polarity/edge fields, pulse styles
-and timing checks; specparams are parameter subkinds 236/237). No native pointer or borrowed buffer
+and timing checks with their events, edge masks, conditions, limits and
+notifier; specparams are parameter subkinds 236/237). No native pointer or borrowed buffer
 escapes the safe interface. See [wrapper](../wrapper/readme.md),
 [owned database](../core/db/readme.md) and
 [patch preparation](../../patches/README.md).

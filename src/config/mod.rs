@@ -253,6 +253,14 @@ pub struct SimulatorConfig {
     /// declaration.
     pub pulse_style: Option<PulseStyle>,
     pub show_cancelled: Option<bool>,
+    /// Whether system timing checks are simulated, whether violations toggle
+    /// their notifiers and whether they are reported.
+    pub timing_checks: Option<bool>,
+    pub notifiers: Option<bool>,
+    pub timing_check_messages: Option<bool>,
+    /// Whether negative `$setuphold`/`$recrem` limits and `$nochange`
+    /// offsets are simulated with delayed signals (otherwise they count as 0).
+    pub neg_timing_checks: Option<bool>,
     /// Arguments passed to the generated simulator.
     pub plusargs: Option<Vec<String>>,
 }

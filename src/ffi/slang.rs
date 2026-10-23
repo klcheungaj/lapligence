@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 36;
+const ABI_VERSION: u32 = 40;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -810,6 +810,16 @@ pub(crate) const SPECIFY_PULSE_ONEVENT: u64 = 1;
 pub(crate) const SPECIFY_PULSE_NOSHOWCANCELLED: u64 = 4;
 /// System timing check codes, `$setup` (1) through `$nochange` (12).
 pub(crate) const SPECIFY_CHECK_NOCHANGE: u64 = 12;
+/// Timing check auxiliary fields (ABI v38): the kind in bits 0-7, the
+/// six-bit transition mask of event argument `k` at
+/// `SPECIFY_CHECK_EVENT_BITS * (k + 1)`, the empty argument positions from
+/// bit 32 and the actual argument count from bit 48.
+pub(crate) const SPECIFY_CHECK_KIND_MASK: u64 = 0xff;
+pub(crate) const SPECIFY_CHECK_EVENT_BITS: u32 = 8;
+pub(crate) const SPECIFY_CHECK_EMPTY_SHIFT: u32 = 32;
+pub(crate) const SPECIFY_CHECK_COUNT_SHIFT: u32 = 48;
+/// The six transition bits of an event mask: 01, 0x, 10, 1x, x0, x1.
+pub(crate) const SPECIFY_EDGE_MASK: u64 = 0x3f;
 /// A rule whose production list is a `rand join` (18.17.5).
 pub(crate) const PRODUCTION_RULE_RAND_JOIN: u64 = 1 << 0;
 /// A cross item names another cross (not 1800-2009 syntax).

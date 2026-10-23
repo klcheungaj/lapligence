@@ -538,3 +538,97 @@ fn module_path_triggers_limits_styles_and_options_are_emitted() {
         "{defaults}"
     );
 }
+
+#[test]
+fn timing_check_tables_are_emitted_only_for_designs_with_checks() {
+    use crate::sim::ir::{
+        IrTimingCheck, IrTimingCheckKind, IrTimingCheckOptions, IrTimingCheckSet, IrTimingEvent,
+        IrTimingTerminal,
+    };
+    let plain = render(net_model(2, 1));
+    assert!(!plain.contains("llg_timing"));
+
+    let mut model = net_model(2, 1);
+    model.signals.push(
+        IrSignal::new(
+            "G_tb_d".to_owned(),
+            Some("tb.d".to_owned()),
+            IrType::Packed {
+                width: 4,
+                signed: false,
+                two_state: false,
+            },
+            None,
+        )
+        .unwrap(),
+    );
+    let signal = model.signals.len() - 1;
+    let one_bit = |name: &str| {
+        IrSignal::new(
+            name.to_owned(),
+            None,
+            IrType::Packed {
+                width: 1,
+                signed: false,
+                two_state: false,
+            },
+            None,
+        )
+        .unwrap()
+    };
+    model.signals.push(one_bit("G_tb_n"));
+    model.signals.push(one_bit("llg_timing_doorbell"));
+    model.timing_doorbell = Some(signal + 2);
+    model.timing_checks.push(IrTimingCheckSet::new(
+        "tb.u".to_owned(),
+        vec![
+            IrTimingTerminal::new(signal, 0, 1),
+            IrTimingTerminal::new(signal, 1, 3),
+        ],
+        vec![IrTimingCheck::new(
+            IrTimingCheckKind::Setup,
+            IrTimingEvent::new(1, 0x23, None),
+            IrTimingEvent::new(0, 0, None),
+            10,
+            -2,
+            Some(0),
+            "f.v:7:5".to_owned(),
+            "$setup(d:\u{2}, posedge c:\u{1}, 10)".to_owned(),
+        )],
+        Vec::new(),
+        vec![signal + 1],
+    ));
+    model.timing_check_options = IrTimingCheckOptions {
+        checks: true,
+        notifiers: true,
+        messages: false,
+        negative: false,
+    };
+    let source = render(model);
+    assert!(source.contains(
+        "static llg_timing_terminal_t llg_timing_set_0__terminals[] = { { .value = &G_tb_d, \
+         .lsb = 0u, .n_bits = 1u }, { .value = &G_tb_d, .lsb = 1u, .n_bits = 3u } };"
+    ));
+    assert!(source.contains(
+        "static llg_timing_check_t llg_timing_set_0__checks[] = { { .kind = 1, .reference = \
+         { .terminal = 1u, .edges = 35 }, .data = { .terminal = 0u, .edges = 0 }, .limit = \
+         10LL, .limit2 = -2LL, .notifier = 1u, .origin = \"f.v:7:5\", .text = \
+         \"$setup(d:\\002, posedge c:\\001, 10)\" } };"
+    ));
+    assert!(source.contains("static sv4_t* const llg_timing_set_0__notifiers[] = { &G_tb_n };"));
+    assert!(source.contains(
+        "static llg_timing_check_set_t llg_timing_set_0 = { .scope = \"tb.u\", .terminals = \
+         llg_timing_set_0__terminals, .n_terminals = 2u, .checks = llg_timing_set_0__checks, \
+         .n_checks = 1u, .conditions = NULL, .n_conditions = 0u, .notifiers = \
+         llg_timing_set_0__notifiers, .n_notifiers = 1u, .lines = NULL, .n_lines = 0u };"
+    ));
+    let defaults = lifecycle(&source, "llg_model_storage_defaults");
+    let configure = defaults.find("llg_timing_checks_configure(0);").unwrap();
+    let doorbell = defaults
+        .find("llg_timing_checks_doorbell(&llg_timing_doorbell);")
+        .unwrap();
+    let start = defaults
+        .find("llg_timing_checks_start(&llg_timing_set_0);")
+        .unwrap();
+    assert!(configure < doorbell && doorbell < start, "{defaults}");
+}

@@ -1,0 +1,11 @@
+3 pd dD=0
+8 pe dC=0
+100 pd dC=1
+108 pe dC=1
+120 pd dC=0
+128 pe dC=0
+141 pe dD=1
+143 pd dD=1
+150 pe dD=0
+153 pd dD=0
+170 notifiers x x

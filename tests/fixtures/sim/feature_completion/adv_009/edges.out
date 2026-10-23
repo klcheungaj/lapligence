@@ -1,0 +1,3 @@
+0 posedge=xxxxxx negedge=xx edge01=xxx edge0x_x1=xx hold=xx vector=xxx
+100 posedge=xx0000 negedge=x0 edge01=xx0 edge0x_x1=0x hold=xx vector=x00
+102 posedge=xx0000 negedge=x0 edge01=xx0 edge0x_x1=0x hold=0x vector=x00

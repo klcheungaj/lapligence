@@ -14,7 +14,9 @@ native traversal or I/O.
   defaults count, wherever the subroutine is declared (the body is the Db's
   recorded `body`; extra scope-only `Begin` children of a subroutine with
   loops or blocks are not it). Input terminals of gate and UDP instances
-  are reads and output terminals are drivers; a concatenation, streaming or
+  are reads and output terminals are drivers; timing check terminals and
+  conditions are reads and a notifier is read and written
+  (`timing_check_activity`); a concatenation, streaming or
   assignment-pattern write target counts for each member (`collect_writes_with_members`).
   Generate scopes (loop, if, case) are analysed like module scopes.
 - `width.rs` — `width-mismatch`: assignments and port links with different known widths;
@@ -64,7 +66,8 @@ native traversal or I/O.
   also covers plain level-sensitive always and initial/final processes.
 - `undriven.rs` — `undriven-signal`: flags a declared signal that is read
   but has no active procedural/continuous driver, declaration initializer,
-  connected output/inout flow, or primitive output terminal. Output, inout and
+  connected output/inout flow, primitive output terminal or timing check
+  notifier. Output, inout and
   non-`const` `ref` actuals of any call are drivers: DPI imports, tasks,
   `$sscanf`/`$fscanf`/`$fgets`/`$fread`/`$readmem*`/`$sformat` destinations and
   `std::randomize` arguments (Slang wraps each written actual in an assignment

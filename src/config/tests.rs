@@ -640,6 +640,10 @@ pulse_reject = 40
 pulse_error = 80
 pulse_style = "ondetect"
 show_cancelled = true
+timing_checks = false
+notifiers = true
+timing_check_messages = false
+neg_timing_checks = true
 plusargs = ["+seed=1"]
 [waveform]
 file = "waves/run.FST"
@@ -713,6 +717,10 @@ runtime_cache = "../cache"
     assert_eq!(config.simulator.pulse_error, Some(80));
     assert_eq!(config.simulator.pulse_style, Some(PulseStyle::OnDetect));
     assert_eq!(config.simulator.show_cancelled, Some(true));
+    assert_eq!(config.simulator.timing_checks, Some(false));
+    assert_eq!(config.simulator.notifiers, Some(true));
+    assert_eq!(config.simulator.timing_check_messages, Some(false));
+    assert_eq!(config.simulator.neg_timing_checks, Some(true));
     assert_eq!(config.build.gen_only, Some(true));
     assert_eq!(config.build.cc.as_deref(), Some("gcc"));
     assert_eq!(
@@ -794,6 +802,19 @@ fn invalid_driver_values_name_their_key() {
         (
             "[simulator]\nshow_cancelled = \"yes\"\n",
             "simulator.show_cancelled",
+        ),
+        (
+            "[simulator]\ntiming_checks = 1\n",
+            "simulator.timing_checks",
+        ),
+        ("[simulator]\nnotifiers = \"no\"\n", "simulator.notifiers"),
+        (
+            "[simulator]\ntiming_check_messages = 0\n",
+            "simulator.timing_check_messages",
+        ),
+        (
+            "[simulator]\nneg_timing_checks = \"yes\"\n",
+            "simulator.neg_timing_checks",
         ),
         ("[lint]\nrun = true\n", "lint.run"),
         ("[waveform]\nfile = \"dump.txt\"\n", "waveform.file"),

@@ -229,4 +229,148 @@ impl Validator<'_> {
         }
         Ok(())
     }
+
+    /// Timing check sets: packed terminals with ranges inside their storage,
+    /// events naming terminals and conditions of their set, known edge bits,
+    /// derived data events of `$period`/`$width` on the reference terminal,
+    /// edge-triggered references where the kind needs one, notifiers that
+    /// are one-bit signals, delayed signals between terminals of one width
+    /// that name their storage, and the doorbell of the timing process.
+    pub(super) fn validate_timing_checks(&self) -> ValidationResult {
+        if self.model.timing_checks.is_empty() != self.model.timing_doorbell.is_none() {
+            return self.fail(
+                "timing_doorbell",
+                "a model has a timing doorbell exactly when it has timing check sets",
+            );
+        }
+        if let Some(doorbell) = self.model.timing_doorbell {
+            let one_bit = matches!(
+                self.model.signals.get(doorbell).map(|signal| &signal.ty),
+                Some(IrType::Packed { width: 1, .. })
+            );
+            if !one_bit {
+                return self.fail(
+                    "timing_doorbell",
+                    "the timing doorbell must be a 1-bit signal",
+                );
+            }
+        }
+        for (index, set) in self.model.timing_checks.iter().enumerate() {
+            let path = format!("timing_checks[{index}]");
+            if set.checks.is_empty() && set.lines.is_empty() {
+                return self.fail(path, "timing check set has no check and no delayed signal");
+            }
+            for (notifier_index, notifier) in set.notifiers.iter().enumerate() {
+                let one_bit = matches!(
+                    self.model.signals.get(*notifier).map(|signal| &signal.ty),
+                    Some(IrType::Packed { width: 1, .. })
+                );
+                if !one_bit {
+                    return self.fail(
+                        format!("{path}.notifiers[{notifier_index}]"),
+                        "a timing check notifier must be a 1-bit signal",
+                    );
+                }
+            }
+            for (line_index, line) in set.lines.iter().enumerate() {
+                let path = format!("{path}.lines[{line_index}]");
+                let (Some(source), Some(target)) = (
+                    set.terminals.get(line.source as usize),
+                    set.terminals.get(line.target as usize),
+                ) else {
+                    return self.fail(path, "a delayed signal names no terminal of its set");
+                };
+                if source.width != target.width || target.line != Some(line_index as u32) {
+                    return self.fail(
+                        path,
+                        "a delayed signal must have its source's width and own its target",
+                    );
+                }
+                if let IrTimingLineStorage::Net { group, slot } = line.storage {
+                    let known = self
+                        .model
+                        .net_groups
+                        .get(group)
+                        .is_some_and(|net| slot < net.n_drivers);
+                    if !known {
+                        return self.fail(path, "a delayed signal names no net driver slot");
+                    }
+                }
+            }
+            for (terminal_index, terminal) in set.terminals.iter().enumerate() {
+                let fits = match self.model.signals.get(terminal.signal).map(|s| &s.ty) {
+                    Some(IrType::Packed { width, .. }) => {
+                        terminal.width != 0
+                            && terminal
+                                .lsb
+                                .checked_add(terminal.width)
+                                .is_some_and(|end| end <= *width)
+                    }
+                    _ => false,
+                };
+                if !fits {
+                    return self.fail(
+                        format!("{path}.terminals[{terminal_index}]"),
+                        "timing check terminal must be a range of a packed signal",
+                    );
+                }
+            }
+            for (check_index, check) in set.checks.iter().enumerate() {
+                let path = format!("{path}.checks[{check_index}]");
+                for event in [&check.reference, &check.data] {
+                    if event.terminal as usize >= set.terminals.len() {
+                        return self.fail(path, "timing check event names no terminal of its set");
+                    }
+                    if event.edges & !TIMING_EDGE_MASK != 0 {
+                        return self.fail(path, "timing check event has an unknown edge bit");
+                    }
+                    if [event.condition, event.condition2]
+                        .iter()
+                        .flatten()
+                        .any(|condition| condition.index as usize >= set.conditions.len())
+                    {
+                        return self.fail(path, "timing check event names no condition of its set");
+                    }
+                }
+                let edge_triggered = matches!(
+                    check.kind,
+                    IrTimingCheckKind::Period
+                        | IrTimingCheckKind::Width
+                        | IrTimingCheckKind::NoChange
+                );
+                if edge_triggered && check.reference.edges == 0 {
+                    return self.fail(path, "timing check reference event needs an edge");
+                }
+                if check.kind.single_signal()
+                    && (check.data.terminal != check.reference.terminal
+                        || check.data.condition != check.reference.condition)
+                {
+                    return self.fail(
+                        path,
+                        "a derived data event must share the reference terminal",
+                    );
+                }
+                if check
+                    .notifier
+                    .is_some_and(|notifier| notifier as usize >= set.notifiers.len())
+                {
+                    return self.fail(path, "timing check names no notifier of its set");
+                }
+            }
+            for (condition_index, condition) in set.conditions.iter().enumerate() {
+                if condition.is_real() {
+                    return self.fail(
+                        format!("{path}.conditions[{condition_index}]"),
+                        "timing check condition must be a packed value",
+                    );
+                }
+                self.validate_expr(
+                    condition,
+                    &[],
+                    &format!("{path}.conditions[{condition_index}]"),
+                )?;
+            }
+        }
+        Ok(())
+    }
 }
