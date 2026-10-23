@@ -56,6 +56,32 @@ those scripts. Differences within the observed spread are reported as noise.
   2,000-cell netlists with 5,000 input toggles is not slower (10.7-11.5 to
   9.7 s with path delays, 54.6 to 50.4 s on bus bits, three runs each).
 
+### Per-instance netlist data as tables
+
+- **Trade-off:** per-instance data (nets, path and timing-check sets,
+  coroutine descriptors, spawns) emitted as initializer code makes the C, its
+  compile time and the executable grow by several KB per cell. As table rows
+  plus per-module templates, the runtime lays the structures out once at
+  start (one loop per kind) and a shared body class has one descriptor.
+- **Decision:** nets are `llg_net_shape_t` rows plus exact-size pools laid out
+  by `llg_net_layout`; path and timing-check sets are per-module templates
+  plus instance references (`llg_module_paths_layout`,
+  `llg_timing_checks_layout`), and their condition evaluators take the
+  instance record as context; a shared root class has one descriptor, one
+  record array and `llg_model_spawn_class` row ranges; identical frame-size
+  assertions are emitted once. Generate-iteration bodies of every kind, driver
+  slots, SDF gate delay slots and per-site inertial handles are sharing
+  operands. The structures the scheduler reads are unchanged, so the
+  simulation fast paths are too.
+- **Evidence:** `model.c` per cell 6.4-7.5 KB -> 0.5-0.75 KB (chain, hier and
+  bus netlists at 4k-256k cells, 9.5-12.7x); 64k-cell gcc build 572 -> 10.5 s
+  (chain) and 1,325 -> 13.3 s (hier), executable 374 -> 59 MB and 421 -> 76 MB,
+  simulation 17.8 -> 14.9 s and 615 -> 602 s with identical output. Interleaved
+  4k-cell and corpus simulations are within 2% (wide values +1.2%, half of
+  it from the runtime build alone). `many-registers-10k`/`20k` compile in
+  0.55/0.91 s instead of 2.2/4.8 s, unlike the rejected model-wide descriptor
+  array, because only bodies of one shared class share a descriptor.
+
 ### Timing tasks as calls, not inline expansions
 
 - **Trade-off:** inlining saves a call and frame per invocation; calls avoid one
@@ -215,7 +241,7 @@ processes or clock edges, at the cost of a few bytes per object.
 | Non-inlined await-result helper | A call after every arm; compile change within noise | Rejected |
 | Liveness-based frame narrowing beyond scope narrowing | Moves 9–58% of frame fields; compile flat (`continuous_contexts` 29.6 → 30.0 s) | Rejected |
 | One model-wide descriptor array | GCC 12× slower (identical-code folding over the constant graph); simulation flat | Rejected |
-| Bounded descriptor arrays; interning equal site tables | 18–59% smaller C; simulation flat; compile flat to +67% (`many-registers-10k`) | Deferred: size alone is not a goal |
+| Bounded descriptor arrays; interning equal site tables | 18–59% smaller C; simulation flat; compile flat to +67% (`many-registers-10k`) | Deferred: size alone is not a goal. Shared body classes now have one descriptor each (see per-instance netlist data), which compiles faster |
 | Inline cancellation flag instead of `llg_activation_cancelled` | At most 0.2% of samples after selective cancellation checks | Rejected |
 | Computed-goto resume dispatch (GNU C) | Dispatch lines take 0–0.05% of samples; adds a compiler-specific path | Rejected |
 | Split process identity from frames | Frees large finished frames early, but finished frames are 16 B each in the corpus (0.2% of peak RSS); costs an extra allocation per live process | Deferred |
