@@ -552,6 +552,7 @@ fn render_coroutine_metadata(
     artifact: &CoroutineArtifact,
     analysis: &ExecutionAnalysis,
     model: &IrModel,
+    host_descs: &BTreeSet<String>,
 ) -> Result<String, String> {
     if let Some(count) = artifact.recursive_sites {
         return render_recursive_metadata(artifact, count);
@@ -609,7 +610,7 @@ fn render_coroutine_metadata(
     out.push_str(&format!(
         "static const llg_co_desc_t {}{} = {{ {}, {}, sizeof({}), {}_sites, {}, 0 }};\n",
         artifact.desc_name,
-        desc_attributes(&callback_host_descs(model), &artifact.desc_name),
+        desc_attributes(host_descs, &artifact.desc_name),
         artifact.shared_entry.as_deref().unwrap_or(entry),
         c_string_literal(&artifact.display_name),
         artifact.frame_type,
@@ -1011,6 +1012,7 @@ fn render_model(
             artifact,
             execution.analysis(),
             model,
+            &host_descs,
         )?);
     }
     for artifact in recursive_functions.values() {
@@ -1018,6 +1020,7 @@ fn render_model(
             artifact,
             execution.analysis(),
             model,
+            &host_descs,
         )?);
     }
     for artifact in coroutine_processes.iter().filter_map(Option::as_ref) {
@@ -1025,6 +1028,7 @@ fn render_model(
             artifact,
             execution.analysis(),
             model,
+            &host_descs,
         )?);
     }
     for artifact in coroutine_branches.values() {
@@ -1032,6 +1036,7 @@ fn render_model(
             artifact,
             execution.analysis(),
             model,
+            &host_descs,
         )?);
     }
     if !model.classes.is_empty() {
