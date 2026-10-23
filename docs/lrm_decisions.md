@@ -696,9 +696,39 @@ invocation controls are `--no-timing-checks`, `--no-notifiers` and
 Rejected with a located error (not decision cases): a notifier that is not a
 scalar variable (31.6), a `$width` notifier without a threshold (31.4.4
 L51843-51844; some simulators accept it), a `$period` or `$width` edge list
-with both rising and falling transitions, and the ADV-010 forms
-(`$setuphold`, `$recrem`, `$timeskew`, `$fullskew`, negative `$nochange`
-offsets).
+with both rising and falling transitions. The combined and negative checks,
+`$timeskew` and `$fullskew` are ADV-010 (below).
+
+## Combined and negative timing checks (ADV-010)
+
+`$setuphold`, `$recrem` with positive, negative and mixed limits, their
+timestamp and timecheck conditions and delayed signals, `$timeskew` and
+`$fullskew` with their flags and negative `$nochange` offsets (SV 31.3.3,
+31.3.6, 31.4.2, 31.4.3, 31.4.6, 31.9; V2001 15.2.3, 15.2.6, 15.3.2, 15.3.3,
+15.3.6, 15.5, 15.8). Negative limits need `--neg-timing-checks` or
+`[simulator] neg_timing_checks = true` ([config](config.md)); the cases
+marked "option" run with it. The fixtures and the derivation of every
+expected value are in
+[`adv_010`](../tests/fixtures/sim/feature_completion/adv_010/readme.md).
+Line numbers refer to `SystemVerilog-1800-2009.txt`.
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| A10-D1 | **A non-negative `$setuphold` is its `$setup` and `$hold`, a `$recrem` its `$removal` and `$recovery`**, with the A9 windows (data at the reference time violates the hold and recovery part); each violation is reported once, as the component check, at the later event. | 31.3.3 L51119; 31.3.6 L51336-51339 | `A10-D1_combined_pairs` | LRM text |
+| A10-D2 | **Without the option a negative `$setuphold`/`$recrem` limit counts as 0** (llg warns once per check) **and the explicit delayed signals are copies**, as with `--no-timing-checks`. | 31.9 L52283-52284; 31.9.4 L52580-52584 | `A10-D2_negative_option_off` | LRM text |
+| A10-D3 | **Option: one delayed signal per signal and edge class** (rise: 01, 0x, x1; fall: the others) **with the smallest delays that put the delayed reference one unit inside every window of two or more units**: `d_ref - d_data >= 1 - setup` and `d_data - d_ref >= 1 - hold` (`- limit` for a zero limit) for the classes a check's edges touch; an unconstrained class takes the other class's delay. A delayed signal starts x and takes the initial value after its delay. | 31.9.1 L52377-52379, L52418-52427, L52460-52466; 31.9.2 L52557-52565 | `A10-D3_delay_solution` (option) | LRM text (Figure 31-6 delays); the one-unit margin, edge classes and start value are industry-standard behaviour |
+| A10-D4 | **Option: a negative limit sum sets the negative limits to 0; a sum of 0 or 1 keeps the limits for the delays but the check never reports**; both are warned about. | 31.3.3 L51110-51112; 31.9.1 L52378-52379 | `A10-D4_limit_sum` (option) | LRM text. Some simulators report a data event on the delayed reference event of a window with a limit sum of 1; llg follows the clause text, under which "violation windows smaller than two units of simulation precision cannot yield timing violations". |
+| A10-D5 | **Option: inconsistent limits set the most negative limit of a conflicting check to 0, then solve again**, with a warning, until the delays have a solution. | 31.9.1 L52444-52449 | `A10-D5_inconsistent_limits` (option) | LRM text. Some simulators resolve the conflict another way and keep delayed signals; llg follows the clause text, which changes "the smallest negative limit value to 0" and repeats. |
+| A10-D6 | **Option: once a delay is nonzero, every check of the module except `$skew`, `$timeskew` and `$fullskew` reads the delayed signals** with each limit adjusted by the delays of the two compared transitions (at least 0, with a warning when it drops to 0); notifiers toggle at the delayed violation, conditions are read at the delayed events (the timestamp condition with the first delayed event, the timecheck condition with the second) and reports give the undelayed times. | 31.9.1 L52432-52441; 31.9.2 L52499-52507; 31.9.3 L52573-52577 | `A10-D6_delayed_evaluation` (option) | LRM text; undelayed report times are industry-standard behaviour |
+| A10-D7 | **Negative `$nochange` offsets shrink the window with or without the option**; a window ending before the trailing edge is decided at the trailing edge. | 31.4.6 L51934-51947, L51956-51960 | `A10-D7_nochange_negative_offsets` | LRM text. Some simulators count negative `$nochange` offsets as 0 unless the negative timing check option is given; llg follows 31.4.6, which defines negative offsets by themselves, while 31.9 makes only `$setuphold` and `$recrem` depend on the option. |
+| A10-D8 | **A `$nochange` window decided at its trailing edge reports every data event inside it; with the option a `$nochange` reads the delayed reference** and decides the window of the undelayed events at the delayed trailing edge. | 31.4.6 L51960-51962; 31.9.1 L52432-52436 | `A10-D8_nochange_deferred` (option) | LRM text. Some simulators decide such a window by its last data event only and evaluate `$nochange` on the undelayed signals; llg follows the clause text, under which any data event in the window violates and `$nochange` is among the checks that "shall" use the delayed signals. |
+| A10-D9 | **`$timeskew`/`$fullskew` flags are constant expressions, set when nonzero** (x or z is an error). Timer-based checks report at the expiry of the limit and turn dormant; event-based ones report at the late data event, again at each later one with remain_active_flag; `$fullskew` takes limit 2 after a data timestamp. | 31.4.2 L51506-51522; 31.4.3 L51655-51700 | `A10-D9_skew_flags` | LRM text (some simulators do not accept these checks) |
+| A10-D10 | **Delayed signals are transport delays; a transition landing before a pending one of the same bit cancels it.** | 31.9.1 L52381-52384 | `A10-D10_delay_lines` (option) | industry-standard behaviour (the text does not say how delayed signals propagate pulses) |
+
+Rejected with a located error: a delayed signal of another width than its
+signal, a delayed signal naming its own signal, two delayed names for one
+signal or one delayed name for two signals (31.9.1 L52418-52427), and an
+unknown `$timeskew`/`$fullskew` flag.
 
 ## Native initialization and let environments (SIM-022)
 

@@ -2146,6 +2146,80 @@ static void test_timing_checks(void) {
     sv4_destroy(&timing_n);
 }
 
+// $timeskew(posedge a, negedge b, 10, n) timer-based (31.4.2): a limit
+// rewritten while the window is open moves its expiry, so the old expiry
+// leaves no stale report and a shortened one past expires at once.
+static sv4_t skew_a = SV4_EMPTY;
+static sv4_t skew_b = SV4_EMPTY;
+static sv4_t skew_n = SV4_EMPTY;
+static sv4_t* const skew_notifiers[] = { &skew_n };
+static llg_timing_terminal_t skew_terminals[] = {
+    { .value = &skew_a, .lsb = 0, .n_bits = 1 },
+    { .value = &skew_b, .lsb = 0, .n_bits = 1 },
+};
+static llg_timing_check_t skew_rows[] = {
+    { .kind = LLG_TIMING_TIMESKEW, .reference = { .terminal = 0, .edges = 0x23 },
+      .data = { .terminal = 1, .edges = 0x1c }, .limit = 10, .notifier = 1,
+      .origin = "t.v:9:1", .text = "$timeskew(posedge a:\001, negedge b:\002, 10)" },
+};
+static llg_timing_check_set_t skew_set = { .scope = "tb.s", .terminals = skew_terminals,
+                                           .n_terminals = 2, .checks = skew_rows,
+                                           .n_checks = 1, .notifiers = skew_notifiers,
+                                           .n_notifiers = 1 };
+
+LLG_SELFTEST_PROCESS(skew_timer_proc, 8) {
+    LLG_SELFTEST_BEGIN(8);
+    llg_ba(&skew_a, test_temp(SV4_C(0, 1)));
+    llg_ba(&skew_b, test_temp(SV4_C(1, 1)));
+    llg_timing_checks_run();
+    // t=5: the reference event opens the window until 15.
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 5));
+    llg_ba(&skew_a, test_temp(SV4_C(1, 1)));
+    llg_timing_checks_run();
+    CHECK(skew_rows[0].state == 1u && skew_rows[0].deadline == 15);
+    // t=8: back-annotation widens the limit to 20: the window ends at 25.
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 3));
+    skew_rows[0].limit = 20;
+    llg_timing_check_limits_changed(&skew_set);
+    CHECK(skew_rows[0].deadline == 25);
+    LLG_SELFTEST_AWAIT(3, llg_arm_time(self, 8));
+    CHECK(timing_bit(&skew_n) == 2u);
+    LLG_SELFTEST_AWAIT(4, llg_arm_time(self, 10));
+    CHECK(timing_bit(&skew_n) == 0u && skew_rows[0].state == 0u);
+    // t=35: a new window; at 40 the limit shrinks to 3, already past.
+    LLG_SELFTEST_AWAIT(5, llg_arm_time(self, 4));
+    llg_ba(&skew_a, test_temp(SV4_C(0, 1)));
+    llg_timing_checks_run();
+    LLG_SELFTEST_AWAIT(6, llg_arm_time(self, 5));
+    llg_ba(&skew_a, test_temp(SV4_C(1, 1)));
+    llg_timing_checks_run();
+    CHECK(skew_rows[0].deadline == 55);
+    LLG_SELFTEST_AWAIT(7, llg_arm_time(self, 5));
+    skew_rows[0].limit = 3;
+    llg_timing_check_limits_changed(&skew_set);
+    CHECK(skew_rows[0].deadline == 40);
+    LLG_SELFTEST_AWAIT(8, llg_arm_time(self, 1));
+    CHECK(timing_bit(&skew_n) == 1u && skew_rows[0].state == 0u);
+    LLG_SELFTEST_FINISH();
+}
+
+static void test_timing_skew_timers(void) {
+    llg_rt_init();
+    sv4_replace(&skew_a, sv4_x(1, 0));
+    sv4_replace(&skew_b, sv4_x(1, 0));
+    sv4_replace(&skew_n, sv4_x(1, 0));
+    llg_timing_checks_configure(0);
+    llg_timing_checks_start(&skew_set);
+    llg_spawn(&skew_timer_proc_desc, "timing-skew");
+    llg_rt_run();
+    CHECK(!llg_rt_failed());
+    llg_rt_cleanup();
+    CHECK(llg_timing_check_sets() == NULL);
+    sv4_destroy(&skew_a);
+    sv4_destroy(&skew_b);
+    sv4_destroy(&skew_n);
+}
+
 // Pulse limits (30.7): one-bit source `b`, destination `q`, path b => q with
 // delay 10. Row 0 has PATHPULSE$-style limits of 0 (every pulse passes), so
 // transitions queue; the second set takes configured percentages.
@@ -2739,6 +2813,7 @@ static int run_selftests(int argc, char** argv) {
     test_inertial_lifetime();
     test_module_paths();
     test_timing_checks();
+    test_timing_skew_timers();
     test_clear_temporaries();
     test_module_path_pulses();
     test_clear_temporaries();

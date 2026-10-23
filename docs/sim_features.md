@@ -1526,14 +1526,39 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   owned Db keeps every check with its events, limits and notifier and the
   model keeps writable limits per check for later annotation. Located errors
   reject non-scalar notifiers, a `$width` notifier without threshold and
-  mixed `$period`/`$width` edge lists; `$setuphold`, `$recrem`, `$timeskew`,
-  `$fullskew`, negative `$nochange` offsets and delayed signals are ADV-010
+  mixed `$period`/`$width` edge lists
   ([ADV-009 fixtures](../tests/fixtures/sim/feature_completion/adv_009/readme.md)).
+  All checks of an instance form one runtime set; terminal changes mark the
+  set and one hidden process per design runs every marked set.
   V §§15.1–15.7; SV §§31.1–31.8 **[1995/SV-2009 restored]**.
-- ❌ **Combined and negative timing checks, SDF** — `$setuphold`, `$recrem`,
-  `$timeskew`, `$fullskew`, negative limits with delayed signals and
-  `$sdf_annotate` delay/check application are not implemented.
-  V §15.8, ch.16; SV §§31.3.3, 31.3.6, 31.4.2–31.4.3, 31.9, ch.32
+- ✅ **Combined and negative timing checks** (ADV-010) — `$setuphold` and
+  `$recrem` run as their `$setup`/`$hold` and `$removal`/`$recovery` parts
+  with every optional argument: notifier, timestamp and timecheck
+  conditions (read at the delayed events, the first delayed event's with the
+  timestamp condition) and explicit delayed reference and data signals
+  (A10-D1). Negative limits need `--neg-timing-checks` or `[simulator]
+  neg_timing_checks`; without it they count as 0 with a warning and delayed
+  signals are copies, as with `--no-timing-checks` (A10-D2). With it llg
+  solves the smallest delays per signal and edge class (difference
+  constraints, one-unit margin inside windows of two or more units; an
+  inconsistent set zeroes its most negative limit and solves again, with a
+  warning; A10-D3, A10-D5), creates implicit delayed signals, settles a
+  negative limit sum to 0 and keeps a sum of 0 or 1 as a check that never
+  reports (both warned, A10-D4), and runs the module's checks except the
+  skew checks on the delayed signals with adjusted limits, reporting the
+  undelayed times (A10-D6; a limit adjusted to 0 or less is warned).
+  Delayed signals are transport delays with cancellation (A10-D10).
+  `$timeskew` and `$fullskew` run timer-based or event-based, with
+  remain_active (A10-D9); `$nochange` accepts negative offsets with or
+  without the option (A10-D7, A10-D8). Located errors reject delayed signals
+  of another width, naming their own signal, two names for one signal or one
+  name for two, and unknown skew flags
+  ([ADV-010 fixtures](../tests/fixtures/sim/feature_completion/adv_010/readme.md)).
+  V §§15.2.3, 15.2.6, 15.3.2–15.3.3, 15.5, 15.8; SV §§31.3.3, 31.3.6,
+  31.4.2–31.4.3, 31.9 **[1995/SV-2009 restored]**.
+- ❌ **SDF** — `$sdf_annotate` delay and timing check application is not
+  implemented; check limits stay writable in the model for it (the delayed
+  signal delays are fixed when the model is generated). V ch.16; SV ch.32
   **[1995/SV-2009 restored]**.
 
 ## 9. Functions & tasks

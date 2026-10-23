@@ -830,9 +830,11 @@ paths otherwise run.
   that driver too".
 - A bit or part select of a multidimensional packed terminal is rejected.
 - State-dependent and edge-sensitive paths and pulse control run since
-  ADV-008, the basic timing checks since ADV-009; `$setuphold`, `$recrem`,
-  `$timeskew`, `$fullskew` and negative `$nochange` offsets are rejected as
-  not simulated yet (ADV-010).
+  ADV-008, the basic timing checks since ADV-009 and the combined and
+  negative ones since ADV-010. The delays of delayed timing check signals
+  are fixed when the model is generated: annotating new `$setuphold` or
+  `$recrem` limits changes the windows but not the delays, and a check whose
+  negative limits sum to 0 or 1 is not in the model at all.
 - A path whose terminals only partly overlap an `ifnone` path's (for example
   `ifnone (a *> y)` and `if (c) (a => y[0])`) does not suppress it: an
   `ifnone` path yields only to active paths with exactly its terminals.

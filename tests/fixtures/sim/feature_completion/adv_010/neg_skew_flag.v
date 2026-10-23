@@ -1,9 +1,9 @@
-// `$recrem`, `$timeskew` and `$fullskew` are ADV-010.
+// The event_based and remain_active flags need known constant values.
 `timescale 1ns/1ns
 module m(input a, input b);
   reg n;
   specify
-    $fullskew(posedge a, negedge b, 4, 6, n);
+    $timeskew(posedge a, negedge b, 5, n, 1'bx);
   endspecify
 endmodule
 module tb;

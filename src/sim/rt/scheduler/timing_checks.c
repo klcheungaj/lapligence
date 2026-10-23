@@ -382,6 +382,9 @@ void llg_timing_checks_start(llg_timing_check_set_t* set) {
         check->deadline = 0;
         check->open = 0;
         check->state = 0;
+        check->window_data = NULL;
+        check->n_window_data = 0;
+        check->window_data_capacity = 0;
     }
     set->next = g.timing_check_sets;
     g.timing_check_sets = set;
@@ -666,10 +669,27 @@ static void timing_fullskew(timing_step_t* step, uint32_t index, llg_timing_chec
 // `$nochange` (31.4.6) with start offset S and end offset E, in undelayed
 // times: a data event in (leading edge - S, trailing edge + E) violates. The
 // leading and trailing edges always open and close the window; the
-// reference and data conditions are read at the data event. With E >= 0 a
-// data event is reported at once (one before the leading edge within S at
-// that edge); with a negative E the window ends before the trailing edge,
-// so the last data event is checked there.
+// reference and data conditions are read at the data event. A data event is
+// decided when it is seen (the last one before the leading edge within S at
+// that edge) unless the window can end before the delayed trailing edge
+// arrives: E below the trailing edge's delay minus the data event's delay,
+// which without delayed signals is a negative E. Such events are kept and
+// each one inside the window is reported at the trailing edge.
+static int timing_nochange_deferred(int64_t end, int64_t trail_delay, uint64_t data_delay) {
+    return end - trail_delay + (int64_t)data_delay < 0;
+}
+
+static void timing_nochange_keep(llg_timing_check_t* check, int64_t data) {
+    if (check->n_window_data == check->window_data_capacity) {
+        size_t capacity = check->window_data_capacity;
+        check->window_data = (int64_t*)timing_grow(check->window_data, &capacity,
+                                                   sizeof(*check->window_data),
+                                                   "timing check window");
+        check->window_data_capacity = (uint32_t)capacity;
+    }
+    check->window_data[check->n_window_data++] = data;
+}
+
 static void timing_nochange(timing_step_t* step, llg_timing_check_t* check) {
     uint64_t now = g.now;
     int64_t start = check->limit;
@@ -678,6 +698,7 @@ static void timing_nochange(timing_step_t* step, llg_timing_check_t* check) {
     trailing.edges = timing_opposite(check->reference.edges);
     uint8_t lead = timing_matched(step, &check->reference);
     uint8_t trail = timing_matched(step, &trailing);
+    int64_t trail_delay = (int64_t)timing_delay(step, check->reference.terminal, trailing.edges);
     // Undelayed times, signed so that offsets can move them past each other.
     int64_t data = (int64_t)check->data_time - (int64_t)check->data_delay;
     if (lead && !check->open) {
@@ -685,16 +706,24 @@ static void timing_nochange(timing_step_t* step, llg_timing_check_t* check) {
         check->reference_time = now;
         check->reference_delay = timing_delay(step, check->reference.terminal, lead);
         check->trail_time = 0;
+        check->n_window_data = 0;
         int64_t leading = (int64_t)now - (int64_t)check->reference_delay;
-        if (end >= 0 && check->data_time && data > leading - start)
-            timing_violation(step->set, check, (uint64_t)leading, (uint64_t)data);
+        if (check->data_time && data > leading - start) {
+            if (timing_nochange_deferred(end, trail_delay, check->data_delay))
+                timing_nochange_keep(check, data);
+            else
+                timing_violation(step->set, check, (uint64_t)leading, (uint64_t)data);
+        }
     } else if (trail && check->open) {
         check->open = 0;
         check->trail_time = now - timing_delay(step, check->reference.terminal, trail);
         int64_t leading = (int64_t)check->reference_time - (int64_t)check->reference_delay;
-        if (end < 0 && check->data_time && data > leading - start &&
-            data < (int64_t)check->trail_time + end)
-            timing_violation(step->set, check, (uint64_t)leading, (uint64_t)data);
+        for (uint32_t index = 0; index < check->n_window_data; index++) {
+            int64_t kept = check->window_data[index];
+            if (kept > leading - start && kept < (int64_t)check->trail_time + end)
+                timing_violation(step->set, check, (uint64_t)leading, (uint64_t)kept);
+        }
+        check->n_window_data = 0;
     }
     uint8_t matched = timing_matched(step, &check->data);
     if (!matched || !timing_conditions(step, &check->reference) ||
@@ -702,9 +731,13 @@ static void timing_nochange(timing_step_t* step, llg_timing_check_t* check) {
         return;
     check->data_time = now;
     check->data_delay = timing_delay(step, check->data.terminal, matched);
-    if (end < 0 || !check->reference_time) return;
+    if (!check->reference_time) return;
     data = (int64_t)now - (int64_t)check->data_delay;
     int64_t leading = (int64_t)check->reference_time - (int64_t)check->reference_delay;
+    if (timing_nochange_deferred(end, trail_delay, check->data_delay)) {
+        if (check->open) timing_nochange_keep(check, data);
+        return;
+    }
     if (check->open) {
         if (data > leading - start)
             timing_violation(step->set, check, (uint64_t)leading, (uint64_t)data);
@@ -908,6 +941,13 @@ static void timing_checks_release(void) {
         if (set->condition_values) {
             for (uint32_t index = 0; index < set->n_conditions; index++)
                 sv4_destroy(&set->condition_values[index]);
+        }
+        for (uint32_t index = 0; index < set->n_checks; index++) {
+            llg_timing_check_t* check = &set->checks[index];
+            free(check->window_data);
+            check->window_data = NULL;
+            check->n_window_data = 0;
+            check->window_data_capacity = 0;
         }
         for (uint32_t index = 0; index < set->n_lines; index++) {
             llg_timing_line_t* line = &set->lines[index];

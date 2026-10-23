@@ -3238,6 +3238,91 @@ fn a9_d13_negative_limit() {
     );
 }
 
+/// An A10 case that needs negative timing checks (31.9).
+fn run_negative_timing_decision(case: &str, expected: &str) {
+    sim_cli::run_case_backend_parity(SUITE, case, expected, &["--neg-timing-checks"], &[]);
+}
+
+#[test]
+fn a10_d1_combined_pairs() {
+    run_decision(
+        "A10-D1_combined_pairs",
+        include_str!("fixtures/sim/lrm_decisions/A10-D1_combined_pairs.out"),
+    );
+}
+
+#[test]
+fn a10_d2_negative_option_off() {
+    run_decision(
+        "A10-D2_negative_option_off",
+        include_str!("fixtures/sim/lrm_decisions/A10-D2_negative_option_off.out"),
+    );
+}
+
+#[test]
+fn a10_d3_delay_solution() {
+    run_negative_timing_decision(
+        "A10-D3_delay_solution",
+        include_str!("fixtures/sim/lrm_decisions/A10-D3_delay_solution.out"),
+    );
+}
+
+#[test]
+fn a10_d4_limit_sum() {
+    run_negative_timing_decision(
+        "A10-D4_limit_sum",
+        include_str!("fixtures/sim/lrm_decisions/A10-D4_limit_sum.out"),
+    );
+}
+
+#[test]
+fn a10_d5_inconsistent_limits() {
+    run_negative_timing_decision(
+        "A10-D5_inconsistent_limits",
+        include_str!("fixtures/sim/lrm_decisions/A10-D5_inconsistent_limits.out"),
+    );
+}
+
+#[test]
+fn a10_d6_delayed_evaluation() {
+    run_negative_timing_decision(
+        "A10-D6_delayed_evaluation",
+        include_str!("fixtures/sim/lrm_decisions/A10-D6_delayed_evaluation.out"),
+    );
+}
+
+#[test]
+fn a10_d7_nochange_negative_offsets() {
+    run_decision(
+        "A10-D7_nochange_negative_offsets",
+        include_str!("fixtures/sim/lrm_decisions/A10-D7_nochange_negative_offsets.out"),
+    );
+}
+
+#[test]
+fn a10_d8_nochange_deferred() {
+    run_negative_timing_decision(
+        "A10-D8_nochange_deferred",
+        include_str!("fixtures/sim/lrm_decisions/A10-D8_nochange_deferred.out"),
+    );
+}
+
+#[test]
+fn a10_d9_skew_flags() {
+    run_decision(
+        "A10-D9_skew_flags",
+        include_str!("fixtures/sim/lrm_decisions/A10-D9_skew_flags.out"),
+    );
+}
+
+#[test]
+fn a10_d10_delay_lines() {
+    run_negative_timing_decision(
+        "A10-D10_delay_lines",
+        include_str!("fixtures/sim/lrm_decisions/A10-D10_delay_lines.out"),
+    );
+}
+
 #[test]
 fn a13_d1_consequent_clock() {
     run_decision(

@@ -157,9 +157,9 @@ on the destination then delays that result like any net delay (A7-D1).
   `neg_specparam_in_range.v`, `neg_specparam_before_declaration.v`,
   `neg_source_not_port.v`, `neg_destination_input.v`,
   `neg_parallel_width.v`, `neg_delay_count.v`.
-- Later tasks, rejected with their location (ADV-009/ADV-010):
-  `neg_timing_check.v`. State-dependent and edge-sensitive paths, `PATHPULSE$`
-  and pulse-style declarations are simulated since ADV-008 (`../adv_008/`).
+- State-dependent and edge-sensitive paths, `PATHPULSE$` and pulse-style
+  declarations are simulated since ADV-008 (`../adv_008/`), timing checks
+  since ADV-009 and ADV-010 (`../adv_009/`, `../adv_010/`).
 - Not simulated yet: `neg_variable_destination.v` (a legal variable
   destination), `neg_outside_driver.v` (an inout destination also driven
   outside the module), `neg_multidimensional_select.sv` (a select of a

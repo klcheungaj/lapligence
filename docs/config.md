@@ -167,6 +167,7 @@ server, accepted and ignored by `llg`.
 | `simulator.pulse_style` | `"onevent"` \| `"ondetect"` | llg | `--pulse-style` |
 | `simulator.show_cancelled` | bool | llg | `--show-cancelled` / `--no-show-cancelled` |
 | `simulator.timing_checks`, `simulator.notifiers`, `simulator.timing_check_messages` | bools | llg | `--[no-]timing-checks`, `--[no-]notifiers`, `--[no-]timing-check-messages` |
+| `simulator.neg_timing_checks` | bool | llg | `--[no-]neg-timing-checks` |
 | `simulator.plusargs` | strings | llg | arguments after `--` (they replace; `--append-plusarg` adds) |
 | `waveform.file` | `.vcd`/`.fst` path | llg | `--wave` |
 | `waveform.depth` | integer 0 to 4294967295 | llg | `--wave-depth`; requires `file` |
@@ -407,6 +408,11 @@ severity = "error"
 - `timing_check_messages` (bool, default `true`) — report each violation on
   stderr; `false` (`--no-timing-check-messages`) keeps the notifier changes
   only.
+- `neg_timing_checks` (bool, default `false`) — simulate negative
+  `$setuphold`/`$recrem` limits with delayed signals (`true`,
+  `--neg-timing-checks`; IEEE 1800-2009 31.9). Off, a negative limit counts
+  as 0 with a warning and explicit delayed signals are copies of their
+  signals (31.9.4). Negative `$nochange` offsets apply either way.
 - `plusargs` (array of strings) — arguments passed to the generated simulator
   (the arguments after `--`).
 

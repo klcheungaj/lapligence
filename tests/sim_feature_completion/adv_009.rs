@@ -378,30 +378,3 @@ fn invalid_checks_are_rejected_with_their_location() {
         );
     }
 }
-
-/// `$setuphold`, `$recrem`, `$timeskew`, `$fullskew` and negative
-/// `$nochange` offsets are ADV-010: rejected with their location.
-#[test]
-fn later_timing_check_forms_are_rejected_with_their_location() {
-    for edition in BOTH {
-        let args = ["--edition", edition];
-        sim_cli::reject_case_with_args(
-            SUITE,
-            "neg_recrem.v",
-            "unsupported timing check `$recrem` (not simulated yet) at",
-            &args,
-        );
-        sim_cli::reject_case_with_args(
-            SUITE,
-            "neg_fullskew.v",
-            "unsupported timing check `$fullskew` (not simulated yet) at",
-            &args,
-        );
-        sim_cli::reject_case_with_args(
-            SUITE,
-            "neg_nochange_offset.v",
-            "unsupported negative `$nochange` offset (not simulated yet) at",
-            &args,
-        );
-    }
-}

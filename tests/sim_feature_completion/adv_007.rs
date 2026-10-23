@@ -127,21 +127,6 @@ fn in_module_drivers_resolve_before_the_path_in_systemverilog() {
     );
 }
 
-/// Timing checks (ADV-009/010) are rejected with their location. The
-/// state-dependent, edge-sensitive and pulse constructs this test also
-/// rejected are simulated since ADV-008 (`adv_008.rs`).
-#[test]
-fn later_specify_constructs_are_rejected_with_their_location() {
-    for edition in BOTH {
-        sim_cli::reject_case_with_args(
-            SUITE,
-            "neg_timing_check.v",
-            "unsupported timing check `$setuphold` (not simulated yet) at",
-            &["--edition", edition],
-        );
-    }
-}
-
 /// Destinations the path mechanism cannot delay exactly are rejected.
 #[test]
 fn unsupported_destinations_are_rejected_with_their_location() {

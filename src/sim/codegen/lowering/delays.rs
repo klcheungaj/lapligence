@@ -242,6 +242,37 @@ impl<'a> Codegen<'a> {
         Ok((self.procedural_delay_ticks(check_node, expression)?, false))
     }
 
+    /// One timing check limit in signed scheduler ticks: a negative value
+    /// keeps its magnitude in the check's time unit (`$setuphold`/`$recrem`
+    /// limits, `$nochange` offsets; 31.9, 31.4.6).
+    pub(super) fn timing_limit_ticks_signed(
+        &mut self,
+        check_node: NodeId,
+        expression: NodeId,
+    ) -> Result<i64, String> {
+        let (ticks, negative) = self.timing_limit_ticks(check_node, expression)?;
+        let ticks = if negative {
+            let magnitude = match self.eval_decl_value_without_time_rounding(expression)? {
+                Val::Bits(value) => Val::Real(
+                    -(value
+                        .to_i128()
+                        .ok_or_else(|| "timing check limit must be known".to_owned())?
+                        as f64),
+                ),
+                Val::Real(value) => Val::Real(-value),
+                other => other,
+            };
+            let ticks =
+                self.delay_value_ticks(magnitude, None, self.timescale_of_node(check_node))?;
+            return i64::try_from(ticks)
+                .map(|ticks| -ticks)
+                .map_err(|_| "timing check limit exceeds 63 bits".to_owned());
+        } else {
+            ticks
+        };
+        i64::try_from(ticks).map_err(|_| "timing check limit exceeds 63 bits".to_owned())
+    }
+
     fn lower_expr_for_delay(&mut self, path: &str, expression: NodeId) -> Result<IrExpr, String> {
         let previous = self.round_time_literals;
         self.round_time_literals = false;

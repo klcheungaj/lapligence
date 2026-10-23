@@ -112,5 +112,6 @@ Line numbers are those of the `pdftotext -layout` extractions
 - Negative cases (`neg_*.v`) stop before the model runs: a vector notifier,
   a `$width` notifier without threshold, a `$period` edge list with rising and
   falling transitions, a missing limit, a non-constant limit and a `$width`
-  without an edge; `$recrem`, `$fullskew` and a negative `$nochange` offset
-  are ADV-010 and rejected with their location.
+  without an edge. `$setuphold`, `$recrem`, `$timeskew`, `$fullskew` and
+  negative `$nochange` offsets are covered by ADV-010
+  (`../adv_010/readme.md`).

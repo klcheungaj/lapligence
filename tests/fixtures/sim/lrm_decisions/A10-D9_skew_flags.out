@@ -1,0 +1,5 @@
+0 timer=x event=x remain=x full=x
+110 timer=0 event=x remain=x full=x
+115 timer=0 event=0 remain=0 full=x
+125 timer=0 event=0 remain=1 full=x
+255 timer=0 event=0 remain=1 full=0

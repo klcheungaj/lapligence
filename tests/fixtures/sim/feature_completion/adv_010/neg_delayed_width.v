@@ -1,9 +1,11 @@
-// Negative `$nochange` offsets shrink the window; they are ADV-010.
+// A delayed signal must have its signal's width (31.9.1).
 `timescale 1ns/1ns
 module m(input c, input d);
   reg n;
+  wire dc;
+  wire [1:0] dd;
   specify
-    $nochange(posedge c, d, -2, 0, n);
+    $setuphold(posedge c, d, -2, 5, n, , , dc, dd);
   endspecify
 endmodule
 module tb;

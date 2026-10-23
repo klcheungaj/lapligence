@@ -840,6 +840,11 @@ typedef struct llg_timing_check {
     uint64_t deadline;
     uint8_t open;
     uint8_t state;
+    /* Undelayed times of the data events a `$nochange` window decides at
+     * its trailing edge. */
+    int64_t* window_data;
+    uint32_t n_window_data;
+    uint32_t window_data_capacity;
 } llg_timing_check_t;
 
 typedef struct llg_timing_check_set llg_timing_check_set_t;

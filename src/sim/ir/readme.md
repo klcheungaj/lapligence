@@ -29,8 +29,13 @@ storage-bit terminals, `IrTimingCheck` rows (kind, reference and data
 `IrTimingEvent` with terminal, transition mask and optional
 `IrTimingCondition`, limits in ticks, notifier index, source origin and report
 text), condition expressions and a notifier count, plus the model-wide
-`IrTimingCheckOptions`. `TimingCheckStep` names a set and the one-bit
-`TimingNotify` runtime query a set's notifier. Validation checks terminal
+`IrTimingCheckOptions` (checks, notifiers, messages, negative). ADV-010
+adds `$timeskew`/`$fullskew` kinds with `flags`, a second event condition
+(`condition2`, the `$setuphold`/`$recrem` timestamp or timecheck
+condition), `IrTimingLine` delayed signals per set (source and target
+terminals, net-slot or variable storage, rise/fall ticks) and the hidden
+`IrModel::timing_doorbell` variable; the unit statement `TimingCheckStep`
+runs every marked set. Validation checks terminal
 ranges, event terminals, edge bits, condition and notifier indices, edges on
 `$period`/`$width`/`$nochange` references and the derived data event of
 single-signal checks; traversals and the storage audit walk the conditions and
