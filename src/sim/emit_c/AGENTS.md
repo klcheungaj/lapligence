@@ -192,7 +192,10 @@ borrow its immutable owners or clone when a retained result is required. Initial
 constants before model defaults/initializers and destroy them after runtime queues
 and model storage at close. One-limb literals use the initializer directly,
 keeping them cheap with inline small values and avoiding extra startup owners.
-Registration follows deterministic typed emission, never generated
+An unsigned constant of at least `PERIODIC_CONSTANT_MIN_BITS` (4096) bits that
+repeats its shortest exact period at least four times (such as a dense array's
+default value) registers that period and a startup `sv4_repeat` of it, so its
+table does not grow with the element count. Registration follows deterministic typed emission, never generated
 C parsing or corpus-specific rules. Ending a local scope drops its lexical cell
 reference; pending NBA/clocking records retain the descriptor until commit/discard.
 This protects identity, not shared/COW packed values. Preserve procedure-root
@@ -294,14 +297,35 @@ Ambiguous muxes evaluate both arms before merging (real results become zero).
 Do not emit detached predicates or bypass eligibility through wrappers.
 
 `owned/repeated_values.rs` owns concatenation append emission. Consecutive equal
-typed operands use a bounded loop at `REPEAT_VALUE_MIN_COUNT` append operations;
-the first operand still seeds the result outside the loop. Evaluate, append and
+typed operands use a bounded loop at `REPEAT_VALUE_MIN_COUNT` append operations,
+and so does a group of 2 to `REPEAT_GROUP_MAX_OPERANDS` operands repeated that
+often (one record of a defaulted record array); the first operand still seeds
+the result outside the loop. Evaluate, append and
 destroy each operand inside the loop, preserving changing reads and mutations.
 The accumulator's runtime width grows each iteration; its Rust metadata records
 the final checked width. Only explicitly admitted numeric kinds whose temporary
 slots are released locally qualify. Calls and other kinds with distinct resume
 sites or lexical storage remain expanded. Declare loop storage through `Frame`
 and emit all braces through `Frame::line` so scope narrowing and C9 reloads hold.
+
+`owned/dense_cells.rs` keeps whole unpacked-array values proportional to their
+shape. Lowering spells them per element; a run of at least
+`LLG_DENSE_CELL_RUN_MIN` consecutive cells of one packed fixed array (not real,
+nor a net for writes) is instead one runtime range call: `llg_dense_cells_*` on
+directly addressed storage, `llg_fixed_array_cells_*` on descriptor storage
+(sparse, activation or descriptor-flagged arrays), whose reads peek without
+materializing cells. Reads: concatenation operands, with nested
+concatenations spliced in, that are constant-index whole-cell `ArrayRead`s of
+consecutive storage offsets become one `*_image` call (not under sampled
+reads). Writes: consecutive `Assign`s in one statement sequence to
+consecutive whole cells, with one `nba` flag, whose right sides are one constant
+(`*_fill`) or same-width slices of one captured local stepping down by the cell
+width, under same-width sign conversions or `ToTwoState` (`*_store`); and a
+left-to-right streaming target, as an assignment or call copy-out, whose leaves
+are exactly such a run. The runtime writes cells in order through
+`llg_ba`/`llg_nba_after` after the same cast and two-state conversion as
+`store`, so publication, force and NBA behaviour are per cell as before.
+Shorter runs and any other shape keep per-element code.
 
 ## Storage, references and publication
 

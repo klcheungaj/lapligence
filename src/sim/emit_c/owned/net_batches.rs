@@ -69,10 +69,14 @@ impl Frame<'_, '_> {
     }
 
     /// Emit a statement sequence, folding runs of consecutive structural net
-    /// contributions into one descriptor-table loop.
+    /// contributions into one descriptor-table loop and runs of whole-cell
+    /// stores into consecutive dense array cells into one range call.
     pub(super) fn statements(&mut self, mut statements: &[IrStmt]) -> Result<(), String> {
         while let Some(statement) = statements.first() {
             let mut consumed = self.net_batch(statements)?;
+            if consumed == 0 {
+                consumed = self.dense_cell_stores(statements)?;
+            }
             if consumed == 0 {
                 self.statement(statement)?;
                 consumed = 1;

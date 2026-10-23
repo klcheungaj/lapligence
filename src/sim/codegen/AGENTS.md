@@ -122,6 +122,12 @@ that renames a signal's `c_name` or adds `net_alias` bindings in place calls
   initializers. Capture selector once; known truth evaluates one arm, ambiguity
   evaluates both with type-specific merging. Array assignment snapshots all RHS
   cells before writes and retains explicit conversions/casts on fallback paths.
+- A whole dense packed view of at least `LLG_DENSE_CELL_RUN_MIN` cells is
+  captured as one image (the concatenation of its element reads) and scattered
+  by slices, so the emitter reads and writes it as one cell run
+  ([emitter](../emit_c/AGENTS.md)). Constant pattern leaves and constant
+  copy-out selectors need no capture. Leaf-wise record equality ANDs its
+  leaves as a balanced tree, so IR depth stays logarithmic in the leaf count.
 - Positional-pattern assignment snapshots the RHS, freezes all destination
   selectors before any write, then scatters. Fixed bit-stream casts convert the
   complete RHS, including nested state-domain conversion, before scattering;

@@ -908,11 +908,7 @@ impl Frame<'_, '_> {
         for (target, storage) in copyouts {
             let mark = self.cancellation_mark();
             let value = self.read_binding(&storage);
-            let target = self.resolve_copy_out_target(target)?;
-            for (target, piece) in self.prepare_captured_assignment(target, value)? {
-                self.store(&target, piece, false, "0")?;
-                self.release_target(target);
-            }
+            self.copy_out(target, value)?;
             self.cancellation_check_since(mark)?;
         }
         for (target, storage, two_state) in fixed_copyouts {
@@ -1035,6 +1031,24 @@ impl Frame<'_, '_> {
         }
     }
 
+    /// Write one copy-out value to its target. A target that is a run of
+    /// whole dense array cells is written with one range call.
+    fn copy_out(&mut self, target: CopyOutTarget<'_>, value: Value) -> Result<(), String> {
+        let value = match &target {
+            CopyOutTarget::AtCopyOut(lhs) => match self.dense_stream_store(lhs, value, false)? {
+                Some(value) => value,
+                None => return Ok(()),
+            },
+            CopyOutTarget::Bound(_) => value,
+        };
+        let target = self.resolve_copy_out_target(target)?;
+        for (target, piece) in self.prepare_captured_assignment(target, value)? {
+            self.store(&target, piece, false, "0")?;
+            self.release_target(target);
+        }
+        Ok(())
+    }
+
     pub(super) fn call_statement(&mut self, call: &IrCall) -> Result<(), String> {
         self.begin_block(&[]);
         let function = self.ctx.model.func(call.f).clone();
@@ -1081,11 +1095,7 @@ impl Frame<'_, '_> {
                 .ok_or_else(|| format!("unknown copyout {name}"))?;
             let value = self.read_binding(&binding);
             let value = self.convert(value, width, signed, false, false);
-            let target = self.resolve_copy_out_target(target)?;
-            for (target, piece) in self.prepare_captured_assignment(target, value)? {
-                self.store(&target, piece, false, "0")?;
-                self.release_target(target);
-            }
+            self.copy_out(target, value)?;
             self.cancellation_check_since(mark)?;
         }
         self.end_block();

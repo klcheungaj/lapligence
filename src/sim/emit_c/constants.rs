@@ -104,6 +104,74 @@ pub(crate) fn emit_const(c: &IrConst) -> String {
     }
 }
 
+/// Narrowest unsigned packed constant that [`periodic_constant`] splits into
+/// one period and a repetition count. Below it the limb tables are at most 64
+/// words per plane; at and above it a whole-array constant (such as the
+/// default value of a dense unpacked array formal) would otherwise spell
+/// every element's bits into `model.c`.
+pub(crate) const PERIODIC_CONSTANT_MIN_BITS: u32 = 4096;
+
+/// Fewest repetitions of its period for which a constant is emitted as one
+/// period and a replication; the same count as `REPEAT_VALUE_MIN_COUNT`.
+const PERIODIC_CONSTANT_MIN_REPEATS: u32 = 4;
+
+/// Bits `start..start + length` (`length <= 64`) of one limb plane; limbs
+/// past the plane's end read as zero.
+fn plane_window(plane: &[u64], start: usize, length: usize) -> u64 {
+    let word = |index: usize| plane.get(index).copied().unwrap_or(0);
+    let (index, shift) = (start / 64, start % 64);
+    let mut value = word(index) >> shift;
+    if shift != 0 {
+        value |= word(index + 1) << (64 - shift);
+    }
+    if length < 64 {
+        value &= (1u64 << length) - 1;
+    }
+    value
+}
+
+/// The shortest exact period of a wide unsigned packed constant, as that
+/// period's constant and the number of repetitions, when the constant is at
+/// least [`PERIODIC_CONSTANT_MIN_BITS`] wide and repeats its period at least
+/// `PERIODIC_CONSTANT_MIN_REPEATS` times. Replicating the period
+/// (`{count{period}}`, LSB-first) reproduces the constant exactly in all
+/// three planes.
+pub(crate) fn periodic_constant(c: &IrConst) -> Option<(IrConst, u32)> {
+    if c.real.is_some() || c.signed || c.width < PERIODIC_CONSTANT_MIN_BITS {
+        return None;
+    }
+    let width = c.width as usize;
+    let planes = [&c.bits, &c.x, &c.z];
+    let repeats = |period: usize| {
+        // Periodic with `period` exactly when every bit equals the bit one
+        // period below it.
+        (period..width).step_by(64).all(|start| {
+            let length = (width - start).min(64);
+            planes.iter().all(|plane| {
+                plane_window(plane, start, length) == plane_window(plane, start - period, length)
+            })
+        })
+    };
+    let max_period = width / PERIODIC_CONSTANT_MIN_REPEATS as usize;
+    let period =
+        (1..=max_period).find(|&period| width.is_multiple_of(period) && repeats(period))?;
+    let pattern = |plane: &[u64]| {
+        (0..period.div_ceil(64))
+            .map(|word| plane_window(plane, word * 64, (period - word * 64).min(64)))
+            .collect::<Vec<_>>()
+    };
+    let constant = IrConst {
+        bits: pattern(&c.bits),
+        x: pattern(&c.x),
+        z: pattern(&c.z),
+        width: u32::try_from(period).ok()?,
+        signed: false,
+        real: None,
+        fill: None,
+    };
+    Some((constant, u32::try_from(width / period).ok()?))
+}
+
 /// Move the limb arrays of a multi-limb [`emit_const`] constructor to
 /// file-scope `static const` tables named `{name}_bits`/`_x`/`_z`, appending
 /// their definitions to `tables`, and return the constructor that reads them.
@@ -326,5 +394,102 @@ impl PackedConstants {
         }
         out.push_str("}\n");
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn constant(width: u32, signed: bool, bit: impl Fn(usize) -> (bool, bool, bool)) -> IrConst {
+        let limbs = width.div_ceil(64) as usize;
+        let mut planes = [vec![0u64; limbs], vec![0u64; limbs], vec![0u64; limbs]];
+        for index in 0..width as usize {
+            let (b, x, z) = bit(index);
+            for (plane, set) in planes.iter_mut().zip([b, x, z]) {
+                if set {
+                    plane[index / 64] |= 1 << (index % 64);
+                }
+            }
+        }
+        let [bits, x, z] = planes;
+        IrConst {
+            bits,
+            x,
+            z,
+            width,
+            signed,
+            real: None,
+            fill: None,
+        }
+    }
+
+    /// `{count{period}}`, least significant repetition first.
+    fn replicate(period: &IrConst, count: u32) -> IrConst {
+        let width = period.width as usize;
+        constant(period.width * count, false, |index| {
+            let bit =
+                |plane: &[u64]| plane[(index % width) / 64] >> ((index % width) % 64) & 1 == 1;
+            (bit(&period.bits), bit(&period.x), bit(&period.z))
+        })
+    }
+
+    #[test]
+    fn element_periodic_constants_split_into_one_period() {
+        // 4,096 elements of a 36-bit record: 4 X bits over a 32-bit zero,
+        // with one Z bit in the zero, as a dense array's default value.
+        let record = |index: usize| {
+            let bit = index % 36;
+            (bit == 7, bit >= 32, bit == 9)
+        };
+        let value = constant(36 * 4096, false, record);
+        let (period, count) = periodic_constant(&value).expect("periodic");
+        assert_eq!((period.width, count), (36, 4096));
+        assert_eq!(replicate(&period, count), value);
+
+        let ones = constant(PERIODIC_CONSTANT_MIN_BITS, false, |_| (true, false, false));
+        let (period, count) = periodic_constant(&ones).expect("uniform");
+        assert_eq!((period.width, count), (1, PERIODIC_CONSTANT_MIN_BITS));
+        assert_eq!(replicate(&period, count), ones);
+
+        // A 1,100-bit period over 4,400 bits crosses limb boundaries.
+        let wide = constant(4400, false, |index| {
+            ((index % 1100) % 3 == 0, index % 1100 == 5, false)
+        });
+        let (period, count) = periodic_constant(&wide).expect("wide period");
+        assert_eq!((period.width, count), (1100, 4));
+        assert_eq!(replicate(&period, count), wide);
+    }
+
+    #[test]
+    fn other_constants_keep_their_tables() {
+        let record = |index: usize| (index % 36 == 7, false, false);
+        // Below the width threshold, signed, or too few repetitions.
+        assert!(
+            periodic_constant(&constant(PERIODIC_CONSTANT_MIN_BITS - 1, false, |_| (
+                true, false, false
+            )))
+            .is_none()
+        );
+        assert!(periodic_constant(&constant(36 * 4096, true, record)).is_none());
+        assert!(periodic_constant(&constant(4400, false, |index| (
+            index % 1467 == 0,
+            false,
+            false
+        )))
+        .is_none());
+        // One differing bit in the last repetition, in each plane.
+        for plane in 0..3 {
+            let value = constant(36 * 4096, false, |index| {
+                let (b, x, z) = record(index);
+                let last = index == 36 * 4096 - 2;
+                (
+                    b ^ (last && plane == 0),
+                    x ^ (last && plane == 1),
+                    z ^ (last && plane == 2),
+                )
+            });
+            assert!(periodic_constant(&value).is_none(), "plane {plane}");
+        }
     }
 }

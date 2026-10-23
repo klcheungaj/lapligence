@@ -785,6 +785,167 @@ void llg_fixed_array_merge(llg_fixed_array_t* dst, const llg_fixed_array_t* left
     llg_value_scope_end(scope);
 }
 
+/* Consecutive cells of dense storage (`dense`) or of a descriptor array
+ * (`array`, from cell `first`). Descriptor reads peek, so unwritten cells are
+ * not materialized; writes publish through the cell owner. */
+typedef struct {
+    sv4_t* dense;
+    llg_fixed_array_t* array;
+    uint64_t first;
+} fixed_cell_run_t;
+
+static const sv4_t* fixed_run_peek(const fixed_cell_run_t* run, uint64_t i) {
+    return run->dense ? &run->dense[i] : llg_fixed_array_peek(run->array, run->first + i);
+}
+
+static sv4_t* fixed_run_cell(const fixed_cell_run_t* run, uint64_t i) {
+    return run->dense ? &run->dense[i] : llg_fixed_array_cell(run->array, run->first + i);
+}
+
+static void fixed_run_check(const fixed_cell_run_t* run, uint64_t count) {
+    if (!run->dense && (!run->array || run->first > run->array->total ||
+                        count > run->array->total - run->first))
+        fixed_bad_state("invalid fixed cell run");
+}
+
+/* OR the low `width` bits of `value` into `plane` at bit `offset`. */
+static void fixed_plane_deposit(uint64_t* plane, uint64_t offset, uint64_t value,
+                                uint32_t width) {
+    if (width < 64u) value &= (UINT64_C(1) << width) - 1u;
+    size_t word = (size_t)(offset / 64u);
+    unsigned shift = (unsigned)(offset % 64u);
+    plane[word] |= value << shift;
+    if (shift && shift + width > 64u) plane[word + 1] |= value >> (64u - shift);
+}
+
+static sv4_t fixed_run_image(const fixed_cell_run_t* run, uint64_t count) {
+    fixed_run_check(run, count);
+    uint32_t width = count ? llg_sv4_width(*fixed_run_peek(run, 0)) : 0;
+    if (!width || count > (uint64_t)(LLG_SUPPORTED_WIDTH_LIMIT - 1u) / width)
+        fixed_bad_state("invalid cell run image");
+    uint64_t total = count * width;
+    size_t words = (size_t)((total + 63u) / 64u);
+    /* Gather every cell's words into three limb planes and construct the
+     * image once: inserting cell by cell into a wide value renormalizes the
+     * whole value per cell, which is quadratic in the run length. The first
+     * cell is the most significant. A peeked cell is read completely before
+     * the next peek, which may materialize a range cell. */
+    uint64_t* planes = llg_checked_calloc(3u * words, sizeof(uint64_t), "cell run image");
+    uint64_t offset = total;
+    for (uint64_t i = 0; i < count; ++i) {
+        const sv4_t* cell = fixed_run_peek(run, i);
+        if (llg_sv4_width(*cell) != width) fixed_bad_state("cell run width mismatch");
+        offset -= width;
+        for (size_t word = 0; word < llg_sv4_words(*cell); ++word) {
+            uint32_t bits = width - (uint32_t)(word * 64u);
+            if (bits > 64u) bits = 64u;
+            for (unsigned plane = 0; plane < 3u; ++plane)
+                fixed_plane_deposit(planes + plane * words, offset + word * 64u,
+                                    llg_sv4_word(*cell, word, plane), bits);
+        }
+    }
+    sv4_t image = sv4_from_limbs(planes, planes + words, planes + 2u * words,
+                                 (uint32_t)total, 0);
+    free(planes);
+    return image;
+}
+
+/* Bits `start .. start + width - 1` (`width <= 64`) of one plane of `value`. */
+static uint64_t fixed_plane_window(sv4_t value, uint64_t start, uint32_t width,
+                                   unsigned plane) {
+    size_t word = (size_t)(start / 64u);
+    unsigned shift = (unsigned)(start % 64u);
+    uint64_t result = llg_sv4_word(value, word, plane) >> shift;
+    if (shift && shift + width > 64u)
+        result |= llg_sv4_word(value, word + 1, plane) << (64u - shift);
+    return width < 64u ? result & ((UINT64_C(1) << width) - 1u) : result;
+}
+
+static void fixed_run_store(const fixed_cell_run_t* run, uint64_t count, const sv4_t* image,
+                            int64_t left, uint32_t width, int is_signed, int two_state,
+                            int nba) {
+    fixed_run_check(run, count);
+    if (!image || !width || left < (int64_t)width - 1 ||
+        (uint64_t)left >= llg_sv4_width(*image) ||
+        count > ((uint64_t)left + 1u) / width)
+        fixed_bad_state("invalid cell run store");
+    /* Each cell is built from its image words directly; a part select per
+     * cell would go through the general selection path. */
+    size_t words = (size_t)((width + 63u) / 64u);
+    uint64_t one[3];
+    uint64_t* planes = words == 1 ? one :
+        llg_checked_calloc(3u * words, sizeof(uint64_t), "cell run store");
+    for (uint64_t i = 0; i < count; ++i, left -= (int64_t)width) {
+        uint64_t low = (uint64_t)left - width + 1u;
+        for (size_t word = 0; word < words; ++word) {
+            uint32_t bits = width - (uint32_t)(word * 64u);
+            if (bits > 64u) bits = 64u;
+            for (unsigned plane = 0; plane < 3u; ++plane)
+                planes[plane * words + word] =
+                    fixed_plane_window(*image, low + word * 64u, bits, plane);
+        }
+        sv4_t value = sv4_from_limbs(planes, planes + words, planes + 2u * words, width,
+                                     (int8_t)is_signed);
+        if (two_state) sv4_replace(&value, sv4_to_two_state(value));
+        sv4_t* cell = fixed_run_cell(run, i);
+        if (nba) llg_nba_after(cell, value, 0);
+        else llg_ba(cell, value);
+        sv4_destroy(&value);
+    }
+    if (planes != one) free(planes);
+}
+
+static void fixed_run_fill(const fixed_cell_run_t* run, uint64_t count, const sv4_t* value,
+                           int nba) {
+    fixed_run_check(run, count);
+    if (!value) fixed_bad_state("invalid cell run fill");
+    for (uint64_t i = 0; i < count; ++i) {
+        sv4_t* cell = fixed_run_cell(run, i);
+        if (nba) llg_nba_after(cell, *value, 0);
+        else llg_ba(cell, *value);
+    }
+}
+
+sv4_t llg_dense_cells_image(const sv4_t* cells, uint64_t count) {
+    if (!cells) fixed_bad_state("invalid dense cell image");
+    /* Read only: the run's cells are only peeked. */
+    fixed_cell_run_t run = {(sv4_t*)cells, NULL, 0};
+    return fixed_run_image(&run, count);
+}
+
+void llg_dense_cells_store(sv4_t* cells, uint64_t count, const sv4_t* image, int64_t left,
+                           uint32_t width, int is_signed, int two_state, int nba) {
+    if (!cells) fixed_bad_state("invalid dense cell store");
+    fixed_cell_run_t run = {cells, NULL, 0};
+    fixed_run_store(&run, count, image, left, width, is_signed, two_state, nba);
+}
+
+void llg_dense_cells_fill(sv4_t* cells, uint64_t count, const sv4_t* value, int nba) {
+    if (!cells) fixed_bad_state("invalid dense cell fill");
+    fixed_cell_run_t run = {cells, NULL, 0};
+    fixed_run_fill(&run, count, value, nba);
+}
+
+sv4_t llg_fixed_array_cells_image(const llg_fixed_array_t* array, uint64_t first,
+                                  uint64_t count) {
+    /* Read only: descriptor cells are only peeked. */
+    fixed_cell_run_t run = {NULL, (llg_fixed_array_t*)array, first};
+    return fixed_run_image(&run, count);
+}
+
+void llg_fixed_array_cells_store(llg_fixed_array_t* array, uint64_t first, uint64_t count,
+                                 const sv4_t* image, int64_t left, uint32_t width,
+                                 int is_signed, int two_state, int nba) {
+    fixed_cell_run_t run = {NULL, array, first};
+    fixed_run_store(&run, count, image, left, width, is_signed, two_state, nba);
+}
+
+void llg_fixed_array_cells_fill(llg_fixed_array_t* array, uint64_t first, uint64_t count,
+                                const sv4_t* value, int nba) {
+    fixed_cell_run_t run = {NULL, array, first};
+    fixed_run_fill(&run, count, value, nba);
+}
+
 void llg_real_cells_order(double* cells, uint64_t count, uint64_t element_cells,
                           int method) {
     if (!cells || count < 2 || !element_cells) return;

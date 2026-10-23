@@ -154,6 +154,28 @@ void llg_fixed_array_dense_source(llg_fixed_array_t*, const sv4_t*, uint64_t, ui
 int llg_fixed_array_bitstream_source(llg_fixed_array_t*, const llg_bitstream_t*, uint32_t);
 /* Append every cell in storage order to a runtime-sized bit stream. */
 void llg_bitstream_append_fixed_array(llg_bitstream_t*, const llg_fixed_array_t*);
+/* Whole-value access to `count` consecutive cells of dense array storage, so
+ * generated code makes one call per run instead of one access per element.
+ * dense_cells_image returns the cells' concatenation, the first cell most
+ * significant. dense_cells_store writes cell i from the borrowed `image` bits
+ * `left - i*width` down to `left - (i+1)*width + 1` (in range), cast to the
+ * cell's width and sign and cleared of X/Z when `two_state`. dense_cells_fill
+ * writes the borrowed `value` to every cell. Writes are blocking (`llg_ba`)
+ * or zero-delay nonblocking (`llg_nba_after`), in cell order. */
+sv4_t llg_dense_cells_image(const sv4_t* cells, uint64_t count);
+void llg_dense_cells_store(sv4_t* cells, uint64_t count, const sv4_t* image, int64_t left,
+                           uint32_t width, int is_signed, int two_state, int nba);
+void llg_dense_cells_fill(sv4_t* cells, uint64_t count, const sv4_t* value, int nba);
+/* The same three operations on `count` consecutive cells of a descriptor
+ * array from linear cell `first`. Reads peek (unwritten cells read the
+ * array's initial value and stay unmaterialized); writes materialize. */
+sv4_t llg_fixed_array_cells_image(const llg_fixed_array_t* array, uint64_t first,
+                                  uint64_t count);
+void llg_fixed_array_cells_store(llg_fixed_array_t* array, uint64_t first, uint64_t count,
+                                 const sv4_t* image, int64_t left, uint32_t width,
+                                 int is_signed, int two_state, int nba);
+void llg_fixed_array_cells_fill(llg_fixed_array_t* array, uint64_t first, uint64_t count,
+                                const sv4_t* value, int nba);
 
 // Keep the library and every model translation unit on the host-allocation
 // declaration contract. CMake supplies the same definition when compiling
@@ -3065,6 +3087,9 @@ int llg_rt_command_line(char*** argv);
  * arguments are borrowed by address; string arguments are consumed through
  * their address and left empty, like the returning forms' by-value strings. */
 void llg_fixed_array_compare_to(sv4_t* dst, const llg_fixed_array_t* p0, const llg_fixed_array_t* p1, int p2, int p3);
+void llg_dense_cells_image_to(sv4_t* dst, const sv4_t* cells, uint64_t count);
+void llg_fixed_array_cells_image_to(sv4_t* dst, const llg_fixed_array_t* array, uint64_t first,
+                                  uint64_t count);
 void llg_fixed_array_stream_source_to(sv4_t* dst, const llg_fixed_array_t* array, int64_t declaration_left, int64_t declaration_right, uint32_t element_width, const sv4_t* fallback, int selector_kind, const sv4_t* first, const sv4_t* second);
 void llg_net_alias_read_to(sv4_t* dst, llg_net_alias_t* alias);
 void llg_q_full_to(sv4_t* dst, const sv4_t* q_id, sv4_t* status);

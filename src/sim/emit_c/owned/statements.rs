@@ -366,10 +366,12 @@ impl Frame<'_, '_> {
                 } else {
                     self.expression(rhs)?
                 };
-                let writes = self.prepare_assignment(lhs, value)?;
-                for (target, value) in writes {
-                    self.store(&target, value, *nba, "0")?;
-                    self.release_target(target);
+                if let Some(value) = self.dense_stream_store(lhs, value, *nba)? {
+                    let writes = self.prepare_assignment(lhs, value)?;
+                    for (target, value) in writes {
+                        self.store(&target, value, *nba, "0")?;
+                        self.release_target(target);
+                    }
                 }
             }
             IrStmt::DelayedAssign { lhs, rhs, ticks } => {

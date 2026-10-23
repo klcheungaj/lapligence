@@ -72,9 +72,23 @@ against code whose size, and compile time, grows with the element count.
 | Combinational UDP | One truth table per primitive, evaluated by `sv4_udp_eval` | UDP model GCC 32 → 0.2 s; 1.7 MB → 50 kB of C | 15% faster |
 | Combinational UDP lookup | Dense `3^n` output index per definition up to 10 inputs; inputs read in place | 4,096-instance mux array: 15.8 → 9.8 MB of C | 2,000 input steps: legacy about 24 → 13 s, compact 9.2 → 5.5 s (shared host) |
 | Repeated identical concatenation operands | Loop from `REPEAT_VALUE_MIN_COUNT` (4) repeats | deep-defaults GCC 43 → 4 s | 2.7 → 1.9 ms |
+| Whole unpacked-array values (copy, compare, `?:` merge, formals, NBA, continuous assignment, `%p`) | One runtime call per run of at least `LLG_DENSE_CELL_RUN_MIN` (6) consecutive cells, in dense or descriptor storage | 256 elements: up to 1.24 MB → 24 kB of C, GCC up to 83 → 0.2 s and 2.3 GB → 41 MB; 4,096 elements: 10-19 MB → 14-22 kB, and the per-element model did not finish compiling at `-O3` in 3 hours; 5,000-element task and `%p` fixture 17.3 MB → 41 kB | 144 pairs at 16 and 256 elements: median 0.26× (0.03-0.26× for whole-value operations at 256); 4,096-record copy at `-O1`: 7.27 → 0.93 s |
+| Wide periodic constants (whole-array defaults) | One period, replicated at startup, from `PERIODIC_CONSTANT_MIN_BITS` (4,096) bits and 4 repeats | 4,096-record formal default: 60 kB → under 1 kB of C | Startup only |
 
-The threshold is 4 because shorter runs gained at most a few percent of
-compile time. Below the threshold, emission is unchanged.
+The repeated-operand threshold is 4 because shorter runs gained at most a
+few percent of compile time. Below the threshold, emission is unchanged.
+
+The cell-run threshold is 6 cells, from 90 pairs of per-element code against
+range calls (8-bit cells, 36-bit records and nested records; copy, `?:`
+merge, `==`, task formals and default initialization; 4 to 16 elements).
+From 6 cells every pair was faster (at most 0.72×, median 0.56×; 0.38× at
+16). At 4 and 5 cells the medians were 0.65× and 0.62×, but copying 4
+records and initializing 5 nested records measured 1.16× and 1.19× in single
+pairs, so shorter runs keep per-element code, which stays bounded by the
+threshold. The range calls gather a run into limb words and build the value
+once: inserting cell by cell renormalized the whole wide value per cell,
+which made a 4,096-record copy quadratic (1.7× slower than per-element
+code at `-O1` instead of 0.13×).
 
 ### Coroutine frame: C locals wherever possible
 

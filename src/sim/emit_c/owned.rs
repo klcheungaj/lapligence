@@ -5,7 +5,7 @@
 //! Descriptor slots are reused within a procedure; lexical locals use separate
 //! registered scopes so queued writes can retain a stable target after exit.
 
-use super::constants::{c_string_literal, emit_const, round_shortreal};
+use super::constants::{c_string_literal, emit_const, periodic_constant, round_shortreal};
 use super::context::RCtx;
 use super::frame_layout::{declaration, FrameLayout, FrameStorage};
 use crate::sim::execution::{CallMechanism, CoroutineId, ExecutionAnalysis, SuspensionOperation};
@@ -22,6 +22,7 @@ mod clocking;
 pub(super) mod containers;
 mod control;
 pub(super) mod coverage;
+mod dense_cells;
 mod event_waits;
 mod events;
 mod expressions;

@@ -2446,10 +2446,7 @@ impl Codegen<'_> {
         }
         let equality = match &tagged {
             Some(layout) => native_tagged_equality(layout, case, equalities, tags)?,
-            None => equalities
-                .into_iter()
-                .map(|(_, equal)| equal)
-                .reduce(|previous, next| cmp_expr_ir(IrBinOp::LogAnd, previous, next))
+            None => balanced_log_and(equalities.into_iter().map(|(_, equal)| equal).collect())
                 .ok_or("native record comparison has no leaves")?,
         };
         let result = if matches!(op, Operation::NotEqual | Operation::CaseNotEqual) {

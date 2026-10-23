@@ -4,8 +4,15 @@ use super::*;
 /// Minimum number of identical append operations emitted as a loop.
 pub(super) const REPEAT_VALUE_MIN_COUNT: usize = 4;
 
+/// Longest group of different operands whose repetitions are emitted as one
+/// loop (one record of a fixed array of records filled from a default).
+const REPEAT_GROUP_MAX_OPERANDS: usize = 64;
+
 impl Frame<'_, '_> {
     pub(super) fn concat(&mut self, parts: &[IrExpr]) -> Result<Value, String> {
+        if let Some(leaves) = self.dense_concat_leaves(parts) {
+            return self.concat_dense_leaves(&leaves);
+        }
         let (first, mut rest) = parts
             .split_first()
             .ok_or_else(|| "empty concatenation".to_owned())?;
@@ -28,6 +35,24 @@ impl Frame<'_, '_> {
                 self.line("}");
                 result.width = width;
                 rest = &rest[count..];
+            } else if let Some((period, repeats)) = repeated_group(rest) {
+                let group = &rest[..period];
+                let width = group
+                    .iter()
+                    .try_fold(0u32, |width, part| width.checked_add(part.width))
+                    .and_then(|width| u32::try_from(repeats).ok()?.checked_mul(width))
+                    .and_then(|width| result.width.checked_add(width))
+                    .ok_or_else(|| "concatenation width overflow".to_owned())?;
+                let (ordinal, declaration) = self.loop_variable("uint32_t", "value_repeat");
+                self.line(format!(
+                    "for ({declaration} = 0; {ordinal} < {repeats}U; ++{ordinal}) {{"
+                ));
+                for part in group {
+                    result = self.concat_append(result, part)?;
+                }
+                self.line("}");
+                result.width = width;
+                rest = &rest[period * repeats..];
             } else {
                 for part in &rest[..count] {
                     result = self.concat_append(result, part)?;
@@ -53,6 +78,22 @@ impl Frame<'_, '_> {
         self.discard(value);
         Ok(result)
     }
+}
+
+/// The shortest group of two or more repeatable operands that starts
+/// `parts` and repeats at least `REPEAT_VALUE_MIN_COUNT` times in a row, with
+/// its repetition count.
+fn repeated_group(parts: &[IrExpr]) -> Option<(usize, usize)> {
+    let longest = REPEAT_GROUP_MAX_OPERANDS.min(parts.len() / REPEAT_VALUE_MIN_COUNT);
+    (2..=longest).find_map(|period| {
+        let group = &parts[..period];
+        let repeats = parts
+            .chunks_exact(period)
+            .take_while(|chunk| *chunk == group)
+            .count();
+        (repeats >= REPEAT_VALUE_MIN_COUNT && group.iter().all(repeatable_operand))
+            .then_some((period, repeats))
+    })
 }
 
 fn repeatable_operand(expr: &IrExpr) -> bool {

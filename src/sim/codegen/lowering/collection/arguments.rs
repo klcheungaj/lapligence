@@ -1175,6 +1175,11 @@ impl<'a> Codegen<'a> {
                     "real-valued selector in subroutine output/inout actual `{tag}` is not supported"
                 ));
             }
+            // A constant reads the same at the call and at copy-out; keeping
+            // it lets the whole-array element writes stay one cell run.
+            if matches!(expr.kind, IrExprKind::Const(_)) {
+                return Ok(expr);
+            }
             let name = format!("_call_idx_{tag}_{}", *sequence);
             *sequence += 1;
             let frozen = IrExpr::new(

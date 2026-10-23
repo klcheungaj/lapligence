@@ -1183,6 +1183,68 @@ impl<'a> Codegen<'a> {
         IrExpr::new(IrExprKind::LocalRead(name), width, signed, None)
     }
 
+    /// Capture a whole dense packed view of at least `LLG_DENSE_CELL_RUN_MIN`
+    /// cells as one image, read in view order before any write, and project
+    /// its cells. The image read and the element stores of its slices are
+    /// then one runtime range call each, not one access per element.
+    fn p30_view_image_values(
+        &self,
+        lhs: NodeId,
+        rhs: NodeId,
+        view: &P30ArrayView,
+        captures: &mut Vec<IrStmt>,
+    ) -> Option<Vec<IrExpr>> {
+        let count = view.coordinates.len();
+        let element_width = view.array.elem_width;
+        let array = self.reference_array(view.array.ir);
+        if view.array.real
+            || element_width == 0
+            || count < crate::sim::ir::LLG_DENSE_CELL_RUN_MIN
+            || self.model.arrays[array].sparse()
+        {
+            return None;
+        }
+        let width = u32::try_from(count)
+            .ok()
+            .and_then(|count| element_width.checked_mul(count))
+            .filter(|width| *width <= LLG_MAX_WIDTH)?;
+        let reads = view
+            .coordinates
+            .iter()
+            .map(|coordinates| {
+                IrExpr::new(
+                    IrExprKind::ArrayRead {
+                        arr: array,
+                        indices: coordinates.clone(),
+                        elem_sel: IrElemSel::Whole,
+                    },
+                    element_width,
+                    view.array.signed,
+                    None,
+                )
+            })
+            .collect();
+        let image = IrExpr::new(IrExprKind::Concat { parts: reads }, width, false, None);
+        let image = self.p30_capture_value(lhs, rhs, 0, image, captures);
+        Some(
+            (0..u32::try_from(count).ok()?)
+                .map(|index| {
+                    let right = width - (index + 1) * element_width;
+                    IrExpr::new(
+                        IrExprKind::PartSel {
+                            base: Box::new(image.clone()),
+                            left: i64::from(right + element_width - 1),
+                            right: i64::from(right),
+                        },
+                        element_width,
+                        false,
+                        None,
+                    )
+                })
+                .collect(),
+        )
+    }
+
     /// Capture a bounded fixed integral value before projecting its cells.
     /// The caller retains specialized array conversions; this fallback admits
     /// other expressions by owned result shape, including module conditionals.
@@ -1374,7 +1436,13 @@ impl<'a> Codegen<'a> {
                 match source {
                     P30PatternSource::Leaf(node) => {
                         let value = self.lower_expr(path, node)?;
-                        values.push(self.p30_capture_value(lhs, rhs, ordinal, value, captures));
+                        // A constant needs no snapshot; repeated `default:`
+                        // constants then store as one run of cells.
+                        values.push(if matches!(value.kind, IrExprKind::Const(_)) {
+                            value
+                        } else {
+                            self.p30_capture_value(lhs, rhs, ordinal, value, captures)
+                        });
                     }
                     P30PatternSource::Element { node, index, dims } => {
                         if let std::collections::hash_map::Entry::Vacant(entry) =
@@ -1401,6 +1469,9 @@ impl<'a> Codegen<'a> {
             return Ok(values);
         }
         if let Some(view) = self.p30_array_view(path, rhs, captures, captured_indices)? {
+            if let Some(values) = self.p30_view_image_values(lhs, rhs, &view, captures) {
+                return Ok(values);
+            }
             let mut values = Vec::with_capacity(view.coordinates.len());
             for (ordinal, coordinates) in view.coordinates.into_iter().enumerate() {
                 let value = IrExpr::new(
