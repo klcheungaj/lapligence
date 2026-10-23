@@ -13,7 +13,36 @@ impl Validator<'_> {
             chandle_return: Cell::new(None),
             string_return: Cell::new(None),
             function: Cell::new(None),
+            signal_names: std::cell::OnceCell::new(),
         }
+    }
+
+    /// Positions of the signals whose storage name is `name`, ascending.
+    fn signals_named(&self, name: &str) -> &[usize] {
+        let names = self.signal_names.get_or_init(|| {
+            let mut names = std::collections::HashMap::<&str, Vec<usize>>::new();
+            for (index, signal) in self.model.signals.iter().enumerate() {
+                names.entry(signal.c_name.as_str()).or_default().push(index);
+            }
+            names
+        });
+        names.get(name).map_or(&[], Vec::as_slice)
+    }
+
+    /// The aliased signal whose alias-visible cell `name` spells exactly
+    /// (`llg_net_alias_{index}.visible`).
+    fn alias_signal(&self, name: &str) -> Option<usize> {
+        let digits = name
+            .strip_prefix("llg_net_alias_")?
+            .strip_suffix(".visible")?;
+        let index = digits.parse::<usize>().ok()?;
+        (index.to_string() == digits
+            && self
+                .model
+                .signals
+                .get(index)
+                .is_some_and(|signal| !signal.net_alias.is_empty()))
+        .then_some(index)
     }
 
     pub(super) fn validate_fixed_activation(&self, index: usize, path: &str) -> ValidationResult {
@@ -46,18 +75,15 @@ impl Validator<'_> {
                 width,
             } => {
                 let total = match storage.as_ref() {
-                    IrDependency::Scalar(name) => {
-                        self.model
-                            .signals
-                            .iter()
-                            .enumerate()
-                            .find_map(|(index, signal)| {
-                                let alias = format!("llg_net_alias_{index}.visible");
-                                (signal.c_name == *name
-                                    || (!signal.net_alias.is_empty() && alias == *name))
-                                    .then_some(signal.ty.width())
-                            })
-                    }
+                    // The first signal named by its storage or alias name.
+                    IrDependency::Scalar(name) => self
+                        .signals_named(name)
+                        .first()
+                        .copied()
+                        .into_iter()
+                        .chain(self.alias_signal(name))
+                        .min()
+                        .map(|index| self.model.signals[index].ty.width()),
                     IrDependency::ArrayElement { array, .. } => self
                         .model
                         .arrays
@@ -76,20 +102,25 @@ impl Validator<'_> {
                 let alias_index = name
                     .strip_prefix("llg_net_alias_")
                     .and_then(|name| name.strip_suffix(".visible"))
-                    .and_then(|index| index.parse::<usize>().ok());
-                self.model
-                    .signals
+                    .and_then(|index| index.parse::<usize>().ok())
+                    .filter(|index| {
+                        self.model
+                            .signals
+                            .get(*index)
+                            .is_some_and(|signal| !signal.net_alias.is_empty())
+                    });
+                self.signals_named(name)
                     .iter()
-                    .enumerate()
-                    .any(|(index, signal)| {
-                        (signal.c_name == *name
-                            || (alias_index == Some(index) && !signal.net_alias.is_empty()))
-                            && !signal.omit
-                            && signal.ty.width() != 0
+                    .copied()
+                    .chain(alias_index)
+                    .any(|index| {
+                        let signal = &self.model.signals[index];
+                        !signal.omit && signal.ty.width() != 0
                     })
             }
-            IrDependency::Real(name) => self.model.signals.iter().any(|signal| {
-                signal.c_name == *name && !signal.omit && matches!(signal.ty, IrType::Real { .. })
+            IrDependency::Real(name) => self.signals_named(name).iter().any(|index| {
+                let signal = &self.model.signals[*index];
+                !signal.omit && matches!(signal.ty, IrType::Real { .. })
             }),
             IrDependency::ArrayElement { array, index } => self
                 .model

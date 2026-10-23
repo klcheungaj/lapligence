@@ -2409,3 +2409,56 @@ fn memory_dump_cannot_carry_source_text() {
         .expect_err("a dump has no source text");
     assert!(error.detail().contains("source text"), "{}", error.detail());
 }
+
+#[test]
+fn dependency_names_resolve_like_a_signal_scan() {
+    let mut model = valid_model();
+    let packed = |width| IrType::Packed {
+        width,
+        signed: false,
+        two_state: false,
+    };
+    let signal = |name: &str, ty, omit| IrSignal {
+        fixed_default: None,
+        c_name: name.to_owned(),
+        hdl_name: None,
+        ty,
+        net_driver: None,
+        net_alias: Vec::new(),
+        alias: None,
+        omit,
+    };
+    // Two signals share a storage name; the first is omitted and narrower.
+    model.signals = vec![
+        signal("a", packed(4), true),
+        signal("a", packed(8), false),
+        signal("b", packed(3), false),
+        signal("r", IrType::Real { shortreal: false }, false),
+    ];
+    model.signals[2].net_alias.push(IrNetAliasBinding {
+        group: 0,
+        slot: 0,
+        signal_bit: 0,
+        group_bit: 0,
+    });
+    let validator = Validator::new(&model);
+    let range = |name: &str, lsb, width| IrDependency::PackedRange {
+        storage: Box::new(IrDependency::scalar(name)),
+        lsb,
+        width,
+    };
+    // A scalar needs some emitted signal of that name.
+    assert!(validator.valid_dependency(&IrDependency::scalar("a")));
+    assert!(!validator.valid_dependency(&IrDependency::scalar("missing")));
+    // A range is bounded by the first signal of that name.
+    assert!(validator.valid_dependency(&range("a", 0, 4)));
+    assert!(!validator.valid_dependency(&range("a", 4, 4)));
+    // Alias-visible cells: scalars parse the index, ranges need its exact spelling.
+    assert!(validator.valid_dependency(&IrDependency::scalar("llg_net_alias_2.visible")));
+    assert!(validator.valid_dependency(&IrDependency::scalar("llg_net_alias_02.visible")));
+    assert!(!validator.valid_dependency(&IrDependency::scalar("llg_net_alias_1.visible")));
+    assert!(validator.valid_dependency(&range("llg_net_alias_2.visible", 0, 3)));
+    assert!(!validator.valid_dependency(&range("llg_net_alias_02.visible", 0, 3)));
+    assert!(validator.valid_dependency(&IrDependency::real("r")));
+    assert!(!validator.valid_dependency(&IrDependency::real("a")));
+}
