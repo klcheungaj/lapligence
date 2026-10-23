@@ -141,6 +141,9 @@ pub struct IrProcess {
     /// runtime calls directly (sequence match-item calls), so its coroutine
     /// descriptor is unreferenced.
     pub(in crate::sim) callback_host: bool,
+    /// A port connection link: its constants come from the instance's
+    /// connection (selected actual bits), not from its module's code.
+    pub(in crate::sim) port_link: bool,
 }
 
 impl IrProcess {
@@ -222,6 +225,7 @@ impl IrProcess {
             program: None,
             origin,
             callback_host: false,
+            port_link: false,
         }
     }
 
@@ -233,6 +237,16 @@ impl IrProcess {
 
     pub fn callback_host(&self) -> bool {
         self.callback_host
+    }
+
+    /// Mark this process as a port connection link (see [`IrProcess::port_link`]).
+    pub(in crate::sim) fn into_port_link(mut self) -> Self {
+        self.port_link = true;
+        self
+    }
+
+    pub fn port_link(&self) -> bool {
+        self.port_link
     }
 
     pub fn c_name(&self) -> &str {

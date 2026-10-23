@@ -316,6 +316,17 @@ fn registry(
     registry
 }
 
+fn is_port_link(execution: &ExecutionModel, artifact: &CoroutineArtifact) -> bool {
+    match artifact.owner {
+        CoroutineId::Process(index) => execution
+            .processes()
+            .get(index)
+            .and_then(|process| execution.ir().processes.get(process.semantic_process))
+            .is_some_and(|process| process.port_link()),
+        _ => false,
+    }
+}
+
 struct Normalized {
     source: String,
     operands: Vec<Operand>,
@@ -451,6 +462,13 @@ fn normalize(
                 ));
             } else if generated && value.ends_with("ULL") {
                 operand = Some(scalars.operand("uint64_t", value));
+            } else if generated
+                && value.ends_with('u')
+                && source[..start].trim_end().ends_with(".lsb =")
+            {
+                // The low bit of a selected wait dependency, a payload like
+                // the selection index the body reads.
+                operand = Some(scalars.operand("uint32_t", value));
             }
         } else {
             index += 1;
@@ -600,7 +618,10 @@ pub(super) fn share(
         if matches!(artifact.owner, CoroutineId::Process(_)) && !spawn_names.contains(name) {
             continue;
         }
-        let generated = artifact.display_name.contains('[');
+        // Literal payloads may vary per instance in generate-scope bodies
+        // and in port links, whose selected actual bits are the instance's
+        // connection rather than its module's code.
+        let generated = artifact.display_name.contains('[') || is_port_link(execution, artifact);
         if let Some(normalized) = normalize(
             &artifact.source,
             name,

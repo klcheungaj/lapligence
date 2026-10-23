@@ -611,14 +611,17 @@ impl<'a> Codegen<'a> {
         };
         let fn_name = self.new_fn_name(parent_path, "link");
         let origin = self.origin(port);
-        self.model.processes.push(IrProcess::new_with_origin(
-            fn_name,
-            format!("{child_path}.link"),
-            shape,
-            Vec::new(),
-            vec![body],
-            origin,
-        ));
+        self.model.processes.push(
+            IrProcess::new_with_origin(
+                fn_name,
+                format!("{child_path}.link"),
+                shape,
+                Vec::new(),
+                vec![body],
+                origin,
+            )
+            .into_port_link(),
+        );
     }
 
     /// Resolve a fixed-array value-port actual to the array being connected,
@@ -2083,14 +2086,17 @@ impl<'a> Codegen<'a> {
                 nba: false,
             }]
         };
-        self.model.processes.push(IrProcess::new_with_origin(
-            fn_name,
-            format!("{child_path}.link"),
-            shape,
-            Vec::new(),
-            body,
-            origin,
-        ));
+        self.model.processes.push(
+            IrProcess::new_with_origin(
+                fn_name,
+                format!("{child_path}.link"),
+                shape,
+                Vec::new(),
+                body,
+                origin,
+            )
+            .into_port_link(),
+        );
         Ok(())
     }
 }
