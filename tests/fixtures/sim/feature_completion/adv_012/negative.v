@@ -1,9 +1,9 @@
 // ADV-012 negative: annotated $setuphold limits with negative timing
 // checks enabled (--neg-timing-checks) settle and solve the delayed signal
 // delays again, as the same limits declared in the source do (IEEE
-// 1800-2009 31.9.1, 32.4.1). `h` declares setup -2 and hold 5; `a` declares
+// 1800-2009 31.9.1, 32.4.2). `h` declares setup -2 and hold 5; `a` declares
 // 1 and 1 and is annotated with -2 and 5; `z` is annotated with -3 and 4,
-// whose window cannot report. Oracles in readme.md.
+// whose window ends at the data event. Oracles in readme.md.
 `timescale 1ns/1ps
 
 module FFH (input clk, input d, output reg q);

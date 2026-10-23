@@ -43,7 +43,8 @@ fn warnings(output: &Output) -> Vec<String> {
 
 /// Run `fixture` with input `files` on every backend and optimizer mode and
 /// require `expected` standard output and exactly the `expected_warnings`
-/// (`{path}` stands for the fixture's absolute path).
+/// (`{path}` stands for the fixture's absolute path, `{any}` for text that
+/// differs between platforms, such as an operating system error).
 fn run_with_warnings(
     fixture: &str,
     expected: &str,
@@ -68,7 +69,23 @@ fn run_with_warnings(
             expected,
             "{label}: output"
         );
-        assert_eq!(warnings(output), expected_warnings, "{label}: warnings");
+        let actual = warnings(output);
+        let matches = actual.len() == expected_warnings.len()
+            && actual
+                .iter()
+                .zip(&expected_warnings)
+                .all(|(actual, expected)| match expected.split_once("{any}") {
+                    Some((before, after)) => {
+                        actual.starts_with(before)
+                            && actual.ends_with(after)
+                            && actual.len() >= before.len() + after.len()
+                    }
+                    None => actual == expected,
+                });
+        assert!(
+            matches,
+            "{label}: warnings\n  actual: {actual:#?}\n  expected: {expected_warnings:#?}"
+        );
     });
 }
 
@@ -131,7 +148,8 @@ fn timing_check_limits() {
 
 /// With negative timing checks, annotated `$setuphold` limits settle and
 /// solve the delayed signal delays again exactly as the same limits declared
-/// in the source do (31.9.1), and a window too small to report stays silent.
+/// in the source do (31.9.1), and data at the end of a window does not
+/// violate.
 #[test]
 fn negative_setuphold_limits() {
     run_with_warnings(
@@ -223,6 +241,99 @@ fn interconnect_delays() {
              from every source of the load (IEEE 1800-2009 32.4.4)",
             "interconnect.sdf:9:18: instance `nosuch` of the INTERCONNECT source `nosuch.y` \
              not found in `tb`",
+        ],
+    );
+}
+
+/// `--sdf` files are annotated in command-line order before simulation
+/// starts: the time-0 transitions use them, a scope and a min:typ:max
+/// member may be named, and a later INCREMENT file adds to an earlier one.
+#[test]
+fn command_line_annotation() {
+    sim_cli::run_case_backend_parity_with_files(
+        SUITE,
+        "startup.v",
+        fixture!("startup.out"),
+        &[
+            "--sdf",
+            "startup.sdf",
+            "--sdf",
+            "max:tb.u1=cell.sdf",
+            "--sdf",
+            "min:tb.u2=cell.sdf",
+        ],
+        &[],
+        &[
+            ("startup.sdf", fixture!("startup.sdf")),
+            ("cell.sdf", fixture!("cell.sdf")),
+        ],
+    );
+}
+
+/// Diagnostics (32.2, 32.9): a missing or malformed file annotates nothing
+/// (the valid CELL before the syntax error included), invalid mtm_spec,
+/// scale_factors and scale_type arguments and an unknown configuration
+/// statement skip the call, and unmatched instances, cell types, paths,
+/// checks and wildcard cell types, a missing triple member, an empty value,
+/// an out-of-range value and a list of more than 12 delays are reported
+/// while the rest of the file applies.
+#[test]
+fn diagnostics() {
+    let call = "$sdf_annotate at {path}";
+    run_with_warnings(
+        "diagnostics.v",
+        fixture!("diagnostics.out"),
+        &[],
+        &[
+            ("malformed.sdf", fixture!("malformed.sdf")),
+            ("unmatched.sdf", fixture!("unmatched.sdf")),
+            ("values.sdf", fixture!("values.sdf")),
+            ("override.sdf", fixture!("override.sdf")),
+            ("unknown.cfg", fixture!("unknown.cfg")),
+        ],
+        &[
+            &format!(
+                "{call}:32:5: cannot open the SDF file `missing.sdf`: {{any}}; the call \
+                 annotates nothing"
+            ),
+            &format!(
+                "{call}:33:5: malformed.sdf:5:76: expected `)` after the IOPATH delays, found \
+                 `nine`; the call annotates nothing"
+            ),
+            "unmatched.sdf:5:2: instance `nosuch` not found in `tb`; the CELL is not annotated",
+            "unmatched.sdf:6:2: `tb.u0` is an instance of `BUF`, not cell type \"FF\"; the \
+             CELL is not annotated",
+            "unmatched.sdf:8:21: no specify path from `b` to `y` in `tb.u0`; the IOPATH is not \
+             annotated",
+            "unmatched.sdf:10:17: no timing check in `tb.f0` matches (HOLD d (posedge clk)); it \
+             is not annotated",
+            "unmatched.sdf:11:2: no instance of cell type \"NONE\" in `tb`; the CELL is not \
+             annotated",
+            "values.sdf:5:69: single values and min:typ:max triples are mixed in one file; a \
+             single value applies to every data set",
+            "values.sdf:7:83: IOPATH has more than 12 delay values; it is not annotated",
+            "values.sdf:4:57: the value 1e999 is out of the simulation time range; it is \
+             annotated as one precision unit",
+            &format!(
+                "{call}:36:5: the mtm_spec `NOMINAL` is not MAXIMUM, MINIMUM, TYPICAL or \
+                 TOOL_CONTROL (IEEE 1800-2009 Table 32-5); the call annotates nothing"
+            ),
+            &format!(
+                "{call}:37:5: the scale_factors `1:x:2` are not three non-negative numbers \
+                 `min:typ:max` (IEEE 1800-2009 32.9); the call annotates nothing"
+            ),
+            &format!(
+                "{call}:38:5: the scale_type `FROM_ELSEWHERE` is not FROM_MINIMUM, \
+                 FROM_TYPICAL, FROM_MAXIMUM or FROM_MTM (IEEE 1800-2009 Table 32-6); the call \
+                 annotates nothing"
+            ),
+            &format!(
+                "{call}:39:5: configuration file `unknown.cfg`:2: unknown statement \
+                 `PULSE_DELAY`; llg reads MTM, SCALE_FACTORS, SCALE_TYPE, INTERCONNECT_MIPD and \
+                 TURNOFF_DELAY; the call annotates nothing"
+            ),
+            "timing violation at {path}:18:5 in tb.f0 at time 60000 (1ps): $setup(d:57000, \
+             posedge clk:60000, 4000)",
         ],
     );
 }

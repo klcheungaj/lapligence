@@ -175,7 +175,7 @@ impl Codegen<'_> {
         }
         for call in calls {
             let origin = self.source_location(call);
-            let annotation = match self.sdf_call_request(call)? {
+            let mut annotation = match self.sdf_call_request(call)? {
                 Ok(request) => {
                     self.read_sdf_request(&mut state, &catalog, &scope_of, &origin, request)
                 }
@@ -186,10 +186,64 @@ impl Codegen<'_> {
                     None
                 }
             };
+            // A call that leads its initial procedure applies before
+            // simulation starts, like `--sdf` (decision A12-D1).
+            if let Some(index) = annotation.filter(|_| self.sdf_call_leads(call)) {
+                state.startup.push(index);
+                annotation = None;
+            }
             state.calls.insert(call, annotation);
         }
         self.sdf = Some(Box::new(state));
         Ok(())
+    }
+
+    /// Whether `call` runs at time 0 before its process can be suspended:
+    /// it is in an `initial` procedure of a module (not a program), reached
+    /// through `begin`-`end` blocks only, after declarations, assignments
+    /// without timing controls and system tasks that do not end the
+    /// simulation. Nothing can observe whether such a call ran before or
+    /// after the other time-0 activity (IEEE 1800-2009 4.7), so applying it
+    /// before simulation starts gives the time-0 transitions its delays
+    /// whatever order the processes start in.
+    fn sdf_call_leads(&self, call: NodeId) -> bool {
+        let mut node = call;
+        loop {
+            let Some(parent) = self.node(node).parent else {
+                return false;
+            };
+            match self.kind(parent) {
+                NodeKind::Process {
+                    kind: ProcessKind::Initial,
+                } => {
+                    return self
+                        .owning_inst(parent)
+                        .is_some_and(|instance| !self.db.is_program_instance(instance));
+                }
+                NodeKind::Stmt(StmtKind::Begin) => {
+                    let earlier = self
+                        .node(parent)
+                        .children
+                        .iter()
+                        .take_while(|child| **child != node);
+                    for statement in earlier {
+                        let runs_through = match self.kind(*statement) {
+                            NodeKind::Var { .. } | NodeKind::Stmt(StmtKind::Empty) => true,
+                            NodeKind::Stmt(StmtKind::Assign { delay, .. }) => delay.is_none(),
+                            NodeKind::SysCall { name } => {
+                                !matches!(name.as_str(), "$finish" | "$stop" | "$exit" | "$fatal")
+                            }
+                            _ => false,
+                        };
+                        if !runs_through {
+                            return false;
+                        }
+                    }
+                    node = parent;
+                }
+                _ => return false,
+            }
+        }
     }
 
     /// The constant text of a string argument: a literal, a parameter, or a

@@ -353,6 +353,15 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             tristate(pulse.show_cancelled),
         ));
     }
+    // Startup annotations (`--sdf` files and calls that lead an initial
+    // procedure) write the delay and limit tables before the path sets, the
+    // delayed nets and the timing checks start, so their first transitions
+    // already use the annotated values.
+    for index in model.sdf_startup() {
+        initialize.push_str(&format!(
+            "    llg_sdf_apply(&llg_sdf_annotation_{index});\n"
+        ));
+    }
     for index in 0..model.module_paths().len() {
         initialize.push_str(&format!(
             "    llg_module_paths_start(&llg_path_set_{index});\n"
@@ -374,12 +383,6 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     for index in 0..model.timing_checks().len() {
         initialize.push_str(&format!(
             "    llg_timing_checks_start(&llg_timing_set_{index});\n"
-        ));
-    }
-    // `--sdf` files annotate the started tables before simulation starts.
-    for index in model.sdf_startup() {
-        initialize.push_str(&format!(
-            "    llg_sdf_apply(&llg_sdf_annotation_{index});\n"
         ));
     }
     emitted.clear();

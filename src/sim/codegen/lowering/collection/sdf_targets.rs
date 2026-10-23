@@ -315,7 +315,7 @@ impl Codegen<'_> {
 
     /// The ports of the module instance owning gate `gate` that one of its
     /// output terminals names, by port order: the outputs a DEVICE entry on
-    /// a module without paths annotates through the gate (decision A12-D?).
+    /// a module without paths annotates through the gate (decision A12-D11).
     fn sdf_primitive_drives(&self, gate: NodeId) -> Vec<u32> {
         let NodeKind::Gate { terms, .. } = self.kind(gate) else {
             return Vec::new();

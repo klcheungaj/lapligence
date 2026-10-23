@@ -1,5 +1,5 @@
 // ADV-012 checks: every timing check entry of Table 32-2 replaces the
-// limits of the checks it maps to (IEEE 1800-2009 32.4.1, Table 32-2;
+// limits of the checks it maps to (IEEE 1800-2009 32.4.2, Table 32-2;
 // IEEE 1364-2001 16.2.2). Each cell holds one check with limit 1, and each
 // annotated limit turns a phase of stimulus into exactly one violation that
 // limit 1 would not report (and one $skew event that limit 1 would).

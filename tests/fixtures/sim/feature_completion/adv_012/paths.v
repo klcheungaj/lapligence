@@ -1,6 +1,6 @@
 // ADV-012 paths: IOPATH delays, pulse limits from delvals, PATHPULSE and
 // PATHPULSEPERCENT, and INCREMENT annotations applied while simulating
-// (IEEE 1800-2009 32.4.2, 32.6, 32.7, 32.8; IEEE 1364-2001 16.2). Oracles
+// (IEEE 1800-2009 32.4.1, 32.6, 32.7, 32.8; IEEE 1364-2001 16.2). Oracles
 // in readme.md.
 `timescale 1ns/1ps
 
