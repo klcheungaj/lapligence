@@ -157,6 +157,15 @@ fn registry(
             );
         }
     }
+    // A path-stamp process names its instance's module path set; as an
+    // operand, the processes of one cell definition share one body.
+    for index in 0..model.module_paths().len() {
+        let name = format!("llg_path_set_{index}");
+        registry.insert(
+            name.clone(),
+            Operand::pointer("llg_module_path_set_t", "module path set".to_owned(), &name),
+        );
+    }
     for event in &model.events {
         if !event.is_array() {
             registry.insert(
