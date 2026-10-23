@@ -637,16 +637,15 @@ static const char* llg_cov_db_read(const char* name, llg_cov_db_file_t* db, int*
     uint32_t version;
     uint64_t length;
     if (db->len < LLG_COV_DB_HEADER_BYTES + 8u) return "the file is not an llg coverage database";
-    llg_cov_get(&reader, magic, sizeof magic);
-    if (memcmp(magic, llg_cov_db_magic, sizeof magic) != 0)
+    if (!llg_cov_get(&reader, magic, sizeof magic) ||
+        memcmp(magic, llg_cov_db_magic, sizeof magic) != 0)
         return "the file is not an llg coverage database";
-    llg_cov_get_u32(&reader, &version);
-    if (version != LLG_COV_DB_VERSION) return "the database version is not supported";
-    llg_cov_get_u32(&reader, &db->sections);
-    llg_cov_get_u64(&reader, &db->functional_hash);
-    llg_cov_get_u64(&reader, &db->assertion_hash);
-    llg_cov_get_u64(&reader, &length);
-    if (length != db->len - LLG_COV_DB_HEADER_BYTES - 8u)
+    if (!llg_cov_get_u32(&reader, &version) || version != LLG_COV_DB_VERSION)
+        return "the database version is not supported";
+    if (!llg_cov_get_u32(&reader, &db->sections) ||
+        !llg_cov_get_u64(&reader, &db->functional_hash) ||
+        !llg_cov_get_u64(&reader, &db->assertion_hash) || !llg_cov_get_u64(&reader, &length) ||
+        length != db->len - LLG_COV_DB_HEADER_BYTES - 8u)
         return "the file length does not match its header";
     if (db->sections & ~(LLG_COV_DB_FUNCTIONAL | LLG_COV_DB_ASSERTION))
         return "the database has unknown sections";

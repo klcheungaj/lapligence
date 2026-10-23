@@ -11,7 +11,7 @@ fn fixed_equality_operands_compare_immediate_members() {
 }
 
 #[test]
-fn conditional_arms_keep_reached_effects_and_immediate_defaults() {
+fn conditional_arms_keep_reached_effects_and_leaf_defaults() {
     let expected =
         include_str!("../fixtures/sim/feature_completion/rtl_005/conditional_effects.out");
     sim_cli::run_case(SUITE, "conditional_effects", expected, "", &[]);

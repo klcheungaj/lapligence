@@ -1,0 +1,3 @@
+output 0 0 0 5
+inout 1 2 101 4
+result 7 bit 01000000

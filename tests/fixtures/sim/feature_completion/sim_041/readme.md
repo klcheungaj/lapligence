@@ -200,6 +200,21 @@ and the noncontext `cell_peek`. `tb` has `u1` (ID 1), `u2` (ID 2) and
   `` `timescale 1ns/1ps `` so the printed time does not depend on a tool's
   default time unit) before and after: the chains take no simulation time.
 
+### `copy_out_targets` (decision S13-D1)
+
+Each context import calls the exported `set_i` before it writes its formals,
+and the outputs are written after the import returns, into the targets their
+selectors name then (13.5.2 L19185-19187: an inout is copied "once from the
+argument into the actual when the subroutine returns"; the text does not say
+when the actual's selectors are evaluated).
+
+- `co_output(a[i], 3)` with `i = 0`: `i` becomes 3, so 5 lands in `a[3]`:
+  `output 0 0 0 5`.
+- `co_inout(a[i], 2)` reads `a[0] = 1` at the call, `i` becomes 2, so 1 + 100
+  lands in `a[2]`: `inout 1 2 101 4`.
+- `r = co_result(v[i], 6)` with `i = 1`: the bit lands in `v[6]` and the
+  result 7 is assigned after the copy-out: `result 7 bit 01000000`.
+
 ### `disables` (35.9)
 
 - `dt_outer` (context task) calls exported task `dt_kill(3)`, which adds 3 to

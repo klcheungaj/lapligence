@@ -199,7 +199,7 @@ impl Frame<'_, '_> {
                 selector,
                 left,
                 right,
-                element_cells,
+                cell_leaves,
             } => {
                 // Each arm is emitted once: a known selector evaluates one arm,
                 // an ambiguous one evaluates both and merges elements (§11.4.11).
@@ -216,10 +216,28 @@ impl Frame<'_, '_> {
                 self.line("}");
                 self.line(format!("if ({state} != 1) {{"));
                 let right_value = self.fixed_value(right, shape, total)?;
+                // A record cell passes its leaf layout; NULL makes each
+                // cell one leaf.
+                let leaves = cell_leaves.as_ref().map(|leaves| {
+                    (
+                        self.constant(&leaves.default, true),
+                        self.constant(&leaves.starts, true),
+                    )
+                });
+                let (default, starts) = match &leaves {
+                    Some((default, starts)) => {
+                        (format!("&{}", default.code), format!("&{}", starts.code))
+                    }
+                    None => ("NULL".to_owned(), "NULL".to_owned()),
+                };
                 self.line(format!(
                     "if ({state} == 0) llg_fixed_array_copy({result}, {right_value}, {two_state}, 0); \
-                     else llg_fixed_array_merge({result}, {result}, {right_value}, {element_cells}ULL, {two_state});"
+                     else llg_fixed_array_merge({result}, {result}, {right_value}, {default}, {starts}, {two_state});"
                 ));
+                if let Some((default, starts)) = leaves {
+                    self.discard(starts);
+                    self.discard(default);
+                }
                 self.line("}");
                 Ok(result)
             }

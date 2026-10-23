@@ -10,6 +10,10 @@ build has a separate 600-second limit to accommodate compiler contention on
 shared hosts; timed-out stages still terminate their descendant processes.
 Individual CTest probe deadlines remain in force. Set
 `CMAKE_BUILD_PARALLEL_LEVEL` to bound native build jobs (for example, `6`).
+The launcher also builds the strict-warning runtime targets
+`owner_probe_debug_rt` and `vpi_ownership_probe` in a Release configuration,
+because the optimizer's flow analysis reports maybe-uninitialized reads that
+a Debug build cannot see.
 
 ## Native run
 

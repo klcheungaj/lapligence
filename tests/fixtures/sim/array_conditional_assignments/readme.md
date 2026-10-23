@@ -13,7 +13,7 @@ are observation scaffolding, not claims that each complete module is synthesizab
 | `nba.sv` | Deferred publication, issue-time values/indices, source-ordered cell updates and X merging. |
 | `clocked.sv` | Direct `always_ff` array conditional with known and unknown selectors. |
 | `views.sv` | Opposite/negative declaration bounds, selected-row indices evaluated once, unselected and invalid row reads. |
-| `shapes.sv` | Immediate multidimensional rows, two-state defaults, packed records and 129-bit elements. |
+| `shapes.sv` | Leaves of multidimensional rows (decision R05-D1), two-state defaults, packed records and 129-bit elements. |
 | `expressions.sv` | Cast/pattern alternatives, conditional concatenation operands and existing per-cell widening. |
 | `nested_defaults.sv` | Shared synthesized row operands, explicit outer keys and untyped one-bit defaults, with ascending/descending bounds. |
 | `typed_defaults.sv` | Explicitly typed row defaults preserve runtime `8'hdd`/`8'hee` byte values rather than applying the nested pattern to packed bits; direct packed patterns also check element sizing and signed results. |

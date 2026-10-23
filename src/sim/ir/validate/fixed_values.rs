@@ -382,20 +382,27 @@ impl Validator<'_> {
                 selector,
                 left,
                 right,
-                element_cells,
+                cell_leaves,
             } => {
                 self.validate_expr(selector, formals, path)?;
-                if selector.width != 1
-                    || selector.signed
-                    || selector.fill.is_some()
-                    || *element_cells == 0
-                {
-                    return self.fail(path, "invalid fixed conditional selector or element extent");
+                if selector.width != 1 || selector.signed || selector.fill.is_some() {
+                    return self.fail(path, "invalid fixed conditional selector");
                 }
                 let left = self.validate_fixed_value(left, formals, path)?;
                 let right = self.validate_fixed_value(right, formals, path)?;
                 if left != right {
                     return self.fail(path, "fixed conditional arms disagree");
+                }
+                if let Some(leaves) = cell_leaves {
+                    // The runtime checks that the period is the cell width.
+                    let cell = leaves.default.width;
+                    self.validate_leaf_merge(leaves, cell, &format!("{path}.cell_leaves"))?;
+                    if cell == 0 || left % u64::from(cell) != 0 {
+                        return self.fail(
+                            path,
+                            "fixed conditional leaf period does not divide the value",
+                        );
+                    }
                 }
                 Ok(left)
             }

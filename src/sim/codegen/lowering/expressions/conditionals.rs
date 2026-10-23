@@ -43,26 +43,13 @@ impl Codegen<'_> {
     ) -> Result<IrExpr, String> {
         // Arity is checked by lower_operation. Slang has already reconciled
         // the alternatives' types; query the typed operand before flattening.
-        let array = self
+        let merge = self
             .query_descriptor(operands[1])
-            .filter(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }))
-            .map(array_merge_default)
-            .transpose()?;
-        let structure = self
-            .query_descriptor(operands[1])
-            .filter(|descriptor| {
-                matches!(
-                    descriptor.shape,
-                    TypeShape::Aggregate(crate::core::db::AggregateLayout {
-                        kind: AggregateKind::UnpackedStruct,
-                        ..
-                    })
-                )
-            })
-            .map(structure_merge_members)
-            .transpose()?;
+            .map(aggregate_conditional_merge)
+            .transpose()?
+            .flatten();
         let sel = self.lower_boolean_expr(scope_path, operands[0])?;
-        self.lower_conditional_arms(scope_path, sel, operands[1], operands[2], array, structure)
+        self.lower_conditional_arms(scope_path, sel, operands[1], operands[2], merge)
     }
 
     pub(in super::super) fn lower_conditional_predicate(
@@ -799,26 +786,13 @@ impl Codegen<'_> {
         if_true: NodeId,
         if_false: NodeId,
     ) -> Result<IrExpr, String> {
-        let array = self
+        let merge = self
             .query_descriptor(if_true)
-            .filter(|descriptor| matches!(descriptor.shape, TypeShape::FixedArray { .. }))
-            .map(array_merge_default)
-            .transpose()?;
-        let structure = self
-            .query_descriptor(if_true)
-            .filter(|descriptor| {
-                matches!(
-                    descriptor.shape,
-                    TypeShape::Aggregate(crate::core::db::AggregateLayout {
-                        kind: AggregateKind::UnpackedStruct,
-                        ..
-                    })
-                )
-            })
-            .map(structure_merge_members)
-            .transpose()?;
+            .map(aggregate_conditional_merge)
+            .transpose()?
+            .flatten();
         let sel = self.lower_conditional_predicate(scope_path, predicate)?;
-        self.lower_conditional_arms(scope_path, sel, if_true, if_false, array, structure)
+        self.lower_conditional_arms(scope_path, sel, if_true, if_false, merge)
     }
 
     /// The selector and arms of a conditional operator whose result has the
@@ -882,52 +856,37 @@ impl Codegen<'_> {
         sel: IrExpr,
         if_true: NodeId,
         if_false: NodeId,
-        array: Option<(u32, IrConst)>,
-        structure: Option<Vec<IrConditionalMember>>,
+        merge: Option<AggregateMerge>,
     ) -> Result<IrExpr, String> {
         let a = self.lower_expr(scope_path, if_true)?;
         let b = self.lower_expr(scope_path, if_false)?;
-        if let Some((width, element_default)) = array {
+        if let Some(merge) = merge {
+            let width = merge.width;
             if a.width != width || b.width != width || a.is_real() || b.is_real() {
                 return Err(format!(
-                    "fixed-array conditional payload width mismatch in `{scope_path}`"
+                    "fixed aggregate conditional payload width mismatch in `{scope_path}`"
                 ));
             }
-            return Ok(IrExpr::new(
-                IrExprKind::ArrayMux {
-                    sel: Box::new(sel),
-                    a: Box::new(IrExpr::resize_to(a, width, false)),
-                    b: Box::new(IrExpr::resize_to(b, width, false)),
+            let (sel, a, b) = (
+                Box::new(sel),
+                Box::new(IrExpr::resize_to(a, width, false)),
+                Box::new(IrExpr::resize_to(b, width, false)),
+            );
+            let kind = match merge.leaves {
+                AggregateLeaves::Uniform(element_default) => IrExprKind::ArrayMux {
+                    sel,
+                    a,
+                    b,
                     element_default: Box::new(element_default),
                 },
-                width,
-                false,
-                None,
-            ));
-        }
-        if let Some(members) = structure {
-            let width = members
-                .iter()
-                .try_fold(0u32, |total, member| total.checked_add(member.width))
-                .ok_or_else(|| {
-                    format!("fixed-structure conditional payload width overflow in `{scope_path}`")
-                })?;
-            if width == 0 || a.width != width || b.width != width || a.is_real() || b.is_real() {
-                return Err(format!(
-                    "fixed-structure conditional payload width mismatch in `{scope_path}`"
-                ));
-            }
-            return Ok(IrExpr::new(
-                IrExprKind::StructMux {
-                    sel: Box::new(sel),
-                    a: Box::new(IrExpr::resize_to(a, width, false)),
-                    b: Box::new(IrExpr::resize_to(b, width, false)),
-                    members,
+                AggregateLeaves::Mixed(leaves) => IrExprKind::StructMux {
+                    sel,
+                    a,
+                    b,
+                    leaves: Box::new(leaves),
                 },
-                width,
-                false,
-                None,
-            ));
+            };
+            return Ok(IrExpr::new(kind, width, false, None));
         }
         let (width, signed) = if a.is_real() || b.is_real() {
             (REAL_EXPR_WIDTH, true)
@@ -955,75 +914,199 @@ impl Codegen<'_> {
     }
 }
 
-fn structure_merge_members(
-    descriptor: &TypeDescriptor,
-) -> Result<Vec<IrConditionalMember>, String> {
-    let TypeShape::Aggregate(layout) = &descriptor.shape else {
-        return Err("conditional merge requires an unpacked structure".to_owned());
-    };
-    if layout.kind != AggregateKind::UnpackedStruct || layout.members.is_empty() {
-        return Err("conditional merge requires a nonempty unpacked structure".to_owned());
-    }
-
-    // The flattened representation places the first declared member at the
-    // most-significant end, matching fixed aggregate projections and defaults.
-    let mut offset = 0u32;
-    let mut members = Vec::with_capacity(layout.members.len());
-    for member in layout.members.iter().rev() {
-        let width = Codegen::fixed_descriptor_width(&member.descriptor)
-            .ok_or("conditional structure member has no supported fixed payload")?;
-        let default = Codegen::fixed_descriptor_uninitialized(&member.descriptor)
-            .ok_or("conditional structure member has no supported default-uninitialized payload")?;
-        if width == 0 || default.width != width {
-            return Err("conditional structure member default width mismatch".to_owned());
-        }
-        members.push(IrConditionalMember {
-            offset,
-            width,
-            default,
-        });
-        offset = offset
-            .checked_add(width)
-            .ok_or("conditional structure payload width overflow")?;
-    }
-    if offset != Codegen::fixed_descriptor_width(descriptor).unwrap_or(0) {
-        return Err("conditional structure payload width disagrees with members".to_owned());
-    }
-    Ok(members)
+/// How an ambiguous conditional merges a fixed aggregate payload
+/// (IEEE 1800-2009 11.4.11).
+pub(in crate::sim::codegen) struct AggregateMerge {
+    width: u32,
+    leaves: AggregateLeaves,
 }
 
-fn array_merge_default(descriptor: &TypeDescriptor) -> Result<(u32, IrConst), String> {
-    let TypeShape::FixedArray {
-        dimensions,
+pub(in crate::sim::codegen) enum AggregateLeaves {
+    /// Every leaf has this width and default-uninitialized value.
+    Uniform(IrConst),
+    /// One period (a record, or one record element of an array) with leaves
+    /// of different widths or defaults.
+    Mixed(IrLeafMerge),
+}
+
+/// The merge of a fixed unpacked array or unpacked structure result, or
+/// `None` for any other type. The text combines the arms "element by
+/// element"; an element that is itself an unpacked array or structure is
+/// combined the same way, so only leaves (packed, real and other scalar
+/// values, and unions as a whole) are compared and replaced. Defaults are
+/// default-uninitialized values, never member initializers.
+pub(in crate::sim::codegen) fn aggregate_conditional_merge(
+    descriptor: &TypeDescriptor,
+) -> Result<Option<AggregateMerge>, String> {
+    let mut period = descriptor;
+    while let TypeShape::FixedArray {
         element,
-    } = &descriptor.shape
-    else {
-        return Err("conditional merge requires a fixed unpacked array".to_owned());
-    };
-    if dimensions.is_empty() {
-        return Err("conditional array has no unpacked dimension".to_owned());
+        dimensions,
+    } = &period.shape
+    {
+        if dimensions.is_empty() {
+            return Err("conditional array has no unpacked dimension".to_owned());
+        }
+        period = element;
+    }
+    if std::ptr::eq(period, descriptor) && !is_unpacked_structure(descriptor) {
+        return Ok(None);
     }
     let width = Codegen::fixed_descriptor_width(descriptor)
-        .ok_or("conditional array requires a supported fixed integral payload")?;
-    // TypeDescriptor coalesces consecutive unpacked dimensions. Only peel
-    // the outermost dimension: a differing row defaults the *whole* row.
-    let immediate = if dimensions.len() == 1 {
-        *element.clone()
-    } else {
-        TypeDescriptor {
-            shape: TypeShape::FixedArray {
-                dimensions: dimensions[1..].to_vec(),
-                element: element.clone(),
-            },
-            ..descriptor.clone()
-        }
-    };
-    let default = Codegen::fixed_descriptor_uninitialized(&immediate)
-        .ok_or("conditional array element has no supported default-uninitialized payload")?;
-    if default.width == 0 || !width.is_multiple_of(default.width) {
-        return Err("conditional array element width does not divide its payload".to_owned());
+        .ok_or("conditional aggregate requires a supported fixed integral payload")?;
+    let leaves = record_leaf_merge(period)?;
+    let period_width = leaves.default.width;
+    if !width.is_multiple_of(period_width) {
+        return Err("conditional aggregate element width does not divide its payload".to_owned());
     }
-    Ok((width, default))
+    let leaves = match uniform_leaf_default(&leaves) {
+        Some(default) => AggregateLeaves::Uniform(default),
+        None => AggregateLeaves::Mixed(leaves),
+    };
+    Ok(Some(AggregateMerge { width, leaves }))
+}
+
+/// The leaf layout of one storage cell of a descriptor-backed fixed array
+/// of type `descriptor`: a record element merges leaf by leaf, while any
+/// other cell is one leaf (`None`).
+pub(in crate::sim::codegen) fn fixed_cell_leaves(
+    descriptor: &TypeDescriptor,
+) -> Result<Option<Box<IrLeafMerge>>, String> {
+    let mut cell = descriptor;
+    while let TypeShape::FixedArray { element, .. } = &cell.shape {
+        cell = element;
+    }
+    if std::ptr::eq(cell, descriptor) || !is_unpacked_structure(cell) {
+        return Ok(None);
+    }
+    record_leaf_merge(cell).map(|leaves| Some(Box::new(leaves)))
+}
+
+fn is_unpacked_structure(descriptor: &TypeDescriptor) -> bool {
+    matches!(
+        &descriptor.shape,
+        TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct
+    )
+}
+
+/// The default-uninitialized value of `period` and the start bit of each
+/// of its leaves. The default comes from the whole type, so member state
+/// flags apply exactly as they do to storage defaults.
+pub(in crate::sim::codegen) fn record_leaf_merge(
+    period: &TypeDescriptor,
+) -> Result<IrLeafMerge, String> {
+    let default = Codegen::fixed_descriptor_uninitialized(period)
+        .ok_or("conditional aggregate element has no supported default-uninitialized payload")?;
+    let width = Codegen::fixed_descriptor_width(period)
+        .filter(|width| *width == default.width)
+        .ok_or("conditional aggregate element default width mismatch")?;
+    let mut starts = vec![0u64; width.div_ceil(64) as usize];
+    mark_leaf_starts(period, 0, &mut starts)?;
+    let starts = IrConst::packed(starts, Vec::new(), Vec::new(), width, false, None)
+        .map_err(|error| error.to_string())?;
+    let default = IrConst::packed(
+        default.bits().to_vec(),
+        default.x_mask().to_vec(),
+        default.z_mask().to_vec(),
+        width,
+        false,
+        None,
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(IrLeafMerge { default, starts })
+}
+
+/// Set the start bit of every leaf of `descriptor` placed at `offset`. The
+/// flattened payload places the first declared member and the left array
+/// element at the most-significant end.
+fn mark_leaf_starts(
+    descriptor: &TypeDescriptor,
+    offset: u32,
+    starts: &mut [u64],
+) -> Result<(), String> {
+    let width = |descriptor: &TypeDescriptor| {
+        Codegen::fixed_descriptor_width(descriptor)
+            .ok_or_else(|| "conditional aggregate leaf has no supported fixed payload".to_owned())
+    };
+    match &descriptor.shape {
+        TypeShape::FixedArray { element, .. } => {
+            let (total, stride) = (width(descriptor)?, width(element)?);
+            let leaf = !matches!(element.shape, TypeShape::FixedArray { .. })
+                && !is_unpacked_structure(element);
+            for index in 0..total / stride {
+                let at = offset + index * stride;
+                if leaf {
+                    starts[(at / 64) as usize] |= 1u64 << (at % 64);
+                } else {
+                    mark_leaf_starts(element, at, starts)?;
+                }
+            }
+        }
+        TypeShape::Aggregate(layout) if layout.kind == AggregateKind::UnpackedStruct => {
+            let mut cursor = offset;
+            for member in layout.members.iter().rev() {
+                mark_leaf_starts(&member.descriptor, cursor, starts)?;
+                cursor += width(&member.descriptor)?;
+            }
+            if cursor - offset != width(descriptor)? {
+                return Err("conditional structure payload width disagrees with members".to_owned());
+            }
+        }
+        _ => {
+            width(descriptor)?;
+            starts[(offset / 64) as usize] |= 1u64 << (offset % 64);
+        }
+    }
+    Ok(())
+}
+
+/// The common leaf default when every leaf of the period has the same width
+/// and default, so the stride merge applies.
+fn uniform_leaf_default(leaves: &IrLeafMerge) -> Option<IrConst> {
+    let bit = |limbs: &[u64], index: u32| {
+        limbs
+            .get((index / 64) as usize)
+            .is_some_and(|limb| limb >> (index % 64) & 1 != 0)
+    };
+    let width = leaves.default.width;
+    let stride = (1..width)
+        .find(|index| bit(leaves.starts.bits(), *index))
+        .unwrap_or(width);
+    if !width.is_multiple_of(stride) {
+        return None;
+    }
+    let planes = [
+        leaves.default.bits(),
+        leaves.default.x_mask(),
+        leaves.default.z_mask(),
+    ];
+    for index in stride..width {
+        if bit(leaves.starts.bits(), index) != index.is_multiple_of(stride)
+            || planes
+                .iter()
+                .any(|plane| bit(plane, index) != bit(plane, index % stride))
+        {
+            return None;
+        }
+    }
+    let slice = |plane: &[u64]| {
+        let mut limbs = vec![0u64; stride.div_ceil(64) as usize];
+        for index in 0..stride {
+            if bit(plane, index) {
+                limbs[(index / 64) as usize] |= 1u64 << (index % 64);
+            }
+        }
+        limbs
+    };
+    IrConst::packed(
+        slice(planes[0]),
+        slice(planes[1]),
+        slice(planes[2]),
+        stride,
+        false,
+        None,
+    )
+    .ok()
 }
 
 #[cfg(test)]

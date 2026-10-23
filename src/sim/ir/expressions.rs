@@ -34,17 +34,21 @@ pub struct IrEnumQuery {
     pub default: IrExpr,
 }
 
-/// One immediate member of a fixed unpacked structure conditional.
+/// Leaf boundaries of one period of a fixed aggregate conditional merge
+/// (IEEE 1800-2009 11.4.11).
 ///
-/// `offset` is the physical LSB offset in the declaration-order flattened
-/// payload. The default is the member's type default, without declaration
-/// initializers; aggregate conditionals replace a differing member as a
-/// whole when the selector is ambiguous.
+/// A period is one element of a fixed unpacked array of records, or the
+/// whole record when the operand is a record. `default` is the period's
+/// default-uninitialized value, without declaration initializers, with the
+/// payload's LSB alignment. `starts` has the same width and is two-state:
+/// bit `i` is set when a leaf (a packed, real or other scalar value) has
+/// its least-significant bit at bit `i`, so bit 0 is always set. An
+/// ambiguous selector keeps each leaf that is known equal in both arms and
+/// replaces every other leaf with its bits of `default`.
 #[derive(Clone, Debug, PartialEq)]
-pub struct IrConditionalMember {
-    pub offset: u32,
-    pub width: u32,
+pub struct IrLeafMerge {
     pub default: IrConst,
+    pub starts: IrConst,
 }
 
 impl IrEnumQuery {
@@ -226,15 +230,16 @@ pub enum IrExprKind {
         a: Box<IrExpr>,
         b: Box<IrExpr>,
     },
-    /// Fixed unpacked-array conditional (IEEE 1800-2009 11.4.11). Operands
-    /// are declaration-order flattened payloads, but an ambiguous selector
-    /// compares each *immediate* unpacked element using logical equality.
-    /// Only a known-true comparison preserves an element; otherwise replace
-    /// the entire element with `element_default`. Nested arrays/structs are
-    /// single elements here, not recursively merged packed bits.
+    /// Fixed unpacked-array conditional (IEEE 1800-2009 11.4.11) whose
+    /// leaves all have one width and one default. Operands are
+    /// declaration-order flattened payloads; an ambiguous selector compares
+    /// each leaf (an element of the innermost unpacked dimension, or a
+    /// record member of uniform shape) with logical equality. Only a
+    /// known-true comparison preserves a leaf; otherwise it becomes
+    /// `element_default`.
     ///
     /// All payloads have the same nonzero width and are unsigned. The default
-    /// is a concrete, packed, default-uninitialized element (no member
+    /// is a concrete, packed, default-uninitialized leaf (no member
     /// initializers or fill marker); its width must divide the payload width.
     /// Known selectors evaluate only the selected arm; ambiguous selectors
     /// evaluate both arms exactly once before merging their captured values.
@@ -244,14 +249,16 @@ pub enum IrExprKind {
         b: Box<IrExpr>,
         element_default: Box<IrConst>,
     },
-    /// Fixed unpacked-structure conditional (IEEE 1800-2009 11.4.11).
-    /// Operands are flattened only for storage, while each immediate member
-    /// retains its typed boundary and default-uninitialized value.
+    /// Fixed unpacked-record conditional (IEEE 1800-2009 11.4.11): a record,
+    /// or a fixed array of records, whose leaves differ in width or default.
+    /// Operands are flattened only for storage; `leaves` describes one
+    /// period, whose width divides the payload width, and an ambiguous
+    /// selector merges leaf by leaf. Evaluation follows `ArrayMux`.
     StructMux {
         sel: Box<IrExpr>,
         a: Box<IrExpr>,
         b: Box<IrExpr>,
-        members: Vec<IrConditionalMember>,
+        leaves: Box<IrLeafMerge>,
     },
     /// Concatenation (operand order already normalized at lowering).
     Concat {

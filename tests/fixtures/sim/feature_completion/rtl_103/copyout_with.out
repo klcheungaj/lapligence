@@ -1,5 +1,5 @@
 plus 00 11 22 33 44 00
-frozen n=4 a1 b2 c3 33
+frozen n=4 00 11 22 a1
 reversed 00 11 22 33 44 00
 static be ef
 expanded ca fe

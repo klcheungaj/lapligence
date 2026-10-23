@@ -91,7 +91,7 @@ fn fixed_structs_preserve_value_copy_and_reference_semantics() {
 }
 
 #[test]
-fn unpacked_structure_conditionals_merge_immediate_members() {
+fn unpacked_structure_conditionals_merge_leaves() {
     sim_cli::run_case_with_args(
         "rtl_completion",
         "syn_004_record_conditional",

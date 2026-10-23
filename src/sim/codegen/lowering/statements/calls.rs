@@ -1,6 +1,6 @@
 //! Calls.
 
-use super::super::collection::CallWriteback;
+use super::super::collection::{CallWriteback, TargetSelectors};
 use super::*;
 
 impl EmitCtx<'_, '_> {
@@ -585,6 +585,7 @@ impl EmitCtx<'_, '_> {
                 bound[idx].expr,
                 &format!("{}_{}", h.0, idx),
                 read_actual,
+                TargetSelectors::AtCopyOut,
             )?;
             for (name, width, signed, two_state, init) in selector_inits {
                 before.push(IrStmt::DeclLocal {

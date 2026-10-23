@@ -1,6 +1,6 @@
 //! Packed selects of resizable-container elements.
 
-use super::collection::{CallWriteback, Select};
+use super::collection::{CallWriteback, Select, TargetSelectors};
 use super::*;
 
 /// Lowered element address: integral indices, or one string key.
@@ -352,14 +352,17 @@ impl Codegen<'_> {
 
     /// The copy-out destination of an output or inout actual naming one
     /// whole packed or real element of a resizable container (SV 13.5): the
-    /// element's keys are evaluated once into locals before the call and the
-    /// formal's final value is stored there after the callee returns.
+    /// formal's final value is stored there after the callee returns. With
+    /// `TargetSelectors::AtCall` the element's keys are evaluated once into
+    /// locals before the call; with `AtCopyOut` the store evaluates them (and
+    /// an inout's read evaluates them again at the call).
     pub(in super::super) fn container_element_writeback(
         &mut self,
         path: &str,
         actual: NodeId,
         tag: &str,
         read_actual: bool,
+        selectors: TargetSelectors,
     ) -> Result<Option<(CallWriteback, Option<IrExpr>)>, String> {
         let Some((container, indices)) = self.container_element_path(actual).or_else(|| {
             self.associative_string_element(actual)
@@ -379,6 +382,7 @@ impl Codegen<'_> {
         }
         let mut prelude = Vec::new();
         let keys = match self.lower_element_keys(path, container, indices)? {
+            keys if selectors == TargetSelectors::AtCopyOut => keys,
             ElementKeys::Integral(indices) => ElementKeys::Integral(
                 indices
                     .into_iter()

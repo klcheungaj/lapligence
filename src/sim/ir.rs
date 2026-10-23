@@ -83,8 +83,8 @@ pub use udp::{
 };
 mod expressions;
 pub use expressions::{
-    IrBinOp, IrBitQuery, IrConditionalMember, IrDynamicCast, IrEnumMember, IrEnumMethod,
-    IrEnumQuery, IrExpr, IrExprKind, IrFileInput, IrFileInputTarget, IrFileReadTarget, IrMathFunc,
+    IrBinOp, IrBitQuery, IrDynamicCast, IrEnumMember, IrEnumMethod, IrEnumQuery, IrExpr,
+    IrExprKind, IrFileInput, IrFileInputTarget, IrFileReadTarget, IrLeafMerge, IrMathFunc,
     IrMutationExpr, IrNativeBinding, IrPatternCheck, IrPatternExpr, IrPatternMatchKind,
     IrPlusArgTarget, IrPlusArgText, IrRandomFunc, IrRealBinOp, IrRealUnOp, IrRuntimeQuery,
     IrSampledCall, IrSampledClock, IrSampledClockKind, IrSampledDomain, IrSampledFunc, IrScanScope,

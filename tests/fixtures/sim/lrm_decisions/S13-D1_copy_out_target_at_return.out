@@ -1,0 +1,12 @@
+task output a[i]: 0 0 0 77
+task inout a[i]: 1 2 101 4
+inout selector call: 1 2 102 4 n=2
+function output a[i]: 0 0 0 66
+bit select: 00100000
+concatenation: 0 0 10 0 00101100
+associative key: early=0 late=5
+queue after push_front: 9 33 20 30
+method output: 0 0 0 9
+whole property: c.f=7 d.f=0
+selected property: c.bits=00000000 d.bits=00000100
+handle element: 0 0 1

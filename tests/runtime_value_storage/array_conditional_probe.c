@@ -101,6 +101,63 @@ static void check_width(uint32_t stride, uint32_t count) {
     CHECK(value_test_live() == 0 && value_test_bytes() == 0);
 }
 
+/* Records merge leaf by leaf: `starts` marks the LSB of each leaf of one
+ * period of `fallback.width` bits, repeated across the payload. */
+static void check_record_merge(sv4_t left, sv4_t right, sv4_t fallback, sv4_t starts) {
+    size_t live = value_test_live();
+    sv4_t result = sv4_record_conditional_merge(left, right, fallback, starts);
+    CHECK(value_test_live() == live + probe_owner_allocations(left.width));
+    CHECK(result.width == left.width && result.is_signed == 0);
+    CHECK(probe_distinct(&result, left) && probe_distinct(&result, right) &&
+          probe_distinct(&result, fallback));
+    CHECK(sv4_bytes(&result) == probe_payload_bytes(left.width, sv4_is_unknown(result)));
+    const uint32_t period = fallback.width;
+    for (uint32_t base = 0; base < left.width; base += period) {
+        for (uint32_t start = 0; start < period;) {
+            uint32_t end = start + 1;
+            while (end < period && state(starts, end) != 1) ++end;
+            unsigned equal = 1;
+            for (uint32_t j = start; j < end; ++j) {
+                unsigned a = state(left, base + j), b = state(right, base + j);
+                equal &= a < 2 && b < 2 && a == b;
+            }
+            for (uint32_t j = start; j < end; ++j)
+                CHECK(state(result, base + j) ==
+                      (equal ? state(left, base + j) : state(fallback, j)));
+            start = end;
+        }
+    }
+    sv4_destroy(&result);
+    CHECK(value_test_live() == live);
+}
+
+static void check_record(const uint32_t* leaves, size_t count, uint32_t periods) {
+    uint32_t period = 0;
+    for (size_t i = 0; i < count; ++i) period += leaves[i];
+    uint32_t width = period * periods;
+    sv4_t left = sv4_zero(width, 0);
+    sv4_t fallback = sv4_zero(period, 0);
+    sv4_t starts = sv4_zero(period, 0);
+    for (uint32_t bit = 0; bit < width; ++bit) put(&left, bit, (bit * 5u + 2u) % 3u % 2u);
+    for (uint32_t bit = 0; bit < period; ++bit) put(&fallback, bit, bit % 4u == 1u ? 0u : 2u);
+    for (size_t i = 0, at = 0; i < count; at += leaves[i++]) put(&starts, (uint32_t)at, 1);
+    sv4_t right = sv4_clone(&left);
+    check_record_merge(left, left, fallback, starts); /* Operands may alias. */
+    /* One differing bit in the last leaf of the first period and in the
+     * first leaf of the last period. */
+    put(&right, period - 1u, state(right, period - 1u) ^ 1u);
+    put(&right, width - period, state(right, width - period) ^ 1u);
+    check_record_merge(left, right, fallback, starts);
+    put(&left, width / 2u, 3);
+    put(&right, width / 2u, 3);
+    check_record_merge(left, right, fallback, starts); /* Case-equal Z never matches. */
+    sv4_destroy(&left);
+    sv4_destroy(&right);
+    sv4_destroy(&fallback);
+    sv4_destroy(&starts);
+    CHECK(value_test_live() == 0 && value_test_bytes() == 0);
+}
+
 static void check_replacement_plateau(void) {
     sv4_t left = sv4_from_u64(0xa55a, 16, 0);
     sv4_t right = sv4_from_u64(0xa65a, 16, 0);
@@ -120,6 +177,17 @@ static void check_replacement_plateau(void) {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && strcmp(argv[1], "record") == 0) {
+        sv4_t value = sv4_zero(16, 0);
+        sv4_t fallback = sv4_zero(8, 0);
+        sv4_t starts = sv4_from_u64(0x10, 8, 0); /* No leaf at bit 0. */
+        sv4_t result = sv4_record_conditional_merge(value, value, fallback, starts);
+        sv4_destroy(&result);
+        sv4_destroy(&value);
+        sv4_destroy(&fallback);
+        sv4_destroy(&starts);
+        return 3;
+    }
     if (argc == 2) {
         sv4_t left = sv4_zero(strcmp(argv[1], "empty") == 0 ? 0 : 16, 0);
         sv4_t right = sv4_zero(strcmp(argv[1], "unequal") == 0 ? 8 : left.width, 0);
@@ -142,7 +210,12 @@ int main(int argc, char** argv) {
     check_width(LLG_SUPPORTED_WIDTH_LIMIT - 1u, 1);
     check_width(65537u, 3);
     check_replacement_plateau();
+    static const uint32_t record_leaves[][3] = {{4, 1, 8}, {1, 64, 3}, {63, 2, 65}, {129, 1, 1}};
+    for (size_t i = 0; i < sizeof(record_leaves) / sizeof(record_leaves[0]); ++i) {
+        check_record(record_leaves[i], 3, 1);
+        check_record(record_leaves[i], 3, 3);
+    }
     CHECK(value_test_live() == 0 && value_test_bytes() == 0);
-    puts("array conditional merge passed");
+    puts("array and record conditional merges passed");
     return 0;
 }

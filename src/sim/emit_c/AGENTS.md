@@ -273,7 +273,8 @@ IR rule cannot diverge. Larger definitions keep encoded rows and scan them
 in the step (level rows, then edge rows on the changed input). Changed inputs
 are taken in port order (decision S3-D2) and Z/X changes are skipped.
 
-ArrayMux uses immediate-element defaults; StructMux uses immediate-member plans.
+ArrayMux uses uniform leaf defaults; StructMux passes one period's leaf layout to
+`sv4_record_conditional_merge`.
 Evaluate each branch once and preserve its self-determined shape; an enclosing cast
 must not resize operands before the merge. Predicates evaluate only reached clauses,
 convert packed/real truth to one bit, and allocate nothing for skipped clauses.

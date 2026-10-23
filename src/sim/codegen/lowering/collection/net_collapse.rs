@@ -77,19 +77,23 @@ impl PortChoice {
     }
 }
 
-/// Column order of Table 23-1, the documented tie-break between types that
-/// do not dominate each other.
-fn table_order(kind: NetType) -> usize {
+/// Tie-break between winning types that do not dominate each other. Table
+/// 23-1 rules on pairs only, and every pair among wand, wor, tri0 and tri1
+/// keeps the external type with a warning, so the text leaves sibling ties
+/// open. This is the industry-standard order: trireg before wor, wor before
+/// tri0 and tri1, and those before wand (decision R11-D1). uwire and the
+/// supplies keep their Table 23-1 column order after them.
+fn tie_order(kind: NetType) -> usize {
     [
-        NetType::Wire,
-        NetType::Wand,
-        NetType::Wor,
         NetType::TriReg,
+        NetType::Wor,
         NetType::Tri0,
         NetType::Tri1,
+        NetType::Wand,
         NetType::Uwire,
         NetType::Supply0,
         NetType::Supply1,
+        NetType::Wire,
     ]
     .iter()
     .position(|candidate| canonical_net_type(kind) == Some(*candidate))
@@ -156,7 +160,7 @@ pub(super) struct CollapseWarning {
 
 /// A same-depth batch whose winning edges name mutually non-dominating types.
 /// Table 23-1 defines pairs only, so the plan picks the first maximal type in
-/// table column order, independently of declaration order, and reports it.
+/// `tie_order`, independently of declaration order, and reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct CollapseTie {
     /// Index of the first batch edge in the tied component.
@@ -300,7 +304,7 @@ impl NetCollapsePlan {
     /// order of sibling instances or ports cannot change the result. Winning
     /// types of one merged component reduce to the types no other winner
     /// dominates (Table 23-1 strict dominance, independent of sides); a
-    /// remaining warning-only tie selects the first in table column order.
+    /// remaining warning-only tie selects the first in `tie_order`.
     /// The delay owners are every winning declaration of the selected type.
     /// Returns the per-edge pairwise warnings and any ties.
     pub(super) fn port_batch(
@@ -388,7 +392,7 @@ impl NetCollapsePlan {
                 .iter()
                 .map(|root| self.entries[*root].resolved.kind)
                 .collect::<Vec<_>>();
-            kinds.sort_by_key(|kind| table_order(*kind));
+            kinds.sort_by_key(|kind| tie_order(*kind));
             kinds.dedup();
             let maximal = kinds
                 .iter()

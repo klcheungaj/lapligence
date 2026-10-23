@@ -1470,7 +1470,8 @@ long-body fixtures to the same matrix.
 
 The native runtime probes run against each backend through
 `tests/runtime_value_storage.rs` (legacy, compact portable and compact GMP, the
-last with the bundled GMP or `LLG_TEST_GMP_ROOT`):
+last with the bundled GMP or `LLG_TEST_GMP_ROOT`), and build the strict-warning
+runtime targets once in Release:
 
 ```sh
 CARGO_BUILD_JOBS=6 CMAKE_BUILD_PARALLEL_LEVEL=6 scripts/run-tests.sh --test-work-dir /build --cargo-profile quick --test runtime_value_storage --test-threads 6

@@ -670,8 +670,9 @@ pub enum IrContainerStmt {
         count: u64,
     },
     /// Ambiguous-predicate conditional merge of two descriptor-backed
-    /// dynamic arrays into `dst` (SV 11.4.11): known-equal immediate
-    /// elements survive, others take their default-uninitialized value.
+    /// dynamic arrays into `dst` (SV 11.4.11): elements merge leaf by leaf;
+    /// known-equal leaves survive, others take their default-uninitialized
+    /// value.
     Merge {
         dst: usize,
         left: usize,

@@ -79,8 +79,8 @@ and per-instance state records.
 
 Keep `llg_value` scheduler/coroutine/waveform-independent, parity with `core::elab`,
 X/Z distinction, actual-width arithmetic/conversions and partial-select X fill.
-Array-conditional helpers borrow inputs and return independent owners with
-immediate-element defaults. Strength resolution retains both X endpoints, strict
+Array- and record-conditional helpers borrow inputs and return independent
+owners with leaf defaults. Strength resolution retains both X endpoints, strict
 opposite-endpoint dominance, neutral Z and wired-AND/OR tie rules; pull/supply
 biases are sources. A highz endpoint makes an X contribution one-sided (L/H).
 `llg_net_t.strength` (scheduler `nets.c`) is an optional per-bit strength view

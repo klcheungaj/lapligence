@@ -53,7 +53,7 @@ const CHAIN_WARNINGS: &[&str] = &[
     "dissimilar inout port `tb.mb.m`: internal Tri0, external Wor; table choice Wor (IEEE 1800-2009 Table 23-1)",
     "dissimilar inout port `tb.mb.leaf.p`: internal Wor, external Tri0; table choice Tri0 (IEEE 1800-2009 Table 23-1)",
     "dissimilar inout port `tb.mn.leaf.p`: internal Wand, external Wor; table choice Wor (IEEE 1800-2009 Table 23-1)",
-    "dissimilar inout port `*`: same-depth connections choose Wand among non-dominating [Wand, Wor] by column order (IEEE 1800-2009 Table 23-1)",
+    "dissimilar inout port `*`: same-depth connections choose Wor among non-dominating [Wor, Wand] (decision R11-D1; IEEE 1800-2009 Table 23-1)",
 ];
 
 #[test]

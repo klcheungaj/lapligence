@@ -1,6 +1,6 @@
 // SIM-008: output and inout actuals naming one element of a queue, dynamic
-// array or associative array (SV 13.5.1-13.5.2). Keys are evaluated once at
-// the call; the formal's final value is stored after the callee returns.
+// array or associative array (SV 13.5.1-13.5.2). After the callee returns the
+// value goes to the element its keys select then (decision S13-D1).
 module tb;
     int q[$];
     int aa[string];

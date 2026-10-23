@@ -1,10 +1,12 @@
 //! Conditional operators whose result is a native record (SV 11.4.11).
 //!
 //! A known predicate assigns exactly one arm. An ambiguous predicate
-//! evaluates both arms once and merges them per immediate member: a member
-//! whose leaves all match keeps that value; any other member takes its
-//! type's default-uninitialized value as a whole, so nested records and
-//! array members are never merged leaf by leaf.
+//! evaluates both arms once and merges a record leaf by leaf: a leaf
+//! (including each element of a fixed array member) that matches keeps that
+//! value, and any other leaf takes its default-uninitialized value. A
+//! queue, dynamic or associative member is one leaf, compared as a whole
+//! and emptied when it differs. A tagged union merges its tag and each
+//! member as a whole.
 
 use super::*;
 
@@ -163,11 +165,21 @@ impl Codegen<'_> {
             }
         }
         let (left_values, right_values) = captured.split_at(lefts.len());
-        // Leaves of one immediate member, in member order; container members
-        // follow the scalar leaves, so a member's leaves need not be adjacent.
-        let mut members: Vec<(Option<AggregatePathPart>, Vec<usize>)> = Vec::new();
+        // Leaves that merge together: one leaf of a record (SV 11.4.11), or
+        // the leaves of one immediate member of a tagged union. Container
+        // members follow the scalar leaves, so a union member's leaves need
+        // not be adjacent.
+        let tagged = matches!(
+            &descriptor.shape,
+            TypeShape::Aggregate(layout) if layout.kind == AggregateKind::TaggedUnion
+        );
+        let mut members: Vec<(Vec<AggregatePathPart>, Vec<usize>)> = Vec::new();
         for (position, (leaf_path, _)) in targets.iter().enumerate() {
-            let member = leaf_path.first().cloned();
+            let member = if tagged {
+                leaf_path.iter().take(1).cloned().collect()
+            } else {
+                leaf_path.clone()
+            };
             match members.iter_mut().find(|(existing, _)| *existing == member) {
                 Some((_, positions)) => positions.push(position),
                 None => members.push((member, vec![position])),

@@ -1,5 +1,5 @@
-// SYN-004: direct unpacked-structure conditionals retain immediate member
-// boundaries. LRM: IEEE 1800-2009 7.2 and 11.4.11.
+// SYN-004: direct unpacked-structure conditionals merge leaf by leaf
+// (decision R05-D1). LRM: IEEE 1800-2009 7.2 and 11.4.11.
 module tb;
     typedef struct {
         logic [7:0] byte_value = 8'h11;
@@ -81,9 +81,9 @@ module tb;
         selector = 1'bx;
         result = choose(selector, left, right);
         if (result.byte_value !== 8'hxx || result.flag !== 1'b0 ||
-            result.equal_value !== 4'h2 || result.row[0] !== 4'hx ||
+            result.equal_value !== 4'h2 || result.row[0] !== 4'h1 ||
             result.row[1] !== 4'hx)
-            $fatal(1, "immediate member merge");
+            $fatal(1, "leaf merge");
 
         selector = 1'bz;
         result = choose(selector, left, right);
@@ -129,9 +129,9 @@ module tb;
         nested_result = choose_nested(1'bx, nested_left, nested_right);
         if (nested_result.child.byte_value !== 8'hxx ||
             nested_result.child.flag !== 1'b0 ||
-            nested_result.child.equal_value !== 4'hx ||
-            nested_result.lane[0] !== 4'hx || nested_result.lane[1] !== 4'hx)
-            $fatal(1, "nested member merge");
+            nested_result.child.equal_value !== 4'h2 ||
+            nested_result.lane[0] !== 4'h1 || nested_result.lane[1] !== 4'hx)
+            $fatal(1, "nested leaf merge");
 
         array_left[0] = left;
         array_right[0] = right;
@@ -140,7 +140,8 @@ module tb;
         selector = 1'bx;
         array_result = selector ? array_left : array_right;
         if (array_result[0].byte_value !== 8'hxx ||
-            array_result[0].equal_value !== 4'hx ||
+            array_result[0].equal_value !== 4'h2 ||
+            array_result[0].row[0] !== 4'h1 || array_result[0].row[1] !== 4'hx ||
             array_result[1].equal_value !== 4'h2)
             $fatal(1, "R01 array conditional control");
 

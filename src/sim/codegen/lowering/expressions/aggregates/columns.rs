@@ -551,9 +551,9 @@ impl Codegen<'_> {
 
     /// `dst = sel ? left : right` (SV 11.4.11). A known selector evaluates
     /// one arm; an ambiguous selector evaluates both once and keeps each
-    /// immediate member that is equal (no X/Z) in both arms, giving the
-    /// member's default-uninitialized value otherwise — the rule packed
-    /// structure merges apply to records within packed capacity.
+    /// leaf that is equal (no X/Z) in both arms, giving the leaf's
+    /// default-uninitialized value otherwise — the rule packed structure
+    /// merges apply to records within packed capacity.
     fn lower_record_conditional_into(
         &mut self,
         path: &str,
@@ -689,18 +689,100 @@ impl Codegen<'_> {
                     .collect(),
             };
             let (target, from_left, from_right) = (select(dst), select(left), select(right));
-            let equal = self.record_equality(path, &from_left, &from_right, false)?;
-            let mut keep = Vec::new();
-            self.record_copy(path, &target, &from_left, nba, &mut keep)?;
-            let mut reset = Vec::new();
-            self.record_fill_uninitialized(path, member, &target, nba, &mut reset)?;
-            out.push(IrStmt::If {
-                cond: equal,
-                then_: keep,
-                els: Some(reset),
-                check: IrUniquePriorityCheck::None,
-            });
+            if layout.kind == AggregateKind::TaggedUnion {
+                // A tagged union member merges as a whole.
+                self.record_merge_columns(
+                    path,
+                    member,
+                    &target,
+                    &from_left,
+                    &from_right,
+                    nba,
+                    out,
+                )?;
+                continue;
+            }
+            // A structure merges leaf by leaf (SV 11.4.11): each column on
+            // its own, and a member array element by element.
+            for index in 0..target.columns.len() {
+                let column = |value: &RecordValue| RecordValue {
+                    descriptor: value.descriptor.clone(),
+                    columns: vec![value.columns[index].clone()],
+                };
+                let (target, from_left, from_right) =
+                    (column(&target), column(&from_left), column(&from_right));
+                if let (
+                    (column_path, RecordColumn::Array(target_array)),
+                    (_, RecordColumn::Array(left_array)),
+                    (_, RecordColumn::Array(right_array)),
+                ) = (
+                    &target.columns[0],
+                    &from_left.columns[0],
+                    &from_right.columns[0],
+                ) {
+                    let leaf = Self::descriptor_at_path(&member.descriptor, &column_path[1..])
+                        .ok_or_else(|| format!("record merge column is unresolved in `{path}`"))?;
+                    let ambiguous = IrConst::packed(vec![], vec![1], vec![], 1, false, None)
+                        .map_err(|error| error.to_string())?;
+                    out.push(IrStmt::FixedValueAssign {
+                        dst: self.record_column_view(*target_array),
+                        src: Box::new(IrFixedValue::Conditional {
+                            selector: Box::new(IrExpr::new(
+                                IrExprKind::Const(ambiguous),
+                                1,
+                                false,
+                                None,
+                            )),
+                            left: Box::new(IrFixedValue::Array(
+                                self.record_column_view(*left_array),
+                            )),
+                            right: Box::new(IrFixedValue::Array(
+                                self.record_column_view(*right_array),
+                            )),
+                            cell_leaves: super::super::fixed_cell_leaves(&leaf)?,
+                        }),
+                        nba,
+                    });
+                    continue;
+                }
+                self.record_merge_columns(
+                    path,
+                    member,
+                    &target,
+                    &from_left,
+                    &from_right,
+                    nba,
+                    out,
+                )?;
+            }
         }
+        Ok(())
+    }
+
+    /// Keep the columns of `target` from `left` when every one is equal in
+    /// both arms, and reset them to their uninitialized value otherwise.
+    #[allow(clippy::too_many_arguments)]
+    fn record_merge_columns(
+        &mut self,
+        path: &str,
+        member: &AggregateMember,
+        target: &RecordValue,
+        left: &RecordValue,
+        right: &RecordValue,
+        nba: bool,
+        out: &mut Vec<IrStmt>,
+    ) -> Result<(), String> {
+        let equal = self.record_equality(path, left, right, false)?;
+        let mut keep = Vec::new();
+        self.record_copy(path, target, left, nba, &mut keep)?;
+        let mut reset = Vec::new();
+        self.record_fill_uninitialized(path, member, target, nba, &mut reset)?;
+        out.push(IrStmt::If {
+            cond: equal,
+            then_: keep,
+            els: Some(reset),
+            check: IrUniquePriorityCheck::None,
+        });
         Ok(())
     }
 

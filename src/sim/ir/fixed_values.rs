@@ -12,8 +12,11 @@ pub enum IrFixedValue {
         selector: Box<IrExpr>,
         left: Box<IrFixedValue>,
         right: Box<IrFixedValue>,
-        /// Number of scalar storage cells in one immediate array element.
-        element_cells: u64,
+        /// An ambiguous selector merges cell by cell (SV 11.4.11). A cell
+        /// that is one leaf is kept when known equal and otherwise becomes
+        /// the array's uninitialized cell; a record cell (`Some`) merges
+        /// leaf by leaf with this layout, whose period is the cell.
+        cell_leaves: Option<Box<IrLeafMerge>>,
     },
     Stream {
         parts: Vec<IrFixedValue>,

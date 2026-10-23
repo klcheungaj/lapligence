@@ -2,7 +2,14 @@
 //! registered scopes remain responsible for payload cleanup and copy-out.
 
 use super::native::{NativeKind, NativeValue};
+use super::streaming::CapturedAssignment;
 use super::*;
+
+/// An output/inout copy-out target, bound at the call or resolved at copy-out.
+enum CopyOutTarget<'l> {
+    Bound(CapturedAssignment),
+    AtCopyOut(&'l IrLhs),
+}
 
 pub(super) enum CallValue {
     Numeric(Value),
@@ -793,7 +800,6 @@ impl Frame<'_, '_> {
                     let temporary = self
                         .lookup(name)
                         .ok_or_else(|| "missing call temporary".to_owned())?;
-                    let target = self.capture_assignment(writeback)?;
                     let storage = if let Some(address) = storage_addr {
                         let storage = self.address(address)?;
                         // Only inout has a copy-in value. A static output
@@ -823,7 +829,7 @@ impl Frame<'_, '_> {
                         temporary
                     };
                     parameters.push(storage.address.clone());
-                    copyouts.push((target, storage));
+                    copyouts.push((self.copy_out_target(writeback)?, storage));
                 }
                 IrCallArg::RefAddr {
                     lhs,
@@ -902,6 +908,7 @@ impl Frame<'_, '_> {
         for (target, storage) in copyouts {
             let mark = self.cancellation_mark();
             let value = self.read_binding(&storage);
+            let target = self.resolve_copy_out_target(target)?;
             for (target, piece) in self.prepare_captured_assignment(target, value)? {
                 self.store(&target, piece, false, "0")?;
                 self.release_target(target);
@@ -1004,6 +1011,30 @@ impl Frame<'_, '_> {
         )
     }
 
+    /// When the target of an output/inout copy-out is resolved (decision
+    /// S13-D1; 13.5 is silent). A whole addressed storage location (a class
+    /// property reached through its handle, or a local or formal) binds at
+    /// the call, so a callee that changes the handle does not redirect the
+    /// copy-out. Any other target, including a select of such a property, is
+    /// resolved when the value is copied out, so its handles and selectors
+    /// take their values after the callee returns.
+    fn copy_out_target<'l>(&mut self, lhs: &'l IrLhs) -> Result<CopyOutTarget<'l>, String> {
+        Ok(match lhs {
+            IrLhs::WholeRef { .. } => CopyOutTarget::Bound(self.capture_assignment(lhs)?),
+            _ => CopyOutTarget::AtCopyOut(lhs),
+        })
+    }
+
+    fn resolve_copy_out_target(
+        &mut self,
+        target: CopyOutTarget<'_>,
+    ) -> Result<CapturedAssignment, String> {
+        match target {
+            CopyOutTarget::Bound(target) => Ok(target),
+            CopyOutTarget::AtCopyOut(lhs) => self.capture_assignment(lhs),
+        }
+    }
+
     pub(super) fn call_statement(&mut self, call: &IrCall) -> Result<(), String> {
         self.begin_block(&[]);
         let function = self.ctx.model.func(call.f).clone();
@@ -1025,9 +1056,9 @@ impl Frame<'_, '_> {
                 initial.as_ref().or(default.as_ref()),
             )?;
         }
-        let mut captured = Vec::new();
+        let mut targets = Vec::new();
         for (lhs, name, width, signed) in &call.copyouts {
-            captured.push((self.capture_assignment(lhs)?, name, *width, *signed));
+            targets.push((self.copy_out_target(lhs)?, name, *width, *signed));
         }
         if let Some(value) = self.call_target(
             call.f,
@@ -1043,13 +1074,14 @@ impl Frame<'_, '_> {
                 CallValue::Native(value) => self.native_discard(value),
             }
         }
-        for (target, name, width, signed) in captured {
+        for (target, name, width, signed) in targets {
             let mark = self.cancellation_mark();
             let binding = self
                 .lookup(name)
                 .ok_or_else(|| format!("unknown copyout {name}"))?;
             let value = self.read_binding(&binding);
             let value = self.convert(value, width, signed, false, false);
+            let target = self.resolve_copy_out_target(target)?;
             for (target, piece) in self.prepare_captured_assignment(target, value)? {
                 self.store(&target, piece, false, "0")?;
                 self.release_target(target);

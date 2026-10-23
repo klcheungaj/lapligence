@@ -13,8 +13,13 @@ fixture `alias_identity`, also run after snapshot/Db destruction.
   instance declaration order and must print the same values. Same-depth
   connections are one batch: the table winners of every edge reduce to the
   types no other winner strictly dominates, and a warning-only tie selects the
-  first remaining type in Table 23-1 column order (wand before wor), with a
-  located warning.
+  first remaining type in the decision R11-D1 order (wor before tri0 and tri1,
+  those before wand), with a located warning. So `c`, with a wand and a wor
+  sibling, is wor: `dc1 = 1`, `dc2 = 0` gives `c=111` at time 1 (changed from
+  wand, `c=000`). Table 23-1 (SV 23.3.3.7, `SystemVerilog-1800-2009.txt`
+  L41613-41649) rules on one internal and one external net only; for a wand
+  internal net and a wor external net, and the reverse, it reads "external"
+  with "warn", so it does not order the siblings.
 - `net_array_chains`: net-array rows and cells collapse through three levels
   with wand/wor dissimilar types, and a true alias of selected bits of a
   collapsed cell competes with the child's driver.

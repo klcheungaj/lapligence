@@ -13,9 +13,18 @@ backends, and (except the adopted witness) after snapshot/Db destruction.
   two-state member is zero and still decides a known mismatch.
 - `conditional_effects` counts side effects in known, ambiguous, constant
   (folded) and identical (identity) arms, a vector predicate with a dominant
-  known 1, nested ternaries and an NBA. Ambiguous merges keep equal immediate
-  elements/members and replace differing ones with uninitialized defaults (whole
-  nested rows/records, not merged leaves); Z/Z becomes X.
+  known 1, nested ternaries and an NBA. Ambiguous merges go leaf by leaf
+  (decision R05-D1, SV2009 11.4.11 L15213-15216): a packed leaf that is known
+  equal in both arms is kept and a differing one takes its uninitialized
+  default, even inside a nested row or record; Z/Z becomes X. So `I` keeps
+  `m[1][0]` (1 in both arms) while `m[1][1]` and row `m[2]` differ; `K` keeps
+  `n.t[0]` and defaults `n.t[1]`; `L` keeps `n.r.a`, `n.r.b` and `n.t[0]` and
+  defaults only the differing `n.r.i` (an `int`, so 0). Other simulators
+  combine the bits of differing leaves as for a packed conditional (`I` shows
+  `X` for `m[1][1]`, `L` shows `n.r.i` as 8), and treat the `4'bx1x0`
+  condition of `F` and `G` as ambiguous for an aggregate result although it
+  is true for a packed one; llg follows L15215-15216 and the truth rule of
+  11.4.11 (a known 1 bit makes the condition true).
 - `cast_contract` checks `$cast` membership against the complete source value,
   selector and source evaluation once, invalid destinations, packed-member
   destinations, aliasing, two-state/sign/real conversion, and static width/sign

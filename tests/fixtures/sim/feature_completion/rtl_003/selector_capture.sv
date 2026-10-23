@@ -1,4 +1,4 @@
-// SV2009 10.4.1/10.4.2, 11.4.2, 13.5: capture destinations once before writes/calls.
+// SV2009 10.4.1/10.4.2, 11.4.2, 13.5: capture destinations once per write (S13-D1).
 module child(ref logic [7:0] x);
  int count = 0;
  int slot = 0;

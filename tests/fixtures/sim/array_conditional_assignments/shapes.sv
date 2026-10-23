@@ -21,8 +21,9 @@ module tb;
         br = selector ? ba : bb;
         wr = selector ? wa : wb;
         lr = selector ? la : lb;
-        if (result[2][-1] !== 7'hxx || result[2][0] !== 7'hxx ||
-            result[1][-1] !== 7'd4 || result[1][0] !== 7'd5) $fatal(1, "whole row defaults");
+        // Leaves of a differing row merge independently (decision R05-D1).
+        if (result[2][-1] !== 7'd1 || result[2][0] !== 7'hxx ||
+            result[1][-1] !== 7'd4 || result[1][0] !== 7'd5) $fatal(1, "row leaf defaults");
         if (br[0] !== 8'h00 || br[1] !== 8'h5a) $fatal(1, "two state element defaults");
         if (wr[0] !== {129{1'bx}} || wr[1] !== wa[1]) $fatal(1, "wide element boundaries");
         if (lr[0] !== 8'hxx || lr[1] !== 8'h5a) $fatal(1, "whole packed record defaults");

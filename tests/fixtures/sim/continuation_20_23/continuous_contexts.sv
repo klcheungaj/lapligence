@@ -50,7 +50,7 @@ module continuous_case #(parameter W = 65)(output bit done);
             window[1] !== {W{1'bz}} || window[0] !== {W{1'bz}})
             $fatal(1, "continuous values, links or slice");
         if (record_result[0] !== record_a[0] || record_result[1].data !== {W{1'bx}} ||
-            record_result[1].valid !== 0) $fatal(1, "record-array element default");
+            record_result[1].valid !== 1) $fatal(1, "record-array leaf default");
         choice = 1;
         a[1] = 'z;
         b[0] = 'z;

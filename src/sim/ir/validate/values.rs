@@ -80,4 +80,40 @@ impl Validator<'_> {
         }
         Ok(())
     }
+
+    /// One period of an aggregate conditional merge: a concrete packed
+    /// default whose width divides `payload`, and a two-state leaf-start
+    /// mask of that width with bit 0 set.
+    pub(super) fn validate_leaf_merge(
+        &self,
+        leaves: &IrLeafMerge,
+        payload: u32,
+        path: &str,
+    ) -> ValidationResult {
+        let (default, starts) = (&leaves.default, &leaves.starts);
+        self.validate_const(default, &format!("{path}.default"))?;
+        self.validate_const(starts, &format!("{path}.starts"))?;
+        if default.real.is_some()
+            || default.fill.is_some()
+            || default.width == 0
+            || !payload.is_multiple_of(default.width)
+        {
+            return self.fail(
+                format!("{path}.default"),
+                "leaf merge default must be a concrete packed period whose width divides the payload",
+            );
+        }
+        if starts.real.is_some()
+            || starts.fill.is_some()
+            || starts.width != default.width
+            || starts.x.iter().chain(&starts.z).any(|limb| *limb != 0)
+            || starts.bits.first().is_none_or(|limb| limb & 1 == 0)
+        {
+            return self.fail(
+                format!("{path}.starts"),
+                "leaf merge starts must be a known mask of the period width with bit 0 set",
+            );
+        }
+        Ok(())
+    }
 }

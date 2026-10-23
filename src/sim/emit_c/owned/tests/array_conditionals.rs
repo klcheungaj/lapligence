@@ -44,7 +44,7 @@ fn array_conditional_emits_branch_local_captures_and_default_owner() {
 }
 
 #[test]
-fn structure_conditional_emits_each_member_boundary_and_default_owner() {
+fn structure_conditional_emits_one_leaf_merge_and_default_owner() {
     let model = IrModel::new("structure_emission".to_owned(), 1).unwrap();
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,
@@ -60,23 +60,11 @@ fn structure_conditional_emits_each_member_boundary_and_default_owner() {
             sel: Box::new(number(0, 1)),
             a: Box::new(number(0x12a5, 13)),
             b: Box::new(number(0x14a6, 13)),
-            members: vec![
-                IrConditionalMember {
-                    offset: 0,
-                    width: 4,
-                    default: IrConst::packed(vec![], vec![0xf], vec![], 4, false, None).unwrap(),
-                },
-                IrConditionalMember {
-                    offset: 4,
-                    width: 1,
-                    default: IrConst::packed(vec![], vec![], vec![], 1, false, None).unwrap(),
-                },
-                IrConditionalMember {
-                    offset: 5,
-                    width: 8,
-                    default: IrConst::packed(vec![], vec![0xff], vec![], 8, false, None).unwrap(),
-                },
-            ],
+            leaves: Box::new(IrLeafMerge {
+                // Leaves at bits 0 (4 bits, X), 4 (1 bit, 0) and 5 (8 bits, X).
+                default: IrConst::packed(vec![], vec![0x1fef], vec![], 13, false, None).unwrap(),
+                starts: IrConst::packed(vec![0x31], vec![], vec![], 13, false, None).unwrap(),
+            }),
         },
         13,
         false,
@@ -86,9 +74,9 @@ fn structure_conditional_emits_each_member_boundary_and_default_owner() {
     let value = frame.expression(&expr).unwrap();
     frame.discard(value);
     let body = frame.body();
-    assert_eq!(body.matches("sv4_array_conditional_merge_to(").count(), 3);
-    assert!(body.matches("sv4_part_select_set(").count() >= 3);
-    assert!(body.contains(", 13, 0);"));
+    assert_eq!(body.matches("sv4_record_conditional_merge").count(), 1);
+    assert!(!body.contains("sv4_array_conditional_merge"));
+    assert!(!body.contains("sv4_part_select"));
     assert!(!body.contains("sv4_mux_to("));
     assert!(frame.slots.iter().all(|live| !live));
     assert!(!body.contains("({"));

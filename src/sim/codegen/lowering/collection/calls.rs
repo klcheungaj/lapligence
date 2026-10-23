@@ -410,6 +410,7 @@ impl<'a> Codegen<'a> {
                     bound[idx].expr,
                     &format!("{}_{idx}", h.0),
                     read_actual,
+                    TargetSelectors::AtCopyOut,
                 )?;
                 let init_ir = self.lower_call_temp_init_from_expr(*io, &bound[idx], actual_read)?;
                 let storage = self.static_formals.get(&(callee_inst, *io)).cloned();

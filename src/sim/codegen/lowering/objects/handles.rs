@@ -116,10 +116,10 @@ impl Codegen<'_> {
 
     /// Copy-out of an output or inout handle formal whose actual is an
     /// element of a container of handles (SV 13.3): a caller temporary that
-    /// the callee writes, and the element store after the call. The element
-    /// is selected when the call starts. Returns the statements before the
-    /// call, the temporary's address and the store, or `None` when `node`
-    /// names no such element.
+    /// the callee writes, and the element store after the call. The store
+    /// selects the element when it runs, after the callee returns (decision
+    /// S13-D1). Returns the statements before the call, the temporary's
+    /// address and the store, or `None` when `node` names no such element.
     pub(in super::super) fn handle_element_copy_out(
         &mut self,
         path: &str,
@@ -143,38 +143,19 @@ impl Codegen<'_> {
             return Ok(None);
         }
         let mut before = Vec::new();
-        let key_name = format!("{temporary}_key");
         let store = match self.model.containers[container].kind {
             IrContainerKind::Associative {
                 key: IrAssocKey::String,
-            } => {
-                let key = self.lower_string(path, index)?;
-                before.push(IrStmt::DeclString {
-                    name: key_name.clone(),
-                    init: Some(key),
-                });
-                IrContainerStmt::SetStringChandle {
-                    container,
-                    key: IrStringExpr::LocalRead(key_name),
-                    value: IrChandleExpr::LocalRead(temporary.to_owned()),
-                }
-            }
-            _ => {
-                let index = self.lower_container_top_index(path, container, index)?;
-                let (width, signed) = (index.width, index.signed);
-                before.push(IrStmt::DeclLocal {
-                    name: key_name.clone(),
-                    width,
-                    signed,
-                    two_state: false,
-                    init: Some(Box::new(index)),
-                });
-                IrContainerStmt::SetChandleValue {
-                    container,
-                    index: IrExpr::new(IrExprKind::LocalRead(key_name), width, signed, None),
-                    value: IrChandleExpr::LocalRead(temporary.to_owned()),
-                }
-            }
+            } => IrContainerStmt::SetStringChandle {
+                container,
+                key: self.lower_string(path, index)?,
+                value: IrChandleExpr::LocalRead(temporary.to_owned()),
+            },
+            _ => IrContainerStmt::SetChandleValue {
+                container,
+                index: self.lower_container_top_index(path, container, index)?,
+                value: IrChandleExpr::LocalRead(temporary.to_owned()),
+            },
         };
         let initial = if copy_in {
             Some(self.lower_chandle(path, node)?)

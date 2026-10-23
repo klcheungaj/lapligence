@@ -1,7 +1,7 @@
 #include "ranges.h"
 
-/* SV2009 11.4.11 compares immediate array elements with logical equality.
- * A matching X/Z payload therefore still selects the element default. */
+/* SV2009 11.4.11 compares uniform array leaves with logical equality.
+ * A matching X/Z payload therefore still selects the leaf default. */
 g4_t llg_gmp_sv4_array_conditional_merge_wide(g4_t a, g4_t b, g4_t element_default) {
     uint32_t stride = element_default.width;
     if (!a.width || a.width >= LLG_GMP_SUPPORTED_WIDTH_LIMIT || a.width != b.width || !stride ||
@@ -42,6 +42,46 @@ g4_t llg_gmp_sv4_array_conditional_merge_wide(g4_t a, g4_t b, g4_t element_defau
             bit += take;
         }
         g4_copy_bits(&result, offset, equal ? a : element_default, equal ? offset : 0, stride);
+    }
+    llg_gmp_sv4_finish(&result);
+    return result;
+}
+/* SV2009 11.4.11 merges records leaf by leaf: `leaf_starts` marks the least-
+ * significant bit of each leaf of one `period_default.width`-bit period, and
+ * the payload repeats that period. A leaf with X/Z or any differing bit takes
+ * its bits of the period default. */
+g4_t llg_gmp_sv4_record_conditional_merge(g4_t a, g4_t b, g4_t period_default,
+                                         g4_t leaf_starts) {
+    uint32_t period = period_default.width;
+    if (!a.width || a.width >= LLG_GMP_SUPPORTED_WIDTH_LIMIT || a.width != b.width || !period ||
+        period > a.width || a.width % period || leaf_starts.width != period ||
+        !(g4_a(&leaf_starts)[0] & 1u))
+        llg_gmp_sv4_fail("invalid record conditional merge shape");
+    g4_t result = llg_gmp_sv4_zero(a.width, 0);
+    const uint64_t *aa = g4_a(&a), *ab = g4_b(&a), *ba = g4_a(&b), *bb = g4_b(&b);
+    const uint64_t* starts = g4_a(&leaf_starts);
+    for (uint32_t base = 0; base < a.width; base += period) {
+        for (uint32_t start = 0; start < period;) {
+            uint32_t end = start + 1;
+            while (end < period && !((starts[end / 64u] >> (end % 64u)) & 1u))
+                ++end;
+            int equal = 1;
+            for (uint32_t bit = start; bit < end;) {
+                uint32_t take = end - bit;
+                if (take > 64u)
+                    take = 64u;
+                uint32_t at = base + bit;
+                if (g4_range_word(ab, at, take) || g4_range_word(bb, at, take) ||
+                    g4_range_word(aa, at, take) != g4_range_word(ba, at, take)) {
+                    equal = 0;
+                    break;
+                }
+                bit += take;
+            }
+            g4_copy_bits(&result, base + start, equal ? a : period_default,
+                         equal ? base + start : start, end - start);
+            start = end;
+        }
     }
     llg_gmp_sv4_finish(&result);
     return result;

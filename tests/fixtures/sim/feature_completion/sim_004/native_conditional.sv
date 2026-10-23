@@ -3,7 +3,7 @@
 // one evaluates both and combines them element by element, keeping matching
 // elements and giving others their default-uninitialized value (6.8 Table
 // 6-7: "" for strings, null for chandles, X/0 for 4/2-state integral, 0.0
-// for real). Nested records are immediate members and default as a whole.
+// for real). Nested records merge leaf by leaf too (decision R05-D1).
 module tb;
   typedef struct {string u; int k;} inner_t;
   typedef struct {

@@ -50,7 +50,28 @@ fn dynamic_storage_and_waveform_snapshots_compact_gmp() {
     );
 }
 
+/// The two targets that compile the whole scheduler runtime (`llg_rt.c` with
+/// the debug coroutine checks) and the VPI layer (`llg_vpi.c`) under the strict
+/// warning set, at Release optimization: GCC's `-O3` flow analysis reports
+/// maybe-uninitialized reads that the Debug build above cannot see. Building
+/// only these targets keeps the check far cheaper than a second full build.
+#[test]
+fn release_runtime_units_build_under_strict_warnings() {
+    run_storage_stages(
+        "runtime-value-storage-release",
+        &[],
+        "Release",
+        &["owner_probe_debug_rt", "vpi_ownership_probe"],
+    );
+}
+
 fn run_storage_tests(label: &str, options: &[String]) {
+    run_storage_stages(label, options, "Debug", &[]);
+}
+
+/// Configures, builds and (when `targets` is empty, so every probe is built)
+/// runs the probes in build configuration `config`.
+fn run_storage_stages(label: &str, options: &[String], config: &str, targets: &[&str]) {
     let cmake = std::env::var("LLG_CMAKE").unwrap_or_else(|_| "cmake".to_owned());
     if Command::new(&cmake).arg("--version").output().is_err() {
         eprintln!("SKIP: CMake `{cmake}` not available");
@@ -64,7 +85,7 @@ fn run_storage_tests(label: &str, options: &[String]) {
         .arg(source)
         .arg("-B")
         .arg(dir.path())
-        .arg("-DCMAKE_BUILD_TYPE=Debug")
+        .arg(format!("-DCMAKE_BUILD_TYPE={config}"))
         // The waveform probes compile the libfst sources the runtime embeds:
         // vendor/libfst, patched in place by the build script.
         .args(options);
@@ -86,17 +107,23 @@ fn run_storage_tests(label: &str, options: &[String]) {
     build
         .arg("--build")
         .arg(dir.path())
-        .args(["--config", "Debug"]);
+        .args(["--config", config]);
+    if !targets.is_empty() {
+        build.arg("--target").args(targets);
+    }
     let ctest = Path::new(&cmake).with_file_name(format!("ctest{}", std::env::consts::EXE_SUFFIX));
     let mut test = Command::new(ctest);
     test.arg("--test-dir")
         .arg(dir.path())
-        .args(["--build-config", "Debug", "--output-on-failure"]);
-    for (stage, command, timeout) in [
+        .args(["--build-config", config, "--output-on-failure"]);
+    let mut stages = vec![
         ("configure", &mut configure, STAGE_TIMEOUT),
         ("build", &mut build, BUILD_TIMEOUT),
-        ("test", &mut test, TEST_STAGE_TIMEOUT),
-    ] {
+    ];
+    if targets.is_empty() {
+        stages.push(("test", &mut test, TEST_STAGE_TIMEOUT));
+    }
+    for (stage, command, timeout) in stages {
         let output = sim_harness::run_command(command, timeout)
             .unwrap_or_else(|error| panic!("storage tests {stage}: {error}"));
         assert!(

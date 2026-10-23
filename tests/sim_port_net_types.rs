@@ -172,7 +172,9 @@ fn port_net_type_sibling_tie_order_is_deterministic() {
             &[],
             &[],
         );
-        assert_collapse_warnings(output, "siblings=000\n", 1);
+        // Decision R11-D1: a wand and a wor sibling on one wire make it wor,
+        // so the 0 and 1 drivers give 1 everywhere.
+        assert_collapse_warnings(output, "siblings=111\n", 1);
     }
 }
 

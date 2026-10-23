@@ -1,8 +1,8 @@
 blocking 1 01
 mutating 2 02
 nba 3 03
-copyout 4 0b
-postfix 5 0 1b
-prefix 6 2 2b
-snapshot 6 2c
-root 02c0
+copyout 4 23
+postfix 5 2 33
+prefix 6 0 03
+snapshot 6 0c
+root 00c0

@@ -596,7 +596,7 @@ impl<'a> Codegen<'a> {
     /// `dst = c ? a : b` for descriptor-backed dynamic arrays (including
     /// fixed-array views of native elements). A known predicate assigns one
     /// arm; an ambiguous one evaluates both arms into temporaries and merges
-    /// immediate elements (SV 11.4.11).
+    /// them leaf by leaf (SV 11.4.11).
     fn lower_container_conditional_into(
         &mut self,
         path: &str,

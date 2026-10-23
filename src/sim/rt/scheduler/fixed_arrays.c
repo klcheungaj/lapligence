@@ -369,15 +369,20 @@ struct llg_fixed_range {
 struct llg_fixed_image {
     size_t refs, count;
     llg_fixed_array_t* sources;
-    uint64_t bit_count, element_cells;
+    uint64_t bit_count;
     uint32_t slice, cell_width;
     int two_state, merge;
+    /* A record-cell merge's period default and leaf starts; empty when
+     * every cell is one leaf. */
+    sv4_t cell_default, leaf_starts;
 };
 
 static void fixed_image_release(llg_fixed_image_t* image) {
     if (!image || --image->refs) return;
     for (size_t i = 0; i < image->count; ++i) llg_fixed_array_destroy(&image->sources[i]);
     free(image->sources);
+    sv4_destroy(&image->cell_default);
+    sv4_destroy(&image->leaf_starts);
     free(image);
 }
 
@@ -399,17 +404,21 @@ static sv4_t fixed_convert(sv4_t value, uint32_t width, int sign, int two_state)
 
 static sv4_t fixed_image_read(const llg_fixed_image_t* image, uint64_t index) {
     if (image->merge) {
-        uint64_t first = index / image->element_cells * image->element_cells;
-        int equal = 1;
-        for (uint64_t i = 0; i < image->element_cells; ++i) {
-            sv4_t left = fixed_read(&image->sources[0], first + i);
-            sv4_t right = fixed_read(&image->sources[1], first + i);
-            int state = fixed_compare_leaf(&left, &right, 0);
+        /* SV 11.4.11: cells merge independently, and a record cell merges
+         * leaf by leaf. */
+        sv4_t left = fixed_read(&image->sources[0], index);
+        sv4_t right = fixed_read(&image->sources[1], index);
+        if (llg_sv4_width(image->cell_default)) {
+            sv4_t merged = sv4_record_conditional_merge(left, right, image->cell_default,
+                                                        image->leaf_starts);
             sv4_destroy(&left); sv4_destroy(&right);
-            if (state != 1) { equal = 0; break; }
+            return merged;
         }
-        if (!equal) return image->two_state ? sv4_zero(image->cell_width, 0) : sv4_x(image->cell_width, 0);
-        return fixed_read(&image->sources[0], index);
+        int state = fixed_compare_leaf(&left, &right, 0);
+        sv4_destroy(&right);
+        if (state == 1) return left;
+        sv4_destroy(&left);
+        return image->two_state ? sv4_zero(image->cell_width, 0) : sv4_x(image->cell_width, 0);
     }
     sv4_t result = sv4_zero(image->cell_width, 0);
     sv4_t cached = SV4_EMPTY;
@@ -753,12 +762,19 @@ void llg_fixed_array_stream_copy(llg_fixed_array_t* dst, const llg_fixed_array_t
     else { const llg_fixed_array_t* sources[] = {src}; llg_fixed_array_stream_segments(dst, sources, 1, two_state, nba, slice); }
 }
 
-void llg_fixed_array_merge(llg_fixed_array_t* dst, const llg_fixed_array_t* left, const llg_fixed_array_t* right, uint64_t element_cells, int two_state) {
-    if (!element_cells || dst->total != left->total || dst->total != right->total || dst->total % element_cells) fixed_bad_state("fixed conditional shape mismatch");
+void llg_fixed_array_merge(llg_fixed_array_t* dst, const llg_fixed_array_t* left, const llg_fixed_array_t* right, const sv4_t* cell_default, const sv4_t* leaf_starts, int two_state) {
+    if (dst->total != left->total || dst->total != right->total || !cell_default != !leaf_starts ||
+        (cell_default && (llg_sv4_width(*cell_default) != llg_sv4_width(dst->initial) ||
+                          llg_sv4_width(*leaf_starts) != llg_sv4_width(*cell_default))))
+        fixed_bad_state("fixed conditional shape mismatch");
     llg_value_scope_t* scope = llg_value_scope_begin_object(sizeof(llg_fixed_array_t), llg_fixed_array_destroy);
     llg_fixed_array_t* snapshot = llg_value_scope_object(scope);
     llg_fixed_image_t* image = llg_checked_calloc(1, sizeof(*image), "fixed conditional image");
-    image->refs = 1; image->count = 2; image->merge = 1; image->element_cells = element_cells;
+    image->refs = 1; image->count = 2; image->merge = 1;
+    if (cell_default) {
+        image->cell_default = sv4_clone(cell_default);
+        image->leaf_starts = sv4_clone(leaf_starts);
+    }
     image->cell_width = llg_sv4_width(dst->initial); image->two_state = two_state;
     image->sources = llg_checked_calloc(2, sizeof(*image->sources), "fixed conditional sources");
     fixed_array_snapshot(&image->sources[0], left, 0); fixed_array_snapshot(&image->sources[1], right, 0);
