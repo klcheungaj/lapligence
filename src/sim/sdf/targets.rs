@@ -35,6 +35,27 @@ pub struct SdfTargetPort {
     pub range: Option<(i64, i64)>,
 }
 
+/// An input or inout port of a module instance connected to a net
+/// (NETDELAY, 32.4.4): port `port` of scope `scope`, whose bits from left
+/// to right connect to net indices `net_bits.0` to `net_bits.1` (`None`:
+/// a scalar net).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SdfNetLoad {
+    pub scope: u32,
+    pub port: u32,
+    pub net_bits: Option<(i64, i64)>,
+}
+
+/// A net declared in a scope and the load ports connected to it in the
+/// scope's own instances (through generate blocks). `range` is the declared
+/// packed range, `None` for a scalar net.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SdfTargetNet {
+    pub name: String,
+    pub range: Option<(i64, i64)>,
+    pub loads: Vec<SdfNetLoad>,
+}
+
 /// A specify path or timing check terminal: a signal name and the declared
 /// indices it selects (`None` for the whole signal).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -207,6 +228,8 @@ pub struct SdfScope {
     /// A primitive's output drives these ports of its parent module (by
     /// index), which makes it a DEVICE target of that module (Table 32-1).
     pub drives: Vec<u32>,
+    /// The nets of a module or generate scope with load ports.
+    pub nets: Vec<SdfTargetNet>,
 }
 
 impl SdfScope {
@@ -223,6 +246,7 @@ impl SdfScope {
             checks: Vec::new(),
             precision_fs: 0,
             drives: Vec::new(),
+            nets: Vec::new(),
         }
     }
 
@@ -374,6 +398,34 @@ impl SdfTargets {
                 out.push_str(&format!(
                     "  port {direction}{range} {}\n",
                     escaped(&port.name)
+                ));
+            }
+            for net in &scope.nets {
+                let range = |range: Option<(i64, i64)>| {
+                    range
+                        .map(|(left, right)| format!("[{left}:{right}]"))
+                        .unwrap_or_default()
+                };
+                let loads = net
+                    .loads
+                    .iter()
+                    .map(|load| {
+                        format!(
+                            "{}.{}{}",
+                            self.path_of(load.scope),
+                            escaped(&self.scope(load.scope).ports[load.port as usize].name),
+                            range(load.net_bits)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let declared = net
+                    .range
+                    .map(|(left, right)| format!(" [{left}:{right}]"))
+                    .unwrap_or_default();
+                out.push_str(&format!(
+                    "  net{declared} {} loads [{loads}]\n",
+                    escaped(&net.name)
                 ));
             }
             for (number, path) in scope.paths.iter().enumerate() {

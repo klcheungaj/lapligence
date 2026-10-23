@@ -1,0 +1,10 @@
+(DELAYFILE
+ (SDFVERSION "2.1")
+ (DESIGN "tb")
+ (TIMESCALE 1ns)
+ (CELL (CELLTYPE "tb") (INSTANCE)
+  (DELAY (ABSOLUTE
+   (NETDELAY l3.a (7))
+   (NETDELAY n4 (8))
+   (NETDELAY n5[1] (9)))))
+)

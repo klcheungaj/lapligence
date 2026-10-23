@@ -51,9 +51,9 @@ pub use syntax::{
     SdfTimingSpec, SdfVersion,
 };
 pub use targets::{
-    SdfCheckEvent, SdfCheckRow, SdfPathRow, SdfPortDirection, SdfScope, SdfScopeKind,
-    SdfTargetCheck, SdfTargetCondition, SdfTargetEdge, SdfTargetPath, SdfTargetPort, SdfTargets,
-    SdfTerminal, SdfTimingCheckKind,
+    SdfCheckEvent, SdfCheckRow, SdfNetLoad, SdfPathRow, SdfPortDirection, SdfScope, SdfScopeKind,
+    SdfTargetCheck, SdfTargetCondition, SdfTargetEdge, SdfTargetNet, SdfTargetPath, SdfTargetPort,
+    SdfTargets, SdfTerminal, SdfTimingCheckKind,
 };
 
 use std::fmt;

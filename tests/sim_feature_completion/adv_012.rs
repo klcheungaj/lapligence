@@ -198,3 +198,31 @@ fn device_delays() {
         ],
     );
 }
+
+/// Interconnect delays (32.4.4, Table 32-3): PORT, INTERCONNECT from one
+/// source, two sources combined by each INTERCONNECT_MIPD policy, NETDELAY
+/// to a port, to every load port of a net and to the load ports of one bit
+/// of a vector net (SDF 2.1), and an INTERCONNECT whose source does not
+/// exist, which applies from every source of the load with a warning.
+#[test]
+fn interconnect_delays() {
+    run_with_warnings(
+        "interconnect.v",
+        fixture!("interconnect.out"),
+        &[],
+        &[
+            ("interconnect.sdf", fixture!("interconnect.sdf")),
+            ("netdelay.sdf", fixture!("netdelay.sdf")),
+            ("ms.sdf", fixture!("ms.sdf")),
+            ("min.cfg", fixture!("min.cfg")),
+            ("average.cfg", fixture!("average.cfg")),
+            ("last.cfg", fixture!("last.cfg")),
+        ],
+        &[
+            "interconnect.sdf:9:5: the INTERCONNECT source was not found; the delay applies \
+             from every source of the load (IEEE 1800-2009 32.4.4)",
+            "interconnect.sdf:9:18: instance `nosuch` of the INTERCONNECT source `nosuch.y` \
+             not found in `tb`",
+        ],
+    );
+}

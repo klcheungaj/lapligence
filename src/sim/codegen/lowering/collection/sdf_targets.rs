@@ -8,9 +8,9 @@
 use super::*;
 use crate::core::db::{PathCondition, PathEdge, PrimitiveType, TimingCheckKind, TimingEvent};
 use crate::sim::sdf::{
-    parse_hdl_condition, CondExpr, SdfCheckEvent, SdfCheckRow, SdfPathRow, SdfPortDirection,
-    SdfScope, SdfScopeKind, SdfTargetCheck, SdfTargetCondition, SdfTargetEdge, SdfTargetPath,
-    SdfTargetPort, SdfTargets, SdfTerminal, SdfTimingCheckKind,
+    parse_hdl_condition, CondExpr, SdfCheckEvent, SdfCheckRow, SdfNetLoad, SdfPathRow,
+    SdfPortDirection, SdfScope, SdfScopeKind, SdfTargetCheck, SdfTargetCondition, SdfTargetEdge,
+    SdfTargetNet, SdfTargetPath, SdfTargetPort, SdfTargets, SdfTerminal, SdfTimingCheckKind,
 };
 
 /// The primitive name a CELLTYPE uses for a gate instance.
@@ -105,7 +105,140 @@ impl Codegen<'_> {
         for top in tops {
             self.add_sdf_scope(&mut targets, &mut tables, None, *top);
         }
+        self.add_sdf_nets(&mut targets, &tables.nodes);
         (targets, tables.nodes)
+    }
+
+    /// The nets that input and inout ports of module instances connect to
+    /// (NETDELAY, 32.4.4), recorded in the scope declaring the net. A port
+    /// whose actual is not a net or a constant select of one (a
+    /// concatenation, an expression) is no NETDELAY load.
+    fn add_sdf_nets(&self, targets: &mut SdfTargets, nodes: &[NodeId]) {
+        let index_of = nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| (*node, index as u32))
+            .collect::<HashMap<_, _>>();
+        let mut nets: Vec<(u32, NodeId, SdfNetLoad)> = Vec::new();
+        for (scope, node) in nodes.iter().enumerate() {
+            if targets.scope(scope as u32).kind != SdfScopeKind::Module {
+                continue;
+            }
+            let ports = self
+                .node(*node)
+                .children
+                .iter()
+                .filter(|child| matches!(self.kind(**child), NodeKind::Port { .. }));
+            for (port_index, port) in ports.enumerate() {
+                let NodeKind::Port {
+                    direction: crate::core::db::Direction::Input | crate::core::db::Direction::Inout,
+                    high,
+                    high_expr,
+                    ..
+                } = self.kind(*port)
+                else {
+                    continue;
+                };
+                let Some(actual) = high_expr.or(*high) else {
+                    continue;
+                };
+                let Some(net) = self.sdf_root_target(actual) else {
+                    continue;
+                };
+                if !matches!(self.kind(net), NodeKind::Net { .. }) {
+                    continue;
+                }
+                let Some(net_bits) = self.sdf_actual_bits(actual, net) else {
+                    continue;
+                };
+                // The innermost catalog scope above the declaration.
+                let mut owner = self.node(net).parent;
+                let owner = loop {
+                    match owner {
+                        Some(candidate) => match index_of.get(&candidate) {
+                            Some(index) => break Some(*index),
+                            None => owner = self.node(candidate).parent,
+                        },
+                        None => break None,
+                    }
+                };
+                if let Some(owner) = owner {
+                    nets.push((
+                        owner,
+                        net,
+                        SdfNetLoad {
+                            scope: scope as u32,
+                            port: port_index as u32,
+                            net_bits,
+                        },
+                    ));
+                }
+            }
+        }
+        for (owner, net, load) in nets {
+            let name = self.node(net).name.clone();
+            let entry = targets.scope_mut(owner);
+            match entry.nets.iter_mut().find(|known| known.name == name) {
+                Some(known) => known.loads.push(load),
+                None => {
+                    let range = self
+                        .db
+                        .packed_dimensions(net)
+                        .and_then(|ranges| (ranges.len() == 1).then(|| ranges[0]))
+                        .map(|range| (range.left as i64, range.right as i64));
+                    entry.nets.push(SdfTargetNet {
+                        name,
+                        range,
+                        loads: vec![load],
+                    });
+                }
+            }
+        }
+    }
+
+    /// The net indices, left to right, a port actual naming `net` selects:
+    /// the declared range for the whole net (`Some(None)` for a scalar),
+    /// or a constant select; `None` when they are not constant.
+    fn sdf_actual_bits(&self, actual: NodeId, net: NodeId) -> Option<Option<(i64, i64)>> {
+        let bound = |node: NodeId| self.eval_bound_i128(node).ok().map(|value| value as i64);
+        match self.kind(actual) {
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) if self.is_net_ref(*base, net) => {
+                bound(*index).map(|bit| Some((bit, bit)))
+            }
+            NodeKind::Expr(ExprKind::PartSelect {
+                base, left, right, ..
+            }) if self.is_net_ref(*base, net) => bound(*left).zip(bound(*right)).map(Some),
+            NodeKind::Expr(ExprKind::IndexedPartSelect {
+                base,
+                base_expr,
+                width_expr,
+                neg,
+                ..
+            }) if self.is_net_ref(*base, net) => {
+                let (start, width) = bound(*base_expr).zip(bound(*width_expr))?;
+                Some(Some(if *neg {
+                    (start, start - width + 1)
+                } else {
+                    (start + width - 1, start)
+                }))
+            }
+            NodeKind::Expr(ExprKind::Ref { .. }) | NodeKind::Net { .. } => Some(
+                self.db
+                    .packed_dimensions(net)
+                    .and_then(|ranges| (ranges.len() == 1).then(|| ranges[0]))
+                    .map(|range| (range.left as i64, range.right as i64)),
+            ),
+            _ => None,
+        }
+    }
+
+    /// `expression` names `net` itself (not an element of an array of nets).
+    fn is_net_ref(&self, expression: NodeId, net: NodeId) -> bool {
+        match self.kind(expression) {
+            NodeKind::Expr(ExprKind::Ref { target }) => *target == Some(net),
+            NodeKind::Net { .. } => expression == net,
+            _ => false,
+        }
     }
 
     fn add_sdf_scope(
