@@ -41,7 +41,11 @@ static int run_region_queue(llg_region_t region) {
     while (!g.finish) {
         llg_region_callback_t* callback = take_region_callback(region);
         llg_proc_t* process = callback ? NULL : dequeue_region(region);
-        if (!callback && !process) break;
+        if (!callback && !process) {
+            // Deferred net updates may wake more work in this region.
+            if (llg_net_flush_deferred()) continue;
+            break;
+        }
         if (!consume_limit(&g.region_passes, g.zero_loop_limit)) {
             free(callback);
             report_zero_delay_loop();
@@ -60,7 +64,9 @@ static int run_region_queue(llg_region_t region) {
             process->region = region;
             g.current = process;
             g.process_turn_active = 1;
+            net_defer_active = 1;
             llg_co_status_t status = llg_co_run(&process->chain);
+            net_defer_active = 0;
             g.process_turn_active = 0;
             g.current = NULL;
             if (status == LLG_CO_DONE ||
@@ -93,6 +99,7 @@ static int run_region_queue(llg_region_t region) {
             }
         }
     }
+    llg_net_flush_deferred();
     return !g.finish && !g.suspended;
 }
 

@@ -308,7 +308,12 @@ runtime-valued net delay is the generated updater's store into
 `propagation_rise/fall/turn_off`; each later publication reads those fields and
 pending records keep their times. Reset
 model handles before freeing driver storage; reinitialization discards pending
-events. Zero-delay drivers drain Active. Generated nets provide exact-size
+events. Zero-delay drivers drain Active. A process's write to a net with several driver
+slots updates the slot at once but queues the net's resolution
+(`llg_net_defer`, slot `deferred_slot`) until its region queue is empty;
+`run_region_queue` flushes the table then and before returning, so the table
+is empty between drains (S2-D11). Writes outside a process turn (inertial
+commits, startup, callbacks) resolve at once. Generated nets provide exact-size
 driver interval nodes and overlap scratch storage. Selected writes replace their
 previous interval, release it to Z when a selector moves, and resolve/publish only
 the union of old and new ranges against overlapping drivers. Keep full-net waiter

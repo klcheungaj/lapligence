@@ -617,6 +617,9 @@ struct llg_net {
      * the first write of a driver covering them (T0-D3). Every write resolves
      * the whole net while it is set. */
     int8_t unsettled;
+    /* 1 + this net's entry in the runtime's deferred-update table while a
+     * driver write waits for the end of the region queue drain; 0 otherwise. */
+    int32_t deferred_slot;
     /* For a net with several drivers, one bit per net bit that still holds
      * its start X because no driver covering it has written yet. NULL once
      * every such bit is written, and for every other net. */

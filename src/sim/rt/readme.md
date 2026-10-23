@@ -64,6 +64,9 @@ Resolved nets keep one generated interval-tree node per driver plus an exact-siz
 query scratch array. Immediate selected-driver updates resolve only the union of
 their old and new intervals using overlapping drivers; publication still targets
 the canonical full net, so waiter semantics do not depend on the optimization.
+A process's write to a net with several driver slots defers that resolution to
+the end of its region queue drain, keeping the union of the written intervals
+in one table entry per net (decision S2-D11).
 The process record embeds only time, named-event and expression-list wait
 payloads. Rare wait kinds own one zeroed out-of-line payload that wake,
 cancellation and teardown release through the same cleanup path.

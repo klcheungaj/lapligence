@@ -2765,6 +2765,14 @@ fn s2_d10_delayed_net_initial_x() {
 }
 
 #[test]
+fn s2_d11_driver_handover_one_update() {
+    run_decision(
+        "S2-D11_driver_handover_one_update",
+        include_str!("fixtures/sim/lrm_decisions/S2-D11_driver_handover_one_update.out"),
+    );
+}
+
+#[test]
 fn s3_d1_level_rows_use_prior_state() {
     run_decision(
         "S3-D1_level_rows_use_prior_state",
