@@ -48,7 +48,7 @@ module tb;
             rr[0].codes[0] !== 4'ha || rr[0].codes[1] !== 4'hb)
             $fatal(1, "default-uninitialized leaf");
         rb[0].count = 8;
-        rr = choose_records(selector, ra, rb);
+        rr = choose_records(selector, rb, ra);
         if (rr[0].count !== 0 || rr[0].codes[1] !== 4'hb)
             $fatal(1, "two-state leaf default");
         if (rr[1].count !== 4 || rr[1].data !== 8'h5a ||
