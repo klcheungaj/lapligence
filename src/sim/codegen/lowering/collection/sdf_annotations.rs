@@ -609,8 +609,12 @@ impl Codegen<'_> {
             .flat_map(|set| set.destinations())
             .map(|destination| destination.group())
             .collect::<HashSet<_>>();
-        // Loads by net group, in first-annotated order.
+        // Loads by net group, in first-annotated order. A flat netlist can
+        // annotate loads on many groups, so groups and reported warnings are
+        // found through sets rather than scans.
         let mut groups: Vec<LoadGroup> = Vec::new();
+        let mut group_index: HashMap<usize, usize> = HashMap::new();
+        let mut reported: HashSet<String> = self.warnings.iter().cloned().collect();
         for (index, load) in state.load_order.iter().enumerate() {
             let port = self
                 .node(load.instance)
@@ -648,19 +652,22 @@ impl Codegen<'_> {
                      values of an input or inout port net of its own that no module path \
                      drives"
                 );
-                if !self.warnings.contains(&message) {
+                if reported.insert(message.clone()) {
                     self.warnings.push(message);
                 }
                 continue;
             };
-            match groups.iter_mut().find(|known| known.group == group) {
-                Some(known) => known.bits.push((index, bit)),
-                None => groups.push(LoadGroup {
-                    group,
-                    signal,
-                    bits: vec![(index, bit)],
-                    name,
-                }),
+            match group_index.get(&group) {
+                Some(&known) => groups[known].bits.push((index, bit)),
+                None => {
+                    group_index.insert(group, groups.len());
+                    groups.push(LoadGroup {
+                        group,
+                        signal,
+                        bits: vec![(index, bit)],
+                        name,
+                    });
+                }
             }
         }
         for LoadGroup {
@@ -870,8 +877,9 @@ impl Codegen<'_> {
             }
             self.model.sdf_annotations.push(ir);
         }
+        let mut reported: HashSet<String> = self.warnings.iter().cloned().collect();
         for message in unmapped.into_iter().chain(negative_limits) {
-            if !self.warnings.contains(&message) {
+            if reported.insert(message.clone()) {
                 self.warnings.push(message);
             }
         }

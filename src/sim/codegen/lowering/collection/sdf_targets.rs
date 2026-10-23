@@ -175,12 +175,16 @@ impl Codegen<'_> {
                 }
             }
         }
+        // A scope can declare many nets (a flat netlist), so loads find
+        // their net through an index rather than a scan.
+        let mut net_index: HashMap<(u32, NodeId), usize> = HashMap::new();
         for (owner, net, load) in nets {
-            let name = self.node(net).name.clone();
             let entry = targets.scope_mut(owner);
-            match entry.nets.iter_mut().find(|known| known.name == name) {
-                Some(known) => known.loads.push(load),
+            match net_index.get(&(owner, net)) {
+                Some(&known) => entry.nets[known].loads.push(load),
                 None => {
+                    let name = self.node(net).name.clone();
+                    net_index.insert((owner, net), entry.nets.len());
                     let range = self
                         .db
                         .packed_dimensions(net)

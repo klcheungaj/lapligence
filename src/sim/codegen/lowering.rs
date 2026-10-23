@@ -544,7 +544,9 @@ fn lower_timing_metadata(
     // SDF files are read against the design before the targets are
     // lowered, which give annotated gates writable delays and annotated
     // combined checks runtime resettlement.
+    let sdf_read_stage = crate::profile::Stage::new("lowering.sdf_read");
     cg.read_sdf_annotations(tops, &options.sdf)?;
+    drop(sdf_read_stage);
     cg.build_net_groups()?;
     // Module paths name net groups and their structural driver sites.
     cg.lower_module_paths()?;
@@ -552,6 +554,7 @@ fn lower_timing_metadata(
     cg.lower_sdf_loads()?;
     // Timing checks read the same terminals and the instance's variables.
     cg.lower_timing_checks()?;
+    let _sdf_map_stage = crate::profile::Stage::new("lowering.sdf_map");
     cg.map_sdf_annotations(tops)
 }
 

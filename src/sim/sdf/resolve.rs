@@ -54,6 +54,8 @@ pub fn resolve<R: BufRead>(
         root,
         limits,
         children: HashMap::new(),
+        ports: HashMap::new(),
+        nets: HashMap::new(),
         by_cell_type: None,
         plan: SdfPlan {
             version: header.version,
@@ -70,6 +72,18 @@ pub fn resolve<R: BufRead>(
                 .children
                 .entry((parent, scope.name.as_str(), scope.index))
                 .or_insert(index as u32);
+        }
+        for (port, declared) in scope.ports.iter().enumerate() {
+            resolver
+                .ports
+                .entry((index as u32, declared.name.as_str()))
+                .or_insert(port as u32);
+        }
+        for (net, declared) in scope.nets.iter().enumerate() {
+            resolver
+                .nets
+                .entry((index as u32, declared.name.as_str()))
+                .or_insert(net as u32);
         }
     }
     while let Some(cell) = reader.next_cell()? {
@@ -88,6 +102,12 @@ struct Resolver<'t> {
     limits: SdfLimits,
     /// `(parent, name, index)` to child scope.
     children: HashMap<(u32, &'t str, Option<i64>), u32>,
+    /// `(scope, name)` to the scope's first port of that name: top and
+    /// hierarchical scopes can have many ports, and every PORT,
+    /// INTERCONNECT and NETDELAY record looks one up.
+    ports: HashMap<(u32, &'t str), u32>,
+    /// `(scope, name)` to the scope's NETDELAY target net of that name.
+    nets: HashMap<(u32, &'t str), u32>,
     /// Scopes at or below the root by cell type, built at the first
     /// wildcard cell.
     by_cell_type: Option<HashMap<&'t str, Vec<u32>>>,
@@ -175,6 +195,17 @@ impl<'t> Resolver<'t> {
         self.children
             .get(&(scope, component.name.as_str(), index))
             .copied()
+    }
+
+    /// The index of `scope`'s first port named `name`.
+    fn port_index(&self, scope: u32, name: &str) -> Option<usize> {
+        self.ports.get(&(scope, name)).map(|&port| port as usize)
+    }
+
+    /// `scope`'s first port named `name`.
+    fn port_named(&self, scope: u32, name: &str) -> Option<&'t SdfTargetPort> {
+        let port = self.port_index(scope, name)?;
+        Some(&self.targets.scope(scope).ports[port])
     }
 
     fn walk(&self, from: u32, components: &[SdfIdent]) -> Option<u32> {
@@ -390,13 +421,7 @@ impl<'t> Resolver<'t> {
         condition: Option<&SdfPathCondition>,
     ) -> Vec<(u32, u32, u32)> {
         let entry = self.targets.scope(scope);
-        let whole = |name: &str| {
-            entry
-                .ports
-                .iter()
-                .find(|port| port.name == name)
-                .and_then(|port| port.range)
-        };
+        let whole = |name: &str| self.port_named(scope, name).and_then(|port| port.range);
         let mut found = Vec::new();
         for (index, path) in entry.paths.iter().enumerate() {
             let edge_ok = match edge {
@@ -458,14 +483,11 @@ impl<'t> Resolver<'t> {
         pos: SdfPos,
     ) -> Option<Vec<SdfPortTarget>> {
         let scope = self.walk(region, &net.path)?;
-        let entry = self.targets.scope(scope);
-        if entry.ports.iter().any(|port| port.name == net.port.name) {
+        if self.port_index(scope, &net.port.name).is_some() {
             return None;
         }
-        let declared = entry
-            .nets
-            .iter()
-            .find(|known| known.name == net.port.name)?;
+        let net_index = *self.nets.get(&(scope, net.port.name.as_str()))?;
+        let declared = &self.targets.scope(scope).nets[net_index as usize];
         let selected = match net.port.bits {
             None => None,
             Some(bits) => {
@@ -547,7 +569,7 @@ impl<'t> Resolver<'t> {
             return None;
         };
         let entry = self.targets.scope(scope);
-        let Some(index) = entry.ports.iter().position(|p| p.name == port.port.name) else {
+        let Some(index) = self.port_index(scope, &port.port.name) else {
             if warn {
                 let message = format!(
                     "{role} `{port}`: `{}` has no port `{}`",
@@ -773,8 +795,7 @@ impl<'t> Resolver<'t> {
                     self.warn(pos, message);
                     return Ok(());
                 };
-                let entry = self.targets.scope(scope);
-                if let Some(declared) = entry.ports.iter().find(|p| p.name == port.port.name) {
+                if let Some(declared) = self.port_named(scope, &port.port.name) {
                     if !matches!(
                         declared.direction,
                         SdfPortDirection::Output | SdfPortDirection::Inout
@@ -813,7 +834,7 @@ impl<'t> Resolver<'t> {
             // Without specify paths, the primitives driving the outputs
             // (Table 32-1).
             let entry = self.targets.scope(scope);
-            let port = output.and_then(|name| entry.ports.iter().position(|p| p.name == name));
+            let port = output.and_then(|name| self.port_index(scope, name));
             let primitives = entry
                 .children
                 .iter()
@@ -926,13 +947,7 @@ impl<'t> Resolver<'t> {
             _ => (&check.ports[0], check.ports.get(1)),
         };
         let entry = self.targets.scope(scope);
-        let whole = |name: &str| {
-            entry
-                .ports
-                .iter()
-                .find(|port| port.name == name)
-                .and_then(|port| port.range)
-        };
+        let whole = |name: &str| self.port_named(scope, name).and_then(|port| port.range);
         let event_matches =
             |sdf: &SdfPortTchk, declared: &SdfCheckEvent, stamp: Option<&SdfCondition>| {
                 if !terminal_matches(
