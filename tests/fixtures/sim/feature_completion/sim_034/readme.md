@@ -135,6 +135,16 @@ driver: `c = f0`. `v` is rebound to `b1`; after `@(b1.sb)` at 15 the sampled
 `b`: `44` at the `c2` edge 30 + 1 and `55` at the `c1` edge 21 + 1. The monitors
 print every change after time 0 (the time-0 assignment is not printed).
 
+Some simulators resolve the handle of a cycle-delayed drive (`v.sb.c <= ##2
+C1`) when it matures rather than when it executes, and restart its cycle count
+on the newly bound instance, so `C1` reaches `b2` at 7 instead of `b1` at 9;
+they bind drives without a cycle delay at issue, as llg does, and evaluate a
+select of the target at issue. llg follows 14.16 L20103-20105
+(`SystemVerilog-1800-2009.txt`), "Like a nonblocking intra-assignment delay,
+it shall not cause execution of the statement to block", and 10.4.2
+L13070-13071, under which a nonblocking target "shall be evaluated at the same
+time as the expression on the right-hand side" (decision S34-D3).
+
 ### `vif_selects`
 
 `m` is `logic [1:0][3:0]`, `asc` is `logic [0:7]`. Through `v` bound to `bj`:
