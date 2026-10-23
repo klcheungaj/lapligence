@@ -182,7 +182,7 @@ fn net_storage_lifecycle(
         "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_fill_to(net->drivers[slot], 3, net->width, net->is_signed);\n        llg_net_index_reset(net);\n        sv4_fill_to(&net->resolved, llg_net_storage[_llg_n].fill, net->width, net->is_signed);\n        net->n_aliases = 0;\n        llg_net_strength_reset(net);\n    }}\n"
     ));
     destroy.push_str(&format!(
-        "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_destroy(net->drivers[slot]);\n        sv4_destroy(&net->resolved);\n        net->propagation = NULL;\n    }}\n"
+        "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_destroy(net->drivers[slot]);\n        sv4_destroy(&net->resolved);\n        llg_net_start_release(net);\n        net->propagation = NULL;\n    }}\n"
     ));
     net_driven_starts(model, tables, initialize);
 }
@@ -839,7 +839,7 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
             result.fill = value.fill;
             let value = frame.convert(result, net.width, net.signed, false, false);
             frame.line(format!(
-                "llg_net_write(&{}, {slot}, {});",
+                "llg_net_write_driven(&{}, {slot}, {});",
                 net.c_name, value.code
             ));
             frame.discard(value);

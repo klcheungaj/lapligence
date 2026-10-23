@@ -3428,6 +3428,14 @@ fn t0_d3_driven_net_starts_x() {
 }
 
 #[test]
+fn t0_d3_driver_bits_start_separately() {
+    run_decision(
+        "T0-D3_driver_bits_start_separately",
+        include_str!("fixtures/sim/lrm_decisions/T0-D3_driver_bits_start_separately.out"),
+    );
+}
+
+#[test]
 fn t0_d4_constant_z_driver_no_event() {
     run_decision(
         "T0-D4_constant_z_driver_no_event",

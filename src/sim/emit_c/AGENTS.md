@@ -269,7 +269,9 @@ and one record slot per part; a group that starts X calls
 `llg_net_start_unknown` in the storage defaults, after the runtime delay
 store when its net delay is runtime-valued. Groups with `driven_runs` (T0-D3)
 share deduplicated run tables and call `llg_net_start_driven` after the net
-storage loop. `ModulePathStamp` is one `llg_module_path_stamp` call; the legacy
+storage loop; the storage teardown calls `llg_net_start_release`. Startup
+net fills (`WriteNet`) use `llg_net_write_driven`, which settles only the
+bits the value drives. `ModulePathStamp` is one `llg_module_path_stamp` call; the legacy
 statement renderer rejects it.
 
 A sequential definition emits one `static inline llg_udp_step_<t>` and each
