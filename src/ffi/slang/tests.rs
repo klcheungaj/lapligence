@@ -394,6 +394,42 @@ fn duplicate_semantic_role_index_is_rejected() {
     assert!(message.contains("duplicate role/index"), "{message}");
 }
 
+/// After a wide node the duplicate check restarts from a smaller set; it
+/// must still accept distinct edges and reject a repeated role/index.
+#[test]
+fn narrow_nodes_after_a_wide_node_keep_the_duplicate_check() {
+    let edge = |index| RawSemanticEdge {
+        role: 1,
+        index,
+        target_id: 0,
+        sequence_delay_valid: 0,
+        sequence_delay_min: 0,
+        sequence_delay_max: 0,
+    };
+    let wide = 300_u32;
+    let node = |id: u64, edge_start: u64, edge_count: u64| RawSemanticNode {
+        id,
+        edge_start,
+        edge_count,
+        ..raw_semantic_node(edge_count)
+    };
+    let mut edges: Vec<_> = (0..wide).map(edge).collect();
+    edges.extend([edge(0), edge(1)]);
+    let mut tables = Tables {
+        semantic_edges: edges.clone(),
+        semantic_nodes: vec![node(0, 0, wide.into()), node(1, wide.into(), 2)],
+        ..Tables::default()
+    };
+    let snapshot = stream(&tables).expect("distinct edges per node decode");
+    assert_eq!(snapshot.semantic_nodes.len(), 2);
+
+    edges.extend([edge(5), edge(5)]);
+    tables.semantic_edges = edges;
+    tables.semantic_nodes.push(node(2, u64::from(wide) + 2, 2));
+    let message = invalid_native_message(stream(&tables));
+    assert!(message.contains("duplicate role/index"), "{message}");
+}
+
 #[test]
 fn invalid_semantic_strength_and_port_state_are_rejected() {
     let mut node = raw_semantic_node(0);

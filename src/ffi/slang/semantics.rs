@@ -198,7 +198,14 @@ pub(super) fn decode_semantic_node(
         context.edges.len(),
         "semantic node edges",
     )?;
-    context.edge_keys.clear();
+    // Clearing a set costs its capacity, so after one wide node (a netlist
+    // module's instance list) clearing it for every later node made decoding
+    // nodes x widest window. Narrower nodes start from a set of their size.
+    if context.edge_keys.capacity() > RETAINED_EDGE_KEYS.max(window.len().saturating_mul(4)) {
+        *context.edge_keys = std::collections::HashSet::with_capacity(window.len());
+    } else {
+        context.edge_keys.clear();
+    }
     for index in window {
         if context.claimed_edges[index] {
             return Err(invalid_native("semantic node edge windows overlap"));
@@ -254,6 +261,9 @@ pub(super) fn decode_semantic_node(
         assertion: assertion_metadata(node),
     })
 }
+
+/// Edge-key capacity a node's duplicate check keeps for the next node.
+const RETAINED_EDGE_KEYS: usize = 64;
 
 fn decode_semantic_kind(raw: u32) -> Result<SemanticKind, SlangError> {
     Ok(match raw {
