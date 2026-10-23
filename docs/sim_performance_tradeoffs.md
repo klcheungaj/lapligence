@@ -48,6 +48,13 @@ those scripts. Differences within the observed spread are reported as noise.
   simulation within noise. On the corpus, `tasks` simulates 10.8% faster and
   `many-masked-20k` 9.9% faster; the rest are within noise. Pairs and triples
   stay unshared because their gain is small.
+- **Netlists:** cell bodies with specify paths, sequential UDPs and bit-select
+  port links share too: their path sets, UDP states and selected bits are
+  record operands. At 4,000 cells the model builds and runs in 5.1 instead of
+  21.4 s (buffer chain), 6.4 instead of 24.7 s (hierarchical blocks) and 7.2
+  instead of 147 s (inverters on bus bits), with identical output. Simulation of
+  2,000-cell netlists with 5,000 input toggles is not slower (10.7-11.5 to
+  9.7 s with path delays, 54.6 to 50.4 s on bus bits, three runs each).
 
 ### Timing tasks as calls, not inline expansions
 

@@ -812,8 +812,9 @@ fn render_sdf_annotations(model: &IrModel, out: &mut String) {
 /// The generated condition evaluator of every timing check set with
 /// conditioned events: `out[k]` receives condition `k`, read in the
 /// instance's scope when a step evaluates a conditioned event.
-pub(super) fn render_timing_condition_evaluators(
-    ctx: &RCtx<'_>,
+pub(super) fn render_timing_condition_evaluators<'a, 'm>(
+    ctx: &'a RCtx<'m>,
+    names: &'a crate::sim::emit_c::owned::StorageNames<'m>,
     out: &mut String,
 ) -> Result<(), String> {
     for (index, set) in ctx.model.timing_checks().iter().enumerate() {
@@ -827,7 +828,9 @@ pub(super) fn render_timing_condition_evaluators(
             item: false,
             real_item: false,
         };
-        out.push_str(&super::super::owned::model::pre_function(ctx, &evaluator)?);
+        out.push_str(&super::super::owned::model::pre_function(
+            ctx, &evaluator, names,
+        )?);
     }
     Ok(())
 }
@@ -835,8 +838,9 @@ pub(super) fn render_timing_condition_evaluators(
 /// The generated condition evaluator of every module path set with
 /// state-dependent paths: `out[k]` receives condition `k`, read in the
 /// instance's scope when the runtime schedules a destination transition.
-pub(super) fn render_path_condition_evaluators(
-    ctx: &RCtx<'_>,
+pub(super) fn render_path_condition_evaluators<'a, 'm>(
+    ctx: &'a RCtx<'m>,
+    names: &'a crate::sim::emit_c::owned::StorageNames<'m>,
     out: &mut String,
 ) -> Result<(), String> {
     for (index, set) in ctx.model.module_paths().iter().enumerate() {
@@ -850,7 +854,9 @@ pub(super) fn render_path_condition_evaluators(
             item: false,
             real_item: false,
         };
-        out.push_str(&super::super::owned::model::pre_function(ctx, &evaluator)?);
+        out.push_str(&super::super::owned::model::pre_function(
+            ctx, &evaluator, names,
+        )?);
     }
     Ok(())
 }

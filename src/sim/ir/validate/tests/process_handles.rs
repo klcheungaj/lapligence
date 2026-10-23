@@ -30,6 +30,7 @@ fn process_model(body: Vec<IrStmt>) -> IrModel {
             reason: "validation fixture".to_owned(),
         },
         callback_host: false,
+        port_link: false,
     });
     model.spawns.push("proc".to_string());
     model

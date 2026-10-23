@@ -1,18 +1,26 @@
 //! Captured numeric branch and evaluator entry points with registered owners.
 use super::*;
 
-pub(super) fn render(ctx: &RCtx<'_>, pre: &IrPreFn) -> Result<String, String> {
-    render_with_frame(ctx, pre, Frame::new(ctx), false).map(|(source, _)| source)
+pub(super) fn render<'a, 'm>(
+    ctx: &'a RCtx<'m>,
+    pre: &IrPreFn,
+    names: &'a StorageNames<'m>,
+) -> Result<String, String> {
+    let mut frame = Frame::new(ctx);
+    frame.storage_names = Some(names);
+    render_with_frame(ctx, pre, frame, false).map(|(source, _)| source)
 }
 
-pub(super) fn coroutine_branch(
-    ctx: &RCtx<'_>,
+pub(super) fn coroutine_branch<'a, 'm>(
+    ctx: &'a RCtx<'m>,
     pre: &IrPreFn,
     owner: crate::sim::execution::CoroutineId,
     analysis: &crate::sim::execution::ExecutionAnalysis,
     frame_upper_bounds: &std::collections::BTreeMap<usize, usize>,
+    names: &'a StorageNames<'m>,
 ) -> Result<(String, super::super::super::frame_layout::FrameLayout), String> {
-    let frame = Frame::new_coframe(ctx, analysis, owner, frame_upper_bounds)?;
+    let mut frame = Frame::new_coframe(ctx, analysis, owner, frame_upper_bounds)?;
+    frame.storage_names = Some(names);
     let (source, layout) = render_with_frame(ctx, pre, frame, true)?;
     Ok((
         source,

@@ -214,3 +214,83 @@ fn unchanged_arena_analysis_renders_without_cloning_the_execution_model() {
         execution.validate().unwrap();
     }
 }
+
+/// Port links that read selected bits of one bus, as a netlist's
+/// `.a(bus[i])` connections do; `port_link` marks them as links.
+fn bus_link_model(count: usize, port_link: bool) -> IrModel {
+    let mut model = instance_model(count);
+    for signal in &mut model.signals {
+        signal.ty = IrType::packed(1, false).unwrap();
+    }
+    let bus = model.signals.len();
+    model.signals.push(
+        IrSignal::new(
+            "G_bus".to_owned(),
+            None,
+            IrType::packed(count as u32, false).unwrap(),
+            None,
+        )
+        .unwrap(),
+    );
+    for (index, process) in std::mem::take(&mut model.processes).into_iter().enumerate() {
+        let read = IrExpr::new(
+            IrExprKind::BitSel {
+                base: Box::new(IrExpr::new(
+                    IrExprKind::SigRead(bus),
+                    count as u32,
+                    false,
+                    None,
+                )),
+                idx: Box::new(number(index as u64, 32)),
+            },
+            1,
+            false,
+            None,
+        );
+        let mut link = IrProcess::new_with_origin(
+            process.c_name.clone(),
+            format!("tb.u{index}.link"),
+            IrShape::SensLoop {
+                reads: vec![IrDependency::PackedRange {
+                    storage: Box::new(IrDependency::scalar("G_bus")),
+                    lsb: index as u32,
+                    width: 1,
+                }],
+            },
+            Vec::new(),
+            vec![IrStmt::Assign {
+                lhs: IrLhs::Whole(index),
+                rhs: read,
+                nba: false,
+            }],
+            process.origin.clone(),
+        );
+        if port_link {
+            link = link.into_port_link();
+        }
+        model.processes.push(link);
+    }
+    model
+}
+
+#[test]
+fn port_link_bit_selections_are_record_operands_of_one_body() {
+    let source =
+        render_with_sharing_threshold(&ExecutionModel::lower(bus_link_model(8, true)).unwrap(), 4)
+            .unwrap();
+    assert_eq!(
+        source.matches("LLG_CO_DISPATCH_BEGIN").count(),
+        1,
+        "{source}"
+    );
+    assert!(source.contains(".lsb = I->"), "{source}");
+    for index in 0..8 {
+        assert!(source.contains(&format!("{index}ULL")), "{source}");
+    }
+    // Ordinary bodies keep their literal payloads structural.
+    let source =
+        render_with_sharing_threshold(&ExecutionModel::lower(bus_link_model(8, false)).unwrap(), 4)
+            .unwrap();
+    assert_eq!(source.matches("LLG_CO_DISPATCH_BEGIN").count(), 8);
+    assert!(!source.contains("llg_shared_body"));
+}

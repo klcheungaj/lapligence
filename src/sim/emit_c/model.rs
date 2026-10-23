@@ -9,8 +9,8 @@ use super::names::{bound_identifiers, rewrite_identifiers, BoundedIdentifiers};
 use super::statements::{render_stmt_impl as render_stmt, wait_any_text_in_region};
 use super::EmitError;
 use crate::sim::execution::{
-    CallMechanism, CoroutineId, ExecutionAnalysis, ExecutionModel, ExecutionTerminator,
-    ScheduleRegion, SuspensionOperation, TriggerPlan,
+    CallMechanism, CoroutineId, ExecutionAnalysis, ExecutionModel, ExecutionProcess,
+    ExecutionTerminator, ScheduleRegion, SuspensionOperation, TriggerPlan,
 };
 use crate::sim::ir::{
     IrConcurrentAssertionKind, IrFunc, IrModel, IrProcessKind, IrSequence, IrType, IrVpiObjectKind,
@@ -231,6 +231,7 @@ fn render_coroutine_functions(
     constants: &super::constants::PackedConstants,
 ) -> Result<(CoroutineArtifacts, CoroutineUpperBounds), String> {
     let model = execution.ir();
+    let names = super::owned::StorageNames::new(model);
     let mut artifacts = BTreeMap::new();
     let mut upper_bounds = BTreeMap::new();
     for &index in execution.analysis().callee_first_functions() {
@@ -249,6 +250,7 @@ fn render_coroutine_functions(
             index,
             execution.analysis(),
             &upper_bounds,
+            &names,
         )?;
         let upper_bound = layout.upper_bound()?;
         upper_bounds.insert(index, upper_bound);
@@ -280,6 +282,7 @@ fn render_recursive_functions(
     constants: &super::constants::PackedConstants,
 ) -> Result<CoroutineArtifacts, String> {
     let model = execution.ir();
+    let names = super::owned::StorageNames::new(model);
     let mut artifacts = BTreeMap::new();
     for (index, function) in model.funcs.iter().enumerate() {
         if !execution.analysis().is_recursive_function(index) {
@@ -293,8 +296,13 @@ fn render_recursive_functions(
             activation_label: None,
             constants: Some(constants),
         };
-        let (source, layout, sites) =
-            super::owned::model::recursive_function(&ctx, function, index, execution.analysis())?;
+        let (source, layout, sites) = super::owned::model::recursive_function(
+            &ctx,
+            function,
+            index,
+            execution.analysis(),
+            &names,
+        )?;
         artifacts.insert(
             index,
             CoroutineArtifact {
@@ -326,36 +334,75 @@ fn render_coroutine_processes(
 ) -> Result<Vec<Option<CoroutineArtifact>>, String> {
     let count = execution.processes().len();
     let mut artifacts = Vec::with_capacity(count);
-    for index in 0..count {
-        let artifact =
-            render_coroutine_process(execution, index, backend, constants, upper_bounds)?;
-        if artifact.is_some() {
-            if let Cow::Owned(execution) = execution {
-                execution.release_process_operations(index);
+    match execution {
+        Cow::Borrowed(execution) => {
+            let model = execution.ir();
+            let names = super::owned::StorageNames::new(model);
+            for (index, executable) in execution.processes().iter().enumerate() {
+                artifacts.push(render_coroutine_process(
+                    model,
+                    executable,
+                    index,
+                    execution.analysis(),
+                    RenderTables {
+                        backend,
+                        constants,
+                        names: &names,
+                    },
+                    upper_bounds,
+                )?);
             }
         }
-        artifacts.push(artifact);
+        Cow::Owned(execution) => {
+            let (model, processes, analysis) = execution.emission_parts();
+            let names = super::owned::StorageNames::new(model);
+            for (index, executable) in processes.iter_mut().enumerate() {
+                let artifact = render_coroutine_process(
+                    model,
+                    executable,
+                    index,
+                    analysis,
+                    RenderTables {
+                        backend,
+                        constants,
+                        names: &names,
+                    },
+                    upper_bounds,
+                )?;
+                if artifact.is_some() {
+                    executable.release_operations();
+                }
+                artifacts.push(artifact);
+            }
+        }
     }
     Ok(artifacts)
 }
 
-fn render_coroutine_process(
-    execution: &ExecutionModel,
-    index: usize,
+/// Model-wide rendering inputs shared by every process body.
+#[derive(Clone, Copy)]
+struct RenderTables<'r, 'm> {
     backend: crate::sim::value_backend::ValueBackend,
-    constants: &super::constants::PackedConstants,
+    constants: &'r super::constants::PackedConstants,
+    names: &'r super::owned::StorageNames<'m>,
+}
+
+fn render_coroutine_process(
+    model: &IrModel,
+    executable: &ExecutionProcess,
+    index: usize,
+    analysis: &ExecutionAnalysis,
+    tables: RenderTables<'_, '_>,
     upper_bounds: &BTreeMap<usize, usize>,
 ) -> Result<Option<CoroutineArtifact>, String> {
-    let model = execution.ir();
     let ctx = RCtx {
-        value_backend: backend,
+        value_backend: tables.backend,
         model,
         func: None,
         sampled: false,
         activation_label: None,
-        constants: Some(constants),
+        constants: Some(tables.constants),
     };
-    let executable = &execution.processes()[index];
     let process = &model.processes[executable.semantic_process];
     if process.kind() == IrProcessKind::Final {
         return Ok(None);
@@ -365,8 +412,9 @@ fn render_coroutine_process(
         process,
         index,
         executable,
-        execution.analysis(),
+        analysis,
         upper_bounds,
+        tables.names,
     )?;
     Ok(Some(CoroutineArtifact {
         source: retained(source),
@@ -410,6 +458,7 @@ fn render_coroutine_branches(
         activation_label: None,
         constants: Some(constants),
     };
+    let names = super::owned::StorageNames::new(model);
     let mut artifacts = BTreeMap::new();
     for (function, definition) in model.funcs.iter().enumerate() {
         for (helper, pre) in definition.pre_fns.iter().enumerate() {
@@ -423,6 +472,7 @@ fn render_coroutine_branches(
                 owner,
                 execution.analysis(),
                 upper_bounds,
+                &names,
             )?;
             let name = pre_name(pre);
             artifacts.insert(
@@ -455,6 +505,7 @@ fn render_coroutine_branches(
                 owner,
                 execution.analysis(),
                 upper_bounds,
+                &names,
             )?;
             let name = pre_name(pre);
             artifacts.insert(
@@ -501,6 +552,7 @@ fn render_coroutine_metadata(
     artifact: &CoroutineArtifact,
     analysis: &ExecutionAnalysis,
     model: &IrModel,
+    host_descs: &BTreeSet<String>,
 ) -> Result<String, String> {
     if let Some(count) = artifact.recursive_sites {
         return render_recursive_metadata(artifact, count);
@@ -558,7 +610,7 @@ fn render_coroutine_metadata(
     out.push_str(&format!(
         "static const llg_co_desc_t {}{} = {{ {}, {}, sizeof({}), {}_sites, {}, 0 }};\n",
         artifact.desc_name,
-        desc_attributes(&callback_host_descs(model), &artifact.desc_name),
+        desc_attributes(host_descs, &artifact.desc_name),
         artifact.shared_entry.as_deref().unwrap_or(entry),
         c_string_literal(&artifact.display_name),
         artifact.frame_type,
@@ -824,6 +876,7 @@ fn render_model(
     )?;
     let execution: &ExecutionModel = &execution;
     let model = execution.ir();
+    let names = super::owned::StorageNames::new(model);
     let mut coroutine_branches =
         render_coroutine_branches(execution, config.backend, &constants, &frame_upper_bounds)?;
     let mut recursive_functions =
@@ -851,7 +904,7 @@ fn render_model(
             };
             plain_functions.insert(
                 index,
-                retained(super::owned::model::function(&ctx, function)?),
+                retained(super::owned::model::function(&ctx, function, &names)?),
             );
         }
     }
@@ -959,6 +1012,7 @@ fn render_model(
             artifact,
             execution.analysis(),
             model,
+            &host_descs,
         )?);
     }
     for artifact in recursive_functions.values() {
@@ -966,6 +1020,7 @@ fn render_model(
             artifact,
             execution.analysis(),
             model,
+            &host_descs,
         )?);
     }
     for artifact in coroutine_processes.iter().filter_map(Option::as_ref) {
@@ -973,6 +1028,7 @@ fn render_model(
             artifact,
             execution.analysis(),
             model,
+            &host_descs,
         )?);
     }
     for artifact in coroutine_branches.values() {
@@ -980,6 +1036,7 @@ fn render_model(
             artifact,
             execution.analysis(),
             model,
+            &host_descs,
         )?);
     }
     if !model.classes.is_empty() {
@@ -1183,7 +1240,7 @@ fn render_model(
             if let Some(artifact) = coroutine_branches.get_mut(&owner) {
                 out.push_str(&std::mem::take(&mut artifact.source));
             } else {
-                out.push_str(&super::owned::model::pre_function(&ctx, pre)?);
+                out.push_str(&super::owned::model::pre_function(&ctx, pre, &names)?);
             }
         }
         if let Some(artifact) = coroutine_functions.get_mut(&index) {
@@ -1216,17 +1273,17 @@ fn render_model(
             if let Some(artifact) = coroutine_branches.get_mut(&owner) {
                 out.push_str(&std::mem::take(&mut artifact.source));
             } else {
-                out.push_str(&super::owned::model::pre_function(&ctx, pre)?);
+                out.push_str(&super::owned::model::pre_function(&ctx, pre, &names)?);
             }
         }
         if let Some(artifact) = &mut coroutine_processes[index] {
             out.push_str(&std::mem::take(&mut artifact.source));
         } else {
-            out.push_str(&super::owned::model::process(&ctx, p, executable)?);
+            out.push_str(&super::owned::model::process(&ctx, p, executable, &names)?);
         }
     }
-    storage::render_path_condition_evaluators(&ctx, &mut out)?;
-    storage::render_timing_condition_evaluators(&ctx, &mut out)?;
+    storage::render_path_condition_evaluators(&ctx, &names, &mut out)?;
+    storage::render_timing_condition_evaluators(&ctx, &names, &mut out)?;
     // Every body has been moved into the model text; release the artifacts
     // and their frame layouts before the remaining sections and the
     // identifier pass.

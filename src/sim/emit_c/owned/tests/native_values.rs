@@ -75,7 +75,8 @@ fn string_formals_are_copied_into_registered_callee_owners() {
         activation_label: None,
         constants: None,
     };
-    let source = super::super::model::function(&ctx, function).unwrap();
+    let names = super::super::StorageNames::new(&model);
+    let source = super::super::model::function(&ctx, function, &names).unwrap();
     assert!(source.contains("llg_string_clone(&a0)"));
     assert!(source.contains("llg_value_scope_begin_object(sizeof(llg_string_t)"));
     let returned = source

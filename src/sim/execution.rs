@@ -158,6 +158,16 @@ pub struct ExecutionProcess {
     pub region: ScheduleRegion,
 }
 
+impl ExecutionProcess {
+    /// Release the typed operations once a consumer that visits each process
+    /// once (C emission) no longer needs them. The model no longer validates
+    /// afterwards, so only an owner that drops it after that pass may call
+    /// this; the process shell, region and analysis remain.
+    pub(crate) fn release_operations(&mut self) {
+        self.blocks = Vec::new();
+    }
+}
+
 /// Complete executable model consumed by optimization and C emission.
 #[derive(Clone, Debug)]
 pub struct ExecutionModel {
@@ -218,14 +228,21 @@ impl ExecutionModel {
         self.validate()
     }
 
-    /// Release the typed operations of one process once a consumer that
-    /// visits each process once (C emission) no longer needs them. The model
-    /// no longer validates afterwards, so only an owner that drops it after
-    /// that pass may call this; the process shell, region and analysis remain.
+    /// Release the typed operations of one process (see
+    /// [`ExecutionProcess::release_operations`]).
+    #[cfg(test)]
     pub(crate) fn release_process_operations(&mut self, index: usize) {
         if let Some(process) = self.processes.get_mut(index) {
-            process.blocks = Vec::new();
+            process.release_operations();
         }
+    }
+
+    /// The IR and analysis with mutable executable processes, so a renderer
+    /// can keep indexes of the IR while it releases each rendered body.
+    pub(crate) fn emission_parts(
+        &mut self,
+    ) -> (&IrModel, &mut [ExecutionProcess], &ExecutionAnalysis) {
+        (&self.ir, &mut self.processes, &self.analysis)
     }
 
     pub fn packed_capacity(&self) -> Result<u128, IrValidationError> {
@@ -272,6 +289,7 @@ impl ExecutionModel {
                 "execution process count does not match lowered process count",
             ));
         }
+        let trigger_storage = TriggerStorage::new(&self.ir);
         for (index, process) in self.processes.iter().enumerate() {
             if process.semantic_process != index || process.entry >= process.blocks.len() {
                 return Err(IrValidationError::new(
@@ -349,7 +367,7 @@ impl ExecutionModel {
                     }
                     if let Some(dependency) = signals
                         .iter()
-                        .find(|dependency| !is_emitted_trigger_storage(&self.ir, dependency))
+                        .find(|dependency| !trigger_storage.emits(dependency))
                     {
                         return Err(IrValidationError::new(
                             format!(
@@ -464,53 +482,72 @@ fn collect_control_labels<'a>(
     Ok(())
 }
 
-fn is_emitted_trigger_storage(ir: &IrModel, dependency: &IrDependency) -> bool {
-    match dependency {
-        IrDependency::PackedRange { storage, .. } => is_emitted_trigger_storage(ir, storage),
-        IrDependency::Scalar(name) => {
-            let alias_index = name
-                .strip_prefix("llg_net_alias_")
-                .and_then(|name| name.strip_suffix(".visible"))
-                .and_then(|index| index.parse::<usize>().ok());
-            ir.signals.iter().enumerate().any(|(index, signal)| {
-                (signal.c_name == *name
-                    || (alias_index == Some(index) && !signal.net_alias().is_empty()))
-                    && !signal.omit
-                    && matches!(signal.ty, crate::sim::ir::IrType::Packed { .. })
-            })
+/// The storage a signal-controlled trigger may wait on. Names are indexed
+/// once per validation, so checking a dependency does not scan every signal.
+struct TriggerStorage<'a> {
+    ir: &'a IrModel,
+    packed: HashSet<&'a str>,
+    real: HashSet<&'a str>,
+}
+
+impl<'a> TriggerStorage<'a> {
+    fn new(ir: &'a IrModel) -> Self {
+        let mut packed = HashSet::new();
+        let mut real = HashSet::new();
+        for signal in ir.signals.iter().filter(|signal| !signal.omit) {
+            match signal.ty {
+                crate::sim::ir::IrType::Packed { .. } => packed.insert(signal.c_name.as_str()),
+                crate::sim::ir::IrType::Real { .. } => real.insert(signal.c_name.as_str()),
+            };
         }
-        IrDependency::Real(name) => ir.signals.iter().any(|signal| {
-            signal.c_name == *name
-                && !signal.omit
-                && matches!(signal.ty, crate::sim::ir::IrType::Real { .. })
-        }),
-        IrDependency::ArrayElement { array, index } => ir
-            .arrays
-            .get(*array)
-            .is_some_and(|array| *index < array.total),
-        IrDependency::ArrayContents(array) => *array < ir.arrays.len(),
-        IrDependency::ContainerContents(container) | IrDependency::ContainerShape(container) => {
-            *container < ir.containers.len()
+        Self { ir, packed, real }
+    }
+
+    fn emits(&self, dependency: &IrDependency) -> bool {
+        let ir = self.ir;
+        match dependency {
+            IrDependency::PackedRange { storage, .. } => self.emits(storage),
+            IrDependency::Scalar(name) => {
+                self.packed.contains(name.as_str())
+                    || name
+                        .strip_prefix("llg_net_alias_")
+                        .and_then(|name| name.strip_suffix(".visible"))
+                        .and_then(|index| index.parse::<usize>().ok())
+                        .and_then(|index| ir.signals.get(index))
+                        .is_some_and(|signal| {
+                            !signal.net_alias().is_empty()
+                                && !signal.omit
+                                && matches!(signal.ty, crate::sim::ir::IrType::Packed { .. })
+                        })
+            }
+            IrDependency::Real(name) => self.real.contains(name.as_str()),
+            IrDependency::ArrayElement { array, index } => ir
+                .arrays
+                .get(*array)
+                .is_some_and(|array| *index < array.total),
+            IrDependency::ArrayContents(array) => *array < ir.arrays.len(),
+            IrDependency::ContainerContents(container)
+            | IrDependency::ContainerShape(container) => *container < ir.containers.len(),
+            IrDependency::Object(object) => ir
+                .objects
+                .get(*object)
+                .is_some_and(|object| object.ty.has_change_marker()),
+            // A virtual-interface member is resolved through its handle each
+            // time a sensitivity loop arms (SV 9.2.2.2.1, 25.9).
+            IrDependency::NativeAccess(name) => ir.native_accesses.iter().any(|access| {
+                access.name == *name
+                    && matches!(
+                        access.kind,
+                        crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. }
+                    )
+            }),
+            IrDependency::InterfaceInstance { .. } => valid_interface_instance(ir, dependency),
+            // A process-local cell is no static trigger storage.
+            IrDependency::SharedCell { .. }
+            | IrDependency::SharedNative { .. }
+            | IrDependency::RefFormal { .. }
+            | IrDependency::NativeRefFormal { .. } => false,
         }
-        IrDependency::Object(object) => ir
-            .objects
-            .get(*object)
-            .is_some_and(|object| object.ty.has_change_marker()),
-        // A virtual-interface member is resolved through its handle each
-        // time a sensitivity loop arms (SV 9.2.2.2.1, 25.9).
-        IrDependency::NativeAccess(name) => ir.native_accesses.iter().any(|access| {
-            access.name == *name
-                && matches!(
-                    access.kind,
-                    crate::sim::ir::IrNativeAccessKind::InterfaceMember { .. }
-                )
-        }),
-        IrDependency::InterfaceInstance { .. } => valid_interface_instance(ir, dependency),
-        // A process-local cell is no static trigger storage.
-        IrDependency::SharedCell { .. }
-        | IrDependency::SharedNative { .. }
-        | IrDependency::RefFormal { .. }
-        | IrDependency::NativeRefFormal { .. } => false,
     }
 }
 
@@ -3345,18 +3382,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(is_emitted_trigger_storage(
-            &ir,
-            &IrDependency::ArrayElement { array: 0, index: 0 }
-        ));
-        assert!(!is_emitted_trigger_storage(
-            &ir,
-            &IrDependency::ArrayElement { array: 0, index: 4 }
-        ));
-        assert!(!is_emitted_trigger_storage(
-            &ir,
-            &IrDependency::scalar("unknown")
-        ));
+        let storage = TriggerStorage::new(&ir);
+        assert!(storage.emits(&IrDependency::ArrayElement { array: 0, index: 0 }));
+        assert!(!storage.emits(&IrDependency::ArrayElement { array: 0, index: 4 }));
+        assert!(!storage.emits(&IrDependency::scalar("unknown")));
     }
 
     #[test]

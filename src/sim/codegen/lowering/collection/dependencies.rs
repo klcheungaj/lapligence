@@ -272,14 +272,8 @@ impl<'a> Codegen<'a> {
     fn dependency_width(&self, dependency: &IrDependency) -> Option<u32> {
         match dependency {
             IrDependency::Scalar(name) => self
-                .model
-                .signals
-                .iter()
-                .enumerate()
-                .find(|(index, signal)| {
-                    signal.c_name == *name || self.signal_dependency_name(*index) == *name
-                })
-                .map(|(_, signal)| signal.ty.width())
+                .signal_by_dependency_name(name)
+                .map(|index| self.model.signals[index].ty.width())
                 .filter(|width| *width != 0),
             IrDependency::ArrayElement { array, .. } => self
                 .model

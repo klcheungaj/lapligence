@@ -602,14 +602,23 @@ emitter. Use [ownership validation](../../../tests/readme.md#dynamic-ownership-v
 and its generated-C sanitizer configuration; do not infer feature acceptance from
 component tests.
 
+A name no frame scope binds resolves to model storage (first subprogram local,
+then signal or alias-visible cell, then change marker). Model-wide renderers
+build `owned/storage_names.rs::StorageNames` once and pass it to their frames;
+frames without one scan, with the same result. Do not add per-access scans of
+model signals, functions or objects: rendering must stay linear in instances.
+
 ## Instance body sharing
 
 `model/sharing.rs` groups compiler-owned emitted bodies by source location,
 coroutine/ordinary ABI, exact canonical frame layout and typed operand shapes,
 then requires exact equality after normalization. Unrepresented
 references remain in the key. Widths, resume numbers, array extents and ordinary
-parameter payloads remain structural; generate-instance ULL payloads may become
-record fields.
+parameter payloads remain structural; ULL payloads and selected wait-dependency
+`.lsb` values of generate-instance bodies and port links (`IrProcess::port_link`,
+whose selections are the instance's connection) may become record fields. Module
+path sets and sequential UDP state records are pointer operands, so path-stamp
+processes and UDP gates of one definition share a body.
 Only known activation/net-contribution identities become scalar operands.
 Bodies with local static storage stay separate. Startup-external roots (assertion
 actions) stay separate because they do not receive the startup record initialization.

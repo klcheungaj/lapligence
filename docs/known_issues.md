@@ -331,6 +331,62 @@ the baseline, including both optimizer modes for the representative fixtures.
 Use the command in the frontend memory entry with `LLG_CORPUS_N` set to
 5,000, 10,000, 20,000 and 40,000, and compare wall times.
 
+## Gate-level netlists emit per-instance data
+
+**Status:** open for per-instance data; the quadratic generation stages are
+fixed.
+
+### Symptom
+
+Generation time is now close to linear in the instance count, but the C model
+still grows by about 6.5 KB per one-path buffer cell (420 MB of `model.c` and
+2.3 GB peak RSS for 64,000 cells; 1.7 GB and 9.1 GB for 256,000). Release
+`--gen-only` on a shared host, final build (2026-10-23):
+
+| Cells (buffer chain) | Wall s | Lowering s | Rendering s | Peak RSS MB | `model.c` MB |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1,000 | 0.49 | 0.05 | 0.29 | 66 | 6.4 |
+| 4,000 | 3.64 | 0.60 | 1.86 | 184 | 25.8 |
+| 16,000 | 16.13 | 2.56 | 7.54 | 617 | 104.1 |
+| 64,000 | 46.54 | 6.88 | 23.32 | 2,349 | 420.4 |
+| 256,000 | 333.48 | 54.86 | 161.20 | 9,124 | 1,695.2 |
+
+Before the fixes, 4,000 cells took 39-84 s (lowering 35-78 s) and 16,000 cells
+646-823 s. From 64,000 to 256,000 cells every stage, including the native
+frontend, grew 6-7x on a host with load average 17; no single stage
+dominated.
+
+### Cause
+
+Lowering, IR validation, rendering, diagnostic positions and semantic stream
+decoding used to scan the design, the signals or the source text per net,
+dependency, storage access or diagnostic. They now use one-pass indexes or
+resumable cursors, for example
+[net writers](../src/sim/codegen/lowering/collection/nets/writer_index.rs) and
+[model storage names](../src/sim/emit_c/owned/storage_names.rs). Cell bodies
+with specify paths, sequential UDPs and port links share code
+([instance sharing](../src/sim/emit_c/model/sharing.rs)).
+
+What remains per instance is data: resolved net groups and their driver tables
+(about 35% of a buffer chain's `model.c`), process descriptors and sites,
+instance records, module-path tables, and one frame-size `_Static_assert` per
+process (6%). Conditional module paths keep one condition evaluator per
+instance (`llg_path_set_N__conditions`); the runtime calls it without an
+instance context.
+
+### Intended direction
+
+Emit per-instance tables as compact data arrays indexed by instance, deduplicate
+identical frame-size assertions, and give path-condition evaluators an instance
+record so one body serves every instance of a cell (a runtime ABI change).
+
+### Reproduce
+
+Generate a buffer chain (`module tb; reg a; wire y0; BUF u0(.a(a), .y(y0)); ...`
+with a one-path `BUF` cell) at 4,000 and 16,000 cells and run
+`LLG_PROFILE_STAGES=1 llg --gen-only`. `tests/sim_scale.rs` caps the growth of
+a 300 -> 1,200-cell netlist.
+
 ## Remaining non-flattened fixed-value contexts
 
 **Status:** open; RTL-002 and RTL-002b implement descriptor transport for

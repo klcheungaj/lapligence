@@ -190,6 +190,9 @@ struct Validator<'model> {
     chandle_return: Cell<Option<bool>>,
     string_return: Cell<Option<bool>>,
     function: Cell<Option<&'model IrFunc>>,
+    /// Signal positions per storage name, built on the first name lookup so
+    /// validating each dependency does not scan every signal.
+    signal_names: std::cell::OnceCell<std::collections::HashMap<&'model str, Vec<usize>>>,
 }
 
 impl IrModel {

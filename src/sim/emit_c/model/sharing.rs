@@ -157,6 +157,23 @@ fn registry(
             );
         }
     }
+    // A path-stamp process names its instance's module path set; as an
+    // operand, the processes of one cell definition share one body.
+    for index in 0..model.module_paths().len() {
+        let name = format!("llg_path_set_{index}");
+        registry.insert(
+            name.clone(),
+            Operand::pointer("llg_module_path_set_t", "module path set".to_owned(), &name),
+        );
+    }
+    // A sequential UDP instance steps its own state record; as an operand,
+    // the gates of one primitive definition share one body.
+    for state in 0..model.udp_states().len() {
+        if let Some(ty) = super::super::owned::udp::state_type(model, state) {
+            let name = format!("llg_udp_state_{state}");
+            registry.insert(name.clone(), Operand::pointer(&ty, ty.clone(), &name));
+        }
+    }
     for event in &model.events {
         if !event.is_array() {
             registry.insert(
@@ -307,6 +324,17 @@ fn registry(
     registry
 }
 
+fn is_port_link(execution: &ExecutionModel, artifact: &CoroutineArtifact) -> bool {
+    match artifact.owner {
+        CoroutineId::Process(index) => execution
+            .processes()
+            .get(index)
+            .and_then(|process| execution.ir().processes.get(process.semantic_process))
+            .is_some_and(|process| process.port_link()),
+        _ => false,
+    }
+}
+
 struct Normalized {
     source: String,
     operands: Vec<Operand>,
@@ -442,6 +470,13 @@ fn normalize(
                 ));
             } else if generated && value.ends_with("ULL") {
                 operand = Some(scalars.operand("uint64_t", value));
+            } else if generated
+                && value.ends_with('u')
+                && source[..start].trim_end().ends_with(".lsb =")
+            {
+                // The low bit of a selected wait dependency, a payload like
+                // the selection index the body reads.
+                operand = Some(scalars.operand("uint32_t", value));
             }
         } else {
             index += 1;
@@ -591,7 +626,10 @@ pub(super) fn share(
         if matches!(artifact.owner, CoroutineId::Process(_)) && !spawn_names.contains(name) {
             continue;
         }
-        let generated = artifact.display_name.contains('[');
+        // Literal payloads may vary per instance in generate-scope bodies
+        // and in port links, whose selected actual bits are the instance's
+        // connection rather than its module's code.
+        let generated = artifact.display_name.contains('[') || is_port_link(execution, artifact);
         if let Some(normalized) = normalize(
             &artifact.source,
             name,

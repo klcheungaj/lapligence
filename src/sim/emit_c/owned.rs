@@ -51,6 +51,8 @@ mod references;
 mod repeated_values;
 mod runtime_tasks;
 mod statements;
+mod storage_names;
+pub(super) use storage_names::StorageNames;
 mod stores;
 mod streaming;
 mod strings;
@@ -237,6 +239,8 @@ pub(super) struct Frame<'a, 'm> {
     synchronous: bool,
     /// `_llg_frame_base`, `_llg_temp_scope` and `_llg_t` are frame fields.
     scope_fields: bool,
+    /// The renderer's model storage index; frames without one scan the model.
+    storage_names: Option<&'a StorageNames<'m>>,
 }
 
 fn pending(feature: &str) -> String {
@@ -444,6 +448,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             suspendable_interface_methods: BTreeSet::new(),
             synchronous: false,
             scope_fields: false,
+            storage_names: None,
         }
     }
     fn line(&mut self, text: impl AsRef<str>) {
@@ -1025,63 +1030,12 @@ impl<'a, 'm> Frame<'a, 'm> {
                 return Some(binding.clone());
             }
         }
-        for func in &self.ctx.model.funcs {
-            if let Some(local) = func.locals.iter().find(|local| local.c_name() == name) {
-                return Some(Binding {
-                    address: format!("&{name}"),
-                    width: if local.real { 0 } else { local.width() },
-                    signed: local.signed(),
-                    two_state: local.two_state,
-                    shortreal: local.shortreal,
-                    automatic: false,
-                });
-            }
+        let model = self.ctx.model;
+        match self.storage_names.filter(|names| names.indexes(model)) {
+            Some(names) => names.find_checked(name),
+            None => storage_names::scan(model, name),
         }
-        for (index, signal) in self.ctx.model.signals.iter().enumerate() {
-            if !signal.net_alias.is_empty() && name == format!("llg_net_alias_{index}.visible") {
-                return Some(Binding {
-                    address: format!("&llg_net_alias_{index}.visible"),
-                    width: signal.ty.width(),
-                    signed: signal.ty.signed(),
-                    two_state: signal.ty.two_state(),
-                    shortreal: false,
-                    automatic: false,
-                });
-            }
-            if signal.c_name == name && (!signal.omit || signal.net_driver.is_some()) {
-                return Some(Binding {
-                    address: format!("&{name}"),
-                    width: signal.ty.width(),
-                    signed: signal.ty.signed(),
-                    two_state: matches!(
-                        signal.ty,
-                        IrType::Packed {
-                            two_state: true,
-                            ..
-                        }
-                    ),
-                    shortreal: matches!(signal.ty, IrType::Real { shortreal: true }),
-                    automatic: false,
-                });
-            }
-        }
-        // The one-bit change marker of a string or handle object, which a
-        // whole-handle event control waits on (SIM-007).
-        let marker = name.strip_suffix("_llg_dep").is_some_and(|object| {
-            self.ctx
-                .model
-                .objects
-                .iter()
-                .any(|candidate| candidate.c_name == object && candidate.ty.has_change_marker())
-        });
-        marker.then(|| Binding {
-            address: format!("&{name}"),
-            width: 1,
-            signed: false,
-            two_state: true,
-            shortreal: false,
-            automatic: false,
-        })
+        .map(|storage| storage.binding(model, name))
     }
     fn address(&mut self, address: &str) -> Result<Binding, String> {
         if let Some(binding) = self.sequence_addresses.get(address) {

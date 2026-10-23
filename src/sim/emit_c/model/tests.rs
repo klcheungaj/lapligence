@@ -291,6 +291,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
             reason: "emitter fixture".to_owned(),
         },
         callback_host: false,
+        port_link: false,
     }];
     model.spawns = vec!["p_top_initial_0".to_string()];
 
