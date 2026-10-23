@@ -16,7 +16,7 @@ use crate::sim::ir::{
     IrConcurrentAssertionKind, IrFunc, IrModel, IrProcessKind, IrSequence, IrType, IrVpiObjectKind,
 };
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 mod interfaces;
 use interfaces::{
@@ -30,6 +30,7 @@ use classes::{
 mod assertions;
 use assertions::{assertion_predicate_name, assertion_sequence_name};
 mod storage;
+pub(in crate::sim::emit_c) use storage::path_source_storage;
 use storage::{render_signal_decls, render_static_local_decls};
 pub(in crate::sim::emit_c) mod vpi;
 use vpi::{render_vpi_builtin_calls, render_vpi_compile_calls, render_vpi_metadata};
@@ -202,7 +203,7 @@ struct CoroutineArtifact {
     owner: CoroutineId,
     root: bool,
     shared_entry: Option<String>,
-    net_batches: Vec<super::owned::net_batches::NetBatch>,
+    net_batches: super::owned::net_batches::ProcessTables,
     /// Resume points of a recursive subprogram's coroutine, numbered during
     /// emission; other coroutines take their sites from the analysis.
     recursive_sites: Option<usize>,
@@ -266,7 +267,7 @@ fn render_coroutine_functions(
                 owner: CoroutineId::Function(index),
                 root: false,
                 shared_entry: None,
-                net_batches: Vec::new(),
+                net_batches: Default::default(),
                 recursive_sites: None,
             },
         );
@@ -315,7 +316,7 @@ fn render_recursive_functions(
                 owner: CoroutineId::Function(index),
                 root: false,
                 shared_entry: None,
-                net_batches: Vec::new(),
+                net_batches: Default::default(),
                 recursive_sites: Some(sites),
             },
         );
@@ -487,7 +488,7 @@ fn render_coroutine_branches(
                     owner,
                     root: true,
                     shared_entry: None,
-                    net_batches: Vec::new(),
+                    net_batches: Default::default(),
                     recursive_sites: None,
                 },
             );
@@ -520,7 +521,7 @@ fn render_coroutine_branches(
                     owner,
                     root: true,
                     shared_entry: None,
-                    net_batches: Vec::new(),
+                    net_batches: Default::default(),
                     recursive_sites: None,
                 },
             );
@@ -548,31 +549,74 @@ fn desc_attributes(hosts: &BTreeSet<String>, desc: &str) -> &'static str {
     }
 }
 
+/// The frame-size guard of one coroutine. Every coroutine of one frame type
+/// has the same bound, so each distinct guard is emitted once per model.
+fn frame_size_assertion(
+    artifact: &CoroutineArtifact,
+    emitted: &mut HashSet<String>,
+) -> Result<String, String> {
+    let frame_upper_bound = if artifact.recursive_sites.is_some() {
+        artifact.layout.upper_bound()?
+    } else if artifact.shared_entry.is_some() {
+        artifact.layout.shared_root_upper_bound()?
+    } else {
+        artifact.layout.upper_bound()?
+    };
+    let assertion = format!("#if UINTPTR_MAX == UINT64_MAX\n_Static_assert(sizeof({}) <= {frame_upper_bound}, \"coroutine frame exceeds selected layout estimate\");\n#endif\n", artifact.frame_type);
+    Ok(if emitted.insert(assertion.clone()) {
+        assertion
+    } else {
+        String::new()
+    })
+}
+
 fn render_coroutine_metadata(
     artifact: &CoroutineArtifact,
     analysis: &ExecutionAnalysis,
     model: &IrModel,
     host_descs: &BTreeSet<String>,
+    assertions: &mut HashSet<String>,
 ) -> Result<String, String> {
+    let mut out = frame_size_assertion(artifact, assertions)?;
     if let Some(count) = artifact.recursive_sites {
-        return render_recursive_metadata(artifact, count);
+        out.push_str(&render_recursive_metadata(artifact, count)?);
+        return Ok(out);
     }
+    let (rows, count) = render_site_rows(artifact, analysis, model)?;
+    out.push_str(&format!(
+        "static const llg_co_site_t {}_sites[{count}] = {{\n{rows}}};\n",
+        artifact.desc_name,
+    ));
+    let entry = artifact
+        .desc_name
+        .strip_suffix("_desc")
+        .ok_or_else(|| format!("invalid coroutine descriptor name {}", artifact.desc_name))?;
+    out.push_str(&format!(
+        "static const llg_co_desc_t {}{} = {{ {}, {}, sizeof({}), {}_sites, {count}, 0 }};\n",
+        artifact.desc_name,
+        desc_attributes(host_descs, &artifact.desc_name),
+        artifact.shared_entry.as_deref().unwrap_or(entry),
+        c_string_literal(&artifact.display_name),
+        artifact.frame_type,
+        artifact.desc_name,
+    ));
+    Ok(out)
+}
+
+/// Resume-site rows of a coroutine's descriptor (`{0}` for state 0, then
+/// one row per resume point) and their count.
+fn render_site_rows(
+    artifact: &CoroutineArtifact,
+    analysis: &ExecutionAnalysis,
+    model: &IrModel,
+) -> Result<(String, usize), String> {
     let sites = analysis
         .sites(artifact.owner)
         .ok_or_else(|| format!("missing coroutine sites for {:?}", artifact.owner))?;
     let mut ordered = sites.values().collect::<Vec<_>>();
     ordered.sort_by_key(|site| site.resume());
-    let frame_upper_bound = if artifact.shared_entry.is_some() {
-        artifact.layout.shared_root_upper_bound()?
-    } else {
-        artifact.layout.upper_bound()?
-    };
-    let mut out = format!("#if UINTPTR_MAX == UINT64_MAX\n_Static_assert(sizeof({}) <= {frame_upper_bound}, \"coroutine frame exceeds selected layout estimate\");\n#endif\n", artifact.frame_type);
-    out.push_str(&format!(
-        "static const llg_co_site_t {}_sites[{}] = {{\n    {{0}},\n",
-        artifact.desc_name,
-        ordered.len() + 1
-    ));
+    let count = ordered.len() + 1;
+    let mut out = "    {0},\n".to_owned();
     for site in ordered {
         let call = artifact
             .layout
@@ -602,21 +646,50 @@ fn render_coroutine_metadata(
             )
         ));
     }
-    out.push_str("};\n");
-    let entry = artifact
-        .desc_name
-        .strip_suffix("_desc")
-        .ok_or_else(|| format!("invalid coroutine descriptor name {}", artifact.desc_name))?;
+    Ok((out, count))
+}
+
+/// One descriptor for every member of a shared root-process class whose
+/// resume-site tables are identical: members then differ only in their
+/// record and spawn label, so per-member descriptors would repeat the same
+/// entry, frame size and sites. Its name is NULL; backtraces label the root
+/// frame with the process name instead. Returns the class's metadata, or
+/// nothing when some member's sites differ (those keep their own
+/// descriptors).
+fn render_class_descriptor(
+    class: &mut super::owned::model::SpawnClass,
+    processes: &[Option<CoroutineArtifact>],
+    analysis: &ExecutionAnalysis,
+    model: &IrModel,
+    assertions: &mut HashSet<String>,
+) -> Result<String, String> {
+    let mut shared = None;
+    for owner in &class.members {
+        let CoroutineId::Process(index) = owner else {
+            return Ok(String::new());
+        };
+        let artifact = processes
+            .get(*index)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| format!("missing shared process artifact {index}"))?;
+        let rows = render_site_rows(artifact, analysis, model)?;
+        match &shared {
+            None => shared = Some((artifact, rows)),
+            Some((_, first)) if *first == rows => {}
+            Some(_) => return Ok(String::new()),
+        }
+    }
+    let Some((artifact, (rows, count))) = shared else {
+        return Ok(String::new());
+    };
+    let desc = format!("{}_desc", class.body);
+    let mut out = frame_size_assertion(artifact, assertions)?;
     out.push_str(&format!(
-        "static const llg_co_desc_t {}{} = {{ {}, {}, sizeof({}), {}_sites, {}, 0 }};\n",
-        artifact.desc_name,
-        desc_attributes(host_descs, &artifact.desc_name),
-        artifact.shared_entry.as_deref().unwrap_or(entry),
-        c_string_literal(&artifact.display_name),
-        artifact.frame_type,
-        artifact.desc_name,
-        sites.len() + 1
+        "static const llg_co_site_t {desc}_sites[{count}] = {{\n{rows}}};\n\
+         static const llg_co_desc_t {desc} = {{ {}, NULL, sizeof({}), {desc}_sites, {count}, 0 }};\n",
+        class.body, class.frame,
     ));
+    class.desc = Some(desc);
     Ok(out)
 }
 
@@ -629,12 +702,21 @@ fn render_coroutine_metadata(
 fn render_gc_frame_maps<'a>(
     artifacts: impl Iterator<Item = &'a CoroutineArtifact>,
     analysis: &ExecutionAnalysis,
+    class_descs: &BTreeMap<CoroutineId, String>,
 ) -> Result<String, String> {
     let mut tables = String::new();
     let mut names = HashMap::new();
     let mut registrations = Vec::new();
+    let mut registered = HashSet::new();
     for artifact in artifacts {
         if artifact.recursive_sites.is_some() || artifact.layout.gc_map().is_empty() {
+            continue;
+        }
+        // Members of a shared class register their one descriptor once.
+        let desc = class_descs
+            .get(&artifact.owner)
+            .unwrap_or(&artifact.desc_name);
+        if !registered.insert(desc.clone()) {
             continue;
         }
         let states = analysis
@@ -684,7 +766,7 @@ fn render_gc_frame_maps<'a>(
                 name
             })
             .clone();
-        registrations.push((artifact.desc_name.clone(), name));
+        registrations.push((desc.clone(), name));
     }
     if registrations.is_empty() {
         return Ok(String::new());
@@ -701,11 +783,7 @@ fn render_gc_frame_maps<'a>(
 /// arena calls, which backtraces follow through the anchor chain, so every
 /// site records no static callee.
 fn render_recursive_metadata(artifact: &CoroutineArtifact, count: usize) -> Result<String, String> {
-    let mut out = format!(
-        "#if UINTPTR_MAX == UINT64_MAX\n_Static_assert(sizeof({}) <= {}, \"coroutine frame exceeds selected layout estimate\");\n#endif\n",
-        artifact.frame_type,
-        artifact.layout.upper_bound()?
-    );
+    let mut out = String::new();
     let location = c_string_literal(&artifact.location);
     out.push_str(&format!(
         "static const llg_co_site_t {}_sites[{}] = {{\n    {{0}},\n",
@@ -909,6 +987,17 @@ fn render_model(
         }
     }
     let net_tables = net_batches::collect(model, &coroutine_processes);
+    let mut evaluators = storage::condition_evaluator_sources(
+        &RCtx {
+            value_backend: config.backend,
+            model,
+            func: None,
+            sampled: false,
+            activation_label: None,
+            constants: Some(&constants),
+        },
+        &names,
+    )?;
     drop(artifact_stage);
     let sharing_stage = crate::profile::Stage::new("render.sharing");
     let sharing = sharing::share(
@@ -920,9 +1009,36 @@ fn render_model(
         threshold,
         sharing::AdditionalOperands {
             net_tables: &net_tables.operands,
+            site_statics: &net_tables.site_statics,
             constants: &constants,
+            evaluators: &mut evaluators,
         },
     )?;
+    let mut sharing = sharing;
+    let mut assertions = HashSet::new();
+    let mut class_metadata = String::new();
+    for class in &mut sharing.spawns.classes {
+        class_metadata.push_str(&render_class_descriptor(
+            class,
+            &coroutine_processes,
+            execution.analysis(),
+            model,
+            &mut assertions,
+        )?);
+    }
+    // Members of a class with one descriptor emit no descriptor of their own.
+    let class_descs = sharing
+        .spawns
+        .classes
+        .iter()
+        .filter_map(|class| class.desc.as_ref().map(|desc| (class, desc)))
+        .flat_map(|(class, desc)| {
+            class
+                .members
+                .iter()
+                .map(move |owner| (*owner, desc.clone()))
+        })
+        .collect::<BTreeMap<_, _>>();
     drop(sharing_stage);
     let assemble_stage = crate::profile::Stage::new("render.assemble");
     let mut out = format!(
@@ -989,6 +1105,9 @@ fn render_model(
                 "static llg_co_status_t {entry}(llg_co_frame_t* co, llg_co_chain_t* ch);\n"
             ));
         }
+        if class_descs.contains_key(&artifact.owner) {
+            continue;
+        }
         out.push_str(&format!(
             "static const llg_co_desc_t {}{};\n",
             artifact.desc_name,
@@ -1013,6 +1132,7 @@ fn render_model(
             execution.analysis(),
             model,
             &host_descs,
+            &mut assertions,
         )?);
     }
     for artifact in recursive_functions.values() {
@@ -1021,14 +1141,20 @@ fn render_model(
             execution.analysis(),
             model,
             &host_descs,
+            &mut assertions,
         )?);
     }
+    coroutine_metadata.push_str(&class_metadata);
     for artifact in coroutine_processes.iter().filter_map(Option::as_ref) {
+        if class_descs.contains_key(&artifact.owner) {
+            continue;
+        }
         coroutine_metadata.push_str(&render_coroutine_metadata(
             artifact,
             execution.analysis(),
             model,
             &host_descs,
+            &mut assertions,
         )?);
     }
     for artifact in coroutine_branches.values() {
@@ -1037,6 +1163,7 @@ fn render_model(
             execution.analysis(),
             model,
             &host_descs,
+            &mut assertions,
         )?);
     }
     if !model.classes.is_empty() {
@@ -1046,6 +1173,7 @@ fn render_model(
                 .chain(coroutine_processes.iter().filter_map(Option::as_ref))
                 .chain(coroutine_branches.values()),
             execution.analysis(),
+            &class_descs,
         )?;
         classes::render_gc_register(model, &frame_maps, &mut coroutine_metadata);
     }
@@ -1282,8 +1410,18 @@ fn render_model(
             out.push_str(&super::owned::model::process(&ctx, p, executable, &names)?);
         }
     }
-    storage::render_path_condition_evaluators(&ctx, &names, &mut out)?;
-    storage::render_timing_condition_evaluators(&ctx, &names, &mut out)?;
+    // Evaluators no shared body replaced, in set order.
+    let evaluator_names = (0..model.module_paths().len())
+        .map(|index| format!("llg_path_set_{index}__conditions"))
+        .chain(
+            (0..model.timing_checks().len())
+                .map(|index| format!("llg_timing_set_{index}__conditions")),
+        );
+    for name in evaluator_names {
+        if let Some(source) = evaluators.remove(&name) {
+            out.push_str(&source);
+        }
+    }
     // Every body has been moved into the model text; release the artifacts
     // and their frame layouts before the remaining sections and the
     // identifier pass.
@@ -1301,7 +1439,13 @@ fn render_model(
         config.backend,
     )?);
     out.push_str(&super::owned::assertions::registrations(model)?);
-    super::owned::model::storage_lifecycle(model, &constants, config.backend, &mut out)?;
+    super::owned::model::storage_lifecycle(
+        model,
+        &constants,
+        config.backend,
+        &sharing.evaluators,
+        &mut out,
+    )?;
     out.push_str(&constants.lifecycle());
     out.push_str(&super::owned::model::main(execution, &sharing.spawns)?);
     let referenced = referenced_descriptor_tables(&out, &activation_descriptors);

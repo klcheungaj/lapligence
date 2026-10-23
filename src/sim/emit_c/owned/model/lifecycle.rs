@@ -12,6 +12,7 @@ enum StartupKind {
     ProgramSpawn,
     InstanceSpawn,
     InstanceProgramSpawn,
+    ClassSpawn,
     Final,
 }
 
@@ -24,6 +25,7 @@ impl StartupKind {
             Self::ProgramSpawn => "llg_spawn_program_in_region",
             Self::InstanceSpawn => "llg_spawn_instance_in_region",
             Self::InstanceProgramSpawn => "llg_spawn_program_instance_in_region",
+            Self::ClassSpawn => "llg_model_spawn_class",
             Self::Final => "llg_spawn_final",
         }
     }
@@ -65,6 +67,11 @@ impl StartupKind {
                 ("const void* record", "record"),
                 ("size_t record_offset", "record_offset"),
             ],
+            Self::ClassSpawn => &[
+                ("uint32_t body_class", "body_class"),
+                ("uint32_t first", "first"),
+                ("uint32_t count", "count"),
+            ],
             Self::Final => &[("void (*fn)(void)", "fn"), ("const char* name", "name")],
         }
     }
@@ -77,6 +84,7 @@ impl StartupKind {
             Self::ProgramSpawn => "llg_model_program_spawn_args_t",
             Self::InstanceSpawn => "llg_model_instance_spawn_args_t",
             Self::InstanceProgramSpawn => "llg_model_program_instance_spawn_args_t",
+            Self::ClassSpawn => "llg_model_class_spawn_args_t",
             Self::Final => "llg_model_final_args_t",
         }
     }
@@ -91,6 +99,30 @@ impl StartupKind {
 struct StartupCall {
     kind: StartupKind,
     args: Vec<String>,
+}
+
+/// Root processes that share one body (`model/sharing.rs`), grouped by
+/// class. Each member's instance record is one row of the class's record
+/// array.
+#[derive(Default)]
+pub(in crate::sim::emit_c) struct SharedSpawns {
+    pub(in crate::sim::emit_c) classes: Vec<SpawnClass>,
+    /// Spawned process C name to its class and member index.
+    pub(in crate::sim::emit_c) members: HashMap<String, (usize, usize)>,
+}
+
+pub(in crate::sim::emit_c) struct SpawnClass {
+    pub(in crate::sim::emit_c) body: String,
+    pub(in crate::sim::emit_c) records: String,
+    pub(in crate::sim::emit_c) record_type: String,
+    pub(in crate::sim::emit_c) frame: String,
+    /// Varying `const char*` record fields with their value per member: a
+    /// spawn label found here is read from the record instead of a table.
+    pub(in crate::sim::emit_c) string_fields: Vec<(String, Vec<String>)>,
+    pub(in crate::sim::emit_c) members: Vec<crate::sim::execution::CoroutineId>,
+    /// One descriptor for every member, set when the members' resume-site
+    /// tables are identical; otherwise each member keeps its own.
+    pub(in crate::sim::emit_c) desc: Option<String>,
 }
 
 /// Emits startup calls in their original order. A run of consecutive calls of
@@ -172,9 +204,112 @@ impl StartupTables {
     }
 }
 
+/// The class table and spawn helper of shared root processes that have one
+/// class descriptor. A member's spawn label is read from a record field
+/// holding it for every member, else from a per-class label table.
+fn render_spawn_classes(
+    sharing: &SharedSpawns,
+    labels: &HashMap<&str, &str>,
+    regions: &[Option<String>],
+    out: &mut String,
+) -> Vec<Option<usize>> {
+    let mut indices = Vec::with_capacity(sharing.classes.len());
+    let mut rows = Vec::new();
+    for (class_index, class) in sharing.classes.iter().enumerate() {
+        let (Some(desc), Some(region)) = (&class.desc, &regions[class_index]) else {
+            indices.push(None);
+            continue;
+        };
+        let mut members = vec![""; class.members.len()];
+        for (name, (index, member)) in &sharing.members {
+            if *index == class_index {
+                members[*member] = labels.get(name.as_str()).copied().unwrap_or("");
+            }
+        }
+        let members = members
+            .iter()
+            .map(|label| c_string_literal(label))
+            .collect::<Vec<_>>();
+        let field = class
+            .string_fields
+            .iter()
+            .find(|(_, values)| *values == members)
+            .map(|(field, _)| field);
+        let names = match field {
+            Some(_) => "NULL".to_owned(),
+            None => {
+                let table = format!("{}_labels", class.records);
+                out.push_str(&format!(
+                    "static const char* const {table}[{}] = {{ {} }};\n",
+                    members.len(),
+                    members.join(", ")
+                ));
+                table
+            }
+        };
+        let name_offset = field.map_or_else(
+            || "0".to_owned(),
+            |field| format!("offsetof({}, {field})", class.record_type),
+        );
+        indices.push(Some(rows.len()));
+        rows.push(format!(
+            "    {{ &{desc}, {}, sizeof({}), offsetof({}, _llg_instance), {name_offset}, {names}, {region} }},\n",
+            class.records, class.record_type, class.frame
+        ));
+    }
+    if rows.is_empty() {
+        return indices;
+    }
+    out.push_str(
+        "typedef struct { const llg_co_desc_t* desc; const void* records; size_t stride; size_t record_offset; size_t name_offset; const char* const* names; llg_region_t region; } llg_model_body_class_t;\n",
+    );
+    out.push_str(&format!(
+        "static const llg_model_body_class_t llg_model_body_classes[{}] = {{\n{}}};\n",
+        rows.len(),
+        rows.concat()
+    ));
+    out.push_str(
+        "static void llg_model_spawn_class(uint32_t body_class, uint32_t first, uint32_t count) {\n    \
+         const llg_model_body_class_t* c = &llg_model_body_classes[body_class];\n    \
+         for (uint32_t m = first; m < first + count; ++m) {\n        \
+         const char* record = (const char*)c->records + (size_t)m * c->stride;\n        \
+         const char* name = c->names ? c->names[m] : *(const char* const*)(const void*)(record + c->name_offset);\n        \
+         llg_spawn_instance_in_region(c->desc, name, c->region, record, c->record_offset);\n    \
+         }\n}\n",
+    );
+    indices
+}
+
+/// Merges consecutive class spawns of one class whose members follow each
+/// other into one call, keeping the spawn order.
+fn merge_class_spawns(calls: Vec<StartupCall>) -> Vec<StartupCall> {
+    let mut merged: Vec<StartupCall> = Vec::with_capacity(calls.len());
+    for call in calls {
+        if call.kind == StartupKind::ClassSpawn {
+            if let Some(last) = merged.last_mut() {
+                if last.kind == StartupKind::ClassSpawn && last.args[0] == call.args[0] {
+                    let first = last.args[1].parse::<usize>().unwrap_or(usize::MAX);
+                    let count = last.args[2].parse::<usize>().unwrap_or(usize::MAX);
+                    if first
+                        .checked_add(count)
+                        .map(|end| end.to_string())
+                        .as_deref()
+                        == Some(call.args[1].as_str())
+                    {
+                        last.args[2] = (count + 1).to_string();
+                        continue;
+                    }
+                }
+            }
+        }
+        merged.push(call);
+    }
+    merged
+}
+
 pub(in crate::sim::emit_c) fn main(
     execution: &ExecutionModel,
-    sharing: &HashMap<String, (String, String)>,
+    sharing: &SharedSpawns,
 ) -> Result<String, String> {
     let model = execution.ir();
     let mut tables = StartupTables::default();
@@ -388,16 +523,55 @@ pub(in crate::sim::emit_c) fn main(
             });
         }
     }
-    for (call, name) in spawns.iter_mut().zip(&model.spawns) {
-        if let Some((record, offset)) = sharing.get(name) {
-            call.kind = if call.kind == StartupKind::ProgramSpawn {
-                StartupKind::InstanceProgramSpawn
-            } else {
-                StartupKind::InstanceSpawn
-            };
-            call.args.extend([record.clone(), offset.clone()]);
+    // Spawn labels as written, keyed by process name.
+    let mut labels = HashMap::new();
+    for (name, fallback_label) in model.spawn_list() {
+        let label = executable_by_name
+            .get(name)
+            .map(|item| model.processes[item.semantic_process].label())
+            .unwrap_or(fallback_label);
+        labels.entry(name).or_insert(label);
+    }
+    // A class spawns in the region of its first spawned member; members in
+    // another region, and program processes, keep their own startup rows.
+    let mut regions = vec![None; sharing.classes.len()];
+    for (call, name) in spawns.iter().zip(&model.spawns) {
+        if let Some(&(class_index, _)) = sharing.members.get(name) {
+            if call.kind == StartupKind::Spawn && regions[class_index].is_none() {
+                regions[class_index] = Some(call.args[2].clone());
+            }
         }
     }
+    let class_rows = render_spawn_classes(sharing, &labels, &regions, &mut tables.source);
+    for (call, name) in spawns.iter_mut().zip(&model.spawns) {
+        let Some(&(class_index, member)) = sharing.members.get(name) else {
+            continue;
+        };
+        let class = &sharing.classes[class_index];
+        match (call.kind, class_rows[class_index]) {
+            (StartupKind::Spawn, Some(row))
+                if regions[class_index].as_deref() == Some(call.args[2].as_str()) =>
+            {
+                call.kind = StartupKind::ClassSpawn;
+                call.args = vec![row.to_string(), member.to_string(), "1".to_owned()];
+            }
+            (kind, _) => {
+                call.kind = if kind == StartupKind::ProgramSpawn {
+                    StartupKind::InstanceProgramSpawn
+                } else {
+                    StartupKind::InstanceSpawn
+                };
+                if let Some(desc) = &class.desc {
+                    call.args[0] = format!("&{desc}");
+                }
+                call.args.extend([
+                    format!("&{}[{member}]", class.records),
+                    format!("offsetof({}, _llg_instance)", class.frame),
+                ]);
+            }
+        }
+    }
+    let mut spawns = merge_class_spawns(spawns);
     let mut semantic_by_name = HashMap::new();
     for process in &model.processes {
         semantic_by_name

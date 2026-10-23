@@ -10,19 +10,19 @@ use std::collections::BTreeMap;
 type ProcessBody = (
     String,
     Option<super::super::frame_layout::FrameLayout>,
-    Vec<super::net_batches::NetBatch>,
+    super::net_batches::ProcessTables,
 );
 type CoroutineProcessBody = (
     String,
     super::super::frame_layout::FrameLayout,
-    Vec<super::net_batches::NetBatch>,
+    super::net_batches::ProcessTables,
 );
 
 mod callbacks;
 mod initialization;
 mod lifecycle;
 pub(in crate::sim::emit_c) use initialization::storage_lifecycle;
-pub(in crate::sim::emit_c) use lifecycle::main;
+pub(in crate::sim::emit_c) use lifecycle::{main, SharedSpawns, SpawnClass};
 
 /// A template definition no call reaches directly: each call selects a
 /// specialization for its actuals (open-array DPI imports and tasks waiting on

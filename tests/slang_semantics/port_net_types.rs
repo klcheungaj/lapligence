@@ -5,6 +5,61 @@ use llg::core::{
 };
 use llg::sim::{codegen, opt::OptConfig};
 
+/// One model net's shape fields, read from `llg_net_shapes[]` through its
+/// `llg_net_storage[]` row: (width, resolver, propagation enabled, rise, fall,
+/// turn-off, delayed parts).
+#[derive(Debug)]
+struct NetShape {
+    width: u32,
+    resolver: String,
+    propagation_enabled: bool,
+    delays: [u64; 3],
+    segments: u32,
+}
+
+fn net_shapes(model_c: &str) -> Vec<NetShape> {
+    fn rows<'a>(model_c: &'a str, table: &str) -> Vec<Vec<&'a str>> {
+        let Some(start) = model_c.find(table) else {
+            return Vec::new();
+        };
+        model_c[start..]
+            .lines()
+            .skip(1)
+            .take_while(|line| !line.starts_with("};"))
+            .map(|line| {
+                line.trim()
+                    .trim_start_matches('{')
+                    .trim_end_matches(',')
+                    .trim_end_matches('}')
+                    .split(',')
+                    .map(str::trim)
+                    .collect()
+            })
+            .collect()
+    }
+    let number = |field: &str| {
+        field
+            .trim_end_matches("ULL")
+            .trim_end_matches('u')
+            .parse::<u64>()
+            .expect("numeric net shape field")
+    };
+    let shapes = rows(model_c, "llg_net_shapes[");
+    rows(model_c, "llg_net_storage[] = {")
+        .iter()
+        .map(|net| {
+            let shape = &shapes[number(net[1]) as usize];
+            NetShape {
+                width: number(shape[0]) as u32,
+                resolver: shape[2].to_owned(),
+                propagation_enabled: shape[3] == "1",
+                delays: [number(shape[10]), number(shape[11]), number(shape[12])],
+                segments: number(shape[13]) as u32,
+            }
+        })
+        .collect()
+}
+
 fn capture(name: &str, source: &str) -> Db {
     let compiled = compile::compile_sources_checked(
         &[compile::OwnedSource::compilation_unit(name, source)],
@@ -53,14 +108,10 @@ fn port_net_type_supported_pairs_select_the_table_resolver_after_snapshot_drop()
             for options in [OptConfig::none(), OptConfig::default()] {
                 let model = codegen::generate_from_db_with_opts(&database, &options)
                     .expect("dissimilar pair lowers");
-                let groups = model
-                    .model_c
-                    .lines()
-                    .filter(|line| line.starts_with("static llg_net_t "))
-                    .collect::<Vec<_>>();
+                let groups = net_shapes(&model.model_c);
                 assert_eq!(groups.len(), 1, "{internal}/{external}: {groups:?}");
-                assert!(
-                    groups[0].contains(resolver),
+                assert_eq!(
+                    groups[0].resolver, resolver,
                     "{internal}/{external}: {groups:?}"
                 );
                 assert_eq!(
@@ -122,29 +173,24 @@ fn port_net_type_delay_selection_drops_dominated_delays_including_zero() {
             .expect("choose delays of dominating declarations, not both declarations");
         // The four input-wire ports have independent WIRE resolver groups.
         // Inspect only the four collapsed WAND networks tested by this fixture.
-        let groups = model
-            .model_c
-            .lines()
-            .filter(|line| {
-                line.starts_with("static llg_net_t ") && line.contains("LLG_RESOLVE_WAND")
-            })
+        let groups = net_shapes(&model.model_c)
+            .into_iter()
+            .filter(|net| net.resolver == "LLG_RESOLVE_WAND")
             .collect::<Vec<_>>();
         assert_eq!(groups.len(), 4);
+        // A net delay without separately delayed parts.
         assert_eq!(
             groups
                 .iter()
-                .filter(|line| { line.contains(".propagation_enabled = 1, .propagation = NULL") })
+                .filter(|net| net.propagation_enabled && net.segments == 0)
                 .count(),
             2
         );
         assert_eq!(
             groups
                 .iter()
-                .filter(|line| {
-                    line.contains(".propagation_enabled = 0, .propagation = NULL")
-                        && line.contains(".propagation_rise = 0")
-                        && line.contains(".propagation_fall = 0")
-                        && line.contains(".propagation_turn_off = 0")
+                .filter(|net| {
+                    !net.propagation_enabled && net.segments == 0 && net.delays == [0, 0, 0]
                 })
                 .count(),
             2
@@ -183,22 +229,10 @@ fn port_net_type_expression_only_actual_joins_all_electrical_bits() {
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
             // Partitioning may combine adjacent connected bits. Count their
             // electrical widths, rather than assuming one group per bit.
-            let wired_width: u32 = model
-                .model_c
-                .lines()
-                .filter(|line| {
-                    line.starts_with("static llg_net_t ") && line.contains("LLG_RESOLVE_WAND")
-                })
-                .map(|line| {
-                    line.split_once(".width = ")
-                        .expect("net group width")
-                        .1
-                        .split_once(',')
-                        .expect("width field delimiter")
-                        .0
-                        .parse::<u32>()
-                        .expect("electrical width")
-                })
+            let wired_width: u32 = net_shapes(&model.model_c)
+                .iter()
+                .filter(|net| net.resolver == "LLG_RESOLVE_WAND")
+                .map(|net| net.width)
                 .sum();
             assert_eq!(
                 wired_width, 4,

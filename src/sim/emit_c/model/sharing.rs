@@ -1,4 +1,5 @@
 //! Exact sharing of owned emitted bodies; unrepresented operands stay in the key.
+use super::super::owned::model::{SharedSpawns, SpawnClass};
 use super::*;
 use crate::sim::ir::*;
 use std::collections::HashSet;
@@ -324,6 +325,16 @@ fn registry(
     registry
 }
 
+/// Whether a body belongs to one iteration of a loop generate construct (or
+/// one element of an instance array), whose genvar or index payloads differ
+/// per instance. Labels and diagnostic names spell such a scope as written,
+/// `tb.g[3].always` (see the lowering's generate-scope collection); only the
+/// C identifiers encode the brackets. A false positive only turns literals
+/// of one sharing class into record fields.
+fn generate_iteration(label: &str) -> bool {
+    label.contains('[')
+}
+
 fn is_port_link(execution: &ExecutionModel, artifact: &CoroutineArtifact) -> bool {
     match artifact.owner {
         CoroutineId::Process(index) => execution
@@ -446,17 +457,25 @@ fn normalize(
         } else if bytes[index].is_ascii_digit() {
             index = word_end(bytes, index);
             let value = &source[start..index];
-            let identity = arguments
-                .last()
-                .is_some_and(|(call, arg)| match call.as_str() {
-                    "llg_net_write"
-                    | "llg_net_write_selected"
-                    | "llg_nba_net_after"
-                    | "llg_nba_net_selected_after" => *arg == 1,
-                    "llg_activation_enter" => *arg < 2,
-                    "llg_disable_target" | "llg_fork_group_new_target" => (1..=2).contains(arg),
-                    _ => false,
-                });
+            // A net driver slot (`.drivers[slot]` or a write/inertial slot
+            // argument) is the instance's contribution identity: drivers of
+            // one net in different generate iterations differ only here. An
+            // SDF-annotated gate's delay slot is likewise its own.
+            let preceding = &source[..start];
+            let identity = preceding.ends_with(".drivers[")
+                || preceding.ends_with("llg_sdf_gate_delays[")
+                || arguments
+                    .last()
+                    .is_some_and(|(call, arg)| match call.as_str() {
+                        "llg_net_write"
+                        | "llg_net_write_selected"
+                        | "llg_nba_net_after"
+                        | "llg_nba_net_selected_after" => *arg == 1,
+                        "llg_inertial_net" | "llg_inertial_selected_net" => *arg == 2,
+                        "llg_activation_enter" => *arg < 2,
+                        "llg_disable_target" | "llg_fork_group_new_target" => (1..=2).contains(arg),
+                        _ => false,
+                    });
             if identity {
                 operand = Some(scalars.operand(
                     if value.ends_with("ULL") {
@@ -514,7 +533,10 @@ pub(super) struct Sharing {
     pub(super) declarations: String,
     pub(super) bodies: String,
     pub(super) prototypes: String,
-    pub(super) spawns: HashMap<String, (String, String)>,
+    pub(super) spawns: SharedSpawns,
+    /// Condition evaluators replaced by a shared body: evaluator name to the
+    /// shared function and the context (its instance record) to pass it.
+    pub(super) evaluators: HashMap<String, (String, String)>,
 }
 
 struct Candidate {
@@ -523,11 +545,19 @@ struct Candidate {
     normalized: Normalized,
     key: String,
     plain: Option<usize>,
+    /// A module path or timing check condition evaluator.
+    evaluator: bool,
 }
 
 pub(super) struct AdditionalOperands<'a> {
     pub net_tables: &'a [(String, String, String)],
+    /// Hoisted per-site process state `(name, element type, element count)`.
+    pub site_statics: &'a [(String, &'static str, Option<u64>)],
     pub constants: &'a super::super::constants::PackedConstants,
+    /// Condition evaluators (`static void <name>(sv4_t* out, void* context)`)
+    /// of module path and timing check sets, by name. Shared ones read their
+    /// instance record through `context`.
+    pub evaluators: &'a mut BTreeMap<String, String>,
 }
 
 fn push_candidate(
@@ -571,7 +601,8 @@ pub(super) fn share(
             declarations: String::new(),
             bodies: String::new(),
             prototypes: String::new(),
-            spawns: HashMap::new(),
+            spawns: SharedSpawns::default(),
+            evaluators: HashMap::new(),
         });
     }
     let model = execution.ir();
@@ -595,6 +626,20 @@ pub(super) fn share(
                 "I->@",
             ),
         );
+    }
+    // Each process's own state: a scalar is addressed (`&name`), an array
+    // decays to its first element (`&name[index]`).
+    for (name, ty, len) in additional.site_statics {
+        let operand = match len {
+            None => Operand::pointer(ty, format!("site:{ty}"), name),
+            Some(len) => Operand::new(
+                format!("{ty}* @"),
+                format!("site:{ty}[{len}]"),
+                name.clone(),
+                "I->@",
+            ),
+        };
+        registry.insert(name.clone(), operand);
     }
     let frame_names = functions
         .values()
@@ -629,7 +674,8 @@ pub(super) fn share(
         // Literal payloads may vary per instance in generate-scope bodies
         // and in port links, whose selected actual bits are the instance's
         // connection rather than its module's code.
-        let generated = artifact.display_name.contains('[') || is_port_link(execution, artifact);
+        let generated =
+            generate_iteration(&artifact.display_name) || is_port_link(execution, artifact);
         if let Some(normalized) = normalize(
             &artifact.source,
             name,
@@ -653,6 +699,29 @@ pub(super) fn share(
                     normalized,
                     key,
                     plain: None,
+                    evaluator: false,
+                },
+                &mut groups,
+                &mut by_key,
+            );
+        }
+    }
+    // Module path and timing check conditions come from specify blocks,
+    // which are module items and never inside a generate scope (1800-2009
+    // A.1.4 `non_port_module_item`): their payloads are the module's parameters and stay structural.
+    for (name, source) in additional.evaluators.iter() {
+        if let Some(normalized) =
+            normalize(source, name, false, &registry, &constants, &mut scalars)
+        {
+            let key = format!("evaluator:{}", normalized.source);
+            push_candidate(
+                Candidate {
+                    owner: CoroutineId::Function(usize::MAX),
+                    name: name.clone(),
+                    normalized,
+                    key,
+                    plain: None,
+                    evaluator: true,
                 },
                 &mut groups,
                 &mut by_key,
@@ -667,7 +736,7 @@ pub(super) fn share(
         if let Some(normalized) = normalize(
             source,
             &function.c_name,
-            false,
+            generate_iteration(function.diagnostic_name()),
             &registry,
             &constants,
             &mut scalars,
@@ -683,6 +752,7 @@ pub(super) fn share(
                     normalized,
                     key,
                     plain: Some(*index),
+                    evaluator: false,
                 },
                 &mut groups,
                 &mut by_key,
@@ -693,7 +763,8 @@ pub(super) fn share(
         declarations: String::new(),
         bodies: String::new(),
         prototypes: String::new(),
-        spawns: HashMap::new(),
+        spawns: SharedSpawns::default(),
+        evaluators: HashMap::new(),
     };
     let mut sequence = 0;
     for group in groups
@@ -779,6 +850,17 @@ pub(super) fn share(
             let declaration = format!("    {frame_name}* F = ({frame_name}*)co;\n");
             source = source.replacen(&declaration, &format!("{declaration}    const {record_type}* restrict I = F->_llg_instance;\n    (void)I;\n"), 1);
             shared_frame = Some(frame_name);
+        } else if first.evaluator {
+            // The evaluator signature already takes a context pointer.
+            let open = source
+                .find(" {\n")
+                .ok_or_else(|| "missing condition evaluator signature".to_owned())?;
+            source.insert_str(
+                open + 3,
+                &format!(
+                    "    const {record_type}* restrict I = (const {record_type}*)context;\n    (void)I;\n"
+                ),
+            );
         } else {
             let open = source
                 .find(" {\n")
@@ -806,21 +888,58 @@ pub(super) fn share(
         );
         result.prototypes.push_str(";\n");
         result.bodies.push_str(&source);
-        for (member, candidate) in group.iter().enumerate() {
-            let record = format!("llg_body_instance_{}_{}", sequence - 1, member);
+        // One record array per class: a member's record is one initializer
+        // row, not a named object.
+        let records = format!("llg_body_instances_{}", sequence - 1);
+        result.declarations.push_str(&format!(
+            "static const {record_type} {records}[{}] = {{\n",
+            group.len()
+        ));
+        for candidate in &group {
             let values = varying
                 .iter()
                 .map(|slot| &*candidate.normalized.operands[*slot].value)
                 .collect::<Vec<_>>();
             result.declarations.push_str(&format!(
-                "static const {record_type} {record} = {{ {} }};\n",
+                "    {{ {} }},\n",
                 if values.is_empty() {
                     "0".to_owned()
                 } else {
                     values.join(", ")
                 }
             ));
-            if let Some(index) = candidate.plain {
+        }
+        result.declarations.push_str("};\n");
+        let mut class = shared_frame.as_ref().map(|frame| SpawnClass {
+            body: body_name.clone(),
+            records: records.clone(),
+            record_type: record_type.clone(),
+            frame: frame.clone(),
+            string_fields: varying
+                .iter()
+                .filter(|slot| first.normalized.operands[**slot].declaration() == "const char* @")
+                .map(|slot| {
+                    (
+                        format!("v{slot}"),
+                        group
+                            .iter()
+                            .map(|candidate| candidate.normalized.operands[*slot].value.to_string())
+                            .collect(),
+                    )
+                })
+                .collect(),
+            members: Vec::with_capacity(group.len()),
+            desc: None,
+        });
+        for (member, candidate) in group.iter().enumerate() {
+            let record = format!("{records}[{member}]");
+            if candidate.evaluator {
+                additional.evaluators.remove(&candidate.name);
+                result.evaluators.insert(
+                    candidate.name.clone(),
+                    (body_name.clone(), format!("&{record}")),
+                );
+            } else if let Some(index) = candidate.plain {
                 let function = &model.funcs[index];
                 let params = owned_func_param_fields(function)
                     .iter()
@@ -849,17 +968,20 @@ pub(super) fn share(
                     artifact.shared_entry = Some(body_name.clone());
                     // Release the body: the shared entry replaces it.
                     artifact.source = String::new();
-                    result.spawns.insert(
-                        candidate.name.clone(),
-                        (
-                            format!("&{record}"),
-                            format!("offsetof({frame}, _llg_instance)"),
-                        ),
-                    );
+                    if let Some(class) = class.as_mut() {
+                        result.spawns.members.insert(
+                            candidate.name.clone(),
+                            (result.spawns.classes.len(), member),
+                        );
+                        class.members.push(candidate.owner);
+                    }
                 } else {
                     artifact.source = retained(format!("static llg_co_status_t {}(llg_co_frame_t* co, llg_co_chain_t* ch) {{\n    return {body_name}(co, ch, &{record});\n}}\n", candidate.name));
                 }
             }
+        }
+        if let Some(class) = class {
+            result.spawns.classes.push(class);
         }
     }
     Ok(result)
@@ -914,6 +1036,7 @@ mod tests {
                     normalized,
                     key,
                     plain: None,
+                    evaluator: false,
                 },
                 &mut groups,
                 &mut by_key,
@@ -949,6 +1072,7 @@ mod tests {
                         },
                         key: "identical key".to_owned(),
                         plain: None,
+                        evaluator: false,
                     },
                     &mut groups,
                     &mut by_key,

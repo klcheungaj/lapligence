@@ -4,6 +4,8 @@ use crate::sim::emit_c::constants::hoist_const_limbs;
 use crate::sim::emit_c::destinations::assign;
 use std::collections::{HashMap, HashSet};
 
+mod instance_tables;
+
 /// Value representation shared by every object in one storage table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum StorageKind {
@@ -145,6 +147,34 @@ fn table_loop(table: &str) -> String {
     format!("for (size_t _llg_n = 0; _llg_n < sizeof({table}) / sizeof({table}[0]); ++_llg_n)")
 }
 
+/// Interns equal `uint32_t`/`uint8_t` tables of the net shapes by content.
+#[derive(Default)]
+struct InternedTables {
+    names: HashMap<String, String>,
+}
+
+impl InternedTables {
+    fn name(&mut self, source: &mut String, prefix: &str, element: &str, values: String) -> String {
+        let next = self.names.len();
+        self.names
+            .entry(format!("{element}:{values}"))
+            .or_insert_with(|| {
+                let name = format!("{prefix}_{next}");
+                source.push_str(&format!(
+                    "static const {element} {name}[] = {{ {values} }};\n"
+                ));
+                name
+            })
+            .clone()
+    }
+}
+
+/// Net storage as data: every distinct net configuration is one
+/// `llg_net_shape_t` row, every net one `{ net, shape }` row, and the
+/// per-driver and per-bit arrays of all nets come from exact-size pools that
+/// `llg_net_layout` slices at start. A net therefore costs a few table bytes
+/// whatever its width, drivers or delays, instead of an initialized record
+/// and five arrays.
 fn net_storage_lifecycle(
     model: &IrModel,
     tables: &mut StorageTables,
@@ -160,9 +190,21 @@ fn net_storage_lifecycle(
     if groups.is_empty() {
         return;
     }
-    tables
-        .source
-        .push_str("static const struct { llg_net_t* net; uint8_t fill; } llg_net_storage[] = {\n");
+    // Module path destinations publish every bit through its own path-stage
+    // record (one pool entry per bit).
+    let path_destinations = model
+        .module_paths()
+        .iter()
+        .flat_map(|set| set.destinations())
+        .map(|destination| model.net_group(destination.group()).c_name.as_str())
+        .collect::<HashSet<_>>();
+    let join = |values: &mut dyn Iterator<Item = String>| values.collect::<Vec<_>>().join(", ");
+    let mut interned = InternedTables::default();
+    let mut shapes = HashMap::<String, usize>::new();
+    let mut shape_rows = String::new();
+    let mut net_rows = String::new();
+    let mut views = Vec::new();
+    let (mut drivers, mut path_bits, mut segments) = (0usize, 0usize, 0usize);
     for group in groups {
         // A delayed net with drivers shows X until its first delayed
         // transition (S2-D10); `net_delay_starts` then propagates it.
@@ -172,69 +214,157 @@ fn net_storage_lifecycle(
             IrNetKind::Tri1 | IrNetKind::Supply1 => 1,
             _ => 3,
         };
-        tables
-            .source
-            .push_str(&format!("    {{ &{}, {fill} }},\n", group.c_name));
+        let path_destination = path_destinations.contains(group.c_name.as_str());
+        let (propagation_enabled, rise, fall, turn_off) = match group.propagation_delay {
+            Some(delay) => (1, delay.rise, delay.fall, delay.turn_off),
+            None => (u8::from(path_destination), 0, 0, 0),
+        };
+        let (strength0, strength1) = if group.n_drivers == 0 {
+            ("NULL".to_owned(), "NULL".to_owned())
+        } else {
+            let mut table = |values: &mut dyn Iterator<Item = String>| {
+                interned.name(
+                    &mut tables.source,
+                    "llg_net_strength",
+                    "uint8_t",
+                    join(values),
+                )
+            };
+            (
+                table(
+                    &mut group
+                        .driver_strengths
+                        .iter()
+                        .map(|(zero, _)| zero.to_string()),
+                ),
+                table(
+                    &mut group
+                        .driver_strengths
+                        .iter()
+                        .map(|(_, one)| one.to_string()),
+                ),
+            )
+        };
+        // A delayed net driven in separate parts schedules each part on its
+        // own (S2-D3); a net scheduled whole has no segments.
+        let (n_segments, segment_lsb) =
+            if group.propagation_delay.is_some() && !group.propagation_segments.is_empty() {
+                let bounds = std::iter::once(0)
+                    .chain(group.propagation_segments.iter().copied())
+                    .chain(std::iter::once(group.width))
+                    .map(|bound| format!("{bound}u"))
+                    .collect::<Vec<_>>();
+                let n = bounds.len() - 1;
+                (
+                    n,
+                    interned.name(
+                        &mut tables.source,
+                        "llg_net_segments",
+                        "uint32_t",
+                        bounds.join(", "),
+                    ),
+                )
+            } else {
+                (0, "NULL".to_owned())
+            };
+        let (driven_runs, n_runs) = if group.driven_runs.is_empty() {
+            ("NULL".to_owned(), 0)
+        } else {
+            (
+                interned.name(
+                    &mut tables.source,
+                    "llg_net_driven_runs",
+                    "uint32_t",
+                    join(
+                        &mut group
+                            .driven_runs
+                            .iter()
+                            .map(|(low, count)| format!("{low}u, {count}u")),
+                    ),
+                ),
+                group.driven_runs.len(),
+            )
+        };
+        let net_delayed = if group.runtime_delay {
+            2
+        } else {
+            u8::from(group.propagation_delay.is_some())
+        };
+        let row = format!(
+            "{{ {}u, {}, {}, {propagation_enabled}, {net_delayed}, {fill}, {}, {}, {strength0}, {strength1}, {rise}ULL, {fall}ULL, {turn_off}ULL, {n_segments}u, {segment_lsb}, {driven_runs}, {n_runs}u }}",
+            group.width,
+            u8::from(group.signed),
+            group.kind.c_value(),
+            u8::from(path_destination),
+            group.n_drivers,
+        );
+        let next = shapes.len();
+        let shape = *shapes.entry(row).or_insert_with_key(|row| {
+            shape_rows.push_str(&format!("    {row},\n"));
+            next
+        });
+        net_rows.push_str(&format!("    {{ &{}, {shape}u }},\n", group.c_name));
+        drivers += group.n_drivers;
+        if path_destination {
+            path_bits += group.width as usize;
+        }
+        segments += n_segments;
+        if let Some(view) = group
+            .strength_view
+            .and_then(|view| model.signals.get(view))
+            .filter(|signal| !signal.omit)
+        {
+            views.push((group.c_name.as_str(), view.c_name.as_str()));
+        }
     }
-    tables.source.push_str("};\n");
+    tables.source.push_str(&format!(
+        "static const llg_net_shape_t llg_net_shapes[{}] = {{\n{shape_rows}}};\n\
+         static const struct {{ llg_net_t* net; uint32_t shape; }} llg_net_storage[] = {{\n{net_rows}}};\n",
+        shapes.len()
+    ));
+    let mut pool = |element: &str, name: &str, count: usize| {
+        if count == 0 {
+            "NULL".to_owned()
+        } else {
+            tables
+                .source
+                .push_str(&format!("static {element} {name}[{count}];\n"));
+            name.to_owned()
+        }
+    };
+    let pools = [
+        pool("sv4_t", "llg_net_cell_pool", drivers),
+        pool("sv4_t*", "llg_net_driver_pool", drivers),
+        pool("llg_net_driver_index_t", "llg_net_index_pool", drivers),
+        pool("int", "llg_net_overlap_pool", drivers),
+        pool("llg_inertial_t*", "llg_net_path_bit_pool", path_bits),
+        pool("llg_inertial_t*", "llg_net_segment_pool", segments),
+    ];
     let each = table_loop("llg_net_storage");
     initialize.push_str(&format!(
-        "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_fill_to(net->drivers[slot], 3, net->width, net->is_signed);\n        llg_net_index_reset(net);\n        sv4_fill_to(&net->resolved, llg_net_storage[_llg_n].fill, net->width, net->is_signed);\n        net->n_aliases = 0;\n        llg_net_strength_reset(net);\n    }}\n"
+        "    {{\n        llg_net_pools_t pools = {{ {} }};\n        {each}\n            llg_net_layout(llg_net_storage[_llg_n].net, &llg_net_shapes[llg_net_storage[_llg_n].shape], &pools);\n    }}\n",
+        pools.join(", ")
+    ));
+    for (net, view) in views {
+        initialize.push_str(&format!("    {net}.strength = &{view};\n"));
+    }
+    initialize.push_str(&format!(
+        "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_fill_to(net->drivers[slot], 3, net->width, net->is_signed);\n        llg_net_index_reset(net);\n        sv4_fill_to(&net->resolved, llg_net_shapes[llg_net_storage[_llg_n].shape].fill, net->width, net->is_signed);\n        net->n_aliases = 0;\n        llg_net_strength_reset(net);\n    }}\n"
     ));
     destroy.push_str(&format!(
         "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_destroy(net->drivers[slot]);\n        sv4_destroy(&net->resolved);\n        llg_net_start_release(net);\n        net->propagation = NULL;\n    }}\n"
     ));
-    net_driven_starts(model, tables, initialize);
-}
-
-/// Start the driven bits of every undelayed driven net at X until its first
-/// driver write (decision T0-D3). Groups with equal runs share one run table.
-fn net_driven_starts(model: &IrModel, tables: &mut StorageTables, initialize: &mut String) {
-    let mut emitted = HashSet::new();
-    let mut run_tables: Vec<&[(u32, u32)]> = Vec::new();
-    let mut entries = Vec::new();
-    for group in &model.net_groups {
-        if group.driven_runs.is_empty() || !emitted.insert(group.c_name.as_str()) {
-            continue;
-        }
-        let table = match run_tables
-            .iter()
-            .position(|runs| *runs == group.driven_runs.as_slice())
-        {
-            Some(index) => index,
-            None => {
-                run_tables.push(&group.driven_runs);
-                run_tables.len() - 1
-            }
-        };
-        entries.push((group.c_name.as_str(), table, group.driven_runs.len()));
-    }
-    if entries.is_empty() {
-        return;
-    }
-    for (index, runs) in run_tables.iter().enumerate() {
-        let values = runs
-            .iter()
-            .map(|(low, count)| format!("{low}u, {count}u"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        tables.source.push_str(&format!(
-            "static const uint32_t llg_net_driven_runs_{index}[] = {{ {values} }};\n"
+    // Start the driven bits of every undelayed driven net at X until its
+    // first driver write (decision T0-D3), in net order.
+    if model
+        .net_groups
+        .iter()
+        .any(|group| !group.driven_runs.is_empty())
+    {
+        initialize.push_str(&format!(
+            "    {each} {{\n        const llg_net_shape_t* shape = &llg_net_shapes[llg_net_storage[_llg_n].shape];\n        if (shape->driven_runs) llg_net_start_driven(llg_net_storage[_llg_n].net, shape->driven_runs, shape->n_driven_runs);\n    }}\n"
         ));
     }
-    tables.source.push_str(
-        "static const struct { llg_net_t* net; const uint32_t* runs; uint32_t n_runs; } llg_net_driven[] = {\n",
-    );
-    for (name, table, count) in entries {
-        tables.source.push_str(&format!(
-            "    {{ &{name}, llg_net_driven_runs_{table}, {count}u }},\n"
-        ));
-    }
-    tables.source.push_str("};\n");
-    let each = table_loop("llg_net_driven");
-    initialize.push_str(&format!(
-        "    {each}\n        llg_net_start_driven(llg_net_driven[_llg_n].net, llg_net_driven[_llg_n].runs, llg_net_driven[_llg_n].n_runs);\n"
-    ));
 }
 
 /// Start every delayed or path-destination net that has drivers from X
@@ -281,6 +411,7 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
     model: &IrModel,
     constants: &super::super::super::constants::PackedConstants,
     backend: crate::sim::value_backend::ValueBackend,
+    evaluators: &HashMap<String, (String, String)>,
     out: &mut String,
 ) -> Result<(), String> {
     let mut initialize = String::from("    llg_model_constants_init();\n");
@@ -332,6 +463,8 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             table_loop("llg_net_storage")
         ));
     }
+    instance_tables::module_path_tables(model, evaluators, &mut tables, &mut initialize);
+    instance_tables::timing_check_tables(model, evaluators, &mut tables, &mut initialize);
     // Module path sets take the initialized source values as their change
     // reference; the runtime releases their state at cleanup. Global pulse
     // controls that differ from the defaults are set first.
@@ -362,9 +495,10 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             "    llg_sdf_apply(&llg_sdf_annotation_{index});\n"
         ));
     }
-    for index in 0..model.module_paths().len() {
+    if !model.module_paths().is_empty() {
         initialize.push_str(&format!(
-            "    llg_module_paths_start(&llg_path_set_{index});\n"
+            "    {}\n        llg_module_paths_start(llg_path_sets[_llg_n].set);\n",
+            table_loop("llg_path_sets")
         ));
     }
     net_delay_starts(model, &mut tables, &mut initialize);
@@ -396,9 +530,10 @@ pub(in crate::sim::emit_c) fn storage_lifecycle(
             model.signal(doorbell).c_name
         ));
     }
-    for index in 0..model.timing_checks().len() {
+    if !model.timing_checks().is_empty() {
         initialize.push_str(&format!(
-            "    llg_timing_checks_start(&llg_timing_set_{index});\n"
+            "    {}\n        llg_timing_checks_start(llg_timing_sets[_llg_n].set);\n",
+            table_loop("llg_timing_sets")
         ));
     }
     emitted.clear();

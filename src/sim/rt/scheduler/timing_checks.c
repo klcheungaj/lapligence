@@ -301,6 +301,44 @@ static void timing_line_start(llg_timing_check_set_t* set, llg_timing_line_t* li
     timing_line_source_changed(line);
 }
 
+void llg_timing_checks_layout(llg_timing_check_set_t* set, const char* scope,
+                              const llg_timing_template_t* checks_template,
+                              const void* condition_context,
+                              llg_timing_pair_t* pairs, uint32_t n_pairs,
+                              llg_timing_pools_t* pools) {
+    const llg_timing_template_t* t = checks_template;
+    memset(set, 0, sizeof(*set));
+    set->scope = scope;
+    set->n_terminals = t->n_terminals;
+    set->terminals = pools->terminals;
+    for (uint32_t index = 0; index < t->n_terminals; index++) {
+        pools->terminals[index] = t->terminals[index];
+        pools->terminals[index].value = pools->values[index];
+    }
+    pools->terminals += t->n_terminals;
+    pools->values += t->n_terminals;
+    set->n_checks = t->n_checks;
+    set->checks = t->n_checks ? pools->checks : NULL;
+    if (t->n_checks) memcpy(pools->checks, t->checks, t->n_checks * sizeof(*pools->checks));
+    pools->checks += t->n_checks;
+    set->conditions = t->conditions;
+    set->n_conditions = t->n_conditions;
+    set->condition_context = condition_context;
+    set->n_notifiers = t->n_notifiers;
+    set->notifiers = t->n_notifiers ? pools->values : NULL;
+    pools->values += t->n_notifiers;
+    set->n_lines = t->n_lines;
+    set->lines = t->n_lines ? pools->lines : NULL;
+    for (uint32_t index = 0; index < t->n_lines; index++) {
+        pools->lines[index] = t->lines[index];
+        pools->lines[index].net = pools->line_nets[index];
+    }
+    pools->lines += t->n_lines;
+    pools->line_nets += t->n_lines;
+    set->pairs = pairs;
+    set->n_pairs = n_pairs;
+}
+
 void llg_timing_checks_start(llg_timing_check_set_t* set) {
     if (!set || set->offsets) return;
     uint32_t terminals = set->n_terminals ? set->n_terminals : 1u;
@@ -418,7 +456,7 @@ static int timing_condition_value(timing_step_t* step, uint32_t condition,
     if (!condition) return 1;
     llg_timing_check_set_t* set = step->set;
     if (!step->evaluated) {
-        set->conditions(set->condition_values, NULL);
+        set->conditions(set->condition_values, (void*)set->condition_context);
         step->evaluated = 1;
     }
     const sv4_t* value = &set->condition_values[condition - 1u];

@@ -149,16 +149,27 @@ _Noreturn void llg_rt_co_oom(size_t bytes) {
 }
 
 static llg_co_chain_t* llg_rt_current_chain(void);
+static const char* llg_rt_current_name(void);
+
+/* A root descriptor shared by every instance of one process body has no
+ * name; its frame is labelled with the running process's name. */
+typedef struct {
+    llg_report_t* report;
+    const char* root_name;
+} llg_rt_co_trace_t;
 
 static void llg_rt_co_trace_frame(void* user, const llg_co_desc_t* desc,
                                   const llg_co_frame_t* frame,
                                   unsigned depth) {
-    llg_report_t* report = (llg_report_t*)user;
+    llg_rt_co_trace_t* trace = (llg_rt_co_trace_t*)user;
+    llg_report_t* report = trace->report;
     const char* location = NULL;
     if (desc && desc->sites && frame && frame->state < desc->n_sites)
         location = desc->sites[frame->state].loc;
-    llg_report_printf(report, "  #%u %s", depth,
-                      desc && desc->name ? desc->name : "<unknown HDL frame>");
+    const char* name = desc && desc->name ? desc->name
+                       : desc && trace->root_name ? trace->root_name
+                                                  : "<unknown HDL frame>";
+    llg_report_printf(report, "  #%u %s", depth, name);
     if (location && location[0] != '\0') llg_report_printf(report, " at %s", location);
     llg_report_bytes(report, "\n", 1);
 }
@@ -173,7 +184,8 @@ _Noreturn void llg_rt_co_bad_state(const llg_co_frame_t* co, const char* fn) {
     llg_co_chain_t* chain = llg_rt_current_chain();
     if (chain) {
         llg_report_printf(&report, "llg: coroutine HDL backtrace:\n");
-        (void)llg_co_backtrace(chain, llg_rt_co_trace_frame, &report);
+        llg_rt_co_trace_t trace = {&report, llg_rt_current_name()};
+        (void)llg_co_backtrace(chain, llg_rt_co_trace_frame, &trace);
     }
     llg_report_emit(&report, stderr);
     abort();

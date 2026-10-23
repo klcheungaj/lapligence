@@ -52,7 +52,8 @@ fn generate_instance_model_bounds_all_internal_c_identifiers() {
         .lines()
         .map(|line| line.split_once('\t').unwrap())
         .collect::<Vec<_>>();
-    assert!(rows.len() >= 32);
+    // The 16 signals; the 16 processes share one body and one descriptor.
+    assert!(rows.len() >= 16, "{}", rows.len());
     assert!(rows.windows(2).all(|rows| rows[0].0 < rows[1].0));
     for (short, original) in rows {
         assert!(identifiers.contains(short));

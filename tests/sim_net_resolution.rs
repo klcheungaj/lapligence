@@ -354,9 +354,12 @@ fn ordinary_wire_selected_continuous_drivers_resolve_with_optimizer_parity() {
         ] {
             let model = sim::codegen::generate_from_db_with_opts(&db, &options)
                 .map_err(|error| format!("{variant} lowering: {error}"))?;
+            // A two-driver net takes two interval-tree nodes and scratch
+            // entries from the exact-size pools.
             assert!(
-                model.model_c.contains("__driver_index[2]")
-                    && model.model_c.contains("__overlap_scratch[2]")
+                model.model_c.contains("llg_net_index_pool[")
+                    && model.model_c.contains("llg_net_overlap_pool[")
+                    && model.model_c.contains(", 2, llg_net_strength_")
                     && model.model_c.matches("llg_net_write_selected(").count() >= 2,
                 "{variant} must emit exact-size interval storage and selected writes"
             );

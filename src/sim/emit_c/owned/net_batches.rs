@@ -9,6 +9,29 @@ pub(in crate::sim::emit_c) struct NetBatch {
     pub rows: Vec<NetRow>,
 }
 
+/// One process's file-scope tables: structural contribution batches and the
+/// per-site runtime state its body addresses.
+#[derive(Default)]
+pub(in crate::sim::emit_c) struct ProcessTables {
+    pub batches: Vec<NetBatch>,
+    pub statics: Vec<SiteStatic>,
+}
+
+/// Mutable per-site state (an inertial driver handle or a sparse-array
+/// handle key) of one process instance. It lives at file scope, named after
+/// the owning process, rather than as a function-local static: the body then
+/// addresses it like any other model storage, so instances whose bodies
+/// differ only in this state share one body with the state as a record
+/// operand. Its lifetime and zero initialization are those of the local
+/// static it replaces.
+pub(in crate::sim::emit_c) struct SiteStatic {
+    pub name: String,
+    /// Element type: `llg_inertial_t*` or `const char`.
+    pub ty: &'static str,
+    /// Element count of a per-element handle array.
+    pub len: Option<u64>,
+}
+
 pub(in crate::sim::emit_c) struct NetRow {
     pub group: usize,
     pub slot: usize,
@@ -114,17 +137,13 @@ impl Frame<'_, '_> {
         let name = format!(
             "llg_net_rows_{}_{}",
             self.batch_owner.as_ref().expect("process owner"),
-            self.net_batches.len()
+            self.net_batches.batches.len()
         );
         let count = rows.len();
         let source = self.expression(&base)?;
         self.line("{");
         let handles = if delay.is_some() {
-            let handles = self.name("net_inertial");
-            self.line(format!(
-                "static llg_inertial_t* {handles}[{count}] = {{0}};"
-            ));
-            Some(handles)
+            Some(self.site_static("llg_inertial_t*", "net_inertial", Some(count as u64)))
         } else {
             None
         };
@@ -164,7 +183,34 @@ impl Frame<'_, '_> {
         self.line("}");
         self.line("}");
         self.discard(source);
-        self.net_batches.push(NetBatch { name, rows });
+        self.net_batches.batches.push(NetBatch { name, rows });
         Ok(count)
+    }
+
+    /// Declare zero-initialized per-site state and return its C name. A
+    /// coroutine process hoists it to file scope (see [`SiteStatic`]); any
+    /// other body keeps a function-local static.
+    pub(super) fn site_static(
+        &mut self,
+        ty: &'static str,
+        purpose: &str,
+        len: Option<u64>,
+    ) -> String {
+        let local = self.name(purpose);
+        if let Some(owner) = &self.batch_owner {
+            let name = format!("{owner}{local}");
+            self.net_batches.statics.push(SiteStatic {
+                name: name.clone(),
+                ty,
+                len,
+            });
+            return name;
+        }
+        self.line(match len {
+            Some(len) => format!("static {ty} {local}[{len}] = {{0}};"),
+            None if ty.ends_with('*') => format!("static {ty} {local} = NULL;"),
+            None => format!("static {ty} {local} = 0;"),
+        });
+        local
     }
 }

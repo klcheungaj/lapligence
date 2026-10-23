@@ -167,7 +167,7 @@ fn included_and_macro_expanded_waits_use_owned_physical_locations() {
 }
 
 #[test]
-fn shared_instance_bodies_keep_distinct_site_tables() {
+fn shared_instance_bodies_share_one_site_table() {
     let database = database(&[OwnedSource::compilation_unit(
         "instances.sv",
         "module worker;\n\
@@ -183,10 +183,13 @@ endmodule\n",
     for optimization in [OptConfig::none(), OptConfig::default()] {
         let c = render(&database, optimization);
         assert_eq!(c.matches("LLG_CO_DISPATCH_BEGIN").count(), 1, "{c}");
+        // Equal resume sites give the class one descriptor; each instance
+        // keeps its own spawn label.
         let tables = site_tables(&c);
-        assert_eq!(tables.len(), 4, "{c}");
-        for table in tables {
-            assert_eq!(table, ["instances.sv:3:1", "instances.sv:4:1"]);
+        assert_eq!(tables.len(), 1, "{c}");
+        assert_eq!(tables[0], ["instances.sv:3:1", "instances.sv:4:1"]);
+        for instance in ["a", "b", "c", "d"] {
+            assert!(c.contains(&format!("\"tb.{instance}.initial\"")), "{c}");
         }
     }
 }
@@ -250,4 +253,59 @@ fn generated_runtime_backtrace_reports_the_resumed_wait_and_call_sites() {
         Ok(())
     })
     .expect("generated diagnostic model runs");
+}
+
+#[test]
+fn shared_root_backtrace_names_the_running_instance() {
+    if !llg::sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    // The four instances share one body and one nameless class descriptor;
+    // a backtrace of the root frame takes the running process's label.
+    let database = database(&[OwnedSource::compilation_unit(
+        "instances.sv",
+        "module worker;\n\
+initial begin\n\
+    #1;\n\
+    #2;\n\
+end\n\
+endmodule\n\
+module tb;\n\
+worker a(), b(), c(), d();\n\
+endmodule\n",
+    )]);
+    sim_harness::with_temp_cwd("shared-root-backtrace", |directory| {
+        let mut c = render(&database, OptConfig::default());
+        assert!(c.contains("llg_shared_body_0_desc = { llg_shared_body_0, NULL, "));
+        let arm = c
+            .lines()
+            .find(|line| line.contains("LLG_CO_AWAIT(co, ch, 2, llg_arm_time("))
+            .expect("second delay await")
+            .to_owned();
+        assert_eq!(c.matches(&arm).count(), 1, "{c}");
+        c = c.replace(
+            &arm,
+            &format!("{arm}\nllg_rt_co_bad_state(co, \"shared root probe\");"),
+        );
+        let executable = llg::sim::build::build_model_cmake(
+            &directory.join("shared"),
+            &[("model.c", c.as_str())],
+        )
+        .map_err(|error| error.to_string())?;
+        let output = sim_harness::run_command(
+            &mut std::process::Command::new(executable),
+            std::time::Duration::from_secs(60),
+        )?;
+        assert!(!output.status.success(), "{output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("coroutine HDL backtrace:"), "{stderr}");
+        assert!(
+            stderr.contains("#0 tb.a.initial at instances.sv:4:1"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("<unknown HDL frame>"), "{stderr}");
+        Ok(())
+    })
+    .expect("shared-root diagnostic model runs");
 }

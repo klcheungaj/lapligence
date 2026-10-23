@@ -704,18 +704,19 @@ fn run_repeated_instances() {
             let c = llg::sim::codegen::generate_from_db_with_opts(&database, &options)
                 .map_err(|error| format!("{variant} codegen: {error}"))?
                 .model_c;
-            // The four generated `always` instances share one frame typedef.
+            // The four generated `always` instances share one frame typedef:
+            // five coroutines (with the initial process) need fewer typedefs.
             let typedefs = c
                 .matches("typedef struct {\n    llg_co_frame_t co;")
                 .count();
-            let descriptors = c.matches("static const llg_co_desc_t p_").count();
             assert!(
-                typedefs < descriptors,
-                "{variant}: {typedefs} typedefs for {descriptors} coroutines\n{c}"
+                typedefs < 5,
+                "{variant}: {typedefs} typedefs for 5 coroutines\n{c}"
             );
             assert!(c.contains("llg_shared_frame_0_t"), "{variant}:\n{c}");
             assert_frame_casts_resolve(&c);
-            // Plain static storage and spawns are table-driven loops.
+            // Plain static storage and spawns are table-driven loops (a shared
+            // class spawns its members from its row range).
             assert!(
                 c.contains("static sv4_t* const llg_storage_"),
                 "{variant}:\n{c}"
@@ -727,7 +728,8 @@ fn run_repeated_instances() {
             );
             assert!(
                 c.contains("llg_spawn_in_region(llg_model_startup_")
-                    || c.contains("llg_spawn_instance_in_region(llg_model_startup_"),
+                    || c.contains("llg_spawn_instance_in_region(llg_model_startup_")
+                    || c.contains("llg_model_spawn_class("),
                 "{variant}:\n{c}"
             );
             assert_strict_c11(&c);
