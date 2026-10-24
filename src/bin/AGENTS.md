@@ -88,7 +88,9 @@ Keep reusable processing in the library. Bins import `llg::config`, `llg::core`,
   `timing_check_messages`, all default on) reach codegen as
   `CodegenOptions::timing_checks`.
 - `--sdf [min:|typ:|max:][<scope>=]<file>` (repeatable, command line only;
-  decision A12-D13) reaches codegen as `CodegenOptions::sdf`; files are read
+  decision A12-D13) reaches codegen as `CodegenOptions::sdf`. Only a word of
+  two or more letters before the first `:` is a selector, so drive-letter,
+  extended and UNC Windows paths are files on every host. Files are read
   relative to the working directory when the model is generated and applied
   before simulation starts. The driver writes `$sdf_annotate` log files from
   `GeneratedModel::sdf_logs` before running the model.
