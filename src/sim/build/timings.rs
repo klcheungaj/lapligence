@@ -7,7 +7,12 @@
 //! `seed=applied|unseeded|existing-tree`, `configure_retry=0|1`), plus
 //! `result=ok|error` and the wall-clock end of the build in Unix
 //! milliseconds (`end_unix_ms`, so a long run can be split into time
-//! windows). Processes running in parallel append to the same file;
+//! windows). `generate` is split into the sub-phases `gen_check` (model
+//! ABI, value-build and DPI library checks), `gen_write` (writing the source
+//! set) and `gen_prune` (removing stale entries; absent when the directory
+//! was new), with the counts `gen_files`, `gen_bytes`, `gen_model_bytes` (the
+//! generated model sources alone) and `gen_dir_calls` and the outcome
+//! `gen_tree=new|existing`. Processes running in parallel append to the same file;
 //! each line is one write. CI uses it to show where model-build time goes on
 //! each platform (`scripts/ci_build_timings.py`). Write failures are ignored:
 //! the timings are diagnostics and never change a build's outcome.
@@ -69,6 +74,7 @@ fn profile_args(dir: &Path, pid: u32, sequence: usize, nanos: u128) -> Vec<Strin
 pub(super) struct BuildTimings {
     phases: Vec<(&'static str, Duration)>,
     notes: Vec<(&'static str, &'static str)>,
+    counts: Vec<(&'static str, u64)>,
     details: Vec<(&'static str, String)>,
 }
 
@@ -91,6 +97,14 @@ impl BuildTimings {
         match self.notes.iter_mut().find(|(stored, _)| *stored == name) {
             Some((_, stored)) => *stored = value,
             None => self.notes.push((name, value)),
+        }
+    }
+
+    /// Set the count `name=value`, replacing an earlier value.
+    pub(super) fn count(&mut self, name: &'static str, value: u64) {
+        match self.counts.iter_mut().find(|(stored, _)| *stored == name) {
+            Some((_, stored)) => *stored = value,
+            None => self.counts.push((name, value)),
         }
     }
 
@@ -121,6 +135,9 @@ impl BuildTimings {
             line.push_str(&format!("\t{name}_ms={}", duration.as_millis()));
         }
         for (name, value) in &self.notes {
+            line.push_str(&format!("\t{name}={value}"));
+        }
+        for (name, value) in &self.counts {
             line.push_str(&format!("\t{name}={value}"));
         }
         for (name, text) in &self.details {
@@ -184,6 +201,23 @@ mod tests {
         assert_eq!(
             failed,
             "llg-build\tresult=error\ttotal_ms=0\tend_unix_ms=7\tdir=x\n"
+        );
+    }
+
+    #[test]
+    fn counts_follow_notes_and_keep_the_last_value() {
+        let mut timings = BuildTimings::default();
+        timings.note("gen_tree", "new");
+        timings.count("gen_files", 3);
+        timings.count("gen_bytes", 10);
+        timings.count("gen_files", 140);
+        timings.detail("template_reason", "why");
+        let line = timings.line(Path::new("d"), Duration::ZERO, true, 0);
+        assert!(
+            line.ends_with(
+                "\tgen_tree=new\tgen_files=140\tgen_bytes=10\ttemplate_reason=why\tdir=d\n"
+            ),
+            "{line}"
         );
     }
 

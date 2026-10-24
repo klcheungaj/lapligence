@@ -382,36 +382,27 @@ pub fn waveform_sources() -> &'static [(&'static str, &'static str)] {
 /// Write optional waveform sources into a generated model directory.
 pub(crate) fn write_waveform_sources(
     out_dir: &std::path::Path,
+    writer: &mut super::SourceWriter,
 ) -> Result<(), super::build::BuildError> {
-    write_source_files(out_dir, waveform_sources())
+    write_source_files(out_dir, waveform_sources(), writer)
 }
 
 /// Write [`gmp::bundled_gmp_sources`] under `out_dir/gmp`.
 pub(crate) fn write_bundled_gmp_sources(
     out_dir: &std::path::Path,
+    writer: &mut super::SourceWriter,
 ) -> Result<(), super::build::BuildError> {
-    write_source_files(out_dir, gmp::bundled_gmp_sources())
+    write_source_files(out_dir, gmp::bundled_gmp_sources(), writer)
 }
 
 /// Write (relative path, contents) pairs, creating parent directories.
 fn write_source_files(
     out_dir: &std::path::Path,
     files: &[(&str, &str)],
+    writer: &mut super::SourceWriter,
 ) -> Result<(), super::build::BuildError> {
     for (name, content) in files {
-        let path = out_dir.join(name);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|source| super::build::BuildError::Io {
-                action: "create",
-                path: parent.to_path_buf(),
-                source,
-            })?;
-        }
-        std::fs::write(&path, content).map_err(|source| super::build::BuildError::Io {
-            action: "write",
-            path,
-            source,
-        })?;
+        writer.write(&out_dir.join(name), content)?;
     }
     Ok(())
 }

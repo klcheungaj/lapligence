@@ -649,9 +649,11 @@ fn build_model_cmake_timed(
     target: Option<&str>,
 ) -> Result<PathBuf, BuildError> {
     let phase = Instant::now();
+    let check = Instant::now();
     validate_dpi_libraries(opts)?;
     check_mach_o_dpi_imports(opts, extra)?;
-    generate_model_sources_with_opts(out_dir, extra, opts)?;
+    timings.record("gen_check", check);
+    generate_model_sources_timed(out_dir, extra, opts, timings)?;
     timings.record("generate", phase);
 
     let cc = resolve_cc(opts);
@@ -799,34 +801,72 @@ pub fn generate_model_sources_with_opts(
     extra: &[(&str, &str)],
     opts: &CmakeBuildOpts,
 ) -> Result<(), BuildError> {
+    generate_model_sources_timed(out_dir, extra, opts, &mut timings::BuildTimings::default())
+}
+
+/// [`generate_model_sources_with_opts`], recording the `gen_*` sub-phases
+/// and the written file, byte and directory counts in `timings`.
+fn generate_model_sources_timed(
+    out_dir: &Path,
+    extra: &[(&str, &str)],
+    opts: &CmakeBuildOpts,
+    timings: &mut timings::BuildTimings,
+) -> Result<(), BuildError> {
+    let phase = Instant::now();
     validate_model_abi_for(extra, opts.value_config)?;
     let guard = value::guard_header(opts)?;
     validate_dpi_libraries(opts)?;
-    super::write_sim_sources(out_dir, extra, opts.value_config)?;
-    std::fs::write(out_dir.join("llg_value_build.h"), guard).map_err(|source| BuildError::Io {
-        action: "write",
-        path: out_dir.join("llg_value_build.h"),
-        source,
-    })?;
+    let bundled_gmp = value::uses_bundled_gmp(opts)?;
+    // An empty or missing directory holds nothing stale, so the prune pass
+    // (a directory walk plus a metadata query per entry) has nothing to do.
+    let new_tree = directory_is_empty(out_dir);
+    timings.record("gen_check", phase);
+
+    let phase = Instant::now();
+    let mut writer = super::SourceWriter::default();
+    super::write_sim_sources(out_dir, extra, opts.value_config, &mut writer)?;
+    writer.write(&out_dir.join("llg_value_build.h"), guard)?;
     let waveform = waveform_enabled(extra);
     if waveform {
-        super::rt::write_waveform_sources(out_dir)?;
+        super::rt::write_waveform_sources(out_dir, &mut writer)?;
     }
     // Written even when a cached runtime will be linked, so the project also
     // builds standalone.
-    let bundled_gmp = value::uses_bundled_gmp(opts)?;
     if bundled_gmp {
-        super::rt::write_bundled_gmp_sources(out_dir)?;
+        super::rt::write_bundled_gmp_sources(out_dir, &mut writer)?;
     }
-    write_cmakelists(out_dir, extra, waveform, opts)?;
-    prune_stale_entries_for(
-        out_dir,
-        extra,
-        waveform,
-        bundled_gmp,
-        opts.value_config.backend,
+    write_cmakelists(out_dir, extra, waveform, opts, &mut writer)?;
+    timings.record("gen_write", phase);
+    timings.count("gen_files", writer.files);
+    timings.count("gen_bytes", writer.bytes);
+    timings.count(
+        "gen_model_bytes",
+        extra.iter().map(|(_, text)| text.len() as u64).sum(),
     );
+    timings.count("gen_dir_calls", writer.directory_calls);
+    timings.note("gen_tree", if new_tree { "new" } else { "existing" });
+
+    if !new_tree {
+        let phase = Instant::now();
+        prune_stale_entries_for(
+            out_dir,
+            extra,
+            waveform,
+            bundled_gmp,
+            opts.value_config.backend,
+        );
+        timings.record("gen_prune", phase);
+    }
     Ok(())
+}
+
+/// Whether `directory` is missing or has no entries. Any other failure to
+/// list it counts as not empty, so the caller still prunes.
+fn directory_is_empty(directory: &Path) -> bool {
+    match std::fs::read_dir(directory) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(error) => error.kind() == io::ErrorKind::NotFound,
+    }
 }
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
@@ -1135,6 +1175,7 @@ fn write_cmakelists(
     extra: &[(&str, &str)],
     waveform: bool,
     opts: &CmakeBuildOpts,
+    writer: &mut super::SourceWriter,
 ) -> Result<(), BuildError> {
     let model_sources: Vec<&str> = extra
         .iter()
@@ -1161,20 +1202,11 @@ fn write_cmakelists(
         .replace("{IMPORT_LIBRARY}", import_library::CMAKE)
         .replace("{DPI_LINK}", &dpi_link_setup(opts)?)
         + &value::cmake_setup(opts, "sim")?;
-    let cmakelists_path = out_dir.join("CMakeLists.txt");
-    std::fs::write(&cmakelists_path, cmakelists).map_err(|source| BuildError::Io {
-        action: "write",
-        path: cmakelists_path,
-        source,
-    })?;
-    let definition_path = out_dir.join(import_library::DEF_FILE);
-    std::fs::write(&definition_path, import_library::module_definition(extra)).map_err(|source| {
-        BuildError::Io {
-            action: "write",
-            path: definition_path,
-            source,
-        }
-    })
+    writer.write(&out_dir.join("CMakeLists.txt"), cmakelists)?;
+    writer.write(
+        &out_dir.join(import_library::DEF_FILE),
+        import_library::module_definition(extra),
+    )
 }
 
 fn validate_dpi_libraries(opts: &CmakeBuildOpts) -> Result<(), BuildError> {
@@ -1416,19 +1448,14 @@ fn prepare_runtime_cache(
             });
         }
     }
-    super::write_sim_sources(&entry, &[], opts.value_config)?;
-    std::fs::write(entry.join("llg_value_build.h"), value::guard_header(opts)?).map_err(
-        |source| BuildError::Io {
-            action: "write",
-            path: entry.join("llg_value_build.h"),
-            source,
-        },
-    )?;
+    let mut writer = super::SourceWriter::default();
+    super::write_sim_sources(&entry, &[], opts.value_config, &mut writer)?;
+    writer.write(&entry.join("llg_value_build.h"), value::guard_header(opts)?)?;
     if waveform {
-        super::rt::write_waveform_sources(&entry)?;
+        super::rt::write_waveform_sources(&entry, &mut writer)?;
     }
     if value::uses_bundled_gmp(opts)? {
-        super::rt::write_bundled_gmp_sources(&entry)?;
+        super::rt::write_bundled_gmp_sources(&entry, &mut writer)?;
     }
     let runtime_sources = runtime_source_names_for(waveform, opts.value_config.backend).join(" ");
     let cmakelists = RUNTIME_CMAKELISTS_TEMPLATE
@@ -2111,8 +2138,9 @@ mod tests {
                 backend,
                 ..Default::default()
             };
-            super::super::write_sim_sources(&directory, &[], config).unwrap();
-            super::super::rt::write_waveform_sources(&directory).unwrap();
+            let mut writer = super::super::SourceWriter::default();
+            super::super::write_sim_sources(&directory, &[], config, &mut writer).unwrap();
+            super::super::rt::write_waveform_sources(&directory, &mut writer).unwrap();
             std::fs::write(directory.join("zlib/stale.c"), "stale").unwrap();
             prune_stale_entries_for(&directory, &[], true, false, backend);
             let written = super::super::rt::value_backend_sources(backend)
@@ -2127,7 +2155,7 @@ mod tests {
             prune_stale_entries_for(&directory, &[], false, false, backend);
             assert!(!directory.join("zlib").exists());
             // Bundled GMP sources follow the same rule.
-            super::super::rt::write_bundled_gmp_sources(&directory).unwrap();
+            super::super::rt::write_bundled_gmp_sources(&directory, &mut writer).unwrap();
             std::fs::write(directory.join("gmp/mpn/generic/stale.c"), "stale").unwrap();
             prune_stale_entries_for(&directory, &[], false, true, backend);
             for (name, _) in super::super::rt::gmp::bundled_gmp_sources() {

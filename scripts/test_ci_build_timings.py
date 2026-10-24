@@ -55,6 +55,29 @@ class BuildTimingsTest(unittest.TestCase):
         self.assertIn("template: -=3, rejected=1", text)
         self.assertIn("template rejected (1): template differs from a real configure: CMakeCache.txt: line 3: `a` vs `b`", text)
 
+    def test_generate_sub_phases_and_slowest_builds_are_reported(self):
+        lines = LINES + [
+            "llg-build\tresult=ok\ttotal_ms=900\tend_unix_ms=1760000120000\tgenerate_ms=700\tgen_check_ms=5"
+            "\tgen_write_ms=690\tgen_tree=new\tgen_files=140\tgen_bytes=4000000\tgen_model_bytes=90000"
+            "\tgen_dir_calls=9\tdir=C:\\t\\big",
+            "llg-build\tresult=ok\ttotal_ms=300\tend_unix_ms=1760000000000\tgenerate_ms=40\tgen_check_ms=1"
+            "\tgen_write_ms=30\tgen_prune_ms=9\tgen_tree=existing\tgen_files=139\tdir=/tmp/small",
+        ]
+        text = timings.summarize(timings.parse(lines))
+        self.assertIn("gen_tree: -=3, existing=1, new=1", text)
+        write = next(line for line in text.splitlines() if line.startswith("gen_write "))
+        self.assertEqual(write.split()[1:3], ["2", "0.7"])
+        prune = next(line for line in text.splitlines() if line.startswith("gen_prune "))
+        self.assertEqual(prune.split()[1], "1")
+        rows = text.splitlines()
+        first = rows.index("slowest generate phases (of 5):")
+        self.assertEqual(rows[first + 2].split(),
+                         ["700", "5", "690", "-", "140", "4000000", "90000", "new", "+2m", "C:\\t\\big"])
+        self.assertEqual(rows[first + 3].split()[:4], ["40", "1", "30", "9"])
+        self.assertEqual(rows[first + 3].split()[-2:], ["+0m", "/tmp/small"])
+        self.assertEqual(rows[first + 4].split()[0], "10")
+        self.assertEqual(timings.slowest_generate([{"total_ms": "5"}]), [])
+
     def test_windows_show_phase_medians_by_build_end_time(self):
         start = 1760000000000
         lines = [

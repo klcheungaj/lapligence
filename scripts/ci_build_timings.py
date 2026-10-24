@@ -5,8 +5,10 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-PHASES = ("generate", "probe", "runtime", "seed", "template", "configure", "build", "total")
-OUTCOMES = ("result", "runtime", "seed", "template", "configure_retry")
+PHASES = ("generate", "gen_check", "gen_write", "gen_prune", "probe", "runtime", "seed", "template", "configure",
+          "build", "total")
+OUTCOMES = ("result", "runtime", "seed", "template", "configure_retry", "gen_tree")
+SLOWEST_GENERATE = 10
 
 
 def parse(lines):
@@ -73,7 +75,33 @@ def summarize(records):
     reasons = Counter(r["template_reason"] for r in records if r.get("template_reason"))
     for reason, count in sorted(reasons.items()):
         out.append(f"template rejected ({count}): {reason}")
+    out.extend(slowest_generate(records))
     return "\n".join(out)
+
+
+def number(record, name):
+    value = record.get(name) or ""
+    return int(value) if value.isdigit() else None
+
+
+def slowest_generate(records, count=SLOWEST_GENERATE):
+    timed = [r for r in records if number(r, "generate_ms") is not None]
+    if not timed:
+        return []
+    stamps = [number(r, "end_unix_ms") for r in records if number(r, "end_unix_ms") is not None]
+    start = min(stamps) if stamps else None
+    out = [f"slowest generate phases (of {len(timed)}):",
+           "  gen_ms  check  write  prune  files  bytes  model_bytes  tree      end  dir"]
+    for r in sorted(timed, key=lambda r: number(r, "generate_ms"), reverse=True)[:count]:
+        def cell(name):
+            value = number(r, name)
+            return "-" if value is None else str(value)
+        end = number(r, "end_unix_ms")
+        offset = f"+{(end - start) // 60000}m" if end is not None and start is not None else "-"
+        out.append(f"{cell('generate_ms'):>8} {cell('gen_check_ms'):>6} {cell('gen_write_ms'):>6} "
+                   f"{cell('gen_prune_ms'):>6} {cell('gen_files'):>6} {cell('gen_bytes'):>6} "
+                   f"{cell('gen_model_bytes'):>12}  {r.get('gen_tree', '-'):<8} {offset:>4}  {r.get('dir', '')}")
+    return out
 
 
 WINDOW_PHASES = ("generate", "runtime", "seed", "configure", "build", "total")
