@@ -64,9 +64,7 @@ where, plus the rules the code comments do not state.
 
 General platform handling: [cross-platform guide](../../../docs/cross_platform.md)
 ([Windows](../../../docs/cross_platform.md#windows-msvc),
-[macOS](../../../docs/cross_platform.md#macos)). Without a compiler selection
-models build with MSVC `cl` on Windows and `cc` elsewhere; models run on the
-host. The Windows install-prefix and MSVC try-compile (`/Zi`) workarounds are
+[macOS](../../../docs/cross_platform.md#macos)). Models run on the host. The Windows install-prefix and MSVC try-compile (`/Zi`) workarounds are
 in `toolchain_seed.rs` (`toolchain_args`).
 
 See [tests](../../../tests/readme.md) and

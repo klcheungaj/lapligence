@@ -260,32 +260,22 @@ General platform handling: [cross-platform guide](../../../docs/cross_platform.m
 [macOS](../../../docs/cross_platform.md#macos),
 [arm64](../../../docs/cross_platform.md#arm64)).
 
-- The platform layer rules are in the `llg_compiler.h`, `llg_platform.h` and
-  `llg_platform_native.h` header comments. Add a service there before adding a
-  compiler/OS conditional anywhere else; that includes generated C and runtime
-  probes. Exceptions: `llg_co.h` (own `LLG_CO_*` macros) and bundled
+- Platform layer: [platform layers](../../../docs/cross_platform.md#platform-layers)
+  and the `llg_compiler.h`, `llg_platform.h`, `llg_platform_native.h` header
+  comments; generated C and runtime probes use it too. Exceptions: `llg_co.h` (own `LLG_CO_*` macros) and bundled
   third-party sources, whose required changes are tracked patches in
   `patches/libfst` ([patch docs](../../../patches/README.md#libfst)); never
   commit the applied state.
 - Generated models and runtime sources build warning-clean with
   `-Wall -Wno-unused-function` (MSVC `/W3`); flags and levels are in the
   [model build](../build/readme.md).
-- Standalone probes also build with MSVC `/W4 /WX`, at `/O2` for the
-  `strict_c11_executable` tests. Avoid what GCC/Clang `-Wall -Wextra` accept but
-  MSVC rejects:
-  - a statement after an unconditional call to an `abort()` helper (C4702 once
-    `/O2` inlines it; declare the helper `_Noreturn`);
-  - a local assigned only inside a `while` loop (C4701; use `do`);
-  - an array of pointers to const passed as `void*` (C4090);
-  - a tentative definition `static const T x;` that a later initialized
-    definition completes (C4132; declare the function it names and define the
-    object before its first use).
-- Clang `-Wunreachable-code` and `-Wconditional-uninitialized` approximate the
-  first two; nothing approximates C4132. The `runtime_strict_sources` suite runs
-  Clang's `-Wmissing-noreturn` and `-Wunreachable-code-aggressive` as errors over
-  every probe-built source (it cannot see dead code from a macro expansion such
-  as `return NULL;`). Generated models still forward-declare descriptors that
-  way, because mutual recursion needs it; they build at `/W3`.
+- Standalone probes also build with MSVC `/W4 /WX` (at `/O2` for the
+  `strict_c11_executable` tests); the warnings to avoid are listed under
+  [MSVC compiler](../../../docs/cross_platform.md#windows-msvc). The
+  `runtime_strict_sources` suite (`tests/runtime_strict_sources.rs` docs) runs
+  the Clang approximations over every probe-built source. Generated models
+  still forward-declare descriptors as tentative definitions, because mutual
+  recursion needs it; they build at `/W3`.
 - User DPI/VPI C code shares the host stack and is covered only by the stack
   headroom above.
 

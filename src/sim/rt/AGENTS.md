@@ -41,8 +41,8 @@ it is never linked into Rust binaries. Module overview and component map:
 
 - Generated code and other runtime parts use only the public value facade
   ([facade contract](value/facade.md), [ownership](value/ownership.md)).
-- Compiler/OS conditionals go only in the platform layer (rules in the
-  `llg_platform.h` header comment); add a service there first.
+- Compiler/OS conditionals: only in the platform layer
+  ([platform notes](readme.md#platform-notes)).
 - Keep `llg_co` free of globals and TLS.
 - `llg_arm_*` copy contract: `llg_rt.h`; an arm that must retain a pointer
   says so there, and the emitter keeps it in a frame field or registered cell.
