@@ -1,124 +1,29 @@
-# Lint rule contracts
+# Agent guide: src/core/lint/rules
 
-Read [../AGENTS.md](../AGENTS.md) for the rule API and configuration.
-`mod.rs::default_rules` is the authoritative stable registry order.
-Assignment and comparison width rules skip unknown operand widths.
+One module per rule; the rule's behavior is in its module docs and
+[readme](readme.md). API and configuration: [lint guide](../AGENTS.md).
 
-Keep shared graph/data-flow helpers in `analysis.rs` rather than duplicating
-them across rules. New rules need registry entries plus focused behavior and
-configuration tests. Rules consume owned data through `LintCtx`, with no live
-native traversal or I/O.
+## Directory map
 
-- `unused.rs` — `unused-signal`: signals that are never read or used. Reads and
-  writes in every subroutine body (exported ones included) and in formal
-  defaults count, wherever the subroutine is declared (the body is the Db's
-  recorded `body`; extra scope-only `Begin` children of a subroutine with
-  loops or blocks are not it). Input terminals of gate and UDP instances
-  are reads and output terminals are drivers; timing check terminals and
-  conditions are reads and a notifier is read and written
-  (`timing_check_activity`); a concatenation, streaming or
-  assignment-pattern write target counts for each member (`collect_writes_with_members`).
-  Generate scopes (loop, if, case) are analysed like module scopes.
-- `width.rs` — `width-mismatch`: assignments and port links with different known widths;
-  a port link compares the port or port expression with the connected
-  expression (`.a(n[0])` is one bit), not with the whole signal it selects.
-  A concatenated port (`.p({a, b})`) is judged once, by its name (or its
-  expression) against the sum of the slices its components connect.
-- `latch.rs` — `incomplete-case`: exact cases without a default in combinational/latch logic.
-- `combloop.rs` — `combinational-loop`: combinational feedback paths. A
-  process's inputs are its exposed reads (read before a definite write on every
-  path; `if`/`case` arms intersect, loops define nothing), and process-locals
-  (`analysis::process_local_vars`) never form edges. Analysis is per whole
-  variable, so bit-level self reads (`v[0] = v[1]`) still report.
-- `multidriver.rs` — `multi-driver`: signals driven by more than one process,
-  continuous assignment or port link; drivers of disjoint constant bit ranges
-  (`assign n[0] = ...`, `.y(n[1])`) or of different constant unpacked
-  elements (`.y(w[0])`, `.y(w[1])`, also with a bit range inside an element)
-  do not count as overlapping. Writes resolve through unpacked element
-  selects (`collect_element_writes`): a continuous assignment drives its
-  constant element region, a process write drives the whole array.
-- `casez.rs` — `casez-misuse`: overlapping wildcard case items and constant selectors.
-- `if_latch.rs` — `if-latch`: incomplete combinational `if` assignments that may infer a latch.
-- `style.rs` — `naming-style`: configured naming-convention violations.
-- `blocking_in_ff.rs` — `blocking-in-always_ff`: blocking assignments in clocked processes.
-- `nba_in_comb.rs` — `nba-in-always_comb`: nonblocking assignments in combinational processes.
-- `unused_param.rs` — `unused-parameter`: parameters that are never referenced.
-- `implicit_net.rs` — `implicit-net`: uses the owned Slang implicit-net
-  declaration flag, independent of resolved type spelling or width.
-- `case_default.rs` — `case-default-missing`: case/casex/casez without a
-  default arm OUTSIDE the incomplete-case domain (which owns the exact
-  case in combinational/latch processes): casex/casez anywhere, exact case
-  in edge-sensitive/initial/final processes and in function/task bodies.
-  Skips statements already in the incomplete-case domain so one location
-  is never reported by both rules.
-- `comparison_width.rs` — `comparison-width-mismatch`: `==`, `!=`, `<`, `<=`,
-  `>`, `>=`, `===`, `!==` with differing known self-determined operand widths.
-- `unconnected_port.rs` — `unconnected-port`: flags omitted, positional-gap,
-  and explicitly open child ports. Resolved expressions and declaration
-  defaults count as connected; top ports are external boundaries. Interface
-  connections refer to actual instances, without frontend-generated copies.
-- `mixed_assign.rs` — `mixed-assignments`: one Error at the process keyword
-  when its body contains both blocking and nonblocking `StmtKind::Assign`.
-  Ignore procedural continuous assignments, force/release, declaration
-  initializers and synchronous drives to clockvars (SV 14.16.1: a drive is
-  not a nonblocking assignment). Do not suppress overlap with `blocking-in-always_ff` or
-  `nba-in-always_comb`: these diagnose different conditions, and this rule
-  also covers plain level-sensitive always and initial/final processes.
-- `undriven.rs` — `undriven-signal`: flags a declared signal that is read
-  but has no active procedural/continuous driver, declaration initializer,
-  connected output/inout flow, primitive output terminal or timing check
-  notifier. Output, inout and
-  non-`const` `ref` actuals of any call are drivers: DPI imports, tasks,
-  `$sscanf`/`$fscanf`/`$fgets`/`$fread`/`$readmem*`/`$sformat` destinations and
-  `std::randomize` arguments (Slang wraps each written actual in an assignment
-  operation), plus the `$random` seed. Assignments in expression position
-  (`for` initializers and steps, compound `+=`), `++`/`--`, `foreach` and
-  declared `for` variables, concatenation/streaming targets (each member),
-  struct/union member writes (the owning object), `rand`/`randc` properties
-  (set by `randomize()`), built-in `push_back`/`push_front`/`insert`/`putc`/
-  `itoa`-family receivers, mailbox `get`/`peek` messages,
-  `obj.randomize(v, ...)` arguments and both sides of `ref` port connections
-  are drivers. Constraint `foreach` loop variables
-  are bound by the solver and never reported. Top-level
-  external inputs/inouts, explicitly open child ports, implicit nets,
-  and intrinsic pull/supply nets are skipped.
-  Input/inout actual expressions are read through the owned port
-  `high_expr`, while the historical direct `high` target remains available
-  to model/codegen consumers.
-- `sensitivity.rs` — `incomplete-sensitivity-list`: flags a plain explicit
-  level-sensitive `always @(...)` when a directly read input is absent.
-  A local written earlier on every represented path is treated as a
-  temporary; uncertain control flow and partial/selected writes fail safe
-  by keeping the signal as an input dependency. Identical findings from
-  cloned module instances are source-deduplicated.
-  Edge, named-event, mixed/complex, implicit `@*`, special `always_*`, and
-  nested timing-control forms are skipped when correctness cannot be proven.
-- `select_range.rs` — `out-of-range-select`: checks statically known bit,
-  part, indexed-part, and unpacked-array selectors against owned elaborated
-  bounds. Dynamic selectors, unresolved ranges, and ambiguous
-  multidimensional packed shapes are intentionally quiet.
-- `xz_comparison.rs` — `xz-logical-equality`: flags `==`/`!=` with a direct
-  X/Z/? literal operand (including transparent casts); case/wildcard
-  equality, parameter references, and nonliteral expressions are skipped.
-- `duplicate_case.rs` — `duplicate-case-item`: flags every later exact
-  captured literal repeated in one exact `case`. Wildcard cases and
-  nonliteral/equivalent-but-differently-represented expressions are skipped.
-- `empty_sensitivity.rs` — `empty-implicit-sensitivity`: flags a plain
-  `always @*` / `always @(*)` whose body writes at least one resolved signal
-  but has no resolved signal reads. `always_comb`, explicit event lists,
-  calls, opaque/unresolved nodes, and nested timing controls are skipped;
-  cloned elaborated instances are source-deduplicated.
-- `assignment_condition.rs` — `assignment-in-condition`: flags a captured
-  assignment operation consumed as an `if`, `while`, `for`, `wait`, or ternary
-  truth predicate. Nested operations are traversed, but explicit equality
-  and relational expressions form a boundary; standalone assignments and
-  `repeat`/`case`/event expressions are outside the rule.
-- `casex_statement.rs` — `casex-statement`: flags every `casex` in a process
-  or function/task body. Exact `case` and `casez` remain quiet, and cloned
-  elaborated instances are source-deduplicated.
-- `analysis.rs` — shared owned-db helpers: read/write collection,
-  expression-width computation, scope/instance iteration, port-link
-  bookkeeping (deterministic, deduped, first-encounter order),
-  and unconnected-port classification (`port_unconnected`). Scope names in
-  messages come from `Db::hierarchical_name_parts`, the same SV 27.4 naming
-  as `%m` (`tb.g[0].c`, not `tb.g.g[0].c`).
+- `mod.rs`: `default_rules`, the authoritative stable registry order.
+- `analysis.rs`: shared owned-db helpers (read/write collection, widths,
+  scope/instance iteration, port links, `port_unconnected`).
+- `<rule>.rs`: one rule each (`unused.rs`, `width.rs`, `undriven.rs`, ...).
+
+## Conventions
+
+- Keep shared graph/data-flow helpers in `analysis.rs`; never duplicate them
+  across rules.
+- A new rule needs a `default_rules` entry plus focused behavior and
+  configuration tests, with triggering and nearby quiet cases.
+- Rules consume owned data through `LintCtx`; no live native traversal or I/O.
+- Width rules skip operands whose width is unknown.
+- When two rules could report one location, document the split in both modules
+  (`case_default.rs` vs `latch.rs`; `mixed_assign.rs` vs `blocking_in_ff.rs` and
+  `nba_in_comb.rs`).
+- Identical findings from cloned instances are source-deduplicated where the
+  rule says so; keep that when refactoring.
+
+## Pitfalls
+
+- `naming-style` uses one built-in convention; there is no naming configuration.
