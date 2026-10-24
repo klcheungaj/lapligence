@@ -148,7 +148,6 @@ jobs:
         uses: ./.github/actions/ccache-finish
         with:
           key: ${{ steps.ccache.outputs.key }}
-          cache-hit: ${{ steps.ccache.outputs.cache-hit }}
 
       # Last step: the cache is saved after the job, so nothing of llg or
       # Slang (target/slang is outside Cargo's layout) may be left in target/.
@@ -229,7 +228,6 @@ jobs:
         uses: ./.github/actions/ccache-finish
         with:
           key: ${{ steps.ccache.outputs.key }}
-          cache-hit: ${{ steps.ccache.outputs.cache-hit }}
 
       - name: Keep only third-party dependencies in target/
         if: always()

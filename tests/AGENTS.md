@@ -313,7 +313,9 @@ executable, nextest archive or runtime cache is saved.
   Compiled dependencies are about 0.3 GB per entry.
 - Generated models: `.github/actions/ccache-setup` downloads a pinned,
   checksum-verified ccache (`scripts/ci_ccache.py`), restores its directory with
-  `actions/cache` (key per job/target/distro and ISO week, 300 MB limit; a full local suite needs about 110 MB), proves a
+  `actions/cache` (one key per job/target/distro and run attempt; the newest entry of
+  the job is restored by prefix; 500 MB limit for the `test` jobs and 300 MB for lint
+  and sanitizers; a full CI suite writes about 0.3 GB), proves a
   cross-directory hit with the compiler and generator the tests use, then exports
   `LLG_C_LAUNCHER` and `CCACHE_*` (`CCACHE_BASEDIR` = temp dir as given plus its
   resolved spelling, since test model directories are canonical: Windows 8.3
@@ -324,15 +326,19 @@ executable, nextest archive or runtime cache is saved.
   two `ccache-input-text` hash inputs and the second compile's log excerpt.
   Used by lint, sanitizers (flags are in the hash), Windows/macOS and Linux
   `test` jobs (installed on the runner, activated inside the container).
-  `ccache-finish` prints `ccache -sv` and, on master only, saves when the week's
-  key is new. Hit rates are in each job's statistics step. `release`, every `build` job
+  `ccache-finish` prints `ccache -sv` and, on master only, saves this run's entry
+  (`save: false` on all but the first shard). Hit rates are in each job's statistics
+  step; a hit needs the same generated C, so models of designs read from per-run
+  temporary paths only hit when their C does not depend on the path. `release`, every `build` job
   and dependency-audit run no generated models.
 Only release events upload Actions
 packages, retained one day; pushes/manual builds upload none. Retention does not
 cap the documented account-wide 500 MB artifact allowance across concurrent runs/
 repositories. Runner disk is a separate resource. The repository's 10 GB cache
-budget holds about nine Cargo entries (about 0.3 GB) plus nine ccache entries (at
-most 300 MB each, about 0.1 GB measured); Python tests for the scripts run in `lint`
+budget holds about nine Cargo entries (about 0.3 GB) plus the ccache entries: each
+master push adds one per job (eight jobs, at most 3.6 GB together); superseded ones
+are never restored again and are the first GitHub evicts at the limit or after
+7 days unused. Python tests for the scripts run in `lint`
 (`scripts/test_ci_cache.py`).
 
 Matrix: Linux x86_64/arm64, Windows x86_64/arm64 (`llg_ls` only), macOS arm64. Audit architecture,

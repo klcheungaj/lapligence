@@ -223,6 +223,22 @@ fn crlf_normalization_rewrites_only_crlf_pairs() {
     assert_eq!(host, expected);
 }
 
+/// Generated models embed source locations. The in-memory harness names its
+/// unit `tb.sv` instead of a file in the per-run directory, so the same design
+/// generates the same C in every directory and run (and compiler caches hit).
+#[test]
+fn in_memory_models_do_not_depend_on_the_run_directory() {
+    let source = "module tb;\n  initial begin\n    #1 $display(\"t=%0t\", $time);\n    $finish;\n  end\nendmodule\n";
+    let first = sim_harness::run_generated_sim(source, "tb", "path-free-a").expect("first run");
+    let second = sim_harness::run_generated_sim(source, "tb", "path-free-b").expect("second run");
+    assert_eq!(first.stdout, "t=1000\n");
+    assert!(
+        first.model_c.contains("\"tb.sv:"),
+        "expected `tb.sv` locations in the model"
+    );
+    assert_eq!(first.model_c, second.model_c);
+}
+
 #[test]
 fn probe_debug_information_is_opt_in() {
     for (value, expected) in [

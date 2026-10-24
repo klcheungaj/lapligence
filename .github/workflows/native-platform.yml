@@ -415,10 +415,9 @@ jobs:
       # setup runs after the MSVC environment because it self-checks with the
       # compiler and generator the tests will use (CMAKE_GENERATOR=Ninja, the
       # compiler on PATH) and silently disables itself if that does not hit.
-      # The Windows entries were full at the default 300M (41 cleanups in one
-      # x64 run), and the storage probes' MSVC Debug objects became cacheable
-      # once they switched from /Zi to /Z7; 500M adds 0.4 GB for the two
-      # Windows entries to the repository's cache budget.
+      # One full suite writes about 0.3 GB of objects (Windows x64 from an
+      # empty cache: 0.3 of 500M; Linux filled 300M and evicted 825 times), so
+      # 500M keeps the previous run's objects while this run adds its misses.
       - name: Set up the generated-model compiler cache
         id: ccache
         if: ${{ !inputs.lsp_only }}
@@ -426,7 +425,7 @@ jobs:
         with:
           key: test-${{ inputs.target }}
           python: python
-          max-size: ${{ inputs.platform == 'windows' && '500M' || '300M' }}
+          max-size: 500M
 
       # The archive carries no build script run, so this fresh checkout still
       # holds the pristine vendor/libfst; the standalone CMake probes need the
@@ -546,12 +545,14 @@ jobs:
           retention-days: 7
           path: ${{ runner.temp }}/llg-resources.jsonl
 
-      # Only the first shard saves the shared weekly entry; a second save of
-      # the same key would race it.
+      # The shards share one key; only the first saves it, a second save of
+      # the same key would race it. (This used to pass the restore's
+      # cache-hit output, which is empty when nothing was restored, so a job
+      # without any entry yet never saved its first one.)
       - name: Compiler cache statistics and save
         if: ${{ always() && !inputs.lsp_only }}
         uses: ./.github/actions/ccache-finish
         with:
           key: ${{ steps.ccache.outputs.key }}
-          cache-hit: ${{ matrix.shard == 1 && steps.ccache.outputs.cache-hit || 'true' }}
+          save: ${{ matrix.shard == 1 }}
           python: python

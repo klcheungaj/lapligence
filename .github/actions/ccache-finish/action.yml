@@ -1,15 +1,17 @@
 name: Generated-model compiler cache (finish)
 description: >-
   Print ccache statistics and, on the default branch only, save the cache
-  directory when this week's entry did not exist yet.
+  directory under this run's key.
 
 inputs:
   key:
     description: The `key` output of ccache-setup.
     required: true
-  cache-hit:
-    description: The `cache-hit` output of ccache-setup.
-    required: true
+  save:
+    description: >-
+      'false' when another job of the same key saves it (for example the
+      other shards of a sharded test job).
+    default: "true"
   stats:
     description: "'false' when the caller already printed statistics (containers)."
     default: "true"
@@ -27,7 +29,7 @@ runs:
       run: '"$CI_PYTHON" scripts/ci_ccache.py stats'
 
     # An empty directory means activation failed (uncached run): saving it
-    # would occupy this week's key with nothing in it.
+    # would make the next run restore nothing.
     - id: populated
       if: ${{ !cancelled() }}
       shell: bash
@@ -39,7 +41,7 @@ runs:
         print('present=' + str(d.is_dir() and any(d.iterdir())).lower())" >> "$GITHUB_OUTPUT"
 
     # Pull requests and releases only read the cache.
-    - if: ${{ !cancelled() && github.ref == 'refs/heads/master' && inputs.cache-hit != 'true' && steps.populated.outputs.present == 'true' }}
+    - if: ${{ !cancelled() && github.ref == 'refs/heads/master' && inputs.save == 'true' && steps.populated.outputs.present == 'true' }}
       uses: actions/cache/save@v6
       with:
         path: ${{ runner.temp }}/ccache

@@ -1575,3 +1575,71 @@ fn missing_cmake_error() {
         "error: {err}"
     );
 }
+
+/// Compiler caches key on the generated text, so generation must not depend
+/// on map iteration order, the output directory or the run. Each checked-in
+/// design is generated twice (fresh hash-map seeds every time) into two
+/// different directories, and both trees must match byte for byte.
+#[test]
+fn generated_sources_are_identical_across_runs_and_directories() {
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+
+    fn tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+        let mut files = BTreeMap::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(directory) = pending.pop() {
+            for entry in std::fs::read_dir(&directory).expect("list generated tree") {
+                let path = entry.expect("generated entry").path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else {
+                    let relative = path.strip_prefix(root).unwrap().to_path_buf();
+                    files.insert(relative, std::fs::read(&path).expect("read generated file"));
+                }
+            }
+        }
+        files
+    }
+
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim");
+    for fixture in [
+        "classes/inheritance.sv",
+        "mailboxes/basic.sv",
+        "concurrent_assertions/assertion_control.sv",
+        "feature_completion/sim_023/lifetime.sv",
+    ] {
+        let source = fixtures.join(fixture);
+        let mut trees = Vec::new();
+        for tag in ["a", "b"] {
+            let compiled = compile::compile_checked(&compile::CompileOpts {
+                files: vec![source.to_string_lossy().into_owned()],
+                top: Some("tb".to_owned()),
+                ..Default::default()
+            })
+            .unwrap_or_else(|error| panic!("{fixture}: compile: {error}"));
+            let database = llg::core::db::Db::from_slang(&compiled.snapshot)
+                .unwrap_or_else(|error| panic!("{fixture}: database: {error}"));
+            let generated = sim::codegen::generate(&database)
+                .unwrap_or_else(|error| panic!("{fixture}: codegen: {error}"));
+            let dir = fresh_dir(&format!("deterministic-{tag}"));
+            let out = dir.path().join(format!("nested-{tag}")).join("model");
+            sim::build::generate_model_sources(&out, &generated.sources())
+                .unwrap_or_else(|error| panic!("{fixture}: generate: {error}"));
+            trees.push((dir, tree(&out)));
+        }
+        let (first, second) = (&trees[0].1, &trees[1].1);
+        assert_eq!(
+            first.keys().collect::<Vec<_>>(),
+            second.keys().collect::<Vec<_>>(),
+            "{fixture}: file sets differ"
+        );
+        for (name, contents) in first {
+            assert!(
+                contents == &second[name],
+                "{fixture}: {} differs between two generations",
+                name.display()
+            );
+        }
+    }
+}

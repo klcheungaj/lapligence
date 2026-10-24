@@ -292,7 +292,7 @@ jobs:
               eval "$LLG_INSTALL"
               touch /tmp/llg-ccache.env
               python3 scripts/ci_ccache.py activate --ccache /ccache-bin/ccache \
-                --ccache-dir /ccache --env-format shell --env-file /tmp/llg-ccache.env
+                --ccache-dir /ccache --max-size 500M --env-format shell --env-file /tmp/llg-ccache.env
               set -a
               . /tmp/llg-ccache.env
               set +a
@@ -318,5 +318,4 @@ jobs:
         uses: ./.github/actions/ccache-finish
         with:
           key: ${{ steps.ccache.outputs.key }}
-          cache-hit: ${{ steps.ccache.outputs.cache-hit }}
           stats: "false"

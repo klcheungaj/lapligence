@@ -431,13 +431,17 @@ fn run_generated_sim_in_dir(
     files: &[(&str, &str)],
     options: &llg::sim::opt::OptConfig,
 ) -> Result<SimRun, String> {
-    let source = dir.join("tb.sv");
-    std::fs::write(&source, sv).map_err(|error| format!("write source: {error}"))?;
-    let compiled = compile::compile_checked(&compile::CompileOpts {
-        files: vec![source.to_string_lossy().into_owned()],
-        top: Some(top.to_owned()),
-        ..Default::default()
-    })
+    // An in-memory unit named `tb.sv`: the generated C embeds source
+    // locations, and the path of a file in this per-run directory would make
+    // the model text, and so its compiler-cache key, differ on every run.
+    let source = compile::OwnedSource::compilation_unit("tb.sv", sv);
+    let compiled = compile::compile_sources_checked(
+        &[source],
+        &compile::CompileOpts {
+            top: Some(top.to_owned()),
+            ..Default::default()
+        },
+    )
     .map_err(|error| format!("compile: {error}"))?;
     let database = llg::core::db::Db::from_slang(&compiled.snapshot)
         .map_err(|error| format!("database: {error}"))?;

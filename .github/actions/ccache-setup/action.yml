@@ -23,27 +23,28 @@ inputs:
     default: "true"
 
 outputs:
-  cache-hit:
-    description: "'true' when the exact (this week's) cache entry was restored."
-    value: ${{ steps.restore.outputs.cache-hit }}
   key:
-    description: The exact cache key a finish step saves under.
+    description: The cache key a finish step saves under (unique to this run attempt).
     value: ${{ steps.restore.outputs.cache-primary-key }}
+  restored-key:
+    description: The key of the entry that was restored, or empty when none was.
+    value: ${{ steps.restore.outputs.cache-matched-key }}
 
 runs:
   using: composite
   steps:
-    # One entry per job and ISO week bounds how many multi-hundred-megabyte
-    # entries accumulate; the previous week's entry seeds a new one.
-    - id: period
-      shell: bash
-      run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
-
+    # Every default-branch run saves its own entry (cache entries are
+    # immutable, so a shared weekly key kept only the week's first run and
+    # every later commit compiled its models from an ever older cache). The
+    # restore takes the newest entry of this job by prefix, including the
+    # older weekly ones. Superseded entries are no longer restored and are
+    # the least recently used ones when GitHub evicts at the repository's
+    # cache limit, or after 7 days without access.
     - id: restore
       uses: actions/cache/restore@v6
       with:
         path: ${{ runner.temp }}/ccache
-        key: ccache-v1-${{ inputs.key }}-${{ steps.period.outputs.week }}
+        key: ccache-v1-${{ inputs.key }}-run${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
           ccache-v1-${{ inputs.key }}-
 
