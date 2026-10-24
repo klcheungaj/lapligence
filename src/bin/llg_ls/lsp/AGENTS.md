@@ -1,56 +1,55 @@
-# LSP lifecycle and admission
+# Agent guide: src/bin/llg_ls/lsp
 
-Applies to `lsp.rs`, `lsp/handlers.rs` and its children. Read
-[server policy](../AGENTS.md), [memory safeguards](../../../AGENTS.md) and
-[validation](../../../../tests/AGENTS.md).
+Backend lifecycle and admission: `lsp.rs`, `handlers.rs` and `handlers/`.
+Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
+[llg_ls guide](../AGENTS.md).
 
-## Scheduling and snapshots
+## Directory map
 
-`handlers/state.rs` owns backend/root state; `scheduling.rs` owns rescans, jobs,
-debounce, reloads and watchers; `staging.rs` owns bounded snapshots, authorized
-includes and private mirrors; `diagnostics.rs` owns publication/shared-file unions.
+- `handlers/state.rs`: backend/root state, `DiscoveryOrder`, `ClientOrder`.
+- `handlers/scheduling.rs`: rescans, jobs, debounce, reloads, watchers.
+- `handlers/staging.rs`: bounded snapshots, authorized includes, private mirrors,
+  single-flight tables.
+- `handlers/diagnostics.rs`: publication order and shared-file unions.
+- `handlers/tests.rs`: last-good, cancellation and exact-buffer regressions;
+  keep fixtures within the configured admission limits.
 
-Build Slang, owned DB/model/indexes in one `spawn_blocking` closure. Hold no backend
-lock across discovery, cleanup, admission or compilation. tower-lsp runs
-notifications concurrently, so rescans overlap: apply a discovery only when no
-later-started one was applied (`DiscoveryOrder`). Discard stale generations;
-triggers during a run arm one dirty-root follow-up, and only the job holding the
-root's current generation releases its running slot. Always publish diagnostics.
-Valid analysis replaces `last_good`; compile/admission failures retain navigation.
-Snapshot replacement/clearing advances the process-wide epoch and invalidates caches.
+## Scheduling rules
 
-Diagnostics are sent after the state lock is released, by job tasks and handlers.
-Every payload takes a `ClientOrder` ticket under that lock, and `publish_ordered`
-sends under an async gate, skipping a URI whose later-ticketed payload already
-went out (commits, shared-file unions, config diagnostics, the didOpen replay).
-Watched-file registrations are serialized by a second gate and read the watcher
-set only after taking their turn, so the newest set is always the one registered.
+- Build Slang, DB, model and indexes in one `spawn_blocking` closure. Hold no
+  backend lock across discovery, cleanup, admission or compilation.
+- tower-lsp runs notifications concurrently: apply a discovery only when no
+  later-started one was applied, discard stale generations, and only the job
+  holding the root's current generation releases its running slot.
+- Always publish diagnostics, after the state lock is released, through the
+  ticketed `publish_ordered` path (`diagnostics.rs` docs).
+- Valid analysis replaces `last_good`; compile/admission failures keep navigation.
+- Watched-file registrations are serialized by their own gate and read the
+  watcher set only after taking their turn.
 
-## Admission
+## Admission rules
 
-- Admit `.v`/`.sv` units; headers/arbitrary included extensions are include-only.
-  Search beside the includer, then configured source/include directories in order.
-  Enforce lexical, canonical and symlink containment; count canonical identities
-  once to terminate cycles.
+- Only `.v`/`.sv` are units; headers and other included extensions are
+  include-only. Search beside the includer, then configured source/include
+  directories in order. Enforce lexical, canonical and symlink containment;
+  count canonical identities once to end cycles.
 - Check unique files against `analysis.max_file_bytes` and roots against
-  `analysis.max_total_input_bytes`, with max-plus-one closed reads and exact open
-  UTF-8 lengths. Reject unreadable, unmeasurable, invalid-UTF-8, changed or
-  over-budget input before compilation. Never fall back to a live path.
-- Log size rejection at error level with bounded path/size fields and
-  `[sources].exclude`/`[analysis]` guidance; publish the same admission diagnostic.
-  `LLG_MEMORY_LIMIT_MB` does not raise source/native export caps.
-- Pass complete `InputSnapshots` to `config::compile_opts_sources`, preserving
-  unit/include-only roles. Slang may not open unadmitted project files.
+  `analysis.max_total_input_bytes` before cloning, staging, caching or
+  compiling, with max-plus-one closed reads and exact open UTF-8 lengths.
+- Reject unreadable, unmeasurable, invalid-UTF-8, changed or over-budget input
+  before compilation; never fall back to a live path. Admission failure keeps the
+  last valid snapshot.
+- Log size rejections at error level with bounded fields and
+  `[sources].exclude`/`[analysis]` guidance, and publish the same diagnostic.
+  `LLG_MEMORY_LIMIT_MB` does not raise source or native caps.
+- Pass complete `InputSnapshots` to `config::compile_opts_sources`, keeping
+  unit/include-only roles; Slang never opens unadmitted files.
 
 ## Requests and shutdown
 
-Isolated tokens use captured revisions/admitted text. Recheck staleness before
-cache lookup, flight admission and blocking compile. Saturated bounded single-flight
-tables refuse new work and fall back to committed tokens. Keep stdout JSON-RPC only.
-
-Shutdown clears roots, caches, flights, watchers and the private process mirror.
-The mirror is `<root>/llg-<pid>-<nanos>`, where `<root>` is `--staging-dir`
-(made absolute and created in `main.rs` before serving) or the OS temp dir;
-only the per-process child is ever removed.
-`handlers/tests.rs` preserves last-good, cancellation and exact-buffer regressions;
-keep fixtures within configured admission limits.
+- Isolated tokens use captured revisions and admitted text; recheck staleness
+  before cache lookup, flight admission and the blocking compile. Saturated
+  single-flight tables refuse new work and fall back to committed tokens.
+- Shutdown clears roots, caches, flights, watchers and the private process
+  mirror; only the per-process child of the staging root is ever removed
+  (`--staging-dir` handling: `main.rs`).

@@ -1,49 +1,44 @@
-# LSP analysis and projections
+# Agent guide: src/bin/llg_ls/features
 
-Applies to `features.rs`, `analysis.rs`, `source_graph.rs`, `fallback.rs`,
-`symbol_index.rs`, `requests.rs` and `tests.rs`. Read [server](../AGENTS.md) and
-[admission](../lsp/AGENTS.md) contracts.
+Analysis and request projections: `features.rs` and `features/`. Components:
+[readme](readme.md); server rules: [llg_ls guide](../AGENTS.md); admission:
+[lsp guide](../lsp/AGENTS.md).
 
-## Analysis and identity
+## Directory map
 
-`Analysis` owns all request data. `analyze()` compiles admitted buffers, imports
-`core::db::Db`, projects the model, lints valid frontend results and builds lexical
-and symbol indexes. No native handles/AST pointers enter feature code.
+- `analysis.rs`: blocking analysis assembly and library-unit recovery.
+- `slang.rs`: frontend diagnostics conversion.
+- `source_graph.rs`, `fallback.rs`: source-level graph and syntax-error extraction.
+- `symbol_index.rs`, `requests.rs`: indexes and pure projections.
+- `tests.rs`, `tests/`: helpers and domain regressions.
 
-Merge elaborated instances with owned source-instance records to preserve incoming
-edges, roots and declaration fallback for bodies excluded by explicit top selection;
-never reparse or reread files. Slang lexical tokens/semantic IDs define identity.
-`core::tokens::RefBindings` maps zero-based positions to exact owned declarations;
-conflicting targets remain unbound, never selected by name.
+## Rules
 
-## Diagnostics and recovery
+- `Analysis` owns all request data; no native handles or AST pointers enter
+  feature code (`features.rs` docs give the analysis and coordinate contract).
+- Merge elaborated instances with owned source-instance records to keep incoming
+  edges, roots and declaration fallback for bodies excluded by explicit top
+  selection; never reparse or reread files.
+- Slang lexical tokens and semantic IDs define identity. `core::tokens::RefBindings`
+  conflicts stay unbound, never resolved by name.
+- Navigation and explorer requests read committed `Analysis` only; isolated
+  semantic tokens are the one exception. Parameter hover/lint uses owned DB/model
+  data; macro hover uses the bounded analysis-time source table.
+- Scoped fallback never overrides exact bindings or resolves ambiguous locations.
 
-Preserve provider, code, ranges, related locations and formatted Slang messages in
-`frontend_diagnostics`. Compact core diagnostics classify validity/preflight failures.
-Syntax/compile failures do not replace last-good navigation.
+## Recovery
 
-Root semantic capture is capped at 100,000 nodes. On a native limit, retry the same
-buffers once as library units under unchanged limits, even for one unit. Visit each
-module/generate body once, check every definition's source body and capture direct
-reference/named-connection bindings without expression/statement graphs. Retain lexical
-tokens and definition topology, omitting lint and instance-specific elaboration.
-Do not import this partial graph into execution or diagnose its intentionally absent
-expressions as DB failure. Never raise limits or read more files during recovery.
+- On a native capture limit, retry the same buffers once as library units under
+  unchanged limits (the cap and guidance texts are in `llg_ls/config.rs`).
+- Recovery keeps lexical tokens, definition topology, direct references and
+  named connections; it omits lint and instance-specific elaboration.
+- Never import the partial graph into execution, diagnose its intentionally
+  absent expressions as DB failures, raise limits or read more files.
+- Keep the limit guidance in fatal and reduced-mode diagnostics when recovery
+  succeeds. Native caps are neither `llg.toml` settings nor raised by
+  `LLG_MEMORY_LIMIT_MB`.
 
-Log source/export/capture limits at error level before recovery with configured
-limits and exclusion guidance. Retain guidance in fatal/reduced-mode diagnostics
-when recovery succeeds. Native caps are neither `llg.toml` settings nor raised by
-`LLG_MEMORY_LIMIT_MB`.
+## Limits
 
-## Requests
-
-Read committed `Analysis` only; navigation/explorer requests do not read files or
-compile. Isolated semantic tokens are the exception: exact admitted unsaved buffers,
-with authoritative empty output on syntax errors. Parameter hover/lint uses owned
-DB/model data; macro hover uses the bounded analysis-time source table. Preserve
-UTF-16 boundary conversion and one-based internal token coordinates until response
-construction.
-
-Scoped fallback must not override exact bindings or resolve ambiguous locations.
-Class-instance member selection and positional connection pairing remain unsupported
-until Slang provides exact associations.
+- Class-instance member selection and positional connection pairing stay
+  unsupported until Slang provides exact associations.
