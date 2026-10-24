@@ -1,32 +1,41 @@
-# Project documentation
+# Agent guide: docs
 
-Keep documentation aligned with implementation and tested behavior. Distinguish
-simulator, shared-core and LSP contracts; simulator behavior is not an LSP guarantee.
+Human and cross-cutting documentation. Index: [source layout](source_layout.md#documentation).
 
-## Ownership
+## Placement
 
-- Module READMEs explain purpose, components, requirements and interactions in
-  concise, human-facing prose, short bullets or a small hierarchy.
-- Keep detailed invariants and maintenance instructions in the owning `AGENTS.md`.
-  Preserve unique details when shortening a README. READMEs must not link to
-  `AGENTS.md`; link to source, other READMEs or product documentation instead.
-- Update simulator feature status only in `sim_features.md`. Put testing methods,
-  limits and commands in `../tests/readme.md`, using concise hierarchical bullets.
-- Keep dated investigations, plans and run evidence in ignored `../persistence/`,
-  not transient reports in `docs/`.
+- Each fact lives in one place; other places link to it.
+- Code comments hold facts about that code; docs and guides point to the file
+  or item instead of restating it.
+- `AGENTS.md` files: local ownership, rules, pitfalls, commands and pointers only.
+- Module `readme.md` beside the source: that module's purpose, components and
+  contracts, in concise prose or short bullets. Extend it rather than adding a
+  parallel file; keep unique details when shortening it.
+- `docs/*.md`: user guides and cross-cutting contracts (for example
+  [cross-platform handling](cross_platform.md)).
+- `tests/readme.md`, `tests/ci.md`: test methods, limits, commands and CI rules.
+- Simulator feature status: only `sim_features.md`.
+- Dated investigations, plans and run evidence: ignored `../persistence/`, never
+  `docs/`.
+- READMEs and docs never link to `AGENTS.md`; link to source, other readmes or
+  docs.
+- `docs/` is ignored by default: whitelist a new tracked doc in `.gitignore` and
+  add it to the index.
 
-## Product accuracy
+## Accuracy
 
-LSP documentation must retain stdio transport; independent multi-root workspaces;
-per-root `llg.toml` v1 and client config-file overrides; `.v`/`.sv` units and
-include-only `.vh`/`.svh`; root-relative include/exclude precedence; include
-authorization under source/include directories; read-only shadow buffers in a
-private process temp tree; lint configuration; dynamic config/source/include
-watchers; and configurable stdout-safe logging. State unsupported macro-generated
-or dynamic include paths rather than implying complete preprocessor resolution.
-
-Keep roadmap/security claims evidence-based. Include validation commands and
-residual risks when material to users. [Validation](../tests/AGENTS.md) owns CI,
-release caveats, serialized tests, generated-runtime sanitizers and dependency
-audits; fmt/check/clippy alone are insufficient. Untested Windows/macOS matrix
-legs do not establish platform support.
+- Keep docs aligned with implementation and tested behavior. Distinguish
+  simulator, shared-core and LSP contracts; simulator behavior is not an LSP
+  guarantee.
+- LSP docs keep: stdio transport; independent multi-root workspaces; per-root
+  `llg.toml` v1 and client config-file overrides; `.v`/`.sv` units and
+  include-only `.vh`/`.svh`; root-relative include/exclude precedence; include
+  authorization under source/include directories; read-only shadow buffers in a
+  private process temp tree; lint configuration; dynamic config/source/include
+  watchers; configurable stdout-safe logging.
+- State that macro-generated or dynamic include paths are unsupported rather than
+  implying complete preprocessor resolution.
+- Roadmap and security claims are evidence-based, with validation commands and
+  residual risks when material to users. fmt/check/clippy alone are not
+  validation, and untested Windows/macOS matrix legs do not establish platform
+  support ([CI](../tests/ci.md)).

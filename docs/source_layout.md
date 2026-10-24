@@ -111,3 +111,24 @@ exact-name filters must include it. Integration-test binary names stay the same.
 See [testing methodology](../tests/readme.md) for execution commands and
 platform limitations. A source move must not change independent HDL oracles,
 error expectations, optimizer-mode coverage, or runtime sanitizer settings.
+
+## Documentation
+
+| Document | Content |
+| --- | --- |
+| [readme.md](../readme.md) | Build, `llg` and `llg_ls` usage, environment variables |
+| [config.md](config.md) | `llg.toml` schema and precedence |
+| [cross_platform.md](cross_platform.md) | Windows/macOS/musl/arm64 pitfalls and platform layers |
+| [coding_practices.md](coding_practices.md) | Coding practices and module boundaries |
+| [sim_features.md](sim_features.md) | Simulator feature status (the only checklist) |
+| [sim_data_semantics.md](sim_data_semantics.md) | Data and expression semantics reference |
+| [lrm_decisions.md](lrm_decisions.md) | LRM decision register |
+| [time_zero_initialization.md](time_zero_initialization.md) | Time-zero initialization |
+| [sim_performance_tradeoffs.md](sim_performance_tradeoffs.md) | Simulation speed versus model compile time |
+| [known_issues.md](known_issues.md) | Deferred limitations |
+| [tests/readme.md](../tests/readme.md), [tests/ci.md](../tests/ci.md) | Test methodology, commands and CI rules |
+| [patches/README.md](../patches/README.md) | Vendored patch preparation |
+| [perf/README.md](../perf/README.md) | Performance measurement |
+
+Module contracts live in the `readme.md` beside each source directory; agent
+rules live in the `AGENTS.md` files, starting at the repository root.
