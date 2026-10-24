@@ -1212,6 +1212,12 @@ files are retained. `LLG_RUNTIME_CACHE_DIR` separately relocates the shared runt
 archive cache, which persists across tests and runs until removed or unmounted.
 Size tmpfs for concurrent builds and leave RAM for compilers and tests.
 
+Generated models build in Release without debug information. The suite's own
+native CMake probe projects (`runtime_value_storage`, `runtime_gmp_closure`) build
+their Debug configuration without it too: `LLG_TEST_DEBUG_INFO=1` (also `on`,
+`true`, `yes`) restores `-g`, MSVC `/Z7` and the `/debug` link for debugging a
+probe. Optimization levels, `/RTC1`, `assert()` and `LLG_CO_DEBUG` are unchanged.
+
 `LLG_TEST_BUILD_DIR` does not relocate Cargo artifacts or tests that use their own
 temporary-directory helpers. Cargo supports `CARGO_TARGET_DIR`; system temporary
 files follow platform settings such as `TMPDIR` on Unix. The native Slang build

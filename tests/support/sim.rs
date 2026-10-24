@@ -498,6 +498,27 @@ pub fn write_value_backend_sources(dir: &std::path::Path) {
     }
 }
 
+/// Whether the native CMake probe projects of the suite (the dynamic-storage
+/// probes, the GMP closure check) build their Debug configuration with debug
+/// information. Off unless `LLG_TEST_DEBUG_INFO` is `1`, `on`, `true` or
+/// `yes`: no probe reads its own symbols, and `-g`, `/Z7` and the `/debug`
+/// link only cost compile, link and compiler-cache time. Optimization levels,
+/// `/RTC1`, `assert()` and `LLG_CO_DEBUG` checks are unaffected. Generated
+/// models build in Release without debug information either way.
+pub(crate) fn test_debug_info() -> bool {
+    debug_info_requested(std::env::var("LLG_TEST_DEBUG_INFO").ok().as_deref())
+}
+
+/// [`test_debug_info`] for the variable's value (`None` when unset).
+pub(crate) fn debug_info_requested(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "on" | "true" | "yes"
+        )
+    })
+}
+
 /// `GMP_ROOT` for compact/GMP lanes: `LLG_TEST_GMP_ROOT` to qualify an
 /// external GMP, otherwise empty, which selects the bundled GMP sources (an
 /// empty `GMP_ROOT` also masks one inherited from the environment).

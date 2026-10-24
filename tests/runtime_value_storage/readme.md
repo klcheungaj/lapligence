@@ -34,6 +34,11 @@ cmake --build target/storage-core --config Debug
 ctest --test-dir target/storage-core --build-config Debug --output-on-failure
 ```
 
+The Debug configuration carries debug information (`-g`, MSVC `/Z7` and a
+`/debug` link) unless `-DLLG_STORAGE_TEST_DEBUG_INFO=OFF`; the Rust test passes
+`OFF` unless `LLG_TEST_DEBUG_INFO=1`. Optimization, `/RTC1`, `assert()` and the
+`LLG_CO_DEBUG` probes are the same either way, and sanitizer builds always keep it.
+
 Do not pass the removed `LLG_STORAGE_TEST_MODEL_WIDTH`. Narrow/wide values share
 the dynamic ABI, not a model-width allocation capacity.
 

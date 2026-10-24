@@ -128,6 +128,10 @@ target_include_directories(closure PRIVATE ${{LLG_GMP_INCLUDE_DIRS}})
         .arg(format!("-DCMAKE_C_COMPILER={compiler}"))
         .arg("-DCMAKE_BUILD_TYPE=Debug")
         .arg("-DCMAKE_C_FLAGS:STRING=-O0");
+    // The check is about what -O0 keeps; GCC/Clang Debug adds only `-g`.
+    if !sim_harness::test_debug_info() {
+        configure.arg("-DCMAKE_C_FLAGS_DEBUG:STRING=");
+    }
     run_stage("configure", &mut configure);
 
     let recipe = std::fs::read_to_string(&recipe_path).expect("read recipe");

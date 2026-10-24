@@ -222,3 +222,24 @@ fn crlf_normalization_rewrites_only_crlf_pairs() {
     let expected: &[u8] = if cfg!(windows) { b"x\n" } else { b"x\r\n" };
     assert_eq!(host, expected);
 }
+
+#[test]
+fn probe_debug_information_is_opt_in() {
+    for (value, expected) in [
+        (None, false),
+        (Some(""), false),
+        (Some("0"), false),
+        (Some("off"), false),
+        (Some("no"), false),
+        (Some("1"), true),
+        (Some(" ON "), true),
+        (Some("true"), true),
+        (Some("Yes"), true),
+    ] {
+        assert_eq!(
+            sim_harness::debug_info_requested(value),
+            expected,
+            "{value:?}"
+        );
+    }
+}

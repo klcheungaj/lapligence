@@ -2482,6 +2482,37 @@ mod tests {
     }
 
     #[test]
+    fn generated_projects_carry_no_debug_information_flags() {
+        // Models build in Release, whose flags the projects replace with
+        // NDEBUG alone, and CMake adds /debug (MSVC) only to Debug and
+        // RelWithDebInfo links. No template may bring debug information back.
+        for level in [
+            ModelOptLevel::O0,
+            ModelOptLevel::O1,
+            ModelOptLevel::O2,
+            ModelOptLevel::O3,
+            ModelOptLevel::Os,
+        ] {
+            let setup = optimization_setup(level);
+            assert!(setup.contains("set(CMAKE_C_FLAGS_RELEASE \"/DNDEBUG\")"));
+            assert!(setup.contains("set(CMAKE_C_FLAGS_RELEASE \"-DNDEBUG\")"));
+            for template in [CMAKELISTS_TEMPLATE, RUNTIME_CMAKELISTS_TEMPLATE, &setup] {
+                let words: Vec<&str> = template
+                    .split(|c: char| c.is_whitespace() || c == '"' || c == '(' || c == ')')
+                    .collect();
+                for flag in [
+                    "-g", "-g3", "-ggdb", "/Zi", "/Z7", "/ZI", "/DEBUG", "/debug",
+                ] {
+                    assert!(!words.contains(&flag), "{flag} in {template}");
+                }
+                assert!(!template.contains("RelWithDebInfo"), "{template}");
+                assert!(!template.contains("DEBUG_INFORMATION_FORMAT"), "{template}");
+            }
+        }
+        assert_eq!(BUILD_TYPE, "Release");
+    }
+
+    #[test]
     fn missing_build_program_is_reported_without_a_retry_hint() {
         #[cfg(unix)]
         use std::os::unix::process::ExitStatusExt;

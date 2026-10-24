@@ -1,12 +1,42 @@
 cmake_minimum_required(VERSION 3.16)
+# Debug information for the Debug configuration. The test suite turns it off
+# (tests/runtime_value_storage.rs, unless LLG_TEST_DEBUG_INFO is set): no probe
+# reads symbols or backtraces, and optimization, /RTC1, assert() and the
+# LLG_CO_DEBUG checks do not depend on it. Sanitizer builds always keep it for
+# symbolized reports.
+option(LLG_STORAGE_TEST_DEBUG_INFO "Emit debug information in the Debug configuration" ON)
+option(LLG_STORAGE_TEST_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+set(LLG_STORAGE_DEBUG_INFO ${LLG_STORAGE_TEST_DEBUG_INFO})
+if(LLG_STORAGE_TEST_SANITIZERS)
+  set(LLG_STORAGE_DEBUG_INFO ON)
+endif()
 # MSVC Debug: embed debug information in each object (/Z7) instead of the
 # shared PDB of /Zi, which ccache refuses as an unsupported compiler option.
-# Takes effect from CMake 3.25 (CMP0141); set before project() enables C.
+# Without debug information the format is a generator expression that
+# evaluates to nothing: a set, non-empty value, so CMake neither falls back
+# to its ProgramDatabase default nor adds a flag. Takes effect from CMake 3.25
+# (CMP0141); set before project() enables C.
 if(POLICY CMP0141)
   cmake_policy(SET CMP0141 NEW)
 endif()
-set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
+if(LLG_STORAGE_DEBUG_INFO)
+  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT Embedded)
+else()
+  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<0:Embedded>")
+endif()
 project(llg_dynamic_storage_tests C)
+if(NOT LLG_STORAGE_DEBUG_INFO)
+  # GCC/Clang Debug flags are only `-g` (no optimization flag, so -O0 stays).
+  # MSVC links Debug with /debug; drop it so no PDB is written, and leave the
+  # rest of the link flags as they are. Before CMake 3.25 (CMP0141 unknown)
+  # MSVC Debug compile flags carry /Zi: drop that as well.
+  string(REGEX REPLACE "(^| )-g[0-9]*( |$)" " " CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+  string(REGEX REPLACE "(^| )[/-]Z[i7I]( |$)" " " CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+  foreach(kind EXE SHARED MODULE)
+    string(REGEX REPLACE "(^| )[/-][Dd][Ee][Bb][Uu][Gg](:[A-Za-z]+)?( |$)" " "
+      CMAKE_${kind}_LINKER_FLAGS_DEBUG "${CMAKE_${kind}_LINKER_FLAGS_DEBUG}")
+  endforeach()
+endif()
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -22,7 +52,6 @@ set(LLG_TEST_HAS_COROUTINES false)
 set(LLG_TEST_HAS_SANITIZERS false)
 
 option(LLG_STORAGE_TEST_WAVEFORMS "Test dynamic waveform snapshot ownership" ON)
-option(LLG_STORAGE_TEST_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 get_filename_component(LLG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(LLG_RT "${LLG_ROOT}/src/sim/rt")
 

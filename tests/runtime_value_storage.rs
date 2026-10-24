@@ -86,6 +86,14 @@ fn run_storage_stages(label: &str, options: &[String], config: &str, targets: &[
         .arg("-B")
         .arg(dir.path())
         .arg(format!("-DCMAKE_BUILD_TYPE={config}"))
+        .arg(format!(
+            "-DLLG_STORAGE_TEST_DEBUG_INFO={}",
+            if sim_harness::test_debug_info() {
+                "ON"
+            } else {
+                "OFF"
+            }
+        ))
         // The waveform probes compile the libfst sources the runtime embeds:
         // vendor/libfst, patched in place by the build script.
         .args(options);
