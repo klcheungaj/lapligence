@@ -1,273 +1,69 @@
-# Simulator pipeline
+# Agent guide: src/sim
 
-`llg` runs compile → owned DB → semantic/execution IR → optimization → C11 →
-CMake build → execution. [Lowering](codegen/AGENTS.md),
-[emission](emit_c/AGENTS.md) and [runtime](rt/AGENTS.md) own domain contracts;
-[source layout](../../docs/source_layout.md) locates implementation modules.
+The `llg` simulator: owned DB → semantic model → typed IR → `ExecutionModel` →
+optimization → C11 → CMake-built model linked with the embedded runtime.
+Component map and pipeline contracts: [readme](readme.md).
 
-## Ownership and validation
+## Core abstractions
 
-- The CLI uses the simulator frontend export policy documented by
-  [FFI](../ffi/AGENTS.md) and [driver](../bin/AGENTS.md); library generation
-  consumes its caller's owned DB without changing capture limits.
+- **`SemanticModel`** (`semantic.rs`) — frontend-neutral model, origins,
+  synthesis classification and executable-node coverage.
+- **`Codegen`** (`codegen/`) — typed lowering of owned DB data into IR.
+- **`IrModel`** (`ir.rs`, `ir/`) — typed storage/value/statement tables,
+  validated by `IrModel::from_parts`.
+- **`ExecutionModel`** (`execution/`) — executable blocks, effects, regions,
+  suspend/resume plans; the only input to optimization and emission.
+- **`OptConfig`** (`opt/`) — the four optimization passes.
+- **`GeneratedModel`** — design name, `model.c`, symbol map and warnings.
+- **`CmakeBuildOpts`** (`build.rs`) — model and runtime-archive builds.
+- **`ValueConfig`** (`value_backend.rs`) — packed-value backend selection.
 
-- `codegen::{generate, generate_with_opts}` accepts owned DB data.
-  `GeneratedModel` retains public `design_name: String`, `model_c` and warnings.
-  `SemanticModel` owns synthesis classification and returns a checked
-  `SynthDesignView` or origin-linked reasons. Never equate simulation admission
-  with the conservative synthesis profile.
-- Typed IR stages signals, arrays, nets, functions, processes and initialization.
-  `ExecutionModel` owns executable blocks/operations, effects, suspend/resume
-  plans and regions. Optimization and whole-model emission consume only it.
-  Emit distinct resume-block terminators; body-controlled suspension requires a
-  validated waiting operation.
-- Treat `IrModelParts` as untrusted until `IrModel::from_parts` validates IDs,
-  shapes, registrations and nested nodes. Keep model/detached-node validation
-  before optimizer/emitter indexing; semantic and executable layers stay owned
-  and independently testable.
-- Simulator Rust has no unsafe/native/FFI calls. The emitter has no DB/FFI/VPI
-  dependencies; preserve `G_`/`p_`/`D_` names and the first `model.c` header line.
-  `tests/emit_decoupling.rs` enforces this boundary.
-- Legacy constructs unsupported by design (user decision 2026-10-08; listed in
-  `legacy_unsupported.rs` and the 🚫 rows of `docs/sim_features.md`) stop the
-  run before lowering through `legacy_unsupported::scan`, or at their target
-  classification in lowering, with the one `diagnostic` message shape. Reuse
-  that shape for a new by-design rejection; never leave such a construct to a
-  generic lowering failure, a VPI fallback or a no-op.
-- Whole models use `emit_c/owned/` with registered values/scopes and explicit
-  startup/teardown. Unrepresented storage/captures/callbacks produce specific
-  errors, never legacy-fragment fallbacks. Detached string-only APIs cannot
-  represent setup/cleanup and remain fail-closed.
+## Directory map
 
-- `sdf/` reads SDF into owned plans without file system access beyond the
-  caller's reader: names only match the in-memory `SdfTargets`. Keep the
-  parser streaming (memory bounded by the longest token and `SdfLimits`),
-  errors positioned and deterministic, and rule violations that keep one
-  meaning as warnings (fixture readme `adv_011`). Plans name declared paths
-  and checks, not IR rows, so applying one can re-settle combined limits and
-  re-solve delayed signals. `apply.rs` values a plan for one call (member
-  selection, scaling, per-module rounding, Table 32-4 expansion, pulse
-  limits, configuration files) into target-named ops; codegen maps them to
-  model rows (fixture readme `adv_012`).
+| Path | Guide or readme |
+| --- | --- |
+| `semantic/`, `semantic.rs` | [readme](semantic/readme.md) |
+| `codegen/`, `codegen.rs` | [guide](codegen/AGENTS.md) |
+| `ir/`, `ir.rs` | [readme](ir/readme.md) |
+| `execution/`, `execution.rs` | [readme](execution/readme.md) |
+| `opt/`, `opt.rs` | [readme](opt/readme.md) |
+| `emit_c/`, `emit_c.rs` | [guide](emit_c/AGENTS.md) |
+| `rt/` | [guide](rt/AGENTS.md) |
+| `build/`, `build.rs` | [readme](build/readme.md) |
+| `sdf/` | module docs in `sdf/mod.rs` |
+| `legacy_unsupported.rs`, `value_backend.rs`, `mod.rs` | module docs |
 
-## IR and optimization
+## Conventions and pitfalls
 
-Keep `OptConfig`'s `fold_constants`, `identities`, `prune_branches` and
-`unused_storage`, default/none modes and per-pass bisection. Fold with exact
-`core::elab::Value` X/Z semantics, f32 shortreal rounding and actual-width
-arithmetic. Shape-guard identities. Prune only proven branches/cases: never pass
-an unknown item or select default until all items are proven unmatched. Omit
-unused storage without renumbering indices.
+- Simulator Rust has no `unsafe`, native or FFI calls; it reads only owned DB
+  data.
+- Unsupported executable forms fail with source-linked errors before C
+  compilation; by-design rejections reuse `legacy_unsupported::diagnostic`.
+- Treat `IrModelParts` as untrusted until validated; validate before any
+  optimizer or emitter indexing.
+- Generation stays linear in the instance count (gate-level netlists hold
+  10^5+ cells).
+- Packed-width limit: `emit_c.rs` width constants; value backend policy:
+  `value_backend.rs` module docs (no fallback).
+- The runtime ships only with generated models; never link it into Rust
+  binaries.
+- CMake is the only model builder; never bake build-machine paths into runtime
+  defaults.
 
-The optimizer's expression walker (`opt/passes/traversal.rs`) and the IR-owned
-`expressions()`/`chandles()` visitors of chandle, container and randomize
-nodes likewise have no wildcard arm: a new kind states whether it has
-expression slots. Unused-storage collection matches every IR enum and the model and call records
-without a wildcard arm or rest pattern: classify a new kind there, including
-references that are not expression reads (wait sources, event-handle indices,
-call receivers, C-address actuals, runtime registrations). `Predicate`
-retains ordered true-only evaluation, not logical-AND identities; drop suffixes
-only when unreachable without discarding reached effects. Singleton concat still
-forces unsigned/self-determined semantics. Array/structure conditionals retain
-leaf boundaries (R05-D1) and default-uninitialized values, not member
-initializers; equal flattened width does not imply equal shape.
-
-`PackedChain` steps are relative to the preceding selected value. Validate
-nonempty/nonzero packed plans and unsigned read shape; preserve negative/X/Z
-indices, partial clipping and missing-bit X/no-write behavior. Never sum offsets
-and erase intermediate bounds. Count index temporaries in capacity estimates.
-Fixed-array folds operate on immediate elements, use the first mapped value as
-seed, preserve Z, and restore nested iterator bindings. Ordered predicates and
-case patterns capture selectors once; tagged pattern discriminants and payloads
-use their enclosing case mode. Ordinary checked-member guards remain exact.
-
-## Capacity and runtime packaging
-
-Validate each packed value against exclusive `1 << 20`, not a model maximum or
-64/1024-bit IR cap. `sv4_t` widths are `uint32_t`; div/mod/pow scratch follows
-operand width. Preserve typed index trees, elaborated indexed-part extents,
-wide intermediate indices and member-specific two-state conversion. Emit static
-extents, not the width expression's integer storage size.
-
-Coroutine storage is explicit POD frame data. Count typed expression storage and
-embedded callee slots in `FrameLayout`; sibling blocks overlay and recursive or
-oversized callees use the chain arena. Recursive synchronous subprograms
-(`execution/recursion.rs`) are also coroutines run by a synchronous driver from
-their unchanged plain entry, so recursion depth uses arena memory, never native
-stack. There is no generated coroutine-stack
-estimate or `LLG_MODEL_STACK_VALUES`. Values allocate by their own widths; never
-restore model-maximum arrays. `LLG_MODEL_VALUE_ABI` must match
-`LLG_VALUE_ABI_VERSION`, and generated models declare process ABI 3.
-
-`write_sim_sources` embeds flat value, random, coroutine, scheduler, container and
-waveform sources plus self-tests into `<out-dir>/sim/<design>/` (driver default
-`build`). Private fragments assemble in facade order; selected value headers retain their
-`value/` or `value_gmp/` relative paths. Compact backend units compile separately. Runtime archives belong only
-to generated C, never Rust binaries; source-only output remains self-contained.
-Keep original runtime/waveform ownership self-tests active. Property vectors mirror
-`core::elab::Value`; regenerate with:
+## Commands
 
 ```sh
-cargo test --test general property_elab::gen_c_vectors -- --ignored --nocapture > /tmp/vectors.inc
+cargo nextest run --lib sim::
+cargo nextest run --test general emit_decoupling opt_storage_differential
+cargo nextest run --test sim_cmake --test sim_scale --test sim_opt_differential
 ```
 
-## Build contract
+Full-suite and parallel-worktree runs: [tests](../../tests/readme.md).
 
-CMake is the only model builder: C11, Release by default, executable under
-`<build>/bin/`, and `m` linkage. The configure command retains:
+## Pointers
 
-```sh
-<cmake> -S <out_dir> -B <out_dir>/build -G <generator> [-DCMAKE_C_COMPILER_LAUNCHER=<launcher>] -DCMAKE_C_COMPILER=<cc|LLG_CC|$CC|cl on Windows, cc elsewhere> -DCMAKE_C_FLAGS:STRING="[cflags|$LLG_CFLAGS]" -DLLG_RUNTIME_LIBRARY=<cache>
-cmake --build <dir> --config Release --parallel <jobs> [--target llg_runtime]
-```
-
-`CmakeBuildOpts.model_opt_level`/`--model-opt-level <O0|O1|O2|O3|Os>` selects
-optimization for model and runtime sources (default `DEFAULT_MODEL_OPT_LEVEL`,
-O3). Both generated projects prefix that level and warning flags to
-`CMAKE_C_FLAGS`; Release contributes only `-DNDEBUG` (`/DNDEBUG` on MSVC),
-removing CMake's implicit optimization. MSVC maps O0 to `/Od`, O1/Os to `/O1`,
-and O2/O3 to `/O2`, with `/W3` warnings. CMake detects the compiler family.
-User `--cflags` replaces `LLG_CFLAGS`; those flags follow the selected level,
-so a user optimization flag wins. Source-only projects retain the selected
-level; manual `-DCMAKE_C_FLAGS` flags have the same precedence. Reconfiguration
-shadows the cache value without accumulating default flags. Runtime cache keys
-include the level, flags and shared CMake optimization setup. Linux corpus
-measurements select the default; MSVC mapping is reasoned, not executed here.
-
-Both `--build` invocations (model and runtime archive) pass `--parallel`, a
-generic option since CMake 3.12 (generated projects require 3.16), so Makefile,
-Ninja and MSBuild generators build translation units concurrently. `<jobs>` is
-`CmakeBuildOpts.build_jobs`/`--build-jobs`, else a positive integer
-`$CMAKE_BUILD_PARALLEL_LEVEL`, else `available_parallelism()` (fallback 1); see
-`resolve_build_jobs`. It is not part of the runtime cache key.
-
-With GCC or Clang, generated model sources also get
-`-Wno-misleading-indentation` as a per-source CMake option; the warning's cost
-is quadratic in file size. Runtime sources keep it.
-
-On POSIX, runtime startup warns when `RLIMIT_STACK` is below the named 640 KiB
-host-stack estimate: the measured worst case (scheduler entry, one polled
-segment, a plain-function chain up to the 256-call guard and runtime helpers;
-367 KiB) plus 256 KiB of named DPI/libc headroom, rounded up to 64 KiB.
-Generated MSVC projects reserve the larger of that estimate and the 1 MiB
-Windows default with `/STACK`. Re-measure before changing either value; see
-`src/sim/rt/llg_rt.h`.
-
-`CmakeBuildOpts.generator`/`--generator` overrides a non-empty `CMAKE_GENERATOR`,
-then `DEFAULT_GENERATOR` (`Ninja`) on every host, never CMake's platform default,
-so caches and trees are uniform and MSBuild/Makefile overhead is avoided. A
-configure reporting no build program fails at once as `BuildProgramNotFound`
-(install Ninja or select a generator), skipping the clean retry. `launcher`/`--launcher` > `LLG_C_LAUNCHER` > none forwards
-`CMAKE_C_COMPILER_LAUNCHER` (`LLG_CC` must remain one program, so a launcher such as
-ccache needs this variable; an empty variable is none and an explicit empty library
-option suppresses it; the `llg` driver's order is CLI > `LLG_C_LAUNCHER` >
-`build.launcher`, resolved in `settings::layered` before it fills the option). It reaches the runtime archive and model compiles, is part of the
-runtime cache key, and never touches the root `build.rs` Slang build (`LLG_CCACHE`). Repeatable `dpi_libraries`/`--dpi-lib` accepts validated explicit link
-files; include `svdpi.h` (llg's Annex I copy, `rt/svdpi.h`) in generated output. Every
-project also gets `sim.def` (provided `svdpi.h` routines, `vpi_user.h` routines and the
-design's DPI-C exports; `build/import_library.rs`): MSVC links `sim.exe` with `/DEF:sim.def`,
-and target `llg_import_library` (`build_model_import_library`, `llg --dpi-import-lib`)
-writes `sim.exe`'s import library with `lib /DEF /NAME:sim.exe` without linking the model,
-for Windows DLL companions and VPI plugins; keep the routine lists in step with the runtime
-(unit-tested). SV `byte` is C `char`
-(Table H.1), signed or not by ABI: thunks keep `char` prototypes and sign-extend each
-foreign byte explicitly. `generate_model_sources`/`--gen-only`
-writes sources/CMake without building. `CmakeBuildOpts` `cmake`/`cc`/`cflags`
-(`--cmake`/`--cc`/`--cflags`) win over `LLG_CMAKE`, `LLG_CC`/`CC` and
-`LLG_CFLAGS`; without a compiler selection `DEFAULT_C_COMPILER` is MSVC `cl` on
-Windows (models run on the host; CMake's own default) and `cc` elsewhere, and
-the runtime cache key records `cl`'s stderr banner plus `VCToolsVersion`,
-`WindowsSDKVersion` and `VSCMD_ARG_TGT_ARCH`; explicit flags replace, not append to, `LLG_CFLAGS`. Reject double quotes in flags;
-missing-CMake errors include installation guidance. Probe availability once.
-
-Cache by ownership ABI, runtime content, compiler-reported target, toolchain,
-flags, generator, launcher, platform and waveform support. Root:
-`runtime_cache_dir` (`--runtime-cache`) >
-`LLG_RUNTIME_CACHE_DIR` > library default `<cwd>/build/llg-runtime-cache` (the
-driver passes `<out-dir>/llg-runtime-cache`); relative paths resolve from the CWD.
-Never bake build-machine paths (`CARGO_MANIFEST_DIR`) into runtime defaults;
-`.cargo/config.toml` `[env]` points Cargo-launched runs at the repo cache. Prune stale
-sources/incompatible partial builds and retry failed configuration once cleanly.
-Root children are runtime archive entries (ready once they hold a `ready`
-marker) except the auxiliary directories listed once in
-`sim::build::RUNTIME_CACHE_AUX_DIRS`: `cmake-toolchain/` (seeds),
-`compiler-probe/` (MSVC probe memos) and `cmake-tree/` (tree templates). Code that enumerates or prunes the root
-skips those names; add any new auxiliary directory to that list.
-
-Fresh trees (model and runtime archive) are seeded with cached toolchain
-detection (`build/toolchain_seed.rs`): `<root>/cmake-toolchain/<hash>` holds one probe's `CMakeFiles/<version>/*.cmake` plus the cache entries
-detection creates, applied with `CMAKE_PLATFORM_INFO_INITIALIZED`, the state
-CMake itself re-configures from. The exact key covers CMake and its version,
-generator, compiler spelling/identity/target, flags, launcher, host and the
-detection environment (`PATH`, `INCLUDE`, `LIB`, `SDKROOT`, ...). Publication
-needs a self-check (clean + re-configure vs seeded probe build files equal
-modulo tree paths (plain, forward-slash, canonical and Ninja-escaped `$:`/`$ `/`$$`
-spellings), CMake module lists and detection scratch such as MSVC's
-`CMakeFiles/ShowIncludes/`) under a non-blocking entry lock; a rejection names
-each differing file with its first differing line;
-otherwise a `rejected` marker stops probing. A seeded configure that fails is
-retried clean and rejects the seed. Published files never change; ready/rejected
-markers are renamed into place with the exact key. Projects keep the shared
-`PROJECT_PREAMBLE` before `project()`. `LLG_CMAKE_TOOLCHAIN_SEED=0` disables it.
-Opt-in configured-tree templates (`LLG_CMAKE_TREE_TEMPLATES=1`,
-`build/tree_template.rs`) go one step further for seeded fresh model trees: a
-template keyed by the seed key, configure arguments and `CMakeLists.txt`
-stores one configured tree with its source-directory spellings replaced by
-placeholders. The first tree is captured, a second tree in another directory
-must match the template rewritten for its paths byte for byte (else
-`rejected`), and later fresh trees are written from it without a configure
-(no `cmake` configure, `ninja --version`, linker checks or `restat`). Only
-plain ASCII paths without spaces, `$` or `@` qualify; a build from a template
-that fails is rebuilt from a real configure and rejects the template when that
-succeeds. A rejection's reason (first differing files and lines) goes to the
-`rejected` marker and the timing record's `template_reason`. Spellings cover the
-path as given and canonical, the drive letter as given, upper and lower case
-(CMake 4.4 writes `c:/...` in the `CMakeCache.txt` header and
-`CMAKE_CACHEFILE_DIR`), native, `/` and string-escaped `\\` separators, and a
-plain or Ninja-escaped (`$:`) colon. Runtime-archive trees always configure.
-Detection `try_compile`s use `CMAKE_TRY_COMPILE_CONFIGURATION=Release` (no MSVC
-`/Zi` PDBs). Every configure passes an empty `CMAKE_INSTALL_PREFIX` (with
-`CMAKE_FIND_NO_INSTALL_PREFIX=ON`): CMake's Windows default prefix depends on
-whether `CMAKE_SIZEOF_VOID_P` is known yet, so clean and seeded trees would
-otherwise differ. Keep these flags in `toolchain_args`, shared by probe and builds. `LLG_BUILD_TIMINGS=<file>` appends one per-phase timing and
-cache-outcome line per model build (`build/timings.rs`); CI summarizes it with
-`scripts/ci_build_timings.py`. `LLG_CMAKE_PROFILE_DIR=<dir>` adds a CMake
-google-trace profile per configure (`--cmake-profiles` summarizes them); it
-changes no build output and stays out of every cache and seed key.
-Compiler self-reports (`--version`/`/Bv` identity, target) come from
-`build/compiler_probe.rs`: each argument spawns at most once per probe (an MSVC
-banner skips `-dumpmachine`), results are memoized per process by spelling,
-canonical executable path, size, mtime and the probe environment, and MSVC
-results also in `<cache root>/compiler-probe/<hash>` files (GCC/Clang
-spellings are often wrappers, so they stay per process). The text must equal an
-unmemoized probe's, keeping existing cache and seed keys valid.
-Root portable patch preparation accepts clean/fully-applied vendors and rejects
-partial/mismatched edits; retain upstream-base gitlinks.
-
-Library optimizer comparisons reuse one DB through `generate_from_db_with_opts`;
-CLI comparisons independently run checked-in HDL in both modes. Follow
-[tests](../../tests/AGENTS.md) and [data semantics](../../docs/sim_data_semantics.md).
-
-## Value selection
-
-Compact values with GMP kernels (`ValueConfig::default()`, `COMPACT_GMP`) are the
-only user configuration; never fall back to legacy or portable. Those are
-development references (`ValueConfig::LEGACY`, `COMPACT_PORTABLE`) that the
-driver selects only through `LLG_DEV_VALUE_BACKEND=legacy|compact` and
-`LLG_DEV_COMPACT_KERNELS=portable|gmp`; keep them out of user documentation.
-`CodegenOptions` and `CmakeBuildOpts` share `value_config`; mismatching generated guards fail before
-export. Compact GMP kernels compile the bundled `vendor/gmp` subset
-(`rt/gmp.rs`, `rt/gmp/llg_gmp.cmake`) into the runtime archive, keyed by its
-content hash. `gmp_root` overrides `GMP_ROOT`; either names an installation
-instead. An explicit root is authoritative and has no system fallback. Hash its
-header and library contents; CMake verifies version agreement, required mpn APIs and 64-bit
-nail-free limbs (any 64-bit limb C type; see `value_gmp/readme.md`). Legacy never
-discovers/links GMP.
-Source-only projects compile their selected runtime as a static archive. Apply
-waveform definitions to that archive as well as the model. Every translation unit
-gets both literal selector definitions. Preserve ABI 4 for legacy, 5 for compact,
-and process ABI 3. Generated startup calls the selected build-identity link fence;
-foreign value clients must do likewise before exchanging descriptors. Cache ready
-markers contain the exact key; plain old ready markers cannot admit stale archives.
-Compact selected builds embed all currently emitted value operations, including
-S4/S5 and V06 consumer primitives; unavailable additions must never fall back.
+- [Feature status](../../docs/sim_features.md) owns supported type/context
+  inventories; [LRM decisions](../../docs/lrm_decisions.md) own decision IDs.
+- [Data semantics](../../docs/sim_data_semantics.md),
+  [cross-platform guide](../../docs/cross_platform.md),
+  [model build](build/readme.md).
