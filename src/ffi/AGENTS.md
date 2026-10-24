@@ -1,195 +1,61 @@
-# Safe native boundary
+# Agent guide: src/ffi
 
-Only `src/ffi/` may contain Rust `unsafe`. Keep platform/native primitives here,
-expose stable safe ownership APIs, and explain every unsafe operation's soundness.
-Each module denies `clippy::undocumented_unsafe_blocks` and
-`unsafe_op_in_unsafe_fn`; explain validity, lifetime, alignment, initialization
-and ownership at every unsafe operation. No panic may cross C. Native owners
-remain on the calling thread; do not implement `Send` or `Sync`.
+The safe native boundary: the only module with Rust `unsafe`. It receives the
+Slang capture stream, owns platform calls and exposes safe owned APIs.
+Contracts: [readme](readme.md); the ABI itself: `src/wrapper/slang_c_api.h`.
 
-## Slang capture-stream ABI
+## Directory map
 
-- Mirror `slang_c_api.h` layouts with `#[repr(C)]`. Validate ABI version, tags,
-  known flags, reserved fields, pointer/length pairs, IDs, ranges and table windows.
-  Use module error types, preserving native status/message; malformed output is
+- `slang.rs`: requests, `Limits`, `Snapshot`, error owners, `#[link]` metadata.
+- `slang/stream.rs`: capture-stream receivers (module docs: catalogue, order,
+  ownership, error flow).
+- `slang/node_flags.rs`, `semantics.rs`, `sources.rs`, `tokens.rs`, `values.rs`,
+  `diagnostics.rs`, `metadata.rs`: per-table decoding and validation.
+- `platform.rs`, `secure_fs.rs`, `process_memory.rs`: platform layer
+  ([cross-platform](../../docs/cross_platform.md#platform-layers)).
+
+## Unsafe and ownership
+
+- Each module denies `clippy::undocumented_unsafe_blocks` and
+  `unsafe_op_in_unsafe_fn`; every unsafe operation states validity, lifetime,
+  alignment, initialization and ownership.
+- No panic crosses C: trampolines catch panics and abort the stream.
+- Native Slang owners stay on the calling thread (no `Send`/`Sync`);
+  `secure_fs`'s `DirectoryStream` is the one documented `Send` exception.
+- Expose no native pointer or native-storage lifetime; records are borrowed only
+  for their callback, so copy what is kept.
+
+## ABI changes
+
+- Mirror `slang_c_api.h` layouts with `#[repr(C)]` and keep tags, flags, record
+  order and budgets aligned with the [wrapper](../wrapper/AGENTS.md).
+- A new tag, flag bit or record bumps `LLG_SLANG_ABI_VERSION` on both sides
+  together. Document codes, edge roles and auxiliary bits in the header, not here.
+- Validate version, tags, known flags (reject reserved bits), reserved fields,
+  pointer/length pairs, IDs, ranges and table windows. Malformed output is
   `InvalidNativeData`, distinct from valid unsupported HDL.
-- ABI v15 `CompileRequest` borrows sources/options until blocking
-  `llg_slang_compile` returns, distinguishing units from include-only buffers.
-  Library-unit recovery uses the same buffers/limits; reject unknown request flags.
-  Cache keys are lexically normalized; include directories are lookup prefixes,
-  not permission to read the filesystem.
-- ABI v16 `parse_metadata` (`slang/metadata.rs`) borrows the same kind of
-  units/include buffers, defines and include prefixes for one blocking
-  `llg_slang_parse_metadata` call and receives each distinct (source, role,
-  name) through a one-callback sink with the stream's panic/abort rules. It
-  rejects library maps, unknown sources/roles, empty or repeated names, and
-  bounds sources by `max_source_bytes`; parse diagnostics are discarded.
-- ABI v17 adds statement tag 68 (`LLG_SLANG_STMT_CONCURRENT_COVER_SEQUENCE`)
-  and subroutine auxiliary bit 11 (`LLG_SLANG_SUBROUTINE_DPI_EXPORT`); a new
-  tag or flag bit bumps the version on both sides together. Since SIM-041 the
-  bit is set on every instance's exported subroutine and `definition_name`
-  carries its export C identifier (no ABI change: an export is never an
-  import, whose linkage name uses the same field).
-- ABI v18 adds scope subkind 235 (`LLG_SLANG_SCOPE_ANONYMOUS_PROGRAM`).
-- ABI v19 adds edge role 39 (`LLG_SLANG_EDGE_DEFAULT_DISABLE`) from a
-  concurrent assertion statement to its inferred `default disable iff`
-  expression; the expression is owned by the first such statement.
-- ABI v20 adds variable auxiliary bit 8 (`LLG_SLANG_VARIABLE_CONST`) above
-  the resolved-lifetime byte (`LLG_SLANG_VARIABLE_LIFETIME_MASK`) for `const`
-  variables and class properties; validation admits no other variable bits.
-- ABI v21 adds semantic kinds 29 (`LLG_SLANG_SEMANTIC_CONSTRAINT_BLOCK`,
-  auxiliary block flags, BODY edge to the root constraint) and 30
-  (`LLG_SLANG_SEMANTIC_CONSTRAINT`, subkinds 1-8 with documented edge roles;
-  only an expression item carries `LLG_SLANG_CONSTRAINT_SOFT`), variable bits
-  9-10 (`RAND`/`RANDC`, mutually exclusive) and call bits 1-2
-  (`LLG_SLANG_CALL_CLASS_RANDOMIZE`/`SCOPE_RANDOMIZE`, at most one) with a
-  BODY edge to inline `with` constraints. Invalid constraints stay unsupported.
-- ABI v22 adds expression subkind 95 (`LLG_SLANG_EXPR_DIST`: LHS, OPERAND[i]
-  items, INDEX[i] `:=` / RIGHT[i] `:/` weights, `LLG_SLANG_DIST_DEFAULT` with a
-  DEFAULT_VALUE edge for the later-edition default weight) and foreach
-  constraint loop variables (auxiliary slot count, DECLARATION[slot] edges).
-- ABI v23 adds semantic kind 31 (`LLG_SLANG_SEMANTIC_COVERAGE`, subkinds
-  GROUP/POINT/BIN/CROSS/BODY with the edge roles documented in the header and
-  validated auxiliary covergroup/bin bits), type kind 22
-  (`LLG_SLANG_TYPE_COVERGROUP`), ARGUMENT edges on covergroup `new`
-  (expression 88), timing subkind 119 (`@@` block event list: REFERENCE[i]
-  targets, auxiliary bit i = `begin`) and argument bit 2
-  (`LLG_SLANG_ARGUMENT_COVERAGE_SAMPLE`). Declaration-only captures omit the
-  coverage edges.
-- ABI v24 adds coverage subkinds TRANS_SET/TRANS_RANGE (synthetic nodes owned
-  by a transition bin: OPERAND[i] range lists, then items, LEFT/RIGHT repeat
-  bounds, auxiliary repeat kind) and SELECT (one cross-bin select operator,
-  auxiliary `LLG_SLANG_COVER_SELECT_*`), a bin BODY edge to its select
-  expression, and cross ARGUMENT[i] (crossed coverpoints), CONDITION and
-  OPERAND[i] option edges with the `LLG_SLANG_COVER_CROSS_OF_CROSS` bit.
-- ABI v25 adds semantic kind 32 (`LLG_SLANG_SEMANTIC_PRODUCTION`: a
-  randsequence production symbol plus synthetic RULE, ITEM, CODE_BLOCK, IF,
-  REPEAT and CASE nodes with the edge roles documented in the header),
-  statement subkind 70 (`LLG_SLANG_STMT_RANDSEQUENCE`) and edge roles 40-41
-  (WEIGHT, RAND_JOIN). Production formals are exported as automatic
-  variables; only a DECLARATION (non-input formal bits) and a RULE
-  (`LLG_SLANG_PRODUCTION_RULE_RAND_JOIN`) carry auxiliary bits.
-- ABI v26 marks a `const'(expr)` conversion expression with auxiliary bit
-  `LLG_SLANG_CONVERSION_CONST` (`Db::is_const_cast`), so a procedural
-  concurrent assertion can tell it from an ordinary cast (16.15.6.1).
-- ABI v29 marks an assertion expression written in parentheses with
-  auxiliary bit `LLG_SLANG_ASSERTION_PARENTHESIZED`
-  (`Db::is_parenthesized_assertion`): Slang binds the parentheses away, and a
-  clocking event inside them does not flow out (16.14.3, decision A13-D1).
-- ABI v30 adds compile request bits 4/5 (`LLG_SLANG_COMPILE_DELAY_SELECT_MIN`/
-  `_MAX`, both together invalid) setting Slang's `minTypMax`, echoed as
-  snapshot bits 11/12 and decoded into `DelaySelection` (`Db::delay_selection`),
-  so the frontend's constants and the simulator's lowering use one operand.
-- ABI v31 adds statement tag 71 (`LLG_SLANG_STMT_CONCURRENT_RESTRICT`) for
-  `restrict property`, which the Db keeps as
-  `ConcurrentAssertionKind::Restrict` and the simulator does not verify
-  (16.15.4).
-- ABI v36 exports a `PATHPULSE$` specparam's limits and terminals: its
-  `constant_id` is the reject limit, its auxiliary is one more than the error
-  limit's constant id (0: none), and OPERAND[0]/LHS[0] name the resolved input
-  and output terminal declarations (`Db::path_pulses`, 30.7.1).
-- ABI v38 exports a timing check's arguments (TIMING_CHECK, semantic kind 33
-  subkind 4): auxiliary bits 0-7 keep the check code, bits 8-13 and 16-21 the
-  6-bit transition masks of event arguments 0 and 1 (01, 0x, 10, 1x, x0, x1;
-  z folds into x; 0 is no edge control), bits 32-47 the empty argument
-  positions and bits 48-55 the actual argument count. OPERAND[k] and
-  CONDITION[k] are event k's terminal and `&&&` condition, DELAY[i] limit
-  argument i (empty ones have no edge) and LHS[0] the notifier
-  (`Db::timing_checks`, 31.3-31.7).
-- ABI v40 adds the `$setuphold`/`$recrem` optional arguments: CONDITION[2] is
-  the timestamp_condition, CONDITION[3] the timecheck_condition, LHS[1] the
-  delayed_reference and LHS[2] the delayed_data signal (31.9).
-- ABI v41 exports the position of every primitive instance array element: its
-  auxiliary holds the array's element count in bits 32-63 and, in bits 0-31,
-  its slice of a connection as wide as the array, 0 for the right-hand
-  indices (28.3.6; `Db::primitive_array_position`). Slang slices input
-  connections itself but binds bidirectional switch terminals whole.
-- The source library-map flag requires a compilation-unit flag and parses the
-  original admitted buffer with Slang's map preprocessor and grammar.
-- Library include directories are ordered name/path pairs in the request;
-  `SourceLibrary` lookup uses them only for that library's admitted buffers.
-- Snapshot `source_libraries` records (v9) name one semantic node each, are
-  bounded by the semantic-node limit and charged to output bytes; reject unknown
-  or repeated nodes and empty library names.
-- Snapshot `line_directives` records (v10) give a file id, the byte offset of
-  the first line a `` `line`` directive maps, and the frontend's own logical
-  line and file there. Reject unknown files and offsets outside the file;
-  sort by file and offset and collapse agreeing duplicates (one include read
-  as several buffers), rejecting disagreeing ones.
-- Snapshot `edition_findings` records (v14) give a known-file source range and
-  a nonempty label, in capture order; at most `MAX_EDITION_FINDINGS`. Only a
-  Verilog-2001 compile produces them.
-- Bound defines, tops, includes, parameter overrides, source bytes, diagnostics,
-  value bits, output bytes, semantic records/edges and tokens on both ABI sides
-  before/during allocation. The capture arrives through the `LlgSlangSink`
-  stream (`slang/stream.rs` documents catalogue, order, ownership and error
-  flow): header counts are limit- and budget-checked before reservation,
-  strings are charged on receipt, tables must arrive in header order with
-  exactly the announced counts, and type/instance/node IDs must equal their
-  dense indices. Records are borrowed only for the callback; copy what is kept.
-  Trampolines catch panics, record only the first error and return
-  `LLG_SLANG_SINK_ABORT`; the bridge then returns status 5 and the receiver's
-  error wins. Non-OK returns an error owner (destructor accepts null). HDL
-  errors set the header's `has_errors`; argument/resource/setup/exception/
-  bridge failures return `SlangError`. Expose no native pointer or
-  native-storage lifetime.
-- `SemanticNode` is size-bounded (`semantic_node_stays_compact`). Add a boolean
-  as a `SemanticFlags` bit with a named accessor in `slang/node_flags.rs` (bits
-  0..=31 mirror the raw ABI flag word except the definition-kind bits 13..=15,
-  which the node keeps as an enum), not as a `bool` field. Node, type, constant
-  and edge-window references are stored as `u32` (`CompactId`, `u32::MAX` means
-  absent); decoding rejects an ID that does not fit, and readers use the
-  `u64`/`Option` accessors. Raise the size bound only with a measured reason.
-- Preserve paired value/unknown limbs, distinct real/shortreal widths and
-  arbitrary-byte SystemVerilog strings; every other ABI string is UTF-8.
-  Source ranges use admitted file IDs and zero-based half-open byte offsets;
-  absent IDs use the invalid-ID sentinel. Kinds/operations/subkinds/flags/roles/
-  lexical categories are stable repository codes, never Slang enums or pointers.
-- Check sequence repetition/ranges and `SequenceConcat` cycle ranges; convert
-  unbounded `UINT32_MAX` maxima to `Option<u32>`, rejecting invalid ranges/flags/
-  kinds. Validate optional member-default constant IDs; fixed-array defaults
-  cross as exact flattened bitstreams. Retain declaration-order violations in
-  compilation-unit lexical uses, including macro expansions.
-- Keep static `#[link]` metadata for wrapper, Slang and fmt. The library and every
-  final musl target must retain the required native archives/wrapping.
-- Bound UDP semantic nodes/edges; reject an edge budget above the native ceiling
-  `NATIVE_MAX_RECORDS` (`u32::MAX`). `Limits::default()` retains the
-  library/interactive budgets (256 MiB export, 4M semantic nodes, 16M edges,
-  1M constants). `Limits::simulator()` bounds nothing but memory: unlimited
-  source/export/value-bit bytes, every record count at `NATIVE_MAX_RECORDS`
-  and sources at `NATIVE_MAX_SOURCES` (2^24). These structural ceilings mirror
-  the wrapper's `kHardMax*`; keep them aligned. Each
-  row owns exactly one valid window. Wildcard indexing has snapshot-wide ceilings
-  of 65,536 assignments and 8 MiB key bytes; check expanded bucket/key costs before
-  allocation.
-- Lexical flag bit 3 (`LLG_SLANG_LEXICAL_DIRECTIVE`, owned `is_directive`)
-  identifies directive text, including unexpanded macro bodies, independently of
-  expanded/skipped state. Disabled conditional branch tokens also carry the skipped
-  flag, even when they occur inside a directive. Edition checks must not treat
-  inactive branches as source. Accept only the four defined bits and reject
-  reserved bits; update both ABI sides together.
-- `ConditionPattern` (`LLG_SLANG_EDGE_CONDITION_PATTERN`, role 38) pairs by index
-  with `Condition`; `THEN`/`ELSE` are separate branch roles at index zero. Extending the
-  semantic tag set does not change pointer/layout contracts. DB import validates
-  these relationships; capture must not turn a pattern match into a Boolean test.
+- Kinds, operations, subkinds, flags, roles and lexical categories are stable
+  repository codes, never Slang enums or pointers.
+- Add a `SemanticNode` boolean as a `SemanticFlags` bit with a named accessor
+  (`slang/node_flags.rs`), never a `bool` field. Raise the
+  `semantic_node_stays_compact` bound only with a measured reason.
+- Keep `Limits` ceilings aligned with the wrapper's `kHardMax*` (`slang.rs` docs).
+- Bound every count and byte total before allocation, on both ABI sides.
+- Keep the static `#[link]` attributes for wrapper, Slang and fmt; the library and
+  every final musl target must retain the native archives and wrapping.
 
-## Platform and filesystem calls
+## Platform and filesystem
 
-`process_memory.rs` reads Linux resident pages from `/proc/self/statm`, macOS
-`task_info` and Windows `GetProcessMemoryInfo`. Validate handles/structures;
-footprint multiplication saturates at `u64::MAX`. Preserve platform error sources.
-Unsupported platforms return a typed error, never a misleading zero footprint.
-Use checked/saturating conversions; shared policy remains in `memory_limit.rs`.
-
-`secure_fs` admits paths through owned directory handles and identity checks.
-Preserve capability-relative containment and race/symlink/reparse/hardlink
-protections rather than reverting to path-check-then-open operations.
-See [patch preparation](../../patches/README.md) for authenticated native inputs
-and staging guarantees.
+- `secure_fs` admits paths through owned directory handles and identity checks;
+  keep capability-relative containment and race/symlink/reparse/hardlink
+  protections, never path-check-then-open.
+- `process_memory.rs` holds OS calls only; policy stays in `memory_limit.rs`.
+  Unsupported platforms return a typed error, never a zero footprint.
+- Native input authentication and staging: [patch preparation](../../patches/README.md).
 
 ## Tests
 
-Exercise layout/tag validation, ownership on every error path, budget boundaries,
-exact values and copy-before-release. Prefer Rust-side FFI tests. Coordinate
-capture changes with [wrapper](../wrapper/AGENTS.md) and
-[owned DB](../core/AGENTS.md); consumers must not add independent native traversals.
+- Prefer Rust-side FFI tests: layout/tag validation, ownership on every error
+  path, budget boundaries, exact values and copy-before-release.
+- Capture changes go through the wrapper and the [owned DB](../core/AGENTS.md);
+  consumers never add native traversals.
