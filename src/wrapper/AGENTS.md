@@ -1,148 +1,60 @@
-# C++ capture and C ABI
+# Agent guide: src/wrapper
 
-The wrapper exports bounded Slang captures through a documented C ABI: after
-capture completes and the compilation is destroyed, it streams every table to
-the caller's `LlgSlangSink` in header order (bounded batches), releasing each
-table once delivered. Keep record layouts, table order and the stream header in
-sync with [FFI](../ffi/AGENTS.md); bump `LLG_SLANG_ABI_VERSION` on both sides.
-Export `extern "C"` functions only: no C++ templates/exceptions or Rust
-panics/generics cross the ABI. Match the CMake-configured C++ standard, existing
-naming/formatting and the C++ coding guide. Minimize includes/public-header
-implementation details; prefer RAII, smart pointers and references to raw owners.
-Do not introduce exceptions unless existing code uses them. Document ownership
-at every function and clarify uncertain assumptions. Capture-owned strings are
-interned stable borrowed views, never individually freed. Charge every occurrence
-against the logical export budget even when its bytes are shared; captures
-outlive temporary compilation and live until the stream ends.
-Keep [FFI](../ffi/AGENTS.md) layouts/errors/budgets aligned. `mimalloc_shim.c`
-redirects C malloc/free through GNU/LLD wrapping on musl.
+C++ Slang capture behind a documented C ABI. After capture the compilation is
+destroyed and every table streams to the caller's `LlgSlangSink`. Contracts:
+[readme](readme.md); ABI codes and layouts: `slang_c_api.h` comments.
 
-Native zero-request defaults remain 64 MiB export, 1M semantic nodes, 4M edges
-and 1M constants. Hard ceilings are structural only: `UINT32_MAX` for every
-record count (Rust stores 32-bit compact IDs), 2^24 source buffers (Slang's
-28-bit buffer IDs also number macro expansions) and none for source, export or
-value-bit bytes. Never preallocate in proportion to a limit, only to counts
-already captured. Reject edge requests above the ceiling before UDP work. Charge
-export records and strings before storing them, and name the effective exhausted
-budget in diagnostics. A larger export budget does not bound total Slang/Rust RSS.
-On glibc, a compile releases freed heap pages after compilation teardown and
-again after streaming, so freed frontend pages are not resident while Rust
-builds its owned copy and imports it. Semantic nodes live in a chunked table:
-growth never moves records (references stay valid across appends) and each
-chunk is freed after delivery. A sink abort throws `SinkAborted`, caught only
-at the C entry. Platform conditionals live only in `slang_platform.hpp/.cpp`;
-the C ABI file calls its neutral functions.
+## Directory map
 
-Capture's ordered pending edge vectors remain authoritative. Build role/index and
-child-target indexes only for parents with at least 64 charged edges. Keep cache
-positions aligned on append and role conversion; invalidate them when erases move
-positions or bulk operations replace roles. Child attachment keeps target dedup
-and the original next-child index, including gaps after role conversion. Avoid
-per-node index storage; many duplicate child positions can still make front
-removal linear in that target's duplicates.
+- `slang_c_api.h`: the C ABI (the source of truth for records, codes, edge roles
+  and auxiliary bits).
+- `slang_c_api.cpp`: compile, capture, metadata parse and streaming.
+- `slang_platform.hpp/.cpp`: the only platform conditionals (glibc heap trim).
+- `mimalloc_shim.c`: GNU/LLD `--wrap` of C `malloc`/`free` on musl.
+- `slang/`: vendored Slang (patched through `patches/slang/`; never edited here).
 
-`llg_slang_parse_metadata` (ABI v16) parses cache-only like a compile, never
-elaborates, and reports per unit its outermost declarations (modules,
-interfaces, programs, packages, primitives, checkers, classes) and Slang
-`ParserMetadata` references not declared anywhere in the same tree (nested
-definitions are local; `std` is skipped). Merged mode reports one tree under its
-first unit. Each tree is released before the next parse.
+## ABI and C++ rules
 
-Top-level parameter overrides are planned before the elaborating compilation
-exists: trees are parsed first, and when overrides are present a throwaway
-compilation sharing them creates default instances of the tops (requested, or
-uninstantiated outermost default-library modules/programs) to classify each
-target. String parameters take bare VALUE text as exact bytes unless the whole
-value is a quoted literal; an enum member name that does not resolve in the top
-becomes a cast of its value to the declared named type; type parameters get
-`type(VALUE)` (the tracked Slang patch applies it); unsized decimals of 2^31 or
-more get an explicit signed width (value bits plus one); local parameters are
-rejected (`LocalParameterOverride`) and dropped. Classification uses default
-types, so a type that depends on another override is not re-derived.
-Diagnostics show the given spelling: invalid-option messages and messages in an
-override value's `<command-line>` buffer map rewritten text back.
+- Export `extern "C"` functions only; no C++ templates or exceptions and no Rust
+  panics or generics cross the ABI.
+- Keep record layouts, table order, stream header and budgets in sync with
+  [FFI](../ffi/AGENTS.md); bump `LLG_SLANG_ABI_VERSION` on both sides.
+- Match the CMake-configured C++ standard and existing naming/formatting.
+  Minimize includes and public-header implementation details; prefer RAII, smart
+  pointers and references to raw owners. Add no exceptions where existing code
+  has none (`SinkAborted` is caught only at the C entry points).
+- Document ownership at every function; clarify uncertain assumptions.
+- Extend the shared ABI/DB rather than exposing another native traversal.
 
-## Capture
+## Capture rules
 
-- Consume only admitted cached buffers, never reopen paths or canonicalize through
-  live filesystem reads. Lexically normalize keys; include misses must fail
-  before content reads. Preserve source identity and typed facts. Apply mappings
-  through `DiagnosticEngine`, synchronously copy `ReportedDiagnostic` records,
-  and retain intrinsic errors despite suppression plus effective error severities.
-- Apply ordered library include prefixes to the matching `SourceLibrary` only;
-  every selected header must already be in the cache-only source set.
-- Parse flagged map buffers with `SyntaxTree::fromLibraryMapBuffer` before
-  compilation so configuration symbols retain native macro-use locations.
-- Library sources follow the compilation-unit mode: one syntax tree per file in
-  separate mode, one per library in merged mode. Export the source library of
-  each instance, package and compilation unit in the `source_libraries` table
-  (at most one record per semantic node), never inferred from file names.
-- Export each `LineDirectiveSyntax` the lexical capture visits as a
-  `line_directives` record: the offset of the next physical line and the
-  SourceManager's `getLineNumber`/`getFileName` there, so the values match the
-  preprocessor's `` `__LINE__``/`` `__FILE__``. A directive on the last line
-  maps nothing. Promote `RefArgAutomaticFunc` (ref formal of a static
-  subroutine, IEEE 1800-2009 13.5.2) and `BadProceduralForce` (force/release
-  of a variable select, IEEE 1364-2001 9.3.2, 1800-2009 10.6.2) to errors
-  before issuing diagnostics.
-- A Verilog-2001 compile runs `Verilog2001SyntaxProfile` over every syntax
-  tree after lexical capture. It is closed: a syntax kind absent from its
-  IEEE 1364-2001 Annex A allowlist is a finding (not descended into), and
-  admitted kinds get shape checks for optional parts 2001 lacks. Trees are
-  macro-expanded, so macro-built forms report at the use site through
-  `Capture::span`. Export at most `LLG_SLANG_MAX_EDITION_FINDINGS`
-  `edition_findings` records (range plus an ABI-owned English label); Rust
-  renders the diagnostic. When a Slang upgrade adds syntax kinds, classify
-  each against Annex A: unlisted kinds reject by default.
-- Snapshot ownership includes typed tables, lexical/source data and uninstantiated
-  source-instance records. Bound all size-derived allocation/traversal before work.
-  Preserve source spelling/coordinates without deriving semantics from text.
-- Library-unit recovery visits each module/generate body once, including referenced
-  definitions/scopes, and captures declaration topology, direct references and
-  named connections. Preserve exact type-dimension bindings. Associate temporary
-  instances with definition-parent scopes; use scoped Slang lookup for ports and
-  parameters. Recover initializer/continuous-assignment syntax when error types
-  lose operands, never across unrelated scopes. Actuals bind in their enclosing
-  module/generate scope even when isolated analysis lacks the child; labels bind
-  to child ports. Recovery is navigation-only under unchanged input/output limits.
-- Lexical kinds for typedef names come from Slang's resolved symbol kind. Cast
-  targets and `$bits`/`type()` operands bind to the alias their expression type
-  resolved, only when the spelling matches it. An instantiation type name whose
-  definition is outside the compilation keeps the module kind with no role, so
-  no navigation target is implied; a resolved binding for the token wins.
-- Instance-array names retain every source index, including negative/nonzero and
-  nested dimensions. Do not substitute flattened ordinals for HDL indices.
-- Slang slices instance-array connections as `X[l:r][i]`/`X[l:r][m:n]`. A
-  constant select inside a constant slice exports `X` as its base, because the
-  slice type keeps `X`'s numbering; a slice with a run-time base stays.
-- `ConditionPattern` role 38 pairs with its indexed condition; true/false edges
-  use explicit branch roles/index 0. Preserve matching syntax as typed patterns,
-  not Boolean conditions. Tag extensions do not change ABI pointer/layout rules.
-- A compound assignment whose right side (through conversions) is a call is an
-  overloaded update (IEEE 1800-2009 11.11): export `OVERLOAD_UPDATE` or, for
-  `isOverloadedPostfix`, `OVERLOAD_POST_UPDATE`, with the whole call as `RHS`;
-  its `LValueReference` arguments export `UPDATE_CURRENT`. Built-in compound
-  placeholders are never visited.
+- Consume only admitted cached buffers; never reopen paths or canonicalize
+  through live filesystem reads. Include misses fail before content reads.
+- Every selected library header must already be in the cache-only source set.
+- Charge every string occurrence against the logical export budget, even when
+  interned bytes are shared, and charge records before storing them.
+- Never preallocate in proportion to a limit, only to counts already captured.
+  Bound size-derived allocation and traversal before the work; reject edge
+  requests above the ceiling before UDP work.
+- Keep source spelling and coordinates; never derive semantics from text.
+- Preserve typed facts: matching syntax stays a typed pattern, not a Boolean
+  condition; instance-array names keep every HDL index, never flattened ordinals.
+- When a Slang upgrade adds syntax kinds, classify each against IEEE 1364-2001
+  Annex A for `Verilog2001SyntaxProfile`; unlisted kinds reject by default.
+- Changing the enabled unused/shadowed-declaration checks needs fixture evidence
+  and an LSP diagnostic-policy review. Default-expression handling needs
+  source-backed tests.
 
-## Assignment patterns
+## Pitfalls
 
-Retain an `OPERAND` for every position, even when positions share one expression
-ID. Resolved bound elements follow declaration order; translate Slang's
-increasing-index ordering where needed. If an intermediate default is erroneous,
-omit its placeholder without discarding valid bound elements. Unresolved index
-keys retain `INDEX` expression edges. Structural children may deduplicate shared
-IDs; indexed operands may not.
-
-Match the Slang driver's unused/shadowed-declaration checks; changing enabled
-checks requires fixture evidence and LSP diagnostic-policy review. Default
-expression handling needs source-backed tests, not assumptions that all defaults
-execute. Preserve type identity, member defaults, order and conversions. Extend the shared ABI/DB rather
-than exposing another native traversal to a consumer.
+- Pending edge vectors are authoritative; the role/index caches of high-fanout
+  parents must stay aligned on append and role conversion and be invalidated
+  when erases move positions ([edge indexes](readme.md#edge-indexes)).
 
 ## Validation
 
-Test ordinary capture and reduced library-unit capture, nominal types, ordered
-operands, repeated IDs, source bindings, budgets and rejection paths. Snapshot
-users must remain correct after native owners are destroyed. Wrapper edits rebuild
-the shim; Slang/CMake/patch edits may rebuild the frontend. Preserve the root
-build's static library and portable patch-preflight integration.
+- Test ordinary and reduced library-unit capture, nominal types, ordered and
+  repeated operands, source bindings, budgets and rejection paths.
+- Snapshot users stay correct after native owners are destroyed.
+- Wrapper edits rebuild the shim; Slang/CMake/patch edits may rebuild the
+  frontend. Keep the root build's static library and patch-preflight integration.
