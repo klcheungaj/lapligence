@@ -556,19 +556,62 @@ fn unexported_definitions(source: &str) -> Vec<String> {
     missing
 }
 
+/// Import definitions in `source` that carry `DPI_DLLESPEC` after a
+/// prototype of the same function without it. MSVC rejects the definition:
+/// `__declspec(dllexport)` on only one of the two is C2375 "redefinition;
+/// different linkage" (CI: sim_039's `endpoints_dpi.c(10)`). Prototypes of
+/// the design's exports (no definition here) stay unmarked.
+fn mismatched_prototypes(source: &str) -> Vec<String> {
+    let lines: Vec<&str> = source.lines().collect();
+    let name = |line: &str| {
+        let head = line[..line.find('(')?].trim_end();
+        let start = head
+            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .map_or(0, |at| at + 1);
+        Some(head[start..].to_owned()).filter(|name| !name.is_empty())
+    };
+    let mut plain = Vec::new();
+    let mut mismatched = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let starts_declaration = line.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+            && line.contains('(')
+            && !["static", "typedef", "struct", "enum", "union"]
+                .iter()
+                .any(|keyword| line.starts_with(keyword));
+        let Some(function) = name(line).filter(|_| starts_declaration) else {
+            continue;
+        };
+        let end = lines[index..]
+            .iter()
+            .flat_map(|line| line.chars())
+            .find(|c| matches!(c, '{' | ';' | '='));
+        let exported = line.contains("DPI_DLLESPEC");
+        match end {
+            Some(';') if !exported => plain.push(function),
+            Some('{') if exported && plain.contains(&function) => {
+                mismatched.push(format!("{}: {line}", index + 1))
+            }
+            _ => {}
+        }
+    }
+    mismatched
+}
+
 /// A Windows DLL exports only what is marked: an unmarked import definition
 /// leaves the model's link without the symbol, and a DLL that exports
 /// nothing gets no import library for `--dpi-lib` (CI round 6: sim_039's
 /// `endpoints_dpi_dll.lib` "is not a regular file"). Every `svdpi.h`
 /// companion that the DLL helpers build marks each import definition
-/// `DPI_DLLESPEC`, which is empty on ELF and Mach-O hosts. `sim/dpi` is the
-/// Unix-only `sim_dpi` suite, which never builds a DLL.
+/// `DPI_DLLESPEC`, which is empty on ELF and Mach-O hosts, and marks a
+/// prototype of one the same way. `sim/dpi` is the Unix-only `sim_dpi`
+/// suite, which never builds a DLL.
 #[test]
 fn dll_companions_export_every_import_definition() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sim");
     let mut pending = vec![root.clone()];
     let mut checked = 0;
     let mut missing = Vec::new();
+    let mut mismatched = Vec::new();
     while let Some(directory) = pending.pop() {
         for entry in std::fs::read_dir(&directory).expect("read fixture directory") {
             let path = entry.expect("fixture entry").path();
@@ -591,6 +634,11 @@ fn dll_companions_export_every_import_definition() {
                     .into_iter()
                     .map(|line| format!("{}:{line}", path.display())),
             );
+            mismatched.extend(
+                mismatched_prototypes(&source)
+                    .into_iter()
+                    .map(|line| format!("{}:{line}", path.display())),
+            );
         }
     }
     assert!(checked > 20, "found only {checked} svdpi.h companions");
@@ -604,5 +652,23 @@ fn dll_companions_export_every_import_definition() {
             "int f(int a,\n      int b)\n{\n    return a;\n}\nint g(void);\nvoid (*t[])(void) = {0};\n"
         ),
         ["1: int f(int a,"]
+    );
+    assert!(
+        mismatched.is_empty(),
+        "import definitions marked DPI_DLLESPEC after an unmarked prototype (mark the \
+         prototype too; MSVC C2375):\n{}",
+        mismatched.join("\n")
+    );
+    assert_eq!(
+        mismatched_prototypes(
+            "int sv_export(void);\nvoid f(int t);\nDPI_DLLESPEC int g(int a);\n\
+             DPI_DLLESPEC void f(int t)\n{\n}\nDPI_DLLESPEC int g(int a)\n{\n    return \
+             sv_export() + a;\n}\nconst char *h(const char *s,\n    int n);\n\
+             DPI_DLLESPEC const char *h(const char *s, int n) { return s + n; }\n"
+        ),
+        [
+            "4: DPI_DLLESPEC void f(int t)",
+            "13: DPI_DLLESPEC const char *h(const char *s, int n) { return s + n; }"
+        ]
     );
 }

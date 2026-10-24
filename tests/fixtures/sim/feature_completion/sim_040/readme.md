@@ -17,7 +17,10 @@ macro that exports it from a Windows DLL and is empty elsewhere (Annex I,
 application */ / #if defined (_MSC_VER) / #define DPI_DLLESPEC
 __declspec(dllexport) / #else / #define DPI_DLLESPEC"). On Windows the
 companion is a DLL linked against the design's import library
-(`llg --dpi-import-lib`), so its `svdpi.h` calls bind to `sim.exe`.
+(`llg --dpi-import-lib`), so its `svdpi.h` calls bind to `sim.exe`. A
+prototype of an import definition carries `DPI_DLLESPEC` too, since MSVC
+rejects a definition whose `__declspec(dllexport)` an earlier declaration
+lacks (C2375); prototypes of the design's exports stay unmarked.
 
 Line numbers refer to `SystemVerilog-1800-2009.txt` (a `pdftotext -layout`
 extraction of IEEE 1800-2009).
