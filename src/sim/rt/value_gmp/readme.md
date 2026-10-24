@@ -196,3 +196,15 @@ generated projects carry both under `gmp/`. Under LGPLv3 alone (a differently
 licensed runtime), static linking would additionally require relinkable object
 files. Only the legacy and portable development references build without GMP.
 See `THIRD_PARTY_NOTICES.md`.
+
+## Editing rules
+
+The facade-wide rules (no legacy fallback, GMP only in `kernels.c`, sign of
+resize vs cast, oracles) are in [value/facade.md](../value/facade.md).
+
+- [facade_audit.md](facade_audit.md) lists the remaining facade surface.
+- Build the separate translation units through
+  `tests/runtime_value_storage/compact_value.cmake`.
+- Keep every operation other than the kernels on direct word loops.
+- Mask top padding and remove a zero B plane before every publication.
+- Test with both kernel configurations.

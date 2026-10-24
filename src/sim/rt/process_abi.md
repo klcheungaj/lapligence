@@ -12,7 +12,7 @@ the process marker rejects stale model/header combinations. Runtime-content
 cache keys select rebuilt archives. Entry, scheduling and llg_co
 frame-header/call conventions are unchanged. Nodes and descriptors live in their
 caller-owned frame or outer C scope through final scope release, which precedes
-frame reclamation. See [ownership and retainer rules](AGENTS.md#frame-resident-cells).
+frame reclamation. See [ownership and retainer rules](scheduler/readme.md#frame-resident-cells).
 
 Every generated `model.c` starts its runtime includes with an explicit marker
 and compile-time check:

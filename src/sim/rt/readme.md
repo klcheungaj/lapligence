@@ -14,7 +14,7 @@ packed operands by address, so generated frames hold no per-call-site
 returned-descriptor temporaries; the returning forms remain for runtime code.
 Proven non-escaping locals register caller-owned scope nodes and cells in
 coroutine frames or frame-less functions' C scopes. Escaping and unproven cells
-keep heap owners. [Retainer and lifetime rules](AGENTS.md#frame-resident-cells)
+keep heap owners. [Retainer and lifetime rules](scheduler/readme.md#frame-resident-cells)
 cover exact-pointer indexing, final history removal and zero-resume exits.
 
 Fixed integral variable arrays above the dense threshold use
@@ -241,6 +241,53 @@ which share the stack and cannot be bounded by the runtime. Default 8 MiB
 stacks, including the 8176 KiB macOS reports, stay quiet. Generated MSVC
 projects reserve the larger of the estimate and the 1 MiB Windows default with
 `/STACK`.
+
+Only facade translation units compile; the fragment order above must match the
+`include_str!`/`concat!` flat embedding. Never include value
+implementation in the scheduler or export private shared state to dodge assembly
+rules. Value/random/RNG/`llg_co` sources are independent; runtime, string and
+container sources require values, and containers do not require the scheduler.
+
+Shared-body startup uses `llg_spawn_instance_in_region` or its program variant
+(contract in `llg_rt.h`): the copied record pointer is checked against the header
+and descriptor frame size, no record ownership or cleanup transfers to the
+runtime, and roots without an instance-record field keep the other spawn services.
+
+## Platform notes
+
+General platform handling: [cross-platform guide](../../../docs/cross_platform.md)
+([Windows](../../../docs/cross_platform.md#windows-msvc),
+[macOS](../../../docs/cross_platform.md#macos),
+[arm64](../../../docs/cross_platform.md#arm64)).
+
+- The platform layer rules are in the `llg_compiler.h`, `llg_platform.h` and
+  `llg_platform_native.h` header comments. Add a service there before adding a
+  compiler/OS conditional anywhere else; that includes generated C and runtime
+  probes. Exceptions: `llg_co.h` (own `LLG_CO_*` macros) and bundled
+  third-party sources, whose required changes are tracked patches in
+  `patches/libfst` ([patch docs](../../../patches/README.md#libfst)); never
+  commit the applied state.
+- Generated models and runtime sources build warning-clean with
+  `-Wall -Wno-unused-function` (MSVC `/W3`); flags and levels are in the
+  [model build](../build/readme.md).
+- Standalone probes also build with MSVC `/W4 /WX`, at `/O2` for the
+  `strict_c11_executable` tests. Avoid what GCC/Clang `-Wall -Wextra` accept but
+  MSVC rejects:
+  - a statement after an unconditional call to an `abort()` helper (C4702 once
+    `/O2` inlines it; declare the helper `_Noreturn`);
+  - a local assigned only inside a `while` loop (C4701; use `do`);
+  - an array of pointers to const passed as `void*` (C4090);
+  - a tentative definition `static const T x;` that a later initialized
+    definition completes (C4132; declare the function it names and define the
+    object before its first use).
+- Clang `-Wunreachable-code` and `-Wconditional-uninitialized` approximate the
+  first two; nothing approximates C4132. The `runtime_strict_sources` suite runs
+  Clang's `-Wmissing-noreturn` and `-Wunreachable-code-aggressive` as errors over
+  every probe-built source (it cannot see dead code from a macro expansion such
+  as `return NULL;`). Generated models still forward-declare descriptors that
+  way, because mutual recursion needs it; they build at `/W3`.
+- User DPI/VPI C code shares the host stack and is covered only by the stack
+  headroom above.
 
 ## Validation and limits
 
