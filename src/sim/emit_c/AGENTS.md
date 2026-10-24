@@ -1,714 +1,82 @@
-# Owned C11 emission
+# Agent guide: src/sim/emit_c
 
-Applies to `emit_c.rs`, `emit_c/owned.rs` and children. Read
-[pipeline](../AGENTS.md), [lowering](../codegen/AGENTS.md) and
-[runtime ownership](../rt/AGENTS.md). Consume validated `ExecutionModel` only;
-no frontend/DB/FFI/VPI dependencies or reparsing opaque C fragments.
+Renders a validated `ExecutionModel` into one standalone C11 `model.c` (plus
+`model.symbols.tsv`) with ordered setup, evaluation and cleanup, linked against
+the embedded [runtime](../rt/AGENTS.md). Applies to `emit_c.rs`, `emit_c/` and
+`owned/`. Module overview: [readme](readme.md).
 
-## Evaluation and scopes
+## Core abstractions
 
-Every function that may suspend, every non-final process and every fork branch
-uses an explicit POD coroutine frame and the `llg_co_fn` entry ABI. Finals
-remain plain `void fn(void)` calls. Route all
-typed procedure storage through `Frame::declare` (or its array/loop wrappers):
-`CStack` emits the declaration in place, while `CoFrame` first registers a unique
-candidate and decides its storage after seeing the complete block tree. A
-candidate whose declaring block and descendants have no resume point remains an
-ordinary C local; otherwise it is a frame field initialized at the original
-declaration point. Coroutine arguments are frame fields. An unshared zero-resume process
-keeps marks, temporaries and ordinary procedure storage on the C stack.
-Intrusive nodes and cells always occupy frame fields, including zero-resume
-processes: a termination check can return before runtime scope unwind. A
-frame-less function declares its intrusive nodes/cells in the outer C scope,
-so common-return unwinding can access them after an inner block has been left.
-`Frame::line` structurally tracks every C body brace and rejects an unbalanced
-body. `FrameLayout` records that exact tree, then flattens every chain with only
-one storage-bearing child into one struct level. Only two or more storage-bearing
-sibling blocks create deterministic `uN.bK` overlays; empty blocks emit nothing.
-Under `LLG_CO_DEBUG`, poison each actual sibling-overlay struct on normal exit
-and after owner unwind on a nonlocal named-block jump. Loop-break poisoning
-must break before rereading the dead condition field; use the debug-only loop
-exit macro. Poison completed frame payloads after common-return scope cleanup
-to cover early returns. Resolve these sites only
-after layout flattening: a flattened child cannot poison a struct containing
-still-live parent fields. Lexical scope destruction precedes poisoning; escaped
-fork/ref/NBA owners remain in their existing retained heap cells. Callee payload
-poisoning precedes argument transfer and declaration initialization for both
-embedded call mechanisms and arena acquisition. Preserve headers/anchor prefixes
-and the populated-frame CALL macro contract. Emit all added statements inside
-`#ifdef LLG_CO_DEBUG`; release emission and frame layouts stay unchanged.
-Parent storage remains live and typed declarations still bind to the active raw
-block before finalized paths rewrite the generated body. Do not emit a
-coroutine-body structural brace outside that path or retain an overlaid field
-access after its block closes.
+- **`Frame`** — one procedure body being rendered; owns declarations
+  (`Frame::declare`), C lines and braces (`Frame::line`), scopes and resume sites.
+- **`CStack` / `CoFrame`** — plain C storage vs coroutine POD frame storage,
+  decided after the whole block tree is seen.
+- **`FrameLayout`** (`frame_layout.rs`) — exact block tree, flattened chains,
+  sibling `uN.bK` overlays, call-site unions, LP64 upper bounds, GC maps.
+- **`Value`** (`owned.rs`) — result code, shape and ownership (owner vs borrow).
+- **Destinations** (`destinations.rs`) — every packed/string result goes
+  through the runtime's `_to` destination forms.
+- **`PackedConstants`** (`constants.rs`) — per-model deduplicated constants.
+- **Sharing** (`model/sharing.rs`) — exact instance body sharing with
+  per-instance records.
+- **Names** (`names.rs`) — source-name escapes and the 32-character
+  identifier registry.
 
-Scope narrowing is safe because resume dispatch labels occur only in blocks
-marked as containing their suspension site: dispatch never jumps into a narrowed
-block or past a narrowed declaration's initialization. Cancellation, loop-control
-and named-block gotos only leave lexical blocks. Keep GCC
-`-Werror=jump-misses-init` as an independent check. The generated-C escape lint
-may accept the address of a local declared in a resume-free block, but must reject
-an address of C-stack storage whose declaring block contains a resume point.
+## Directory map
 
-Emit coroutine frame types callee-first, one typedef per distinct layout:
-frames that render identically once embedded callee types are replaced by their
-own layout group (every instance of one process or task) share one
-`llg_shared_frame_<k>_t`, while a layout used once keeps `<fn>_frame_t`; bodies,
-descriptors and layout assertions all name the shared type. Each storage-bearing block's polled
-callees occupy ordinary members of its deterministic `union callsN`, anchored
-callees use `LLG_CO_ANCHORED(T)`,
-and recursive or oversized callees use `ch->arena`. Descriptor
-offsets use the complete nested member path.
+- `emit_c.rs` — facade; legacy fragment APIs stay fail-closed.
+- `owned.rs`, `owned/` — expressions, lvalues, calls, captures, native
+  services, scopes; `owned/model/` storage, initialization and lifecycle API.
+  Map: [owned/readme.md](owned/readme.md).
+- `model.rs`, `model/` — whole-model assembly: storage, processes, functions,
+  classes, DPI, VPI, net batches, recursion, sharing.
+- `frame_layout.rs`, `destinations.rs`, `constants.rs`, `names.rs`,
+  `containers.rs`, `objects.rs`, `expressions/`, `statements/` — shared helpers.
 
-Recursive synchronous subprograms (`ExecutionAnalysis::is_recursive_function`)
-render twice from the same body: `<fn>_co` in a `Frame::new_recursive` frame and
-the plain-ABI entry `<fn>`, which copies its parameters into an arena frame from
-`llg_co_sync_begin` and runs `llg_co_sync_run`. Every caller outside the
-component, including dispatchers and DPI export thunks, keeps calling `<fn>`. The
-coroutine keeps plain-function exits (`llg_rt_exiting`, budget and
-cancellation `goto _llg_return`, `llg_current()` for `self`), numbers its
-resume points as it emits arena calls, and writes its result through the
-`_llg_result` frame pointer at `_llg_return`; the guard writes the result
-default. Arena call sites store by-value packed descriptors, `depth + 1` and a
-destination that survives the resume (temporary slot, reserved native object or
-frame scalar). Dynamic calls use per-slot/method helpers returning an anchor for
-a recursive implementation and NULL after a plain call or dispatch failure.
-Class virtual slots with a suspending implementation
-(`ExecutionAnalysis::suspendable_dispatch_slots`, SIM-011) use the same
-helper from any coroutine at an arena call site; their plain dispatchers
-fail instead of entering a coroutine with plain arguments.
-A failed null class or virtual-interface access is fatal at once (S99-D8; a
-virtual-interface failure skips the final procedures, a class one runs them,
-S99-D11):
-inside a statement, the owned emitter checks the access result and leaves the
-process (`LLG_CO_EXIT_CHECK`, or `goto _llg_return` in plain functions) before
-the rest of the statement, and checks the exit flag after a plain or dispatched
-call whose effects include `Terminate`. The checks sit on the failure branch, so
-code without such accesses or calls is unchanged.
-The legacy fragment emitter (`statements.rs`, `expressions.rs`, `objects.rs`
-and their children, and the `#[allow(dead_code)]` legacy model renderer in
-`model/`) does not get these checks and is development-only: its public entry
-points `render_expr`, `render_stmt` and `render_pre_fn` return
-`OWNER_MIGRATION_DIAGNOSTIC` before rendering, no code outside `emit_c` calls
-them (`emit_decoupling::legacy_fragment_emitter_has_no_callers_outside_emit_c`,
-`legacy_fragment_emitter_rejects_valid_ir`), and with those entry points cut off
-rustc reports `render_stmt_impl` and `render_expr_impl` unused. Port a
-behaviour to it only together with a user-reachable path.
-Compute conservative LP64 upper
-bounds with every embedded call charged its 16-byte anchor prefix and sibling
-blocks contributing their maximum rather than their sum; the named
-`ExecutionAnalysisOptions::embed_limit` tunable defaults to 16 KiB and forces
-larger callees onto the arena. Descriptors contain the real entry function;
-numbered site tables and dispatch cases must remain one-to-one with every
-emitted await or suspendable call.
+## Conventions and pitfalls
 
-Specification arrays passed to a runtime arm that copies them before returning
-(`llg_arm_any_dependencies`, `_any_events`, `_events`, `_order`, `_mixed`,
-`_clocking_cycle`, `_expressions` and the dependency lists inside its
-descriptors; the copy contract is documented on each declaration in
-`llg_rt.h`) are compound literals inside the `LLG_CO_AWAIT` arm expression via
-`Frame::arm_array`: no frame field, no `memcpy`. A literal's lifetime is the
-enclosing block, which covers the arm call. Route only arm arguments through
-it, and only when the runtime does not keep the array or a pointer into it;
-nonblocking registrations (`llg_nba_event_*_when`), `wait_order`'s result flag
-and event handles the runtime resolves later keep declared storage.
-Initializers are evaluated into scalars before the await, so a literal may be
-repeated at several arm sites (clocking cycles).
+- Consume only validated `ExecutionModel`: no frontend, DB, FFI or VPI
+  dependency and no reparsing of opaque C fragments
+  (`tests/emit_decoupling.rs`). Keep `G_`/`p_`/`D_` names and the first
+  `model.c` header line.
+- Unrepresented storage, captures or callbacks fail with specific errors;
+  never add a legacy-fragment or `Verbatim` fallback.
+- Declare all typed procedure storage through `Frame::declare` and emit every
+  body brace through `Frame::line`; never keep an overlaid field access after
+  its block closes.
+- Debug poisoning goes inside `#ifdef LLG_CO_DEBUG` only; release output and
+  frame layouts must not change.
+- Install packed/string results through `destinations`; register a new
+  value-returning runtime call there with its `_to` declaration.
+- Rendering stays linear in instances: build model-wide indexes once
+  (`StorageNames`); no per-access scans of signals, functions or objects.
+- Generated identifiers are standard C (never `$`) and at most 32 characters;
+  runtime API names and foreign DPI symbols keep their exact spelling. Labels,
+  VPI/waveform names and diagnostics stay source-derived.
+- The owned (production) and borrowed (test) paths must produce
+  byte-identical `model.c` and `model.symbols.tsv`.
+- The process-global runtime runs one model at a time; keep value ABI 4/5 and
+  `LLG_MODEL_PROCESS_ABI 3` aligned with the runtime.
+- Component or hand-written C probes do not prove emitter behaviour; use real
+  IR-to-C emission and HDL runs.
 
-Within each struct level, fields observed by the first generated continuation
-statement after a Phase-2 suspension are emitted first, preserving declaration
-order within hot and ordinary groups. The continuation probe ends at the next C
-statement boundary, including the cancellation check after a wait. This is a
-deterministic cache-line heuristic, not a liveness proof.
+## Commands
 
-Frame fields that are assigned once and only read afterwards (`_llg_t`,
-`_llg_frame_base` and the `_llg_local_N` cell pointers; `_llg_temp_scope` is
-write-only) are mirrored by C locals of the same name (`owned/cached_fields.rs`,
-design §13.2 rule 2), because every `F->` load is possibly aliased for GCC. The
-local is declared without an initializer before `LLG_CO_DISPATCH_BEGIN`, assigned
-together with the field (`x = F->x = init;`, or right after the prologue) and
-reloaded from the frame on the line after every suspension macro, for the cached
-fields whose C scope is open there: a resume jumps into the macro with every local
-indeterminate. Stability rests on the runtime never moving a value scope's array
-and on the prologue being skipped by the dispatch. Emission still checks the final
-text: a candidate with any other write, address-of or member access, one that
-narrowing turned into a C local, and one read no more often than it is reloaded
-(`CACHE_MIN_READS_PER_RELOAD`) stays a frame field. Keep reload placeholders out of
-`Frame::line`, which would make them the continuation probe's first statement. Add
-a new cached kind only after proving it is assigned only at its declaration. The
-frame lint rejects a cached local read after a suspension without a reload.
+```sh
+cargo nextest run --test general emit_decoupling generated_c_frame_lint generated_c_determinism
+cargo nextest run --test sim_stack_bounds --test sim_instance_sharing --test sim_compact_names
+cargo nextest run --lib sim::emit_c
+```
 
-Cancellation checks (`llg_activation_cancelled()`) follow only cancellation
-points: resume points, `disable`, calls whose callee may disable (the Phase-2
-`Disable` effect) or dispatch dynamically, and the exit of a named block that
-was left through a check. Only `llg_disable_target` sets an activation's
-`disabled` flag, so nothing else can cancel a running process. A check straight
-after a call, an await or a leaf statement covers its points; compound
-statements re-check at their end while any point inside is uncovered, so a
-point in one branch is never checked only in another. Copy-out and later
-operands after a cancelled call stay skipped.
+## Contracts
 
-`Value` carries code, width/sign/fill metadata and an optional owning descriptor slot.
-`expression` returns an owner; `operand` may return a synchronous packed borrow
-with its original registered address for later ownership materialization.
-Emit ordered setup, calls and cleanup, not nested allocating C expressions.
-Non-addressable real results are scalar temporaries; addressable real locals use registered stable cells selected by the escape
-proof below.
-Packed locals have separate lexical cells from expression temporaries.
-No compiler cleanup attributes, statement expressions, VLAs, alloca, C++
-destructors or simulation-lifetime temporary arena.
-
-Borrow packed inputs, own every value-returning operation, and destroy consumed
-owners immediately. `owned/operands.rs` admits direct packed signal/local and
-pooled-constant borrows only at synchronous consumption sites. A binary's earlier
-operand is snapshotted when the later subtree can call, mutate, suspend or contains
-an unproven kind. Selected assignment targets keep an owned RHS while capturing
-selectors; whole signal/reference assignments may borrow through their one
-alias-safe publication call. General expression, call arguments, delayed writes,
-stream fan-out, sampled reads and callback outputs retain owners. Never destroy,
-move or retag a borrow. Read-only private stores materialize an owner before move.
-
-Elide packed cast/resize only when width and signedness match and there is no
-context fill. Two-state coercion remains explicit. VPI callback results first
-normalize to their declared HDL width/sign: registration
-may choose a different runtime shape, and the call arguments specify fallbacks.
-Reuse an owned operand's descriptor for a fresh result, choosing the later owner
-when the earlier operand is borrowed. Install every packed or string result
-through `emit_c::destinations` (`Frame::assign`, `assign_string`, `move_string`):
-it renders the runtime's destination form `op_to(&dst, &a, &b, ...)`, so neither
-a returned descriptor nor a by-value operand needs a per-call-site stack
-temporary, and a generated frame does not grow with its body length
-(`tests/sim_stack_bounds.rs`). Register a new value-returning runtime call there
-together with its `_to` declaration; unregistered producers fall back to
-`sv4_replace`. Non-coroutine functions return packed results through a trailing
-`sv4_t* _llg_result` and borrow packed inputs as `const sv4_t*`. Wide constant
-limbs used by startup code live in file-scope tables, not compound literals.
-Runtime arithmetic may reuse same-width payloads; multiply must preserve aliased
-inputs until completion. No HDL destination is mutated before scheduler publication.
-
-Each model's `PackedConstants` registry deduplicates canonical packed constructors
-by width, signedness and all three planes, including expanded fills. Procedures
-borrow its immutable owners or clone when a retained result is required. Initialize
-constants before model defaults/initializers and destroy them after runtime queues
-and model storage at close. One-limb literals use the initializer directly,
-keeping them cheap with inline small values and avoiding extra startup owners.
-An unsigned constant of at least `PERIODIC_CONSTANT_MIN_BITS` (4096) bits that
-repeats its shortest exact period at least four times (such as a dense array's
-default value) registers that period and a startup `sv4_repeat` of it, so its
-table does not grow with the element count. Registration follows deterministic typed emission, never generated
-C parsing or corpus-specific rules. Ending a local scope drops its lexical cell
-reference; pending NBA/clocking records retain the descriptor until commit/discard.
-This protects identity, not shared/COW packed values. Preserve procedure-root
-arguments/results across yields. Clone returns before unwinding cells that queued
-writes may still reference. Cancellation unwinds registered scopes without
-resuming coroutines or depending on C stack unwinding.
-
-Register pooled constant width/sign facts with instance sharing. Generated
-instance bodies may load immutable constants from typed record operands, just as
-their literals previously varied per site; constant pointer identity does not
-constrain the sharing key. Preserve the existing width/sign and non-generated
-parameter-payload exclusions.
-
-Freeze output targets/indices before calls. Keep arguments/copy-out temporaries
-alive across suspension; do not admit native-real NBA targets without equivalent
-retention. Inline numeric calls reserve escaping results in the caller before
-private callee storage and rename internal labels. Static callback returns require
-the lowering proof of independence from prior calls; ordinary static calls retain
-persistent return storage. Static output temporaries retain prior values unless
-inout initialization supplies a value; automatic ones receive typed defaults.
-
-`UdpEval` references one typed model-level definition. `owned/udp.rs` emits one
-immutable table per definition, shared by scalar and array instances. Up to
-`UDP_DENSE_INDEX_MAX_INPUTS` (10, the IEEE 1364-2001 8.1.4 minimum) inputs it is a
-dense `3^n` output index built from the rows at generation (first match wins,
-unmatched X); an evaluation reads each input's bit-0 state with `llg_sv4_state`
-(Z folds to X in `llg_udp_digit`) and makes one `sv4_fill` of the loaded state.
-Inputs are read in order; they are borrowed in place only when every input is a
-stable expression, and a constant bit or one-bit part-select of a borrowed base
-reads that bit directly, so no input owner or copy exists. Wider definitions keep
-the row-major masks and one `sv4_udp_eval` scan. Gate lowering passes plain
-scalar input expressions and keeps selected output indices, sensitivity,
-strengths and inertial publication. Row count affects only table data, never the
-executable gate body.
-
-Module path sets are table data, not per-instance initializers
-(`owned/model/initialization/instance_tables.rs`). Storage emits the zeroed
-set records and pools: `llg_path_dest_pool`, the writable row pool
-`llg_path_row_pool` (one `llg_module_path_t` per path, set-major, so SDF
-entries address `&llg_path_row_pool[row]`) and, when limits are used,
-`llg_path_limit_pool`. One interned `llg_path_template_<k>_*` row/destination/
-style/limit table per distinct set shape (a module's specify block) plus one
-`llg_path_templates[]` row carry everything instance-independent, including
-the condition evaluator; per set, `llg_path_sets[]` holds `{ set, scope,
-template, condition context }` and the instance's source and destination
-references fill `llg_path_source_refs` and `llg_path_dest_nets`. The storage
-defaults run one `llg_module_paths_layout` loop, which copies template rows
-into the pools in set order, before the pulse configuration, startup SDF and
-the `llg_module_paths_start` loop. ADV-008 condition evaluators
-(`llg_path_set_<n>__conditions`, MonEval-shaped) take the set's
-`condition_context`: an evaluator shared by instance sharing reads its
-instance record from it, an unshared one gets NULL.
-`llg_module_paths_configure` is emitted only when `IrModel::path_pulse`
-differs from its default. Models without paths are unchanged.
-Switch networks emit two constant tables after the net groups
-(`llg_switch_nodes`: net pointer and bit; `llg_switches`: node pair and
-flags), an optional direct-control table (`llg_switch_controls`: control
-storage, bit, switch, invert) and one `llg_switches_start` (then
-`llg_switch_controls_start`) after the net delays start; a `SwitchControl`
-statement is one `llg_switch_control` call. Models without
-switches emit neither, so their `model.c` is unchanged.
-Timing check sets follow the same template scheme: storage emits the set
-records and the terminal, check and line pools (`llg_timing_check_pool` rows
-are writable for annotation and addressed by SDF as
-`&llg_timing_check_pool[first + check]`) and `llg_timing_set_<n>__pairs` for
-combined checks a negative annotation re-solves; `llg_timing_template_<k>_*`
-terminal/check/line tables and `llg_timing_templates[]` rows hold each set
-shape once, `llg_timing_values` (terminals, then notifiers) and
-`llg_timing_line_nets` hold the instance references, and one
-`llg_timing_checks_layout` loop runs before `llg_timing_checks_configure(0)`
-(when reports are off), the doorbell and the `llg_timing_checks_start` loop.
-Rows carry `condition2`, `flags`, notifier indices and the set its `.lines`
-(delayed signals: source/target terminal, net and driver slot or none,
-rise/fall). `TimingCheckStep` emits `llg_timing_checks_run();`. Models
-without timing checks are unchanged byte for byte.
-SDF annotations (`model/storage.rs` `render_sdf_annotations`) emit, only
-when the model has any: the writable gate delay array
-`llg_sdf_gate_delays` (annotated gates read their triple from it),
-`llg_sdf_load_<n>` interconnect entry tables, and one
-`llg_sdf_annotation_<n>` per annotation (a `llg_sdf_op_t` array with
-designated `.kind/.flags/.delay/.reject/.error/.derive/.first` and target
-fields, and the value array). `IrStmt::SdfAnnotate` emits
-`llg_sdf_apply(&llg_sdf_annotation_<n>);`; startup annotations emit the same
-call in the storage defaults, after the path and timing layouts and before
-the first `llg_module_paths_start`.
-Only destination groups gain `.propagation_enabled = 1` and per-bit
-path-stage records; a model without paths emits exactly what it did
-before. A delayed group with separately driven parts emits its part bounds
-and one record slot per part; a group that starts X calls
-`llg_net_start_unknown` in the storage defaults, after the runtime delay
-store when its net delay is runtime-valued. Groups with `driven_runs` (T0-D3)
-share deduplicated run tables and call `llg_net_start_driven` after the net
-storage loop; the storage teardown calls `llg_net_start_release`. Startup
-net fills (`WriteNet`) use `llg_net_write_driven`, which settles only the
-bits the value drives. `ModulePathStamp` is one `llg_module_path_stamp` call; the legacy
-statement renderer rejects it.
-
-A sequential definition emits one `static inline llg_udp_step_<t>` and each
-instance one file-scope state record (`IrModel::udp_states`) holding the
-base-3 code of its prior inputs and its state, initialized to all-X inputs
-and the initial value. `UdpStep` advances the record from the current input
-digits; `UdpState` reads its state with one `sv4_fill`. While the next-state
-index `3^(n+1) * (1 + 2e)` (`e` inputs named with a transition) fits
-`UDP_SEQUENTIAL_DENSE_MAX_ENTRIES` (2^20 bytes) the step makes one index load
-per changed input: slot 0 serves inputs without transitions, and each edge
-input has a slot per `old - (old > new)`. The index is built by evaluating
-`IrUdpSequential::next_state` for every entry, so the emitted lookup and the
-IR rule cannot diverge. Larger definitions keep encoded rows and scan them
-in the step (level rows, then edge rows on the changed input). Changed inputs
-are taken in port order (decision S3-D2) and Z/X changes are skipped.
-
-ArrayMux uses uniform leaf defaults; StructMux passes one period's leaf layout to
-`sv4_record_conditional_merge`.
-Evaluate each branch once and preserve its self-determined shape; an enclosing cast
-must not resize operands before the merge. Predicates evaluate only reached clauses,
-convert packed/real truth to one bit, and allocate nothing for skipped clauses.
-Pattern member projections convert two-state fields before comparison or binding;
-dispose the raw slice when replacing it with the converted value.
-Ambiguous muxes evaluate both arms before merging (real results become zero).
-Do not emit detached predicates or bypass eligibility through wrappers.
-
-`owned/repeated_values.rs` owns concatenation append emission. Consecutive equal
-typed operands use a bounded loop at `REPEAT_VALUE_MIN_COUNT` append operations,
-and so does a group of 2 to `REPEAT_GROUP_MAX_OPERANDS` operands repeated that
-often (one record of a defaulted record array); the first operand still seeds
-the result outside the loop. Evaluate, append and
-destroy each operand inside the loop, preserving changing reads and mutations.
-The accumulator's runtime width grows each iteration; its Rust metadata records
-the final checked width. Only explicitly admitted numeric kinds whose temporary
-slots are released locally qualify. Calls and other kinds with distinct resume
-sites or lexical storage remain expanded. Declare loop storage through `Frame`
-and emit all braces through `Frame::line` so scope narrowing and C9 reloads hold.
-
-`owned/dense_cells.rs` keeps whole unpacked-array values proportional to their
-shape. Lowering spells them per element; a run of at least
-`LLG_DENSE_CELL_RUN_MIN` consecutive cells of one packed fixed array (not real,
-nor a net for writes) is instead one runtime range call: `llg_dense_cells_*` on
-directly addressed storage, `llg_fixed_array_cells_*` on descriptor storage
-(sparse, activation or descriptor-flagged arrays), whose reads peek without
-materializing cells. Reads: concatenation operands, with nested
-concatenations spliced in, that are constant-index whole-cell `ArrayRead`s of
-consecutive storage offsets become one `*_image` call (not under sampled
-reads). Writes: consecutive `Assign`s in one statement sequence to
-consecutive whole cells, with one `nba` flag, whose right sides are one constant
-(`*_fill`) or same-width slices of one captured local stepping down by the cell
-width, under same-width sign conversions or `ToTwoState` (`*_store`); and a
-left-to-right streaming target, as an assignment or call copy-out, whose leaves
-are exactly such a run. The runtime writes cells in order through
-`llg_ba`/`llg_nba_after` after the same cast and two-state conversion as
-`store`, so publication, force and NBA behaviour are per cell as before.
-Shorter runs and any other shape keep per-element code.
-
-## Storage, references and publication
-
-`owned/frame_cells.rs` proves local descriptor eligibility from typed IR and
-callee effects before emitting any procedure storage. A non-escaping packed,
-real or native local registers an intrusive `llg_value_scope_t` and an empty
-value cell in the coroutine frame (including zero-resume procedures and
-resume-free inner blocks), or in the outer C scope of a frame-less function. Required frame fields
-remain live through common-return unwinding; sibling overlays may reuse them
-only after all registrations in the preceding scope have ended. Initialization
-and registration still occur at the original declaration, preserving LIFO cleanup.
-
-NBA destinations, all address/ref/output call actuals and local wait dependencies
-keep heap cells. Typed binding names identify cells; never infer eligibility from
-generated C. Unknown expression/statement forms fail closed for the whole
-procedure. Context-free read-only event evaluators qualify only after scanning
-their typed reads and wait dependencies; observed cells remain heap-backed.
-Captured evaluator contexts, fork captures, clocking, sampled/assertion operations,
-force/inertial registrations (whose fixed-array sources register element or
-contents change markers), mailbox delivery, VPI, DPI and dynamic dispatch,
-monitor/strobe and deferred assertion readers are currently unproven. Spawning
-callee effects also fail closed. A new admitted form requires an explicit
-descriptor-retention argument and tests. Expression temporaries and runtime
-helper scopes keep their existing heap path.
-
-The runtime exact-pointer index includes both kinds of cell. Scope end destroys
-payloads and forgets R1 clock history before unregistering/reusing intrusive
-storage; intrusive end with an outstanding retain is a fatal contract violation.
-See the [runtime retainer inventory](../rt/AGENTS.md#frame-resident-cells).
-
-- Alias visible cells have independent owners, canonical dependency addresses and
-  explicit startup/close. Alias parts are run-length rows
-  (`{ net, slot, signal_lsb, group_lsb, bit_count }`) built by
-  `render_alias_parts`; the runtime refreshes and writes each run as one part
-  select. Alias/stochastic publication temporaries must be
-  registered; alias reads are pure. Sequence-local writes remain private.
-- Packed formals resolve through current activation bindings, including callbacks,
-  never synthetic model globals. Input mutation is private; ref writes clone/update
-  the selected parent and publish immediately. Capture output indices once for
-  copy-back; retain const/NBA lifetime rejections. Convert two-state members before
-  subsequent missing-index X fill and preserve neighbors.
-- Build ref descriptors from typed LHS plans, not legacy address strings. A member
-  or packed chain of a flattened array element is an `LLG_REF_VIEW` over the whole
-  element, whose selectors bind once with the parent. Register
-  LIFO call scopes through copy-out and cancellation. Queue references pin cell
-  identities; removed cells detach from queue structure and remain independently
-  writable while pinned. The queue's ref list is borrowed, not a second owner.
-- `PackedChain` plans contain numeric coordinates only, not owner pointers.
-  Evaluate/refine/destroy each index independently and preserve intermediate
-  clipping. Invalid unpacked roots supply defaults before inner packed X/no-write
-  rules. NBA issue captures masks/values, never an escaping plan pointer.
-  `LLG_REF_PACKED_PLAN` is a synchronous borrowed scanner target: do not forward
-  it as a retained ref or register it as a pinned queue cell.
-- Runtime memory-view selectors are evaluated once into registered owners; validate
-  physical view/strides before writes. Fixed folds seed from the first mapped
-  value, release per-iteration owners, and bound slots by expression complexity,
-  not element count. Include those slots in the explicit frame layout.
-- Tagged access checks register expected-tag/equality values, release them before
-  the C branch and preserve source diagnostics. A tagged-member NBA also passes
-  each guard's issue-time receiver plan to `llg_nba_tagged_selected_after`, so
-  the commit re-checks the tags (SV 11.9, Q03). Retag signed native projections
-  in both valid and invalid cases. For `inside` array leaves, change the runtime
-  value's signedness before wildcard comparison, not metadata alone.
-- Writable callback leaves must all be proven private. Never allow external refs,
-  net/scheduler writes or NBAs through this path.
-
-## Native boundaries
-
-String inputs are copied; reserve return ownership before argument scopes. Check
-cancellation before copy-out. Native ref descriptors borrow addresses, not string
-allocations. A native record `ref` formal bound by a specialization
-(`IrCallArg::NativeRefBound`) receives null value and companion parameters
-that its body never reads. An input event formal is a by-value `llg_event_t` (frame field in a
-coroutine callee) holding the object the actual named at the call: the caller
-snapshots `{ p ? p->object : NULL }` and the callee binds a private handle copy
-(`IrEventRef::Formal`), so rebinding the actual or the formal cannot move waits.
-Only open-array DPI imports and tasks waiting on a native record `ref` formal
-are templates that are never emitted (`IrFunc::inline_expanded`); a task whose
-event control reads a `ref` formal also emits per-signal specializations
-(`CallShape`). A typed body waits on a real `ref` formal through its cell, on a
-packed one through `llg_ref_wait_spec`/`llg_arm_ref_dependencies` (which expand
-the descriptor into the leaf markers of the storage it selects; retained
-container cells carry their container's contents marker), on a string `ref`
-formal through its `llg_string_t.dependency` and on a handle `ref` formal
-through the marker parameter `d<idx>` that follows `r<idx>`
-(`handle_marker_param`): the caller passes the module handle's
-`<name>_llg_dep`, the object's `llg_class_handle_dependency`, its own `d<idx>`
-or a fork-shared handle's `llg_frame_opaque_marker`, else NULL. Stores through
-the formal publish that marker at the store (`Frame::handle_store_marker`). A
-class string property actual of a waited formal gets its marker before the call
-(`observe_class_string_property`); an observed fork-shared string's frame owns
-its marker (`IrStmt::SharedString::observed`).
-Concrete interface members retain their actual member address.
-
-Container operations evaluate operands in order, register borrowed string keys and
-item snapshots, compute all mapped results before publishing, and destroy consumed
-intermediates before notifications. Detach consumed keys only at final use. Class
-receivers evaluate once before arguments; use typed nominal headers, never casts
-between unrelated structures. Class objects are collected (SIM-018): allocate them only
-through `llg_gc_alloc`, keep `llg_gc_header_t` first in `llg_class_object_t`,
-and make the class type's trace visit every handle, chandle, container and
-native-record property. `llg_model_gc_register` (called right after runtime
-initialization) registers static handle and container roots, payload tracers
-for every container drop type and per-descriptor frame maps. A frame map lists,
-per resume state, the `void*` handle fields and object-addressing pointer
-fields declared on the live block path before that state
-(`FrameLayout::compute_gc_map`); every new resume form must go through
-`owned.rs` `resume_state` so its state is recorded. Recursive function
-coroutines run synchronously inside a turn and need no frame map. Automatic chandle cells use
-the `llg_gc_handle_cell_drop` destructor tag so value scopes trace them.
-
-Mailbox payload capture follows all user operand effects. Remove a consumed node
-before callbacks; peek clones. A blocking get into an `AtDelivery` target
-(lowering marks whole storage that stays valid for the wait, and class handles) wraps it
-in `llg_mailbox_delivery_target`, and the runtime writes it at the put (AB-O3).
-A handle destination with a change marker is wrapped in
-`llg_mailbox_published_target`, so the runtime publishes a changed handle
-whenever it writes it (sync, at the put, `try_get` or on resume).
-Any other blocking get emits `llg_mailbox_delivery_take` with the same destination
-right after its arm, so a suspended get writes only live storage on resume. Never cast an integer to a target pointer.
-
-DPI-C exports (`model/dpi_exports.rs`) render one external entry per C
-identifier that resolves the instance thunk through the current `svScope` and
-casts it to the Annex H prototype, and a static per-instance thunk that
-converts with the import layout helpers, calls `<fn>` with `depth + 1` and
-copies outputs back in declaration order. Export string outputs and results
-stay in per-thunk retained strings until that thunk runs again (H.8.10). When
-a model has any context import or export, every import thunk brackets the
-call with `llg_dpi_import_enter/leave`; every import call site sets
-`llg_dpi_next_site` just before the call (decision S41-D3), and an
-uninstrumented thunk clears it after the call. Context imports carry the effects of
-every exported body (`execution::effects_for_function`), so cancellation
-checks follow them.
-DPI input strings remain borrowed for the call. Snapshot the foreign return and
-all string outputs before the first copy-out or input destruction, preserving
-aliased foreign pointers. VPI argument arrays borrow registered slots only for
-one call. File-input/plusarg source and format snapshots plus selected targets
-remain owned across callbacks.
-
-## Container storage names
-
-Name containers only through `Frame::container_name`: a model-global
-container is its C variable, an activation container is the frame binding made
-by `Declare`, a container formal or a call operand (`(*ptr)` into a value-scope
-object created by `new_container`), and a class property container is
-`llg_class_field(_this, ...)` storage inside that class's methods, or
-`llg_class_field(<receiver>, ...)` for a receiver-qualified alias
-(`IrContainer::receiver`, a plain handle read rendered without statements).
-Fixed-array properties allocate their elements when the object is created.
-Activation and per-object containers have no change dependencies, so waits and
-monitors on them reject. An `IrDependency::NativeAccess` renders its receiver
-with `quiet_receivers` (no null report: `llg_class_field_quiet`,
-`llg_vif_member_quiet`) and arms on the field/member storage or, for a handle
-property, on the object's lazily allocated `handle_dependency`, which
-`llg_class_handle_store` toggles on a changed blocking store (in-place writers
-— task output copy-out, mailbox `get`/`peek`, task-form `$cast` — compare
-the slot before and after and call `llg_class_handle_published`, as module
-handles toggle `<name>_llg_dep`; see `Frame::handle_store_publish`), or, for a string
-property, on the marker `llg_class_string_dependency` installs in the string
-itself (so every changed `llg_string_move` toggles it; freed with the object
-and an interior collector root while armed); a null receiver arms on the
-never-changing marker. Calls give every container formal fresh storage and
-copy back outputs after the cancellation check, like native values.
-
-## Streaming and event captures
-
-Snapshot a stream RHS before unpacking. Evaluate/check/publish targets in stream
-order; later blocking `>>` selectors may read preceding unpacked fields. A `<<`
-unpack without a resizable target resolves every fixed selector first, consumes
-that many leftmost source bits and reorders only those. Nonblocking streams have
-fixed targets only, evaluate selectors at issue and queue each element. Check
-available source size before each component's writes, retaining valid in-range
-writes on bounds error. Fixed selectors follow declared storage order; dynamic
-containers use ascending storage indices. Registered loop indices are destroyed
-each iteration. Image-represented fixed targets (refs, locals, members, rows) take
-one read-modify-write when blocking and per-element selected stores when queued;
-out-of-range source elements stream the element's default-uninitialized value,
-and descriptor sources read cells through `peek`. Mixed-domain image elements
-convert their two-state runs on the selected segment before any element write.
-Descriptor stream operands build a runtime-length source list: empty runtime
-selections are skipped, `Selected` windows share owner ranges/cells plus the
-element default outside the bounds, `Dense` views and `Packed` values become
-scratch cells, and nested streams are lazy images. StreamToFixed left-aligns/
-zero-fills and diagnoses oversized inputs. Composite call/ref targets retain exact
-layout descriptors.
-
-Evaluate capture values before publishing frames. Synchronous joined forks may
-alias registered parent numeric cells until every branch completes. A branch
-binds an aliased packed capture under its capture name, its initializer's local
-and `IrCapture::alias` (the declaring subroutine's local, which element reads
-in nested branches name). Register all
-fields of a multi-event context before the first evaluator call: shared context
-pointers require one retain per descriptor field, not per distinct pointer.
-Fork captures of input event formals use `StorageKind::Event` and a typed
-`EventCapture` initializer. Synchronous joins borrow the parent handle through an
-opaque slot, preserving rebinding across siblings; the handle stays in the live
-parent coroutine frame until all children complete or are cancelled. Detached
-joins copy the event object into the slot and bind a private `llg_event_t` in the
-branch. Nested forks use the same ownership rule; event objects remain valid
-until model teardown.
-
-## Model lifecycle and checks
-
-Initialization frames allow legal zero-time declaration calls, not timing-bearing
-functions. Tear down runtime queues and VPI observers before model storage.
-`llg_model_start`/advance/close preserve suspended state; advance returns status 2
-without cleaning up that live context. Reject double start, allow repeated
-start/close, and preserve `LLG_MODEL_NO_MAIN` for host-controlled entry. The process-global runtime
-supports one model, not concurrent/thread-safe instances. Keep selected value ABI
-4 (legacy) / 5 (compact) and cache markers aligned; reject stale generated C.
-Frame estimates use the selected descriptor: LP64 `sv4_t` is 32 / 24 bytes and
-`llg_vpi_arg_t` retains conservative bounds of 64 / 56 bytes (actual 56 / 48).
-Emit descriptor and complete-frame size guards
-on 64-bit hosts, each distinct `_Static_assert` once per model (bodies that
-share a frame type share its guard). Shared root-frame guards include the added record pointer and
-its alignment; the callee arena-selection estimate excludes that root-only field. Emit `LLG_MODEL_PROCESS_ABI 3`, pass
-only immutable descriptors to spawn/fork sites, and initialize through
-`llg_rt_init_with_args_and_precision`; coroutine stack sizing is not model data.
-Default and teardown calls for plain static storage use one file-scope pointer
-table and loop per value representation, flushed at the storage section's
-original position. Nets are declared zeroed (`static llg_net_t g_net_0, ...;`)
-and described by data: interned per-net shapes (`llg_net_shapes[]`: width,
-sign, resolution, fill, delays, driver count, interned strength, segment and
-driven-run tables) and one `llg_net_storage[] = { net, shape }` row per net.
-Each start runs one `llg_net_layout` loop that configures every net from its
-shape and takes its contribution cells, driver pointers, index nodes, overlap
-scratch, path-bit and segment records from the front of exact-size pools
-(`llg_net_cell_pool`, `llg_net_driver_pool`, ...) in net order, so the driver
-pointers address cells as before. Optional strength views stay per net
-(`g_net_<k>.strength = &...;`, NULL unless a `%v` reads the net) and
-`IrDisplayArg::Strength` formats with `LLG_FMT_STRENGTH`. Net defaults, driver
-reset/destruction, index reset, driven-run starts and alias-list cleanup are
-fixed-size loops over `llg_net_storage`, independent of net count, driver
-count, width and resolution kind; only mutable index state needs resetting. Scalar aliases copy all
-visible owners before binding; array aliases copy and bind in original array/
-element order through one pointer table. Array initialization refreshes only its
-contiguous slice of that table. Runtime queues and VPI must close before these
-loops destroy values and clear alias lists; repeated start/close rebuilds them.
-Runs of consecutive constant startup calls (spawns, finals,
-waveform registrations) use argument tables and loops in their original order;
-registrations still fail startup. Generated identifiers are standard C (never
-`$`, checked by the all-fixture lint).
-
-`names.rs` owns reversible `cI_` / `Z` source-name escapes and injective
-component composition. Lowering retains raw source components separately from
-display paths: never pass encoded components through `ident` again. Keep the
-source diagnostic labels, VPI and waveform metadata, design/export
-file names and foreign DPI C symbols independent of internal symbol spelling.
-After frame sharing and all derived symbols are emitted, cap complete internal
-identifiers at `MAX_C_IDENTIFIER_LEN` (32) through a sorted per-model registry.
-Sort only the identifiers needing replacement; use hash sets for occupied-name
-lookup and borrow substitutions rather than allocating per occurrence.
-A replacement keeps its namespace, as many leading original-name characters
-as fit, a `_h` plus base-36 registry index and any `_frame_t`/`_desc`
-suffix. Leading stems retain hierarchy context without decoding source escapes;
-the index makes stems with the same leading characters distinct. Reserve all
-occupied identifiers, previously assigned replacements, explicit foreign DPI
-names and identifiers from the embedded runtime headers, including header names
-absent from the model. Runtime API/macro names and foreign DPI names are exempt
-from the internal bound. The existing emitted-C identifier rewrite passes
-skip literals/comments/numeric suffixes; this does not admit opaque IR fragments.
-`GeneratedModel::sources()` includes `model.c` and `model.symbols.tsv`. The map
-contains every renamed symbol as `short<TAB>original<NEWLINE>`, sorted by short
-name, with no header; it is empty when no renames occur. The CLI writes it for
-normal builds and `--gen-only` exports. Pass both files as builder extras: CMake
-compiles only `.c` files and the current extra-file set owns stale-output cleanup.
-Regeneration replaces the map, including with an empty map; a source set omitting
-it removes the old sidecar. Keep separate-process determinism tests on both files.
-Coroutine descriptor
-labels and loop budgets use source process/function labels; branch descriptors use
-the source owner plus `.fork`, never the helper C symbol. A shared root class's
-one descriptor has a NULL name: the runtime then names the running process in
-HDL backtraces, and the spawn table supplies each instance's label. IR functions without source
-provenance use an unnamed-function diagnostic label.
-
-Maintain exact scope/reference checks, array-index disposal, inert invalid handles
-and source-size preflight regressions. Preserve these distinct validation layers:
-Rust structure checks, real IR-to-C emitter execution, public HDL CLI runs and
-handwritten C components. Hand-authored output-shape probes do not execute this
-emitter. Use [ownership validation](../../../tests/readme.md#dynamic-ownership-validation)
-and its generated-C sanitizer configuration; do not infer feature acceptance from
-component tests.
-
-A name no frame scope binds resolves to model storage (first subprogram local,
-then signal or alias-visible cell, then change marker). Model-wide renderers
-build `owned/storage_names.rs::StorageNames` once and pass it to their frames;
-frames without one scan, with the same result. Do not add per-access scans of
-model signals, functions or objects: rendering must stay linear in instances.
-
-## Instance body sharing
-
-`model/sharing.rs` groups compiler-owned emitted bodies by source location,
-coroutine/ordinary ABI, exact canonical frame layout and typed operand shapes,
-then requires exact equality after normalization. Unrepresented
-references remain in the key. Widths, resume numbers, array extents and ordinary
-parameter payloads remain structural; ULL payloads and selected wait-dependency
-`.lsb` values of generate-instance bodies and port links (`IrProcess::port_link`,
-whose selections are the instance's connection) may become record fields. Module
-path sets and sequential UDP state records are pointer operands, so path-stamp
-processes and UDP gates of one definition share a body. A body belongs to a
-generate iteration when its label or diagnostic name spells an indexed scope
-(`tb.g[3].always`: labels keep the written name, only C identifiers encode
-it); the same test applies to coroutine processes, functions and branches and
-to plain functions. Path and timing condition evaluators come from specify
-blocks, which are never in a generate scope, so their payloads stay
-structural; they share a body with the instance record passed as the set's
-condition context. Net driver slots (`.drivers[slot]`, the slot argument of
-`llg_net_write*`, `llg_nba_net_*` and `llg_inertial_*net`) and an SDF-annotated
-gate's `llg_sdf_gate_delays` index are identity operands of every body.
-A coroutine process's per-site mutable state (inertial handles, sparse-array
-handle keys, delayed batch handles) is a file-scope object named after the
-process (`Frame::site_static`), registered as a pointer operand, so instances
-keep distinct state while sharing the body; other bodies keep function-local
-statics. Event-expression evaluators (`IrPreFn::MonEval`/`RealEval`) stay one
-per process: their `eval_context` is an owned frame reference, so a process
-whose wait names one keeps its own body.
-Only known activation/net-contribution identities become scalar operands.
-Bodies with local static storage stay separate. Startup-external roots (assertion
-actions) stay separate because they do not receive the startup record initialization.
-
-Candidates enter exact sharing groups as they are rendered; each group retains
-one normalized source and key. Every member retains its typed operands, including
-each generated constant occurrence and its width/sign, even after its duplicate
-normalized source is released. An operand is a shared kind (declaration, shape,
-access) plus a value; registry entries and scalar literals are interned per pass,
-never copied per occurrence. A member whose body the shared entry replaces drops
-its rendered source.
-
-## Generation memory
-
-Rendering must not accumulate on top of the execution IR. Retained rendered
-bodies are shrunk to their length; a finished `FrameLayout` drops its name and
-access indexes (`release_emission_state`), keeping only the block tree, fields
-and call slots that frame grouping, sharing and metadata read. The production
-path (`render_with_value_config`) owns the `ExecutionModel`: it releases each
-process's operations after that coroutine body is rendered, so a fact needed
-later must be recorded on the artifact, and a changed
-arena-callee set is reanalyzed in place. The borrowed test API keeps the model
-intact and clones only for reanalysis. Assembly moves bodies into the model text
-and drops artifacts before the identifier pass, which bounds identifiers in the
-text's own buffer. Any change must keep `model.c` and `model.symbols.tsv`
-byte-identical between the owned and borrowed paths.
-
-`LLG_SHARE_MIN_INSTANCES` is a positive integer (default 4); `unlimited` disables
-sharing. Each qualifying class emits one body and one static const record array
-(`llg_body_instances_<k>[member]`). When every member's site table is equal a
-root class also gets one descriptor and site table; its members are spawned by
-`llg_model_spawn_class(class, first, count)` over `llg_model_body_classes[]`
-(descriptor, records, stride, record and name offsets, an optional label table,
-region), in their original spawn order.
-Operands equal across all members stay direct constants/references. Shared root
-frames add `_llg_instance` immediately after the header; spawn tables supply its
-`offsetof` and initialize it before execution, including Reactive program roots.
-Runtime labels and all model storage remain distinct; descriptors and site tables
-remain distinct unless the class descriptor above replaces them.
-Metadata offsets use the resulting frame type. Shared callees/fork entries keep
-small ABI-preserving thunks forwarding a hidden record argument; their frame
-layout and arena/poll analysis therefore do not change. Shared bodies resist
-compiler inlining/cloning to avoid recreating the duplicated code.
-
-The immutable record pointer is reconstructed at every entry, before dispatch;
-it is not a C9 local whose initial assignment can be skipped on resume. Records
-hold model-lifetime storage/descriptor addresses, never activation locals. The
-frame lint must recognize shared-body signatures and narrowly permit addresses of
-record-referenced model storage while retaining its cached-field and overlay checks.
+- [Evaluation and scopes](evaluation.md): frames, overlays, poisoning,
+  narrowing, ownership, constants, UDP/path/timing/SDF tables, dense cells.
+- [Storage and native boundaries](storage.md): publication, references,
+  DPI/strings/handles, containers, streams, fork and event captures.
+- [Model lifecycle](model/readme.md): start/advance/close, frame guards, net
+  tables, names and the symbol map, validation layers, body sharing,
+  generation memory.
+- [Runtime ownership](../rt/value/ownership.md),
+  [frame-resident cells](../rt/scheduler/readme.md#frame-resident-cells),
+  [ownership validation](../../../tests/readme.md#dynamic-ownership-validation).

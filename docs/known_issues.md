@@ -238,7 +238,7 @@ sharing threshold; this requires abstracting frame-type names
 that are resolved after rendering. Stream the final text to `model.c` only if
 the generated-model API stops returning it in memory. Generated `model.c` must
 stay byte-identical, including both optimizer modes and the exact sharing
-output; see the [emitter guide](../src/sim/emit_c/AGENTS.md#generation-memory).
+output; see the [emitter guide](../src/sim/emit_c/model/readme.md#generation-memory).
 
 ### Reproduce
 

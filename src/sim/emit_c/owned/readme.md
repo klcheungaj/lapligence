@@ -49,7 +49,7 @@ cargo test --locked --no-default-features --test sim_a_m sim_dynamic_ownership::
 ```
 
 See [runtime ownership](../../rt/value/ownership.md) and
-[feature boundaries](../../../../docs/sim_features.md#dynamic-value-migration-acceptance-boundary).
+[feature boundaries](../../../../docs/sim_features.md#selected-profile-acceptance-boundary).
 
 `udp.rs` emits shared immutable combinational truth tables and one borrowed runtime
 evaluation per gate. Row count grows data, while executable body size stays fixed.
