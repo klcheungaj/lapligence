@@ -92,6 +92,33 @@ Concrete loop-generate blocks use the array name and source index as one
 hierarchical segment (`rows[0]`), so bound children retain standard paths after
 the native snapshot is released.
 
+## Import and projection contracts
+
+- Node IDs are stable arena indices. Parent/structural-child links are acyclic;
+  typed resolved references may cross hierarchies. `InstanceBody` is normalized
+  so instances directly own declarations, processes, subroutines and children;
+  instance-array containers and entries are kept, with concrete entries in the
+  enclosing instance's child list. Explicit statement blocks are kept.
+- Implicit conversions and source- versus context-determined widths survive
+  import and projection, as do complete delays.
+- Kept metadata: native kinds for unsupported-node reachability, program origin
+  (anonymous-program members flatten into their package or `$unit`), explicit
+  storage lifetime and source qualification, enum declaration order and every
+  `foreach` iterator slot (including omitted and packed dimensions). Event
+  metadata keeps `iff`, event-array identities, nonblocking trigger mode and
+  timing.
+- Subroutine bodies use explicit references. Index keys fold as expressions, not
+  spelling. Recursive instance-array expansion rejects cycles and repeated
+  entries.
+- Conditional clauses have dense, unique ordered indices; each
+  `ConditionPattern` pairs with its condition, and `if` branches are explicit,
+  not child-position heuristics. Tagged pattern member IDs and relationships are
+  validated.
+- A member access whose base is a function call (possibly through further member
+  accesses) is `ExprKind::MemberSelect` with the computed base, and an element
+  select of it keeps that node as its base; other non-path member accesses stay
+  `Other`.
+
 The DB is the common semantic source for model/lint/LSP projections and simulator
 lowering. Invalid IDs, table windows, ranges, cycles or relationship metadata fail
 construction. See the [shared core](../readme.md) and
