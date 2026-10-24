@@ -371,7 +371,16 @@ Both `llg` and `llg_ls`:
 | `LLG_MEMORY_LIMIT_MB` | Memory budget in MiB for the frontend process; unset disables it. |
 | `LLG_MEMORY_WARNING_PERCENT` | Warn at this percentage of the budget (default 80). |
 | `LLG_MEMORY_POLL_MS` | Memory sampling interval in milliseconds (default 1000). |
-| `LLG_MEMORY_ADDRESS_SPACE_LIMIT` | `true` also applies the budget as a Linux/macOS address-space limit. |
+| `LLG_MEMORY_ADDRESS_SPACE_LIMIT` | `true` (or `yes`/`on`/`1`; default `false`) also applies the budget as a Linux/macOS address-space limit. |
+
+The budget covers Rust and in-process Slang/C++ allocations of the frontend
+(Linux RSS, macOS physical footprint, Windows working set; Windows also uses a
+Job Object limit). Exhausting it prints a fixed message to stderr and ends the
+process at once. Size it for startup and peak parsing, not idle use. It does not
+measure the generated simulator or other children: Unix children inherit an
+enabled address-space limit, which bounds virtual rather than physical memory
+and can fail allocations before the watchdog, and Windows descendants left in
+the job may inherit its limit. Guard child memory separately.
 
 ## Using `llg_ls`
 
