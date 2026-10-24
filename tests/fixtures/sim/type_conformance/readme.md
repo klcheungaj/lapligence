@@ -24,6 +24,18 @@ cargo run --bin llg -- --no-opt --top tb tests/fixtures/sim/type_conformance/uwi
 CMake and a C compiler are required. The [coverage map](../../../readme.md)
 describes normative anchors and remaining limits.
 
+## Harness contract
+
+- Designs are checked-in `.sv` files with top `tb`, passed directly to `llg`
+  through `support/sim_cli.rs`; never embed or regenerate them in Rust.
+  Orchestration and independent oracles live in `sim_type_conformance.rs` and its domain
+  directory; extend fixtures and oracles together.
+- Both optimizer modes run in isolated directories with CMake, timeouts and the
+  inherited generated-runtime sanitizer settings.
+- Positives assert exact stdout, lowering warnings and stderr; frontend warnings
+  are allowed only for intentional boundary probes. Negatives require exit 1
+  and their specific diagnostic in both modes.
+
 ## Integral matrix operand map
 
 `mixed-types-N.sv` uses row N as the left operand against every row below.

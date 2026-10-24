@@ -19,6 +19,18 @@ Use any fixture filename from this directory in the last command; add
 See the [remaining feature inventory](../../../../docs/sim_features.md)
 for the boundaries these tests do not cover.
 
+## Harness contract
+
+- Designs are checked-in `.sv` files with top `tb`, passed directly to `llg`
+  through `support/sim_cli.rs`; never embed or regenerate them in Rust.
+  Orchestration and independent oracles live in `sim_partial_features.rs` and its domain
+  directory; extend fixtures and oracles together.
+- Both optimizer modes run in isolated directories with CMake, timeouts and the
+  inherited generated-runtime sanitizer settings.
+- Positives assert exact stdout, lowering warnings and stderr; frontend warnings
+  are allowed only for intentional boundary probes. Negatives require exit 1
+  and their specific diagnostic in both modes.
+
 ## Cases
 
 | Files | Behavior checked |
