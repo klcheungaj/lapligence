@@ -5,7 +5,7 @@ owned APIs to the rest of the library.
 
 | Component | Responsibility |
 | --- | --- |
-| `slang.rs` and `slang/` | C ABI v15 requests, the capture-stream receivers (`slang/stream.rs`), bounded error owners, layout/tag validation, exact value/text copies and RAII destruction. |
+| `slang.rs` and `slang/` | C ABI requests (`LLG_SLANG_ABI_VERSION`), the capture-stream receivers (`slang/stream.rs`), bounded error owners, layout/tag validation, exact value/text copies and RAII destruction. |
 | `process_memory.rs` | Platform process-memory counters and native resource limits. |
 | `secure_fs` | Handle-relative filesystem admission and identity/race protection. |
 
@@ -41,3 +41,40 @@ strings; the process-memory guard is the resource bound.
 The source map flag asks Slang to parse an admitted original map buffer with
 its preprocessor. It requires compilation-unit admission and preserves macro
 invocation locations in configuration diagnostics.
+
+## ABI notes beyond the header
+
+- `CompileRequest` and `parse_metadata` borrow sources/options until the
+  blocking call returns and distinguish units from include-only buffers.
+  Library-unit recovery reuses the same buffers and limits. Cache keys are
+  lexically normalized; include directories are lookup prefixes, not permission
+  to read the filesystem.
+- `parse_metadata` bounds sources by `max_source_bytes` and discards parse
+  diagnostics.
+- The library-map source flag requires the compilation-unit flag. Library
+  include directories are ordered name/path pairs used only for that library's
+  admitted buffers.
+- Header counts are limit- and budget-checked before reservation and strings are
+  charged on receipt. Trampolines record only the first error; the bridge then
+  returns status 5 and the receiver's error wins. A non-OK return carries an
+  error owner. HDL errors set the header's `has_errors`; argument, resource,
+  setup, exception and bridge failures return `SlangError`.
+- Source ranges use admitted file IDs and zero-based half-open byte offsets.
+  Value/unknown limbs stay paired, real and shortreal widths stay distinct, and
+  SystemVerilog string constants are arbitrary bytes; every other string is
+  UTF-8.
+- Sequence repetition and `SequenceConcat` cycle ranges are checked; unbounded
+  `UINT32_MAX` maxima become `Option<u32>`. Optional member-default constant IDs
+  are validated; fixed-array defaults cross as exact flattened bitstreams.
+  Compilation-unit lexical uses keep declaration-order violations, including
+  macro expansions.
+- `edition_findings` records come only from a Verilog-2001 compile.
+- A `default disable iff` expression (`LLG_SLANG_EDGE_DEFAULT_DISABLE`) is owned
+  by the first assertion statement that uses it. `restrict property` is kept as
+  `ConcurrentAssertionKind::Restrict`, which the simulator does not verify.
+- Lexical directive flags mark directive text, including unexpanded macro
+  bodies, independently of expanded/skipped state; disabled conditional-branch
+  tokens also carry the skipped flag. Edition checks never treat inactive
+  branches as source.
+- `ConditionPattern` (role 38) pairs by index with `Condition`; `THEN`/`ELSE`
+  are separate roles at index zero. DB import validates the pairing.

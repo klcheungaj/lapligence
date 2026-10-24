@@ -29,6 +29,7 @@ docs/*
 !docs/sim_performance_tradeoffs.md
 !docs/lrm_decisions.md
 !docs/time_zero_initialization.md
+!docs/cross_platform.md
 
 skills-lock.json
 temp

@@ -1,79 +1,50 @@
-# Verilog/SystemVerilog language server
+# Agent guide: src/bin/llg_ls
 
-Tower-LSP stdio serves diagnostics, tokens, hover, definition, references, symbols,
-completion, prepareRename/rename, inactive ranges, token dumps and a read-only
-module explorer.
+tower-lsp stdio server over owned analysis: diagnostics, tokens, hover,
+navigation, symbols, completion, rename, inactive ranges, token dumps and a
+read-only module explorer. Components: [readme](readme.md); user behavior:
+[configuration](../../../docs/config.md).
 
-## Ownership and transport
+## Ownership
 
-[lsp](lsp/AGENTS.md) owns scheduling, admission, snapshots, diagnostics, watchers
-and handlers; [features](features/AGENTS.md) owns analysis, bindings, indexes and
-projections. Read [shared safeguards](../../AGENTS.md) and
-[validation](../../../tests/AGENTS.md).
+- `lsp.rs`, `lsp/`: lifecycle, scheduling, admission, staging, diagnostics and
+  handlers ([guide](lsp/AGENTS.md)).
+- `features.rs`, `features/`: analysis, bindings, indexes and projections
+  ([guide](features/AGENTS.md)).
+- `scheduler.rs`: debounce and follow-up policy (module docs).
+- `semantic_tokens.rs`: token types and modifiers (the mapping is in the code).
+- `request_cache.rs`: bounded request caches; `logging.rs`: `LLG_LOG`/`LLG_LOG_FILE`.
+- `config.rs`: re-exports `llg::config` and builds Slang options; add or change
+  keys in the library, never here.
+- `module_explorer.rs`, `module_explorer/`: explorer catalog and budgets.
 
-Keep LSP dependencies in this binary behind default-on `lsp`. Serving stdout is
-JSON-RPC only; logs go to stderr/configured file. Help, version and token dumps
-print ordinary text without serving. Invalid CLI arguments exit 2 with stderr usage.
+## Rules
 
-## Configuration
+- tower-lsp, tokio and dashmap stay in this binary behind default-on `lsp`.
+- Serving stdout is JSON-RPC only; logs go to stderr or the configured file.
+  Help, version and `--dump-tokens` print ordinary text without serving; invalid
+  arguments exit 2 with usage on stderr.
+- Driver-only keys (marked `llg` in `docs/config.md`) are validated and ignored.
+  An unknown key rejects the whole file atomically, in the server and in
+  `--dump-tokens`.
+- Request handlers never touch native objects or start project compilation; one
+  blocking closure compiles admitted buffers into owned DB, indexes and
+  `Analysis`.
+- Keep the Slang diagnostic provider, code, full message, primary range and
+  related locations. Ranges stay on the physical buffer; a `` `line``-mapped
+  position adds a first related entry on that range.
+- Publish current failures while serving navigation from the last-good snapshot.
+- Exact semantic bindings outrank scoped fallback; ambiguity yields no target.
+- Cache keys include the applicable buffer, defines, URI, request arguments and
+  analysis epoch. Snapshot replacement or clearing advances the epoch; servable
+  module-graph changes notify explorer clients.
+- Bounded caches must not pin retired native state; apply shadow-to-real
+  presentation mapping after lookup.
+- Lifecycle logs may carry bounded paths, counts, outcomes, timings and memory
+  samples, never source buffers or unbounded LSP payloads.
 
-The schema and loader are the shared `llg::config` module (also used by the `llg`
-driver); `config.rs` only re-exports it and builds Slang options from a root's
-config. Add or change keys in the library, never here. The server uses
-`[sources]` directories/include/exclude, `[compile]` top/include_dirs/defines/
-param_overrides, `[lint]` enabled/rules and `[analysis]`; driver-only keys
-(`sources.files`, `compile.edition/compilation_units/system_tasks`, `[libraries]`,
-`lint.run/json/json_file`, `[simulator]`, `[build]`, `[output]`) are validated with
-the file and ignored. An unknown key anywhere rejects the whole file atomically in
-both the LSP and `--dump-tokens` paths.
+## Pointers
 
-## Frontend boundary
-
-Root jobs snapshot every unit/literal include within budgets. One blocking closure
-compiles those exact buffers and builds owned DB/indexes/`Analysis`. Request
-handlers neither access native objects nor start project compilation.
-
-Preserve Slang diagnostic provider, name/code, full message, primary range and
-related locations. Diagnostic ranges stay on the physical buffer; a
-`` `line``-mapped position (Slang, edition or lint) adds a first related entry
-on that same range, `` `line origin: file:line``. Core diagnostics classify admission/DB failures. Publish current
-failures while serving navigation from the last-good root snapshot.
-
-Open-document semantic tokens compile the exact admitted unsaved buffer in
-isolation; syntax errors return an authoritative empty stream. Unopened documents
-use committed tokens. Cache keys include applicable buffer, defines, URI, request
-arguments and analysis epoch. Parameters/localparams use `property.readonly`;
-data/net types, port directions, typedef names (declaration and every type use,
-including casts and `$bits`/`type()` operands) and the `parameter`/`localparam`/
-`specparam` keywords use `type`; module and program names (declaration and
-instantiation, even when the definition is outside the compiled buffer) use
-`class`, interfaces `interface`, packages `namespace`; control/module words and
-`defparam` remain `keyword`.
-
-## Source and serving rules
-
-Each root has independent config/scheduling. Only `.v`/`.sv` are compilation units;
-headers are include-only. Resolve literal includes beside the including file,
-then configured source/include directories; canonical identities deduplicate cycles.
-Native reads must never reach unmeasured paths.
-
-Apply `analysis.max_file_bytes` and `analysis.max_total_input_bytes` before cloning,
-staging, caching or compiling. Use max-plus-one closed reads and exact open UTF-8
-byte lengths. Admission failure preserves the last valid snapshot.
-
-Use trailing debounce and generation checks. Triggers during a run mark the root
-dirty for one newest-input follow-up. Hold no backend lock during discovery, I/O
-or compilation. Navigation, token dumps and explorer requests read committed owned
-data; exact semantic bindings outrank scoped fallback, and ambiguity yields no
-target. Snapshot replacement/clearing advances the epoch; servable module-graph
-changes notify explorer clients.
-
-Bound definition/hover/reference/isolated-token caches. Apply shadow-to-real
-presentation mapping after lookup; cache values must not pin retired native state.
-
-## Logging
-
-`LLG_LOG`: `off`, `error`, `warn`, `info`, `debug`, `trace`.
-`LLG_LOG_FILE`: append-only file with stderr fallback. Lifecycle logs may contain
-bounded paths, counts, outcomes, timings and memory samples, never source buffers
-or unbounded LSP payloads.
+- Safeguard rules: [src guide](../../AGENTS.md#safeguard-changes).
+- Wire tests: [LSP acceptance](../../../tests/readme.md#lsp-acceptance).
+- Platform: [cross-platform handling](../../../docs/cross_platform.md).

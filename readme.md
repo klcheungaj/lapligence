@@ -265,6 +265,29 @@ Common options:
   `ninja` fails the build with an install hint).
 - `--launcher <program>`: optionally set CMake's C compiler launcher, such as
   `ccache` or `sccache` (default `$LLG_C_LAUNCHER`, then `build.launcher`; none when all are unset).
+- `--dpi-lib <path>` (repeatable): link a DPI-C library into the model; it is
+  validated before CMake and kept in `--gen-only` output. A library naming
+  `veriusertfs` or a PLI 1.0 `tf_*`/`acc_*` routine is refused. On Windows the
+  model run puts each `--dpi-lib` directory first on `PATH`.
+- `--dpi-import-lib <path>` (command line only, MSVC): configure the model, build
+  only `sim.exe`'s import library for DPI-C/VPI DLLs, copy it to `<path>` and
+  stop; refused with `--gen-only` and on other toolchains.
+- `--vpi` (command line only): keep the VPI object catalog for an application
+  loaded at run time with `LLG_VPI_PLUGIN`; any `--dpi-lib` or user system task
+  call implies it.
+- `--sdf [min:|typ:|max:][<scope>=]<file>` (repeatable, command line only):
+  annotate SDF before simulation starts. Only a word of two or more letters
+  before the first `:` is a selector, so drive-letter, extended and UNC Windows
+  paths are files on every host. Files are read relative to the working
+  directory when the model is generated; `$sdf_annotate` logs are written before
+  the model runs.
+- `--pulse-reject`/`--pulse-error <0-100>`, `--pulse-style <onevent|ondetect>`,
+  `--[no-]show-cancelled`: path pulse limits and style; an error limit below the
+  reject limit is a settings error.
+- `--[no-]timing-checks`, `--[no-]notifiers`, `--[no-]timing-check-messages`:
+  timing-check evaluation, notifier updates and messages (all on by default).
+- `--stop-policy <resume|exit>`: `$stop` resumes in the same time step (default);
+  `exit` returns without draining work or running final blocks.
 - `--`: pass the remaining arguments to the generated simulator for
   `$test$plusargs`/`$value$plusargs` (for example, `llg tb.sv -- +mode=fast`).
 
@@ -371,7 +394,16 @@ Both `llg` and `llg_ls`:
 | `LLG_MEMORY_LIMIT_MB` | Memory budget in MiB for the frontend process; unset disables it. |
 | `LLG_MEMORY_WARNING_PERCENT` | Warn at this percentage of the budget (default 80). |
 | `LLG_MEMORY_POLL_MS` | Memory sampling interval in milliseconds (default 1000). |
-| `LLG_MEMORY_ADDRESS_SPACE_LIMIT` | `true` also applies the budget as a Linux/macOS address-space limit. |
+| `LLG_MEMORY_ADDRESS_SPACE_LIMIT` | `true` (or `yes`/`on`/`1`; default `false`) also applies the budget as a Linux/macOS address-space limit. |
+
+The budget covers Rust and in-process Slang/C++ allocations of the frontend
+(Linux RSS, macOS physical footprint, Windows working set; Windows also uses a
+Job Object limit). Exhausting it prints a fixed message to stderr and ends the
+process at once. Size it for startup and peak parsing, not idle use. It does not
+measure the generated simulator or other children: Unix children inherit an
+enabled address-space limit, which bounds virtual rather than physical memory
+and can fail allocations before the watchdog, and Windows descendants left in
+the job may inherit its limit. Guard child memory separately.
 
 ## Using `llg_ls`
 

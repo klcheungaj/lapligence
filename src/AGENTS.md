@@ -1,315 +1,51 @@
-# Shared source policies
+# Agent guide: src
 
-`lib.rs` exposes `ffi`, `core`, `sim` and `memory_limit`. Root architecture rules
-apply throughout; child guides own module contracts.
+The `llg` library crate (`lib.rs`) plus the native wrapper and the binaries.
+Module ownership is in the `lib.rs` crate docs; child guides own their contracts.
 
-## Process-memory safeguard
+## Directory map
 
-[memory_limit.rs](memory_limit.rs) owns policy;
-[ffi/process_memory.rs](ffi/process_memory.rs) owns platform primitives. `llg` and
-`llg_ls` install the guard after accepting CLI work and before source admission,
-not for help, version or usage errors. `llg_ls` integrates lifecycle logging;
-`llg` sends status/warnings to stderr.
+- `config/`: shared `llg.toml` schema ([readme](config/readme.md)).
+- `core/`: compile, owned DB, values, projections and lint ([guide](core/AGENTS.md)).
+- `ffi/`: the only Rust `unsafe`; Slang ABI receivers and platform calls
+  ([guide](ffi/AGENTS.md)).
+- `wrapper/`: C++ Slang capture behind the C ABI ([guide](wrapper/AGENTS.md)).
+- `sim/`: simulator pipeline and C11 runtime ([guide](sim/AGENTS.md)).
+- `bin/`: `llg`, `llg_ls` and demos ([guide](bin/AGENTS.md)).
+- `memory_limit.rs`: process-memory policy (module docs); platform primitives in
+  `ffi/process_memory.rs`. User variables: [readme](../readme.md).
+- `profile.rs`: opt-in `LLG_PROFILE_STAGES=1` stage markers (module docs;
+  scaling runs in [perf](../perf/README.md)).
 
-The optional process-wide budget covers Rust and in-process Slang/C++ allocations.
-Configure it before starting either frontend:
+## Platform code
 
-| Variable | Meaning | Default |
-| --- | --- | --- |
-| `LLG_MEMORY_LIMIT_MB` | Positive integer physical-memory budget in MiB | unset/disabled |
-| `LLG_MEMORY_WARNING_PERCENT` | Percentage triggering one warning | `80` |
-| `LLG_MEMORY_POLL_MS` | Sampling interval in milliseconds | `1000` |
-| `LLG_MEMORY_ADDRESS_SPACE_LIMIT` | Reversible Linux/macOS `RLIMIT_AS`; accepts `true/false`, `yes/no`, `on/off`, `1/0` | `false` |
-
-The watchdog samples Linux RSS, macOS physical footprint/resident usage or Windows
-working set. Budget exhaustion prints a fixed emergency stderr message and
-terminates immediately, avoiding shutdown allocations. Windows also uses a Job
-Object process limit. Optional Unix `RLIMIT_AS` limits virtual, not physical,
-memory and may fail allocations before the watchdog. Failed native installation
-is reported; retain the watchdog when it can start, including inside an existing
-Windows host job.
-
-Budget for startup and peak Slang parsing/capture, not idle usage. The guard covers
-concurrent LSP work, frontend compilations and driver activity. It samples and
-terminates only the frontend, not its generated simulator or aggregate child RSS.
-Unix children inherit enabled `RLIMIT_AS`; Windows descendants remaining in the job
-may inherit native limits. These effects are host-dependent; guard child physical
-memory separately.
+- Platform conditionals live only in the platform layers; add a layer function
+  instead of a conditional elsewhere
+  ([layers](../docs/cross_platform.md#platform-layers)).
+- Resolve and compare paths through `ffi/secure_fs.rs`, never by string.
+- Check [cross-platform handling](../docs/cross_platform.md) before touching
+  paths, text output, process exit, C compilation or CI.
+- Windows on ARM ships `llg_ls` only: code `llg_ls` uses (library, frontend, Db,
+  lint) stays portable there.
 
 ## Safeguard changes
 
-[LSP admission](bin/llg_ls/lsp/AGENTS.md) owns staging;
-[LSP policy](bin/llg_ls/AGENTS.md) owns requests, caches, explorer limits and tracing;
-[validation](../tests/AGENTS.md) owns gates.
+Owners: LSP admission ([lsp guide](bin/llg_ls/lsp/AGENTS.md)); requests, caches,
+explorer limits and tracing ([llg_ls guide](bin/llg_ls/AGENTS.md)); test gates
+([safeguards](../tests/readme.md#safeguards)).
 
 - Apply byte/count limits before input cloning, size-derived allocation, cache
-  keys, single-flight admission, staging, parsing or optional-response serialization.
-  Preserve exact boundaries; check or saturate arithmetic for totals, percentages,
-  timeouts and size conversions.
-- Keep open buffers authoritative. Bound closed reads to maximum plus one byte
-  and reuse admitted snapshots. Preserve include authorization, canonical
-  deduplication and cache-only native reads; never reopen unadmitted paths.
-- Reject invalid configuration atomically, retaining the documented last-valid
-  config and servable analysis. Stale revisions or saturated flights must not
-  start frontend work.
-- Keep emergency logs allocation-light, bounded, redacted and off JSON-RPC stdout.
-  Test Unix limit restoration and Windows Job Object ownership natively before
+  keys, single-flight admission, staging, parsing or optional-response
+  serialization. Keep exact boundaries.
+- Check or saturate arithmetic for totals, percentages, timeouts and size
+  conversions.
+- Open buffers are authoritative. Bound closed reads to maximum plus one byte and
+  reuse admitted snapshots. Keep include authorization, canonical deduplication
+  and cache-only native reads; never reopen unadmitted paths.
+- Reject invalid configuration atomically, keeping the last valid config and
+  servable analysis. Stale revisions or saturated flights start no frontend work.
+- Emergency logs stay allocation-light, bounded, redacted and off JSON-RPC stdout.
+- Test Unix limit restoration and Windows Job Object ownership natively before
   changing platform claims.
-- Update defaults, diagnostics, tests and owning guides together for any changed
+- Change defaults, diagnostics, tests, docs and guides together for any
   environment variable, configuration key, limit or fallback.
-
-## Platform layers
-
-Platform conditionals (`cfg(windows|unix)`, `target_os`, `_WIN32`, `_MSC_VER`,
-`__GLIBC__` and similar) live only in the platform layers; everything else calls
-their neutral interface:
-
-- Rust: `src/ffi/platform.rs` (path spellings such as verbatim-prefix removal
-  and `canonicalize`, file-name rules), `ffi/secure_fs.rs` (handle-based file
-  admission) and `ffi/process_memory.rs` (process limits).
-- Build scripts: `build_support/host_platform.rs`, included beside the other
-  build-support modules because build scripts cannot use the crate.
-- Generated-model C runtime: `src/sim/rt/llg_compiler.h`, `llg_platform.h` and
-  `llg_platform_native.h` (see [runtime](sim/rt/AGENTS.md#platform-layer)).
-- C++ wrapper: `src/wrapper/slang_platform.hpp/.cpp`.
-
-Tests may branch on the platform only where they assert platform-specific
-behaviour (symlinks, permissions). Add a layer function instead of a new
-conditional elsewhere.
-
-## Platform differences
-
-Observed in CI and native builds; keep code portable across all of them. Resolve
-or compare paths the way [secure_fs](ffi/secure_fs.rs) does, never by string.
-
-- Windows on ARM (`aarch64-pc-windows-msvc`): `llg_ls` only; `llg` unsupported, so
-  generated models, DPI/VPI and the C runtime are too. Its CI lane builds only
-  `--bin llg_ls`, packages only `llg_ls.exe` and runs the language-server test
-  set (nextest profile `ci-lsp`); the library, frontend, Db and lint code that
-  `llg_ls` uses must stay portable there. `ffi::platform::simulator_unsupported_reason`
-  makes `llg` exit 2 with an "unsupported platform" message on that target; never
-  add simulator-only tests to the `ci-lsp` set (see
-  [CI and release gate](../tests/AGENTS.md#ci-and-release-gate)). The arm64
-  runner observations below stay as history for a possible return of the platform.
-
-- macOS `/var`, `/tmp` and `/etc` are symlinks into `/private`, and `temp_dir()`
-  is `/var/folders/...`. Handle-derived paths are resolved, so compare resolved
-  spellings: resolve user roots (include directories, dump targets) once at entry
-  with `secure_fs::open_path(..).actual_path()`. Linux hits the same mismatch for
-  symlinked project directories. Reproduce macOS by pointing `TMPDIR` at a
-  symlinked directory. Never send resolved paths back to LSP clients in place of
-  their URI spelling; symlinked LSP workspace roots still miss feature lookups.
-- macOS `/dev/fd/N` entries are fdesc device nodes, not symlinks: `readlink` fails
-  with EINVAL, `opendir` with ENOTDIR, and opening one duplicates N with a shared
-  offset. Use `fcntl(F_GETPATH)` and `fdopendir` on a fresh `openat(".")`. Linux
-  `/proc/self/fd/N` is a real link whose reopen creates a new description.
-- Windows `canonicalize` returns verbatim `\\?\D:\...` paths; `Path::starts_with`
-  treats that prefix and `D:` as different. Handle paths strip it, so compare
-  canonical with canonical, and canonicalize test temporary paths on Unix only.
-- Windows relative paths use `\`: compare `Path` components, never strings
-  containing `/`. Diagnostics and runtime reports name a source by its resolved
-  native spelling (handle-derived); tests build expected text with
-  `ffi::platform::canonicalize`, not `join("tests/fixtures/...")`, which keeps
-  a literal `/` on Windows. `Url::path` is `/C:/...` there; compare
-  `Url::to_file_path` or `Url::from_file_path` results instead.
-- Windows text-mode consoles and files write CRLF. Captured child output goes
-  through `ffi::platform::native_text_to_lf` before comparison with LF oracles.
-  `$fopen` passes its mode to C `fopen` unchanged, so text-mode `$ftell`,
-  `$fseek` and `$rewind` positions differ there (UCRT's text-mode `ftell`
-  returned -1 after `$rewind` and `$fgetc` on an LF-only file). HDL fixtures and
-  `lrm_decisions` cases whose output depends on byte positions or unformatted
-  data open their files with `"rb"`/`"wb"` (IEEE 1800-2009 21.3.1).
-- Windows `abort()` ends a process with an NTSTATUS such as 0xC0000409, which an
-  `ExitCode` byte would truncate (to 9); `llg` maps statuses outside 0-255, like
-  Unix signals, to 1 and prints one line: `llg: the model exited with status
-  0xC0000409` (the 32-bit status in upper-case hex, `0x` and eight digits) on
-  Windows, `llg: the model was terminated by signal 6 (SIGABRT)` on Unix (the
-  name is omitted for a signal outside the table in `src/bin/llg/main.rs`).
-- MSVC `/W4` rejects shadowed locals, parameters and globals (C4456/C4457/C4459)
-  under `/WX`; GCC/Clang only report them with `-Wshadow`, which the runtime
-  storage probes enable.
-- Windows share mode 0 blocks other opens of that file, including from this
-  process (os error 32). `FlushFileBuffers` needs a writable handle, so directory
-  sync through cap-std's read-only directory handles fails; skip it there.
-- `std::os::windows::fs::MetadataExt::number_of_links`/`file_index` are unstable
-  (`windows_by_handle`); use cap-std `MetadataExt` on an open handle. Gate
-  `std::os::unix` users, including symlink tests, with `#[cfg(unix)]`.
-- MSVC C mode lacks `max_align_t` (use `llg_co_max_align_t`). MSVC gives unnamed
-  enums an `int` underlying type where GCC/Clang choose `unsigned`, so brace
-  initializing a `uint32_t` from an enum ternary is narrowing (C2397); cast.
-  MSVC's `<chrono>` warning C4530 without `/EHsc` is harmless.
-- MSVC at `/W4` reports a statement after a call to a `__declspec(noreturn)`
-  or `_Noreturn` function as unreachable (C4702); GCC/Clang do not. `llg_co.h`
-  omits such defensive returns only for MSVC with its default noreturn handler
-  or an override that defines `LLG_CO_BAD_STATE_NORETURN` (as `llg_rt.h` does).
-- MSVC `/W4 /WX` also rejects what GCC/Clang accept by default: C4701 for a
-  variable assigned only inside a `while` loop (at `/O2`; use `do`), C4702 for a
-  `return` after an `abort()` helper that `/O2` inlines (declare it `_Noreturn`),
-  C4090 for `memset` on an array of pointers to const (assign elements), and
-  C4132 for a valid C11 tentative definition `static const T x;` completed later
-  (define the object first, after a function prototype). Clang `-Wconditional-uninitialized`/`-Wunreachable-code` approximate the first
-  two. Details: [runtime guide](sim/rt/AGENTS.md).
-- A Windows DLL resolves every import when it is linked, and the model links the
-  DLLs it imports DPI-C functions from, so a DPI-C or VPI DLL cannot find the
-  `svdpi.h`/`vpi_*` routines or DPI-C exports in `sim.exe` the way an ELF or
-  Mach-O library does at load time. Every model writes `sim.def` (those names);
-  MSVC links `sim.exe` with `/DEF:sim.def`, and `llg --dpi-import-lib x.lib`
-  writes `sim.exe`'s import library from the same file (`lib /DEF
-  /NAME:sim.exe`) without linking the model, which breaks the cycle. A DLL
-  linked against it binds to the loaded module named `sim.exe`, so keep that
-  name. The user's C stays Annex H/I code: it exports its import functions with
-  `svdpi.h`'s `DPI_DLLESPEC` (or a `.def`), and `vpi_user.h` exports
-  `vlog_startup_routines` (`PLI_DLLESPEC`, Annex K). `--dpi-lib` takes the DLL's
-  import library; `llg` puts each `--dpi-lib` directory first on `PATH` when it
-  runs the model. A call the import library lacks (`svGetTime`, an export the
-  design does not declare) fails the DLL's own link, which names it. This was
-  chosen over a function-pointer table because calls stay direct by name with no
-  llg stub library in the DLL (LLVM's `opt.exe` plugins work the same way);
-  static archives remain the route that needs no import library. A DLL that
-  exports nothing gets no import library at all, so `--dpi-lib x_dll.lib`
-  then fails as "not a regular file": mark every import definition
-  `DPI_DLLESPEC` (`sim_040::dll_companions_export_every_import_definition`
-  checks the fixtures).
-- `cl /LD` implies the static CRT (`/MT`) unless `/MD` is given, while CMake
-  builds the model with the shared UCRT (`/MD`, CMP0091). A static-CRT DLL has
-  its own `stdout` buffer: its `printf` lines reach a piped stdout when the
-  DLL unloads, after everything the model printed, where ELF and Mach-O
-  companions share the model's libc buffer. The model flushes its own
-  `stdout` after every line but cannot flush another CRT's, so the companion
-  owns that: test DLLs build with `/MD` (`c_compiler::shared_library`), and
-  the Windows DLL guidance in `docs/known_issues.md` says so.
-- `cl` writes its diagnostics to stdout, not stderr: print both streams when a
-  compile fails. A Ninja build stops at the first failing source, so one CI run
-  can hide further MSVC-only errors behind it.
-- `cmd.exe`'s `copy` prints `1 file(s) copied.` on stdout, which a `$system`
-  command shares with the model; redirect it (`>NUL`) where output is compared.
-- GitHub Actions runs `shell: bash` steps as `bash -eo pipefail`, and `ls`
-  exits 2 when any operand (an unmatched glob) is missing, so
-  `x=$(ls a b 2>/dev/null | head -n 1)` ends the step silently with status 2
-  even when `b` exists; test each candidate with `[ -f ]` in a loop.
-- Unsequenced operands (`f() | g()`, C11 6.5p3) run in a different order under
-  MSVC than under GCC/Clang. Sequence calls with side effects, such as printing
-  checks, as separate statements.
-- CMake's Windows-MSVC platform file makes single-config generators (Ninja,
-  NMake) default to Debug: `/Od` keeps dead calls, so a subset library can fail
-  to link, and `/Zi` writes PDBs. Pass `CMAKE_BUILD_TYPE` and
-  `CMAKE_TRY_COMPILE_CONFIGURATION` explicitly.
-- Windows paths are limited to `MAX_PATH` (260 characters). CMake `try_compile`
-  object paths under a deep test directory exceed it, and `cl` fails with C1083
-  or C1041, which surfaces as unrelated errors such as a failed type-size check.
-  Keep scratch directory names short (`tests/readme.md`).
-- CMake output differs on Windows in ways a textual comparison must allow:
-  `build.ninja` escapes paths (`D$:\...`, `$ `, `$$`), configured headers are
-  written with CRLF, `CMakeFiles/ShowIncludes/` is scratch, and the default
-  `CMAKE_INSTALL_PREFIX` depends on whether `CMAKE_SIZEOF_VOID_P` is known yet.
-  The toolchain seed handles these ([sim guide](sim/AGENTS.md)).
-  `CMakeCache.txt` names the build directory with a lower-case drive and `/`
-  (`c:/Users/...`), so a test looking for a tree path matches CMake's
-  spellings, not only `Path::to_str` (`sim_cmake::cmake_path_spellings`).
-- Git for Windows' MSYS `make`/`sh` rewrites `/option` arguments into paths
-  (`/nologo` becomes `C:/Program Files/Git/nologo`); use the NMake or Ninja
-  generator with MSVC, never `Unix Makefiles`.
-- Paths built from configured relative parts get native separators on Windows
-  (`out\w\dump.vcd`); tests build expected paths with `Path::join`.
-- `ilammy/msvc-dev-cmd` with `amd64_arm64` runs x64 cross tools under emulation
-  on arm64 runners, several times slower; use the native `arm64` tools.
-- Without zlib's configure step `Z_HAVE_UNISTD_H` is unset, so its `gz*` code
-  calls undeclared `read`/`write`/`lseek`/`close`, which GCC 14 and Clang reject;
-  the bundled zlib defines it outside Windows.
-- Windows test temporary directories drop the test's label (`llg-<pid>-<n>`),
-  so a word that a Unix run finds in a diagnostic's path is absent there. Match
-  diagnostic fields (message, severity, position), never a whole `Debug` dump.
-- The GitHub Windows arm64 image ships Defender real-time, on-access,
-  behaviour and IOAV protection on, with tamper protection, so
-  `Set-MpPreference` cannot turn them off; the x64 image ships them off. Both
-  list `C:\` and `D:\` as excluded paths. Under the test load a fresh, seeded
-  model configure took 3.0 s (median) on arm64 against 0.15 s for an existing
-  tree, 0.35 s on x64 and 19 ms on Linux; `scripts/ci_windows_runner.py`
-  measures where that time goes. Doing less per fresh tree is the remaining
-  lever (opt-in `LLG_CMAKE_TREE_TEMPLATES`, [sim guide](sim/AGENTS.md)).
-- On the arm64 runner `bash` (Git Bash) and Git's `link` are x64 images run
-  under emulation, and Git's `usr/bin` precedes the MSVC tools on a Git Bash
-  `PATH`. CMake still links with the native `link.exe` beside `cl`
-  (`CMakeFindBinUtils` searches the compiler's directory first); Cargo needs
-  the pinned linker (`.github/actions/msvc-linker`).
-- The UCRT's `clock()` returns elapsed wall time, not processor time; timing
-  checks that compare CPU costs use `llg_process_cpu_seconds`
-  (`llg_platform_native.h`).
-- Renaming `malloc`/`free` with `-D` on the compiler command line also renames
-  the UCRT's own `dllimport` declarations, so references become `__imp_<name>`
-  that no static library defines (LNK2019). Rename in a header included after
-  `<stdlib.h>` (a forced include).
-- ccache refuses MSVC `/Zi` (shared PDB) as an unsupported compiler option;
-  Debug CMake projects that should be cached embed debug information
-  (`/Z7`, `CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded`, CMP0141).
-- Plain C `char` is unsigned on AArch64 Linux (also PowerPC, RISC-V and MSVC with
-  `/J`) and signed on x86, Apple arm64 and Windows. SV `byte` is C `char` (IEEE
-  1800-2009 Table H.1), so DPI thunks keep `char` prototypes and sign-extend each
-  foreign byte explicitly, and C code (companions included) reads a `byte` through
-  an explicit sign extension, never `%d` of a plain `char`. GCC/Clang
-  `-funsigned-char` reproduces the AArch64 behaviour on x86_64.
-- The Annex I sample `svdpi.h` defines the fixed-width types per OS and falls back
-  to `<sys/types.h>`, which lacks `uint8_t`/`uint32_t`/`uint64_t` on macOS. llg
-  writes its own `rt/svdpi.h` (the same header with `<inttypes.h>`, allowed by
-  I.2) beside every model; DPI-C tests compile against it. `-U__linux` on Linux
-  reproduces the macOS failure of the sample header.
-- Windows process CPU time (`GetProcessTimes`) advances in 15.625 ms ticks;
-  `clock()` on Linux and macOS in 1 µs steps. A CPU-time comparison must span many
-  ticks of the measured resolution (the fork-group scale probe repeats each sample
-  until it spans 32), or one or four ticks read as a ratio of 4.
-- MSVC Debug (`/Od /RTC1`) runs call-heavy probes 6-14x slower than GCC `-O0`
-  (Windows CI: `array_conditional` 12.6 s against 0.9 s, the per-bit word-copy
-  oracle over 60 s against 10 s). Keep per-bit reference work in plain arrays,
-  not in calls into the runtime under test.
-- CMake 4.4 on Windows writes a `C:\...` build directory as `c:/...` (lower-case
-  drive, `/`) in the `CMakeCache.txt` header while other files keep the given
-  drive case; a textual comparison of configured trees covers both drive cases
-  (`build/tree_template.rs`). This rejected every opt-in tree template on both
-  Windows runners until CI round 5.
-- A Windows DLL resolves its imports only from libraries named when it is
-  linked, and the model executable has no import library, so a DPI DLL can
-  call neither the `svdpi.h` routines nor `export "DPI-C"` entries of the
-  model. On Windows a companion that uses them is given to `--dpi-lib` as a
-  static library (`.lib`), which CMake links into the model executable; Unix
-  hosts accept both shared and static companions. The static route is
-  exercised by `sim_041::static_archive_companion_reaches_exports_and_scopes`
-  (written for MSVC `cl /c` + `lib`; Unix-verified only as of SIM-041).
-- Apple ld64 does not check a dylib's undefined symbols when it links an
-  executable against it; GNU ld does. A DPI library built with `-undefined
-  dynamic_lookup` that calls a routine or an export nobody defines therefore
-  links, and the model ends by a signal (status 1 and a `terminated by signal`
-  line from `llg`) when it calls it, or runs on when it never does. llg reads
-  Mach-O libraries' symbol tables before the build (`build/dpi_link.rs`) and
-  names the unprovided `svdpi.h` routines and every lookup that neither the
-  model nor another `--dpi-lib` defines, as GNU ld's link failure does;
-  `clang --target=arm64-apple-macos11 -c` produces Mach-O objects on Linux
-  for checking such a reader.
-- In the Windows arm64 test job (4 CPUs, Defender on) model-building tests ran a
-  median 4.5 times longer than on x64, flat over five hours, while tests that
-  compile without model builds (frame lint, storage probes) ran at x64 speed and
-  isolated or 4-way concurrent builds in the build job matched x64. The cause is
-  not known. Windows on ARM no longer runs the simulator suite (language server
-  only), so the two-shard split and the resource samplers were removed from that
-  lane; the observation stays for a possible return of the platform.
-- tower-lsp 0.20 runs notifications concurrently, so slower runners (Rocky arm64)
-  interleave handlers that are sequential elsewhere; state written after an
-  `await` must not let an older result replace a newer one (workspace rescans
-  carry a start ticket).
-- The Linux build container runs as root and Cargo extracts crates with their
-  archive modes (`fnv-1.0.7` is owner-only), so the runner user's cache-save `tar`
-  cannot read them; the workflow hands the registry back to the runner user.
-- Linux CI builds only in static-musl Alpine; glibc Ubuntu/Rocky containers run
-  those binaries. Minimal images lack clang, which `generated_c_frame_lint`
-  requires alongside gcc; install test tools explicitly. zlib is bundled, never
-  a system package.
-
-## Pipeline profiling
-
-`profile.rs` emits opt-in `llg-profile begin/end` stderr markers when
-`LLG_PROFILE_STAGES=1`. Wrapper markers separate Slang elaboration/analysis from
-capture; FFI, DB import, semantic/typed/execution lowering, optimization and
-rendering use the same format. Keep this diagnostic helper frontend-neutral;
-markers must not affect ABI fields, diagnostics or generated files.
-`perf/scripts/frontend_scale.py` combines these markers with sampled Linux RSS
-and GNU time whole-process peaks. RSS includes all representations live in a
-stage and allocator-retained pages, not that stage's exclusive allocation cost.

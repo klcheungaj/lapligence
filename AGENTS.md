@@ -1,112 +1,83 @@
-# Lapligence agent guide
+# Agent guide for lapligence
 
-Lapligence (`llg`) shares a Rust core and vendored Slang v11.0 between:
+Lapligence (`llg`) shares a Rust core and vendored Slang v11.0 between a
+simulator (source → Slang → owned `core::db` → semantic/execution IR →
+optimization → C11 → CMake-built stackless model) and the `llg_ls` language
+server (the same frontend → owned analysis → tower-lsp stdio features).
 
-- Simulator: source → Slang parse/compile/elaborate → owned `core::db` →
-  semantic/execution IR → optimization → C11 → CMake-built stackless runtime model.
-- LSP: the same frontend → owned analysis → tower-lsp stdio diagnostics, tokens,
-  hover, definition, symbols, completion, references, rename/prepareRename and
-  read-only module explorer.
+## Agentic file budget
 
-## Instruction map
+- Root guide: under about 80 lines. Subtree guides: under about 100 (aim for
+  40-80): local ownership, rules, pitfalls, commands and pointers.
+- Each rule lives in one place. Contracts, procedures, platform notes and
+  examples go to module readmes or docs ([placement](docs/AGENTS.md)); guides
+  link to them and never restate a source comment.
 
-Read the owning guide before editing a module or sibling facade such as
-`features.rs` or `codegen.rs`. Keep detailed contracts with their owner and link
-rather than duplicate. Use the [source map](docs/source_layout.md) to find domains.
+## Universal work rules
 
-| Area | Guide |
-| --- | --- |
-| Shared safeguards | [src/AGENTS.md](src/AGENTS.md) |
-| Compile, DB, values and projections | [core](src/core/AGENTS.md) |
-| Native ownership and platform calls | [ffi](src/ffi/AGENTS.md) |
-| C ABI and C++ | [wrapper](src/wrapper/AGENTS.md) |
-| Simulator pipeline, lowering, emitter and runtime | [sim](src/sim/AGENTS.md) |
-| Drivers and allocators | [bin](src/bin/AGENTS.md) |
-| `llg.toml` schema (shared by `llg` and `llg_ls`) | [config](src/config/readme.md), [reference](docs/config.md) |
-| LSP backend and features | [llg_ls](src/bin/llg_ls/AGENTS.md) |
-| Lint API, configuration and rules | [lint](src/core/lint/AGENTS.md) |
-| Tests, safeguards, CI and release | [tests](tests/AGENTS.md) |
-| Human documentation | [docs](docs/AGENTS.md) |
+- Before editing a file, read the nearest `AGENTS.md` and each parent guide up
+  to this one.
+- Follow [coding practices](docs/coding_practices.md). Make conservative,
+  incremental changes; verify APIs and flags against vendored headers; state
+  uncertainty and ask when correctness depends on it.
+- Use the Cargo.toml edition, rustfmt defaults, `Result`/`Option` over panics and
+  the existing `compile::Diag`/`elab::ElabError` types. Add error enums or
+  explicit lifetimes only as needed; prefer clarity over clever generics. Add
+  Python comments or docstrings only when asked.
+- Speed and memory come first, but optimize only with evidence and explained
+  trade-offs; no unsolicited micro-optimizations.
+- New nontrivial code needs tests ([test guide](tests/AGENTS.md)).
+- Comments are factual and say why; document public APIs and FFI ownership.
+  Update a module readme when its purpose or interactions change.
+- Keep handoffs, plans, findings and run evidence in ignored `persistence/`;
+  never stage, commit or force-add it.
 
-## Architecture
+## Architecture rules
 
-- Prefer Rust; use C++ for performance, ABI stability or legacy needs. Cross only
-  a documented C ABI: no C++ templates/exceptions, Rust generics or panics.
-  Clarify uncertain ownership or boundary assumptions.
-- Confine Rust `unsafe` to `src/ffi/`, with soundness explanations. The check
+- Prefer Rust; use C++ only for performance, ABI stability or legacy needs.
+  Cross only a documented C ABI: no C++ templates or exceptions, no Rust
+  generics or panics.
+- Rust `unsafe` lives only in `src/ffi/`, with soundness explanations:
   `grep -rn "unsafe" src --include=*.rs | grep -v src/ffi` must be empty.
-  Other modules use stable safe FFI APIs.
-- `core::db::Db::from_slang` is the single owned semantic import. Model, lint,
-  simulator and LSP consumers read owned data; extend capture instead of adding
-  native AST traversals. Use frontend-neutral `core::value` with exact four-state
-  and byte payloads. Safe APIs expose neither AST pointers nor borrowed native memory.
-- Keep tower-lsp/tokio/dashmap in `llg_ls`, behind default-on `lsp` and the bin's
-  `required-features = ["lsp"]`. `cargo build --lib --no-default-features` must
-  work without them. Bins import `llg::config`, `llg::core`, `llg::ffi` and `llg::sim`; no
-  `#[path]` includes. The C11 runtime, including `llg_co`, is packaged only with
-  generated models, never linked into Rust binaries.
+- `core::db::Db::from_slang` is the single owned semantic import. Consumers read
+  owned data; extend capture instead of adding native AST traversals. Safe APIs
+  expose neither AST pointers nor borrowed native memory.
+- tower-lsp, tokio and dashmap stay in `llg_ls` behind default-on `lsp`
+  (`required-features = ["lsp"]`); `cargo build --lib --no-default-features`
+  must work.
+- The C11 runtime, including `llg_co`, ships only with generated models, never
+  linked into Rust binaries.
+- Windows on ARM ships `llg_ls` only; `llg` is unsupported there.
 
-## Build and references
+## Build
 
-Root `build.rs` drives CMake for Slang, fmt and the C wrapper; even `cargo check`
-may trigger a native build. Build `llg_ls`, `llg` or `elab_check` with
-`cargo build --bin <name>`; demo bins are also available.
+- Root `build.rs` drives CMake for Slang, fmt and the wrapper; even `cargo check`
+  may trigger a native build. Build one binary with `cargo build --bin <name>`.
+- Vendored Slang: the Rust patch preparer applies tracked `patches/slang/` to the
+  documented upstream-base gitlink; no project-specific submodule commits
+  ([patch preparation](patches/README.md)).
+- Accelerators (opt-in, never required): from the repository root,
+  `export LLG_SCCACHE=1 LLG_MOLD=1; source scripts/dev-env.sh`, omitting
+  unavailable tools; mold only on Linux GNU hosts
+  ([accelerators](tests/readme.md#optional-development-accelerators)).
+- Parallel worktrees: `scripts/run-tests.sh --test-work-dir /build` (the actual
+  tmpfs mount); never share mutable Cargo/CMake trees or delete another run's
+  scratch ([storage and cleanup](tests/readme.md#parallel-worktrees)).
 
-For parallel worktrees with an available executable tmpfs, use
-`scripts/run-tests.sh --test-work-dir /build` (substitute the actual mount path;
-append nextest filters as needed). This opt-in flow isolates scratch per
-worktree/run, shares the runtime cache, and keeps Cargo/Slang builds on disk.
-Do not share mutable Cargo/CMake build trees or delete another active run's
-scratch. Follow [test storage and cleanup](tests/readme.md#parallel-worktrees).
-Optional `--sccache`/`--mold` runner flags and a sourced environment helper for
-plain Cargo are described in [development accelerators](tests/readme.md#optional-development-accelerators).
-Agents should enable installed accelerators from the repository root with
-`export LLG_SCCACHE=1 LLG_MOLD=1; source scripts/dev-env.sh`; omit unavailable tools'
-variables and use mold only on a Linux GNU host. Keep these tools opt-in and never
-required; preserve configured rustflags and user Rust wrappers.
+## Project map
 
-The portable Rust patch preparer applies tracked `patches/slang/` before consuming
-native sources. Keep the documented upstream-base vendor gitlink; no
-project-specific submodule commits. Accept clean or fully applied trees; reject
-partial/mismatched trees with actionable diagnostics.
-Wrapper edits rebuild the shim; Slang/CMake/patch edits may rebuild the frontend.
+- [src/AGENTS.md](src/AGENTS.md): library crate, platform code, safeguards.
+  - [core](src/core/AGENTS.md), [lint](src/core/lint/AGENTS.md),
+    [ffi](src/ffi/AGENTS.md), [wrapper](src/wrapper/AGENTS.md),
+    [sim](src/sim/AGENTS.md), [bin](src/bin/AGENTS.md),
+    [llg_ls](src/bin/llg_ls/AGENTS.md), [config](src/config/readme.md).
+- [tests/AGENTS.md](tests/AGENTS.md): tests, CI and release.
+- [docs/AGENTS.md](docs/AGENTS.md): documentation placement.
+- Other: `patches/`, `perf/`, `scripts/`, `vendor/`, `build_support/`.
 
-`llg_ls` and `helloworld` use mimalloc as Rust global allocator. On musl Linux,
-`build.rs` and `mimalloc_shim.c` wrap C `malloc`/`free` for every binary and use
-static target archives. Preserve `ffi/slang.rs` native `#[link]` attributes for
-wrapper, Slang and fmt linkage through the library.
+## Source-of-truth docs
 
-The release matrix targets static-musl Linux x86_64/arm64, MSVC Windows
-x86_64/arm64 and macOS arm64, with linkage audits. Windows on ARM: `llg_ls` only;
-`llg` unsupported (its CI lane builds, audits, packages and tests the language
-server alone, and `llg` refuses to run there). Configuration is not validated
-support; keep platform evidence and generated-model limits in local
-`persistence/platforms.md`. [Tests](tests/AGENTS.md) owns CI/release commands.
-The stackless coroutine library is in `src/sim/rt/llg_co.h/.c`; LRMs are in
-`docs/specification/`. Local `persistence/ROADMAP.md` records remaining work.
-
-## Working conventions
-
-Follow [coding practices](docs/coding_practices.md), subject to architecture and
-safety rules. Make conservative incremental changes, verify APIs/flags against
-vendored headers, state uncertainty and clarify when correctness requires it.
-Use the Cargo.toml edition, rustfmt defaults, `Result`/`Option` over panics and existing
-`compile::Diag`/`elab::ElabError` types. Add error enums or explicit lifetimes
-only as needed; prefer clarity over clever generics. Optimize only with evidence
-and explained trade-offs; no unsolicited micro-optimizations. Follow the wrapper
-C++ guide. Add Python comments/docstrings only when requested.
-
-New nontrivial code needs tests; prefer Rust unit/integration and Rust-side FFI
-coverage. Use exact in-memory sources for focused library tests and the test
-guide's checked-in HDL contract for end-to-end simulation. Serialize CWD changes
-and restore them. Use `compile_checked` for execution/elaboration; reserve raw
-`compile` for partial-result/diagnostic tests. Follow test cleanup/regression rules.
-Keep comments factual and focused on why; document public APIs and FFI ownership.
-Update module READMEs when purpose, requirements or interactions change.
-
-## Local records
-
-Keep handoffs, plans, findings, run evidence and inter-session memory in ignored
-`persistence/`; never stage, commit or force-add it. Consult it on resumption and
-update decisions, evidence, limits, remaining work and moved references. Human
-guides belong in `docs/`; module documentation belongs beside source.
+- [Source layout](docs/source_layout.md) (ownership, doc index),
+  [cross-platform](docs/cross_platform.md), [CI](tests/ci.md),
+  [configuration](docs/config.md), [feature status](docs/sim_features.md).
+- Local only: LRMs in `docs/specification/`, `persistence/ROADMAP.md`.
