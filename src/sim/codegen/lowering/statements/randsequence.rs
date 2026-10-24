@@ -16,7 +16,7 @@
 //! when it ends, so recursion never uses the C stack; the total depth is
 //! checked against [`RANDSEQUENCE_DEPTH_LIMIT`].
 //!
-//! Random stability and the order of draws are decisions S16-D1..D9 in
+//! Random stability and the order of draws are decisions S16-D1..D10 in
 //! `docs/lrm_decisions.md`.
 
 use super::*;

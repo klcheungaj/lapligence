@@ -126,6 +126,11 @@ error expectations, optimizer-mode coverage, or runtime sanitizer settings.
 | [time_zero_initialization.md](time_zero_initialization.md) | Time-zero initialization |
 | [sim_performance_tradeoffs.md](sim_performance_tradeoffs.md) | Simulation speed versus model compile time |
 | [known_issues.md](known_issues.md) | Deferred limitations |
+| [sim/codegen/](../src/sim/codegen/readme.md): [calls](../src/sim/codegen/calls.md), [events](../src/sim/codegen/events.md), [nets](../src/sim/codegen/nets.md), [processes](../src/sim/codegen/processes.md), [services](../src/sim/codegen/services.md), [values](../src/sim/codegen/values.md) | Lowering contracts by domain |
+| [sim/emit_c/](../src/sim/emit_c/readme.md): [evaluation](../src/sim/emit_c/evaluation.md), [storage](../src/sim/emit_c/storage.md) | Emission contracts |
+| [sim/rt/process_abi.md](../src/sim/rt/process_abi.md) | Generated process ABI between emitter and scheduler |
+| [sim/rt/io.md](../src/sim/rt/io.md), [values.md](../src/sim/rt/values.md), [scheduler/control.md](../src/sim/rt/scheduler/control.md) | Runtime I/O, value-owner and stop/assertion contracts |
+| [sim/rt/value/facade.md](../src/sim/rt/value/facade.md), [ownership.md](../src/sim/rt/value/ownership.md), [value_gmp/facade_audit.md](../src/sim/rt/value_gmp/facade_audit.md) | Packed-value facade, ownership and compact-backend checklist |
 | [tests/readme.md](../tests/readme.md), [tests/ci.md](../tests/ci.md) | Test methodology, commands and CI rules |
 | [patches/README.md](../patches/README.md) | Vendored patch preparation |
 | [perf/README.md](../perf/README.md) | Performance measurement |
