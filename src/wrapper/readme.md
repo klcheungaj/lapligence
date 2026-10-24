@@ -34,10 +34,8 @@ and [patch preparation](../../patches/README.md).
 
 ## Native budgets
 
-Zero-request defaults are 64 MiB export, 1M semantic nodes, 4M edges and 1M
-constants; hard ceilings are structural only (`kHardMax*` in `slang_c_api.cpp`).
-Diagnostics name the effective exhausted budget. A larger export budget does not
-bound total Slang/Rust RSS.
+Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
+`slang_c_api.cpp`. A larger export budget does not bound total Slang/Rust RSS.
 
 ## Library sources and recovery
 
