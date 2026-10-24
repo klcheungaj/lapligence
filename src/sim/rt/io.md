@@ -72,8 +72,9 @@ scales in decimal through the `$timeformat` unit into the caller's unit.
 Integral `$sscanf` sources drop leading zero bytes; NUL is white space.
 Container `$fread` notifies once after the read, and a short final word fills
 only its high bytes. `$ungetc` returns 0, and a successful seek clears the
-slot's error and EOF state. Invalid descriptors return each function's
-failure code without touching destinations (`lrm_decisions` S26-D*).
+slot's error and EOF state. Invalid descriptors leave destinations untouched; `$fread` then ends the run and
+the other input functions return their failure code (`file_io.c`,
+`lrm_decisions` S26-D*).
 
 Monitor registration/enabling forces a postponed report; only registered signal
 changes dirty later reports. `$monitor` owns one list (a new call replaces it)
