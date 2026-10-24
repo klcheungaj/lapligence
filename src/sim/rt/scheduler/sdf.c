@@ -306,7 +306,7 @@ static void sdf_pairs_resolve(llg_timing_check_set_t* set) {
             check->text = negative ? (part ? pair->text_after : pair->text)
                                    : (part ? pair->after_text : pair->before_text);
             if (reports)
-                check->flags &= (uint8_t)~LLG_TIMING_DISABLED;
+                check->flags = (uint8_t)(check->flags & ~LLG_TIMING_DISABLED);
             else
                 check->flags |= LLG_TIMING_DISABLED;
         }
