@@ -38,8 +38,18 @@ pub struct SdfCommand {
 
 impl SdfCommand {
     /// Parse the `--sdf` operand.
+    ///
+    /// The text before the first `:` is a selector only when it is a word of
+    /// two or more letters, which must then be min, typ or max (so a typo
+    /// such as `mx:` is an error). Anything else leaves the operand whole, so
+    /// a Windows drive letter (`D:\dir\f.sdf`, `D:/f.sdf`, `D:f.sdf`), an
+    /// extended (`\\?\D:\...`) or UNC (`\\server\share\f.sdf`) path and a
+    /// `scope=D:\...` operand are read as written on every host.
     pub fn parse(text: &str) -> Result<Self, String> {
-        let (mtm, rest) = match text.split_once(':') {
+        let selector = text.split_once(':').filter(|(member, _)| {
+            member.len() >= 2 && member.bytes().all(|b| b.is_ascii_alphabetic())
+        });
+        let (mtm, rest) = match selector {
             Some((member, rest)) => {
                 let mtm = match member.to_ascii_lowercase().as_str() {
                     "min" => "MINIMUM",
@@ -55,9 +65,13 @@ impl SdfCommand {
             }
             None => (None, text),
         };
+        // A path that starts with a drive letter or `\\` names no scope, even
+        // when a later directory name holds `=`.
         let (scope, file) = match rest.split_once('=') {
-            Some((scope, file)) => (Some(scope.to_owned()), file),
-            None => (None, rest),
+            Some((scope, file)) if !starts_with_drive_or_unc(rest) => {
+                (Some(scope.to_owned()), file)
+            }
+            _ => (None, rest),
         };
         if file.is_empty() || scope.as_deref() == Some("") {
             return Err(format!(
@@ -70,6 +84,14 @@ impl SdfCommand {
             mtm,
         })
     }
+}
+
+/// `X:` (a drive letter) or `\\` (UNC or extended-length) at the start of
+/// `text`: Windows path shapes no hierarchical scope name takes.
+fn starts_with_drive_or_unc(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+        || text.starts_with("\\\\")
 }
 
 /// An annotation request: a `$sdf_annotate` call or a `--sdf` file, with
@@ -916,4 +938,94 @@ fn sdf_port_bits(catalog: &SdfTargets, target: &SdfPortTarget) -> Vec<u32> {
     (first..=last)
         .map(|bit| offset(bit) as u32)
         .collect::<Vec<_>>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SdfCommand;
+
+    fn parsed(text: &str) -> (Option<&'static str>, Option<String>, String) {
+        let command = SdfCommand::parse(text).unwrap_or_else(|error| panic!("{text}: {error}"));
+        let mtm = command.mtm.as_deref().map(|mtm| match mtm {
+            "MINIMUM" => "min",
+            "TYPICAL" => "typ",
+            "MAXIMUM" => "max",
+            other => panic!("unexpected selector {other}"),
+        });
+        (mtm, command.scope, command.file)
+    }
+
+    #[test]
+    fn sdf_operand_selectors_and_scopes() {
+        assert_eq!(parsed("gates.sdf"), (None, None, "gates.sdf".into()));
+        assert_eq!(
+            parsed("min:gates.sdf"),
+            (Some("min"), None, "gates.sdf".into())
+        );
+        assert_eq!(
+            parsed("TYP:gates.sdf"),
+            (Some("typ"), None, "gates.sdf".into())
+        );
+        assert_eq!(
+            parsed("max:tb.dut=dir/gates.sdf"),
+            (Some("max"), Some("tb.dut".into()), "dir/gates.sdf".into())
+        );
+        assert_eq!(
+            parsed("tb.dut=gates.sdf"),
+            (None, Some("tb.dut".into()), "gates.sdf".into())
+        );
+    }
+
+    #[test]
+    fn sdf_operand_windows_paths_are_files_on_every_host() {
+        let drive = r"D:\a\lapligence\tests\fixtures\sdf_gates.sdf";
+        assert_eq!(parsed(drive), (None, None, drive.into()));
+        assert_eq!(
+            parsed("d:/work/gates.sdf"),
+            (None, None, "d:/work/gates.sdf".into())
+        );
+        assert_eq!(parsed("C:gates.sdf"), (None, None, "C:gates.sdf".into()));
+        assert_eq!(
+            parsed(&format!("typ:{drive}")),
+            (Some("typ"), None, drive.into())
+        );
+        assert_eq!(
+            parsed(&format!("tb.dut={drive}")),
+            (None, Some("tb.dut".into()), drive.into())
+        );
+        assert_eq!(
+            parsed(&format!("max:tb={drive}")),
+            (Some("max"), Some("tb".into()), drive.into())
+        );
+        let unc = r"\\server\share\gates.sdf";
+        assert_eq!(parsed(unc), (None, None, unc.into()));
+        let extended = r"\\?\D:\dir\gates.sdf";
+        assert_eq!(parsed(extended), (None, None, extended.into()));
+        assert_eq!(
+            parsed(&format!("min:{extended}")),
+            (Some("min"), None, extended.into())
+        );
+        // `=` inside a directory of a drive or UNC path names no scope.
+        let equals = r"D:\a=b\gates.sdf";
+        assert_eq!(parsed(equals), (None, None, equals.into()));
+        let unc_equals = r"\\host\a=b\gates.sdf";
+        assert_eq!(parsed(unc_equals), (None, None, unc_equals.into()));
+    }
+
+    #[test]
+    fn sdf_operand_errors() {
+        for text in [
+            "mx:gates.sdf",
+            "minimum:gates.sdf",
+            "min:",
+            "=gates.sdf",
+            "tb=",
+            "",
+        ] {
+            assert!(
+                SdfCommand::parse(text).is_err(),
+                "`{text}` must be rejected"
+            );
+        }
+    }
 }

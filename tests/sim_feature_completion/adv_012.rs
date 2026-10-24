@@ -4,7 +4,7 @@
 //! notifier is derived by hand from the clause text quoted in the fixture
 //! readme. Positive cases run in both optimizer modes and on every value
 //! backend.
-use super::sim_cli;
+use super::{sim_cli, sim_harness};
 use std::path::Path;
 use std::process::Output;
 
@@ -19,14 +19,15 @@ macro_rules! fixture {
     };
 }
 
-/// The absolute fixture path, as reports name the source.
+/// The absolute fixture path, as reports name the source: the resolved
+/// native spelling, since a joined path keeps `SUITE`'s `/` on Windows.
 fn source_path(fixture: &str) -> String {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/sim")
-        .join(SUITE)
-        .join(fixture)
-        .to_string_lossy()
-        .into_owned()
+    sim_harness::source_display(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/sim")
+            .join(SUITE)
+            .join(fixture),
+    )
 }
 
 /// The `llg: warning:` lines of a run, sorted (reports at one time come in

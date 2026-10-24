@@ -95,3 +95,145 @@ fn probe_built_runtime_sources_have_no_code_after_fatal_helpers() {
         }
     }
 }
+
+/// Integer types narrower than or as wide as `unsigned int`: a cast to one
+/// of them from the complement of an unsigned constant drops set high bits.
+const NARROW_CAST_TYPES: &[&str] = &[
+    "uint8_t",
+    "int8_t",
+    "uint16_t",
+    "int16_t",
+    "uint32_t",
+    "int32_t",
+    "char",
+    "signed char",
+    "unsigned char",
+    "short",
+    "unsigned short",
+    "int",
+    "unsigned",
+    "unsigned int",
+];
+
+/// The 1-based columns of each `(<narrow type>)~<constant>` on `line`, where
+/// the constant is a literal or an all-caps macro name, with optional
+/// parentheses and spaces between the parts. MSVC folds such a cast as a
+/// constant and reports C4310 "cast truncates constant value" (`~0x80u` is
+/// `0xFFFFFF7F`), which `/WX` makes an error; GCC and Clang never warn on an
+/// explicit cast. `(uint8_t)(x & ~CONST)` casts a non-constant and is fine.
+fn truncating_constant_casts(line: &str) -> Vec<usize> {
+    let code = line.split("//").next().unwrap_or("");
+    let bytes = code.as_bytes();
+    let mut hits = Vec::new();
+    for (open, _) in code.match_indices('(') {
+        let Some(close) = code[open + 1..].find(')').map(|at| open + 1 + at) else {
+            continue;
+        };
+        let ty = code[open + 1..close]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !NARROW_CAST_TYPES.contains(&ty.as_str()) {
+            continue;
+        }
+        let mut at = close + 1;
+        let skip = |at: &mut usize, also_paren: bool| {
+            while *at < bytes.len()
+                && (bytes[*at].is_ascii_whitespace() || (also_paren && bytes[*at] == b'('))
+            {
+                *at += 1;
+            }
+        };
+        skip(&mut at, true);
+        if bytes.get(at) != Some(&b'~') {
+            continue;
+        }
+        at += 1;
+        skip(&mut at, true);
+        let start = at;
+        while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_') {
+            at += 1;
+        }
+        let operand = &code[start..at];
+        let constant = operand.starts_with(|c: char| c.is_ascii_digit())
+            || (operand.starts_with(|c: char| c.is_ascii_uppercase())
+                && operand
+                    .bytes()
+                    .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_'));
+        // Only the first operand is inspected, so `(uint8_t)~(FLAG | x)` is
+        // flagged too; spell it as a cast of the masked value instead.
+        if constant {
+            hits.push(open + 1);
+        }
+    }
+    hits
+}
+
+#[test]
+fn truncating_constant_cast_scan_finds_the_msvc_c4310_shapes() {
+    assert_eq!(
+        truncating_constant_casts("x &= (uint8_t)~LLG_TIMING_DISABLED;"),
+        vec![6]
+    );
+    assert_eq!(
+        truncating_constant_casts("y = (unsigned char) ~ (0x80u);"),
+        vec![5]
+    );
+    assert_eq!(
+        truncating_constant_casts("z = (uint16_t)(~FLAG_A1);"),
+        vec![5]
+    );
+    assert!(truncating_constant_casts("x = (uint8_t)(x & ~LLG_TIMING_DISABLED);").is_empty());
+    assert!(truncating_constant_casts("s = (uint64_t)(uint32_t)~words[i].aval;").is_empty());
+    assert!(truncating_constant_casts("v = (int64_t)~low;").is_empty());
+    assert!(truncating_constant_casts("w = (uint64_t)~FLAG;").is_empty());
+    assert!(truncating_constant_casts("// (uint8_t)~FLAG in a comment").is_empty());
+}
+
+/// Every runtime C source and header, including those only generated models
+/// compile, and the standalone probes: none may cast the complement of a
+/// constant to a narrow type (MSVC C4310 under `/WX`; CI: `scheduler/sdf.c(309)`).
+#[test]
+fn runtime_sources_have_no_truncating_constant_casts() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut pending = vec![
+        root.join("src/sim/rt"),
+        root.join("tests/runtime_value_storage"),
+    ];
+    let mut findings = Vec::new();
+    let mut scanned = 0usize;
+    while let Some(directory) = pending.pop() {
+        let entries = std::fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("read {}: {error}", directory.display()));
+        for entry in entries {
+            let path = entry.expect("read directory entry").path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if !matches!(path.extension().and_then(|e| e.to_str()), Some("c" | "h")) {
+                continue;
+            }
+            scanned += 1;
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            for (number, line) in text.lines().enumerate() {
+                for column in truncating_constant_casts(line) {
+                    findings.push(format!(
+                        "{}:{}:{column}: {}",
+                        path.strip_prefix(root).unwrap_or(&path).display(),
+                        number + 1,
+                        line.trim()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(scanned > 0, "no runtime C sources found");
+    assert!(
+        findings.is_empty(),
+        "cast the masked value instead of the complemented constant, e.g. \
+         `x = (uint8_t)(x & ~FLAG)` (MSVC C4310 under /WX):\n{}",
+        findings.join("\n")
+    );
+}

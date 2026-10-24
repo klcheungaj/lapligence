@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 int mn_now(void);
-void mn_note(int t, int x);
+DPI_DLLESPEC void mn_note(int t, int x);
 
 /* `x` was copied when the sequence matched; `mn_now` reads the current
  * value of `d` when the call runs. */
