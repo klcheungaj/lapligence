@@ -137,8 +137,9 @@ fn decode_named(tokens: &SemanticTokens) -> Vec<(u32, u32, u32, String)> {
         .collect()
 }
 
-/// Module and typedef names, and the parameter keywords, reach clients with
-/// the token types C/C++ servers use, through the committed-analysis path.
+/// Module and typedef names reach clients with the token types C/C++
+/// servers use and declaration keywords stay keywords, through the
+/// committed-analysis path.
 #[test]
 fn semantic_tokens_color_module_typedef_and_parameter_words_like_cpp() {
     let _guards = analysis_guards();
@@ -172,12 +173,12 @@ fn semantic_tokens_color_module_typedef_and_parameter_words_like_cpp() {
     };
     for (line, word, nth, expected) in [
         (3, "leaf", 0, "class"),
-        (3, "parameter", 0, "type"),
+        (3, "parameter", 0, "keyword"),
         (1, "byte_t", 0, "type"),
         (3, "byte_t", 0, "type"),
         (5, "top", 0, "class"),
         (5, "module", 0, "keyword"),
-        (6, "localparam", 0, "type"),
+        (6, "localparam", 0, "keyword"),
         (7, "nib_t", 0, "type"),
         (8, "nib_t", 0, "type"),
         (9, "leaf", 0, "class"),

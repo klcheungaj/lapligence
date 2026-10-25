@@ -2923,6 +2923,13 @@ public:
           handle(value);
       }
     }
+    // An enum without a typedef has no alias to walk; its values appear in the
+    // declaring scope only as transparent members. Capture each value so its
+    // declaration token is bound even when nothing references it.
+    if constexpr (std::same_as<T, TransparentMemberSymbol>) {
+      if (symbol.wrapped.kind == SymbolKind::EnumValue)
+        handle(symbol.wrapped.template as<EnumValueSymbol>());
+    }
     if constexpr (std::same_as<T, NetAliasSymbol>) {
       uint32_t index = 0;
       for (const Expression* expression : symbol.getNetReferences())
@@ -5721,8 +5728,15 @@ public:
           break;
         }
       }
-      if (!sourceGenvarClone && node.kind != LLG_SLANG_SEMANTIC_EXPRESSION &&
-          node.name.len != 0) {
+      // A transparent member is Slang's alias that makes an enum value
+      // visible in the enclosing scope; it shares the value's name and
+      // location but is not a declaration, and would otherwise hide the
+      // value's node.
+      const bool transparentMember = std::string_view(
+          reinterpret_cast<const char*>(node.detail.data), node.detail.len) ==
+          "TransparentMember";
+      if (!sourceGenvarClone && !transparentMember &&
+          node.kind != LLG_SLANG_SEMANTIC_EXPRESSION && node.name.len != 0) {
         const Position position{node.range.file_id, node.range.start};
         auto [it, inserted] = declarations.try_emplace(position, node.id);
         if (!inserted && node.kind == LLG_SLANG_SEMANTIC_DEFINITION &&
@@ -5738,8 +5752,17 @@ public:
             capture.canonicalLexicalTarget(node.target_id);
         const std::string_view detail(
             reinterpret_cast<const char*>(node.detail.data), node.detail.len);
+        // A scope-qualified enum value (`pkg::ITEM`) spans more than the
+        // value's name, so its first token is the qualifier, not the value.
+        const bool qualifiedEnumValue =
+            lexicalTarget < capture.output.semantic_nodes.size() &&
+            capture.output.semantic_nodes[static_cast<size_t>(lexicalTarget)]
+                    .kind == LLG_SLANG_SEMANTIC_ENUM_CONSTANT &&
+            node.range.end - node.range.start !=
+                capture.output.semantic_nodes[static_cast<size_t>(lexicalTarget)]
+                    .name.len;
         if (node.subkind == LLG_SLANG_EXPR_REFERENCE &&
-            detail != "HierarchicalValue") {
+            detail != "HierarchicalValue" && !qualifiedEnumValue) {
           referencesByStart.try_emplace(
               Position{node.range.file_id, node.range.start}, lexicalTarget);
         }
@@ -5776,7 +5799,17 @@ public:
         const std::string_view declarationName(
             reinterpret_cast<const char*>(declaration.name.data),
             declaration.name.len);
-        if (tokenText == declarationName) {
+        // An enum range `R[3]` or `R[1:3]` declares R0..R2 / R1..R3 (IEEE
+        // 1800-2009 6.19.2) at the name token R: the generated names are the
+        // token text followed by decimal digits.
+        const bool enumRangeName =
+            declaration.kind == LLG_SLANG_SEMANTIC_ENUM_CONSTANT &&
+            declarationName.size() > tokenText.size() &&
+            declarationName.starts_with(tokenText) &&
+            std::all_of(declarationName.begin() + tokenText.size(),
+                        declarationName.end(),
+                        [](char c) { return c >= '0' && c <= '9'; });
+        if (tokenText == declarationName || enumRangeName) {
           semanticId = it->second;
           role = LLG_SLANG_LEXICAL_ROLE_DECLARATION;
         }

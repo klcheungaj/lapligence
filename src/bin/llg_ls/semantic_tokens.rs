@@ -76,12 +76,9 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         if node.line == 0 {
             continue;
         }
-        let Some((mut token_type, modifiers)) = token_type_for(node.kind) else {
+        let Some((token_type, modifiers)) = token_type_for(node.kind) else {
             continue;
         };
-        if token_type == TT_KEYWORD && node.name.as_deref().is_some_and(is_type_keyword) {
-            token_type = TT_TYPE;
-        }
         let length = node
             .name
             .as_ref()
@@ -132,60 +129,13 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
     }
 }
 
-fn is_type_keyword(name: &str) -> bool {
-    // Match the extension grammar's built-in, net, and port-direction types.
-    matches!(
-        name,
-        "bit"
-            | "logic"
-            | "reg"
-            | "byte"
-            | "shortint"
-            | "int"
-            | "longint"
-            | "integer"
-            | "time"
-            | "genvar"
-            | "shortreal"
-            | "real"
-            | "realtime"
-            | "supply0"
-            | "supply1"
-            | "tri"
-            | "triand"
-            | "trior"
-            | "trireg"
-            | "tri0"
-            | "tri1"
-            | "uwire"
-            | "wire"
-            | "wand"
-            | "wor"
-            | "var"
-            | "void"
-            | "signed"
-            | "unsigned"
-            | "string"
-            | "const"
-            | "chandle"
-            | "event"
-            | "struct"
-            | "union"
-            | "enum"
-            | "input"
-            | "output"
-            | "inout"
-            | "ref"
-            | "parameter"
-            | "localparam"
-            | "specparam"
-    )
-}
-
 fn token_type_for(kind: i32) -> Option<(u32, u32)> {
     let (kind, slang_declaration) = token_base_kind(kind);
     let declaration = slang_declaration || matches!(kind, TOKEN_GENVAR_DECL);
-    let readonly = matches!(kind, TOKEN_SLANG_PARAMETER | TOKEN_SLANG_PORT);
+    let readonly = matches!(
+        kind,
+        TOKEN_SLANG_PARAMETER | TOKEN_SLANG_PORT | TOKEN_SLANG_ENUM_MEMBER
+    );
     let connection = matches!(
         kind,
         TOKEN_SLANG_PORT_CONNECTION_LABEL | TOKEN_SLANG_PARAMETER_CONNECTION_LABEL
@@ -236,8 +186,9 @@ mod tests {
     use crate::test_paths::host_path as hp;
     use llg::core::compile::{self, CompileOpts, OwnedSource};
 
-    /// Absolute zero-based line, column, text and token type of one encoded token.
-    type Decoded = (u32, u32, String, u32);
+    /// Absolute zero-based line, column, text, token type and modifier bitset
+    /// of one encoded token.
+    type Decoded = (u32, u32, String, u32, u32);
 
     /// Decode every encoded token.
     fn decode(source: &str, nodes: &[TokenInfo]) -> Vec<Decoded> {
@@ -255,13 +206,25 @@ mod tests {
                 };
                 let text =
                     lines[line as usize][col as usize..(col + token.length) as usize].to_owned();
-                (line, col, text, token.token_type)
+                (
+                    line,
+                    col,
+                    text,
+                    token.token_type,
+                    token.token_modifiers_bitset,
+                )
             })
             .collect()
     }
 
-    /// Token type of the `nth` whole-word occurrence of `word` on zero-based `line`.
-    fn type_at(decoded: &[Decoded], source: &str, line: usize, word: &str, nth: usize) -> u32 {
+    /// Token of the `nth` whole-word occurrence of `word` on zero-based `line`.
+    fn token_at<'a>(
+        decoded: &'a [Decoded],
+        source: &str,
+        line: usize,
+        word: &str,
+        nth: usize,
+    ) -> &'a Decoded {
         let text = source.lines().nth(line).unwrap();
         let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$';
         let bytes = text.as_bytes();
@@ -278,7 +241,11 @@ mod tests {
             .iter()
             .find(|token| token.0 == line as u32 && token.1 == col)
             .unwrap_or_else(|| panic!("no token for {word} at {line}:{col}; stream {decoded:?}"))
-            .3
+    }
+
+    /// Token type of the `nth` whole-word occurrence of `word` on zero-based `line`.
+    fn type_at(decoded: &[Decoded], source: &str, line: usize, word: &str, nth: usize) -> u32 {
+        token_at(decoded, source, line, word, nth).3
     }
 
     /// Token streams of one source under every capture profile that serves tokens.
@@ -327,22 +294,24 @@ mod tests {
     }
 
     #[test]
-    fn type_and_direction_keywords_use_type_highlighting() {
+    fn type_and_direction_keywords_use_keyword_highlighting() {
         let source = "module top(input logic signed [3:0] a, output wire b, inout tri c);\ninteger count; real value; string label;\nassign b = a[0];\nendmodule";
         let parsed = compile::parse_source(hp("/virtual/top.sv"), source, &[]).unwrap();
         let nodes = &parsed.tokens[0].nodes;
         let encoded = encode(nodes);
         assert_eq!(encoded.data.len(), nodes.len());
+        let mut seen = 0;
         for (node, token) in nodes.iter().zip(&encoded.data) {
             match node.name.as_deref().unwrap_or_default() {
                 "input" | "logic" | "signed" | "output" | "wire" | "inout" | "tri" | "integer"
-                | "real" | "string" => assert_eq!(token.token_type, TT_TYPE, "{node:?}"),
-                "module" | "endmodule" | "assign" => {
+                | "real" | "string" | "module" | "endmodule" | "assign" => {
+                    seen += 1;
                     assert_eq!(token.token_type, TT_KEYWORD, "{node:?}")
                 }
                 _ => {}
             }
         }
+        assert_eq!(seen, 13);
     }
 
     #[test]
@@ -510,7 +479,7 @@ mod tests {
     }
 
     #[test]
-    fn parameter_declaration_keywords_use_type_highlighting() {
+    fn parameter_declaration_keywords_use_keyword_highlighting() {
         let source = "module sub #(parameter int A = 1)();\nendmodule\nmodule top #(parameter int P = 1, localparam int Q = 2)(input logic x);\n  parameter type T = int;\n  localparam R = 3;\n  specparam S = 4;\n  sub u ();\n  defparam u.A = 5;\n  if (P > 0) begin : g end\nendmodule\n";
         for (profile, tokens) in profiles(source) {
             let at = |line, word, nth| type_at(&tokens, source, line, word, nth);
@@ -521,10 +490,6 @@ mod tests {
                 (3, "parameter"),
                 (4, "localparam"),
                 (5, "specparam"),
-            ] {
-                assert_eq!(at(line, word, 0), TT_TYPE, "{profile} {word} line {line}");
-            }
-            for (line, word) in [
                 (7, "defparam"),
                 (8, "if"),
                 (0, "module"),
@@ -538,6 +503,78 @@ mod tests {
                 );
             }
             assert_eq!(at(2, "P", 0), TT_PROPERTY, "{profile}");
+        }
+    }
+
+    #[test]
+    fn enum_members_are_readonly_enum_members_at_declarations_and_references() {
+        let source = "package pkg;\n  typedef enum logic [1:0] { PA, PB } pe_t;\n  enum { ANON0, ANON1 = 5 } anon;\n  typedef enum { R[2], S[1:3] } rng_t;\nendpackage\nmodule top;\n  import pkg::*;\n  typedef enum logic [1:0] { IDLE, RUN } state_t;\n  enum { X0, X1 } local_anon;\n  state_t st;\n  pkg::pe_t pe;\n  pkg::rng_t rv;\n  initial begin\n    st = IDLE;\n    pe = pkg::PB;\n    if (pe == PA) st = RUN;\n    local_anon = X1;\n    pkg::anon = pkg::ANON1;\n    rv = R1;\n    rv = S3;\n  end\nendmodule\n";
+        let declarations: &[(usize, &str)] = &[
+            (1, "PA"),
+            (1, "PB"),
+            (2, "ANON0"),
+            (2, "ANON1"),
+            (3, "R"),
+            (3, "S"),
+            (7, "IDLE"),
+            (7, "RUN"),
+            (8, "X0"),
+            (8, "X1"),
+        ];
+        let references: &[(usize, &str, usize)] = &[
+            (13, "IDLE", 0),
+            (14, "PB", 0),
+            (15, "PA", 0),
+            (15, "RUN", 0),
+            (16, "X1", 0),
+            (17, "ANON1", 0),
+            (18, "R1", 0),
+            (19, "S3", 0),
+        ];
+        for (profile, tokens) in profiles(source) {
+            for &(line, word) in declarations {
+                let token = token_at(&tokens, source, line, word, 0);
+                assert_eq!(token.3, TT_ENUM_MEMBER, "{profile} {word} line {line}");
+                assert_eq!(
+                    token.4,
+                    (1 << TM_DECLARATION) | (1 << TM_READONLY),
+                    "{profile} {word} line {line}"
+                );
+            }
+            for &(line, word, nth) in references {
+                let token = token_at(&tokens, source, line, word, nth);
+                assert_eq!(token.3, TT_ENUM_MEMBER, "{profile} {word} line {line}");
+                assert_eq!(token.4, 1 << TM_READONLY, "{profile} {word} line {line}");
+            }
+            for (line, nth) in [(14, 0), (17, 0), (17, 1)] {
+                let qualifier = token_at(&tokens, source, line, "pkg", nth);
+                assert_ne!(qualifier.3, TT_ENUM_MEMBER, "{profile} line {line}");
+                assert_eq!(qualifier.4 & (1 << TM_READONLY), 0, "{profile} line {line}");
+            }
+        }
+    }
+
+    #[test]
+    fn enum_members_in_other_scopes_are_enum_members() {
+        let source = "class C;\n  typedef enum { K0, K1 } kind_t;\n  kind_t k = K1;\nendclass\nmodule top;\n  function automatic int pick(input int v);\n    enum { L0, L1 } local_e;\n    local_e = L1;\n    return v + int'(local_e);\n  endfunction\n  C::kind_t ck = C::K0;\n  parameter enum { P0, P1 } pe = P1;\nendmodule\n";
+        for (profile, tokens) in profiles(source) {
+            for (line, word, nth, declaration) in [
+                (1, "K0", 0, true),
+                (1, "K1", 0, true),
+                (2, "K1", 0, false),
+                (6, "L0", 0, true),
+                (6, "L1", 0, true),
+                (7, "L1", 0, false),
+                (10, "K0", 0, false),
+                (11, "P0", 0, true),
+                (11, "P1", 0, true),
+                (11, "P1", 1, false),
+            ] {
+                let token = token_at(&tokens, source, line, word, nth);
+                assert_eq!(token.3, TT_ENUM_MEMBER, "{profile} {word} line {line}");
+                let expected = (1 << TM_READONLY) | ((declaration as u32) << TM_DECLARATION);
+                assert_eq!(token.4, expected, "{profile} {word} line {line}");
+            }
         }
     }
 

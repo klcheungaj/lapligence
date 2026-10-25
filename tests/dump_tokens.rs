@@ -811,3 +811,47 @@ fn dump_reports_unknown_config_keys_by_name() {
     assert!(stderr.contains("build.ccc"), "{stderr}");
     let _ = fs::remove_dir_all(root);
 }
+
+/// Enum items dump as `enumMember` + `readonly` at declarations and
+/// references (anonymous, typedef, packaged and ranged enums), and a package
+/// qualifier in `pkg::ITEM` is not itself bound to the item.
+#[test]
+fn enum_items_dump_as_readonly_enum_members_at_declarations_and_references() {
+    let root = std::env::temp_dir().join(format!("llg-dump-enums-{}", std::process::id()));
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/dump/enums"),
+        &root,
+    );
+    let dump = Dump::run(&root);
+    let declaration = [
+        "kind=enum-member-declaration",
+        "sym=enumMember/declaration+readonly",
+    ];
+    for location in [
+        "enums.sv:1:28-30",
+        "enums.sv:1:32-34",
+        "enums.sv:2:8-13",
+        "enums.sv:2:15-20",
+        "enums.sv:3:16-17",
+        "enums.sv:3:22-23",
+        "enums.sv:7:28-32",
+        "enums.sv:7:34-37",
+        "enums.sv:8:8-10",
+        "enums.sv:8:12-14",
+    ] {
+        dump.assert_rows(location, &declaration);
+    }
+    let reference = ["kind=enum-member\t", "sym=enumMember/readonly"];
+    for location in [
+        "enums.sv:12:9-13",
+        "enums.sv:13:14-16",
+        "enums.sv:14:14-16",
+        "enums.sv:14:23-26",
+        "enums.sv:15:17-19",
+        "enums.sv:16:11-16",
+    ] {
+        dump.assert_rows(location, &reference);
+    }
+    dump.assert_rows_without("enums.sv:13:9-12", &["enum-member", "bind=enums.sv"]);
+    let _ = fs::remove_dir_all(root);
+}

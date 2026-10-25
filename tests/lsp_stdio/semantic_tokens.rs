@@ -155,8 +155,9 @@ fn lsp_stdio_semantic_tokens_use_current_open_buffer_and_cached_unopened_snapsho
     client.shutdown();
 }
 
-/// Constant references and type words keep their classes through project and
-/// isolated unsaved-buffer analysis, including references to missing children.
+/// Constant references keep their classes and type/direction words stay
+/// keywords through project and isolated unsaved-buffer analysis, including
+/// references to missing children.
 #[test]
 fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths() {
     let fixture = FixtureTree::new();
@@ -227,7 +228,7 @@ fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths(
         for name in ["input", "logic", "output", "wire", "inout", "tri", "int"] {
             for occurrence in 0..buffer.match_indices(name).count() {
                 let (line, col) = position_of(&buffer, name, occurrence);
-                assert_eq!(row_at(&rows, line, col).token_type, "type", "{name}");
+                assert_eq!(row_at(&rows, line, col).token_type, "keyword", "{name}");
             }
         }
         for name in ["module color_top", "assign buffer", "endmodule"] {
@@ -236,6 +237,83 @@ fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths(
         }
     }
     assert_eq!(fs::read_to_string(&path).unwrap(), source);
+    client.shutdown();
+}
+
+/// Enum items are `enumMember` + `readonly` at declarations (which add
+/// `declaration`) and at references, and declaration keywords stay `keyword`,
+/// through project and isolated unsaved-buffer analysis.
+#[test]
+fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("enum_colors.sv");
+    let uri = file_uri(&path);
+    let source = "package enum_pkg;\n  typedef enum logic [1:0] { PKG_A, PKG_B } pkg_t;\n  enum { ANON_A, ANON_B = 5 } anon;\nendpackage\nmodule enum_top;\n  import enum_pkg::*;\n  typedef enum logic [1:0] { IDLE, RUN } state_t;\n  state_t st;\n  pkg_t pk;\n  initial begin\n    st = IDLE;\n    pk = enum_pkg::PKG_B;\n    if (pk == PKG_A) st = RUN;\n    enum_pkg::anon = ANON_B;\n  end\nendmodule\n";
+    fs::write(&path, source).expect("write enum fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+
+    for opened in [false, true] {
+        if opened {
+            client.open(&path, source).expect("open enum buffer");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("enum semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        let has = |row: &SemanticRow, name: &str| row.modifiers.iter().any(|m| m == name);
+        let declarations = [
+            "PKG_A, ", "PKG_B }", "ANON_A,", "ANON_B =", "IDLE,", "RUN }",
+        ];
+        for needle in declarations {
+            let (line, col) = position_of(source, needle, 0);
+            let row = row_at(&rows, line, col);
+            assert_eq!(
+                row.token_type, "enumMember",
+                "opened={opened} {needle}: {row:?}"
+            );
+            assert!(has(row, "readonly"), "opened={opened} {needle}: {row:?}");
+            assert!(has(row, "declaration"), "opened={opened} {needle}: {row:?}");
+        }
+        let references = ["IDLE;", "PKG_B;", "PKG_A)", "RUN;", "ANON_B;"];
+        for needle in references {
+            let (line, col) = position_of(source, needle, 0);
+            let row = row_at(&rows, line, col);
+            assert_eq!(
+                row.token_type, "enumMember",
+                "opened={opened} {needle}: {row:?}"
+            );
+            assert!(has(row, "readonly"), "opened={opened} {needle}: {row:?}");
+            assert!(
+                !has(row, "declaration"),
+                "opened={opened} {needle}: {row:?}"
+            );
+        }
+        let (line, col) = position_of(source, "enum_pkg::PKG_B", 0);
+        let qualifier = row_at(&rows, line, col);
+        assert_ne!(
+            qualifier.token_type, "enumMember",
+            "opened={opened}: {qualifier:?}"
+        );
+        for needle in ["typedef enum logic", "enum {", "import", "package"] {
+            let (line, col) = position_of(source, needle, 0);
+            assert_eq!(
+                row_at(&rows, line, col).token_type,
+                "keyword",
+                "opened={opened} {needle}"
+            );
+        }
+    }
     client.shutdown();
 }
 
