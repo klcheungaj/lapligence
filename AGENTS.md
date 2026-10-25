@@ -31,6 +31,7 @@ server (the same frontend → owned analysis → tower-lsp stdio features).
   Update a module readme when its purpose or interactions change.
 - Keep handoffs, plans, findings and run evidence in ignored `persistence/`;
   never stage, commit or force-add it.
+- Commit messages carry no `Co-Authored-By` or other AI attribution trailer.
 
 ## Architecture rules
 
