@@ -95,7 +95,7 @@ the rules a change must keep. Platform pitfalls are in
   replace matching asset names. Only release events upload packages (kept one
   day); the account-wide 500 MB artifact allowance is shared.
 - Naming: `lapligence-<version>-<os>-<arch>.<ext>`; strip a leading `v`; os
-  `linux`/`windows`/`macos`, arch `x64`/`arm64`; `tar.gz` on Unix, `zip` on
+  `linux`/`windows`/`macos`, arch `x86_64`/`arm64`; `tar.gz` on Unix, `zip` on
   Windows. Contents: both executables (Windows arm64: `llg_ls.exe` only),
   `readme.md`, `LICENSE` and checksums.
 - Configuration is not validated platform support; keep platform evidence in

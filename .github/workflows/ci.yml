@@ -261,7 +261,7 @@ jobs:
       runner: windows-2025
       platform: windows
       arch: x86_64
-      package_arch: x64
+      package_arch: x86_64
       python_arch: x64
       msvc_arch: amd64
       target: x86_64-pc-windows-msvc
@@ -307,7 +307,7 @@ jobs:
     with:
       arch: x86_64
       runner: ubuntu-24.04
-      package_arch: x64
+      package_arch: x86_64
       target: x86_64-unknown-linux-musl
       nextest_platform: linux-musl
 
@@ -358,7 +358,7 @@ jobs:
         working-directory: dist
         run: |
           version=${GITHUB_REF_NAME#v}
-          for platform in linux-x64 linux-arm64 windows-x64 windows-arm64 macos-arm64; do
+          for platform in linux-x86_64 linux-arm64 windows-x86_64 windows-arm64 macos-arm64; do
             extension=tar.gz
             if [[ "$platform" == windows-* ]]; then
               extension=zip

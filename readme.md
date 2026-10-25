@@ -56,7 +56,7 @@ in the GitHub web UI runs the same checks for its tag and attaches binary
 packages to that existing release after all jobs pass. Saving a draft does not
 trigger CI. For a tag such as `v1.2.3`, download packages use
 `lapligence-1.2.3-<os>-<arch>.<ext>`: `os` is `linux`, `windows`, or `macos`,
-and `arch` is `x64` or `arm64` for the targets above. Windows packages are ZIP
+and `arch` is `x86_64` or `arm64` for the targets above. Windows packages are ZIP
 files; Linux and macOS packages are `.tar.gz` files. Each includes `llg`,
 `llg_ls` (with `.exe` on Windows), `readme.md`, and `LICENSE`; the Windows arm64
 package holds `llg_ls.exe`, `readme.md` and `LICENSE` only. Running a locally built
