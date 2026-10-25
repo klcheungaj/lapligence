@@ -2425,6 +2425,10 @@ public:
       result.type_id = capture.type(symbol.targetType.getType());
     if constexpr (std::same_as<T, EnumValueSymbol>)
       result.constant_id = capture.constant(symbol.getValue());
+    // An unresolved instance keeps the definition name it was written with
+    // so editor projections can describe the black box without syntax.
+    if constexpr (std::same_as<T, UninstantiatedDefSymbol>)
+      result.definition_name = storeString(capture.output, symbol.definitionName);
     if constexpr (std::same_as<T, ParameterSymbol> ||
                   std::same_as<T, TypeParameterSymbol>) {
       if (symbol.isLocalParam())
@@ -2848,8 +2852,24 @@ public:
     if constexpr (std::same_as<T, UninstantiatedDefSymbol>) {
       for (const auto* parameter : symbol.paramExpressions)
         parameter->visit(*this);
-      for (const auto* connection : symbol.getPortConnections())
+      for (const auto* connection : symbol.getPortConnections()) {
         connection->visit(*this);
+        // Slang binds an unknown definition's port expression against the
+        // error type, which wraps the correctly bound expression in an
+        // invalid conversion whose child its visitor does not descend into.
+        // Capture that child under the black box as well so owned consumers
+        // see the signals each connection names. Declaration-only capture
+        // already binds these names from syntax.
+        if (capture.declarationOnly || connection->kind != AssertionExprKind::Simple)
+          continue;
+        const Expression& actual =
+            connection->template as<SimpleAssertionExpr>().expr;
+        if (actual.kind != ExpressionKind::Invalid)
+          continue;
+        const Expression* child = actual.as<InvalidExpression>().child;
+        if (child && !child->bad())
+          child->visit(*this);
+      }
     }
     if constexpr (std::same_as<T, SubroutineSymbol>) {
       for (const FormalArgumentSymbol* argument : symbol.getArguments())

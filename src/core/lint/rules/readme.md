@@ -12,7 +12,8 @@ See [shared lint](../readme.md).
   children of a subroutine with loops or blocks are not it), and so do formal
   defaults. A concatenation, streaming or assignment-pattern write target counts
   for each member (`collect_writes_with_members`). Generate scopes (loop, if,
-  case) are analysed like module scopes.
+  case) are analysed like module scopes. Signals connected to a black box (an
+  instance of an unknown module, `black_box_connection_signals`) are skipped.
 - `width-mismatch` (`width.rs`): a port link compares the port or port expression
   with the connected expression (`.a(n[0])` is one bit), not the whole selected
   signal. A concatenated port (`.p({a, b})`) is judged once, by its name or
@@ -36,6 +37,7 @@ See [shared lint](../readme.md).
   `get`/`peek` messages, `obj.randomize(v, ...)` arguments and both sides of
   `ref` port connections. Constraint `foreach` loop variables are never reported.
   Skipped: top-level external inputs/inouts, explicitly open child ports,
+  signals connected to a black box (an instance of an unknown module),
   implicit nets and intrinsic pull/supply nets. Input/inout actuals are read
   through the owned port `high_expr`; the direct `high` target stays for
   model/codegen consumers.

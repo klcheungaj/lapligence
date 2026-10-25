@@ -308,6 +308,16 @@ fn declaration_detail(node: &crate::ffi::slang::SemanticNode, snapshot: &Snapsho
             }
         }
         SemanticKind::EnumConstant => format!("enum constant {name}"),
+        // An instance of a definition Slang could not resolve (an unknown
+        // module is a black box): describe it like an instance, by the
+        // written definition name.
+        SemanticKind::Unsupported
+            if node.detail == "UninstantiatedDef"
+                && !name.is_empty()
+                && !node.definition_name.is_empty() =>
+        {
+            format!("{} {name}", node.definition_name)
+        }
         _ if !name.is_empty() => format!("{} {name}", semantic_kind(node.kind)),
         _ => String::new(),
     }

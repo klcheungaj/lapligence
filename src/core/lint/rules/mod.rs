@@ -114,6 +114,21 @@ pub(crate) mod tests {
         (db, model)
     }
 
+    /// Compile an in-memory design that Slang rejects (for example one that
+    /// instantiates an unknown module) the way the language server does:
+    /// diagnostics are kept, the owned import still runs.
+    pub(crate) fn build_design_with_errors(sv: &str) -> (Db, DesignModel) {
+        let out = compile::compile(&compile::CompileOpts {
+            sources: vec![compile::OwnedSource::compilation_unit("design.sv", sv)],
+            ..Default::default()
+        })
+        .expect("compile should start");
+        assert!(!out.ok(), "the design must carry a frontend error");
+        let db = Db::from_slang(&out.snapshot).expect("semantic capture");
+        let model = DesignModel::from_db(&db);
+        (db, model)
+    }
+
     /// Compile `sv` and run every default lint rule over it.
     pub(crate) fn lint_design(sv: &str, top: &str) -> Vec<LintDiag> {
         let (db, model) = build_design(sv, top);

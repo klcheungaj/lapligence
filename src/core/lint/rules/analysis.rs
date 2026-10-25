@@ -1380,6 +1380,23 @@ pub fn unconnected_port_signals(db: &Db) -> HashSet<NodeId> {
     out
 }
 
+/// Signals named by the parameter or port expressions of an instance whose
+/// definition Slang could not resolve (an unknown module, kept as a black
+/// box).  Connection directions are unknown, so rules treat these signals as
+/// both possibly driven and possibly read instead of guessing.  Only
+/// snapshots that already carry the frontend error contain such instances.
+pub fn black_box_connection_signals(db: &Db) -> HashSet<NodeId> {
+    // A flat arena scan: this runs on every lint pass, including valid
+    // simulator designs that never contain a black box.
+    db.node_ids()
+        .filter(|id| {
+            matches!(db.node_kind(*id), NodeKind::Other)
+                && db.semantic_detail(*id) == Some("UninstantiatedDef")
+        })
+        .flat_map(|id| collect_reads(db, id))
+        .collect()
+}
+
 /// Signals read by input/inout terminals of captured structural primitives.
 /// Primitive-array objects are skipped because the database has no terminal
 /// expressions for their members.
@@ -1574,6 +1591,44 @@ mod tests {
     fn db_of(sv: &str) -> Db {
         let (db, _) = build_design(sv, "");
         db
+    }
+
+    /// An unknown module is a black box whose connection directions are
+    /// unknown: the signals it names are neither undriven nor unused, while
+    /// an unrelated signal keeps its findings.
+    #[test]
+    fn black_box_connections_count_as_possible_drivers_and_readers() {
+        let (db, model) = crate::core::lint::rules::tests::build_design_with_errors(
+            "module top(input logic c, output logic o, output logic p);\n\
+             logic w, v, lonely, idle;\n\
+             missing_mod u_a(.a(c), .b(w)), u_b(.a(w), .b(v));\n\
+             assign o = v;\n\
+             assign p = lonely;\n\
+             endmodule\n",
+        );
+        let named = |name: &str| crate::core::lint::rules::tests::find_signal(&db, name);
+        let connected = black_box_connection_signals(&db);
+        for name in ["c", "w", "v"] {
+            assert!(connected.contains(&named(name)), "`{name}` is connected");
+        }
+        for name in ["lonely", "idle", "o", "p"] {
+            assert!(
+                !connected.contains(&named(name)),
+                "`{name}` is not connected"
+            );
+        }
+        let diags = crate::core::lint::lint(&db, &model);
+        let flagged = |rule: &str, name: &str| {
+            diags
+                .iter()
+                .any(|d| d.rule == rule && d.message.contains(&format!("`{name}`")))
+        };
+        for name in ["w", "v"] {
+            assert!(!flagged("undriven-signal", name), "{diags:?}");
+            assert!(!flagged("unused-signal", name), "{diags:?}");
+        }
+        assert!(flagged("undriven-signal", "lonely"), "{diags:?}");
+        assert!(flagged("unused-signal", "idle"), "{diags:?}");
     }
 
     /// First top-level continuous assignment of the design.

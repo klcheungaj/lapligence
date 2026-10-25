@@ -9,9 +9,10 @@ use std::collections::HashSet;
 
 use crate::core::db::{ConstraintKind, Db, NodeId, NodeKind, RandQualifier};
 use crate::core::lint::rules::analysis::{
-    all_nodes, collect_driver_writes, collect_reads, connected_port_link_drivers,
-    gate_terminal_drivers, gate_terminal_reads, is_signal, port_link_reads, signal_scope_path,
-    subroutine_body, timing_check_activity, top_external_port_signals, unconnected_port_signals,
+    all_nodes, black_box_connection_signals, collect_driver_writes, collect_reads,
+    connected_port_link_drivers, gate_terminal_drivers, gate_terminal_reads, is_signal,
+    port_link_reads, signal_scope_path, subroutine_body, timing_check_activity,
+    top_external_port_signals, unconnected_port_signals,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -32,6 +33,8 @@ impl LintRule for UndrivenSignalRule {
         let (reads, drivers) = design_activity(db);
         let mut exempt = top_external_port_signals(db);
         exempt.extend(unconnected_port_signals(db));
+        // A black-box (unknown module) connection may drive the signal.
+        exempt.extend(black_box_connection_signals(db));
         // The built-in `option` and `type_option` members of covergroups,
         // coverpoints and crosses (SV 19.10) are coverage settings the
         // simulator holds, not signals.

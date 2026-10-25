@@ -118,6 +118,11 @@ the native snapshot is released.
   accesses) is `ExprKind::MemberSelect` with the computed base, and an element
   select of it keeps that node as its base; other non-path member accesses stay
   `Other`.
+- Frontend-rejected input (editor analysis only; the simulator stops on the
+  Slang error first): an instance of an unresolved definition (an unknown
+  module, a black box) is `Other` with its parameter and connection expressions
+  as children, and a continuous assignment Slang replaced with an invalid
+  expression is `Other` instead of failing construction.
 
 The DB is the common semantic source for model/lint/LSP projections and simulator
 lowering. Invalid IDs, table windows, ranges, cycles or relationship metadata fail

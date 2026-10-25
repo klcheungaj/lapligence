@@ -25,9 +25,9 @@ use std::collections::HashSet;
 
 use crate::core::db::{Db, Direction, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
-    all_design_nodes, collect_reads, collect_writes_with_members, gate_terminal_drivers,
-    gate_terminal_reads, is_signal, iter_instances, port_connected_signals, signal_scope_path,
-    subroutine_body, subroutine_formal_defaults, timing_check_activity,
+    all_design_nodes, black_box_connection_signals, collect_reads, collect_writes_with_members,
+    gate_terminal_drivers, gate_terminal_reads, is_signal, iter_instances, port_connected_signals,
+    signal_scope_path, subroutine_body, subroutine_formal_defaults, timing_check_activity,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -46,6 +46,8 @@ impl LintRule for UnusedSignalRule {
     fn check(&self, ctx: &LintCtx<'_>) -> Vec<LintDiag> {
         let db = ctx.db;
         let port_connected = port_connected_signals(db);
+        // A black-box (unknown module) connection may read the signal.
+        let black_box_connected = black_box_connection_signals(db);
         let mut reads = HashSet::new();
         let mut writes = HashSet::new();
         let mut cont_writes = HashSet::new();
@@ -92,7 +94,7 @@ impl LintRule for UnusedSignalRule {
                 if !is_signal(db, *sig) {
                     continue;
                 }
-                if port_connected.contains(sig) {
+                if port_connected.contains(sig) || black_box_connected.contains(sig) {
                     continue;
                 }
                 // A continuous assignment is a driver; treat driven outputs as

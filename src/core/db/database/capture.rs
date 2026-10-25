@@ -1022,17 +1022,31 @@ impl Db {
                         )
                     })?;
                 let assignment_node = &snapshot.semantic_nodes[assignment.index()];
-                let assignment_edges = semantic_edges(snapshot, assignment_node)?;
-                children = [SemanticEdgeRole::Lhs, SemanticEdgeRole::Rhs]
-                    .into_iter()
-                    .map(|role| {
-                        edge_target(&ids, assignment_edges, role)?.ok_or_else(|| {
-                            DbError::InvalidSnapshot(
-                                "continuous assignment expression has no operand".into(),
-                            )
+                if assignment_node.kind == SemanticKind::Expression
+                    && assignment_node.detail == "Invalid"
+                {
+                    // Slang replaces an assignment it has already diagnosed
+                    // (an undeclared name, or a reference into an unknown
+                    // module's black box) with an operand-less invalid
+                    // expression. Record the assignment as an unsupported
+                    // `Other` node so the rest of the design stays
+                    // importable for editor analysis; the simulator never
+                    // gets here because it stops on the frontend error.
+                    kind = NodeKind::Other;
+                    children = vec![assignment];
+                } else {
+                    let assignment_edges = semantic_edges(snapshot, assignment_node)?;
+                    children = [SemanticEdgeRole::Lhs, SemanticEdgeRole::Rhs]
+                        .into_iter()
+                        .map(|role| {
+                            edge_target(&ids, assignment_edges, role)?.ok_or_else(|| {
+                                DbError::InvalidSnapshot(
+                                    "continuous assignment expression has no operand".into(),
+                                )
+                            })
                         })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                        .collect::<Result<Vec<_>, _>>()?;
+                }
                 if let Some(delay) = edge_target(&ids, edges, SemanticEdgeRole::Delay)? {
                     children.push(delay);
                 }
@@ -1572,6 +1586,58 @@ mod tests {
             db.semantic_details.slot_count(),
             snapshot.semantic_nodes.len()
         );
+    }
+
+    /// A continuous assignment Slang already rejected (here a reference into
+    /// an unknown module's black box, then an undeclared name) imports as an
+    /// unsupported `Other` node instead of failing the whole database, so the
+    /// editor keeps the rest of the design.
+    #[test]
+    fn diagnosed_invalid_continuous_assignments_import_as_other() {
+        let source = "module top(input logic c, output logic o, output logic p, output logic q);\n\
+            missing_mod u_m(.a(c));\n\
+            assign o = u_m.sig;\n\
+            assign p = nope;\n\
+            assign q = c;\n\
+            endmodule\n";
+        let output = crate::core::compile::compile(&crate::core::compile::CompileOpts {
+            sources: vec![crate::core::compile::OwnedSource::compilation_unit(
+                "invalid_assign.sv",
+                source,
+            )],
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(
+            !output.ok(),
+            "Slang reports the unknown module and the name"
+        );
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let assignments = |want_other: bool| {
+            db.node_ids()
+                .filter(|id| db.semantic_detail(*id) == Some("ContinuousAssign"))
+                .filter(|id| matches!(db.node_kind(*id), NodeKind::Other) == want_other)
+                .count()
+        };
+        assert_eq!(assignments(true), 2, "both rejected assignments are Other");
+        assert_eq!(assignments(false), 1, "the valid assignment stays typed");
+        assert!(db
+            .node_ids()
+            .any(|id| matches!(db.node_kind(id), NodeKind::ContAssign { .. })));
+        // A valid design never takes the tolerant path.
+        let valid = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "valid_assign.sv",
+                "module top(input logic c, output logic q); assign q = c; endmodule",
+            )],
+            &crate::core::compile::CompileOpts::default(),
+        )
+        .unwrap();
+        let db = Db::from_slang(&valid.snapshot).unwrap();
+        assert!(db
+            .node_ids()
+            .filter(|id| db.semantic_detail(*id) == Some("ContinuousAssign"))
+            .all(|id| matches!(db.node_kind(id), NodeKind::ContAssign { .. })));
     }
 
     #[test]
