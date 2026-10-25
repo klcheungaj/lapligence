@@ -33,8 +33,8 @@ neutral interface:
 - Never send resolved paths back to LSP clients in place of their URI spelling;
   symlinked LSP workspace roots still miss feature lookups.
 - Diagnostics and runtime reports name a source by its resolved native spelling.
-  Tests build expected text with `ffi::platform::canonicalize` and `Path::join`,
-  not `join("tests/fixtures/...")`, which keeps a literal `/` on Windows.
+  Tests build expected text with `sim_harness::source_display`, not
+  `join("tests/fixtures/...")`, which keeps a literal `/` on Windows.
 - Compare `Path` components, never strings containing `/`; configured relative
   parts get native separators (`out\w\dump.vcd`).
 - Compare captured child output with LF oracles only after
@@ -43,6 +43,10 @@ neutral interface:
   dump: Windows test temporary directories drop the test label (`llg-<pid>-<n>`).
 
 ## Windows (MSVC)
+
+Most Windows-only failures are MSVC `/W4 /WX` diagnostics, path forms (drive
+letters, separators, verbatim prefixes) and DLL linkage. Each new one gets a
+bullet here and, where possible, a Linux-side guard test.
 
 Paths and files:
 
@@ -59,6 +63,13 @@ Paths and files:
 - `std::os::windows::fs::MetadataExt::number_of_links`/`file_index` are unstable;
   use cap-std `MetadataExt` on an open handle. Gate `std::os::unix` users,
   including symlink tests, with `#[cfg(unix)]`.
+- A CLI operand of the form `prefix:path` (`--sdf [min:|typ:|max:]file`) must not
+  read a drive letter `D:` or a UNC/`\\?\` path as the prefix: prefix words have
+  two or more letters (`sdf_operand_*` unit tests in
+  `src/sim/codegen/lowering/collection/sdf_annotations.rs`).
+- Expected diagnostics in tests name the source as llg prints it, with native
+  separators (`sim_harness::source_display`); a `/`-joined fixture path matches
+  on Linux and macOS and cannot fail there.
 - Text-mode consoles and files write CRLF. `$fopen` passes its mode to C `fopen`
   unchanged, so text-mode `$ftell`/`$fseek`/`$rewind` positions differ; fixtures
   and `lrm_decisions` cases that depend on byte positions or unformatted data
@@ -86,6 +97,9 @@ MSVC compiler:
   (C4090; assign elements) and a completed tentative definition
   `static const T x;` (C4132; define the object first). Clang
   `-Wconditional-uninitialized`/`-Wunreachable-code` approximate C4701/C4702.
+  A cast that truncates a complemented constant, `(uint8_t)~FLAG`, is C4310 (GCC
+  and Clang never warn on an explicit cast); mask first, `(uint8_t)(x & ~FLAG)`
+  (`runtime_strict_sources::runtime_sources_have_no_truncating_constant_casts`).
 - C mode lacks `max_align_t` (use `llg_co_max_align_t`). Unnamed enums have an
   `int` underlying type, so brace-initializing a `uint32_t` from an enum ternary
   narrows (C2397); cast. `<chrono>` warning C4530 without `/EHsc` is harmless.
@@ -122,7 +136,8 @@ DPI-C and VPI DLLs:
   docs. Static archives remain the route that needs no import library
   (`sim_041::static_archive_companion_reaches_exports_and_scopes`).
 - User C stays Annex H/I code: mark every import definition `DPI_DLLESPEC` (or use
-  a `.def`). A DLL that exports nothing gets no import library, and `--dpi-lib
+  a `.def`), and its prototype too, or MSVC reports C2375 "redefinition; different
+  linkage". A DLL that exports nothing gets no import library, and `--dpi-lib
   x_dll.lib` then fails as "not a regular file"
   (`sim_040::dll_companions_export_every_import_definition`). `vpi_user.h`
   exports `vlog_startup_routines` (`PLI_DLLESPEC`, Annex K).
