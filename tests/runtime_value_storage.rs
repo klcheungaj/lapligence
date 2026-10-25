@@ -115,7 +115,8 @@ fn run_storage_stages(label: &str, options: &[String], config: &str, targets: &[
     build
         .arg("--build")
         .arg(dir.path())
-        .args(["--config", config]);
+        .args(["--config", config, "--parallel"])
+        .arg(sim_harness::cmake_build_jobs());
     if !targets.is_empty() {
         build.arg("--target").args(targets);
     }

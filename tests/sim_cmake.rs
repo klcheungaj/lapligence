@@ -407,8 +407,14 @@ fn end_to_end_cmake() {
     assert_eq!(stdout, EXPECTED_STDOUT);
 }
 
+/// Ceiling for the from-scratch build in the test below. Serial builds took
+/// 77-125 s on a 4-CPU CI job; the build now runs `--parallel`, and this keeps
+/// several times the parallel duration as headroom for a loaded runner.
+const SELF_CONTAINED_BUILD_TIMEOUT: Duration = Duration::from_secs(300);
+
 /// A source-only export must compile without injecting the cached runtime
-/// archive, so every packaged runtime translation unit is exercised.
+/// archive, so every packaged runtime translation unit is exercised. The
+/// commands are the plain `cmake` ones a user would type, plus `--parallel`.
 #[test]
 fn generated_sources_build_as_a_self_contained_cmake_project() {
     let _guard = TEST_LOCK.lock().unwrap();
@@ -448,8 +454,9 @@ fn generated_sources_build_as_a_self_contained_cmake_project() {
     compile
         .arg("--build")
         .arg(&build)
-        .args(["--config", "Release"]);
-    let output = sim_harness::run_command(&mut compile, Duration::from_secs(120))
+        .args(["--config", "Release", "--parallel"])
+        .arg(sim_harness::cmake_build_jobs());
+    let output = sim_harness::run_command(&mut compile, SELF_CONTAINED_BUILD_TIMEOUT)
         .expect("build self-contained model");
     assert!(
         output.status.success(),

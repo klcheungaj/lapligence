@@ -1338,8 +1338,11 @@ Test parallelism is unchanged. Model and runtime-archive builds run
 `cmake --build --parallel <N>`, with `N` from `$CMAKE_BUILD_PARALLEL_LEVEL` when
 set, else the host CPU count; the harness leaves it unset because the runtime
 archive is built once per cache key under a lock and a model is one translation
-unit (revisit when models are split into parts). Every invocation owns a unique child directory and
-removes that child on completion or unwind; the configured root and unrelated
+unit (revisit when models are split into parts). Tests that run plain
+`cmake --build` on a Makefiles tree (self-contained export, GMP closure, storage
+probes) pass `--parallel` from `sim_harness::cmake_build_jobs()`, which follows the
+same variable and then the usable CPUs; without it the build is serial in CI.
+Every invocation owns a unique child directory and removes that child on completion or unwind; the configured root and unrelated
 files are retained. `LLG_RUNTIME_CACHE_DIR` separately relocates the shared runtime
 archive cache, which persists across tests and runs until removed or unmounted.
 Size tmpfs for concurrent builds and leave RAM for compilers and tests.

@@ -20,6 +20,22 @@ thread_local! {
 }
 const MODEL_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Job count for `cmake --build --parallel` in tests that run plain `cmake`
+/// commands instead of `sim::build`: `$CMAKE_BUILD_PARALLEL_LEVEL` when set,
+/// else the CPUs this process may use (cgroup and affinity aware). Plain
+/// `cmake --build` on a Makefiles tree is serial without it, and CI containers
+/// set neither a default generator nor the variable.
+pub(crate) fn cmake_build_jobs() -> String {
+    sim::build::resolve_build_jobs(
+        None,
+        std::env::var(sim::build::BUILD_PARALLEL_LEVEL_ENV)
+            .ok()
+            .as_deref(),
+        thread::available_parallelism().ok().map(usize::from),
+    )
+    .to_string()
+}
+
 fn lock_process_cwd() -> std::sync::MutexGuard<'static, ()> {
     // CwdGuard restores the process directory while unwinding. A poisoned
     // mutex therefore records a failed test, not a damaged CWD invariant.

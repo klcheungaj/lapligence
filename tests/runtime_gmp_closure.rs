@@ -183,7 +183,11 @@ target_include_directories(closure PRIVATE ${{LLG_GMP_INCLUDE_DIRS}})
     std::fs::write(project.join("refs.c"), refs).expect("write refs.c");
 
     let mut build = Command::new(&cmake);
-    build.arg("--build").arg(project.join("build"));
+    build
+        .arg("--build")
+        .arg(project.join("build"))
+        .arg("--parallel")
+        .arg(sim_harness::cmake_build_jobs());
     run_stage("link", &mut build);
 }
 
