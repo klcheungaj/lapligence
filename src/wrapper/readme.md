@@ -58,6 +58,16 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
 - Typedef-name lexical kinds come from Slang's resolved symbol kind. Cast
   targets and `$bits`/`type()` operands bind to the alias their expression type
   resolved, only when the spelling matches.
+- Both capture modes bind, from the resolved AST, the name tokens no reference
+  node carries: `::` qualifiers to the enclosing package or class, hierarchical
+  path steps to the symbols of Slang's resolved path, `disable` targets and
+  symbol operands, called subroutine names, and interface-port type names.
+  System subroutine and built-in method names get the
+  `LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE` kind with no target. Slang wraps a
+  failed statement or expression, with its enclosing list, in an Invalid node
+  the AST visitor never enters; capture walks that child for lexical bindings
+  only (no semantic nodes), so only the names Slang could not resolve stay
+  unbound identifiers.
 
 ## Parameter overrides
 

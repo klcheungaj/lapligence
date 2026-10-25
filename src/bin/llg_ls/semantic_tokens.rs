@@ -147,8 +147,8 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
 /// A reference the capture could not resolve to any symbol is lexically a
 /// plain identifier. It gets no token, so the editor leaves it uncolored
 /// instead of painting a name that has no definition as a variable. Plain
-/// identifier declarations (instance names, labels) are separate kinds and
-/// keep theirs.
+/// identifier declarations (instance names, labels) and bound references to
+/// them (`TOKEN_SLANG_BOUND_IDENTIFIER`) are separate kinds and keep theirs.
 fn is_unresolved_identifier(kind: i32) -> bool {
     kind == TOKEN_SLANG_IDENTIFIER
 }
@@ -207,9 +207,10 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
         TOKEN_SLANG_VARIABLE
         | TOKEN_SLANG_NET
         | TOKEN_SLANG_IDENTIFIER
+        | TOKEN_SLANG_BOUND_IDENTIFIER
         | TOKEN_GENVAR_DECL
         | TOKEN_GENVAR_REF => TT_VARIABLE,
-        TOKEN_SLANG_FUNCTION | TOKEN_SLANG_TASK => TT_FUNCTION,
+        TOKEN_SLANG_FUNCTION | TOKEN_SLANG_TASK | TOKEN_SLANG_SYSTEM_SUBROUTINE => TT_FUNCTION,
         TOKEN_SLANG_METHOD => TT_METHOD,
         TOKEN_SLANG_MACRO => TT_MACRO,
         TOKEN_SLANG_KEYWORD => TT_KEYWORD,
@@ -229,6 +230,9 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
     }
     if connection {
         modifiers |= 1 << TM_CONNECTION_LABEL;
+    }
+    if kind == TOKEN_SLANG_SYSTEM_SUBROUTINE {
+        modifiers |= 1 << TM_DEFAULT_LIBRARY;
     }
     Some((token_type, modifiers))
 }
@@ -499,6 +503,115 @@ mod tests {
                 TT_VARIABLE,
                 "{profile}"
             );
+        }
+    }
+
+    /// Names that resolve keep their real kinds, also inside a block that an
+    /// undeclared name makes invalid: package qualifiers, `disable` labels,
+    /// hierarchical path steps and system subroutine names. Only the
+    /// undeclared name has no token.
+    #[test]
+    fn resolved_names_keep_tokens_in_erroneous_blocks_and_qualified_paths_in_every_capture_profile()
+    {
+        let source =
+            "package pk; int pv; function int pf(int a); return a; endfunction endpackage\n\
+interface ifc; logic sig; endinterface\n\
+module sub(input logic i, output logic o); assign o = i; endmodule\n\
+module top;\n\
+  logic [3:0] v, w;\n\
+  ifc bus();\n\
+  sub u0(.i(v[0]), .o(w[0]));\n\
+  for (genvar g = 0; g < 2; g++) begin : gb logic q; end\n\
+  initial begin : bad\n\
+    v = ghost + w;\n\
+    w = pk::pf(v) + pk::pv + gb[0].q + u0.o + bus.sig + $bits(v);\n\
+    disable bad;\n\
+  end\n\
+  initial begin : good\n\
+    w = pk::pf(v) + pk::pv + gb[0].q + u0.o + bus.sig + $bits(v);\n\
+    $display(\"%0d\", v);\n\
+    disable good;\n\
+  end\n\
+endmodule\n";
+        let default_library = 1 << TM_DEFAULT_LIBRARY;
+        let readonly = 1 << TM_READONLY;
+        for (profile, tokens) in profiles(source) {
+            let find = |line: usize, word: &str, nth: usize| {
+                let text = source.lines().nth(line).unwrap();
+                let col = text
+                    .match_indices(word)
+                    .filter(|(at, _)| {
+                        let bytes = text.as_bytes();
+                        let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+                        (*at == 0 || !is_word(bytes[at - 1]))
+                            && bytes.get(at + word.len()).is_none_or(|b| !is_word(*b))
+                    })
+                    .nth(nth)
+                    .unwrap()
+                    .0 as u32;
+                tokens
+                    .iter()
+                    .find(|t| t.0 == line as u32 && t.1 == col)
+                    .cloned()
+            };
+            let token = |line: usize, word: &str, nth: usize| {
+                find(line, word, nth).unwrap_or_else(|| {
+                    panic!("{profile}: no token for {word}#{nth} on line {line}")
+                })
+            };
+            let col = source.lines().nth(9).unwrap().find("ghost").unwrap() as u32;
+            assert!(
+                !tokens.iter().any(|t| t.0 == 9 && t.1 == col),
+                "{profile}: undeclared name got a token: {tokens:?}"
+            );
+            assert_eq!(token(9, "v", 0).3, TT_VARIABLE, "{profile}: bad-block v");
+            assert_eq!(token(9, "w", 0).3, TT_VARIABLE, "{profile}: bad-block w");
+            for line in [10, 14] {
+                let expect = [
+                    ("w", 0, TT_VARIABLE, 0),
+                    ("pk", 0, TT_NAMESPACE, 0),
+                    ("pf", 0, TT_FUNCTION, 0),
+                    ("v", 0, TT_VARIABLE, 0),
+                    ("pk", 1, TT_NAMESPACE, 0),
+                    ("pv", 0, TT_VARIABLE, 0),
+                    ("gb", 0, TT_VARIABLE, 0),
+                    ("q", 0, TT_VARIABLE, 0),
+                    ("u0", 0, TT_VARIABLE, 0),
+                    ("o", 0, TT_PARAMETER, readonly),
+                    ("bus", 0, TT_VARIABLE, 0),
+                    ("sig", 0, TT_VARIABLE, 0),
+                    ("$bits", 0, TT_FUNCTION, default_library),
+                    ("v", 1, TT_VARIABLE, 0),
+                ];
+                for (word, nth, token_type, modifiers) in expect {
+                    // Library-unit capture elaborates no hierarchy: Slang leaves
+                    // hierarchical names in an uninstantiated body unresolved,
+                    // so those steps may have no token there.
+                    let hierarchical = matches!(word, "gb" | "q" | "u0" | "o" | "bus" | "sig");
+                    if hierarchical && profile == "library_units=true" {
+                        if let Some(t) = find(line, word, nth) {
+                            assert_eq!((t.3, t.4), (token_type, modifiers), "{profile} {word}");
+                        }
+                        continue;
+                    }
+                    let t = token(line, word, nth);
+                    assert_eq!(
+                        (t.3, t.4),
+                        (token_type, modifiers),
+                        "{profile} line {line} {word}#{nth}"
+                    );
+                }
+            }
+            let display = token(15, "$display", 0);
+            assert_eq!(
+                (display.3, display.4),
+                (TT_FUNCTION, default_library),
+                "{profile}"
+            );
+            for (line, label) in [(11, "bad"), (16, "good")] {
+                let t = token(line, label, 0);
+                assert_eq!((t.3, t.4), (TT_VARIABLE, 0), "{profile} disable {label}");
+            }
         }
     }
 

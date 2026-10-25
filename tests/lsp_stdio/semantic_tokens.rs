@@ -395,6 +395,92 @@ fn lsp_stdio_semantic_tokens_skip_unresolved_names_in_both_serving_paths() {
     client.shutdown();
 }
 
+/// One undeclared name leaves only itself uncolored: the other names of its
+/// invalid block, package qualifiers, hierarchical path steps, `disable`
+/// labels and system names keep their kinds, through project and isolated
+/// unsaved-buffer analysis.
+#[test]
+fn lsp_stdio_semantic_tokens_keep_resolved_names_of_erroneous_blocks_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("resolved_names.sv");
+    let uri = file_uri(&path);
+    let source = "package pk; int pv; function int pf(int a); return a; endfunction endpackage\n\
+interface ifc; logic sig; endinterface\n\
+module sub(input logic i, output logic o); assign o = i; endmodule\n\
+module names_top;\n\
+  logic [3:0] v, w;\n\
+  ifc bus();\n\
+  sub u0(.i(v[0]), .o(w[0]));\n\
+  for (genvar g = 0; g < 2; g++) begin : gb logic q; end\n\
+  initial begin : bad\n\
+    v = ghost + w;\n\
+    w = pk::pf(v) + pk::pv + gb[0].q + u0.o + bus.sig + $bits(v);\n\
+    disable bad;\n\
+  end\n\
+endmodule\n";
+    fs::write(&path, source).expect("write resolved-names fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+
+    let expected: [(&str, usize, u64, &str, &[&str]); 15] = [
+        ("v = ghost", 0, 0, "variable", &[]),
+        ("+ w;", 0, 2, "variable", &[]),
+        ("pk::pf", 0, 0, "namespace", &[]),
+        ("pk::pf", 0, 4, "function", &[]),
+        ("pf(v)", 0, 3, "variable", &[]),
+        ("pk::pv", 0, 0, "namespace", &[]),
+        ("pk::pv", 0, 4, "variable", &[]),
+        ("gb[0].q", 0, 0, "variable", &[]),
+        ("gb[0].q", 0, 6, "variable", &[]),
+        ("u0.o", 0, 0, "variable", &[]),
+        ("u0.o", 0, 3, "parameter", &["readonly"]),
+        ("bus.sig", 0, 0, "variable", &[]),
+        ("bus.sig", 0, 4, "variable", &[]),
+        ("$bits", 0, 0, "function", &["defaultLibrary"]),
+        ("disable bad", 0, 8, "variable", &[]),
+    ];
+    for opened in [false, true] {
+        if opened {
+            client
+                .open(&path, source)
+                .expect("open resolved-names buffer");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("resolved-names semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        let (line, col) = position_of(source, "ghost", 0);
+        assert!(
+            rows.iter()
+                .all(|row| !(row.line == line && row.character == col)),
+            "opened={opened}: undeclared name got a token: {rows:?}"
+        );
+        for (needle, occurrence, offset, token_type, token_modifiers) in expected {
+            let (line, col) = position_of(source, needle, occurrence);
+            let row = row_at(&rows, line, col + offset);
+            assert_eq!(
+                row.token_type, token_type,
+                "opened={opened} {needle}+{offset}"
+            );
+            assert_eq!(
+                row.modifiers, token_modifiers,
+                "opened={opened} {needle}+{offset}"
+            );
+        }
+    }
+    client.shutdown();
+}
+
 /// Connection labels carry `connectionLabel`; actuals retain their own symbol
 /// classification in both cached-project and isolated open-buffer responses.
 #[test]

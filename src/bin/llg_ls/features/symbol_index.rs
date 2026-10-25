@@ -65,7 +65,10 @@ pub struct SymbolIndex {
 }
 
 /// Token kinds that denote a module/interface instance name at its site.
-pub(super) const INSTANCE_NAME_TOKEN_TYPES: &[i32] = &[tokens::TOKEN_SLANG_IDENTIFIER];
+pub(super) const INSTANCE_NAME_TOKEN_TYPES: &[i32] = &[
+    tokens::TOKEN_SLANG_IDENTIFIER,
+    tokens::TOKEN_SLANG_BOUND_IDENTIFIER,
+];
 
 /// Maximum distance (0-based lines) between an instance declaration and a
 /// named port-connection label on a later line for the multi-line heuristic in
@@ -1653,7 +1656,9 @@ pub(super) fn classify_token(
         tokens::TOKEN_SLANG_PARAMETER => Some(SymKind::Param),
         tokens::TOKEN_SLANG_PORT => Some(SymKind::Port),
         tokens::TOKEN_SLANG_NET => Some(SymKind::Net),
-        tokens::TOKEN_SLANG_VARIABLE | tokens::TOKEN_SLANG_IDENTIFIER => Some(SymKind::Var),
+        tokens::TOKEN_SLANG_VARIABLE
+        | tokens::TOKEN_SLANG_IDENTIFIER
+        | tokens::TOKEN_SLANG_BOUND_IDENTIFIER => Some(SymKind::Var),
         tokens::TOKEN_SLANG_FUNCTION | tokens::TOKEN_SLANG_METHOD => Some(SymKind::Function),
         tokens::TOKEN_SLANG_TASK => Some(SymKind::Task),
         tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL

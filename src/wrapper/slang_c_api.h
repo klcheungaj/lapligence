@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 41u
+#define LLG_SLANG_ABI_VERSION 42u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1303,7 +1303,10 @@ enum {
   LLG_SLANG_LEXICAL_NUMBER = 21,
   LLG_SLANG_LEXICAL_OPERATOR = 22,
   LLG_SLANG_LEXICAL_IDENTIFIER = 23,
-  LLG_SLANG_LEXICAL_GENVAR = 24
+  LLG_SLANG_LEXICAL_GENVAR = 24,
+  /* A system task or function name, or a built-in method name (ABI v42):
+   * resolved by Slang to a built-in subroutine, so it has no semantic target. */
+  LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE = 25
 };
 
 enum {

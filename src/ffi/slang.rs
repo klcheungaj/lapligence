@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 41;
+const ABI_VERSION: u32 = 42;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1512,6 +1512,9 @@ pub enum LexicalKind {
     Operator,
     Identifier,
     Genvar,
+    /// A system task or function, or built-in method, name. It has no
+    /// semantic target.
+    SystemSubroutine,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

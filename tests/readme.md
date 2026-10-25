@@ -836,9 +836,16 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   names never carry `defaultLibrary`), directions and kind words (`input`,
   `parameter`, `localparam`, `const`, `var`, ...) are `modifier`, and the
   remaining keywords stay `keyword`. A reference the capture could not resolve
-  (plain `identifier` lexical kind) gets no token, so the editor leaves it
-  uncolored; declarations and kind-known references keep theirs. All of this
-  holds for committed and isolated buffers, including missing children.
+  (unbound plain `identifier` lexical kind) gets no token, so the editor leaves
+  it uncolored; declarations and kind-known references keep theirs. Resolved
+  names keep their kind even inside a block that one undeclared name makes
+  invalid: scope qualifiers (`pk::f`) are `namespace`, hierarchical path steps,
+  instance and block names (`u0.o`, `gb[0].q`, `disable blk`) are bound
+  `variable` with the final member's own kind, and system tasks, functions and
+  built-in methods (`$bits`, `$display`, `q.size`) are
+  `function.defaultLibrary`. All of this holds for committed and isolated
+  buffers, including missing children (library-unit capture elaborates no
+  hierarchy, so Slang leaves hierarchical names there unresolved).
   Keep the compact-capture tests.
 
 Fixtures use `fixtures/lsp/test.json` (schema `llg.lsp.fixture/v1`), the

@@ -501,8 +501,8 @@
       "line": 9,
       "module": "tb",
       "role": "REF",
-      "sym": null,
-      "tokenKind": "identifier"
+      "sym": "variable",
+      "tokenKind": "bound-identifier"
     },
     {
       "binding": {

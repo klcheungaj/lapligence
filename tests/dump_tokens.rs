@@ -814,7 +814,7 @@ fn dump_reports_unknown_config_keys_by_name() {
 
 /// Enum items dump as `enumMember` + `readonly` at declarations and
 /// references (anonymous, typedef, packaged and ranged enums), and a package
-/// qualifier in `pkg::ITEM` is not itself bound to the item.
+/// qualifier in `pkg::ITEM` is bound to the package, not to the item.
 #[test]
 fn enum_items_dump_as_readonly_enum_members_at_declarations_and_references() {
     let root = std::env::temp_dir().join(format!("llg-dump-enums-{}", std::process::id()));
@@ -852,6 +852,135 @@ fn enum_items_dump_as_readonly_enum_members_at_declarations_and_references() {
     ] {
         dump.assert_rows(location, &reference);
     }
-    dump.assert_rows_without("enums.sv:13:9-12", &["enum-member", "bind=enums.sv"]);
+    // The scope qualifier of `pkg::PB` names the package, not the item.
+    dump.assert_rows_without("enums.sv:13:9-12", &["enum-member"]);
+    dump.assert_rows(
+        "enums.sv:13:9-12",
+        &[
+            "kind=package\t",
+            "sym=namespace\t",
+            "bind=enums.sv:0:8[pkg,package]",
+        ],
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Resolved names keep their kind and binding inside a block that one
+/// undeclared name makes invalid: package qualifiers, called functions,
+/// hierarchical path steps, `disable` labels and system names. The
+/// undeclared name stays an unbound plain identifier.
+#[test]
+fn resolved_names_of_an_erroneous_block_dump_with_kinds_and_bindings() {
+    let root = std::env::temp_dir().join(format!("llg-dump-names-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create names fixture dir");
+    let source = "package pk; int pv; function int pf(int a); return a; endfunction endpackage\n\
+interface ifc; logic sig; endinterface\n\
+module sub(input logic i, output logic o); assign o = i; endmodule\n\
+module names_top;\n\
+  logic [3:0] v, w;\n\
+  ifc bus();\n\
+  sub u0(.i(v[0]), .o(w[0]));\n\
+  for (genvar g = 0; g < 2; g++) begin : gb logic q; end\n\
+  initial begin : bad\n\
+    v = ghost + w;\n\
+    w = pk::pf(v) + pk::pv + gb[0].q + u0.o + bus.sig + $bits(v);\n\
+    disable bad;\n\
+  end\n\
+endmodule\n";
+    fs::write(root.join("names.sv"), source).expect("write names.sv");
+    let dump = Dump::run(&root);
+    // `names.sv:<line0>:<col0>-<col1>` of `name`, `skip` bytes past the first
+    // `context` on zero-based `line`, and the binding prefix of a declaration.
+    let at = |line: usize, context: &str, skip: usize, name: &str| {
+        let col = source.lines().nth(line).unwrap().find(context).unwrap() + skip;
+        format!("names.sv:{line}:{col}-{}", col + name.len())
+    };
+    let decl = |line: usize, context: &str, name: &str| {
+        let col = source.lines().nth(line).unwrap().find(context).unwrap();
+        format!("bind=names.sv:{line}:{col}[{name},")
+    };
+    let rows = [
+        (
+            at(9, "ghost", 0, "ghost"),
+            ["kind=identifier\t", "sym=-", "bind=-"]
+                .map(String::from)
+                .to_vec(),
+        ),
+        (
+            at(9, "+ w", 2, "w"),
+            vec!["kind=variable\t".to_owned(), decl(4, "w;", "w")],
+        ),
+        (
+            at(10, "pk::pf", 0, "pk"),
+            vec![
+                "kind=package\t".to_owned(),
+                "sym=namespace".to_owned(),
+                decl(0, "pk;", "pk"),
+            ],
+        ),
+        (
+            at(10, "pk::pf", 4, "pf"),
+            vec![
+                "kind=function\t".to_owned(),
+                "sym=function".to_owned(),
+                decl(0, "pf(int", "pf"),
+            ],
+        ),
+        (
+            at(10, "pk::pv", 0, "pk"),
+            vec!["kind=package\t".to_owned(), decl(0, "pk;", "pk")],
+        ),
+        (
+            at(10, "pk::pv", 4, "pv"),
+            vec!["kind=variable\t".to_owned(), decl(0, "pv;", "pv")],
+        ),
+        (
+            at(10, "gb[0]", 0, "gb"),
+            vec![
+                "kind=bound-identifier\t".to_owned(),
+                "sym=variable".to_owned(),
+                decl(7, "gb logic", "gb"),
+            ],
+        ),
+        (
+            at(10, ".q", 1, "q"),
+            vec!["kind=variable\t".to_owned(), decl(7, "q;", "q")],
+        ),
+        (
+            at(10, "u0.o", 0, "u0"),
+            vec!["kind=bound-identifier\t".to_owned(), decl(6, "u0", "u0")],
+        ),
+        (
+            at(10, "u0.o", 3, "o"),
+            vec!["kind=port\t".to_owned(), decl(2, "o)", "o")],
+        ),
+        (
+            at(10, "bus.sig", 0, "bus"),
+            vec!["kind=bound-identifier\t".to_owned(), decl(5, "bus", "bus")],
+        ),
+        (
+            at(10, "bus.sig", 4, "sig"),
+            vec!["kind=variable\t".to_owned(), decl(1, "sig;", "sig")],
+        ),
+        (
+            at(10, "$bits", 0, "$bits"),
+            [
+                "kind=system-subroutine\t",
+                "REF",
+                "sym=function/defaultLibrary",
+                "bind=-",
+            ]
+            .map(String::from)
+            .to_vec(),
+        ),
+        (
+            at(11, "bad", 0, "bad"),
+            vec!["kind=bound-identifier\t".to_owned(), decl(8, "bad", "bad")],
+        ),
+    ];
+    for (location, needles) in rows {
+        let needles: Vec<&str> = needles.iter().map(String::as_str).collect();
+        dump.assert_rows(&location, &needles);
+    }
     let _ = fs::remove_dir_all(root);
 }

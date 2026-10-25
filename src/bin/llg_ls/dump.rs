@@ -373,8 +373,12 @@ pub(crate) fn collect_rows_for(
             }
             let line0 = node.line - 1;
             let col0 = node.col - 1;
-            let Some(&is_decl) = classified.get(&(ft.path.as_str(), line0, col0)) else {
-                continue; // keywords/macros etc.: not indexed as DECL or REF
+            // System subroutine names are not symbols, so the index skips
+            // them; they still get a REF row.
+            let is_decl = match classified.get(&(ft.path.as_str(), line0, col0)) {
+                Some(&is_decl) => is_decl,
+                None if node.kind == tokens::TOKEN_SLANG_SYSTEM_SUBROUTINE => false,
+                None => continue, // keywords/macros etc.: not indexed as DECL or REF
             };
             let sym =
                 sem.and_then(|toks| sym_field(&legend_types, &legend_modifiers, toks, line0, col0));
@@ -587,6 +591,8 @@ fn token_kind_name(kind: i32) -> String {
         (tokens::TOKEN_SLANG_FUNCTION, "function"),
         (tokens::TOKEN_SLANG_TASK, "task"),
         (tokens::TOKEN_SLANG_IDENTIFIER, "identifier"),
+        (tokens::TOKEN_SLANG_BOUND_IDENTIFIER, "bound-identifier"),
+        (tokens::TOKEN_SLANG_SYSTEM_SUBROUTINE, "system-subroutine"),
         (
             tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL,
             "port-connection-label",

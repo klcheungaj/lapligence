@@ -67,6 +67,7 @@ fn decode_lexical_kind(raw: u32) -> Result<LexicalKind, SlangError> {
         22 => LexicalKind::Operator,
         23 => LexicalKind::Identifier,
         24 => LexicalKind::Genvar,
+        25 => LexicalKind::SystemSubroutine,
         _ => return Err(invalid_native("lexical token has an unknown kind")),
     })
 }
@@ -107,6 +108,29 @@ mod tests {
         assert!(decode_lexical_token(&token, &[], 0).is_err());
         token.flags = 8;
         token.reserved = 1;
+        assert!(decode_lexical_token(&token, &[], 0).is_err());
+    }
+
+    #[test]
+    fn system_subroutine_kind_is_decoded_and_the_next_code_is_rejected() {
+        let mut token = RawLexicalToken {
+            range: RawRange {
+                file_id: INVALID_ID,
+                start: 0,
+                end: 0,
+            },
+            kind: 25,
+            role: 0,
+            flags: 0,
+            reserved: 0,
+            semantic_id: INVALID_ID,
+            text: empty_raw_string(),
+        };
+        assert_eq!(
+            decode_lexical_token(&token, &[], 0).unwrap().kind,
+            LexicalKind::SystemSubroutine
+        );
+        token.kind = 26;
         assert!(decode_lexical_token(&token, &[], 0).is_err());
     }
 }
