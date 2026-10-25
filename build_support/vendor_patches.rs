@@ -199,7 +199,9 @@ fn emit_directory_files(directory: &Path, extension: Option<&str>) {
 }
 
 /// Apply every repository-owned vendor patch in place, accepting only an
-/// entirely clean or entirely-applied tree.
+/// entirely clean or entirely-applied tree. Files an earlier committed patch
+/// set applied are first restored to the pinned base
+/// (`restore_build_written_files`).
 ///
 /// Slang is a submodule pinned at its documented base. libfst is a plain
 /// directory tracked by this repository, so its applied state appears as
@@ -246,7 +248,14 @@ fn apply_directory_with_base(
     checkout: VendorCheckout<'_>,
 ) -> Result<(), PatchError> {
     let repository = canonical_repository(label, project_root, repository)?;
-    let plans = plan_directory(label, &repository, patches_dir, checkout)?;
+    let plans = plan_directory(
+        label,
+        project_root,
+        &repository,
+        patches_dir,
+        checkout,
+        StaleRestore::Allowed,
+    )?;
     if tree_state(label, &repository, &plans)? == PatchState::Applied {
         return Ok(());
     }
@@ -272,9 +281,11 @@ enum VendorCheckout<'a> {
 /// Parse, authenticate and plan every patch of one vendor tree.
 fn plan_directory(
     label: &str,
+    project_root: &Path,
     repository: &Path,
     patches_dir: &Path,
     checkout: VendorCheckout<'_>,
+    stale_restore: StaleRestore,
 ) -> Result<Vec<PatchPlan>, PatchError> {
     let entries = fs::read_dir(patches_dir).map_err(|error| {
         PatchError::new(format!(
@@ -318,6 +329,18 @@ fn plan_directory(
         specs.push(spec);
     }
     manifest.validate_paths(label, &expected_paths, &retired.entries)?;
+    if stale_restore == StaleRestore::Allowed {
+        restore_build_written_files(
+            label,
+            project_root,
+            repository,
+            patches_dir,
+            &manifest,
+            &retired,
+            checkout,
+            &expected_paths,
+        )?;
+    }
     validate_retired_files(label, repository, &retired)?;
     if let VendorCheckout::Git { expected_base } = checkout {
         validate_git_checkout(label, repository, expected_base, &expected_paths)?;
@@ -362,6 +385,425 @@ fn tree_state(
         "{label} vendor checkout {} is partially applied or mismatched ({states}); check out the documented base revision, or restore the complete applied state",
         repository.display()
     )))
+}
+
+/// How many committed revisions of a patch directory's `files.sha256` are
+/// searched for the applied digest of a stale vendor file. The walk runs only
+/// when some file is neither clean nor currently applied, stops at the first
+/// revision that explains every such file, and costs one small `git cat-file`
+/// per revision. The bound never admits content: a build-written state older
+/// than the bound falls back to the strict failure with the manual restore
+/// hint, so it only limits the convenience and keeps the build script's Git
+/// work bounded on long histories.
+const STALE_MANIFEST_HISTORY_LIMIT: usize = 128;
+
+/// Whether planning may restore build-written stale vendor files (the build)
+/// or must leave the tree untouched (read-only inspections).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StaleRestore {
+    Allowed,
+    #[cfg(test)]
+    Disabled,
+}
+
+/// A vendor file that is not at its pinned base content.
+#[derive(Debug)]
+struct RestoreTarget {
+    relative: PathBuf,
+    path: PathBuf,
+    current: [u8; 32],
+    base: [u8; 32],
+    crlf: bool,
+    retired: bool,
+    /// The manifest revision whose applied digest names `current`; `None` for
+    /// a stale file not (yet) identified. Files at the current applied digest
+    /// are kept separately and need no history.
+    origin: Option<String>,
+}
+
+/// Where restoration reads manifest history and authenticated base blobs.
+struct RestoreSource {
+    superproject: PathBuf,
+    manifest_spec: String,
+    base_blobs: BaseBlobs,
+}
+
+enum BaseBlobs {
+    /// A submodule: base blobs come from its pinned `HEAD`.
+    VendorHead(PathBuf),
+    /// Files tracked by the superproject below `prefix`; its `HEAD` holds the
+    /// pristine blobs (`committed_libfst_blobs_are_pristine`).
+    Superproject { prefix: String },
+}
+
+impl RestoreSource {
+    fn base_blob(&self, relative: &Path) -> Option<Vec<u8>> {
+        let relative = git_path(relative)?;
+        match &self.base_blobs {
+            BaseBlobs::VendorHead(repository) => git_output_bytes(
+                repository,
+                &["cat-file", "blob", &format!("HEAD:{relative}")],
+            ),
+            BaseBlobs::Superproject { prefix } => git_output_bytes(
+                &self.superproject,
+                &["cat-file", "blob", &format!("HEAD:{prefix}/{relative}")],
+            ),
+        }
+    }
+}
+
+/// Restore vendor files that an earlier build applied from an older patch set.
+///
+/// The preparer accepts only a clean or a currently applied tree, so after a
+/// manifest change the files the build itself wrote from earlier patches
+/// block every build. A file whose digest is an applied digest of a committed
+/// earlier revision of the same manifest was written by the preparer, not by
+/// hand. When every non-clean, non-current file is identified that way, all
+/// non-clean patch targets (including those at the current applied digest,
+/// so the tree becomes entirely clean) are restored to their authenticated
+/// base content and the normal apply follows. Anything unidentified, or a
+/// tree without usable Git metadata, changes nothing and fails with the
+/// manual restore hint: edits the build did not write are never discarded.
+#[allow(clippy::too_many_arguments)]
+fn restore_build_written_files(
+    label: &str,
+    project_root: &Path,
+    repository: &Path,
+    patches_dir: &Path,
+    manifest: &FileManifest,
+    retired: &RetiredManifest,
+    checkout: VendorCheckout<'_>,
+    expected_paths: &BTreeSet<PathBuf>,
+) -> Result<(), PatchError> {
+    let mut stale = Vec::new();
+    let mut applied = Vec::new();
+    for (relative, expectation) in &manifest.entries {
+        let target = restore_target(label, repository, relative, expectation.base, false)?;
+        if target.current == expectation.base {
+            continue;
+        }
+        if target.current == expectation.applied {
+            applied.push(target);
+        } else {
+            stale.push(target);
+        }
+    }
+    for (relative, base) in &retired.entries {
+        let target = restore_target(label, repository, relative, *base, true)?;
+        if target.current != *base {
+            stale.push(target);
+        }
+    }
+    if stale.is_empty() {
+        return Ok(());
+    }
+
+    let hint = restore_hint(project_root, repository, checkout);
+    let Some(source) = restore_source(
+        label,
+        project_root,
+        repository,
+        patches_dir,
+        checkout,
+        expected_paths,
+        retired,
+    )?
+    else {
+        return Err(stale_error(
+            label,
+            repository,
+            &stale,
+            "no usable Git metadata can identify them as files an earlier build wrote",
+            &hint,
+        ));
+    };
+    match_manifest_history(label, &source, &mut stale);
+    if stale.iter().any(|target| target.origin.is_none()) {
+        let reason = format!(
+            "the unidentified ones match no applied content in the last {STALE_MANIFEST_HISTORY_LIMIT} committed revisions of {}",
+            source.manifest_spec
+        );
+        return Err(stale_error(label, repository, &stale, &reason, &hint));
+    }
+
+    // Render and authenticate every restoration before the first write, so a
+    // missing or mismatched base blob leaves the tree untouched.
+    let mut writes = Vec::with_capacity(stale.len() + applied.len());
+    for target in stale.iter().chain(&applied) {
+        let blob = source.base_blob(&target.relative).ok_or_else(|| {
+            PatchError::new(format!(
+                "{label} cannot read the pinned base content of vendor file {} from Git; nothing was changed. {}",
+                target.relative.display(),
+                hint_sentence(&hint)
+            ))
+        })?;
+        let text = String::from_utf8(blob).map_err(|_| {
+            PatchError::new(format!(
+                "{label} pinned base content of vendor file {} is not valid UTF-8; nothing was changed",
+                target.relative.display()
+            ))
+        })?;
+        let mut source_text = SourceText::parse(&text);
+        source_text.newline = if target.crlf { "\r\n" } else { "\n" };
+        let rendered = source_text.render(&source_text.lines);
+        if canonical_digest(rendered.as_bytes()) != target.base {
+            return Err(PatchError::new(format!(
+                "{label} pinned base content of vendor file {} does not match the authenticated base digest; nothing was changed. {}",
+                target.relative.display(),
+                hint_sentence(&hint)
+            )));
+        }
+        writes.push((target, rendered));
+    }
+
+    let manifest_path = patches_dir.join(FILE_MANIFEST);
+    for (target, rendered) in &writes {
+        let path = safe_vendor_target_path(label, repository, &target.relative, "restore target")?;
+        if path != target.path {
+            return Err(PatchError::new(format!(
+                "{label} vendor file {} changed identity while preparing its restoration; restore the vendor checkout",
+                target.relative.display()
+            )));
+        }
+        atomic_replace(
+            label,
+            repository,
+            &path,
+            rendered,
+            target.current,
+            target.base,
+            &manifest_path,
+        )?;
+    }
+
+    println!(
+        "cargo:warning={label}: restored {} build-written vendor file(s) in {} to the pinned base before applying the current patches:",
+        writes.len(),
+        repository.display()
+    );
+    for (target, _) in &writes {
+        let origin = match &target.origin {
+            Some(commit) => format!(
+                "applied by the patch set of commit {}",
+                commit.get(..12).unwrap_or(commit)
+            ),
+            None => "current applied content, reapplied".to_string(),
+        };
+        println!(
+            "cargo:warning={label}:   {} ({origin})",
+            target.relative.display()
+        );
+    }
+    Ok(())
+}
+
+fn restore_target(
+    label: &str,
+    repository: &Path,
+    relative: &Path,
+    base: [u8; 32],
+    retired: bool,
+) -> Result<RestoreTarget, PatchError> {
+    let context = if retired {
+        "retired vendor file"
+    } else {
+        "patch target"
+    };
+    let path = safe_vendor_target_path(label, repository, relative, context)?;
+    let contents = fs::read(&path).map_err(|error| {
+        PatchError::new(format!(
+            "{label} {context} {} is missing or unreadable: {error}; restore the pinned base checkout",
+            path.display()
+        ))
+    })?;
+    Ok(RestoreTarget {
+        relative: relative.to_path_buf(),
+        path,
+        current: canonical_digest(&contents),
+        base,
+        crlf: contents.windows(2).any(|pair| pair == b"\r\n"),
+        retired,
+        origin: None,
+    })
+}
+
+/// Usable Git metadata for restoration: the project root is exactly a Git
+/// top level holding the patch directory, and the vendor tree passes the same
+/// canonical checks as the normal preflight (submodule top level, pinned
+/// `HEAD`, no tracked changes outside the active and retired targets, no
+/// untracked inputs), or is tracked below that top level.
+fn restore_source(
+    label: &str,
+    project_root: &Path,
+    repository: &Path,
+    patches_dir: &Path,
+    checkout: VendorCheckout<'_>,
+    expected_paths: &BTreeSet<PathBuf>,
+    retired: &RetiredManifest,
+) -> Result<Option<RestoreSource>, PatchError> {
+    let Some(superproject) = exact_git_top_level(project_root) else {
+        return Ok(None);
+    };
+    let Some(patches) = relative_git_path(&superproject, patches_dir) else {
+        return Ok(None);
+    };
+    let base_blobs = match checkout {
+        VendorCheckout::Git { expected_base } => {
+            let mut admitted = expected_paths.clone();
+            admitted.extend(retired.entries.keys().cloned());
+            if !validate_git_checkout(label, repository, expected_base, &admitted)? {
+                return Ok(None);
+            }
+            BaseBlobs::VendorHead(repository.to_path_buf())
+        }
+        VendorCheckout::Tracked => {
+            let Some(prefix) = relative_git_path(&superproject, repository) else {
+                return Ok(None);
+            };
+            BaseBlobs::Superproject { prefix }
+        }
+    };
+    Ok(Some(RestoreSource {
+        superproject,
+        manifest_spec: format!("{patches}/{FILE_MANIFEST}"),
+        base_blobs,
+    }))
+}
+
+/// Record, for each stale file, the newest committed manifest revision whose
+/// applied digest for that path equals the file's digest. Unreadable or
+/// malformed historical manifests identify nothing.
+fn match_manifest_history(label: &str, source: &RestoreSource, stale: &mut [RestoreTarget]) {
+    let max_count = format!("--max-count={STALE_MANIFEST_HISTORY_LIMIT}");
+    let Some(log) = git_output(
+        &source.superproject,
+        &[
+            "log",
+            "--no-show-signature",
+            "--format=%H",
+            &max_count,
+            "--",
+            &source.manifest_spec,
+        ],
+    ) else {
+        return;
+    };
+    for commit in log.lines().map(str::trim) {
+        if commit.is_empty() || !commit.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            continue;
+        }
+        let spec = format!("{commit}:{}", source.manifest_spec);
+        let Some(text) = git_output(&source.superproject, &["cat-file", "blob", &spec]) else {
+            continue;
+        };
+        let Ok(historic) = FileManifest::parse(&text, Path::new(&spec), label) else {
+            continue;
+        };
+        for target in stale.iter_mut().filter(|target| target.origin.is_none()) {
+            if historic
+                .entries
+                .get(&target.relative)
+                .is_some_and(|expectation| expectation.applied == target.current)
+            {
+                target.origin = Some(commit.to_string());
+            }
+        }
+        if stale.iter().all(|target| target.origin.is_some()) {
+            return;
+        }
+    }
+}
+
+fn stale_error(
+    label: &str,
+    repository: &Path,
+    stale: &[RestoreTarget],
+    reason: &str,
+    hint: &str,
+) -> PatchError {
+    let describe = |target: &RestoreTarget| {
+        if target.retired {
+            format!(
+                "{} contains edits from a retired patch",
+                target.relative.display()
+            )
+        } else {
+            format!(
+                "{} does not match its exact clean or applied content",
+                target.relative.display()
+            )
+        }
+    };
+    let unknown = stale
+        .iter()
+        .filter(|target| target.origin.is_none())
+        .map(describe)
+        .collect::<Vec<_>>()
+        .join("; ");
+    let identified = stale
+        .iter()
+        .filter(|target| target.origin.is_some())
+        .map(|target| target.relative.display().to_string())
+        .collect::<Vec<_>>();
+    let identified = if identified.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " Build-written stale files were left in place too: {}.",
+            identified.join(", ")
+        )
+    };
+    PatchError::new(format!(
+        "{label} vendor checkout {} has files that are neither the pinned base nor the current applied content ({unknown}), and {reason}; nothing was changed.{identified} {}",
+        repository.display(),
+        hint_sentence(hint)
+    ))
+}
+
+fn hint_sentence(hint: &str) -> String {
+    format!(
+        "To restore the pinned base, run `{hint}` from the repository root; this discards every local edit in that vendor tree, including edits the build did not write"
+    )
+}
+
+fn restore_hint(project_root: &Path, repository: &Path, checkout: VendorCheckout<'_>) -> String {
+    let vendor = repository
+        .strip_prefix(project_root)
+        .ok()
+        .and_then(git_path)
+        .unwrap_or_else(|| repository.display().to_string());
+    match checkout {
+        VendorCheckout::Git { .. } => format!("git -C {vendor} checkout -- ."),
+        VendorCheckout::Tracked => format!("git restore -- {vendor}"),
+    }
+}
+
+/// The canonical Git top level when it is exactly `directory`; `git -C`
+/// searches parents, so a tree inside an unrelated checkout yields `None`.
+fn exact_git_top_level(directory: &Path) -> Option<PathBuf> {
+    if !git_available() {
+        return None;
+    }
+    let top_level = git_output(directory, &["rev-parse", "--show-toplevel"])?;
+    let top_level = PathBuf::from(top_level.trim()).canonicalize().ok()?;
+    (directory.canonicalize().ok()? == top_level).then_some(top_level)
+}
+
+fn relative_git_path(top_level: &Path, path: &Path) -> Option<String> {
+    let path = path.canonicalize().ok()?;
+    git_path(path.strip_prefix(top_level).ok()?)
+}
+
+/// A non-empty relative path spelled with `/` for Git revision syntax.
+fn git_path(path: &Path) -> Option<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        let Component::Normal(name) = component else {
+            return None;
+        };
+        parts.push(name.to_str()?);
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 fn expected_retired_entries(label: &str) -> Option<&'static [(&'static str, &'static str)]> {
@@ -1371,21 +1813,24 @@ fn reject_link_metadata(
     Ok(())
 }
 
+/// Run the Git strengthening checks on a vendor submodule. Returns whether
+/// usable Git metadata was found (canonical top level, inspectable HEAD); a
+/// tree without it is accepted here and relies on the exact manifests.
 fn validate_git_checkout(
     label: &str,
     repository: &Path,
     expected_base: Option<&str>,
     expected_paths: &BTreeSet<PathBuf>,
-) -> Result<(), PatchError> {
+) -> Result<bool, PatchError> {
     if !git_available() {
-        return Ok(());
+        return Ok(false);
     }
 
     let Some(git_top_level) = git_output(repository, &["rev-parse", "--show-toplevel"]) else {
         // A source archive nested below an unrelated outer Git checkout has no
         // vendor repository metadata. Preserve the archive path and rely on
         // the authenticated file manifests below.
-        return Ok(());
+        return Ok(false);
     };
     let git_top_level = PathBuf::from(git_top_level.trim());
     let git_top_level = git_top_level.canonicalize().ok();
@@ -1394,17 +1839,17 @@ fn validate_git_checkout(
         // `git -C` searches parent directories. Only a Git worktree whose
         // canonical top level is exactly the vendor repository is a checkout;
         // an archive inside an outer project remains a supported no-Git tree.
-        return Ok(());
+        return Ok(false);
     }
 
     let Some(git_dir) = git_output(repository, &["rev-parse", "--git-dir"]) else {
         // Source archives and vendor trees copied without their VCS metadata
         // are supported by the exact file manifests below. Git is an optional
         // strengthening check, never a prerequisite for the native build.
-        return Ok(());
+        return Ok(false);
     };
     if git_dir.trim().is_empty() {
-        return Ok(());
+        return Ok(false);
     }
 
     if let Some(expected_base) = expected_base {
@@ -1412,7 +1857,7 @@ fn validate_git_checkout(
             // A checkout whose metadata Git cannot inspect (for example a
             // source tree outside safe.directory) still has the portable
             // manifest checks available. Do not require a user Git setting.
-            return Ok(());
+            return Ok(false);
         };
         let actual_base = actual_base.trim();
         if actual_base != expected_base {
@@ -1485,7 +1930,7 @@ fn validate_git_checkout(
             )));
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 fn git_available() -> bool {
@@ -1571,6 +2016,12 @@ impl FileManifest {
                 path.display()
             ))
         })?;
+        Self::parse(&text, path, label)
+    }
+
+    /// Parse manifest text; `path` names its origin in diagnostics (a file or
+    /// a `<commit>:<path>` revision).
+    fn parse(text: &str, path: &Path, label: &str) -> Result<Self, PatchError> {
         let mut entries = BTreeMap::new();
         for (line_number, raw_line) in text.lines().enumerate() {
             let line = raw_line.trim();
@@ -3156,6 +3607,253 @@ mod tests {
         apply_directory_with_base(label, root, source, patches, VendorCheckout::Tracked)
     }
 
+    fn git(directory: &Path, arguments: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(directory)
+            .args(arguments)
+            .status()
+            .expect("git should run");
+        assert!(status.success(), "git {arguments:?} should succeed");
+    }
+
+    const NEWER_PATCH: &str = "diff --git a/alpha.txt b/alpha.txt\n--- a/alpha.txt\n+++ b/alpha.txt\n@@ -1,2 +1,2 @@\n one\n-old\n+newer\n";
+    const GAMMA_PATCH: &str = "diff --git a/gamma.txt b/gamma.txt\n--- a/gamma.txt\n+++ b/gamma.txt\n@@ -1 +1 @@\n-gamma\n+gamma applied\n";
+
+    fn write_manifest_entries(patches: &Path, entries: &[(&str, &str, &str)]) {
+        let text = entries
+            .iter()
+            .map(|(relative, base, applied)| {
+                format!(
+                    "{relative} {} {}\n",
+                    digest_text(base),
+                    digest_text(applied)
+                )
+            })
+            .collect::<String>();
+        fs::write(patches.join(FILE_MANIFEST), text).expect("write exact file manifest");
+    }
+
+    /// The first committed patch set: alpha `old -> new`, beta `before ->
+    /// after`, gamma `gamma -> gamma applied`.
+    fn write_first_patch_set(patches: &Path) {
+        fs::write(patches.join("alpha.patch"), PATCH).expect("write alpha patch");
+        fs::write(patches.join("beta.patch"), BETA_PATCH).expect("write beta patch");
+        fs::write(patches.join("gamma.patch"), GAMMA_PATCH).expect("write gamma patch");
+        write_manifest_entries(
+            patches,
+            &[
+                ("alpha.txt", "one\nold\n", "one\nnew\n"),
+                ("beta.txt", "before\n", "after\n"),
+                ("gamma.txt", "gamma\n", "gamma applied\n"),
+            ],
+        );
+    }
+
+    /// The second committed patch set: alpha now renders `newer`, beta is
+    /// unchanged and gamma's patch is retired.
+    fn write_second_patch_set(patches: &Path) {
+        fs::write(patches.join("alpha.patch"), NEWER_PATCH).expect("write newer alpha patch");
+        let gamma = patches.join("gamma.patch");
+        if gamma.exists() {
+            fs::remove_file(gamma).expect("retire gamma patch");
+        }
+        write_manifest_entries(
+            patches,
+            &[
+                ("alpha.txt", "one\nold\n", "one\nnewer\n"),
+                ("beta.txt", "before\n", "after\n"),
+            ],
+        );
+        write_retired_manifest(patches, "gamma.txt", "gamma\n");
+    }
+
+    /// A superproject whose history holds the first and then the second patch
+    /// set, with a nested vendor repository the first set was applied to.
+    fn submodule_tree_with_stale_first_set() -> (PathBuf, PathBuf, PathBuf) {
+        let root = temporary_tree();
+        let repository = root.join("repo");
+        let patches = root.join("patches");
+        fs::create_dir_all(&repository).expect("create repository");
+        fs::write(repository.join("alpha.txt"), "one\nold\n").expect("write alpha");
+        fs::write(repository.join("beta.txt"), "before\n").expect("write beta");
+        fs::write(repository.join("gamma.txt"), "gamma\n").expect("write gamma");
+        initialize_repository(&repository);
+        fs::write(root.join(".gitignore"), "repo/\n").expect("ignore nested repository");
+        write_first_patch_set(&patches);
+        initialize_repository(&root);
+        apply_directory("test", &repository, &patches).expect("first patch set applies");
+        write_second_patch_set(&patches);
+        git(&root, &["add", "-A", "patches"]);
+        git(&root, &["commit", "--quiet", "-m", "second patch set"]);
+        (root, repository, patches)
+    }
+
+    fn read(path: &Path) -> String {
+        fs::read_to_string(path).expect("read vendor file")
+    }
+
+    #[test]
+    fn stale_earlier_applied_set_is_restored_and_current_set_applied() {
+        let (root, repository, patches) = submodule_tree_with_stale_first_set();
+        assert_eq!(read(&repository.join("alpha.txt")), "one\nnew\n");
+        assert_eq!(read(&repository.join("gamma.txt")), "gamma applied\n");
+
+        apply_directory("test", &repository, &patches).expect("stale build output is restored");
+        assert_eq!(read(&repository.join("alpha.txt")), "one\nnewer\n");
+        assert_eq!(read(&repository.join("beta.txt")), "after\n");
+        assert_eq!(read(&repository.join("gamma.txt")), "gamma\n");
+        apply_directory("test", &repository, &patches).expect("restored tree stays applied");
+
+        fs::remove_dir_all(root).expect("remove temporary patch tree");
+    }
+
+    #[test]
+    fn stale_set_with_hand_edit_fails_without_writing() {
+        let (root, repository, patches) = submodule_tree_with_stale_first_set();
+        fs::write(repository.join("beta.txt"), "edited\n").expect("hand-edit beta");
+
+        let error = apply_directory("test", &repository, &patches)
+            .expect_err("unidentified edit must block restoration");
+        let message = error.to_string();
+        assert!(
+            message.contains("beta.txt does not match its exact clean or applied content"),
+            "{message}"
+        );
+        assert!(message.contains("nothing was changed"), "{message}");
+        assert!(message.contains("git -C repo checkout -- ."), "{message}");
+        assert_eq!(read(&repository.join("alpha.txt")), "one\nnew\n");
+        assert_eq!(read(&repository.join("beta.txt")), "edited\n");
+        assert_eq!(read(&repository.join("gamma.txt")), "gamma applied\n");
+
+        fs::remove_dir_all(root).expect("remove temporary patch tree");
+    }
+
+    #[test]
+    fn hand_edit_alone_fails_with_restore_hint() {
+        let (root, repository, patches) = submodule_tree_with_stale_first_set();
+        apply_directory("test", &repository, &patches).expect("stale build output is restored");
+        fs::write(repository.join("alpha.txt"), "one\nhand\n").expect("hand-edit alpha");
+
+        let error = apply_directory("test", &repository, &patches)
+            .expect_err("hand edit must not be discarded");
+        let message = error.to_string();
+        assert!(
+            message.contains("alpha.txt does not match its exact clean or applied content"),
+            "{message}"
+        );
+        assert!(message.contains("committed revisions"), "{message}");
+        assert!(message.contains("git -C repo checkout -- ."), "{message}");
+        assert!(message.contains("discards every local edit"), "{message}");
+        assert_eq!(read(&repository.join("alpha.txt")), "one\nhand\n");
+        assert_eq!(read(&repository.join("beta.txt")), "after\n");
+
+        fs::remove_dir_all(root).expect("remove temporary patch tree");
+    }
+
+    #[test]
+    fn stale_files_without_git_metadata_fail_with_restore_hint() {
+        let root = temporary_tree();
+        let repository = root.join("repo");
+        let patches = root.join("patches");
+        fs::create_dir_all(&repository).expect("create archive vendor tree");
+        // The first set's applied alpha against the second set's manifest,
+        // in a copied tree with neither vendor nor superproject metadata.
+        fs::write(repository.join("alpha.txt"), "one\nnew\n").expect("write stale alpha");
+        fs::write(repository.join("beta.txt"), "after\n").expect("write applied beta");
+        fs::write(repository.join("gamma.txt"), "gamma\n").expect("write retired gamma");
+        write_second_patch_set(&patches);
+        fs::write(patches.join("beta.patch"), BETA_PATCH).expect("write beta patch");
+
+        let error = apply_directory("test", &repository, &patches)
+            .expect_err("stale archive must fail closed");
+        let message = error.to_string();
+        assert!(
+            message.contains("alpha.txt does not match its exact clean or applied content"),
+            "{message}"
+        );
+        assert!(message.contains("no usable Git metadata"), "{message}");
+        assert!(message.contains("git -C repo checkout -- ."), "{message}");
+        assert_eq!(read(&repository.join("alpha.txt")), "one\nnew\n");
+        assert_eq!(read(&repository.join("beta.txt")), "after\n");
+
+        fs::remove_dir_all(root).expect("remove temporary patch tree");
+    }
+
+    /// A superproject tracking pristine vendor files (as `vendor/libfst`),
+    /// with the first patch set applied in the working tree and the second
+    /// one committed afterwards.
+    fn tracked_tree_with_stale_first_set() -> (PathBuf, PathBuf, PathBuf) {
+        let root = temporary_tree();
+        let source = root.join("vendor");
+        let patches = root.join("patches");
+        fs::create_dir_all(&source).expect("create tracked vendor tree");
+        fs::write(source.join("alpha.txt"), "one\nold\n").expect("write alpha");
+        fs::write(source.join("beta.txt"), "before\n").expect("write beta");
+        fs::write(source.join("gamma.txt"), "gamma\n").expect("write gamma");
+        write_first_patch_set(&patches);
+        initialize_repository(&root);
+        apply_tracked("libfst", &root, &source, &patches).expect("first patch set applies");
+        write_second_patch_set(&patches);
+        git(&root, &["add", "-A", "patches"]);
+        git(&root, &["commit", "--quiet", "-m", "second patch set"]);
+        (root, source, patches)
+    }
+
+    #[test]
+    fn tracked_stale_earlier_applied_set_is_restored_and_current_set_applied() {
+        let (root, source, patches) = tracked_tree_with_stale_first_set();
+        assert_eq!(read(&source.join("alpha.txt")), "one\nnew\n");
+
+        apply_tracked("libfst", &root, &source, &patches).expect("stale build output is restored");
+        assert_eq!(read(&source.join("alpha.txt")), "one\nnewer\n");
+        assert_eq!(read(&source.join("beta.txt")), "after\n");
+        assert_eq!(read(&source.join("gamma.txt")), "gamma\n");
+
+        fs::write(source.join("alpha.txt"), "one\nhand\n").expect("hand-edit alpha");
+        let error = apply_tracked("libfst", &root, &source, &patches)
+            .expect_err("tracked hand edit must not be discarded");
+        assert!(
+            error.to_string().contains("git restore -- vendor"),
+            "{error}"
+        );
+        assert_eq!(read(&source.join("alpha.txt")), "one\nhand\n");
+
+        fs::remove_dir_all(root).expect("remove temporary patch tree");
+    }
+
+    #[test]
+    fn clean_and_applied_trees_with_history_are_not_rewritten() {
+        let (root, repository, patches) = submodule_tree_with_stale_first_set();
+        git(&repository, &["checkout", "--quiet", "--", "."]);
+        let snapshot = |repository: &Path| {
+            ["alpha.txt", "beta.txt", "gamma.txt"].map(|name| {
+                fs::metadata(repository.join(name))
+                    .unwrap()
+                    .modified()
+                    .unwrap()
+            })
+        };
+
+        let clean = snapshot(&repository);
+        apply_directory("test", &repository, &patches).expect("clean tree applies");
+        let applied = snapshot(&repository);
+        assert_eq!(
+            applied[2], clean[2],
+            "the untouched retired file is not rewritten"
+        );
+        assert_eq!(read(&repository.join("alpha.txt")), "one\nnewer\n");
+
+        apply_directory("test", &repository, &patches).expect("applied tree is accepted");
+        assert_eq!(
+            snapshot(&repository),
+            applied,
+            "an applied tree is not rewritten"
+        );
+
+        fs::remove_dir_all(root).expect("remove temporary patch tree");
+    }
+
     /// The tracked libfst tree is either entirely pristine or entirely
     /// applied. The build applies the patch in place, so both are legitimate
     /// working-tree states.
@@ -3165,9 +3863,11 @@ mod tests {
         let source = manifest_dir.join(LIBFST_SOURCE);
         let plans = plan_directory(
             "libfst",
+            &manifest_dir,
             &source,
             &manifest_dir.join(LIBFST_PATCHES),
             VendorCheckout::Tracked,
+            StaleRestore::Disabled,
         )
         .expect("libfst patches plan");
         tree_state("libfst", &source, &plans).expect("libfst tree is clean or fully applied");

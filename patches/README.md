@@ -2,7 +2,9 @@
 
 Root `build.rs` applies these patches with a portable Rust preflight, retaining
 upstream-base vendor gitlinks. Clean and fully applied trees are accepted;
-mixed/mismatched inputs fail, including edits outside diff hunks.
+files an earlier committed patch set applied are restored first
+([stale build output](#stale-build-output)); other mixed/mismatched inputs fail,
+including edits outside diff hunks.
 
 ## Content and filesystem validation
 
@@ -30,6 +32,23 @@ manifests without Git or safe.directory setup. Slang lists sources explicitly;
 generated products stay outside vendors. These fixed inputs bound archive
 admission.
 
+## Stale build output
+
+After a branch switch or pull changes a manifest, the vendor tree may still
+hold files the build applied from an older patch set. When a patch or retired
+target is neither clean nor currently applied and Git metadata is usable (the
+project root is exactly a Git top level; Slang also passes the checks above,
+counting retired targets as admitted changes), the preparer searches the
+applied digests of the last `STALE_MANIFEST_HISTORY_LIMIT` committed revisions
+of that `files.sha256` (`git log` from `HEAD`) for each such path. Only if every
+such file is identified does it restore every non-clean target, current
+applied ones included, to the pinned base blob (vendor `HEAD` for Slang,
+superproject `HEAD` for libfst), authenticated against the current base digest
+and written through the staging path above, warn with the files and matched
+commits, and apply normally. Otherwise, or without Git, nothing changes and the
+error names the files and the manual fix, which discards all local vendor
+edits: `git -C vendor/slang checkout -- .` or `git restore -- vendor/libfst`.
+
 ## Slang
 
 - Base: `7ddf4059f79eff508dd486eb42fd650cdf320d52`
@@ -51,9 +70,10 @@ admission.
 ## Updating patches
 
 Transition from the verified prior complete applied state or documented clean
-base, then run the preparer. Never mix old applied files with new manifests,
-relax full-file authentication, admit arbitrary intermediates, or discard unrelated
-vendor edits to satisfy preflight.
+base, then run the preparer; committing the new manifest lets a later build
+recognise the prior applied files (above). Never mix old applied files with new
+manifests, relax full-file authentication, admit arbitrary intermediates, or
+discard unrelated vendor edits to satisfy preflight.
 
 ## libfst
 

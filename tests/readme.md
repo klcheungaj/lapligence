@@ -776,7 +776,9 @@ longest static prefix reject. The legality ruling is in the
 
 `vendor_patches.rs` checks clean/applied trees, no-Git archives (including archives
 inside another checkout), authenticated active/retired manifests, LF digest/CRLF
-rendering, and symlink/reparse/hardlink/stale/untracked-input rejection. Race probes
+rendering, symlink/reparse/hardlink/stale/untracked-input rejection, and restoration
+of files an earlier committed patch set applied (Git history only; mixed hand edits
+and no-Git copies fail unchanged with the manual restore hint). Race probes
 cover ancestor/parent replacement and late staging hardlinks. The plain tracked
 `vendor/libfst` is patched in place by the same preparer, so its working tree is
 clean or applied; tests cover in-place application, idempotence, partial/mismatched
