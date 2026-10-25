@@ -155,8 +155,8 @@ fn lsp_stdio_semantic_tokens_use_current_open_buffer_and_cached_unopened_snapsho
     client.shutdown();
 }
 
-/// Constant references keep their classes and type/direction words stay
-/// keywords through project and isolated unsaved-buffer analysis, including
+/// Constant references keep their classes, built-in types are
+/// `type`+`defaultLibrary` and direction/kind words are `modifier` through project and isolated unsaved-buffer analysis, including
 /// references to missing children.
 #[test]
 fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths() {
@@ -225,10 +225,20 @@ fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths(
                 );
             }
         }
-        for name in ["input", "logic", "output", "wire", "inout", "tri", "int"] {
+        for name in ["logic", "wire", "tri", "int"] {
             for occurrence in 0..buffer.match_indices(name).count() {
                 let (line, col) = position_of(&buffer, name, occurrence);
-                assert_eq!(row_at(&rows, line, col).token_type, "keyword", "{name}");
+                let row = row_at(&rows, line, col);
+                assert_eq!(row.token_type, "type", "{name}: {row:?}");
+                assert_eq!(row.modifiers, ["defaultLibrary"], "{name}: {row:?}");
+            }
+        }
+        for name in ["input", "output", "inout", "parameter", "localparam"] {
+            for occurrence in 0..buffer.match_indices(name).count() {
+                let (line, col) = position_of(&buffer, name, occurrence);
+                let row = row_at(&rows, line, col);
+                assert_eq!(row.token_type, "modifier", "{name}: {row:?}");
+                assert!(row.modifiers.is_empty(), "{name}: {row:?}");
             }
         }
         for name in ["module color_top", "assign buffer", "endmodule"] {
@@ -241,7 +251,7 @@ fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths(
 }
 
 /// Enum items are `enumMember` + `readonly` at declarations (which add
-/// `declaration`) and at references, and declaration keywords stay `keyword`,
+/// `declaration`) and at references, and `enum`/`typedef` stay `keyword`,
 /// through project and isolated unsaved-buffer analysis.
 #[test]
 fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() {

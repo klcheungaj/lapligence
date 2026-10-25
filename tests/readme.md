@@ -830,9 +830,12 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   never return shadow URIs. Tokens keep parameters/localparams
   `property.readonly` in dimensions/expressions/actuals, enum items
   `enumMember.readonly` (plus `declaration` at declarations, anonymous and
-  ranged enums included) and every declaration keyword (data/net/direction/
-  parameter words) `keyword`, for committed and isolated buffers, including
-  missing children. Keep the compact-capture tests.
+  ranged enums included). Keyword-derived words keep their class by text:
+  built-in data and net types (`logic`, `wire`, `int`, `genvar`, `void`, ...)
+  are `type.defaultLibrary` (user typedef names never carry `defaultLibrary`),
+  directions and kind words (`input`, `parameter`, `localparam`, `const`,
+  `var`, ...) are `modifier`, and `struct`, `union`, `enum` and the rest stay
+  `keyword`, for committed and isolated buffers, including missing children. Keep the compact-capture tests.
 
 Fixtures use `fixtures/lsp/test.json` (schema `llg.lsp.fixture/v1`), the
 effective per-root `llg.toml` and `// llg-lsp-fixture:` headers. Keep the

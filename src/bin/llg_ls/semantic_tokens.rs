@@ -19,11 +19,13 @@ const TT_FUNCTION: u32 = 12;
 const TT_METHOD: u32 = 13;
 const TT_MACRO: u32 = 14;
 const TT_KEYWORD: u32 = 15;
+const TT_MODIFIER: u32 = 16;
 const TT_STRING: u32 = 18;
 const TT_NUMBER: u32 = 19;
 const TT_OPERATOR: u32 = 21;
 const TM_DECLARATION: u32 = 0;
 const TM_READONLY: u32 = 2;
+const TM_DEFAULT_LIBRARY: u32 = 9;
 const TM_CONNECTION_LABEL: u32 = 10;
 const TM_CONNECTION_LABEL_NAME: SemanticTokenModifier =
     SemanticTokenModifier::new("connectionLabel");
@@ -76,9 +78,19 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         if node.line == 0 {
             continue;
         }
-        let Some((token_type, modifiers)) = token_type_for(node.kind) else {
+        let Some((mut token_type, mut modifiers)) = token_type_for(node.kind) else {
             continue;
         };
+        if token_type == TT_KEYWORD {
+            match node.name.as_deref().map(keyword_class) {
+                Some(KeywordClass::BuiltinType) => {
+                    token_type = TT_TYPE;
+                    modifiers |= 1 << TM_DEFAULT_LIBRARY;
+                }
+                Some(KeywordClass::Qualifier) => token_type = TT_MODIFIER,
+                _ => {}
+            }
+        }
         let length = node
             .name
             .as_ref()
@@ -126,6 +138,35 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
     SemanticTokens {
         result_id: None,
         data,
+    }
+}
+
+/// How a keyword token is presented. Only keyword-derived tokens are
+/// retyped; user type names never carry `defaultLibrary`.
+#[derive(Debug, PartialEq, Eq)]
+enum KeywordClass {
+    /// Built-in data and net types: `type` + `defaultLibrary`, which VS Code
+    /// maps to the built-in-type color.
+    BuiltinType,
+    /// Port directions and kind words: `modifier`.
+    Qualifier,
+    /// Every other keyword stays `keyword`.
+    Other,
+}
+
+/// Classify by keyword text, so words that are keywords in some editions only
+/// (for example `uwire`) need no edition knowledge here.
+fn keyword_class(name: &str) -> KeywordClass {
+    match name {
+        "bit" | "logic" | "reg" | "byte" | "shortint" | "int" | "longint" | "integer" | "time"
+        | "shortreal" | "real" | "realtime" | "string" | "chandle" | "event" | "void"
+        | "signed" | "unsigned" | "genvar" | "supply0" | "supply1" | "tri" | "triand" | "trior"
+        | "trireg" | "tri0" | "tri1" | "uwire" | "wire" | "wand" | "wor" => {
+            KeywordClass::BuiltinType
+        }
+        "input" | "output" | "inout" | "ref" | "parameter" | "localparam" | "specparam"
+        | "const" | "var" => KeywordClass::Qualifier,
+        _ => KeywordClass::Other,
     }
 }
 
@@ -294,24 +335,133 @@ mod tests {
     }
 
     #[test]
-    fn type_and_direction_keywords_use_keyword_highlighting() {
+    fn builtin_types_are_default_library_types_and_kind_words_are_modifiers() {
         let source = "module top(input logic signed [3:0] a, output wire b, inout tri c);\ninteger count; real value; string label;\nassign b = a[0];\nendmodule";
         let parsed = compile::parse_source(hp("/virtual/top.sv"), source, &[]).unwrap();
         let nodes = &parsed.tokens[0].nodes;
         let encoded = encode(nodes);
         assert_eq!(encoded.data.len(), nodes.len());
+        let default_library = 1 << TM_DEFAULT_LIBRARY;
         let mut seen = 0;
         for (node, token) in nodes.iter().zip(&encoded.data) {
-            match node.name.as_deref().unwrap_or_default() {
-                "input" | "logic" | "signed" | "output" | "wire" | "inout" | "tri" | "integer"
-                | "real" | "string" | "module" | "endmodule" | "assign" => {
-                    seen += 1;
-                    assert_eq!(token.token_type, TT_KEYWORD, "{node:?}")
+            let expected = match node.name.as_deref().unwrap_or_default() {
+                "logic" | "signed" | "wire" | "tri" | "integer" | "real" | "string" => {
+                    (TT_TYPE, default_library)
                 }
-                _ => {}
-            }
+                "input" | "output" | "inout" => (TT_MODIFIER, 0),
+                "module" | "endmodule" | "assign" => (TT_KEYWORD, 0),
+                _ => continue,
+            };
+            seen += 1;
+            assert_eq!(
+                (token.token_type, token.token_modifiers_bitset),
+                expected,
+                "{node:?}"
+            );
         }
         assert_eq!(seen, 13);
+    }
+
+    #[test]
+    fn keyword_classes_cover_the_decided_word_lists() {
+        for word in [
+            "bit",
+            "logic",
+            "reg",
+            "byte",
+            "shortint",
+            "int",
+            "longint",
+            "integer",
+            "time",
+            "shortreal",
+            "real",
+            "realtime",
+            "string",
+            "chandle",
+            "event",
+            "void",
+            "signed",
+            "unsigned",
+            "genvar",
+            "supply0",
+            "supply1",
+            "tri",
+            "triand",
+            "trior",
+            "trireg",
+            "tri0",
+            "tri1",
+            "uwire",
+            "wire",
+            "wand",
+            "wor",
+        ] {
+            assert_eq!(keyword_class(word), KeywordClass::BuiltinType, "{word}");
+        }
+        for word in [
+            "input",
+            "output",
+            "inout",
+            "ref",
+            "parameter",
+            "localparam",
+            "specparam",
+            "const",
+            "var",
+        ] {
+            assert_eq!(keyword_class(word), KeywordClass::Qualifier, "{word}");
+        }
+        for word in [
+            "struct", "union", "enum", "module", "typedef", "type", "packed", "assign",
+        ] {
+            assert_eq!(keyword_class(word), KeywordClass::Other, "{word}");
+        }
+    }
+
+    #[test]
+    fn every_decided_word_row_encodes_its_type_and_modifier_bits() {
+        let source = "module top;\n  const int ci = 1;\n  var logic vl;\n  genvar g;\n  supply0 s0;\n  uwire uw;\n  event ev;\n  chandle ch;\n  typedef struct packed { bit [1:0] f; } st_t;\n  typedef union packed { bit [1:0] f; } un_t;\n  typedef enum { E0 } en_t;\n  specparam SP = 1;\n  localparam int LP = 1;\n  function void fn(ref int r); endfunction\n  st_t user_s;\nendmodule\n";
+        let default_library = 1 << TM_DEFAULT_LIBRARY;
+        for (profile, tokens) in profiles(source) {
+            let token = |line, word| token_at(&tokens, source, line, word, 0);
+            for (line, word) in [
+                (1, "int"),
+                (2, "logic"),
+                (3, "genvar"),
+                (4, "supply0"),
+                (5, "uwire"),
+                (6, "event"),
+                (7, "chandle"),
+                (8, "bit"),
+                (13, "void"),
+            ] {
+                let t = token(line, word);
+                assert_eq!(t.3, TT_TYPE, "{profile} {word}");
+                assert_eq!(t.4, default_library, "{profile} {word}");
+            }
+            for (line, word) in [
+                (1, "const"),
+                (2, "var"),
+                (11, "specparam"),
+                (12, "localparam"),
+                (13, "ref"),
+            ] {
+                let t = token(line, word);
+                assert_eq!(t.3, TT_MODIFIER, "{profile} {word}");
+                assert_eq!(t.4, 0, "{profile} {word}");
+            }
+            for (line, word) in [(8, "struct"), (9, "union"), (10, "enum"), (8, "typedef")] {
+                let t = token(line, word);
+                assert_eq!(t.3, TT_KEYWORD, "{profile} {word}");
+                assert_eq!(t.4, 0, "{profile} {word}");
+            }
+            let user = token(14, "st_t");
+            assert_eq!(user.3, TT_TYPE, "{profile} user typedef use");
+            assert_eq!(user.4 & default_library, 0, "{profile} user typedef use");
+            let declared = token(8, "st_t");
+            assert_eq!(declared.4 & default_library, 0, "{profile} typedef decl");
+        }
     }
 
     #[test]
@@ -479,17 +629,11 @@ mod tests {
     }
 
     #[test]
-    fn parameter_declaration_keywords_use_keyword_highlighting() {
+    fn parameter_declaration_keywords_use_modifier_and_keyword_highlighting() {
         let source = "module sub #(parameter int A = 1)();\nendmodule\nmodule top #(parameter int P = 1, localparam int Q = 2)(input logic x);\n  parameter type T = int;\n  localparam R = 3;\n  specparam S = 4;\n  sub u ();\n  defparam u.A = 5;\n  if (P > 0) begin : g end\nendmodule\n";
         for (profile, tokens) in profiles(source) {
             let at = |line, word, nth| type_at(&tokens, source, line, word, nth);
             for (line, word) in [
-                (0, "parameter"),
-                (2, "parameter"),
-                (2, "localparam"),
-                (3, "parameter"),
-                (4, "localparam"),
-                (5, "specparam"),
                 (7, "defparam"),
                 (8, "if"),
                 (0, "module"),
@@ -501,6 +645,18 @@ mod tests {
                     TT_KEYWORD,
                     "{profile} {word} line {line}"
                 );
+            }
+            for (line, word) in [
+                (0, "parameter"),
+                (2, "parameter"),
+                (2, "localparam"),
+                (3, "parameter"),
+                (4, "localparam"),
+                (5, "specparam"),
+            ] {
+                let token = token_at(&tokens, source, line, word, 0);
+                assert_eq!(token.3, TT_MODIFIER, "{profile} {word} line {line}");
+                assert_eq!(token.4, 0, "{profile} {word} line {line}");
             }
             assert_eq!(at(2, "P", 0), TT_PROPERTY, "{profile}");
         }
