@@ -251,7 +251,7 @@ fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths(
 }
 
 /// Enum items are `enumMember` + `readonly` at declarations (which add
-/// `declaration`) and at references, and `enum`/`typedef` stay `keyword`,
+/// `declaration`) and at references, and `typedef`/`enum` are `type`+`defaultLibrary` (`import`/`package` stay `keyword`),
 /// through project and isolated unsaved-buffer analysis.
 #[test]
 fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() {
@@ -310,12 +310,26 @@ fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() 
             );
         }
         let (line, col) = position_of(source, "enum_pkg::PKG_B", 0);
-        let qualifier = row_at(&rows, line, col);
-        assert_ne!(
-            qualifier.token_type, "enumMember",
-            "opened={opened}: {qualifier:?}"
-        );
-        for needle in ["typedef enum logic", "enum {", "import", "package"] {
+        if let Some(qualifier) = rows
+            .iter()
+            .find(|row| row.line == line && row.character == col)
+        {
+            assert_ne!(
+                qualifier.token_type, "enumMember",
+                "opened={opened}: {qualifier:?}"
+            );
+        }
+        for needle in ["typedef enum logic", "enum {"] {
+            let (line, col) = position_of(source, needle, 0);
+            let row = row_at(&rows, line, col);
+            assert_eq!(row.token_type, "type", "opened={opened} {needle}");
+            assert_eq!(
+                row.modifiers,
+                ["defaultLibrary"],
+                "opened={opened} {needle}"
+            );
+        }
+        for needle in ["import", "package"] {
             let (line, col) = position_of(source, needle, 0);
             assert_eq!(
                 row_at(&rows, line, col).token_type,
@@ -323,6 +337,60 @@ fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() 
                 "opened={opened} {needle}"
             );
         }
+    }
+    client.shutdown();
+}
+
+/// A name with no definition gets no token (the editor leaves it uncolored)
+/// while declared names keep `variable`, through project and isolated
+/// unsaved-buffer analysis.
+#[test]
+fn lsp_stdio_semantic_tokens_skip_unresolved_names_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("unresolved.sv");
+    let uri = file_uri(&path);
+    let source = "module unresolved_top;\n  logic [3:0] data, result;\n  assign result = data + ghost_name;\n  always_comb data = result;\nendmodule\n";
+    fs::write(&path, source).expect("write unresolved fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+
+    for opened in [false, true] {
+        if opened {
+            client.open(&path, source).expect("open unresolved buffer");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("unresolved semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        let (line, col) = position_of(source, "ghost_name", 0);
+        assert!(
+            rows.iter()
+                .all(|row| !(row.line == line && row.character == col)),
+            "opened={opened}: undeclared name got a token: {rows:?}"
+        );
+        for (needle, occurrence) in [("data", 2), ("result", 2)] {
+            let (line, col) = position_of(source, needle, occurrence);
+            let row = row_at(&rows, line, col);
+            assert_eq!(row.token_type, "variable", "opened={opened} {needle}");
+        }
+        let (line, col) = position_of(source, "data", 0);
+        assert!(
+            row_at(&rows, line, col)
+                .modifiers
+                .iter()
+                .any(|m| m == "declaration"),
+            "opened={opened}: declarations keep their token"
+        );
     }
     client.shutdown();
 }

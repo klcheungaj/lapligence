@@ -832,10 +832,14 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   `enumMember.readonly` (plus `declaration` at declarations, anonymous and
   ranged enums included). Keyword-derived words keep their class by text:
   built-in data and net types (`logic`, `wire`, `int`, `genvar`, `void`, ...)
-  are `type.defaultLibrary` (user typedef names never carry `defaultLibrary`),
-  directions and kind words (`input`, `parameter`, `localparam`, `const`,
-  `var`, ...) are `modifier`, and `struct`, `union`, `enum` and the rest stay
-  `keyword`, for committed and isolated buffers, including missing children. Keep the compact-capture tests.
+  plus `typedef`/`struct`/`union`/`enum` are `type.defaultLibrary` (user typedef
+  names never carry `defaultLibrary`), directions and kind words (`input`,
+  `parameter`, `localparam`, `const`, `var`, ...) are `modifier`, and the
+  remaining keywords stay `keyword`. A reference the capture could not resolve
+  (plain `identifier` lexical kind) gets no token, so the editor leaves it
+  uncolored; declarations and kind-known references keep theirs. All of this
+  holds for committed and isolated buffers, including missing children.
+  Keep the compact-capture tests.
 
 Fixtures use `fixtures/lsp/test.json` (schema `llg.lsp.fixture/v1`), the
 effective per-root `llg.toml` and `// llg-lsp-fixture:` headers. Keep the

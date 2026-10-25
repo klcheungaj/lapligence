@@ -78,6 +78,9 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         if node.line == 0 {
             continue;
         }
+        if is_unresolved_identifier(node.kind) {
+            continue;
+        }
         let Some((mut token_type, mut modifiers)) = token_type_for(node.kind) else {
             continue;
         };
@@ -141,12 +144,22 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
     }
 }
 
+/// A reference the capture could not resolve to any symbol is lexically a
+/// plain identifier. It gets no token, so the editor leaves it uncolored
+/// instead of painting a name that has no definition as a variable. Plain
+/// identifier declarations (instance names, labels) are separate kinds and
+/// keep theirs.
+fn is_unresolved_identifier(kind: i32) -> bool {
+    kind == TOKEN_SLANG_IDENTIFIER
+}
+
 /// How a keyword token is presented. Only keyword-derived tokens are
 /// retyped; user type names never carry `defaultLibrary`.
 #[derive(Debug, PartialEq, Eq)]
 enum KeywordClass {
-    /// Built-in data and net types: `type` + `defaultLibrary`, which VS Code
-    /// maps to the built-in-type color.
+    /// Built-in data and net types plus `typedef`/`struct`/`union`/`enum`:
+    /// `type` + `defaultLibrary`, which VS Code maps to the built-in-type
+    /// color (C/C++ storage types).
     BuiltinType,
     /// Port directions and kind words: `modifier`.
     Qualifier,
@@ -158,12 +171,11 @@ enum KeywordClass {
 /// (for example `uwire`) need no edition knowledge here.
 fn keyword_class(name: &str) -> KeywordClass {
     match name {
-        "bit" | "logic" | "reg" | "byte" | "shortint" | "int" | "longint" | "integer" | "time"
-        | "shortreal" | "real" | "realtime" | "string" | "chandle" | "event" | "void"
-        | "signed" | "unsigned" | "genvar" | "supply0" | "supply1" | "tri" | "triand" | "trior"
-        | "trireg" | "tri0" | "tri1" | "uwire" | "wire" | "wand" | "wor" => {
-            KeywordClass::BuiltinType
-        }
+        "typedef" | "struct" | "union" | "enum" | "bit" | "logic" | "reg" | "byte" | "shortint"
+        | "int" | "longint" | "integer" | "time" | "shortreal" | "real" | "realtime" | "string"
+        | "chandle" | "event" | "void" | "signed" | "unsigned" | "genvar" | "supply0"
+        | "supply1" | "tri" | "triand" | "trior" | "trireg" | "tri0" | "tri1" | "uwire"
+        | "wire" | "wand" | "wor" => KeywordClass::BuiltinType,
         "input" | "output" | "inout" | "ref" | "parameter" | "localparam" | "specparam"
         | "const" | "var" => KeywordClass::Qualifier,
         _ => KeywordClass::Other,
@@ -365,6 +377,10 @@ mod tests {
     #[test]
     fn keyword_classes_cover_the_decided_word_lists() {
         for word in [
+            "typedef",
+            "struct",
+            "union",
+            "enum",
             "bit",
             "logic",
             "reg",
@@ -412,9 +428,7 @@ mod tests {
         ] {
             assert_eq!(keyword_class(word), KeywordClass::Qualifier, "{word}");
         }
-        for word in [
-            "struct", "union", "enum", "module", "typedef", "type", "packed", "assign",
-        ] {
+        for word in ["module", "type", "packed", "assign", "begin", "initial"] {
             assert_eq!(keyword_class(word), KeywordClass::Other, "{word}");
         }
     }
@@ -435,6 +449,10 @@ mod tests {
                 (7, "chandle"),
                 (8, "bit"),
                 (13, "void"),
+                (8, "struct"),
+                (9, "union"),
+                (10, "enum"),
+                (8, "typedef"),
             ] {
                 let t = token(line, word);
                 assert_eq!(t.3, TT_TYPE, "{profile} {word}");
@@ -451,16 +469,36 @@ mod tests {
                 assert_eq!(t.3, TT_MODIFIER, "{profile} {word}");
                 assert_eq!(t.4, 0, "{profile} {word}");
             }
-            for (line, word) in [(8, "struct"), (9, "union"), (10, "enum"), (8, "typedef")] {
-                let t = token(line, word);
-                assert_eq!(t.3, TT_KEYWORD, "{profile} {word}");
-                assert_eq!(t.4, 0, "{profile} {word}");
-            }
             let user = token(14, "st_t");
             assert_eq!(user.3, TT_TYPE, "{profile} user typedef use");
             assert_eq!(user.4 & default_library, 0, "{profile} user typedef use");
             let declared = token(8, "st_t");
             assert_eq!(declared.4 & default_library, 0, "{profile} typedef decl");
+        }
+    }
+
+    #[test]
+    fn unresolved_identifier_references_get_no_token_in_every_capture_profile() {
+        let source = "module top;\n  logic [3:0] v, w;\n  assign w = v + ghost;\n  always_comb v = w;\nendmodule\n";
+        for (profile, tokens) in profiles(source) {
+            let has_token = |line: u32, word: &str| {
+                let col = source
+                    .lines()
+                    .nth(line as usize)
+                    .unwrap()
+                    .find(word)
+                    .unwrap() as u32;
+                tokens.iter().any(|token| token.0 == line && token.1 == col)
+            };
+            assert!(!has_token(2, "ghost"), "{profile}: {tokens:?}");
+            assert!(has_token(1, "v"), "{profile}: declaration keeps its token");
+            let declared = token_at(&tokens, source, 3, "v", 0);
+            assert_eq!(declared.3, TT_VARIABLE, "{profile}");
+            assert_eq!(
+                token_at(&tokens, source, 3, "w", 0).3,
+                TT_VARIABLE,
+                "{profile}"
+            );
         }
     }
 
@@ -703,9 +741,12 @@ mod tests {
                 assert_eq!(token.4, 1 << TM_READONLY, "{profile} {word} line {line}");
             }
             for (line, nth) in [(14, 0), (17, 0), (17, 1)] {
-                let qualifier = token_at(&tokens, source, line, "pkg", nth);
-                assert_ne!(qualifier.3, TT_ENUM_MEMBER, "{profile} line {line}");
-                assert_eq!(qualifier.4 & (1 << TM_READONLY), 0, "{profile} line {line}");
+                let text = source.lines().nth(line).unwrap();
+                let col = text.match_indices("pkg").nth(nth).unwrap().0 as u32;
+                if let Some(qualifier) = tokens.iter().find(|t| t.0 == line as u32 && t.1 == col) {
+                    assert_ne!(qualifier.3, TT_ENUM_MEMBER, "{profile} line {line}");
+                    assert_eq!(qualifier.4 & (1 << TM_READONLY), 0, "{profile} line {line}");
+                }
             }
         }
     }

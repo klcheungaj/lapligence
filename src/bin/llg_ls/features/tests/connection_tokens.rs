@@ -75,7 +75,7 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
         vec![
             (1, 13, tokens::TOKEN_SLANG_MODULE, "m"),
             (1, 18, tokens::TOKEN_SLANG_PARAMETER_CONNECTION_LABEL, "W"),
-            (1, 20, tokens::TOKEN_SLANG_IDENTIFIER, "w"),
+            (1, 20, tokens::TOKEN_SLANG_VARIABLE, "w"),
             (
                 1,
                 24,
@@ -83,7 +83,7 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
                 "u0",
             ),
             (1, 29, tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL, "clk"),
-            (1, 33, tokens::TOKEN_SLANG_IDENTIFIER, "c"),
+            (1, 33, tokens::TOKEN_SLANG_VARIABLE, "c"),
             (
                 2,
                 9,

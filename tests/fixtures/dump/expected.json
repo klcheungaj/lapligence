@@ -501,7 +501,7 @@
       "line": 9,
       "module": "tb",
       "role": "REF",
-      "sym": "variable",
+      "sym": null,
       "tokenKind": "identifier"
     },
     {
