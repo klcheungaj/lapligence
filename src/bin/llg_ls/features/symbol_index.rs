@@ -887,7 +887,24 @@ impl SymbolIndex {
 
         // ── Deduplicate by position (keep the first / richest entry) ────────
         let mut seen: HashSet<(String, u32, u32)> = HashSet::new();
-        decls.retain(|e| seen.insert((e.file.clone(), e.line, e.col)));
+        let keep: Vec<bool> = decls
+            .iter()
+            .map(|e| seen.insert((e.file.clone(), e.line, e.col)))
+            .collect();
+        // `instance_def` is keyed by pre-dedup indices; a dropped duplicate
+        // before an instance would otherwise shift its type onto a neighbor.
+        let mut new_index = Vec::with_capacity(keep.len());
+        let mut kept = 0usize;
+        for &keep_entry in &keep {
+            new_index.push(keep_entry.then_some(kept));
+            kept += usize::from(keep_entry);
+        }
+        instance_def = instance_def
+            .into_iter()
+            .filter_map(|(idx, def)| Some((new_index.get(idx).copied().flatten()?, def)))
+            .collect();
+        let mut keep_iter = keep.into_iter();
+        decls.retain(|_| keep_iter.next().unwrap_or(false));
         seen.clear();
         refs.retain(|e| seen.insert((e.file.clone(), e.line, e.col)));
 

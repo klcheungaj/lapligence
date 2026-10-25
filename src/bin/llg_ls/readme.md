@@ -12,6 +12,14 @@ Slang; only owned snapshots/indexes reach requests. Serving stdout is JSON-RPC o
 | `lsp.rs`, `lsp/` | Workspace/configuration state, scheduling, staging, diagnostics and handlers. |
 | `module_explorer.rs`, `module_explorer/` | Catalog, budgets, contents, hierarchy, compatibility, presentation and types. |
 
+An instance of an unknown module is a black box: Slang's `UnknownModule` error is
+published once on the module name, the analysis (a `Compile` outcome with feature
+data) replaces the last-good snapshot, and everything else stays elaborated. The
+instance name hovers as `<module> <instance>`, its actuals bind to the parent
+scope, its labels and module name have no target, lint treats its connections as
+possibly driven and read, and the explorer shows it as a declaration-only child
+without a definition.
+
 Explorer tests live in `module_explorer/tests.rs`; feature-test helpers and domain
 suites in `features/tests.rs` and `features/tests/`. See
 [source layout](../../../docs/source_layout.md).

@@ -811,6 +811,10 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   keep features; syntax-broken roots keep declaration symbols/hover where
   possible, fatal-only roots do not. Watched fixes upgrade analysis. Current
   syntax-invalid open buffers return authoritative empty semantic tokens.
+- `lsp_stdio/black_box.rs`: an unknown module yields one Slang `UnknownModule`
+  error on its name, fresh analysis is committed, siblings/parents stay
+  elaborated and navigable, black-box actuals bind to the parent scope and the
+  explorer lists it as a declaration-only child without a definition.
 - Exact instance-scope bindings: named port/parameter labels refer to child
   declarations, actuals/override RHS to the parent scope. Check single/multiline
   and syntax-fallback forms with dumpTokens `bind=`. Module types stay distinct

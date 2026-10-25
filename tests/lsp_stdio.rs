@@ -22,6 +22,8 @@ use support::lsp::{default_init_options, file_uri, LspProcess};
 
 use serde_json::{json, Value};
 
+#[path = "lsp_stdio/black_box.rs"]
+mod black_box;
 #[path = "lsp_stdio/configuration.rs"]
 mod configuration;
 #[path = "lsp_stdio/definitions.rs"]
