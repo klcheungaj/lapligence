@@ -155,9 +155,10 @@ fn lsp_stdio_semantic_tokens_use_current_open_buffer_and_cached_unopened_snapsho
     client.shutdown();
 }
 
-/// Constant references keep their classes, built-in types are
-/// `type`+`defaultLibrary` and direction/kind words are `modifier` through project and isolated unsaved-buffer analysis, including
-/// references to missing children.
+/// Constant references keep their classes, built-in type words and
+/// direction/kind words are plain `modifier` (no modifier bits) through project
+/// and isolated unsaved-buffer analysis, including references to missing
+/// children.
 #[test]
 fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths() {
     let fixture = FixtureTree::new();
@@ -229,8 +230,8 @@ fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths(
             for occurrence in 0..buffer.match_indices(name).count() {
                 let (line, col) = position_of(&buffer, name, occurrence);
                 let row = row_at(&rows, line, col);
-                assert_eq!(row.token_type, "type", "{name}: {row:?}");
-                assert_eq!(row.modifiers, ["defaultLibrary"], "{name}: {row:?}");
+                assert_eq!(row.token_type, "modifier", "{name}: {row:?}");
+                assert!(row.modifiers.is_empty(), "{name}: {row:?}");
             }
         }
         for name in ["input", "output", "inout", "parameter", "localparam"] {
@@ -251,8 +252,8 @@ fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths(
 }
 
 /// Enum items are `enumMember` + `readonly` at declarations (which add
-/// `declaration`) and at references, and `typedef`/`enum` are `type`+`defaultLibrary` (`import`/`package` stay `keyword`),
-/// through project and isolated unsaved-buffer analysis.
+/// `declaration`) and at references, and `typedef`/`enum` are plain `modifier`
+/// (`import`/`package` stay `keyword`), through project and isolated unsaved-buffer analysis.
 #[test]
 fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() {
     let fixture = FixtureTree::new();
@@ -322,12 +323,8 @@ fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() 
         for needle in ["typedef enum logic", "enum {"] {
             let (line, col) = position_of(source, needle, 0);
             let row = row_at(&rows, line, col);
-            assert_eq!(row.token_type, "type", "opened={opened} {needle}");
-            assert_eq!(
-                row.modifiers,
-                ["defaultLibrary"],
-                "opened={opened} {needle}"
-            );
+            assert_eq!(row.token_type, "modifier", "opened={opened} {needle}");
+            assert!(row.modifiers.is_empty(), "opened={opened} {needle}");
         }
         for needle in ["import", "package"] {
             let (line, col) = position_of(source, needle, 0);
@@ -337,6 +334,75 @@ fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() 
                 "opened={opened} {needle}"
             );
         }
+    }
+    client.shutdown();
+}
+
+/// `struct`, `typedef`, `default`, `automatic` and `static` are plain
+/// `modifier` words without modifier bits, `module`/`always`/`case` stay
+/// `keyword`, and a use of the user typedef name keeps its own `type` token, through
+/// project and isolated unsaved-buffer analysis.
+#[test]
+fn lsp_stdio_semantic_tokens_send_struct_and_declaration_words_as_modifier() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("modifier_words.sv");
+    let uri = file_uri(&path);
+    let source = "module mod_top;\n  typedef struct packed { logic [1:0] f; } st_t;\n  st_t s;\n  function automatic int fa(input int p); return p; endfunction\n  static int sv;\n  always @* case (sv) 0: ; default: ; endcase\nendmodule\n";
+    fs::write(&path, source).expect("write modifier-word fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+
+    for opened in [false, true] {
+        if opened {
+            client.open(&path, source).expect("open modifier buffer");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("modifier semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        for needle in [
+            "typedef",
+            "struct",
+            "automatic",
+            "static",
+            "default",
+            "logic",
+            "int",
+        ] {
+            let (line, col) = position_of(source, needle, 0);
+            let row = row_at(&rows, line, col);
+            assert_eq!(row.token_type, "modifier", "opened={opened} {needle}");
+            assert!(
+                row.modifiers.is_empty(),
+                "opened={opened} {needle}: {row:?}"
+            );
+        }
+        for needle in ["module", "always", "case"] {
+            let (line, col) = position_of(source, needle, 0);
+            let row = row_at(&rows, line, col);
+            assert_eq!(row.token_type, "keyword", "opened={opened} {needle}");
+            assert!(
+                row.modifiers.is_empty(),
+                "opened={opened} {needle}: {row:?}"
+            );
+        }
+        let (line, col) = position_of(source, "st_t s;", 0);
+        let row = row_at(&rows, line, col);
+        assert_eq!(row.token_type, "type", "opened={opened}: {row:?}");
+        assert!(
+            !row.modifiers.iter().any(|m| m == "defaultLibrary"),
+            "opened={opened}: {row:?}"
+        );
     }
     client.shutdown();
 }

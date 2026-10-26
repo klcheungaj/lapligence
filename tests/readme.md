@@ -832,10 +832,12 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   `enumMember.readonly` (plus `declaration` at declarations, anonymous and
   ranged enums included). Keyword-derived words keep their class by text:
   built-in data and net types (`logic`, `wire`, `int`, `genvar`, `void`, ...)
-  plus `typedef`/`struct`/`union`/`enum` are `type.defaultLibrary` (user typedef
-  names never carry `defaultLibrary`), directions and kind words (`input`,
-  `parameter`, `localparam`, `const`, `var`, ...) are `modifier`, and the
-  remaining keywords stay `keyword`. A reference the capture could not resolve
+  plus `struct`/`union`/`enum`, and directions, kind words and declaration
+  qualifiers (`input`, `parameter`, `localparam`, `const`, `var`, `typedef`,
+  `default`, `automatic`, `static`, ...), are plain `modifier` with no modifier
+  bits (no `defaultLibrary`; VS Code storage.modifier, apart from the teal
+  module/class/typedef names), and the remaining keywords stay `keyword`.
+  A reference the capture could not resolve
   (unbound plain `identifier` lexical kind) gets no token, so the editor leaves
   it uncolored; declarations and kind-known references keep theirs. Resolved
   names keep their kind even inside a block that one undeclared name makes

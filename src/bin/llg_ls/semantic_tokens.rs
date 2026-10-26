@@ -81,17 +81,14 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         if is_unresolved_identifier(node.kind) {
             continue;
         }
-        let Some((mut token_type, mut modifiers)) = token_type_for(node.kind) else {
+        let Some((mut token_type, modifiers)) = token_type_for(node.kind) else {
             continue;
         };
         if token_type == TT_KEYWORD {
-            match node.name.as_deref().map(keyword_class) {
-                Some(KeywordClass::BuiltinType) => {
-                    token_type = TT_TYPE;
-                    modifiers |= 1 << TM_DEFAULT_LIBRARY;
-                }
-                Some(KeywordClass::Qualifier) => token_type = TT_MODIFIER,
-                _ => {}
+            if let Some(KeywordClass::Primitive | KeywordClass::Declaration) =
+                node.name.as_deref().map(keyword_class)
+            {
+                token_type = TT_MODIFIER;
             }
         }
         let length = node
@@ -154,30 +151,34 @@ fn is_unresolved_identifier(kind: i32) -> bool {
 }
 
 /// How a keyword token is presented. Only keyword-derived tokens are
-/// retyped; user type names never carry `defaultLibrary`.
+/// retyped; user type names keep their own token types.
 #[derive(Debug, PartialEq, Eq)]
 enum KeywordClass {
-    /// Built-in data and net types plus `typedef`/`struct`/`union`/`enum`:
-    /// `type` + `defaultLibrary`, which VS Code maps to the built-in-type
-    /// color (C/C++ storage types).
-    BuiltinType,
-    /// Port directions and kind words: `modifier`.
-    Qualifier,
+    /// Built-in data and net types plus `struct`/`union`/`enum`.
+    Primitive,
+    /// Port directions, kind words and declaration qualifiers.
+    Declaration,
     /// Every other keyword stays `keyword`.
     Other,
 }
 
 /// Classify by keyword text, so words that are keywords in some editions only
-/// (for example `uwire`) need no edition knowledge here.
+/// (for example `uwire`) need no edition knowledge here. `Primitive` and
+/// `Declaration` both encode as `modifier` without modifier bits today (VS Code
+/// maps it to storage.modifier, the C++ `int`/`const` look, apart from
+/// module/class/typedef names); they stay separate so a custom `primitive`
+/// token type is a one-line change in `encode`.
 fn keyword_class(name: &str) -> KeywordClass {
     match name {
-        "typedef" | "struct" | "union" | "enum" | "bit" | "logic" | "reg" | "byte" | "shortint"
-        | "int" | "longint" | "integer" | "time" | "shortreal" | "real" | "realtime" | "string"
-        | "chandle" | "event" | "void" | "signed" | "unsigned" | "genvar" | "supply0"
-        | "supply1" | "tri" | "triand" | "trior" | "trireg" | "tri0" | "tri1" | "uwire"
-        | "wire" | "wand" | "wor" => KeywordClass::BuiltinType,
+        "bit" | "logic" | "reg" | "byte" | "shortint" | "int" | "longint" | "integer" | "time"
+        | "shortreal" | "real" | "realtime" | "string" | "chandle" | "event" | "void"
+        | "signed" | "unsigned" | "genvar" | "supply0" | "supply1" | "tri" | "triand" | "trior"
+        | "trireg" | "tri0" | "tri1" | "uwire" | "wire" | "wand" | "wor" | "struct" | "union"
+        | "enum" => KeywordClass::Primitive,
         "input" | "output" | "inout" | "ref" | "parameter" | "localparam" | "specparam"
-        | "const" | "var" => KeywordClass::Qualifier,
+        | "const" | "var" | "typedef" | "default" | "automatic" | "static" => {
+            KeywordClass::Declaration
+        }
         _ => KeywordClass::Other,
     }
 }
@@ -351,18 +352,17 @@ mod tests {
     }
 
     #[test]
-    fn builtin_types_are_default_library_types_and_kind_words_are_modifiers() {
+    fn primitive_and_declaration_words_are_plain_modifiers() {
         let source = "module top(input logic signed [3:0] a, output wire b, inout tri c);\ninteger count; real value; string label;\nassign b = a[0];\nendmodule";
         let parsed = compile::parse_source(hp("/virtual/top.sv"), source, &[]).unwrap();
         let nodes = &parsed.tokens[0].nodes;
         let encoded = encode(nodes);
         assert_eq!(encoded.data.len(), nodes.len());
-        let default_library = 1 << TM_DEFAULT_LIBRARY;
         let mut seen = 0;
         for (node, token) in nodes.iter().zip(&encoded.data) {
             let expected = match node.name.as_deref().unwrap_or_default() {
                 "logic" | "signed" | "wire" | "tri" | "integer" | "real" | "string" => {
-                    (TT_TYPE, default_library)
+                    (TT_MODIFIER, 0)
                 }
                 "input" | "output" | "inout" => (TT_MODIFIER, 0),
                 "module" | "endmodule" | "assign" => (TT_KEYWORD, 0),
@@ -381,10 +381,6 @@ mod tests {
     #[test]
     fn keyword_classes_cover_the_decided_word_lists() {
         for word in [
-            "typedef",
-            "struct",
-            "union",
-            "enum",
             "bit",
             "logic",
             "reg",
@@ -416,8 +412,11 @@ mod tests {
             "wire",
             "wand",
             "wor",
+            "struct",
+            "union",
+            "enum",
         ] {
-            assert_eq!(keyword_class(word), KeywordClass::BuiltinType, "{word}");
+            assert_eq!(keyword_class(word), KeywordClass::Primitive, "{word}");
         }
         for word in [
             "input",
@@ -429,17 +428,23 @@ mod tests {
             "specparam",
             "const",
             "var",
+            "typedef",
+            "default",
+            "automatic",
+            "static",
         ] {
-            assert_eq!(keyword_class(word), KeywordClass::Qualifier, "{word}");
+            assert_eq!(keyword_class(word), KeywordClass::Declaration, "{word}");
         }
-        for word in ["module", "type", "packed", "assign", "begin", "initial"] {
+        for word in [
+            "module", "type", "packed", "assign", "begin", "initial", "always", "case",
+        ] {
             assert_eq!(keyword_class(word), KeywordClass::Other, "{word}");
         }
     }
 
     #[test]
-    fn every_decided_word_row_encodes_its_type_and_modifier_bits() {
-        let source = "module top;\n  const int ci = 1;\n  var logic vl;\n  genvar g;\n  supply0 s0;\n  uwire uw;\n  event ev;\n  chandle ch;\n  typedef struct packed { bit [1:0] f; } st_t;\n  typedef union packed { bit [1:0] f; } un_t;\n  typedef enum { E0 } en_t;\n  specparam SP = 1;\n  localparam int LP = 1;\n  function void fn(ref int r); endfunction\n  st_t user_s;\nendmodule\n";
+    fn every_decided_word_row_encodes_modifier_without_modifier_bits() {
+        let source = "module top;\n  const int ci = 1;\n  var logic vl;\n  genvar g;\n  supply0 s0;\n  uwire uw;\n  event ev;\n  chandle ch;\n  typedef struct packed { bit [1:0] f; } st_t;\n  typedef union packed { bit [1:0] f; } un_t;\n  typedef enum { E0 } en_t;\n  specparam SP = 1;\n  localparam int LP = 1;\n  function void fn(ref int r); endfunction\n  st_t user_s;\n  function automatic int fa(input int p); return p; endfunction\n  static int sv;\n  always @* case (sv) 0: ; default: ; endcase\nendmodule\n";
         let default_library = 1 << TM_DEFAULT_LIBRARY;
         for (profile, tokens) in profiles(source) {
             let token = |line, word| token_at(&tokens, source, line, word, 0);
@@ -456,11 +461,9 @@ mod tests {
                 (8, "struct"),
                 (9, "union"),
                 (10, "enum"),
-                (8, "typedef"),
             ] {
                 let t = token(line, word);
-                assert_eq!(t.3, TT_TYPE, "{profile} {word}");
-                assert_eq!(t.4, default_library, "{profile} {word}");
+                assert_eq!((t.3, t.4), (TT_MODIFIER, 0), "{profile} primitive {word}");
             }
             for (line, word) in [
                 (1, "const"),
@@ -468,15 +471,23 @@ mod tests {
                 (11, "specparam"),
                 (12, "localparam"),
                 (13, "ref"),
+                (8, "typedef"),
+                (15, "automatic"),
+                (16, "static"),
+                (17, "default"),
             ] {
                 let t = token(line, word);
-                assert_eq!(t.3, TT_MODIFIER, "{profile} {word}");
-                assert_eq!(t.4, 0, "{profile} {word}");
+                assert_eq!((t.3, t.4), (TT_MODIFIER, 0), "{profile} declaration {word}");
+            }
+            for (line, word) in [(0, "module"), (17, "always"), (17, "case")] {
+                let t = token(line, word);
+                assert_eq!((t.3, t.4), (TT_KEYWORD, 0), "{profile} keyword {word}");
             }
             let user = token(14, "st_t");
             assert_eq!(user.3, TT_TYPE, "{profile} user typedef use");
             assert_eq!(user.4 & default_library, 0, "{profile} user typedef use");
             let declared = token(8, "st_t");
+            assert_eq!(declared.3, TT_TYPE, "{profile} typedef decl");
             assert_eq!(declared.4 & default_library, 0, "{profile} typedef decl");
         }
     }

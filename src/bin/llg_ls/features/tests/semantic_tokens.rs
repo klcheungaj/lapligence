@@ -138,9 +138,9 @@ fn decode_named(tokens: &SemanticTokens) -> Vec<(u32, u32, u32, String)> {
 }
 
 /// Module and typedef names reach clients with the token types C/C++
-/// servers use, built-in types are `type`+`defaultLibrary`, kind words are
-/// `modifier` and other keywords stay `keyword`, through the committed-analysis
-/// path.
+/// servers use, built-in type words and kind words are plain `modifier` (no
+/// modifier bits) and other keywords stay `keyword`, through the
+/// committed-analysis path.
 #[test]
 fn semantic_tokens_color_module_typedef_and_parameter_words_like_cpp() {
     let _guards = analysis_guards();
@@ -198,18 +198,14 @@ fn semantic_tokens_color_module_typedef_and_parameter_words_like_cpp() {
         assert_eq!(type_of(line, word, nth), expected, "{word} on line {line}");
     }
     for (line, word, nth, expected) in [
-        (1, "logic", 0, "type"),
+        (1, "typedef", 0, "modifier"),
+        (1, "logic", 0, "modifier"),
         (3, "input", 0, "modifier"),
-        (6, "int", 0, "type"),
-        (3, "int", 0, "type"),
+        (6, "int", 0, "modifier"),
+        (3, "int", 0, "modifier"),
     ] {
         assert_eq!(type_of(line, word, nth), expected, "{word} on line {line}");
-        let has_default_library = modifiers_of(line, word, nth) & (1 << default_library) != 0;
-        assert_eq!(
-            has_default_library,
-            expected == "type",
-            "{word} line {line}"
-        );
+        assert_eq!(modifiers_of(line, word, nth), 0, "{word} line {line}");
     }
     for (line, word) in [(1, "byte_t"), (3, "byte_t"), (7, "nib_t"), (8, "nib_t")] {
         assert_eq!(
