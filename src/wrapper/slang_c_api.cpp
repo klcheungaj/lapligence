@@ -6007,6 +6007,29 @@ public:
     if (syntax.label && syntax.kind != syntax::SyntaxKind::SequentialBlockStatement &&
         syntax.kind != syntax::SyntaxKind::ParallelBlockStatement)
       blockName(&syntax.label->name, nullptr, nullptr);
+    // Words whose other uses are not control flow: `unique`, `unique0` and
+    // `priority` qualifying an if or case (IEEE 1800-2009 A.6.6, A.6.7;
+    // `unique` also starts a uniqueness constraint) and the `disable` of a
+    // disable statement (A.6.5; `disable iff` is a property reset).
+    switch (syntax.kind) {
+      case syntax::SyntaxKind::ConditionalStatement:
+        controlKeyword =
+            syntax.as<syntax::ConditionalStatementSyntax>().uniqueOrPriority.location();
+        break;
+      case syntax::SyntaxKind::CaseStatement:
+        controlKeyword =
+            syntax.as<syntax::CaseStatementSyntax>().uniqueOrPriority.location();
+        break;
+      case syntax::SyntaxKind::DisableStatement:
+        controlKeyword = syntax.as<syntax::DisableStatementSyntax>().disable.location();
+        break;
+      case syntax::SyntaxKind::DisableForkStatement:
+        controlKeyword =
+            syntax.as<syntax::DisableForkStatementSyntax>().disable.location();
+        break;
+      default:
+        break;
+    }
     visitDefault(syntax);
   }
 

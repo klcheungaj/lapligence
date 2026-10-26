@@ -233,3 +233,79 @@ fn semantic_tokens_color_module_typedef_and_parameter_words_like_cpp() {
     let _ = std::fs::remove_dir_all(fixture);
     cleanup_process_shadow();
 }
+
+/// Control-flow keywords carry `controlFlow` through the committed-analysis
+/// path: words that are control flow everywhere by text, and `unique`,
+/// `priority`, `disable` and a case item `default` where the capture marks
+/// them, while `disable iff`, block delimiters and declaration keywords keep
+/// their own bits.
+#[test]
+fn semantic_tokens_mark_control_flow_keywords_in_committed_analysis() {
+    let _guards = analysis_guards();
+    let fixture = resolved_temp_dir(&format!("llg_controlflow_{}", std::process::id()));
+    let sv = fixture.join("control_flow.sv");
+    let source = "module top(input logic clk, input logic rst);\n  logic [3:0] q;\n  property p; @(posedge clk) disable iff (rst) q == 0; endproperty\n  always @(posedge clk) begin : blk\n    unique case (q) 0: q <= 1; default: q <= 2; endcase\n    priority if (q == 1) q <= 0; else q <= 3;\n    for (int i = 0; i < 2; i++) if (i == 1) break;\n  end\n  initial begin wait (rst); disable blk; end\nendmodule\n";
+    std::fs::write(&sv, source).expect("write design");
+    let opts = CompileOpts {
+        files: vec![sv.to_string_lossy().into_owned()],
+        ..Default::default()
+    };
+    let analysis = analyze_with_config(&opts, &LintConfig::default());
+    assert!(
+        analysis.is_valid(),
+        "analysis failed: {:?}",
+        analysis.diagnostics
+    );
+    let raw = semantic_tokens_for(&analysis, &sv.to_string_lossy());
+    let decoded = decode_named(&raw);
+    let lines: Vec<&str> = source.lines().collect();
+    let token = |line: usize, word: &str| {
+        let col = lines[line].find(word).unwrap() as u32;
+        let index = decoded
+            .iter()
+            .position(|token| token.0 == line as u32 && token.1 == col)
+            .unwrap_or_else(|| panic!("no token for {word} on line {line}: {decoded:?}"));
+        (
+            decoded[index].3.clone(),
+            raw.data[index].token_modifiers_bitset,
+        )
+    };
+    let bit = |name: &str| {
+        let index = crate::semantic_tokens::legend()
+            .token_modifiers
+            .iter()
+            .position(|m| m.as_str() == name)
+            .unwrap_or_else(|| panic!("{name} in legend"));
+        1u32 << index
+    };
+    let control = bit("controlFlow");
+    for (line, word, bits) in [
+        (4, "unique", control),
+        (4, "case", control),
+        (4, "default", control),
+        (4, "endcase", control),
+        (5, "priority", control),
+        (5, "if", control),
+        (5, "else", control),
+        (6, "for", control),
+        (6, "break", control),
+        (8, "wait", control),
+        (8, "disable", control),
+        (2, "disable", 0),
+        (2, "iff", 0),
+        (3, "always", 0),
+        (3, "begin", 0),
+        (0, "module", 0),
+        (0, "input", bit("direction")),
+        (1, "logic", bit("primitive")),
+    ] {
+        assert_eq!(
+            token(line, word),
+            ("keyword".to_owned(), bits),
+            "{word} on line {line}"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(fixture);
+    cleanup_process_shadow();
+}

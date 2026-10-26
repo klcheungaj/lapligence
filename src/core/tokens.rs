@@ -40,8 +40,9 @@ pub const TOKEN_SLANG_BOUND_IDENTIFIER: i32 = -29;
 /// declaration (with [`TOKEN_DECLARATION_OFFSET`]), an end label, or a
 /// reference bound to the block. Instance names are not blocks.
 pub const TOKEN_SLANG_BLOCK: i32 = -30;
-/// Keyword that is control flow at its syntax position (a case item
-/// `default`). Every other keyword is [`TOKEN_SLANG_KEYWORD`].
+/// Keyword that is control flow only at this syntax position (a case item
+/// `default`, an if/case `unique`/`unique0`/`priority`, a disable statement's
+/// `disable`). Every other keyword is [`TOKEN_SLANG_KEYWORD`].
 pub const TOKEN_SLANG_CONTROL_KEYWORD: i32 = -31;
 pub const TOKEN_DECLARATION_OFFSET: i32 = -1_000;
 

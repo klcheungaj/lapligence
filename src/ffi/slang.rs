@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 43;
+const ABI_VERSION: u32 = 44;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1544,7 +1544,8 @@ pub struct LexicalToken {
     /// using native compilation-unit order across includes and source buffers.
     pub is_unit_forward_reference: bool,
     /// Keyword is control flow at this syntax position (a case item
-    /// `default`); other uses of the same keyword leave it false.
+    /// `default`, an if/case `unique`/`unique0`/`priority`, a disable
+    /// statement's `disable`); other uses of the same keyword leave it false.
     pub is_control_flow: bool,
     pub semantic_id: Option<u64>,
     pub text: String,

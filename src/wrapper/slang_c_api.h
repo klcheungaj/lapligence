@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 43u
+#define LLG_SLANG_ABI_VERSION 44u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1328,9 +1328,11 @@ enum {
   LLG_SLANG_LEXICAL_MACRO_EXPANSION = 1u << 2,
   LLG_SLANG_LEXICAL_DIRECTIVE = 1u << 3,
   LLG_SLANG_LEXICAL_UNIT_FORWARD_REFERENCE = 1u << 4,
-  /* A keyword whose syntax position makes it control flow (ABI v43): the
-   * `default` of a case, case-generate, randsequence-case or property-case
-   * item. Every other use of the same keyword leaves the bit clear. */
+  /* A keyword whose syntax position makes it control flow (ABI v43, v44):
+   * the `default` of a case, case-generate, randsequence-case or
+   * property-case item, the `unique`/`unique0`/`priority` qualifying an if
+   * or case statement, and the `disable` of a disable statement. Every other
+   * use of the same keyword leaves the bit clear. */
   LLG_SLANG_LEXICAL_CONTROL_FLOW = 1u << 5
 };
 

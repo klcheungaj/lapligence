@@ -355,8 +355,8 @@ fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() 
 /// every occurrence: `typedef struct union enum` carry `typeDefinition`,
 /// `input output inout ref` carry `direction`, and built-in data and net types
 /// plus kind and qualifier words carry `primitive`. The legend keeps only
-/// standard token types and appends the three modifiers after
-/// `connectionLabel`. `module`/`always`/`case` are `keyword` without modifier
+/// standard token types and appends the three modifiers and `controlFlow`
+/// after `connectionLabel`. `module`/`always` are `keyword` without modifier
 /// bits, and a use of the user typedef name keeps its own `type` token, through
 /// project and isolated unsaved-buffer analysis.
 #[test]
@@ -434,7 +434,7 @@ fn lsp_stdio_semantic_tokens_send_grouped_words_as_keywords_with_llg_modifiers()
         .expect("connectionLabel in legend");
     assert_eq!(
         modifiers[connection_label + 1..],
-        ["typeDefinition", "direction", "primitive"],
+        ["typeDefinition", "direction", "primitive", "controlFlow"],
         "{modifiers:?}"
     );
     wait_for_diagnostics(&mut client, &uri, |_| true);
@@ -467,7 +467,7 @@ fn lsp_stdio_semantic_tokens_send_grouped_words_as_keywords_with_llg_modifiers()
                 }
             }
         }
-        for needle in ["module", "always", "case"] {
+        for needle in ["module", "always"] {
             let (line, col) = position_of(source, needle, 0);
             let row = row_at(&rows, line, col);
             assert_eq!(row.token_type, "keyword", "opened={opened} {needle}");
@@ -766,7 +766,7 @@ endmodule\n"
 }
 
 /// `default` labelling a case, case-inside, case-generate, property-case or
-/// randsequence-case item is plain `keyword`; every other `default`
+/// randsequence-case item is `keyword.controlFlow`; every other `default`
 /// (assignment-pattern keys, `default clocking`, `default disable iff`,
 /// default bins) is `keyword.primitive`, through project and isolated
 /// unsaved-buffer analysis.
@@ -821,19 +821,191 @@ endmodule\n";
         for &(line, col) in &positions {
             let row = row_at(&rows, line, col);
             let expected: &[&str] = if control_lines.contains(&line) {
-                &[]
+                &["controlFlow"]
             } else {
                 &["primitive"]
             };
             assert_eq!(row.token_type, "keyword", "opened={opened} {row:?}");
             assert_eq!(row.modifiers, expected, "opened={opened} {row:?}");
         }
-        for (needle, expected) in [("logic [3:0] a", &["primitive"][..]), ("case (q)", &[])] {
+        for (needle, expected) in [
+            ("logic [3:0] a", &["primitive"][..]),
+            ("case (q)", &["controlFlow"]),
+        ] {
             let (line, col) = position_of(source, needle, 0);
             let row = row_at(&rows, line, col);
             assert_eq!(row.token_type, "keyword", "opened={opened} {needle}");
             assert_eq!(row.modifiers, expected, "opened={opened} {needle}");
         }
+    }
+    client.shutdown();
+}
+
+/// Raw `(token type index, modifier bitset)` of the token starting at
+/// zero-based `line`/`character`, without legend name resolution.
+fn raw_token_at(result: &Value, line: u64, character: u64) -> (u64, u64) {
+    let data = result["data"].as_array().expect("semantic token data");
+    let (mut at_line, mut at_character) = (0, 0);
+    for token in data.as_chunks::<5>().0 {
+        let delta_line = token[0].as_u64().unwrap();
+        let delta_start = token[1].as_u64().unwrap();
+        if delta_line == 0 {
+            at_character += delta_start;
+        } else {
+            at_line += delta_line;
+            at_character = delta_start;
+        }
+        if (at_line, at_character) == (line, character) {
+            return (token[3].as_u64().unwrap(), token[4].as_u64().unwrap());
+        }
+    }
+    panic!("no semantic token at {line}:{character}");
+}
+
+/// Control-flow words are `keyword` (index 15) with exactly the
+/// `controlFlow` bit (modifier 14) in both serving paths, while `disable iff`,
+/// block delimiters, declaration keywords and the other grouped words keep
+/// their own bits.
+#[test]
+fn lsp_stdio_semantic_tokens_mark_control_flow_keywords_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("control_words.sv");
+    let uri = file_uri(&path);
+    let source = "module control_words(input logic clk, input logic rst);\n\
+  typedef logic [3:0] q_t;\n\
+  q_t q; int arr [2]; event ev;\n\
+  for (genvar i = 0; i < 2; i++) begin : g\n\
+    if (i == 0) begin : t end else begin : e end\n\
+  end\n\
+  case (1) 1: begin : c end default: begin : d end endcase\n\
+  property p; @(posedge clk iff rst) disable iff (rst) if (q == 0) q == 1 else q == 2; endproperty\n\
+  function automatic int f(int n); return n; endfunction\n\
+  always @(posedge clk) begin : blk\n\
+    unique if (q == 0) q <= 1; else if (q inside {[1:2]}) q <= 2; else q <= 3;\n\
+    unique0 if (q == 1) q <= 0;\n\
+    priority if (q == 2) q <= 0;\n\
+    unique case (q) 0: q <= 1; default: q <= 2; endcase\n\
+    unique0 casez (q) 4'b1???: q <= 0; endcase\n\
+    priority casex (q) 4'b0xxx: q <= 1; endcase\n\
+  end\n\
+  initial begin\n\
+    randcase 1: arr[0] = 0; endcase\n\
+    for (int k = 0; k < 2; k++) begin if (k == 1) break; else continue; end\n\
+    foreach (arr[k]) arr[k] = k;\n\
+    while (arr[0] > 0) arr[0]--;\n\
+    do arr[0]++; while (arr[0] < 2);\n\
+    repeat (2) @(posedge clk);\n\
+    wait (rst);\n\
+    wait fork;\n\
+    wait_order (ev) else arr[0] = 0;\n\
+    fork : fk join_any\n\
+    disable fk;\n\
+    disable fork;\n\
+    -> ev;\n\
+    forever begin break; end\n\
+  end\n\
+endmodule\n";
+    let control_words = [
+        "if",
+        "else",
+        "case",
+        "casex",
+        "casez",
+        "randcase",
+        "endcase",
+        "for",
+        "foreach",
+        "while",
+        "do",
+        "repeat",
+        "forever",
+        "return",
+        "break",
+        "continue",
+        "wait",
+        "wait_order",
+        "unique",
+        "unique0",
+        "priority",
+        "disable",
+        "default",
+    ];
+    let disable_iff = position_of(source, "disable iff", 0);
+    fs::write(&path, source).expect("write control-word fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    assert_eq!(types[15], "keyword", "{types:?}");
+    assert_eq!(modifiers[14], "controlFlow", "{modifiers:?}");
+    assert_eq!(modifiers.len(), 15, "{modifiers:?}");
+    let control = 1 << 14;
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+
+    for opened in [false, true] {
+        if opened {
+            client
+                .open(&path, source)
+                .expect("open control-word buffer");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("control-word semantic token response");
+        for word in control_words {
+            let positions = word_positions(source, word);
+            assert!(!positions.is_empty(), "sample lacks {word}");
+            for (line, col) in positions {
+                let want = if (line, col) == disable_iff {
+                    0
+                } else {
+                    control
+                };
+                assert_eq!(
+                    raw_token_at(&result, line, col),
+                    (15, want),
+                    "opened={opened} {word} at {line}:{col}"
+                );
+            }
+        }
+        for (word, bits) in [
+            ("module", 0),
+            ("always", 0),
+            ("begin", 0),
+            ("end", 0),
+            ("fork", 0),
+            ("join_any", 0),
+            ("iff", 0),
+            ("inside", 0),
+            ("typedef", 1 << 11),
+            ("input", 1 << 12),
+            ("logic", 1 << 13),
+        ] {
+            for (line, col) in word_positions(source, word) {
+                assert_eq!(
+                    raw_token_at(&result, line, col),
+                    (15, bits),
+                    "opened={opened} {word} at {line}:{col}"
+                );
+            }
+        }
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        let (line, col) = position_of(source, "fk;", 0);
+        let row = row_at(&rows, line, col);
+        assert_eq!(row.token_type, "namespace", "opened={opened} {row:?}");
+        assert!(row.modifiers.is_empty(), "opened={opened} {row:?}");
+        let (line, col) = position_of(source, "-> ev", 0);
+        assert_eq!(
+            row_at(&rows, line, col).token_type,
+            "operator",
+            "opened={opened}"
+        );
     }
     client.shutdown();
 }

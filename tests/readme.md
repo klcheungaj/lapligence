@@ -835,13 +835,18 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   `typedef`/`struct`/`union`/`enum` get `typeDefinition`, `input`/`output`/
   `inout`/`ref` get `direction`, and built-in data and net types plus kind and
   qualifier words (`logic`, `wire`, `int`, `genvar`, `parameter`, `const`,
-  `default`, `automatic`, `static`, ...) get `primitive`, except that a case,
-  case-inside, case-generate, property-case or randsequence-case item
-  `default` is plain `keyword` (from the capture, not the text); the legend holds only
-  standard token types and appends these modifiers after `connectionLabel`
+  `default`, `automatic`, `static`, ...) get `primitive`, and control-flow
+  words (`if`, `else`, `case`, `endcase`, loops, `return`/`break`/`continue`,
+  `wait`, ...) get `controlFlow`. A case, case-inside, case-generate,
+  property-case or randsequence-case item `default`, an if/case `unique`/
+  `unique0`/`priority` and a disable statement's `disable` get `controlFlow`
+  from the capture, not the text, while `disable iff`, a uniqueness-constraint
+  `unique` and every other `default` do not; the legend holds only standard
+  token types and appends these modifiers after `connectionLabel`
   ([legend contract](../src/bin/llg_ls/readme.md#semantic-token-legend)).
-  The remaining keywords are `keyword` without modifier bits, and user typedef
-  names keep `type` (never `defaultLibrary`).
+  The remaining keywords (`module`, `begin`, `fork`, `iff`, `inside`, ...) are
+  `keyword` without modifier bits, and user typedef names keep `type` (never
+  `defaultLibrary`).
   A reference the capture could not resolve
   (unbound plain `identifier` lexical kind) gets no token, so the editor leaves
   it uncolored; declarations and kind-known references keep theirs. Resolved

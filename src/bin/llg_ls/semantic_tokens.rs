@@ -38,6 +38,11 @@ const TM_DIRECTION_NAME: SemanticTokenModifier = SemanticTokenModifier::new("dir
 /// qualifier words.
 const TM_PRIMITIVE: u32 = 13;
 const TM_PRIMITIVE_NAME: SemanticTokenModifier = SemanticTokenModifier::new("primitive");
+/// Keyword modifier for control-flow words, named like rust-analyzer's
+/// `controlFlow` so a client can give control flow its own scope while every
+/// other keyword keeps a plain keyword scope.
+const TM_CONTROL_FLOW: u32 = 14;
+const TM_CONTROL_FLOW_NAME: SemanticTokenModifier = SemanticTokenModifier::new("controlFlow");
 
 pub fn legend() -> SemanticTokensLegend {
     SemanticTokensLegend {
@@ -80,6 +85,7 @@ pub fn legend() -> SemanticTokensLegend {
             TM_TYPE_DEFINITION_NAME,
             TM_DIRECTION_NAME,
             TM_PRIMITIVE_NAME,
+            TM_CONTROL_FLOW_NAME,
         ],
     }
 }
@@ -96,13 +102,17 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         let Some((token_type, mut modifiers)) = token_type_for(node.kind) else {
             continue;
         };
-        // A control-flow keyword (a case item `default`) stays plain even
-        // when the same word is grouped elsewhere.
-        if node.kind == TOKEN_SLANG_KEYWORD {
+        // The capture marks words that are control flow only at some syntax
+        // positions (a case item `default`, an if/case `unique`, a disable
+        // statement); their text class is never consulted.
+        if node.kind == TOKEN_SLANG_CONTROL_KEYWORD {
+            modifiers |= 1 << TM_CONTROL_FLOW;
+        } else if node.kind == TOKEN_SLANG_KEYWORD {
             modifiers |= match node.name.as_deref().map(keyword_class) {
                 Some(KeywordClass::TypeDefinition) => 1 << TM_TYPE_DEFINITION,
                 Some(KeywordClass::Direction) => 1 << TM_DIRECTION,
                 Some(KeywordClass::Primitive) => 1 << TM_PRIMITIVE,
+                Some(KeywordClass::ControlFlow) => 1 << TM_CONTROL_FLOW,
                 Some(KeywordClass::Other) | None => 0,
             };
         }
@@ -177,6 +187,8 @@ enum KeywordClass {
     /// Built-in data and net types plus declaration kind and qualifier words:
     /// `primitive`.
     Primitive,
+    /// Words that are control flow at every position: `controlFlow`.
+    ControlFlow,
     /// Every other keyword is a plain `keyword` without modifier bits.
     Other,
 }
@@ -184,11 +196,22 @@ enum KeywordClass {
 /// Classify by keyword text, so words that are keywords in some editions only
 /// (for example `uwire`) need no edition knowledge here. The words keep the
 /// standard `keyword` type and gain an llg modifier instead of a custom type,
-/// so clients without a mapping still see a keyword. A case item `default` is
-/// control flow by its syntax position and arrives as
-/// `TOKEN_SLANG_CONTROL_KEYWORD`, which is never classified. VS Code styles a plain
-/// `keyword` from `keyword.control`; a client maps `keyword.<modifier>`
+/// so clients without a mapping still see a keyword. Words that are control
+/// flow only at some syntax positions (a case item `default`, an if/case
+/// `unique`/`unique0`/`priority`, a disable statement's `disable`) arrive as
+/// `TOKEN_SLANG_CONTROL_KEYWORD` there and are never classified; elsewhere
+/// they keep their text class. VS Code styles a plain `keyword` from
+/// `keyword.control`; a client maps `keyword` and `keyword.<modifier>`
 /// selectors to its own scopes (the llg_ls readme has the contract).
+///
+/// The control-flow words are the statement keywords of IEEE 1800-2009
+/// A.6.5-A.6.8 that choose, repeat, leave or wait for execution: conditional
+/// and case statements (also as conditional generate constructs, A.4.2,
+/// property statements, A.2.10, and constraint `if`/`foreach`, A.1.10, which
+/// select or iterate the same way), loops, jump statements and wait
+/// statements. Block delimiters (`begin`/`end`, `fork`/`join*`), event
+/// qualifiers (`iff`), set membership (`inside`) and pattern words
+/// (`matches`) stay plain keywords.
 fn keyword_class(name: &str) -> KeywordClass {
     match name {
         "typedef" | "struct" | "union" | "enum" => KeywordClass::TypeDefinition,
@@ -200,6 +223,9 @@ fn keyword_class(name: &str) -> KeywordClass {
         | "localparam" | "specparam" | "const" | "var" | "default" | "automatic" | "static" => {
             KeywordClass::Primitive
         }
+        "if" | "else" | "case" | "casex" | "casez" | "randcase" | "endcase" | "for" | "foreach"
+        | "while" | "do" | "repeat" | "forever" | "return" | "break" | "continue" | "wait"
+        | "wait_order" => KeywordClass::ControlFlow,
         _ => KeywordClass::Other,
     }
 }
@@ -469,10 +495,11 @@ mod tests {
             (TM_TYPE_DEFINITION, "typeDefinition"),
             (TM_DIRECTION, "direction"),
             (TM_PRIMITIVE, "primitive"),
+            (TM_CONTROL_FLOW, "controlFlow"),
         ] {
             assert_eq!(legend.token_modifiers[index as usize].as_str(), name);
         }
-        assert_eq!(legend.token_modifiers.len(), TM_PRIMITIVE as usize + 1);
+        assert_eq!(legend.token_modifiers.len(), TM_CONTROL_FLOW as usize + 1);
     }
 
     #[test]
@@ -509,17 +536,21 @@ mod tests {
         for word in PRIMITIVE_WORDS {
             assert_eq!(keyword_class(word), KeywordClass::Primitive, "{word}");
         }
+        for word in CONTROL_FLOW_WORDS {
+            assert_eq!(keyword_class(word), KeywordClass::ControlFlow, "{word}");
+        }
         for word in [
-            "module", "type", "packed", "assign", "begin", "initial", "always", "case",
+            "module", "type", "packed", "assign", "begin", "initial", "always", "unique",
+            "unique0", "priority", "disable", "iff", "inside", "fork", "join", "matches",
         ] {
             assert_eq!(keyword_class(word), KeywordClass::Other, "{word}");
         }
     }
 
     /// Every occurrence of every grouped word is `keyword` with exactly its
-    /// group's llg modifier in every capture profile, while control keywords
-    /// are `keyword` without modifier bits and the user typedef name stays
-    /// `type`.
+    /// group's llg modifier in every capture profile, while other keywords
+    /// are `keyword` without modifier bits (`case` is `controlFlow`) and the
+    /// user typedef name stays `type`.
     #[test]
     fn every_decided_word_gets_its_keyword_modifier_in_every_profile() {
         let source = EVERY_WORD_SOURCE;
@@ -545,10 +576,16 @@ mod tests {
                 }
             }
             let token = |line, word| token_at(&tokens, source, line, word, 0);
-            for (line, word) in [(0, "module"), (17, "always"), (17, "case"), (18, "assign")] {
+            for (line, word) in [(0, "module"), (17, "always"), (18, "assign")] {
                 let t = token(line, word);
                 assert_eq!((t.3, t.4), (TT_KEYWORD, 0), "{profile} keyword {word}");
             }
+            let t = token(17, "case");
+            assert_eq!(
+                (t.3, t.4),
+                (TT_KEYWORD, 1 << TM_CONTROL_FLOW),
+                "{profile} keyword case"
+            );
             let user = token(12, "st_t");
             assert_eq!(user.3, TT_TYPE, "{profile} user typedef use");
             assert_eq!(user.4 & default_library, 0, "{profile} user typedef use");
@@ -717,10 +754,10 @@ endmodule\n";
     const CONTROL_DEFAULT_LINES: &[u32] = &[6, 8, 9, 12, 13];
 
     #[test]
-    fn case_item_default_is_a_plain_keyword_and_every_other_default_is_primitive_in_every_profile()
-    {
+    fn case_item_default_is_control_flow_and_every_other_default_is_primitive_in_every_profile() {
         let source = DEFAULT_SOURCE;
         let primitive = 1 << TM_PRIMITIVE;
+        let control = 1 << TM_CONTROL_FLOW;
         let positions = word_positions(source, "default");
         assert_eq!(positions.len(), 11, "sample defaults");
         for (profile, tokens) in profiles(source) {
@@ -730,7 +767,7 @@ endmodule\n";
                     .find(|t| (t.0, t.1) == (line, col))
                     .unwrap_or_else(|| panic!("{profile}: no token for default at {line}:{col}"));
                 let bits = if CONTROL_DEFAULT_LINES.contains(&line) {
-                    0
+                    control
                 } else {
                     primitive
                 };
@@ -745,8 +782,187 @@ endmodule\n";
             let t = token_at(&tokens, source, 2, "logic", 0);
             assert_eq!((t.3, t.4), (TT_KEYWORD, primitive), "{profile}");
             let t = token_at(&tokens, source, 8, "case", 0);
-            assert_eq!((t.3, t.4), (TT_KEYWORD, 0), "{profile}");
+            assert_eq!((t.3, t.4), (TT_KEYWORD, control), "{profile}");
         }
+    }
+
+    /// Words that are control flow at every position: `keyword` +
+    /// `controlFlow`.
+    const CONTROL_FLOW_WORDS: &[&str] = &[
+        "if",
+        "else",
+        "case",
+        "casex",
+        "casez",
+        "randcase",
+        "endcase",
+        "for",
+        "foreach",
+        "while",
+        "do",
+        "repeat",
+        "forever",
+        "return",
+        "break",
+        "continue",
+        "wait",
+        "wait_order",
+    ];
+
+    /// Words that are control flow only where the capture marks them.
+    const POSITIONAL_CONTROL_WORDS: &[&str] = &["unique", "unique0", "priority", "disable"];
+
+    /// Every control-flow word in statements, conditional generate
+    /// constructs, a property and constraints, next to plain keywords that
+    /// delimit blocks or qualify events and a `disable iff` reset.
+    const CONTROL_SOURCE: &str = "module top(input logic clk, input logic rst);
+  typedef logic [3:0] q_t;
+  q_t q; int arr [2]; event ev;
+  for (genvar i = 0; i < 2; i++) begin : g
+    if (i == 0) begin : t end else begin : e end
+  end
+  case (1) 1: begin : c end default: begin : d end endcase
+  property p; @(posedge clk iff rst) disable iff (rst) if (q == 0) q == 1 else q == 2; endproperty
+  function automatic int f(int n); return n; endfunction
+  initial begin : blk
+    unique if (q == 0) q = 1; else if (q inside {[1:2]}) q = 2; else q = 3;
+    unique0 if (q == 1) q = 0;
+    priority if (q == 2) q = 0;
+    unique case (q) 0: q = 1; default: q = 2; endcase
+    unique0 casez (q) 4'b1???: q = 0; endcase
+    priority casex (q) 4'b0xxx: q = 1; endcase
+    randcase 1: q = 0; endcase
+    for (int k = 0; k < 2; k++) begin if (k == 1) break; else continue; end
+    foreach (arr[k]) arr[k] = k;
+    while (q > 0) q--;
+    do q++; while (q < 2);
+    repeat (2) @(posedge clk);
+    wait (rst);
+    wait fork;
+    wait_order (ev) else q = 0;
+    fork : fk join_any
+    fork join_none
+    disable fk;
+    disable fork;
+    -> ev;
+    forever begin break; end
+  end
+endmodule
+class cls;
+  rand int x; rand int arr2 [2];
+  constraint cx { if (x > 0) x < 4; else x > 1; foreach (arr2[j]) arr2[j] > 0; }
+endclass
+";
+
+    /// Zero-based line of [`CONTROL_SOURCE`] whose `disable` is a property
+    /// reset, not a disable statement.
+    const DISABLE_IFF_LINE: u32 = 7;
+
+    #[test]
+    fn control_flow_words_carry_control_flow_and_other_keywords_stay_plain_in_every_profile() {
+        let source = CONTROL_SOURCE;
+        let control = 1 << TM_CONTROL_FLOW;
+        for (profile, tokens) in profiles(source) {
+            let bits_at = |line: u32, col: u32, word: &str| {
+                let token = tokens
+                    .iter()
+                    .find(|t| (t.0, t.1) == (line, col))
+                    .unwrap_or_else(|| panic!("{profile}: no token for {word} at {line}:{col}"));
+                assert_eq!(token.3, TT_KEYWORD, "{profile}: {word} at {line}:{col}");
+                token.4
+            };
+            for word in CONTROL_FLOW_WORDS.iter().chain(POSITIONAL_CONTROL_WORDS) {
+                let positions = word_positions(source, word);
+                assert!(!positions.is_empty(), "sample lacks {word}");
+                for (line, col) in positions {
+                    let want = if *word == "disable" && line == DISABLE_IFF_LINE {
+                        0
+                    } else {
+                        control
+                    };
+                    assert_eq!(
+                        bits_at(line, col, word),
+                        want,
+                        "{profile}: {word} at {line}:{col}"
+                    );
+                }
+            }
+            for (line, col) in word_positions(source, "default") {
+                assert_eq!(bits_at(line, col, "default"), control, "{profile}: default");
+            }
+            for word in [
+                "module",
+                "endmodule",
+                "begin",
+                "end",
+                "fork",
+                "join_any",
+                "join_none",
+                "iff",
+                "inside",
+                "posedge",
+                "property",
+                "endproperty",
+                "function",
+                "endfunction",
+                "initial",
+                "class",
+                "endclass",
+                "rand",
+                "constraint",
+            ] {
+                let positions = word_positions(source, word);
+                assert!(!positions.is_empty(), "sample lacks {word}");
+                for (line, col) in positions {
+                    // `wait fork` and `disable fork` reuse the block word.
+                    let bits = bits_at(line, col, word);
+                    assert_eq!(bits, 0, "{profile}: {word} at {line}:{col}");
+                }
+            }
+            for (word, bits) in [
+                ("typedef", 1 << TM_TYPE_DEFINITION),
+                ("input", 1 << TM_DIRECTION),
+                ("logic", 1 << TM_PRIMITIVE),
+                ("automatic", 1 << TM_PRIMITIVE),
+            ] {
+                for (line, col) in word_positions(source, word) {
+                    assert_eq!(bits_at(line, col, word), bits, "{profile}: {word}");
+                }
+            }
+            // `->` is an operator, and block names stay namespaces.
+            let (line, col) = word_positions(source, "ev")[2];
+            assert_eq!(line, 29, "{profile}");
+            let arrow = tokens
+                .iter()
+                .find(|t| (t.0, t.1) == (line, col - 3))
+                .unwrap_or_else(|| panic!("{profile}: no -> token"));
+            assert_eq!(
+                (arrow.2.as_str(), arrow.3),
+                ("->", TT_OPERATOR),
+                "{profile}"
+            );
+            let t = token_at(&tokens, source, 27, "fk", 0);
+            assert_eq!((t.3, t.4), (TT_NAMESPACE, 0), "{profile} disable fk");
+        }
+    }
+
+    /// `unique` is control flow only when it qualifies an if or case; the
+    /// uniqueness constraint (outside the 2009 edition, still captured) keeps
+    /// a plain keyword.
+    #[test]
+    fn uniqueness_constraint_unique_is_a_plain_keyword() {
+        let source = "class cls;
+  rand int a, b;
+  constraint cu { unique {a, b}; }
+endclass
+module top; int q; initial unique if (q == 0) q = 1; endmodule
+";
+        let parsed = compile::parse_source(hp("/virtual/top.sv"), source, &[]).unwrap();
+        let tokens = decode(source, &parsed.tokens[0].nodes);
+        let t = token_at(&tokens, source, 2, "unique", 0);
+        assert_eq!((t.3, t.4), (TT_KEYWORD, 0), "{tokens:?}");
+        let t = token_at(&tokens, source, 4, "unique", 0);
+        assert_eq!((t.3, t.4), (TT_KEYWORD, 1 << TM_CONTROL_FLOW), "{tokens:?}");
     }
 
     /// Named blocks, labeled statements and generate blocks: declarations
@@ -1055,9 +1271,14 @@ endmodule\n";
         let source = "module sub #(parameter int A = 1)();\nendmodule\nmodule top #(parameter int P = 1, localparam int Q = 2)(input logic x);\n  parameter type T = int;\n  localparam R = 3;\n  specparam S = 4;\n  sub u ();\n  defparam u.A = 5;\n  if (P > 0) begin : g end\nendmodule\n";
         for (profile, tokens) in profiles(source) {
             let at = |line, word, nth| type_at(&tokens, source, line, word, nth);
+            let t = token_at(&tokens, source, 8, "if", 0);
+            assert_eq!(
+                (t.3, t.4),
+                (TT_KEYWORD, 1 << TM_CONTROL_FLOW),
+                "{profile} if"
+            );
             for (line, word) in [
                 (7, "defparam"),
-                (8, "if"),
                 (0, "module"),
                 (2, "module"),
                 (9, "endmodule"),

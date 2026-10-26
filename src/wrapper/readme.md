@@ -76,7 +76,10 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   from the bound generate or statement-block scope. Instance names keep their
   kind. A keyword carries `LLG_SLANG_LEXICAL_CONTROL_FLOW` only where its
   syntax position makes it control flow: the `default` of a case,
-  case-generate, property-case or randsequence-case item.
+  case-generate, property-case or randsequence-case item, the `unique`,
+  `unique0` or `priority` of an if or case statement, and the `disable` of a
+  disable statement (not of `disable iff`). Words that are control flow
+  everywhere are left to the consumer's text classification.
 
 ## Parameter overrides
 
