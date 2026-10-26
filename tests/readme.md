@@ -830,13 +830,14 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   never return shadow URIs. Tokens keep parameters/localparams
   `property.readonly` in dimensions/expressions/actuals, enum items
   `enumMember.readonly` (plus `declaration` at declarations, anonymous and
-  ranged enums included). Keyword-derived words keep their class by text:
+  ranged enums included). Keyword-derived words are classified by text:
   built-in data and net types (`logic`, `wire`, `int`, `genvar`, `void`, ...)
   plus `struct`/`union`/`enum`, and directions, kind words and declaration
   qualifiers (`input`, `parameter`, `localparam`, `const`, `var`, `typedef`,
-  `default`, `automatic`, `static`, ...), are plain `modifier` with no modifier
-  bits (no `defaultLibrary`; VS Code storage.modifier, apart from the teal
-  module/class/typedef names), and the remaining keywords stay `keyword`.
+  `default`, `automatic`, `static`, ...), get no semantic token so the editor
+  grammar scopes them (a semantic `keyword` or `modifier` would override that
+  with a control-flow look); the remaining keywords stay `keyword`, and user
+  typedef names keep `type` (never `defaultLibrary`).
   A reference the capture could not resolve
   (unbound plain `identifier` lexical kind) gets no token, so the editor leaves
   it uncolored; declarations and kind-known references keep theirs. Resolved

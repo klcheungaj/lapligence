@@ -156,9 +156,9 @@ fn lsp_stdio_semantic_tokens_use_current_open_buffer_and_cached_unopened_snapsho
 }
 
 /// Constant references keep their classes, built-in type words and
-/// direction/kind words are plain `modifier` (no modifier bits) through project
-/// and isolated unsaved-buffer analysis, including references to missing
-/// children.
+/// direction/kind words get no token (left to the editor grammar) through
+/// project and isolated unsaved-buffer analysis, including references to
+/// missing children.
 #[test]
 fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths() {
     let fixture = FixtureTree::new();
@@ -229,17 +229,13 @@ fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths(
         for name in ["logic", "wire", "tri", "int"] {
             for occurrence in 0..buffer.match_indices(name).count() {
                 let (line, col) = position_of(&buffer, name, occurrence);
-                let row = row_at(&rows, line, col);
-                assert_eq!(row.token_type, "modifier", "{name}: {row:?}");
-                assert!(row.modifiers.is_empty(), "{name}: {row:?}");
+                assert!(!has_row_at(&rows, line, col), "{name} at {line}:{col}");
             }
         }
         for name in ["input", "output", "inout", "parameter", "localparam"] {
             for occurrence in 0..buffer.match_indices(name).count() {
                 let (line, col) = position_of(&buffer, name, occurrence);
-                let row = row_at(&rows, line, col);
-                assert_eq!(row.token_type, "modifier", "{name}: {row:?}");
-                assert!(row.modifiers.is_empty(), "{name}: {row:?}");
+                assert!(!has_row_at(&rows, line, col), "{name} at {line}:{col}");
             }
         }
         for name in ["module color_top", "assign buffer", "endmodule"] {
@@ -252,8 +248,9 @@ fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths(
 }
 
 /// Enum items are `enumMember` + `readonly` at declarations (which add
-/// `declaration`) and at references, and `typedef`/`enum` are plain `modifier`
-/// (`import`/`package` stay `keyword`), through project and isolated unsaved-buffer analysis.
+/// `declaration`) and at references, and `typedef`/`enum` get no token
+/// (`import`/`package` stay `keyword`), through project and isolated
+/// unsaved-buffer analysis.
 #[test]
 fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() {
     let fixture = FixtureTree::new();
@@ -322,9 +319,7 @@ fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() 
         }
         for needle in ["typedef enum logic", "enum {"] {
             let (line, col) = position_of(source, needle, 0);
-            let row = row_at(&rows, line, col);
-            assert_eq!(row.token_type, "modifier", "opened={opened} {needle}");
-            assert!(row.modifiers.is_empty(), "opened={opened} {needle}");
+            assert!(!has_row_at(&rows, line, col), "opened={opened} {needle}");
         }
         for needle in ["import", "package"] {
             let (line, col) = position_of(source, needle, 0);
@@ -338,17 +333,17 @@ fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() 
     client.shutdown();
 }
 
-/// `struct`, `typedef`, `default`, `automatic` and `static` are plain
-/// `modifier` words without modifier bits, `module`/`always`/`case` stay
-/// `keyword`, and a use of the user typedef name keeps its own `type` token, through
-/// project and isolated unsaved-buffer analysis.
+/// `struct`, `typedef`, `default`, `automatic`, `static`, directions, kind
+/// words and built-in types get no token, `module`/`always`/`case` stay
+/// `keyword`, and a use of the user typedef name keeps its own `type` token,
+/// through project and isolated unsaved-buffer analysis.
 #[test]
-fn lsp_stdio_semantic_tokens_send_struct_and_declaration_words_as_modifier() {
+fn lsp_stdio_semantic_tokens_leave_struct_and_declaration_words_to_the_grammar() {
     let fixture = FixtureTree::new();
     let root = fixture.root("root-a");
     let path = root.join("modifier_words.sv");
     let uri = file_uri(&path);
-    let source = "module mod_top;\n  typedef struct packed { logic [1:0] f; } st_t;\n  st_t s;\n  function automatic int fa(input int p); return p; endfunction\n  static int sv;\n  always @* case (sv) 0: ; default: ; endcase\nendmodule\n";
+    let source = "module mod_top;\n  typedef struct packed { logic [1:0] f; } st_t;\n  st_t s;\n  function automatic int fa(input int p); return p; endfunction\n  static int sv;\n  localparam int LP = 1;\n  genvar gv;\n  always @* case (sv) 0: ; default: ; endcase\nendmodule\n";
     fs::write(&path, source).expect("write modifier-word fixture");
     let mut client = LspProcess::spawn(&fixture.root);
     let initialize = client
@@ -378,14 +373,12 @@ fn lsp_stdio_semantic_tokens_send_struct_and_declaration_words_as_modifier() {
             "default",
             "logic",
             "int",
+            "input",
+            "localparam",
+            "genvar",
         ] {
             let (line, col) = position_of(source, needle, 0);
-            let row = row_at(&rows, line, col);
-            assert_eq!(row.token_type, "modifier", "opened={opened} {needle}");
-            assert!(
-                row.modifiers.is_empty(),
-                "opened={opened} {needle}: {row:?}"
-            );
+            assert!(!has_row_at(&rows, line, col), "opened={opened} {needle}");
         }
         for needle in ["module", "always", "case"] {
             let (line, col) = position_of(source, needle, 0);

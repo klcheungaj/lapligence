@@ -19,7 +19,6 @@ const TT_FUNCTION: u32 = 12;
 const TT_METHOD: u32 = 13;
 const TT_MACRO: u32 = 14;
 const TT_KEYWORD: u32 = 15;
-const TT_MODIFIER: u32 = 16;
 const TT_STRING: u32 = 18;
 const TT_NUMBER: u32 = 19;
 const TT_OPERATOR: u32 = 21;
@@ -81,15 +80,16 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         if is_unresolved_identifier(node.kind) {
             continue;
         }
-        let Some((mut token_type, modifiers)) = token_type_for(node.kind) else {
+        let Some((token_type, modifiers)) = token_type_for(node.kind) else {
             continue;
         };
-        if token_type == TT_KEYWORD {
-            if let Some(KeywordClass::Primitive | KeywordClass::Declaration) =
-                node.name.as_deref().map(keyword_class)
-            {
-                token_type = TT_MODIFIER;
-            }
+        if token_type == TT_KEYWORD
+            && matches!(
+                node.name.as_deref().map(keyword_class),
+                Some(KeywordClass::Primitive | KeywordClass::Declaration)
+            )
+        {
+            continue;
         }
         let length = node
             .name
@@ -164,10 +164,12 @@ enum KeywordClass {
 
 /// Classify by keyword text, so words that are keywords in some editions only
 /// (for example `uwire`) need no edition knowledge here. `Primitive` and
-/// `Declaration` both encode as `modifier` without modifier bits today (VS Code
-/// maps it to storage.modifier, the C++ `int`/`const` look, apart from
-/// module/class/typedef names); they stay separate so a custom `primitive`
-/// token type is a one-line change in `encode`.
+/// `Declaration` words get no semantic token: the editor grammar already scopes
+/// them (VS Code storage.type, support.type.direction, storage.modifier), and a
+/// semantic `keyword` or `modifier` would override that with a control-flow
+/// look, as clangd leaves C++ `int`/`const` to the grammar. The groups stay
+/// separate so a custom token type for one of them is a one-line change in
+/// `encode`.
 fn keyword_class(name: &str) -> KeywordClass {
     match name {
         "bit" | "logic" | "reg" | "byte" | "shortint" | "int" | "longint" | "integer" | "time"
@@ -283,6 +285,18 @@ mod tests {
         word: &str,
         nth: usize,
     ) -> &'a Decoded {
+        find_token(decoded, source, line, word, nth)
+            .unwrap_or_else(|| panic!("no token for {word} on line {line}; stream {decoded:?}"))
+    }
+
+    /// Like `token_at`, but `None` when the word has no token.
+    fn find_token<'a>(
+        decoded: &'a [Decoded],
+        source: &str,
+        line: usize,
+        word: &str,
+        nth: usize,
+    ) -> Option<&'a Decoded> {
         let text = source.lines().nth(line).unwrap();
         let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$';
         let bytes = text.as_bytes();
@@ -298,7 +312,6 @@ mod tests {
         decoded
             .iter()
             .find(|token| token.0 == line as u32 && token.1 == col)
-            .unwrap_or_else(|| panic!("no token for {word} at {line}:{col}; stream {decoded:?}"))
     }
 
     /// Token type of the `nth` whole-word occurrence of `word` on zero-based `line`.
@@ -352,30 +365,27 @@ mod tests {
     }
 
     #[test]
-    fn primitive_and_declaration_words_are_plain_modifiers() {
+    fn primitive_and_declaration_words_get_no_token() {
         let source = "module top(input logic signed [3:0] a, output wire b, inout tri c);\ninteger count; real value; string label;\nassign b = a[0];\nendmodule";
         let parsed = compile::parse_source(hp("/virtual/top.sv"), source, &[]).unwrap();
         let nodes = &parsed.tokens[0].nodes;
         let encoded = encode(nodes);
-        assert_eq!(encoded.data.len(), nodes.len());
-        let mut seen = 0;
-        for (node, token) in nodes.iter().zip(&encoded.data) {
-            let expected = match node.name.as_deref().unwrap_or_default() {
-                "logic" | "signed" | "wire" | "tri" | "integer" | "real" | "string" => {
-                    (TT_MODIFIER, 0)
-                }
-                "input" | "output" | "inout" => (TT_MODIFIER, 0),
-                "module" | "endmodule" | "assign" => (TT_KEYWORD, 0),
-                _ => continue,
-            };
-            seen += 1;
-            assert_eq!(
-                (token.token_type, token.token_modifiers_bitset),
-                expected,
-                "{node:?}"
-            );
+        let (mut dropped, mut kept) = (0, 0);
+        for node in nodes {
+            match node.name.as_deref().unwrap_or_default() {
+                "logic" | "signed" | "wire" | "tri" | "integer" | "real" | "string" | "input"
+                | "output" | "inout" => dropped += 1,
+                "module" | "endmodule" | "assign" => kept += 1,
+                _ => {}
+            }
         }
-        assert_eq!(seen, 13);
+        assert_eq!((dropped, kept), (10, 3));
+        let keywords = encoded
+            .data
+            .iter()
+            .filter(|t| t.token_type == TT_KEYWORD)
+            .count();
+        assert_eq!(keywords, kept);
     }
 
     #[test]
@@ -443,7 +453,7 @@ mod tests {
     }
 
     #[test]
-    fn every_decided_word_row_encodes_modifier_without_modifier_bits() {
+    fn every_decided_word_row_gets_no_token_in_every_profile() {
         let source = "module top;\n  const int ci = 1;\n  var logic vl;\n  genvar g;\n  supply0 s0;\n  uwire uw;\n  event ev;\n  chandle ch;\n  typedef struct packed { bit [1:0] f; } st_t;\n  typedef union packed { bit [1:0] f; } un_t;\n  typedef enum { E0 } en_t;\n  specparam SP = 1;\n  localparam int LP = 1;\n  function void fn(ref int r); endfunction\n  st_t user_s;\n  function automatic int fa(input int p); return p; endfunction\n  static int sv;\n  always @* case (sv) 0: ; default: ; endcase\nendmodule\n";
         let default_library = 1 << TM_DEFAULT_LIBRARY;
         for (profile, tokens) in profiles(source) {
@@ -462,8 +472,10 @@ mod tests {
                 (9, "union"),
                 (10, "enum"),
             ] {
-                let t = token(line, word);
-                assert_eq!((t.3, t.4), (TT_MODIFIER, 0), "{profile} primitive {word}");
+                assert!(
+                    find_token(&tokens, source, line, word, 0).is_none(),
+                    "{profile} primitive {word}"
+                );
             }
             for (line, word) in [
                 (1, "const"),
@@ -476,8 +488,10 @@ mod tests {
                 (16, "static"),
                 (17, "default"),
             ] {
-                let t = token(line, word);
-                assert_eq!((t.3, t.4), (TT_MODIFIER, 0), "{profile} declaration {word}");
+                assert!(
+                    find_token(&tokens, source, line, word, 0).is_none(),
+                    "{profile} declaration {word}"
+                );
             }
             for (line, word) in [(0, "module"), (17, "always"), (17, "case")] {
                 let t = token(line, word);
@@ -791,7 +805,7 @@ endmodule\n";
     }
 
     #[test]
-    fn parameter_declaration_keywords_use_modifier_and_keyword_highlighting() {
+    fn parameter_declaration_words_get_no_token_and_other_keywords_stay_keyword() {
         let source = "module sub #(parameter int A = 1)();\nendmodule\nmodule top #(parameter int P = 1, localparam int Q = 2)(input logic x);\n  parameter type T = int;\n  localparam R = 3;\n  specparam S = 4;\n  sub u ();\n  defparam u.A = 5;\n  if (P > 0) begin : g end\nendmodule\n";
         for (profile, tokens) in profiles(source) {
             let at = |line, word, nth| type_at(&tokens, source, line, word, nth);
@@ -816,9 +830,10 @@ endmodule\n";
                 (4, "localparam"),
                 (5, "specparam"),
             ] {
-                let token = token_at(&tokens, source, line, word, 0);
-                assert_eq!(token.3, TT_MODIFIER, "{profile} {word} line {line}");
-                assert_eq!(token.4, 0, "{profile} {word} line {line}");
+                assert!(
+                    find_token(&tokens, source, line, word, 0).is_none(),
+                    "{profile} {word} line {line}"
+                );
             }
             assert_eq!(at(2, "P", 0), TT_PROPERTY, "{profile}");
         }

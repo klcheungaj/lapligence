@@ -537,6 +537,11 @@ fn row_at(rows: &[SemanticRow], line: u64, character: u64) -> &SemanticRow {
         .unwrap_or_else(|| panic!("no semantic token at {line}:{character}: {rows:?}"))
 }
 
+fn has_row_at(rows: &[SemanticRow], line: u64, character: u64) -> bool {
+    rows.iter()
+        .any(|row| row.line == line && row.character == character)
+}
+
 /// 0-based `(line, character)` of the `occurrence`-th (0-based) match of
 /// `needle` in `text`, counting characters like LSP columns.
 fn position_of(text: &str, needle: &str, occurrence: usize) -> (u64, u64) {
