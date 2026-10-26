@@ -834,10 +834,11 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   built-in data and net types (`logic`, `wire`, `int`, `genvar`, `void`, ...)
   plus `struct`/`union`/`enum`, and directions, kind words and declaration
   qualifiers (`input`, `parameter`, `localparam`, `const`, `var`, `typedef`,
-  `default`, `automatic`, `static`, ...), get no semantic token so the editor
-  grammar scopes them (a semantic `keyword` or `modifier` would override that
-  with a control-flow look); the remaining keywords stay `keyword`, and user
-  typedef names keep `type` (never `defaultLibrary`).
+  `default`, `automatic`, `static`, ...), get the custom legend types
+  `primitive` and `declarationKeyword` without modifier bits at every
+  occurrence ([legend contract](../src/bin/llg_ls/readme.md#semantic-token-legend));
+  the remaining keywords stay `keyword`, and user typedef names keep `type`
+  (never `defaultLibrary`).
   A reference the capture could not resolve
   (unbound plain `identifier` lexical kind) gets no token, so the editor leaves
   it uncolored; declarations and kind-known references keep theirs. Resolved

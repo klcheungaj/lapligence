@@ -155,10 +155,10 @@ fn lsp_stdio_semantic_tokens_use_current_open_buffer_and_cached_unopened_snapsho
     client.shutdown();
 }
 
-/// Constant references keep their classes, built-in type words and
-/// direction/kind words get no token (left to the editor grammar) through
-/// project and isolated unsaved-buffer analysis, including references to
-/// missing children.
+/// Constant references keep their classes, built-in type words are
+/// `primitive` and direction/kind words `declarationKeyword` (no modifier
+/// bits) through project and isolated unsaved-buffer analysis, including
+/// references to missing children.
 #[test]
 fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths() {
     let fixture = FixtureTree::new();
@@ -226,16 +226,20 @@ fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths(
                 );
             }
         }
-        for name in ["logic", "wire", "tri", "int"] {
-            for occurrence in 0..buffer.match_indices(name).count() {
-                let (line, col) = position_of(&buffer, name, occurrence);
-                assert!(!has_row_at(&rows, line, col), "{name} at {line}:{col}");
-            }
-        }
-        for name in ["input", "output", "inout", "parameter", "localparam"] {
-            for occurrence in 0..buffer.match_indices(name).count() {
-                let (line, col) = position_of(&buffer, name, occurrence);
-                assert!(!has_row_at(&rows, line, col), "{name} at {line}:{col}");
+        for (names, expected) in [
+            (&["logic", "wire", "tri", "int"][..], "primitive"),
+            (
+                &["input", "output", "inout", "parameter", "localparam"][..],
+                "declarationKeyword",
+            ),
+        ] {
+            for name in names {
+                for occurrence in 0..buffer.match_indices(name).count() {
+                    let (line, col) = position_of(&buffer, name, occurrence);
+                    let row = row_at(&rows, line, col);
+                    assert_eq!(row.token_type, expected, "{name}: {row:?}");
+                    assert!(row.modifiers.is_empty(), "{name}: {row:?}");
+                }
             }
         }
         for name in ["module color_top", "assign buffer", "endmodule"] {
@@ -248,9 +252,9 @@ fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths(
 }
 
 /// Enum items are `enumMember` + `readonly` at declarations (which add
-/// `declaration`) and at references, and `typedef`/`enum` get no token
-/// (`import`/`package` stay `keyword`), through project and isolated
-/// unsaved-buffer analysis.
+/// `declaration`) and at references, `typedef` is `declarationKeyword` and
+/// `enum` is `primitive` (`import`/`package` stay `keyword`), through project
+/// and isolated unsaved-buffer analysis.
 #[test]
 fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() {
     let fixture = FixtureTree::new();
@@ -317,9 +321,18 @@ fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() 
                 "opened={opened}: {qualifier:?}"
             );
         }
-        for needle in ["typedef enum logic", "enum {"] {
+        for (needle, expected) in [
+            ("typedef enum logic", "declarationKeyword"),
+            ("enum logic", "primitive"),
+            ("enum {", "primitive"),
+        ] {
             let (line, col) = position_of(source, needle, 0);
-            assert!(!has_row_at(&rows, line, col), "opened={opened} {needle}");
+            let row = row_at(&rows, line, col);
+            assert_eq!(row.token_type, expected, "opened={opened} {needle}");
+            assert!(
+                row.modifiers.is_empty(),
+                "opened={opened} {needle}: {row:?}"
+            );
         }
         for needle in ["import", "package"] {
             let (line, col) = position_of(source, needle, 0);
@@ -333,18 +346,71 @@ fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() 
     client.shutdown();
 }
 
-/// `struct`, `typedef`, `default`, `automatic`, `static`, directions, kind
-/// words and built-in types get no token, `module`/`always`/`case` stay
-/// `keyword`, and a use of the user typedef name keeps its own `type` token,
-/// through project and isolated unsaved-buffer analysis.
+/// Every word of the primitive group (built-in data and net types,
+/// `struct`/`union`/`enum`) is `primitive` and every word of the declaration
+/// group (directions, kind words, qualifiers) is `declarationKeyword`, both
+/// without modifier bits and at every occurrence; `module`/`always`/`case`
+/// stay `keyword`, and a use of the user typedef name keeps its own `type`
+/// token, through project and isolated unsaved-buffer analysis.
 #[test]
-fn lsp_stdio_semantic_tokens_leave_struct_and_declaration_words_to_the_grammar() {
+fn lsp_stdio_semantic_tokens_send_primitive_and_declaration_keyword_types() {
     let fixture = FixtureTree::new();
     let root = fixture.root("root-a");
-    let path = root.join("modifier_words.sv");
+    let path = root.join("keyword_words.sv");
     let uri = file_uri(&path);
-    let source = "module mod_top;\n  typedef struct packed { logic [1:0] f; } st_t;\n  st_t s;\n  function automatic int fa(input int p); return p; endfunction\n  static int sv;\n  localparam int LP = 1;\n  genvar gv;\n  always @* case (sv) 0: ; default: ; endcase\nendmodule\n";
-    fs::write(&path, source).expect("write modifier-word fixture");
+    let source = "module all_words #(parameter int P = 1)(input logic i, output wire o, inout tri t);\n  localparam int L = 2;\n  specparam S = 3;\n  bit b; reg r; byte by; shortint si; longint li; integer ig; time tm;\n  shortreal sr; real re; realtime rt; string sg; chandle ch; event ev;\n  logic signed [1:0] sn; logic unsigned [1:0] us;\n  genvar gv;\n  supply0 s0; supply1 s1; triand ta; trior tr; trireg tg; tri0 t0; tri1 t1;\n  uwire uw; wand wa; wor wo;\n  typedef struct packed { bit f; } st_t;\n  typedef union packed { bit f; } un_t;\n  typedef enum { E0 } en_t;\n  st_t user_s;\n  const int ci = 1;\n  var logic vl;\n  static int sv;\n  function automatic void fa(ref int x); endfunction\n  always @* case (sv) 0: ; default: ; endcase\n  assign o = i;\nendmodule\n";
+    let primitive = [
+        "bit",
+        "logic",
+        "reg",
+        "byte",
+        "shortint",
+        "int",
+        "longint",
+        "integer",
+        "time",
+        "shortreal",
+        "real",
+        "realtime",
+        "string",
+        "chandle",
+        "event",
+        "void",
+        "signed",
+        "unsigned",
+        "genvar",
+        "supply0",
+        "supply1",
+        "tri",
+        "triand",
+        "trior",
+        "trireg",
+        "tri0",
+        "tri1",
+        "uwire",
+        "wire",
+        "wand",
+        "wor",
+        "struct",
+        "union",
+        "enum",
+    ];
+    let declaration = [
+        "input",
+        "output",
+        "inout",
+        "ref",
+        "parameter",
+        "localparam",
+        "specparam",
+        "const",
+        "var",
+        "typedef",
+        "default",
+        "automatic",
+        "static",
+    ];
+    fs::write(&path, source).expect("write keyword-word fixture");
     let mut client = LspProcess::spawn(&fixture.root);
     let initialize = client
         .initialize(&[("root-a", &root)], default_init_options())
@@ -352,33 +418,36 @@ fn lsp_stdio_semantic_tokens_leave_struct_and_declaration_words_to_the_grammar()
     let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
     let types = legend_names(legend, "tokenTypes");
     let modifiers = legend_names(legend, "tokenModifiers");
+    assert!(types.iter().any(|t| t == "primitive"), "{types:?}");
+    assert!(types.iter().any(|t| t == "declarationKeyword"), "{types:?}");
     wait_for_diagnostics(&mut client, &uri, |_| true);
 
     for opened in [false, true] {
         if opened {
-            client.open(&path, source).expect("open modifier buffer");
+            client
+                .open(&path, source)
+                .expect("open keyword-word buffer");
         }
         let result = client
             .request(
                 "textDocument/semanticTokens/full",
                 json!({ "textDocument": { "uri": uri } }),
             )
-            .expect("modifier semantic token response");
+            .expect("keyword-word semantic token response");
         let rows = semantic_token_rows(&result, &types, &modifiers);
-        for needle in [
-            "typedef",
-            "struct",
-            "automatic",
-            "static",
-            "default",
-            "logic",
-            "int",
-            "input",
-            "localparam",
-            "genvar",
+        for (words, expected) in [
+            (&primitive[..], "primitive"),
+            (&declaration[..], "declarationKeyword"),
         ] {
-            let (line, col) = position_of(source, needle, 0);
-            assert!(!has_row_at(&rows, line, col), "opened={opened} {needle}");
+            for word in words {
+                let positions = word_positions(source, word);
+                assert!(!positions.is_empty(), "sample lacks {word}");
+                for (line, col) in positions {
+                    let row = row_at(&rows, line, col);
+                    assert_eq!(row.token_type, expected, "opened={opened} {word}: {row:?}");
+                    assert!(row.modifiers.is_empty(), "opened={opened} {word}: {row:?}");
+                }
+            }
         }
         for needle in ["module", "always", "case"] {
             let (line, col) = position_of(source, needle, 0);
@@ -389,7 +458,7 @@ fn lsp_stdio_semantic_tokens_leave_struct_and_declaration_words_to_the_grammar()
                 "opened={opened} {needle}: {row:?}"
             );
         }
-        let (line, col) = position_of(source, "st_t s;", 0);
+        let (line, col) = position_of(source, "st_t user_s;", 0);
         let row = row_at(&rows, line, col);
         assert_eq!(row.token_type, "type", "opened={opened}: {row:?}");
         assert!(

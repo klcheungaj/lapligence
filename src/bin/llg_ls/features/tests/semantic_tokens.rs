@@ -138,9 +138,9 @@ fn decode_named(tokens: &SemanticTokens) -> Vec<(u32, u32, u32, String)> {
 }
 
 /// Module and typedef names reach clients with the token types C/C++
-/// servers use, built-in type words and kind words get no token (the editor
-/// grammar scopes them) and other keywords stay `keyword`, through the
-/// committed-analysis path.
+/// servers use, built-in type words are `primitive` and direction/kind words
+/// `declarationKeyword` (both without modifier bits), and other keywords stay
+/// `keyword`, through the committed-analysis path.
 #[test]
 fn semantic_tokens_color_module_typedef_and_parameter_words_like_cpp() {
     let _guards = analysis_guards();
@@ -164,14 +164,11 @@ fn semantic_tokens_color_module_typedef_and_parameter_words_like_cpp() {
     let raw = semantic_tokens_for(&analysis, &sv.to_string_lossy());
     let decoded = decode_named(&raw);
     let lines: Vec<&str> = source.lines().collect();
-    let try_find = |line: usize, word: &str, nth: usize| {
+    let find = |line: usize, word: &str, nth: usize| {
         let col = lines[line].match_indices(word).nth(nth).unwrap().0 as u32;
         decoded
             .iter()
             .position(|token| token.0 == line as u32 && token.1 == col)
-    };
-    let find = |line: usize, word: &str, nth: usize| {
-        try_find(line, word, nth)
             .unwrap_or_else(|| panic!("no token for {word} on line {line}: {decoded:?}"))
     };
     let type_of = |line: usize, word: &str, nth: usize| decoded[find(line, word, nth)].3.clone();
@@ -198,19 +195,17 @@ fn semantic_tokens_color_module_typedef_and_parameter_words_like_cpp() {
     ] {
         assert_eq!(type_of(line, word, nth), expected, "{word} on line {line}");
     }
-    for (line, word) in [
-        (1, "typedef"),
-        (1, "logic"),
-        (3, "parameter"),
-        (3, "input"),
-        (6, "localparam"),
-        (6, "int"),
-        (3, "int"),
+    for (line, word, expected) in [
+        (1, "typedef", "declarationKeyword"),
+        (1, "logic", "primitive"),
+        (3, "parameter", "declarationKeyword"),
+        (3, "input", "declarationKeyword"),
+        (6, "localparam", "declarationKeyword"),
+        (6, "int", "primitive"),
+        (3, "int", "primitive"),
     ] {
-        assert!(
-            try_find(line, word, 0).is_none(),
-            "{word} on line {line} must have no token"
-        );
+        assert_eq!(type_of(line, word, 0), expected, "{word} on line {line}");
+        assert_eq!(modifiers_of(line, word, 0), 0, "{word} on line {line}");
     }
     for (line, word) in [(1, "byte_t"), (3, "byte_t"), (7, "nib_t"), (8, "nib_t")] {
         assert_eq!(

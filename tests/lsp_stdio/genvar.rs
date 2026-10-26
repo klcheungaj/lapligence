@@ -220,10 +220,9 @@ fn assert_genvar_tokens(
         let line = prefix.bytes().filter(|byte| *byte == b'\n').count() as u64;
         let line_start = prefix.rfind('\n').map_or(0, |position| position + 1);
         let column = source[line_start..byte_index].encode_utf16().count() as u64;
-        assert!(
-            !has_row_at(&rows, line, column),
-            "genvar keyword at {line}:{column} must have no token"
-        );
+        let row = row_at(&rows, line, column);
+        assert_eq!(row.token_type, "primitive", "{row:?}");
+        assert!(row.modifiers.is_empty(), "{row:?}");
     }
 }
 

@@ -22,6 +22,13 @@ const TT_KEYWORD: u32 = 15;
 const TT_STRING: u32 = 18;
 const TT_NUMBER: u32 = 19;
 const TT_OPERATOR: u32 = 21;
+const TT_PRIMITIVE: u32 = 22;
+const TT_DECLARATION_KEYWORD: u32 = 23;
+/// Custom legend type for built-in data and net type words; clients without a
+/// mapping for it leave the word in their default style.
+const TT_PRIMITIVE_NAME: SemanticTokenType = SemanticTokenType::new("primitive");
+/// Custom legend type for direction, kind and qualifier words.
+const TT_DECLARATION_KEYWORD_NAME: SemanticTokenType = SemanticTokenType::new("declarationKeyword");
 const TM_DECLARATION: u32 = 0;
 const TM_READONLY: u32 = 2;
 const TM_DEFAULT_LIBRARY: u32 = 9;
@@ -54,6 +61,8 @@ pub fn legend() -> SemanticTokensLegend {
             SemanticTokenType::NUMBER,
             SemanticTokenType::REGEXP,
             SemanticTokenType::OPERATOR,
+            TT_PRIMITIVE_NAME,
+            TT_DECLARATION_KEYWORD_NAME,
         ],
         token_modifiers: vec![
             SemanticTokenModifier::DECLARATION,
@@ -80,16 +89,15 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         if is_unresolved_identifier(node.kind) {
             continue;
         }
-        let Some((token_type, modifiers)) = token_type_for(node.kind) else {
+        let Some((mut token_type, modifiers)) = token_type_for(node.kind) else {
             continue;
         };
-        if token_type == TT_KEYWORD
-            && matches!(
-                node.name.as_deref().map(keyword_class),
-                Some(KeywordClass::Primitive | KeywordClass::Declaration)
-            )
-        {
-            continue;
+        if token_type == TT_KEYWORD {
+            match node.name.as_deref().map(keyword_class) {
+                Some(KeywordClass::Primitive) => token_type = TT_PRIMITIVE,
+                Some(KeywordClass::Declaration) => token_type = TT_DECLARATION_KEYWORD,
+                Some(KeywordClass::Other) | None => {}
+            }
         }
         let length = node
             .name
@@ -154,22 +162,21 @@ fn is_unresolved_identifier(kind: i32) -> bool {
 /// retyped; user type names keep their own token types.
 #[derive(Debug, PartialEq, Eq)]
 enum KeywordClass {
-    /// Built-in data and net types plus `struct`/`union`/`enum`.
+    /// Built-in data and net types plus `struct`/`union`/`enum`: `primitive`.
     Primitive,
-    /// Port directions, kind words and declaration qualifiers.
+    /// Port directions, kind words and declaration qualifiers:
+    /// `declarationKeyword`.
     Declaration,
     /// Every other keyword stays `keyword`.
     Other,
 }
 
 /// Classify by keyword text, so words that are keywords in some editions only
-/// (for example `uwire`) need no edition knowledge here. `Primitive` and
-/// `Declaration` words get no semantic token: the editor grammar already scopes
-/// them (VS Code storage.type, support.type.direction, storage.modifier), and a
-/// semantic `keyword` or `modifier` would override that with a control-flow
-/// look, as clangd leaves C++ `int`/`const` to the grammar. The groups stay
-/// separate so a custom token type for one of them is a one-line change in
-/// `encode`.
+/// (for example `uwire`) need no edition knowledge here. Both groups use custom
+/// legend types because no standard type fits: VS Code styles `keyword` from
+/// `keyword.control` and `type`/`class`/`struct` from `entity.name.type*`, the
+/// looks reserved for control words and user type names. A client maps the
+/// custom types to its own scopes (the llg_ls readme has the contract).
 fn keyword_class(name: &str) -> KeywordClass {
     match name {
         "bit" | "logic" | "reg" | "byte" | "shortint" | "int" | "longint" | "integer" | "time"
@@ -285,18 +292,6 @@ mod tests {
         word: &str,
         nth: usize,
     ) -> &'a Decoded {
-        find_token(decoded, source, line, word, nth)
-            .unwrap_or_else(|| panic!("no token for {word} on line {line}; stream {decoded:?}"))
-    }
-
-    /// Like `token_at`, but `None` when the word has no token.
-    fn find_token<'a>(
-        decoded: &'a [Decoded],
-        source: &str,
-        line: usize,
-        word: &str,
-        nth: usize,
-    ) -> Option<&'a Decoded> {
         let text = source.lines().nth(line).unwrap();
         let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$';
         let bytes = text.as_bytes();
@@ -312,6 +307,7 @@ mod tests {
         decoded
             .iter()
             .find(|token| token.0 == line as u32 && token.1 == col)
+            .unwrap_or_else(|| panic!("no token for {word} on line {line}; stream {decoded:?}"))
     }
 
     /// Token type of the `nth` whole-word occurrence of `word` on zero-based `line`.
@@ -364,85 +360,126 @@ mod tests {
         }
     }
 
+    /// Every word of the primitive group, as decided for presentation.
+    const PRIMITIVE_WORDS: &[&str] = &[
+        "bit",
+        "logic",
+        "reg",
+        "byte",
+        "shortint",
+        "int",
+        "longint",
+        "integer",
+        "time",
+        "shortreal",
+        "real",
+        "realtime",
+        "string",
+        "chandle",
+        "event",
+        "void",
+        "signed",
+        "unsigned",
+        "genvar",
+        "supply0",
+        "supply1",
+        "tri",
+        "triand",
+        "trior",
+        "trireg",
+        "tri0",
+        "tri1",
+        "uwire",
+        "wire",
+        "wand",
+        "wor",
+        "struct",
+        "union",
+        "enum",
+    ];
+
+    /// Every word of the declaration group.
+    const DECLARATION_WORDS: &[&str] = &[
+        "input",
+        "output",
+        "inout",
+        "ref",
+        "parameter",
+        "localparam",
+        "specparam",
+        "const",
+        "var",
+        "typedef",
+        "default",
+        "automatic",
+        "static",
+    ];
+
+    /// One module that uses every word of both groups at least once.
+    const EVERY_WORD_SOURCE: &str = "module all_words #(parameter int P = 1)(input logic i, output wire o, inout tri t);\n  localparam int L = 2;\n  specparam S = 3;\n  bit b; reg r; byte by; shortint si; longint li; integer ig; time tm;\n  shortreal sr; real re; realtime rt; string sg; chandle ch; event ev;\n  logic signed [1:0] sn; logic unsigned [1:0] us;\n  genvar gv;\n  supply0 s0; supply1 s1; triand ta; trior tr; trireg tg; tri0 t0; tri1 t1;\n  uwire uw; wand wa; wor wo;\n  typedef struct packed { bit f; } st_t;\n  typedef union packed { bit f; } un_t;\n  typedef enum { E0 } en_t;\n  st_t user_s;\n  const int ci = 1;\n  var logic vl;\n  static int sv;\n  function automatic void fa(ref int x); endfunction\n  always @* case (sv) 0: ; default: ; endcase\n  assign o = i;\nendmodule\n";
+
+    /// Zero-based `(line, column)` of every whole-word occurrence of `word`.
+    fn word_positions(source: &str, word: &str) -> Vec<(u32, u32)> {
+        let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$';
+        let mut out = Vec::new();
+        for (line, text) in source.lines().enumerate() {
+            let bytes = text.as_bytes();
+            for (at, _) in text.match_indices(word) {
+                if (at == 0 || !is_word(bytes[at - 1]))
+                    && bytes.get(at + word.len()).is_none_or(|b| !is_word(*b))
+                {
+                    out.push((line as u32, at as u32));
+                }
+            }
+        }
+        out
+    }
+
     #[test]
-    fn primitive_and_declaration_words_get_no_token() {
+    fn custom_legend_types_sit_at_their_encoded_indices() {
+        let legend = legend();
+        assert_eq!(legend.token_types[TT_KEYWORD as usize].as_str(), "keyword");
+        assert_eq!(
+            legend.token_types[TT_PRIMITIVE as usize].as_str(),
+            "primitive"
+        );
+        assert_eq!(
+            legend.token_types[TT_DECLARATION_KEYWORD as usize].as_str(),
+            "declarationKeyword"
+        );
+        assert_eq!(
+            legend.token_types.len(),
+            TT_DECLARATION_KEYWORD as usize + 1
+        );
+    }
+
+    #[test]
+    fn primitive_and_declaration_words_get_their_custom_types() {
         let source = "module top(input logic signed [3:0] a, output wire b, inout tri c);\ninteger count; real value; string label;\nassign b = a[0];\nendmodule";
         let parsed = compile::parse_source(hp("/virtual/top.sv"), source, &[]).unwrap();
-        let nodes = &parsed.tokens[0].nodes;
-        let encoded = encode(nodes);
-        let (mut dropped, mut kept) = (0, 0);
-        for node in nodes {
-            match node.name.as_deref().unwrap_or_default() {
-                "logic" | "signed" | "wire" | "tri" | "integer" | "real" | "string" | "input"
-                | "output" | "inout" => dropped += 1,
-                "module" | "endmodule" | "assign" => kept += 1,
+        let tokens = decode(source, &parsed.tokens[0].nodes);
+        let count = |token_type| tokens.iter().filter(|t| t.3 == token_type).count();
+        assert_eq!(count(TT_PRIMITIVE), 7, "{tokens:?}");
+        assert_eq!(count(TT_DECLARATION_KEYWORD), 3, "{tokens:?}");
+        assert_eq!(count(TT_KEYWORD), 3, "{tokens:?}");
+        for token in &tokens {
+            match token.3 {
+                TT_PRIMITIVE | TT_DECLARATION_KEYWORD => assert_eq!(token.4, 0, "{token:?}"),
+                TT_KEYWORD => assert!(
+                    matches!(token.2.as_str(), "module" | "endmodule" | "assign"),
+                    "{token:?}"
+                ),
                 _ => {}
             }
         }
-        assert_eq!((dropped, kept), (10, 3));
-        let keywords = encoded
-            .data
-            .iter()
-            .filter(|t| t.token_type == TT_KEYWORD)
-            .count();
-        assert_eq!(keywords, kept);
     }
 
     #[test]
     fn keyword_classes_cover_the_decided_word_lists() {
-        for word in [
-            "bit",
-            "logic",
-            "reg",
-            "byte",
-            "shortint",
-            "int",
-            "longint",
-            "integer",
-            "time",
-            "shortreal",
-            "real",
-            "realtime",
-            "string",
-            "chandle",
-            "event",
-            "void",
-            "signed",
-            "unsigned",
-            "genvar",
-            "supply0",
-            "supply1",
-            "tri",
-            "triand",
-            "trior",
-            "trireg",
-            "tri0",
-            "tri1",
-            "uwire",
-            "wire",
-            "wand",
-            "wor",
-            "struct",
-            "union",
-            "enum",
-        ] {
+        for word in PRIMITIVE_WORDS {
             assert_eq!(keyword_class(word), KeywordClass::Primitive, "{word}");
         }
-        for word in [
-            "input",
-            "output",
-            "inout",
-            "ref",
-            "parameter",
-            "localparam",
-            "specparam",
-            "const",
-            "var",
-            "typedef",
-            "default",
-            "automatic",
-            "static",
-        ] {
+        for word in DECLARATION_WORDS {
             assert_eq!(keyword_class(word), KeywordClass::Declaration, "{word}");
         }
         for word in [
@@ -452,55 +489,45 @@ mod tests {
         }
     }
 
+    /// Every occurrence of every word of both groups carries its custom type
+    /// without modifier bits in every capture profile, while control keywords
+    /// stay `keyword` and the user typedef name stays `type`.
     #[test]
-    fn every_decided_word_row_gets_no_token_in_every_profile() {
-        let source = "module top;\n  const int ci = 1;\n  var logic vl;\n  genvar g;\n  supply0 s0;\n  uwire uw;\n  event ev;\n  chandle ch;\n  typedef struct packed { bit [1:0] f; } st_t;\n  typedef union packed { bit [1:0] f; } un_t;\n  typedef enum { E0 } en_t;\n  specparam SP = 1;\n  localparam int LP = 1;\n  function void fn(ref int r); endfunction\n  st_t user_s;\n  function automatic int fa(input int p); return p; endfunction\n  static int sv;\n  always @* case (sv) 0: ; default: ; endcase\nendmodule\n";
+    fn every_decided_word_gets_its_custom_type_in_every_profile() {
+        let source = EVERY_WORD_SOURCE;
         let default_library = 1 << TM_DEFAULT_LIBRARY;
         for (profile, tokens) in profiles(source) {
+            for (words, expected) in [
+                (PRIMITIVE_WORDS, TT_PRIMITIVE),
+                (DECLARATION_WORDS, TT_DECLARATION_KEYWORD),
+            ] {
+                for word in words {
+                    let positions = word_positions(source, word);
+                    assert!(!positions.is_empty(), "sample lacks {word}");
+                    for (line, col) in positions {
+                        let token = tokens
+                            .iter()
+                            .find(|t| (t.0, t.1) == (line, col))
+                            .unwrap_or_else(|| {
+                                panic!("{profile}: no token for {word} at {line}:{col}")
+                            });
+                        assert_eq!(
+                            (token.3, token.4),
+                            (expected, 0),
+                            "{profile} {word} at {line}:{col}"
+                        );
+                    }
+                }
+            }
             let token = |line, word| token_at(&tokens, source, line, word, 0);
-            for (line, word) in [
-                (1, "int"),
-                (2, "logic"),
-                (3, "genvar"),
-                (4, "supply0"),
-                (5, "uwire"),
-                (6, "event"),
-                (7, "chandle"),
-                (8, "bit"),
-                (13, "void"),
-                (8, "struct"),
-                (9, "union"),
-                (10, "enum"),
-            ] {
-                assert!(
-                    find_token(&tokens, source, line, word, 0).is_none(),
-                    "{profile} primitive {word}"
-                );
-            }
-            for (line, word) in [
-                (1, "const"),
-                (2, "var"),
-                (11, "specparam"),
-                (12, "localparam"),
-                (13, "ref"),
-                (8, "typedef"),
-                (15, "automatic"),
-                (16, "static"),
-                (17, "default"),
-            ] {
-                assert!(
-                    find_token(&tokens, source, line, word, 0).is_none(),
-                    "{profile} declaration {word}"
-                );
-            }
-            for (line, word) in [(0, "module"), (17, "always"), (17, "case")] {
+            for (line, word) in [(0, "module"), (17, "always"), (17, "case"), (18, "assign")] {
                 let t = token(line, word);
                 assert_eq!((t.3, t.4), (TT_KEYWORD, 0), "{profile} keyword {word}");
             }
-            let user = token(14, "st_t");
+            let user = token(12, "st_t");
             assert_eq!(user.3, TT_TYPE, "{profile} user typedef use");
             assert_eq!(user.4 & default_library, 0, "{profile} user typedef use");
-            let declared = token(8, "st_t");
+            let declared = token(9, "st_t");
             assert_eq!(declared.3, TT_TYPE, "{profile} typedef decl");
             assert_eq!(declared.4 & default_library, 0, "{profile} typedef decl");
         }
@@ -805,7 +832,7 @@ endmodule\n";
     }
 
     #[test]
-    fn parameter_declaration_words_get_no_token_and_other_keywords_stay_keyword() {
+    fn parameter_declaration_words_are_declaration_keywords_and_other_keywords_stay_keyword() {
         let source = "module sub #(parameter int A = 1)();\nendmodule\nmodule top #(parameter int P = 1, localparam int Q = 2)(input logic x);\n  parameter type T = int;\n  localparam R = 3;\n  specparam S = 4;\n  sub u ();\n  defparam u.A = 5;\n  if (P > 0) begin : g end\nendmodule\n";
         for (profile, tokens) in profiles(source) {
             let at = |line, word, nth| type_at(&tokens, source, line, word, nth);
@@ -830,8 +857,10 @@ endmodule\n";
                 (4, "localparam"),
                 (5, "specparam"),
             ] {
-                assert!(
-                    find_token(&tokens, source, line, word, 0).is_none(),
+                let t = token_at(&tokens, source, line, word, 0);
+                assert_eq!(
+                    (t.3, t.4),
+                    (TT_DECLARATION_KEYWORD, 0),
                     "{profile} {word} line {line}"
                 );
             }

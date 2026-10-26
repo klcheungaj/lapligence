@@ -20,6 +20,50 @@ scope, its labels and module name have no target, lint treats its connections as
 possibly driven and read, and the explorer shows it as a declaration-only child
 without a definition.
 
+## Semantic token legend
+
+The legend lists the standard LSP token types plus custom entries; clients
+receive them in `semanticTokensProvider.legend`. Custom entries:
+
+| Entry | Kind | Words or symbols |
+| --- | --- | --- |
+| `primitive` | type | Built-in data and net type words: `bit logic reg byte shortint int longint integer time shortreal real realtime string chandle event void signed unsigned genvar supply0 supply1 tri triand trior trireg tri0 tri1 uwire wire wand wor struct union enum`. |
+| `declarationKeyword` | type | Direction, kind and qualifier words: `input output inout ref parameter localparam specparam const var typedef default automatic static`. |
+| `connectionLabel` | modifier | Named port and parameter connection labels (`.a(x)`, `.W(2)`). |
+
+Both custom types carry no modifier bits. Every other keyword is `keyword`, and
+user typedef names are `type`. The custom types exist because VS Code styles
+`keyword` from `keyword.control` and `type`/`class`/`struct` from
+`entity.name.type*`, which would color these words like control flow or like
+user type names. VS Code gives a type it has no registration or scope mapping
+for no semantic style, so without a client contribution these words keep the
+editor's base style. A client extension maps them, for example in its
+`package.json` (use the language ids the client registers):
+
+```json
+"contributes": {
+  "semanticTokenTypes": [
+    { "id": "primitive", "description": "Built-in SystemVerilog data and net type words." },
+    { "id": "declarationKeyword", "description": "SystemVerilog direction, kind and qualifier words." }
+  ],
+  "semanticTokenScopes": [
+    { "language": "systemverilog", "scopes": {
+      "primitive": ["storage.type.primitive.systemverilog"],
+      "declarationKeyword": ["storage.modifier.systemverilog"] } },
+    { "language": "verilog", "scopes": {
+      "primitive": ["storage.type.primitive.verilog"],
+      "declarationKeyword": ["storage.modifier.verilog"] } }
+  ]
+}
+```
+
+Give neither type a `superType`: a theme rule for `keyword` or `type` would
+then win over the scope mapping. A user can instead set
+`editor.semanticTokenColorCustomizations.rules` for `primitive` and
+`declarationKeyword`. In Neovim the tokens reach the `@lsp.type.primitive` and
+`@lsp.type.declarationKeyword` highlight groups, which can be linked to, for
+example, `@type.builtin` and `@keyword.modifier`.
+
 Explorer tests live in `module_explorer/tests.rs`; feature-test helpers and domain
 suites in `features/tests.rs` and `features/tests/`. See
 [source layout](../../../docs/source_layout.md).

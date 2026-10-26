@@ -537,9 +537,22 @@ fn row_at(rows: &[SemanticRow], line: u64, character: u64) -> &SemanticRow {
         .unwrap_or_else(|| panic!("no semantic token at {line}:{character}: {rows:?}"))
 }
 
-fn has_row_at(rows: &[SemanticRow], line: u64, character: u64) -> bool {
-    rows.iter()
-        .any(|row| row.line == line && row.character == character)
+/// 0-based `(line, character)` of every whole-word occurrence of `word` in
+/// `text`, counting characters like LSP columns.
+fn word_positions(text: &str, word: &str) -> Vec<(u64, u64)> {
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$';
+    let mut out = Vec::new();
+    for (line, line_text) in text.lines().enumerate() {
+        let bytes = line_text.as_bytes();
+        for (at, _) in line_text.match_indices(word) {
+            if (at == 0 || !is_word(bytes[at - 1]))
+                && bytes.get(at + word.len()).is_none_or(|b| !is_word(*b))
+            {
+                out.push((line as u64, line_text[..at].encode_utf16().count() as u64));
+            }
+        }
+    }
+    out
 }
 
 /// 0-based `(line, character)` of the `occurrence`-th (0-based) match of
