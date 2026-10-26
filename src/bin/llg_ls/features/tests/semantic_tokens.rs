@@ -138,9 +138,9 @@ fn decode_named(tokens: &SemanticTokens) -> Vec<(u32, u32, u32, String)> {
 }
 
 /// Module and typedef names reach clients with the token types C/C++
-/// servers use, built-in type words are `primitive` and direction/kind words
-/// `declarationKeyword` (both without modifier bits), and other keywords stay
-/// `keyword`, through the committed-analysis path.
+/// servers use, grouped keyword words are `keyword` with exactly one llg
+/// modifier (`typeDefinition`, `direction` or `primitive`), and other keywords
+/// stay `keyword` without modifier bits, through the committed-analysis path.
 #[test]
 fn semantic_tokens_color_module_typedef_and_parameter_words_like_cpp() {
     let _guards = analysis_guards();
@@ -195,16 +195,31 @@ fn semantic_tokens_color_module_typedef_and_parameter_words_like_cpp() {
     ] {
         assert_eq!(type_of(line, word, nth), expected, "{word} on line {line}");
     }
-    for (line, word, expected) in [
-        (1, "typedef", "declarationKeyword"),
+    let modifier_bit = |name: &str| {
+        let index = crate::semantic_tokens::legend()
+            .token_modifiers
+            .iter()
+            .position(|m| m.as_str() == name)
+            .unwrap_or_else(|| panic!("{name} in legend"));
+        1u32 << index
+    };
+    for (line, word, modifier) in [
+        (1, "typedef", "typeDefinition"),
         (1, "logic", "primitive"),
-        (3, "parameter", "declarationKeyword"),
-        (3, "input", "declarationKeyword"),
-        (6, "localparam", "declarationKeyword"),
+        (3, "parameter", "primitive"),
+        (3, "input", "direction"),
+        (6, "localparam", "primitive"),
         (6, "int", "primitive"),
         (3, "int", "primitive"),
     ] {
-        assert_eq!(type_of(line, word, 0), expected, "{word} on line {line}");
+        assert_eq!(type_of(line, word, 0), "keyword", "{word} on line {line}");
+        assert_eq!(
+            modifiers_of(line, word, 0),
+            modifier_bit(modifier),
+            "{word} on line {line}"
+        );
+    }
+    for (line, word) in [(5, "module"), (11, "defparam")] {
         assert_eq!(modifiers_of(line, word, 0), 0, "{word} on line {line}");
     }
     for (line, word) in [(1, "byte_t"), (3, "byte_t"), (7, "nib_t"), (8, "nib_t")] {

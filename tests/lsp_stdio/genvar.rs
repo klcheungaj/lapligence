@@ -221,8 +221,8 @@ fn assert_genvar_tokens(
         let line_start = prefix.rfind('\n').map_or(0, |position| position + 1);
         let column = source[line_start..byte_index].encode_utf16().count() as u64;
         let row = row_at(&rows, line, column);
-        assert_eq!(row.token_type, "primitive", "{row:?}");
-        assert!(row.modifiers.is_empty(), "{row:?}");
+        assert_eq!(row.token_type, "keyword", "{row:?}");
+        assert_eq!(row.modifiers, ["primitive"], "{row:?}");
     }
 }
 

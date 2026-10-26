@@ -830,15 +830,16 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   never return shadow URIs. Tokens keep parameters/localparams
   `property.readonly` in dimensions/expressions/actuals, enum items
   `enumMember.readonly` (plus `declaration` at declarations, anonymous and
-  ranged enums included). Keyword-derived words are classified by text:
-  built-in data and net types (`logic`, `wire`, `int`, `genvar`, `void`, ...)
-  plus `struct`/`union`/`enum`, and directions, kind words and declaration
-  qualifiers (`input`, `parameter`, `localparam`, `const`, `var`, `typedef`,
-  `default`, `automatic`, `static`, ...), get the custom legend types
-  `primitive` and `declarationKeyword` without modifier bits at every
-  occurrence ([legend contract](../src/bin/llg_ls/readme.md#semantic-token-legend));
-  the remaining keywords stay `keyword`, and user typedef names keep `type`
-  (never `defaultLibrary`).
+  ranged enums included). Keyword-derived words are classified by text and
+  stay `keyword` with exactly one llg modifier at every occurrence:
+  `typedef`/`struct`/`union`/`enum` get `typeDefinition`, `input`/`output`/
+  `inout`/`ref` get `direction`, and built-in data and net types plus kind and
+  qualifier words (`logic`, `wire`, `int`, `genvar`, `parameter`, `const`,
+  `default`, `automatic`, `static`, ...) get `primitive`; the legend holds only
+  standard token types and appends these modifiers after `connectionLabel`
+  ([legend contract](../src/bin/llg_ls/readme.md#semantic-token-legend)).
+  The remaining keywords are `keyword` without modifier bits, and user typedef
+  names keep `type` (never `defaultLibrary`).
   A reference the capture could not resolve
   (unbound plain `identifier` lexical kind) gets no token, so the editor leaves
   it uncolored; declarations and kind-known references keep theirs. Resolved

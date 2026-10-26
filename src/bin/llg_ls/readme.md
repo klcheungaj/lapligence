@@ -22,47 +22,70 @@ without a definition.
 
 ## Semantic token legend
 
-The legend lists the standard LSP token types plus custom entries; clients
-receive them in `semanticTokensProvider.legend`. Custom entries:
+The legend lists only standard LSP token types; llg-specific modifiers follow
+the standard modifiers (their indices are stable). Clients receive both lists
+in `semanticTokensProvider.legend`. llg modifiers:
 
-| Entry | Kind | Words or symbols |
+| Modifier | Used with | Words or symbols |
 | --- | --- | --- |
-| `primitive` | type | Built-in data and net type words: `bit logic reg byte shortint int longint integer time shortreal real realtime string chandle event void signed unsigned genvar supply0 supply1 tri triand trior trireg tri0 tri1 uwire wire wand wor struct union enum`. |
-| `declarationKeyword` | type | Direction, kind and qualifier words: `input output inout ref parameter localparam specparam const var typedef default automatic static`. |
-| `connectionLabel` | modifier | Named port and parameter connection labels (`.a(x)`, `.W(2)`). |
+| `connectionLabel` | `function`, `property` | Named port and parameter connection labels (`.a(x)`, `.W(2)`). |
+| `typeDefinition` | `keyword` | `typedef struct union enum`. |
+| `direction` | `keyword` | `input output inout ref`. |
+| `primitive` | `keyword` | Built-in data and net types and declaration kind and qualifier words: `parameter localparam specparam const var bit logic reg byte shortint int longint integer time shortreal real realtime string chandle event void signed unsigned genvar supply0 supply1 tri triand trior trireg tri0 tri1 uwire wire wand wor default automatic static`. |
 
-Both custom types carry no modifier bits. Every other keyword is `keyword`, and
-user typedef names are `type`. The custom types exist because VS Code styles
-`keyword` from `keyword.control` and `type`/`class`/`struct` from
-`entity.name.type*`, which would color these words like control flow or like
-user type names. VS Code gives a type it has no registration or scope mapping
-for no semantic style, so without a client contribution these words keep the
-editor's base style. A client extension maps them, for example in its
-`package.json` (use the language ids the client registers):
+Each grouped word carries exactly its one keyword modifier at every occurrence.
+Every other keyword is `keyword` without modifier bits, and user typedef names
+are `type`. A client that knows no llg modifier still renders the words as
+keywords.
+
+VS Code matches a selector's modifiers by name, needs no registration for
+them, and lets a selector with more matching modifiers win. Without a mapping
+for `keyword.<modifier>`, a grouped word therefore falls back to the `keyword`
+default `keyword.control`, the same color as control flow; the server alone
+cannot change that. A client extension maps the three selectors to the scopes
+C/C++ grammars use for `int` and `const` (both `#569cd6` in Dark+ and Dark
+Modern), for example in its `package.json` (use the language ids the client
+registers):
 
 ```json
 "contributes": {
-  "semanticTokenTypes": [
-    { "id": "primitive", "description": "Built-in SystemVerilog data and net type words." },
-    { "id": "declarationKeyword", "description": "SystemVerilog direction, kind and qualifier words." }
+  "semanticTokenModifiers": [
+    { "id": "typeDefinition", "description": "SystemVerilog type-definition words." },
+    { "id": "direction", "description": "SystemVerilog port directions." },
+    { "id": "primitive", "description": "SystemVerilog built-in type and declaration words." }
   ],
   "semanticTokenScopes": [
     { "language": "systemverilog", "scopes": {
-      "primitive": ["storage.type.primitive.systemverilog"],
-      "declarationKeyword": ["storage.modifier.systemverilog"] } },
+      "keyword.typeDefinition": ["storage.type.systemverilog"],
+      "keyword.direction": ["storage.modifier.systemverilog"],
+      "keyword.primitive": ["storage.type.systemverilog"] } },
     { "language": "verilog", "scopes": {
-      "primitive": ["storage.type.primitive.verilog"],
-      "declarationKeyword": ["storage.modifier.verilog"] } }
+      "keyword.typeDefinition": ["storage.type.verilog"],
+      "keyword.direction": ["storage.modifier.verilog"],
+      "keyword.primitive": ["storage.type.verilog"] } }
   ]
 }
 ```
 
-Give neither type a `superType`: a theme rule for `keyword` or `type` would
-then win over the scope mapping. A user can instead set
-`editor.semanticTokenColorCustomizations.rules` for `primitive` and
-`declarationKeyword`. In Neovim the tokens reach the `@lsp.type.primitive` and
-`@lsp.type.declarationKeyword` highlight groups, which can be linked to, for
-example, `@type.builtin` and `@keyword.modifier`.
+The scope mapping works with the TextMate grammar disabled, because VS Code
+probes the scopes against the theme's token colors. Registering the modifiers
+only documents them; matching does not need it. A theme without a `storage`
+rule, or a theme or user semantic rule for `keyword` that sets the foreground,
+still leaves the words keyword-colored. A user without such an extension can
+set the colors directly in `settings.json`:
+
+```json
+"editor.semanticTokenColorCustomizations": {
+  "rules": {
+    "keyword.typeDefinition:systemverilog": "#569cd6",
+    "keyword.direction:systemverilog": "#569cd6",
+    "keyword.primitive:systemverilog": "#569cd6"
+  }
+}
+```
+
+The `:systemverilog` suffix limits a rule to one language id; repeat the rules
+for each id the client uses, or drop the suffix to apply them everywhere.
 
 Explorer tests live in `module_explorer/tests.rs`; feature-test helpers and domain
 suites in `features/tests.rs` and `features/tests/`. See

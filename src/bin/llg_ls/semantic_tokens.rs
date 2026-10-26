@@ -22,19 +22,22 @@ const TT_KEYWORD: u32 = 15;
 const TT_STRING: u32 = 18;
 const TT_NUMBER: u32 = 19;
 const TT_OPERATOR: u32 = 21;
-const TT_PRIMITIVE: u32 = 22;
-const TT_DECLARATION_KEYWORD: u32 = 23;
-/// Custom legend type for built-in data and net type words; clients without a
-/// mapping for it leave the word in their default style.
-const TT_PRIMITIVE_NAME: SemanticTokenType = SemanticTokenType::new("primitive");
-/// Custom legend type for direction, kind and qualifier words.
-const TT_DECLARATION_KEYWORD_NAME: SemanticTokenType = SemanticTokenType::new("declarationKeyword");
 const TM_DECLARATION: u32 = 0;
 const TM_READONLY: u32 = 2;
 const TM_DEFAULT_LIBRARY: u32 = 9;
 const TM_CONNECTION_LABEL: u32 = 10;
 const TM_CONNECTION_LABEL_NAME: SemanticTokenModifier =
     SemanticTokenModifier::new("connectionLabel");
+/// Keyword modifier for type-definition words (`typedef struct union enum`).
+const TM_TYPE_DEFINITION: u32 = 11;
+const TM_TYPE_DEFINITION_NAME: SemanticTokenModifier = SemanticTokenModifier::new("typeDefinition");
+/// Keyword modifier for port directions (`input output inout ref`).
+const TM_DIRECTION: u32 = 12;
+const TM_DIRECTION_NAME: SemanticTokenModifier = SemanticTokenModifier::new("direction");
+/// Keyword modifier for built-in data and net types and declaration kind and
+/// qualifier words.
+const TM_PRIMITIVE: u32 = 13;
+const TM_PRIMITIVE_NAME: SemanticTokenModifier = SemanticTokenModifier::new("primitive");
 
 pub fn legend() -> SemanticTokensLegend {
     SemanticTokensLegend {
@@ -61,8 +64,6 @@ pub fn legend() -> SemanticTokensLegend {
             SemanticTokenType::NUMBER,
             SemanticTokenType::REGEXP,
             SemanticTokenType::OPERATOR,
-            TT_PRIMITIVE_NAME,
-            TT_DECLARATION_KEYWORD_NAME,
         ],
         token_modifiers: vec![
             SemanticTokenModifier::DECLARATION,
@@ -76,6 +77,9 @@ pub fn legend() -> SemanticTokensLegend {
             SemanticTokenModifier::DOCUMENTATION,
             SemanticTokenModifier::DEFAULT_LIBRARY,
             TM_CONNECTION_LABEL_NAME,
+            TM_TYPE_DEFINITION_NAME,
+            TM_DIRECTION_NAME,
+            TM_PRIMITIVE_NAME,
         ],
     }
 }
@@ -89,15 +93,16 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         if is_unresolved_identifier(node.kind) {
             continue;
         }
-        let Some((mut token_type, modifiers)) = token_type_for(node.kind) else {
+        let Some((token_type, mut modifiers)) = token_type_for(node.kind) else {
             continue;
         };
         if token_type == TT_KEYWORD {
-            match node.name.as_deref().map(keyword_class) {
-                Some(KeywordClass::Primitive) => token_type = TT_PRIMITIVE,
-                Some(KeywordClass::Declaration) => token_type = TT_DECLARATION_KEYWORD,
-                Some(KeywordClass::Other) | None => {}
-            }
+            modifiers |= match node.name.as_deref().map(keyword_class) {
+                Some(KeywordClass::TypeDefinition) => 1 << TM_TYPE_DEFINITION,
+                Some(KeywordClass::Direction) => 1 << TM_DIRECTION,
+                Some(KeywordClass::Primitive) => 1 << TM_PRIMITIVE,
+                Some(KeywordClass::Other) | None => 0,
+            };
         }
         let length = node
             .name
@@ -158,35 +163,37 @@ fn is_unresolved_identifier(kind: i32) -> bool {
     kind == TOKEN_SLANG_IDENTIFIER
 }
 
-/// How a keyword token is presented. Only keyword-derived tokens are
-/// retyped; user type names keep their own token types.
+/// Which llg keyword modifier a keyword token carries. Only keyword tokens
+/// are classified; user type names keep their own token types.
 #[derive(Debug, PartialEq, Eq)]
 enum KeywordClass {
-    /// Built-in data and net types plus `struct`/`union`/`enum`: `primitive`.
+    /// `typedef struct union enum`: `typeDefinition`.
+    TypeDefinition,
+    /// Port directions: `direction`.
+    Direction,
+    /// Built-in data and net types plus declaration kind and qualifier words:
+    /// `primitive`.
     Primitive,
-    /// Port directions, kind words and declaration qualifiers:
-    /// `declarationKeyword`.
-    Declaration,
-    /// Every other keyword stays `keyword`.
+    /// Every other keyword is a plain `keyword` without modifier bits.
     Other,
 }
 
 /// Classify by keyword text, so words that are keywords in some editions only
-/// (for example `uwire`) need no edition knowledge here. Both groups use custom
-/// legend types because no standard type fits: VS Code styles `keyword` from
-/// `keyword.control` and `type`/`class`/`struct` from `entity.name.type*`, the
-/// looks reserved for control words and user type names. A client maps the
-/// custom types to its own scopes (the llg_ls readme has the contract).
+/// (for example `uwire`) need no edition knowledge here. The words keep the
+/// standard `keyword` type and gain an llg modifier instead of a custom type,
+/// so clients without a mapping still see a keyword. VS Code styles a plain
+/// `keyword` from `keyword.control`; a client maps `keyword.<modifier>`
+/// selectors to its own scopes (the llg_ls readme has the contract).
 fn keyword_class(name: &str) -> KeywordClass {
     match name {
+        "typedef" | "struct" | "union" | "enum" => KeywordClass::TypeDefinition,
+        "input" | "output" | "inout" | "ref" => KeywordClass::Direction,
         "bit" | "logic" | "reg" | "byte" | "shortint" | "int" | "longint" | "integer" | "time"
         | "shortreal" | "real" | "realtime" | "string" | "chandle" | "event" | "void"
         | "signed" | "unsigned" | "genvar" | "supply0" | "supply1" | "tri" | "triand" | "trior"
-        | "trireg" | "tri0" | "tri1" | "uwire" | "wire" | "wand" | "wor" | "struct" | "union"
-        | "enum" => KeywordClass::Primitive,
-        "input" | "output" | "inout" | "ref" | "parameter" | "localparam" | "specparam"
-        | "const" | "var" | "typedef" | "default" | "automatic" | "static" => {
-            KeywordClass::Declaration
+        | "trireg" | "tri0" | "tri1" | "uwire" | "wire" | "wand" | "wor" | "parameter"
+        | "localparam" | "specparam" | "const" | "var" | "default" | "automatic" | "static" => {
+            KeywordClass::Primitive
         }
         _ => KeywordClass::Other,
     }
@@ -360,8 +367,20 @@ mod tests {
         }
     }
 
-    /// Every word of the primitive group, as decided for presentation.
+    /// Type-definition words: `keyword` + `typeDefinition`.
+    const TYPE_DEFINITION_WORDS: &[&str] = &["typedef", "struct", "union", "enum"];
+
+    /// Port directions: `keyword` + `direction`.
+    const DIRECTION_WORDS: &[&str] = &["input", "output", "inout", "ref"];
+
+    /// Built-in data and net types plus declaration kind and qualifier words:
+    /// `keyword` + `primitive`.
     const PRIMITIVE_WORDS: &[&str] = &[
+        "parameter",
+        "localparam",
+        "specparam",
+        "const",
+        "var",
         "bit",
         "logic",
         "reg",
@@ -393,29 +412,21 @@ mod tests {
         "wire",
         "wand",
         "wor",
-        "struct",
-        "union",
-        "enum",
-    ];
-
-    /// Every word of the declaration group.
-    const DECLARATION_WORDS: &[&str] = &[
-        "input",
-        "output",
-        "inout",
-        "ref",
-        "parameter",
-        "localparam",
-        "specparam",
-        "const",
-        "var",
-        "typedef",
         "default",
         "automatic",
         "static",
     ];
 
-    /// One module that uses every word of both groups at least once.
+    /// Each word group with the modifier bitset its keyword tokens carry.
+    fn word_groups() -> [(&'static [&'static str], u32); 3] {
+        [
+            (TYPE_DEFINITION_WORDS, 1 << TM_TYPE_DEFINITION),
+            (DIRECTION_WORDS, 1 << TM_DIRECTION),
+            (PRIMITIVE_WORDS, 1 << TM_PRIMITIVE),
+        ]
+    }
+
+    /// One module that uses every word of the three groups at least once.
     const EVERY_WORD_SOURCE: &str = "module all_words #(parameter int P = 1)(input logic i, output wire o, inout tri t);\n  localparam int L = 2;\n  specparam S = 3;\n  bit b; reg r; byte by; shortint si; longint li; integer ig; time tm;\n  shortreal sr; real re; realtime rt; string sg; chandle ch; event ev;\n  logic signed [1:0] sn; logic unsigned [1:0] us;\n  genvar gv;\n  supply0 s0; supply1 s1; triand ta; trior tr; trireg tg; tri0 t0; tri1 t1;\n  uwire uw; wand wa; wor wo;\n  typedef struct packed { bit f; } st_t;\n  typedef union packed { bit f; } un_t;\n  typedef enum { E0 } en_t;\n  st_t user_s;\n  const int ci = 1;\n  var logic vl;\n  static int sv;\n  function automatic void fa(ref int x); endfunction\n  always @* case (sv) 0: ; default: ; endcase\n  assign o = i;\nendmodule\n";
 
     /// Zero-based `(line, column)` of every whole-word occurrence of `word`.
@@ -436,51 +447,62 @@ mod tests {
     }
 
     #[test]
-    fn custom_legend_types_sit_at_their_encoded_indices() {
+    fn keyword_modifiers_sit_at_their_encoded_indices_and_no_custom_types_remain() {
         let legend = legend();
         assert_eq!(legend.token_types[TT_KEYWORD as usize].as_str(), "keyword");
         assert_eq!(
-            legend.token_types[TT_PRIMITIVE as usize].as_str(),
-            "primitive"
-        );
-        assert_eq!(
-            legend.token_types[TT_DECLARATION_KEYWORD as usize].as_str(),
-            "declarationKeyword"
-        );
-        assert_eq!(
             legend.token_types.len(),
-            TT_DECLARATION_KEYWORD as usize + 1
+            TT_OPERATOR as usize + 1,
+            "only standard token types"
         );
+        assert_eq!(
+            legend.token_types.last().map(|t| t.as_str()),
+            Some("operator")
+        );
+        for (index, name) in [
+            (TM_CONNECTION_LABEL, "connectionLabel"),
+            (TM_TYPE_DEFINITION, "typeDefinition"),
+            (TM_DIRECTION, "direction"),
+            (TM_PRIMITIVE, "primitive"),
+        ] {
+            assert_eq!(legend.token_modifiers[index as usize].as_str(), name);
+        }
+        assert_eq!(legend.token_modifiers.len(), TM_PRIMITIVE as usize + 1);
     }
 
     #[test]
-    fn primitive_and_declaration_words_get_their_custom_types() {
-        let source = "module top(input logic signed [3:0] a, output wire b, inout tri c);\ninteger count; real value; string label;\nassign b = a[0];\nendmodule";
+    fn grouped_keywords_carry_their_llg_modifier() {
+        let source = "module top(input logic signed [3:0] a, output wire b, inout tri c);\ninteger count; real value; string label;\ntypedef enum { E0 } e_t;\nassign b = a[0];\nendmodule";
         let parsed = compile::parse_source(hp("/virtual/top.sv"), source, &[]).unwrap();
         let tokens = decode(source, &parsed.tokens[0].nodes);
-        let count = |token_type| tokens.iter().filter(|t| t.3 == token_type).count();
-        assert_eq!(count(TT_PRIMITIVE), 7, "{tokens:?}");
-        assert_eq!(count(TT_DECLARATION_KEYWORD), 3, "{tokens:?}");
-        assert_eq!(count(TT_KEYWORD), 3, "{tokens:?}");
-        for token in &tokens {
-            match token.3 {
-                TT_PRIMITIVE | TT_DECLARATION_KEYWORD => assert_eq!(token.4, 0, "{token:?}"),
-                TT_KEYWORD => assert!(
-                    matches!(token.2.as_str(), "module" | "endmodule" | "assign"),
-                    "{token:?}"
-                ),
-                _ => {}
-            }
+        let count = |bits| {
+            tokens
+                .iter()
+                .filter(|t| (t.3, t.4) == (TT_KEYWORD, bits))
+                .count()
+        };
+        assert_eq!(count(1 << TM_TYPE_DEFINITION), 2, "{tokens:?}");
+        assert_eq!(count(1 << TM_DIRECTION), 3, "{tokens:?}");
+        assert_eq!(count(1 << TM_PRIMITIVE), 7, "{tokens:?}");
+        assert_eq!(count(0), 3, "{tokens:?}");
+        for token in tokens.iter().filter(|t| (t.3, t.4) == (TT_KEYWORD, 0)) {
+            assert!(
+                matches!(token.2.as_str(), "module" | "endmodule" | "assign"),
+                "{token:?}"
+            );
         }
     }
 
     #[test]
     fn keyword_classes_cover_the_decided_word_lists() {
+        for word in TYPE_DEFINITION_WORDS {
+            assert_eq!(keyword_class(word), KeywordClass::TypeDefinition, "{word}");
+        }
+        for word in DIRECTION_WORDS {
+            assert_eq!(keyword_class(word), KeywordClass::Direction, "{word}");
+        }
         for word in PRIMITIVE_WORDS {
             assert_eq!(keyword_class(word), KeywordClass::Primitive, "{word}");
-        }
-        for word in DECLARATION_WORDS {
-            assert_eq!(keyword_class(word), KeywordClass::Declaration, "{word}");
         }
         for word in [
             "module", "type", "packed", "assign", "begin", "initial", "always", "case",
@@ -489,18 +511,16 @@ mod tests {
         }
     }
 
-    /// Every occurrence of every word of both groups carries its custom type
-    /// without modifier bits in every capture profile, while control keywords
-    /// stay `keyword` and the user typedef name stays `type`.
+    /// Every occurrence of every grouped word is `keyword` with exactly its
+    /// group's llg modifier in every capture profile, while control keywords
+    /// are `keyword` without modifier bits and the user typedef name stays
+    /// `type`.
     #[test]
-    fn every_decided_word_gets_its_custom_type_in_every_profile() {
+    fn every_decided_word_gets_its_keyword_modifier_in_every_profile() {
         let source = EVERY_WORD_SOURCE;
         let default_library = 1 << TM_DEFAULT_LIBRARY;
         for (profile, tokens) in profiles(source) {
-            for (words, expected) in [
-                (PRIMITIVE_WORDS, TT_PRIMITIVE),
-                (DECLARATION_WORDS, TT_DECLARATION_KEYWORD),
-            ] {
+            for (words, bits) in word_groups() {
                 for word in words {
                     let positions = word_positions(source, word);
                     assert!(!positions.is_empty(), "sample lacks {word}");
@@ -513,7 +533,7 @@ mod tests {
                             });
                         assert_eq!(
                             (token.3, token.4),
-                            (expected, 0),
+                            (TT_KEYWORD, bits),
                             "{profile} {word} at {line}:{col}"
                         );
                     }
@@ -832,7 +852,7 @@ endmodule\n";
     }
 
     #[test]
-    fn parameter_declaration_words_are_declaration_keywords_and_other_keywords_stay_keyword() {
+    fn parameter_declaration_words_are_primitive_keywords_and_other_keywords_stay_plain() {
         let source = "module sub #(parameter int A = 1)();\nendmodule\nmodule top #(parameter int P = 1, localparam int Q = 2)(input logic x);\n  parameter type T = int;\n  localparam R = 3;\n  specparam S = 4;\n  sub u ();\n  defparam u.A = 5;\n  if (P > 0) begin : g end\nendmodule\n";
         for (profile, tokens) in profiles(source) {
             let at = |line, word, nth| type_at(&tokens, source, line, word, nth);
@@ -843,11 +863,8 @@ endmodule\n";
                 (2, "module"),
                 (9, "endmodule"),
             ] {
-                assert_eq!(
-                    at(line, word, 0),
-                    TT_KEYWORD,
-                    "{profile} {word} line {line}"
-                );
+                let t = token_at(&tokens, source, line, word, 0);
+                assert_eq!((t.3, t.4), (TT_KEYWORD, 0), "{profile} {word} line {line}");
             }
             for (line, word) in [
                 (0, "parameter"),
@@ -860,7 +877,7 @@ endmodule\n";
                 let t = token_at(&tokens, source, line, word, 0);
                 assert_eq!(
                     (t.3, t.4),
-                    (TT_DECLARATION_KEYWORD, 0),
+                    (TT_KEYWORD, 1 << TM_PRIMITIVE),
                     "{profile} {word} line {line}"
                 );
             }
