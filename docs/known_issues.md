@@ -2296,7 +2296,8 @@ construct ([legend contract](../src/bin/llg_ls/readme.md#semantic-token-legend))
   the grave accent, and macro arguments (`v` in `` `ADD(v, 1) ``) are `macro`
   instead of their own kind. A use-site macro name is not sent as `macro`.
 - Macro formal arguments inside `` `define `` are `macro`, not `parameter`
-  (the C/C++ grammar analogue), and attribute names (`(* keep *)`) get no
+  (the C/C++ grammar analogue), the defined name lacks `declaration` (clangd
+  adds it to macro definitions), and attribute names (`(* keep *)`) get no
   token.
 
 ### Cause
@@ -2324,3 +2325,44 @@ Open a buffer containing `` `define W 8 `` and `localparam int L = `W;` and
 request `textDocument/semanticTokens/full` (empty result); run
 `llg_ls --dump-tokens` or the project stream on the same file for the use-site
 tokens.
+
+## Semantic token kinds that need more capture (llg_ls)
+
+**Status:** deferred by LS-TOK-9; the colors are already right in stock
+VS Code themes except where noted.
+
+### Symptom
+
+- Ports are `parameter` + `readonly` for every direction; only input ports
+  are read-only.
+- Subroutine arguments, struct fields and class properties are `variable`
+  and class methods `function` (clangd: `parameter`, `property`, `method`;
+  same Dark+ colors).
+- Modport, clocking-block, covergroup, sequence, property and constraint
+  names are `variable` at their declarations, and references to sequences
+  and properties get no token (they are unbound); a covergroup is a type
+  (`class`, `#4EC9B0`) and a sequence or property is callable (`function`,
+  `#DCDCAA`) in the analogue model.
+- A type-parameter connection label (`#(.T(int))`) is `variable` +
+  `readonly`, not `typeParameter`.
+- A generate `case (expr)` condition has no reference token.
+
+### Cause
+
+`TokenInfo` carries one lexical kind per token and these constructs share a
+kind (`LexicalKind::Port`, `Variable`, `Function`, `Identifier`) in the
+wrapper capture (`lexicalKindForSemantic` in `src/wrapper/slang_c_api.cpp`);
+the encoder (`src/bin/llg_ls/semantic_tokens.rs`) sees no direction, member
+or callable distinction.
+
+### Intended direction
+
+Carry the bound semantic detail (port direction, `Field`/`ClassProperty`,
+`FormalArgument`, class-scoped subroutine, covergroup, sequence, property)
+into the token kind, bind sequence and property references, and keep the
+symbol index and dump kind names unchanged.
+
+### Reproduce
+
+`llg_ls --dump-tokens` on a module with an output port, a class with a
+property and a method, and a named sequence referenced by an assertion.
