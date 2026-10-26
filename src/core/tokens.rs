@@ -44,6 +44,10 @@ pub const TOKEN_SLANG_BLOCK: i32 = -30;
 /// `default`, an if/case `unique`/`unique0`/`priority`, a disable statement's
 /// `disable`). Every other keyword is [`TOKEN_SLANG_KEYWORD`].
 pub const TOKEN_SLANG_CONTROL_KEYWORD: i32 = -31;
+/// Type parameter (`parameter type T`): a declaration (with
+/// [`TOKEN_DECLARATION_OFFSET`]) or a reference bound to it. Value parameters
+/// are [`TOKEN_SLANG_PARAMETER`].
+pub const TOKEN_SLANG_TYPE_PARAMETER: i32 = -32;
 pub const TOKEN_DECLARATION_OFFSET: i32 = -1_000;
 
 /// Source-positioned lexical item. Coordinates are one-based UTF-16 to retain
@@ -173,7 +177,11 @@ pub fn project_slang(
                 .and_then(|id| semantic.get(&id).map(|node| node.kind))
             {
                 Some(SemanticKind::Parameter) => TOKEN_SLANG_PARAMETER_CONNECTION_LABEL,
-                None if token.kind == LexicalKind::Parameter => {
+                None if matches!(
+                    token.kind,
+                    LexicalKind::Parameter | LexicalKind::TypeParameter
+                ) =>
+                {
                     TOKEN_SLANG_PARAMETER_CONNECTION_LABEL
                 }
                 _ => TOKEN_SLANG_PORT_CONNECTION_LABEL,
@@ -451,6 +459,7 @@ fn lexical_kind(kind: LexicalKind) -> i32 {
         LexicalKind::Genvar => TOKEN_GENVAR_REF,
         LexicalKind::SystemSubroutine => TOKEN_SLANG_SYSTEM_SUBROUTINE,
         LexicalKind::Block => TOKEN_SLANG_BLOCK,
+        LexicalKind::TypeParameter => TOKEN_SLANG_TYPE_PARAMETER,
     }
 }
 

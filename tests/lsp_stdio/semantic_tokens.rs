@@ -155,7 +155,8 @@ fn lsp_stdio_semantic_tokens_use_current_open_buffer_and_cached_unopened_snapsho
     client.shutdown();
 }
 
-/// Constant references keep their classes, built-in type and kind words are
+/// Parameters and localparams are constants (`variable` + `readonly`) at
+/// declarations, uses and override actuals, built-in type and kind words are
 /// `keyword` + `primitive` and directions `keyword` + `direction` (no other
 /// modifier bits) through project and isolated unsaved-buffer analysis,
 /// including references to missing children.
@@ -208,7 +209,7 @@ fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths(
                 let (line, col) = position_of(&buffer, name, occurrence);
                 let row = row_at(&rows, line, col);
                 assert_eq!(
-                    row.token_type, "property",
+                    row.token_type, "variable",
                     "opened={opened} {name}: {row:?}"
                 );
                 assert!(
@@ -627,8 +628,10 @@ endmodule\n";
     client.shutdown();
 }
 
-/// Connection labels carry `connectionLabel`; actuals retain their own symbol
-/// classification in both cached-project and isolated open-buffer responses.
+/// Connection labels carry `connectionLabel` and the type of the child
+/// declaration they name (`parameter` for ports, `variable` + `readonly` for
+/// parameters); actuals retain their own symbol classification in both
+/// cached-project and isolated open-buffer responses.
 #[test]
 fn lsp_stdio_semantic_tokens_mark_connection_labels_in_both_serving_paths() {
     let fixture = FixtureTree::new();
@@ -672,7 +675,7 @@ fn lsp_stdio_semantic_tokens_mark_connection_labels_in_both_serving_paths() {
     // identifier AFTER the dot, the actual at the identifier after the paren.
     let (clk_line, clk_dot_col) = position_of(&labels_text, ".clk", 0);
     let clk_row = row_at(&rows, clk_line, clk_dot_col + 1);
-    assert_eq!(clk_row.token_type, "function", "clk row: {clk_row:?}");
+    assert_eq!(clk_row.token_type, "parameter", "clk row: {clk_row:?}");
     assert!(
         clk_row
             .modifiers
@@ -740,25 +743,25 @@ endmodule\n"
     };
 
     // Single-line instantiation: param override labels …
-    let w_mods = expect_label(".W", 0, "property");
+    let w_mods = expect_label(".W", 0, "variable");
     assert!(
         w_mods.iter().any(|name| name == "readonly"),
         "override label keeps its readonly base modifier: {w_mods:?}"
     );
-    expect_label(".D", 0, "property");
+    expect_label(".D", 0, "variable");
     // … port labels …
-    expect_label(".clk", 0, "function");
-    expect_label(".q", 0, "function");
+    expect_label(".clk", 0, "parameter");
+    expect_label(".q", 0, "parameter");
     // … and the connected signals stay plain.
     expect_plain(&iso_buffer, ".D(wa)", 0, 3);
     expect_plain(&iso_buffer, ".clk(wa)", 0, 5);
     expect_plain(&iso_buffer, ".q(tq)", 0, 3);
 
     // Multi-line instantiation: identical marking on continuation lines.
-    expect_label(".W", 1, "property");
-    expect_label(".D", 1, "property");
-    expect_label(".clk", 1, "function");
-    expect_label(".q", 1, "function");
+    expect_label(".W", 1, "variable");
+    expect_label(".D", 1, "variable");
+    expect_label(".clk", 1, "parameter");
+    expect_label(".q", 1, "parameter");
     expect_plain(&iso_buffer, ".clk(wa)", 1, 5);
     expect_plain(&iso_buffer, ".q(tq)", 1, 3);
 
@@ -1006,6 +1009,96 @@ endmodule\n";
             "operator",
             "opened={opened}"
         );
+    }
+    client.shutdown();
+}
+
+/// Value parameters are `variable` + `readonly`, type parameters
+/// `typeParameter`, port labels `parameter` and parameter labels `variable` +
+/// `readonly` (labels with `connectionLabel`) in both serving paths. Compiler
+/// directives are `keyword` (conditional ones with `controlFlow`) in the
+/// project stream; the isolated open-buffer parse masks directive lines, so
+/// they have no token there.
+#[test]
+fn lsp_stdio_semantic_tokens_type_parameters_labels_and_directives_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("analogue_types.sv");
+    let uri = file_uri(&path);
+    let source = "`ifndef ANALOGUE_TYPES\n\
+`define ANALOGUE_TYPES\n\
+`endif\n\
+`timescale 1ns/1ps\n\
+module analogue_child #(parameter int P = 1, parameter type T = logic [1:0])(input T a, output logic y);\n\
+  T t_local;\n\
+  assign t_local = a;\n\
+  assign y = t_local[0] ^ P[0];\n\
+endmodule\n\
+module analogue_top;\n\
+  localparam int L = 2;\n\
+  logic [1:0] v; logic o;\n\
+  analogue_child #(.P(L)) u (.a(v), .y(o));\n\
+endmodule\n";
+    fs::write(&path, source).expect("write analogue-type fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+
+    for opened in [false, true] {
+        if opened {
+            client
+                .open(&path, source)
+                .expect("open analogue-type buffer");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("analogue-type semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        let expect = |needle: &str, offset: u64, token_type: &str, want: &[&str]| {
+            let (line, col) = position_of(source, needle, 0);
+            let row = row_at(&rows, line, col + offset);
+            assert_eq!(
+                row.token_type, token_type,
+                "opened={opened} {needle}: {row:?}"
+            );
+            assert_eq!(row.modifiers, want, "opened={opened} {needle}: {row:?}");
+        };
+        expect("P = 1", 0, "variable", &["declaration", "readonly"]);
+        expect("T = logic", 0, "typeParameter", &["declaration"]);
+        expect("T a", 0, "typeParameter", &[]);
+        expect("T t_local", 0, "typeParameter", &[]);
+        expect("P[0]", 0, "variable", &["readonly"]);
+        expect("L = 2", 0, "variable", &["declaration", "readonly"]);
+        expect(".P(L)", 1, "variable", &["readonly", "connectionLabel"]);
+        expect(".P(L)", 3, "variable", &["readonly"]);
+        expect(".a(v)", 1, "parameter", &["connectionLabel"]);
+        expect(".y(o)", 1, "parameter", &["connectionLabel"]);
+        for (needle, want) in [
+            ("`ifndef", &["controlFlow"][..]),
+            ("`define", &[]),
+            ("`endif", &["controlFlow"]),
+            ("`timescale", &[]),
+        ] {
+            let (line, col) = position_of(source, needle, 0);
+            if opened {
+                assert!(
+                    !rows
+                        .iter()
+                        .any(|row| row.line == line && row.character == col),
+                    "masked directive {needle} has a token: {rows:?}"
+                );
+            } else {
+                expect(needle, 0, "keyword", want);
+            }
+        }
     }
     client.shutdown();
 }

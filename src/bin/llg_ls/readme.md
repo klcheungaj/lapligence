@@ -22,13 +22,40 @@ without a definition.
 
 ## Semantic token legend
 
+Token types follow the clangd and rust-analyzer analogue of each construct,
+so stock VS Code themes color them like the C++ or Rust counterpart:
+
+| Construct | Type and modifiers | Analogue |
+| --- | --- | --- |
+| Module, program, class names | `class` | C++ class, Rust struct |
+| Interface names | `interface` | Java/TypeScript interface |
+| Packages, scope qualifiers, named and generate blocks | `namespace` | C++ namespace, Rust module |
+| Typedef names | `type` | C++ typedef |
+| Enum items | `enumMember` + `readonly` | C++ enumerator |
+| Parameters, localparams, specparams | `variable` + `readonly` | C++ `constexpr` variable, Rust `const` |
+| Type parameters | `typeParameter` | C++ template type parameter |
+| Ports | `parameter` + `readonly` | C++ function parameter |
+| Variables, nets, genvars, instances, members, arguments | `variable` | C++ variable |
+| Functions, tasks, methods | `function` | C++ function |
+| System tasks and functions, built-in methods | `function` + `defaultLibrary` | standard library function |
+| `` `define `` names | `macro` | C++ macro |
+| Port / parameter connection labels | `parameter` / `variable` + `readonly`, with `connectionLabel` | the named child declaration |
+| Keywords, compiler directives | `keyword` (llg modifiers below) | keywords |
+| Strings, numbers, operators | `string`, `number`, `operator` | literals, operators |
+
+Declarations add `declaration`. A `` `name `` that is not a compiler
+directive (a macro usage kept unexpanded inside a macro body) is `macro`.
+Comments, attribute names and unresolved references get no token. Macro use
+sites and open buffers that use macros have the gaps listed in
+[known issues](../../../docs/known_issues.md#semantic-tokens-around-text-macros-llg_ls).
+
 The legend lists only standard LSP token types; llg-specific modifiers follow
 the standard modifiers (their indices are stable). Clients receive both lists
 in `semanticTokensProvider.legend`. llg modifiers:
 
 | Modifier | Index | Used with | Words or symbols |
 | --- | --- | --- | --- |
-| `connectionLabel` | 10 | `function`, `property` | Named port and parameter connection labels (`.a(x)`, `.W(2)`). |
+| `connectionLabel` | 10 | `parameter`, `variable` | Named port and parameter connection labels (`.a(x)`, `.W(2)`). |
 | `typeDefinition` | 11 | `keyword` | `typedef struct union enum`. |
 | `direction` | 12 | `keyword` | `input output inout ref`. |
 | `primitive` | 13 | `keyword` | Built-in data and net types and declaration kind and qualifier words: `parameter localparam specparam const var bit logic reg byte shortint int longint integer time shortreal real realtime string chandle event void signed unsigned genvar supply0 supply1 tri triand trior trireg tri0 tri1 uwire wire wand wor default automatic static`. |
@@ -48,7 +75,10 @@ iff`, default bins) keeps `primitive`; the `disable` of `disable iff` and the
 `keyword` without modifier bits; `->` is an `operator`. `static` and
 `automatic` are always lifetime or class qualifiers. User typedef names are
 `type`. A client that knows no llg modifier still renders the words as
-keywords.
+keywords. Compiler directives (IEEE 1800-2009 22.1) are `keyword`, and the
+conditional-compilation directives `` `ifdef ``, `` `ifndef ``, `` `elsif ``,
+`` `else `` and `` `endif `` (22.6) add `controlFlow`; the isolated open-buffer
+parse masks directive lines, so open buffers carry no directive tokens.
 
 Named and labeled statement blocks and generate block names use the standard
 `namespace` type, like packages: the opening name (`begin : blk`, `lbl:`,

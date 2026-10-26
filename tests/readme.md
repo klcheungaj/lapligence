@@ -828,7 +828,10 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
 - Explorer roots honor configured tops/source graphs; keep recursive children,
   leaves, typed contents, declaration fallback and useful roots under truncation;
   never return shadow URIs. Tokens keep parameters/localparams
-  `property.readonly` in dimensions/expressions/actuals, enum items
+  `variable.readonly` in dimensions/expressions/actuals, type parameters
+  `typeParameter`, port labels `parameter.connectionLabel`, parameter labels
+  `variable.readonly.connectionLabel`, compiler directives `keyword` (with
+  `controlFlow` for conditional compilation; project stream only), enum items
   `enumMember.readonly` (plus `declaration` at declarations, anonymous and
   ranged enums included). Keyword-derived words are classified by text and
   stay `keyword` with exactly one llg modifier at every occurrence:

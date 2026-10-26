@@ -55,7 +55,9 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   the enclosing module/generate scope even when isolated analysis lacks the
   child; labels bind to child ports. Recovery is navigation-only under unchanged
   limits.
-- Typedef-name lexical kinds come from Slang's resolved symbol kind. Cast
+- Typedef-name and type-parameter lexical kinds come from Slang's resolved
+  symbol kind (`TypeAlias`, `TypeParameter`); value parameters keep the
+  parameter kind. Cast
   targets and `$bits`/`type()` operands bind to the alias their expression type
   resolved, only when the spelling matches.
 - Both capture modes bind, from the resolved AST, the name tokens no reference

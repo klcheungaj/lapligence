@@ -5926,6 +5926,9 @@ uint32_t lexicalKindForSemantic(const LlgSlangSemanticNode& node) {
   // the exact discriminator, as for genvars above.
   if (detail == "TypeAlias")
     return LLG_SLANG_LEXICAL_TYPE_ALIAS;
+  // Type and value parameters share the parameter kind.
+  if (detail == "TypeParameter")
+    return LLG_SLANG_LEXICAL_TYPE_PARAMETER;
   // Named and labeled statement blocks share the scope kind with instance
   // bodies, compilation units and clocking blocks; the symbol kind tells them
   // apart.

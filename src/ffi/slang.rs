@@ -1518,6 +1518,8 @@ pub enum LexicalKind {
     /// A named statement block, labeled statement or generate block name:
     /// its declaration, an end label, or a reference bound to the block.
     Block,
+    /// A type parameter's declaration or a reference bound to it.
+    TypeParameter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

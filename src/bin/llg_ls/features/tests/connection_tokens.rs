@@ -270,8 +270,8 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
         }
         panic!("no semantic token at {want_line}:{want_col}");
     };
-    assert_eq!(decode_sym(0, 28), "function/connectionLabel");
-    assert_eq!(decode_sym(0, 17), "property/readonly+connectionLabel");
+    assert_eq!(decode_sym(0, 28), "parameter/connectionLabel");
+    assert_eq!(decode_sym(0, 17), "variable/readonly+connectionLabel");
     assert_eq!(decode_sym(0, 32), "variable");
     assert_eq!(decode_sym(0, 19), "variable");
 }

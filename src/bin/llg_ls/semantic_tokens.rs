@@ -11,9 +11,9 @@ const TT_CLASS: u32 = 2;
 const TT_ENUM: u32 = 3;
 const TT_INTERFACE: u32 = 4;
 const TT_STRUCT: u32 = 5;
+const TT_TYPE_PARAMETER: u32 = 6;
 const TT_PARAMETER: u32 = 7;
 const TT_VARIABLE: u32 = 8;
-const TT_PROPERTY: u32 = 9;
 const TT_ENUM_MEMBER: u32 = 10;
 const TT_FUNCTION: u32 = 12;
 const TT_METHOD: u32 = 13;
@@ -99,9 +99,22 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         if is_unresolved_identifier(node.kind) {
             continue;
         }
-        let Some((token_type, mut modifiers)) = token_type_for(node.kind) else {
+        let Some((mut token_type, mut modifiers)) = token_type_for(node.kind) else {
             continue;
         };
+        // Directive and macro-usage words arrive as operator-kind tokens.
+        if node.kind == TOKEN_SLANG_OPERATOR {
+            match node.name.as_deref().and_then(backtick_word) {
+                Some(BacktickWord::Directive { conditional }) => {
+                    token_type = TT_KEYWORD;
+                    if conditional {
+                        modifiers |= 1 << TM_CONTROL_FLOW;
+                    }
+                }
+                Some(BacktickWord::MacroUsage) => token_type = TT_MACRO,
+                None => {}
+            }
+        }
         // The capture marks words that are control flow only at some syntax
         // positions (a case item `default`, an if/case `unique`, a disable
         // statement); their text class is never consulted.
@@ -176,6 +189,55 @@ fn is_unresolved_identifier(kind: i32) -> bool {
     kind == TOKEN_SLANG_IDENTIFIER
 }
 
+/// A grave-accent word in the token stream.
+#[derive(Debug, PartialEq, Eq)]
+enum BacktickWord {
+    /// An IEEE 1800-2009 22.1 compiler directive; `conditional` for the
+    /// conditional-compilation directives of 22.6.
+    Directive { conditional: bool },
+    /// Any other `` `name ``: a text macro usage (inside a macro body, where
+    /// the capture keeps it unexpanded).
+    MacroUsage,
+}
+
+/// Classify `` `name `` tokens. Compiler directives are keywords (`keyword`,
+/// with `controlFlow` for `` `ifdef ``, `` `ifndef ``, `` `elsif ``, `` `else ``
+/// and `` `endif ``, which select the source that is compiled, as `if` selects
+/// statements); every other grave-accent name is a macro usage. The macro
+/// quote and paste tokens (`` `" ``, ``` `` ```) are not words and keep the
+/// operator type.
+fn backtick_word(name: &str) -> Option<BacktickWord> {
+    let word = name.strip_prefix('`')?;
+    if !word
+        .bytes()
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+    {
+        return None;
+    }
+    Some(match word {
+        "ifdef" | "ifndef" | "elsif" | "else" | "endif" => {
+            BacktickWord::Directive { conditional: true }
+        }
+        "begin_keywords"
+        | "celldefine"
+        | "default_nettype"
+        | "define"
+        | "end_keywords"
+        | "endcelldefine"
+        | "include"
+        | "line"
+        | "nounconnected_drive"
+        | "pragma"
+        | "resetall"
+        | "timescale"
+        | "unconnected_drive"
+        | "undef"
+        | "undefineall" => BacktickWord::Directive { conditional: false },
+        _ => BacktickWord::MacroUsage,
+    })
+}
+
 /// Which llg keyword modifier a keyword token carries. Only keyword tokens
 /// are classified; user type names keep their own token types.
 #[derive(Debug, PartialEq, Eq)]
@@ -237,6 +299,11 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
         kind,
         TOKEN_SLANG_PARAMETER | TOKEN_SLANG_PORT | TOKEN_SLANG_ENUM_MEMBER
     );
+    // Types follow the clangd and rust-analyzer analogues (the llg_ls readme
+    // has the table): value parameters are constants (`variable` +
+    // `readonly`, VS Code `variable.other.constant`), type parameters are
+    // `typeParameter`, ports are `parameter`, and a named connection label
+    // takes the type of the child declaration it names.
     let connection = matches!(
         kind,
         TOKEN_SLANG_PORT_CONNECTION_LABEL | TOKEN_SLANG_PARAMETER_CONNECTION_LABEL
@@ -250,7 +317,8 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
         TOKEN_SLANG_ENUM => TT_ENUM,
         TOKEN_SLANG_ENUM_MEMBER => TT_ENUM_MEMBER,
         TOKEN_SLANG_TYPE_ALIAS => TT_TYPE,
-        TOKEN_SLANG_PARAMETER => TT_PROPERTY,
+        TOKEN_SLANG_PARAMETER => TT_VARIABLE,
+        TOKEN_SLANG_TYPE_PARAMETER => TT_TYPE_PARAMETER,
         TOKEN_SLANG_PORT => TT_PARAMETER,
         TOKEN_SLANG_VARIABLE
         | TOKEN_SLANG_NET
@@ -265,8 +333,8 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
         TOKEN_SLANG_STRING => TT_STRING,
         TOKEN_SLANG_NUMBER => TT_NUMBER,
         TOKEN_SLANG_OPERATOR => TT_OPERATOR,
-        TOKEN_SLANG_PORT_CONNECTION_LABEL => TT_FUNCTION,
-        TOKEN_SLANG_PARAMETER_CONNECTION_LABEL => TT_PROPERTY,
+        TOKEN_SLANG_PORT_CONNECTION_LABEL => TT_PARAMETER,
+        TOKEN_SLANG_PARAMETER_CONNECTION_LABEL => TT_VARIABLE,
         _ => return None,
     };
     let mut modifiers = 0;
@@ -391,7 +459,7 @@ mod tests {
             for node in &files[0].nodes {
                 if matches!(node.name.as_deref(), Some("WIDTH" | "LIMIT" | "DEPTH")) {
                     let (kind, modifiers) = token_type_for(node.kind).unwrap();
-                    assert_eq!(kind, TT_PROPERTY, "library={library_units} {node:?}");
+                    assert_eq!(kind, TT_VARIABLE, "library={library_units} {node:?}");
                     assert_ne!(modifiers & (1 << TM_READONLY), 0, "{node:?}");
                 }
             }
@@ -965,6 +1033,122 @@ module top; int q; initial unique if (q == 0) q = 1; endmodule
         assert_eq!((t.3, t.4), (TT_KEYWORD, 1 << TM_CONTROL_FLOW), "{tokens:?}");
     }
 
+    /// Value parameters, type parameters, connection labels and directives.
+    const DECLARATION_SOURCE: &str = "`define W 8\n\
+`define TWICE(x) (`W * (x))\n\
+`ifdef W\n\
+module child #(parameter int P = 1, parameter type T = logic [1:0])(input T a, output logic y);\n\
+  T t_local;\n\
+  assign y = a[0] ^ P[0];\n\
+endmodule\n\
+`else\n\
+module other; endmodule\n\
+`endif\n\
+`timescale 1ns/1ps\n\
+module top;\n\
+  localparam int L = 2;\n\
+  logic [1:0] v; logic o;\n\
+  child #(.P(L)) u (.a(v), .y(o));\n\
+endmodule\n";
+
+    /// Value parameters are constants (`variable` + `readonly`), type
+    /// parameters `typeParameter`, port labels `parameter` and parameter
+    /// labels `variable` + `readonly` (both with `connectionLabel`), compiler
+    /// directives `keyword` (conditional ones with `controlFlow`) and a macro
+    /// usage inside a macro body `macro`, in every capture profile.
+    #[test]
+    fn parameters_labels_and_directives_use_their_analogue_types_in_every_profile() {
+        let source = DECLARATION_SOURCE;
+        let declaration = 1 << TM_DECLARATION;
+        let readonly = 1 << TM_READONLY;
+        let label = 1 << TM_CONNECTION_LABEL;
+        let control = 1 << TM_CONTROL_FLOW;
+        for (profile, tokens) in profiles(source) {
+            let at = |line: u32, needle: &str| {
+                let col = source
+                    .lines()
+                    .nth(line as usize)
+                    .unwrap()
+                    .find(needle)
+                    .unwrap() as u32;
+                let t = tokens
+                    .iter()
+                    .find(|t| (t.0, t.1) == (line, col))
+                    .unwrap_or_else(|| panic!("{profile}: no token for {needle} on {line}"));
+                (t.2.clone(), t.3, t.4)
+            };
+            for (line, needle, text, token_type, bits) in [
+                (0, "`define", "`define", TT_KEYWORD, 0),
+                (1, "`define", "`define", TT_KEYWORD, 0),
+                (1, "`W", "`W", TT_MACRO, 0),
+                (2, "`ifdef", "`ifdef", TT_KEYWORD, control),
+                (7, "`else", "`else", TT_KEYWORD, control),
+                (9, "`endif", "`endif", TT_KEYWORD, control),
+                (10, "`timescale", "`timescale", TT_KEYWORD, 0),
+                (3, "P =", "P", TT_VARIABLE, declaration | readonly),
+                (3, "T =", "T", TT_TYPE_PARAMETER, declaration),
+                (3, "T a", "T", TT_TYPE_PARAMETER, 0),
+                (4, "T", "T", TT_TYPE_PARAMETER, 0),
+                (5, "P[0]", "P", TT_VARIABLE, readonly),
+                (12, "L =", "L", TT_VARIABLE, declaration | readonly),
+                (14, "L)", "L", TT_VARIABLE, readonly),
+                (14, "P(", "P", TT_VARIABLE, readonly | label),
+                (14, "a(", "a", TT_PARAMETER, label),
+                (14, "y(", "y", TT_PARAMETER, label),
+            ] {
+                assert_eq!(
+                    at(line, needle),
+                    (text.to_owned(), token_type, bits),
+                    "{profile}: {needle} on line {line}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn backtick_words_split_directives_macro_usages_and_quote_tokens() {
+        for word in [
+            "`begin_keywords",
+            "`celldefine",
+            "`default_nettype",
+            "`define",
+            "`end_keywords",
+            "`endcelldefine",
+            "`include",
+            "`line",
+            "`nounconnected_drive",
+            "`pragma",
+            "`resetall",
+            "`timescale",
+            "`unconnected_drive",
+            "`undef",
+            "`undefineall",
+        ] {
+            assert_eq!(
+                backtick_word(word),
+                Some(BacktickWord::Directive { conditional: false }),
+                "{word}"
+            );
+        }
+        for word in ["`ifdef", "`ifndef", "`elsif", "`else", "`endif"] {
+            assert_eq!(
+                backtick_word(word),
+                Some(BacktickWord::Directive { conditional: true }),
+                "{word}"
+            );
+        }
+        for word in ["`WIDTH", "`_m", "`__FILE__", "`definex"] {
+            assert_eq!(
+                backtick_word(word),
+                Some(BacktickWord::MacroUsage),
+                "{word}"
+            );
+        }
+        for word in ["`\"", "``", "`\\`\"", "`", "+", "define"] {
+            assert_eq!(backtick_word(word), None, "{word}");
+        }
+    }
+
     /// Named blocks, labeled statements and generate blocks: declarations
     /// (`namespace` + `declaration`), end labels and references
     /// (`namespace`). Instance names and members keep their kinds.
@@ -1121,7 +1305,7 @@ endmodule\n";
             assert_eq!(arguments.len(), 2);
             for node in arguments {
                 let (kind, modifiers) = token_type_for(node.kind).unwrap();
-                assert_ne!(kind, TT_PROPERTY, "library={library_units} {node:?}");
+                assert_eq!(kind, TT_VARIABLE, "library={library_units} {node:?}");
                 assert_eq!(modifiers & (1 << TM_READONLY), 0, "{node:?}");
             }
         }
@@ -1139,7 +1323,7 @@ endmodule\n";
         assert_eq!(parameters.len(), 7);
         for node in parameters {
             let (kind, modifiers) = token_type_for(node.kind).unwrap();
-            assert_eq!(kind, TT_PROPERTY, "{node:?}");
+            assert_eq!(kind, TT_VARIABLE, "{node:?}");
             assert_ne!(modifiers & (1 << TM_READONLY), 0, "{node:?}");
         }
     }
@@ -1301,7 +1485,13 @@ endmodule\n";
                     "{profile} {word} line {line}"
                 );
             }
-            assert_eq!(at(2, "P", 0), TT_PROPERTY, "{profile}");
+            assert_eq!(at(2, "P", 0), TT_VARIABLE, "{profile}");
+            let t = token_at(&tokens, source, 3, "T", 0);
+            assert_eq!(
+                (t.3, t.4),
+                (TT_TYPE_PARAMETER, 1 << TM_DECLARATION),
+                "{profile} T"
+            );
         }
     }
 

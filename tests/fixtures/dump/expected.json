@@ -29,7 +29,7 @@
       "line": 2,
       "module": "package:p",
       "role": "DECL",
-      "sym": "property/declaration+readonly",
+      "sym": "variable/declaration+readonly",
       "tokenKind": "parameter-declaration"
     },
     {
@@ -321,7 +321,7 @@
       "line": 6,
       "module": "tb",
       "role": "REF",
-      "sym": "function/connectionLabel",
+      "sym": "parameter/connectionLabel",
       "tokenKind": "port-connection-label"
     },
     {
@@ -361,7 +361,7 @@
       "line": 6,
       "module": "tb",
       "role": "REF",
-      "sym": "function/connectionLabel",
+      "sym": "parameter/connectionLabel",
       "tokenKind": "port-connection-label"
     },
     {
@@ -441,7 +441,7 @@
       "line": 7,
       "module": "tb",
       "role": "REF",
-      "sym": "function/connectionLabel",
+      "sym": "parameter/connectionLabel",
       "tokenKind": "port-connection-label"
     },
     {

@@ -273,7 +273,7 @@
       "line": 25,
       "module": "top",
       "role": "REF",
-      "sym": "function/connectionLabel",
+      "sym": "parameter/connectionLabel",
       "tokenKind": "port-connection-label"
     },
     {
@@ -313,7 +313,7 @@
       "line": 26,
       "module": "top",
       "role": "REF",
-      "sym": "function/connectionLabel",
+      "sym": "parameter/connectionLabel",
       "tokenKind": "port-connection-label"
     },
     {
@@ -353,7 +353,7 @@
       "line": 27,
       "module": "top",
       "role": "REF",
-      "sym": "function/connectionLabel",
+      "sym": "parameter/connectionLabel",
       "tokenKind": "port-connection-label"
     },
     {

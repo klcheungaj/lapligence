@@ -585,6 +585,7 @@ fn token_kind_name(kind: i32) -> String {
         (tokens::TOKEN_SLANG_ENUM_MEMBER, "enum-member"),
         (tokens::TOKEN_SLANG_TYPE_ALIAS, "type-alias"),
         (tokens::TOKEN_SLANG_PARAMETER, "parameter"),
+        (tokens::TOKEN_SLANG_TYPE_PARAMETER, "type-parameter"),
         (tokens::TOKEN_SLANG_PORT, "port"),
         (tokens::TOKEN_SLANG_VARIABLE, "variable"),
         (tokens::TOKEN_SLANG_NET, "net"),

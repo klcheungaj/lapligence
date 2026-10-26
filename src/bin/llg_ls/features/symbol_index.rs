@@ -362,7 +362,7 @@ impl SymbolIndex {
                         port_names.insert(nm.clone());
                         signal_names.insert(nm);
                     }
-                    tokens::TOKEN_SLANG_PARAMETER => {
+                    tokens::TOKEN_SLANG_PARAMETER | tokens::TOKEN_SLANG_TYPE_PARAMETER => {
                         param_names.insert(nm.clone());
                         signal_names.insert(nm);
                     }
@@ -454,8 +454,10 @@ impl SymbolIndex {
                 let Some((line1, col1)) = ft
                     .and_then(|ft| {
                         ft.nodes.iter().find(|n| {
-                            tokens::token_base_kind(n.kind).0 == tokens::TOKEN_SLANG_PARAMETER
-                                && clean_name(n.name.as_deref().unwrap_or("")) == param.name
+                            matches!(
+                                tokens::token_base_kind(n.kind).0,
+                                tokens::TOKEN_SLANG_PARAMETER | tokens::TOKEN_SLANG_TYPE_PARAMETER
+                            ) && clean_name(n.name.as_deref().unwrap_or("")) == param.name
                         })
                     })
                     .map(|n| (n.line, n.col))
@@ -1653,7 +1655,7 @@ pub(super) fn classify_token(
         | tokens::TOKEN_SLANG_UNION
         | tokens::TOKEN_SLANG_ENUM => Some(SymKind::Typedef),
         tokens::TOKEN_SLANG_ENUM_MEMBER => Some(SymKind::EnumConst),
-        tokens::TOKEN_SLANG_PARAMETER => Some(SymKind::Param),
+        tokens::TOKEN_SLANG_PARAMETER | tokens::TOKEN_SLANG_TYPE_PARAMETER => Some(SymKind::Param),
         tokens::TOKEN_SLANG_PORT => Some(SymKind::Port),
         tokens::TOKEN_SLANG_NET => Some(SymKind::Net),
         tokens::TOKEN_SLANG_VARIABLE

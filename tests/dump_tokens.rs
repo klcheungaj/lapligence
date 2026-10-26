@@ -177,7 +177,7 @@ fn duplicate_identifiers_bind_to_their_own_module() {
 /// module, even where parent and child declare identical names.
 ///
 /// Semantic surface: the label rows carry the `connectionLabel` modifier
-/// (`sym=function/connectionLabel`) while the connected ACTUAL rows stay
+/// (`sym=parameter/connectionLabel`) while the connected ACTUAL rows stay
 /// plain `variable` with no `connectionLabel`.
 #[test]
 fn port_connections_bind_labels_to_child_ports_and_actuals_to_parent_scope() {
@@ -214,7 +214,7 @@ fn port_connections_bind_labels_to_child_ports_and_actuals_to_parent_scope() {
 
     // Highlighting: labels carry `connectionLabel`, actuals do not.
     for loc in ["tb.sv:6:11", "tb.sv:6:21", "tb.sv:7:11"] {
-        dump.assert_rows(loc, &["sym=function/connectionLabel"]);
+        dump.assert_rows(loc, &["sym=parameter/connectionLabel"]);
     }
     for loc in ["tb.sv:6:15", "tb.sv:6:23", "tb.sv:7:15"] {
         dump.assert_rows_without(loc, &["connectionLabel"]);
@@ -509,7 +509,7 @@ fn module_inst_json_golden_matches_fixture() {
                     true,
                     false,
                     "port-connection-label",
-                    "function/connectionLabel",
+                    "parameter/connectionLabel",
                 ),
                 "connection" => (false, true, "port", "parameter/readonly"),
                 _ => panic!("unknown via {want_via}"),

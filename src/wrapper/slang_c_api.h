@@ -1310,7 +1310,10 @@ enum {
   /* A named statement block, labeled statement or generate block name
    * (ABI v43): a declaration, an end label, or a reference bound to the
    * block (`disable blk`, the `g` of `g[0].x`). Instances keep their kind. */
-  LLG_SLANG_LEXICAL_BLOCK = 26
+  LLG_SLANG_LEXICAL_BLOCK = 26,
+  /* Type parameter (`parameter type T`, ABI v44): the declaration and every
+   * reference bound to it. Value parameters stay LLG_SLANG_LEXICAL_PARAMETER. */
+  LLG_SLANG_LEXICAL_TYPE_PARAMETER = 27
 };
 
 enum {
