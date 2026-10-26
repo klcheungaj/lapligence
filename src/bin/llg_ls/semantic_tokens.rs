@@ -96,7 +96,9 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         let Some((token_type, mut modifiers)) = token_type_for(node.kind) else {
             continue;
         };
-        if token_type == TT_KEYWORD {
+        // A control-flow keyword (a case item `default`) stays plain even
+        // when the same word is grouped elsewhere.
+        if node.kind == TOKEN_SLANG_KEYWORD {
             modifiers |= match node.name.as_deref().map(keyword_class) {
                 Some(KeywordClass::TypeDefinition) => 1 << TM_TYPE_DEFINITION,
                 Some(KeywordClass::Direction) => 1 << TM_DIRECTION,
@@ -157,8 +159,9 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
 /// A reference the capture could not resolve to any symbol is lexically a
 /// plain identifier. It gets no token, so the editor leaves it uncolored
 /// instead of painting a name that has no definition as a variable. Plain
-/// identifier declarations (instance names, labels) and bound references to
-/// them (`TOKEN_SLANG_BOUND_IDENTIFIER`) are separate kinds and keep theirs.
+/// identifier declarations (instance names), bound references to them
+/// (`TOKEN_SLANG_BOUND_IDENTIFIER`) and block names (`TOKEN_SLANG_BLOCK`) are
+/// separate kinds and keep theirs.
 fn is_unresolved_identifier(kind: i32) -> bool {
     kind == TOKEN_SLANG_IDENTIFIER
 }
@@ -181,7 +184,9 @@ enum KeywordClass {
 /// Classify by keyword text, so words that are keywords in some editions only
 /// (for example `uwire`) need no edition knowledge here. The words keep the
 /// standard `keyword` type and gain an llg modifier instead of a custom type,
-/// so clients without a mapping still see a keyword. VS Code styles a plain
+/// so clients without a mapping still see a keyword. A case item `default` is
+/// control flow by its syntax position and arrives as
+/// `TOKEN_SLANG_CONTROL_KEYWORD`, which is never classified. VS Code styles a plain
 /// `keyword` from `keyword.control`; a client maps `keyword.<modifier>`
 /// selectors to its own scopes (the llg_ls readme has the contract).
 fn keyword_class(name: &str) -> KeywordClass {
@@ -212,7 +217,7 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
     );
     let token_type = match kind {
         TOKEN_SLANG_MODULE | TOKEN_SLANG_PROGRAM => TT_CLASS,
-        TOKEN_SLANG_PACKAGE => TT_NAMESPACE,
+        TOKEN_SLANG_PACKAGE | TOKEN_SLANG_BLOCK => TT_NAMESPACE,
         TOKEN_SLANG_INTERFACE => TT_INTERFACE,
         TOKEN_SLANG_CLASS => TT_CLASS,
         TOKEN_SLANG_STRUCT | TOKEN_SLANG_UNION => TT_STRUCT,
@@ -230,7 +235,7 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
         TOKEN_SLANG_FUNCTION | TOKEN_SLANG_TASK | TOKEN_SLANG_SYSTEM_SUBROUTINE => TT_FUNCTION,
         TOKEN_SLANG_METHOD => TT_METHOD,
         TOKEN_SLANG_MACRO => TT_MACRO,
-        TOKEN_SLANG_KEYWORD => TT_KEYWORD,
+        TOKEN_SLANG_KEYWORD | TOKEN_SLANG_CONTROL_KEYWORD => TT_KEYWORD,
         TOKEN_SLANG_STRING => TT_STRING,
         TOKEN_SLANG_NUMBER => TT_NUMBER,
         TOKEN_SLANG_OPERATOR => TT_OPERATOR,
@@ -427,7 +432,7 @@ mod tests {
     }
 
     /// One module that uses every word of the three groups at least once.
-    const EVERY_WORD_SOURCE: &str = "module all_words #(parameter int P = 1)(input logic i, output wire o, inout tri t);\n  localparam int L = 2;\n  specparam S = 3;\n  bit b; reg r; byte by; shortint si; longint li; integer ig; time tm;\n  shortreal sr; real re; realtime rt; string sg; chandle ch; event ev;\n  logic signed [1:0] sn; logic unsigned [1:0] us;\n  genvar gv;\n  supply0 s0; supply1 s1; triand ta; trior tr; trireg tg; tri0 t0; tri1 t1;\n  uwire uw; wand wa; wor wo;\n  typedef struct packed { bit f; } st_t;\n  typedef union packed { bit f; } un_t;\n  typedef enum { E0 } en_t;\n  st_t user_s;\n  const int ci = 1;\n  var logic vl;\n  static int sv;\n  function automatic void fa(ref int x); endfunction\n  always @* case (sv) 0: ; default: ; endcase\n  assign o = i;\nendmodule\n";
+    const EVERY_WORD_SOURCE: &str = "module all_words #(parameter int P = 1)(input logic i, output wire o, inout tri t);\n  localparam int L = 2;\n  specparam S = 3;\n  bit b; reg r; byte by; shortint si; longint li; integer ig; time tm;\n  shortreal sr; real re; realtime rt; string sg; chandle ch; event ev;\n  logic signed [1:0] sn; logic unsigned [1:0] us;\n  genvar gv;\n  supply0 s0; supply1 s1; triand ta; trior tr; trireg tg; tri0 t0; tri1 t1;\n  uwire uw; wand wa; wor wo;\n  typedef struct packed { bit f; } st_t;\n  typedef union packed { bit f; } un_t;\n  typedef enum { E0 } en_t;\n  st_t user_s;\n  const int ci = 1;\n  var logic vl;\n  static int sv;\n  function automatic void fa(ref int x); endfunction\n  always @* case (sv) 0: user_s = '{default: 0}; endcase\n  assign o = i;\nendmodule\n";
 
     /// Zero-based `(line, column)` of every whole-word occurrence of `word`.
     fn word_positions(source: &str, word: &str) -> Vec<(u32, u32)> {
@@ -579,7 +584,8 @@ mod tests {
     }
 
     /// Names that resolve keep their real kinds, also inside a block that an
-    /// undeclared name makes invalid: package qualifiers, `disable` labels,
+    /// undeclared name makes invalid: package qualifiers, `disable` labels
+    /// and generate block steps (`namespace`),
     /// hierarchical path steps and system subroutine names. Only the
     /// undeclared name has no token.
     #[test]
@@ -646,7 +652,7 @@ endmodule\n";
                     ("v", 0, TT_VARIABLE, 0),
                     ("pk", 1, TT_NAMESPACE, 0),
                     ("pv", 0, TT_VARIABLE, 0),
-                    ("gb", 0, TT_VARIABLE, 0),
+                    ("gb", 0, TT_NAMESPACE, 0),
                     ("q", 0, TT_VARIABLE, 0),
                     ("u0", 0, TT_VARIABLE, 0),
                     ("o", 0, TT_PARAMETER, readonly),
@@ -682,8 +688,201 @@ endmodule\n";
             );
             for (line, label) in [(11, "bad"), (16, "good")] {
                 let t = token(line, label, 0);
-                assert_eq!((t.3, t.4), (TT_VARIABLE, 0), "{profile} disable {label}");
+                assert_eq!((t.3, t.4), (TT_NAMESPACE, 0), "{profile} disable {label}");
             }
+        }
+    }
+
+    /// Every `default` of the sample by zero-based line: case, case-inside,
+    /// case-generate, property-case and randsequence-case items are control
+    /// flow; assignment-pattern keys, `default clocking`, `default disable
+    /// iff` and default bins are not.
+    const DEFAULT_SOURCE: &str = "module top;\n\
+  typedef struct packed { logic [3:0] a; logic [3:0] b; } st_t;\n\
+  logic [7:0] q; st_t s; int arr [4]; logic clk;\n\
+  default clocking cb @(posedge clk); endclocking\n\
+  default disable iff (clk);\n\
+  covergroup cg @(posedge clk); coverpoint q { bins lo = {0}; bins other = default; } endgroup\n\
+  case (1) 0: begin : c0 logic z; end default: begin : cd logic z; end endcase\n\
+  always @(posedge clk) begin\n\
+    case (q) 8'd0: q = 1; default: q = 0; endcase\n\
+    case (q) inside [0:3]: q = 2; default q = 3; endcase\n\
+    s = '{default: 0}; s = '{a: 1, default: 0}; arr = '{default: 5};\n\
+  end\n\
+  property p; case (q) 0: clk; default: 1; endcase endproperty\n\
+  initial randsequence (main) main : case (q) 0: ra; default: rb; endcase; ra : {}; rb : {}; endsequence\n\
+endmodule\n";
+
+    /// Lines of [`DEFAULT_SOURCE`] whose `default` is a case item label.
+    const CONTROL_DEFAULT_LINES: &[u32] = &[6, 8, 9, 12, 13];
+
+    #[test]
+    fn case_item_default_is_a_plain_keyword_and_every_other_default_is_primitive_in_every_profile()
+    {
+        let source = DEFAULT_SOURCE;
+        let primitive = 1 << TM_PRIMITIVE;
+        let positions = word_positions(source, "default");
+        assert_eq!(positions.len(), 11, "sample defaults");
+        for (profile, tokens) in profiles(source) {
+            for &(line, col) in &positions {
+                let token = tokens
+                    .iter()
+                    .find(|t| (t.0, t.1) == (line, col))
+                    .unwrap_or_else(|| panic!("{profile}: no token for default at {line}:{col}"));
+                let bits = if CONTROL_DEFAULT_LINES.contains(&line) {
+                    0
+                } else {
+                    primitive
+                };
+                assert_eq!(
+                    (token.3, token.4),
+                    (TT_KEYWORD, bits),
+                    "{profile}: default at {line}:{col}"
+                );
+            }
+            // The other grouped words keep their modifier next to a control
+            // `default`.
+            let t = token_at(&tokens, source, 2, "logic", 0);
+            assert_eq!((t.3, t.4), (TT_KEYWORD, primitive), "{profile}");
+            let t = token_at(&tokens, source, 8, "case", 0);
+            assert_eq!((t.3, t.4), (TT_KEYWORD, 0), "{profile}");
+        }
+    }
+
+    /// Named blocks, labeled statements and generate blocks: declarations
+    /// (`namespace` + `declaration`), end labels and references
+    /// (`namespace`). Instance names and members keep their kinds.
+    const BLOCK_SOURCE: &str = "module sub(output logic o); assign o = 1'b0; endmodule\n\
+module top;\n\
+  logic q;\n\
+  sub u0(.o());\n\
+  for (genvar i = 0; i < 2; i++) begin : g\n\
+    logic x;\n\
+  end : g\n\
+  if (1) begin : gi logic y; end\n\
+  initial begin : blk\n\
+    fork : f\n\
+      q = g[0].x;\n\
+    join : f\n\
+    lbl: begin\n\
+      q = top.g[1].x;\n\
+      q = gi.y | u0.o;\n\
+    end : lbl\n\
+    l2: assert (q == 0);\n\
+    disable lbl;\n\
+    disable top.blk;\n\
+  end : blk\n\
+endmodule\n";
+
+    #[test]
+    fn block_names_are_namespaces_at_declarations_end_labels_and_references_in_every_profile() {
+        let source = BLOCK_SOURCE;
+        let declaration = 1 << TM_DECLARATION;
+        let declarations = [
+            (4, "g", 0),
+            (7, "gi", 0),
+            (8, "blk", 0),
+            (9, "f", 0),
+            (12, "lbl", 0),
+            (16, "l2", 0),
+        ];
+        let end_labels = [(6, "g", 0), (11, "f", 0), (15, "lbl", 0), (19, "blk", 0)];
+        let references = [
+            (10, "g", 0),
+            (13, "g", 0),
+            (14, "gi", 0),
+            (17, "lbl", 0),
+            (18, "blk", 0),
+        ];
+        for (profile, tokens) in profiles(source) {
+            for (line, word, nth) in declarations {
+                let t = token_at(&tokens, source, line, word, nth);
+                assert_eq!(
+                    (t.3, t.4),
+                    (TT_NAMESPACE, declaration),
+                    "{profile} declaration {word} on line {line}"
+                );
+            }
+            for (line, word, nth) in end_labels {
+                let t = token_at(&tokens, source, line, word, nth);
+                assert_eq!(
+                    (t.3, t.4),
+                    (TT_NAMESPACE, 0),
+                    "{profile} end label {word} on line {line}"
+                );
+            }
+            for (line, word, nth) in references {
+                // Library-unit capture elaborates no hierarchy, so a
+                // hierarchical step may have no token there (see above).
+                let text = source.lines().nth(line).unwrap();
+                let hierarchical = text.contains('.');
+                if hierarchical && profile == "library_units=true" {
+                    let col = text.find(word).unwrap() as u32;
+                    if let Some(t) = tokens.iter().find(|t| (t.0, t.1) == (line as u32, col)) {
+                        assert_eq!((t.3, t.4), (TT_NAMESPACE, 0), "{profile} {word}");
+                    }
+                    continue;
+                }
+                let t = token_at(&tokens, source, line, word, nth);
+                assert_eq!(
+                    (t.3, t.4),
+                    (TT_NAMESPACE, 0),
+                    "{profile} reference {word} on line {line}"
+                );
+            }
+            // Instances and the module are not blocks.
+            let t = token_at(&tokens, source, 3, "u0", 0);
+            assert_eq!(t.3, TT_VARIABLE, "{profile} instance declaration");
+            let t = token_at(&tokens, source, 5, "x", 0);
+            assert_eq!(t.3, TT_VARIABLE, "{profile} generate member");
+            if profile != "library_units=true" {
+                let t = token_at(&tokens, source, 14, "u0", 0);
+                assert_eq!(t.3, TT_VARIABLE, "{profile} instance reference");
+                let t = token_at(&tokens, source, 18, "top", 0);
+                assert_ne!(t.3, TT_NAMESPACE, "{profile} hierarchical top");
+            }
+        }
+    }
+
+    /// Full capture binds an end label to its block, so navigation from
+    /// `end : blk` reaches the opening name.
+    #[test]
+    fn block_end_labels_bind_to_their_declaration() {
+        let source = BLOCK_SOURCE;
+        let compiled = compile::compile(&CompileOpts {
+            sources: vec![OwnedSource::compilation_unit(hp("/virtual/top.sv"), source)],
+            ..Default::default()
+        })
+        .unwrap();
+        let (_, bindings, _, _, _) = llg::core::tokens::project_slang(
+            &compiled.snapshot,
+            &[(hp("/virtual/top.sv"), source)],
+        );
+        let column = |line: usize, word: &str| {
+            let text = source.lines().nth(line).unwrap();
+            text.rfind(word).unwrap() as u32
+        };
+        for (end_line, decl_line, word) in
+            [(6, 4, "g"), (11, 9, "f"), (15, 12, "lbl"), (19, 8, "blk")]
+        {
+            let key = (
+                hp("/virtual/top.sv").to_owned(),
+                end_line as u32,
+                column(end_line, word),
+            );
+            let target = bindings
+                .get(&key)
+                .unwrap_or_else(|| panic!("end label {word} unbound: {bindings:?}"));
+            let decl_col = if word == "lbl" {
+                source.lines().nth(decl_line).unwrap().find(word).unwrap() as u32
+            } else {
+                column(decl_line, word)
+            };
+            assert_eq!(
+                (target.name.as_str(), target.line0, target.col0),
+                (word, decl_line as u32, decl_col),
+                "end label {word}"
+            );
         }
     }
 

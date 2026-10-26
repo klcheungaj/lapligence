@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 42u
+#define LLG_SLANG_ABI_VERSION 43u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1306,7 +1306,11 @@ enum {
   LLG_SLANG_LEXICAL_GENVAR = 24,
   /* A system task or function name, or a built-in method name (ABI v42):
    * resolved by Slang to a built-in subroutine, so it has no semantic target. */
-  LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE = 25
+  LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE = 25,
+  /* A named statement block, labeled statement or generate block name
+   * (ABI v43): a declaration, an end label, or a reference bound to the
+   * block (`disable blk`, the `g` of `g[0].x`). Instances keep their kind. */
+  LLG_SLANG_LEXICAL_BLOCK = 26
 };
 
 enum {
@@ -1323,7 +1327,11 @@ enum {
   LLG_SLANG_LEXICAL_SKIPPED = 1u << 1,
   LLG_SLANG_LEXICAL_MACRO_EXPANSION = 1u << 2,
   LLG_SLANG_LEXICAL_DIRECTIVE = 1u << 3,
-  LLG_SLANG_LEXICAL_UNIT_FORWARD_REFERENCE = 1u << 4
+  LLG_SLANG_LEXICAL_UNIT_FORWARD_REFERENCE = 1u << 4,
+  /* A keyword whose syntax position makes it control flow (ABI v43): the
+   * `default` of a case, case-generate, randsequence-case or property-case
+   * item. Every other use of the same keyword leaves the bit clear. */
+  LLG_SLANG_LEXICAL_CONTROL_FLOW = 1u << 5
 };
 
 typedef struct {

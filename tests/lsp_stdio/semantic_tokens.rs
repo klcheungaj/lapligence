@@ -365,7 +365,7 @@ fn lsp_stdio_semantic_tokens_send_grouped_words_as_keywords_with_llg_modifiers()
     let root = fixture.root("root-a");
     let path = root.join("keyword_words.sv");
     let uri = file_uri(&path);
-    let source = "module all_words #(parameter int P = 1)(input logic i, output wire o, inout tri t);\n  localparam int L = 2;\n  specparam S = 3;\n  bit b; reg r; byte by; shortint si; longint li; integer ig; time tm;\n  shortreal sr; real re; realtime rt; string sg; chandle ch; event ev;\n  logic signed [1:0] sn; logic unsigned [1:0] us;\n  genvar gv;\n  supply0 s0; supply1 s1; triand ta; trior tr; trireg tg; tri0 t0; tri1 t1;\n  uwire uw; wand wa; wor wo;\n  typedef struct packed { bit f; } st_t;\n  typedef union packed { bit f; } un_t;\n  typedef enum { E0 } en_t;\n  st_t user_s;\n  const int ci = 1;\n  var logic vl;\n  static int sv;\n  function automatic void fa(ref int x); endfunction\n  always @* case (sv) 0: ; default: ; endcase\n  assign o = i;\nendmodule\n";
+    let source = "module all_words #(parameter int P = 1)(input logic i, output wire o, inout tri t);\n  localparam int L = 2;\n  specparam S = 3;\n  bit b; reg r; byte by; shortint si; longint li; integer ig; time tm;\n  shortreal sr; real re; realtime rt; string sg; chandle ch; event ev;\n  logic signed [1:0] sn; logic unsigned [1:0] us;\n  genvar gv;\n  supply0 s0; supply1 s1; triand ta; trior tr; trireg tg; tri0 t0; tri1 t1;\n  uwire uw; wand wa; wor wo;\n  typedef struct packed { bit f; } st_t;\n  typedef union packed { bit f; } un_t;\n  typedef enum { E0 } en_t;\n  st_t user_s;\n  const int ci = 1;\n  var logic vl;\n  static int sv;\n  function automatic void fa(ref int x); endfunction\n  always @* case (sv) 0: user_s = '{default: 0}; endcase\n  assign o = i;\nendmodule\n";
     let type_definition = ["typedef", "struct", "union", "enum"];
     let direction = ["input", "output", "inout", "ref"];
     let primitive = [
@@ -583,14 +583,14 @@ endmodule\n";
         ("pf(v)", 0, 3, "variable", &[]),
         ("pk::pv", 0, 0, "namespace", &[]),
         ("pk::pv", 0, 4, "variable", &[]),
-        ("gb[0].q", 0, 0, "variable", &[]),
+        ("gb[0].q", 0, 0, "namespace", &[]),
         ("gb[0].q", 0, 6, "variable", &[]),
         ("u0.o", 0, 0, "variable", &[]),
         ("u0.o", 0, 3, "parameter", &["readonly"]),
         ("bus.sig", 0, 0, "variable", &[]),
         ("bus.sig", 0, 4, "variable", &[]),
         ("$bits", 0, 0, "function", &["defaultLibrary"]),
-        ("disable bad", 0, 8, "variable", &[]),
+        ("disable bad", 0, 8, "namespace", &[]),
     ];
     for opened in [false, true] {
         if opened {
@@ -762,5 +762,222 @@ endmodule\n"
     expect_plain(&iso_buffer, ".clk(wa)", 1, 5);
     expect_plain(&iso_buffer, ".q(tq)", 1, 3);
 
+    client.shutdown();
+}
+
+/// `default` labelling a case, case-inside, case-generate, property-case or
+/// randsequence-case item is plain `keyword`; every other `default`
+/// (assignment-pattern keys, `default clocking`, `default disable iff`,
+/// default bins) is `keyword.primitive`, through project and isolated
+/// unsaved-buffer analysis.
+#[test]
+fn lsp_stdio_semantic_tokens_split_control_and_declaration_defaults_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("default_words.sv");
+    let uri = file_uri(&path);
+    let source = "module default_words;\n\
+  typedef struct packed { logic [3:0] a; logic [3:0] b; } st_t;\n\
+  logic [7:0] q; st_t s; int arr [4]; logic clk;\n\
+  default clocking cb @(posedge clk); endclocking\n\
+  default disable iff (clk);\n\
+  covergroup cg @(posedge clk); coverpoint q { bins lo = {0}; bins other = default; } endgroup\n\
+  case (1) 0: begin : c0 logic z; end default: begin : cd logic z; end endcase\n\
+  always @(posedge clk) begin\n\
+    case (q) 8'd0: q = 1; default: q = 0; endcase\n\
+    case (q) inside [0:3]: q = 2; default q = 3; endcase\n\
+    s = '{default: 0}; s = '{a: 1, default: 0}; arr = '{default: 5};\n\
+  end\n\
+  property p; case (q) 0: clk; default: 1; endcase endproperty\n\
+  initial randsequence (main) main : case (q) 0: ra; default: rb; endcase; ra : {}; rb : {}; endsequence\n\
+endmodule\n";
+    // Zero-based lines whose `default` labels a case item.
+    let control_lines = [6, 8, 9, 12, 13];
+    fs::write(&path, source).expect("write default-word fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+
+    let positions = word_positions(source, "default");
+    assert_eq!(positions.len(), 11, "sample defaults");
+    for opened in [false, true] {
+        if opened {
+            client
+                .open(&path, source)
+                .expect("open default-word buffer");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("default-word semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        for &(line, col) in &positions {
+            let row = row_at(&rows, line, col);
+            let expected: &[&str] = if control_lines.contains(&line) {
+                &[]
+            } else {
+                &["primitive"]
+            };
+            assert_eq!(row.token_type, "keyword", "opened={opened} {row:?}");
+            assert_eq!(row.modifiers, expected, "opened={opened} {row:?}");
+        }
+        for (needle, expected) in [("logic [3:0] a", &["primitive"][..]), ("case (q)", &[])] {
+            let (line, col) = position_of(source, needle, 0);
+            let row = row_at(&rows, line, col);
+            assert_eq!(row.token_type, "keyword", "opened={opened} {needle}");
+            assert_eq!(row.modifiers, expected, "opened={opened} {needle}");
+        }
+    }
+    client.shutdown();
+}
+
+/// Named, labeled and generate block names are `namespace` (`declaration` at
+/// the opening name) at declarations, end labels and references, and
+/// definition requests from end labels and references reach the opening name;
+/// instance names and block members keep their kinds. Both serving paths.
+#[test]
+fn lsp_stdio_semantic_tokens_send_block_names_as_namespaces_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("block_names.sv");
+    let uri = file_uri(&path);
+    let source = "module blk_sub(output logic o); assign o = 1'b0; endmodule\n\
+module block_names;\n\
+  logic q;\n\
+  blk_sub u0(.o());\n\
+  for (genvar i = 0; i < 2; i++) begin : g\n\
+    logic x;\n\
+  end : g\n\
+  if (1) begin : gi logic y; end\n\
+  initial begin : blk\n\
+    fork : f\n\
+      q = g[0].x;\n\
+    join : f\n\
+    lbl: begin\n\
+      q = block_names.g[1].x;\n\
+      q = gi.y | u0.o;\n\
+    end : lbl\n\
+    l2: assert (q == 0);\n\
+    disable lbl;\n\
+    disable block_names.blk;\n\
+  end : blk\n\
+endmodule\n";
+    fs::write(&path, source).expect("write block-name fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+
+    // (needle, occurrence, offset of the name inside the needle).
+    let declarations: [(&str, usize, u64); 6] = [
+        ("begin : g", 0, 8),
+        ("begin : gi", 0, 8),
+        ("begin : blk", 0, 8),
+        ("fork : f", 0, 7),
+        ("lbl: begin", 0, 0),
+        ("l2:", 0, 0),
+    ];
+    // (needle, occurrence, offset, declaration index).
+    let uses: [(&str, usize, u64, usize); 9] = [
+        ("end : g", 0, 6, 0),
+        ("join : f", 0, 7, 3),
+        ("end : lbl", 0, 6, 4),
+        ("end : blk", 0, 6, 2),
+        ("g[0].x", 0, 0, 0),
+        (".g[1].x", 0, 1, 0),
+        ("gi.y", 0, 0, 1),
+        ("disable lbl", 0, 8, 4),
+        (".blk;", 0, 1, 2),
+    ];
+    let at = |(needle, occurrence, offset): (&str, usize, u64)| {
+        let (line, col) = position_of(source, needle, occurrence);
+        (line, col + offset)
+    };
+    for opened in [false, true] {
+        if opened {
+            client.open(&path, source).expect("open block-name buffer");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("block-name semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        for site in declarations {
+            let (line, col) = at(site);
+            let row = row_at(&rows, line, col);
+            assert_eq!(row.token_type, "namespace", "opened={opened} {site:?}");
+            assert_eq!(row.modifiers, ["declaration"], "opened={opened} {site:?}");
+        }
+        for (needle, occurrence, offset, declaration) in uses {
+            let (line, col) = at((needle, occurrence, offset));
+            let row = row_at(&rows, line, col);
+            assert_eq!(row.token_type, "namespace", "opened={opened} {needle}");
+            assert!(
+                row.modifiers.is_empty(),
+                "opened={opened} {needle}: {row:?}"
+            );
+            let (decl_line, decl_col) = at(declarations[declaration]);
+            let definition = client
+                .request(
+                    "textDocument/definition",
+                    json!({
+                        "textDocument": { "uri": uri },
+                        "position": { "line": line, "character": col }
+                    }),
+                )
+                .expect("block-name definition");
+            let target = if definition.is_array() {
+                definition[0].clone()
+            } else {
+                definition.clone()
+            };
+            assert_eq!(
+                target.get("uri").and_then(Value::as_str),
+                Some(uri.as_str()),
+                "opened={opened} {needle}: {definition}"
+            );
+            assert_eq!(
+                start_key(&target["range"]["start"]),
+                (decl_line, decl_col),
+                "opened={opened} {needle}: {definition}"
+            );
+            let name = source.lines().nth(decl_line as usize).unwrap()[decl_col as usize..]
+                .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                .next()
+                .unwrap();
+            let hover = param_hover_markup(
+                &mut client,
+                &uri,
+                &json!({ "line": line, "character": col }),
+            );
+            assert!(
+                hover.contains(&format!("scope {name}")),
+                "opened={opened} {needle}: {hover}"
+            );
+        }
+        for (needle, token_type) in [
+            ("u0(.o", "variable"),
+            ("u0.o", "variable"),
+            ("x;\n", "variable"),
+            ("module block_names", "keyword"),
+        ] {
+            let (line, col) = position_of(source, needle, 0);
+            let row = row_at(&rows, line, col);
+            assert_eq!(row.token_type, token_type, "opened={opened} {needle}");
+        }
+    }
     client.shutdown();
 }

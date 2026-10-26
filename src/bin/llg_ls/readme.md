@@ -33,10 +33,21 @@ in `semanticTokensProvider.legend`. llg modifiers:
 | `direction` | `keyword` | `input output inout ref`. |
 | `primitive` | `keyword` | Built-in data and net types and declaration kind and qualifier words: `parameter localparam specparam const var bit logic reg byte shortint int longint integer time shortreal real realtime string chandle event void signed unsigned genvar supply0 supply1 tri triand trior trireg tri0 tri1 uwire wire wand wor default automatic static`. |
 
-Each grouped word carries exactly its one keyword modifier at every occurrence.
-Every other keyword is `keyword` without modifier bits, and user typedef names
-are `type`. A client that knows no llg modifier still renders the words as
-keywords.
+Each grouped word carries exactly its one keyword modifier at every occurrence,
+with one syntax-driven exception: a `default` that labels a case, case-inside,
+case-generate, property-case or randsequence-case item is control flow and
+stays plain `keyword` (the capture marks it; it is not a text rule). Every
+other `default` (assignment-pattern keys, `default clocking`, `default disable
+iff`, default bins) keeps `primitive`. `static` and `automatic` are always
+lifetime or class qualifiers, so they need no such split. Every other keyword
+is `keyword` without modifier bits, and user typedef names are `type`. A
+client that knows no llg modifier still renders the words as keywords.
+
+Named and labeled statement blocks and generate block names use the standard
+`namespace` type, like packages: the opening name (`begin : blk`, `lbl:`,
+`fork : f`, `begin : g` in a generate) adds `declaration`; end labels and
+references (`end : blk`, `disable blk`, `g[0].x`, `top.g.x`) carry no
+modifier and navigate to the opening name. Instance names stay `variable`.
 
 VS Code matches a selector's modifiers by name, needs no registration for
 them, and lets a selector with more matching modifiers win. Without a mapping

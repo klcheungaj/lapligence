@@ -835,7 +835,9 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   `typedef`/`struct`/`union`/`enum` get `typeDefinition`, `input`/`output`/
   `inout`/`ref` get `direction`, and built-in data and net types plus kind and
   qualifier words (`logic`, `wire`, `int`, `genvar`, `parameter`, `const`,
-  `default`, `automatic`, `static`, ...) get `primitive`; the legend holds only
+  `default`, `automatic`, `static`, ...) get `primitive`, except that a case,
+  case-inside, case-generate, property-case or randsequence-case item
+  `default` is plain `keyword` (from the capture, not the text); the legend holds only
   standard token types and appends these modifiers after `connectionLabel`
   ([legend contract](../src/bin/llg_ls/readme.md#semantic-token-legend)).
   The remaining keywords are `keyword` without modifier bits, and user typedef
@@ -844,9 +846,11 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   (unbound plain `identifier` lexical kind) gets no token, so the editor leaves
   it uncolored; declarations and kind-known references keep theirs. Resolved
   names keep their kind even inside a block that one undeclared name makes
-  invalid: scope qualifiers (`pk::f`) are `namespace`, hierarchical path steps,
-  instance and block names (`u0.o`, `gb[0].q`, `disable blk`) are bound
-  `variable` with the final member's own kind, and system tasks, functions and
+  invalid: scope qualifiers (`pk::f`) are `namespace`, hierarchical path steps
+  and instance names (`u0.o`) are bound `variable` with the final member's own
+  kind, named, labeled and generate block names (`gb[0].q`, `disable blk`,
+  `end : blk`) are `namespace` (`declaration` at the opening name, whose
+  definition end labels and references reach), and system tasks, functions and
   built-in methods (`$bits`, `$display`, `q.size`) are
   `function.defaultLibrary`. All of this holds for committed and isolated
   buffers, including missing children (library-unit capture elaborates no

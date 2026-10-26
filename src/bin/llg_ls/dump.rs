@@ -592,6 +592,7 @@ fn token_kind_name(kind: i32) -> String {
         (tokens::TOKEN_SLANG_TASK, "task"),
         (tokens::TOKEN_SLANG_IDENTIFIER, "identifier"),
         (tokens::TOKEN_SLANG_BOUND_IDENTIFIER, "bound-identifier"),
+        (tokens::TOKEN_SLANG_BLOCK, "block"),
         (tokens::TOKEN_SLANG_SYSTEM_SUBROUTINE, "system-subroutine"),
         (
             tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL,

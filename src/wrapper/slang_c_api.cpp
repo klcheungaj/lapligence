@@ -5926,6 +5926,12 @@ uint32_t lexicalKindForSemantic(const LlgSlangSemanticNode& node) {
   // the exact discriminator, as for genvars above.
   if (detail == "TypeAlias")
     return LLG_SLANG_LEXICAL_TYPE_ALIAS;
+  // Named and labeled statement blocks share the scope kind with instance
+  // bodies, compilation units and clocking blocks; the symbol kind tells them
+  // apart.
+  if (node.kind == LLG_SLANG_SEMANTIC_GENERATE_SCOPE ||
+      (node.kind == LLG_SLANG_SEMANTIC_SCOPE && detail == "StatementBlock"))
+    return LLG_SLANG_LEXICAL_BLOCK;
   switch (node.kind) {
     case LLG_SLANG_SEMANTIC_DEFINITION:
       if (node.flags & LLG_SLANG_SEMANTIC_INTERFACE)
@@ -5974,6 +5980,51 @@ public:
                            LLG_SLANG_LEXICAL_PARAMETER);
     if (syntax.expr)
       capture.connectionActual(syntax.expr->sourceRange());
+    visitDefault(syntax);
+  }
+
+  // Block names come from the syntax so that every capture mode classifies
+  // them, including declaration-only capture that builds no block scopes.
+  // The opening name (a statement label or the `: name` after begin/fork) is
+  // the declaration; the closing `: name` refers to it.
+  void handle(const syntax::BlockStatementSyntax& syntax) {
+    blockName(syntax.label ? &syntax.label->name : nullptr,
+              syntax.blockName ? &syntax.blockName->name : nullptr,
+              syntax.endBlockName ? &syntax.endBlockName->name : nullptr);
+    visitDefault(syntax);
+  }
+
+  void handle(const syntax::GenerateBlockSyntax& syntax) {
+    blockName(syntax.label ? &syntax.label->name : nullptr,
+              syntax.beginName ? &syntax.beginName->name : nullptr,
+              syntax.endName ? &syntax.endName->name : nullptr);
+    visitDefault(syntax);
+  }
+
+  // A labeled statement that is not a block is still a named block scope
+  // (Slang's StatementBlockSymbol::fromLabeledStmt; IEEE 1800-2009 9.3.5).
+  void handle(const syntax::StatementSyntax& syntax) {
+    if (syntax.label && syntax.kind != syntax::SyntaxKind::SequentialBlockStatement &&
+        syntax.kind != syntax::SyntaxKind::ParallelBlockStatement)
+      blockName(&syntax.label->name, nullptr, nullptr);
+    visitDefault(syntax);
+  }
+
+  // `default` labels a case item (IEEE 1800-2009 12.5, 18.17.3, 16.13.16 and
+  // the generate case of 27.5): control flow, unlike the `default` of an
+  // assignment pattern key, clocking, disable iff, bins or dist item.
+  void handle(const syntax::DefaultCaseItemSyntax& syntax) {
+    controlKeyword = syntax.defaultKeyword.location();
+    visitDefault(syntax);
+  }
+
+  void handle(const syntax::DefaultRsCaseItemSyntax& syntax) {
+    controlKeyword = syntax.defaultKeyword.location();
+    visitDefault(syntax);
+  }
+
+  void handle(const syntax::DefaultPropertyCaseItemSyntax& syntax) {
+    controlKeyword = syntax.defaultKeyword.location();
     visitDefault(syntax);
   }
 
@@ -6251,9 +6302,89 @@ public:
         token.kind = lexicalKindForSemantic(semantic);
       }
     }
+    bindBlockNames();
   }
 
 private:
+  // One block name declaration and the names that repeat it (an end label, or
+  // a begin name after a statement label). Ranges are physical name spans.
+  struct BlockName {
+    LlgSlangSourceRange declaration;
+    LlgSlangSourceRange repeats[2];
+  };
+
+  void blockName(const parsing::Token* label, const parsing::Token* begin,
+                 const parsing::Token* end) {
+    const parsing::Token* declaration = label ? label : begin;
+    if (!declaration || declaration->isMissing())
+      return;
+    const auto range = capture.span(declaration->range());
+    if (range.file_id == LLG_SLANG_INVALID_ID)
+      return;
+    if (blockNames.size() >= capture.maxLexicalTokens())
+      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                          "block name limit exceeded");
+    BlockName name{range,
+                   {{LLG_SLANG_INVALID_ID, 0, 0}, {LLG_SLANG_INVALID_ID, 0, 0}}};
+    size_t repeat = 0;
+    for (const parsing::Token* token : {label ? begin : nullptr, end}) {
+      // A mismatched end label is a frontend error and names nothing.
+      if (token && !token->isMissing() &&
+          token->valueText() == declaration->valueText())
+        name.repeats[repeat++] = capture.span(token->range());
+    }
+    blockNames.push_back(name);
+  }
+
+  LlgSlangLexicalToken* tokenAt(const LlgSlangSourceRange& range) {
+    auto& tokens = capture.output.lexical_tokens;
+    const auto it = std::lower_bound(
+        tokens.begin(), tokens.end(), range, [](const auto& token, const auto& key) {
+          return std::tie(token.range.file_id, token.range.start, token.range.end) <
+                 std::tie(key.file_id, key.start, key.end);
+        });
+    if (it == tokens.end() || it->range.file_id != range.file_id ||
+        it->range.start != range.start || it->range.end != range.end)
+      return nullptr;
+    return &*it;
+  }
+
+  // Runs after semantic binding over the sorted token table. A declaration
+  // that capture bound to its block scope already has the block kind; one
+  // without a scope (declaration-only capture, or a block Slang did not
+  // build) still gets the kind and the declaration role from its syntax. A
+  // repeated name refers to the declaration's block, or carries only the kind
+  // when the declaration has no target. A name bound to anything else keeps
+  // its binding.
+  void bindBlockNames() {
+    for (const auto& name : blockNames) {
+      LlgSlangLexicalToken* declaration = tokenAt(name.declaration);
+      if (!declaration || (declaration->flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION))
+        continue;
+      if (declaration->kind == LLG_SLANG_LEXICAL_IDENTIFIER &&
+          declaration->semantic_id == LLG_SLANG_INVALID_ID) {
+        declaration->kind = LLG_SLANG_LEXICAL_BLOCK;
+        declaration->role = LLG_SLANG_LEXICAL_ROLE_DECLARATION;
+      }
+      if (declaration->kind != LLG_SLANG_LEXICAL_BLOCK)
+        continue;
+      for (const auto& range : name.repeats) {
+        if (range.file_id == LLG_SLANG_INVALID_ID)
+          continue;
+        LlgSlangLexicalToken* repeat = tokenAt(range);
+        if (!repeat || repeat->kind != LLG_SLANG_LEXICAL_IDENTIFIER ||
+            repeat->semantic_id != LLG_SLANG_INVALID_ID ||
+            (repeat->flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION))
+          continue;
+        repeat->kind = LLG_SLANG_LEXICAL_BLOCK;
+        if (declaration->semantic_id != LLG_SLANG_INVALID_ID) {
+          repeat->semantic_id = declaration->semantic_id;
+          repeat->role = LLG_SLANG_LEXICAL_ROLE_REFERENCE;
+        }
+      }
+    }
+  }
+
   void lineDirective(SourceLocation location) {
     const SourceLocation physical = capture.physicalLocation(location);
     if (!physical.valid())
@@ -6285,6 +6416,9 @@ private:
   uint32_t directiveDepth = 0;
   uint32_t skippedDepth = 0;
   std::map<std::tuple<uint64_t, uint64_t, uint64_t>, SourceLocation> tokenLocations;
+  std::vector<BlockName> blockNames;
+  // The `default` keyword of the case item being visited.
+  SourceLocation controlKeyword;
 
   void addToken(parsing::Token token, uint32_t extraFlags) {
     const std::string_view text = token.rawText();
@@ -6320,6 +6454,9 @@ private:
     if (token.location().valid() &&
         capture.sourceManager.isMacroLoc(token.location()))
       flags |= LLG_SLANG_LEXICAL_MACRO_EXPANSION;
+    if (kind == LLG_SLANG_LEXICAL_KEYWORD && controlKeyword.valid() &&
+        token.location() == controlKeyword)
+      flags |= LLG_SLANG_LEXICAL_CONTROL_FLOW;
     if (kind == LLG_SLANG_LEXICAL_IDENTIFIER &&
         (directiveDepth != 0 ||
          (flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) != 0))

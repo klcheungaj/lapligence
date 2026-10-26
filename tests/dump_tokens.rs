@@ -937,8 +937,8 @@ endmodule\n";
         (
             at(10, "gb[0]", 0, "gb"),
             vec![
-                "kind=bound-identifier\t".to_owned(),
-                "sym=variable".to_owned(),
+                "kind=block\t".to_owned(),
+                "sym=namespace".to_owned(),
                 decl(7, "gb logic", "gb"),
             ],
         ),
@@ -975,12 +975,91 @@ endmodule\n";
         ),
         (
             at(11, "bad", 0, "bad"),
-            vec!["kind=bound-identifier\t".to_owned(), decl(8, "bad", "bad")],
+            vec![
+                "kind=block\t".to_owned(),
+                "sym=namespace".to_owned(),
+                decl(8, "bad", "bad"),
+            ],
         ),
     ];
     for (location, needles) in rows {
         let needles: Vec<&str> = needles.iter().map(String::as_str).collect();
         dump.assert_rows(&location, &needles);
     }
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Named, labeled and generate block names dump as `block` with the
+/// `namespace` token type at declarations, end labels and references; an end
+/// label binds to its block's opening name, and an instance prefix stays a
+/// bound identifier.
+#[test]
+fn block_names_dump_as_blocks_and_end_labels_bind_to_their_declaration() {
+    let root = std::env::temp_dir().join(format!("llg-dump-blocks-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create blocks fixture dir");
+    let source = "module sub(output logic o); assign o = 1'b0; endmodule\n\
+module blocks_top;\n\
+  logic q;\n\
+  sub u0(.o());\n\
+  for (genvar i = 0; i < 2; i++) begin : g\n\
+    logic x;\n\
+  end : g\n\
+  initial begin : blk\n\
+    fork : f\n\
+      q = g[0].x | u0.o;\n\
+    join : f\n\
+    lbl: begin\n\
+      q = 1;\n\
+    end : lbl\n\
+    disable blocks_top.blk;\n\
+  end : blk\n\
+endmodule\n";
+    fs::write(root.join("blocks.sv"), source).expect("write blocks.sv");
+    let dump = Dump::run(&root);
+    let at = |line: usize, context: &str, skip: usize, name: &str| {
+        let col = source.lines().nth(line).unwrap().find(context).unwrap() + skip;
+        format!("blocks.sv:{line}:{col}-{}", col + name.len())
+    };
+    let decl = |line: usize, context: &str, name: &str| {
+        let col = source.lines().nth(line).unwrap().find(context).unwrap();
+        format!("bind=blocks.sv:{line}:{col}[{name},")
+    };
+    let declaration = [
+        "kind=block-declaration\t",
+        "DECL",
+        "sym=namespace/declaration",
+    ];
+    for (line, context, skip, name) in [
+        (4, ": g", 2, "g"),
+        (7, ": blk", 2, "blk"),
+        (8, ": f", 2, "f"),
+        (11, "lbl", 0, "lbl"),
+    ] {
+        dump.assert_rows(&at(line, context, skip, name), &declaration);
+    }
+    // Every opening name is the last occurrence of the name on its line.
+    for (line, context, skip, name, decl_line) in [
+        (6, ": g", 2, "g", 4),
+        (10, ": f", 2, "f", 8),
+        (13, ": lbl", 2, "lbl", 11),
+        (15, ": blk", 2, "blk", 7),
+        (9, "g[0]", 0, "g", 4),
+        (14, ".blk", 1, "blk", 7),
+    ] {
+        let decl_col = source.lines().nth(decl_line).unwrap().rfind(name).unwrap();
+        let bind = format!("bind=blocks.sv:{decl_line}:{decl_col}[{name},");
+        dump.assert_rows(
+            &at(line, context, skip, name),
+            &["kind=block\t", "REF", "sym=namespace", &bind],
+        );
+    }
+    dump.assert_rows(
+        &at(9, "u0.o", 0, "u0"),
+        &[
+            "kind=bound-identifier\t",
+            "sym=variable",
+            &decl(3, "u0", "u0"),
+        ],
+    );
     let _ = fs::remove_dir_all(root);
 }

@@ -68,6 +68,15 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   the AST visitor never enters; capture walks that child for lexical bindings
   only (no semantic nodes), so only the names Slang could not resolve stay
   unbound identifiers.
+- Named statement blocks, labeled statements (Slang makes each one a named
+  block) and generate block names get `LLG_SLANG_LEXICAL_BLOCK` from the
+  syntax, so declaration-only capture classifies them too: the opening name is
+  the declaration, a matching end label (`end : blk`, `join : f`) binds to it,
+  and resolved references (`disable blk`, the `g` of `g[0].x`) take the kind
+  from the bound generate or statement-block scope. Instance names keep their
+  kind. A keyword carries `LLG_SLANG_LEXICAL_CONTROL_FLOW` only where its
+  syntax position makes it control flow: the `default` of a case,
+  case-generate, property-case or randsequence-case item.
 
 ## Parameter overrides
 

@@ -33,9 +33,16 @@ pub const TOKEN_SLANG_PARAMETER_CONNECTION_LABEL: i32 = -27;
 /// System task or function, or built-in method, name (no declaration).
 pub const TOKEN_SLANG_SYSTEM_SUBROUTINE: i32 = -28;
 /// Reference bound to a declaration whose lexical kind is a plain identifier
-/// (instances, generate and named blocks, modports, events). An unbound
-/// reference stays [`TOKEN_SLANG_IDENTIFIER`].
+/// (instances, modports, events). An unbound reference stays
+/// [`TOKEN_SLANG_IDENTIFIER`].
 pub const TOKEN_SLANG_BOUND_IDENTIFIER: i32 = -29;
+/// Named statement block, labeled statement or generate block name: a
+/// declaration (with [`TOKEN_DECLARATION_OFFSET`]), an end label, or a
+/// reference bound to the block. Instance names are not blocks.
+pub const TOKEN_SLANG_BLOCK: i32 = -30;
+/// Keyword that is control flow at its syntax position (a case item
+/// `default`). Every other keyword is [`TOKEN_SLANG_KEYWORD`].
+pub const TOKEN_SLANG_CONTROL_KEYWORD: i32 = -31;
 pub const TOKEN_DECLARATION_OFFSET: i32 = -1_000;
 
 /// Source-positioned lexical item. Coordinates are one-based UTF-16 to retain
@@ -182,6 +189,8 @@ pub fn project_slang(
                 )
             {
                 TOKEN_SLANG_BOUND_IDENTIFIER
+            } else if token.kind == LexicalKind::Keyword && token.is_control_flow {
+                TOKEN_SLANG_CONTROL_KEYWORD
             } else {
                 kind
             }
@@ -440,6 +449,7 @@ fn lexical_kind(kind: LexicalKind) -> i32 {
         LexicalKind::Identifier => TOKEN_SLANG_IDENTIFIER,
         LexicalKind::Genvar => TOKEN_GENVAR_REF,
         LexicalKind::SystemSubroutine => TOKEN_SLANG_SYSTEM_SUBROUTINE,
+        LexicalKind::Block => TOKEN_SLANG_BLOCK,
     }
 }
 
