@@ -1,0 +1,112 @@
+# Weekly dependency security audit and upgrade reminder.
+#
+# The scan job reports RustSec vulnerabilities and warnings (unmaintained,
+# unsound, yanked) for Cargo.lock, direct Cargo dependencies behind their
+# newest crates.io release, the Rust toolchain pin, vendored submodules behind
+# their newest upstream release tag and GitHub Actions behind their newest major
+# (scripts/ci_dependency_report.py). It never builds the crate, so build.rs and
+# the native Slang build do not run. Vulnerabilities and checks that could not
+# run fail the scan job; upgrades are reminders only.
+#
+# The report goes to the run summary and to one tracking issue, which the
+# issue job updates (or reopens) while anything is reported and closes once a
+# run reports nothing. Only that job may write issues, and only on master.
+# ci.yml keeps its own `cargo audit` gate for pushes and releases.
+name: Dependency audit
+
+on:
+  schedule:
+    # Mondays, after ci.yml's 04:17 UTC scheduled audit.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: audit and upgrade scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      findings: ${{ steps.report.outputs.findings }}
+      vulnerabilities: ${{ steps.report.outputs.vulnerabilities }}
+      errors: ${{ steps.report.outputs.errors }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@1.98.0
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      # cargo audit exits nonzero when it finds vulnerabilities; the report
+      # step reads the JSON and a missing or invalid file is a check error.
+      - name: Audit Cargo.lock against RustSec
+        run: cargo audit --json > "$RUNNER_TEMP/audit.json" || true
+
+      - name: Build the report
+        id: report
+        run: >-
+          python3 scripts/ci_dependency_report.py
+          --audit-json "$RUNNER_TEMP/audit.json"
+          --output dependency-report.md
+          --github-output "$GITHUB_OUTPUT"
+          --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Publish the run summary
+        run: cat dependency-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dependency-report
+          path: dependency-report.md
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Fail on vulnerabilities or incomplete checks
+        if: steps.report.outputs.vulnerabilities != '0' || steps.report.outputs.errors != '0'
+        run: |
+          echo "::error::${{ steps.report.outputs.vulnerabilities }} RustSec vulnerabilities, ${{ steps.report.outputs.errors }} check errors; see the run summary."
+          exit 1
+
+  issue:
+    name: update the tracking issue
+    needs: scan
+    if: always() && needs.scan.outputs.findings != '' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      LABEL: dependency-audit
+      TITLE: Dependency audit and upgrade reminder
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      REPORTED: ${{ needs.scan.outputs.findings != '0' || needs.scan.outputs.errors != '0' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dependency-report
+
+      - name: Open, update or close the issue
+        run: |
+          gh label create "$LABEL" --force --color 0e8a16 \
+            --description "Weekly dependency audit and upgrade reminder"
+          # A failed lookup stops the step instead of creating a duplicate.
+          found=$(gh issue list --state all --label "$LABEL" --limit 100 --json number,title,state \
+            --jq 'map(select(.title == $ENV.TITLE)) | first | select(. != null) | "\(.number) \(.state)"')
+          read -r number state <<< "$found" || true
+          if [ "$REPORTED" = true ]; then
+            if [ -z "${number:-}" ]; then
+              gh issue create --title "$TITLE" --label "$LABEL" --body-file dependency-report.md
+            else
+              gh issue edit "$number" --body-file dependency-report.md
+              if [ "$state" != OPEN ]; then gh issue reopen "$number"; fi
+            fi
+          elif [ -n "${number:-}" ] && [ "$state" = OPEN ]; then
+            gh issue edit "$number" --body-file dependency-report.md
+            gh issue close "$number" --comment "Nothing to report as of $RUN_URL."
+          fi

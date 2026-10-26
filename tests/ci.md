@@ -65,6 +65,13 @@ the rules a change must keep. Platform pitfalls are in
   `ci.yml` with GCC ASan/UBSan; it is not LSP admission coverage. The
   dependency audit (15 min) runs `cargo audit` on the same triggers and Mondays
   04:17 UTC; reports stay in workflow logs.
+- `dependency-audit.yml` (Mondays 05:23 UTC and manual) is the upgrade reminder:
+  `scripts/ci_dependency_report.py` reports RustSec vulnerabilities and
+  warnings, outdated direct crates, the toolchain pin, submodules behind their
+  newest upstream tag and outdated action majors without building the crate.
+  Vulnerabilities and failed checks fail it; upgrades only remind. Only its
+  `issue` job gets `issues:write`, and only on master it opens, updates or
+  closes the one `dependency-audit` issue.
 
 ## Caching (binding user rule)
 
