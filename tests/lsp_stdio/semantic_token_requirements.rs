@@ -624,6 +624,240 @@ fn st_40_to_st_43_builtin_functions_and_methods_in_both_serving_paths() {
     client.shutdown();
 }
 
+/// The package example of ST-50 and ST-51: a module that imports, in its
+/// header, a package of another file, in a root without `llg.toml`.
+const EXAMPLE_PKG: &str = include_str!("../fixtures/semantic_tokens/pkg_example_pkg.sv");
+const EXAMPLE_TOP: &str = include_str!("../fixtures/semantic_tokens/pkg_example_top.sv");
+
+/// Uses of `ex_pkg` items in `pkg_example_top.sv`.
+const EXAMPLE_CHECKS: &[Check] = &[
+    ("ST-51", "ex_pkg::*", 0, 0, "namespace", NONE),
+    (
+        "ST-51",
+        "mode_t                     mode",
+        0,
+        0,
+        "type",
+        NONE,
+    ),
+    ("ST-51", "IDLE;", 0, 0, "enumMember", RO),
+    (
+        "ST-51",
+        "op_t                       op;",
+        0,
+        0,
+        "type",
+        NONE,
+    ),
+    ("ST-51", "op_args_t ", 0, 0, "type", NONE),
+    ("ST-51", "FRAME_W-1:0]        frame", 0, 0, "variable", RO),
+    ("ST-51", "WORD_W-1:0]          regs", 0, 0, "variable", RO),
+    ("ST-51", "IDX_W)-1:0]", 0, 0, "variable", RO),
+    ("ST-51", "N_LANES)", 0, 0, "variable", RO),
+    ("ST-51", "pass_args_t ", 0, 0, "type", NONE),
+    ("ST-51", "sum_args_t ", 0, 0, "type", NONE),
+    ("ST-51", "op_t'(", 0, 0, "type", NONE),
+    ("ST-51", "OP_W]);", 0, 0, "variable", RO),
+    ("ST-51", "ARG_W];", 0, 0, "variable", RO),
+    ("ST-51", "FRAME_W - WORD_W)'(0)", 0, 0, "variable", RO),
+    ("ST-51", "WORD_W)'(0)", 0, 0, "variable", RO),
+    ("ST-51", "PASS_PRE;", 0, 0, "enumMember", RO),
+    ("ST-51", "OP_EXIT", 0, 0, "enumMember", RO),
+    ("ST-51", "DRAIN:", 0, 0, "enumMember", RO),
+    ("ST-51", "OP_READ, OP_WRITE", 0, 0, "enumMember", RO),
+    ("ST-51", "OP_READ, OP_WRITE", 0, 9, "enumMember", RO),
+    ("ST-51", "REG_VERSION]", 0, 0, "enumMember", RO),
+    ("ST-51", "REG_LANE]", 0, 0, "enumMember", RO),
+    ("ST-51", "SUM),", 0, 0, "enumMember", RO),
+];
+
+const REFRESH: &str = "workspace/semanticTokens/refresh";
+
+/// A root without `llg.toml` holding the example files named in `files`;
+/// returns the guard, the root and the paths of the package and top files.
+fn example_root(tag: &str, files: &[&str]) -> (TempDirCleanup, PathBuf, PathBuf, PathBuf) {
+    let base =
+        std::env::temp_dir().join(format!("llg-lsp-pkg-example-{}-{tag}", std::process::id()));
+    let root = base.join("example");
+    fs::create_dir_all(&root).expect("create example root");
+    let pkg = root.join("pkg_example_pkg.sv");
+    let top = root.join("pkg_example_top.sv");
+    for (path, text) in [(&pkg, EXAMPLE_PKG), (&top, EXAMPLE_TOP)] {
+        let name = path.file_name().unwrap().to_str().unwrap();
+        if files.contains(&name) {
+            fs::write(path, text).expect("write example file");
+        }
+    }
+    (TempDirCleanup(base), root, pkg, top)
+}
+
+fn check_holds(rows: &[SemanticRow], source: &str, check: &Check) -> bool {
+    let (_, needle, occurrence, offset, token_type, modifiers) = *check;
+    let (line, col) = position_of(source, needle, occurrence);
+    rows.iter().any(|row| {
+        row.line == line
+            && row.character == col + offset
+            && row.token_type == token_type
+            && row
+                .modifiers
+                .iter()
+                .map(String::as_str)
+                .eq(modifiers.iter().copied())
+    })
+}
+
+fn example_rows(
+    client: &mut LspProcess,
+    top: &Path,
+    types: &[String],
+    modifiers: &[String],
+) -> (Vec<SemanticRow>, Value) {
+    let result = client
+        .request(
+            "textDocument/semanticTokens/full",
+            json!({ "textDocument": { "uri": file_uri(top) } }),
+        )
+        .expect("example semantic token response");
+    (
+        semantic_token_rows(&result, types, modifiers),
+        result["data"].clone(),
+    )
+}
+
+/// ST-50, ST-51: an editor restores the example at start-up and asks for
+/// tokens at once, before the first analysis commits. Whether it opened the
+/// importing file (open-buffer stream) or only the package file (project
+/// stream of the unopened importer), a stream without the package items is
+/// followed by `workspace/semanticTokens/refresh`, and the re-requested
+/// stream gives every use of the package its type, with definition and
+/// hover in the package file; a root without `llg.toml` finds the package.
+#[test]
+fn st_50_and_st_51_a_stream_served_before_the_first_commit_is_refreshed() {
+    let mut streams = Vec::new();
+    for opened in ["pkg_example_top.sv", "pkg_example_pkg.sv"] {
+        let (_guard, root, pkg, top) =
+            example_root(opened, &["pkg_example_pkg.sv", "pkg_example_top.sv"]);
+        let mut client = LspProcess::spawn(&root);
+        let initialize = client
+            .initialize_with_token_refresh(&[("example", &root)], default_init_options())
+            .expect("initialize example root");
+        let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+        let types = legend_names(legend, "tokenTypes");
+        let modifiers = legend_names(legend, "tokenModifiers");
+        if opened == "pkg_example_top.sv" {
+            client.open(&top, EXAMPLE_TOP).expect("open example top");
+        } else {
+            client
+                .open(&pkg, EXAMPLE_PKG)
+                .expect("open example package");
+        }
+        let (first, _) = example_rows(&mut client, &top, &types, &modifiers);
+        client.wait_ready().expect("first analysis");
+        let complete = EXAMPLE_CHECKS
+            .iter()
+            .all(|check| check_holds(&first, EXAMPLE_TOP, check));
+        if !complete {
+            client
+                .wait_for_server_request(REFRESH)
+                .unwrap_or_else(|error| panic!("ST-50 {opened}: no refresh request: {error}"));
+        }
+        let (rows, data) = example_rows(&mut client, &top, &types, &modifiers);
+        for check in EXAMPLE_CHECKS {
+            assert_check(&rows, EXAMPLE_TOP, check, opened);
+        }
+        let package_uri = file_uri(&pkg);
+        for &(_, needle, occurrence, offset, _, _) in EXAMPLE_CHECKS {
+            let (line, col) = position_of(EXAMPLE_TOP, needle, occurrence);
+            let position = json!({ "line": line, "character": col + offset });
+            let what = format!("ST-51 {opened} {needle:?}+{offset}");
+            let definition = client
+                .request(
+                    "textDocument/definition",
+                    json!({ "textDocument": { "uri": file_uri(&top) }, "position": position }),
+                )
+                .expect("example definition response");
+            let (target, _) = single_location(&definition, &what);
+            assert_eq!(target, package_uri, "{what}: definition");
+            let name: String = needle[offset as usize..]
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            let hover = client
+                .request(
+                    "textDocument/hover",
+                    json!({ "textDocument": { "uri": file_uri(&top) }, "position": position }),
+                )
+                .expect("example hover response");
+            assert!(
+                hover.to_string().contains(&name),
+                "{what}: hover must name {name}: {hover}"
+            );
+        }
+        streams.push(data);
+        client.shutdown();
+    }
+    assert_eq!(streams[0], streams[1], "ST-24: serving paths differ");
+}
+
+/// ST-50: the package file appears after the importer's open-buffer stream
+/// was served, then an unsaved edit removes an enum item the importer uses.
+/// Each commit that changes the package units sends a refresh request,
+/// and the re-requested stream follows the package.
+#[test]
+fn st_50_a_package_change_in_another_file_refreshes_the_open_importer() {
+    let (_guard, root, pkg, top) = example_root("late", &["pkg_example_top.sv"]);
+    let mut client = LspProcess::spawn(&root);
+    let initialize = client
+        .initialize_with_token_refresh(&[("example", &root)], default_init_options())
+        .expect("initialize example root");
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    client.wait_ready().expect("first analysis");
+    client.open(&top, EXAMPLE_TOP).expect("open example top");
+    let (rows, _) = example_rows(&mut client, &top, &types, &modifiers);
+    assert!(
+        !check_holds(&rows, EXAMPLE_TOP, &EXAMPLE_CHECKS[2]),
+        "ST-50: IDLE resolved without its package"
+    );
+
+    fs::write(&pkg, EXAMPLE_PKG).expect("write example package");
+    client
+        .send_watch_event(&pkg, 1)
+        .expect("package created event");
+    client
+        .wait_for_server_request(REFRESH)
+        .expect("ST-50: no refresh after the package file appeared");
+    let (rows, _) = example_rows(&mut client, &top, &types, &modifiers);
+    for check in EXAMPLE_CHECKS {
+        assert_check(&rows, EXAMPLE_TOP, check, "after package creation");
+    }
+
+    let edited = EXAMPLE_PKG.replace(",\n        DRAIN = 4", "");
+    assert_ne!(edited, EXAMPLE_PKG, "the edit removes DRAIN");
+    client
+        .open(&pkg, EXAMPLE_PKG)
+        .expect("open example package");
+    client
+        .change(&pkg, 2, &edited)
+        .expect("edit example package");
+    client
+        .wait_for_server_request(REFRESH)
+        .expect("ST-50: no refresh after the package edit");
+    let (rows, _) = example_rows(&mut client, &top, &types, &modifiers);
+    let (line, col) = position_of(EXAMPLE_TOP, "DRAIN:", 0);
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.line == line && row.character == col),
+        "ST-50/ST-22: the removed enum item keeps a token"
+    );
+    for check in EXAMPLE_CHECKS.iter().filter(|check| check.1 != "DRAIN:") {
+        assert_check(&rows, EXAMPLE_TOP, check, "after package edit");
+    }
+    client.shutdown();
+}
+
 /// Size casts of ST-52, with a package width and a block-local width that
 /// shadows the module's.
 const SIZE_CAST_SOURCE: &str = include_str!("../fixtures/semantic_tokens/size_casts.sv");

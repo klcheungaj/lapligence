@@ -850,8 +850,11 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   `lsp_stdio/semantic_token_requirements.rs` checks every `ST` rule with exact
   type and modifier bits in both serving paths over
   `fixtures/semantic_tokens/requirements.sv` (its package in another project
-  file is `requirements_pkg.sv`) and `size_casts.sv` (ST-52); the unit tests
-  in
+  file is `requirements_pkg.sv`), `size_casts.sv` (ST-52) and the no-config
+  package example `pkg_example_top.sv` / `pkg_example_pkg.sv` (ST-50, ST-51,
+  started through `LspProcess::initialize_with_token_refresh`, which
+  advertises `refreshSupport` and does not wait for the first analysis); the
+  unit tests in
   `src/bin/llg_ls/semantic_tokens.rs` repeat the classification in every
   capture profile (isolated, `library_units` off and on; library-unit capture
   elaborates no hierarchy, so hierarchical names there may stay unresolved).

@@ -2361,9 +2361,10 @@ method, and a named sequence referenced by an assertion.
 
 ## Open-buffer token parse sees other files through packages only (llg_ls)
 
-**Status:** partially fixed by LS-PKG. Package items used through any import
-form or `pkg::name` resolve in both serving paths, and import item names are
-references ([token requirements](semantic_tokens.md));
+**Status:** partially fixed by LS-PKG and LS-PKG-2. Package items used through
+any import form or `pkg::name` resolve in both serving paths, import item names
+are references, and a stream served before a context change is refreshed
+([token requirements](semantic_tokens.md));
 the gaps below remain in the open-buffer path only.
 
 ### Symptom
@@ -2376,10 +2377,9 @@ the gaps below remain in the open-buffer path only.
   project file is unknown in the open-buffer stream: an interface port type
   `ifc_x bus` gets no token (the project stream has `interface`). Unknown
   module instances are black boxes in both paths.
-- An open buffer requested before its root's first analysis commits has no
-  package context, and a package file edit reaches an open buffer's stream
-  only on its next request after the commit (no
-  `workspace/semanticTokens/refresh` is sent).
+- A client without `workspace.semanticTokens.refreshSupport` keeps a stream
+  served before a context change (the first analysis, a package file edit)
+  until its next request; clients with it are refreshed (ST-50).
 
 ### Cause
 

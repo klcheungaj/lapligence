@@ -114,6 +114,21 @@ impl IncludeContext {
             .map(|(name, text)| compile::OwnedSource::include(name.clone(), text.as_str()))
             .collect()
     }
+
+    /// Whether an isolated parse of any buffer gets the same inputs from
+    /// `other` as from `self`: the same include search prefixes, include
+    /// buffers and package units, by name and text. Each commit snapshots
+    /// texts anew, so equal texts in different allocations compare equal.
+    pub fn same_inputs(&self, other: &IncludeContext) -> bool {
+        self.include_dirs == other.include_dirs
+            && self.includes.len() == other.includes.len()
+            && self.includes.iter().zip(&other.includes).all(
+                |((name, text), (other_name, other_text))| {
+                    name == other_name && (Arc::ptr_eq(text, other_text) || text == other_text)
+                },
+            )
+            && self.packages.same_units(&other.packages)
+    }
 }
 
 impl Analysis {

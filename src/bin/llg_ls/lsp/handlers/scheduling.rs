@@ -278,6 +278,25 @@ pub(super) fn spawn_debounced_run(client: Client, state: Arc<Mutex<BackendState>
                 .send_notification::<LlgModuleExplorerChanged>(ModuleExplorerChangedParams {})
                 .await;
         }
+        if outcome.semantic_tokens_refresh {
+            // A request to the client: its reply must not hold up this job's
+            // follow-up run, and a failed or refused refresh changes nothing
+            // the next edit would not redo.
+            let client = client.clone();
+            let root = key.display().to_string();
+            tokio::spawn(async move {
+                let outcome = match client.semantic_tokens_refresh().await {
+                    Ok(()) => "ok",
+                    Err(_) => "error",
+                };
+                crate::llg_debug!(
+                    "event=semantic_tokens.refresh outcome={} root={} generation={}",
+                    outcome,
+                    root,
+                    generation
+                );
+            });
+        }
         if outcome.valid_commit || outcome.watchers_refresh {
             // Re-register watchers now that resolved include dependencies are
             // known; unchanged watcher sets are coalesced away.

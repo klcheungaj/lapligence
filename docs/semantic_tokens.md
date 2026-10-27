@@ -184,6 +184,42 @@ language provides, as rust-analyzer marks the standard library.
   a top and none of their tokens enter the buffer's stream
   (`src/bin/llg_ls/features/package_context.rs`). A package is a design-wide
   name (3.13 b), unlike a macro (ST-25).
+- **ST-50** A stream depends on other files only through what a commit
+  holds: the committed snapshot for an unopened file, and the root's
+  `[compile] defines` plus the committed include and package context for an
+  open buffer. When a commit changes what a stream served since the previous
+  commit was computed from (the defines, an include or package unit text, the
+  include directories, or a replaced snapshot), the server sends
+  `workspace/semanticTokens/refresh` to a client that advertises
+  `workspace.semanticTokens.refreshSupport`, so the editor re-requests its
+  visible streams. A client asks for tokens as soon as it opens a document,
+  usually before the first analysis commits (an editor restoring its open
+  files); without the refresh the package items of that first stream stay
+  uncolored until the next edit. A commit that leaves those inputs equal
+  sends nothing (`ServedTokenInputs` in
+  `src/bin/llg_ls/lsp/handlers/state.rs`).
+- **ST-51** A root without `llg.toml` resolves packages from every file the
+  default discovery finds (the root directory, recursive `.v`/`.sv`), in
+  both paths, whichever of the files is open. The fixture is an anonymised
+  user report (`tests/fixtures/semantic_tokens/pkg_example_top.sv` and
+  `pkg_example_pkg.sv`): a header import of a package in another file, with
+  `` `default_nettype none ``, an `` `ifndef ``-guarded macro used as a
+  delay, `` `ifdef ``-guarded ports and nets and an instance of an unknown
+  module.
+
+  ```systemverilog
+  `default_nettype none
+  module ex_top
+      import ex_pkg::*;   // ex_pkg is declared in pkg_example_pkg.sv
+  (
+      input wire clk,
+  `ifndef EX_NARROW
+      input wire [3:0] i_lane1,
+  `endif
+      output wire busy
+  );
+      mode_t mode = IDLE; // type, enumMember + readonly
+  ```
 
 ## Client mappings (VS Code)
 

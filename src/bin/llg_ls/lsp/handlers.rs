@@ -290,6 +290,13 @@ impl LanguageServer for Backend {
             .and_then(|workspace| workspace.did_change_watched_files.as_ref())
             .and_then(|watched| watched.dynamic_registration)
             .unwrap_or(false);
+        let semantic_tokens_refresh = params
+            .capabilities
+            .workspace
+            .as_ref()
+            .and_then(|workspace| workspace.semantic_tokens.as_ref())
+            .and_then(|tokens| tokens.refresh_support)
+            .unwrap_or(false);
         let mut roots = BTreeMap::new();
         let mut warnings = init_warnings;
         for (path, id) in Self::roots_from_initialize(&params) {
@@ -305,6 +312,7 @@ impl LanguageServer for Backend {
             let mut state = self.lock_state();
             state.roots = roots;
             state.dynamic_watched_files = dynamic;
+            state.semantic_tokens_refresh = semantic_tokens_refresh;
             state.pending_logs.extend(warnings);
         }
         request.set_root(|| format!("roots={root_count}"));
@@ -831,10 +839,11 @@ impl LanguageServer for Backend {
             });
         let uri = params.text_document.uri;
         let (analysis, paths, open_document, max_file_bytes, shared_owner) = {
-            let state = self.lock_state();
+            let mut state = self.lock_state();
             let Some((root, real, paths)) = Self::root_context(&state, &uri) else {
                 return Ok(None);
             };
+            let root_key = root.descriptor.root.clone();
             request.set_root(|| root.descriptor.id.clone());
             let analysis = root.last_good.clone();
             let open_document = state.documents.get(&uri).cloned().map(|text| {
@@ -860,6 +869,18 @@ impl LanguageServer for Backend {
             // is not possible; log the ownership decision instead.
             let shared = shared_tracker_count(&state, &real) > 1;
             let owner_name = root.descriptor.id.clone();
+            // Recorded under the same lock as the captured inputs, so a
+            // commit that lands while this request computes sees them and
+            // asks the client to re-request a stream that is already old.
+            let refresh_supported = state.semantic_tokens_refresh;
+            if let Some(root) = state.roots.get_mut(&root_key).filter(|_| refresh_supported) {
+                match &open_document {
+                    Some(document) => root
+                        .served_tokens
+                        .record_isolated(&document.defines, &document.includes),
+                    None => root.served_tokens.record_snapshot(),
+                }
+            }
             (
                 analysis,
                 paths,

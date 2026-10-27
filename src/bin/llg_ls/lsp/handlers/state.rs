@@ -28,6 +28,9 @@ pub(super) struct RootState {
     /// structurally; reads happen together with `last_good` under the state
     /// lock.
     pub(super) analysis_epoch: u64,
+    /// Inputs of the semantic-token streams served since the last commit,
+    /// which decide whether that commit asks the client to re-request them.
+    pub(super) served_tokens: ServedTokenInputs,
     /// Diagnostics published for this root's documents (open or closed).
     pub(super) diagnostics: BTreeMap<Url, Vec<Diagnostic>>,
     /// Digest of the last primary payload sent per URI by this root, so
@@ -78,6 +81,9 @@ pub(super) struct BackendState {
     /// Order of the messages this server sends to the client (see
     /// [`ClientOrder`]).
     pub(super) client_order: ClientOrder,
+    /// The client handles `workspace/semanticTokens/refresh`
+    /// (`workspace.semanticTokens.refreshSupport`).
+    pub(super) semantic_tokens_refresh: bool,
 }
 
 /// Orders workspace discoveries ([`Backend::rescan`]). tower-lsp runs
@@ -194,6 +200,85 @@ pub(super) struct CommitOutcome {
     /// snapshot.  Diagnostics-only/fatal commits retain the existing model
     /// and do not cause clients to refetch it.
     pub(super) module_explorer_changed: bool,
+    /// Whether a semantic-token stream served before this commit may differ
+    /// from one computed now, and the client takes a refresh request
+    /// ([`ServedTokenInputs`]).
+    pub(super) semantic_tokens_refresh: bool,
+}
+
+/// What the semantic-token streams served for one root since its last
+/// commit were computed from, so a commit asks the client to re-request them
+/// (`workspace/semanticTokens/refresh`) only when one may now differ. A
+/// client requests tokens when a document opens or its text changes, and
+/// never because another file or the first analysis committed; without the
+/// refresh, a stream served before the first commit (no package or include
+/// context yet) or before a package file changed stays on screen.
+///
+/// An open buffer's stream is a function of its text, the root's
+/// `[compile] defines` and the committed include context; the client covers
+/// text changes, so only the other two are recorded. Any other stream is the
+/// committed snapshot's, which every replacement may change. Fallback streams
+/// an open buffer gets when its isolated parse is refused (stale revision,
+/// size limit, saturated flights, parse failure) are not recorded: the next
+/// edit re-requests them. Nothing is recorded for a client without
+/// `workspace.semanticTokens.refreshSupport`.
+#[derive(Debug, Default)]
+pub(super) struct ServedTokenInputs {
+    /// A stream came from the committed snapshot (an unopened file).
+    snapshot: bool,
+    /// The defines and include context of the isolated parses served.
+    isolated: Option<(Vec<String>, Arc<features::IncludeContext>)>,
+    /// Isolated parses used different defines or contexts.
+    mixed: bool,
+}
+
+impl ServedTokenInputs {
+    /// Record a stream served from the committed snapshot.
+    pub(super) fn record_snapshot(&mut self) {
+        self.snapshot = true;
+    }
+
+    /// Record an isolated open-buffer parse with these inputs.
+    pub(super) fn record_isolated(
+        &mut self,
+        defines: &[String],
+        context: &Arc<features::IncludeContext>,
+    ) {
+        match &self.isolated {
+            None => self.isolated = Some((defines.to_vec(), Arc::clone(context))),
+            Some((recorded_defines, recorded)) => {
+                let same = recorded_defines == defines
+                    && (Arc::ptr_eq(recorded, context) || recorded.same_inputs(context));
+                self.mixed |= !same;
+            }
+        }
+    }
+
+    /// Whether a recorded stream may differ from one computed against the
+    /// inputs a commit leaves current (`defines`, `context`, and whether it
+    /// replaced the snapshot). Clears what the decision settles: a snapshot
+    /// record survives a commit that kept the snapshot.
+    pub(super) fn take_refresh(
+        &mut self,
+        snapshot_replaced: bool,
+        defines: &[String],
+        context: &features::IncludeContext,
+    ) -> bool {
+        let isolated_changed = self.mixed
+            || self
+                .isolated
+                .as_ref()
+                .is_some_and(|(recorded_defines, recorded)| {
+                    recorded_defines != defines || !recorded.same_inputs(context)
+                });
+        let refresh = isolated_changed || (self.snapshot && snapshot_replaced);
+        let keep_snapshot = self.snapshot && !refresh;
+        *self = ServedTokenInputs {
+            snapshot: keep_snapshot,
+            ..ServedTokenInputs::default()
+        };
+        refresh
+    }
 }
 /// What [`Backend::apply_discovery`] did with one walk's file sets.
 #[derive(Debug, PartialEq, Eq)]
@@ -281,6 +366,7 @@ impl Backend {
                 next_generation: 0,
                 discovery: DiscoveryOrder::default(),
                 client_order: ClientOrder::default(),
+                semantic_tokens_refresh: false,
             })),
             definition_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
             hover_cache: MemoCache::new(NAVIGATION_CACHE_CAPACITY),
@@ -558,6 +644,7 @@ impl Backend {
                 pending_parent_id: None,
                 scheduler: SchedulerState::default(),
                 analysis_epoch: 0,
+                served_tokens: ServedTokenInputs::default(),
             },
             errors,
         )
