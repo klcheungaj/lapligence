@@ -2358,3 +2358,45 @@ symbol index and dump kind names unchanged.
 
 `llg_ls --dump-tokens` on a module with an output port, a class with a
 method, and a named sequence referenced by an assertion.
+
+## Open-buffer token parse sees other files through packages only (llg_ls)
+
+**Status:** partially fixed by LS-PKG. Package items used through any import
+form or `pkg::name` resolve in both serving paths, and import item names are
+references ([token requirements](semantic_tokens.md));
+the gaps below remain in the open-buffer path only.
+
+### Symptom
+
+- A package the buffer names only through text that the lexical scan cannot
+  see (a `[compile] defines` macro or a header the buffer does not include
+  expanding to `pkg::`, a package name built by token pasting) stays unknown
+  in the open-buffer stream; its items get no token there.
+- An interface, or another non-package definition, declared only in another
+  project file is unknown in the open-buffer stream: an interface port type
+  `ifc_x bus` gets no token (the project stream has `interface`). Unknown
+  module instances are black boxes in both paths.
+- An open buffer requested before its root's first analysis commits has no
+  package context, and a package file edit reaches an open buffer's stream
+  only on its next request after the commit (no
+  `workspace/semanticTokens/refresh` is sent).
+
+### Cause
+
+The isolated parse (`features/requests.rs`) compiles the buffer with the
+committed include context plus the units `PackageContext::sources_for`
+(`features/package_context.rs`) selects by a lexical `name ::` scan of the
+buffer, the headers it includes and the selected units; other definitions
+are not selected.
+
+### Intended direction
+
+Record, per committed unit, the packages and definitions Slang resolved for
+it, and select dependency units from those facts plus the scan of the unsaved
+text; send a semantic-token refresh after a commit that changes an open
+buffer's context.
+
+### Reproduce
+
+Open a file with `module top(ifc_x bus); endmodule` where `ifc_x` is declared
+in another project file and request `textDocument/semanticTokens/full`.

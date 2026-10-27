@@ -2402,23 +2402,6 @@ public:
           !sourceGenerateBlocks.insert(symbol.getSyntax()).second)
         return;
     }
-    // The package name of `import pk::*;` / `import pk::x;` (IEEE 1800-2009
-    // 26.3) names the imported package.
-    if constexpr (std::same_as<T, WildcardImportSymbol> ||
-                  std::same_as<T, ExplicitImportSymbol>) {
-      const PackageSymbol* package = nullptr;
-      if constexpr (std::same_as<T, WildcardImportSymbol>)
-        package = symbol.getPackage();
-      else
-        package = symbol.package();
-      const syntax::SyntaxNode* item = symbol.getSyntax();
-      if (package && item && item->kind == syntax::SyntaxKind::PackageImportItem) {
-        const parsing::Token name = item->as<syntax::PackageImportItemSyntax>().package;
-        if (name.valueText() == package->name)
-          capture.lexicalBinding(name, lexicalTarget(*package),
-                                 LLG_SLANG_LEXICAL_ROLE_REFERENCE);
-      }
-    }
     const uint64_t id = capture.ensureSemantic(&symbol);
     attach(id);
     if (!markVisited(id))
@@ -3032,6 +3015,9 @@ public:
       if (symbol.wrapped.kind == SymbolKind::EnumValue)
         handle(symbol.wrapped.template as<EnumValueSymbol>());
     }
+    if constexpr (std::same_as<T, ExplicitImportSymbol> ||
+                  std::same_as<T, WildcardImportSymbol>)
+      bindImportItem(symbol);
     if constexpr (std::same_as<T, NetAliasSymbol>) {
       uint32_t index = 0;
       for (const Expression* expression : symbol.getNetReferences())
@@ -4131,6 +4117,39 @@ private:
         tokens.push_back(name.as<syntax::ClassNameSyntax>().identifier);
         break;
       default: break;
+    }
+  }
+
+  // An import or export item `pkg::name` / `pkg::*` (IEEE 1800-2009 26.3,
+  // 26.6) names a package and, unless it is `*`, one of its members. Neither
+  // name declares anything in the importing scope; Slang's import symbol sits
+  // at the item name, so without these bindings the member name would read as
+  // a declaration of its own. An unresolved package or member stays unbound.
+  template<typename T>
+  void bindImportItem(const T& symbol) {
+    const syntax::SyntaxNode* syntaxNode = symbol.getSyntax();
+    if (!syntaxNode || syntaxNode->kind != syntax::SyntaxKind::PackageImportItem)
+      return;
+    const auto& item = syntaxNode->as<syntax::PackageImportItemSyntax>();
+    const PackageSymbol* package = nullptr;
+    if constexpr (std::same_as<T, ExplicitImportSymbol>)
+      package = symbol.package();
+    else
+      package = symbol.getPackage();
+    // A name a macro builds is not spelled at its token; leave it unbound.
+    if (!package || item.package.valueText() != package->name)
+      return;
+    capture.lexicalBinding(item.package, lexicalTarget(*package),
+                           LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+    if constexpr (std::same_as<T, ExplicitImportSymbol>) {
+      const Symbol* imported = symbol.importedSymbol();
+      // An enum value is visible in its package through a transparent
+      // member; references elsewhere bind the value itself.
+      if (imported && imported->kind == SymbolKind::TransparentMember)
+        imported = &imported->template as<TransparentMemberSymbol>().wrapped;
+      if (imported && item.item.valueText() == imported->name)
+        capture.lexicalBinding(item.item, lexicalTarget(*imported),
+                               LLG_SLANG_LEXICAL_ROLE_REFERENCE);
     }
   }
 

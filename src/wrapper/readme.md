@@ -62,9 +62,11 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   targets and `$bits`/`type()` operands bind to the alias their expression type
   resolved, only when the spelling matches.
 - Both capture modes bind, from the resolved AST, the name tokens no reference
-  node carries: `::` qualifiers to the enclosing package or class, hierarchical
-  path steps to the symbols of Slang's resolved path, `disable` targets and
-  symbol operands, called subroutine names, and interface-port type names.
+  node carries: `::` qualifiers to the enclosing package or class, the package
+  and member names of import and export items (references, never
+  declarations), hierarchical path steps to the symbols of Slang's resolved
+  path, `disable` targets and symbol operands, called subroutine names, and
+  interface-port type names.
   System subroutine and built-in method names get the
   `LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE` kind with no target: every written
   `$name` token from its spelling (also where no expression is captured, or
@@ -94,9 +96,9 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   members and class properties are `LLG_SLANG_LEXICAL_FIELD`: a member
   declaration nothing references still gets the declaration role from the
   syntax, every member step of a select (`s.a.b`, `pk::v.f`, `u.p.f`) and an
-  assignment-pattern member key (`'{a: 1}`) bind to the member, and the
-  package name of an import binds to the package. A `` `define `` name has the
-  declaration role without a semantic target. Words that are control flow
+  assignment-pattern member key (`'{a: 1}`) bind to the member (import item
+  names: see the bindings above). A `` `define `` name has the declaration
+  role without a semantic target. Words that are control flow
   everywhere are left to the consumer's text classification.
 - Text macros: a use site keeps its `` `NAME `` directive token and its
   written actual arguments. Expanded tokens carry

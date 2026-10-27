@@ -66,11 +66,11 @@ positional words and bindings come from the capture in
 - **ST-10** Module, program and class names are `class`; interface names are
   `interface`. Declarations add `declaration` (this holds for every name
   rule below).
-- **ST-11** Packages, `pk::` qualifiers (also in `import pk::*`), and named,
-  labeled and generate block names are `namespace`; the opening block name
-  (`begin : blk`, `lbl:`) adds `declaration`, and end labels and references
-  (`end : blk`, `disable blk`, `g[0].x`) navigate to it. Instance names are
-  not blocks.
+- **ST-11** Packages, `pk::` qualifiers (also in import and export items,
+  ST-28), and named, labeled and generate block names are `namespace`; the
+  opening block name (`begin : blk`, `lbl:`) adds `declaration`, and end
+  labels and references (`end : blk`, `disable blk`, `g[0].x`) navigate to
+  it. Instance names are not blocks.
 - **ST-12** Typedef names are `type`, never `defaultLibrary`.
 - **ST-13** Enum items are `enumMember` + `readonly`.
 - **ST-14** Parameters, localparams and specparams are `variable` +
@@ -104,6 +104,11 @@ positional words and bindings come from the capture in
 - **ST-23** Strings are `string`, numbers `number`, operators and
   punctuation (also `->`) `operator`. Comments and attribute names get no
   token.
+- **ST-28** The names of an import or export item (26.3, 26.6) are
+  references, never declarations or document symbols: `pk` in `import pk::*`
+  and `import pk::x` is `namespace`, and `x` has the type of what it imports
+  (ST-12, ST-13, ST-14, ST-19). Definition requests on either name reach the
+  package or member declaration.
 
 ## Built-in functions and methods
 
@@ -142,9 +147,9 @@ language provides, as rust-analyzer marks the standard library.
 ## Serving paths
 
 - **ST-24** The project stream (committed analysis of an unopened file) and
-  the open-buffer stream (the buffer compiled alone with the root's
-  `[compile] defines` and the committed include context) agree token for
-  token for the same text.
+  the open-buffer stream (the buffer compiled with the root's `[compile]
+  defines`, the committed include context and the committed package units of
+  ST-29) agree token for token for the same text.
 - **ST-25** An open buffer that defines or uses text macros is fully
   tokenized. A macro defined only in another project file is unknown in both
   paths (each file is its own compilation unit).
@@ -152,6 +157,15 @@ language provides, as rust-analyzer marks the standard library.
   committed set degrades the stream per token: the tokens Slang recovered
   stay.
 - **ST-27** Inactive conditional-compilation branches carry no token.
+- **ST-29** Items of a package declared in another project file keep their
+  types (ST-12 to ST-19) in both paths, used through a compilation-unit,
+  header or body wildcard import, an explicit import item or `pk::x`. The
+  open buffer is compiled with the committed project files that declare the
+  packages it names (`pk ::` in the buffer, its admitted headers and,
+  transitively, those files) as library units: none of their modules becomes
+  a top and none of their tokens enter the buffer's stream
+  (`src/bin/llg_ls/features/package_context.rs`). A package is a design-wide
+  name (3.13 b), unlike a macro (ST-25).
 
 ## Client mappings (VS Code)
 

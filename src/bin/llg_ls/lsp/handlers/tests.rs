@@ -1863,6 +1863,7 @@ fn semantic_parse_reads_includes_only_from_the_committed_context() {
             header.to_owned(),
             Arc::new("`define HDR_WIDTH 4\nmodule from_header; endmodule\n".to_owned()),
         )],
+        ..Default::default()
     };
 
     // Act
@@ -1890,6 +1891,104 @@ fn semantic_parse_reads_includes_only_from_the_committed_context() {
         );
         assert!(tokens.iter().all(|token| token.0 < 5), "{tokens:?}");
     }
+}
+
+#[test]
+fn semantic_parse_resolves_packages_from_the_committed_context() {
+    // Arrange: the package units come from the committed context; `other.sv`
+    // declares no package the buffer names and must not change anything.
+    let unit = hp("/virtual/ctx/top.sv");
+    let source = "module top import cfg_pkg::*; #(parameter int W = P_W) ();\n  localparam int Q = cfg_pkg::L_D + W;\nendmodule\n";
+    let context = features::IncludeContext {
+        packages: features::PackageContext::new(
+            [
+                (
+                    hp("/virtual/ctx/cfg_pkg.sv").to_owned(),
+                    Arc::new("package cfg_pkg;\n  import base_pkg::*;\n  parameter int P_W = B_V;\n  localparam int L_D = 4;\nendpackage\nmodule pkg_file_module; endmodule\n".to_owned()),
+                ),
+                (
+                    hp("/virtual/ctx/base_pkg.sv").to_owned(),
+                    Arc::new("package base_pkg;\n  localparam int B_V = 2;\nendpackage\n".to_owned()),
+                ),
+                (
+                    hp("/virtual/ctx/other.sv").to_owned(),
+                    Arc::new("package other_pkg; parameter int P_W = 1; endpackage\n".to_owned()),
+                ),
+            ],
+            &[],
+        ),
+        ..Default::default()
+    };
+
+    // Act
+    let with_context = isolated_tokens(unit, source, &[], &context);
+    let without_context = isolated_tokens(unit, source, &[], &Default::default());
+
+    // Assert: the imported and the qualified package items resolve only with
+    // the context; the buffer's own names resolve either way, and no token
+    // of a package unit enters this file's stream.
+    let readonly_variable = legend_index("variable");
+    for needle in ["P_W)", "L_D +"] {
+        assert_eq!(
+            token_type_at(&with_context, source, needle),
+            Some(readonly_variable),
+            "{needle}: {with_context:?}"
+        );
+        assert_eq!(
+            token_type_at(&without_context, source, needle),
+            None,
+            "{needle}: {without_context:?}"
+        );
+    }
+    assert_eq!(
+        token_type_at(&with_context, source, "cfg_pkg::L_D"),
+        Some(legend_index("namespace"))
+    );
+    for tokens in [&with_context, &without_context] {
+        assert_eq!(
+            token_type_at(tokens, source, "W = P_W"),
+            Some(readonly_variable),
+            "{tokens:?}"
+        );
+        assert!(tokens.iter().all(|token| token.0 < 3), "{tokens:?}");
+    }
+}
+
+#[test]
+fn semantic_parse_admits_a_package_unit_that_another_unit_includes_once() {
+    // Arrange: `cfg_pkg.sv` is a compilation unit that `wrap.sv` also
+    // includes, so the committed context holds it as an include buffer and as
+    // a package unit; Slang accepts one buffer per path.
+    let unit = hp("/virtual/ctx/top.sv");
+    let package = hp("/virtual/ctx/cfg_pkg.sv");
+    let package_text =
+        Arc::new("package cfg_pkg;\n  localparam int L_D = 4;\nendpackage\n".to_owned());
+    let source = "module top;\n  localparam int Q = cfg_pkg::L_D;\nendmodule\n";
+    let includes = vec![(package.to_owned(), Arc::clone(&package_text))];
+    let context = features::IncludeContext {
+        packages: features::PackageContext::new(
+            [
+                (package.to_owned(), package_text),
+                (
+                    hp("/virtual/ctx/wrap.sv").to_owned(),
+                    Arc::new("`include \"cfg_pkg.sv\"\n".to_owned()),
+                ),
+            ],
+            &includes,
+        ),
+        include_dirs: Vec::new(),
+        includes,
+    };
+
+    // Act
+    let tokens = isolated_tokens(unit, source, &[], &context);
+
+    // Assert
+    assert_eq!(
+        token_type_at(&tokens, source, "L_D;"),
+        Some(legend_index("variable")),
+        "{tokens:?}"
+    );
 }
 
 #[test]

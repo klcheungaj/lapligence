@@ -57,3 +57,12 @@ module req_top(input logic clk, input logic rst);
     -> ev;
   end
 endmodule
+module req_imports import req_ext_pkg::*; #(parameter int PW = EXT_W) (input ext_t ei, output logic [EXT_L-1:0] eo);
+  import req_ext_pkg::EXT_L;
+  import req_ext_pkg::ext_e;
+  import req_ext_pkg::EXT_ON;
+  import req_ext_pkg::ext_inc;
+  localparam int PL = EXT_L + ext_inc(PW) + req_ext_pkg::EXT_W;
+  ext_e e2 = EXT_ON;
+  assign eo = ei[EXT_L-1:0] + PL;
+endmodule

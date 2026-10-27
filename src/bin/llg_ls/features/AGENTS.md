@@ -10,6 +10,7 @@ Analysis and request projections: `features.rs` and `features/`. Components:
 - `slang.rs`: frontend diagnostics conversion.
 - `source_graph.rs`, `fallback.rs`: source-level graph and syntax-error extraction.
 - `symbol_index.rs`, `requests.rs`: indexes and pure projections.
+- `package_context.rs`: package-declaring units an isolated token parse adds.
 - `tests.rs`, `tests/`: helpers and domain regressions.
 
 ## Rules

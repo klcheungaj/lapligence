@@ -5,6 +5,18 @@
 use super::*;
 
 const SOURCE: &str = include_str!("../fixtures/semantic_tokens/requirements.sv");
+/// The package `requirements.sv` imports from another project file (ST-28,
+/// ST-29).
+const PKG_SOURCE: &str = include_str!("../fixtures/semantic_tokens/requirements_pkg.sv");
+
+/// Write the fixture and its package file into `root`; returns the fixture
+/// path.
+fn write_requirements(root: &Path) -> PathBuf {
+    let path = root.join("st_requirements.sv");
+    fs::write(&path, SOURCE).expect("write requirements fixture");
+    fs::write(root.join("st_requirements_pkg.sv"), PKG_SOURCE).expect("write requirements package");
+    path
+}
 
 /// Errors and an unresolved name for ST-22 and ST-26, after the clean module.
 const ERRORS_SOURCE: &str = "module req_errors(input logic a, output logic b);\n\
@@ -233,6 +245,23 @@ const CHECKS: &[Check] = &[
     ("ST-23", "\"hi\"", 0, 0, "string", NONE),
     ("ST-23", "4'h1", 0, 0, "number", NONE),
     ("ST-23", "-> ev", 0, 0, "operator", NONE),
+    // ST-28: import item names are references to the package and member.
+    ("ST-28", "req_ext_pkg::EXT_L;", 0, 0, "namespace", NONE),
+    ("ST-28", "req_ext_pkg::EXT_L;", 0, 13, "variable", RO),
+    ("ST-28", "req_ext_pkg::ext_e;", 0, 13, "type", NONE),
+    ("ST-28", "req_ext_pkg::EXT_ON;", 0, 13, "enumMember", RO),
+    ("ST-28", "req_ext_pkg::ext_inc;", 0, 13, "function", NONE),
+    // ST-29: items of a package in another file, through a header import,
+    // explicit import items and a qualified name.
+    ("ST-29", "req_ext_pkg::*", 0, 0, "namespace", NONE),
+    ("ST-29", "EXT_W) (", 0, 0, "variable", RO),
+    ("ST-29", "ext_t ei", 0, 0, "type", NONE),
+    ("ST-29", "EXT_L-1:0] eo", 0, 0, "variable", RO),
+    ("ST-29", "EXT_L + ext_inc", 0, 0, "variable", RO),
+    ("ST-29", "ext_inc(PW)", 0, 0, "function", NONE),
+    ("ST-29", "req_ext_pkg::EXT_W;", 0, 0, "namespace", NONE),
+    ("ST-29", "req_ext_pkg::EXT_W;", 0, 13, "variable", RO),
+    ("ST-29", "e2 = EXT_ON", 0, 5, "enumMember", RO),
 ];
 
 fn assert_check(rows: &[SemanticRow], source: &str, check: &Check, path: &str) {
@@ -250,16 +279,16 @@ fn assert_check(rows: &[SemanticRow], source: &str, check: &Check, path: &str) {
     );
 }
 
-/// ST-01 (legend), ST-02 to ST-21, ST-23 (classification), ST-24 (both
-/// serving paths agree), ST-25 (an open buffer that uses macros is fully
-/// tokenized) and ST-27 (inactive branches carry no token).
+/// ST-01 (legend), ST-02 to ST-21, ST-23, ST-28 (classification), ST-24
+/// (both serving paths agree), ST-25 (an open buffer that uses macros is
+/// fully tokenized), ST-27 (inactive branches carry no token) and ST-29 (a
+/// package in another project file, also in the open buffer).
 #[test]
 fn st_semantic_token_requirements_hold_in_both_serving_paths() {
     let fixture = FixtureTree::new();
     let root = fixture.root("root-a");
-    let path = root.join("st_requirements.sv");
+    let path = write_requirements(&root);
     let uri = file_uri(&path);
-    fs::write(&path, SOURCE).expect("write requirements fixture");
     let mut client = LspProcess::spawn(&fixture.root);
     let initialize = client
         .initialize(&[("root-a", &root)], default_init_options())
@@ -320,9 +349,8 @@ fn st_semantic_token_requirements_hold_in_both_serving_paths() {
 fn st_19_member_references_and_pattern_keys_navigate_to_the_member() {
     let fixture = FixtureTree::new();
     let root = fixture.root("root-a");
-    let path = root.join("st_requirements.sv");
+    let path = write_requirements(&root);
     let uri = file_uri(&path);
-    fs::write(&path, SOURCE).expect("write requirements fixture");
     let mut client = LspProcess::spawn(&fixture.root);
     client
         .initialize(&[("root-a", &root)], default_init_options())
@@ -346,6 +374,65 @@ fn st_19_member_references_and_pattern_keys_navigate_to_the_member() {
             (start["line"].as_u64(), start["character"].as_u64()),
             (Some(declaration.0), Some(declaration.1)),
             "ST-18 {needle}: {response}"
+        );
+    }
+    client.shutdown();
+}
+
+/// ST-28, ST-29: definition requests on import item names and on uses of a
+/// package in another project file reach the package declarations, and the
+/// import item names are not document symbols.
+#[test]
+fn st_28_and_st_29_import_items_and_package_uses_navigate_to_the_package() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = write_requirements(&root);
+    let uri = file_uri(&path);
+    let package_uri = file_uri(&root.join("st_requirements_pkg.sv"));
+    let mut client = LspProcess::spawn(&fixture.root);
+    client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+    for (needle, offset, declaration, declaration_offset) in [
+        ("req_ext_pkg::*", 0, "package req_ext_pkg", 8),
+        ("req_ext_pkg::EXT_L;", 13, "EXT_L = 2", 0),
+        ("req_ext_pkg::EXT_ON;", 13, "EXT_ON }", 0),
+        ("req_ext_pkg::ext_inc;", 0, "package req_ext_pkg", 8),
+        ("req_ext_pkg::ext_inc;", 13, "ext_inc(int", 0),
+        ("EXT_W) (", 0, "EXT_W = 8", 0),
+        ("e2 = EXT_ON", 5, "EXT_ON }", 0),
+    ] {
+        let (line, col) = position_of(SOURCE, needle, 0);
+        let response = client
+            .request(
+                "textDocument/definition",
+                json!({
+                    "textDocument": { "uri": uri },
+                    "position": { "line": line, "character": col + offset }
+                }),
+            )
+            .expect("package definition response");
+        let (target, start) = single_location(&response, "package definition");
+        let expected = position_of(PKG_SOURCE, declaration, 0);
+        assert_eq!(target, package_uri, "ST-28/ST-29 {needle}+{offset}");
+        assert_eq!(
+            (start["line"].as_u64(), start["character"].as_u64()),
+            (Some(expected.0), Some(expected.1 + declaration_offset)),
+            "ST-28/ST-29 {needle}+{offset}: {response}"
+        );
+    }
+    let symbols = client
+        .request(
+            "textDocument/documentSymbol",
+            json!({ "textDocument": { "uri": uri } }),
+        )
+        .expect("document symbols");
+    let names = names(&symbols);
+    for imported in ["EXT_L", "ext_e", "EXT_ON", "ext_inc", "req_ext_pkg"] {
+        assert!(
+            !names.iter().any(|name| name == imported),
+            "ST-28: {imported} listed as a fixture symbol: {names:?}"
         );
     }
     client.shutdown();

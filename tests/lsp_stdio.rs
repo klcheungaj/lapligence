@@ -70,6 +70,8 @@ mod inactive_ranges;
 mod macro_hover;
 #[path = "lsp_stdio/macro_tokens.rs"]
 mod macro_tokens;
+#[path = "lsp_stdio/package_imports.rs"]
+mod package_imports;
 #[path = "lsp_stdio/semantic_token_requirements.rs"]
 mod semantic_token_requirements;
 
