@@ -103,6 +103,13 @@ VPI writes are flushed per call like `$fdisplay` so the two interleave in call
 order, closing a channel cancels its monitors and strobes as `$fclose` does,
 and each slot keeps the name it was opened with. A file descriptor (bit 31) is
 refused except by `vpi_mcd_name` (A20-D1..D4).
+`vpi_get_value_array`/`vpi_put_value_array` (38.16, 38.35) work on whole
+unpacked array rows: the section is validated (array, element type, format,
+indices, count) before any value moves, gets fill one simulator buffer
+(`array_values`, overwritten by the next call) unless `vpiUserAllocFlag`
+names the application's, and puts write element by element through
+`llg_ba`/`llg_ba_d` like `vpi_put_value` with `vpiNoDelay`. `vpiPropagateOff`
+is accepted and every fanout is still notified (A20-D5..D8).
 Built-ins are never dispatched to a registration under their name: after
 plugin startup, `llg_vpi_check_builtin_overrides` fails the start, naming the
 call, when an application registered a built-in the model runs natively

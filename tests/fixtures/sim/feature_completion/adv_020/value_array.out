@@ -1,0 +1,86 @@
+a raw4 from [1][4]: level=0 code=-
+  buffer=same
+  [0] A=030000000014 B=000000000000
+  [1] A=030000000065 B=0000000000a0
+  [2] A=030000000003 B=000000000000
+  [3] A=030000000004 B=000000000000
+  [4] A=03ffffffffff B=03ffffffffff
+a vector from [2][3]: level=0 code=-
+  [0] 00000300/00000000 00000023/00000000
+  [1] 00000300/00000000 00000024/00000000
+  [2] 00000300/00000000 00000025/00000000
+a raw2 from [1][5]: level=0 code=-
+  [0] A=030000000045
+  [1] A=030000000003
+b int from [0]: level=0 code=-
+  2049 255 291 4095
+b raw4 from [2]: level=0 code=-
+  [0] A=0123 B=0000
+  [1] A=0fff B=0000
+by shortint: level=0 code=-
+  -2 127 -128
+si shortint: level=0 code=-
+  -300 32767
+by longint: level=0 code=-
+  -2 127 -128
+si longint: level=0 code=-
+  -300 32767
+li longint: level=0 code=-
+  -1234567890123 9223372036854775806
+iv int from [1]: level=0 code=-
+  -5 70000
+r real: level=0 code=-
+  1.5 -2.25 1e+10
+sr shortreal: level=0 code=-
+  0.5 -3
+sr real: level=0 code=-
+  0.5 -3
+t time: level=0 code=-
+  type=2 high=1 low=705032704
+  type=2 high=0 low=3
+ig vector: level=0 code=-
+  fffffff9/00000000 ffffffff/ffffffff
+n vector: level=0 code=-
+  a/0 9/c
+not an array: level=3 code=LLG_VPI_HANDLE value=NULL
+an element: level=3 code=LLG_VPI_HANDLE value=NULL
+unpacked struct elements: level=3 code=LLG_VPI_VALUE value=NULL
+index outside: level=3 code=LLG_VPI_INDEX value=NULL
+num 0: level=3 code=LLG_VPI_INDEX value=NULL
+past the end: level=3 code=LLG_VPI_INDEX value=NULL
+null index: level=3 code=LLG_VPI_INDEX value=NULL
+vpiOneValue flag: level=3 code=LLG_VPI_FLAGS value=NULL
+user buffer NULL: level=3 code=LLG_VPI_ARGUMENT value=NULL
+vpiBinStrVal: level=3 code=LLG_VPI_FORMAT value=NULL
+shortint of int: level=3 code=LLG_VPI_FORMAT value=NULL
+longint of int: level=3 code=LLG_VPI_FORMAT value=NULL
+real of bit: level=3 code=LLG_VPI_FORMAT value=NULL
+shortreal of real: level=3 code=LLG_VPI_FORMAT value=NULL
+int of real: level=3 code=LLG_VPI_FORMAT value=NULL
+null arrayvalue_p: level=3 code=LLG_VPI_ARGUMENT
+a raw4 to [1][4] propagate off: level=0 code=-
+b one value: level=0 code=-
+b raw4 to [2]: level=0 code=-
+a raw2 to [2][3]: level=0 code=-
+iv shortint from [1]: level=0 code=-
+li longint: level=0 code=-
+r real from [1]: level=0 code=-
+sr shortreal: level=0 code=-
+t time: level=0 code=-
+ig vector: level=0 code=-
+net array: level=3 code=LLG_VPI_VALUE
+vpiUserAllocFlag: level=3 code=LLG_VPI_FLAGS
+vpiInertialDelay: level=3 code=LLG_VPI_FLAGS
+null buffer: level=3 code=LLG_VPI_ARGUMENT
+past the end: level=3 code=LLG_VPI_INDEX
+shortint to byte: level=3 code=LLG_VPI_FORMAT
+longint to shortint: level=3 code=LLG_VPI_FORMAT
+unpacked struct elements: level=3 code=LLG_VPI_VALUE
+vpiRawFourStateVal to real: level=3 code=LLG_VPI_FORMAT
+null arrayvalue_p: level=3 code=LLG_VPI_ARGUMENT
+a[1][4]=00000000001 a[1][5]=00000000101 a[0][3]=00000010101 a[0][4]=00001010101 a[0][5]=001010101xx
+a[2][3]=00000000201 a[2][5]=30000000025
+b=abc abc 234 abc changes=1
+by=-2 127 -128 si=-300 32767 iv[1]=-1 iv[0]=300
+li=-1 42 r=1.5 3.25 -0.5 sr=1.25 2.5
+ig=5 0000000z t=4294967296 7

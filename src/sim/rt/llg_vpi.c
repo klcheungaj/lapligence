@@ -249,6 +249,8 @@ typedef struct {
     char str_buffer[1024];        /* vpi_get_str result for composed names */
     char* mcd_name;               /* vpi_mcd_name result, overwritten by each call */
     size_t mcd_name_capacity;
+    void* array_values;           /* vpi_get_value_array result, overwritten by each call */
+    size_t array_values_capacity;
 } llg_vpi_state_t;
 
 static llg_vpi_state_t g_vpi;
@@ -4300,6 +4302,362 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
     }
 }
 
+/* ── array values (38.16, 38.35) ────────────────────────────────────────── */
+
+/* Whether `format` suits the elements of array row `object` (38.16, 38.35).
+ * vpiIntVal, vpiTimeVal, vpiVectorVal and the raw formats read or write any
+ * packed element; the small-integer and short real formats name the element
+ * types each clause lists, which differ between get and put. */
+static int array_format_suits(const llg_vpi_model_object_t* object, PLI_UINT32 format, int put) {
+    int element = object->subtype;
+    if (object->is_real) {
+        if (format == vpiRealVal) return 1;
+        return format == vpiShortRealVal && (object->flags & LLG_VPI_OBJ_SHORTREAL) != 0;
+    }
+    switch (format) {
+        case vpiIntVal:
+        case vpiTimeVal:
+        case vpiVectorVal:
+        case vpiRawFourStateVal:
+        case vpiRawTwoStateVal:
+            return 1;
+        case vpiShortIntVal:
+            return put ? element == vpiShortIntVar || element == vpiIntVar ||
+                             element == vpiLongIntVar
+                       : element == vpiShortIntVar || element == vpiByteVar;
+        case vpiLongIntVal:
+            return put ? element == vpiLongIntVar
+                       : element == vpiLongIntVar || element == vpiShortIntVar ||
+                             element == vpiByteVar;
+        default:
+            return 0;
+    }
+}
+
+/* Bytes one element occupies in the application's buffer for `format`. */
+static size_t array_element_bytes(PLI_UINT32 format, uint32_t width) {
+    size_t groups = ((size_t)width + 7u) / 8u;
+    switch (format) {
+        case vpiIntVal: return sizeof(PLI_INT32);
+        case vpiShortIntVal: return sizeof(PLI_INT16);
+        case vpiLongIntVal: return sizeof(PLI_INT64);
+        case vpiRealVal: return sizeof(double);
+        case vpiShortRealVal: return sizeof(float);
+        case vpiTimeVal: return sizeof(s_vpi_time);
+        case vpiVectorVal: return word_count(width) * sizeof(s_vpi_vecval);
+        case vpiRawFourStateVal: return groups * 2u;
+        default: return groups; /* vpiRawTwoStateVal */
+    }
+}
+
+/* Validate the array, format and section of a value-array call and return
+ * the array row and the flat index of the first element. Every failure
+ * records the error and returns 0 before any value moves. */
+static int array_section(vpiHandle handle, const s_vpi_arrayvalue* values, const PLI_INT32* index,
+                         PLI_UINT32 num, int put, uint32_t* row, uint64_t* first) {
+    const char* routine = put ? "vpi_put_value_array" : "vpi_get_value_array";
+    llg_vpi_slot_t* slot = checked_handle(handle, NULL);
+    if (!slot) return 0;
+    llg_vpi_model_object_t* object = slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
+    if (!object || !is_array_type(object->type) || !has_storage(object)) {
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_HANDLE", "%s needs an unpacked array handle",
+                       routine);
+        return 0;
+    }
+    /* 38.16/38.35: elements of an unpacked type are not allowed. */
+    const llg_vpi_typespec_t* element = element_typespec(object);
+    if (is_aggregate_typespec(element) && (element->flags & LLG_VPI_TS_UNPACKED)) {
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_VALUE",
+                       "%s: the elements of this array are unpacked structures or unions",
+                       routine);
+        return 0;
+    }
+    if (!array_format_suits(object, values->format, put)) {
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_FORMAT",
+                       "%s: format %d is unsupported or does not suit the array elements",
+                       routine, (int)values->format);
+        return 0;
+    }
+    if (!index) {
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_INDEX", "%s needs index_p", routine);
+        return 0;
+    }
+    uint64_t flat = 0;
+    for (uint32_t d = 0; d < object->dim_count; ++d) {
+        int64_t left = object->dims[2u * d], right = object->dims[2u * d + 1u];
+        uint64_t offset;
+        if (!index_offset(left, right, index[d], &offset)) {
+            vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_INDEX",
+                           "%s: index %d of dimension %u is outside [%lld:%lld]", routine,
+                           (int)index[d], (unsigned)d + 1u, (long long)left, (long long)right);
+            return 0;
+        }
+        uint64_t extent = (uint64_t)(left > right ? left - right : right - left) + 1u;
+        flat = flat * extent + offset;
+    }
+    uint64_t count = g_vpi.element_counts[slot->object];
+    if (num == 0 || num > count - flat) {
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_INDEX",
+                       "%s: %u elements from the start index exceed the array", routine,
+                       (unsigned)num);
+        return 0;
+    }
+    *row = slot->object;
+    *first = flat;
+    return 1;
+}
+
+/* 38.16: values of `num` consecutive elements, fastest-varying index last.
+ * Without vpiUserAllocFlag the values live in simulator storage that the
+ * next call overwrites; on any error the value pointer becomes NULL. */
+void vpi_get_value_array(vpiHandle handle, p_vpi_arrayvalue arrayvalue_p, PLI_INT32* index_p,
+                         PLI_UINT32 num) {
+    vpi_enter();
+    if (!arrayvalue_p) {
+        vpi_error("LLG_VPI_ARGUMENT", "null vpi_get_value_array arrayvalue_p");
+        return;
+    }
+    int user = (arrayvalue_p->flags & vpiUserAllocFlag) != 0;
+    void* buffer = user ? (void*)arrayvalue_p->value.rawvals : NULL;
+    memset(&arrayvalue_p->value, 0, sizeof(arrayvalue_p->value));
+    /* Decision A20-D5: only vpiUserAllocFlag is a get flag. */
+    if (arrayvalue_p->flags & ~(PLI_UINT32)vpiUserAllocFlag) {
+        vpi_error("LLG_VPI_FLAGS", "vpi_get_value_array accepts only vpiUserAllocFlag");
+        return;
+    }
+    if (user && !buffer) {
+        vpi_error("LLG_VPI_ARGUMENT", "vpiUserAllocFlag with a null value buffer");
+        return;
+    }
+    uint32_t row;
+    uint64_t first;
+    if (!array_section(handle, arrayvalue_p, index_p, num, 0, &row, &first)) return;
+    llg_vpi_model_object_t* object = row_object(row);
+    PLI_UINT32 format = arrayvalue_p->format;
+    uint32_t width = object->width;
+    size_t unit = array_element_bytes(format, width);
+    if (!user) {
+        if (unit && (size_t)num > SIZE_MAX / unit) {
+            vpi_error("LLG_VPI_NOMEM", "vpi_get_value_array section is too large");
+            return;
+        }
+        size_t need = unit * (size_t)num;
+        if (need > g_vpi.array_values_capacity) {
+            void* grown = realloc(g_vpi.array_values, need);
+            if (!grown) {
+                vpi_error("LLG_VPI_NOMEM", "vpi_get_value_array allocation failed");
+                return;
+            }
+            g_vpi.array_values = grown;
+            g_vpi.array_values_capacity = need;
+        }
+        buffer = g_vpi.array_values;
+    }
+    unsigned char* out = (unsigned char*)buffer;
+    size_t words = word_count(width);
+    size_t groups = ((size_t)width + 7u) / 8u;
+    for (PLI_UINT32 i = 0; i < num; ++i, out += unit) {
+        uint64_t flat = first + i;
+        if (object->is_real) {
+            double value = object->real[flat];
+            if (format == vpiShortRealVal) {
+                float narrow = (float)value;
+                memcpy(out, &narrow, sizeof(narrow));
+            } else {
+                memcpy(out, &value, sizeof(value));
+            }
+            continue;
+        }
+        s_vpi_vecval* bits = scratch_words(words);
+        if (!bits) {
+            vpi_error("LLG_VPI_NOMEM", "VPI value conversion allocation failed");
+            return;
+        }
+        export_words(object->packed[flat], bits);
+        switch (format) {
+            case vpiIntVal: {
+                PLI_INT32 value = low_int(bits, width, object->is_signed);
+                memcpy(out, &value, sizeof(value));
+                break;
+            }
+            case vpiShortIntVal: {
+                PLI_INT16 value = (PLI_INT16)low_int(bits, width, object->is_signed);
+                memcpy(out, &value, sizeof(value));
+                break;
+            }
+            case vpiLongIntVal: {
+                uint64_t value = low_u64(bits, width);
+                if (object->is_signed && width < 64u && ((value >> (width - 1u)) & 1u))
+                    value |= ~((UINT64_C(1) << width) - 1u);
+                PLI_INT64 signed_value = (PLI_INT64)value;
+                memcpy(out, &signed_value, sizeof(signed_value));
+                break;
+            }
+            case vpiTimeVal: {
+                uint64_t value = low_u64(bits, width);
+                s_vpi_time time;
+                memset(&time, 0, sizeof(time));
+                time.type = vpiSimTime;
+                time.high = (PLI_UINT32)(value >> 32);
+                time.low = (PLI_UINT32)value;
+                memcpy(out, &time, sizeof(time));
+                break;
+            }
+            case vpiVectorVal:
+                memcpy(out, bits, words * sizeof(*bits));
+                break;
+            default: {
+                /* Raw formats: A then B byte groups, least significant byte
+                 * first. The two-state form reads x and z as 0 (decision
+                 * A20-D6). */
+                int four = format == vpiRawFourStateVal;
+                for (size_t g = 0; g < groups; ++g) {
+                    unsigned shift = (unsigned)(g % 4u) * 8u;
+                    uint32_t a = bits[g / 4u].aval >> shift, b = bits[g / 4u].bval >> shift;
+                    out[g] = (unsigned char)(four ? a : a & ~b);
+                    if (four) out[groups + g] = (unsigned char)b;
+                }
+                break;
+            }
+        }
+    }
+    arrayvalue_p->value.rawvals = (PLI_BYTE8*)buffer;
+}
+
+/* One element value from the application's buffer `in` (one element in
+ * `format`) for array row `object`. */
+static int array_element_datum(const llg_vpi_model_object_t* object, PLI_UINT32 format,
+                               const unsigned char* in, llg_vpi_datum_t* out) {
+    memset(out, 0, sizeof(*out));
+    out->packed = VPI_EMPTY;
+    if (object->is_real) {
+        out->is_real = 1;
+        if (format == vpiShortRealVal) {
+            float narrow;
+            memcpy(&narrow, in, sizeof(narrow));
+            out->real = (double)narrow;
+        } else {
+            memcpy(&out->real, in, sizeof(out->real));
+        }
+        return 1;
+    }
+    uint32_t width = object->width;
+    s_vpi_value value;
+    memset(&value, 0, sizeof(value));
+    switch (format) {
+        case vpiIntVal:
+            value.format = vpiIntVal;
+            memcpy(&value.value.integer, in, sizeof(value.value.integer));
+            return value_from_vpi(&value, width, object->is_signed, 0, out);
+        case vpiShortIntVal: {
+            PLI_INT16 narrow;
+            memcpy(&narrow, in, sizeof(narrow));
+            value.format = vpiIntVal;
+            value.value.integer = narrow;
+            return value_from_vpi(&value, width, object->is_signed, 0, out);
+        }
+        case vpiTimeVal: {
+            s_vpi_time time;
+            memcpy(&time, in, sizeof(time));
+            value.format = vpiTimeVal;
+            value.value.time = &time;
+            return value_from_vpi(&value, width, object->is_signed, 0, out);
+        }
+        case vpiVectorVal:
+            value.format = vpiVectorVal;
+            value.value.vector = (p_vpi_vecval)(void*)in;
+            return value_from_vpi(&value, width, object->is_signed, 0, out);
+        default:
+            break;
+    }
+    size_t count = word_count(width);
+    s_vpi_vecval* words = scratch_words(count < 2u ? 2u : count);
+    if (!words) {
+        vpi_error("LLG_VPI_NOMEM", "VPI value conversion allocation failed");
+        return 0;
+    }
+    if (format == vpiLongIntVal) {
+        PLI_INT64 wide;
+        memcpy(&wide, in, sizeof(wide));
+        words[0].aval = (uint32_t)(uint64_t)wide;
+        words[1].aval = (uint32_t)((uint64_t)wide >> 32);
+        for (size_t i = 2; i < count; ++i) words[i].aval = wide < 0 ? UINT32_MAX : 0u;
+    } else {
+        /* Raw formats. 38.35: a two-state array ignores the B bytes of
+         * vpiRawFourStateVal; vpiRawTwoStateVal has none (B is 0). */
+        size_t groups = ((size_t)width + 7u) / 8u;
+        int with_b = format == vpiRawFourStateVal && !(object->flags & LLG_VPI_OBJ_TWO_STATE);
+        for (size_t g = 0; g < groups; ++g) {
+            unsigned shift = (unsigned)(g % 4u) * 8u;
+            words[g / 4u].aval |= (uint32_t)in[g] << shift;
+            if (with_b) words[g / 4u].bval |= (uint32_t)in[groups + g] << shift;
+        }
+    }
+    uint32_t top = width % 32u;
+    if (top) {
+        words[count - 1u].aval &= (1u << top) - 1u;
+        words[count - 1u].bval &= (1u << top) - 1u;
+    }
+    out->packed = sv4_zero(width, object->is_signed);
+    llg_sv4_import_vpi32(&out->packed, words, count, sizeof(*words));
+    return 1;
+}
+
+/* 38.35: write `num` consecutive elements as vpi_put_value with vpiNoDelay
+ * would, each through the procedural write path (forces still win).
+ * vpiOneValue applies the first buffer element to the whole section.
+ * vpiPropagateOff is accepted; llg still notifies every fanout, which the
+ * clause's own caveat makes the always-correct result (decision A20-D7). */
+void vpi_put_value_array(vpiHandle handle, p_vpi_arrayvalue arrayvalue_p, PLI_INT32* index_p,
+                         PLI_UINT32 num) {
+    vpi_enter();
+    if (!arrayvalue_p) {
+        vpi_error("LLG_VPI_ARGUMENT", "null vpi_put_value_array arrayvalue_p");
+        return;
+    }
+    if (arrayvalue_p->flags & ~(PLI_UINT32)(vpiPropagateOff | vpiOneValue | vpiNoDelay)) {
+        vpi_error("LLG_VPI_FLAGS",
+                  "vpi_put_value_array accepts only vpiPropagateOff, vpiOneValue and vpiNoDelay");
+        return;
+    }
+    if (!arrayvalue_p->value.rawvals) {
+        vpi_error("LLG_VPI_ARGUMENT", "null vpi_put_value_array value buffer");
+        return;
+    }
+    if (g_vpi.phase == LLG_VPI_PHASE_RUNNING && llg_rt_running() && llg_region_is_read_only()) {
+        vpi_set_errorf(vpiRun, vpiError, "LLG_VPI_READ_ONLY",
+                       "vpi_put_value_array is not allowed in the read-only %s region",
+                       llg_region_name(llg_current_region()));
+        return;
+    }
+    uint32_t row;
+    uint64_t first;
+    if (!array_section(handle, arrayvalue_p, index_p, num, 1, &row, &first)) return;
+    llg_vpi_model_object_t* object = row_object(row);
+    /* Decision A20-D8: as for vpi_put_value on a net array element. */
+    if (object->type == vpiNetArray) {
+        vpi_error("LLG_VPI_VALUE",
+                  "elements of a net array are published from their nets and are read-only");
+        return;
+    }
+    size_t unit = array_element_bytes(arrayvalue_p->format, object->width);
+    int one = (arrayvalue_p->flags & vpiOneValue) != 0;
+    const unsigned char* in = (const unsigned char*)arrayvalue_p->value.rawvals;
+    for (PLI_UINT32 i = 0; i < num; ++i) {
+        llg_vpi_datum_t datum;
+        if (!array_element_datum(object, arrayvalue_p->format, one ? in : in + (size_t)i * unit,
+                                 &datum))
+            return;
+        llg_vpi_target_t target;
+        memset(&target, 0, sizeof(target));
+        target.object = row;
+        target.element = first + i;
+        target.is_signed = object->is_signed;
+        write_target(&target, &datum);
+        datum_destroy(&datum);
+    }
+}
+
 void vpi_get_time(vpiHandle object, p_vpi_time time) {
     vpi_enter();
     llg_vpi_model_object_t* scope = NULL;
@@ -5699,6 +6057,7 @@ void llg_vpi_shutdown(void) {
     free(g_vpi.value_text);
     free(g_vpi.value_strength);
     free(g_vpi.mcd_name);
+    free(g_vpi.array_values);
     for (int i = 0; i < g_vpi.plugin_count; ++i) llg_dl_close(g_vpi.plugin_handles[i]);
     memset(&g_vpi, 0, sizeof(g_vpi));
 }
@@ -5907,26 +6266,6 @@ void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
     (void)delay_p;
     vpi_enter();
     vpi_unsupported_routine("vpi_put_delays", "no VPI delay objects");
-}
-
-void vpi_get_value_array(vpiHandle object, p_vpi_arrayvalue arrayvalue_p, PLI_INT32* index_p,
-                         PLI_UINT32 num) {
-    (void)object;
-    (void)arrayvalue_p;
-    (void)index_p;
-    (void)num;
-    vpi_enter();
-    vpi_unsupported_routine("vpi_get_value_array", "read the elements with vpi_get_value");
-}
-
-void vpi_put_value_array(vpiHandle object, p_vpi_arrayvalue arrayvalue_p, PLI_INT32* index_p,
-                         PLI_UINT32 num) {
-    (void)object;
-    (void)arrayvalue_p;
-    (void)index_p;
-    (void)num;
-    vpi_enter();
-    vpi_unsupported_routine("vpi_put_value_array", "write the elements with vpi_put_value");
 }
 
 PLI_INT32 vpi_get_data(PLI_INT32 id, PLI_BYTE8* dataLoc, PLI_INT32 numOfBytes) {

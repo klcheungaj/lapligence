@@ -564,6 +564,15 @@ a switch. MOS, CMOS and resistive MOS switches stay unsupported by design.
 | A20-D3 | **`vpi_mcd_printf` to several channels** writes the text to each and returns its character count once. Channels that are not open are skipped: with at least one open channel the count is returned with `vpiError`; with none, EOF with `vpiError`. | 38.28 L63682-63687; decision S25-D7 | `A20-D3_mcd_printf_channels` (`.sv` and `.c`) | llg choice (the text is silent on several or closed channels) |
 | A20-D4 | **Closing or flushing channels that are not open.** `vpi_mcd_close(1)` returns 1 and channel 1 keeps working; an unopened channel comes back unclosed, a mixed descriptor closes its open channels and returns the others, and `vpi_mcd_close(0)` returns 0, each with `vpiError`; `vpi_mcd_flush` of 0 or of an unopened channel returns nonzero with `vpiError`. | 38.24 L63515-63521; 38.25 L63543 | `A20-D4_mcd_close_unopened` (`.sv` and `.c`) | LRM text for the return values; the status levels and descriptor 0 are llg choices |
 
+## VPI value arrays, force/disable callbacks and controls (ADV-020)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| A20-D5 | **Value-array argument errors.** A count of 0, a section past the last element, a start index outside its range, a format the clause does not list for the element type (`vpiRealVal` of a bit array; `vpiShortIntVal` of an int array on get) and, on get, any flag other than `vpiUserAllocFlag` fail with `vpiError`. A failed get leaves the value pointer NULL, also for an application buffer; a failed put writes no element. | 38.16 L63044-63046, L63102-63103; 38.35 L64482 | `A20-D5_value_array_errors` (`.sv` and `.c`) | LRM text for formats and put flags; llg choice for counts, ranges, get flags and atomicity |
+| A20-D6 | **Raw two-state values of a four-state array.** `vpiRawTwoStateVal` reads x and z bits as 0; `vpiRawFourStateVal` written to a two-state array ignores the B bytes, and `vpiRawTwoStateVal` written to a four-state array takes B as 0. | 38.16 L63052-63054; 6.11.2 L5489-5490; 38.35 L64449-64450 | `A20-D6_value_array_raw_two_state` (`.sv` and `.c`) | LRM text for the puts; llg choice (the 4-to-2-state conversion) for the get |
+| A20-D7 | **`vpiPropagateOff`** is accepted by `vpi_put_value_array`; the values are stored and every fanout is still notified (waiting processes wake, continuous assignments reevaluate). | 38.35 L64471-64475 | `A20-D7_value_array_propagate_off` (`.sv` and `.c`) | llg choice (the flag permits skipping the notification) |
+| A20-D8 | **Net arrays.** `vpi_get_value_array` reads the resolved element values; `vpi_put_value_array` to a net array fails with `vpiError` and changes nothing, as `vpi_put_value` to a net array element does. | 38.16 L62946-62947; 38.35 L64484-64485, L64497 | `A20-D8_value_array_net_array` (`.sv` and `.c`) | llg limitation (the clause gives the put an override until a driver changes) |
+
 ## Covergroups, instances and sampling (SIM-044)
 
 | ID | Decision | Clause (SV) | Case | Kind |

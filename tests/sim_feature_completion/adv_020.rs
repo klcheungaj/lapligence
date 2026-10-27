@@ -75,3 +75,25 @@ fn mcd_routines_share_the_fopen_table() {
         &[("LLG_VPI_PLUGIN", &library)],
     );
 }
+
+const VALUE_ARRAY: &[&str] = &[
+    "--define-system-task",
+    "task $va_get()",
+    "--define-system-task",
+    "task $va_put()",
+];
+
+#[test]
+fn value_arrays_read_and_write_sections_in_every_format() {
+    let directory = sim_harness::TempDir::new("adv020-va").expect("temporary directory");
+    let Some(library) = plugin(&directory, "value_array") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "value_array",
+        include_str!("../fixtures/sim/feature_completion/adv_020/value_array.out"),
+        VALUE_ARRAY,
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}

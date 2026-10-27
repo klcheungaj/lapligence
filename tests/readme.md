@@ -408,8 +408,10 @@ ADV-020's VPI parity fixtures use
 `-E 'binary(sim_feature_completion) & test(adv_020::)'`. `symbols` takes the
 address of every Annex K/M routine and runs as an `LLG_VPI_PLUGIN` plugin (a
 Windows DLL linked against the model import library) and as a static archive
-(every host); `mcd` exercises `vpi_mcd_*` on the `$fopen` table. Decisions
-A20-D1..D4 are in `sim_lrm_decisions` (`-E 'test(/a20_d/)'`); the export list
+(every host); `mcd` exercises `vpi_mcd_*` on the `$fopen` table;
+`value_array` reads and writes array sections with
+`vpi_get_value_array`/`vpi_put_value_array`. Decisions
+A20-D1..D8 are in `sim_lrm_decisions` (`-E 'test(/a20_d/)'`); the export list
 check is `sim::build::import_library::tests`.
 
 SIM-043's callback fixtures use

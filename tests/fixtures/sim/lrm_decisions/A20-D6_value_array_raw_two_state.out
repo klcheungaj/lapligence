@@ -1,0 +1,5 @@
+q two-state: 84 5a level=0
+q four-state: A=a5 B=33 A=5a B=00 level=0
+b four-state put level=0
+q two-state put level=0
+q=10xz01zx 11000011 b=00111100
