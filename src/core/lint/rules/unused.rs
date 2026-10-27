@@ -83,6 +83,17 @@ impl LintRule for UnusedSignalRule {
         for group in db.covergroups().keys() {
             reads.extend(collect_reads(db, *group));
         }
+        // A checker instance reads the `default disable iff` condition of its
+        // instantiation context through `$inferred_disable` (16.15.7, 17.4);
+        // the condition is not part of any process or assertion there.
+        for checker in db.checker_instances() {
+            if let Some(condition) = db
+                .checker_instance(checker)
+                .and_then(|info| info.default_disable)
+            {
+                reads.extend(collect_reads(db, condition));
+            }
+        }
         // Timing checks read their terminals and conditions and toggle their
         // notifiers.
         let (timing_reads, timing_writes) = timing_check_activity(db);
@@ -190,6 +201,23 @@ fn instance_activity(db: &Db, scope: NodeId) -> (Vec<NodeId>, Vec<NodeId>, Vec<N
 mod tests {
     use super::*;
     use crate::core::lint::rules::tests::{lint_design, rule_diags};
+
+    #[test]
+    fn default_disable_read_by_a_checker_is_used() {
+        let diags = lint_design(
+            "checker c(logic a, event clk, logic d = $inferred_disable);\n\
+             \x20 a1: assert property (@clk disable iff (d) a);\n\
+             endchecker\n\
+             module top;\n  logic clk, x, r, unused_r;\n\
+             \x20 default disable iff r;\n\
+             \x20 c u(x, posedge clk);\n\
+             \x20 initial begin clk = 0; x = 0; r = 0; end\nendmodule\n",
+            "top",
+        );
+        let got = rule_diags(&diags, "unused-signal");
+        assert_eq!(got.len(), 1, "{:?}", diags);
+        assert!(got[0].message.contains("`unused_r`"), "{}", got[0].message);
+    }
 
     #[test]
     fn flags_never_used_signal_only() {

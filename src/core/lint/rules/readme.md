@@ -14,13 +14,17 @@ See [shared lint](../readme.md).
   for each member (`collect_writes_with_members`). Generate scopes (loop, if,
   case) are analysed like module scopes. Signals connected to a black box (an
   instance of an unknown module, `black_box_connection_signals`) are skipped.
+  The `default disable iff` condition a checker instance takes for
+  `$inferred_disable` counts as read.
 - `width-mismatch` (`width.rs`): a port link compares the port or port expression
   with the connected expression (`.a(n[0])` is one bit), not the whole selected
   signal. A concatenated port (`.p({a, b})`) is judged once, by its name or
   expression, against the sum of the slices its components connect.
 - `multi-driver` (`multidriver.rs`): writes resolve through unpacked element
   selects (`collect_element_writes`); a bit range inside an element still counts
-  as disjoint.
+  as disjoint. Each assignment of a checker procedure drives only its constant
+  target bits (the 17.7.1 Single Assignment Rule keeps them disjoint), so two
+  checker procedures assigning different bits are not two drivers.
 - `unconnected-port` (`unconnected_port.rs`): top ports are external boundaries;
   interface connections refer to actual instances, without frontend-generated
   copies.
