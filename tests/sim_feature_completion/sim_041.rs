@@ -312,11 +312,6 @@ fn undeclared_exports_imported_by_a_mach_o_library_are_named_before_the_build() 
 fn unsupported_exports_are_codegen_errors() {
     sim_cli::reject_case(
         SUITE,
-        "neg_timed_export_task",
-        "DPI-C export task `wait_one` (C identifier `wait_one`) can consume time; exported tasks that suspend are not supported (ADV-018)",
-    );
-    sim_cli::reject_case(
-        SUITE,
         "neg_reserved_c_name",
         "DPI-C export `get_scope` uses C identifier `svGetScope`, which the generated model or its runtime defines",
     );

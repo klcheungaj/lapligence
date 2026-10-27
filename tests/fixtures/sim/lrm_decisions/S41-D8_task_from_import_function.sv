@@ -1,6 +1,7 @@
-// Decision S41-D8: an exported task called from an imported function runs
-// like any exported subroutine call; nothing reports it. Exported tasks
-// cannot consume time, so the call completes inside the function.
+// Decision S41-D8: an exported task that cannot consume time, called from an
+// imported function, runs like any exported subroutine call; nothing reports
+// it, and the call completes inside the function. (One that can consume time
+// is a fatal error: decision A18-D3.)
 //
 // IEEE 1800-2009 35.8 (SystemVerilog-1800-2009.txt L56241-56242):
 //   "It is never legal to call an exported task from within an imported

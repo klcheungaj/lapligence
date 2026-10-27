@@ -1,0 +1,20 @@
+c_chain 1 enter
+0 sv_wait 1 waits 10
+c_chain 2 enter
+5 sv_wait 2 waits 20
+10 sv_wait 1 resumes
+c_chain 1 back status=0 intact=1
+10 chain 1 returned
+25 sv_wait 2 resumes
+c_chain 2 back status=0 intact=1
+25 chain 2 returned
+c_chain 4 enter
+40 sv_wait 4 waits 30
+c_chain 3 enter
+50 sv_wait 3 waits 5
+55 sv_wait 3 resumes
+c_chain 3 back status=0 intact=1
+55 chain 3 returned
+70 sv_wait 4 resumes
+c_chain 4 back status=0 intact=1
+70 chain 4 returned

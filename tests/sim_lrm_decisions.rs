@@ -1071,6 +1071,32 @@ fn s41_d8_task_from_import_function() {
 }
 
 #[test]
+fn a18_d1_kill_unwinds_suspended_chain() {
+    run_dpi_decision(
+        "A18-D1_kill_unwinds_suspended_chain",
+        include_str!("fixtures/sim/lrm_decisions/A18-D1_kill_unwinds_suspended_chain.out"),
+    );
+}
+
+#[test]
+fn a18_d2_finish_leaves_chain_suspended() {
+    run_dpi_decision(
+        "A18-D2_finish_leaves_chain_suspended",
+        include_str!("fixtures/sim/lrm_decisions/A18-D2_finish_leaves_chain_suspended.out"),
+    );
+}
+
+#[test]
+fn a18_d3_waiting_task_from_import_function() {
+    run_dpi_fatal_decision(
+        "A18-D3_waiting_task_from_import_function",
+        include_str!("fixtures/sim/lrm_decisions/A18-D3_waiting_task_from_import_function.out"),
+        "llg: DPI-C exported task `a3_wait` can consume time, but its foreign caller cannot \
+         suspend",
+    );
+}
+
+#[test]
 fn s09_d1_string_ref_wait() {
     run_decision(
         "S09-D1_string_ref_wait",

@@ -2476,7 +2476,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   [sim_040](../tests/fixtures/sim/feature_completion/sim_040/readme.md).
   SV ch.35, Annex H **[SV-2005]**.
 - 🟨 **DPI-C exports and context call chains** — `export "DPI-C"` functions
-  and zero-time tasks of modules, interfaces, programs, generate blocks and
+  and tasks of modules, interfaces, programs, generate blocks and
   packages, with the import signature rules for formals and results. Every
   exported C identifier is one C entry point with the Annex H prototype that
   runs the instance of the current context scope; each scope declaring DPI
@@ -2497,7 +2497,18 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   imported function runs (S41-D8). Context imports carry the effects of every
   exported body (stores, disables, `$finish`), so the optimizer and process
   cancellation treat them as barriers; noncontext and pure imports keep their
-  declared properties. An exported task that can consume time is rejected (ADV-018).
+  declared properties. Exported tasks may consume time (delays, event
+  controls, waits, forks; ADV-018): the C code of each suspended chain keeps
+  its own native stack on a foreign call context while the calling process
+  suspends, so chains resume in any order, nest (C -> SV -> C -> SV) and keep
+  their scope across the suspension
+  ([foreign call contexts](../src/sim/rt/foreign_contexts/readme.md)). A
+  disable around a suspended chain follows 35.9, a kill unwinds it through
+  the same protocol (A18-D1), the end of the simulation leaves it suspended
+  (A18-D2), and an imported function calling such a task is a fatal error
+  (A18-D3). Only context imported tasks of a design with such an export pay
+  for the context switch; fixtures:
+  [adv_018](../tests/fixtures/sim/feature_completion/adv_018/readme.md).
   On Windows a companion DLL links against the model's import library
   (`llg --dpi-import-lib`) and `--dpi-lib` takes the DLL's import library; a
   static archive works on every host; limits:

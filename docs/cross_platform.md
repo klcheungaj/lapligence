@@ -141,6 +141,13 @@ DPI-C and VPI DLLs:
   x_dll.lib` then fails as "not a regular file"
   (`sim_040::dll_companions_export_every_import_definition`). `vpi_user.h`
   exports `vlog_startup_routines` (`PLI_DLLESPEC`, Annex K).
+- Foreign call contexts of suspendable DPI-C chains (ADV-018,
+  `src/sim/rt/foreign_contexts/readme.md`) are platform-layer threads with an
+  explicit stack (`llg_thread_start_sized`): `CreateThread` reserves
+  `LLG_DPI_CONTEXT_STACK_BYTES` with `STACK_SIZE_PARAM_IS_A_RESERVATION`;
+  POSIX sets it with `pthread_attr_setstacksize`, because new threads get
+  only 128 KiB on musl and 512 KiB on macOS. Only models with such chains
+  link `Threads::Threads` (glibc before 2.34 needs `-lpthread`).
 - `cl /LD` implies the static CRT, whose `stdout` buffer the model cannot flush;
   test DLLs build with `/MD` (`tests/support/c_compiler.rs`), and
   [known issues](known_issues.md) tells users the same.

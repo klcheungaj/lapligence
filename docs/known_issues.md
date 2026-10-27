@@ -1952,15 +1952,23 @@ runtime-sized handle; provide the time services.
 
 ## DPI-C export limits (SIM-041)
 
-**Status:** open. SIM-041 provides zero-time exports, `svScope` and context
-call chains; these cases remain outside it.
+**Status:** open. SIM-041 provides exports, `svScope` and context call
+chains, and ADV-018 exported tasks that consume time; these cases remain
+outside them.
 
 ### Symptom
 
-- An exported task that can consume time (a delay, event control or wait,
-  directly or through a called task) is rejected: "DPI-C export task `t` (C
-  identifier `t`) can consume time; exported tasks that suspend are not
-  supported (ADV-018)".
+- A context imported task of a design with an exported task that can
+  consume time runs its C code on a foreign call context (an OS thread with
+  its own stack, [design](../src/sim/rt/foreign_contexts/readme.md)), whether
+  or not that call reaches such a task: each call costs two thread
+  hand-offs, and each call of a waiting exported task two more (tens of
+  microseconds on a loaded host). The C code must not rely on running on
+  the main thread (thread-local storage, thread affinity of other
+  libraries). Its stack is `LLG_DPI_CONTEXT_STACK_BYTES` (8 MiB by default;
+  set it with `LLG_CFLAGS=-DLLG_DPI_CONTEXT_STACK_BYTES=<bytes>`).
+- A chain still suspended when the simulation ends is never resumed
+  (A18-D2): its thread stays blocked until the process exits.
 - On Windows a DPI DLL (or VPI plugin) reaches the exports and the `svdpi.h`
   and VPI routines in `sim.exe` through the model's import library, written by
   `llg --dpi-import-lib <file>` for the same design and options before the
@@ -1998,19 +2006,20 @@ call chains; these cases remain outside it.
 
 ### Cause
 
-A suspending export would need the C caller's native stack preserved across
-the suspension (ADV-018). Windows DLLs resolve imports only from libraries
-named at link time, so the model's import library must exist before the DLL
-and must name the executable.
+The C frames of a suspended chain must stay on a native stack of their own;
+threads are the portable way to keep one (the design weighs the
+alternatives). Windows DLLs resolve imports only from libraries named at
+link time, so the model's import library must exist before the DLL and must
+name the executable.
 
 ### Intended direction
 
-ADV-018 for time-consuming exports; a `dlltool` import library if MinGW DLLs
-are needed.
+A faster context switch (fibers) behind the same interface if the hand-off
+cost matters; a `dlltool` import library if MinGW DLLs are needed.
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_041/neg_timed_export_task.sv`;
+`tests/fixtures/sim/feature_completion/adv_018/crossing.sv`;
 `tests/fixtures/sim/lrm_decisions/S41-D1_context_scope_chain.sv`.
 
 ## Constrained randomization limits (SIM-029, SIM-030)

@@ -34,9 +34,9 @@ Each `<ID>_<name>.sv` file is:
 ### On another simulator
 
 1. Compile and run the `.sv` file alone, with `tb` as the top module.
-2. If there is a `.c` companion of the same name (B8, S40-D1 to S40-D6 and
-   S41-D1 to S41-D8), build it as a shared DPI-C library (the S40 and S41
-   cases include `svdpi.h`) and load it with the simulator's DPI library option.
+2. If there is a `.c` companion of the same name (B8, S40-D1 to S40-D6,
+   S41-D1 to S41-D8 and A18-D1 to A18-D3), build it as a shared DPI-C
+   library (the S40, S41 and A18 cases include `svdpi.h`) and load it with the simulator's DPI library option.
    For S99-D6 the `.c` file is a VPI application (`vpi_user.h`,
    `vlog_startup_routines`); load it with the simulator's VPI option.
    The A12 cases read SDF files (`<ID>_<name>.sdf`, and for A12-D5 and
@@ -61,7 +61,7 @@ through the public `llg` command line:
 - requiring the exact `.out` stdout and identical stderr across backends.
 
 The A12 cases run with their SDF and configuration files written into the
-run directory. For B8, S40-D1 to S40-D6 and S41-D1 to S41-D8, the test builds the `.c`
+run directory. For B8, S40-D1 to S40-D6, S41-D1 to S41-D8 and A18-D1 to A18-D3, the test builds the `.c`
 companion with the host C compiler and passes it with `--dpi-lib`; these cases
 run on Unix hosts only. S40-D5 must stop with exit status 1 after its first
 line, reporting "DPI-C import task `d5_task` returned nonzero, but nothing
@@ -69,7 +69,7 @@ disabled it". S40-D6 must stop with exit status 1 after its second line
 (printed by the C function before its wrong access) and print
 `final block b[0][3]=0`, reporting "DPI-C open
 array element access with 1 index(es) to an array with 2 unpacked
-dimension(s)". S41-D6, S41-D7 and S41-D8 must stop with exit status 1 after
+dimension(s)". S41-D6, S41-D7 and A18-D3 must stop with exit status 1 after
 their first line, reporting a "DPI-C protocol violation". AA-D7 must fail to
 compile with "`$past` of a real expression is illegal", S14-D5 with
 "nonblocking assignment to class property `x`", and S23-D2 with "is an
@@ -498,7 +498,15 @@ a switch. MOS, CMOS and resistive MOS switches stay unsupported by design.
 | S41-D5 | **Disabled imports copy nothing back.** An import that returns because a disable cancelled it leaves its output and inout actuals and the function result target unchanged; an export task that disabled the caller returns 1. | 35.9 L56269-56275, L56313-56318; 9.6.2 L12400-12402 | `S41-D5_disabled_outputs` (`.sv` and `.c`) | llg choice (the text permits not propagating). Some simulators report no disable to the C side (`svIsDisabledState` 0) and return no 1 from the exported task; llg follows 35.9 a), which requires that 1. |
 | S41-D6 | **Export call from a noncontext import** is a fatal error at that call. | 35.5.3 L55796-55797; H.9 L72543-72545 | `S41-D6_noncontext_export_call` (`.sv` and `.c`; runtime fatal after the first line) | llg policy (the text says "error" without a reporting rule) |
 | S41-D7 | **Export not exported from the chain's scope** (no `svSetScope` to a scope that exports it) is a fatal error at that call. | 35.5.3 L55841-55844 | `S41-D7_export_outside_scope` (`.sv` and `.c`; runtime fatal after the first line) | llg policy, industry-standard behaviour (the text is silent on the outcome). The case calls the import from its own scope, because simulators that run a context import in its caller's scope (see S41-D1) would find the export there |
-| S41-D8 | **Exported task called from an imported function runs.** The task body runs inside the function and returns 0; nothing is reported. Exported tasks cannot consume time (ADV-018), so the call completes. | 35.8 L56241-56242; 35.9 a) L56270-56271 | `S41-D8_task_from_import_function` (`.sv` and `.c`) | llg choice, industry-standard behaviour (the text says "never legal" but mandates no check, and a C call cannot be checked when the model is compiled; llg formerly made it a fatal error). The case does not print the task's status, because some simulators return 1 there |
+| S41-D8 | **Exported task called from an imported function runs.** The task body runs inside the function and returns 0; nothing is reported. This holds for an exported task that cannot consume time; one that can is a fatal error (A18-D3). | 35.8 L56241-56242; 35.9 a) L56270-56271 | `S41-D8_task_from_import_function` (`.sv` and `.c`) | llg choice, industry-standard behaviour (the text says "never legal" but mandates no check, and a C call cannot be checked when the model is compiled; llg formerly made it a fatal error). The case does not print the task's status, because some simulators return 1 there |
+
+## Time-suspending DPI-C call chains (ADV-018)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| A18-D1 | **A kill unwinds a suspended chain.** Killing a process whose DPI-C chain waits in an exported task unwinds the chain at the kill, innermost import first, through the disable protocol: the exported task returns 1, `svIsDisabledState()` is 1, the import's C code must return 1 without calling another export, and its outputs are not copied back. A further export call is a fatal error and that C code never runs on. | 9.7 L12631-12632; 35.9 L56262-56264, L56270-56277 | `A18-D1_kill_unwinds_suspended_chain` (`.sv` and `.c`) | llg choice (the text does not say what a kill does to suspended foreign code; llg gives it the cleanup opportunity of 35.9 L56258-56260). Reference check pending. |
+| A18-D2 | **The end of the simulation leaves suspended chains suspended.** A chain still waiting in an exported task when `$finish` (or `$fatal`, or the end of the event queue) ends the simulation never resumes: its exported task does not return to the C code. The final procedures run and the exit status is unchanged. | 20.2 L34119; 35.5.1.5 L55696-55698 | `A18-D2_finish_leaves_chain_suspended` (`.sv` and `.c`) | llg choice (the text is silent; `$finish` is not a disable, so no foreign code runs after the simulation ended). Reference check pending. |
+| A18-D3 | **An imported function calling an exported task that can consume time** is a fatal error at that call, whether or not that call would wait. A zero-time exported task still runs (S41-D8). | 35.8 L56241-56242 | `A18-D3_waiting_task_from_import_function` (`.sv` and `.c`; runtime fatal after the first line) | llg policy (the text says "never legal" without a reporting rule; an imported function cannot suspend). Reference check pending. |
 
 ## VPI object and value access (SIM-042)
 

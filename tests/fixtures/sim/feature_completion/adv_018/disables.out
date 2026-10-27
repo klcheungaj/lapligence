@@ -1,0 +1,11 @@
+c 1 enter
+c 1 sv_hold returned 1 disabled=1
+10 after blk1 o1=5
+c 2 enter
+c 2 sv_hold returned 0 disabled=0
+30 after task 2 o2=42
+c 3 enter
+c 3 sv_hold returned 1 disabled=1
+50 killed p3 o3=7 status=KILLED
+c 4 enter
+final o4=8

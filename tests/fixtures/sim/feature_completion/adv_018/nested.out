@@ -1,0 +1,18 @@
+c_outer tb.u1 enter depth=0
+1 tb.u1.sv_step depth=0 tag=from_tb.u1
+c_outer tb.u2 enter depth=0
+2 tb.u2.sv_step depth=0 tag=from_tb.u2
+c_inner tb.u1 moves to tb.u2 (previous is own: 1) count=102
+4 tb.u2.sv_inner_wait depth=1 waits for go
+c_inner tb.u2 moves to tb.u1 (previous is own: 1) count=101
+5 tb.u1.sv_inner_wait depth=1 waits for go
+20 tb.u1.sv_inner_wait woke got=11
+c_inner tb.u2 back status=0 got=11 scope_is_other=1 local=7
+20 tb.u2.sv_step back tag=from_tb.u2 r=11
+c_outer tb.u2 back status=0 got=12 same_scope=1 intact=1
+20 tb.u2 result=24
+30 tb.u2.sv_inner_wait woke got=12
+c_inner tb.u1 back status=0 got=12 scope_is_other=1 local=7
+30 tb.u1.sv_step back tag=from_tb.u1 r=12
+c_outer tb.u1 back status=0 got=13 same_scope=1 intact=1
+30 tb.u1 result=26

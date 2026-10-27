@@ -250,8 +250,9 @@ so the task runs and returns 0 (35.9 a), decision S41-D8): `start`, then
 `neg_missing_export`: `errors.c` calls `err_tick` and `err_kill`, which the
 design does not export; the model link names both.
 
-Code generation rejects `neg_timed_export_task` (an exported task that can
-consume time: ADV-018) and `neg_reserved_c_name` (C identifier `svGetScope`).
+Code generation rejects `neg_reserved_c_name` (C identifier `svGetScope`).
+Exported tasks that consume time are covered by
+[adv_018](../adv_018/readme.md).
 The frontend rejects `neg_duplicate_c_name` (35.7), `neg_conflicting_export`
 (35.4), `neg_import_and_export` (one C identifier imported and exported) and
 `neg_undeclared_export`.
