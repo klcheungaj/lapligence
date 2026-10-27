@@ -1,0 +1,5 @@
+path 0: name=NULL type=2 polarity=1 data_polarity=3 has_ifnone=0 in(tb.u.a dir=1 edge=0x00) out(tb.u.y dir=2 edge=0x00) data=NULL condition=NULL
+path 1: name=NULL type=2 polarity=3 data_polarity=2 has_ifnone=0 in(tb.u.clk dir=1 edge=0x0d) out(tb.u.q dir=2 edge=0x00) data=tb.u.d condition=NULL
+path 2: name=NULL type=1 polarity=3 data_polarity=3 has_ifnone=1 in(tb.u.b dir=1 edge=0x00) out(tb.u.y dir=2 edge=0x00) data=NULL condition=tb.u.en
+path 3: name=NULL type=1 polarity=3 data_polarity=3 has_ifnone=1 in(tb.u.b dir=1 edge=0x00) out(tb.u.y dir=2 edge=0x00) data=NULL condition=NULL
+path 4: name=NULL type=1 polarity=3 data_polarity=3 has_ifnone=0 in(tb.u.d dir=1 edge=0x00) out(tb.u.y dir=2 edge=0x00) data=NULL condition=tb.u.en

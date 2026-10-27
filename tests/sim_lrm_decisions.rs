@@ -2191,6 +2191,60 @@ fn a19_d8_named_event_callback() {
 }
 
 #[test]
+fn a19_d9_modpath_objects() {
+    run_vpi_decision(
+        "A19-D9_modpath_objects",
+        &["task $d9()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D9_modpath_objects.out"),
+    );
+}
+
+#[test]
+fn a19_d10_tchk_objects() {
+    run_vpi_decision(
+        "A19-D10_tchk_objects",
+        &["task $d10()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D10_tchk_objects.out"),
+    );
+}
+
+#[test]
+fn a20_d12_delay_counts() {
+    run_vpi_decision(
+        "A20-D12_delay_counts",
+        &["task $d12(input integer stage)"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D12_delay_counts.out"),
+    );
+}
+
+#[test]
+fn a20_d13_delay_flags() {
+    run_vpi_decision(
+        "A20-D13_delay_flags",
+        &["task $d13(input integer stage)"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D13_delay_flags.out"),
+    );
+}
+
+#[test]
+fn a20_d14_delay_objects() {
+    run_vpi_decision(
+        "A20-D14_delay_objects",
+        &["task $d14(input integer stage)"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D14_delay_objects.out"),
+    );
+}
+
+#[test]
+fn a20_d15_tchk_violation_callback() {
+    run_vpi_decision(
+        "A20-D15_tchk_violation_callback",
+        &["task $d15()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D15_tchk_violation_callback.out"),
+    );
+}
+
+#[test]
 fn s44_d1_covergroup_type_per_declaration() {
     run_decision(
         "S44-D1_covergroup_type_per_declaration",

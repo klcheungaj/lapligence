@@ -1,0 +1,24 @@
+gate mtm: 3 3 3 6 6 6
+gate pulse: 3 3 3 6 6 6
+path pulse: 6 6 6 4 4 4
+put path 8 8: ok
+path pulse: 8 6 6 8 4 4
+append path 1: ok
+path pulse: 9 6 6 9 4 4
+put gate mtm: ok
+gate 3: 2 5 2
+append gate 1 1: ok
+gate 3: 3 6 3
+put gate pulse: error level=3
+put path negative: error level=3
+path 2: 9 9
+4 y=0
+6 g=0
+13 g=1
+19 y=1
+21 g=0
+24 y=0
+put path pulse: ok
+path pulse: 9 9 9 9 9 9
+43 g=1
+51 g=0
