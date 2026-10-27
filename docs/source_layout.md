@@ -126,6 +126,7 @@ error expectations, optimizer-mode coverage, or runtime sanitizer settings.
 | [time_zero_initialization.md](time_zero_initialization.md) | Time-zero initialization |
 | [sim_performance_tradeoffs.md](sim_performance_tradeoffs.md) | Simulation speed versus model compile time |
 | [known_issues.md](known_issues.md) | Deferred limitations |
+| [semantic_tokens.md](semantic_tokens.md) | `llg_ls` semantic token requirements and client mappings |
 | [sim/codegen/](../src/sim/codegen/readme.md): [calls](../src/sim/codegen/calls.md), [events](../src/sim/codegen/events.md), [nets](../src/sim/codegen/nets.md), [processes](../src/sim/codegen/processes.md), [services](../src/sim/codegen/services.md), [values](../src/sim/codegen/values.md) | Lowering contracts by domain |
 | [sim/emit_c/](../src/sim/emit_c/readme.md): [evaluation](../src/sim/emit_c/evaluation.md), [storage](../src/sim/emit_c/storage.md) | Emission contracts |
 | [sim/rt/process_abi.md](../src/sim/rt/process_abi.md) | Generated process ABI between emitter and scheduler |

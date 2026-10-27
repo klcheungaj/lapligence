@@ -42,12 +42,17 @@ pub const TOKEN_SLANG_BOUND_IDENTIFIER: i32 = -29;
 pub const TOKEN_SLANG_BLOCK: i32 = -30;
 /// Keyword that is control flow only at this syntax position (a case item
 /// `default`, an if/case `unique`/`unique0`/`priority`, a disable statement's
-/// `disable`). Every other keyword is [`TOKEN_SLANG_KEYWORD`].
+/// `disable`, a procedure, continuous-assignment, alias or procedural
+/// continuous-assignment keyword). Every other keyword is
+/// [`TOKEN_SLANG_KEYWORD`].
 pub const TOKEN_SLANG_CONTROL_KEYWORD: i32 = -31;
 /// Type parameter (`parameter type T`): a declaration (with
 /// [`TOKEN_DECLARATION_OFFSET`]) or a reference bound to it. Value parameters
 /// are [`TOKEN_SLANG_PARAMETER`].
 pub const TOKEN_SLANG_TYPE_PARAMETER: i32 = -32;
+/// Struct or union member or class property: a declaration (with
+/// [`TOKEN_DECLARATION_OFFSET`]) or a reference bound to it.
+pub const TOKEN_SLANG_FIELD: i32 = -33;
 pub const TOKEN_DECLARATION_OFFSET: i32 = -1_000;
 
 /// Source-positioned lexical item. Coordinates are one-based UTF-16 to retain
@@ -466,6 +471,7 @@ fn lexical_kind(kind: LexicalKind) -> i32 {
         LexicalKind::SystemSubroutine => TOKEN_SLANG_SYSTEM_SUBROUTINE,
         LexicalKind::Block => TOKEN_SLANG_BLOCK,
         LexicalKind::TypeParameter => TOKEN_SLANG_TYPE_PARAMETER,
+        LexicalKind::Field => TOKEN_SLANG_FIELD,
     }
 }
 

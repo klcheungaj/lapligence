@@ -14,6 +14,7 @@ const TT_STRUCT: u32 = 5;
 const TT_TYPE_PARAMETER: u32 = 6;
 const TT_PARAMETER: u32 = 7;
 const TT_VARIABLE: u32 = 8;
+const TT_PROPERTY: u32 = 9;
 const TT_ENUM_MEMBER: u32 = 10;
 const TT_FUNCTION: u32 = 12;
 const TT_METHOD: u32 = 13;
@@ -105,11 +106,9 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         // Directive and macro-usage words arrive as operator-kind tokens.
         if node.kind == TOKEN_SLANG_OPERATOR {
             match node.name.as_deref().and_then(backtick_word) {
-                Some(BacktickWord::Directive { conditional }) => {
+                Some(BacktickWord::Directive) => {
                     token_type = TT_KEYWORD;
-                    if conditional {
-                        modifiers |= 1 << TM_CONTROL_FLOW;
-                    }
+                    modifiers |= 1 << TM_CONTROL_FLOW;
                 }
                 Some(BacktickWord::MacroUsage) => token_type = TT_MACRO,
                 None => {}
@@ -192,18 +191,17 @@ fn is_unresolved_identifier(kind: i32) -> bool {
 /// A grave-accent word in the token stream.
 #[derive(Debug, PartialEq, Eq)]
 enum BacktickWord {
-    /// An IEEE 1800-2009 22.1 compiler directive; `conditional` for the
-    /// conditional-compilation directives of 22.6.
-    Directive { conditional: bool },
+    /// An IEEE 1800-2009 22.1 compiler directive.
+    Directive,
     /// Any other `` `name ``: a text macro usage (inside a macro body, where
     /// the capture keeps it unexpanded).
     MacroUsage,
 }
 
-/// Classify `` `name `` tokens. Compiler directives are keywords (`keyword`,
-/// with `controlFlow` for `` `ifdef ``, `` `ifndef ``, `` `elsif ``, `` `else ``
-/// and `` `endif ``, which select the source that is compiled, as `if` selects
-/// statements); every other grave-accent name is a macro usage. The macro
+/// Classify `` `name `` tokens. Compiler directives are keywords with
+/// `controlFlow` (user decision, 2026-10-27: every directive steers what is
+/// compiled, as `` `ifdef `` selects source the way `if` selects statements);
+/// every other grave-accent name is a macro usage. The macro
 /// quote and paste tokens (`` `" ``, ``` `` ```) are not words and keep the
 /// operator type.
 fn backtick_word(name: &str) -> Option<BacktickWord> {
@@ -216,10 +214,12 @@ fn backtick_word(name: &str) -> Option<BacktickWord> {
         return None;
     }
     Some(match word {
-        "ifdef" | "ifndef" | "elsif" | "else" | "endif" => {
-            BacktickWord::Directive { conditional: true }
-        }
-        "begin_keywords"
+        "ifdef"
+        | "ifndef"
+        | "elsif"
+        | "else"
+        | "endif"
+        | "begin_keywords"
         | "celldefine"
         | "default_nettype"
         | "define"
@@ -233,7 +233,7 @@ fn backtick_word(name: &str) -> Option<BacktickWord> {
         | "timescale"
         | "unconnected_drive"
         | "undef"
-        | "undefineall" => BacktickWord::Directive { conditional: false },
+        | "undefineall" => BacktickWord::Directive,
         _ => BacktickWord::MacroUsage,
     })
 }
@@ -302,8 +302,11 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
     // Types follow the clangd and rust-analyzer analogues (the llg_ls readme
     // has the table): value parameters are constants (`variable` +
     // `readonly`, VS Code `variable.other.constant`), type parameters are
-    // `typeParameter`, ports are `parameter`, and a named connection label
-    // takes the type of the child declaration it names.
+    // `typeParameter` and ports are `parameter`. A named port or parameter
+    // connection label is `function` (user decision, 2026-10-27) so that
+    // stock themes color it apart from the `variable`/`parameter` actual it
+    // connects; a parameter label keeps `readonly`, which VS Code registers
+    // no default scope for on `function`, so it does not change the color.
     let connection = matches!(
         kind,
         TOKEN_SLANG_PORT_CONNECTION_LABEL | TOKEN_SLANG_PARAMETER_CONNECTION_LABEL
@@ -319,6 +322,7 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
         TOKEN_SLANG_TYPE_ALIAS => TT_TYPE,
         TOKEN_SLANG_PARAMETER => TT_VARIABLE,
         TOKEN_SLANG_TYPE_PARAMETER => TT_TYPE_PARAMETER,
+        TOKEN_SLANG_FIELD => TT_PROPERTY,
         TOKEN_SLANG_PORT => TT_PARAMETER,
         TOKEN_SLANG_VARIABLE
         | TOKEN_SLANG_NET
@@ -333,8 +337,7 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
         TOKEN_SLANG_STRING => TT_STRING,
         TOKEN_SLANG_NUMBER => TT_NUMBER,
         TOKEN_SLANG_OPERATOR => TT_OPERATOR,
-        TOKEN_SLANG_PORT_CONNECTION_LABEL => TT_PARAMETER,
-        TOKEN_SLANG_PARAMETER_CONNECTION_LABEL => TT_VARIABLE,
+        TOKEN_SLANG_PORT_CONNECTION_LABEL | TOKEN_SLANG_PARAMETER_CONNECTION_LABEL => TT_FUNCTION,
         _ => return None,
     };
     let mut modifiers = 0;
@@ -670,10 +673,11 @@ endmodule\n";
         assert_eq!(count(1 << TM_TYPE_DEFINITION), 2, "{tokens:?}");
         assert_eq!(count(1 << TM_DIRECTION), 3, "{tokens:?}");
         assert_eq!(count(1 << TM_PRIMITIVE), 7, "{tokens:?}");
-        assert_eq!(count(0), 3, "{tokens:?}");
+        assert_eq!(count(1 << TM_CONTROL_FLOW), 1, "{tokens:?}");
+        assert_eq!(count(0), 2, "{tokens:?}");
         for token in tokens.iter().filter(|t| (t.3, t.4) == (TT_KEYWORD, 0)) {
             assert!(
-                matches!(token.2.as_str(), "module" | "endmodule" | "assign"),
+                matches!(token.2.as_str(), "module" | "endmodule"),
                 "{token:?}"
             );
         }
@@ -703,8 +707,8 @@ endmodule\n";
 
     /// Every occurrence of every grouped word is `keyword` with exactly its
     /// group's llg modifier in every capture profile, while other keywords
-    /// are `keyword` without modifier bits (`case` is `controlFlow`) and the
-    /// user typedef name stays `type`.
+    /// are `keyword` without modifier bits (`case`, `always` and `assign` are
+    /// `controlFlow`) and the user typedef name stays `type`.
     #[test]
     fn every_decided_word_gets_its_keyword_modifier_in_every_profile() {
         let source = EVERY_WORD_SOURCE;
@@ -730,16 +734,16 @@ endmodule\n";
                 }
             }
             let token = |line, word| token_at(&tokens, source, line, word, 0);
-            for (line, word) in [(0, "module"), (17, "always"), (18, "assign")] {
+            let t = token(0, "module");
+            assert_eq!((t.3, t.4), (TT_KEYWORD, 0), "{profile} keyword module");
+            for (line, word) in [(17, "always"), (17, "case"), (18, "assign")] {
                 let t = token(line, word);
-                assert_eq!((t.3, t.4), (TT_KEYWORD, 0), "{profile} keyword {word}");
+                assert_eq!(
+                    (t.3, t.4),
+                    (TT_KEYWORD, 1 << TM_CONTROL_FLOW),
+                    "{profile} keyword {word}"
+                );
             }
-            let t = token(17, "case");
-            assert_eq!(
-                (t.3, t.4),
-                (TT_KEYWORD, 1 << TM_CONTROL_FLOW),
-                "{profile} keyword case"
-            );
             let user = token(12, "st_t");
             assert_eq!(user.3, TT_TYPE, "{profile} user typedef use");
             assert_eq!(user.4 & default_library, 0, "{profile} user typedef use");
@@ -1059,7 +1063,6 @@ endclass
                 "endproperty",
                 "function",
                 "endfunction",
-                "initial",
                 "class",
                 "endclass",
                 "rand",
@@ -1097,6 +1100,196 @@ endclass
             );
             let t = token_at(&tokens, source, 27, "fk", 0);
             assert_eq!((t.3, t.4), (TT_NAMESPACE, 0), "{profile} disable fk");
+        }
+    }
+
+    /// Process and continuous-assignment keywords (IEEE 1800-2009 9.2, 10.3,
+    /// 10.6, 10.11) in modules, a checker and a procedure.
+    const PROCESS_SOURCE: &str = "module top(input logic clk, input logic d);
+  logic q, r; wire w1, w2;
+  initial q = 0;
+  final $display(q);
+  always @(posedge clk) q <= d;
+  always_comb r = d;
+  always_ff @(posedge clk) r <= d;
+  always_latch if (clk) q = d;
+  assign w1 = d;
+  alias w1 = w2;
+  initial begin
+    assign q = d;
+    deassign q;
+    force r = d;
+    release r;
+    force w1 = 1'b0;
+    release w1;
+  end
+  property pa; @(posedge clk) always d; endproperty
+endmodule
+checker chk(logic a, event ck);
+  logic m;
+  always @(ck) m <= a;
+endchecker
+primitive udp(output reg uq, input ud, input uc);
+  initial uq = 0;
+  table
+    0 r : ? : 0;
+    1 r : ? : 1;
+  endtable
+endprimitive
+";
+
+    /// Zero-based lines of [`PROCESS_SOURCE`] whose `always` is the property
+    /// operator and whose `initial` is a UDP initial statement.
+    const PROPERTY_ALWAYS_LINE: u32 = 18;
+    const UDP_INITIAL_LINE: u32 = 25;
+
+    /// Process introducers and continuous, alias and procedural continuous
+    /// assignment keywords are `controlFlow` in every profile; the `always`
+    /// property operator and a UDP `initial` stay plain.
+    #[test]
+    fn process_and_assignment_keywords_are_control_flow_in_every_profile() {
+        let source = PROCESS_SOURCE;
+        let control = 1 << TM_CONTROL_FLOW;
+        for (profile, tokens) in profiles(source) {
+            for word in [
+                "initial",
+                "final",
+                "always",
+                "always_comb",
+                "always_ff",
+                "always_latch",
+                "assign",
+                "alias",
+                "deassign",
+                "force",
+                "release",
+            ] {
+                let positions = word_positions(source, word);
+                assert!(!positions.is_empty(), "sample lacks {word}");
+                for (line, col) in positions {
+                    let want = match (word, line) {
+                        ("always", PROPERTY_ALWAYS_LINE) | ("initial", UDP_INITIAL_LINE) => 0,
+                        _ => control,
+                    };
+                    let token = tokens
+                        .iter()
+                        .find(|t| (t.0, t.1) == (line, col))
+                        .unwrap_or_else(|| {
+                            panic!("{profile}: no token for {word} at {line}:{col}")
+                        });
+                    assert_eq!(
+                        (token.3, token.4),
+                        (TT_KEYWORD, want),
+                        "{profile}: {word} at {line}:{col}"
+                    );
+                }
+            }
+            for word in [
+                "module",
+                "checker",
+                "primitive",
+                "table",
+                "property",
+                "begin",
+            ] {
+                for (line, col) in word_positions(source, word) {
+                    let token = tokens.iter().find(|t| (t.0, t.1) == (line, col)).unwrap();
+                    assert_eq!((token.3, token.4), (TT_KEYWORD, 0), "{profile}: {word}");
+                }
+            }
+        }
+    }
+
+    /// Struct and union members (packed and unpacked, typedef'd, anonymous
+    /// and nested) and class properties at declarations, member selects,
+    /// assignment-pattern keys and through ports and packages.
+    const FIELD_SOURCE: &str = "package pk;
+  typedef struct packed { logic [3:0] lo; logic hi; } pair_t;
+  pair_t pv;
+endpackage
+module child(input pk::pair_t pin, output logic o);
+  assign o = pin.hi;
+endmodule
+module top;
+  typedef struct { int a; struct { int x; int y; } inner; } s_t;
+  typedef union packed { logic [4:0] u0; logic [4:0] u1; } u_t;
+  s_t s;
+  s_t arr [2];
+  u_t un;
+  struct packed { logic f1; logic f2; } anon;
+  logic o;
+  child c(.pin(pk::pv), .o(o));
+  class cls; int prop; function void m(); prop = 1; this.prop = 2; endfunction endclass
+  initial begin
+    s.a = 1;
+    s.inner.x = 2;
+    arr[1].inner.y = 3;
+    pk::pv.lo = 4'h1;
+    un.u1 = 5'h2;
+    anon.f2 = 1'b1;
+    s = '{a: 1, inner: '{x: 2, y: 3}};
+    $display(c.pin.hi);
+  end
+endmodule
+";
+
+    /// Members and class properties are `property` (`declaration` at the
+    /// member declaration) in every profile, as rust-analyzer and clangd
+    /// send fields; the containing variables keep `variable`.
+    #[test]
+    fn struct_union_members_and_class_properties_are_properties_in_every_profile() {
+        let source = FIELD_SOURCE;
+        let declaration = 1 << TM_DECLARATION;
+        for (profile, tokens) in profiles(source) {
+            for (line, word, nth, want) in [
+                (1, "lo", 0, (TT_PROPERTY, declaration)),
+                (1, "hi", 0, (TT_PROPERTY, declaration)),
+                (5, "hi", 0, (TT_PROPERTY, 0)),
+                (8, "a", 0, (TT_PROPERTY, declaration)),
+                (8, "x", 0, (TT_PROPERTY, declaration)),
+                (8, "y", 0, (TT_PROPERTY, declaration)),
+                (8, "inner", 0, (TT_PROPERTY, declaration)),
+                (9, "u0", 0, (TT_PROPERTY, declaration)),
+                (9, "u1", 0, (TT_PROPERTY, declaration)),
+                (13, "f1", 0, (TT_PROPERTY, declaration)),
+                (13, "f2", 0, (TT_PROPERTY, declaration)),
+                (13, "anon", 0, (TT_VARIABLE, declaration)),
+                (16, "prop", 0, (TT_PROPERTY, declaration)),
+                (16, "prop", 1, (TT_PROPERTY, 0)),
+                (16, "prop", 2, (TT_PROPERTY, 0)),
+                (18, "s", 0, (TT_VARIABLE, 0)),
+                (18, "a", 0, (TT_PROPERTY, 0)),
+                (19, "inner", 0, (TT_PROPERTY, 0)),
+                (19, "x", 0, (TT_PROPERTY, 0)),
+                (20, "arr", 0, (TT_VARIABLE, 0)),
+                (20, "inner", 0, (TT_PROPERTY, 0)),
+                (20, "y", 0, (TT_PROPERTY, 0)),
+                (21, "pk", 0, (TT_NAMESPACE, 0)),
+                (21, "pv", 0, (TT_VARIABLE, 0)),
+                (21, "lo", 0, (TT_PROPERTY, 0)),
+                (22, "u1", 0, (TT_PROPERTY, 0)),
+                (23, "f2", 0, (TT_PROPERTY, 0)),
+                (24, "a", 0, (TT_PROPERTY, 0)),
+                (24, "inner", 0, (TT_PROPERTY, 0)),
+                (24, "x", 0, (TT_PROPERTY, 0)),
+                (24, "y", 0, (TT_PROPERTY, 0)),
+                (25, "c", 0, (TT_VARIABLE, 0)),
+                (25, "pin", 0, (TT_PARAMETER, 1 << TM_READONLY)),
+                (25, "hi", 0, (TT_PROPERTY, 0)),
+            ] {
+                let text = source.lines().nth(line).unwrap();
+                let col = word_positions(text, word)[nth].1;
+                let got = tokens
+                    .iter()
+                    .find(|t| (t.0, t.1) == (line as u32, col))
+                    .map(|t| (t.3, t.4));
+                // Library-unit capture elaborates no hierarchy, so the steps
+                // of the hierarchical `c.pin.hi` may have no token there.
+                if line == 25 && profile == "library_units=true" && got.is_none() {
+                    continue;
+                }
+                assert_eq!(got, Some(want), "{profile}: {word}#{nth} on line {line}");
+            }
         }
     }
 
@@ -1138,10 +1331,11 @@ module top;\n\
 endmodule\n";
 
     /// Value parameters are constants (`variable` + `readonly`), type
-    /// parameters `typeParameter`, port labels `parameter` and parameter
-    /// labels `variable` + `readonly` (both with `connectionLabel`), compiler
-    /// directives `keyword` (conditional ones with `controlFlow`) and a macro
-    /// usage inside a macro body `macro`, in every capture profile.
+    /// parameters `typeParameter`, port labels `function` and parameter
+    /// labels `function` + `readonly` (both with `connectionLabel`), compiler
+    /// directives `keyword` + `controlFlow`, `` `define `` names `macro` +
+    /// `declaration` and a macro usage inside a macro body `macro`, in every
+    /// capture profile.
     #[test]
     fn parameters_labels_and_directives_use_their_analogue_types_in_every_profile() {
         let source = DECLARATION_SOURCE;
@@ -1164,13 +1358,15 @@ endmodule\n";
                 (t.2.clone(), t.3, t.4)
             };
             for (line, needle, text, token_type, bits) in [
-                (0, "`define", "`define", TT_KEYWORD, 0),
-                (1, "`define", "`define", TT_KEYWORD, 0),
+                (0, "`define", "`define", TT_KEYWORD, control),
+                (1, "`define", "`define", TT_KEYWORD, control),
+                (0, "W 8", "W", TT_MACRO, declaration),
+                (1, "TWICE", "TWICE", TT_MACRO, declaration),
                 (1, "`W", "`W", TT_MACRO, 0),
                 (2, "`ifdef", "`ifdef", TT_KEYWORD, control),
                 (7, "`else", "`else", TT_KEYWORD, control),
                 (9, "`endif", "`endif", TT_KEYWORD, control),
-                (10, "`timescale", "`timescale", TT_KEYWORD, 0),
+                (10, "`timescale", "`timescale", TT_KEYWORD, control),
                 (3, "P =", "P", TT_VARIABLE, declaration | readonly),
                 (3, "T =", "T", TT_TYPE_PARAMETER, declaration),
                 (3, "T a", "T", TT_TYPE_PARAMETER, 0),
@@ -1178,13 +1374,71 @@ endmodule\n";
                 (5, "P[0]", "P", TT_VARIABLE, readonly),
                 (12, "L =", "L", TT_VARIABLE, declaration | readonly),
                 (14, "L)", "L", TT_VARIABLE, readonly),
-                (14, "P(", "P", TT_VARIABLE, readonly | label),
-                (14, "a(", "a", TT_PARAMETER, label),
-                (14, "y(", "y", TT_PARAMETER, label),
+                (14, "P(", "P", TT_FUNCTION, readonly | label),
+                (14, "a(", "a", TT_FUNCTION, label),
+                (14, "y(", "y", TT_FUNCTION, label),
+                (14, "v)", "v", TT_VARIABLE, 0),
+                (14, "o)", "o", TT_VARIABLE, 0),
             ] {
                 assert_eq!(
                     at(line, needle),
                     (text.to_owned(), token_type, bits),
+                    "{profile}: {needle} on line {line}"
+                );
+            }
+        }
+    }
+
+    /// Named, implicit and interface port labels and value and type
+    /// parameter labels.
+    const CONNECTION_SOURCE: &str = "interface bus_if; logic s; modport mp(input s); endinterface
+module child #(parameter int W = 1, parameter type T = logic)(input T a, output logic y, bus_if.mp b);
+endmodule
+module top;
+  localparam int L = 2;
+  logic v, y, w;
+  bus_if bi();
+  child #(.W(L), .T(logic [1:0])) u0 (.a(v), .y, .b(bi));
+  child #(L, logic) u1 (v, w, bi);
+endmodule
+";
+
+    /// Every named connection label is `function` + `connectionLabel`
+    /// (parameter labels also `readonly`), so stock themes color it apart
+    /// from the actual, which keeps its own type, as do positional actuals.
+    #[test]
+    fn connection_labels_are_functions_and_actuals_keep_their_types_in_every_profile() {
+        let source = CONNECTION_SOURCE;
+        let readonly = 1 << TM_READONLY;
+        let label = 1 << TM_CONNECTION_LABEL;
+        for (profile, tokens) in profiles(source) {
+            let at = |line: u32, needle: &str, nth: usize| {
+                let text = source.lines().nth(line as usize).unwrap();
+                let col = text.match_indices(needle).nth(nth).unwrap().0 as u32
+                    + needle.starts_with('.') as u32;
+                let t = tokens
+                    .iter()
+                    .find(|t| (t.0, t.1) == (line, col))
+                    .unwrap_or_else(|| panic!("{profile}: no token for {needle} on {line}"));
+                (t.3, t.4)
+            };
+            for (line, needle, nth, want) in [
+                (7, ".W", 0, (TT_FUNCTION, readonly | label)),
+                (7, "L", 0, (TT_VARIABLE, readonly)),
+                (7, ".T", 0, (TT_FUNCTION, readonly | label)),
+                (7, ".a", 0, (TT_FUNCTION, label)),
+                (7, "v", 0, (TT_VARIABLE, 0)),
+                (7, ".y", 0, (TT_FUNCTION, label)),
+                (7, ".b", 0, (TT_FUNCTION, label)),
+                (7, "bi", 0, (TT_VARIABLE, 0)),
+                (8, "L", 0, (TT_VARIABLE, readonly)),
+                (8, "v", 0, (TT_VARIABLE, 0)),
+                (8, "w", 0, (TT_VARIABLE, 0)),
+                (8, "bi", 0, (TT_VARIABLE, 0)),
+            ] {
+                assert_eq!(
+                    at(line, needle, nth),
+                    want,
                     "{profile}: {needle} on line {line}"
                 );
             }
@@ -1210,18 +1464,10 @@ endmodule\n";
             "`undef",
             "`undefineall",
         ] {
-            assert_eq!(
-                backtick_word(word),
-                Some(BacktickWord::Directive { conditional: false }),
-                "{word}"
-            );
+            assert_eq!(backtick_word(word), Some(BacktickWord::Directive), "{word}");
         }
         for word in ["`ifdef", "`ifndef", "`elsif", "`else", "`endif"] {
-            assert_eq!(
-                backtick_word(word),
-                Some(BacktickWord::Directive { conditional: true }),
-                "{word}"
-            );
+            assert_eq!(backtick_word(word), Some(BacktickWord::Directive), "{word}");
         }
         for word in ["`WIDTH", "`_m", "`__FILE__", "`definex"] {
             assert_eq!(
@@ -1409,7 +1655,12 @@ endmodule\n";
         assert_eq!(parameters.len(), 7);
         for node in parameters {
             let (kind, modifiers) = token_type_for(node.kind).unwrap();
-            assert_eq!(kind, TT_VARIABLE, "{node:?}");
+            let want = if node.kind == TOKEN_SLANG_PARAMETER_CONNECTION_LABEL {
+                TT_FUNCTION
+            } else {
+                TT_VARIABLE
+            };
+            assert_eq!(kind, want, "{node:?}");
             assert_ne!(modifiers & (1 << TM_READONLY), 0, "{node:?}");
         }
     }

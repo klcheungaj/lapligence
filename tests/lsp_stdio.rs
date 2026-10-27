@@ -72,6 +72,8 @@ mod macro_hover;
 mod macro_tokens;
 #[path = "lsp_stdio/package_imports.rs"]
 mod package_imports;
+#[path = "lsp_stdio/semantic_token_requirements.rs"]
+mod semantic_token_requirements;
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/lsp");
 const MODULE_EXPLORER_FIXTURE_DIR: &str = concat!(

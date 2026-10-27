@@ -321,7 +321,7 @@
       "line": 6,
       "module": "tb",
       "role": "REF",
-      "sym": "parameter/connectionLabel",
+      "sym": "function/connectionLabel",
       "tokenKind": "port-connection-label"
     },
     {
@@ -361,7 +361,7 @@
       "line": 6,
       "module": "tb",
       "role": "REF",
-      "sym": "parameter/connectionLabel",
+      "sym": "function/connectionLabel",
       "tokenKind": "port-connection-label"
     },
     {
@@ -441,7 +441,7 @@
       "line": 7,
       "module": "tb",
       "role": "REF",
-      "sym": "parameter/connectionLabel",
+      "sym": "function/connectionLabel",
       "tokenKind": "port-connection-label"
     },
     {

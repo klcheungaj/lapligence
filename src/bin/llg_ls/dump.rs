@@ -588,6 +588,7 @@ fn token_kind_name(kind: i32) -> String {
         (tokens::TOKEN_SLANG_TYPE_PARAMETER, "type-parameter"),
         (tokens::TOKEN_SLANG_PORT, "port"),
         (tokens::TOKEN_SLANG_VARIABLE, "variable"),
+        (tokens::TOKEN_SLANG_FIELD, "field"),
         (tokens::TOKEN_SLANG_NET, "net"),
         (tokens::TOKEN_SLANG_FUNCTION, "function"),
         (tokens::TOKEN_SLANG_TASK, "task"),

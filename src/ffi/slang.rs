@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 45;
+const ABI_VERSION: u32 = 46;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1520,6 +1520,9 @@ pub enum LexicalKind {
     Block,
     /// A type parameter's declaration or a reference bound to it.
     TypeParameter,
+    /// A struct or union member or a class property: its declaration or a
+    /// reference bound to it.
+    Field,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

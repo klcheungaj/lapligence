@@ -2285,14 +2285,13 @@ reads a database of the W = 4 model).
 
 **Status:** partially fixed by LS-MAC. Use sites, written arguments, open
 buffers that use macros and syntax-broken buffers are served
-([legend contract](../src/bin/llg_ls/readme.md#semantic-token-legend)); the
+([semantic token requirements](semantic_tokens.md)); the
 gaps below remain.
 
 ### Symptom
 
 - Macro formal arguments inside `` `define `` are `macro`, not `parameter`
-  (the C/C++ grammar analogue), the defined name lacks `declaration` (clangd
-  adds it to macro definitions), and attribute names (`(* keep *)`) get no
+  (the C/C++ grammar analogue), and attribute names (`(* keep *)`) get no
   token.
 - An open buffer requested before its root's first analysis commits has no
   include context, so header macros are unknown there until the next request
@@ -2306,8 +2305,8 @@ The isolated parse reads the include context of the committed analysis only.
 
 ### Intended direction
 
-Give formal arguments a parameter kind and the defined name the declaration
-role in the capture, attribute names a decorator kind; send a semantic-token
+Give formal arguments a parameter kind in the capture, attribute names a
+decorator kind; send a semantic-token
 refresh after a commit that changes an open buffer's include context.
 
 ### Reproduce
@@ -2317,23 +2316,25 @@ Run `llg_ls --dump-tokens` on a file with `` `define ADD(a, b) ((a) + (b)) ``:
 
 ## Semantic token kinds that need more capture (llg_ls)
 
-**Status:** deferred by LS-TOK-9; the colors are already right in stock
-VS Code themes except where noted.
+**Status:** deferred by LS-TOK-9 (struct and union members and class
+properties became `property` in LS-TOK-10); the colors are already right in
+stock VS Code themes except where noted.
 
 ### Symptom
 
 - Ports are `parameter` + `readonly` for every direction; only input ports
   are read-only.
-- Subroutine arguments, struct fields and class properties are `variable`
-  and class methods `function` (clangd: `parameter`, `property`, `method`;
-  same Dark+ colors).
+- Subroutine arguments are `variable` and class methods `function` (clangd:
+  `parameter`, `method`; same Dark+ colors).
 - Modport, clocking-block, covergroup, sequence, property and constraint
   names are `variable` at their declarations, and references to sequences
   and properties get no token (they are unbound); a covergroup is a type
   (`class`, `#4EC9B0`) and a sequence or property is callable (`function`,
   `#DCDCAA`) in the analogue model.
-- A type-parameter connection label (`#(.T(int))`) is `variable` +
-  `readonly`, not `typeParameter`.
+- In the project stream (found by LS-TOK-10; the open-buffer stream was not
+  checked), a use of a type parameter inside a module whose instance
+  overrides it (`#(.T(logic [1:0]))`) is `type`, not `typeParameter` (same
+  `#4EC9B0` in Dark+); the declaration stays `typeParameter`.
 - A generate `case (expr)` condition has no reference token.
 
 ### Cause
@@ -2341,26 +2342,25 @@ VS Code themes except where noted.
 `TokenInfo` carries one lexical kind per token and these constructs share a
 kind (`LexicalKind::Port`, `Variable`, `Function`, `Identifier`) in the
 wrapper capture (`lexicalKindForSemantic` in `src/wrapper/slang_c_api.cpp`);
-the encoder (`src/bin/llg_ls/semantic_tokens.rs`) sees no direction, member
-or callable distinction.
+the encoder (`src/bin/llg_ls/semantic_tokens.rs`) sees no direction or
+callable distinction.
 
 ### Intended direction
 
-Carry the bound semantic detail (port direction, `Field`/`ClassProperty`,
-`FormalArgument`, class-scoped subroutine, covergroup, sequence, property)
+Carry the bound semantic detail (port direction, `FormalArgument`, class-scoped subroutine, covergroup, sequence, property)
 into the token kind, bind sequence and property references, and keep the
 symbol index and dump kind names unchanged.
 
 ### Reproduce
 
 `llg_ls --dump-tokens` on a module with an output port, a class with a
-property and a method, and a named sequence referenced by an assertion.
+method, and a named sequence referenced by an assertion.
 
 ## Open-buffer token parse sees other files through packages only (llg_ls)
 
 **Status:** partially fixed by LS-PKG. Package items used through any import
 form or `pkg::name` resolve in both serving paths, and import item names are
-references ([legend contract](../src/bin/llg_ls/readme.md#semantic-token-legend));
+references ([token requirements](semantic_tokens.md));
 the gaps below remain in the open-buffer path only.
 
 ### Symptom
