@@ -224,6 +224,58 @@ impl Db {
             })
             .map(|(index, _)| NodeId::from_index(index))
             .collect();
+        let mut checker_instances = HashMap::new();
+        let mut checker_actuals = HashMap::new();
+        for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
+            if semantic.kind != SemanticKind::Instance
+                || semantic.subkind != crate::ffi::slang::SEMANTIC_INSTANCE_CHECKER
+            {
+                continue;
+            }
+            let instance = NodeId::from_index(index);
+            checker_instances.insert(
+                instance,
+                CheckerInstanceInfo {
+                    procedural: semantic.auxiliary & crate::ffi::slang::CHECKER_PROCEDURAL != 0,
+                    bound: semantic.auxiliary & crate::ffi::slang::CHECKER_BOUND != 0,
+                    nested: semantic.auxiliary & crate::ffi::slang::CHECKER_NESTED != 0,
+                    default_disable: edge_target(
+                        &ids,
+                        semantic_edges(snapshot, semantic)?,
+                        SemanticEdgeRole::DefaultDisable,
+                    )?,
+                },
+            );
+            for edge in semantic_edges(snapshot, semantic)? {
+                if edge.role != SemanticEdgeRole::CheckerActual {
+                    continue;
+                }
+                let expression = semantic_id(&ids, edge.target_id)?;
+                if !matches!(
+                    snapshot.semantic_nodes.get(expression.index()),
+                    Some(node) if matches!(
+                        node.kind,
+                        SemanticKind::Expression
+                            | SemanticKind::SystemCall
+                            | SemanticKind::MethodCall
+                            | SemanticKind::FunctionCall
+                    )
+                ) {
+                    return Err(DbError::InvalidSnapshot(
+                        "checker actual does not name an expression".into(),
+                    ));
+                }
+                let actual = CheckerActual {
+                    instance,
+                    default: edge.index & crate::ffi::slang::CHECKER_ACTUAL_DEFAULT != 0,
+                };
+                if checker_actuals.insert(expression, actual).is_some() {
+                    return Err(DbError::InvalidSnapshot(
+                        "checker actual names an expression twice".into(),
+                    ));
+                }
+            }
+        }
         let source_libraries = snapshot
             .source_libraries
             .iter()
@@ -461,6 +513,13 @@ impl Db {
                 {
                     continue;
                 }
+                // A checker instance's instantiation-context disable
+                // condition is metadata (`checker_instances`), not a member.
+                if semantic.kind == SemanticKind::Instance
+                    && edge.role == SemanticEdgeRole::DefaultDisable
+                {
+                    continue;
+                }
                 if semantic.kind == SemanticKind::Unsupported
                     && semantic.subkind == crate::ffi::slang::SEMANTIC_PATTERN_STRUCTURE
                     && edge.role == SemanticEdgeRole::Declaration
@@ -491,6 +550,7 @@ impl Db {
                         | SemanticEdgeRole::LowConnection
                         | SemanticEdgeRole::SourceIdentity
                         | SemanticEdgeRole::ReturnOwner
+                        | SemanticEdgeRole::CheckerActual
                 ) {
                     children.push(semantic_id(&ids, edge.target_id)?);
                 }
@@ -1431,6 +1491,8 @@ impl Db {
             conditional_patterns,
             conditional_pattern_fields,
             program_instances,
+            checker_instances,
+            checker_actuals,
             unconnected_drives,
             primitive_array_positions,
             source_libraries,

@@ -1211,6 +1211,30 @@ fn covergroup_bins_violation(
     None
 }
 
+/// IEEE 1800-2009 17.2 and 17.5: a checker procedure is `initial`,
+/// `always` or `final`, and a checker formal has no direction. The
+/// `always_comb`/`always_latch`/`always_ff` checker procedures and output
+/// formals are 1800-2012 forms that the pinned frontend admits.
+fn checker_member_violation(
+    nodes: &HashMap<u64, &SemanticNode>,
+    node: &SemanticNode,
+) -> Option<&'static str> {
+    let label = match (node.kind, node.subkind) {
+        (SemanticKind::Process, 4) => "checker always_comb procedure",
+        (SemanticKind::Process, 5) => "checker always_latch procedure",
+        (SemanticKind::Process, 6) => "checker always_ff procedure",
+        (SemanticKind::Argument, _) if node.is_output() => "checker output formal",
+        _ => return None,
+    };
+    // The procedure or formal is a member of the checker instance body.
+    let body = nodes.get(&node.parent_id()?)?;
+    let instance = nodes.get(&body.parent_id()?)?;
+    (body.kind == SemanticKind::Scope
+        && instance.kind == SemanticKind::Instance
+        && instance.subkind == crate::ffi::slang::SEMANTIC_INSTANCE_CHECKER)
+        .then_some(label)
+}
+
 fn immediate(subkind: u32) -> bool {
     matches!(
         subkind,
@@ -1302,6 +1326,9 @@ pub(super) fn edition_diagnostics(
         }
         if node.kind == SemanticKind::Class && node.auxiliary & CLASS_INTERFACE != 0 {
             violations.push((node.range, "interface class".to_owned()));
+        }
+        if let Some(label) = checker_member_violation(&nodes, node) {
+            violations.push((node.range, label.to_owned()));
         }
         if edition == LanguageEdition::Verilog2001
             && node.kind == SemanticKind::Expression

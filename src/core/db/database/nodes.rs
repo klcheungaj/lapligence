@@ -231,6 +231,31 @@ pub enum NodeKind {
     Other,
 }
 
+/// Checker identity of an elaborated checker instance (IEEE 1800-2009 17.3),
+/// kept beside its [`NodeKind::ModuleInst`] hierarchy node.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckerInstanceInfo {
+    /// Instantiated in procedural code (a procedural checker instance).
+    pub procedural: bool,
+    /// Injected into its target scope by a `bind` directive (23.11).
+    pub bound: bool,
+    /// Instantiated in the body of another checker (17.3.2).
+    pub nested: bool,
+    /// The `default disable iff` condition in effect where the checker is
+    /// instantiated, which `$inferred_disable` stands for (16.15.7).
+    pub default_disable: Option<NodeId>,
+}
+
+/// A checker-body expression that a reference to a checker formal expanded
+/// to (IEEE 1800-2009 17.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CheckerActual {
+    /// The checker instance whose formal was referenced.
+    pub instance: NodeId,
+    /// The formal's default value rather than an explicit actual argument.
+    pub default: bool,
+}
+
 #[derive(Debug)]
 pub enum ProcessKind {
     Always { always_type: AlwaysKind },

@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 52;
+const ABI_VERSION: u32 = 55;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1007,6 +1007,16 @@ pub const SEMANTIC_ASSERTION_FINAL: u64 = 1 << 1;
 pub const SEMANTIC_TIMING_CYCLE_DELAY: u32 = 117;
 pub const SEMANTIC_TIMING_ONE_STEP_DELAY: u32 = 118;
 pub const SEMANTIC_SCOPE_CLOCKING_BLOCK: u32 = 230;
+/// Instance subkind of a checker instance (IEEE 1800-2009 17.3).
+pub const SEMANTIC_INSTANCE_CHECKER: u32 = 197;
+/// Checker instance metadata in [`SemanticNode::auxiliary`]: instantiated
+/// in procedural code, injected by `bind`, or inside another checker.
+pub const CHECKER_PROCEDURAL: u64 = 1 << 0;
+pub const CHECKER_BOUND: u64 = 1 << 1;
+pub const CHECKER_NESTED: u64 = 1 << 2;
+/// Index bit of a [`SemanticEdgeRole::CheckerActual`] edge naming a formal's
+/// default value rather than an explicit actual argument.
+pub const CHECKER_ACTUAL_DEFAULT: u32 = 1 << 31;
 /// An anonymous program (SV 24.6): a scope whose members belong to the
 /// enclosing package or compilation-unit namespace.
 pub const SEMANTIC_SCOPE_ANONYMOUS_PROGRAM: u32 = 235;
@@ -1187,6 +1197,10 @@ pub enum SemanticEdgeRole {
     /// The typedef declaration a declared type names (IEEE 1800-2009
     /// 37.23); the index counts the dimensions declared above it.
     Typedef,
+    /// From a checker instance to a body expression that a formal
+    /// reference expanded to (IEEE 1800-2009 17.3); the index has
+    /// [`CHECKER_ACTUAL_DEFAULT`] set for a formal's default value.
+    CheckerActual,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

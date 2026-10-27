@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 52u
+#define LLG_SLANG_ABI_VERSION 55u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -980,6 +980,10 @@ enum {
   LLG_SLANG_INSTANCE_BODY = 194,
   LLG_SLANG_GENERATE_BLOCK = 195,
   LLG_SLANG_GENERATE_BLOCK_ARRAY = 196,
+  /* A checker instance (IEEE 1800-2009 17.3): an INSTANCE node whose
+   * INSTANCE_BODY child holds the elaborated checker body. Its auxiliary
+   * holds LLG_SLANG_CHECKER_* bits. */
+  LLG_SLANG_INSTANCE_CHECKER = 197,
   LLG_SLANG_PRIMITIVE_AND = 200,
   LLG_SLANG_PRIMITIVE_NAND = 201,
   LLG_SLANG_PRIMITIVE_NOR = 202,
@@ -1179,7 +1183,8 @@ enum {
   LLG_SLANG_VARIABLE_LIFETIME_MASK = 0xffull,
   /* Declared `const` (SV 6.20.6), including const class properties. */
   LLG_SLANG_VARIABLE_CONST = 1ull << 8,
-  /* Class property declared `rand` or `randc` (IEEE 1800-2009 18.4). */
+  /* Class property declared `rand` or `randc` (IEEE 1800-2009 18.4); RAND
+   * also marks a free checker variable (`rand`, IEEE 1800-2009 17.7). */
   LLG_SLANG_VARIABLE_RAND = 1ull << 9,
   LLG_SLANG_VARIABLE_RANDC = 1ull << 10
 };
@@ -1242,8 +1247,25 @@ enum {
    * packed and fixed unpacked dimensions declared above it: 0 when the
    * declared type is the typedef itself (for a typedef, the typedef it
    * aliases). At most one edge per declaration. */
-  LLG_SLANG_EDGE_TYPEDEF = 42
+  LLG_SLANG_EDGE_TYPEDEF = 42,
+  /* From a checker instance (INSTANCE_CHECKER) to each captured expression
+   * of its body that a formal reference expanded to: the bound actual
+   * argument of a checker instantiated outside any checker, or a formal's
+   * default value. The index is the occurrence ordinal; bit 31 is set for a
+   * default value (LLG_SLANG_CHECKER_ACTUAL_DEFAULT). Not a child edge. */
+  LLG_SLANG_EDGE_CHECKER_ACTUAL = 43
 };
+
+/* Checker instance auxiliary bits and CHECKER_ACTUAL index flag. */
+enum {
+  /* Instantiated in procedural code (IEEE 1800-2009 17.3). */
+  LLG_SLANG_CHECKER_PROCEDURAL = 1ull << 0,
+  /* Injected by a bind directive (IEEE 1800-2009 23.11). */
+  LLG_SLANG_CHECKER_BOUND = 1ull << 1,
+  /* Instantiated in another checker's body (17.3.2). */
+  LLG_SLANG_CHECKER_NESTED = 1ull << 2
+};
+#define LLG_SLANG_CHECKER_ACTUAL_DEFAULT 0x80000000u
 
 typedef struct {
   uint64_t id;
