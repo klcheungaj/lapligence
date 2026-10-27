@@ -245,12 +245,16 @@ fn lsp_stdio_semantic_colors_preserve_constants_and_types_in_both_serving_paths(
                 }
             }
         }
-        for name in ["module color_top", "assign buffer", "endmodule"] {
+        for name in ["module color_top", "endmodule"] {
             let (line, col) = position_of(&buffer, name, 0);
             let row = row_at(&rows, line, col);
             assert_eq!(row.token_type, "keyword", "{name}");
             assert!(row.modifiers.is_empty(), "{name}: {row:?}");
         }
+        let (line, col) = position_of(&buffer, "assign buffer", 0);
+        let row = row_at(&rows, line, col);
+        assert_eq!(row.token_type, "keyword", "assign: {row:?}");
+        assert_eq!(row.modifiers, ["controlFlow"], "assign: {row:?}");
     }
     assert_eq!(fs::read_to_string(&path).unwrap(), source);
     client.shutdown();
@@ -359,8 +363,8 @@ fn lsp_stdio_semantic_tokens_mark_enum_members_readonly_in_both_serving_paths() 
 /// `input output inout ref` carry `direction`, and built-in data and net types
 /// plus kind and qualifier words carry `primitive`. The legend keeps only
 /// standard token types and appends the three modifiers and `controlFlow`
-/// after `connectionLabel`. `module`/`always` are `keyword` without modifier
-/// bits, and a use of the user typedef name keeps its own `type` token, through
+/// after `connectionLabel`. `module` is `keyword` without modifier bits and
+/// `always` carries `controlFlow`, and a use of the user typedef name keeps its own `type` token, through
 /// project and isolated unsaved-buffer analysis.
 #[test]
 fn lsp_stdio_semantic_tokens_send_grouped_words_as_keywords_with_llg_modifiers() {
@@ -470,14 +474,11 @@ fn lsp_stdio_semantic_tokens_send_grouped_words_as_keywords_with_llg_modifiers()
                 }
             }
         }
-        for needle in ["module", "always"] {
+        for (needle, want) in [("module", &[][..]), ("always", &["controlFlow"][..])] {
             let (line, col) = position_of(source, needle, 0);
             let row = row_at(&rows, line, col);
             assert_eq!(row.token_type, "keyword", "opened={opened} {needle}");
-            assert!(
-                row.modifiers.is_empty(),
-                "opened={opened} {needle}: {row:?}"
-            );
+            assert_eq!(row.modifiers, want, "opened={opened} {needle}: {row:?}");
         }
         let (line, col) = position_of(source, "st_t user_s;", 0);
         let row = row_at(&rows, line, col);
@@ -630,9 +631,8 @@ endmodule\n";
     client.shutdown();
 }
 
-/// Connection labels carry `connectionLabel` and the type of the child
-/// declaration they name (`parameter` for ports, `variable` + `readonly` for
-/// parameters); actuals retain their own symbol classification in both
+/// Connection labels are `function` + `connectionLabel` (parameter labels
+/// also `readonly`), so stock themes color them apart from actuals; actuals retain their own symbol classification in both
 /// cached-project and isolated open-buffer responses.
 #[test]
 fn lsp_stdio_semantic_tokens_mark_connection_labels_in_both_serving_paths() {
@@ -677,7 +677,7 @@ fn lsp_stdio_semantic_tokens_mark_connection_labels_in_both_serving_paths() {
     // identifier AFTER the dot, the actual at the identifier after the paren.
     let (clk_line, clk_dot_col) = position_of(&labels_text, ".clk", 0);
     let clk_row = row_at(&rows, clk_line, clk_dot_col + 1);
-    assert_eq!(clk_row.token_type, "parameter", "clk row: {clk_row:?}");
+    assert_eq!(clk_row.token_type, "function", "clk row: {clk_row:?}");
     assert!(
         clk_row
             .modifiers
@@ -745,25 +745,25 @@ endmodule\n"
     };
 
     // Single-line instantiation: param override labels …
-    let w_mods = expect_label(".W", 0, "variable");
+    let w_mods = expect_label(".W", 0, "function");
     assert!(
         w_mods.iter().any(|name| name == "readonly"),
         "override label keeps its readonly base modifier: {w_mods:?}"
     );
-    expect_label(".D", 0, "variable");
+    expect_label(".D", 0, "function");
     // … port labels …
-    expect_label(".clk", 0, "parameter");
-    expect_label(".q", 0, "parameter");
+    expect_label(".clk", 0, "function");
+    expect_label(".q", 0, "function");
     // … and the connected signals stay plain.
     expect_plain(&iso_buffer, ".D(wa)", 0, 3);
     expect_plain(&iso_buffer, ".clk(wa)", 0, 5);
     expect_plain(&iso_buffer, ".q(tq)", 0, 3);
 
     // Multi-line instantiation: identical marking on continuation lines.
-    expect_label(".W", 1, "variable");
-    expect_label(".D", 1, "variable");
-    expect_label(".clk", 1, "parameter");
-    expect_label(".q", 1, "parameter");
+    expect_label(".W", 1, "function");
+    expect_label(".D", 1, "function");
+    expect_label(".clk", 1, "function");
+    expect_label(".q", 1, "function");
     expect_plain(&iso_buffer, ".clk(wa)", 1, 5);
     expect_plain(&iso_buffer, ".q(tq)", 1, 3);
 
@@ -935,6 +935,8 @@ endmodule\n";
         "priority",
         "disable",
         "default",
+        "always",
+        "initial",
     ];
     let disable_iff = position_of(source, "disable iff", 0);
     fs::write(&path, source).expect("write control-word fixture");
@@ -981,7 +983,6 @@ endmodule\n";
         }
         for (word, bits) in [
             ("module", 0),
-            ("always", 0),
             ("begin", 0),
             ("end", 0),
             ("fork", 0),
@@ -1015,9 +1016,129 @@ endmodule\n";
     client.shutdown();
 }
 
+/// Process introducers and continuous, alias and procedural continuous
+/// assignment keywords are exactly `keyword` + `controlFlow` in both serving
+/// paths, while the `always` property operator, a UDP `initial` and other
+/// declaration keywords keep plain `keyword`.
+#[test]
+fn lsp_stdio_semantic_tokens_mark_process_and_assignment_keywords_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("process_words.sv");
+    let uri = file_uri(&path);
+    let source = "module process_words(input logic clk, input logic d);\n\
+  logic q, r; wire w1, w2;\n\
+  initial q = 0;\n\
+  final $display(q);\n\
+  always @(posedge clk) q <= d;\n\
+  always_comb r = d;\n\
+  always_ff @(posedge clk) r <= d;\n\
+  always_latch if (clk) q = d;\n\
+  assign w1 = d;\n\
+  alias w1 = w2;\n\
+  initial begin\n\
+    assign q = d;\n\
+    deassign q;\n\
+    force r = d;\n\
+    release r;\n\
+    force w1 = 1'b0;\n\
+    release w1;\n\
+  end\n\
+  property pa; @(posedge clk) always d; endproperty\n\
+endmodule\n\
+checker chk(logic a, event ck);\n\
+  logic m;\n\
+  always @(ck) m <= a;\n\
+endchecker\n\
+primitive udp(output reg uq, input ud, input uc);\n\
+  initial uq = 0;\n\
+  table\n\
+    0 r : ? : 0;\n\
+    1 r : ? : 1;\n\
+  endtable\n\
+endprimitive\n";
+    let property_always = position_of(source, "always d", 0);
+    let udp_initial = position_of(source, "initial uq", 0);
+    fs::write(&path, source).expect("write process-word fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let control = 1 << 14;
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+
+    for opened in [false, true] {
+        if opened {
+            client
+                .open(&path, source)
+                .expect("open process-word buffer");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("process-word semantic token response");
+        for word in [
+            "initial",
+            "final",
+            "always",
+            "always_comb",
+            "always_ff",
+            "always_latch",
+            "assign",
+            "alias",
+            "deassign",
+            "force",
+            "release",
+        ] {
+            let positions = word_positions(source, word);
+            assert!(!positions.is_empty(), "sample lacks {word}");
+            for (line, col) in positions {
+                let want = if (line, col) == property_always || (line, col) == udp_initial {
+                    0
+                } else {
+                    control
+                };
+                assert_eq!(
+                    raw_token_at(&result, line, col),
+                    (15, want),
+                    "opened={opened} {word} at {line}:{col}"
+                );
+            }
+        }
+        for word in [
+            "module",
+            "checker",
+            "primitive",
+            "table",
+            "property",
+            "begin",
+        ] {
+            for (line, col) in word_positions(source, word) {
+                assert_eq!(
+                    raw_token_at(&result, line, col),
+                    (15, 0),
+                    "opened={opened} {word} at {line}:{col}"
+                );
+            }
+        }
+        for (line, col) in word_positions(source, "wire") {
+            assert_eq!(
+                raw_token_at(&result, line, col),
+                (15, 1 << 13),
+                "opened={opened}"
+            );
+        }
+    }
+    client.shutdown();
+}
+
 /// Value parameters are `variable` + `readonly`, type parameters
-/// `typeParameter`, port labels `parameter` and parameter labels `variable` +
-/// `readonly` (labels with `connectionLabel`) in both serving paths. Compiler
+/// `typeParameter`, named, implicit and interface port labels `function` and
+/// value and type parameter labels `function` + `readonly` (labels with
+/// `connectionLabel`, actuals keeping their own types) in both serving paths.
+/// Compiler
 /// directives are `keyword` (conditional ones with `controlFlow`) in both
 /// serving paths: the isolated open-buffer parse preprocesses the unchanged
 /// buffer like the project compile.
@@ -1031,15 +1152,21 @@ fn lsp_stdio_semantic_tokens_type_parameters_labels_and_directives_in_both_servi
 `define ANALOGUE_TYPES\n\
 `endif\n\
 `timescale 1ns/1ps\n\
-module analogue_child #(parameter int P = 1, parameter type T = logic [1:0])(input T a, output logic y);\n\
+interface analogue_if; logic s; endinterface\n\
+module analogue_tchild #(parameter type T = logic)(input logic a);\n\
+endmodule\n\
+module analogue_child #(parameter int P = 1, parameter type T = logic [1:0])(input T a, output logic y, analogue_if b);\n\
   T t_local;\n\
   assign t_local = a;\n\
   assign y = t_local[0] ^ P[0];\n\
 endmodule\n\
 module analogue_top;\n\
   localparam int L = 2;\n\
-  logic [1:0] v; logic o;\n\
-  analogue_child #(.P(L)) u (.a(v), .y(o));\n\
+  logic [1:0] v; logic o; logic y;\n\
+  analogue_if bi();\n\
+  analogue_child #(.P(L)) u (.a(v), .y(o), .b(bi));\n\
+  analogue_child #(L) u2 (.a(v), .y, .b(bi));\n\
+  analogue_tchild #(.T(logic [1:0])) u3 (.a(v[0]));\n\
 endmodule\n";
     fs::write(&path, source).expect("write analogue-type fixture");
     let mut client = LspProcess::spawn(&fixture.root);
@@ -1079,10 +1206,17 @@ endmodule\n";
         expect("T t_local", 0, "typeParameter", &[]);
         expect("P[0]", 0, "variable", &["readonly"]);
         expect("L = 2", 0, "variable", &["declaration", "readonly"]);
-        expect(".P(L)", 1, "variable", &["readonly", "connectionLabel"]);
+        expect(".P(L)", 1, "function", &["readonly", "connectionLabel"]);
         expect(".P(L)", 3, "variable", &["readonly"]);
-        expect(".a(v)", 1, "parameter", &["connectionLabel"]);
-        expect(".y(o)", 1, "parameter", &["connectionLabel"]);
+        expect(".T(logic", 1, "function", &["readonly", "connectionLabel"]);
+        expect(".a(v)", 1, "function", &["connectionLabel"]);
+        expect(".a(v)", 3, "variable", &[]);
+        expect(".y(o)", 1, "function", &["connectionLabel"]);
+        expect(".y(o)", 3, "variable", &[]);
+        expect(".b(bi)", 1, "function", &["connectionLabel"]);
+        expect(".b(bi)", 3, "variable", &[]);
+        expect("#(L)", 2, "variable", &["readonly"]);
+        expect(".y, .b", 1, "function", &["connectionLabel"]);
         for (needle, want) in [
             ("`ifndef", &["controlFlow"][..]),
             ("`define", &[]),

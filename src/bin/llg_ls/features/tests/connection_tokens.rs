@@ -12,7 +12,7 @@ use super::*;
 ///   declaration;
 /// * the semantic-token stream marks exactly the label positions with the
 ///   `connectionLabel` modifier (`function/connectionLabel`,
-///   `property/readonly+connectionLabel`) while the connected signals
+///   `function/readonly+connectionLabel`) while the connected signals
 ///   stay plain `variable`.
 #[test]
 fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
@@ -270,8 +270,8 @@ fn connection_label_tokens_index_as_references_and_highlight_as_labels() {
         }
         panic!("no semantic token at {want_line}:{want_col}");
     };
-    assert_eq!(decode_sym(0, 28), "parameter/connectionLabel");
-    assert_eq!(decode_sym(0, 17), "variable/readonly+connectionLabel");
+    assert_eq!(decode_sym(0, 28), "function/connectionLabel");
+    assert_eq!(decode_sym(0, 17), "function/readonly+connectionLabel");
     assert_eq!(decode_sym(0, 32), "variable");
     assert_eq!(decode_sym(0, 19), "variable");
 }

@@ -6093,9 +6093,40 @@ public:
         controlKeyword =
             syntax.as<syntax::DisableForkStatementSyntax>().disable.location();
         break;
+      // Procedural continuous assignments (A.6.2; 10.6): `assign`,
+      // `deassign`, `force` and `release` statements.
+      case syntax::SyntaxKind::ProceduralAssignStatement:
+      case syntax::SyntaxKind::ProceduralForceStatement:
+        controlKeyword =
+            syntax.as<syntax::ProceduralAssignStatementSyntax>().keyword.location();
+        break;
+      case syntax::SyntaxKind::ProceduralDeassignStatement:
+      case syntax::SyntaxKind::ProceduralReleaseStatement:
+        controlKeyword =
+            syntax.as<syntax::ProceduralDeassignStatementSyntax>().keyword.location();
+        break;
       default:
         break;
     }
+    visitDefault(syntax);
+  }
+
+  // Process introducers (IEEE 1800-2009 A.6.2, 9.2; also the checker
+  // `always` of A.1.8): control flow, unlike the `initial` of a UDP initial
+  // statement (A.5.4) and the `always` property operator (A.2.10).
+  void handle(const syntax::ProceduralBlockSyntax& syntax) {
+    controlKeyword = syntax.keyword.location();
+    visitDefault(syntax);
+  }
+
+  // Continuous assignment and net alias (A.6.1; 10.3, 10.11).
+  void handle(const syntax::ContinuousAssignSyntax& syntax) {
+    controlKeyword = syntax.assign.location();
+    visitDefault(syntax);
+  }
+
+  void handle(const syntax::NetAliasSyntax& syntax) {
+    controlKeyword = syntax.keyword.location();
     visitDefault(syntax);
   }
 
@@ -6201,9 +6232,18 @@ public:
       const auto key = std::tuple{binding.range.file_id, binding.range.start,
                                   binding.range.end};
       auto [it, inserted] = connectionLabels.try_emplace(key, binding);
-      if (!inserted &&
-          it->second.semantic_id == LLG_SLANG_INVALID_ID &&
-          binding.semantic_id != LLG_SLANG_INVALID_ID) {
+      if (inserted)
+        continue;
+      // An implicit named port connection `.name` (IEEE 1800-2009 23.3.2.3)
+      // is both the label and a reference to the connected name; the label
+      // role wins so the result does not depend on capture order.
+      const bool existingLabel =
+          it->second.role == LLG_SLANG_LEXICAL_ROLE_CONNECTION_LABEL;
+      const bool newLabel = binding.role == LLG_SLANG_LEXICAL_ROLE_CONNECTION_LABEL;
+      if ((newLabel && !existingLabel) ||
+          (newLabel == existingLabel &&
+           it->second.semantic_id == LLG_SLANG_INVALID_ID &&
+           binding.semantic_id != LLG_SLANG_INVALID_ID)) {
         it->second = binding;
       }
     }
@@ -6525,7 +6565,7 @@ private:
   // lexical token table; an expanded argument token replaces its record.
   std::map<std::tuple<uint64_t, uint64_t, uint64_t>, size_t> writtenArguments;
   std::vector<BlockName> blockNames;
-  // The `default` keyword of the case item being visited.
+  // The control-flow keyword of the syntax node being visited.
   SourceLocation controlKeyword;
 
   void addToken(parsing::Token token, uint32_t extraFlags) {

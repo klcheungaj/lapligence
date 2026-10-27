@@ -238,15 +238,15 @@ fn semantic_tokens_color_module_typedef_and_parameter_words_like_cpp() {
 
 /// Control-flow keywords carry `controlFlow` through the committed-analysis
 /// path: words that are control flow everywhere by text, and `unique`,
-/// `priority`, `disable` and a case item `default` where the capture marks
-/// them, while `disable iff`, block delimiters and declaration keywords keep
+/// `priority`, `disable`, a case item `default`, process keywords and
+/// `assign` where the capture marks them, while `disable iff`, block delimiters and declaration keywords keep
 /// their own bits.
 #[test]
 fn semantic_tokens_mark_control_flow_keywords_in_committed_analysis() {
     let _guards = analysis_guards();
     let fixture = resolved_temp_dir(&format!("llg_controlflow_{}", std::process::id()));
     let sv = fixture.join("control_flow.sv");
-    let source = "module top(input logic clk, input logic rst);\n  logic [3:0] q;\n  property p; @(posedge clk) disable iff (rst) q == 0; endproperty\n  always @(posedge clk) begin : blk\n    unique case (q) 0: q <= 1; default: q <= 2; endcase\n    priority if (q == 1) q <= 0; else q <= 3;\n    for (int i = 0; i < 2; i++) if (i == 1) break;\n  end\n  initial begin wait (rst); disable blk; end\nendmodule\n";
+    let source = "module top(input logic clk, input logic rst);\n  logic [3:0] q; logic w;\n  property p; @(posedge clk) disable iff (rst) q == 0; endproperty\n  always @(posedge clk) begin : blk\n    unique case (q) 0: q <= 1; default: q <= 2; endcase\n    priority if (q == 1) q <= 0; else q <= 3;\n    for (int i = 0; i < 2; i++) if (i == 1) break;\n  end\n  initial begin wait (rst); disable blk; end\n  assign w = rst;\nendmodule\n";
     std::fs::write(&sv, source).expect("write design");
     let opts = CompileOpts {
         files: vec![sv.to_string_lossy().into_owned()],
@@ -295,7 +295,9 @@ fn semantic_tokens_mark_control_flow_keywords_in_committed_analysis() {
         (8, "disable", control),
         (2, "disable", 0),
         (2, "iff", 0),
-        (3, "always", 0),
+        (3, "always", control),
+        (8, "initial", control),
+        (9, "assign", control),
         (3, "begin", 0),
         (0, "module", 0),
         (0, "input", bit("direction")),

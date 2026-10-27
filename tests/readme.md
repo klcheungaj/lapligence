@@ -838,8 +838,10 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   leaves, typed contents, declaration fallback and useful roots under truncation;
   never return shadow URIs. Tokens keep parameters/localparams
   `variable.readonly` in dimensions/expressions/actuals, type parameters
-  `typeParameter`, port labels `parameter.connectionLabel`, parameter labels
-  `variable.readonly.connectionLabel`, compiler directives `keyword` (with
+  `typeParameter`, named, implicit (`.a`) and interface port labels
+  `function.connectionLabel`, value and type parameter labels
+  `function.readonly.connectionLabel` (actuals keep their own types),
+  compiler directives `keyword` (with
   `controlFlow` for conditional compilation), enum items
   `enumMember.readonly` (plus `declaration` at declarations, anonymous and
   ranged enums included). Keyword-derived words are classified by text and
@@ -851,9 +853,12 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   words (`if`, `else`, `case`, `endcase`, loops, `return`/`break`/`continue`,
   `wait`, ...) get `controlFlow`. A case, case-inside, case-generate,
   property-case or randsequence-case item `default`, an if/case `unique`/
-  `unique0`/`priority` and a disable statement's `disable` get `controlFlow`
-  from the capture, not the text, while `disable iff`, a uniqueness-constraint
-  `unique` and every other `default` do not; the legend holds only standard
+  `unique0`/`priority`, a disable statement's `disable`, the keyword of an
+  `initial`/`final`/`always*` procedure and the `assign`/`alias`/`deassign`/
+  `force`/`release` of continuous, alias and procedural continuous
+  assignments get `controlFlow` from the capture, not the text, while
+  `disable iff`, a uniqueness-constraint `unique`, a UDP `initial`, the
+  `always` property operator and every other `default` do not; the legend holds only standard
   token types and appends these modifiers after `connectionLabel`
   ([legend contract](../src/bin/llg_ls/readme.md#semantic-token-legend)).
   The remaining keywords (`module`, `begin`, `fork`, `iff`, `inside`, ...) are

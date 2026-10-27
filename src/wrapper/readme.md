@@ -15,7 +15,8 @@ Capture preserves typed declarations, values, dimensions, source/lexical data,
 instance topology, references, diagnostics and ordered expression edges. Library-unit
 recovery supplies bounded declaration/navigation data without claiming executable
 completeness. Named connections retain separate child-port labels and parent-scope
-actuals; array instances retain HDL indices. Pattern operands preserve position
+actuals; an implicit `.name` connection's single token keeps the label role in
+every capture mode; array instances retain HDL indices. Pattern operands preserve position
 and declaration order even when expression IDs repeat.
 Class constraint blocks and their constraint trees are captured as semantic
 kinds 29/30 with ordered roles; `randomize` calls carry a class/scope tag and
@@ -79,8 +80,11 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   kind. A keyword carries `LLG_SLANG_LEXICAL_CONTROL_FLOW` only where its
   syntax position makes it control flow: the `default` of a case,
   case-generate, property-case or randsequence-case item, the `unique`,
-  `unique0` or `priority` of an if or case statement, and the `disable` of a
-  disable statement (not of `disable iff`). Words that are control flow
+  `unique0` or `priority` of an if or case statement, the `disable` of a
+  disable statement (not of `disable iff`), the keyword of an initial, final
+  or always* procedure (not a UDP `initial` or the `always` property
+  operator), and the keyword of a continuous assignment, net alias or
+  procedural assign, deassign, force or release statement. Words that are control flow
   everywhere are left to the consumer's text classification.
 - Text macros: a use site keeps its `` `NAME `` directive token and its
   written actual arguments. Expanded tokens carry

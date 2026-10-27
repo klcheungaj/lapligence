@@ -39,7 +39,7 @@ so stock VS Code themes color them like the C++ or Rust counterpart:
 | Functions, tasks, methods | `function` | C++ function |
 | System tasks and functions, built-in methods | `function` + `defaultLibrary` | standard library function |
 | `` `define `` names | `macro` | C++ macro |
-| Port / parameter connection labels | `parameter` / `variable` + `readonly`, with `connectionLabel` | the named child declaration |
+| Named, implicit (`.a`) and interface port connection labels; value and type parameter connection labels | `function` + `connectionLabel`; parameter labels also `readonly` | none: a user decision (2026-10-27) so stock themes color a label (`function`) apart from its actual (`variable`, `parameter`); VS Code registers no `function.readonly` default scope, so `readonly` keeps the function color |
 | Keywords, compiler directives | `keyword` (llg modifiers below) | keywords |
 | Strings, numbers, operators | `string`, `number`, `operator` | literals, operators |
 
@@ -69,11 +69,11 @@ in `semanticTokensProvider.legend`. llg modifiers:
 
 | Modifier | Index | Used with | Words or symbols |
 | --- | --- | --- | --- |
-| `connectionLabel` | 10 | `parameter`, `variable` | Named port and parameter connection labels (`.a(x)`, `.W(2)`). |
+| `connectionLabel` | 10 | `function` | Named, implicit and interface port connection labels and value and type parameter connection labels (`.a(x)`, `.a`, `.W(2)`, `.T(logic)`). |
 | `typeDefinition` | 11 | `keyword` | `typedef struct union enum`. |
 | `direction` | 12 | `keyword` | `input output inout ref`. |
 | `primitive` | 13 | `keyword` | Built-in data and net types and declaration kind and qualifier words: `parameter localparam specparam const var bit logic reg byte shortint int longint integer time shortreal real realtime string chandle event void signed unsigned genvar supply0 supply1 tri triand trior trireg tri0 tri1 uwire wire wand wor default automatic static`. |
-| `controlFlow` | 14 | `keyword` | Control flow: `if else case casex casez randcase endcase for foreach while do repeat forever return break continue wait wait_order` everywhere, and, where the syntax makes them control flow, `unique unique0 priority` qualifying an if or case, the `disable` of a disable statement, and a case item `default`. |
+| `controlFlow` | 14 | `keyword` | Control flow: `if else case casex casez randcase endcase for foreach while do repeat forever return break continue wait wait_order` everywhere, and, where the syntax makes them control flow, `unique unique0 priority` qualifying an if or case, the `disable` of a disable statement, a case item `default`, the process keywords `initial final always always_comb always_ff always_latch` (also a checker `always`), and the `assign`, `alias`, `deassign`, `force` and `release` of continuous assignments, net aliases and procedural continuous assignments. |
 
 A keyword carries at most one llg modifier. The control-flow words are the
 IEEE 1800-2009 statement keywords that choose, repeat, leave or wait for
@@ -84,7 +84,12 @@ marked by the capture, not by their text: a case, case-inside, case-generate,
 property-case or randsequence-case item `default` is control flow while every
 other `default` (assignment-pattern keys, `default clocking`, `default disable
 iff`, default bins) keeps `primitive`; the `disable` of `disable iff` and the
-`unique` of a uniqueness constraint stay plain. Block delimiters (`begin`,
+`unique` of a uniqueness constraint stay plain. The capture also marks the
+keywords that introduce processes (IEEE 1800-2009 9.2: `initial`, `final`,
+`always*`) and assignments that drive or override values continuously (10.3
+`assign`, 10.6 `assign`/`deassign`/`force`/`release`, 10.11 `alias`); the
+`initial` of a UDP initial statement (A.5.4) and the `always` property
+operator (A.2.10) stay plain. Block delimiters (`begin`,
 `end`, `fork`, `join*`), `iff`, `inside`, `matches` and every other keyword are
 `keyword` without modifier bits; `->` is an `operator`. `static` and
 `automatic` are always lifetime or class qualifiers. User typedef names are

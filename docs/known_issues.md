@@ -2332,8 +2332,10 @@ VS Code themes except where noted.
   and properties get no token (they are unbound); a covergroup is a type
   (`class`, `#4EC9B0`) and a sequence or property is callable (`function`,
   `#DCDCAA`) in the analogue model.
-- A type-parameter connection label (`#(.T(int))`) is `variable` +
-  `readonly`, not `typeParameter`.
+- In the project stream (found by LS-TOK-10; the open-buffer stream was not
+  checked), a use of a type parameter inside a module whose instance
+  overrides it (`#(.T(logic [1:0]))`) is `type`, not `typeParameter` (same
+  `#4EC9B0` in Dark+); the declaration stays `typeParameter`.
 - A generate `case (expr)` condition has no reference token.
 
 ### Cause

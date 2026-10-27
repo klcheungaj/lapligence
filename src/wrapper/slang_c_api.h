@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 45u
+#define LLG_SLANG_ABI_VERSION 46u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1331,11 +1331,15 @@ enum {
   LLG_SLANG_LEXICAL_MACRO_EXPANSION = 1u << 2,
   LLG_SLANG_LEXICAL_DIRECTIVE = 1u << 3,
   LLG_SLANG_LEXICAL_UNIT_FORWARD_REFERENCE = 1u << 4,
-  /* A keyword whose syntax position makes it control flow (ABI v43, v44):
-   * the `default` of a case, case-generate, randsequence-case or
+  /* A keyword whose syntax position makes it control flow (ABI v43, v44,
+   * v46): the `default` of a case, case-generate, randsequence-case or
    * property-case item, the `unique`/`unique0`/`priority` qualifying an if
-   * or case statement, and the `disable` of a disable statement. Every other
-   * use of the same keyword leaves the bit clear. */
+   * or case statement, the `disable` of a disable statement, the keyword
+   * introducing an initial, final or always* procedure (also a checker
+   * `always`), and the keyword of a continuous assignment, net alias or
+   * procedural assign, deassign, force or release statement. Every other
+   * use of the same keyword (a UDP `initial`, the `always` property
+   * operator) leaves the bit clear. */
   LLG_SLANG_LEXICAL_CONTROL_FLOW = 1u << 5,
   /* A macro-expanded token whose text is written in the actual arguments of
    * the outermost macro usage (ABI v45), always with
