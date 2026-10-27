@@ -44,10 +44,24 @@ so stock VS Code themes color them like the C++ or Rust counterpart:
 | Strings, numbers, operators | `string`, `number`, `operator` | literals, operators |
 
 Declarations add `declaration`. A `` `name `` that is not a compiler
-directive (a macro usage kept unexpanded inside a macro body) is `macro`.
-Comments, attribute names and unresolved references get no token. Macro use
-sites and open buffers that use macros have the gaps listed in
+directive is `macro`: every use site, also of an undefined macro (Slang
+reports it), and a usage kept unexpanded inside a macro body. No token of a
+macro's expansion is sent, so nothing is painted over the use site; text
+written in the actual arguments (`v` in `` `ADD(v, 1) ``, also through nested
+macros) keeps its own type at its written position. A name the expansion
+makes from body text alone has no written spelling and gets no token.
+Comments, attribute names and unresolved references get no token. The
+remaining macro gaps (formal arguments, the defined name's modifier) are in
 [known issues](../../../docs/known_issues.md#semantic-tokens-around-text-macros-llg_ls).
+
+Both serving paths see the same macros. The project stream comes from the
+committed analysis; an open buffer is compiled alone, unchanged, with the
+root's `[compile] defines` and the include search directories and admitted
+include buffers of the last committed analysis (no file is read or admitted
+for the request). Like the project compile, every file is its own
+compilation unit, so a macro defined only in another project file is unknown
+in both. A syntax error, an unknown macro or an include outside the
+committed set degrades the stream per token: the tokens Slang recovered stay.
 
 The legend lists only standard LSP token types; llg-specific modifiers follow
 the standard modifiers (their indices are stable). Clients receive both lists
@@ -77,8 +91,8 @@ iff`, default bins) keeps `primitive`; the `disable` of `disable iff` and the
 `type`. A client that knows no llg modifier still renders the words as
 keywords. Compiler directives (IEEE 1800-2009 22.1) are `keyword`, and the
 conditional-compilation directives `` `ifdef ``, `` `ifndef ``, `` `elsif ``,
-`` `else `` and `` `endif `` (22.6) add `controlFlow`; the isolated open-buffer
-parse masks directive lines, so open buffers carry no directive tokens.
+`` `else `` and `` `endif `` (22.6) add `controlFlow`, in both serving
+paths. Inactive conditional-compilation branches carry no token.
 
 Named and labeled statement blocks and generate block names use the standard
 `namespace` type, like packages: the opening name (`begin : blk`, `lbl:`,

@@ -85,6 +85,31 @@ pub struct Analysis {
     /// so macro-usage hover stays a pure read over committed data.  Empty for
     /// hand-built analyses.
     pub(super) macros: macros::MacroTable,
+    /// Include search prefixes and include-only buffers of the admitted
+    /// project compile, shared with the isolated open-buffer token parse so an
+    /// open buffer sees the headers (and their macros) its project compile
+    /// saw. Empty for hand-built and preflight-failed analyses.
+    pub(crate) include_context: Arc<IncludeContext>,
+}
+
+/// The include half of one admitted project compile: its logical include
+/// search prefixes, in order, and the admitted include-only buffers by name.
+/// Texts are the admission snapshots themselves (shared, not copied), so
+/// retaining them costs no more than the committed analysis already pins.
+#[derive(Debug, Default)]
+pub struct IncludeContext {
+    pub include_dirs: Vec<String>,
+    pub includes: Vec<(String, Arc<String>)>,
+}
+
+impl IncludeContext {
+    /// Owned include buffers for one isolated compile request.
+    pub fn sources(&self) -> Vec<compile::OwnedSource> {
+        self.includes
+            .iter()
+            .map(|(name, text)| compile::OwnedSource::include(name.clone(), text.as_str()))
+            .collect()
+    }
 }
 
 impl Analysis {
@@ -196,7 +221,13 @@ impl Analysis {
             module_graph: ModuleGraph::default(),
             configured_top: None,
             macros: macros::MacroTable::default(),
+            include_context: Arc::default(),
         }
+    }
+
+    /// Attach the include context of the compile that produced this analysis.
+    pub(crate) fn set_include_context(&mut self, context: IncludeContext) {
+        self.include_context = Arc::new(context);
     }
 
     /// Attach the macro table captured during this analysis commit.

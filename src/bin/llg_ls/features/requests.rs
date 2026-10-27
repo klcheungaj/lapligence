@@ -130,18 +130,11 @@ pub fn lsp_diagnostics_with_fallback(
 /// Encode the semantic tokens for `file` from the cached token lists.
 ///
 /// Source identity is exact. A same-named file elsewhere in the workspace
-/// must neither provide tokens nor suppress this file's tokens. A matching
-/// syntax diagnostic makes the empty result authoritative.
+/// must neither provide tokens nor suppress this file's tokens. A file with
+/// syntax errors keeps the tokens of everything the frontend recovered:
+/// missing and skipped tokens are never captured, so an error degrades the
+/// stream per token, not per file.
 pub fn semantic_tokens_for(a: &Analysis, file: &str) -> SemanticTokens {
-    if a.diagnostics.iter().any(|diagnostic| {
-        matches!(diagnostic.severity, Severity::Syntax)
-            && diagnostic
-                .file
-                .as_deref()
-                .is_some_and(|diagnostic_file| semantic_file_matches(diagnostic_file, file))
-    }) {
-        return empty_semantic_tokens();
-    }
     match file_tokens(a, file) {
         Some(ft) => semantic_tokens::encode(&ft.nodes),
         None => empty_semantic_tokens(),
@@ -171,17 +164,27 @@ pub(super) fn semantic_file_matches(left: &str, right: &str) -> bool {
 /// Parse one open document in isolation and encode its lexical
 /// semantic tokens.
 ///
-/// This path deliberately does not build or update an [`Analysis`].  It runs
-/// Slang receives the admitted in-memory buffer when one is available.
-/// Frontend syntax diagnostics do not make this return an error. Instead, any syntax
-/// diagnostic produces an authoritative empty stream so an incomplete edit
-/// cannot expose unstable partial highlighting or fall back to stale tokens.
+/// This path deliberately does not build or update an [`Analysis`]. Slang
+/// receives the admitted in-memory buffer when one is available, preprocessed
+/// with the configured defines and the include context of the root's
+/// committed project compile, so macros from the buffer itself, its admitted
+/// headers and the configuration expand exactly as in the project stream.
+/// Frontend diagnostics do not make this return an error and do not empty
+/// the stream: the tokens the frontend recovered are encoded (missing and
+/// skipped tokens are never captured), so a syntax error or an unknown macro
+/// degrades the stream per token.
 #[allow(dead_code)] // compatibility wrapper; production uses the parent-aware variant
 pub fn semantic_tokens_for_open_document(
     file: &str,
     defines: &[String],
 ) -> Result<SemanticTokens, OpenDocumentTokensError> {
-    semantic_tokens_for_open_document_with_parent(file, defines, None, None)
+    semantic_tokens_for_open_document_with_parent(
+        file,
+        defines,
+        None,
+        &IncludeContext::default(),
+        None,
+    )
 }
 
 /// Parent-aware variant used by an LSP semantic-token request.  Direct
@@ -191,10 +194,17 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
     file: &str,
     defines: &[String],
     source: Option<&str>,
+    includes: &IncludeContext,
     _parent_id: Option<u64>,
 ) -> Result<SemanticTokens, OpenDocumentTokensError> {
     let parsed = match source {
-        Some(source) => compile::parse_source(file, source, defines),
+        Some(source) => compile::parse_source_in_context(
+            file,
+            source,
+            defines,
+            &includes.include_dirs,
+            includes.sources(),
+        ),
         None => compile::parse_only(file, defines),
     }
     .map_err(|error| {
@@ -217,15 +227,11 @@ pub(crate) fn semantic_tokens_for_open_document_with_parent(
         .diagnostics
         .iter()
         .filter(|diagnostic| matches!(diagnostic.severity, Severity::Fatal | Severity::Syntax))
-        .collect::<Vec<_>>();
-    if !blocking_diagnostics.is_empty() {
+        .count();
+    if blocking_diagnostics != 0 {
         crate::llg_debug!(
-            "isolated semantic token parse rejected file={file} diagnostics={blocking_diagnostics:?}"
+            "isolated semantic token parse recovered file={file} syntax_diagnostics={blocking_diagnostics}"
         );
-        return Ok(SemanticTokens {
-            result_id: None,
-            data: Vec::new(),
-        });
     }
     let nodes = parsed
         .tokens

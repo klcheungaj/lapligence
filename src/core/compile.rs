@@ -4550,6 +4550,22 @@ pub fn parse_source(
     text: &str,
     defines: &[String],
 ) -> Result<ParseOnlyOut, StartupError> {
+    parse_source_in_context(name, text, defines, &[], Vec::new())
+}
+
+/// Compile one supplied buffer as the only compilation unit, with the include
+/// context of a project compile: `include_dirs` are its logical search
+/// prefixes and `includes` the include-only buffers it admitted. An include
+/// outside that set is a frontend diagnostic, never a filesystem read, so the
+/// buffer sees exactly the headers (and the macros they define) that its
+/// project compile admitted. Tokens are projected for `name` only.
+pub fn parse_source_in_context(
+    name: &str,
+    text: &str,
+    defines: &[String],
+    include_dirs: &[String],
+    includes: Vec<OwnedSource>,
+) -> Result<ParseOnlyOut, StartupError> {
     let limits = Limits::default();
     let source_bytes = (name.len() as u64)
         .checked_add(text.len() as u64)
@@ -4582,9 +4598,24 @@ pub fn parse_source(
             "isolated defines exceed the Slang ABI limit",
         ));
     }
-    let sources = vec![OwnedSource::compilation_unit(name, text)];
+    let mut sources = Vec::with_capacity(includes.len() + 1);
+    sources.push(OwnedSource::compilation_unit(name, text));
+    // Include buffers keep the include-only role whatever the caller passed,
+    // so a second compilation unit can never enter the isolated parse. The
+    // buffer itself may be in the context (a unit another unit includes);
+    // the supplied text wins.
+    sources.extend(
+        includes
+            .into_iter()
+            .filter(|include| include.name != name)
+            .map(|include| OwnedSource {
+                is_compilation_unit: false,
+                ..include
+            }),
+    );
     let opts = CompileOpts {
         defines: defines.to_vec(),
+        include_dirs: include_dirs.to_vec(),
         limits,
         ..CompileOpts::default()
     };

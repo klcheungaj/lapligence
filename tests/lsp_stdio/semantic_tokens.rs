@@ -96,9 +96,9 @@ fn lsp_stdio_semantic_tokens_use_current_open_buffer_and_cached_unopened_snapsho
         "opened file did not use the current in-memory module position: {opened_positions:?}"
     );
 
-    // A syntax-broken current buffer must produce no semantic tokens.  In
-    // particular, it must neither expose a partial parse-only stream nor
-    // fall back to the last valid project snapshot.
+    // A syntax-broken current buffer keeps the tokens the frontend recovered
+    // from it (a syntax error degrades the stream per token), and never falls
+    // back to the last valid project snapshot.
     let syntax_buffer =
         format!("{SOURCE_HEADER} semantic-current/opened.sv\n\n\n\n\nmodule SyntaxOnly;\n");
     client
@@ -110,9 +110,11 @@ fn lsp_stdio_semantic_tokens_use_current_open_buffer_and_cached_unopened_snapsho
             json!({ "textDocument": { "uri": file_uri(&opened) } }),
         )
         .expect("request syntax-broken opened semantic tokens");
-    assert!(
-        semantic_token_positions(&syntax_tokens).is_empty(),
-        "syntax-broken current buffer returned semantic tokens: {syntax_tokens}"
+    let syntax_positions = semantic_token_positions(&syntax_tokens);
+    assert_eq!(
+        syntax_positions,
+        [(5, 0), (5, 7), (5, 17)],
+        "syntax-broken current buffer must keep exactly its recovered tokens: {syntax_tokens}"
     );
 
     // A later complete revision must not be pinned to the cached empty result
@@ -1016,9 +1018,9 @@ endmodule\n";
 /// Value parameters are `variable` + `readonly`, type parameters
 /// `typeParameter`, port labels `parameter` and parameter labels `variable` +
 /// `readonly` (labels with `connectionLabel`) in both serving paths. Compiler
-/// directives are `keyword` (conditional ones with `controlFlow`) in the
-/// project stream; the isolated open-buffer parse masks directive lines, so
-/// they have no token there.
+/// directives are `keyword` (conditional ones with `controlFlow`) in both
+/// serving paths: the isolated open-buffer parse preprocesses the unchanged
+/// buffer like the project compile.
 #[test]
 fn lsp_stdio_semantic_tokens_type_parameters_labels_and_directives_in_both_serving_paths() {
     let fixture = FixtureTree::new();
@@ -1087,17 +1089,7 @@ endmodule\n";
             ("`endif", &["controlFlow"]),
             ("`timescale", &[]),
         ] {
-            let (line, col) = position_of(source, needle, 0);
-            if opened {
-                assert!(
-                    !rows
-                        .iter()
-                        .any(|row| row.line == line && row.character == col),
-                    "masked directive {needle} has a token: {rows:?}"
-                );
-            } else {
-                expect(needle, 0, "keyword", want);
-            }
+            expect(needle, 0, "keyword", want);
         }
     }
     client.shutdown();

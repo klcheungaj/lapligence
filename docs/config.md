@@ -488,7 +488,11 @@ order used for admission. A readable closed input is bounded-read once during
 admission, and that exact text is supplied to Slang as an owned source buffer.
 The frontend resolves includes only from admitted buffers. Missing or
 macro-generated includes that were not admitted produce diagnostics without
-reading an unmeasured file. Open buffers use their in-memory contents.
+reading an unmeasured file. Open buffers use their in-memory contents. The
+semantic tokens of an open buffer come from that buffer alone, compiled with
+`compile.defines` and the include directories and admitted include buffers of
+the last committed analysis, so its macros match the project analysis; an
+include the buffer has newly gained resolves after the next analysis commits.
 
 Config reloads are bounded independently of the analysis budgets: at most
 `MAX_CONFIG_BYTES` (1 MiB) plus one byte is read from `llg.toml`. Oversized and

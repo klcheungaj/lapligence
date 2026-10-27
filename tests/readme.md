@@ -811,8 +811,17 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   publication/config tests.
 - Failed compiles keep last-good navigation. Non-syntax errors with surviving data
   keep features; syntax-broken roots keep declaration symbols/hover where
-  possible, fatal-only roots do not. Watched fixes upgrade analysis. Current
-  syntax-invalid open buffers return authoritative empty semantic tokens.
+  possible, fatal-only roots do not. Watched fixes upgrade analysis. A
+  syntax-invalid file keeps the semantic tokens Slang recovered in both serving
+  paths, and a current open buffer never falls back to stale cached tokens.
+- `lsp_stdio/macro_tokens.rs`: both serving paths agree token for token on
+  in-source, header (`[compile] include_dirs`) and `[compile] defines` macros;
+  each use site is one `macro` token with no expansion token over it, text
+  written in actual arguments (also nested) keeps its own kind, directives are
+  keywords and inactive branches have no token. A macro defined only in another
+  project file is unknown in both paths (separate compilation units): its
+  diagnostic is published and the rest of the buffer stays tokenized. Unsaved
+  edits expand new macros with the committed include context.
 - `lsp_stdio/black_box.rs`: an unknown module yields one Slang `UnknownModule`
   error on its name, fresh analysis is committed, siblings/parents stay
   elaborated and navigable, black-box actuals bind to the parent scope and the
@@ -831,7 +840,7 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   `variable.readonly` in dimensions/expressions/actuals, type parameters
   `typeParameter`, port labels `parameter.connectionLabel`, parameter labels
   `variable.readonly.connectionLabel`, compiler directives `keyword` (with
-  `controlFlow` for conditional compilation; project stream only), enum items
+  `controlFlow` for conditional compilation), enum items
   `enumMember.readonly` (plus `declaration` at declarations, anonymous and
   ranged enums included). Keyword-derived words are classified by text and
   stay `keyword` with exactly one llg modifier at every occurrence:

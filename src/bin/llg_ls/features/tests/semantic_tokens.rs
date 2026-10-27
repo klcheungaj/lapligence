@@ -12,9 +12,10 @@ fn semantic_tokens_require_exact_source_identity() {
 }
 
 #[test]
-fn semantic_tokens_are_empty_for_a_file_with_a_syntax_error() {
+fn semantic_tokens_keep_recovered_tokens_of_a_file_with_a_syntax_error() {
     // Arrange
     let mut analysis = sample_analysis();
+    let expected = semantic_tokens_for(&analysis, hp("/x/top.sv"));
     analysis.diagnostics.push(Diag {
         severity: Severity::Syntax,
         logical: None,
@@ -27,8 +28,9 @@ fn semantic_tokens_are_empty_for_a_file_with_a_syntax_error() {
     // Act
     let tokens = semantic_tokens_for(&analysis, hp("/x/top.sv"));
 
-    // Assert
-    assert!(tokens.data.is_empty());
+    // Assert: a syntax error degrades per token, never per file.
+    assert!(!tokens.data.is_empty());
+    assert_eq!(tokens.data, expected.data);
 }
 
 #[test]

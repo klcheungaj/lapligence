@@ -2283,48 +2283,37 @@ reads a database of the W = 4 model).
 
 ## Semantic tokens around text macros (llg_ls)
 
-**Status:** deferred by LS-TOK-9, which set the token types of every other
-construct ([legend contract](../src/bin/llg_ls/readme.md#semantic-token-legend)).
+**Status:** partially fixed by LS-MAC. Use sites, written arguments, open
+buffers that use macros and syntax-broken buffers are served
+([legend contract](../src/bin/llg_ls/readme.md#semantic-token-legend)); the
+gaps below remain.
 
 ### Symptom
 
-- An open buffer that uses a text macro (`` `WIDTH ``, `` `ADD(a, b) ``)
-  returns an empty semantic-token stream, even when the macro is defined in
-  the same buffer. Unopened files (the project stream) keep their tokens.
-- In the project stream a macro use site carries the tokens of its
-  expansion: `` `WIDTH `` defined as `8` is one 1-character `number` token at
-  the grave accent, and macro arguments (`v` in `` `ADD(v, 1) ``) are `macro`
-  instead of their own kind. A use-site macro name is not sent as `macro`.
 - Macro formal arguments inside `` `define `` are `macro`, not `parameter`
   (the C/C++ grammar analogue), the defined name lacks `declaration` (clangd
   adds it to macro definitions), and attribute names (`(* keep *)`) get no
   token.
+- An open buffer requested before its root's first analysis commits has no
+  include context, so header macros are unknown there until the next request
+  after the commit (the server sends no `workspace/semanticTokens/refresh`).
 
 ### Cause
 
-The isolated open-buffer parse (`SemanticStage`,
-`src/bin/llg_ls/lsp/handlers/staging.rs`) masks every directive line, including
-`` `define ``, so any macro use becomes an unknown-macro syntax error, which
-makes the stream authoritatively empty. Macros defined in other files are
-unknown to the isolated parse even without the masking. In the capture
-(`LexicalCapture` in `src/wrapper/slang_c_api.cpp`) expansion tokens map to
-the use site, and identifiers with macro locations (arguments included) become
-the macro kind.
+The capture (`LexicalCapture` in `src/wrapper/slang_c_api.cpp`) keeps the
+whole `` `define `` body as directive tokens without a formal-argument role.
+The isolated parse reads the include context of the committed analysis only.
 
 ### Intended direction
 
-Stage the isolated parse with the defines and macro table of the last-good
-project analysis and mask only `` `include ``; in the capture, emit one
-`macro` token over each use-site name, keep argument tokens with their own
-kind, drop the other expansion tokens, give formal arguments a parameter kind
-and attribute names a decorator kind.
+Give formal arguments a parameter kind and the defined name the declaration
+role in the capture, attribute names a decorator kind; send a semantic-token
+refresh after a commit that changes an open buffer's include context.
 
 ### Reproduce
 
-Open a buffer containing `` `define W 8 `` and `localparam int L = `W;` and
-request `textDocument/semanticTokens/full` (empty result); run
-`llg_ls --dump-tokens` or the project stream on the same file for the use-site
-tokens.
+Run `llg_ls --dump-tokens` on a file with `` `define ADD(a, b) ((a) + (b)) ``:
+`a` and `b` in the definition are `macro`.
 
 ## Semantic token kinds that need more capture (llg_ls)
 

@@ -1231,13 +1231,26 @@ impl Backend {
             if let Some(mut span) = staging_span.take() {
                 span.complete("ok", files.len() + include_deps.len());
             }
-            let analysis = features::analyze_with_config_context_parent(
+            let mut analysis = features::analyze_with_config_context_parent(
                 &opts,
                 &job.lint_config,
                 &root_identity,
                 job.generation,
                 Some(job_span.id()),
             );
+            // Every admitted include (a unit that another unit includes as
+            // well) with the compile's own search prefixes: the isolated
+            // open-buffer token parse resolves the same headers from them.
+            analysis.set_include_context(features::IncludeContext {
+                include_dirs: opts.include_dirs.clone(),
+                includes: include_deps
+                    .iter()
+                    .filter_map(|path| {
+                        let text = input_snapshots.shared(path)?;
+                        Some((path.to_string_lossy().into_owned(), Arc::clone(text)))
+                    })
+                    .collect(),
+            });
             crate::llg_debug!(
                 "event=root_job.analysis.end outcome={:?} root={} generation={} diagnostics={} lint={} token_files={} declarations={} references={} elapsed_us={}",
                 analysis.outcome,

@@ -2,8 +2,9 @@
 //!
 //! Cached feature queries are pure: they take a shared [`Analysis`] plus a
 //! position and return LSP payloads.  [`semantic_tokens_for_open_document`]
-//! is the narrow exception: it performs one blocking, isolated parse-only run
-//! over an admitted open buffer. No `Client` and no async here — the
+//! is the narrow exception: it performs one blocking, isolated compile of an
+//! admitted open buffer with the include context of the committed analysis
+//! ([`IncludeContext`]). No `Client` and no async here — the
 //! tower-lsp backend (`lsp.rs` and `lsp/`) owns caching, staging, scheduling,
 //! and request handling.
 //!
@@ -22,7 +23,7 @@
 use std::borrow::Borrow;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, Diagnostic as LspDiagnostic, DiagnosticSeverity,

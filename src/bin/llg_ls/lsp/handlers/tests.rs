@@ -185,34 +185,39 @@ fn admitted_snapshot_indexes_share_the_same_text_allocation() {
 }
 
 #[test]
-fn open_token_cache_key_tracks_text_and_defines() {
+fn open_token_cache_key_tracks_text_defines_and_epoch() {
     let defines_a = vec!["WIDTH=8".to_owned()];
     let defines_b = vec!["WIDTH=16".to_owned()];
-    let key = open_token_cache_key("file:///p.sv", "module m;\nendmodule", &defines_a);
+    let key = open_token_cache_key("file:///p.sv", "module m;\nendmodule", &defines_a, 7);
     assert_eq!(
         key,
-        open_token_cache_key("file:///p.sv", "module m;\nendmodule", &defines_a),
+        open_token_cache_key("file:///p.sv", "module m;\nendmodule", &defines_a, 7),
         "unchanged inputs repeat the key"
     );
     assert_ne!(
         key,
-        open_token_cache_key("file:///p.sv", "module n;\nendmodule", &defines_a),
+        open_token_cache_key("file:///p.sv", "module n;\nendmodule", &defines_a, 7),
         "buffer edit changes the key"
     );
     assert_ne!(
         key,
-        open_token_cache_key("file:///p.sv", "module m;\nendmodule", &defines_b),
+        open_token_cache_key("file:///p.sv", "module m;\nendmodule", &defines_b, 7),
         "defines hot-reload changes the key"
     );
     assert_ne!(
         key,
-        open_token_cache_key("file:///q.sv", "module m;\nendmodule", &defines_a),
+        open_token_cache_key("file:///q.sv", "module m;\nendmodule", &defines_a, 7),
         "uri is part of the key"
+    );
+    assert_ne!(
+        key,
+        open_token_cache_key("file:///p.sv", "module m;\nendmodule", &defines_a, 8),
+        "a snapshot replacement (include context) changes the key"
     );
 }
 
 #[test]
-fn cached_semantic_tokens_syntax_error_blocks_real_shadow_alias_fallbacks() {
+fn cached_semantic_tokens_keep_recovered_tokens_of_syntax_invalid_aliases() {
     // Arrange
     let real = PathBuf::from(hp("/tmp/llg-lsp-token-alias/src/thing.sv"));
     let shadow = PathBuf::from(hp("/tmp/llg-lsp-token-alias-shadow/src/thing.sv"));
@@ -234,17 +239,17 @@ fn cached_semantic_tokens_syntax_error_blocks_real_shadow_alias_fallbacks() {
     // Act
     let cached = cached_semantic_tokens(Some(&analysis), &paths, false);
 
-    // Assert: the real-path diagnostic suppresses the shadow-path token
-    // before any alternate-path lookup can serve it.
-    assert!(cached.data.is_empty());
+    // Assert: a syntax error degrades per token, so the recovered token of
+    // the exact alias is served.
+    assert_eq!(cached.data.len(), 1);
+    assert_eq!(cached.data[0].delta_line, 3);
 
-    // Repeat with the diagnostic and token aliases reversed.  Both
-    // aliases are relevant to the same open document.
+    // Repeat with the diagnostic and token aliases reversed.
     analysis.tokens.clear();
     analysis.tokens.push(semantic_token_file(&real, 4));
     analysis.diagnostics[0].file = Some(shadow.to_string_lossy().into_owned());
     let cached = cached_semantic_tokens(Some(&analysis), &paths, false);
-    assert!(cached.data.is_empty());
+    assert_eq!(cached.data.len(), 1);
 }
 
 #[test]
@@ -258,24 +263,16 @@ fn cached_semantic_tokens_checks_canonical_aliases_before_fallback() {
     std::fs::write(&real, "module m; endmodule\n").expect("write canonical alias source");
     let mut analysis = features::empty_analysis();
     analysis.tokens.push(semantic_token_file(&real, 4));
-    analysis.diagnostics.push(llg::core::compile::Diag {
-        severity: llg::core::compile::Severity::Syntax,
-        logical: None,
-        file: Some(lexical_alias.to_string_lossy().into_owned()),
-        line: 4,
-        col: 1,
-        message: "incomplete declaration".to_owned(),
-    });
 
     // Act
     let cached = cached_semantic_tokens(
         Some(&analysis),
-        &[real.to_string_lossy().into_owned()],
+        &[lexical_alias.to_string_lossy().into_owned()],
         false,
     );
 
-    // Assert
-    assert!(cached.data.is_empty());
+    // Assert: the canonical identity matches without a basename fallback.
+    assert_eq!(cached.data.len(), 1);
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -296,14 +293,15 @@ fn cached_semantic_tokens_isolates_same_basename_files_and_preserves_closed_fall
         message: "incomplete declaration".to_owned(),
     });
 
-    // Act / Assert: the invalid left file is empty, while the valid
-    // right file's exact path still returns its own token stream.
+    // Act / Assert: the syntax-invalid left file keeps its own recovered
+    // token and the valid right file's exact path returns its own stream.
     let left_tokens = cached_semantic_tokens(
         Some(&analysis),
         &[left.to_string_lossy().into_owned()],
         false,
     );
-    assert!(left_tokens.data.is_empty());
+    assert_eq!(left_tokens.data.len(), 1);
+    assert_eq!(left_tokens.data[0].delta_line, 1);
     let right_tokens = cached_semantic_tokens(
         Some(&analysis),
         &[right.to_string_lossy().into_owned()],
@@ -355,7 +353,14 @@ fn source_limit_guidance_distinguishes_sizes_from_unreadable_files() {
 #[test]
 fn oversized_open_token_buffer_is_rejected_before_flight_admission() {
     let path = PathBuf::from(hp("/tmp/llg-open-too-large.sv"));
-    let open_document = (path.clone(), Arc::new("12345".to_owned()), Vec::new());
+    let document = |text: &str| OpenTokenDocument {
+        real: path.clone(),
+        text: Arc::new(text.to_owned()),
+        defines: Vec::new(),
+        includes: Arc::default(),
+        epoch: 0,
+    };
+    let open_document = document("12345");
     let limit = open_token_size_limit(Some(&open_document), Some(4)).expect("over-limit buffer");
     assert_eq!(limit.measured_bytes, 5);
     assert!(limit.message().contains("max_file_bytes=4"));
@@ -364,7 +369,7 @@ fn oversized_open_token_buffer_is_rejected_before_flight_admission() {
     // constructs a cache key or calls `OpenTokenFlightRegistry::acquire`.
     let registry = Arc::new(OpenTokenFlightRegistry::new());
     assert_eq!(registry.len(), 0);
-    let boundary_document = (path, Arc::new("1234".to_owned()), Vec::new());
+    let boundary_document = document("1234");
     assert!(open_token_size_limit(Some(&boundary_document), Some(4)).is_none());
     assert!(open_token_size_limit(None, Some(4)).is_none());
     assert_eq!(registry.len(), 0);
@@ -1729,6 +1734,7 @@ fn semantic_staging_guard_does_not_recreate_shadow_state_after_shutdown() {
         &source,
         "module top; endmodule\n",
         &[],
+        &features::IncludeContext::default(),
         || false,
         None,
     );
@@ -1741,287 +1747,240 @@ fn semantic_staging_guard_does_not_recreate_shadow_state_after_shutdown() {
     );
 }
 
-#[test]
-fn semantic_parse_masks_directives_without_shifting_source_positions() {
-    // Arrange
-    let source = "  `include \"defs.svh\"\nmodule top;\n`define VALUE \\\n+  1\nlogic `WIDTH data;\nendmodule\n";
+/// Absolute zero-based `(line, character, length, token type)` of every token.
+fn absolute_semantic_tokens(tokens: &SemanticTokens) -> Vec<(u32, u32, u32, u32)> {
+    let (mut line, mut character) = (0, 0);
+    tokens
+        .data
+        .iter()
+        .map(|token| {
+            if token.delta_line == 0 {
+                character += token.delta_start;
+            } else {
+                line += token.delta_line;
+                character = token.delta_start;
+            }
+            (line, character, token.length, token.token_type)
+        })
+        .collect()
+}
 
-    // Act
-    let masked = mask_semantic_preprocessor_directives(source, &[]);
-    let source_lines = source.lines().collect::<Vec<_>>();
-    let masked_lines = masked.lines().collect::<Vec<_>>();
+/// Isolated tokens of `source` named `path`, with `defines` and `includes`.
+fn isolated_tokens(
+    path: &str,
+    source: &str,
+    defines: &[String],
+    includes: &features::IncludeContext,
+) -> Vec<(u32, u32, u32, u32)> {
+    let tokens = features::semantic_tokens_for_open_document_with_parent(
+        path,
+        defines,
+        Some(source),
+        includes,
+        None,
+    )
+    .expect("isolated semantic parse");
+    absolute_semantic_tokens(&tokens)
+}
 
-    // Assert
-    assert_eq!(masked_lines.len(), source_lines.len());
-    assert!(masked_lines[0].trim().is_empty());
-    assert_eq!(masked_lines[1], "module top;");
-    assert!(masked_lines[2].trim().is_empty());
-    assert!(masked_lines[3].trim().is_empty());
-    assert_eq!(masked_lines[4], "logic `WIDTH data;");
-    assert_eq!(masked_lines[5], "endmodule");
-    for (original, replacement) in source_lines.iter().zip(masked_lines) {
-        assert_eq!(original.chars().count(), replacement.chars().count());
-    }
+/// Zero-based line and UTF-16 column of the first `needle` in `source`.
+fn source_position(source: &str, needle: &str) -> (u32, u32) {
+    let at = source.find(needle).unwrap_or_else(|| panic!("no {needle}"));
+    let line = source[..at].matches('\n').count() as u32;
+    let line_start = source[..at].rfind('\n').map_or(0, |index| index + 1);
+    (line, source[line_start..at].encode_utf16().count() as u32)
+}
+
+fn token_type_at(tokens: &[(u32, u32, u32, u32)], source: &str, needle: &str) -> Option<u32> {
+    let (line, character) = source_position(source, needle);
+    tokens
+        .iter()
+        .find(|token| (token.0, token.1) == (line, character))
+        .map(|token| token.3)
+}
+
+fn legend_index(name: &str) -> u32 {
+    crate::semantic_tokens::legend()
+        .token_types
+        .iter()
+        .position(|token_type| token_type.as_str() == name)
+        .unwrap_or_else(|| panic!("legend lacks {name}")) as u32
 }
 
 #[test]
-fn semantic_parse_masks_begin_keywords_and_delay_directives() {
-    // Arrange: these compiler directives are valid in a preprocessed
-    // source file but are not accepted by the request-local parse-only
-    // path. The continuation also must not leak into the parser.
+fn semantic_parse_preprocesses_directives_in_the_unchanged_buffer() {
+    // Arrange: directives the project compile accepts, with CRLF line ends
+    // and a continued macro body.
     let source = concat!(
-        "  `begin_keywords \"1800-2012\" \\\r\n",
-        "    \"1800-2017\"\r\n",
+        "`begin_keywords \"1800-2009\"\r\n",
         "`end_keywords\r\n",
-        "`accelerate\r\n",
-        "`noaccelerate\r\n",
         "`default_decay_time 0\r\n",
-        "`default_trireg_strength (strong1, strong0)\r\n",
-        "`delay_mode_distributed\r\n",
-        "`delay_mode_path\r\n",
-        "`delay_mode_unit\r\n",
         "`delay_mode_zero\r\n",
+        "`timescale 1ns/1ps\r\n",
+        "`define VALUE \\\r\n",
+        "  1\r\n",
         "module top;\r\n",
+        "  localparam int P = `VALUE;\r\n",
         "endmodule\r\n",
     );
 
     // Act
-    let masked = mask_semantic_preprocessor_directives(source, &[]);
-    let lines = masked.lines().collect::<Vec<_>>();
-
-    // Assert
-    for line in &lines[..11] {
-        assert!(line.trim().is_empty(), "directive was not masked: {line:?}");
-    }
-    assert_eq!(lines[11], "module top;");
-    assert_eq!(lines[12], "endmodule");
-    assert_eq!(source.len(), masked.len(), "CRLF bytes must be retained");
-    assert_eq!(
-        source.encode_utf16().count(),
-        masked.encode_utf16().count(),
-        "masked text must retain UTF-16 positions"
+    let tokens = isolated_tokens(
+        hp("/virtual/directives.sv"),
+        source,
+        &[],
+        &Default::default(),
     );
+
+    // Assert: the directives are keywords at their own positions, the
+    // module survived and the macro usage expands.
+    let keyword = legend_index("keyword");
+    for directive in ["`begin_keywords", "`end_keywords", "`timescale", "`define"] {
+        assert_eq!(
+            token_type_at(&tokens, source, directive),
+            Some(keyword),
+            "{directive}: {tokens:?}"
+        );
+    }
+    assert_eq!(token_type_at(&tokens, source, "module"), Some(keyword));
     assert_eq!(
-        source.matches("\r\n").count(),
-        masked.matches("\r\n").count()
+        token_type_at(&tokens, source, "`VALUE;"),
+        Some(legend_index("macro")),
+        "{tokens:?}"
     );
 }
 
 #[test]
-fn semantic_parse_accepts_masked_compiler_directives() {
-    // Arrange
-    let _guard = SHADOW_TESTS_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let root = temp_root("semantic_directives");
-    std::fs::create_dir_all(&root).expect("create semantic test root");
-    let path = root.join("directives.sv");
-    let source = concat!(
-        "`begin_keywords \"1800-2012\"\n",
-        "`end_keywords\n",
-        "`accelerate\n",
-        "`default_decay_time 0\n",
-        "`delay_mode_distributed\n",
-        "`delay_mode_path\n",
-        "`delay_mode_unit\n",
-        "`delay_mode_zero\n",
-        "module top;\n",
-        "endmodule\n",
-    );
-    let masked = mask_semantic_preprocessor_directives(source, &[]);
-    std::fs::write(&path, masked).expect("write masked semantic source");
+fn semantic_parse_reads_includes_only_from_the_committed_context() {
+    // Arrange: the header is supplied by the committed include context, so
+    // its macro expands; nothing is read from disk.
+    let unit = hp("/virtual/ctx/top.sv");
+    let header = hp("/virtual/ctx/defs.svh");
+    let source = "`include \"defs.svh\"\nmodule top;\n  localparam int P = `HDR_WIDTH;\n  logic q;\nendmodule\n";
+    let context = features::IncludeContext {
+        include_dirs: Vec::new(),
+        includes: vec![(
+            header.to_owned(),
+            Arc::new("`define HDR_WIDTH 4\nmodule from_header; endmodule\n".to_owned()),
+        )],
+    };
 
     // Act
-    let tokens =
-        features::semantic_tokens_for_open_document(path.to_str().expect("UTF-8 test path"), &[]);
-    features::cleanup_process_shadow();
-    let _ = std::fs::remove_dir_all(root);
+    let with_context = isolated_tokens(unit, source, &[], &context);
+    let without_context = isolated_tokens(unit, source, &[], &Default::default());
 
-    // Assert: the valid module survives parse-only collection, so the
-    // directive lines did not become false syntax errors.
-    let tokens = tokens.expect("masked compiler directives must parse");
-    assert!(!tokens.data.is_empty(), "module tokens should be collected");
-}
-
-#[test]
-fn semantic_parse_masks_every_shared_directive_keyword() {
-    // Arrange / Act / Assert: exercise the local classifier against the
-    // complete compiler-directive keyword set mirrored from
-    // core::macros. The scanner-only predefined expression macros are
-    // covered separately because they must remain parseable source.
-    for keyword in SEMANTIC_DIRECTIVE_KEYWORDS {
-        let source = format!("  `{keyword} argument\r\nmodule top;\r\nendmodule\r\n");
-        let masked = mask_semantic_preprocessor_directives(&source, &[]);
-        let first_line = masked.lines().next().expect("directive line");
-
-        assert!(
-            first_line.trim().is_empty(),
-            "shared directive `{keyword}` was not masked: {first_line:?}"
-        );
-        assert_eq!(
-            source.len(),
-            masked.len(),
-            "byte positions changed for `{keyword}`"
-        );
-        assert_eq!(
-            source.encode_utf16().count(),
-            masked.encode_utf16().count(),
-            "UTF-16 positions changed for `{keyword}`"
-        );
-        assert_eq!(
-            source.matches("\r\n").count(),
-            masked.matches("\r\n").count(),
-            "line endings changed for `{keyword}`"
-        );
-        assert!(masked.contains("module top;"));
-    }
-}
-
-#[test]
-fn semantic_parse_keeps_predefined_expression_macros_in_multiline_localparams() {
-    // Arrange
+    // Assert: with the context the include and the macro resolve; without it
+    // the include misses (a frontend diagnostic) and the rest of the buffer
+    // is still tokenized. Header tokens never enter this file's stream.
+    let macro_type = legend_index("macro");
     assert_eq!(
-        SEMANTIC_PREDEFINED_EXPRESSION_MACROS,
-        &["__FILE__", "__LINE__"]
+        token_type_at(&with_context, source, "`HDR_WIDTH"),
+        Some(macro_type),
+        "{with_context:?}"
     );
-    for keyword in SEMANTIC_PREDEFINED_EXPRESSION_MACROS {
-        assert!(
-            !SEMANTIC_DIRECTIVE_KEYWORDS.contains(keyword),
-            "predefined expression macro `{keyword}` must not be a whole-line directive"
+    assert_eq!(
+        token_type_at(&with_context, source, "`include"),
+        Some(legend_index("keyword"))
+    );
+    for tokens in [&with_context, &without_context] {
+        assert_eq!(
+            token_type_at(tokens, source, "q;"),
+            Some(legend_index("variable")),
+            "{tokens:?}"
         );
+        assert!(tokens.iter().all(|token| token.0 < 5), "{tokens:?}");
     }
+}
+
+#[test]
+fn semantic_parse_keeps_predefined_expression_macros() {
     let source = concat!(
         "module top;\n",
         "  localparam string source_file =\n",
         "    `__FILE__;\n",
         "  localparam int source_line =\n",
         "    `__LINE__;\n",
-        "  `include \"not-consumed.svh\"\n",
         "endmodule\n",
     );
-
-    // Act
-    let masked = mask_semantic_preprocessor_directives(source, &[]);
-    let source_lines = source.lines().collect::<Vec<_>>();
-    let masked_lines = masked.lines().collect::<Vec<_>>();
-
-    // Assert: macro-use lines retain their source text, while the actual
-    // compiler directive remains masked.
-    assert_eq!(masked_lines[2], source_lines[2]);
-    assert_eq!(masked_lines[4], source_lines[4]);
-    assert!(masked_lines[5].trim().is_empty());
-    assert_eq!(source.len(), masked.len());
-    assert_eq!(source.encode_utf16().count(), masked.encode_utf16().count());
-
-    // Also exercise Slang over the staged source. The request-local copy
-    // preserves predefined expression macros for Slang's preprocessor.
-    let _guard = SHADOW_TESTS_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    let path = temp_root("semantic_predefined_expression_macros").join("predefined.sv");
-    let stage = SemanticStage::new(&path, source, &[]).expect("stage semantic macro source");
-    let tokens = features::semantic_tokens_for_open_document_with_parent(
-        path.to_str().expect("UTF-8 source path"),
+    let tokens = isolated_tokens(
+        hp("/virtual/predefined.sv"),
+        source,
         &[],
-        Some(&stage.source),
-        None,
+        &Default::default(),
     );
-    drop(stage);
-    features::cleanup_process_shadow();
-    let tokens = tokens.expect("predefined expression macros must parse in isolation");
-    assert!(!tokens.data.is_empty(), "module tokens should be collected");
+    let macro_type = legend_index("macro");
+    assert_eq!(
+        token_type_at(&tokens, source, "`__FILE__"),
+        Some(macro_type)
+    );
+    assert_eq!(
+        token_type_at(&tokens, source, "`__LINE__"),
+        Some(macro_type)
+    );
+    assert_eq!(
+        token_type_at(&tokens, source, "source_line"),
+        Some(legend_index("variable"))
+    );
 }
 
 #[test]
-fn semantic_parse_masks_only_directives_outside_strings_and_comments() {
-    // Arrange
+fn semantic_parse_skips_inactive_branches_without_moving_utf16_positions() {
+    // Arrange: the inactive branches are incomplete and contain a
+    // supplementary character, so either reaching the parser or a byte
+    // column would show up below.
     let source = concat!(
-        "localparam string text = \"`begin_keywords\";\r\n",
-        "// `delay_mode_zero\r\n",
-        "/* `accelerate\r\n",
-        "   `end_keywords */\r\n",
-        "  `delay_mode_zero\r\n",
+        "`ifdef ACTIVE\r\n",
         "module top;\r\n",
-        "endmodule\r\n",
-    );
-
-    // Act
-    let masked = mask_semantic_preprocessor_directives(source, &[]);
-    let source_lines = source.lines().collect::<Vec<_>>();
-    let masked_lines = masked.lines().collect::<Vec<_>>();
-
-    // Assert
-    assert_eq!(&masked_lines[..4], &source_lines[..4]);
-    assert!(masked_lines[4].trim().is_empty());
-    assert_eq!(&masked_lines[5..], &source_lines[5..]);
-}
-
-#[test]
-fn semantic_parse_masks_inactive_unicode_lines_without_changing_utf16_positions() {
-    // Arrange: the inactive body contains a supplementary character, so
-    // scalar-count preservation alone would move an LSP UTF-16 column.
-    let source = concat!(
-        "`ifdef UNUSED\r\n",
-        "😀 must not reach parse-only\r\n",
+        "`else\r\n",
+        "module broken( 😀\r\n",
         "`endif\r\n",
-        "module top;\r\n",
+        "`ifdef UNUSED\r\n",
+        "😀 must not reach the parser\r\n",
+        "`endif\r\n",
+        "  /* 😀 */ logic q;\r\n",
         "endmodule\r\n",
     );
 
     // Act
-    let masked = mask_semantic_preprocessor_directives(source, &[]);
+    let tokens = isolated_tokens(
+        hp("/virtual/inactive.sv"),
+        source,
+        &["ACTIVE=1".to_owned()],
+        &Default::default(),
+    );
 
     // Assert
-    assert_eq!(
-        source.encode_utf16().count(),
-        masked.encode_utf16().count(),
-        "inactive masking must preserve UTF-16 coordinates"
+    assert!(
+        tokens.iter().all(|token| token.0 != 3 && token.0 != 6),
+        "inactive lines have tokens: {tokens:?}"
     );
     assert_eq!(
-        source.matches("\r\n").count(),
-        masked.matches("\r\n").count()
+        token_type_at(&tokens, source, "top"),
+        Some(legend_index("class"))
     );
-    assert_eq!(
-        masked.lines().nth(3),
-        Some("module top;"),
-        "active source after an inactive branch must remain unchanged"
+    // `q` follows a two-code-unit (four-byte) character on line 8: UTF-16
+    // column 17, where a byte column would be 19.
+    assert!(
+        tokens.contains(&(8, 17, 1, legend_index("variable"))),
+        "{tokens:?}"
     );
-    assert_eq!(masked.lines().nth(4), Some("endmodule"));
 }
 
 #[test]
-fn semantic_parse_masks_inactive_conditional_branches() {
-    // Arrange: the inactive branch is deliberately incomplete and would
-    // create a false syntax error if both branch bodies reached Slang.
-    let source = "`ifdef ACTIVE\nmodule top;\n`else\nmodule broken(\n`endif\nendmodule\n";
-
-    // Act
-    let masked = mask_semantic_preprocessor_directives(source, &["ACTIVE=1".to_owned()]);
-    let lines = masked.lines().collect::<Vec<_>>();
-
-    // Assert
-    assert!(lines[0].trim().is_empty());
-    assert_eq!(lines[1], "module top;");
-    assert!(lines[2].trim().is_empty());
-    assert!(lines[3].trim().is_empty());
-    assert!(lines[4].trim().is_empty());
-    assert_eq!(lines[5], "endmodule");
-    for (original, replacement) in source.lines().zip(lines) {
-        assert_eq!(original.chars().count(), replacement.chars().count());
-    }
-}
-
-#[test]
-fn semantic_parse_does_not_mask_directives_inside_block_comments() {
-    // Arrange: erasing the apparent directive line would also erase the
-    // closing delimiter and turn valid source into an unterminated comment.
-    let source = "/* documentation\n`include \"not-real.svh\" */\nmodule top;\nendmodule\n";
-
-    // Act
-    let masked = mask_semantic_preprocessor_directives(source, &[]);
-
-    // Assert
-    assert_eq!(masked, source);
+fn semantic_parse_ignores_directive_text_in_comments_and_strings() {
+    let source = concat!(
+        "/* documentation\n",
+        "`include \"not-real.svh\" */\n",
+        "module top;\n",
+        "  localparam string text = \"`begin_keywords\";\n",
+        "endmodule\n",
+    );
+    let tokens = isolated_tokens(hp("/virtual/comments.sv"), source, &[], &Default::default());
+    assert!(tokens.iter().all(|token| token.0 != 0 && token.0 != 1));
+    assert_eq!(
+        token_type_at(&tokens, source, "\"`begin_keywords\""),
+        Some(legend_index("string"))
+    );
 }
 
 #[test]

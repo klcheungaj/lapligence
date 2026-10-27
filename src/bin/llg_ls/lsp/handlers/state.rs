@@ -248,8 +248,8 @@ pub(crate) struct Backend {
     pub(super) hover_cache: MemoCache<RequestKey, Option<Hover>>,
     pub(super) references_cache: MemoCache<RequestKey, Vec<Location>>,
     /// Open-buffer isolated token streams keyed on (uri, buffer text,
-    /// effective `-D` defines) — the exact inputs of the request-local
-    /// parse-only run.
+    /// effective `-D` defines, committed analysis epoch) — the exact inputs
+    /// of the request-local compile.
     pub(super) open_token_cache: Arc<MemoCache<String, SemanticTokens>>,
     /// In-flight keyed single-flight coordination for open-buffer semantic
     /// token misses.  This is separate from the result cache so cache changes

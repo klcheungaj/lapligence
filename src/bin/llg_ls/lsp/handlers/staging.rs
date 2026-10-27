@@ -85,6 +85,13 @@ impl InputSnapshots {
         self.by_identity.insert(input_identity(path), text);
     }
 
+    /// The shared admitted text of `path`, by spelling or identity.
+    pub(super) fn shared(&self, path: &Path) -> Option<&SharedText> {
+        self.by_path
+            .get(path)
+            .or_else(|| self.by_identity.get(&input_identity(path)))
+    }
+
     pub(super) fn text(&self, path: &Path) -> Option<&str> {
         self.by_path
             .get(path)
@@ -122,13 +129,26 @@ pub(super) fn open_input_size_limit(
 /// exercise the same decision that must happen before cache-key construction
 /// and single-flight admission.
 pub(super) fn open_token_size_limit(
-    open_document: Option<&(PathBuf, SharedText, Vec<String>)>,
+    open_document: Option<&OpenTokenDocument>,
     max_file_bytes: Option<u64>,
 ) -> Option<InputSizeLimit> {
-    let (Some((path, text, _)), Some(max_file_bytes)) = (open_document, max_file_bytes) else {
+    let (Some(document), Some(max_file_bytes)) = (open_document, max_file_bytes) else {
         return None;
     };
-    open_input_size_limit(path, text.as_str(), max_file_bytes)
+    open_input_size_limit(&document.real, document.text.as_str(), max_file_bytes)
+}
+
+/// The inputs of one isolated open-buffer token parse, captured under the
+/// backend state lock: the real path, the admitted buffer revision, the
+/// effective configured defines and the include context of the root's
+/// committed analysis together with that analysis' epoch.
+#[derive(Clone)]
+pub(super) struct OpenTokenDocument {
+    pub(super) real: PathBuf,
+    pub(super) text: SharedText,
+    pub(super) defines: Vec<String>,
+    pub(super) includes: Arc<features::IncludeContext>,
+    pub(super) epoch: u64,
 }
 
 /// Bound the number of open-document parses that can be retained in the
@@ -405,146 +425,24 @@ impl ShadowPaths {
 
 static NEXT_SEMANTIC_STAGE_ID: AtomicU64 = AtomicU64::new(0);
 
-/// One request-local open-buffer transformation guarded by a unique private
-/// directory so cleanup stays isolated from project-analysis shadow state.
+/// One request-local isolated parse guarded by a unique private directory so
+/// cleanup stays isolated from project-analysis shadow state. Slang receives
+/// the buffer text unchanged: the preprocessor runs with the configured
+/// defines and the committed include context, so directives, macro usages and
+/// inactive branches are handled exactly as in the project compile.
 pub(super) struct SemanticStage {
     pub(super) directory: PathBuf,
-    pub(super) source: String,
 }
 
 impl SemanticStage {
-    pub(super) fn new(_real: &Path, text: &str, defines: &[String]) -> std::io::Result<Self> {
+    pub(super) fn new() -> std::io::Result<Self> {
         let id = NEXT_SEMANTIC_STAGE_ID.fetch_add(1, Ordering::Relaxed);
         let directory = features::process_shadow_base()
             .join("semantic")
             .join(format!("{}-{id}", std::process::id()));
         std::fs::create_dir_all(&directory)?;
-        Ok(Self {
-            directory,
-            source: mask_semantic_preprocessor_directives(text, defines),
-        })
+        Ok(Self { directory })
     }
-}
-
-/// Replace standalone compiler-directive lines with spaces while preserving
-/// every newline and UTF-16 source column. Slang's `-parseonly` mode bypasses
-/// preprocessing and otherwise diagnoses valid directives such as
-/// `` `include`` as parser syntax errors. Semantic-token collection is
-/// intentionally source-local, so masking the directives both avoids that
-/// false error and guarantees that includes are not consumed.
-pub(super) fn mask_semantic_preprocessor_directives(text: &str, defines: &[String]) -> String {
-    let inactive = crate::inactive_ranges::inactive_line_ranges(text, defines);
-    let mut inactive_index = 0usize;
-    let mut output = String::with_capacity(text.len());
-    let mut continuation = false;
-    let mut in_block_comment = false;
-    for (line_index, line) in text.split_inclusive('\n').enumerate() {
-        let body = line.strip_suffix('\n').unwrap_or(line);
-        while inactive
-            .get(inactive_index)
-            .is_some_and(|range| range.end_line < line_index as u32)
-        {
-            inactive_index += 1;
-        }
-        let line_is_inactive = inactive.get(inactive_index).is_some_and(|range| {
-            range.start_line <= line_index as u32 && line_index as u32 <= range.end_line
-        });
-        let starts_directive = semantic_directive_outside_comment(body, &mut in_block_comment);
-        let directive = continuation || starts_directive;
-        continuation = directive && body.trim_end().ends_with('\\');
-        if directive || line_is_inactive {
-            output.push_str(&mask_semantic_source_line(body));
-        } else {
-            output.push_str(body);
-        }
-        if line.ends_with('\n') {
-            output.push('\n');
-        }
-    }
-    output
-}
-
-/// Mask one source line without changing its line ending or LSP column
-/// accounting.  Source positions use UTF-16 code units, so a supplementary
-/// character becomes two spaces; tabs remain tabs just as they did before
-/// masking.  `\n` is normally handled by the caller, but preserving it here
-/// keeps this helper safe for direct use too.
-pub(super) fn mask_semantic_source_line(line: &str) -> String {
-    let mut masked = String::with_capacity(line.len());
-    for ch in line.chars() {
-        match ch {
-            '\r' | '\n' | '\t' => masked.push(ch),
-            _ => {
-                for _ in 0..ch.len_utf16() {
-                    masked.push(' ');
-                }
-            }
-        }
-    }
-    masked
-}
-
-/// Whether the first non-whitespace, non-comment token on this line is one
-/// of the directives masked for isolated semantic parsing. The block-comment
-/// state crosses lines, and quoted/comment text never starts a directive.
-pub(super) fn semantic_directive_outside_comment(line: &str, in_block_comment: &mut bool) -> bool {
-    let bytes = line.as_bytes();
-    let mut index = 0usize;
-    let mut saw_code = false;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut directive = false;
-
-    while index < bytes.len() {
-        if *in_block_comment {
-            if bytes[index..].starts_with(b"*/") {
-                *in_block_comment = false;
-                index += 2;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if bytes[index] == b'\\' {
-                escaped = true;
-            } else if bytes[index] == b'"' {
-                in_string = false;
-            }
-            index += 1;
-            continue;
-        }
-        if bytes[index..].starts_with(b"//") {
-            break;
-        }
-        if bytes[index..].starts_with(b"/*") {
-            *in_block_comment = true;
-            index += 2;
-            continue;
-        }
-        if bytes[index].is_ascii_whitespace() {
-            index += 1;
-            continue;
-        }
-        if !saw_code && bytes[index] == b'`' {
-            let start = index + 1;
-            let mut end = start;
-            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
-                end += 1;
-            }
-            let keyword = &line[start..end];
-            directive = SEMANTIC_DIRECTIVE_KEYWORDS.contains(&keyword)
-                && !SEMANTIC_PREDEFINED_EXPRESSION_MACROS.contains(&keyword);
-        }
-        saw_code = true;
-        if bytes[index] == b'"' {
-            in_string = true;
-        }
-        index += 1;
-    }
-    directive
 }
 
 impl Drop for SemanticStage {
@@ -569,21 +467,10 @@ pub(super) fn cached_semantic_tokens(
         return empty_semantic_tokens();
     };
 
-    // Check every exact/canonical alias before looking at any token list.  A
-    // project analysis for an open buffer normally contains the shadow path,
-    // while its diagnostic may carry the real path (or vice versa).  Looking
-    // up one candidate at a time would let the other alias, or a same-named
-    // file found by the compatibility fallback, resurrect partial tokens.
-    if paths
-        .iter()
-        .any(|path| cached_semantic_syntax_diagnostic_matches(analysis, path))
-    {
-        return empty_semantic_tokens();
-    }
-
     // Prefer exact/canonical token paths.  Once an exact path entry exists,
     // an empty stream is authoritative for that file and must not fall
-    // through to an unrelated same-basename file.
+    // through to an unrelated same-basename file.  A file with syntax errors
+    // keeps the tokens the frontend recovered (per-token degradation).
     let mut found_exact = false;
     for path in paths {
         for file_tokens in &analysis.tokens {
@@ -604,16 +491,13 @@ pub(super) fn cached_semantic_tokens(
     // Preserve the historical basename lookup for closed/project requests,
     // where Slang can report a compatible path spelling.  It is disabled
     // for open buffers so two files with the same basename cannot contaminate
-    // an isolated request's cache fallback.  Do not serve a partial stream
-    // from a fallback file that is itself syntax-invalid.
+    // an isolated request's cache fallback.
     for path in paths {
         let Some(file_name) = Path::new(path).file_name() else {
             continue;
         };
         for file_tokens in &analysis.tokens {
-            if Path::new(&file_tokens.path).file_name() != Some(file_name)
-                || cached_semantic_syntax_diagnostic_matches(analysis, &file_tokens.path)
-            {
+            if Path::new(&file_tokens.path).file_name() != Some(file_name) {
                 continue;
             }
             let tokens = crate::semantic_tokens::encode(&file_tokens.nodes);
@@ -638,16 +522,6 @@ pub(super) fn cached_semantic_file_matches(left: &str, right: &str) -> bool {
     }
 }
 
-pub(super) fn cached_semantic_syntax_diagnostic_matches(analysis: &Analysis, path: &str) -> bool {
-    analysis.diagnostics.iter().any(|diagnostic| {
-        matches!(diagnostic.severity, llg::core::compile::Severity::Syntax)
-            && diagnostic
-                .file
-                .as_deref()
-                .is_some_and(|diagnostic_file| cached_semantic_file_matches(diagnostic_file, path))
-    })
-}
-
 pub(super) fn compute_semantic_tokens(
     analysis: Option<Arc<Analysis>>,
     paths: Vec<String>,
@@ -656,8 +530,8 @@ pub(super) fn compute_semantic_tokens(
     parent_id: Option<u64>,
 ) -> (Option<OpenTokenResult>, SemanticTokens) {
     let cached = cached_semantic_tokens(analysis.as_deref(), &paths, open_document.is_none());
-    let fresh = open_document.map(|(real, text, defines)| {
-        let result = compute_open_document_semantic_tokens(real, text, defines, current, parent_id);
+    let fresh = open_document.map(|document| {
+        let result = compute_open_document_semantic_tokens(document, current, parent_id);
         if let Err(error) = &result {
             crate::llg_debug!(
                 "semantic tokens: isolated collection failed before producing tokens: {error}"
@@ -669,33 +543,46 @@ pub(super) fn compute_semantic_tokens(
 }
 
 pub(super) fn compute_open_document_semantic_tokens(
-    real: PathBuf,
-    text: SharedText,
-    defines: Vec<String>,
+    document: OpenTokenDocument,
     current: impl Fn() -> bool,
     parent_id: Option<u64>,
 ) -> OpenTokenResult {
-    open_document_semantic_tokens_if_current(&real, &text, &defines, current, parent_id)
+    open_document_semantic_tokens_if_current(
+        &document.real,
+        &document.text,
+        &document.defines,
+        &document.includes,
+        current,
+        parent_id,
+    )
 }
 
 /// Memoization key of one open-buffer isolated token stream: document URI,
-/// buffer text digest and effective configured defines. These are exactly the
-/// inputs of the request-local `-parseonly` run, so any edit or defines
-/// hot-reload produces a different key while an unchanged repeat hits.
-pub(super) fn open_token_cache_key(uri: &str, text: &str, defines: &[String]) -> String {
+/// buffer text digest, effective configured defines and the epoch of the
+/// committed analysis whose include context the parse reads. These are
+/// exactly the inputs of the request-local run, so any edit, defines
+/// hot-reload or snapshot replacement produces a different key while an
+/// unchanged repeat hits.
+pub(super) fn open_token_cache_key(
+    uri: &str,
+    text: &str,
+    defines: &[String],
+    epoch: u64,
+) -> String {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut hasher);
     for define in defines {
         define.hash(&mut hasher);
     }
-    format!("open-tokens|{uri}|{:016x}", hasher.finish())
+    format!("open-tokens|{uri}|{epoch}|{:016x}", hasher.finish())
 }
 
 pub(super) fn open_document_semantic_tokens_if_current(
     real: &Path,
     text: &str,
     defines: &[String],
+    includes: &features::IncludeContext,
     current: impl Fn() -> bool,
     parent_id: Option<u64>,
 ) -> std::result::Result<SemanticTokens, String> {
@@ -745,7 +632,9 @@ pub(super) fn open_document_semantic_tokens_if_current(
         return Err(STALE_OPEN_TOKEN_ERROR.to_owned());
     }
     let stage_started = std::time::Instant::now();
-    let stage = match SemanticStage::new(real, text, defines) {
+    // Held until the parse and scratch cleanup finish; dropping it removes the
+    // private directory.
+    let _stage = match SemanticStage::new() {
         Ok(stage) => stage,
         Err(error) => {
             let error = format!("failed to stage open document: {error}");
@@ -789,12 +678,14 @@ pub(super) fn open_document_semantic_tokens_if_current(
                 Err(STALE_OPEN_TOKEN_ERROR.to_owned())
             } else {
                 // Slang consumes the admitted buffer and never reads this
-                // path. Preserve the real document identity in its snapshot;
-                // the private stage only serializes cleanup and masking.
+                // path. Preserve the real document identity in its snapshot,
+                // so includes resolve beside the real file exactly as in the
+                // project compile; the private stage only serializes cleanup.
                 features::semantic_tokens_for_open_document_with_parent(
                     path,
                     defines,
-                    Some(&stage.source),
+                    Some(text),
+                    includes,
                     parent_id,
                 )
                     .map_err(|error| error.to_string())
@@ -816,10 +707,10 @@ pub(super) fn select_semantic_tokens(
     cached: SemanticTokens,
     buffer_is_current: bool,
 ) -> SemanticTokens {
-    // The isolated parse returns an authoritative empty result when the
-    // current buffer has a syntax error.  The cache is used only when
-    // staging/session work (or the blocking task) fails before producing a
-    // result; a successful empty result must therefore remain authoritative.
+    // A successful isolated parse is authoritative for the current buffer,
+    // including the partial stream of a buffer with syntax errors and an
+    // empty stream.  The cache is used only when staging/session work (or
+    // the blocking task) fails before producing a result.
     if buffer_is_current {
         fresh.and_then(std::result::Result::ok).unwrap_or(cached)
     } else {

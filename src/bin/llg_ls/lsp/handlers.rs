@@ -50,48 +50,6 @@ const CLIENT_PROTOCOL_VERSION: u32 = 1;
 type RootKey = PathBuf;
 type SharedText = Arc<String>;
 type OpenDocuments = BTreeMap<PathBuf, SharedText>;
-type OpenTokenDocument = (PathBuf, SharedText, Vec<String>);
-
-/// Compiler-directive words mirrored from the shared macro scanner's
-/// `DIRECTIVE_KEYWORDS` table.  The scanner also lists `__FILE__` and
-/// `__LINE__` there so they are excluded from macro-usage reporting, but they
-/// are predefined expression macros rather than whole-line directives and
-/// therefore live in the separate table below.
-const SEMANTIC_DIRECTIVE_KEYWORDS: &[&str] = &[
-    "define",
-    "undef",
-    "undefineall",
-    "ifdef",
-    "ifndef",
-    "elsif",
-    "else",
-    "endif",
-    "include",
-    "timescale",
-    "resetall",
-    "default_nettype",
-    "line",
-    "begin_keywords",
-    "end_keywords",
-    "celldefine",
-    "endcelldefine",
-    "pragma",
-    "unconnected_drive",
-    "nounconnected_drive",
-    "accelerate",
-    "noaccelerate",
-    "default_decay_time",
-    "default_trireg_strength",
-    "delay_mode_distributed",
-    "delay_mode_path",
-    "delay_mode_unit",
-    "delay_mode_zero",
-];
-
-/// Entries present in the shared scanner's directive-exclusion table that
-/// must remain source text during isolated parsing.
-const SEMANTIC_PREDEFINED_EXPRESSION_MACROS: &[&str] = &["__FILE__", "__LINE__"];
-
 /// Set once the client's `shutdown` request has been handled; read by the
 /// lifecycle interceptor in `main.rs` to pick the spec-mandated process exit
 /// code (0 after `shutdown`, otherwise 1).
@@ -257,9 +215,9 @@ impl Backend {
         let state = Arc::clone(&self.state);
         let coordinator_started = std::time::Instant::now();
         let file_for_log = crate::logging::enabled(crate::logging::Level::Debug)
-            .then(|| open_document.0.display().to_string());
-        let text_bytes = open_document.1.len();
-        let define_count = open_document.2.len();
+            .then(|| open_document.real.display().to_string());
+        let text_bytes = open_document.text.len();
+        let define_count = open_document.defines.len();
         let detached = tokio::task::spawn_blocking(move || {
             crate::llg_debug!(
                 "event=semantic_tokens.coordinator.begin file={} bytes={} defines={} parent_id={:?}",
@@ -269,9 +227,7 @@ impl Backend {
                 parent_id
             );
             let result = compute_open_document_semantic_tokens(
-                open_document.0,
-                open_document.1,
-                open_document.2,
+                open_document,
                 {
                     let state = Arc::clone(&state);
                     let uri = uri.clone();
@@ -882,8 +838,19 @@ impl LanguageServer for Backend {
             request.set_root(|| root.descriptor.id.clone());
             let analysis = root.last_good.clone();
             let open_document = state.documents.get(&uri).cloned().map(|text| {
-                let defines = root.descriptor.effective_config().compile.defines;
-                (real.clone(), text, defines)
+                // The include context comes from the same committed snapshot
+                // as the cached fallback, and its epoch keys the memoized
+                // stream, so a snapshot replacement re-parses the buffer.
+                OpenTokenDocument {
+                    real: real.clone(),
+                    text,
+                    defines: root.descriptor.effective_config().compile.defines,
+                    includes: analysis
+                        .as_ref()
+                        .map(|analysis| Arc::clone(&analysis.include_context))
+                        .unwrap_or_default(),
+                    epoch: root.analysis_epoch,
+                }
             });
             let max_file_bytes = open_document
                 .as_ref()
@@ -907,7 +874,7 @@ impl LanguageServer for Backend {
                 real.display()
             );
         }
-        let captured_text = open_document.as_ref().map(|(_, text, _)| text.clone());
+        let captured_text = open_document.as_ref().map(|document| document.text.clone());
         let allow_filename_fallback = captured_text.is_none();
         let fallback_analysis = analysis.clone();
         let fallback_paths = paths.clone();
@@ -932,8 +899,8 @@ impl LanguageServer for Backend {
             // stale captured revision into a size-limit result.  This is
             // deliberately before key construction, flight admission,
             // staging, and spawn_blocking.
-            if let Some((_, text, _)) = open_document.as_ref() {
-                if !open_document_is_current(&self.state, &uri, text) {
+            if let Some(document) = open_document.as_ref() {
+                if !open_document_is_current(&self.state, &uri, &document.text) {
                     let tokens = cached_semantic_tokens(
                         fallback_analysis.as_deref(),
                         &fallback_paths,
@@ -954,13 +921,19 @@ impl LanguageServer for Backend {
             }
         }
         // Memoize the request-local parse: the isolated stream is a pure
-        // function of (buffer text, -D defines), so a repeat request with
-        // unchanged inputs short-circuits the whole stage+parse pipeline.
-        // A config hot reload that changes `compile.defines` changes the key;
-        // other config edits do not affect a single-file `-parseonly` run.
-        let token_key = open_document
-            .as_ref()
-            .map(|(_, text, defines)| open_token_cache_key(uri.as_str(), text, defines));
+        // function of (buffer text, -D defines, committed include context),
+        // so a repeat request with unchanged inputs short-circuits the whole
+        // stage+parse pipeline. A config hot reload that changes
+        // `compile.defines` changes the key, and every snapshot replacement
+        // advances the epoch that names the include context.
+        let token_key = open_document.as_ref().map(|document| {
+            open_token_cache_key(
+                uri.as_str(),
+                &document.text,
+                &document.defines,
+                document.epoch,
+            )
+        });
         let request_id = request.id();
         let started = std::time::Instant::now();
         if let Some(key) = &token_key {
