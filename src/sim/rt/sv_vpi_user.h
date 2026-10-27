@@ -49,6 +49,30 @@
 #define vpiPacked 630
 #define vpiTagged 632
 
+/* Instances, interface ports, processes and task/function properties
+ * (37.6-37.15, 37.37, 37.58). */
+#define vpiProgram 602
+#define vpiInterfaceArray 603
+#define vpiProgramArray 604
+#define vpiModport 606
+#define vpiInterfaceTfDecl 607
+#define vpiRefObj 608
+#define vpiFinal 676
+#define vpiActual 700
+#define vpiInstance 745
+#define vpiPortType 611
+#define vpiInterfacePort 1
+#define vpiModportPort 2
+#define vpiVisibility 620
+#define vpiPublicVis 1
+#define vpiAlwaysType 624
+#define vpiAlwaysComb 2
+#define vpiAlwaysFF 3
+#define vpiAlwaysLatch 4
+#define vpiMethod 645
+#define vpiOtherFunc 6
+#define vpiWaitingProcesses 734
+
 /* Assertion object types (39.3.2). */
 #define vpiAssert 686
 #define vpiAssume 687

@@ -47,7 +47,7 @@ impl Validator<'_> {
 
         for (idx, object) in self.model.vpi_objects.iter().enumerate() {
             let path = format!("vpi_objects[{idx}]");
-            if object.full_name.is_empty() || object.name.is_empty() {
+            if object.full_name.is_empty() || (object.name.is_empty() && !object.unnamed) {
                 return self.fail(path, "VPI object names must be non-empty");
             }
             if object.full_name.contains('\0')
@@ -84,6 +84,26 @@ impl Validator<'_> {
                 IrVpiObjectKind::Record => {
                     if object.signal.is_some() || object.array.is_some() {
                         return self.fail(path, "VPI record members keep their own storage");
+                    }
+                }
+                IrVpiObjectKind::NamedEvent => {
+                    if object.signal.is_some() || object.array.is_some() {
+                        return self.fail(path, "VPI named event has no value storage");
+                    }
+                    if object
+                        .event
+                        .is_none_or(|event| event >= self.model.events.len())
+                    {
+                        return self.fail(path, "VPI named event references no IR event");
+                    }
+                }
+                IrVpiObjectKind::Process
+                | IrVpiObjectKind::ContAssign
+                | IrVpiObjectKind::Primitive
+                | IrVpiObjectKind::InstanceArray
+                | IrVpiObjectKind::Modport => {
+                    if object.signal.is_some() || object.array.is_some() {
+                        return self.fail(path, "VPI structure object has no own storage");
                     }
                 }
                 IrVpiObjectKind::Parameter | IrVpiObjectKind::Port => {

@@ -2813,8 +2813,17 @@ typedef struct {
     // it was parked on a list that also names value sources.
     uint64_t trigger_count;
     int triggered;
+    // VPI cbValueChange watches on this object (llg_event_watch_add). The
+    // VPI layer owns the count, so llg_event_object_reset keeps it.
+    uint32_t vpi_watches;
 } llg_event_object_t;
 
+// VPI cbValueChange watches on an event object (IEEE 1800-2009 38.36.1):
+// while the count is nonzero, every trigger calls the value-watch hook
+// (llg_value_watch_hook) with the object as key after waking its waiters.
+// Objects without a watch pay one predictable branch per trigger.
+void llg_event_watch_add(llg_event_object_t* ev);
+void llg_event_watch_remove(llg_event_object_t* ev);
 // Release any grown waiter tables and clear the event state. Safe on a
 // zero-initialized object and idempotent.
 void llg_event_object_reset(llg_event_object_t* ev);
