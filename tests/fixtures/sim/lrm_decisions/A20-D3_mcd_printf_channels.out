@@ -1,0 +1,8 @@
+a: 4 level=0
+a|b: 5 level=0
+a|unopened: 5 level=3
+unopened: -1 level=3
+a: one
+a: both
+a: part
+b: both

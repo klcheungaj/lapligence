@@ -1,0 +1,5 @@
+mcd 1: stdout level=0
+fd 0x80000000: stdin level=0
+fd 0x80000001: stdout level=0
+fd 0x80000002: stderr level=0
+$fopen fd: a20_d2.txt level=0
