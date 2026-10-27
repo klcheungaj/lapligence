@@ -2717,6 +2717,7 @@ static vpiHandle iterate_typespec(const llg_vpi_slot_t* slot, int type) {
         base = g_vpi.enumconst_base + typespec->first_const;
     } else if (type == vpiRange && (typespec->type == vpiLogicTypespec ||
                                     typespec->type == vpiBitTypespec ||
+                                    typespec->type == vpiPackedArrayTypespec ||
                                     typespec->type == vpiArrayTypespec)) {
         count = typespec->range_count;
         base = LLG_VPI_NONE;
@@ -3066,6 +3067,8 @@ static PLI_INT32 typespec_property(const llg_vpi_slot_t* slot, int property) {
             if (typespec->type != vpiUnionTypespec) return unsupported_property();
             return (typespec->flags & LLG_VPI_TS_TAGGED) != 0;
         case vpiVector:
+            /* 37.23: packed array typespecs are always vectors. */
+            if (typespec->type == vpiPackedArrayTypespec) return 1;
             if (typespec->type != vpiLogicTypespec && typespec->type != vpiBitTypespec)
                 return unsupported_property();
             return typespec->range_count > 0;
@@ -3310,6 +3313,7 @@ static const char* type_name(int type) {
         case vpiBitTypespec: return "vpiBitTypespec";
         case vpiLogicTypespec: return "vpiLogicTypespec";
         case vpiArrayTypespec: return "vpiArrayTypespec";
+        case vpiPackedArrayTypespec: return "vpiPackedArrayTypespec";
         case vpiTypespecMember: return "vpiTypespecMember";
         default: return NULL;
     }

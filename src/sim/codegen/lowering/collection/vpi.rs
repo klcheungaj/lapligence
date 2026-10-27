@@ -85,6 +85,7 @@ fn typespec_var_kind(kind: IrVpiTypespecKind, ranges: usize) -> IrVpiVarKind {
         IrVpiTypespecKind::Enum => IrVpiVarKind::Enum,
         IrVpiTypespecKind::Struct => IrVpiVarKind::Struct,
         IrVpiTypespecKind::Union => IrVpiVarKind::Union,
+        IrVpiTypespecKind::PackedArray => IrVpiVarKind::PackedArray,
     }
 }
 
@@ -208,6 +209,26 @@ impl Codegen<'_> {
                     })
                     .collect::<Option<Vec<_>>>()?;
                 let width = info.width?;
+                if let Some(element) = self.db.packed_array_element(descriptor.id) {
+                    // One range per level; an enum element keeps its base
+                    // type's ranges below this level.
+                    let below = match &element.shape {
+                        TypeShape::PackedAtom { ranges } => ranges.len(),
+                        _ => 0,
+                    };
+                    let level = ranges.get(..ranges.len().checked_sub(below)?)?.to_vec();
+                    let element =
+                        self.vpi_typespec(table, element, inner_typedef(naming), depth + 1)?;
+                    return Some(IrVpiTypespec {
+                        kind: IrVpiTypespecKind::PackedArray,
+                        element: Some(element),
+                        width,
+                        signed: info.signed,
+                        two_state: descriptor.two_state,
+                        ranges: level,
+                        ..IrVpiTypespec::default()
+                    });
+                }
                 match info.kind.as_str() {
                     "enum" => self.vpi_enum_typespec(table, descriptor, &ranges, width),
                     "struct" | "union" | "array" | "other" => None,
@@ -701,6 +722,12 @@ impl Codegen<'_> {
                         NodeKind::Net { net_type, .. } => Some(vpi_net_type(*net_type)),
                         _ => None,
                     };
+                    let typespec = self.vpi_declared_typespec(&mut typespecs, id);
+                    // 37.18: a packed array of structures, unions or enums
+                    // is a vpiPackedArrayVar.
+                    let packed_array = typespec.is_some_and(|typespec| {
+                        typespecs.entries[typespec].kind == IrVpiTypespecKind::PackedArray
+                    });
                     insert(source(IrVpiObject {
                         full_name: self.vpi_full_name(id),
                         name: node.name.clone(),
@@ -710,14 +737,18 @@ impl Codegen<'_> {
                         real,
                         net,
                         signal: Some(ir),
-                        var_kind: IrVpiVarKind::from_type_kind(
-                            &ty.kind,
-                            self.vpi_packed_dimension_count(id),
-                        ),
+                        var_kind: if packed_array {
+                            IrVpiVarKind::PackedArray
+                        } else {
+                            IrVpiVarKind::from_type_kind(
+                                &ty.kind,
+                                self.vpi_packed_dimension_count(id),
+                            )
+                        },
                         packed_range: (!real).then(|| self.vpi_packed_range(id, width)).flatten(),
                         net_type: net.then(|| net_type.unwrap_or("vpiWire")),
                         two_state,
-                        typespec: self.vpi_declared_typespec(&mut typespecs, id),
+                        typespec,
                         ..IrVpiObject::default()
                     }));
                 }

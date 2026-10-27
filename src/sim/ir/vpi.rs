@@ -218,6 +218,8 @@ pub enum IrVpiTypespecKind {
     Enum,
     Struct,
     Union,
+    /// A packed array of structures, unions or enums.
+    PackedArray,
     /// An unpacked array (`vpiArrayTypespec`).
     Array,
 }
@@ -239,6 +241,7 @@ impl IrVpiTypespecKind {
             Self::Enum => "vpiEnumTypespec",
             Self::Struct => "vpiStructTypespec",
             Self::Union => "vpiUnionTypespec",
+            Self::PackedArray => "vpiPackedArrayTypespec",
             Self::Array => "vpiArrayTypespec",
         }
     }
@@ -260,6 +263,7 @@ impl IrVpiTypespecKind {
             Self::Enum => "vpiEnumVar",
             Self::Struct => "vpiStructVar",
             Self::Union => "vpiUnionVar",
+            Self::PackedArray => "vpiPackedArrayVar",
             Self::Array => "vpiRegArray",
         }
     }

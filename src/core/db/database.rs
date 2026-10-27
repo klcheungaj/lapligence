@@ -325,6 +325,9 @@ pub struct Db {
     enum_types: HashMap<TypeId, EnumTypeMetadata>,
     /// Typedef names of declared types and aggregate members (37.23).
     typedefs: TypedefNames,
+    /// Immediate elements of packed arrays of structures, unions and enums,
+    /// keyed by the array type identity.
+    packed_array_elements: HashMap<TypeId, TypeDescriptor>,
     /// Ordered ranges of multidimensional packed declarations.
     packed_dimensions: HashMap<NodeId, Vec<PackedRange>>,
     /// True for declarations whose complete packed type has a two-state base.
@@ -444,6 +447,7 @@ impl Db {
             mailbox_elements: HashMap::new(),
             enum_types: HashMap::new(),
             typedefs: TypedefNames::default(),
+            packed_array_elements: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
             assertion_local_vars: HashSet::new(),
@@ -530,6 +534,7 @@ impl Db {
             mailbox_elements: HashMap::new(),
             enum_types: HashMap::new(),
             typedefs: TypedefNames::default(),
+            packed_array_elements: HashMap::new(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
             assertion_local_vars: HashSet::new(),
@@ -1113,6 +1118,12 @@ impl Db {
     /// declaration the typedef it aliases. `None` when no typedef is named.
     pub fn declared_typedef(&self, id: NodeId) -> Option<TypedefRef> {
         self.typedefs.declared.get(&id).copied()
+    }
+
+    /// The immediate element of a packed array type whose base is a packed
+    /// structure, union or enum; its own descriptor is a flattened atom.
+    pub fn packed_array_element(&self, array: TypeId) -> Option<&TypeDescriptor> {
+        self.packed_array_elements.get(&array)
     }
 
     /// Whether typedef declaration `id` renames a built-in type keyword such

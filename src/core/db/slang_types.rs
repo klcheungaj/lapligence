@@ -154,6 +154,30 @@ impl<'a> SlangTypeProjector<'a> {
             .collect()
     }
 
+    /// The immediate element descriptor of every packed array whose base is
+    /// a packed structure, union or enum, keyed by the array type identity.
+    /// Their descriptors are flattened packed atoms, so this keeps the
+    /// element structure that VPI typespecs expose (IEEE 1800-2009 37.23).
+    pub fn packed_array_elements(&self) -> Result<HashMap<TypeId, TypeDescriptor>, String> {
+        let mut elements = HashMap::new();
+        for ty in self.types.values() {
+            if ty.kind != TypeKind::PackedArray
+                || !matches!(
+                    self.packed_base(ty)?.kind,
+                    TypeKind::PackedStruct | TypeKind::PackedUnion | TypeKind::Enum
+                )
+            {
+                continue;
+            }
+            let element = self.element_type(ty, "packed array")?;
+            elements.insert(
+                TypeId(ty.id),
+                self.descriptor(element, &mut HashSet::new())?,
+            );
+        }
+        Ok(elements)
+    }
+
     fn unpacked_element(&self, ty: &'a SlangType) -> Result<&'a SlangType, String> {
         let mut current = ty;
         let mut seen = HashSet::new();

@@ -393,6 +393,9 @@ impl Db {
         let mailbox_elements = type_projector
             .mailbox_elements()
             .map_err(DbError::InvalidSnapshot)?;
+        let packed_array_elements = type_projector
+            .packed_array_elements()
+            .map_err(DbError::InvalidSnapshot)?;
         let mut enum_types = HashMap::new();
         let mut packed_dimensions = HashMap::new();
         let mut clocking_blocks = HashMap::new();
@@ -1464,6 +1467,7 @@ impl Db {
             mailbox_elements,
             enum_types,
             typedefs,
+            packed_array_elements,
             packed_dimensions,
             two_state_types,
             assertion_local_vars,
@@ -1812,6 +1816,12 @@ mod tests {
             Some(("nib_t".to_owned(), 1))
         );
         assert_eq!(db.member_typedef(aggregate, 2), None);
+        // Packed arrays of structures keep their element structure.
+        let packed = db.type_descriptor(parrtype2.typedef).unwrap();
+        let element = db.packed_array_element(packed.id).unwrap();
+        assert!(matches!(element.shape, TypeShape::PackedAtom { ref ranges } if ranges.len() == 1));
+        let base = db.packed_array_element(element.id).unwrap();
+        assert!(matches!(base.shape, TypeShape::Aggregate(_)));
     }
 
     #[test]
