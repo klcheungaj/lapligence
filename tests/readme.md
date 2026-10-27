@@ -397,11 +397,13 @@ objects) use
 `-E 'binary(sim_feature_completion) & test(adv_019::)'`: `typespecs` prints the
 typespec tree of each declaration, `members` reads, finds, watches and
 writes members and `structure` walks ports, processes, assignments, tasks,
-primitives, instance arrays and named events, all linked as static archives.
-Decisions A19-D1..D8 are in
+primitives, instance arrays and named events, all linked as static archives;
+`timing` (VPI-T1) walks module paths and timing checks with their terms.
+Decisions A19-D1..D10 are in
 `sim_lrm_decisions` (`-E 'test(/a19_d/)'`); the unit checks are
 `core::db::database::capture::tests`,
-`sim::codegen::lowering::collection::vpi::tests` and
+`sim::codegen::lowering::collection::vpi::tests`,
+`sim::codegen::lowering::collection::vpi::timing::tests` and
 `sim::emit_c::model::vpi::tests`.
 
 ADV-020's VPI parity fixtures use
@@ -411,8 +413,10 @@ Windows DLL linked against the model import library) and as a static archive
 (every host); `mcd` exercises `vpi_mcd_*` on the `$fopen` table;
 `value_array` reads and writes array sections with
 `vpi_get_value_array`/`vpi_put_value_array`; `force_callbacks` and `disable`
-cover `cbForce`/`cbRelease`/`cbAssign`/`cbDeassign` and `cbDisable`. Decisions
-A20-D1..D11 are in `sim_lrm_decisions` (`-E 'test(/a20_d/)'`); the export list
+cover `cbForce`/`cbRelease`/`cbAssign`/`cbDeassign` and `cbDisable`; `delays`
+(VPI-T1) reads and writes path, check, primitive and continuous assignment
+delays and counts `cbTchkViolation` records. Decisions
+A20-D1..D15 are in `sim_lrm_decisions` (`-E 'test(/a20_d/)'`); the export list
 check is `sim::build::import_library::tests`.
 
 SIM-043's callback fixtures use

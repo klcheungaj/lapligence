@@ -219,6 +219,8 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         vpi_compile_calls: Vec::new(),
         vpi_builtin_calls: Vec::new(),
         vpi_catalog: true,
+        vpi_delays_writable: false,
+        vpi_delay_select: 1,
         random: Default::default(),
         dpi_scopes: Vec::new(),
         dpi_sites: Vec::new(),

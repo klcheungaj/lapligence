@@ -1,0 +1,14 @@
+cont 2: 1 2
+cont 3: 1 2 1
+put cont: error level=3
+undelayed 2: 0 0
+put undelayed: error level=3
+module: error level=3
+net: error level=3
+port: error level=3
+put port: error level=3
+5 y=0
+put path 1: ok
+path 1: 1
+15 y=1
+21 y=0

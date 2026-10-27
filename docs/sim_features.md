@@ -1515,7 +1515,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   destination with two drivers inside the module (14.2.1). Located errors
   reject variable destinations,
   inout destinations also driven outside the module and selects of
-  multidimensional packed terminals. No `vpiModPath` objects yet (ADV-019)
+  multidimensional packed terminals. VPI walks paths as `vpiModPath`
+  objects and reads and writes their delays (VPI-T1)
   ([ADV-007 fixtures](../tests/fixtures/sim/feature_completion/adv_007/readme.md)).
   V §§3.11.3, 14.1–14.4; SV §§6.20.5, 30.1–30.6 **[1995/SV-2009 restored]**.
 - 🟨 **State-dependent and edge-sensitive paths, pulse control** —
@@ -2544,8 +2545,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   share the `$fopen` table with the built-in file tasks (ADV-020, decisions
   A20-D1..D4). `vpi_user.h` and `sv_vpi_user.h` declare every IEEE 1800-2009
   Annex K/M routine and the model defines each, so applications written for
-  the full headers link; `vpi_handle_multi`, `vpi_get_delays`/`vpi_put_delays`,
-  `vpi_get_data`/`vpi_put_data`
+  the full headers link; `vpi_handle_multi`, `vpi_get_data`/`vpi_put_data`
   and `vpi_register_assertion_cb` are not supported and fail with a
   `vpi_chk_error` error (`docs/known_issues.md`).
   `vpi_get_value_array`/`vpi_put_value_array` (38.16, 38.35) read and write
@@ -2558,6 +2558,14 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   forced object and the left-hand value; `cbDisable` runs when `disable`
   ends a named block, named fork or task, or a block enclosing a registered
   system task call; `cbAssign`/`cbDeassign` register and never run;
+  `vpiModPath` and `vpiTchk` objects iterate from instances with their
+  terms, edges, conditions, path type, polarities, `vpiModPathHasIfNone`,
+  `vpiTchkType` and notifier (37.35, 37.36; decisions A19-D9, A19-D10);
+  `vpi_get_delays`/`vpi_put_delays` (38.10, 38.32) read and write path,
+  timing check and primitive delays with every `mtm_flag`, `append_flag`
+  and `pulsere_flag` mode through the SDF annotation path, and read
+  continuous assignment delays; `cbTchkViolation` runs for each reported
+  violation (VPI-T1, decisions A20-D12..D15);
   `vpi_control(vpiReset/vpiSetInteractiveScope)` fail (A20-D9..D11). Objects are
   modules, interfaces, generate scopes (SV 27.4 names), named blocks, ports,
   parameters, nets, variables with their exact types (`vpiIntVar`,

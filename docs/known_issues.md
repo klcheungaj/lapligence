@@ -888,8 +888,9 @@ paths otherwise run.
 - A path whose terminals only partly overlap an `ifnone` path's (for example
   `ifnone (a *> y)` and `if (c) (a => y[0])`) does not suppress it: an
   `ifnone` path yields only to active paths with exactly its terminals.
-- There are no `vpiModPath` objects; path metadata is available through the
-  owned `Db::module_paths` and the generated model's `llg_module_path_sets`.
+- VPI exposes paths as `vpiModPath` objects and their delays through
+  `vpi_get_delays`/`vpi_put_delays` (VPI-T1); see the VPI limits for what
+  stays out.
 
 ### Cause
 
@@ -2237,7 +2238,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   `cbForce`/`cbRelease`, `cbAssign`/`cbDeassign` (accepted; they never run,
   since procedural `assign`/`deassign` is rejected) and `cbDisable`:
   `cbStmt`, the class, frame and thread reasons, `cbError`/`cbPLIError`/
-  `cbTchkViolation`/`cbSignal` and the save, restart, reset and interactive
+  `cbSignal` and the save, restart, reset and interactive
   features;
 - the `vpiForce`/`vpiRelease` handle of a `cbForce`/`cbRelease` callback has
   only `vpiType` and `vpiLhs`, and `vpiLhs` is NULL with an error for a
@@ -2252,9 +2253,20 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - `vpi_put_value_array` to a net array (its elements are read-only to VPI,
   as for `vpi_put_value`; decision A20-D8), and `vpiPropagateOff`, which is
   accepted but still notifies every fanout (A20-D7);
+- delays (VPI-T1): `vpi_get_delays`/`vpi_put_delays` serve module paths,
+  timing checks, primitives and continuous assignments (read-only); on a
+  module, net or port (no MIPD or net delay objects) they are `vpiError`
+  with `LLG_VPI_UNSUPPORTED`. `vpi_put_delays`
+  needs a model generated with `--vpi` or `--dpi-lib` (it reserves the
+  writable delay tables then; otherwise the write is refused), writes only
+  primitives with constant delays, and leaves transitions already
+  scheduled at their times (decisions A20-D12..D14). The delays of
+  delayed timing check signals stay fixed, as for SDF;
+- `vpiModPath` handles carry no name and no `vpiDelay`/`vpiInterModPath`
+  relations; `vpiTchkTerm` and `vpiPathTerm` handles have no own source
+  location;
 - the routines `vpi_handle_multi` (no `vpiPortInst`/`vpiInterModPath`
-  objects), `vpi_get_delays`/`vpi_put_delays` (no delay objects),
-  `vpi_get_data`/`vpi_put_data` (no
+  objects), `vpi_get_data`/`vpi_put_data` (no
   save/restart) and `vpi_register_assertion_cb` (no assertion callbacks).
   They are declared and defined so that applications link, and return
   NULL, 0 or nothing with an `LLG_VPI_UNSUPPORTED` error without reading or

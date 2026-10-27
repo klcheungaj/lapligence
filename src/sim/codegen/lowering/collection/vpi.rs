@@ -14,6 +14,9 @@ use crate::sim::ir::{
     IrVpiTypespecMember, IrVpiVarKind,
 };
 
+mod timing;
+pub(in super::super) use timing::VpiTimingMetadata;
+
 const SEPARATOR: &str = "\u{1f}";
 
 /// Typedef aliases and nested types a typespec may chain through before the
@@ -634,6 +637,7 @@ impl Codegen<'_> {
             signed,
             direction,
             value: None,
+            ..IrVpiConn::default()
         };
         match self.kind(inner) {
             NodeKind::Expr(ExprKind::Constant {
@@ -674,6 +678,7 @@ impl Codegen<'_> {
                     signed: constant.signed,
                     direction,
                     value: Some(digits),
+                    ..IrVpiConn::default()
                 }
             }
             NodeKind::Expr(ExprKind::ScopeRef { target }) => {
@@ -890,6 +895,7 @@ impl Codegen<'_> {
         &self,
         model: &mut IrModel,
         tops: &[NodeId],
+        mut timing: VpiTimingMetadata,
     ) -> Result<(), String> {
         use std::collections::BTreeMap;
 
@@ -1248,6 +1254,7 @@ impl Codegen<'_> {
                         conns: vec![lhs, rhs],
                         unnamed: true,
                         qualifier: *net_decl,
+                        timing: timing.delays.remove(&id),
                         ..IrVpiObject::default()
                     }));
                 }
@@ -1282,9 +1289,14 @@ impl Codegen<'_> {
                     }));
                 }
                 NodeKind::Gate { .. } => {
-                    if let Some(row) =
-                        self.vpi_primitive_row(id, &array_of, source(IrVpiObject::default()))
-                    {
+                    if let Some(row) = self.vpi_primitive_row(
+                        id,
+                        &array_of,
+                        source(IrVpiObject {
+                            timing: timing.delays.remove(&id),
+                            ..IrVpiObject::default()
+                        }),
+                    ) {
                         insert(row);
                     }
                 }
@@ -1392,6 +1404,9 @@ impl Codegen<'_> {
                 }
                 _ => {}
             }
+        }
+        for row in timing.rows {
+            insert(row);
         }
         model.vpi_objects = objects.into_values().collect();
         model.vpi_typespecs = typespecs.entries;

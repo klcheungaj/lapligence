@@ -143,3 +143,21 @@ fn disable_runs_cb_disable_of_blocks_tasks_and_enclosed_calls() {
         &[("LLG_VPI_PLUGIN", &library)],
     );
 }
+
+#[test]
+fn delays_read_and_write_paths_checks_primitives_and_assignments() {
+    let directory = sim_harness::TempDir::new("adv020-delays").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "delays", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "delays",
+        include_str!("../fixtures/sim/feature_completion/adv_020/delays.out"),
+        &[
+            "--define-system-task",
+            "task $delays(input integer stage)",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}

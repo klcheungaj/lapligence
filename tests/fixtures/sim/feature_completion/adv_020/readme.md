@@ -32,9 +32,12 @@ level 3 with code `LLG_VPI_UNSUPPORTED` and a message naming the routine:
 
 - `vpi_handle_multi` returns NULL (38.22: "Returns: vpiHandle Handle to an
   object.", L63405; llg has no `vpiPortInst`/`vpiInterModPath` objects).
-- `vpi_get_delays`/`vpi_put_delays` return nothing; the application's delay
-  record and its `da` array are left as they were (`da=same no_of_delays=1
-  time_type=2 low=77`, where 2 is `vpiSimTime`).
+- `vpi_get_delays`/`vpi_put_delays` on a module return nothing, with
+  `LLG_VPI_UNSUPPORTED` and a message naming the objects that have delays
+  (a module has none; llg has no port or intermodule path delays). The
+  application's delay record and its `da` array are left as they were
+  (`da=same no_of_delays=1 time_type=2 low=77`, where 2 is `vpiSimTime`).
+  `delays.c` covers the objects that have delays.
 - `vpi_get_data` returns 0 (38.9, L62169-L62170: "The return value shall be
   the number of bytes retrieved. On a failure, the return value shall be 0.")
   and `vpi_put_data` returns 0 (38.31, L63792-L63793: "The return value shall
@@ -270,6 +273,49 @@ blk` (time 1), `disable work` (3), `disable fk` (4) and the self-disable of
 record runs, while the record on `tb.outer2.inner`, which `disable` did not
 name, does not (decision A20-D10). No disabled block prints its message.
 
+## delays (38.10, 38.32, 38.36.1)
+
+`delays.c` reads and writes delays at the stages `$delays(n)` marks and
+prints what the design does afterwards; every expected time follows from
+the declared or written delays.
+
+- Counts. 38.10 (L62269-L62279): "For primitive objects, the no_of_delays
+  value shall be 2 or 3. For path delay objects, the no_of_delays value
+  shall be 1, 2, 3, 6, or 12. For timing check objects, the no_of_delays
+  value shall match the number of limits existing in the timing check."
+  Stage 0 reads the path `(a => y) = (tpd, 4)` with each legal count, in
+  the order of Table 30-2 (`path 12 ps` reads them as `vpiSimTime` ticks of
+  1 ps), the primitive `gb` with 2 and 3, the
+  undelayed `nb` as 0, the continuous assignment, and `$setup` and
+  `$setuphold` with their limit counts; other counts, a net, a suppressed
+  time type and a missing array are `vpiError` (decisions A20-D12,
+  A20-D14).
+- Flags. `pulsere_flag` reads path reject and error limits (`3 3 3 4 4 4`:
+  the default limits equal the delays) and primitive limits equal to the
+  delays; `mtm_flag` repeats each value as min, typ and max (decision
+  A20-D13).
+- Writes. 38.32 (L63958-L63961): "The VPI routine vpi_put_delays() shall set
+  the delays or timing limits of an object as indicated in the delay_p
+  structure. [...] If only the delay changes and not the pulse limits, the
+  pulse limits shall retain the values they had before the delays where
+  altered." Writes go through the SDF annotation path (`llg_sdf_apply`):
+  `put path 7 8` moves `y` to 37 and 48 with the limits still 3 and 4;
+  `put gb mtm` writes the typical operand (5, 6), so `g` follows at 35 and
+  46. In stage 1 an appended 1 gives 8 and 9; the 4 ns pulse at 82 passes
+  the kept 4 ns reject limit (`y` at 90 and 95). Stage 2 writes the limits
+  equal to the delays and the same pulse at 105 is rejected. Writes to
+  `nb`, the continuous assignment, a negative path delay and primitive
+  pulse limits are refused (decisions A20-D13, A20-D14).
+- Timing checks. `$setup` reports a violation at 121 ns with limit 2; after
+  `put setup 1` the 1 ns setup at 131 ns passes, after `append setup 2`
+  (limit 3) the next one at 142 ns violates again. An append of -5 floors
+  the limit at 0.
+- `cbTchkViolation`. 38.36.1 (L65044-L65045): "For cbTchkViolation
+  callbacks, the obj field shall be a handle to the timing check." A record
+  with a NULL obj sees both violations (`violations=2`); one on
+  `$setuphold` sees none (`one-check=0`); one on a net is refused
+  (decision A20-D15).
+
 ## Decisions
 
 The choices where the text is silent are the portable cases A20-D1 to A20-D4
@@ -284,4 +330,6 @@ form), A20-D7 (`vpiPropagateOff` still propagates) and A20-D8 (no puts to net
 arrays). The callback choices are A20-D9 (`cbForce`/`cbRelease` timing,
 object matching and VPI forces; `cbAssign`/`cbDeassign` never run) and A20-D10
 (`cbDisable` timing, inactive and enclosing blocks); A20-D11 covers
-`vpi_control(vpiReset)` and `vpiSetInteractiveScope`.
+`vpi_control(vpiReset)` and `vpiSetInteractiveScope`. The delay choices are A20-D12 (counts and order),
+A20-D13 (`mtm_flag`, `append_flag`, `pulsere_flag`), A20-D14 (objects with
+delays) and A20-D15 (`cbTchkViolation`).

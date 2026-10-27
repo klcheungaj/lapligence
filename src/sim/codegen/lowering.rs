@@ -550,6 +550,9 @@ fn lower_timing_metadata(
     // combined checks runtime resettlement.
     let sdf_read_stage = crate::profile::Stage::new("lowering.sdf_read");
     cg.read_sdf_annotations(tops, &options.sdf)?;
+    if options.vpi {
+        cg.reserve_vpi_delays();
+    }
     drop(sdf_read_stage);
     cg.build_net_groups()?;
     // Module paths name net groups and their structural driver sites.
@@ -695,7 +698,14 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     // Every driver site and delayed-driver start now exists.
     net_delay_layout::assign_net_delay_layouts(&mut model);
     check_wave_variable_targets(&cg.wave_variable_targets, &model)?;
-    cg.populate_vpi_metadata(&mut model, &tops)?;
+    let timing = cg.vpi_timing_metadata(&model, &tops);
+    model.vpi_delays_writable = options.vpi;
+    model.vpi_delay_select = match db.delay_selection() {
+        crate::ffi::slang::DelaySelection::Min => 0,
+        crate::ffi::slang::DelaySelection::Typical => 1,
+        crate::ffi::slang::DelaySelection::Max => 2,
+    };
+    cg.populate_vpi_metadata(&mut model, &tops, timing)?;
     cg.populate_vpi_builtin_calls(&mut model);
     cg.finish_dpi(&mut model)?;
     cg.populate_assertion_coverage(&mut model);

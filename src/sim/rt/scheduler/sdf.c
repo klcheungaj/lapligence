@@ -72,6 +72,7 @@ static uint64_t* sdf_path_limits(llg_module_path_t* path) {
 static void sdf_path(const llg_sdf_op_t* op, const int64_t* values) {
     llg_module_path_t* path = op->path;
     int increment = (op->flags & LLG_SDF_INCREMENT) != 0;
+    if ((op->flags & LLG_SDF_KEEP_LIMITS) && op->delay) sdf_path_limits(path);
     for (uint32_t t = 0; t < LLG_PATH_TRANSITIONS; t++) {
         if (op->delay >> t & 1u) path->delays[t] = sdf_value(path->delays[t], *values++, increment);
     }
@@ -360,6 +361,21 @@ void llg_sdf_apply(const llg_sdf_annotation_t* annotation) {
         if (op->checks->n_pairs) sdf_pairs_resolve(op->checks);
         llg_timing_check_limits_changed(op->checks);
     }
+}
+
+void llg_module_path_pulse_limits(const llg_module_path_t* path, uint32_t t,
+                                  uint64_t* reject, uint64_t* error) {
+    uint64_t delay = t < LLG_PATH_TRANSITIONS ? path->delays[t] : 0u;
+    uint64_t r = 0, e = 0;
+    if (t < LLG_PATH_TRANSITIONS && path->limits) {
+        r = path->limits[t];
+        e = path->limits[LLG_PATH_TRANSITIONS + t];
+    } else {
+        r = sdf_percent(delay, path_pulse.reject_percent);
+        e = sdf_percent(delay, path_pulse.error_percent);
+    }
+    *reject = r > delay ? delay : r;
+    *error = e > delay ? delay : e;
 }
 
 static void sdf_release(void) {

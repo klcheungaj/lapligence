@@ -43,6 +43,12 @@ pub enum IrVpiObjectKind {
     InstanceArray,
     /// A modport of an interface instance (37.7).
     Modport,
+    /// A module path declaration (37.35); unnamed, `conns` holds its
+    /// terminals and condition, [`IrVpiObject::timing`] its delays.
+    ModPath,
+    /// A timing check (37.36); unnamed, `conns` holds its arguments and
+    /// terminal conditions, [`IrVpiObject::timing`] its limits.
+    Tchk,
 }
 
 impl IrVpiObjectKind {
@@ -68,6 +74,8 @@ impl IrVpiObjectKind {
             Self::Primitive => "vpiGate",
             Self::InstanceArray => "vpiModuleArray",
             Self::Modport => "vpiModport",
+            Self::ModPath => "vpiModPath",
+            Self::Tchk => "vpiTchk",
         }
     }
 
@@ -248,6 +256,69 @@ pub struct IrVpiObject {
     /// Runtime activation identity `(declaration, instance)` of a named
     /// block, task or function: what `disable` names (cbDisable).
     pub(in crate::sim) activation: Option<(u32, u32)>,
+    /// Delays of a module path, timing check, primitive or continuous
+    /// assignment (`vpi_get_delays`/`vpi_put_delays`).
+    pub(in crate::sim) timing: Option<IrVpiTiming>,
+}
+
+/// The delays or limits of a catalog object and the runtime values that
+/// hold them (IEEE 1800-2009 38.10, 38.32).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct IrVpiTiming {
+    /// The model values back-annotation writes, each with the index of the
+    /// timing check limit it holds (0 for paths and primitives): the path
+    /// rows of a module path, the check rows or combined pairs of each
+    /// limit of a timing check, the delay slot of a primitive.
+    pub(in crate::sim) targets: Vec<(u32, super::IrSdfTarget)>,
+    /// The values as elaborated, in design-precision ticks: the twelve
+    /// transition delays of a path, the limits of a check, the rise, fall
+    /// and turn-off delays of a primitive or continuous assignment.
+    pub(in crate::sim) declared: Vec<i64>,
+    /// How many delays or limits the source gives (0: none).
+    pub(in crate::sim) count: u32,
+    /// `vpiPolarity` and `vpiDataPolarity` code names of a path.
+    pub(in crate::sim) polarity: &'static str,
+    pub(in crate::sim) data_polarity: &'static str,
+    /// `vpiModPathHasIfNone`: the path is an `ifnone` path.
+    pub(in crate::sim) has_ifnone: bool,
+}
+
+/// What a connection of a module path or timing check stands for
+/// (IEEE 1800-2009 37.35, 37.36).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IrVpiConnRole {
+    /// Any other structure connection.
+    #[default]
+    Connection,
+    PathIn,
+    PathOut,
+    PathData,
+    /// The condition of a state-dependent path.
+    Condition,
+    TchkRef,
+    TchkData,
+    /// Another timing check argument (a limit or flag).
+    Argument,
+    Notifier,
+    /// The `&&&` condition of a timing check terminal.
+    TermCondition,
+}
+
+impl IrVpiConnRole {
+    pub const fn c_code(self) -> &'static str {
+        match self {
+            Self::Connection => "LLG_VPI_ROLE_CONNECTION",
+            Self::PathIn => "LLG_VPI_ROLE_PATH_IN",
+            Self::PathOut => "LLG_VPI_ROLE_PATH_OUT",
+            Self::PathData => "LLG_VPI_ROLE_PATH_DATA",
+            Self::Condition => "LLG_VPI_ROLE_CONDITION",
+            Self::TchkRef => "LLG_VPI_ROLE_TCHK_REF",
+            Self::TchkData => "LLG_VPI_ROLE_TCHK_DATA",
+            Self::Argument => "LLG_VPI_ROLE_ARGUMENT",
+            Self::Notifier => "LLG_VPI_ROLE_NOTIFIER",
+            Self::TermCondition => "LLG_VPI_ROLE_TERM_COND",
+        }
+    }
 }
 
 /// One expression connection of a structure object: how the application
@@ -262,6 +333,12 @@ pub struct IrVpiConn {
     pub(in crate::sim) direction: IrVpiDirection,
     /// Value digits (`0`/`1`/`x`/`z`, most significant first) of a constant.
     pub(in crate::sim) value: Option<String>,
+    /// Role in a module path or timing check.
+    pub(in crate::sim) role: IrVpiConnRole,
+    /// `vpiEdge` bits of a path or timing check terminal.
+    pub(in crate::sim) edge: u8,
+    /// Index of the connection holding a timing check terminal's condition.
+    pub(in crate::sim) condition: Option<u32>,
 }
 
 /// `vpiType` of a typespec (IEEE 1800-2009 37.23, Annex M).

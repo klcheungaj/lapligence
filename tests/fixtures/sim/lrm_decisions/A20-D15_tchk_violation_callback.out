@@ -1,0 +1,7 @@
+register all: handle level=0
+register hold: handle level=0
+register module: NULL level=3
+all: vpiTchk type=1 at 11 notifier=x value=NULL
+all: vpiTchk type=2 at 12 notifier=0 value=NULL
+hold: vpiTchk type=2 at 12 notifier=0 value=NULL
+13 notifier=0

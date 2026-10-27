@@ -272,6 +272,13 @@ impl<'a> Codegen<'a> {
             })?),
             None => None,
         };
+        // A slot reserved only for VPI applications cannot hold a delay
+        // computed at run time; the gate keeps its own.
+        if self.sdf_gate_slot(g).is_some()
+            && !matches!(scaled_delay, None | Some(IrInertialDelay::Constant(_)))
+        {
+            self.release_vpi_gate_slot(g);
+        }
         // An SDF DEVICE entry annotates the gate: it reads writable delays
         // that start as its own (none: 0), so a delayed driver replaces an
         // undelayed one (IEEE 1800-2009 32.4.3).

@@ -66,3 +66,21 @@ fn structure_walker_reaches_ports_processes_assignments_primitives_and_arrays() 
         &[],
     );
 }
+
+#[test]
+fn module_paths_and_timing_checks_walk_their_terminals_and_conditions() {
+    let directory = sim_harness::TempDir::new("adv019-timing").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "timing", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "timing",
+        include_str!("../fixtures/sim/feature_completion/adv_019/timing.out"),
+        &[
+            "--define-system-task",
+            "task $timing()",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}

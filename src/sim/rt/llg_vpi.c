@@ -67,6 +67,7 @@ typedef enum {
     SLOT_PRIMTERM,  /* terminal `aux` of primitive row `object` */
     SLOT_PORTBIT,   /* bit `aux` (from the LSB) of port row `object` */
     SLOT_REFOBJ,    /* interface port `object` reference: `aux` 0 low, 1 high */
+    SLOT_TERM,      /* path term or tchk term: connection `aux` of row `object` */
     SLOT_STMT,      /* force/release statement `aux` (vpiForce, vpiRelease) of a
                      * running cbForce/cbRelease dispatch: llg_vpi_stmt_t */
 } llg_vpi_slot_kind_t;
@@ -277,6 +278,7 @@ typedef struct {
     uint32_t assertion_cbs;       /* live vpi_register_assertion_cb records */
     int assertion_sys_started;    /* cbAssertionSysInitialized ran (39.4.1) */
     int assertions_ended;         /* vpiAssertionSysEnd or the end of the run */
+    uint32_t tchk_cbs;            /* live cbTchkViolation records */
     int quiet_force;              /* vpi_put_value force/release: not a statement */
     llg_vpi_storage_t* storage;   /* rows with storage by address, built on demand */
     size_t storage_count;
@@ -377,7 +379,8 @@ static int is_instance_array_type(int type) {
  * 37.31, 37.43, 37.58). */
 static int is_structure_type(int type) {
     return is_process_type(type) || is_primitive_type(type) || is_instance_array_type(type) ||
-           type == vpiContAssign || type == vpiNamedEvent || type == vpiModport;
+           type == vpiContAssign || type == vpiNamedEvent || type == vpiModport ||
+           type == vpiModPath || type == vpiTchk;
 }
 
 static int is_array_type(int type) {
@@ -423,7 +426,22 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
         const llg_vpi_compile_arg_t* ref = &object->conns[i].ref;
         if (ref->object >= 0 && (uint64_t)ref->object >= g_vpi.object_count) return 0;
         if (ref->ref_kind == LLG_VPI_ARG_CONSTANT && !object->conns[i].value) return 0;
+        if (object->conns[i].condition > object->conn_count) return 0;
     }
+    if (object->timing) {
+        const llg_vpi_timing_t* tm = object->timing;
+        if ((tm->op_count && !tm->ops) || (tm->declared_count && !tm->declared))
+            return 0;
+        for (uint32_t i = 0; i < tm->op_count; ++i) {
+            const llg_sdf_op_t* op = &tm->ops[i];
+            int valid = op->kind == LLG_SDF_PATH ? op->path != NULL
+                        : op->kind == LLG_SDF_GATE ? op->gate != NULL
+                        : op->kind == LLG_SDF_CHECK ? op->check != NULL && op->checks != NULL
+                        : op->kind == LLG_SDF_PAIR ? op->checks != NULL : 0;
+            if (!valid || (object->type == vpiTchk && op->first >= 2u)) return 0;
+        }
+    }
+    if (object->type == vpiModPath || object->type == vpiTchk) return object->timing != NULL;
     if (is_structure_type(object->type)) {
         if (object->packed || object->real) return 0;
         if (object->type == vpiNamedEvent) return object->event != NULL;
@@ -1452,6 +1470,462 @@ static vpiHandle iterate_aux(llg_vpi_slot_kind_t kind, uint32_t row, uint32_t co
         items[made++] = (uintptr_t)handle;
     }
     return make_list_iterator(type, items, made);
+}
+
+/* ── module paths and timing checks (37.35, 37.36) ──────────────────────── */
+
+/* How the model was generated (llg_vpi_model_delays); kept apart from
+ * g_vpi, which model initialization clears. */
+static int g_vpi_delays_writable;
+static int g_vpi_delay_select = 1;
+
+void llg_vpi_model_delays(int writable, int delay_select) {
+    g_vpi_delays_writable = writable != 0;
+    g_vpi_delay_select = delay_select >= 0 && delay_select <= 2 ? delay_select : 1;
+}
+
+static uint64_t time_unit_of(const llg_vpi_model_object_t* object);
+
+static int is_term_role(int role) {
+    return role == LLG_VPI_ROLE_PATH_IN || role == LLG_VPI_ROLE_PATH_OUT ||
+           role == LLG_VPI_ROLE_PATH_DATA || role == LLG_VPI_ROLE_TCHK_REF ||
+           role == LLG_VPI_ROLE_TCHK_DATA;
+}
+
+/* The first connection of `row` with `role`, or LLG_VPI_NONE. */
+static uint32_t role_conn(uint32_t row, int role) {
+    llg_vpi_model_object_t* object = row_object(row);
+    if (!object) return LLG_VPI_NONE;
+    for (uint32_t i = 0; i < object->conn_count; ++i)
+        if (object->conns[i].role == role) return i;
+    return LLG_VPI_NONE;
+}
+
+/* The path term or tchk term of `row` with `role`; NULL when it has none. */
+static vpiHandle role_term(uint32_t row, int role) {
+    uint32_t conn = role_conn(row, role);
+    return conn == LLG_VPI_NONE ? NULL : make_aux_slot(SLOT_TERM, row, conn);
+}
+
+/* The connections of `row` whose role is in the bit set `roles`, in
+ * order: terminals as term handles, other entries as their expressions. */
+static vpiHandle iterate_roles(uint32_t row, int type, unsigned roles) {
+    llg_vpi_model_object_t* object = row_object(row);
+    if (!object || !object->conn_count) return NULL;
+    uintptr_t* items = (uintptr_t*)calloc(object->conn_count, sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    uint32_t made = 0;
+    for (uint32_t i = 0; i < object->conn_count; ++i) {
+        int role = object->conns[i].role;
+        if (role < 0 || role > 31 || !(roles >> role & 1u)) continue;
+        vpiHandle handle = is_term_role(role) ? make_aux_slot(SLOT_TERM, row, i)
+                                              : conn_handle(row, i);
+        if (!handle) break;
+        items[made++] = (uintptr_t)handle;
+    }
+    return make_list_iterator(type, items, made);
+}
+
+/* The delay object kinds of vpi_get_delays/vpi_put_delays. */
+enum { DELAYS_NONE = 0, DELAYS_PATH, DELAYS_TCHK, DELAYS_PRIMITIVE, DELAYS_CONT_ASSIGN };
+
+static int delay_kind(const llg_vpi_model_object_t* object) {
+    if (!object || !object->timing) return DELAYS_NONE;
+    if (object->type == vpiModPath) return DELAYS_PATH;
+    if (object->type == vpiTchk) return DELAYS_TCHK;
+    if (is_primitive_type(object->type)) return DELAYS_PRIMITIVE;
+    if (object->type == vpiContAssign) return DELAYS_CONT_ASSIGN;
+    return DELAYS_NONE;
+}
+
+/* `ticks` in the time format of `type` for `scope` (38.10). */
+static void delay_time(int64_t ticks, int type, const llg_vpi_model_object_t* scope,
+                       s_vpi_time* out) {
+    out->type = type;
+    out->high = 0;
+    out->low = 0;
+    out->real = 0.0;
+    if (type == vpiSimTime) {
+        uint64_t value = (uint64_t)ticks;
+        out->high = (PLI_UINT32)(value >> 32);
+        out->low = (PLI_UINT32)value;
+        return;
+    }
+    uint64_t precision = llg_time_precision_fs();
+    uint64_t unit = time_unit_of(scope);
+    if (!precision) precision = 1;
+    if (!unit) unit = precision;
+    out->real = (double)((long double)ticks * precision / unit);
+}
+
+/* A delay value in design-precision ticks; 0 when it cannot be one. */
+static int delay_ticks(const s_vpi_time* time, int type, const llg_vpi_model_object_t* scope,
+                       int64_t* out) {
+    if (type == vpiSimTime) {
+        *out = (int64_t)(((uint64_t)time->high << 32) | time->low);
+        return 1;
+    }
+    uint64_t precision = llg_time_precision_fs();
+    uint64_t unit = time_unit_of(scope);
+    if (!precision) precision = 1;
+    if (!unit) unit = precision;
+    double ticks = time->real * (double)unit / (double)precision;
+    if (!(ticks > -9.2e18 && ticks < 9.2e18)) return 0;
+    *out = (int64_t)llround(ticks);
+    return 1;
+}
+
+/* The op of `tm` holding limit `limit` of a timing check, or NULL. */
+static const llg_sdf_op_t* limit_op(const llg_vpi_timing_t* tm, uint32_t limit) {
+    for (uint32_t i = 0; i < tm->op_count; ++i)
+        if (tm->ops[i].first == limit) return &tm->ops[i];
+    return NULL;
+}
+
+/* Current value `index` of the delays or limits of `object`: its runtime
+ * value when it has one, else as declared. Path delays are transitions in
+ * the order of llg_module_path_t.delays (01, 10, 0z, z1, 1z, z0, ...), so
+ * the first one, two, three or six are those of a declaration with as many
+ * values; primitive and continuous assignment delays are rise, fall and
+ * turn-off. */
+static int64_t current_delay(const llg_vpi_model_object_t* object, int kind, uint32_t index) {
+    const llg_vpi_timing_t* tm = object->timing;
+    if (kind == DELAYS_PATH && tm->op_count && tm->ops[0].path)
+        return (int64_t)tm->ops[0].path->delays[index];
+    if (kind == DELAYS_PRIMITIVE && tm->op_count && tm->ops[0].gate)
+        return (int64_t)tm->ops[0].gate[index];
+    if (kind == DELAYS_TCHK) {
+        const llg_sdf_op_t* op = limit_op(tm, index);
+        int second = op && (op->flags & LLG_SDF_SECOND);
+        if (op && op->kind == LLG_SDF_CHECK && op->check)
+            return second ? op->check->limit2 : op->check->limit;
+        if (op && op->kind == LLG_SDF_PAIR && op->checks && op->checks->pairs &&
+            op->index < op->checks->n_pairs)
+            return second ? op->checks->pairs[op->index].after
+                          : op->checks->pairs[op->index].before;
+    }
+    return index < tm->declared_count ? tm->declared[index] : 0;
+}
+
+/* Validate the delay record against the object (38.10, 38.32): the object
+ * kind, time format, number of delays and flags. Returns the object's
+ * delay kind, or DELAYS_NONE with the error recorded. */
+static int delay_record(vpiHandle handle, p_vpi_delay delay_p, const char* routine,
+                        llg_vpi_model_object_t** row_out) {
+    llg_vpi_slot_t* slot = checked_handle(handle, NULL);
+    if (!slot) return DELAYS_NONE;
+    if (!delay_p || !delay_p->da) {
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_ARGUMENT",
+                       "%s needs a delay record with an s_vpi_time array", routine);
+        return DELAYS_NONE;
+    }
+    llg_vpi_model_object_t* object = slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
+    int kind = delay_kind(object);
+    if (kind == DELAYS_NONE) {
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_UNSUPPORTED",
+                       "%s applies to module paths, timing checks, primitives and continuous "
+                       "assignments; llg has no port (MIPD) or intermodule path delays",
+                       routine);
+        return DELAYS_NONE;
+    }
+    if (delay_p->time_type != vpiScaledRealTime && delay_p->time_type != vpiSimTime) {
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_TIME",
+                       "%s needs time_type vpiScaledRealTime or vpiSimTime", routine);
+        return DELAYS_NONE;
+    }
+    int n = delay_p->no_of_delays;
+    int legal;
+    switch (kind) {
+        case DELAYS_PATH:
+            legal = n == 1 || n == 2 || n == 3 || n == 6 || n == 12;
+            break;
+        case DELAYS_TCHK:
+            legal = n == (int)object->timing->count;
+            break;
+        default:
+            legal = n == 2 || n == 3;
+            break;
+    }
+    if (!legal) {
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_DELAYS",
+                       "%s: %d delays do not suit this %s (%s)", routine, n,
+                       kind == DELAYS_PATH ? "module path" : kind == DELAYS_TCHK ? "timing check"
+                       : kind == DELAYS_PRIMITIVE ? "primitive" : "continuous assignment",
+                       kind == DELAYS_PATH ? "1, 2, 3, 6 or 12"
+                       : kind == DELAYS_TCHK ? "the number of limits of the check" : "2 or 3");
+        return DELAYS_NONE;
+    }
+    if (delay_p->pulsere_flag && kind == DELAYS_TCHK) {
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_DELAYS",
+                       "%s: a timing check has no pulse limits", routine);
+        return DELAYS_NONE;
+    }
+    *row_out = object;
+    return kind;
+}
+
+/* Position in delay_p->da of value `which` (0 delay, 1 reject, 2 error) of
+ * delay `k`, min/typ/max operand `m` (Tables 38-2 and 38-4). */
+static size_t delay_slot(const s_vpi_delay* delay_p, uint32_t k, uint32_t which, uint32_t m) {
+    size_t operands = delay_p->mtm_flag ? 3u : 1u;
+    size_t per = operands * (delay_p->pulsere_flag ? 3u : 1u);
+    return (size_t)k * per + which * operands + (delay_p->mtm_flag ? m : 0u);
+}
+
+void vpi_get_delays(vpiHandle object, p_vpi_delay delay_p) {
+    vpi_enter();
+    if (!vpi_ready()) return;
+    llg_vpi_model_object_t* row = NULL;
+    int kind = delay_record(object, delay_p, "vpi_get_delays", &row);
+    if (kind == DELAYS_NONE) return;
+    uint32_t n = (uint32_t)delay_p->no_of_delays;
+    for (uint32_t k = 0; k < n; ++k) {
+        int64_t value[3];
+        value[0] = current_delay(row, kind, k);
+        value[1] = value[0];
+        value[2] = value[0];
+        if (kind == DELAYS_PATH && row->timing->op_count && row->timing->ops[0].path) {
+            uint64_t reject, error;
+            llg_module_path_pulse_limits(row->timing->ops[0].path, k, &reject, &error);
+            value[1] = (int64_t)reject;
+            value[2] = (int64_t)error;
+        }
+        uint32_t classes = delay_p->pulsere_flag ? 3u : 1u;
+        for (uint32_t which = 0; which < classes; ++which)
+            for (uint32_t m = 0; m < (delay_p->mtm_flag ? 3u : 1u); ++m)
+                delay_time(value[which], delay_p->time_type, row,
+                           &delay_p->da[delay_slot(delay_p, k, which, m)]);
+    }
+}
+
+/* `n` values in the order of llg_module_path_t.delays, expanded to the
+ * twelve transitions as a declaration with as many delays (Tables 30-2 and
+ * 30-3, `expand_path_delays` in the IR). */
+static void expand_path_values(const int64_t* values, uint32_t n, int64_t* out) {
+    enum { T01, T10, T0Z, TZ1, T1Z, TZ0, T0X, TX1, T1X, TX0, TXZ, TZX };
+    if (n == 12) {
+        memcpy(out, values, 12u * sizeof(*out));
+        return;
+    }
+    int64_t r = values[0], f = n >= 2 ? values[1] : r;
+    switch (n) {
+        case 1:
+            for (int t = 0; t < 6; ++t) out[t] = r;
+            break;
+        case 2:
+        case 3: {
+            int64_t z = n == 3 ? values[2] : 0;
+            out[T01] = r;
+            out[T10] = f;
+            out[T0Z] = n == 3 ? z : r;
+            out[TZ1] = r;
+            out[T1Z] = n == 3 ? z : f;
+            out[TZ0] = f;
+            break;
+        }
+        default:
+            memcpy(out, values, 6u * sizeof(*out));
+            break;
+    }
+#define LLG_MIN(a, b) ((a) < (b) ? (a) : (b))
+#define LLG_MAX(a, b) ((a) > (b) ? (a) : (b))
+    out[T0X] = LLG_MIN(out[T0Z], out[T01]);
+    out[T1X] = LLG_MIN(out[T1Z], out[T10]);
+    out[TZX] = LLG_MIN(out[TZ1], out[TZ0]);
+    out[TX0] = LLG_MAX(out[TZ0], out[T10]);
+    out[TX1] = LLG_MAX(out[TZ1], out[T01]);
+    out[TXZ] = LLG_MAX(out[T1Z], out[T0Z]);
+#undef LLG_MIN
+#undef LLG_MAX
+}
+
+void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
+    vpi_enter();
+    if (!vpi_ready()) return;
+    llg_vpi_model_object_t* row = NULL;
+    int kind = delay_record(object, delay_p, "vpi_put_delays", &row);
+    if (kind == DELAYS_NONE) return;
+    const llg_vpi_timing_t* tm = row->timing;
+    if (kind == DELAYS_CONT_ASSIGN) {
+        vpi_error("LLG_VPI_DELAYS",
+                  "vpi_put_delays: the delays of a continuous assignment are read-only (37.43)");
+        return;
+    }
+    if (!g_vpi_delays_writable) {
+        vpi_error("LLG_VPI_DELAYS",
+                  "vpi_put_delays: the model was generated without --vpi or --dpi-lib, so its "
+                  "delays are not writable");
+        return;
+    }
+    if (!tm->op_count) {
+        vpi_error("LLG_VPI_DELAYS",
+                  kind == DELAYS_PRIMITIVE
+                      ? "vpi_put_delays: llg writes the delays of primitives declared with "
+                        "constant delays; this primitive has none"
+                      : kind == DELAYS_TCHK
+                      ? "vpi_put_delays: this timing check is not simulated (timing checks "
+                        "are off, or a duplicate or a window that cannot report was dropped)"
+                      : "vpi_put_delays: this module path is not simulated");
+        return;
+    }
+    if (delay_p->pulsere_flag && kind == DELAYS_PRIMITIVE) {
+        vpi_error("LLG_VPI_DELAYS",
+                  "vpi_put_delays: primitive delays are inertial; llg keeps no pulse limits "
+                  "for them");
+        return;
+    }
+    uint32_t n = (uint32_t)delay_p->no_of_delays;
+    uint32_t classes = delay_p->pulsere_flag ? 3u : 1u;
+    uint32_t operand = delay_p->mtm_flag ? (uint32_t)g_vpi_delay_select : 0u;
+    int append = delay_p->append_flag != 0;
+    int64_t given[3][12] = {{0}};
+    for (uint32_t which = 0; which < classes; ++which) {
+        for (uint32_t k = 0; k < n; ++k) {
+            const s_vpi_time* time = &delay_p->da[delay_slot(delay_p, k, which, operand)];
+            if (!delay_ticks(time, delay_p->time_type, row, &given[which][k])) {
+                vpi_error("LLG_VPI_DELAYS", "vpi_put_delays: a delay value is out of range");
+                return;
+            }
+            if (!append && given[which][k] < 0 && kind != DELAYS_TCHK) {
+                vpi_error("LLG_VPI_DELAYS",
+                          "vpi_put_delays: module path and primitive delays are not negative");
+                return;
+            }
+        }
+    }
+    if (kind == DELAYS_TCHK) {
+        /* Absolute limits, the stored ops take them by limit index. A
+         * negative limit counts as 0 except where the check keeps its sign
+         * (31.9.4 for `$setuphold`/`$recrem` with negative timing checks, the
+         * `$nochange` offsets). */
+        int64_t limits[2] = {0, 0};
+        for (uint32_t k = 0; k < n && k < 2u; ++k) {
+            int64_t value = given[0][k];
+            if (append) {
+                int64_t current = current_delay(row, kind, k);
+                value = value > 0 && current > INT64_MAX - value ? INT64_MAX
+                        : value < 0 && current < INT64_MIN - value ? INT64_MIN
+                                                                   : current + value;
+            }
+            const llg_sdf_op_t* op = limit_op(tm, k);
+            int signed_limit = row->detail == vpiNoChange || (op && op->kind == LLG_SDF_PAIR);
+            if (value < 0 && !signed_limit) value = 0;
+            limits[k] = value;
+        }
+        llg_sdf_annotation_t annotation = {tm->ops, tm->op_count, limits};
+        llg_sdf_apply(&annotation);
+        return;
+    }
+    llg_sdf_op_t* ops = (llg_sdf_op_t*)calloc(tm->op_count, sizeof(*ops));
+    if (!ops) {
+        vpi_error("LLG_VPI_NOMEM", "vpi_put_delays: out of memory");
+        return;
+    }
+    int64_t values[3 * 12] = {0};
+    if (kind == DELAYS_PATH) {
+        for (uint32_t which = 0; which < classes; ++which)
+            expand_path_values(given[which], n, values + 12u * which);
+    } else {
+        values[0] = given[0][0];
+        values[1] = given[0][1];
+        /* Two delays: turn-off is the smaller (28.16). */
+        values[2] = n == 3 ? given[0][2] : (given[0][0] < given[0][1] ? given[0][0] : given[0][1]);
+    }
+    for (uint32_t i = 0; i < tm->op_count; ++i) {
+        ops[i] = tm->ops[i];
+        ops[i].first = 0;
+        ops[i].derive = 0;
+        ops[i].flags = (uint8_t)(append ? LLG_SDF_INCREMENT : 0u);
+        if (kind == DELAYS_PATH) {
+            ops[i].delay = 0x0fffu;
+            ops[i].reject = delay_p->pulsere_flag ? 0x0fffu : 0u;
+            ops[i].error = ops[i].reject;
+            /* 38.32: new delays alone leave the pulse limits as they were. */
+            if (!delay_p->pulsere_flag) ops[i].flags |= LLG_SDF_KEEP_LIMITS;
+        } else {
+            ops[i].delay = 0x7u;
+            ops[i].reject = 0;
+            ops[i].error = 0;
+        }
+    }
+    llg_sdf_annotation_t annotation = {ops, tm->op_count, values};
+    llg_sdf_apply(&annotation);
+    free(ops);
+}
+
+/* ── cbTchkViolation (38.36.1) ─────────────────────────────────────────── */
+
+/* Timing check rows by the runtime check they own, built at the first
+ * violation a record may report (pair rows exist only once the model
+ * started). */
+typedef struct {
+    const llg_timing_check_t* check;
+    uint32_t row;
+} llg_vpi_tchk_row_t;
+
+static llg_vpi_tchk_row_t* g_vpi_tchk_rows;
+static size_t g_vpi_tchk_row_count;
+static int g_vpi_tchk_rows_built;
+
+static int compare_tchk_rows(const void* left, const void* right) {
+    uintptr_t a = (uintptr_t)((const llg_vpi_tchk_row_t*)left)->check;
+    uintptr_t b = (uintptr_t)((const llg_vpi_tchk_row_t*)right)->check;
+    return a < b ? -1 : a > b;
+}
+
+static void tchk_rows_build(void) {
+    g_vpi_tchk_rows_built = 1;
+    size_t capacity = 0;
+    for (size_t row = 0; row < g_vpi.object_count; ++row) {
+        const llg_vpi_model_object_t* object = &g_vpi.objects[row];
+        if (object->type == vpiTchk && object->timing) capacity += 2u * object->timing->op_count;
+    }
+    if (!capacity) return;
+    g_vpi_tchk_rows = (llg_vpi_tchk_row_t*)calloc(capacity, sizeof(*g_vpi_tchk_rows));
+    if (!g_vpi_tchk_rows) return;
+    size_t count = 0;
+    for (size_t row = 0; row < g_vpi.object_count; ++row) {
+        const llg_vpi_model_object_t* object = &g_vpi.objects[row];
+        if (object->type != vpiTchk || !object->timing) continue;
+        for (uint32_t i = 0; i < object->timing->op_count; ++i) {
+            const llg_sdf_op_t* op = &object->timing->ops[i];
+            if (op->kind == LLG_SDF_CHECK && op->check) {
+                g_vpi_tchk_rows[count++] = (llg_vpi_tchk_row_t){op->check, (uint32_t)row};
+            } else if (op->kind == LLG_SDF_PAIR && op->checks && op->checks->pairs &&
+                       op->index < op->checks->n_pairs) {
+                const llg_timing_pair_t* pair = &op->checks->pairs[op->index];
+                int32_t rows[2] = {pair->before_row, pair->after_row};
+                for (int part = 0; part < 2; ++part)
+                    if (rows[part] >= 0 && (uint32_t)rows[part] < op->checks->n_checks)
+                        g_vpi_tchk_rows[count++] =
+                            (llg_vpi_tchk_row_t){&op->checks->checks[rows[part]], (uint32_t)row};
+            }
+        }
+    }
+    qsort(g_vpi_tchk_rows, count, sizeof(*g_vpi_tchk_rows), compare_tchk_rows);
+    g_vpi_tchk_row_count = count;
+}
+
+static uint32_t tchk_row_of(const llg_timing_check_t* check) {
+    if (!g_vpi_tchk_rows_built) tchk_rows_build();
+    size_t low = 0, high = g_vpi_tchk_row_count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if ((uintptr_t)g_vpi_tchk_rows[middle].check < (uintptr_t)check) low = middle + 1u;
+        else high = middle;
+    }
+    return low < g_vpi_tchk_row_count && g_vpi_tchk_rows[low].check == check
+               ? g_vpi_tchk_rows[low].row : LLG_VPI_NONE;
+}
+
+static void tchk_rows_release(void) {
+    free(g_vpi_tchk_rows);
+    g_vpi_tchk_rows = NULL;
+    g_vpi_tchk_row_count = 0;
+    g_vpi_tchk_rows_built = 0;
 }
 
 /* ── value formats (Table 38-3) ─────────────────────────────────────────── */
@@ -2979,7 +3453,7 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
             return typespec_handle(typespec_ref(reference));
         }
         case vpiParent:
-            if (slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_PORTBIT)
+            if (slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_PORTBIT || slot->kind == SLOT_TERM)
                 return object_handle(slot->object);
             if (slot->kind == SLOT_MEMBER) {
                 /* 37.17 detail 26: the enclosing member, else the struct or
@@ -3074,7 +3548,37 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 return conn_handle(slot->object, type == vpiLhs ? 0u : 1u);
             break;
         case vpiExpr:
-            if (slot->kind == SLOT_PRIMTERM) return conn_handle(slot->object, (uint32_t)slot->aux);
+            if (slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_TERM)
+                return conn_handle(slot->object, (uint32_t)slot->aux);
+            break;
+        case vpiCondition:
+            /* 37.35, 37.36: the condition of a state-dependent path or of a
+             * timing check terminal; NULL without one (and for `ifnone`). */
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiModPath) {
+                uint32_t conn = role_conn(slot->object, LLG_VPI_ROLE_CONDITION);
+                return conn == LLG_VPI_NONE ? NULL : conn_handle(slot->object, conn);
+            }
+            if (slot->kind == SLOT_TERM) {
+                const llg_vpi_conn_t* conn = row_conn(slot->object, (uint32_t)slot->aux);
+                return conn && conn->condition ? conn_handle(slot->object, conn->condition - 1u)
+                                               : NULL;
+            }
+            break;
+        case vpiModDataPathIn:
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiModPath)
+                return role_term(slot->object, LLG_VPI_ROLE_PATH_DATA);
+            break;
+        case vpiTchkRefTerm:
+        case vpiTchkDataTerm:
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiTchk)
+                return role_term(slot->object, type == vpiTchkRefTerm ? LLG_VPI_ROLE_TCHK_REF
+                                                                      : LLG_VPI_ROLE_TCHK_DATA);
+            break;
+        case vpiTchkNotifier:
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiTchk) {
+                uint32_t conn = role_conn(slot->object, LLG_VPI_ROLE_NOTIFIER);
+                return conn == LLG_VPI_NONE ? NULL : conn_handle(slot->object, conn);
+            }
             break;
         case vpiActual:
             if (slot->kind == SLOT_REFOBJ) return object_handle(row_of(object->target));
@@ -3144,7 +3648,7 @@ static int iteration_type_supported(int type) {
         case vpiTask: case vpiFunction: case vpiPrimitive: case vpiGate: case vpiSwitch:
         case vpiUdp: case vpiModuleArray: case vpiInterfaceArray: case vpiPrimitiveArray:
         case vpiGateArray: case vpiSwitchArray: case vpiUdpArray: case vpiInstanceArray:
-        case vpiModport:
+        case vpiModport: case vpiModPath: case vpiTchk:
             return 1;
         default:
             return 0;
@@ -3399,6 +3903,25 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         vpi_error("LLG_VPI_RELATION", "an instance array iterates vpiRange and its instances");
         return NULL;
     }
+    if (slot->kind == SLOT_OBJECT && object && object->type == vpiModPath) {
+        /* 37.35: the input, output and data terminals. */
+        int role = type == vpiModPathIn ? LLG_VPI_ROLE_PATH_IN
+                   : type == vpiModPathOut ? LLG_VPI_ROLE_PATH_OUT
+                   : type == vpiModDataPathIn ? LLG_VPI_ROLE_PATH_DATA : -1;
+        if (role >= 0) return iterate_roles(slot->object, type, 1u << role);
+        vpi_error("LLG_VPI_RELATION",
+                  "a module path iterates vpiModPathIn, vpiModPathOut and vpiModDataPathIn");
+        return NULL;
+    }
+    if (slot->kind == SLOT_OBJECT && object && object->type == vpiTchk) {
+        /* 37.36 detail 2: the arguments in order, the events as tchk terms. */
+        if (type == vpiExpr)
+            return iterate_roles(slot->object, type,
+                                 1u << LLG_VPI_ROLE_TCHK_REF | 1u << LLG_VPI_ROLE_TCHK_DATA |
+                                     1u << LLG_VPI_ROLE_ARGUMENT | 1u << LLG_VPI_ROLE_NOTIFIER);
+        vpi_error("LLG_VPI_RELATION", "a timing check iterates vpiExpr");
+        return NULL;
+    }
     if (slot->kind == SLOT_OBJECT && object && is_primitive_type(object->type)) {
         if (type == vpiPrimTerm) return iterate_aux(SLOT_PRIMTERM, slot->object, object->conn_count, type, 0);
         vpi_error("LLG_VPI_RELATION", "a primitive iterates vpiPrimTerm");
@@ -3573,6 +4096,12 @@ static int handle_type(const llg_vpi_slot_t* slot) {
             return conn && conn->ref.ref_kind == LLG_VPI_ARG_CONSTANT ? vpiConstant : vpiOperation;
         }
         case SLOT_PRIMTERM: return vpiPrimTerm;
+        case SLOT_TERM: {
+            const llg_vpi_conn_t* conn = row_conn(slot->object, (uint32_t)slot->aux);
+            return conn && (conn->role == LLG_VPI_ROLE_TCHK_REF ||
+                            conn->role == LLG_VPI_ROLE_TCHK_DATA)
+                       ? vpiTchkTerm : vpiPathTerm;
+        }
         case SLOT_PORTBIT: return vpiPortBit;
         case SLOT_REFOBJ: return vpiRefObj;
         case SLOT_STMT: return slot->aux;
@@ -3814,10 +4343,34 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if ((slot->kind == SLOT_OBJECT || slot->kind == SLOT_PORTBIT) && object &&
                 object->type == vpiPort)
                 return object->subtype ? object->subtype : vpiNoDirection;
-            if (slot->kind == SLOT_PRIMTERM) {
+            if (slot->kind == SLOT_PRIMTERM || (slot->kind == SLOT_TERM && type == vpiPathTerm)) {
                 const llg_vpi_conn_t* conn = row_conn(slot->object, (uint32_t)slot->aux);
                 return conn && conn->direction ? conn->direction : vpiNoDirection;
             }
+            return unsupported_property();
+        case vpiEdge:
+            if (slot->kind == SLOT_TERM) {
+                const llg_vpi_conn_t* conn = row_conn(slot->object, (uint32_t)slot->aux);
+                return conn ? conn->edge : vpiNoEdge;
+            }
+            return unsupported_property();
+        case vpiPathType:
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiModPath)
+                return object->detail;
+            return unsupported_property();
+        case vpiPolarity:
+        case vpiDataPolarity:
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiModPath)
+                return property == vpiPolarity ? object->timing->polarity
+                                               : object->timing->data_polarity;
+            return unsupported_property();
+        case vpiModPathHasIfNone:
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiModPath)
+                return object->timing->has_ifnone != 0;
+            return unsupported_property();
+        case vpiTchkType:
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiTchk)
+                return object->detail;
             return unsupported_property();
         case vpiPortType:
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiPort)
@@ -4030,6 +4583,10 @@ static const char* type_name(int type) {
         case vpiModport: return "vpiModport";
         case vpiPortBit: return "vpiPortBit";
         case vpiRefObj: return "vpiRefObj";
+        case vpiModPath: return "vpiModPath";
+        case vpiPathTerm: return "vpiPathTerm";
+        case vpiTchk: return "vpiTchk";
+        case vpiTchkTerm: return "vpiTchkTerm";
         default: return NULL;
     }
 }
@@ -4896,7 +5453,7 @@ void vpi_get_time(vpiHandle object, p_vpi_time time) {
 static int handle_identity(const llg_vpi_slot_t* slot, uint32_t index, uint64_t identity[4]) {
     llg_vpi_target_t target;
     if (slot->kind == SLOT_CONN || slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_PORTBIT ||
-        slot->kind == SLOT_REFOBJ) {
+        slot->kind == SLOT_REFOBJ || slot->kind == SLOT_TERM) {
         identity[0] = 2u + slot->kind;
         identity[1] = slot->object;
         identity[2] = 0;
@@ -5055,6 +5612,7 @@ typedef enum {
     CB_DISABLE,    /* cbDisable */
     CB_ASSERTION,  /* vpi_register_assertion_cb (39.4.2) */
     CB_ASSERT_SYS, /* cbAssertionSys* (39.4.1) */
+    CB_TCHK,       /* cbTchkViolation */
 } llg_vpi_cb_kind_t;
 
 typedef struct llg_vpi_cb {
@@ -5242,6 +5800,7 @@ static void vpi_cb_detach(llg_vpi_cb_t* cb, llg_vpi_cb_done_t* done) {
     if (cb->kind == CB_FORCE) --g_vpi.force_cbs;
     if (cb->kind == CB_DISABLE) --g_vpi.disable_cbs;
     if (cb->kind == CB_ASSERTION) assertion_cb_release(cb);
+    if (cb->kind == CB_TCHK) --g_vpi.tchk_cbs;
     if (cb->waiting) {
         cb->waiting = 0;
         --g_vpi.next_time_pending;
@@ -5786,6 +6345,57 @@ static int bind_disable_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
     return 1;
 }
 
+/* A cbTchkViolation record with a NULL obj runs for every timing check, one
+ * on a timing check only for its own violations. */
+static int matches_tchk(const llg_vpi_cb_t* cb, const void* context) {
+    uint32_t row = *(const uint32_t*)context;
+    return cb->kind == CB_TCHK && (cb->target.object == LLG_VPI_NONE || cb->target.object == row);
+}
+
+/* Runtime violation hook: row `check` of `set` reported a violation
+ * (38.36.1: obj is the timing check). It runs during the timing step, after
+ * the report and before the step toggles the notifiers. */
+static void vpi_tchk_violation(llg_timing_check_set_t* set, const llg_timing_check_t* check) {
+    (void)set;
+    if (!g_vpi.tchk_cbs || !g_vpi.indexed) return;
+    uint32_t row = tchk_row_of(check);
+    if (row == LLG_VPI_NONE) return;
+    llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
+    size_t count;
+    dispatch_begin();
+    llg_vpi_cb_t** items = collect_cbs(g_vpi.cbs, matches_tchk, &row, buffer, &count);
+    for (size_t i = 0; i < count; ++i) {
+        llg_vpi_cb_t* cb = items[i];
+        if (cb->removed) continue;
+        s_cb_data data;
+        s_vpi_time time;
+        base_data(cb, &data);
+        data.obj = object_handle(row);
+        data.time = callback_time(cb->time.type, cb->scope ? cb->scope : row_object(row),
+                                  llg_time(), &time);
+        invoke_cb(cb, &data);
+    }
+    if (items != buffer) free(items);
+    dispatch_end();
+}
+
+/* 38.36.1: obj is NULL (every timing check) or a timing check. */
+static int bind_tchk_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
+    cb->target.object = LLG_VPI_NONE;
+    cb->target.element = LLG_VPI_NO_ELEMENT;
+    if (!data->obj) return 1;
+    llg_vpi_slot_t* slot = checked_handle(data->obj, NULL);
+    if (!slot) return 0;
+    llg_vpi_model_object_t* object = slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
+    if (!object || object->type != vpiTchk) {
+        vpi_error("LLG_VPI_CALLBACK", "cbTchkViolation needs a NULL obj or a timing check");
+        return 0;
+    }
+    cb->target.object = slot->object;
+    cb->scope = object;
+    return 1;
+}
+
 /* ── assertion callbacks (39.4) ─────────────────────────────────────────── */
 
 /* The attempt reasons a record watches its item for, and the control
@@ -6145,6 +6755,8 @@ vpiHandle vpi_register_cb(p_cb_data data) {
                       "the assertion system has ended; no assertion system callback can occur");
             return NULL;
         }
+    } else if (reason == cbTchkViolation) {
+        kind = CB_TCHK;
     } else if (reason == cbNextSimTime || time_reason(reason)) {
         kind = reason == cbNextSimTime ? CB_NEXT_TIME : CB_TIME;
         if (g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
@@ -6156,7 +6768,7 @@ vpiHandle vpi_register_cb(p_cb_data data) {
                       "unsupported or invalid VPI callback registration");
         return NULL;
     }
-    if ((kind == CB_VALUE || kind == CB_FORCE || kind == CB_DISABLE) &&
+    if ((kind == CB_VALUE || kind == CB_FORCE || kind == CB_DISABLE || kind == CB_TCHK) &&
         g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
         vpi_error("LLG_VPI_CALLBACK", "the simulation has ended; no value can change");
         return NULL;
@@ -6206,6 +6818,10 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         vpi_cb_free(cb);
         return NULL;
     }
+    if (kind == CB_TCHK && !bind_tchk_cb(cb, data)) {
+        vpi_cb_free(cb);
+        return NULL;
+    }
     cb->data.time = data->time ? &cb->time : NULL;
     cb->data.value = data->value ? &cb->value : NULL;
     uint32_t index = alloc_slot(SLOT_CALLBACK);
@@ -6235,6 +6851,10 @@ vpiHandle vpi_register_cb(p_cb_data data) {
     if (kind == CB_DISABLE) {
         ++g_vpi.disable_cbs;
         llg_disable_watch_hook(vpi_disabled);
+    }
+    if (kind == CB_TCHK) {
+        ++g_vpi.tchk_cbs;
+        llg_timing_violation_hook(vpi_tchk_violation);
     }
     if (kind == CB_NEXT_TIME) {
         cb->waiting = 1;
@@ -6699,6 +7319,8 @@ void llg_vpi_shutdown(void) {
     llg_force_watch_hook(NULL);
     llg_disable_watch_hook(NULL);
     llg_assertion_watch_hook(NULL);
+    llg_timing_violation_hook(NULL);
+    tchk_rows_release();
     while (g_vpi.cbs) vpi_cb_retire(g_vpi.cbs);
     free(g_vpi.watch_buckets);
     for (size_t i = g_vpi.static_count; i < g_vpi.slot_count; ++i) {
@@ -6927,20 +7549,6 @@ vpiHandle vpi_handle_multi(PLI_INT32 type, vpiHandle ref_handle1, vpiHandle ref_
     vpi_enter();
     vpi_unsupported_routine("vpi_handle_multi", "no vpiPortInst or vpiInterModPath objects");
     return NULL;
-}
-
-void vpi_get_delays(vpiHandle object, p_vpi_delay delay_p) {
-    (void)object;
-    (void)delay_p;
-    vpi_enter();
-    vpi_unsupported_routine("vpi_get_delays", "no VPI delay objects");
-}
-
-void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
-    (void)object;
-    (void)delay_p;
-    vpi_enter();
-    vpi_unsupported_routine("vpi_put_delays", "no VPI delay objects");
 }
 
 PLI_INT32 vpi_get_data(PLI_INT32 id, PLI_BYTE8* dataLoc, PLI_INT32 numOfBytes) {

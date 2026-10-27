@@ -1177,6 +1177,13 @@ void llg_timing_checks_run(void);
 void llg_timing_check_limits_changed(llg_timing_check_set_t* set);
 /* The started sets, most recently started first, linked through `next`. */
 llg_timing_check_set_t* llg_timing_check_sets(void);
+/* Observer of timing violations (VPI cbTchkViolation): runs for every
+ * violation of row `check` of `set`, after the report and before the
+ * notifiers of the step toggle, whether messages and notifiers are on or
+ * off. Without a hook each violation pays one predictable branch. */
+typedef void (*llg_timing_violation_fn)(llg_timing_check_set_t* set,
+                                        const llg_timing_check_t* check);
+void llg_timing_violation_hook(llg_timing_violation_fn hook);
 
 /* SDF back-annotation (IEEE 1800-2009 32). The model generator reads,
  * resolves and values every `$sdf_annotate` file; an annotation is the
@@ -1194,6 +1201,10 @@ llg_timing_check_set_t* llg_timing_check_sets(void);
 /* Bits 3-4: how a load combines its sources' delays (INTERCONNECT_MIPD):
  * 0 the largest, 1 the smallest, 2 the average, 3 the last annotated. */
 #define LLG_SDF_MIPD_SHIFT 3u
+/* A path op whose path has no pulse-limit table first takes the limits the
+ * global percentages give its current delays, so new delays leave the
+ * limits as they were (VPI vpi_put_delays without pulse values, 38.32). */
+#define LLG_SDF_KEEP_LIMITS 32u
 
 /* An interconnect load port bit: the delays of each source entry (entry 0:
  * from every source) and whether it was annotated; `path` is the port net's
@@ -1238,6 +1249,11 @@ typedef struct llg_sdf_annotation {
  * exceed its delay. Pending events keep their scheduled times; later events
  * use the new values. */
 void llg_sdf_apply(const llg_sdf_annotation_t* annotation);
+/* The reject and error limits of transition `t` of `path` as the path
+ * stage applies them: its limit table, else the global percentages of its
+ * delay, never above the delay. */
+void llg_module_path_pulse_limits(const llg_module_path_t* path, uint32_t t,
+                                  uint64_t* reject, uint64_t* error);
 /* 1 when bit `bit` of a path destination has a scheduled update; then its
  * absolute time and four-state value (0, 1, 2 = x, 3 = z) are stored. */
 int llg_net_path_pending(const llg_net_t* net, uint32_t bit, uint64_t* time,

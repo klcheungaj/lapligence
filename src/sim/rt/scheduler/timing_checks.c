@@ -17,6 +17,9 @@
 // time 0 never stamp (A9-D3).
 
 static int timing_check_messages = 1;
+static llg_timing_violation_fn timing_violation_hook;
+
+void llg_timing_violation_hook(llg_timing_violation_fn hook) { timing_violation_hook = hook; }
 
 // A heap entry: due time, issue order for equal times, and the item.
 typedef struct {
@@ -526,13 +529,21 @@ static void timing_unit(char* out, size_t size) {
     snprintf(out, size, "%llufs", (unsigned long long)fs);
 }
 
-// One violation: a report on stderr (unless turned off) and the notifier
-// flag. The times are those of the undelayed events.
+static void timing_report(llg_timing_check_set_t* set, const llg_timing_check_t* check,
+                          uint64_t reference, uint64_t data);
+
+// One violation: a report on stderr (unless turned off), the notifier flag
+// and the violation observer. The times are those of the undelayed events.
 static void timing_violation(llg_timing_check_set_t* set, const llg_timing_check_t* check,
                              uint64_t reference, uint64_t data) {
     if (check->notifier && check->notifier <= set->n_notifiers)
         set->notify[check->notifier - 1u] = 1u;
-    if (!timing_check_messages) return;
+    if (timing_check_messages) timing_report(set, check, reference, data);
+    if (LLG_CO_UNLIKELY(timing_violation_hook != NULL)) timing_violation_hook(set, check);
+}
+
+static void timing_report(llg_timing_check_set_t* set, const llg_timing_check_t* check,
+                          uint64_t reference, uint64_t data) {
     char unit[32];
     timing_unit(unit, sizeof(unit));
     llg_report_t report;

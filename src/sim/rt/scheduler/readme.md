@@ -242,6 +242,9 @@ Limits are writable for annotation; steady-state steps allocate nothing
 (deferred `$nochange` data and pending delay transitions grow on demand).
 A row flagged `LLG_TIMING_DISABLED` never reports; a report text may carry
 `\003`/`\004` placeholders that print the row's current `limit`/`limit2`.
+`llg_timing_violation_hook` installs one function called after each report
+with the set and check (VPI `cbTchkViolation`); it is NULL unless a callback
+is registered, so a violation then costs one predicted branch.
 
 SDF annotations (`llg_sdf_annotation_t`; model in the `scheduler/sdf.c`
 header): `llg_sdf_apply` writes path delays and pulse limits (allocating a
@@ -257,6 +260,10 @@ is shorter than two units. Startup
 annotations run in the storage defaults before the path sets, delayed nets
 and timing checks start; `sdf_release` frees the allocated limit tables at
 cleanup.
+A path op flagged `LLG_SDF_KEEP_LIMITS` (VPI `vpi_put_delays` without
+`pulsere_flag`) first materializes the path's limit table from the current
+delays, so the new delays leave the pulse limits as they were (38.32);
+`llg_module_path_pulse_limits` reads the limits a transition uses.
 
 ## Activations, waits and limits
 

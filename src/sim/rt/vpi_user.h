@@ -92,6 +92,53 @@ typedef struct llg_vpi_handle* vpiHandle;
 #define vpiTaskFunc 127
 #define vpiNamedEventArray 129
 
+/* Module paths and timing checks (37.35, 37.36). */
+#define vpiInterModPath 26
+#define vpiModPath 31
+#define vpiPathTerm 43
+#define vpiTchk 61
+#define vpiTchkTerm 62
+#define vpiCondition 71
+#define vpiTchkDataTerm 86
+#define vpiTchkNotifier 87
+#define vpiTchkRefTerm 88
+#define vpiModDataPathIn 94
+#define vpiModPathIn 95
+#define vpiModPathOut 96
+#define vpiPolarity 34
+#define vpiDataPolarity 35
+#define vpiPositive 1
+#define vpiNegative 2
+#define vpiUnknown 3
+#define vpiEdge 36
+#define vpiNoEdge 0x00
+#define vpiEdge01 0x01
+#define vpiEdge10 0x02
+#define vpiEdge0x 0x04
+#define vpiEdgex1 0x08
+#define vpiEdge1x 0x10
+#define vpiEdgex0 0x20
+#define vpiPosedge (vpiEdgex1 | vpiEdge01 | vpiEdge0x)
+#define vpiNegedge (vpiEdgex0 | vpiEdge10 | vpiEdge1x)
+#define vpiAnyEdge (vpiPosedge | vpiNegedge)
+#define vpiPathType 37
+#define vpiPathFull 1
+#define vpiPathParallel 2
+#define vpiTchkType 38
+#define vpiSetup 1
+#define vpiHold 2
+#define vpiPeriod 3
+#define vpiWidth 4
+#define vpiSkew 5
+#define vpiRecovery 6
+#define vpiNoChange 7
+#define vpiSetupHold 8
+#define vpiFullskew 9
+#define vpiRecrem 10
+#define vpiRemoval 11
+#define vpiTimeskew 12
+#define vpiModPathHasIfNone 71
+
 /* Statements reported by cbForce/cbRelease/cbAssign/cbDeassign (38.36.1). */
 #define vpiAssignStmt 2
 #define vpiDeassign 9

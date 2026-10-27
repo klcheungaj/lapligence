@@ -477,6 +477,14 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
             model.dpi_scopes().len()
         ));
     }
+    // How `vpi_put_delays` may write the model's delays (38.32).
+    if model.vpi_catalog && (model.vpi_delays_writable || model.vpi_delay_select != 1) {
+        out.push_str(&format!(
+            "    llg_vpi_model_delays({}, {});\n",
+            u8::from(model.vpi_delays_writable),
+            model.vpi_delay_select
+        ));
+    }
     out.push_str(&format!(
         "    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_model_types(llg_vpi_type_tables) || !llg_vpi_startup_static(LLG_VPI_STATIC_ROUTINES) || !llg_vpi_startup()) {{\n\
              \x20       llg_vpi_shutdown();\n\

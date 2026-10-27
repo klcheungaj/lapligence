@@ -237,3 +237,35 @@ unnamed processes and assignments in source order, decision A19-D7).
   event to toggle." `$fire` at time 10 does so: the callback runs inside the
   put, then `fire level=0`, then the woken process (decision A19-D8). `inc
   2` and the `final` line close the run.
+
+## timing (37.35, 37.36)
+
+`timing.c` walks every module instance from `vpi_iterate(vpiModule, NULL)`
+and prints its `vpiModPath` and `vpiTchk` objects in source order with
+`vpiLineNo`, then checks two refusals and prints `failures=0` when every
+relation pointed back at its origin (`vpiParent` of a term is its path or
+check, `vpiModule` is the instance).
+
+- Paths. The 37.35 diagram (L59873-L59900) gives the path terms
+  `vpiModPathIn`, `vpiModPathOut` and `vpiModDataPathIn` with
+  `vpiDirection`, `vpiEdge` and `vpiExpr`, the path's `vpiCondition`,
+  `vpiPathType`, `vpiPolarity`, `vpiDataPolarity` and
+  `vpiModPathHasIfNone`. `(a +=> y)` is a parallel path (`type=2`) with
+  polarity `vpiPositive`; `(posedge clk => (q +: d))` has edge
+  `vpiPosedge` (`0x0d`) on its input, `d` as data path input and data
+  polarity `vpiPositive`. `if (en) (b *> y)` is a full path (`type=1`)
+  whose condition is `en`; it and `ifnone (b *> y)` report `ifnone=1`
+  (decision A19-D9).
+- Checks. 37.36 details 1-2 (L59948-L59951): "the relationship
+  vpiTchkRefTerm shall denote the reference_event or
+  controlled_reference_event, while vpiTchkDataTerm shall denote the
+  data_event, if any" and "When iterating over vpiExpr from a tchk, the
+  handles returned for a reference_event, a controlled_reference_event, or a
+  data_event shall have the type vpiTchkTerm." Every timing check task
+  appears once with its `vpiTchkType` (`$setup` 1 to `$timeskew` 12); for
+  `$setup` the reference term is `clk` (second argument), the `&&& en`
+  condition sits on the data term of `$hold`, `negedge` is `0x32`,
+  `$period` and `$width` have no data term, and `vpiTchkNotifier` is
+  `notifier` only for `$setup` (decision A19-D10).
+- Refusals. `vpi_iterate(vpiExpr)` on a path and `vpi_get(vpiTchkType)` on a
+  path are `vpiError` (`level=3`).

@@ -158,9 +158,9 @@ pub use storage::{
 };
 mod vpi;
 pub use vpi::{
-    IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn, IrVpiConstant,
-    IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiTypespec, IrVpiTypespecKind,
-    IrVpiTypespecMember, IrVpiVarKind,
+    IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn, IrVpiConnRole,
+    IrVpiConstant, IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiTiming, IrVpiTypespec,
+    IrVpiTypespecKind, IrVpiTypespecMember, IrVpiVarKind,
 };
 
 /// Upper bound on one generated `llg_net_t`'s driver count. The runtime stores
@@ -641,6 +641,13 @@ pub struct IrModel {
     /// with `vpi_objects`, when no application can reach the catalog: no
     /// user system task call site and no `CodegenOptions::vpi`.
     pub(in crate::sim) vpi_catalog: bool,
+    /// Whether every delay the catalog names is writable runtime storage
+    /// (models generated for VPI applications), which `vpi_put_delays`
+    /// needs.
+    pub(in crate::sim) vpi_delays_writable: bool,
+    /// The min:typ:max operand the model's delays use (0 min, 1 typ, 2
+    /// max), which `vpi_put_delays` takes from min:typ:max values.
+    pub(in crate::sim) vpi_delay_select: u8,
     /// Random streams the model observes; set by lowering.
     pub(in crate::sim) random: IrRandomUse,
     /// Constraint problems of randomize calls (IEEE 1800-2009 18), one per
@@ -806,6 +813,8 @@ impl IrModel {
             vpi_compile_calls: Vec::new(),
             vpi_builtin_calls: Vec::new(),
             vpi_catalog: true,
+            vpi_delays_writable: false,
+            vpi_delay_select: 1,
             random: IrRandomUse::default(),
             rand_problems: Vec::new(),
             free_variables: Vec::new(),
