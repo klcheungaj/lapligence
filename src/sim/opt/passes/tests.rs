@@ -216,6 +216,8 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         final_spawns: Vec::new(),
         vpi_objects: Vec::new(),
         vpi_typespecs: Vec::new(),
+        vpi_code: Vec::new(),
+        vpi_code_files: Vec::new(),
         vpi_compile_calls: Vec::new(),
         vpi_builtin_calls: Vec::new(),
         vpi_catalog: true,

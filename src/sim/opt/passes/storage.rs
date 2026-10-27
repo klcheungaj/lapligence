@@ -162,6 +162,8 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         final_spawns: _,
         vpi_objects,
         vpi_typespecs: _,
+        vpi_code: _,
+        vpi_code_files: _,
         vpi_compile_calls: _,
         vpi_builtin_calls: _,
         vpi_catalog: _,

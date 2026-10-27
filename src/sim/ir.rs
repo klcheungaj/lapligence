@@ -158,9 +158,9 @@ pub use storage::{
 };
 mod vpi;
 pub use vpi::{
-    IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn, IrVpiConnRole,
-    IrVpiConstant, IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiTiming, IrVpiTypespec,
-    IrVpiTypespecKind, IrVpiTypespecMember, IrVpiVarKind,
+    IrVpiArgRef, IrVpiBuiltinCall, IrVpiCode, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn,
+    IrVpiConnRole, IrVpiConstant, IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiTiming,
+    IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember, IrVpiVarKind,
 };
 
 /// Upper bound on one generated `llg_net_t`'s driver count. The runtime stores
@@ -630,6 +630,12 @@ pub struct IrModel {
     pub(in crate::sim) vpi_objects: Vec<IrVpiObject>,
     /// Interned typespecs the catalog objects name (IEEE 1800-2009 37.23).
     pub(in crate::sim) vpi_typespecs: Vec<IrVpiTypespec>,
+    /// Expression and statement objects (IEEE 1800-2009 37.54-37.74),
+    /// captured only for models generated for VPI applications
+    /// (`CodegenOptions::vpi`); empty otherwise.
+    pub(in crate::sim) vpi_code: Vec<IrVpiCode>,
+    /// Source files the [`IrVpiCode::file`] entries name.
+    pub(in crate::sim) vpi_code_files: Vec<String>,
     /// Type-only VPI call sites run through compiletf/sizetf before the
     /// generated scheduler starts. Empty for hand-built IR fixtures.
     pub(in crate::sim) vpi_compile_calls: Vec<IrVpiCompileCall>,
@@ -810,6 +816,8 @@ impl IrModel {
             final_spawns: parts.final_spawns,
             vpi_objects: Vec::new(),
             vpi_typespecs: Vec::new(),
+            vpi_code: Vec::new(),
+            vpi_code_files: Vec::new(),
             vpi_compile_calls: Vec::new(),
             vpi_builtin_calls: Vec::new(),
             vpi_catalog: true,
@@ -949,6 +957,14 @@ impl IrModel {
 
     pub fn vpi_typespecs(&self) -> &[IrVpiTypespec] {
         &self.vpi_typespecs
+    }
+
+    pub fn vpi_code(&self) -> &[IrVpiCode] {
+        &self.vpi_code
+    }
+
+    pub fn vpi_code_files(&self) -> &[String] {
+        &self.vpi_code_files
     }
 
     pub fn vpi_compile_calls(&self) -> &[IrVpiCompileCall] {

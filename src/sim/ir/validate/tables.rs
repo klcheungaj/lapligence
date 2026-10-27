@@ -180,8 +180,51 @@ impl Validator<'_> {
             }
         }
 
+        // Expression and statement objects: children follow their parent,
+        // so the table is a forest the runtime walks without cycles.
+        let codes = self.model.vpi_code.len();
+        let objects = self.model.vpi_objects.len();
+        for (idx, code) in self.model.vpi_code.iter().enumerate() {
+            let path = format!("vpi_code[{idx}]");
+            let first = code.first as usize;
+            if code.count > 0 && (first <= idx || first + code.count as usize > codes) {
+                return self.fail(path, "VPI code children must follow their parent in bounds");
+            }
+            if code.object.is_some_and(|object| object >= objects)
+                || code.scope.is_some_and(|scope| scope >= objects)
+                || code
+                    .typespec
+                    .is_some_and(|typespec| typespec >= self.model.vpi_typespecs.len())
+                || code
+                    .file
+                    .is_some_and(|file| file as usize >= self.model.vpi_code_files.len())
+            {
+                return self.fail(path, "VPI code references an out-of-bounds table entry");
+            }
+            if code.flags & crate::sim::ir::IrVpiCode::ALIAS != 0 && code.object.is_none() {
+                return self.fail(path, "VPI code alias names no catalog object");
+            }
+            if code.text.as_deref().is_some_and(|text| text.contains('\0')) {
+                return self.fail(path, "VPI code text must not contain NUL bytes");
+            }
+        }
+        let code_in_bounds = |code: Option<u32>| code.is_none_or(|code| (code as usize) < codes);
+        for (idx, object) in self.model.vpi_objects.iter().enumerate() {
+            if !code_in_bounds(object.code)
+                || object.conns.iter().any(|conn| !code_in_bounds(conn.code))
+            {
+                return self.fail(
+                    format!("vpi_objects[{idx}]"),
+                    "VPI object references an out-of-bounds code entry",
+                );
+            }
+        }
+
         for (idx, call) in self.model.vpi_compile_calls.iter().enumerate() {
             let path = format!("vpi_compile_calls[{idx}]");
+            if call.args.iter().any(|arg| !code_in_bounds(arg.code)) {
+                return self.fail(path, "VPI compile-call argument references no code entry");
+            }
             if !call.name.starts_with('$') || call.name.len() < 2 {
                 return self.fail(path, "VPI compile-call name must start with `$`");
             }

@@ -70,6 +70,7 @@ typedef enum {
     SLOT_TERM,      /* path term or tchk term: connection `aux` of row `object` */
     SLOT_STMT,      /* force/release statement `aux` (vpiForce, vpiRelease) of a
                      * running cbForce/cbRelease dispatch: llg_vpi_stmt_t */
+    SLOT_CODE,      /* expression or statement object: code row `aux` */
 } llg_vpi_slot_kind_t;
 
 enum {
@@ -85,6 +86,7 @@ typedef enum {
     ITER_BITS,      /* vector bits, created on scan */
     ITER_ARGUMENTS, /* arguments of the active call, created on scan */
     ITER_MEMBERS,   /* member nodes [left, left + count), created on scan */
+    ITER_CODE,      /* code rows [left, left + count) whose role is `aux` */
 } llg_vpi_iter_kind_t;
 
 struct llg_vpi_callsite;
@@ -214,6 +216,9 @@ typedef struct {
     uint32_t* next_sibling;   /* row + 1 */
     uint64_t* element_counts;
     const llg_vpi_type_tables_t* types; /* typespec tables, or NULL */
+    const llg_vpi_code_tables_t* code;  /* expression and statement tables, or NULL */
+    char* decompiled;             /* vpiDecompile result, overwritten by each call */
+    size_t decompiled_capacity;
     uint32_t typespec_base;   /* static typespec slots follow the catalog rows */
     uint32_t tsmember_base;   /* then typespec members */
     uint32_t enumconst_base;  /* then enum constants */
@@ -283,6 +288,9 @@ typedef struct {
 
 static llg_vpi_state_t g_vpi;
 static uint32_t g_vpi_generation;
+
+static int code_tables_valid(const llg_vpi_code_tables_t* t);
+static PLI_INT32 unsupported_property(void);
 
 /* ── errors ─────────────────────────────────────────────────────────────── */
 
@@ -526,6 +534,11 @@ static int vpi_ready(void) {
     size_t count = g_vpi.object_count;
     if (!types_valid(g_vpi.types)) {
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_MODEL", "invalid VPI typespec tables");
+        g_vpi.failed = 1;
+        return 0;
+    }
+    if (!code_tables_valid(g_vpi.code)) {
+        vpi_set_error(vpiPLI, vpiError, "LLG_VPI_MODEL", "invalid VPI expression and statement tables");
         g_vpi.failed = 1;
         return 0;
     }
@@ -1131,6 +1144,8 @@ static llg_vpi_call_t* slot_call(const llg_vpi_slot_t* slot) {
 }
 
 static int read_conn(uint32_t row, uint32_t index, llg_vpi_datum_t* out, int* is_signed);
+static int code_value(uint32_t index, llg_vpi_datum_t* out, int* is_signed);
+static vpiHandle code_handle(uint32_t index);
 
 /* The width and sign of the value a handle reads, or 0 when it has none. */
 static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is_signed) {
@@ -1169,6 +1184,8 @@ static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is
         case SLOT_CONN:
         case SLOT_PRIMTERM:
             return read_conn(slot->object, (uint32_t)slot->aux, out, is_signed);
+        case SLOT_CODE:
+            return code_value((uint32_t)slot->aux, out, is_signed);
         case SLOT_CONSTANT:
             out->packed = sv4_from_i64(slot->left, 32);
             llg_sv4_set_signed(&out->packed, 1);
@@ -1258,11 +1275,17 @@ static vpiHandle conn_handle(uint32_t row, uint32_t index) {
                 break;
         }
     }
+    /* An expression or literal of a model generated for VPI applications
+     * is an expression object (37.55). */
+    if ((ref->ref_kind == LLG_VPI_ARG_EXPRESSION || ref->ref_kind == LLG_VPI_ARG_CONSTANT) &&
+        ref->code && g_vpi.code)
+        return code_handle(ref->code - 1u);
     return make_aux_slot(SLOT_CONN, row, index);
 }
 
-/* Read connection `index` of `row` as its conn_handle reads. An opaque
- * expression has no readable value. */
+/* Read connection `index` of `row` as its conn_handle reads: an
+ * expression of a model generated for VPI applications evaluates its
+ * operation tree; another opaque expression has no readable value. */
 static int read_conn(uint32_t row, uint32_t index, llg_vpi_datum_t* out, int* is_signed) {
     memset(out, 0, sizeof(*out));
     out->packed = VPI_EMPTY;
@@ -1275,6 +1298,8 @@ static int read_conn(uint32_t row, uint32_t index, llg_vpi_datum_t* out, int* is
         out->packed = digits_value(conn->value, ref->width, ref->is_signed, 0);
         return 1;
     }
+    if (ref->ref_kind == LLG_VPI_ARG_EXPRESSION && ref->code && g_vpi.code)
+        return code_value(ref->code - 1u, out, is_signed);
     if (ref->object < 0) return 0;
     llg_vpi_slot_t view;
     memset(&view, 0, sizeof(view));
@@ -3375,6 +3400,1185 @@ static vpiHandle statement_lhs(const llg_vpi_stmt_t* stmt) {
 
 /* 38.36.1: vpiLhs of the reported statement. A statement whose left-hand
  * side is a concatenation has no expression object in llg. */
+/* ── expression and statement objects (37.54-37.74) ────────────────────── */
+
+/* Expression evaluation recurses once per operand level; deeper trees (or
+ * corrupt tables) stop with an error instead of exhausting the stack. */
+#define LLG_VPI_MAX_EVAL_DEPTH 4096
+
+static const llg_vpi_code_t* code_at(uint32_t index) {
+    return g_vpi.code && index < g_vpi.code->node_count ? &g_vpi.code->nodes[index] : NULL;
+}
+
+static int code_is_select(int type) {
+    return type == vpiBitSelect || type == vpiPartSelect || type == vpiIndexedPartSelect;
+}
+
+static int code_is_statement(int type) {
+    switch (type) {
+        case vpiBegin: case vpiFork: case vpiNamedBegin: case vpiNamedFork:
+        case vpiAssignment: case vpiIf: case vpiIfElse: case vpiCase: case vpiFor:
+        case vpiWhile: case vpiRepeat: case vpiDoWhile: case vpiForever: case vpiForeachStmt:
+        case vpiDelayControl: case vpiEventControl: case vpiRepeatControl: case vpiEventStmt:
+        case vpiWait: case vpiOrderedWait: case vpiWaitFork: case vpiDisable:
+        case vpiDisableFork: case vpiReturnStmt: case vpiBreak: case vpiContinue:
+        case vpiNullStmt: case vpiForce: case vpiRelease: case vpiAssignStmt: case vpiDeassign:
+        case vpiTaskCall: case vpiSysTaskCall: case vpiMethodTaskCall:
+        case vpiImmediateAssert: case vpiImmediateAssume: case vpiImmediateCover:
+        case vpiAssert:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/* The vpiType of an entry: an alias has its catalog object's type. */
+static int code_type(const llg_vpi_code_t* node) {
+    if (node->type) return node->type;
+    return node->object >= 0 ? g_vpi.objects[node->object].type : vpiRefObj;
+}
+
+static int code_is_expression(const llg_vpi_code_t* node) {
+    int type = code_type(node);
+    return !code_is_statement(type) && type != vpiCaseItem;
+}
+
+static const char* code_text(const llg_vpi_code_t* node) {
+    if (code_is_select(node->type) || !node->data || node->data > g_vpi.code->text_count)
+        return NULL;
+    return g_vpi.code->texts[node->data - 1u];
+}
+
+static int code_range(const llg_vpi_code_t* node, int64_t* left, int64_t* right) {
+    if (!code_is_select(node->type) || !node->data || node->data > g_vpi.code->range_count)
+        return 0;
+    *left = g_vpi.code->ranges[2u * (node->data - 1u)];
+    *right = g_vpi.code->ranges[2u * (node->data - 1u) + 1u];
+    return 1;
+}
+
+static int code_tables_valid(const llg_vpi_code_tables_t* t) {
+    uint32_t nodes = t ? t->node_count : 0u;
+    for (size_t row = 0; row < g_vpi.object_count; ++row) {
+        const llg_vpi_model_object_t* object = &g_vpi.objects[row];
+        if (object->code > nodes) return 0;
+        for (uint32_t i = 0; i < object->conn_count; ++i)
+            if (object->conns[i].ref.code > nodes) return 0;
+    }
+    if (!t) return 1;
+    if ((t->node_count && !t->nodes) || (t->text_count && !t->texts) ||
+        (t->file_count && !t->files) || (t->range_count && !t->ranges) ||
+        t->node_count >= (uint32_t)INT32_MAX)
+        return 0;
+    uint32_t typespecs = g_vpi.types ? g_vpi.types->typespec_count : 0u;
+    for (uint32_t i = 0; i < t->node_count; ++i) {
+        const llg_vpi_code_t* node = &t->nodes[i];
+        /* Children follow their parent, so every walk terminates. */
+        if (node->count && (node->first <= i || node->first > t->node_count ||
+                            node->count > t->node_count - node->first))
+            return 0;
+        if (node->object >= 0 && (size_t)node->object >= g_vpi.object_count) return 0;
+        if (node->scope > g_vpi.object_count || node->file > t->file_count ||
+            node->typespec > typespecs)
+            return 0;
+        if (node->data > (code_is_select(node->type) ? t->range_count : t->text_count)) return 0;
+        if (node->data && !code_is_select(node->type) && !t->texts[node->data - 1u]) return 0;
+        if (node->file && !t->files[node->file - 1u]) return 0;
+    }
+    return 1;
+}
+
+int llg_vpi_model_code(const llg_vpi_code_tables_t* tables) {
+    g_vpi.code = tables;
+    return 1;
+}
+
+/* The entry an application sees for entry `index`: implicit conversions
+ * are not objects of their own. */
+static uint32_t code_visible(uint32_t index) {
+    const llg_vpi_code_t* node = code_at(index);
+    while (node && (node->flags & LLG_VPI_CODE_HIDDEN) && node->count) {
+        index = node->first;
+        node = code_at(index);
+    }
+    return index;
+}
+
+/* The handle of entry `index`: the catalog object it stands for, else a
+ * handle of its own. */
+static vpiHandle code_handle(uint32_t index) {
+    index = code_visible(index);
+    const llg_vpi_code_t* node = code_at(index);
+    if (!node) return NULL;
+    if ((node->flags & LLG_VPI_CODE_ALIAS) && node->object >= 0)
+        return object_handle((uint32_t)node->object);
+    return make_aux_slot(SLOT_CODE, LLG_VPI_NONE, index);
+}
+
+/* The first child of `node` reached by `relation`, or LLG_VPI_NONE. */
+static uint32_t code_child(const llg_vpi_code_t* node, int relation) {
+    for (uint32_t i = 0; i < node->count; ++i)
+        if (g_vpi.code->nodes[node->first + i].role == relation) return node->first + i;
+    return LLG_VPI_NONE;
+}
+
+/* Whether 37.54-37.74 give objects of `type` the one-to-one `relation`
+ * (a missing optional target is then NULL without an error). */
+static int code_relation_applies(int type, int relation) {
+    switch (type) {
+        case vpiAssignment:
+            return relation == vpiLhs || relation == vpiRhs || relation == vpiDelayControl ||
+                   relation == vpiEventControl || relation == vpiRepeatControl;
+        case vpiIf: case vpiWhile: case vpiRepeat: case vpiDoWhile: case vpiWait:
+        case vpiEventControl:
+            return relation == vpiCondition || relation == vpiStmt;
+        case vpiIfElse:
+            return relation == vpiCondition || relation == vpiStmt || relation == vpiElseStmt;
+        case vpiCase: return relation == vpiCondition;
+        case vpiCaseItem: case vpiForever: return relation == vpiStmt;
+        case vpiFor: return relation == vpiCondition || relation == vpiStmt;
+        case vpiForeachStmt: return relation == vpiVariables || relation == vpiStmt;
+        case vpiOrderedWait: return relation == vpiStmt || relation == vpiElseStmt;
+        case vpiDelayControl: return relation == vpiDelay || relation == vpiStmt;
+        case vpiRepeatControl: return relation == vpiExpr || relation == vpiEventControl;
+        case vpiEventStmt: return relation == vpiNamedEvent;
+        case vpiDisable: return relation == vpiExpr;
+        case vpiReturnStmt: return relation == vpiCondition;
+        case vpiForce: case vpiAssignStmt: return relation == vpiLhs || relation == vpiRhs;
+        case vpiRelease: case vpiDeassign: return relation == vpiLhs;
+        case vpiFuncCall: return relation == vpiFunction;
+        case vpiTaskCall: return relation == vpiTask;
+        case vpiBitSelect: case vpiVarSelect:
+            return relation == vpiParent || relation == vpiIndex;
+        case vpiPartSelect:
+            return relation == vpiParent || relation == vpiLeftRange || relation == vpiRightRange;
+        case vpiIndexedPartSelect:
+            return relation == vpiParent || relation == vpiBaseExpr || relation == vpiWidthExpr;
+        default:
+            return 0;
+    }
+}
+
+/* Whether objects of `type` iterate `relation`. */
+static int code_iteration_applies(int type, int relation) {
+    switch (type) {
+        case vpiOperation: return relation == vpiOperand;
+        case vpiBegin: case vpiFork: case vpiNamedBegin: case vpiNamedFork:
+            return relation == vpiStmt;
+        case vpiCase: return relation == vpiCaseItem;
+        case vpiCaseItem: return relation == vpiExpr;
+        case vpiFor: return relation == vpiForInitStmt || relation == vpiForIncStmt;
+        case vpiFuncCall: case vpiTaskCall: case vpiSysFuncCall: case vpiSysTaskCall:
+            return relation == vpiArgument;
+        case vpiVarSelect: return relation == vpiIndex;
+        case vpiForeachStmt: return relation == vpiLoopVars;
+        case vpiOrderedWait: return relation == vpiCondition;
+        default:
+            return 0;
+    }
+}
+
+static void code_opaque_error(void) {
+    vpi_error("LLG_VPI_UNSUPPORTED", "llg does not decompose this expression or statement");
+}
+
+static vpiHandle code_relation(int type, uint32_t index) {
+    const llg_vpi_code_t* node = code_at(index);
+    if (!node) return NULL;
+    if (type == vpiScope) return node->scope ? object_handle(node->scope - 1u) : NULL;
+    if (type == vpiTypespec) {
+        /* 37.55 detail 5: casts; llg gives no other expression a typespec. */
+        if (node->typespec) return typespec_handle(typespec_at(node->typespec - 1u));
+        vpi_error("LLG_VPI_UNSUPPORTED", "llg gives only casts a typespec among expressions");
+        return NULL;
+    }
+    if (node->flags & LLG_VPI_CODE_OPAQUE) {
+        code_opaque_error();
+        return NULL;
+    }
+    uint32_t child = code_child(node, type);
+    if (child != LLG_VPI_NONE) return code_handle(child);
+    if (code_relation_applies(code_type(node), type)) return NULL;
+    vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-one relation for this object");
+    return NULL;
+}
+
+/* Iterate the children of entry `index` reached by `relation`. */
+static vpiHandle iterate_code(uint32_t index, int relation) {
+    const llg_vpi_code_t* node = code_at(index);
+    if (!node) return NULL;
+    if (node->flags & LLG_VPI_CODE_OPAQUE) {
+        code_opaque_error();
+        return NULL;
+    }
+    if (!code_iteration_applies(code_type(node), relation)) {
+        vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-many relation for this object");
+        return NULL;
+    }
+    if (code_child(node, relation) == LLG_VPI_NONE) return NULL;
+    uint32_t slot_index = alloc_slot(SLOT_ITERATOR);
+    if (slot_index == LLG_VPI_NONE) return NULL;
+    llg_vpi_slot_t* iterator = &g_vpi.slots[slot_index];
+    iterator->iter_kind = ITER_CODE;
+    iterator->left = node->first;
+    iterator->count = node->count;
+    iterator->aux = relation;
+    return encode_handle(slot_index);
+}
+
+static vpiHandle scan_code(uint32_t slot_index) {
+    llg_vpi_slot_t* iterator = &g_vpi.slots[slot_index];
+    while (iterator->position < iterator->count) {
+        uint32_t child = (uint32_t)iterator->left + iterator->position++;
+        if (g_vpi.code->nodes[child].role == iterator->aux) return code_handle(child);
+    }
+    release_slot(slot_index);
+    return NULL;
+}
+
+/* The expression object behind a call argument handle, or LLG_VPI_NONE. */
+static uint32_t argument_code(const llg_vpi_slot_t* slot) {
+    if (slot->kind != SLOT_ARGUMENT || !g_vpi.code) return LLG_VPI_NONE;
+    const llg_vpi_callsite_t* site = (const llg_vpi_callsite_t*)slot->pointer;
+    if (slot->aux < 0 || slot->aux >= site->arg_count) return LLG_VPI_NONE;
+    uint32_t code = site->args[slot->aux].code;
+    return code && code - 1u < g_vpi.code->node_count ? code_visible(code - 1u) : LLG_VPI_NONE;
+}
+
+/* ── expression values ── */
+
+static int code_eval(uint32_t index, llg_vpi_datum_t* out, int depth);
+
+static void datum_set_packed(llg_vpi_datum_t* out, sv4_t value) {
+    sv4_replace(&out->packed, value);
+    out->is_real = 0;
+}
+
+/* Truth of a datum: 1 true, 0 false, -1 unknown (11.4.7). */
+static int datum_truth(const llg_vpi_datum_t* datum) {
+    if (datum->is_real) return datum->real != 0.0;
+    sv4_t any = sv4_reduce_or(datum->packed);
+    int truth = sv4_is_unknown(any) ? -1 : sv4_to_bool(any);
+    sv4_destroy(&any);
+    return truth;
+}
+
+static double datum_real(const llg_vpi_datum_t* datum) {
+    return datum->is_real ? datum->real : sv4_to_real(datum->packed);
+}
+
+/* Bits [lsb, lsb + width) of `value`; bits outside it read as x (11.5.1). */
+static sv4_t select_bits(sv4_t value, int64_t lsb, uint32_t width) {
+    uint32_t have = llg_sv4_width(value);
+    if (lsb >= 0 && (uint64_t)lsb + width <= have)
+        return sv4_part_select(value, lsb + (int64_t)width - 1, lsb);
+    sv4_t result = sv4_x(width, 0);
+    for (uint32_t i = 0; i < width; ++i) {
+        int64_t bit = lsb + (int64_t)i;
+        if (bit < 0 || (uint64_t)bit >= have) continue;
+        sv4_t one = sv4_bit_select(value, (uint64_t)bit);
+        sv4_bit_select_set(&result, i, one);
+        sv4_destroy(&one);
+    }
+    return result;
+}
+
+static int code_index(uint32_t index, int64_t* value, int depth) {
+    llg_vpi_datum_t datum;
+    memset(&datum, 0, sizeof(datum));
+    datum.packed = VPI_EMPTY;
+    int known = code_eval(index, &datum, depth) && !datum.is_real &&
+                sv4_to_index_i64(datum.packed, value);
+    datum_destroy(&datum);
+    return known;
+}
+
+/* A bit, part or indexed part select of a packed value (11.5.1). */
+static int eval_select(const llg_vpi_code_t* node, llg_vpi_datum_t* out, int depth) {
+    int64_t left, right;
+    uint32_t parent = code_child(node, vpiParent);
+    if (parent == LLG_VPI_NONE || !code_range(node, &left, &right)) return 0;
+    llg_vpi_datum_t base;
+    memset(&base, 0, sizeof(base));
+    base.packed = VPI_EMPTY;
+    if (!code_eval(parent, &base, depth) || base.is_real) {
+        datum_destroy(&base);
+        return 0;
+    }
+    uint64_t extent = (uint64_t)(left >= right ? left - right : right - left) + 1u;
+    uint64_t stride = llg_sv4_width(base.packed) / extent;
+    if (!stride) stride = 1;
+    int64_t low = 0, high = 0;
+    int known = 1;
+    uint32_t width = node->width ? node->width : 1u;
+    if (node->type == vpiBitSelect) {
+        known = code_index(code_child(node, vpiIndex), &low, depth);
+        high = low;
+    } else if (node->type == vpiPartSelect) {
+        known = code_index(code_child(node, vpiLeftRange), &high, depth) &&
+                code_index(code_child(node, vpiRightRange), &low, depth);
+    } else {
+        int64_t start = 0, count = 0;
+        known = code_index(code_child(node, vpiBaseExpr), &start, depth) &&
+                code_index(code_child(node, vpiWidthExpr), &count, depth) && count > 0;
+        low = start;
+        high = node->subtype == vpiNegIndexed ? start - count + 1 : start + count - 1;
+    }
+    /* Offsets count elements from the `right` end of the dimension, so
+     * ascending and descending ranges map alike; bits outside the value
+     * read as x. */
+    int64_t from_low = left >= right ? low - right : right - low;
+    int64_t from_high = left >= right ? high - right : right - high;
+    int64_t from = from_low < from_high ? from_low : from_high;
+    int64_t limit = (int64_t)1 << 40;
+    if (from <= -limit || from >= limit) known = 0;
+    int64_t lsb = known ? from * (int64_t)stride : 0;
+    sv4_t value = known ? select_bits(base.packed, lsb, width) : sv4_x(width, 0);
+    datum_destroy(&base);
+    datum_set_packed(out, value);
+    return 1;
+}
+
+/* An element of a catalog array, by its indices (37.19). */
+static int eval_var_select(const llg_vpi_code_t* node, llg_vpi_datum_t* out, int depth) {
+    uint32_t parent = code_child(node, vpiParent);
+    const llg_vpi_code_t* array = parent == LLG_VPI_NONE ? NULL : code_at(parent);
+    if (!array || !(array->flags & LLG_VPI_CODE_ALIAS) || array->object < 0) return 0;
+    llg_vpi_model_object_t* object = row_object((uint32_t)array->object);
+    if (!object || !is_array_type(object->type)) return 0;
+    uint64_t element = 0;
+    uint32_t dim = 0;
+    int in_range = 1;
+    for (uint32_t i = 0; i < node->count; ++i) {
+        uint32_t child = node->first + i;
+        if (g_vpi.code->nodes[child].role != vpiIndex) continue;
+        int64_t left, right, value;
+        uint64_t offset;
+        if (!array_dim(object, dim++, &left, &right)) return 0;
+        uint64_t extent = (uint64_t)(left >= right ? left - right : right - left) + 1u;
+        if (!code_index(child, &value, depth) || !index_offset(left, right, value, &offset))
+            in_range = 0;
+        element = element * extent + (in_range ? offset : 0u);
+    }
+    if (dim != object->dim_count) return 0;
+    if (!in_range || element >= g_vpi.element_counts[array->object]) {
+        /* An index outside the array or with x/z bits reads the default. */
+        if (object->is_real) {
+            out->is_real = 1;
+            out->real = 0.0;
+        } else {
+            datum_set_packed(out, sv4_x(object->width ? object->width : 1u, 0));
+        }
+        return 1;
+    }
+    llg_vpi_slot_t view;
+    memset(&view, 0, sizeof(view));
+    view.kind = SLOT_ELEMENT;
+    view.object = (uint32_t)array->object;
+    view.element = element;
+    int is_signed = 0;
+    datum_destroy(out);
+    return read_handle(&view, out, &is_signed);
+}
+
+/* The operands of an operation, evaluated; returns how many (at most
+ * `capacity`), or -1 when one has no value. */
+static int eval_operands(const llg_vpi_code_t* node, llg_vpi_datum_t* operands, int capacity,
+                         int depth) {
+    if (node->count > (uint32_t)capacity) return -1;
+    int count = 0;
+    for (uint32_t i = 0; i < node->count && count < capacity; ++i) {
+        memset(&operands[count], 0, sizeof(operands[count]));
+        operands[count].packed = VPI_EMPTY;
+        if (!code_eval(node->first + i, &operands[count], depth)) {
+            for (int j = 0; j <= count; ++j) datum_destroy(&operands[j]);
+            return -1;
+        }
+        ++count;
+    }
+    return count;
+}
+
+static int eval_real_operation(int op, llg_vpi_datum_t* operands, int count,
+                               llg_vpi_datum_t* out) {
+    double a = count > 0 ? datum_real(&operands[0]) : 0.0;
+    double b = count > 1 ? datum_real(&operands[1]) : 0.0;
+    out->is_real = 1;
+    switch (op) {
+        case vpiMinusOp: out->real = -a; return count == 1;
+        case vpiPlusOp: out->real = a; return count == 1;
+        case vpiAddOp: out->real = a + b; return count == 2;
+        case vpiSubOp: out->real = a - b; return count == 2;
+        case vpiMultOp: out->real = a * b; return count == 2;
+        case vpiDivOp: out->real = a / b; return count == 2;
+        case vpiPowerOp: out->real = pow(a, b); return count == 2;
+        default: return 0;
+    }
+}
+
+/* Integral and comparison operations (11.4). Operand types are already the
+ * frontend's: implicit conversions are entries of their own. */
+static int eval_operation(const llg_vpi_code_t* node, llg_vpi_datum_t* out, int depth) {
+    llg_vpi_datum_t operands[3];
+    for (int i = 0; i < 3; ++i) {
+        memset(&operands[i], 0, sizeof(operands[i]));
+        operands[i].packed = VPI_EMPTY;
+    }
+    int op = node->subtype;
+    if (op == vpiConcatOp || op == vpiMultiConcatOp) {
+        /* Self-determined operands, joined most significant first. */
+        uint32_t first = node->first, count = node->count;
+        uint64_t repeat = 1;
+        if (op == vpiMultiConcatOp) {
+            int64_t times;
+            if (!count || !code_index(first, &times, depth) || times < 0) return 0;
+            repeat = (uint64_t)times;
+            ++first;
+            --count;
+        }
+        sv4_t joined = VPI_EMPTY;
+        for (uint32_t i = 0; i < count; ++i) {
+            llg_vpi_datum_t part;
+            memset(&part, 0, sizeof(part));
+            part.packed = VPI_EMPTY;
+            if (!code_eval(first + i, &part, depth) || part.is_real) {
+                datum_destroy(&part);
+                sv4_destroy(&joined);
+                return 0;
+            }
+            sv4_t next = i ? sv4_concat(joined, part.packed) : sv4_clone(&part.packed);
+            sv4_replace(&joined, next);
+            datum_destroy(&part);
+        }
+        if (op == vpiMultiConcatOp) sv4_replace(&joined, sv4_repeat(joined, repeat));
+        datum_set_packed(out, joined);
+        return 1;
+    }
+    if (op == vpiConditionOp) {
+        if (node->count != 3 || !code_eval(node->first, &operands[0], depth)) return 0;
+        int truth = datum_truth(&operands[0]);
+        datum_destroy(&operands[0]);
+        if (truth >= 0) return code_eval(node->first + (truth ? 1u : 2u), out, depth);
+        if (node->flags & LLG_VPI_CODE_REAL) return 0;
+        /* An unknown condition merges the arms bit by bit (11.4.11). */
+        if (eval_operands(node, operands, 3, depth) != 3) return 0;
+        sv4_t select = sv4_x(1, 0);
+        datum_set_packed(out, sv4_mux(select, operands[1].packed, operands[2].packed));
+        sv4_destroy(&select);
+        for (int i = 0; i < 3; ++i) datum_destroy(&operands[i]);
+        return 1;
+    }
+    int count = eval_operands(node, operands, 2, depth);
+    if (count < 0) return 0;
+    int ok = 1;
+    int real = count > 0 && (operands[0].is_real || (count > 1 && operands[1].is_real));
+    if (node->flags & LLG_VPI_CODE_REAL) {
+        ok = eval_real_operation(op, operands, count, out);
+    } else if (real) {
+        /* Comparisons and logical operators of real operands. */
+        double a = datum_real(&operands[0]), b = count > 1 ? datum_real(&operands[1]) : 0.0;
+        int result;
+        switch (op) {
+            case vpiEqOp: result = a == b; break;
+            case vpiNeqOp: result = a != b; break;
+            case vpiGtOp: result = a > b; break;
+            case vpiGeOp: result = a >= b; break;
+            case vpiLtOp: result = a < b; break;
+            case vpiLeOp: result = a <= b; break;
+            case vpiNotOp: result = a == 0.0; break;
+            case vpiLogAndOp: result = a != 0.0 && b != 0.0; break;
+            case vpiLogOrOp: result = a != 0.0 || b != 0.0; break;
+            default: ok = 0; result = 0; break;
+        }
+        if (ok) datum_set_packed(out, sv4_from_u64((uint64_t)result, 1, 0));
+    } else if (count == 1) {
+        sv4_t a = operands[0].packed;
+        switch (op) {
+            case vpiMinusOp: datum_set_packed(out, sv4_neg(a)); break;
+            case vpiPlusOp: datum_set_packed(out, sv4_clone(&a)); break;
+            case vpiNotOp: datum_set_packed(out, sv4_lognot(a)); break;
+            case vpiBitNegOp: datum_set_packed(out, sv4_bitneg(a)); break;
+            case vpiUnaryAndOp: datum_set_packed(out, sv4_reduce_and(a)); break;
+            case vpiUnaryNandOp: datum_set_packed(out, sv4_reduce_nand(a)); break;
+            case vpiUnaryOrOp: datum_set_packed(out, sv4_reduce_or(a)); break;
+            case vpiUnaryNorOp: datum_set_packed(out, sv4_reduce_nor(a)); break;
+            case vpiUnaryXorOp: datum_set_packed(out, sv4_reduce_xor(a)); break;
+            case vpiUnaryXNorOp: datum_set_packed(out, sv4_reduce_xnor(a)); break;
+            default: ok = 0; break;
+        }
+    } else if (count == 2) {
+        sv4_t a = operands[0].packed, b = operands[1].packed;
+        switch (op) {
+            case vpiAddOp: datum_set_packed(out, sv4_add(a, b)); break;
+            case vpiSubOp: datum_set_packed(out, sv4_sub(a, b)); break;
+            case vpiMultOp: datum_set_packed(out, sv4_mul(a, b)); break;
+            case vpiDivOp: datum_set_packed(out, sv4_div(a, b)); break;
+            case vpiModOp: datum_set_packed(out, sv4_mod(a, b)); break;
+            case vpiPowerOp: datum_set_packed(out, sv4_pow(a, b)); break;
+            case vpiEqOp: datum_set_packed(out, sv4_eq(a, b)); break;
+            case vpiNeqOp: datum_set_packed(out, sv4_neq(a, b)); break;
+            case vpiCaseEqOp: datum_set_packed(out, sv4_case_eq(a, b)); break;
+            case vpiCaseNeqOp: datum_set_packed(out, sv4_case_neq(a, b)); break;
+            case vpiWildEqOp: datum_set_packed(out, sv4_wild_eq(a, b)); break;
+            case vpiWildNeqOp: datum_set_packed(out, sv4_wild_neq(a, b)); break;
+            case vpiGtOp: datum_set_packed(out, sv4_gt(a, b)); break;
+            case vpiGeOp: datum_set_packed(out, sv4_ge(a, b)); break;
+            case vpiLtOp: datum_set_packed(out, sv4_lt(a, b)); break;
+            case vpiLeOp: datum_set_packed(out, sv4_le(a, b)); break;
+            case vpiLShiftOp: datum_set_packed(out, sv4_shl(a, b)); break;
+            case vpiRShiftOp: datum_set_packed(out, sv4_shr(a, b)); break;
+            case vpiArithLShiftOp: datum_set_packed(out, sv4_ashl(a, b)); break;
+            case vpiArithRShiftOp: datum_set_packed(out, sv4_ashr(a, b)); break;
+            case vpiLogAndOp: datum_set_packed(out, sv4_logand(a, b)); break;
+            case vpiLogOrOp: datum_set_packed(out, sv4_logor(a, b)); break;
+            case vpiImplyOp: datum_set_packed(out, sv4_logimpl(a, b)); break;
+            case vpiBitAndOp: datum_set_packed(out, sv4_and(a, b)); break;
+            case vpiBitOrOp: datum_set_packed(out, sv4_or(a, b)); break;
+            case vpiBitXorOp: datum_set_packed(out, sv4_xor(a, b)); break;
+            case vpiBitXNorOp: datum_set_packed(out, sv4_xnor(a, b)); break;
+            default: ok = 0; break;
+        }
+    } else {
+        ok = 0;
+    }
+    for (int i = 0; i < count; ++i) datum_destroy(&operands[i]);
+    return ok;
+}
+
+/* A conversion, implicit or a cast: the operand's value as the entry's
+ * type (6.24). */
+static int eval_conversion(const llg_vpi_code_t* node, llg_vpi_datum_t* out, int depth) {
+    if (node->count != 1) return 0;
+    llg_vpi_datum_t operand;
+    memset(&operand, 0, sizeof(operand));
+    operand.packed = VPI_EMPTY;
+    if (!code_eval(node->first, &operand, depth)) {
+        datum_destroy(&operand);
+        return 0;
+    }
+    int8_t is_signed = (node->flags & LLG_VPI_CODE_SIGNED) != 0;
+    int ok = 1;
+    if (node->flags & LLG_VPI_CODE_REAL) {
+        out->real = datum_real(&operand);
+        out->is_real = 1;
+    } else if (!node->width) {
+        ok = 0;
+    } else if (operand.is_real) {
+        datum_set_packed(out, sv4_from_real(operand.real, node->width, is_signed));
+    } else {
+        datum_set_packed(out, sv4_cast(operand.packed, node->width, is_signed));
+    }
+    if (ok && !out->is_real && (node->flags & LLG_VPI_CODE_TWO_STATE))
+        sv4_replace(&out->packed, sv4_to_two_state(out->packed));
+    datum_destroy(&operand);
+    return ok;
+}
+
+/* Evaluate entry `index` into `out` (an initialized datum): its current
+ * value as the frontend typed it. Returns 0 when it has none. */
+static int code_eval(uint32_t index, llg_vpi_datum_t* out, int depth) {
+    const llg_vpi_code_t* node = code_at(index);
+    if (!node || depth > LLG_VPI_MAX_EVAL_DEPTH || (node->flags & LLG_VPI_CODE_OPAQUE)) return 0;
+    ++depth;
+    int ok;
+    if (node->flags & LLG_VPI_CODE_ALIAS) {
+        if (node->object < 0) return 0;
+        llg_vpi_slot_t view;
+        memset(&view, 0, sizeof(view));
+        view.kind = SLOT_OBJECT;
+        view.object = (uint32_t)node->object;
+        view.element = LLG_VPI_NO_ELEMENT;
+        int is_signed = 0;
+        datum_destroy(out);
+        return read_handle(&view, out, &is_signed);
+    }
+    switch (node->type) {
+        case vpiConstant: {
+            const char* text = code_text(node);
+            if (!text || node->subtype == vpiNullConst || node->subtype == vpiUnboundedConst)
+                return 0;
+            if (node->flags & LLG_VPI_CODE_REAL) {
+                out->is_real = 1;
+                out->real = strtod(text, NULL);
+                return 1;
+            }
+            datum_set_packed(out, digits_value(text, node->width,
+                                               (node->flags & LLG_VPI_CODE_SIGNED) != 0,
+                                               (node->flags & LLG_VPI_CODE_STRING) != 0));
+            return 1;
+        }
+        case vpiOperation:
+            ok = node->subtype == vpiCastOp ? eval_conversion(node, out, depth)
+                                            : eval_operation(node, out, depth);
+            break;
+        case vpiBitSelect:
+        case vpiPartSelect:
+        case vpiIndexedPartSelect:
+            ok = eval_select(node, out, depth);
+            break;
+        case vpiVarSelect:
+            return eval_var_select(node, out, depth);
+        default:
+            return 0;
+    }
+    /* Results carry the entry's own size and sign. */
+    if (ok && !out->is_real && node->width) {
+        int8_t is_signed = (node->flags & LLG_VPI_CODE_SIGNED) != 0;
+        if (llg_sv4_width(out->packed) != node->width)
+            sv4_replace(&out->packed, sv4_resize(out->packed, node->width, is_signed));
+        llg_sv4_set_signed(&out->packed, is_signed);
+    }
+    return ok;
+}
+
+static int code_value(uint32_t index, llg_vpi_datum_t* out, int* is_signed) {
+    memset(out, 0, sizeof(*out));
+    out->packed = VPI_EMPTY;
+    *is_signed = 0;
+    if (!code_eval(index, out, 0)) return 0;
+    *is_signed = !out->is_real && llg_sv4_signed(out->packed);
+    return 1;
+}
+
+/* ── decompilation (37.55 detail 2) ── */
+
+typedef struct {
+    char* text;
+    size_t length;
+    size_t capacity;
+    int failed;
+} llg_vpi_text_t;
+
+static void text_append(llg_vpi_text_t* text, const char* part, size_t length) {
+    if (text->failed) return;
+    if (text->length + length + 1u > text->capacity) {
+        size_t capacity = text->capacity ? text->capacity : 64u;
+        while (capacity < text->length + length + 1u) capacity *= 2u;
+        char* grown = (char*)realloc(text->text, capacity);
+        if (!grown) {
+            text->failed = 1;
+            return;
+        }
+        text->text = grown;
+        text->capacity = capacity;
+    }
+    memcpy(text->text + text->length, part, length);
+    text->length += length;
+    text->text[text->length] = '\0';
+}
+
+static void text_put(llg_vpi_text_t* text, const char* part) {
+    text_append(text, part, strlen(part));
+}
+
+/* Operator spelling and precedence (11.3.2, Table 11-2): larger binds
+ * tighter; 0 for an operation printed without an infix operator. */
+static const char* operator_text(int op, int unary, int* precedence) {
+    if (unary) {
+        *precedence = 14;
+        switch (op) {
+            case vpiMinusOp: return "-";
+            case vpiPlusOp: return "+";
+            case vpiNotOp: return "!";
+            case vpiBitNegOp: return "~";
+            case vpiUnaryAndOp: return "&";
+            case vpiUnaryNandOp: return "~&";
+            case vpiUnaryOrOp: return "|";
+            case vpiUnaryNorOp: return "~|";
+            case vpiUnaryXorOp: return "^";
+            case vpiUnaryXNorOp: return "~^";
+            case vpiPreIncOp: return "++";
+            case vpiPreDecOp: return "--";
+            case vpiPosedgeOp: *precedence = 1; return "posedge";
+            case vpiNegedgeOp: *precedence = 1; return "negedge";
+            default: break;
+        }
+    }
+    switch (op) {
+        case vpiPowerOp: *precedence = 13; return "**";
+        case vpiMultOp: *precedence = 12; return "*";
+        case vpiDivOp: *precedence = 12; return "/";
+        case vpiModOp: *precedence = 12; return "%";
+        case vpiAddOp: *precedence = 11; return "+";
+        case vpiSubOp: *precedence = 11; return "-";
+        case vpiLShiftOp: *precedence = 10; return "<<";
+        case vpiRShiftOp: *precedence = 10; return ">>";
+        case vpiArithLShiftOp: *precedence = 10; return "<<<";
+        case vpiArithRShiftOp: *precedence = 10; return ">>>";
+        case vpiLtOp: *precedence = 9; return "<";
+        case vpiLeOp: *precedence = 9; return "<=";
+        case vpiGtOp: *precedence = 9; return ">";
+        case vpiGeOp: *precedence = 9; return ">=";
+        case vpiInsideOp: *precedence = 9; return "inside";
+        case vpiEqOp: *precedence = 8; return "==";
+        case vpiNeqOp: *precedence = 8; return "!=";
+        case vpiCaseEqOp: *precedence = 8; return "===";
+        case vpiCaseNeqOp: *precedence = 8; return "!==";
+        case vpiWildEqOp: *precedence = 8; return "==?";
+        case vpiWildNeqOp: *precedence = 8; return "!=?";
+        case vpiBitAndOp: *precedence = 7; return "&";
+        case vpiBitXorOp: *precedence = 6; return "^";
+        case vpiBitXNorOp: *precedence = 6; return "~^";
+        case vpiBitOrOp: *precedence = 5; return "|";
+        case vpiLogAndOp: *precedence = 4; return "&&";
+        case vpiLogOrOp: *precedence = 3; return "||";
+        case vpiConditionOp: *precedence = 2; return "?";
+        case vpiImplyOp: *precedence = 1; return "->";
+        case vpiEventOrOp: *precedence = 1; return "or";
+        case vpiIffOp: *precedence = 1; return "iff";
+        default: *precedence = 15; return NULL;
+    }
+}
+
+/* The precedence an expression prints with (15: a primary). */
+static int code_precedence(uint32_t index) {
+    const llg_vpi_code_t* node = code_at(code_visible(index));
+    if (!node || node->type != vpiOperation || (node->flags & LLG_VPI_CODE_OPAQUE)) return 15;
+    int precedence = 15;
+    switch (node->subtype) {
+        case vpiPostIncOp: case vpiPostDecOp: case vpiConcatOp: case vpiMultiConcatOp:
+        case vpiCastOp: case vpiAssignmentPatternOp: case vpiMultiAssignmentPatternOp:
+        case vpiNullOp: case vpiMinTypMaxOp: case vpiListOp:
+            return 15;
+        default:
+            break;
+    }
+    operator_text(node->subtype, node->count == 1, &precedence);
+    return precedence;
+}
+
+static void decompile(llg_vpi_text_t* text, uint32_t index, int depth);
+
+/* Operand `index` at a position that binds at least `minimum`. */
+static void decompile_operand(llg_vpi_text_t* text, uint32_t index, int minimum, int depth) {
+    int parenthesize = code_precedence(index) < minimum;
+    if (parenthesize) text_put(text, "(");
+    decompile(text, index, depth);
+    if (parenthesize) text_put(text, ")");
+}
+
+/* The children reached by `relation`, separated by ", ". */
+static void decompile_list(llg_vpi_text_t* text, const llg_vpi_code_t* node, int relation,
+                           uint32_t skip, int depth) {
+    int first = 1;
+    for (uint32_t i = skip; i < node->count; ++i) {
+        if (g_vpi.code->nodes[node->first + i].role != relation) continue;
+        if (!first) text_put(text, ", ");
+        first = 0;
+        decompile(text, node->first + i, depth);
+    }
+}
+
+/* A constant as a literal of its vpiConstType: unsized signed 32-bit
+ * decimals as written, other integers sized in their radix (binary when
+ * a hexadecimal or octal digit would mix known and unknown bits). */
+static void decompile_constant(llg_vpi_text_t* text, const llg_vpi_code_t* node) {
+    const char* digits = code_text(node);
+    char buffer[64];
+    if (node->subtype == vpiNullConst) {
+        text_put(text, "null");
+        return;
+    }
+    if (!digits) return;
+    if (node->flags & LLG_VPI_CODE_STRING) {
+        text_put(text, "\"");
+        for (const char* c = digits; *c; ++c) {
+            if (*c == '"' || *c == '\\') text_put(text, "\\");
+            if (*c == '\n') {
+                text_put(text, "\\n");
+                continue;
+            }
+            text_append(text, c, 1);
+        }
+        text_put(text, "\"");
+        return;
+    }
+    if ((node->flags & (LLG_VPI_CODE_REAL | LLG_VPI_CODE_OPAQUE)) ||
+        node->subtype == vpiUnboundedConst) {
+        text_put(text, digits);
+        return;
+    }
+    size_t width = strlen(digits);
+    int is_signed = (node->flags & LLG_VPI_CODE_SIGNED) != 0;
+    int known = strspn(digits, "01") == width;
+    int radix = node->subtype == vpiHexConst ? 16 : node->subtype == vpiOctConst ? 8
+                : node->subtype == vpiDecConst || node->subtype == vpiIntConst ? 10 : 2;
+    if (radix == 10 && known && width <= 64) {
+        uint64_t value = 0;
+        for (size_t i = 0; i < width; ++i) value = value << 1 | (uint64_t)(digits[i] == '1');
+        if (width == 32 && is_signed) {
+            snprintf(buffer, sizeof(buffer), "%lld", (long long)(int32_t)(uint32_t)value);
+            text_put(text, buffer);
+            return;
+        }
+        snprintf(buffer, sizeof(buffer), "%zu'%sd%llu", width, is_signed ? "s" : "",
+                 (unsigned long long)value);
+        text_put(text, buffer);
+        return;
+    }
+    if (radix == 10) radix = 2;
+    unsigned bits = radix == 16 ? 4u : radix == 8 ? 3u : 1u;
+    /* Groups of digits must be all known or all one unknown state. */
+    for (size_t end = width; bits > 1 && end > 0;) {
+        size_t start = end > bits ? end - bits : 0;
+        size_t known_bits = 0, x = 0, z = 0;
+        for (size_t i = start; i < end; ++i) {
+            known_bits += digits[i] == '0' || digits[i] == '1';
+            x += digits[i] == 'x';
+            z += digits[i] == 'z';
+        }
+        if (known_bits != end - start && x != end - start && z != end - start) bits = 1;
+        end = start;
+    }
+    snprintf(buffer, sizeof(buffer), "%zu'%s%c", width, is_signed ? "s" : "",
+             bits == 4 ? 'h' : bits == 3 ? 'o' : 'b');
+    text_put(text, buffer);
+    size_t groups = (width + bits - 1u) / bits;
+    for (size_t g = groups; g-- > 0;) {
+        size_t end = width - g * bits;
+        size_t start = end > bits ? end - bits : 0;
+        unsigned value = 0;
+        char digit = 0;
+        for (size_t i = start; i < end; ++i) {
+            if (digits[i] == 'x' || digits[i] == 'z') digit = digits[i];
+            value = value << 1 | (unsigned)(digits[i] == '1');
+        }
+        if (!digit) digit = "0123456789abcdef"[value];
+        text_append(text, &digit, 1);
+    }
+}
+
+/* The keyword of a built-in casting type (6.24.1), or NULL. */
+static const char* cast_keyword(int typespec_type) {
+    switch (typespec_type) {
+        case vpiIntTypespec: return "int";
+        case vpiShortIntTypespec: return "shortint";
+        case vpiLongIntTypespec: return "longint";
+        case vpiByteTypespec: return "byte";
+        case vpiIntegerTypespec: return "integer";
+        case vpiTimeTypespec: return "time";
+        case vpiRealTypespec: return "real";
+        case vpiShortRealTypespec: return "shortreal";
+        case vpiStringTypespec: return "string";
+        default: return NULL;
+    }
+}
+
+static void decompile_operation(llg_vpi_text_t* text, const llg_vpi_code_t* node, int depth) {
+    int op = node->subtype, precedence = 15;
+    uint32_t first = node->first;
+    switch (op) {
+        case vpiConcatOp:
+            text_put(text, "{");
+            decompile_list(text, node, vpiOperand, 0, depth);
+            text_put(text, "}");
+            return;
+        case vpiMultiConcatOp:
+            text_put(text, "{");
+            if (node->count) decompile(text, first, depth);
+            text_put(text, "{");
+            decompile_list(text, node, vpiOperand, 1, depth);
+            text_put(text, "}}");
+            return;
+        case vpiAssignmentPatternOp:
+            text_put(text, "'{");
+            decompile_list(text, node, vpiOperand, 0, depth);
+            text_put(text, "}");
+            return;
+        case vpiMultiAssignmentPatternOp:
+            text_put(text, "'{");
+            if (node->count) decompile(text, first, depth);
+            text_put(text, "{");
+            decompile_list(text, node, vpiOperand, 1, depth);
+            text_put(text, "}}");
+            return;
+        case vpiCastOp: {
+            const char* size = code_text(node);
+            const llg_vpi_typespec_t* typespec =
+                node->typespec ? typespec_at(node->typespec - 1u) : NULL;
+            const char* keyword = typespec ? cast_keyword(typespec->type) : NULL;
+            if (size) {
+                text_put(text, size);
+            } else if (typespec && typespec->name) {
+                text_put(text, typespec->name);
+            } else if (keyword) {
+                text_put(text, keyword);
+            } else if (node->count && !(node->flags & LLG_VPI_CODE_REAL)) {
+                /* An unnamed vector target: a signing cast keeps the
+                 * operand's size and a size cast its signedness (6.24.1). */
+                const llg_vpi_code_t* argument = code_at(code_visible(first));
+                int is_signed = (node->flags & LLG_VPI_CODE_SIGNED) != 0;
+                int sign_changes = !(argument->flags & LLG_VPI_CODE_REAL) &&
+                                   is_signed != ((argument->flags & LLG_VPI_CODE_SIGNED) != 0);
+                int size_changes = (argument->flags & LLG_VPI_CODE_REAL) ||
+                                   argument->width != node->width || !sign_changes;
+                char buffer[48];
+                if (sign_changes && size_changes) {
+                    snprintf(buffer, sizeof(buffer), "%s'(%u", is_signed ? "signed" : "unsigned",
+                             node->width);
+                    text_put(text, buffer);
+                    text_put(text, "'(");
+                    decompile(text, first, depth);
+                    text_put(text, "))");
+                    return;
+                }
+                if (size_changes) {
+                    snprintf(buffer, sizeof(buffer), "%u", node->width);
+                    text_put(text, buffer);
+                } else {
+                    text_put(text, is_signed ? "signed" : "unsigned");
+                }
+            } else {
+                text->failed = 1;
+                return;
+            }
+            text_put(text, "'(");
+            if (node->count) decompile(text, first, depth);
+            text_put(text, ")");
+            return;
+        }
+        case vpiPostIncOp:
+        case vpiPostDecOp:
+            if (node->count) decompile_operand(text, first, 15, depth);
+            text_put(text, op == vpiPostIncOp ? "++" : "--");
+            return;
+        case vpiMinTypMaxOp:
+            for (uint32_t i = 0; i < node->count; ++i) {
+                if (i) text_put(text, ":");
+                decompile(text, first + i, depth);
+            }
+            return;
+        case vpiNullOp:
+            return;
+        case vpiListOp:
+            decompile_list(text, node, vpiOperand, 0, depth);
+            return;
+        case vpiConditionOp:
+            if (node->count != 3) return;
+            /* Right associative: only the condition needs a tighter binding. */
+            decompile_operand(text, first, 3, depth);
+            text_put(text, " ? ");
+            decompile_operand(text, first + 1u, 2, depth);
+            text_put(text, " : ");
+            decompile_operand(text, first + 2u, 2, depth);
+            return;
+        default:
+            break;
+    }
+    const char* spelling = operator_text(op, node->count == 1, &precedence);
+    if (!spelling) return;
+    if (node->count == 1) {
+        text_put(text, spelling);
+        text_put(text, " ");
+        decompile_operand(text, first, precedence, depth);
+        return;
+    }
+    /* Binary operators associate left to right except implication; an
+     * equal-precedence operand on the other side keeps its parentheses.
+     * An event or list is flat: its edges need none. */
+    int right_associative = op == vpiImplyOp;
+    for (uint32_t i = 0; i < node->count; ++i) {
+        if (i) {
+            text_put(text, " ");
+            text_put(text, spelling);
+            text_put(text, " ");
+        }
+        int tighter = op != vpiEventOrOp && (i == 0) == right_associative;
+        decompile_operand(text, first + i, precedence + tighter, depth);
+    }
+}
+
+static void decompile(llg_vpi_text_t* text, uint32_t index, int depth) {
+    index = code_visible(index);
+    const llg_vpi_code_t* node = code_at(index);
+    if (!node || depth > LLG_VPI_MAX_EVAL_DEPTH) {
+        text->failed = 1;
+        return;
+    }
+    ++depth;
+    const char* name = code_text(node);
+    if (node->flags & LLG_VPI_CODE_ALIAS) {
+        if (name) {
+            text_put(text, name);
+        } else if (node->object >= 0) {
+            text_put(text, g_vpi.objects[node->object].name);
+        }
+        return;
+    }
+    switch (node->type) {
+        case vpiConstant:
+            decompile_constant(text, node);
+            return;
+        case vpiOperation:
+            if (node->flags & LLG_VPI_CODE_OPAQUE) {
+                text->failed = 1;
+                return;
+            }
+            decompile_operation(text, node, depth);
+            return;
+        case vpiBitSelect:
+        case vpiPartSelect:
+        case vpiIndexedPartSelect:
+        case vpiVarSelect: {
+            uint32_t parent = code_child(node, vpiParent);
+            if (parent == LLG_VPI_NONE) {
+                text->failed = 1;
+                return;
+            }
+            decompile_operand(text, parent, 15, depth);
+            text_put(text, "[");
+            if (node->type == vpiPartSelect) {
+                decompile(text, code_child(node, vpiLeftRange), depth);
+                text_put(text, ":");
+                decompile(text, code_child(node, vpiRightRange), depth);
+            } else if (node->type == vpiIndexedPartSelect) {
+                decompile(text, code_child(node, vpiBaseExpr), depth);
+                text_put(text, node->subtype == vpiNegIndexed ? " -: " : " +: ");
+                decompile(text, code_child(node, vpiWidthExpr), depth);
+            } else {
+                int first = 1;
+                for (uint32_t i = 0; i < node->count; ++i) {
+                    if (g_vpi.code->nodes[node->first + i].role != vpiIndex) continue;
+                    if (!first) text_put(text, "][");
+                    first = 0;
+                    decompile(text, node->first + i, depth);
+                }
+            }
+            text_put(text, "]");
+            return;
+        }
+        case vpiFuncCall:
+        case vpiTaskCall:
+        case vpiSysFuncCall:
+        case vpiSysTaskCall:
+            if (name) text_put(text, name);
+            text_put(text, "(");
+            decompile_list(text, node, vpiArgument, 0, depth);
+            text_put(text, ")");
+            return;
+        default:
+            if (node->flags & LLG_VPI_CODE_OPAQUE && name && !code_is_statement(node->type)) {
+                /* A reference to an object outside the catalog. */
+                text_put(text, name);
+                return;
+            }
+            text->failed = 1;
+            return;
+    }
+}
+
+static char* code_decompile(uint32_t index) {
+    llg_vpi_text_t text = {g_vpi.decompiled, 0, g_vpi.decompiled_capacity, 0};
+    text_put(&text, "");
+    decompile(&text, index, 0);
+    g_vpi.decompiled = text.text;
+    g_vpi.decompiled_capacity = text.capacity;
+    if (text.failed) {
+        vpi_error("LLG_VPI_UNSUPPORTED", "llg cannot decompile this expression");
+        return NULL;
+    }
+    return text.text;
+}
+
+/* ── properties ── */
+
+static PLI_INT32 code_property(uint32_t index, int property) {
+    const llg_vpi_code_t* node = code_at(index);
+    int type = code_type(node);
+    int expression = code_is_expression(node);
+    switch (property) {
+        case vpiType: return type;
+        case vpiLineNo: return (PLI_INT32)node->line;
+        case vpiValid: return vpiValidTrue;
+        case vpiSize:
+            if (!expression) break;
+            /* A real expression reports its IEEE 754 storage (S42-D8). */
+            if (node->flags & LLG_VPI_CODE_REAL) return 64;
+            if (!node->width && (node->flags & LLG_VPI_CODE_OPAQUE)) break;
+            return (PLI_INT32)node->width;
+        case vpiSigned:
+            if (!expression) break;
+            return (node->flags & LLG_VPI_CODE_SIGNED) != 0;
+        case vpiScalar:
+        case vpiVector:
+            if (!expression || (node->flags & LLG_VPI_CODE_REAL) || !node->width) break;
+            return property == vpiScalar ? node->width == 1 : node->width > 1;
+        case vpiOpType:
+            if (type == vpiAssignment && node->subtype) return node->subtype;
+            if (type != vpiOperation || (node->flags & LLG_VPI_CODE_OPAQUE)) break;
+            return node->subtype;
+        case vpiConstType:
+            if (type != vpiConstant) break;
+            return node->subtype;
+        case vpiBlocking:
+            if (type != vpiAssignment && type != vpiEventStmt) break;
+            return (node->flags & LLG_VPI_CODE_BLOCKING) != 0;
+        case vpiCaseType:
+            if (type != vpiCase || (node->flags & LLG_VPI_CODE_OPAQUE)) break;
+            return node->subtype;
+        case vpiQualifier:
+            if (type != vpiIf && type != vpiIfElse && type != vpiCase) break;
+            return node->qualifier;
+        case vpiConstantSelect:
+            if (!code_is_select(type) && type != vpiVarSelect) break;
+            return (node->flags & LLG_VPI_CODE_CONSTANT) != 0;
+        case vpiIndexedPartSelectType:
+            if (type != vpiIndexedPartSelect) break;
+            return node->subtype;
+        case vpiLocalVarDecls:
+            if (type != vpiFor) break;
+            return (node->flags & LLG_VPI_CODE_LOCALS) != 0;
+        case vpiUserDefn:
+            if (type != vpiSysFuncCall && type != vpiSysTaskCall) break;
+            return (node->flags & LLG_VPI_CODE_USER) != 0;
+        case vpiFuncType: {
+            if (type == vpiFuncCall && node->object >= 0) {
+                const llg_vpi_model_object_t* callee = &g_vpi.objects[node->object];
+                if (callee->detail) return callee->detail;
+            }
+            if (type == vpiSysFuncCall && (node->flags & LLG_VPI_CODE_USER)) {
+                const char* name = code_text(node);
+                llg_vpi_registration_t* registration = name ? find_registration(name) : NULL;
+                if (registration && registration->data.type == vpiSysFunc)
+                    return registration->data.sysfunctype;
+            }
+            break;
+        }
+        default:
+            break;
+    }
+    return unsupported_property();
+}
+
+static PLI_BYTE8* code_string(uint32_t index, int property) {
+    const llg_vpi_code_t* node = code_at(index);
+    int type = code_type(node);
+    switch (property) {
+        case vpiName: {
+            /* Calls, references outside the catalog and named blocks
+             * outside a process have names; statements carry no label. */
+            if (type == vpiFuncCall || type == vpiTaskCall || type == vpiSysFuncCall ||
+                type == vpiSysTaskCall || type == vpiMethodFuncCall ||
+                type == vpiMethodTaskCall || type == vpiNamedBegin || type == vpiNamedFork ||
+                ((node->flags & LLG_VPI_CODE_OPAQUE) && code_is_expression(node) &&
+                 type != vpiOperation && type != vpiConstant))
+                return (PLI_BYTE8*)code_text(node);
+            if (code_is_statement(type)) return NULL;
+            break;
+        }
+        case vpiFile:
+            return node->file ? (PLI_BYTE8*)g_vpi.code->files[node->file - 1u] : NULL;
+        case vpiDecompile:
+            if (code_is_expression(node) || type == vpiSysTaskCall || type == vpiTaskCall)
+                return (PLI_BYTE8*)code_decompile(index);
+            break;
+        default:
+            break;
+    }
+    vpi_error("LLG_VPI_UNSUPPORTED", "unsupported VPI string property for this object");
+    return NULL;
+}
+
 static vpiHandle statement_relation(int type, const llg_vpi_slot_t* slot) {
     const llg_vpi_stmt_t* stmt = (const llg_vpi_stmt_t*)slot->pointer;
     if (type == vpiLhs) {
@@ -3408,8 +4612,26 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     if (!slot) return NULL;
     if (slot->kind == SLOT_ASSERTION) return assertion_relation(type, slot);
     if (slot->kind == SLOT_STMT) return statement_relation(type, slot);
+    if (slot->kind == SLOT_CODE) return code_relation(type, (uint32_t)slot->aux);
+    uint32_t argument = argument_code(slot);
+    if (argument != LLG_VPI_NONE) return code_relation(type, argument);
     llg_vpi_model_object_t* object = row_object(slot->object);
     switch (type) {
+        case vpiStmt:
+            /* 37.37, 37.58: the statement of a process, task or function
+             * (NULL for an empty body, 37.12 detail 5). */
+            if (slot->kind == SLOT_OBJECT && object &&
+                (is_process_type(object->type) || object->type == vpiTask ||
+                 object->type == vpiFunction)) {
+                if (!g_vpi.code) {
+                    vpi_error("LLG_VPI_UNSUPPORTED",
+                              "statements are objects only in models generated with --vpi or "
+                              "--dpi-lib");
+                    return NULL;
+                }
+                return object->code ? code_handle(object->code - 1u) : NULL;
+            }
+            break;
         case vpiTypespec: {
             if (slot->kind != SLOT_OBJECT && slot->kind != SLOT_ELEMENT &&
                 slot->kind != SLOT_MEMBER && slot->kind != SLOT_TSMEMBER)
@@ -3835,7 +5057,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     uint32_t ref_index;
     llg_vpi_slot_t* slot = checked_handle(ref_handle, &ref_index);
     if (!slot) return NULL;
-    if (type == vpiArgument) {
+    if (type == vpiArgument && slot->kind != SLOT_CODE) {
         if (slot->kind != SLOT_CALL) {
             vpi_error("LLG_VPI_RELATION", "vpiArgument iterates a system task or function call");
             return NULL;
@@ -3859,7 +5081,20 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     }
     if (type == vpiMember) return iterate_members(slot);
     if (slot->kind == SLOT_TYPESPEC) return iterate_typespec(slot, type);
+    if (slot->kind == SLOT_CODE) return iterate_code((uint32_t)slot->aux, type);
+    uint32_t argument = argument_code(slot);
+    if (argument != LLG_VPI_NONE) return iterate_code(argument, type);
     llg_vpi_model_object_t* object = row_object(slot->object);
+    if (type == vpiStmt && slot->kind == SLOT_OBJECT && object &&
+        (object->type == vpiNamedBegin || object->type == vpiNamedFork)) {
+        /* 37.12: the statements of a named block. */
+        if (!g_vpi.code) {
+            vpi_error("LLG_VPI_UNSUPPORTED",
+                      "statements are objects only in models generated with --vpi or --dpi-lib");
+            return NULL;
+        }
+        return object->code ? iterate_code(object->code - 1u, type) : NULL;
+    }
     if (slot->kind == SLOT_OBJECT && object && is_array_type(object->type) &&
         (type == vpiRange || type == vpiReg || type == vpiNet || type == vpiMemoryWord ||
          type == object->subtype)) {
@@ -3964,6 +5199,14 @@ static vpiHandle argument_handle(llg_vpi_callsite_t* site, llg_vpi_call_t* call,
                 break;
         }
     }
+    if (shape && shape->ref_kind == LLG_VPI_ARG_EXPRESSION && shape->code && g_vpi.code &&
+        shape->code <= g_vpi.code->node_count) {
+        /* A whole object converted to the formal's type is that object:
+         * implicit conversions are not objects (decision A19-D12). */
+        const llg_vpi_code_t* node = code_at(code_visible(shape->code - 1u));
+        if ((node->flags & LLG_VPI_CODE_ALIAS) && node->object >= 0)
+            return object_handle((uint32_t)node->object);
+    }
     uint32_t index = alloc_slot(SLOT_ARGUMENT);
     if (index == LLG_VPI_NONE) return NULL;
     llg_vpi_slot_t* slot = &g_vpi.slots[index];
@@ -3984,6 +5227,7 @@ vpiHandle vpi_scan(vpiHandle iterator_handle) {
         vpi_error("LLG_VPI_HANDLE", "vpi_scan needs an iterator handle");
         return NULL;
     }
+    if (slot->iter_kind == ITER_CODE) return scan_code(index);
     if (slot->position >= slot->count) {
         /* 38.40: the iterator is freed once vpi_scan returns NULL. */
         release_slot(index);
@@ -4060,7 +5304,11 @@ static int handle_type(const llg_vpi_slot_t* slot) {
             return site->registration && site->registration->data.type == vpiSysFunc
                        ? vpiSysFuncCall : vpiSysTaskCall;
         }
-        case SLOT_ARGUMENT: return argument_type(slot);
+        case SLOT_ARGUMENT: {
+            uint32_t code = argument_code(slot);
+            return code != LLG_VPI_NONE ? code_type(code_at(code)) : argument_type(slot);
+        }
+        case SLOT_CODE: return code_type(code_at((uint32_t)slot->aux));
         case SLOT_CALLBACK:
         case SLOT_FIRED_CB: return vpiCallback;
         case SLOT_EVENT: return vpiSchedEvent;
@@ -4148,6 +5396,14 @@ static int handle_width(const llg_vpi_slot_t* slot, uint32_t* width, int* is_sig
             *width = 32;
             *is_signed = 1;
             return 1;
+        case SLOT_CODE: {
+            const llg_vpi_code_t* node = code_at((uint32_t)slot->aux);
+            if (!code_is_expression(node) || (node->flags & LLG_VPI_CODE_OPAQUE)) return 0;
+            *real = (node->flags & LLG_VPI_CODE_REAL) != 0;
+            *width = node->width;
+            *is_signed = (node->flags & LLG_VPI_CODE_SIGNED) != 0;
+            return *real || node->width != 0;
+        }
         case SLOT_CONN:
         case SLOT_PRIMTERM: {
             const llg_vpi_conn_t* conn = row_conn(slot->object, (uint32_t)slot->aux);
@@ -4232,6 +5488,17 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         return value > INT32_MAX ? INT32_MAX : (PLI_INT32)value;
     }
     if (slot->kind == SLOT_STMT) return property == vpiType ? slot->aux : unsupported_property();
+    if (slot->kind == SLOT_CODE) return code_property((uint32_t)slot->aux, property);
+    {
+        /* An argument's expression object answers its own properties; its
+         * value, size and sign are the call's snapshot. */
+        uint32_t argument = argument_code(slot);
+        if (argument != LLG_VPI_NONE &&
+            (property == vpiOpType || property == vpiLineNo || property == vpiConstantSelect ||
+             property == vpiIndexedPartSelectType || property == vpiUserDefn ||
+             property == vpiFuncType))
+            return code_property(argument, property);
+    }
     if (is_coverage_type_property(property)) return instance_coverage(slot, property);
     if (slot->kind == SLOT_TYPESPEC || slot->kind == SLOT_TSMEMBER || slot->kind == SLOT_ENUMCONST) {
         if (property == vpiType) return handle_type(slot);
@@ -4568,6 +5835,41 @@ static const char* type_name(int type) {
         case vpiPathTerm: return "vpiPathTerm";
         case vpiTchk: return "vpiTchk";
         case vpiTchkTerm: return "vpiTchkTerm";
+        case vpiAssignment: return "vpiAssignment";
+        case vpiBegin: return "vpiBegin";
+        case vpiCase: return "vpiCase";
+        case vpiCaseItem: return "vpiCaseItem";
+        case vpiDelayControl: return "vpiDelayControl";
+        case vpiDisable: return "vpiDisable";
+        case vpiEventControl: return "vpiEventControl";
+        case vpiEventStmt: return "vpiEventStmt";
+        case vpiFor: return "vpiFor";
+        case vpiForever: return "vpiForever";
+        case vpiFork: return "vpiFork";
+        case vpiFuncCall: return "vpiFuncCall";
+        case vpiIf: return "vpiIf";
+        case vpiIfElse: return "vpiIfElse";
+        case vpiNullStmt: return "vpiNullStmt";
+        case vpiRepeat: return "vpiRepeat";
+        case vpiRepeatControl: return "vpiRepeatControl";
+        case vpiTaskCall: return "vpiTaskCall";
+        case vpiVarSelect: return "vpiVarSelect";
+        case vpiWait: return "vpiWait";
+        case vpiWhile: return "vpiWhile";
+        case vpiBitSelect: return "vpiBitSelect";
+        case vpiIndexedPartSelect: return "vpiIndexedPartSelect";
+        case vpiDoWhile: return "vpiDoWhile";
+        case vpiOrderedWait: return "vpiOrderedWait";
+        case vpiWaitFork: return "vpiWaitFork";
+        case vpiDisableFork: return "vpiDisableFork";
+        case vpiForeachStmt: return "vpiForeachStmt";
+        case vpiReturnStmt: return "vpiReturnStmt";
+        case vpiBreak: return "vpiBreak";
+        case vpiContinue: return "vpiContinue";
+        case vpiMethodFuncCall: return "vpiMethodFuncCall";
+        case vpiMethodTaskCall: return "vpiMethodTaskCall";
+        case vpiAssignStmt: return "vpiAssignStmt";
+        case vpiDeassign: return "vpiDeassign";
         default: return NULL;
     }
 }
@@ -4639,6 +5941,13 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
         const char* name = type_name(handle_type(slot));
         if (name) return (PLI_BYTE8*)name;
     }
+    if (slot->kind == SLOT_CODE) return code_string((uint32_t)slot->aux, property);
+    {
+        uint32_t argument = argument_code(slot);
+        if (argument != LLG_VPI_NONE &&
+            (property == vpiDecompile || property == vpiName || property == vpiFile))
+            return code_string(argument, property);
+    }
     switch (slot->kind) {
         case SLOT_OBJECT:
             /* Processes, continuous assignments and unnamed primitives
@@ -4661,6 +5970,13 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
                 case vpiFile:
                     if (object->file) return (PLI_BYTE8*)object->file;
                     break;
+                case vpiDecompile:
+                    /* 37.55: nets, variables and parameters are simple
+                     * expressions; each decompiles to its name. */
+                    if (is_variable_type(object->type) || object->type == vpiNet ||
+                        object->type == vpiParameter)
+                        return (PLI_BYTE8*)object->name;
+                    break;
                 default:
                     break;
             }
@@ -4668,6 +5984,7 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
         case SLOT_ELEMENT:
         case SLOT_SELECT:
         case SLOT_MEMBER:
+            if (property == vpiDecompile) property = vpiName;
             if (property == vpiName || property == vpiFullName) {
                 char* name = composed_name(slot, property == vpiFullName);
                 if (name) return (PLI_BYTE8*)name;
@@ -5433,7 +6750,7 @@ void vpi_get_time(vpiHandle object, p_vpi_time time) {
 static int handle_identity(const llg_vpi_slot_t* slot, uint32_t index, uint64_t identity[4]) {
     llg_vpi_target_t target;
     if (slot->kind == SLOT_CONN || slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_PORTBIT ||
-        slot->kind == SLOT_REFOBJ || slot->kind == SLOT_TERM) {
+        slot->kind == SLOT_REFOBJ || slot->kind == SLOT_TERM || slot->kind == SLOT_CODE) {
         identity[0] = 2u + slot->kind;
         identity[1] = slot->object;
         identity[2] = 0;
@@ -7142,6 +8459,7 @@ void llg_vpi_shutdown(void) {
     free(g_vpi.value_strength);
     free(g_vpi.mcd_name);
     free(g_vpi.array_values);
+    free(g_vpi.decompiled);
     free(g_vpi.storage);
     for (int i = 0; i < g_vpi.plugin_count; ++i) llg_dl_close(g_vpi.plugin_handles[i]);
     memset(&g_vpi, 0, sizeof(g_vpi));

@@ -259,6 +259,9 @@ pub struct IrVpiObject {
     /// Delays of a module path, timing check, primitive or continuous
     /// assignment (`vpi_get_delays`/`vpi_put_delays`).
     pub(in crate::sim) timing: Option<IrVpiTiming>,
+    /// Index into [`super::IrModel::vpi_code`]: the `vpiStmt` of a process,
+    /// task or function, or the statement object of a named block.
+    pub(in crate::sim) code: Option<u32>,
 }
 
 /// The delays or limits of a catalog object and the runtime values that
@@ -339,6 +342,101 @@ pub struct IrVpiConn {
     pub(in crate::sim) edge: u8,
     /// Index of the connection holding a timing check terminal's condition.
     pub(in crate::sim) condition: Option<u32>,
+    /// Index into [`super::IrModel::vpi_code`] of the expression object of
+    /// an [`IrVpiArgRef::Expression`] connection.
+    pub(in crate::sim) code: Option<u32>,
+}
+
+/// One expression or statement object (IEEE 1800-2009 37.54-37.74) of a
+/// model generated for VPI applications. The children of an entry are the
+/// contiguous entries `first..first + count`; each child's `role` names the
+/// relation that reaches it from its parent (`vpiOperand`, `vpiLhs`,
+/// `vpiStmt`, ...). Code names are the Annex K/M constant names the
+/// emitter writes verbatim.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrVpiCode {
+    pub(in crate::sim) type_code: &'static str,
+    /// `vpiOpType`, `vpiConstType`, `vpiCaseType` or
+    /// `vpiIndexedPartSelectType`, or `"0"`.
+    pub(in crate::sim) subtype: &'static str,
+    /// The relation from the parent, or `"0"` for a root.
+    pub(in crate::sim) role: &'static str,
+    /// `vpiQualifier` of an `if`, `if-else` or `case`, or `"0"`.
+    pub(in crate::sim) qualifier: &'static str,
+    /// [`IrVpiCode::SIGNED`] and the other flags, as the runtime's
+    /// `LLG_VPI_CODE_*`.
+    pub(in crate::sim) flags: u32,
+    pub(in crate::sim) width: u32,
+    /// Index into [`super::IrModel::vpi_code_files`].
+    pub(in crate::sim) file: Option<u32>,
+    pub(in crate::sim) line: u32,
+    /// Index into [`super::IrModel::vpi_objects`] of the catalog object the
+    /// entry stands for ([`IrVpiCode::ALIAS`]) or names.
+    pub(in crate::sim) object: Option<usize>,
+    /// Index into [`super::IrModel::vpi_objects`] of the enclosing scope.
+    pub(in crate::sim) scope: Option<usize>,
+    pub(in crate::sim) first: u32,
+    pub(in crate::sim) count: u32,
+    /// Constant digits (`0`/`1`/`x`/`z`, most significant first), string
+    /// or real text; the name of a call, a reference or a label.
+    pub(in crate::sim) text: Option<String>,
+    /// Declared `(left, right)` of the dimension a select indexes.
+    pub(in crate::sim) range: Option<(i64, i64)>,
+    /// Index into [`super::IrModel::vpi_typespecs`] of a cast's type.
+    pub(in crate::sim) typespec: Option<usize>,
+}
+
+impl IrVpiCode {
+    pub const SIGNED: u32 = 0x01;
+    pub const REAL: u32 = 0x02;
+    /// An implicit conversion: evaluated, never an object of its own.
+    pub const HIDDEN: u32 = 0x04;
+    /// An expression or statement llg does not decompose: no children and
+    /// no value.
+    pub const OPAQUE: u32 = 0x08;
+    /// Stands for catalog object `object` (a reference, a named block).
+    pub const ALIAS: u32 = 0x10;
+    pub const BLOCKING: u32 = 0x20;
+    pub const CONSTANT: u32 = 0x40;
+    pub const USER: u32 = 0x80;
+    pub const LOCALS: u32 = 0x100;
+    pub const TWO_STATE: u32 = 0x200;
+    /// A constant whose text is the characters of a string.
+    pub const STRING: u32 = 0x400;
+    /// The `LLG_VPI_CODE_*` names of `flags`, lowest bit first.
+    pub const FLAG_NAMES: [&'static str; 11] = [
+        "LLG_VPI_CODE_SIGNED",
+        "LLG_VPI_CODE_REAL",
+        "LLG_VPI_CODE_HIDDEN",
+        "LLG_VPI_CODE_OPAQUE",
+        "LLG_VPI_CODE_ALIAS",
+        "LLG_VPI_CODE_BLOCKING",
+        "LLG_VPI_CODE_CONSTANT",
+        "LLG_VPI_CODE_USER",
+        "LLG_VPI_CODE_LOCALS",
+        "LLG_VPI_CODE_TWO_STATE",
+        "LLG_VPI_CODE_STRING",
+    ];
+
+    pub fn new(type_code: &'static str) -> Self {
+        Self {
+            type_code,
+            subtype: "0",
+            role: "0",
+            qualifier: "0",
+            flags: 0,
+            width: 0,
+            file: None,
+            line: 0,
+            object: None,
+            scope: None,
+            first: 0,
+            count: 0,
+            text: None,
+            range: None,
+            typespec: None,
+        }
+    }
 }
 
 /// `vpiType` of a typespec (IEEE 1800-2009 37.23, Annex M).
@@ -507,6 +605,9 @@ pub struct IrVpiCompileArg {
     pub(in crate::sim) signed: bool,
     pub(in crate::sim) real: bool,
     pub(in crate::sim) reference: IrVpiArgRef,
+    /// Index into [`super::IrModel::vpi_code`] of the argument's expression
+    /// object, which answers its `vpiOpType` and `vpiOperand` relations.
+    pub(in crate::sim) code: Option<u32>,
 }
 
 impl IrVpiCompileCall {

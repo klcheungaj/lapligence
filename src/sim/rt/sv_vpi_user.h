@@ -73,6 +73,43 @@
 #define vpiOtherFunc 6
 #define vpiWaitingProcesses 734
 
+/* Statement and expression objects (37.55-37.73). */
+#define vpiReturn 666
+#define vpiDoWhile 670
+#define vpiOrderedWait 671
+#define vpiWaitFork 672
+#define vpiDisableFork 673
+#define vpiForeachStmt 675
+#define vpiReturnStmt 691
+#define vpiBreak 684
+#define vpiContinue 685
+#define vpiMethodFuncCall 648
+#define vpiMethodTaskCall 649
+#define vpiLoopVars 737
+#define vpiLocalVarDecls 609
+#define vpiNullConst 11
+#define vpiUnboundedConst 10
+#define vpiQualifier 650
+#define vpiNoQualifier 0
+#define vpiUniqueQualifier 1
+#define vpiPriorityQualifier 2
+#define vpiInsideQualifier 16
+#define vpiImplyOp 50
+#define vpiPostIncOp 62
+#define vpiPreIncOp 63
+#define vpiPostDecOp 64
+#define vpiPreDecOp 65
+#define vpiCastOp 67
+#define vpiIffOp 68
+#define vpiWildEqOp 69
+#define vpiWildNeqOp 70
+#define vpiStreamLROp 71
+#define vpiStreamRLOp 72
+#define vpiAssignmentPatternOp 75
+#define vpiMultiAssignmentPatternOp 76
+#define vpiInsideOp 95
+#define vpiAssignmentOp 82
+
 /* Assertion object types (39.3.2). */
 #define vpiAssert 686
 #define vpiAssume 687
