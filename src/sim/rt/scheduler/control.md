@@ -157,6 +157,28 @@ every other pending attempt, strong obligations included, ends without a
 result (S38-D1, A13-D7);
 `cover` and `expect` are not settled. Instances count against
 `LLG_SEQUENCE_THREAD_LIMIT` and are recycled through `g.property_inst_pool`.
+
+Global clocking future sampled value functions (16.9.4,
+`future_assertions.c`, registered by `llg_assertion_future` after the
+assertion): such an assertion queues each Observed pass's clock events with
+the operands its generated capture callback stores, the attempts a
+leading-clock event begins (enable state, single attempt and procedural
+maturity read then), the step's clock history and its action controls, and
+evaluates the entry through the ordinary engines in the Observed region of
+the first tick of its global sampled clock (`tick_time1`) strictly after the
+entry's step. Predicates read the captured operands through
+`llg_assertion_captured` (fatal outside a replay) and the future arguments as
+current sampled values, so results and actions belong to that global tick
+while every interval rule is that of the event. `end_assertion_attempts`
+(disable iff, `$assertkill`) appends a marker instead while entries are
+queued, so a discard reaches exactly the attempts running at its point;
+consecutive markers coalesce. A procedural instance maturing after the step's
+leading-clock event was queued adds to that entry. Entries count against
+`LLG_SEQUENCE_THREAD_LIMIT` and are recycled per assertion with their operand
+owners; the end of the run drops the queue (A14-D3) and cleanup frees it.
+Assertion coverage counts an attempt and its result when the entry is
+evaluated. `expect`, end points and asynchronous aborts are rejected by
+codegen and by the registration.
 An `expect` keeps its outcome (`llg_assertion_expect_outcome`: 0 none, 1 pass,
 2 fail) for the resumed caller, which runs the action block itself; an else arm
 (`has_fail_action`) suppresses the default failure report.

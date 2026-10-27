@@ -1645,6 +1645,43 @@ impl Validator<'_> {
                                     .fail(path, "$past result shape disagrees with argument");
                             }
                         }
+                        IrSampledFunc::Captured
+                        | IrSampledFunc::Future
+                        | IrSampledFunc::Rising
+                        | IrSampledFunc::Falling
+                        | IrSampledFunc::Steady
+                        | IrSampledFunc::Changing => {
+                            let Some(slots) = self.future_slots.get() else {
+                                return self.fail(
+                                    path,
+                                    "future sampled values belong to an assertion with global clocking future functions",
+                                );
+                            };
+                            if call.domain.is_some()
+                                || (call.kind == IrSampledFunc::Future && call.ticks != 0)
+                                || (call.kind != IrSampledFunc::Future
+                                    && call.ticks >= u64::from(slots))
+                            {
+                                return self
+                                    .fail(path, "future sampled value capture slot is invalid");
+                            }
+                            let value = matches!(
+                                call.kind,
+                                IrSampledFunc::Captured | IrSampledFunc::Future
+                            );
+                            let shape_ok = if value {
+                                (expr.width, expr.signed)
+                                    == (call.argument.width, call.argument.signed)
+                            } else {
+                                expr.width == 1 && !expr.signed
+                            };
+                            if !shape_ok {
+                                return self.fail(
+                                    path,
+                                    "future sampled value result shape disagrees with its function",
+                                );
+                            }
+                        }
                         IrSampledFunc::Rose
                         | IrSampledFunc::Fell
                         | IrSampledFunc::Stable

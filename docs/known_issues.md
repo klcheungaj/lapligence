@@ -1866,6 +1866,45 @@ patch.
 [adv_013](../tests/fixtures/sim/feature_completion/adv_013/readme.md); the
 other items need small hand-written cases.
 
+## Global clocking future sampled value function limits
+
+**Status:** open (ADV-014 boundary).
+
+### Symptom
+
+An assertion with a global clocking future sampled value function
+(`$future_gclk`, `$rising_gclk`, `$falling_gclk`, `$steady_gclk`,
+`$changing_gclk`, SV 16.9.4) is rejected at its location ("... with global
+clocking future sampled value functions at FILE:LINE:COL is not supported")
+when it is an `expect` statement, when it contains an asynchronous
+`accept_on`/`reject_on`, or when the sequence is a sequence end point
+(`.triggered`, `.matched`, `@(seq)`). Inside such an assertion a real-valued
+operand outside the future function arguments, a future value of a sequence
+local variable and expression forms other than operators, selects, casts and
+concatenations around the future calls are rejected the same way. The
+assertion coverage counters of these assertions count an attempt and its
+result when its clock event is evaluated at the next global clock tick (as
+the VPI callbacks of 39.4.2.1 are delivered), not at the event itself.
+
+### Cause
+
+These assertions evaluate each clock event at the next global clock tick
+from operands captured at the event. An `expect` would block its caller and
+an end point would publish its matches one global clock tick late; an
+asynchronous abort reads sampled values between assertion clock ticks, which
+the captured operands do not keep. A captured operand is a packed value.
+
+### Intended direction
+
+Capture the abort condition once per time step while evaluations are pending,
+keep real operands as their 64-bit images, and resume an `expect` caller at
+the global clock tick.
+
+### Reproduce
+
+`neg_expect.sv`, `neg_async_abort.sv` and `neg_endpoint.sv` in
+[adv_014](../tests/fixtures/sim/feature_completion/adv_014/readme.md).
+
 ## DPI-C import limits (SIM-040)
 
 **Status:** open. SIM-040 marshals packed, sized unpacked and open-array

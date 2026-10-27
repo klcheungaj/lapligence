@@ -327,6 +327,7 @@ static void sampled_domain_grow(llg_sampled_domain_t* domain) {
 // Record the clock's tick in every domain on it. A tick repeated within a
 // time step overwrites that step's sample, so each step counts once.
 static void sampled_clock_record(llg_sampled_clock_t* clock) {
+    clock->tick_time1 = g.now + 1;
     for (size_t index = 0; index < clock->n_domains; index++) {
         llg_sampled_domain_t* domain = clock->domains[index];
         if (domain->count == 0 || domain->times[domain->newest] != g.now) {

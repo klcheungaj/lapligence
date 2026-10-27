@@ -729,9 +729,38 @@ pub enum IrSampledFunc {
     /// reals with `==` (so -0.0 equals 0.0 and NaN never equals itself).
     RealStable,
     RealChanged,
+    /// An operand of an assertion with global clocking future sampled value
+    /// functions (IEEE 1800-2009 16.9.4), captured when its clock event
+    /// occurs and read when the event is evaluated at the next global clock
+    /// tick. `ticks` is the capture slot; `argument` is the captured
+    /// expression, which the assertion's capture callback evaluates.
+    Captured,
+    /// `$future_gclk(argument)`: the argument's current sampled value when
+    /// the event is evaluated, which is its value at the next global tick.
+    Future,
+    /// `$rising_gclk`, `$falling_gclk`, `$steady_gclk` and `$changing_gclk`
+    /// (Annex F.3.4.4): compare the argument's value captured in slot
+    /// `ticks` at the event with its value at the next global clock tick.
+    Rising,
+    Falling,
+    Steady,
+    Changing,
 }
 
-/// One sampled-value call. `ticks` is meaningful only for [`IrSampledFunc::Past`].
+impl IrSampledFunc {
+    /// The global clocking future functions, which need the deferred
+    /// evaluation of their assertion.
+    pub(in crate::sim) fn is_future(self) -> bool {
+        matches!(
+            self,
+            Self::Future | Self::Rising | Self::Falling | Self::Steady | Self::Changing
+        )
+    }
+}
+
+/// One sampled-value call. `ticks` is the tick count of [`IrSampledFunc::Past`]
+/// and the capture slot of [`IrSampledFunc::Captured`] and the future status
+/// functions; zero otherwise.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrSampledCall {
     pub(in crate::sim) kind: IrSampledFunc,

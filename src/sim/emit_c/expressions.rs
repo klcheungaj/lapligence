@@ -902,6 +902,17 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                             fill: None,
                         }
                     }
+                    IrSampledFunc::Captured
+                    | IrSampledFunc::Future
+                    | IrSampledFunc::Rising
+                    | IrSampledFunc::Falling
+                    | IrSampledFunc::Steady
+                    | IrSampledFunc::Changing => {
+                        return Err(
+                            "global clocking future sampled value functions require the ownership-aware emitter"
+                                .to_owned(),
+                        )
+                    }
                     IrSampledFunc::Rose
                     | IrSampledFunc::Fell
                     | IrSampledFunc::Stable

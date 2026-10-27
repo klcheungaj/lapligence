@@ -15,6 +15,7 @@ use super::*;
 
 mod clocks;
 mod endpoints;
+mod future;
 mod locals;
 mod match_calls;
 pub(super) use locals::local_assignment;
@@ -598,6 +599,7 @@ impl Codegen<'_> {
                     self.intern_sampled_clock(path, SampledClockSource::Edge(program.clock), None)?;
                 lowered = lowered.with_clock_gate(gate);
             }
+            let lowered = self.finish_future_assertion(path, lowered)?;
             self.model.assertions.push(lowered);
             return Ok(());
         }
@@ -649,12 +651,16 @@ impl Codegen<'_> {
                 pass_action,
                 fail_action,
             );
-            self.model.assertions.push(gated(match abort_condition {
-                Some(condition) => {
-                    assertion.with_abort_control(condition, abort_reject, abort_sync)
-                }
-                None => assertion,
-            }));
+            let assertion = self.finish_future_assertion(
+                path,
+                gated(match abort_condition {
+                    Some(condition) => {
+                        assertion.with_abort_control(condition, abort_reject, abort_sync)
+                    }
+                    None => assertion,
+                }),
+            )?;
+            self.model.assertions.push(assertion);
         } else if let Some(consequent) = parts.consequent_sequence {
             let assertion = IrAssertion::new_sequence(
                 assertion.index() as u64,
@@ -671,12 +677,16 @@ impl Codegen<'_> {
                 pass_action,
                 fail_action,
             );
-            self.model.assertions.push(gated(match abort_condition {
-                Some(condition) => {
-                    assertion.with_abort_control(condition, abort_reject, abort_sync)
-                }
-                None => assertion,
-            }));
+            let assertion = self.finish_future_assertion(
+                path,
+                gated(match abort_condition {
+                    Some(condition) => {
+                        assertion.with_abort_control(condition, abort_reject, abort_sync)
+                    }
+                    None => assertion,
+                }),
+            )?;
+            self.model.assertions.push(assertion);
         } else {
             return Err(format!(
                 "concurrent assertion has no lowered consequent at {path}"

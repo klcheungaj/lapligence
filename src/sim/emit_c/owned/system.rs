@@ -59,6 +59,48 @@ impl Frame<'_, '_> {
                         expr.signed,
                     )
                 }
+                // Global clocking future functions (SV 16.9.4) run while their
+                // assertion evaluates a queued clock event at the next global
+                // clock tick: the argument's current sampled value is its
+                // future value, and the event's own values are captured.
+                IrSampledFunc::Captured => self.value(
+                    format!("llg_assertion_captured({}u)", call.ticks),
+                    expr.width,
+                    expr.signed,
+                ),
+                IrSampledFunc::Future => {
+                    let previous = self.sampled_reads;
+                    self.sampled_reads = true;
+                    let value = self.expression(&call.argument);
+                    self.sampled_reads = previous;
+                    value?
+                }
+                IrSampledFunc::Rising
+                | IrSampledFunc::Falling
+                | IrSampledFunc::Steady
+                | IrSampledFunc::Changing => {
+                    let status = match call.kind {
+                        IrSampledFunc::Rising => 0,
+                        IrSampledFunc::Falling => 1,
+                        IrSampledFunc::Steady => 2,
+                        _ => 3,
+                    };
+                    let previous = self.sampled_reads;
+                    self.sampled_reads = true;
+                    let future = self.expression(&call.argument);
+                    self.sampled_reads = previous;
+                    let future = future?;
+                    let result = self.scalar(
+                        "int",
+                        format!(
+                            "llg_assertion_future_status({status}, {}u, {})",
+                            call.ticks,
+                            future.address()
+                        ),
+                    );
+                    self.discard(future);
+                    self.value(format!("sv4_from_u64({result}, 1, 0)"), 1, false)
+                }
                 kind => {
                     let domain = call
                         .domain

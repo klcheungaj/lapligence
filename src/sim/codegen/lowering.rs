@@ -1800,6 +1800,9 @@ struct Codegen<'a> {
     /// that reads one expression on one clock and gate shares one history.
     sampled_clock_keys: HashMap<String, usize>,
     sampled_domain_keys: HashMap<String, usize>,
+    /// Global sampled clock of the last global clocking future function
+    /// lowered (IEEE 1800-2009 16.9.4), taken by the enclosing assertion.
+    assertion_future_clock: Option<usize>,
     /// Event clocks whose waiting tick process is emitted after lowering.
     sampled_event_clocks: Vec<PendingSampledEventClock>,
     /// Planned assertion clock signals keyed by their source event list and
@@ -2108,6 +2111,7 @@ impl<'a> Codegen<'a> {
             procedural_assertions: 0,
             sampled_clock_keys: HashMap::new(),
             sampled_domain_keys: HashMap::new(),
+            assertion_future_clock: None,
             sampled_event_clocks: Vec::new(),
             assertion_pulse_keys: HashMap::new(),
             assertion_inferred_clocks: Vec::new(),

@@ -1,0 +1,12 @@
+15 ifs fail
+25 prc pass
+25 loc fail
+35 ini fail
+65 prc pass
+65 loc pass
+105 prc pass
+105 loc pass
+145 prc pass
+145 loc pass
+165 syn pass
+165 syn pass

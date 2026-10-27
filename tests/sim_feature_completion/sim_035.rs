@@ -256,13 +256,3 @@ fn neg_queue_arg() {
         "is not supported: sampled histories hold packed integral and real values, not queues",
     );
 }
-
-#[test]
-fn neg_future_global() {
-    // ADV-014 owns the global-clock future functions (SV 16.9.4).
-    sim_cli::reject_case(
-        SUITE,
-        "neg_future_global",
-        "future global sampled-value function `$future_gclk` is not supported",
-    );
-}

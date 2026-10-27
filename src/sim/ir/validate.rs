@@ -193,6 +193,10 @@ struct Validator<'model> {
     /// Signal positions per storage name, built on the first name lookup so
     /// validating each dependency does not scan every signal.
     signal_names: std::cell::OnceCell<std::collections::HashMap<&'model str, Vec<usize>>>,
+    /// Capture slots of the assertion with global clocking future sampled
+    /// value functions whose expressions are being validated; captured
+    /// operands and future functions are valid only there.
+    future_slots: Cell<Option<u32>>,
 }
 
 impl IrModel {

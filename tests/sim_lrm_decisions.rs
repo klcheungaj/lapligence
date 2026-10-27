@@ -3448,6 +3448,38 @@ fn a13_d7_unbegun_strong_at_end() {
 }
 
 #[test]
+fn a14_d1_future_report_time() {
+    run_decision(
+        "A14-D1_future_report_time",
+        include_str!("fixtures/sim/lrm_decisions/A14-D1_future_report_time.out"),
+    );
+}
+
+#[test]
+fn a14_d2_future_control_interval() {
+    run_decision(
+        "A14-D2_future_control_interval",
+        include_str!("fixtures/sim/lrm_decisions/A14-D2_future_control_interval.out"),
+    );
+}
+
+#[test]
+fn a14_d3_future_end_of_simulation() {
+    run_decision(
+        "A14-D3_future_end_of_simulation",
+        include_str!("fixtures/sim/lrm_decisions/A14-D3_future_end_of_simulation.out"),
+    );
+}
+
+#[test]
+fn a14_d4_future_action_controls() {
+    run_decision(
+        "A14-D4_future_action_controls",
+        include_str!("fixtures/sim/lrm_decisions/A14-D4_future_action_controls.out"),
+    );
+}
+
+#[test]
 fn t0_d1_initializer_no_event() {
     run_decision(
         "T0-D1_initializer_no_event",

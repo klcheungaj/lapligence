@@ -24,9 +24,9 @@ conditional properties, and accept/reject controls with synchronous forms.
 
 Output/inout/ref formal copy-out, delayed or nested local-formal invocations,
 selected-local lvalues, repeated match-item bodies, unsupported temporal
-property operators, future global sampled-value functions and complex sampled
-clock events remain intentionally rejected with source-bearing
-diagnostics. H26 adds bounded blocking `expect`, `$asserton`/`$assertoff`/
+property operators and complex sampled clock events remain intentionally
+rejected with source-bearing diagnostics. Future global sampled-value
+functions run since ADV-014 (`feature_completion/adv_014`). H26 adds bounded blocking `expect`, `$asserton`/`$assertoff`/
 `$assertkill`, the level-0 ON/OFF/KILL `$assertcontrol` forms, and sequence
 `.matched` endpoint evaluation; invalid control arguments and non-hierarchical
 scopes are also rejected. The 2009 pass/fail/vacuity action controls are

@@ -155,15 +155,13 @@ impl<'a> Codegen<'a> {
             "$fell_gclk" => (IrSampledFunc::Fell, true, false),
             "$stable_gclk" => (IrSampledFunc::Stable, true, false),
             "$changed_gclk" => (IrSampledFunc::Changed, true, false),
-            "$future_gclk" | "$rising_gclk" | "$falling_gclk" | "$steady_gclk"
-            | "$changing_gclk" => (IrSampledFunc::Past, true, true),
+            "$future_gclk" => (IrSampledFunc::Future, true, true),
+            "$rising_gclk" => (IrSampledFunc::Rising, true, true),
+            "$falling_gclk" => (IrSampledFunc::Falling, true, true),
+            "$steady_gclk" => (IrSampledFunc::Steady, true, true),
+            "$changing_gclk" => (IrSampledFunc::Changing, true, true),
             _ => return Err(format!("unsupported sampled-value function `{name}`")),
         };
-        if future {
-            return Err(format!(
-                "future global sampled-value function `{name}` is not supported; future values are never read from live storage in `{scope_path}`"
-            ));
-        }
 
         let expected = if kind == IrSampledFunc::Past && !global {
             1..=4
@@ -233,6 +231,27 @@ impl<'a> Codegen<'a> {
             ticks = 1;
         }
 
+        if future {
+            // SV 16.9.4: the value at the next global clock tick. The
+            // enclosing assertion evaluates its clock events at that tick
+            // (`finish_future_assertion`); no history domain is needed.
+            let source = self.lower_global_sampled_clock(scope_path)?;
+            let clock = self.intern_sampled_clock(scope_path, source, None)?;
+            self.assertion_future_clock = Some(clock);
+            let (width, signed) = if kind == IrSampledFunc::Future {
+                (argument.width, argument.signed)
+            } else {
+                (1, false)
+            };
+            return Ok(IrExpr::new(
+                IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(IrSampledCall::new(
+                    kind, argument, None, 0,
+                )))),
+                width,
+                signed,
+                None,
+            ));
+        }
         let source = if global {
             self.lower_global_sampled_clock(scope_path)?
         } else if let Some(node) = explicit_clock {
