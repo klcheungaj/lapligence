@@ -82,6 +82,16 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   `unique0` or `priority` of an if or case statement, and the `disable` of a
   disable statement (not of `disable iff`). Words that are control flow
   everywhere are left to the consumer's text classification.
+- Text macros: a use site keeps its `` `NAME `` directive token and its
+  written actual arguments. Expanded tokens carry
+  `LLG_SLANG_LEXICAL_MACRO_EXPANSION`. One whose text is written in the
+  outermost usage's arguments (its fully original location lies at or after
+  the use site in the same buffer and spells the token) also carries
+  `LLG_SLANG_LEXICAL_MACRO_ARGUMENT`, takes the written range and replaces the
+  written copy, so it keeps its own kind and binding: names bind through
+  lexical bindings keyed by that range, because Slang's reference and
+  declaration nodes span the use site. Every other expanded token is macro
+  body text and spans the use site.
 
 ## Parameter overrides
 

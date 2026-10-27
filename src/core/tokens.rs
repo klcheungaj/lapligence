@@ -155,7 +155,13 @@ pub fn project_slang(
     let mut declarations = ParseDeclPositions::new();
 
     for token in &snapshot.lexical_tokens {
-        if token.is_missing || token.is_skipped {
+        // Macro body tokens all span their use site, where the `` `NAME ``
+        // usage token stands; projecting them would paint the body's first
+        // token over the usage. Argument tokens keep their written range.
+        if token.is_missing
+            || token.is_skipped
+            || (token.is_macro_expansion && !token.is_macro_argument)
+        {
             continue;
         }
         let Some(range) = token.range else {

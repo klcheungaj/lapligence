@@ -615,6 +615,40 @@ struct Capture {
                      fileLen)};
   }
 
+  // The written range of a macro-expanded token whose text comes from the
+  // actual arguments of the outermost macro usage: its fully original
+  // location lies in the use-site buffer at or after the use site, and the
+  // source there spells the token (a pasted or stringified token is new text
+  // and keeps the use site). Body text is written in a `define, which always
+  // precedes its use in the same buffer or lies in another buffer.
+  // `std::nullopt` for every other location.
+  std::optional<LlgSlangSourceRange> macroArgumentSpan(SourceLocation location,
+                                                       std::string_view text) const {
+    if (!location.valid() || !sourceManager.isMacroLoc(location) || text.empty())
+      return std::nullopt;
+    const SourceLocation original = sourceManager.getFullyOriginalLoc(location);
+    const SourceLocation expanded = sourceManager.getFullyExpandedLoc(location);
+    if (!original.valid() || !expanded.valid() || !sourceManager.isFileLoc(original) ||
+        original.buffer() != expanded.buffer() || original.offset() < expanded.offset())
+      return std::nullopt;
+    const std::string_view source = sourceManager.getSourceText(original.buffer());
+    if (original.offset() > source.size() ||
+        source.substr(original.offset(), text.size()) != text)
+      return std::nullopt;
+    const LlgSlangSourceRange range = span(original, text.size());
+    if (range.file_id == LLG_SLANG_INVALID_ID)
+      return std::nullopt;
+    return range;
+  }
+
+  // Physical range of one token: its written argument text for a macro
+  // argument token, otherwise its use-site span.
+  LlgSlangSourceRange tokenSpan(parsing::Token token) const {
+    if (auto written = macroArgumentSpan(token.location(), token.rawText()))
+      return *written;
+    return span(token.range());
+  }
+
   LlgSlangSourceRange span(SourceRange range) const {
     SourceLocation start = physicalLocation(range.start());
     SourceLocation end = physicalLocation(range.end());
@@ -1403,18 +1437,25 @@ struct Capture {
     return semanticId;
   }
 
+  // Keyed by the token's physical range, so a name written in a macro
+  // argument binds at its written text (see `tokenSpan`).
   void lexicalBinding(parsing::Token token, uint64_t semanticId,
                       uint32_t role, uint32_t kind = LLG_SLANG_LEXICAL_UNKNOWN) {
-    lexicalBinding(token.range(), semanticId, role, kind);
+    lexicalBinding(tokenSpan(token), semanticId, role, kind);
   }
 
   // `range` must be exactly one name token's range.
   void lexicalBinding(SourceRange range, uint64_t semanticId, uint32_t role,
                       uint32_t kind = LLG_SLANG_LEXICAL_UNKNOWN) {
+    lexicalBinding(span(range), semanticId, role, kind);
+  }
+
+  void lexicalBinding(const LlgSlangSourceRange& range, uint64_t semanticId,
+                      uint32_t role, uint32_t kind = LLG_SLANG_LEXICAL_UNKNOWN) {
     if (lexicalBindings.size() >= maxLexicalTokens())
       throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
                           "lexical binding limit exceeded");
-    lexicalBindings.push_back({span(range), semanticId, role, kind});
+    lexicalBindings.push_back({range, semanticId, role, kind});
   }
 
   void connectionActual(SourceRange range) {
@@ -2383,6 +2424,12 @@ public:
         ? capture.span(symbol.location, symbol.name.size())
         : (symbol.getSyntax() ? capture.span(symbol.getSyntax()->sourceRange())
                               : LlgSlangSourceRange{LLG_SLANG_INVALID_ID, 0, 0});
+    // A name written in a macro argument: the node spans the macro use site,
+    // so the written name token is bound to the declaration here.
+    if (symbol.kind != SymbolKind::TransparentMember) {
+      if (auto written = capture.macroArgumentSpan(symbol.location, symbol.name))
+        capture.lexicalBinding(*written, id, LLG_SLANG_LEXICAL_ROLE_DECLARATION);
+    }
     if constexpr (std::derived_from<T, ValueSymbol>) {
       result.type_id = capture.type(symbol.getType());
       const Scope* parent = symbol.getParentScope();
@@ -3067,6 +3114,7 @@ public:
     if (!markVisited(id))
       return;
     bindNameTokens(expression);
+    bindValueNameToken(expression, true);
     if constexpr (std::same_as<T, InvalidExpression>)
       bindInvalidSubtree(expression.child);
     // Capturing a call's iterator or referenced symbol can append to the
@@ -3744,29 +3792,44 @@ private:
   // which neither mode lowers.
   template<std::derived_from<Expression> T>
   void bindValueName(const T& expression) {
+    if constexpr (std::same_as<T, NamedValueExpression>) {
+      if (!expression.syntax)
+        bindNameRange(expression.sourceRange, expression.symbol);
+    }
+    bindValueNameToken(expression, false);
+    captureTypeNameReference(expression);
+  }
+
+  // Binds the value name token of a reference. With `macroArgumentsOnly`
+  // (full capture) only a name written in a macro argument is bound: its
+  // reference node spans the macro use site, so the node cannot bind it.
+  template<std::derived_from<Expression> T>
+  void bindValueNameToken(const T& expression, bool macroArgumentsOnly) {
     if constexpr (std::same_as<T, NamedValueExpression> ||
                   std::same_as<T, HierarchicalValueExpression> ||
                   std::same_as<T, MemberAccessExpression>) {
-      if constexpr (std::same_as<T, NamedValueExpression>) {
-        if (!expression.syntax)
-          bindNameRange(expression.sourceRange, expression.symbol);
-      }
       if (expression.syntax) {
         if (const Symbol* target = expression.getSymbolReference()) {
-          auto token = expression.syntax->getLastToken();
+          // Slang drops redundant parentheses from the expression but keeps
+          // them in its syntax (`(a)` in a macro body such as `((a) + (b))`).
+          const syntax::SyntaxNode* name = expression.syntax;
+          while (name->kind == syntax::SyntaxKind::ParenthesizedExpression)
+            name = name->template as<syntax::ParenthesizedExpressionSyntax>().expression;
+          auto token = name->getLastToken();
           // A value with member selects (`s.f`) carries the whole dotted
           // name as its syntax; the value is its leading step.
           if constexpr (std::same_as<T, NamedValueExpression>) {
             if (token.valueText() != target->name)
-              token = valueNameToken(*expression.syntax);
+              token = valueNameToken(*name);
           }
-          if (token.valueText() == target->name)
+          if (token.valueText() == target->name &&
+              (!macroArgumentsOnly ||
+               capture.macroArgumentSpan(token.location(), token.rawText())))
             capture.lexicalBinding(token, lexicalTarget(*target),
                                    LLG_SLANG_LEXICAL_ROLE_REFERENCE);
         }
       }
     }
-    captureTypeNameReference(expression);
   }
 
   // Name tokens no reference node carries, bound in both capture modes:
@@ -6072,6 +6135,20 @@ public:
     skippedDepth--;
   }
 
+  // A macro usage at its use site. The name is the use-site token; the
+  // written actual arguments follow it in the source. Each written argument
+  // token is recorded so the expanded copy of the same text replaces it
+  // (`addToken`): the expansion, not the raw argument list, is what the
+  // parser and elaboration saw, so it carries the token's kind and binding.
+  void handle(const syntax::MacroUsageSyntax& syntax) {
+    visitToken(syntax.directive);
+    if (!syntax.args)
+      return;
+    macroArgumentDepth++;
+    syntax.args->visit(*this);
+    macroArgumentDepth--;
+  }
+
   // Records the logical position that a `line directive gives the following
   // physical line. The values are read back from the SourceManager, so they
   // match the preprocessor's `__LINE__`/`__FILE__` exactly, including for a
@@ -6441,7 +6518,12 @@ private:
   std::unordered_set<const syntax::SyntaxNode*> directives;
   uint32_t directiveDepth = 0;
   uint32_t skippedDepth = 0;
+  // Nesting depth inside the written actual arguments of a macro usage.
+  uint32_t macroArgumentDepth = 0;
   std::map<std::tuple<uint64_t, uint64_t, uint64_t>, SourceLocation> tokenLocations;
+  // Written macro argument tokens by physical range, as indices into the
+  // lexical token table; an expanded argument token replaces its record.
+  std::map<std::tuple<uint64_t, uint64_t, uint64_t>, size_t> writtenArguments;
   std::vector<BlockName> blockNames;
   // The `default` keyword of the case item being visited.
   SourceLocation controlKeyword;
@@ -6477,28 +6559,57 @@ private:
       flags |= LLG_SLANG_LEXICAL_SKIPPED;
     if (token.isMissing())
       flags |= LLG_SLANG_LEXICAL_MISSING;
+    LlgSlangSourceRange range{LLG_SLANG_INVALID_ID, 0, 0};
     if (token.location().valid() &&
-        capture.sourceManager.isMacroLoc(token.location()))
+        capture.sourceManager.isMacroLoc(token.location())) {
       flags |= LLG_SLANG_LEXICAL_MACRO_EXPANSION;
+      if (auto written = capture.macroArgumentSpan(token.location(), text)) {
+        flags |= LLG_SLANG_LEXICAL_MACRO_ARGUMENT;
+        range = *written;
+      }
+    }
+    if ((flags & LLG_SLANG_LEXICAL_MACRO_ARGUMENT) == 0)
+      range = capture.span(token.range());
     if (kind == LLG_SLANG_LEXICAL_KEYWORD && controlKeyword.valid() &&
         token.location() == controlKeyword)
       flags |= LLG_SLANG_LEXICAL_CONTROL_FLOW;
-    if (kind == LLG_SLANG_LEXICAL_IDENTIFIER &&
+    // Names in directives and macro bodies are macro text. Names written in
+    // macro arguments and their expanded copies are ordinary names.
+    if (kind == LLG_SLANG_LEXICAL_IDENTIFIER && macroArgumentDepth == 0 &&
+        (flags & LLG_SLANG_LEXICAL_MACRO_ARGUMENT) == 0 &&
         (directiveDepth != 0 ||
          (flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) != 0))
       kind = LLG_SLANG_LEXICAL_MACRO;
-    const auto range = capture.span(token.range());
-    tokenLocations.try_emplace(std::tuple{range.file_id, range.start, range.end},
-                              token.location());
-    chargeRecord(capture.output, sizeof(LlgSlangLexicalToken));
-    capture.output.lexical_tokens.push_back({
-        capture.span(token.range()), kind,
+    const auto key = std::tuple{range.file_id, range.start, range.end};
+    tokenLocations.try_emplace(key, token.location());
+    const LlgSlangLexicalToken record{
+        range, kind,
         // MSVC gives unnamed enums an int underlying type; narrowing to the
         // uint32_t field must be explicit in brace initialization.
         static_cast<uint32_t>(kind == LLG_SLANG_LEXICAL_KEYWORD
                                   ? LLG_SLANG_LEXICAL_ROLE_KEYWORD
                                   : LLG_SLANG_LEXICAL_ROLE_NONE),
-        flags, 0, LLG_SLANG_INVALID_ID, storeString(capture.output, text)});
+        flags, 0, LLG_SLANG_INVALID_ID, {}};
+    if ((flags & LLG_SLANG_LEXICAL_MACRO_ARGUMENT) != 0 &&
+        range.file_id != LLG_SLANG_INVALID_ID) {
+      // Replace the written copy in place; repeated uses of one argument in
+      // a body share its single record. The text is the same spelling.
+      if (auto it = writtenArguments.find(key); it != writtenArguments.end()) {
+        auto& written = capture.output.lexical_tokens[it->second];
+        const LlgSlangString stored = written.text;
+        written = record;
+        written.text = stored;
+        return;
+      }
+    }
+    chargeRecord(capture.output, sizeof(LlgSlangLexicalToken));
+    capture.output.lexical_tokens.push_back(record);
+    capture.output.lexical_tokens.back().text = storeString(capture.output, text);
+    // An expanded argument without a written copy (none was visited) is
+    // registered too, so a second expansion of it still keeps one record.
+    if ((macroArgumentDepth != 0 || (flags & LLG_SLANG_LEXICAL_MACRO_ARGUMENT) != 0) &&
+        range.file_id != LLG_SLANG_INVALID_ID)
+      writtenArguments.try_emplace(key, capture.output.lexical_tokens.size() - 1);
   }
 };
 

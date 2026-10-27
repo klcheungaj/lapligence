@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 44u
+#define LLG_SLANG_ABI_VERSION 45u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1336,7 +1336,13 @@ enum {
    * property-case item, the `unique`/`unique0`/`priority` qualifying an if
    * or case statement, and the `disable` of a disable statement. Every other
    * use of the same keyword leaves the bit clear. */
-  LLG_SLANG_LEXICAL_CONTROL_FLOW = 1u << 5
+  LLG_SLANG_LEXICAL_CONTROL_FLOW = 1u << 5,
+  /* A macro-expanded token whose text is written in the actual arguments of
+   * the outermost macro usage (ABI v45), always with
+   * LLG_SLANG_LEXICAL_MACRO_EXPANSION. Its range is the written argument
+   * text, not the use site, and it keeps its own kind and binding. Every
+   * other expanded token comes from a macro body and spans the use site. */
+  LLG_SLANG_LEXICAL_MACRO_ARGUMENT = 1u << 6
 };
 
 typedef struct {

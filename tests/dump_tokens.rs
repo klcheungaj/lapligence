@@ -1063,3 +1063,45 @@ endmodule\n";
     );
     let _ = fs::remove_dir_all(root);
 }
+
+/// A macro use site dumps no row of its expansion, and a name written in the
+/// actual arguments dumps at its written position with its own kind and its
+/// binding.
+#[test]
+fn macro_use_sites_dump_without_expansion_rows_and_arguments_keep_bindings() {
+    let root = std::env::temp_dir().join(format!("llg-dump-macros-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create macro fixture dir");
+    let source = "`define W 8\n\
+`define ADD(a, b) ((a) + (b))\n\
+module macro_dump(input logic [7:0] v, output logic [7:0] y);\n\
+  localparam int L = `W;\n\
+  assign y = `ADD(v, L);\n\
+endmodule\n";
+    fs::write(root.join("macros.sv"), source).expect("write macros.sv");
+    let dump = Dump::run(&root);
+    let at = |line: usize, context: &str, len: usize| {
+        let col = source.lines().nth(line).unwrap().find(context).unwrap();
+        format!("macros.sv:{line}:{col}-{}", col + len)
+    };
+    let starts_at = |line: usize, context: &str| {
+        let col = source.lines().nth(line).unwrap().find(context).unwrap();
+        format!("macros.sv:{line}:{col}-")
+    };
+    // The dump lists named occurrences; a use site has none of its own, and
+    // the expansion (`8`, `((v) + (L))`) adds none there.
+    for (line, context) in [(3, "`W"), (4, "`ADD")] {
+        let rows = dump.rows_at(&starts_at(line, context));
+        assert!(rows.is_empty(), "expansion rows at {context}: {rows:?}");
+    }
+    let port = source.lines().nth(2).unwrap().find("v,").unwrap();
+    dump.assert_rows(
+        &at(4, "v,", 1),
+        &["sym=parameter", &format!("bind=macros.sv:2:{port}[v,")],
+    );
+    let param = source.lines().nth(3).unwrap().find("L =").unwrap();
+    dump.assert_rows(
+        &at(4, "L)", 1),
+        &["sym=variable", &format!("bind=macros.sv:3:{param}[L,")],
+    );
+    let _ = fs::remove_dir_all(root);
+}

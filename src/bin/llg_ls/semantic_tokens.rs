@@ -445,6 +445,92 @@ mod tests {
         out
     }
 
+    /// Text macros in every capture profile: each use site is one `macro`
+    /// token, no expansion token is painted over it, and text written in
+    /// the actual arguments keeps its own kind at its written position,
+    /// through nested macros, a macro argument that is itself a macro, a
+    /// declaration whose name is an argument, and an unknown macro (whose
+    /// diagnostic leaves the rest of the stream intact).
+    #[test]
+    fn macro_use_sites_and_arguments_keep_their_own_tokens_in_every_profile() {
+        let source = "`define W 8\n\
+`define ADD(a, b) ((a) + (b))\n\
+`define OUTER(x) `ADD(x, `W)\n\
+`define DECL(n) logic n;\n\
+module top(input logic [`W-1:0] v, output logic [7:0] y);\n\
+  localparam int L = `W;\n\
+  assign y = `ADD(v, 1) + `OUTER(v) + `ADD(`W, L);\n\
+  `DECL(dv)\n\
+  assign dv = `UNKNOWN;\n\
+  wire q = v[0];\n\
+endmodule\n";
+        let readonly = 1 << TM_READONLY;
+        let declaration = 1 << TM_DECLARATION;
+        for (profile, tokens) in profiles(source) {
+            let at = |line: u32, needle: &str, nth: usize| {
+                let text = source.lines().nth(line as usize).unwrap();
+                let col = text
+                    .match_indices(needle)
+                    .nth(nth)
+                    .unwrap_or_else(|| panic!("no {needle} on line {line}"))
+                    .0 as u32;
+                let found: Vec<_> = tokens
+                    .iter()
+                    .filter(|t| (t.0, t.1) == (line, col))
+                    .collect();
+                assert_eq!(found.len(), 1, "{profile}: {needle} on {line}: {tokens:?}");
+                (found[0].2.clone(), found[0].3, found[0].4)
+            };
+            for (line, needle, nth, text, token_type, bits) in [
+                (4, "`W", 0, "`W", TT_MACRO, 0),
+                (5, "`W", 0, "`W", TT_MACRO, 0),
+                (6, "`ADD", 0, "`ADD", TT_MACRO, 0),
+                (6, "v,", 0, "v", TT_PARAMETER, readonly),
+                (6, "1)", 0, "1", TT_NUMBER, 0),
+                (6, "`OUTER", 0, "`OUTER", TT_MACRO, 0),
+                (6, "v)", 0, "v", TT_PARAMETER, readonly),
+                (6, "`ADD", 1, "`ADD", TT_MACRO, 0),
+                (6, "`W", 0, "`W", TT_MACRO, 0),
+                (6, "L)", 0, "L", TT_VARIABLE, readonly),
+                (7, "`DECL", 0, "`DECL", TT_MACRO, 0),
+                (8, "`UNKNOWN", 0, "`UNKNOWN", TT_MACRO, 0),
+                (9, "q", 0, "q", TT_VARIABLE, declaration),
+                (9, "v", 0, "v", TT_PARAMETER, readonly),
+            ] {
+                assert_eq!(
+                    at(line, needle, nth),
+                    (text.to_owned(), token_type, bits),
+                    "{profile}: {needle}#{nth} on line {line}"
+                );
+            }
+            assert_eq!(
+                at(7, "dv", 0),
+                ("dv".to_owned(), TT_VARIABLE, declaration),
+                "{profile}"
+            );
+            assert_eq!(
+                at(8, "dv", 0),
+                ("dv".to_owned(), TT_VARIABLE, 0),
+                "{profile}"
+            );
+            // Nothing but the use site and the written arguments: the
+            // expansion `((v) + (1))` adds no token on the usage line.
+            let line6: Vec<_> = tokens
+                .iter()
+                .filter(|t| t.0 == 6)
+                .map(|t| t.2.as_str())
+                .collect();
+            assert_eq!(
+                line6,
+                [
+                    "assign", "y", "=", "`ADD", "(", "v", ",", "1", ")", "+", "`OUTER", "(", "v",
+                    ")", "+", "`ADD", "(", "`W", ",", "L", ")", ";"
+                ],
+                "{profile}"
+            );
+        }
+    }
+
     #[test]
     fn parameter_references_keep_readonly_highlighting_in_both_capture_profiles() {
         let source = "package sizes; parameter int DEPTH = 4; endpackage\nmodule top #(parameter int WIDTH = 8)(input logic [WIDTH-1:0] data);\nlocalparam int LIMIT = WIDTH + 1;\nwire [LIMIT-1:0] result;\nint memory [sizes::DEPTH];\nassign result = data + LIMIT;\nendmodule";

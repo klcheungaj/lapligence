@@ -7,8 +7,14 @@ pub(super) fn decode_lexical_token(
     files: &[File],
     semantic_node_count: usize,
 ) -> Result<LexicalToken, SlangError> {
-    if token.reserved != 0 || token.flags & !0b11_1111 != 0 {
+    if token.reserved != 0 || token.flags & !0b111_1111 != 0 {
         return Err(invalid_native("lexical token has unknown flags"));
+    }
+    // A macro argument token is always an expanded token.
+    if token.flags & 64 != 0 && token.flags & 4 == 0 {
+        return Err(invalid_native(
+            "lexical macro argument token is not a macro expansion",
+        ));
     }
     let semantic_id = (token.semantic_id != INVALID_ID).then_some(token.semantic_id);
     if semantic_id
@@ -34,6 +40,7 @@ pub(super) fn decode_lexical_token(
         is_directive: token.flags & 8 != 0,
         is_unit_forward_reference: token.flags & 16 != 0,
         is_control_flow: token.flags & 32 != 0,
+        is_macro_argument: token.flags & 64 != 0,
         semantic_id,
         // SAFETY: stream records and their strings are valid for the callback
         // that delivered them.
@@ -113,7 +120,12 @@ mod tests {
                 .unwrap()
                 .is_control_flow
         );
+        token.flags = 4 | 64;
+        let token_out = decode_lexical_token(&token, &[], 0).expect("macro argument token");
+        assert!(token_out.is_macro_expansion && token_out.is_macro_argument);
         token.flags = 64;
+        assert!(decode_lexical_token(&token, &[], 0).is_err());
+        token.flags = 128;
         assert!(decode_lexical_token(&token, &[], 0).is_err());
         token.flags = 8;
         token.reserved = 1;

@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 44;
+const ABI_VERSION: u32 = 45;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1549,6 +1549,11 @@ pub struct LexicalToken {
     /// `default`, an if/case `unique`/`unique0`/`priority`, a disable
     /// statement's `disable`); other uses of the same keyword leave it false.
     pub is_control_flow: bool,
+    /// Macro-expanded token whose text is written in the actual arguments of
+    /// the outermost macro usage (always with `is_macro_expansion`): `range`
+    /// is the written argument text and the kind and binding are its own.
+    /// Other expanded tokens come from a macro body and span the use site.
+    pub is_macro_argument: bool,
     pub semantic_id: Option<u64>,
     pub text: String,
 }
