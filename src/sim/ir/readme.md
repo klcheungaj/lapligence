@@ -61,7 +61,10 @@ Staging entries retain names, helpers, spawn/process/program identities, and
 write dependencies because functions, storage, and calls share their checked
 tables. Concurrent assertions remain in `IrModel::assertions`, with validated
 clock/disable sources, sampled predicates, overlap modes, labels, and Reactive
-action identities rather than ordinary procedural blocks.
+action identities rather than ordinary procedural blocks. An assertion with
+global clocking future sampled value functions carries `IrAssertionFuture`;
+its `IrSampledFunc::Captured` operands and future status calls number capture
+slots below its slot count, and the validator admits them only there.
 
 Large designs hold many statement vectors and expression trees at once, and
 every slot is sized by its enum's largest variant. Rare or optional payloads

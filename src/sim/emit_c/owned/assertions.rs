@@ -17,6 +17,9 @@ fn sampled_domain_callback_name(index: usize) -> String {
 fn sampled_clock_gate_name(index: usize) -> String {
     format!("llg_sampled_clock_{index}_gate")
 }
+fn assertion_capture_name(index: usize) -> String {
+    format!("llg_assertion_{index}_capture")
+}
 
 fn callback_frame<'a, 'm>(ctx: &'a RCtx<'m>) -> Frame<'a, 'm> {
     let mut frame = Frame::new(ctx);
@@ -110,6 +113,60 @@ fn sampled_value(
     ))
 }
 
+/// The operands an assertion with global clocking future sampled value
+/// functions captures at each clock event (SV 16.9.4), one per slot: the
+/// argument of every captured operand and future status call, evaluated
+/// against the event's sampled values like a predicate.
+fn future_capture(
+    model: &IrModel,
+    constants: &super::super::constants::PackedConstants,
+    backend: crate::sim::value_backend::ValueBackend,
+    index: usize,
+    assertion: &IrAssertion,
+) -> Result<String, String> {
+    let mut slots = std::collections::BTreeMap::new();
+    for expression in assertion.expressions() {
+        let mut copy = expression.clone();
+        crate::sim::opt::walk_expr_mut(&mut copy, &mut |node| {
+            if let IrExprKind::SysFunc(function) = &node.kind {
+                if let IrSysFunc::Sampled(call) = &**function {
+                    if call.kind.is_future() && call.kind != IrSampledFunc::Future
+                        || call.kind == IrSampledFunc::Captured
+                    {
+                        slots
+                            .entry(call.ticks)
+                            .or_insert_with(|| (*call.argument).clone());
+                    }
+                }
+            }
+        });
+    }
+    let ctx = RCtx {
+        value_backend: backend,
+        model,
+        func: None,
+        sampled: true,
+        activation_label: None,
+        constants: Some(constants),
+    };
+    let mut frame = callback_frame(&ctx);
+    for (slot, argument) in &slots {
+        let value = frame.expression(argument)?;
+        if value.width == 0 {
+            return Err("captured assertion operand must be packed".to_owned());
+        }
+        frame.line(format!("sv4_copy(&slots[{slot}], {});", value.address()));
+        frame.discard(value);
+    }
+    frame.line("llg_value_scopes_end_since(_llg_frame_base);");
+    Ok(format!(
+        "static void {}(void* data, sv4_t* slots) {{\n{}{}\n}}\n\n",
+        assertion_capture_name(index),
+        frame.prologue(),
+        frame.body()
+    ))
+}
+
 /// A sampled clock's gate reads current values when the clock occurs, like
 /// the `iff` of an event control (SV 9.4.2.3, 16.9.3).
 fn sampled_clock_gate(
@@ -183,6 +240,11 @@ pub(in crate::sim::emit_c) fn callbacks(
                     model, constants, backend, index, role, expression, sampled,
                 )?);
             }
+        }
+        if assertion.future().is_some_and(|future| future.slots() != 0) {
+            out.push_str(&future_capture(
+                model, constants, backend, index, assertion,
+            )?);
         }
         if let Some(property) = assertion.property() {
             out.push_str(&property::render(

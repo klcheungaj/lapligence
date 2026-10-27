@@ -28,10 +28,6 @@ $reset_value	vpi-only	IEEE 1800-2009 D.8 (informative; a VPI application may pro
 $save	vpi-only	IEEE 1800-2009 D.9 (informative; a VPI application may provide it, 36.3.2)
 $restart	vpi-only	IEEE 1800-2009 D.9 (informative; a VPI application may provide it, 36.3.2)
 $incsave	vpi-only	IEEE 1800-2009 D.9 (informative; a VPI application may provide it, 36.3.2)
-$rising_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4
-$falling_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4
-$steady_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4
-$changing_gclk	advanced	ADV-014 future global sampled values, IEEE 1800-2009 16.9.4
 $async$and$plane	by-design	legacy PLA tasks, IEEE 1800-2009 20.17 (docs/sim_features.md)
 $sync$and$plane	by-design	legacy PLA tasks, IEEE 1800-2009 20.17 (docs/sim_features.md)
 $async$nand$array	by-design	legacy PLA tasks, IEEE 1800-2009 20.17 (docs/sim_features.md)

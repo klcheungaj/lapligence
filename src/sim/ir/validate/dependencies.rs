@@ -14,6 +14,7 @@ impl Validator<'_> {
             string_return: Cell::new(None),
             function: Cell::new(None),
             signal_names: std::cell::OnceCell::new(),
+            future_slots: Cell::new(None),
         }
     }
 

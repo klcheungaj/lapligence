@@ -3030,6 +3030,29 @@ int llg_sampled_clock_register_edge(uint64_t clock, sv4_t* signal, int edge,
 // first leading clock event (an assertion that is the whole body of an
 // initial procedure, IEEE 1800-2009 16.15.6).
 int llg_assertion_single_attempt(uint64_t identity);
+/* Global clocking future sampled value functions (IEEE 1800-2009 16.9.4).
+ * Make the last registered assertion `identity` one whose evaluation needs
+ * sampled values of the next tick of sampled clock `global_clock` (the
+ * global clock): each Observed pass with its clock events calls `capture`
+ * (with the assertion's data) to store the `slots` operands the attempt
+ * reads at those events into an owned array, and queues the events. At the
+ * first global clock tick strictly after their time step the events are
+ * evaluated in order, the predicates reading the captured operands through
+ * llg_assertion_captured and the future values as current sampled values,
+ * so actions run at that tick. Disable iff and $assertkill discard the
+ * attempts running at their own point of the queue. Events after the last
+ * global clock tick are never evaluated. The queue counts against
+ * LLG_SEQUENCE_THREAD_LIMIT. Call after the registration, before run. */
+typedef void (*llg_assertion_capture_fn)(void* data, sv4_t* slots);
+int llg_assertion_future(uint64_t identity, uint64_t global_clock, uint32_t slots,
+                         llg_assertion_capture_fn capture);
+/* Captured operand `slot` of the queued events being evaluated (a fresh
+ * owner), or a run-stopping error outside such an evaluation. */
+sv4_t llg_assertion_captured(uint32_t slot);
+/* $rising_gclk (0), $falling_gclk (1), $steady_gclk (2) or $changing_gclk
+ * (3) of the operand captured in `slot` at the evaluated event, whose
+ * sampled value at the next global clock tick is `future` (Annex F.3.4.4). */
+int llg_assertion_future_status(int kind, uint32_t slot, const sv4_t* future);
 // Make the last registered assertion `identity` procedural concurrent
 // assertion `index` (dense from 0 in registration order, IEEE 1800-2009
 // 16.15.6): a leading clock event begins one attempt per matured instance of
@@ -3291,6 +3314,7 @@ void llg_sequence_local_read_to(sv4_t* dst, void* attempt, uint32_t slot);
 void llg_system_to(sv4_t* dst, llg_string_t* command, int has_command);
 void llg_frame_read_value_to(sv4_t* dst, const llg_frame_t* frame, size_t slot);
 void llg_sampled_domain_past_to(sv4_t* dst, uint64_t identity, uint64_t ticks);
+void llg_assertion_captured_to(sv4_t* dst, uint32_t slot);
 void llg_rt_ref_read_to(sv4_t* dst, const llg_ref_t* ref);
 /* String destination forms: `X_to(dst, ...)` replaces the expression owner at
  * dst (destroyed first; it must carry no change callback) with the string

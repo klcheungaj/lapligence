@@ -187,6 +187,9 @@ typedef struct llg_sampled_clock {
     llg_sampled_domain_t** domains;
     size_t n_domains;
     size_t domains_capacity;
+    /* Time + 1 of the step in which the clock last ticked (0: never), read
+     * by assertions with global clocking future sampled value functions. */
+    uint64_t tick_time1;
 } llg_sampled_clock_t;
 
 static llg_sampled_value_t* find_sampled_value(const sv4_t* signal);
@@ -379,6 +382,30 @@ typedef struct llg_assertion_clock_event {
     uint64_t tick;
 } llg_assertion_clock_event_t;
 
+/* One entry of the deferred evaluation queue of an assertion with global
+ * clocking future sampled value functions (IEEE 1800-2009 16.9.4,
+ * future_assertions.c), in time order. A batch holds the clock events one
+ * Observed pass took, the clock history of their time step, the operands
+ * captured for them and the attempts their leading-clock event begins; a
+ * marker discards the attempts running at its point of the queue (disable
+ * iff or $assertkill). */
+typedef struct llg_assertion_lag {
+    struct llg_assertion_lag* next;
+    uint64_t time;
+    llg_assertion_clock_event_t* events;
+    llg_assertion_clock_event_t* history;
+    sv4_t* slots;
+    uint64_t starts;
+    uint8_t marker;
+    uint8_t killed;
+    uint8_t has_root;
+    /* Action controls in force at the events (SV 20.12): their results
+     * belong to this time step. */
+    uint8_t pass_action_off;
+    uint8_t vacuous_action_off;
+    uint8_t fail_action_off;
+} llg_assertion_lag_t;
+
 /* One destination clock of a sequence endpoint's `.matched` status (SV
  * 16.14.6): a match is visible at destination tick `visible_tick`, the
  * first tick of `clock` after the match's time step (S39-D5); `also_next`
@@ -500,6 +527,19 @@ typedef struct llg_concurrent_assertion {
      * of the step whose sampled abort conditions were last checked. */
     int property_async;
     uint64_t property_async_checked;
+    /* Global clocking future sampled value functions (16.9.4): the global
+     * clock, the capture callback and slot count, the deferred evaluation
+     * queue with its recycled entries, and the replay state (the entry's
+     * attempt starts while its events are evaluated). NULL `future_clock`
+     * for every other assertion. */
+    struct llg_sampled_clock* future_clock;
+    llg_assertion_capture_fn future_capture;
+    uint32_t future_slots;
+    uint8_t lag_replaying;
+    uint64_t lag_starts;
+    llg_assertion_lag_t* lag_head;
+    llg_assertion_lag_t* lag_tail;
+    llg_assertion_lag_t* lag_free;
 } llg_concurrent_assertion_t;
 
 /* Discard the running attempts of an assertion whose disable iff holds or
@@ -682,6 +722,11 @@ typedef struct {
     llg_assertion_eval_t* assertion_eval_pool;
     llg_assertion_clock_event_t* assertion_clock_event_pool;
     llg_property_inst_t* property_inst_pool;
+    // Operands captured for the deferred-queue entry being replayed by an
+    // assertion with global clocking future sampled value functions
+    // (future_assertions.c); NULL outside a replay.
+    const sv4_t* assertion_lag_slots;
+    uint32_t assertion_lag_slot_count;
     // Registered property assertions with an asynchronous abort condition.
     uint64_t property_async_count;
     llg_deferred_trigger_t* deferred_triggers;

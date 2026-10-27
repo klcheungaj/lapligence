@@ -4,6 +4,10 @@ static void run_property_assertion(llg_concurrent_assertion_t* assertion,
 static void property_attempt_begin(llg_concurrent_assertion_t* assertion,
                                    const llg_assertion_clock_event_t* event);
 static void property_assertions_async(void);
+static void future_assertion_observed(llg_concurrent_assertion_t* assertion);
+static int future_assertion_defer_end(llg_concurrent_assertion_t* assertion, int killed);
+static void future_assertion_add_start(llg_concurrent_assertion_t* assertion);
+static void future_assertion_drop(llg_concurrent_assertion_t* assertion);
 
 static void assertion_action(llg_concurrent_assertion_t* assertion,
                              const llg_co_desc_t* desc) {
@@ -206,6 +210,14 @@ static int assertion_attempt_starts(llg_concurrent_assertion_t* assertion) {
  * so it begins even if $assertoff came after it was queued (20.11 "may
  * still mature"). */
 static uint64_t assertion_root_starts(llg_concurrent_assertion_t* assertion) {
+    if (assertion->lag_replaying) {
+        // The starts were decided when the event was queued (16.9.4); they
+        // count as attempts when the event is evaluated.
+        uint64_t starts = assertion->lag_starts;
+        assertion->lag_starts = 0;
+        for (uint64_t index = 0; index < starts; index++) llg_acov_attempt(assertion->acov);
+        return starts;
+    }
     if (!assertion->procedural) return (uint64_t)assertion_attempt_starts(assertion);
     uint64_t starts = assertion->procedural_matured;
     assertion->procedural_matured = 0;
@@ -245,6 +257,9 @@ static int assertion_clock_live(const llg_concurrent_assertion_t* assertion) {
  * condition holds (`killed` 0) or a control task killed it, counting them
  * for assertion coverage. */
 static void end_assertion_attempts(llg_concurrent_assertion_t* assertion, int killed) {
+    // An assertion with future global sampled functions discards the
+    // attempts running at this point of its deferred queue (16.9.4).
+    if (assertion->future_clock && future_assertion_defer_end(assertion, killed)) return;
     if (assertion->acov)
         llg_acov_end_attempts(assertion->acov, assertion_attempts_in_progress(assertion), killed);
     free_assertion_attempts(assertion);
@@ -412,7 +427,8 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
             // pending threads alike: transitions on this edge are the
             // leading clocking event (lowering rejects other forms).
             if (assertion->clock_gate && !assertion->clock_gate(NULL)) continue;
-            if (assertion->consequent_sequence || assertion->property)
+            if (assertion->consequent_sequence || assertion->property ||
+                assertion->future_clock)
                 assertion_clock_event_append(assertion, signal, assertion->edge,
                                              order);
             else
@@ -592,6 +608,10 @@ static void abort_new_attempts(llg_concurrent_assertion_t* assertion, int had_pe
     uint64_t starts;
     if (assertion->procedural) {
         starts = assertion_root_starts(assertion);
+    } else if (assertion->lag_replaying) {
+        starts = !had_pending && assertion->lag_starts;
+        assertion->lag_starts = 0;
+        if (starts) llg_acov_attempt(assertion->acov);
     } else {
         starts = !had_pending && assertion->enabled;
         if (starts) llg_acov_attempt(assertion->acov);
@@ -630,7 +650,61 @@ static void procedural_note_tick(llg_concurrent_assertion_t* assertion,
     assertion->procedural_cycle = cycle;
 }
 
+/* One clock event of a sequence assertion after its cycle was taken: a
+ * synchronous accept/reject control at a leading-clock event, otherwise a
+ * step of every thread. */
+static void sequence_assertion_event(llg_concurrent_assertion_t* assertion,
+                                     const llg_assertion_clock_event_t* event,
+                                     int root_event, uint64_t cycle) {
+    if (root_event && assertion->abort_condition &&
+        assertion->abort_condition(assertion->data)) {
+        int had_pending = assertion->attempts != NULL ||
+                          assertion->sequence_antecedents != NULL ||
+                          assertion->sequence_consequents != NULL;
+        assertion_abort_attempts(assertion);
+        // A synchronous accept/reject control also controls the new
+        // attempt begun at this sampled leading-clock edge.
+        if (!g.finish) abort_new_attempts(assertion, had_pending);
+        return;
+    }
+    (void)run_sequence_concurrent_assertion(assertion, cycle, event->signal, event->edge,
+                                            event->time, event->order, event->tick,
+                                            root_event);
+}
+
+/* One leading-clock edge of a predicate assertion. */
+static void simple_assertion_edge(llg_concurrent_assertion_t* assertion) {
+    if (assertion->abort_condition && assertion->abort_condition(assertion->data)) {
+        int had_pending = assertion->attempts != NULL ||
+                          assertion->sequence_antecedents != NULL ||
+                          assertion->sequence_consequents != NULL;
+        assertion_abort_attempts(assertion);
+        // A synchronous accept/reject control also controls the new attempt
+        // begun at this sampled edge. Emit one result even when no older
+        // attempt was pending, matching the per-clock evaluation contract.
+        if (!g.finish) abort_new_attempts(assertion, had_pending);
+        return;
+    }
+
+    while (assertion->attempts) {
+        llg_assertion_attempt_t* attempt = assertion->attempts;
+        assertion->attempts = attempt->next;
+        if (!assertion->attempts) assertion->attempts_tail = NULL;
+        int success = assertion->consequent(assertion->data) != 0;
+        assertion_result(assertion, success, 0);
+        free(attempt);
+        if (g.finish) return;
+    }
+
+    for (uint64_t starts = assertion_root_starts(assertion); starts && !g.finish; starts--)
+        simple_attempt_begin(assertion);
+}
+
 static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
+    if (assertion->future_clock) {
+        future_assertion_observed(assertion);
+        return;
+    }
     // A clock transition is observed after Active/NBA writes, while every
     // predicate reads the immutable Preponed snapshot from this time slot.
     if (!assertion_clock_live(assertion) ||
@@ -680,22 +754,7 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
                 return;
             }
             if (root_event) procedural_note_tick(assertion, event, cycle);
-            if (root_event && assertion->abort_condition &&
-                assertion->abort_condition(assertion->data)) {
-                int had_pending = assertion->attempts != NULL ||
-                                  assertion->sequence_antecedents != NULL ||
-                                  assertion->sequence_consequents != NULL;
-                assertion_abort_attempts(assertion);
-                // A synchronous accept/reject control also controls the new
-                // attempt begun at this sampled leading-clock edge.
-                if (!g.finish) abort_new_attempts(assertion, had_pending);
-                assertion_clock_event_recycle(event);
-                if (g.finish) return;
-                continue;
-            }
-            (void)run_sequence_concurrent_assertion(
-                assertion, cycle, event->signal, event->edge, event->time,
-                event->order, event->tick, root_event);
+            sequence_assertion_event(assertion, event, root_event, cycle);
             assertion_clock_event_recycle(event);
             if (g.finish) return;
         }
@@ -706,31 +765,7 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
     assertion->edge_pending = 0;
     if (!edge) return;
     procedural_note_tick(assertion, NULL, 0);
-
-    if (assertion->abort_condition && assertion->abort_condition(assertion->data)) {
-        int had_pending = assertion->attempts != NULL ||
-                          assertion->sequence_antecedents != NULL ||
-                          assertion->sequence_consequents != NULL;
-        assertion_abort_attempts(assertion);
-        // A synchronous accept/reject control also controls the new attempt
-        // begun at this sampled edge. Emit one result even when no older
-        // attempt was pending, matching the per-clock evaluation contract.
-        if (!g.finish) abort_new_attempts(assertion, had_pending);
-        return;
-    }
-
-    while (assertion->attempts) {
-        llg_assertion_attempt_t* attempt = assertion->attempts;
-        assertion->attempts = attempt->next;
-        if (!assertion->attempts) assertion->attempts_tail = NULL;
-        int success = assertion->consequent(assertion->data) != 0;
-        assertion_result(assertion, success, 0);
-        free(attempt);
-        if (g.finish) return;
-    }
-
-    for (uint64_t starts = assertion_root_starts(assertion); starts && !g.finish; starts--)
-        simple_attempt_begin(assertion);
+    simple_assertion_edge(assertion);
 }
 
 /* Whether a leading-clock event of `assertion` waits for this Observed
@@ -806,7 +841,9 @@ static void procedural_instance_mature(llg_concurrent_assertion_t* assertion) {
     } else if (assertion->procedural_disabled_tick == g.now + 1) {
         llg_acov_disabled_attempt(assertion->acov);
     } else if (assertion->procedural_tick == g.now + 1) {
-        procedural_begin_at_tick(assertion);
+        // A deferred assertion has not evaluated that event yet.
+        if (assertion->future_clock) future_assertion_add_start(assertion);
+        else procedural_begin_at_tick(assertion);
     } else {
         assertion->procedural_matured++;
     }
@@ -840,8 +877,12 @@ static int run_concurrent_assertions(void) {
 
 static void flush_assertion_attempts(void) {
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
-         assertion = assertion->next)
+         assertion = assertion->next) {
+        // Queued events after the last global clock tick are never
+        // evaluated (16.9.4, F.6.3).
+        if (assertion->future_clock) future_assertion_drop(assertion);
         free_assertion_attempts(assertion);
+    }
 }
 
 int llg_assertion_register_control(

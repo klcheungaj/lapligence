@@ -203,7 +203,8 @@ static int assertion_control_arg(const sv4_t* value, uint64_t* result) {
 
 static int assertion_has_attempts(const llg_concurrent_assertion_t* assertion) {
     return assertion->attempts || assertion->sequence_antecedents ||
-           assertion->sequence_consequents || assertion->property_attempts;
+           assertion->sequence_consequents || assertion->property_attempts ||
+           assertion->lag_head;
 }
 
 // Table 20-6 assertion-type bits of the immediate forms: simple immediate

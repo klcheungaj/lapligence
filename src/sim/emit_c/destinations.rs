@@ -174,6 +174,7 @@ const OPERATIONS: &[(&str, &str, &[Param])] = &[
         "llg_sampled_domain_past_to",
         &[S, S],
     ),
+    ("llg_assertion_captured", "llg_assertion_captured_to", &[S]),
     ("llg_rt_ref_read", "llg_rt_ref_read_to", &[S]),
     (
         "llg_dyn_value_get_nested",

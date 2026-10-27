@@ -46,6 +46,7 @@
 #include "scheduler/sequences.c"
 #include "scheduler/concurrent_assertions.c"
 #include "scheduler/properties.c"
+#include "scheduler/future_assertions.c"
 #include "scheduler/monitors.c"
 #include "scheduler/scheduler.c"
 #include "scheduler/output.c"

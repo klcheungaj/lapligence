@@ -151,7 +151,12 @@ transition of its own). Property-level locals are forced into the antecedent gra
 inherited by the consequent (`PropertyLocalInit`); property-engine operands
 reject them. Subroutine match items: `assertions/match_calls.rs` module docs
 (`IrExprKind::MatchCall`, `DeferredAssertion` pre-fn). Sequence end points:
-`assertions/endpoints.rs` module docs.
+`assertions/endpoints.rs` module docs. An assertion that calls a global
+clocking future sampled value function (16.9.4) is completed by
+`finish_future_assertion` (`assertions/future.rs` module docs) at every
+registration site: its sampled subexpressions become captured operands and it
+carries `IrAssertionFuture` (the global sampled clock and slot count);
+`expect`, end points and asynchronous aborts are located rejections.
 Sequence composition chooses its mechanism per site: one-cycle operands of
 `and`/`intersect`/`throughout`/`within` stay one sampled `&&` atom; multi-cycle
 operands become an `IrSequenceJoin`. Repeated non-Boolean sequences re-lower

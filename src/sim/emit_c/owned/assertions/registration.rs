@@ -216,6 +216,19 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
                 sampled_clock_gate_name(clock),
             ));
         }
+        if let Some(future) = assertion.future() {
+            let capture = if future.slots() == 0 {
+                "NULL".to_owned()
+            } else {
+                super::assertion_capture_name(index)
+            };
+            out.push_str(&format!(
+                "    if (!llg_assertion_future({}ULL, {}ULL, {}u, {capture})) return 0;\n",
+                assertion.identity(),
+                future.clock(),
+                future.slots(),
+            ));
+        }
         if let Some(endpoint) = assertion.endpoint() {
             let clocks = endpoint.matched_clocks();
             let (clock_list, edge_list) = if clocks.is_empty() {

@@ -434,6 +434,24 @@ impl Validator<'_> {
         let mut next_procedural = 0u32;
         for (idx, assertion) in self.model.assertions.iter().enumerate() {
             let path = format!("assertions[{idx}]");
+            if let Some(future) = &assertion.future {
+                if future.clock >= self.model.sampled_clocks.len() {
+                    return self.fail(
+                        format!("{path}.future.clock"),
+                        "future sampled value assertion must name a sampled global clock",
+                    );
+                }
+                if assertion.kind == IrConcurrentAssertionKind::Expect
+                    || assertion.endpoint.is_some()
+                {
+                    return self.fail(
+                        format!("{path}.future"),
+                        "an expect or sequence end point cannot defer its evaluation",
+                    );
+                }
+            }
+            self.future_slots
+                .set(assertion.future.as_ref().map(|future| future.slots));
             if let Some(index) = assertion.procedural {
                 // Procedural assertions number themselves in table order and
                 // exclude the other attempt-start policies.
@@ -667,6 +685,7 @@ impl Validator<'_> {
                 }
             }
         }
+        self.future_slots.set(None);
 
         for (idx, clock) in self.model.sampled_clocks.iter().enumerate() {
             let path = format!("sampled_clocks[{idx}]");

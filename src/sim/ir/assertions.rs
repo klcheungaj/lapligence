@@ -805,6 +805,32 @@ pub struct IrAssertion {
     /// Present when this entry is a sequence endpoint rather than an
     /// assertion statement (see [`IrAssertionEndpoint`]).
     pub(in crate::sim) endpoint: Option<IrAssertionEndpoint>,
+    /// Present when the assertion calls global clocking future sampled value
+    /// functions (see [`IrAssertionFuture`]).
+    pub(in crate::sim) future: Option<IrAssertionFuture>,
+}
+
+/// Deferred evaluation of an assertion with global clocking future sampled
+/// value functions (IEEE 1800-2009 16.9.4). Every clock event is evaluated at
+/// the first tick of the global sampled clock `clock` strictly after it. Its
+/// expressions read the values they need from their event's time step through
+/// [`super::IrSampledFunc::Captured`] calls and the future status functions,
+/// numbered by capture slot below `slots`; the argument of each such call is
+/// evaluated into its slot when the event occurs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IrAssertionFuture {
+    pub(in crate::sim) clock: usize,
+    pub(in crate::sim) slots: u32,
+}
+
+impl IrAssertionFuture {
+    pub fn clock(&self) -> usize {
+        self.clock
+    }
+
+    pub fn slots(&self) -> u32 {
+        self.slots
+    }
 }
 
 /// A sequence endpoint: a hidden cover of every match of one sequence
@@ -898,6 +924,7 @@ impl IrAssertion {
             pass_action,
             fail_action,
             endpoint: None,
+            future: None,
         }
     }
 
@@ -941,6 +968,7 @@ impl IrAssertion {
             pass_action,
             fail_action,
             endpoint: None,
+            future: None,
         }
     }
 
@@ -983,6 +1011,7 @@ impl IrAssertion {
             pass_action,
             fail_action,
             endpoint: None,
+            future: None,
         }
     }
 
@@ -1102,6 +1131,65 @@ impl IrAssertion {
     pub(in crate::sim) fn with_endpoint(mut self, endpoint: IrAssertionEndpoint) -> Self {
         self.endpoint = Some(endpoint);
         self
+    }
+
+    pub fn future(&self) -> Option<&IrAssertionFuture> {
+        self.future.as_ref()
+    }
+
+    /// Every expression the assertion evaluates at its clock events, in a
+    /// fixed order: the abort condition, the predicates, then each
+    /// sequence's atoms, match items and initializers, then the property
+    /// atoms and the property's sequences.
+    pub(in crate::sim) fn expressions(&self) -> Vec<&IrExpr> {
+        fn sequence<'a>(out: &mut Vec<&'a IrExpr>, graph: &'a IrSequence) {
+            out.extend(graph.atoms.iter());
+            out.extend(graph.match_items.iter());
+            out.extend(graph.initializers.iter());
+        }
+        let mut out = Vec::new();
+        out.extend(self.abort_condition.iter());
+        out.extend(self.antecedent.iter());
+        out.extend(self.consequent.iter());
+        for graph in [&self.antecedent_sequence, &self.consequent_sequence]
+            .into_iter()
+            .flatten()
+        {
+            sequence(&mut out, graph);
+        }
+        if let Some(property) = &self.property {
+            out.extend(property.atoms.iter());
+            for graph in &property.sequences {
+                sequence(&mut out, graph);
+            }
+        }
+        out
+    }
+
+    /// Mutable form of [`Self::expressions`], in the same order.
+    pub(in crate::sim) fn expressions_mut(&mut self) -> Vec<&mut IrExpr> {
+        fn sequence<'a>(out: &mut Vec<&'a mut IrExpr>, graph: &'a mut IrSequence) {
+            out.extend(graph.atoms.iter_mut());
+            out.extend(graph.match_items.iter_mut());
+            out.extend(graph.initializers.iter_mut());
+        }
+        let mut out = Vec::new();
+        out.extend(self.abort_condition.iter_mut());
+        out.extend(self.antecedent.iter_mut());
+        out.extend(self.consequent.iter_mut());
+        for graph in [&mut self.antecedent_sequence, &mut self.consequent_sequence]
+            .into_iter()
+            .flatten()
+        {
+            sequence(&mut out, graph);
+        }
+        if let Some(property) = &mut self.property {
+            out.extend(property.atoms.iter_mut());
+            for graph in &mut property.sequences {
+                sequence(&mut out, graph);
+            }
+        }
+        out
     }
 
     pub fn pass_action(&self) -> Option<&str> {

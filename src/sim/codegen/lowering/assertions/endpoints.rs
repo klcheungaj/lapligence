@@ -300,6 +300,7 @@ impl Codegen<'_> {
             )?;
             assertion = assertion.with_clock_gate(gate);
         }
+        let assertion = self.finish_future_assertion(path, assertion)?;
         let table_index = self.model.assertions.len();
         self.model.assertions.push(assertion);
         self.sequence_endpoints.insert(key, table_index);

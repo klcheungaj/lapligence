@@ -321,6 +321,16 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
     {
         return Err("sequence endpoints require the owned model emitter".to_owned());
     }
+    if model
+        .assertions()
+        .iter()
+        .any(|assertion| assertion.future().is_some())
+    {
+        return Err(
+            "global clocking future sampled value functions require the owned model emitter"
+                .to_owned(),
+        );
+    }
     for (index, assertion) in model.assertions().iter().enumerate() {
         let clock = model.signal(assertion.clock_signal()).c_name();
         let disable = assertion

@@ -140,4 +140,3 @@ waiting process can run.
 | `neg_past_zero`, `neg_past_negative`, `neg_past_nonconst`, `neg_past_unknown_ticks` | §16.9.3: `number_of_ticks` is a constant of at least 1 | frontend |
 | `neg_no_clock` | §16.9.3: a clock must be explicit or inferred | frontend |
 | `neg_unpacked_arg`, `neg_unpacked_struct_arg`, `neg_queue_arg` | legal or non-excluded types without sampled storage | llg: explicit unsupported |
-| `neg_future_global` | §16.9.4 future functions belong to ADV-014 | llg: explicit unsupported |

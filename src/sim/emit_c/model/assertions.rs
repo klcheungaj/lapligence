@@ -244,6 +244,12 @@ pub(super) fn render_assertion_callbacks(model: &IrModel) -> Result<String, Stri
         if assertion.property().is_some() {
             return Err("property operators require the owned model emitter".to_owned());
         }
+        if assertion.future().is_some() {
+            return Err(
+                "global clocking future sampled value functions require the owned model emitter"
+                    .to_owned(),
+            );
+        }
         if let Some(antecedent) = assertion.antecedent() {
             out.push_str(&render_assertion_predicate(
                 model,
