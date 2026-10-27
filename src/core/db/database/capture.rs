@@ -334,6 +334,7 @@ impl Db {
             })
             .collect();
         let primitive_array_positions = primitive_array_positions(snapshot);
+        let instance_array_ranges = instance_array_ranges(snapshot);
         let mut arrays = HashMap::new();
         let mut event_arrays = HashMap::new();
         let mut subroutine_arrays = HashMap::new();
@@ -1433,6 +1434,7 @@ impl Db {
             program_instances,
             unconnected_drives,
             primitive_array_positions,
+            instance_array_ranges,
             source_libraries,
             declaration_time_scales,
             class_declaring_scopes,
@@ -1601,6 +1603,22 @@ fn primitive_array_positions(
         .collect()
 }
 
+/// The declared range of every instance array level, as the frontend
+/// exported it (left bound in the low half of `auxiliary`).
+fn instance_array_ranges(snapshot: &SlangSnapshot) -> HashMap<NodeId, (i32, i32)> {
+    snapshot
+        .semantic_nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.kind == SemanticKind::Instance && node.subkind == 193)
+        .map(|(index, node)| {
+            let left = (node.auxiliary & u64::from(u32::MAX)) as u32 as i32;
+            let right = (node.auxiliary >> 32) as u32 as i32;
+            (NodeId::from_index(index), (left, right))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1742,6 +1760,51 @@ mod tests {
         // An input port's value is a default for an unconnected port
         // (23.2.2.4), never a variable initializer.
         assert!(db.var_initializer(storage("top.c.i")).is_none());
+    }
+
+    #[test]
+    fn instance_arrays_keep_their_declared_ranges() {
+        // IEEE 1800-2009 37.11: every array level reports its own bounds.
+        let source = "module leaf(input logic a); endmodule \
+            module top; logic [3:0] x; wire [3:0] y; \
+            leaf up [3:1] (.a(x[0])); leaf grid [0:1][5:4] (.a(x[1])); \
+            nand ng [0:3] (y, x, x); endmodule";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "arrays.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let mut ranges = db
+            .node_ids()
+            .filter(|id| matches!(db.node_kind(*id), NodeKind::InstanceArray))
+            .map(|id| (db.node(id).name.clone(), db.instance_array_range(id)))
+            .collect::<Vec<_>>();
+        ranges.sort();
+        assert_eq!(
+            ranges,
+            vec![
+                (String::new(), Some((5, 4))),
+                (String::new(), Some((5, 4))),
+                ("grid".to_owned(), Some((0, 1))),
+                ("ng".to_owned(), Some((0, 3))),
+                ("up".to_owned(), Some((3, 1))),
+            ]
+        );
+        let names = db
+            .node_ids()
+            .filter(|id| matches!(db.node_kind(*id), NodeKind::ModuleInst { .. }))
+            .map(|id| db.node(id).name.clone())
+            .filter(|name| name.starts_with("grid["))
+            .collect::<Vec<_>>();
+        assert_eq!(names.len(), 4);
+        assert!(names.contains(&"grid[1][4]".to_owned()));
     }
 
     #[test]

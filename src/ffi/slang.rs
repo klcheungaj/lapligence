@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 52;
+const ABI_VERSION: u32 = 54;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
