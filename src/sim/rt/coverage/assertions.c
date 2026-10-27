@@ -293,12 +293,12 @@ static void llg_acov_item_control(llg_acov_item_t* item, int operation, uint64_t
             break;
         case LLG_ACOV_OP_PASS_OFF: item->control |= LLG_ACOV_CTL_PASS_OFF | LLG_ACOV_CTL_VACUOUS_OFF; break;
         case LLG_ACOV_OP_PASS_ON:
-            item->control &= (uint8_t)~(LLG_ACOV_CTL_PASS_OFF | LLG_ACOV_CTL_VACUOUS_OFF);
+            item->control = (uint8_t)(item->control & ~(LLG_ACOV_CTL_PASS_OFF | LLG_ACOV_CTL_VACUOUS_OFF));
             break;
         case LLG_ACOV_OP_FAIL_OFF: item->control |= LLG_ACOV_CTL_FAIL_OFF; break;
-        case LLG_ACOV_OP_FAIL_ON: item->control &= (uint8_t)~LLG_ACOV_CTL_FAIL_OFF; break;
+        case LLG_ACOV_OP_FAIL_ON: item->control = (uint8_t)(item->control & ~LLG_ACOV_CTL_FAIL_OFF); break;
         case LLG_ACOV_OP_VACUOUS_OFF: item->control |= LLG_ACOV_CTL_VACUOUS_OFF; break;
-        case LLG_ACOV_OP_NONVACUOUS_ON: item->control &= (uint8_t)~LLG_ACOV_CTL_PASS_OFF; break;
+        case LLG_ACOV_OP_NONVACUOUS_ON: item->control = (uint8_t)(item->control & ~LLG_ACOV_CTL_PASS_OFF); break;
         default: break;
     }
 }
