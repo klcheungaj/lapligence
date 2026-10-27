@@ -213,8 +213,16 @@ fn lsp_stdio_macro_use_sites_and_arguments_match_in_both_serving_paths() {
                 bits.iter().map(|bit| (*bit).to_owned()).collect::<Vec<_>>(),
             )
         };
-        assert_eq!(token("`include", 0, 0), keyword(&[]), "opened={opened}");
-        assert_eq!(token("`define", 0, 0), keyword(&[]), "opened={opened}");
+        assert_eq!(
+            token("`include", 0, 0),
+            keyword(&["controlFlow"]),
+            "opened={opened}"
+        );
+        assert_eq!(
+            token("`define", 0, 0),
+            keyword(&["controlFlow"]),
+            "opened={opened}"
+        );
         assert_eq!(
             token("`ifdef CFG", 0, 0),
             keyword(&["controlFlow"]),

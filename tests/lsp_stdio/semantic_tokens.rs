@@ -1219,9 +1219,9 @@ endmodule\n";
         expect(".y, .b", 1, "function", &["connectionLabel"]);
         for (needle, want) in [
             ("`ifndef", &["controlFlow"][..]),
-            ("`define", &[]),
+            ("`define", &["controlFlow"]),
             ("`endif", &["controlFlow"]),
-            ("`timescale", &[]),
+            ("`timescale", &["controlFlow"]),
         ] {
             expect(needle, 0, "keyword", want);
         }

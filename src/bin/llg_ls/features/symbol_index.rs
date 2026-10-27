@@ -1659,6 +1659,7 @@ pub(super) fn classify_token(
         tokens::TOKEN_SLANG_PORT => Some(SymKind::Port),
         tokens::TOKEN_SLANG_NET => Some(SymKind::Net),
         tokens::TOKEN_SLANG_VARIABLE
+        | tokens::TOKEN_SLANG_FIELD
         | tokens::TOKEN_SLANG_IDENTIFIER
         | tokens::TOKEN_SLANG_BOUND_IDENTIFIER
         | tokens::TOKEN_SLANG_BLOCK => Some(SymKind::Var),

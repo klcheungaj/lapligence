@@ -84,7 +84,13 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   disable statement (not of `disable iff`), the keyword of an initial, final
   or always* procedure (not a UDP `initial` or the `always` property
   operator), and the keyword of a continuous assignment, net alias or
-  procedural assign, deassign, force or release statement. Words that are control flow
+  procedural assign, deassign, force or release statement. Struct and union
+  members and class properties are `LLG_SLANG_LEXICAL_FIELD`: a member
+  declaration nothing references still gets the declaration role from the
+  syntax, every member step of a select (`s.a.b`, `pk::v.f`, `u.p.f`) and an
+  assignment-pattern member key (`'{a: 1}`) bind to the member, and the
+  package name of an import binds to the package. A `` `define `` name has the
+  declaration role without a semantic target. Words that are control flow
   everywhere are left to the consumer's text classification.
 - Text macros: a use site keeps its `` `NAME `` directive token and its
   written actual arguments. Expanded tokens carry

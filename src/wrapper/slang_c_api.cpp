@@ -455,6 +455,9 @@ struct Capture {
   std::vector<LexicalBinding> lexicalBindings;
   std::vector<LlgSlangSourceRange> connectionActualRanges;
   std::vector<GenvarLexicalScope> genvarLexicalScopes;
+  // Struct and union member declaration names from the syntax. A member that
+  // nothing references has no semantic node, so its name would stay unbound.
+  std::vector<LlgSlangSourceRange> fieldDeclarations;
   std::unordered_map<uint64_t, uint64_t> lexicalTargetAliases;
   std::unordered_map<const syntax::SyntaxNode*, std::vector<uint64_t>>
       sourceIdentityGroups;
@@ -1467,6 +1470,15 @@ struct Capture {
       connectionActualRanges.push_back(physical);
   }
 
+  void fieldDeclaration(parsing::Token token) {
+    if (fieldDeclarations.size() >= maxLexicalTokens())
+      throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
+                          "field declaration limit exceeded");
+    const auto physical = tokenSpan(token);
+    if (physical.file_id != LLG_SLANG_INVALID_ID)
+      fieldDeclarations.push_back(physical);
+  }
+
   void genvarLexicalScope(SourceRange range, std::string_view name,
                           uint64_t semanticId) {
     if (genvarLexicalScopes.size() >= maxLexicalTokens())
@@ -2389,6 +2401,23 @@ public:
       if (capture.declarationOnly && symbol.getSyntax() &&
           !sourceGenerateBlocks.insert(symbol.getSyntax()).second)
         return;
+    }
+    // The package name of `import pk::*;` / `import pk::x;` (IEEE 1800-2009
+    // 26.3) names the imported package.
+    if constexpr (std::same_as<T, WildcardImportSymbol> ||
+                  std::same_as<T, ExplicitImportSymbol>) {
+      const PackageSymbol* package = nullptr;
+      if constexpr (std::same_as<T, WildcardImportSymbol>)
+        package = symbol.getPackage();
+      else
+        package = symbol.package();
+      const syntax::SyntaxNode* item = symbol.getSyntax();
+      if (package && item && item->kind == syntax::SyntaxKind::PackageImportItem) {
+        const parsing::Token name = item->as<syntax::PackageImportItemSyntax>().package;
+        if (name.valueText() == package->name)
+          capture.lexicalBinding(name, lexicalTarget(*package),
+                                 LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+      }
     }
     const uint64_t id = capture.ensureSemantic(&symbol);
     attach(id);
@@ -3847,6 +3876,48 @@ private:
     if constexpr (std::same_as<T, NamedValueExpression>) {
       bindScopeQualifiers(*expression.syntax, expression.symbol);
     }
+    else if constexpr (std::same_as<T, StructuredAssignmentPatternExpression>) {
+      bindPatternMemberKeys(expression);
+    }
+    else if constexpr (std::same_as<T, MemberAccessExpression>) {
+      // The inner selects of `s.a.b` and the value of `pk::v.f` may keep no
+      // syntax of their own; their names are steps of the outer select's
+      // name, so bind each member step right to left, and the qualifiers.
+      std::vector<parsing::Token> names;
+      collectNameTokens(*expression.syntax, names, false);
+      size_t index = names.size();
+      const Expression* value = &expression;
+      while (value->kind == ExpressionKind::MemberAccess) {
+        const auto& access = value->template as<MemberAccessExpression>();
+        if (index == 0 || names[index - 1].valueText() != access.member.name ||
+            access.member.name.empty())
+          break;
+        capture.lexicalBinding(names[--index], lexicalTarget(access.member),
+                               LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+        value = &access.value();
+      }
+      const bool membersBound = value->kind != ExpressionKind::MemberAccess;
+      while (value->kind == ExpressionKind::MemberAccess)
+        value = &value->template as<MemberAccessExpression>().value();
+      if (value->kind == ExpressionKind::NamedValue) {
+        const Symbol& root = value->template as<NamedValueExpression>().symbol;
+        if (membersBound && index > 0 && !root.name.empty() &&
+            names[index - 1].valueText() == root.name)
+          capture.lexicalBinding(names[index - 1], lexicalTarget(root),
+                                 LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+        bindScopeQualifiers(*expression.syntax, root);
+      }
+      else if (value->kind == ExpressionKind::HierarchicalValue && membersBound &&
+               index > 0) {
+        // `u.p.f`: the hierarchical value `u.p` keeps no syntax here.
+        const auto& hierarchical = value->template as<HierarchicalValueExpression>();
+        if (names[index - 1].valueText() == hierarchical.symbol.name) {
+          capture.lexicalBinding(names[index - 1], lexicalTarget(hierarchical.symbol),
+                                 LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+          bindHierarchicalSteps(names, index, hierarchical.ref);
+        }
+      }
+    }
     else if constexpr (std::same_as<T, HierarchicalValueExpression>) {
       bindHierarchicalPath(*expression.syntax, expression.ref);
     }
@@ -3882,6 +3953,33 @@ private:
       capture.lexicalBinding(token, lexicalTarget(*target),
                              LLG_SLANG_LEXICAL_ROLE_REFERENCE);
       bindScopeQualifiers(*name, *target);
+    }
+  }
+
+  // A member key of a structure assignment pattern (`'{a: 1}`, IEEE
+  // 1800-2009 10.9.2) names a member of the pattern's type; Slang keeps the
+  // member but not the key's syntax, so match the written keys by name.
+  void bindPatternMemberKeys(const StructuredAssignmentPatternExpression& expression) {
+    if (expression.memberSetters.empty())
+      return;
+    const syntax::SyntaxNode* pattern = expression.syntax;
+    if (pattern->kind == syntax::SyntaxKind::AssignmentPatternExpression)
+      pattern = pattern->as<syntax::AssignmentPatternExpressionSyntax>().pattern;
+    if (pattern->kind != syntax::SyntaxKind::StructuredAssignmentPattern)
+      return;
+    for (const syntax::AssignmentPatternItemSyntax* item :
+         pattern->as<syntax::StructuredAssignmentPatternSyntax>().items) {
+      if (item->key->kind != syntax::SyntaxKind::IdentifierName)
+        continue;
+      const parsing::Token key =
+          item->key->as<syntax::IdentifierNameSyntax>().identifier;
+      for (const auto& setter : expression.memberSetters) {
+        if (setter.member->name == key.valueText()) {
+          capture.lexicalBinding(key, lexicalTarget(*setter.member),
+                                 LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+          break;
+        }
+      }
     }
   }
 
@@ -4010,9 +4108,16 @@ private:
   // first qualifier that names none.
   void bindScopeQualifiers(const syntax::SyntaxNode& syntaxNode,
                            const Symbol& target) {
-    if (syntaxNode.kind != syntax::SyntaxKind::ScopedName)
+    // A value with member selects (`pk::v.f`) carries the whole dotted name;
+    // the qualifiers belong to its leading `pk::v`.
+    const syntax::SyntaxNode* name = &syntaxNode;
+    while (name->kind == syntax::SyntaxKind::ScopedName &&
+           name->as<syntax::ScopedNameSyntax>().separator.kind ==
+               parsing::TokenKind::Dot)
+      name = name->as<syntax::ScopedNameSyntax>().left;
+    if (name->kind != syntax::SyntaxKind::ScopedName)
       return;
-    const auto& scoped = syntaxNode.as<syntax::ScopedNameSyntax>();
+    const auto& scoped = name->as<syntax::ScopedNameSyntax>();
     if (scoped.separator.kind != parsing::TokenKind::DoubleColon)
       return;
     std::vector<parsing::Token> qualifiers;
@@ -4044,12 +4149,19 @@ private:
       return;
     std::vector<parsing::Token> names;
     collectNameTokens(syntaxNode, names, false);
-    if (names.size() < 2)
+    bindHierarchicalSteps(names, names.size(), ref);
+  }
+
+  // Binds `names[0, count - 1)`, the steps before the reference's own name
+  // `names[count - 1]`, as bindHierarchicalPath does.
+  void bindHierarchicalSteps(const std::vector<parsing::Token>& names,
+                             size_t count, const HierarchicalReference& ref) {
+    if (count < 2 || ref.path.empty())
       return;
     size_t step = ref.path.size();
     if (ref.path[step - 1].symbol == ref.target)
       step--;
-    for (size_t index = names.size() - 1; index-- > 0;) {
+    for (size_t index = count - 1; index-- > 0;) {
       const std::string_view text = names[index].valueText();
       while (step > 0) {
         const auto& element = ref.path[--step];
@@ -5992,6 +6104,9 @@ uint32_t lexicalKindForSemantic(const LlgSlangSemanticNode& node) {
   // Type and value parameters share the parameter kind.
   if (detail == "TypeParameter")
     return LLG_SLANG_LEXICAL_TYPE_PARAMETER;
+  // Struct and union members and class properties share the variable kind.
+  if (detail == "Field" || detail == "ClassProperty")
+    return LLG_SLANG_LEXICAL_FIELD;
   // Named and labeled statement blocks share the scope kind with instance
   // bodies, compilation units and clocking blocks; the symbol kind tells them
   // apart.
@@ -6111,6 +6226,17 @@ public:
     visitDefault(syntax);
   }
 
+  void handle(const syntax::DefineDirectiveSyntax& syntax) {
+    defineName = syntax.name.location();
+    visitDefault(syntax);
+  }
+
+  void handle(const syntax::StructUnionMemberSyntax& syntax) {
+    for (const syntax::DeclaratorSyntax* declarator : syntax.declarators)
+      capture.fieldDeclaration(declarator->name);
+    visitDefault(syntax);
+  }
+
   // Process introducers (IEEE 1800-2009 A.6.2, 9.2; also the checker
   // `always` of A.1.8): control flow, unlike the `initial` of a UDP initial
   // statement (A.5.4) and the `always` property operator (A.2.10).
@@ -6226,6 +6352,13 @@ public:
                 return std::tie(left.file_id, left.start, left.end) <
                        std::tie(right.file_id, right.start, right.end);
               });
+    const auto rangeLess = [](const LlgSlangSourceRange& left,
+                              const LlgSlangSourceRange& right) {
+      return std::tie(left.file_id, left.start, left.end) <
+             std::tie(right.file_id, right.start, right.end);
+    };
+    std::sort(capture.fieldDeclarations.begin(), capture.fieldDeclarations.end(),
+              rangeLess);
     for (const auto& binding : capture.lexicalBindings) {
       if (binding.range.file_id == LLG_SLANG_INVALID_ID)
         continue;
@@ -6382,6 +6515,13 @@ public:
             }
           }
         }
+      }
+      if (role == LLG_SLANG_LEXICAL_ROLE_NONE &&
+          std::binary_search(capture.fieldDeclarations.begin(),
+                             capture.fieldDeclarations.end(), token.range,
+                             rangeLess)) {
+        role = LLG_SLANG_LEXICAL_ROLE_DECLARATION;
+        boundKind = LLG_SLANG_LEXICAL_FIELD;
       }
       const std::string_view tokenText(
           reinterpret_cast<const char*>(token.text.data), token.text.len);
@@ -6567,6 +6707,8 @@ private:
   std::vector<BlockName> blockNames;
   // The control-flow keyword of the syntax node being visited.
   SourceLocation controlKeyword;
+  // The macro name of the `define directive being visited.
+  SourceLocation defineName;
 
   void addToken(parsing::Token token, uint32_t extraFlags) {
     const std::string_view text = token.rawText();
@@ -6626,9 +6768,12 @@ private:
         range, kind,
         // MSVC gives unnamed enums an int underlying type; narrowing to the
         // uint32_t field must be explicit in brace initialization.
-        static_cast<uint32_t>(kind == LLG_SLANG_LEXICAL_KEYWORD
-                                  ? LLG_SLANG_LEXICAL_ROLE_KEYWORD
-                                  : LLG_SLANG_LEXICAL_ROLE_NONE),
+        static_cast<uint32_t>(
+            kind == LLG_SLANG_LEXICAL_KEYWORD ? LLG_SLANG_LEXICAL_ROLE_KEYWORD
+            : kind == LLG_SLANG_LEXICAL_MACRO && defineName.valid() &&
+                    token.location() == defineName
+                ? LLG_SLANG_LEXICAL_ROLE_DECLARATION
+                : LLG_SLANG_LEXICAL_ROLE_NONE),
         flags, 0, LLG_SLANG_INVALID_ID, {}};
     if ((flags & LLG_SLANG_LEXICAL_MACRO_ARGUMENT) != 0 &&
         range.file_id != LLG_SLANG_INVALID_ID) {

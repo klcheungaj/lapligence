@@ -1313,11 +1313,16 @@ enum {
   LLG_SLANG_LEXICAL_BLOCK = 26,
   /* Type parameter (`parameter type T`, ABI v44): the declaration and every
    * reference bound to it. Value parameters stay LLG_SLANG_LEXICAL_PARAMETER. */
-  LLG_SLANG_LEXICAL_TYPE_PARAMETER = 27
+  LLG_SLANG_LEXICAL_TYPE_PARAMETER = 27,
+  /* A struct or union member or a class property (ABI v46): the declaration
+   * and every reference bound to it. */
+  LLG_SLANG_LEXICAL_FIELD = 28
 };
 
 enum {
   LLG_SLANG_LEXICAL_ROLE_NONE = 0,
+  /* Also the macro name of a `define directive (ABI v46), which has no
+   * semantic target. */
   LLG_SLANG_LEXICAL_ROLE_DECLARATION = 1,
   LLG_SLANG_LEXICAL_ROLE_REFERENCE = 2,
   LLG_SLANG_LEXICAL_ROLE_CONNECTION_LABEL = 3,

@@ -14,6 +14,7 @@ const TT_STRUCT: u32 = 5;
 const TT_TYPE_PARAMETER: u32 = 6;
 const TT_PARAMETER: u32 = 7;
 const TT_VARIABLE: u32 = 8;
+const TT_PROPERTY: u32 = 9;
 const TT_ENUM_MEMBER: u32 = 10;
 const TT_FUNCTION: u32 = 12;
 const TT_METHOD: u32 = 13;
@@ -105,11 +106,9 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         // Directive and macro-usage words arrive as operator-kind tokens.
         if node.kind == TOKEN_SLANG_OPERATOR {
             match node.name.as_deref().and_then(backtick_word) {
-                Some(BacktickWord::Directive { conditional }) => {
+                Some(BacktickWord::Directive) => {
                     token_type = TT_KEYWORD;
-                    if conditional {
-                        modifiers |= 1 << TM_CONTROL_FLOW;
-                    }
+                    modifiers |= 1 << TM_CONTROL_FLOW;
                 }
                 Some(BacktickWord::MacroUsage) => token_type = TT_MACRO,
                 None => {}
@@ -192,18 +191,17 @@ fn is_unresolved_identifier(kind: i32) -> bool {
 /// A grave-accent word in the token stream.
 #[derive(Debug, PartialEq, Eq)]
 enum BacktickWord {
-    /// An IEEE 1800-2009 22.1 compiler directive; `conditional` for the
-    /// conditional-compilation directives of 22.6.
-    Directive { conditional: bool },
+    /// An IEEE 1800-2009 22.1 compiler directive.
+    Directive,
     /// Any other `` `name ``: a text macro usage (inside a macro body, where
     /// the capture keeps it unexpanded).
     MacroUsage,
 }
 
-/// Classify `` `name `` tokens. Compiler directives are keywords (`keyword`,
-/// with `controlFlow` for `` `ifdef ``, `` `ifndef ``, `` `elsif ``, `` `else ``
-/// and `` `endif ``, which select the source that is compiled, as `if` selects
-/// statements); every other grave-accent name is a macro usage. The macro
+/// Classify `` `name `` tokens. Compiler directives are keywords with
+/// `controlFlow` (user decision, 2026-10-27: every directive steers what is
+/// compiled, as `` `ifdef `` selects source the way `if` selects statements);
+/// every other grave-accent name is a macro usage. The macro
 /// quote and paste tokens (`` `" ``, ``` `` ```) are not words and keep the
 /// operator type.
 fn backtick_word(name: &str) -> Option<BacktickWord> {
@@ -216,10 +214,12 @@ fn backtick_word(name: &str) -> Option<BacktickWord> {
         return None;
     }
     Some(match word {
-        "ifdef" | "ifndef" | "elsif" | "else" | "endif" => {
-            BacktickWord::Directive { conditional: true }
-        }
-        "begin_keywords"
+        "ifdef"
+        | "ifndef"
+        | "elsif"
+        | "else"
+        | "endif"
+        | "begin_keywords"
         | "celldefine"
         | "default_nettype"
         | "define"
@@ -233,7 +233,7 @@ fn backtick_word(name: &str) -> Option<BacktickWord> {
         | "timescale"
         | "unconnected_drive"
         | "undef"
-        | "undefineall" => BacktickWord::Directive { conditional: false },
+        | "undefineall" => BacktickWord::Directive,
         _ => BacktickWord::MacroUsage,
     })
 }
@@ -322,6 +322,7 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
         TOKEN_SLANG_TYPE_ALIAS => TT_TYPE,
         TOKEN_SLANG_PARAMETER => TT_VARIABLE,
         TOKEN_SLANG_TYPE_PARAMETER => TT_TYPE_PARAMETER,
+        TOKEN_SLANG_FIELD => TT_PROPERTY,
         TOKEN_SLANG_PORT => TT_PARAMETER,
         TOKEN_SLANG_VARIABLE
         | TOKEN_SLANG_NET
@@ -1199,6 +1200,99 @@ endprimitive
         }
     }
 
+    /// Struct and union members (packed and unpacked, typedef'd, anonymous
+    /// and nested) and class properties at declarations, member selects,
+    /// assignment-pattern keys and through ports and packages.
+    const FIELD_SOURCE: &str = "package pk;
+  typedef struct packed { logic [3:0] lo; logic hi; } pair_t;
+  pair_t pv;
+endpackage
+module child(input pk::pair_t pin, output logic o);
+  assign o = pin.hi;
+endmodule
+module top;
+  typedef struct { int a; struct { int x; int y; } inner; } s_t;
+  typedef union packed { logic [4:0] u0; logic [4:0] u1; } u_t;
+  s_t s;
+  s_t arr [2];
+  u_t un;
+  struct packed { logic f1; logic f2; } anon;
+  logic o;
+  child c(.pin(pk::pv), .o(o));
+  class cls; int prop; function void m(); prop = 1; this.prop = 2; endfunction endclass
+  initial begin
+    s.a = 1;
+    s.inner.x = 2;
+    arr[1].inner.y = 3;
+    pk::pv.lo = 4'h1;
+    un.u1 = 5'h2;
+    anon.f2 = 1'b1;
+    s = '{a: 1, inner: '{x: 2, y: 3}};
+    $display(c.pin.hi);
+  end
+endmodule
+";
+
+    /// Members and class properties are `property` (`declaration` at the
+    /// member declaration) in every profile, as rust-analyzer and clangd
+    /// send fields; the containing variables keep `variable`.
+    #[test]
+    fn struct_union_members_and_class_properties_are_properties_in_every_profile() {
+        let source = FIELD_SOURCE;
+        let declaration = 1 << TM_DECLARATION;
+        for (profile, tokens) in profiles(source) {
+            for (line, word, nth, want) in [
+                (1, "lo", 0, (TT_PROPERTY, declaration)),
+                (1, "hi", 0, (TT_PROPERTY, declaration)),
+                (5, "hi", 0, (TT_PROPERTY, 0)),
+                (8, "a", 0, (TT_PROPERTY, declaration)),
+                (8, "x", 0, (TT_PROPERTY, declaration)),
+                (8, "y", 0, (TT_PROPERTY, declaration)),
+                (8, "inner", 0, (TT_PROPERTY, declaration)),
+                (9, "u0", 0, (TT_PROPERTY, declaration)),
+                (9, "u1", 0, (TT_PROPERTY, declaration)),
+                (13, "f1", 0, (TT_PROPERTY, declaration)),
+                (13, "f2", 0, (TT_PROPERTY, declaration)),
+                (13, "anon", 0, (TT_VARIABLE, declaration)),
+                (16, "prop", 0, (TT_PROPERTY, declaration)),
+                (16, "prop", 1, (TT_PROPERTY, 0)),
+                (16, "prop", 2, (TT_PROPERTY, 0)),
+                (18, "s", 0, (TT_VARIABLE, 0)),
+                (18, "a", 0, (TT_PROPERTY, 0)),
+                (19, "inner", 0, (TT_PROPERTY, 0)),
+                (19, "x", 0, (TT_PROPERTY, 0)),
+                (20, "arr", 0, (TT_VARIABLE, 0)),
+                (20, "inner", 0, (TT_PROPERTY, 0)),
+                (20, "y", 0, (TT_PROPERTY, 0)),
+                (21, "pk", 0, (TT_NAMESPACE, 0)),
+                (21, "pv", 0, (TT_VARIABLE, 0)),
+                (21, "lo", 0, (TT_PROPERTY, 0)),
+                (22, "u1", 0, (TT_PROPERTY, 0)),
+                (23, "f2", 0, (TT_PROPERTY, 0)),
+                (24, "a", 0, (TT_PROPERTY, 0)),
+                (24, "inner", 0, (TT_PROPERTY, 0)),
+                (24, "x", 0, (TT_PROPERTY, 0)),
+                (24, "y", 0, (TT_PROPERTY, 0)),
+                (25, "c", 0, (TT_VARIABLE, 0)),
+                (25, "pin", 0, (TT_PARAMETER, 1 << TM_READONLY)),
+                (25, "hi", 0, (TT_PROPERTY, 0)),
+            ] {
+                let text = source.lines().nth(line).unwrap();
+                let col = word_positions(text, word)[nth].1;
+                let got = tokens
+                    .iter()
+                    .find(|t| (t.0, t.1) == (line as u32, col))
+                    .map(|t| (t.3, t.4));
+                // Library-unit capture elaborates no hierarchy, so the steps
+                // of the hierarchical `c.pin.hi` may have no token there.
+                if line == 25 && profile == "library_units=true" && got.is_none() {
+                    continue;
+                }
+                assert_eq!(got, Some(want), "{profile}: {word}#{nth} on line {line}");
+            }
+        }
+    }
+
     /// `unique` is control flow only when it qualifies an if or case; the
     /// uniqueness constraint (outside the 2009 edition, still captured) keeps
     /// a plain keyword.
@@ -1239,8 +1333,9 @@ endmodule\n";
     /// Value parameters are constants (`variable` + `readonly`), type
     /// parameters `typeParameter`, port labels `function` and parameter
     /// labels `function` + `readonly` (both with `connectionLabel`), compiler
-    /// directives `keyword` (conditional ones with `controlFlow`) and a macro
-    /// usage inside a macro body `macro`, in every capture profile.
+    /// directives `keyword` + `controlFlow`, `` `define `` names `macro` +
+    /// `declaration` and a macro usage inside a macro body `macro`, in every
+    /// capture profile.
     #[test]
     fn parameters_labels_and_directives_use_their_analogue_types_in_every_profile() {
         let source = DECLARATION_SOURCE;
@@ -1263,13 +1358,15 @@ endmodule\n";
                 (t.2.clone(), t.3, t.4)
             };
             for (line, needle, text, token_type, bits) in [
-                (0, "`define", "`define", TT_KEYWORD, 0),
-                (1, "`define", "`define", TT_KEYWORD, 0),
+                (0, "`define", "`define", TT_KEYWORD, control),
+                (1, "`define", "`define", TT_KEYWORD, control),
+                (0, "W 8", "W", TT_MACRO, declaration),
+                (1, "TWICE", "TWICE", TT_MACRO, declaration),
                 (1, "`W", "`W", TT_MACRO, 0),
                 (2, "`ifdef", "`ifdef", TT_KEYWORD, control),
                 (7, "`else", "`else", TT_KEYWORD, control),
                 (9, "`endif", "`endif", TT_KEYWORD, control),
-                (10, "`timescale", "`timescale", TT_KEYWORD, 0),
+                (10, "`timescale", "`timescale", TT_KEYWORD, control),
                 (3, "P =", "P", TT_VARIABLE, declaration | readonly),
                 (3, "T =", "T", TT_TYPE_PARAMETER, declaration),
                 (3, "T a", "T", TT_TYPE_PARAMETER, 0),
@@ -1367,18 +1464,10 @@ endmodule
             "`undef",
             "`undefineall",
         ] {
-            assert_eq!(
-                backtick_word(word),
-                Some(BacktickWord::Directive { conditional: false }),
-                "{word}"
-            );
+            assert_eq!(backtick_word(word), Some(BacktickWord::Directive), "{word}");
         }
         for word in ["`ifdef", "`ifndef", "`elsif", "`else", "`endif"] {
-            assert_eq!(
-                backtick_word(word),
-                Some(BacktickWord::Directive { conditional: true }),
-                "{word}"
-            );
+            assert_eq!(backtick_word(word), Some(BacktickWord::Directive), "{word}");
         }
         for word in ["`WIDTH", "`_m", "`__FILE__", "`definex"] {
             assert_eq!(
