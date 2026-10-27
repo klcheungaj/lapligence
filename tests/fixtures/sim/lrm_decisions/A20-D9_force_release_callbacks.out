@@ -1,0 +1,14 @@
+register force: handle level=0
+register release: handle level=0
+register n[7:4] force: handle level=0
+register v[0] force: NULL level=3
+register assign: handle level=0
+register deassign: handle level=0
+force at 1: vpiForce lhs=tb.v value=5a
+after force at 1
+force at 2: vpiForce lhs=tb.n[3:0] value=3
+release at 3: vpiRelease lhs=tb.n value=22
+release at 4: vpiRelease lhs=tb.v value=5a
+force at 5: vpiForce lhs=tb.v value=22
+release at 7: vpiRelease lhs=tb.v value=33
+vpi force and release done

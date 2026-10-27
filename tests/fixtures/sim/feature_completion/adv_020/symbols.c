@@ -113,20 +113,6 @@ static PLI_INT32 symbols(PLI_BYTE8* data) {
                delay.da == times ? "same" : "changed", (int)delay.no_of_delays,
                (int)delay.time_type, (unsigned)times[0].low);
 
-    PLI_INT32 values[2] = {11, 22};
-    PLI_INT32 index[1] = {0};
-    s_vpi_arrayvalue array;
-    memset(&array, 0, sizeof(array));
-    array.format = vpiIntVal;
-    array.flags = vpiUserAllocFlag;
-    array.value.integers = values;
-    vpi_get_value_array(top, &array, index, 2);
-    report("vpi_get_value_array", "void");
-    vpi_put_value_array(top, &array, index, 2);
-    report("vpi_put_value_array", "void");
-    vpi_printf("array record: values=%d,%d integers=%s\n", (int)values[0], (int)values[1],
-               array.value.integers == values ? "same" : "changed");
-
     char buffer[4] = {'a', 'b', 'c', 0};
     report("vpi_get_data", vpi_get_data(1, buffer, 3) == 0 ? "0" : "nonzero");
     report("vpi_put_data", vpi_put_data(1, buffer, 3) == 0 ? "0" : "nonzero");

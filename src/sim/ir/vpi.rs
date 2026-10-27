@@ -245,6 +245,9 @@ pub struct IrVpiObject {
     /// `vpiNetDeclAssign` of a continuous assignment, `vpiAutomatic` of a
     /// task or function.
     pub(in crate::sim) qualifier: bool,
+    /// Runtime activation identity `(declaration, instance)` of a named
+    /// block, task or function: what `disable` names (cbDisable).
+    pub(in crate::sim) activation: Option<(u32, u32)>,
 }
 
 /// One expression connection of a structure object: how the application

@@ -1,0 +1,15 @@
+get b[1..2]: level=0 value=set 2 3
+get count 0: level=3 value=NULL
+get past the end: level=3 value=NULL
+get index 4: level=3 value=NULL
+get vpiOneValue: level=3 value=NULL
+get vpiPropagateOff: level=3 value=NULL
+get vpiRealVal of bit: level=3 value=NULL
+get vpiShortIntVal of int: level=3 value=NULL
+get vpiBinStrVal: level=3 value=NULL
+put count 0: level=3
+put past the end: level=3
+put vpiUserAllocFlag: level=3
+put vpiInertialDelay: level=3
+put vpiNoDelay b[3]: level=0
+b=1 2 3 91

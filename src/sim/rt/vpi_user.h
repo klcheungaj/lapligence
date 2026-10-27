@@ -92,6 +92,12 @@ typedef struct llg_vpi_handle* vpiHandle;
 #define vpiTaskFunc 127
 #define vpiNamedEventArray 129
 
+/* Statements reported by cbForce/cbRelease/cbAssign/cbDeassign (38.36.1). */
+#define vpiAssignStmt 2
+#define vpiDeassign 9
+#define vpiForce 16
+#define vpiRelease 50
+
 /* Scalar logic values. */
 #define vpi0 0
 #define vpi1 1

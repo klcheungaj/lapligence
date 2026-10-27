@@ -1,0 +1,33 @@
+register any-force handle: level=0 code=-
+register any-release handle: level=0 code=-
+register n[7:4]-force handle: level=0 code=-
+register na-release handle: level=0 code=-
+register r-force handle: level=0 code=-
+register n-release handle: level=0 code=-
+register n[0]-force NULL: level=3 code=LLG_VPI_CALLBACK
+register P-force NULL: level=3 code=LLG_VPI_CALLBACK
+register any-assign handle: level=0 code=-
+register v-deassign handle: level=0 code=-
+any-force at 1: vpiForce lhs=tb.v value=01011010
+any-release at 2: vpiRelease lhs=tb.v value=5a
+any-force at 3: vpiForce lhs=tb.n value=11110000
+n[7:4]-force at 3: vpiForce lhs=tb.n value=f0
+any-force at 4: vpiForce lhs=tb.n[3:0] value=0011
+any-release at 5: vpiRelease lhs=tb.n value=22
+n-release at 5: vpiRelease lhs=tb.n value=vector 22/0
+any-force at 6: vpiForce lhs=tb.r value=0000000000000000000000000000000000000000000000000000000000000010
+r-force at 6: vpiForce lhs=tb.r value=2.5
+any-release at 7: vpiRelease lhs=tb.r value=0000000000000002
+any-force at 8: vpiForce lhs=tb.na[1] value=1001
+any-release at 9: vpiRelease lhs=tb.na[1] value=1
+na-release at 9: vpiRelease lhs=tb.na[1] value=1
+any-force at 10: vpiForce lhs=none (lhs error) value=11000011
+any-release at 11: vpiRelease lhs=none (lhs error) value=c3
+any-force at 12: vpiForce lhs=tb.w value=01011011
+any-release at 14: vpiRelease lhs=tb.w value=41
+vpi force: level=0 code=-
+vpi release: level=0 code=-
+statement handle after its callback: level=3 code=LLG_VPI_HANDLE
+remove any-force: 1
+any-release at 18: vpiRelease lhs=tb.v value=01
+v=01 w=05 n=05 r=2.5 na[1]=1 a=c b=3

@@ -307,6 +307,10 @@ static void llg_kill_named_group(llg_fork_group_t* grp) {
     }
 }
 
+static llg_disable_watch_fn disable_watch_hook;
+
+void llg_disable_watch_hook(llg_disable_watch_fn hook) { disable_watch_hook = hook; }
+
 void llg_disable_target(llg_proc_t* self, uint32_t declaration,
                         uint32_t instance) {
     llg_runtime_service_enter(self, "disable");
@@ -362,6 +366,8 @@ void llg_disable_target(llg_proc_t* self, uint32_t declaration,
         }
     }
     reap_retired_procs();
+    if (LLG_CO_UNLIKELY(disable_watch_hook != NULL) && matched)
+        disable_watch_hook(declaration, instance);
     if (self && self->killed) self->chain.exiting = LLG_EXIT_ABANDON;
 }
 

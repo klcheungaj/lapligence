@@ -2545,9 +2545,20 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   A20-D1..D4). `vpi_user.h` and `sv_vpi_user.h` declare every IEEE 1800-2009
   Annex K/M routine and the model defines each, so applications written for
   the full headers link; `vpi_handle_multi`, `vpi_get_delays`/`vpi_put_delays`,
-  `vpi_get_value_array`/`vpi_put_value_array`, `vpi_get_data`/`vpi_put_data`
+  `vpi_get_data`/`vpi_put_data`
   and `vpi_register_assertion_cb` are not supported and fail with a
-  `vpi_chk_error` error (`docs/known_issues.md`). Objects are
+  `vpi_chk_error` error (`docs/known_issues.md`).
+  `vpi_get_value_array`/`vpi_put_value_array` (38.16, 38.35) read and write
+  sections of static unpacked variable arrays (gets also net arrays) in every
+  format the clauses define, with `vpiUserAllocFlag`, `vpiOneValue` and
+  `vpiPropagateOff` (ADV-020, decisions A20-D5..D8). `cbForce`/`cbRelease`
+  run after every force or release statement (all statements with a NULL
+  object, or those writing a variable, net, element, select, member or array
+  element) with a `vpiForce`/`vpiRelease` handle whose `vpiLhs` is the
+  forced object and the left-hand value; `cbDisable` runs when `disable`
+  ends a named block, named fork or task, or a block enclosing a registered
+  system task call; `cbAssign`/`cbDeassign` register and never run;
+  `vpi_control(vpiReset/vpiSetInteractiveScope)` fail (A20-D9..D11). Objects are
   modules, interfaces, generate scopes (SV 27.4 names), named blocks, ports,
   parameters, nets, variables with their exact types (`vpiIntVar`,
   `vpiBitVar`, `vpiByteVar`, `vpiTimeVar`, ...), unpacked arrays and their

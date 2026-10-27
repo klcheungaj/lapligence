@@ -2056,6 +2056,69 @@ fn a20_d4_mcd_close_unopened() {
 }
 
 #[test]
+fn a20_d5_value_array_errors() {
+    run_vpi_decision(
+        "A20-D5_value_array_errors",
+        &["task $d5()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D5_value_array_errors.out"),
+    );
+}
+
+#[test]
+fn a20_d6_value_array_raw_two_state() {
+    run_vpi_decision(
+        "A20-D6_value_array_raw_two_state",
+        &["task $d6()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D6_value_array_raw_two_state.out"),
+    );
+}
+
+#[test]
+fn a20_d7_value_array_propagate_off() {
+    run_vpi_decision(
+        "A20-D7_value_array_propagate_off",
+        &["task $d7()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D7_value_array_propagate_off.out"),
+    );
+}
+
+#[test]
+fn a20_d8_value_array_net_array() {
+    run_vpi_decision(
+        "A20-D8_value_array_net_array",
+        &["task $d8()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D8_value_array_net_array.out"),
+    );
+}
+
+#[test]
+fn a20_d9_force_release_callbacks() {
+    run_vpi_decision(
+        "A20-D9_force_release_callbacks",
+        &["task $d9()", "task $d9_vpi()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D9_force_release_callbacks.out"),
+    );
+}
+
+#[test]
+fn a20_d10_disable_callback() {
+    run_vpi_decision(
+        "A20-D10_disable_callback",
+        &["task $d10()", "task $d10_call()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D10_disable_callback.out"),
+    );
+}
+
+#[test]
+fn a20_d11_control_reset_interactive() {
+    run_vpi_decision(
+        "A20-D11_control_reset_interactive",
+        &["task $d11()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D11_control_reset_interactive.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",

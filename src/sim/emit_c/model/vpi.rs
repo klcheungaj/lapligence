@@ -45,6 +45,7 @@ struct Entry {
     conns: Vec<IrVpiConn>,
     unnamed: bool,
     qualifier: bool,
+    activation: Option<(u32, u32)>,
 }
 
 impl Entry {
@@ -83,6 +84,7 @@ impl Entry {
             conns: Vec::new(),
             unnamed: false,
             qualifier: false,
+            activation: None,
         }
     }
 }
@@ -252,6 +254,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 conns: object.conns.clone(),
                 unnamed: object.unnamed,
                 qualifier: object.qualifier,
+                activation: object.activation,
             },
         );
     }
@@ -512,6 +515,10 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         if entry.qualifier {
             flags.push("LLG_VPI_OBJ_QUALIFIER");
         }
+        if entry.activation.is_some() {
+            flags.push("LLG_VPI_OBJ_ACTIVATION");
+        }
+        let (declaration, instance) = entry.activation.unwrap_or((0, 0));
         let (constant, real_constant) = match &entry.constant {
             Some(IrVpiConstant::Bits(digits)) => (c_string_literal(digits), "0.0".to_owned()),
             Some(IrVpiConstant::Text(text)) => {
@@ -547,7 +554,8 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
 .time_unit_fs = {}ULL, .subtype = {}, .flags = {}, .left = {left}LL, .right = {right}LL, \
 .dims = {dims}, .dim_count = {dim_count}u, .port_index = {}u, .target = {target}, .net = {}, \
 .constant = {constant}, .real_constant = {real_constant}, .typespec = {}u, .detail = {}, \
-.event = {}, .conns = {conns}, .conn_count = {}u }},\n",
+.event = {}, .conns = {conns}, .conn_count = {}u, .activation_declaration = {declaration}u, \
+.activation_instance = {instance}u }},\n",
             entry.type_code,
             c_string_literal(&entry.name),
             c_string_literal(&path.replace('\u{1f}', ".")),
@@ -918,8 +926,11 @@ pub(super) fn render_vpi_compile_calls(model: &IrModel, out: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{arg_reference, member_tree, render_vpi_typespecs};
-    use crate::sim::ir::{IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember};
+    use super::{arg_reference, member_tree, render_vpi_metadata, render_vpi_typespecs};
+    use crate::sim::ir::{
+        IrModel, IrVpiObject, IrVpiObjectKind, IrVpiTypespec, IrVpiTypespecKind,
+        IrVpiTypespecMember,
+    };
 
     fn member(name: &str, typespec: usize, lsb: u32, width: u32) -> IrVpiTypespecMember {
         IrVpiTypespecMember {
@@ -1018,6 +1029,41 @@ mod tests {
         let mut nodes = Vec::new();
         assert_eq!(member_tree(&typespecs, 3, &mut nodes).1, 0);
         assert!(nodes.is_empty());
+    }
+
+    #[test]
+    fn named_blocks_carry_their_disable_identity() {
+        let mut model = IrModel::new("tb".to_owned(), 1).expect("model");
+        model.vpi_objects.push(IrVpiObject {
+            full_name: "tb\u{1f}blk".to_owned(),
+            name: "blk".to_owned(),
+            kind: IrVpiObjectKind::NamedBegin,
+            activation: Some((7, 3)),
+            ..IrVpiObject::default()
+        });
+        model.vpi_objects.push(IrVpiObject {
+            full_name: "tb\u{1f}other".to_owned(),
+            name: "other".to_owned(),
+            kind: IrVpiObjectKind::NamedBegin,
+            ..IrVpiObject::default()
+        });
+        let mut out = String::new();
+        render_vpi_metadata(&model, &mut out);
+        let row = |name: &str| {
+            out.lines()
+                .find(|line| line.contains(&format!(".full_name = \"{name}\"")))
+                .unwrap_or_else(|| panic!("{name}: {out}"))
+                .to_owned()
+        };
+        let blk = row("tb.blk");
+        assert!(blk.contains("LLG_VPI_OBJ_ACTIVATION"), "{blk}");
+        assert!(
+            blk.contains(".activation_declaration = 7u, .activation_instance = 3u"),
+            "{blk}"
+        );
+        let other = row("tb.other");
+        assert!(!other.contains("LLG_VPI_OBJ_ACTIVATION"), "{other}");
+        assert!(other.contains(".activation_declaration = 0u"), "{other}");
     }
 
     #[test]

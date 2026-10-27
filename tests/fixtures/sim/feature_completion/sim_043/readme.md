@@ -124,9 +124,10 @@ delay (S43-D2) of 5, `cbAfterDelay` with 10 and `cbNextSimTime`.
 - `vpi_get_cb_info` returns the registration (reason 1, user data, value
   format 6 = vpiIntVal). Releasing a callback handle does not remove the
   callback (`release kept handle -> 1`, and `kept` runs at 2).
-- `cbStmt` and `cbForce` are not provided, a parameter is not watchable, a
+- `cbStmt` is not provided, a parameter is not watchable, a
   NULL object is an invalid handle and a `vpiSuppressTime` time callback is
-  an error (L64969-64970); each returns NULL. A value-change callback on the
+  an error (L64969-64970); each returns NULL. `cbForce` on `v` registers
+  (ADV-020, decision A20-D9) and never runs, since nothing forces `v`. A value-change callback on the
   whole unpacked array `m` is accepted (S43-D7); a second one is removed at
   once (`1`), which drops its watch on every element.
 - At 1 and 2: `second` then `first`, the newest registration first (S43-D6).

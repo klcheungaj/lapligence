@@ -21,6 +21,7 @@ extern "C" {
 #define LLG_VPI_OBJ_RECORD 0x100u     /* unpacked struct/union: members hold the value */
 #define LLG_VPI_OBJ_UNNAMED 0x200u    /* no vpiName/vpiFullName; never found by name */
 #define LLG_VPI_OBJ_QUALIFIER 0x400u  /* vpiNetDeclAssign / vpiAutomatic */
+#define LLG_VPI_OBJ_ACTIVATION 0x800u /* activation_* name what `disable` targets */
 
 /* Typespecs (IEEE 1800-2009 37.23). The generated model emits interned
  * tables; fields naming an optional entry hold its index + 1 (0: none),
@@ -151,6 +152,9 @@ typedef struct llg_vpi_model_object {
     llg_event_t* event;       /* named event */
     const llg_vpi_conn_t* conns;
     uint32_t conn_count;
+    /* Named block, task or function: the llg_disable_target identity. */
+    uint32_t activation_declaration;
+    uint32_t activation_instance;
 } llg_vpi_model_object_t;
 
 /* A built-in system task or function the model runs natively and its first

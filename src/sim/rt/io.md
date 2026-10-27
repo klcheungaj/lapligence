@@ -103,6 +103,23 @@ VPI writes are flushed per call like `$fdisplay` so the two interleave in call
 order, closing a channel cancels its monitors and strobes as `$fclose` does,
 and each slot keeps the name it was opened with. A file descriptor (bit 31) is
 refused except by `vpi_mcd_name` (A20-D1..D4).
+`vpi_get_value_array`/`vpi_put_value_array` (38.16, 38.35) work on whole
+unpacked array rows: the section is validated (array, element type, format,
+indices, count) before any value moves, gets fill one simulator buffer
+(`array_values`, overwritten by the next call) unless `vpiUserAllocFlag`
+names the application's, and puts write element by element through
+`llg_ba`/`llg_ba_d` like `vpi_put_value` with `vpiNoDelay`. `vpiPropagateOff`
+is accepted and every fanout is still notified (A20-D5..D8).
+`cbForce`/`cbRelease` use `llg_force_watch_hook` and `cbDisable`
+`llg_disable_watch_hook` (`llg_rt.h`): the runtime calls them after a force or
+release statement, or a `disable` that ended something, behind one unlikely
+branch. The force hook gets the statement's parts; `llg_vpi.c` maps them back
+to catalog rows through a storage-address index built on the first such
+registration (net array elements through the alias that publishes them) and
+reports a `SLOT_STMT` handle released before the dispatch returns. VPI's own
+force/release puts do not report (A20-D9). Rows of named blocks, tasks and
+functions carry their `llg_disable_target` identity
+(`LLG_VPI_OBJ_ACTIVATION`) for `cbDisable` (A20-D10).
 Built-ins are never dispatched to a registration under their name: after
 plugin startup, `llg_vpi_check_builtin_overrides` fails the start, naming the
 call, when an application registered a built-in the model runs natively

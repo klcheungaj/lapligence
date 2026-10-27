@@ -1,4 +1,4 @@
-# ADV-020 fixtures: VPI symbol parity and multichannel descriptors
+# ADV-020 fixtures: VPI symbol parity, multichannel descriptors, value arrays and callbacks
 
 Each `<name>.sv` has a C application `<name>.c` that registers the system
 tasks and functions the HDL calls. `tests/sim_feature_completion/adv_020.rs`
@@ -35,8 +35,6 @@ level 3 with code `LLG_VPI_UNSUPPORTED` and a message naming the routine:
 - `vpi_get_delays`/`vpi_put_delays` return nothing; the application's delay
   record and its `da` array are left as they were (`da=same no_of_delays=1
   time_type=2 low=77`, where 2 is `vpiSimTime`).
-- `vpi_get_value_array`/`vpi_put_value_array` return nothing and leave the
-  array record and its values (`11,22`) as they were.
 - `vpi_get_data` returns 0 (38.9, L62169-L62170: "The return value shall be
   the number of bytes retrieved. On a failure, the return value shall be 0.")
   and `vpi_put_data` returns 0 (38.31, L63792-L63793: "The return value shall
@@ -125,6 +123,153 @@ values are not printed; the checks print relations between them.
   refused it; `adv020_v2.txt` has the line written before it closed;
   `adv020_v3.txt` is empty; `adv020_v4.txt` has the design's line.
 
+## value_array (38.16, 38.35)
+
+`value_array.c` (`$va_get`, then `$va_put`) reads and writes sections of the
+design's unpacked arrays; the design prints the arrays after the puts.
+
+- **Order.** 38.16 (L63066-L63071): "The array element values are retrieved
+  consecutively in order of the fastest varying index (rightmost unpacked
+  range of the array declaration), followed by more slowly varying indices
+  accordingly until the number of elements (num) has been retrieved. Index
+  values within each range are ordered from leftmost range value to
+  rightmost. For example, elements of an array a[2:0][3:5] with index_p[0] =
+  1 and index_p[1] = 4 would be retrieved in the order a[1][4], a[1][5],
+  a[0][3], a[0][4], a[0][5]". The first get is that example: the five
+  elements are `0x14`, `0x15` with bits 7:4 set to `z1x0` (A byte `65`, B
+  byte `a0`), `0x03`, `0x04` and all-x, each with bits 41:40 set (top byte
+  `03`). `iv [1:0]` from index 1 reads `iv[1]` then `iv[0]`.
+- **Raw formats.** 38.16 (L62999-L63006): "Each array element occupies
+  ngroups*2 bytes stored consecutively as A/B byte groups ... ngroups is
+  computed given the array element size in bits (= elemBits) as follows: int
+  ngroups = (elemBits + 7) / 8;" and (L63055-L63058) "the lsb of rawvals[0]
+  and rawvals[ngroups] indicates the A and B value of the lsb (0th) bit of
+  the first array element". The lines print each element's bytes most
+  significant first. `vpiRawTwoStateVal` omits the B bytes (L63009-L63012);
+  an x or z bit of the four-state `a` reads as 0 there (`65` becomes `45`,
+  decision A20-D6).
+- **Buffers.** 38.16 (L63073-L63079): "By default, array values shall be
+  returned in memory allocated by VPI ... However, if the application sets the
+  vpiUserAllocFlag in the value.flags field, the function will assume the
+  calling application has set the value field to point to a buffer of
+  sufficient size". With the flag the value pointer stays the application's
+  buffer (`buffer=same`); without it the values are in simulator storage.
+- **Formats.** `vpiVectorVal` gives `((elemBits + 31) / 32)` A/B word pairs
+  per element (L63036-L63042; printed high word first); `vpiIntVal` the low 32
+  bits with the element's sign (`b` is unsigned: 2049, 255, 291, 4095);
+  `vpiShortIntVal` of byte and shortint elements and `vpiLongIntVal` of byte,
+  shortint and longint elements, sign-extended (L63013-L63018); `vpiRealVal`
+  and `vpiShortRealVal` of real and shortreal arrays; `vpiTimeVal` as
+  `vpiSimTime` (type 2) high and low words (5000000000 is high 1, low
+  705032704); the net array `n` reads its resolved values (`a/0` and `9/c` for
+  `4'bxz01`).
+- **Get errors.** Each leaves level 3 and a NULL value pointer (L63102-L63103:
+  "If vpi_get_value_array() returns NULL for the value pointer in either case,
+  it shall indicate that a VPI error has occurred"): a handle that is not an
+  unpacked array (`tb.w`, the element `tb.a[0][3]`); an array of unpacked
+  structures (L62951-L62952: "The elements of arrays are not allowed to be of
+  an unpacked type themselves"); an index outside its range, a count of 0, a
+  section past the end and a NULL `index_p` (decision A20-D5); a flag other
+  than `vpiUserAllocFlag` (A20-D5); `vpiUserAllocFlag` with a NULL buffer;
+  `vpiBinStrVal` (L63044: "All other formats not mentioned here are
+  unsupported, and shall result in an error if requested"); and formats the
+  text does not list for the element type (L63045-L63046): `vpiShortIntVal`
+  or `vpiLongIntVal` of int elements, `vpiRealVal` of bit elements,
+  `vpiShortRealVal` and `vpiIntVal` of real elements. A NULL `arrayvalue_p` is
+  level 3.
+- **Puts.** 38.35 (L64504-L64551) example: the five elements from `a[1][4]`
+  take one to five low bytes of 1, the last with an x low byte, with
+  `vpiPropagateOff` (`00000000001`, `00000000101`, `00000010101`,
+  `00001010101`, `001010101xx`). `vpiOneValue` (L64476-L64477: "This flag set
+  causes the function to apply only a single element value to the entire
+  array section specified") writes `abc` to all of `b`; `b[1]` changed, so the
+  `always @(b[1])` process ran once although `vpiPropagateOff` was set
+  (`changes=1`, decision A20-D7). L64449-L64450: "If the vpiRawFourStateVal
+  format is set for a 2-state array type, the bvalbits shall be ignored. If
+  the vpiRawTwoStateVal format is specified for a 4-state array type, the
+  bvalbits shall be assumed to be 0.": `b[2]` becomes `234`; `a[2][3]`
+  becomes `201` (byte 5, bit 47, lies above bit 41). `vpiShortIntVal` puts to
+  int elements (L64414-L64415: "appropriate only for arrays of
+  vpiShortIntVar, vpiIntVar or vpiLongIntVar elements"): `iv[1]=-1`,
+  `iv[0]=300`; `vpiLongIntVal` to longint, `vpiRealVal`, `vpiShortRealVal`,
+  `vpiTimeVal` (high 1 is 4294967296) and `vpiVectorVal` (`ig[1]` takes a z
+  low nibble) write their elements.
+- **Put errors.** Level 3 and no element written: the net array `n` (decision
+  A20-D8), the flags `vpiUserAllocFlag` and `vpiInertialDelay` (L64482:
+  "Flags other than vpiPropagateOff, vpiOneValue, or vpiNoDelay (the default)
+  specified shall be an error."), a NULL buffer, a section past the end (`b`
+  still ends `234 abc`), `vpiShortIntVal` to byte elements, `vpiLongIntVal` to
+  shortint elements (L64417-L64418: "appropriate for arrays of vpiLongIntVar
+  elements"), an array of unpacked structures, a raw format to a real array
+  and a NULL `arrayvalue_p`.
+
+## force_callbacks (38.36.1)
+
+`$watch` registers, in this order, `cbForce` and `cbRelease` with a NULL
+object, `cbForce` on the part-select `tb.n[7:4]`, `cbRelease` on the net array
+`tb.na`, `cbForce` on `tb.r` and `cbRelease` on `tb.n`, then tries `cbForce` on
+the bit-select `tb.n[0]` and on the parameter `tb.P`, and registers `cbAssign`
+(NULL object) and `cbDeassign` on `tb.v`. Each callback prints its label, the
+time, `vpiType` of its object, the full name of `vpiLhs` and the value in the
+registered format.
+
+- **Registration.** L64695-L64697: "For force and release callbacks, if this
+  is set to NULL, every force and release shall generate a callback.";
+  L64788-L64789: "It is illegal to attempt to place a callback for reason
+  cbForce, cbRelease, or cbDisable on a variable bit-select." The bit-select
+  and the parameter (never forced) are refused with level 3. `cbAssign` and
+  `cbDeassign` register; llg rejects procedural `assign`/`deassign`, so they
+  never run (decision A20-D9).
+- **Object and value.** L64780-L64783: "For cbForce, cbRelease, cbAssign, and
+  cbDeassign callbacks, the object returned in the obj field shall be a handle
+  to the force, release, assign, or deassign statement. The value field shall
+  contain the resultant value of the left-hand expression. In the case of a
+  release, the value field shall contain the value after the release has
+  occurred." The object is `vpiForce` or `vpiRelease`; `vpiLhs` is the forced
+  variable, net, select or net array element (`tb.na[1]`). A concatenation
+  has no expression object in llg: `vpiLhs` is NULL with an error (`lhs=none
+  (lhs error)`), and the value is the concatenation (`c3`).
+- **Statements.** 10.6.2 (L13390-L13393): "When released, then if the
+  variable is not driven by a continuous assignment ... the variable shall
+  not immediately change value and shall maintain its current value until the
+  next procedural assignment to the variable is executed."; (L13399-L13400)
+  "When released, the net shall immediately be assigned the value determined
+  by the drivers of the net." `force v = 8'h5a` (binary `01011010`);
+  `release v` keeps the forced value `5a`; `force n = 8'hf0` also runs the
+  `tb.n[7:4]` record, while `force n[3:0]` writes none of its bits and does
+  not; `release n` gives the driven value `22` (the `tb.n` record asks for
+  `vpiObjTypeVal`, a vector for an 8-bit net); `force r = 2.5` gives the real
+  to `r-force` and, to the binary and hex records, the real truncated to a
+  64-bit integer (decision S42-D9); `release na[1]` runs the `tb.na` record
+  with the element's driven value 1. `force w = v + 8'd1` reports `5b`; the
+  later write of `v` reevaluates the force without a callback, and `release w`
+  reports the value it kept, `41` (decision A20-D9).
+- **VPI forces.** `$vpi_force` forces and releases `tb.w` with `vpi_put_value`;
+  no callback runs (A20-D9) and `w`, then `n`, keep 5.
+- **Handle lifetime.** `$stale` reads `vpiType` of the last statement handle
+  after its callback returned: level 3, the handle is gone. It then removes
+  the NULL-object `cbForce` record, so the last `force v` runs no callback
+  and the last `release v` runs only the `cbRelease` record.
+
+## disable (38.36.1)
+
+`$watch_disable` places `cbDisable` on the named block `tb.blk`, the named
+fork `tb.fk`, the task `tb.work`, the inner block `tb.outer2.inner` and the
+block `tb.selfb`, and tries a NULL object, the variable `tb.v`, the
+bit-select `tb.v[0]` and the module `tb`, which are refused with level 3
+(L64785-L64786: "For a cbDisable callback, obj shall be a handle to a system
+task call, system function call, named begin, named fork, task, or function.").
+`$inner`, called inside `tb.outer2.inner`, places one on its own call handle.
+
+L64648-L64649: "cbDisable After a named block or task containing a system
+task or system function has been disabled." The records run when `disable
+blk` (time 1), `disable work` (3), `disable fk` (4) and the self-disable of
+`selfb` (6) end their targets, with the registered object and a NULL value.
+`disable blk` at time 2, when `blk` already ended, runs nothing.
+`disable outer2` (5) ends the block enclosing the `$inner` call, so the call's
+record runs, while the record on `tb.outer2.inner`, which `disable` did not
+name, does not (decision A20-D10). No disabled block prints its message.
+
 ## Decisions
 
 The choices where the text is silent are the portable cases A20-D1 to A20-D4
@@ -133,4 +278,10 @@ descriptors given to the mcd routines (A20-D1), the names of the standard
 streams (A20-D2, `stdout` for channel 1 and `0x80000001`, `stdin` and `stderr`
 for `0x80000000` and `0x80000002`), the count and status of a write to several
 or partly closed channels (A20-D3), and closing or flushing channels that are
-not open (A20-D4).
+not open (A20-D4). The value-array choices are A20-D5 (argument errors, get
+flags, no partial writes), A20-D6 (x and z read as 0 in the raw two-state
+form), A20-D7 (`vpiPropagateOff` still propagates) and A20-D8 (no puts to net
+arrays). The callback choices are A20-D9 (`cbForce`/`cbRelease` timing,
+object matching and VPI forces; `cbAssign`/`cbDeassign` never run) and A20-D10
+(`cbDisable` timing, inactive and enclosing blocks); A20-D11 covers
+`vpi_control(vpiReset)` and `vpiSetInteractiveScope`.
