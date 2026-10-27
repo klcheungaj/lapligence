@@ -2549,6 +2549,19 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpiParent`, `vpi_handle_by_name` paths (`tb.s.f`, `tb.arr[1].f`) and
   member values, writes and `cbValueChange`, packed or unpacked, nested and
   in elements of unpacked arrays of structures (decisions A19-D1..D4).
+  Structure objects (ADV-019 family 2): `vpiHighConn` and `vpiPortType` of
+  ports, port bits (`vpiBit`, `vpiPortBit`), interface and modport ports
+  whose connections are `vpiRefObj` objects with `vpiActual`, `vpiModport`,
+  instance arrays (`vpiModuleArray`, `vpiInterfaceArray`, `vpiGateArray`,
+  `vpiSwitchArray`, `vpiUdpArray`) with `vpiRange`, element iteration,
+  `vpi_handle_by_index` and the elements' `vpiIndex`, primitives (`vpiGate`,
+  `vpiSwitch`, `vpiUdp`, `vpiPrimType`, `vpiPrimTerm` terminals with
+  `vpiExpr`, output value), `vpiContAssign` with `vpiLhs`/`vpiRhs` and its
+  value, processes (`vpiProcess`: `vpiInitial`, `vpiAlways` with
+  `vpiAlwaysType`, `vpiFinal`), task and function declarations
+  (`vpiTaskFunc`, scopes with `vpiFuncType`, `vpiSize`, `vpiAutomatic`) and
+  named events (`vpiNamedEvent`: `vpi_put_value` triggers, `cbValueChange`
+  runs at each trigger), decisions A19-D5..D8.
   `vpi_get_value` serves every Table
   38-3 format with exact X/Z; `vpi_put_value` writes through the storage APIs
   with no delay, inertial, transport and pure-transport delays,

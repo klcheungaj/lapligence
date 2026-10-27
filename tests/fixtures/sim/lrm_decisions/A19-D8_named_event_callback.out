@@ -1,0 +1,11 @@
+vpiNamedEvent get level=3
+watch registered
+cb tb.ev at 1 value=NULL
+wake 1 at 1
+cb tb.ev at 2 value=NULL
+wake 2 at 2
+cb tb.ev at 3 value=NULL
+put level=0
+wake 3 at 3
+delayed put level=3
+hits 3

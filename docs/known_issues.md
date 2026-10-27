@@ -2136,8 +2136,22 @@ with no error status, as for a name that denotes nothing (S42-D11):
 
 - objects outside the generated catalog: sparse fixed arrays (stored in a keyed
   container), dynamic arrays, queues, associative arrays, strings, class
-  objects and their properties, interface ports and modports, automatic
-  variables;
+  objects and their properties, automatic variables, named event arrays,
+  tasks and functions of classes and packages, programs and checkers;
+- structure relations that are not exposed (ADV-019 family 2): expression
+  trees, so a connection or right-hand side that is not an object, a
+  constant select or element, or a literal is a `vpiOperation` without a
+  value (and so is the value of a continuous assignment with such a
+  right-hand side, or of a primitive whose output is one); `vpiStmt` of a
+  process, task or function; `vpiDelay`, `vpiStrength0/1` and cont assign
+  bits; `vpiReturn` and `vpiIODecl` of tasks, functions and modports;
+  `vpiPortInst`, `vpiExplicitName` and `vpiConnByName`; elements of
+  multidimensional primitive arrays, and `vpiIndex` of an element of a
+  multidimensional instance array; `vpi_put_value` to a sequential UDP;
+  `cbValueChange` on a continuous assignment or primitive; a delayed
+  `vpi_put_value` to a named event (only `vpiNoDelay` triggers, decision
+  A19-D8). A `cbValueChange` on a named event watches the synchronization
+  object the event names at registration;
 - structure and union members that are not exposed: members of structure or
   union nets, members of a record kept in columns (an unpacked structure
   whose instances the optimizer split into per-field arrays), unpacked
@@ -2166,7 +2180,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   `cbForce`/`cbRelease`, `cbAssign`/`cbDeassign`, `cbDisable`, the class,
   frame and thread reasons, `cbError`/`cbPLIError`/`cbTchkViolation`/
   `cbSignal` and the save, restart, reset and interactive features;
-- `cbValueChange` on named events, on a whole unpacked array of more than
+- `cbValueChange` on a whole unpacked array of more than
   2^20 elements (register it on the elements), or with `vpiStrengthVal` to see
   strength-only changes (it runs on value changes only);
 - `vpi_control(vpiReset)` and `vpiSetInteractiveScope`;
