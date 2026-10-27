@@ -25,6 +25,7 @@ scripts/run-tests.sh -E 'binary(sim_feature_completion) & test(adv_015::)'
 | `nested.sv` | `$inferred_clock`/`$inferred_disable`, nested checker with an inferred clock, let/function/sequence, cover, deferred assertion item, final (A01) |
 | `bind.sv` | checker bound into a module, interface port actuals, covergroup, subchecker (A01) |
 | `boundary.sv` | disjoint bits of one variable from two procedures, named block, two instances, unused checker (A01) |
+| `let_formals.sv` | checker formals passed to lets declared inside and outside the checker: ordered, named and default arguments, a one-formal let, a let calling a let, repeated calls (A01) |
 | `neg_*.sv` | 17.5 and 17.7.1 restrictions, later-revision forms, located limits (A03) |
 
 ## Clauses the expectations rely on
@@ -38,6 +39,13 @@ L28308-28310):
 > —      Arguments that cannot be sampled, such as events, sequences, and properties, are treated similarly
 >        to such arguments for sequences and properties (see 16.8): they are substituted directly for the
 >        formal argument when it is used in statements or expressions within the checker.
+
+Let arguments (11.13, L16782-16783), `let_formals`: a checker formal used as
+a let argument is still a reference to the formal, so it reads the sampled
+value of its actual like a direct reference:
+
+> The let body gets expanded with the actual arguments by replacing the formal arguments with the actual
+> arguments.
 
 Nested checkers (17.3, L28322-28323):
 

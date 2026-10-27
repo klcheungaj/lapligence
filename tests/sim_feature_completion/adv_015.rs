@@ -78,6 +78,16 @@ fn disjoint_assignments_and_independent_instances() {
     });
 }
 
+/// A01: a checker formal passed to a let declared inside or outside the
+/// checker reads the sampled value of its actual, through ordered, named
+/// and default arguments, nested lets and repeated calls.
+#[test]
+fn let_arguments_read_sampled_formals() {
+    sim_cli::run_case_checked_matrix(SUITE, "let_formals", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("let_formals.out"))
+    });
+}
+
 /// A03: the 17.5 and 17.7.1 restrictions on checker procedures are located
 /// errors.
 #[test]

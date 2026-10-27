@@ -1,0 +1,4 @@
+5 tb.u.c1 pair=0 named=0 ident=0 nested=0 mixed=0 inner=0 act=4
+5 tb.w.c1 pair=0 named=0 ident=0 nested=0 mixed=0 inner=0 act=4
+15 tb.u.c1 pair=5 named=3 ident=3 nested=2 mixed=2 inner=4 act=11
+15 tb.w.c1 pair=5 named=5 ident=1 nested=6 mixed=14 inner=2 act=11

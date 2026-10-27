@@ -99,7 +99,9 @@ flattens like a module's; `Db::checker_instance` records procedural, bound
 and nested instantiation, a `$unit` time scale and the instantiation
 context's default disable, and `Db::checker_actual` marks the body
 expressions a formal reference expanded to (its actual or default), so
-lowering can read their sampled values.
+lowering can read their sampled values. A formal passed as an argument of a
+let, sequence or property instance, declared in the checker or outside it,
+is marked where the instance's formal expands to it.
 Typed references distinguish subroutine
 bodies, indexed pattern keys, event qualifiers and ordered conditional clauses.
 Concrete loop-generate blocks use the array name and source index as one

@@ -3253,6 +3253,25 @@ public:
     attach(id);
     if (!markVisited(id))
       return;
+    // A let expansion inside a checker resolves its formals to the actual
+    // arguments of this invocation while the expansion is captured.
+    const bool inChecker = !checkerActuals.empty();
+    const size_t letAliases = inChecker ? pushLetAliases(expression) : 0;
+    if (inChecker)
+      captureSyntax.push_back(expression.syntax ? expression.syntax
+                              : captureSyntax.empty() ? nullptr
+                                                      : captureSyntax.back());
+    struct AliasGuard {
+      std::vector<std::unordered_map<const syntax::SyntaxNode*, const syntax::SyntaxNode*>>&
+          frames;
+      size_t count;
+      std::vector<const syntax::SyntaxNode*>* syntaxStack;
+      ~AliasGuard() {
+        frames.resize(frames.size() - count);
+        if (syntaxStack)
+          syntaxStack->pop_back();
+      }
+    } aliasGuard{assertionAliases, letAliases, inChecker ? &captureSyntax : nullptr};
     if (!checkerActuals.empty())
       markCheckerActual(id, expression);
     bindNameTokens(expression);
@@ -3450,7 +3469,12 @@ public:
       // Assertion-instance arguments are not traversed by AssertionExpr's
       // ordinary expression visitor. Visit each actual explicitly so the
       // owned semantic graph retains its value/sequence/event binding.
+      // Inside a checker, a formal of this let, sequence or property that
+      // a checker formal is passed to expands to that checker formal.
+      const bool aliased = !checkerActuals.empty() && pushAssertionAliases(expression);
       expression.body.visit(*this);
+      if (aliased)
+        assertionAliases.pop_back();
       for (const auto& [formal, actual] : expression.arguments) {
         (void)formal;
         std::visit([this](auto* value) {
@@ -5285,6 +5309,250 @@ private:
     return references;
   }
 
+  // Expansion aliases of the let, sequence and property instances being
+  // captured inside a checker, innermost last. Slang binds a reference to a
+  // formal of such a declaration by binding the actual argument and stamping
+  // the reference's syntax on the result, so an expanded checker formal
+  // carries the syntax of the declaration's own formal reference, which may
+  // lie outside the checker. Each alias maps a formal reference in the
+  // declaration to the actual argument syntax of this instance.
+  std::vector<std::unordered_map<const syntax::SyntaxNode*, const syntax::SyntaxNode*>>
+      assertionAliases;
+  // Per let, sequence or property declaration: the identifier names in it
+  // that spell one of its formals (`formalReferences`).
+  std::unordered_map<const void*,
+                     std::unordered_map<const syntax::SyntaxNode*, std::string_view>>
+      assertionFormalReferences;
+  // Syntax of the expressions being captured inside a checker, innermost
+  // last, and the let expansions matched so far per (checker instance,
+  // calls scope, let).
+  std::vector<const syntax::SyntaxNode*> captureSyntax;
+  std::map<std::tuple<uint64_t, const syntax::SyntaxNode*, const syntax::SyntaxNode*>, size_t>
+      letExpansionCounts;
+
+  // Pushes the aliases of `expression` and returns whether it pushed any.
+  bool pushAssertionAliases(const AssertionInstanceExpression& expression) {
+    const syntax::SyntaxNode* declaration = expression.symbol.getSyntax();
+    if (!declaration || expression.arguments.empty())
+      return false;
+    std::unordered_set<std::string_view> names;
+    for (const auto& [formal, actual] : expression.arguments) {
+      (void)actual;
+      if (formal && !formal->name.empty())
+        names.insert(formal->name);
+    }
+    std::unordered_map<const syntax::SyntaxNode*, const syntax::SyntaxNode*> aliases;
+    for (const auto& [reference, name] :
+         formalReferences(&expression.symbol, *declaration, names)) {
+      for (const auto& [formal, actual] : expression.arguments) {
+        const Expression* const* value = std::get_if<const Expression*>(&actual);
+        if (formal && formal->name == name && value && *value && (*value)->syntax)
+          aliases.emplace(reference, (*value)->syntax);
+      }
+    }
+    if (aliases.empty())
+      return false;
+    assertionAliases.push_back(std::move(aliases));
+    return true;
+  }
+
+  // Identifier names in `root` that spell one of `names`, cached per
+  // declaration.
+  const std::unordered_map<const syntax::SyntaxNode*, std::string_view>&
+  formalReferences(const void* declaration, const syntax::SyntaxNode& root,
+                   const std::unordered_set<std::string_view>& names) {
+    auto [it, inserted] = assertionFormalReferences.try_emplace(declaration);
+    if (inserted) {
+      auto& references = it->second;
+      auto visitor = syntax::makeSyntaxVisitor(
+          [&](auto&, const syntax::IdentifierNameSyntax& name) {
+            const std::string_view text = name.identifier.valueText();
+            if (const auto found = names.find(text); found != names.end())
+              references.emplace(&name, *found);
+          });
+      root.visit(visitor);
+    }
+    return it->second;
+  }
+
+  // Slang expands a let instance directly to the let's expression (11.13):
+  // the expansion keeps the syntax of the let declaration and no link to
+  // the invocation. Its root is the first captured expression whose syntax
+  // lies in a let declaration while the enclosing captured expression's
+  // does not. The invocation is a call of that let in the enclosing
+  // expression's syntax or, at the root of a statement or declaration, in
+  // the checker declaration; a let whose whole expression is a call of
+  // another let expands to that let, so a call of the outer let also
+  // matches, through the chain. Matching calls are taken in source order.
+  // Pushes the aliases of each let of the chosen chain, outermost first,
+  // and returns how many frames it pushed.
+  size_t pushLetAliases(const Expression& expression) {
+    if (!expression.syntax)
+      return 0;
+    const syntax::LetDeclarationSyntax* let = nullptr;
+    for (const syntax::SyntaxNode* node = expression.syntax->parent; node; node = node->parent) {
+      if (node->kind == syntax::SyntaxKind::LetDeclaration) {
+        let = &node->as<syntax::LetDeclarationSyntax>();
+        break;
+      }
+    }
+    if (!let)
+      return 0;
+    const syntax::SyntaxNode* enclosing =
+        captureSyntax.empty() ? nullptr : captureSyntax.back();
+    for (const syntax::SyntaxNode* node = enclosing; node; node = node->parent) {
+      if (node == let)
+        return 0;
+    }
+    std::vector<LetChain> candidates;
+    const syntax::SyntaxNode* scope = enclosing;
+    if (enclosing)
+      collectLetChains(*enclosing, *let, candidates);
+    if (candidates.empty()) {
+      scope = checkerActuals.back().body->checker.getSyntax();
+      if (scope)
+        collectLetChains(*scope, *let, candidates);
+    }
+    if (candidates.empty())
+      return 0;
+    size_t& next = letExpansionCounts[{checkerActuals.back().instance, scope, let}];
+    const LetChain& chain = candidates[next % candidates.size()];
+    ++next;
+    size_t pushed = 0;
+    for (const auto& [declaration, invocation] : chain)
+      pushed += pushInvocationAliases(*declaration, *invocation) ? 1 : 0;
+    return pushed;
+  }
+
+  // The lets of one expansion, outermost first, each with its call.
+  using LetChain = std::vector<
+      std::pair<const syntax::LetDeclarationSyntax*, const syntax::InvocationExpressionSyntax*>>;
+
+  // Maximum number of lets one chain may pass through: each step is a let
+  // whose whole expression calls the next.
+  static constexpr size_t LetChainDepth = 16;
+
+  // The calls in `root`, in source order, that expand to `target`: calls of
+  // `target` itself and calls of lets whose whole expression is (through
+  // further such lets) a call of `target`.
+  void collectLetChains(const syntax::SyntaxNode& root, const syntax::LetDeclarationSyntax& target,
+                        std::vector<LetChain>& out) {
+    std::vector<const syntax::InvocationExpressionSyntax*> calls;
+    auto visitor = syntax::makeSyntaxVisitor(
+        [&](auto& self, const syntax::InvocationExpressionSyntax& call) {
+          if (call.left->kind == syntax::SyntaxKind::IdentifierName)
+            calls.push_back(&call);
+          self.visitDefault(call);
+        });
+    root.visit(visitor);
+    const std::string_view targetName = target.identifier.valueText();
+    for (const syntax::InvocationExpressionSyntax* call : calls) {
+      LetChain chain;
+      const syntax::InvocationExpressionSyntax* current = call;
+      for (size_t depth = 0; current && depth < LetChainDepth; ++depth) {
+        const std::string_view name =
+            current->left->as<syntax::IdentifierNameSyntax>().identifier.valueText();
+        if (name == targetName) {
+          chain.emplace_back(&target, current);
+          out.push_back(std::move(chain));
+          break;
+        }
+        const syntax::LetDeclarationSyntax* declaration = letDeclaration(name);
+        if (!declaration)
+          break;
+        chain.emplace_back(declaration, current);
+        const syntax::ExpressionSyntax* body = declaration->expr;
+        while (body->kind == syntax::SyntaxKind::ParenthesizedExpression)
+          body = body->as<syntax::ParenthesizedExpressionSyntax>().expression;
+        current = body->kind == syntax::SyntaxKind::InvocationExpression &&
+                          body->as<syntax::InvocationExpressionSyntax>().left->kind ==
+                              syntax::SyntaxKind::IdentifierName
+                      ? &body->as<syntax::InvocationExpressionSyntax>()
+                      : nullptr;
+      }
+    }
+  }
+
+  // The let declaration `name` resolves to from the innermost checker body.
+  const syntax::LetDeclarationSyntax* letDeclaration(std::string_view name) {
+    const Symbol* symbol = checkerActuals.back().body->lookupName(name);
+    if (!symbol || symbol->kind != SymbolKind::LetDecl)
+      return nullptr;
+    const syntax::SyntaxNode* declaration = symbol->getSyntax();
+    return declaration && declaration->kind == syntax::SyntaxKind::LetDeclaration
+               ? &declaration->as<syntax::LetDeclarationSyntax>()
+               : nullptr;
+  }
+
+  // Pushes the aliases of the formals of `let` at call `invocation` and
+  // returns whether it pushed any.
+  bool pushInvocationAliases(const syntax::LetDeclarationSyntax& let,
+                             const syntax::InvocationExpressionSyntax& invocation) {
+    std::unordered_map<std::string_view, const syntax::SyntaxNode*> actuals;
+    std::unordered_set<std::string_view> names;
+    std::vector<std::string_view> order;
+    if (let.portList) {
+      for (const syntax::AssertionItemPortSyntax* port : let.portList->ports) {
+        const std::string_view portName = port->name.valueText();
+        order.push_back(portName);
+        if (portName.empty())
+          continue;
+        names.insert(portName);
+        if (port->defaultValue) {
+          if (const auto* value = checkerActualExpression(port->defaultValue->expr))
+            actuals[portName] = value;
+        }
+      }
+    }
+    if (invocation.arguments) {
+      size_t ordered = 0;
+      for (const syntax::ArgumentSyntax* argument : invocation.arguments->parameters) {
+        if (argument->kind == syntax::SyntaxKind::OrderedArgument) {
+          if (ordered < order.size()) {
+            if (const auto* value = checkerActualExpression(
+                    argument->as<syntax::OrderedArgumentSyntax>().expr))
+              actuals[order[ordered]] = value;
+          }
+          ordered++;
+        }
+        else if (argument->kind == syntax::SyntaxKind::NamedArgument) {
+          const auto& named = argument->as<syntax::NamedArgumentSyntax>();
+          if (const auto* value = checkerActualExpression(named.expr))
+            actuals[named.name.valueText()] = value;
+        }
+      }
+    }
+    std::unordered_map<const syntax::SyntaxNode*, const syntax::SyntaxNode*> aliases;
+    for (const auto& [reference, portName] : formalReferences(&let, *let.expr, names)) {
+      if (const auto found = actuals.find(portName); found != actuals.end())
+        aliases.emplace(reference, found->second);
+    }
+    if (aliases.empty())
+      return false;
+    assertionAliases.push_back(std::move(aliases));
+    return true;
+  }
+
+  // The actual argument syntax that `reference` expands to through the let,
+  // sequence and property instances being captured, or `reference` itself.
+  const syntax::SyntaxNode* resolveAssertionAlias(const syntax::SyntaxNode* reference) const {
+    // Each step moves to an enclosing instance's argument, so the chain is
+    // no longer than the stack.
+    for (size_t step = 0; step < assertionAliases.size(); ++step) {
+      bool moved = false;
+      for (auto frame = assertionAliases.rbegin(); frame != assertionAliases.rend(); ++frame) {
+        if (const auto found = frame->find(reference); found != frame->end()) {
+          reference = found->second;
+          moved = true;
+          break;
+        }
+      }
+      if (!moved)
+        break;
+    }
+    return reference;
+  }
+
   void pushCheckerActuals(uint64_t id, const CheckerInstanceSymbol& symbol) {
     checkerActuals.push_back(
         {id, &symbol.body, &checkerFormalReferences(symbol.body.checker), 0});
@@ -5324,7 +5592,7 @@ private:
   void markCheckerActual(uint64_t id, const Expression& expression) {
     if (!expression.syntax)
       return;
-    const syntax::SyntaxNode* reference = expression.syntax;
+    const syntax::SyntaxNode* reference = resolveAssertionAlias(expression.syntax);
     size_t level = checkerActuals.size();
     while (level-- > 0) {
       CheckerActuals& entry = checkerActuals[level];
