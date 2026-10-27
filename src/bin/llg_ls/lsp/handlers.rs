@@ -337,6 +337,13 @@ impl LanguageServer for Backend {
                         },
                     ),
                 ),
+                // SystemVerilog has no color literals. Answering
+                // `textDocument/documentColor` with an empty list keeps VS
+                // Code's default color decorators (on with
+                // `editor.defaultColorDecorators: "auto"`) from showing a
+                // color picker beside delays such as `#10`
+                // (docs/semantic_tokens.md, ST-66).
+                color_provider: Some(ColorProviderCapability::Simple(true)),
                 workspace: Some(WorkspaceServerCapabilities {
                     workspace_folders: Some(WorkspaceFoldersServerCapabilities {
                         supported: Some(true),
@@ -1641,6 +1648,19 @@ impl LanguageServer for Backend {
         }
         request.complete("ok", values.len());
         Ok(Some(values))
+    }
+
+    /// Always an empty list, never null: VS Code skips its default color
+    /// decorators only when a provider answers with an array.
+    async fn document_color(&self, _: DocumentColorParams) -> Result<Vec<ColorInformation>> {
+        Ok(Vec::new())
+    }
+
+    async fn color_presentation(
+        &self,
+        _: ColorPresentationParams,
+    ) -> Result<Vec<ColorPresentation>> {
+        Ok(Vec::new())
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {

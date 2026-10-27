@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 47;
+const ABI_VERSION: u32 = 48;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1523,6 +1523,9 @@ pub enum LexicalKind {
     /// A struct or union member or a class property: its declaration or a
     /// reference bound to it.
     Field,
+    /// A formal argument of a `` `define ``: its name in the formal list
+    /// (role `Declaration`) or a body token that spells it.
+    MacroFormal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

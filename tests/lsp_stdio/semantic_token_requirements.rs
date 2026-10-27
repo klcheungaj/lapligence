@@ -623,3 +623,196 @@ fn st_40_to_st_43_builtin_functions_and_methods_in_both_serving_paths() {
     }
     client.shutdown();
 }
+
+const MACRO_SOURCE: &str = include_str!("../fixtures/semantic_tokens/macros_and_class_scope.sv");
+
+const PRIM: &[&str] = &["primitive"];
+const STATIC: &[&str] = &["static"];
+
+const MACRO_CHECKS: &[Check] = &[
+    // ST-60: the name a `define declares and its use sites are `macro`.
+    ("ST-60", "`define A 32", 0, 8, "macro", DECL),
+    ("ST-60", "`define A 32", 0, 0, "keyword", CONTROL),
+    ("ST-60", "`A + `ABC", 0, 0, "macro", NONE),
+    ("ST-60", "`A + `ABC", 0, 5, "macro", NONE),
+    // ST-61: the net type of `default_nettype is a primitive keyword.
+    ("ST-61", "`default_nettype none", 0, 0, "keyword", CONTROL),
+    ("ST-61", "`default_nettype none", 0, 17, "keyword", PRIM),
+    ("ST-61", "`default_nettype wire", 0, 17, "keyword", PRIM),
+    // ST-62: the macro name of a conditional directive or `undef.
+    ("ST-62", "`ifdef XXX", 0, 0, "keyword", CONTROL),
+    ("ST-62", "`ifdef XXX", 0, 7, "macro", NONE),
+    ("ST-62", "`elsif ZZZ", 0, 7, "macro", NONE),
+    ("ST-62", "`ifndef YYY", 0, 8, "macro", NONE),
+    ("ST-62", "`undef N", 0, 0, "keyword", CONTROL),
+    ("ST-62", "`undef N", 0, 7, "macro", NONE),
+    // ST-63: formal arguments are parameters, declared in the formal list.
+    ("ST-63", "ABC(x,y)", 0, 4, "parameter", DECL),
+    ("ST-63", "ABC(x,y)", 0, 6, "parameter", DECL),
+    ("ST-63", "((x)+(y))", 0, 2, "parameter", NONE),
+    ("ST-63", "((x)+(y))", 0, 6, "parameter", NONE),
+    ("ST-63", "WR(v)", 0, 3, "parameter", DECL),
+    ("ST-63", "$size(v)", 0, 6, "parameter", NONE),
+    ("ST-63", "write_dr(v)", 0, 9, "parameter", NONE),
+    ("ST-63", "`ABC(e, e)", 0, 5, "parameter", NONE),
+    // ST-64: a `define body is highlighted like source, its names from the
+    // expansions.
+    ("ST-64", "cnt = cnt + 1; if", 0, 0, "variable", NONE),
+    ("ST-64", "cnt = cnt + 1; if", 0, 6, "variable", NONE),
+    ("ST-64", "cnt = cnt + 1; if", 0, 10, "operator", NONE),
+    ("ST-64", "cnt = cnt + 1; if", 0, 12, "number", NONE),
+    ("ST-64", "if (cnt > `A)", 0, 0, "keyword", CONTROL),
+    ("ST-64", "if (cnt > `A)", 0, 10, "macro", NONE),
+    ("ST-64", "`ABC(e, e)", 0, 0, "macro", NONE),
+    ("ST-64", "SAME_KIND hits", 0, 10, "variable", NONE),
+    ("ST-64", "\"body text\"", 0, 0, "string", NONE),
+    ("ST-64", "never_seen + 1", 0, 13, "number", NONE),
+    ("ST-64", "$size(v)", 0, 0, "function", LIB),
+    // ST-65: class-scope names, also inside a `define body (ST-64).
+    ("ST-65", "Util2#($size(v))", 0, 0, "class", NONE),
+    ("ST-65", "write_dr(v)", 0, 0, "function", STATIC),
+    ("ST-65", "Util2#($size(in))", 0, 0, "class", NONE),
+    ("ST-65", "Util2#($size(in))", 0, 7, "function", LIB),
+    ("ST-65", "Util2#($size(in))", 0, 13, "variable", NONE),
+    ("ST-65", "write_dr(in)", 0, 0, "function", STATIC),
+    ("ST-65", "write_dr(in)", 0, 9, "variable", NONE),
+    ("ST-65", "`WR(in)", 0, 4, "variable", NONE),
+    (
+        "ST-65",
+        "write_dr(input",
+        0,
+        0,
+        "function",
+        &["declaration", "static"],
+    ),
+    (
+        "ST-65",
+        "width();",
+        0,
+        0,
+        "function",
+        &["declaration", "static"],
+    ),
+    ("ST-65", "inst_width", 0, 0, "function", DECL),
+    ("ST-65", "C::f()", 0, 0, "class", NONE),
+    ("ST-65", "C::f()", 0, 3, "function", STATIC),
+    ("ST-65", "Util2#(2)::width", 0, 0, "class", NONE),
+    ("ST-65", "Util2#(2)::width", 0, 11, "function", STATIC),
+    ("ST-65", "Util2#(4)::T", 0, 0, "class", NONE),
+    ("ST-65", "Util2#(4)::T", 0, 11, "type", NONE),
+    ("ST-65", "C::Inner::depth", 0, 0, "class", NONE),
+    ("ST-65", "C::Inner::depth", 0, 3, "class", NONE),
+    ("ST-65", "C::Inner::depth", 0, 10, "function", STATIC),
+    // ST-23 (unchanged by ST-66): a delay is an operator and a number.
+    ("ST-66", "#10", 0, 0, "operator", NONE),
+    ("ST-66", "#10", 0, 1, "number", NONE),
+    ("ST-66", "#1ns", 0, 1, "number", NONE),
+];
+
+/// ST-60 to ST-66 over the wire in both serving paths: macro names,
+/// directive operands, macro formals and bodies, class-scope names, and the
+/// empty document-color answer that keeps VS Code from offering a color
+/// picker beside a delay.
+#[test]
+fn st_60_to_st_66_macros_directives_class_scope_and_delays_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("st_macros.sv");
+    fs::write(&path, MACRO_SOURCE).expect("write macro fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    // ST-66: the server is a document-color provider.
+    assert_eq!(
+        initialize["capabilities"]["colorProvider"],
+        json!(true),
+        "ST-66 {initialize}"
+    );
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    let uri = file_uri(&path);
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+    let mut streams = Vec::new();
+    for opened in [false, true] {
+        if opened {
+            client.open(&path, MACRO_SOURCE).expect("open macro buffer");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("macro semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        let label = if opened { "open buffer" } else { "project" };
+        for check in MACRO_CHECKS {
+            assert_check(&rows, MACRO_SOURCE, check, label);
+        }
+        // ST-64: a body name whose expansions disagree (a variable in one
+        // module, a parameter in the other) and one of a macro never
+        // expanded get no token.
+        for needle in ["mixed\n", "never_seen"] {
+            let (line, col) = position_of(MACRO_SOURCE, needle, 0);
+            assert!(
+                !rows
+                    .iter()
+                    .any(|row| row.line == line && row.character == col),
+                "ST-64 {label}: {needle:?} has a token"
+            );
+        }
+        // ST-66: an empty list, never null.
+        let colors = client
+            .request(
+                "textDocument/documentColor",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("document color response");
+        assert_eq!(colors, json!([]), "ST-66 {label}");
+        streams.push(result["data"].clone());
+    }
+    assert_eq!(streams[0], streams[1], "ST-24: serving paths differ");
+    client.shutdown();
+}
+
+/// ST-64: body names highlight like source but are macro text, not
+/// references of the design: renaming the variable leaves the `define body
+/// alone.
+#[test]
+fn st_64_macro_body_names_are_not_renamed_with_the_design_name() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("st_macros.sv");
+    fs::write(&path, MACRO_SOURCE).expect("write macro fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let uri = file_uri(&path);
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+    let (line, col) = position_of(MACRO_SOURCE, "cnt;", 0);
+    let rename = client
+        .request(
+            "textDocument/rename",
+            json!({
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": col },
+                "newName": "renamed",
+            }),
+        )
+        .expect("rename response");
+    let edits = rename["changes"][uri.as_str()]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(!edits.is_empty(), "ST-64: rename found nothing: {rename}");
+    let (body_line, _) = position_of(MACRO_SOURCE, "cnt = cnt + 1; if", 0);
+    assert!(
+        edits
+            .iter()
+            .all(|edit| edit["range"]["start"]["line"] != json!(body_line)),
+        "ST-64: rename edits the `define body: {rename}"
+    );
+    client.shutdown();
+}

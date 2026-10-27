@@ -53,7 +53,22 @@ pub const TOKEN_SLANG_TYPE_PARAMETER: i32 = -32;
 /// Struct or union member or class property: a declaration (with
 /// [`TOKEN_DECLARATION_OFFSET`]) or a reference bound to it.
 pub const TOKEN_SLANG_FIELD: i32 = -33;
+/// Formal argument of a `` `define ``: its name in the formal list (with
+/// [`TOKEN_DECLARATION_OFFSET`]) or a body token that spells it. Always
+/// carries [`TOKEN_MACRO_BODY_OFFSET`].
+pub const TOKEN_SLANG_MACRO_FORMAL: i32 = -34;
+/// Class method declared `static` (IEEE 1800-2009 8.10), a declaration (with
+/// [`TOKEN_DECLARATION_OFFSET`]) or a reference bound to it. Other functions,
+/// tasks and methods are [`TOKEN_SLANG_FUNCTION`].
+pub const TOKEN_SLANG_STATIC_FUNCTION: i32 = -35;
 pub const TOKEN_DECLARATION_OFFSET: i32 = -1_000;
+/// Added to the kind (declaration offset included) of a name written in a
+/// `` `define `` directive: a body name bound from the macro's expansions, an
+/// unbound body name, or a formal argument. Such a token is text of the
+/// macro, not a declaration or reference of the design, so name indexes skip
+/// it (its kind matches none of theirs); [`macro_body_kind`] recovers the
+/// kind for highlighting.
+pub const TOKEN_MACRO_BODY_OFFSET: i32 = -10_000;
 
 /// Source-positioned lexical item. Coordinates are one-based UTF-16 to retain
 /// the existing feature/index representation; Slang byte ranges are converted
@@ -198,7 +213,18 @@ pub fn project_slang(
                 _ => TOKEN_SLANG_PORT_CONNECTION_LABEL,
             }
         } else {
-            let kind = lexical_kind(token.kind);
+            let mut kind = lexical_kind(token.kind);
+            if matches!(token.kind, LexicalKind::Function | LexicalKind::Task)
+                && token
+                    .semantic_id
+                    .and_then(|id| semantic.get(&id))
+                    .is_some_and(|node| {
+                        node.kind == SemanticKind::Subroutine
+                            && node.auxiliary & crate::ffi::slang::SUBROUTINE_STATIC != 0
+                    })
+            {
+                kind = TOKEN_SLANG_STATIC_FUNCTION;
+            }
             if token.role == LexicalRole::Declaration {
                 kind + TOKEN_DECLARATION_OFFSET
             } else if token.kind == LexicalKind::Identifier
@@ -215,6 +241,30 @@ pub fn project_slang(
                 kind
             }
         };
+        // A name in a `define is macro text: it keeps its kind for
+        // highlighting but binds and declares nothing of the design.
+        let macro_body = token.is_directive
+            && !matches!(
+                token.kind,
+                LexicalKind::Macro
+                    | LexicalKind::Keyword
+                    | LexicalKind::Operator
+                    | LexicalKind::String
+                    | LexicalKind::Number
+                    | LexicalKind::SystemSubroutine
+            );
+        if macro_body {
+            grouped.entry(file.to_owned()).or_default().push(TokenInfo {
+                line,
+                col,
+                end_line,
+                end_col,
+                kind: role_kind + TOKEN_MACRO_BODY_OFFSET,
+                name: (!token.text.is_empty()).then(|| token.text.clone()),
+                file: file.to_owned(),
+            });
+            continue;
+        }
         let node = TokenInfo {
             line,
             col,
@@ -472,7 +522,15 @@ fn lexical_kind(kind: LexicalKind) -> i32 {
         LexicalKind::Block => TOKEN_SLANG_BLOCK,
         LexicalKind::TypeParameter => TOKEN_SLANG_TYPE_PARAMETER,
         LexicalKind::Field => TOKEN_SLANG_FIELD,
+        LexicalKind::MacroFormal => TOKEN_SLANG_MACRO_FORMAL,
     }
+}
+
+/// The kind of a `` `define `` name token without [`TOKEN_MACRO_BODY_OFFSET`],
+/// or `None` for every other token.
+pub fn macro_body_kind(kind: i32) -> Option<i32> {
+    // Every other kind, declaration offset included, is above half the offset.
+    (kind <= TOKEN_MACRO_BODY_OFFSET / 2).then_some(kind - TOKEN_MACRO_BODY_OFFSET)
 }
 
 pub fn token_base_kind(kind: i32) -> (i32, bool) {

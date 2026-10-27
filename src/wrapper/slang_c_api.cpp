@@ -407,6 +407,9 @@ struct Capture {
     uint64_t semantic_id;
     uint32_t role;
     uint32_t kind;
+    // The range is a name in a `define body, bound from one expansion of it;
+    // every expansion of the macro binds the same range.
+    bool macroBody = false;
   };
 
   struct GenvarLexicalScope {
@@ -644,11 +647,38 @@ struct Capture {
     return range;
   }
 
+  // The range in a `define body that a macro-expanded token was copied
+  // from: its fully original location is a file location that spells the
+  // token and is not text written in the actual arguments of the outermost
+  // usage (`macroArgumentSpan`). Nested usages resolve through every level,
+  // so a name written in an outer body and passed to an inner macro maps to
+  // the outer body. A pasted or stringified token is new text and has none.
+  std::optional<LlgSlangSourceRange> macroBodySpan(SourceLocation location,
+                                                   std::string_view text) const {
+    if (!location.valid() || !sourceManager.isMacroLoc(location) || text.empty() ||
+        macroArgumentSpan(location, text))
+      return std::nullopt;
+    const SourceLocation original = sourceManager.getFullyOriginalLoc(location);
+    if (!original.valid() || !sourceManager.isFileLoc(original))
+      return std::nullopt;
+    const std::string_view source = sourceManager.getSourceText(original.buffer());
+    if (original.offset() > source.size() ||
+        source.substr(original.offset(), text.size()) != text)
+      return std::nullopt;
+    const LlgSlangSourceRange range = span(original, text.size());
+    if (range.file_id == LLG_SLANG_INVALID_ID)
+      return std::nullopt;
+    return range;
+  }
+
   // Physical range of one token: its written argument text for a macro
-  // argument token, otherwise its use-site span.
+  // argument token, its `define body text for a token copied from a macro
+  // body, otherwise its span.
   LlgSlangSourceRange tokenSpan(parsing::Token token) const {
     if (auto written = macroArgumentSpan(token.location(), token.rawText()))
       return *written;
+    if (auto body = macroBodySpan(token.location(), token.rawText()))
+      return *body;
     return span(token.range());
   }
 
@@ -1441,9 +1471,14 @@ struct Capture {
   }
 
   // Keyed by the token's physical range, so a name written in a macro
-  // argument binds at its written text (see `tokenSpan`).
+  // argument binds at its written text and a name copied from a macro body
+  // binds at the body text (see `tokenSpan`).
   void lexicalBinding(parsing::Token token, uint64_t semanticId,
                       uint32_t role, uint32_t kind = LLG_SLANG_LEXICAL_UNKNOWN) {
+    if (auto body = macroBodySpan(token.location(), token.rawText())) {
+      lexicalBinding(*body, semanticId, role, kind, true);
+      return;
+    }
     lexicalBinding(tokenSpan(token), semanticId, role, kind);
   }
 
@@ -1454,11 +1489,12 @@ struct Capture {
   }
 
   void lexicalBinding(const LlgSlangSourceRange& range, uint64_t semanticId,
-                      uint32_t role, uint32_t kind = LLG_SLANG_LEXICAL_UNKNOWN) {
+                      uint32_t role, uint32_t kind = LLG_SLANG_LEXICAL_UNKNOWN,
+                      bool macroBody = false) {
     if (lexicalBindings.size() >= maxLexicalTokens())
       throw BridgeFailure(LLG_SLANG_STATUS_LIMIT_EXCEEDED,
                           "lexical binding limit exceeded");
-    lexicalBindings.push_back({range, semanticId, role, kind});
+    lexicalBindings.push_back({range, semanticId, role, kind, macroBody});
   }
 
   void connectionActual(SourceRange range) {
@@ -2438,9 +2474,13 @@ public:
                               : LlgSlangSourceRange{LLG_SLANG_INVALID_ID, 0, 0});
     // A name written in a macro argument: the node spans the macro use site,
     // so the written name token is bound to the declaration here.
+    // A name copied from a `define body binds the body text the same way.
     if (symbol.kind != SymbolKind::TransparentMember) {
       if (auto written = capture.macroArgumentSpan(symbol.location, symbol.name))
         capture.lexicalBinding(*written, id, LLG_SLANG_LEXICAL_ROLE_DECLARATION);
+      else if (auto body = capture.macroBodySpan(symbol.location, symbol.name))
+        capture.lexicalBinding(*body, id, LLG_SLANG_LEXICAL_ROLE_DECLARATION,
+                               LLG_SLANG_LEXICAL_UNKNOWN, true);
     }
     if constexpr (std::derived_from<T, ValueSymbol>) {
       result.type_id = capture.type(symbol.getType());
@@ -3816,8 +3856,9 @@ private:
   }
 
   // Binds the value name token of a reference. With `macroArgumentsOnly`
-  // (full capture) only a name written in a macro argument is bound: its
-  // reference node spans the macro use site, so the node cannot bind it.
+  // (full capture) only a name written in a macro argument or copied from a
+  // `define body is bound: its reference node spans the macro use site, so
+  // the node cannot bind it.
   template<std::derived_from<Expression> T>
   void bindValueNameToken(const T& expression, bool macroArgumentsOnly) {
     if constexpr (std::same_as<T, NamedValueExpression> ||
@@ -3839,7 +3880,8 @@ private:
           }
           if (token.valueText() == target->name &&
               (!macroArgumentsOnly ||
-               capture.macroArgumentSpan(token.location(), token.rawText())))
+               capture.macroArgumentSpan(token.location(), token.rawText()) ||
+               capture.macroBodySpan(token.location(), token.rawText())))
             capture.lexicalBinding(token, lexicalTarget(*target),
                                    LLG_SLANG_LEXICAL_ROLE_REFERENCE);
         }
@@ -4186,8 +4228,50 @@ private:
         return;
       capture.lexicalBinding(*token, lexicalTarget(qualifier),
                              LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+      if (qualifier.kind == SymbolKind::ClassType)
+        bindSpecializationValues(qualifier.as<ClassType>(), *scoped.left);
       scope = qualifier.getParentScope();
     }
+  }
+
+  // The value parameter assignments of a class specialization `C#(e)::name`
+  // (IEEE 1800-2009 8.25.1) are bound by Slang in the referencing scope, and
+  // the overridden parameter's initializer keeps that binding; its names are
+  // bound from it when this use site wrote them. Slang shares one
+  // specialization between assignments with equal values, so the text of
+  // any other site has no initializer: its names are looked up in the
+  // innermost instance body or generate block being captured instead, and
+  // stay unbound outside one (package and class scope).
+  void bindSpecializationValues(const ClassType& type,
+                                const syntax::SyntaxNode& qualifier) {
+    if (!type.genericClass)
+      return;
+    const SourceRange written = qualifier.sourceRange();
+    const auto within = [&](SourceLocation location) {
+      return location.valid() && written.start().valid() && written.end().valid() &&
+             location.buffer() == written.start().buffer() &&
+             location.buffer() == written.end().buffer() &&
+             location.offset() >= written.start().offset() &&
+             location.offset() < written.end().offset();
+    };
+    bool bound = false;
+    for (const ParameterSymbol& parameter : type.membersOfType<ParameterSymbol>()) {
+      if (!parameter.isOverridden())
+        continue;
+      const Expression* initializer = parameter.getInitializer();
+      if (initializer && within(initializer->sourceRange.start())) {
+        bindInvalidSubtree(initializer);
+        bound = true;
+      }
+    }
+    if (bound || disableScopes.empty())
+      return;
+    const ASTContext context(*disableScopes.back(), LookupLocation::max);
+    auto visitor = syntax::makeSyntaxVisitor(
+        [&](auto&, const syntax::ParameterValueAssignmentSyntax& assignment) {
+          captureNames(assignment, context);
+        });
+    qualifier.visit(visitor);
   }
 
   // A hierarchical name (IEEE 1800-2009 23.6) resolves through instances,
@@ -4802,6 +4886,11 @@ private:
       node.detail = storeString(capture.output, toString(symbol.kind));
       node.range = capture.span(symbol.location, symbol.name.size());
       capture.sourceIdentity(symbol.getSyntax(), id);
+      // A reference-only target (a method of a class specialization) still
+      // says whether it is a static method.
+      if (symbol.kind == SymbolKind::Subroutine &&
+          symbol.as<SubroutineSymbol>().flags.has(MethodFlags::Static))
+        node.auxiliary |= LLG_SLANG_SUBROUTINE_STATIC;
     }
     if (ValueSymbol::isKind(symbol.kind))
       node.type_id = capture.type(symbol.as<ValueSymbol>().getType());
@@ -6278,8 +6367,29 @@ public:
     visitDefault(syntax);
   }
 
+  // A `define directive. Its formal arguments (IEEE 1800-2009 22.5.1) are
+  // the macro's parameters: the name in the formal list is their
+  // declaration and every body token that spells one is a use. Every other
+  // body name is ordinary source text once expanded; it takes the kind its
+  // expansions bind at the body text (`Capture::macroBodySpan`).
   void handle(const syntax::DefineDirectiveSyntax& syntax) {
     defineName = syntax.name.location();
+    defineFormals.clear();
+    if (syntax.formalArguments) {
+      for (const syntax::MacroFormalArgumentSyntax* formal :
+           syntax.formalArguments->args)
+        defineFormals.push_back(formal->name);
+    }
+    defineDepth++;
+    visitDefault(syntax);
+    defineDepth--;
+    defineFormals.clear();
+  }
+
+  // The net type of `default_nettype (22.8) is a net type keyword, or
+  // `none`, which is a keyword only here.
+  void handle(const syntax::DefaultNetTypeDirectiveSyntax& syntax) {
+    directiveKeyword = syntax.netType.location();
     visitDefault(syntax);
   }
 
@@ -6419,6 +6529,10 @@ public:
       auto [it, inserted] = connectionLabels.try_emplace(key, binding);
       if (inserted)
         continue;
+      if (binding.macroBody || it->second.macroBody) {
+        mergeMacroBodyBinding(it->second, binding);
+        continue;
+      }
       // An implicit named port connection `.name` (IEEE 1800-2009 23.3.2.3)
       // is both the label and a reference to the connected name; the label
       // role wins so the result does not depend on capture order.
@@ -6654,6 +6768,39 @@ public:
   }
 
 private:
+  // The lexical kind a binding gives its token.
+  uint32_t boundLexicalKind(const Capture::LexicalBinding& binding) const {
+    const uint64_t target = capture.canonicalLexicalTarget(binding.semantic_id);
+    if (target != LLG_SLANG_INVALID_ID && target < capture.output.semantic_nodes.size())
+      return lexicalKindForSemantic(
+          capture.output.semantic_nodes[static_cast<size_t>(target)]);
+    return binding.kind;
+  }
+
+  // Every expansion of a macro binds the names of its `define body again.
+  // The body token keeps a kind and role only when every binding agrees on
+  // them, and a target only when they also agree on the target; bindings
+  // that disagree (`v` a variable in one expansion and a type in another)
+  // leave an unbound identifier, which gets no token.
+  void mergeMacroBodyBinding(Capture::LexicalBinding& merged,
+                             const Capture::LexicalBinding& binding) const {
+    if (merged.kind == LLG_SLANG_LEXICAL_IDENTIFIER &&
+        merged.role == LLG_SLANG_LEXICAL_ROLE_NONE)
+      return;
+    const uint32_t kind = boundLexicalKind(merged);
+    if (!binding.macroBody || !merged.macroBody || kind != boundLexicalKind(binding) ||
+        merged.role != binding.role) {
+      merged = {merged.range, LLG_SLANG_INVALID_ID, LLG_SLANG_LEXICAL_ROLE_NONE,
+                LLG_SLANG_LEXICAL_IDENTIFIER, true};
+      return;
+    }
+    if (capture.canonicalLexicalTarget(merged.semantic_id) !=
+        capture.canonicalLexicalTarget(binding.semantic_id)) {
+      merged.kind = kind;
+      merged.semantic_id = LLG_SLANG_INVALID_ID;
+    }
+  }
+
   // One block name declaration and the names that repeat it (an end label, or
   // a begin name after a statement label). Ranges are physical name spans.
   struct BlockName {
@@ -6666,7 +6813,7 @@ private:
     const parsing::Token* declaration = label ? label : begin;
     if (!declaration || declaration->isMissing())
       return;
-    const auto range = capture.span(declaration->range());
+    const auto range = capture.tokenSpan(*declaration);
     if (range.file_id == LLG_SLANG_INVALID_ID)
       return;
     if (blockNames.size() >= capture.maxLexicalTokens())
@@ -6679,7 +6826,7 @@ private:
       // A mismatched end label is a frontend error and names nothing.
       if (token && !token->isMissing() &&
           token->valueText() == declaration->valueText())
-        name.repeats[repeat++] = capture.span(token->range());
+        name.repeats[repeat++] = capture.tokenSpan(*token);
     }
     blockNames.push_back(name);
   }
@@ -6774,6 +6921,13 @@ private:
   SourceLocation controlKeyword;
   // The macro name of the `define directive being visited.
   SourceLocation defineName;
+  // The formal argument names of the `define directive being visited, and
+  // whether one is being visited.
+  std::vector<parsing::Token> defineFormals;
+  uint32_t defineDepth = 0;
+  // A directive operand that is a keyword although Slang lexes it as an
+  // identifier (the `none` of `default_nettype none).
+  SourceLocation directiveKeyword;
 
   void addToken(parsing::Token token, uint32_t extraFlags) {
     const std::string_view text = token.rawText();
@@ -6833,26 +6987,42 @@ private:
         (flags & LLG_SLANG_LEXICAL_MACRO_ARGUMENT) == 0 && macroArgumentDepth == 0;
     if (token.kind == parsing::TokenKind::SystemIdentifier && !expansionCopy)
       kind = LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE;
-    // Names in directives and macro bodies are macro text. Names written in
-    // macro arguments and their expanded copies are ordinary names.
-    if (kind == LLG_SLANG_LEXICAL_IDENTIFIER && macroArgumentDepth == 0 &&
-        (flags & LLG_SLANG_LEXICAL_MACRO_ARGUMENT) == 0 &&
-        (directiveDepth != 0 ||
-         (flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) != 0))
+    // Names in directives and expansion copies are macro text. Names written
+    // in macro arguments and their expanded copies are ordinary names, and
+    // so are the names of a `define body (bound from its expansions); the
+    // formal arguments of a `define are its parameters.
+    uint32_t role = kind == LLG_SLANG_LEXICAL_KEYWORD ? LLG_SLANG_LEXICAL_ROLE_KEYWORD
+                                                      : LLG_SLANG_LEXICAL_ROLE_NONE;
+    if (kind == LLG_SLANG_LEXICAL_IDENTIFIER && directiveDepth != 0 &&
+        token.location() == directiveKeyword) {
+      kind = LLG_SLANG_LEXICAL_KEYWORD;
+      role = LLG_SLANG_LEXICAL_ROLE_KEYWORD;
+    }
+    else if (kind == LLG_SLANG_LEXICAL_IDENTIFIER && macroArgumentDepth == 0 &&
+             (flags & LLG_SLANG_LEXICAL_MACRO_ARGUMENT) == 0 &&
+             (directiveDepth != 0 ||
+              (flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) != 0)) {
       kind = LLG_SLANG_LEXICAL_MACRO;
+      if (defineName.valid() && token.location() == defineName) {
+        role = LLG_SLANG_LEXICAL_ROLE_DECLARATION;
+      }
+      else if (defineDepth != 0 && directiveDepth != 0 &&
+               (flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) == 0) {
+        kind = LLG_SLANG_LEXICAL_IDENTIFIER;
+        for (const parsing::Token& formal : defineFormals) {
+          if (formal.valueText() == token.valueText()) {
+            kind = LLG_SLANG_LEXICAL_MACRO_FORMAL;
+            if (formal.location() == token.location())
+              role = LLG_SLANG_LEXICAL_ROLE_DECLARATION;
+            break;
+          }
+        }
+      }
+    }
     const auto key = std::tuple{range.file_id, range.start, range.end};
     tokenLocations.try_emplace(key, token.location());
-    const LlgSlangLexicalToken record{
-        range, kind,
-        // MSVC gives unnamed enums an int underlying type; narrowing to the
-        // uint32_t field must be explicit in brace initialization.
-        static_cast<uint32_t>(
-            kind == LLG_SLANG_LEXICAL_KEYWORD ? LLG_SLANG_LEXICAL_ROLE_KEYWORD
-            : kind == LLG_SLANG_LEXICAL_MACRO && defineName.valid() &&
-                    token.location() == defineName
-                ? LLG_SLANG_LEXICAL_ROLE_DECLARATION
-                : LLG_SLANG_LEXICAL_ROLE_NONE),
-        flags, 0, LLG_SLANG_INVALID_ID, {}};
+    const LlgSlangLexicalToken record{range, kind, role, flags, 0,
+                                      LLG_SLANG_INVALID_ID, {}};
     if ((flags & LLG_SLANG_LEXICAL_MACRO_ARGUMENT) != 0 &&
         range.file_id != LLG_SLANG_INVALID_ID) {
       // Replace the written copy in place; repeated uses of one argument in

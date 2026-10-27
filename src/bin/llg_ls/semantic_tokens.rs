@@ -25,6 +25,7 @@ const TT_NUMBER: u32 = 19;
 const TT_OPERATOR: u32 = 21;
 const TM_DECLARATION: u32 = 0;
 const TM_READONLY: u32 = 2;
+const TM_STATIC: u32 = 3;
 const TM_DEFAULT_LIBRARY: u32 = 9;
 const TM_CONNECTION_LABEL: u32 = 10;
 const TM_CONNECTION_LABEL_NAME: SemanticTokenModifier =
@@ -97,14 +98,17 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         if node.line == 0 {
             continue;
         }
-        if is_unresolved_identifier(node.kind) {
+        // A name in a `define body is highlighted as the source its
+        // expansions bind; unbound body names are unresolved (ST-22).
+        let kind = macro_body_kind(node.kind).unwrap_or(node.kind);
+        if is_unresolved_identifier(kind) {
             continue;
         }
-        let Some((mut token_type, mut modifiers)) = token_type_for(node.kind) else {
+        let Some((mut token_type, mut modifiers)) = token_type_for(kind) else {
             continue;
         };
         // Directive and macro-usage words arrive as operator-kind tokens.
-        if node.kind == TOKEN_SLANG_OPERATOR {
+        if kind == TOKEN_SLANG_OPERATOR {
             match node.name.as_deref().and_then(backtick_word) {
                 Some(BacktickWord::Directive) => {
                     token_type = TT_KEYWORD;
@@ -117,9 +121,9 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
         // The capture marks words that are control flow only at some syntax
         // positions (a case item `default`, an if/case `unique`, a disable
         // statement); their text class is never consulted.
-        if node.kind == TOKEN_SLANG_CONTROL_KEYWORD {
+        if kind == TOKEN_SLANG_CONTROL_KEYWORD {
             modifiers |= 1 << TM_CONTROL_FLOW;
-        } else if node.kind == TOKEN_SLANG_KEYWORD {
+        } else if kind == TOKEN_SLANG_KEYWORD {
             modifiers |= match node.name.as_deref().map(keyword_class) {
                 Some(KeywordClass::TypeDefinition) => 1 << TM_TYPE_DEFINITION,
                 Some(KeywordClass::Direction) => 1 << TM_DIRECTION,
@@ -282,9 +286,8 @@ fn keyword_class(name: &str) -> KeywordClass {
         | "shortreal" | "real" | "realtime" | "string" | "chandle" | "event" | "void"
         | "signed" | "unsigned" | "genvar" | "supply0" | "supply1" | "tri" | "triand" | "trior"
         | "trireg" | "tri0" | "tri1" | "uwire" | "wire" | "wand" | "wor" | "parameter"
-        | "localparam" | "specparam" | "const" | "var" | "default" | "automatic" | "static" => {
-            KeywordClass::Primitive
-        }
+        | "localparam" | "specparam" | "const" | "var" | "default" | "automatic" | "static"
+        | "none" => KeywordClass::Primitive,
         "if" | "else" | "case" | "casex" | "casez" | "randcase" | "endcase" | "for" | "foreach"
         | "while" | "do" | "repeat" | "forever" | "return" | "break" | "continue" | "wait"
         | "wait_order" => KeywordClass::ControlFlow,
@@ -330,7 +333,13 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
         | TOKEN_SLANG_BOUND_IDENTIFIER
         | TOKEN_GENVAR_DECL
         | TOKEN_GENVAR_REF => TT_VARIABLE,
-        TOKEN_SLANG_FUNCTION | TOKEN_SLANG_TASK | TOKEN_SLANG_SYSTEM_SUBROUTINE => TT_FUNCTION,
+        TOKEN_SLANG_FUNCTION
+        | TOKEN_SLANG_TASK
+        | TOKEN_SLANG_STATIC_FUNCTION
+        | TOKEN_SLANG_SYSTEM_SUBROUTINE => TT_FUNCTION,
+        // A `define formal is the parameter of a function-like macro, as
+        // clangd and rust-analyzer send function parameters.
+        TOKEN_SLANG_MACRO_FORMAL => TT_PARAMETER,
         TOKEN_SLANG_METHOD => TT_METHOD,
         TOKEN_SLANG_MACRO => TT_MACRO,
         TOKEN_SLANG_KEYWORD | TOKEN_SLANG_CONTROL_KEYWORD => TT_KEYWORD,
@@ -352,6 +361,10 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
     }
     if kind == TOKEN_SLANG_SYSTEM_SUBROUTINE {
         modifiers |= 1 << TM_DEFAULT_LIBRARY;
+    }
+    // clangd sends a static method as `function` + `static`.
+    if kind == TOKEN_SLANG_STATIC_FUNCTION {
+        modifiers |= 1 << TM_STATIC;
     }
     Some((token_type, modifiers))
 }
@@ -454,6 +467,87 @@ mod tests {
     /// through nested macros, a macro argument that is itself a macro, a
     /// declaration whose name is an argument, and an unknown macro (whose
     /// diagnostic leaves the rest of the stream intact).
+    /// `define formals are parameters, body names take the kind their
+    /// expansions bind (none when the expansions disagree or there is none),
+    /// the `default_nettype operand is a primitive keyword, and static class
+    /// methods add `static`, also through a class specialization whose value
+    /// assignment is written at the use site, in every capture profile.
+    #[test]
+    fn macro_bodies_formals_directive_operands_and_static_methods_in_every_profile() {
+        let source = "`define ADD(a, b) ((a) + (b))\n\
+`define BUMP cnt = cnt + 1\n\
+`define WR(v) U#($size(v))::put(v)\n\
+`define MIX mx\n\
+`define DEAD gone\n\
+`default_nettype none\n\
+class U #(parameter int W = 1);\n\
+  static task put(input logic [W-1:0] d); endtask\n\
+  function int get(); return W; endfunction\n\
+endclass\n\
+module top;\n\
+  logic [3:0] in;\n\
+  int cnt, mx;\n\
+  initial begin\n\
+    `BUMP;\n\
+    U#(4)::put(in);\n\
+    U#($size(in))::put(in);\n\
+    `WR(in);\n\
+    cnt = `ADD(cnt, 1) + `MIX;\n\
+  end\n\
+endmodule\n\
+module other;\n\
+  localparam int mx = 2;\n\
+  int n = `MIX;\n\
+endmodule\n";
+        let declaration = 1 << TM_DECLARATION;
+        let static_ = 1 << TM_STATIC;
+        let library = 1 << TM_DEFAULT_LIBRARY;
+        for (profile, tokens) in profiles(source) {
+            for (line, word, nth, token_type, bits) in [
+                (0, "a", 0, TT_PARAMETER, declaration),
+                (0, "b", 0, TT_PARAMETER, declaration),
+                (0, "a", 1, TT_PARAMETER, 0),
+                (0, "b", 1, TT_PARAMETER, 0),
+                (1, "cnt", 0, TT_VARIABLE, 0),
+                (1, "cnt", 1, TT_VARIABLE, 0),
+                (1, "1", 0, TT_NUMBER, 0),
+                (2, "v", 0, TT_PARAMETER, declaration),
+                (2, "U", 0, TT_CLASS, 0),
+                (2, "$size", 0, TT_FUNCTION, library),
+                (2, "put", 0, TT_FUNCTION, static_),
+                (5, "none", 0, TT_KEYWORD, 1 << TM_PRIMITIVE),
+                (7, "put", 0, TT_FUNCTION, declaration | static_),
+                (15, "put", 0, TT_FUNCTION, static_),
+                (16, "in", 0, TT_VARIABLE, 0),
+                (16, "put", 0, TT_FUNCTION, static_),
+            ] {
+                let token = token_at(&tokens, source, line, word, nth);
+                assert_eq!(
+                    (token.3, token.4),
+                    (token_type, bits),
+                    "{profile}: {word}#{nth} on line {line}"
+                );
+            }
+            // Library-unit capture does not elaborate the generic class, so
+            // an unreferenced method may have no token there; a non-static
+            // method never carries `static`.
+            let get_col = source.lines().nth(8).unwrap().find("get").unwrap() as u32;
+            if let Some(get) = tokens.iter().find(|t| (t.0, t.1) == (8, get_col)) {
+                assert_eq!((get.3, get.4), (TT_FUNCTION, declaration), "{profile}: get");
+            } else {
+                assert_eq!(profile, "library_units=true", "get has no token");
+            }
+            for (line, word) in [(3, "mx"), (4, "gone")] {
+                let text = source.lines().nth(line).unwrap();
+                let col = text.find(word).unwrap() as u32;
+                assert!(
+                    !tokens.iter().any(|t| (t.0, t.1) == (line as u32, col)),
+                    "{profile}: {word} on line {line} has a token"
+                );
+            }
+        }
+    }
+
     #[test]
     fn macro_use_sites_and_arguments_keep_their_own_tokens_in_every_profile() {
         let source = "`define W 8\n\

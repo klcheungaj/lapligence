@@ -109,7 +109,20 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   written copy, so it keeps its own kind and binding: names bind through
   lexical bindings keyed by that range, because Slang's reference and
   declaration nodes span the use site. Every other expanded token is macro
-  body text and spans the use site.
+  body text and spans the use site; its fully original location is the
+  `` `define `` body text it was copied from (`Capture::macroBodySpan`), so
+  its lexical bindings are keyed by the body range and bind the body token:
+  every expansion binds it again, and the merge keeps a kind and role only
+  when all bindings agree (and a target only when the targets agree too).
+  The formal arguments of a `` `define `` and the body tokens that spell them
+  are `LLG_SLANG_LEXICAL_MACRO_FORMAL`; other body names are identifiers
+  until an expansion binds them. The net type of `` `default_nettype ``
+  (`none` included) is a keyword.
+- Class specializations: the names written in a `C#(...)::name` value
+  assignment bind from the overridden parameter initializer when this use
+  site wrote it, else by lookup in the innermost instance body or generate
+  block being captured (Slang shares a specialization between equal
+  assignments).
 
 ## Parameter overrides
 

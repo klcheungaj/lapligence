@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 47u
+#define LLG_SLANG_ABI_VERSION 48u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1320,7 +1320,16 @@ enum {
   LLG_SLANG_LEXICAL_TYPE_PARAMETER = 27,
   /* A struct or union member or a class property (ABI v46): the declaration
    * and every reference bound to it. */
-  LLG_SLANG_LEXICAL_FIELD = 28
+  LLG_SLANG_LEXICAL_FIELD = 28,
+  /* A formal argument of a `define directive (ABI v48): the name in the
+   * formal list (role DECLARATION) and every body token that spells it.
+   * Since v48 the other names of a `define body (flag DIRECTIVE) are
+   * LLG_SLANG_LEXICAL_IDENTIFIER bound like ordinary source: they take the
+   * kind, role and target the macro's expansions bind at the body text,
+   * the target only when every expansion agrees, and stay unbound
+   * identifiers when the expansions disagree or there is none. The net type
+   * of `default_nettype, `none` included, is LLG_SLANG_LEXICAL_KEYWORD. */
+  LLG_SLANG_LEXICAL_MACRO_FORMAL = 29
 };
 
 enum {

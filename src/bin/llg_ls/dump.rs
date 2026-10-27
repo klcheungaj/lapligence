@@ -592,6 +592,8 @@ fn token_kind_name(kind: i32) -> String {
         (tokens::TOKEN_SLANG_NET, "net"),
         (tokens::TOKEN_SLANG_FUNCTION, "function"),
         (tokens::TOKEN_SLANG_TASK, "task"),
+        (tokens::TOKEN_SLANG_STATIC_FUNCTION, "static-function"),
+        (tokens::TOKEN_SLANG_MACRO_FORMAL, "macro-formal"),
         (tokens::TOKEN_SLANG_IDENTIFIER, "identifier"),
         (tokens::TOKEN_SLANG_BOUND_IDENTIFIER, "bound-identifier"),
         (tokens::TOKEN_SLANG_BLOCK, "block"),

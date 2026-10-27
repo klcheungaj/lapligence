@@ -582,7 +582,9 @@ impl SymbolIndex {
                         ft.nodes.iter().find(|n| {
                             matches!(
                                 tokens::token_base_kind(n.kind).0,
-                                tokens::TOKEN_SLANG_FUNCTION | tokens::TOKEN_SLANG_TASK
+                                tokens::TOKEN_SLANG_FUNCTION
+                                    | tokens::TOKEN_SLANG_TASK
+                                    | tokens::TOKEN_SLANG_STATIC_FUNCTION
                             ) && n.line == m.line
                                 && clean_name(n.name.as_deref().unwrap_or("")) == mname
                         })
@@ -1663,7 +1665,9 @@ pub(super) fn classify_token(
         | tokens::TOKEN_SLANG_IDENTIFIER
         | tokens::TOKEN_SLANG_BOUND_IDENTIFIER
         | tokens::TOKEN_SLANG_BLOCK => Some(SymKind::Var),
-        tokens::TOKEN_SLANG_FUNCTION | tokens::TOKEN_SLANG_METHOD => Some(SymKind::Function),
+        tokens::TOKEN_SLANG_FUNCTION
+        | tokens::TOKEN_SLANG_STATIC_FUNCTION
+        | tokens::TOKEN_SLANG_METHOD => Some(SymKind::Function),
         tokens::TOKEN_SLANG_TASK => Some(SymKind::Task),
         tokens::TOKEN_SLANG_PORT_CONNECTION_LABEL
         | tokens::TOKEN_SLANG_PARAMETER_CONNECTION_LABEL => Some(SymKind::Var),
