@@ -1,0 +1,186 @@
+# ADV-017 fixtures: assertion and coverage native API object lifecycles
+
+Each `<name>.sv` has a C application `<name>.c` that registers the system
+tasks the HDL calls. `tests/sim_feature_completion/adv_017.rs` loads it as a
+run-time plugin (`LLG_VPI_PLUGIN`; on Windows a DLL linked against a model
+import library) and, for `lifecycle`, also links it as a static archive with
+`--dpi-lib`; it compares stdout with `<name>.out` in both optimizer modes on
+the legacy, compact/portable and compact/GMP value backends. Clause numbers
+are IEEE 1800-2009; line numbers refer to `SystemVerilog-1800-2009.txt`.
+
+The expected outputs were derived by hand from the rules below and then
+checked against a run; no line was accepted only because the run printed it.
+Times are `vpiSimTime` ticks (1 ns). In every design `clk` starts at 0 and
+toggles every 5 ns, so its rising edges are at 5, 15, 25, ...; stimulus
+changes at even times, so a sampled value at an edge is the value set
+before it.
+
+## Rules the outputs rely on
+
+- **Attempt callbacks.** 39.4.2 L65666: "cbAssertionStart. An assertion
+  attempt has started."; L65670 "cbAssertionSuccess. An assertion attempt or
+  property instance reaches a success state."; L65672
+  "cbAssertionVacuousSuccess. An assertion attempt reaches a vacuous success
+  state."; L65673 "cbAssertionDisabledEvaluation. An assertion attempt
+  reaches the disabled state (e.g. as a result of disable iff condition
+  becoming true ...)"; L65675 "cbAssertionFailure. An assertion attempt or a
+  property fails to reach a success state or a sequence instance fails to
+  match."; L65688 "cbAssertionKill. An attempt is killed (e.g., as a result
+  of a control action, see 39.5.2)." So every attempt that starts reaches
+  exactly one of success, vacuous success, failure, disabled or killed, or
+  is still in progress at the end. llg also reports a cover attempt that
+  does not match as cbAssertionFailure (it "fails to reach a success
+  state"), although the 40.5.3 failure counter does not count it (S46-D8);
+  a `cover sequence` reports a success per match (L66654: "there can be
+  multiple matches corresponding to a single attempt"). Decision A17-D1.
+- **Attempt information.** L65735-L65736: "On disable, enable, reset, kill,
+  pass action, fail action, vacuous action, and nonvacuous action callbacks,
+  the returned p_vpi_attempt_info info pointer is NULL"; L65738 "On start
+  and success callbacks, only the attemptStartTime field is valid."; L65777
+  "the content of attemptStartTime is always the start time of the actual
+  attempt". cb_time (L65756-L65765) is the start time for cbAssertionStart
+  and the time of the event otherwise. llg's failExpr is NULL: expressions
+  are not VPI objects (A17-D1).
+- **Global clocking future functions.** 39.4.2.1 L65787-L65788: "The
+  callback is executed at the nearest tick of the global clock strictly
+  following the callback event"; "cb_time contains the time of the callback
+  event".
+- **Control.** 39.5.2 L65904 "vpiAssertionDisable disables the starting of
+  any new attempts for this assertion. This has no effect on any existing
+  attempts"; L65908 Enable; L65901 "vpiAssertionReset discards all current
+  attempts in progress for this assertion and resets this assertion to its
+  initial state."; L65940 "vpiAssertionKill discards the given attempt, but
+  leaves the assertion enabled"; L65911-L65935 the pass, fail, vacuous and
+  nonvacuous action operations, each with "no effect on any existing
+  attempts". L65944 "vpiAssertionDisableStep disables step callbacks for
+  this assertion. This has no effect if stepping is not enabled". 39.5.3
+  L65977-L65979: a function that discards attempts "also ... flushes any
+  pending instances that have not yet matured". vpi_control returns 1 on
+  success and 0 on a failure (38.4 L61970). A control raises the
+  callback of the same name with a NULL info pointer; discarded attempts
+  each raise cbAssertionKill and count as killed (L66642, "killed (e.g. as a
+  result of a control action, see 39.5.2)"). Decisions A17-D2, A17-D3.
+- **System control.** 39.5.1 L65825-L65827: the handle is "a vpiHandle for a
+  scope ... A NULL handle signifies that the control applies to all
+  assertions regardless of scope."; L65845-L65857 SysOff, SysKill, SysOn,
+  SysEnd ("All assertion callbacks currently installed shall be removed.
+  Once this control is issued, no further assertion-related actions shall be
+  permitted."). The system callbacks (39.4.1) run once per system control;
+  cbAssertionSysInitialized and cbAssertionSysOn run after
+  cbStartOfSimulation (L65579: "The assertion system can initialize before
+  cbStartOfSimulation does or afterwards."). Decision A17-D4.
+- **Counters.** 40.5.3 L66651: "in progress = attempts - (successes +
+  vacuous success + disabled + killed + failures)".
+- **Static information.** 39.3.2 L65565: "Assertion source information: the
+  file, line, and column where the assertion is defined"; L65548 "Unnamed
+  assertions cannot be found by name."; L65566 "Assertion clocking
+  block/expression" is an expression, which llg does not expose
+  (`LLG_VPI_UNSUPPORTED`).
+
+## lifecycle (A01, A02)
+
+`$attach` (time 0) lists the assertions in table order and places the six
+attempt reasons on each; `a_req` is traced line by line, has a second
+`cbAssertionStart` record and a `cbAssertionDisablePassAction` record.
+Stimulus: `req` 1 at 2, 0 at 42, 1 at 52; `ack` 1 at 12, 0 at 22, 1 at 52;
+`rst` 1 from 28 to 32. Sampled at the edges 5..65: `req` 1 1 1 1 0 1 1,
+`ack` 0 1 0 0 0 1 1.
+
+- `a_req` (`disable iff (rst) req |=> ack`): attempt 5 succeeds at 15
+  (ack 1); 15 fails at 25; 25 is in progress when `rst` rises at 28, so it
+  is disabled at 28; 35 is killed by `$ctl(1)` at 38 (cb_time 38, info
+  NULL); `$ctl(2)` at 44 disables the pass action (callback at 44); 45 has
+  `req` 0, a vacuous success; 55 succeeds at 65; 65 is in progress. Tally:
+  start 7, success 2, vacuous 1, failure 1, disabled 1, kill 1, one in
+  progress; the counters agree. Pass actions ran only for the success at
+  15 (`a_pass` 1); the fail action ran for 25 (`a_fail` 1). The vacuous
+  success at 45 and the success at 65 ran no action yet did raise their
+  callbacks: a disabled action and a killed attempt are told apart.
+- The second Start record runs at 5, 15, 25 and 35 and is removed at 38: 4
+  calls. `a_req`'s own handle is released at 38; the callbacks keep theirs.
+- `m_two` (`req |=> @(posedge clk2) ack`, `clk2` edges 3, 9, 15, 21, 27,
+  33, 39, 45, 51, 57, 63, 69): from 5 the consequent is due at 9 (ack 0,
+  failure), 15 at 21 (success), 25 at 27 (failure), 35 at 39 (failure), 45
+  is vacuous, 55 at 57 (success), 65 at 69 (success). Tally 7/3/1/3, none in
+  progress; pass actions 4 (3 successes and the vacuous success run the
+  pass action), fail actions 3.
+- `f_fut` (`$rose(req) |-> $future_gclk(req)`, global clock edges at every
+  odd time): `$rose` holds at 5 (from the initial 0) and at 55; `req` is 1
+  at 7 and 57, so both succeed; the other five attempts are vacuous. Each
+  result is delivered at the next global clock tick, before `$report`.
+  Tally 7/2/5/0, pass actions 7.
+- `k_cov` (`cover property (req ##1 ack)`): 5 matches at 15, 55 at 65;
+  15, 25 and 35 fail at the next edge (ack 0) and 45 at once (req 0); 65 is
+  in progress. Tally 7/2/0/4; the failure counter stays 0 (covers);
+  `cov_hits` 2.
+- `tb.u_hs.c_ack` and `tb.u_hs.c_req`, owned by the checker instance, see the
+  same sampled values as `a_req` without its reset and controls: `c_ack`
+  succeeds at 15 and 65, fails at 25, 35 and 45 (from 15, 25, 35), is vacuous
+  at 45, one in progress; `c_req` is as `k_cov`.
+
+## control (A03)
+
+`registration` places a record for each of the 12 assertion system reasons,
+so `SysInitialized` and `SysOn` run at 0 after the start of simulation.
+`$setup` places Start, Success, Failure and Kill on `p`, `im`, `df` and
+`u_sub.s_x` (only `p` traced; the others are tallied) and the 9 control
+reasons on `p`, `im` and `df`. `vpi_get_cb_info` of an assertion callback
+gives its reason and assertion, with a NULL `cb_rtn` (the routine has the
+39.4.2 signature, not `cb_rtn`'s). Specified errors: a late
+`cbAssertionSysInitialized` is accepted and never runs (as S43-D4); step
+reasons, a module handle, a NULL routine and a time reason fail with level
+3.
+
+`a` is 1 throughout; `b` is 0 until 50, 1 from 50 to 70, 0 from 70 to 90,
+then 1, so sampled `b` at 5..115 is 0 0 0 0 0 1 1 0 0 1 1 1.
+
+| time | step | effect on `p` (`a |=> b`) |
+| --- | --- | --- |
+| 5 | | start 5 |
+| 8 | 1 | Disable on p, im, df; NULL and module handles fail |
+| 15 | | 5 fails (fail action: `p_fail` 1); no new attempt |
+| 28 | 2 | Enable on p, im, df |
+| 35 | | start 35 |
+| 38 | 3 | kill 35: Kill; kill 7 returns 1 and does nothing; `vpiSuppressTime` fails |
+| 45 | | start 45 |
+| 48 | 4 | Reset: Kill 45, then Reset |
+| 55 | | start 55 |
+| 58 | 5 | p fail action off, im pass action off, p vacuous action off |
+| 65 | | 55 succeeds (`p_pass` 1); start 65 |
+| 75 | | 65 fails, fail action off; start 75 |
+| 78 | 6 | p fail action on, im pass action on, p nonvacuous action on |
+| 85 | | 75 fails (`p_fail` 2); start 85 |
+| 88 | 7 | SysOff on `tb.u_sub` (only `s_x`): SysOff |
+| 95 | | 85 succeeds (`p_pass` 2); start 95 |
+| 98 | 8 | SysOn (NULL); SysKill on `p`: Kill 95, p disabled; SysReset on `tb`: everything enabled |
+| 105 | | start 105 |
+| 108 | 9 | the six system action operations, one callback each |
+| 115 | | 105 succeeds (`p_pass` 3); start 115 |
+| 118 | 10 | EnableStep fails; DisableStep returns 1; SysEnd with a scope fails; SysEnd: Kill 115, SysEnd; then controls and registrations fail |
+| 122 | | `$asserton` cannot restart anything |
+
+`p`: attempts 10, success 3, failure 3, killed 4. `im` (`assert (b)` at each
+edge while enabled: 5, 35..115) has 10 attempts, 5 successes (55, 65, 95,
+105, 115), 5 failures; its pass action was off at 65, so `im_pass` is 4 and
+`im_fail` 5. `df` (`assert #0 (b)`) has the same outcomes with every action
+running: 5 and 5. `s_x` misses only the edge at 95 and stops after 118:
+11 attempts, 4 successes (55, 65, 105, 115), 7 failures.
+
+## objects (39.3)
+
+`vpi_iterate(vpiAssertion, NULL)` lists the items in table order with type,
+name, full name, file, line and column of the statement (the label for a
+labelled one), `vpiIsDeferred`, the owning instance and its definition. The
+unnamed immediate assertion in `leaf` has no name or full name. Iterating
+from `tb.u_leaf` and from the checker instance `tb.u_chk` gives their own
+assertions; `k_x` is found by name below `tb.u_chk`. `vpiClockingEvent`,
+`vpiDisableCondition`, `vpiProperty` and `vpiEndLine` fail with
+`LLG_VPI_UNSUPPORTED`.
+
+`r1` (`v` is always 1) has three Start records: a trace, a `killer` that
+kills the attempt starting at 15 from inside its own Start callback, and a
+`remover` that removes itself on its second call. The kill is delivered
+inside the killer's call, before the next Start record runs; the attempt
+from 15 never succeeds; the remover runs at 5 and 15 only. Attempts 5, 25
+succeed at 15, 35; 35 is in progress: attempts 4, success 2, killed 1;
+`vpiCovered` is 1 (attempted, succeeded, never failed, 40.5.3 L66606).

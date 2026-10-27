@@ -1,0 +1,21 @@
+5 Start attempt=5
+8 Kill info=NULL
+  kill attempt 5 -> 1 level=0
+  kill attempt 3 -> 1 level=0
+15 Start attempt=15
+18 Disable info=NULL
+  disable -> 1 level=0
+18 Disable info=NULL
+  disable again -> 1 level=0
+25 Success attempt=15
+28 Reset info=NULL
+  reset -> 1 level=0
+35 Start attempt=35
+45 Success attempt=35
+55 Start attempt=55
+  disable step -> 1 level=0
+  enable step -> 0 level=3
+  attempts=4 success=2 killed=1
+65 Success attempt=55
+65 Start attempt=65
+passes=3 fails=0

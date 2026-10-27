@@ -43,7 +43,10 @@ level 3 with code `LLG_VPI_UNSUPPORTED` and a message naming the routine:
   and `vpi_put_data` returns 0 (38.31, L63792-L63793: "The return value shall
   be the number of bytes written. A zero shall be returned if an error is
   detected."); the buffer still reads `abc`.
-- `vpi_register_assertion_cb` returns NULL and never calls the callback.
+- `vpi_register_assertion_cb` is supported (ADV-017); here it is given the
+  module `tb`, not an assertion, so it returns NULL with code
+  `LLG_VPI_CALLBACK` (39.4.2: "If there were errors on placing the callback,
+  a NULL handle is returned.", L65720) and never calls the callback.
 
 The last line shows that the next routine clears the status (38.2): `vpi_get`
 of `tb` returns `vpiModule` with level 0.

@@ -1,0 +1,105 @@
+0 SysInitialized obj=NULL
+0 SysOn obj=NULL
+cb info: reason=Reset obj=p cb_rtn=NULL
+  late cbAssertionSysInitialized -> 1 level=0 code=-
+  step callback -> 0 level=3 code=LLG_VPI_UNSUPPORTED
+  assertion callback on a module -> 0 level=3 code=LLG_VPI_CALLBACK
+  assertion callback without a routine -> 0 level=3 code=LLG_VPI_CALLBACK
+  assertion callback with a time reason -> 0 level=3 code=LLG_VPI_CALLBACK
+5 p Start attempt=5
+8 step 1
+8 p Disable info=NULL
+  disable p -> 1 level=0 code=-
+8 im Disable info=NULL
+  disable im -> 1 level=0 code=-
+8 df Disable info=NULL
+  disable df -> 1 level=0 code=-
+  disable NULL -> 0 level=3 code=LLG_VPI_HANDLE
+  disable a module -> 0 level=3 code=LLG_VPI_ARGUMENT
+15 p Failure attempt=5
+28 step 2
+28 p Enable info=NULL
+  enable p -> 1 level=0 code=-
+28 im Enable info=NULL
+  enable im -> 1 level=0 code=-
+28 df Enable info=NULL
+  enable df -> 1 level=0 code=-
+35 p Start attempt=35
+38 step 3
+38 p Kill info=NULL
+  kill p attempt 35 -> 1 level=0 code=-
+  kill p attempt 7 -> 1 level=0 code=-
+  kill with vpiSuppressTime -> 0 level=3 code=LLG_VPI_ARGUMENT
+45 p Start attempt=45
+48 step 4
+48 p Kill info=NULL
+48 p Reset info=NULL
+  reset p -> 1 level=0 code=-
+55 p Start attempt=55
+58 step 5
+58 p DisableFailAction info=NULL
+  disable p fail action -> 1 level=0 code=-
+58 im DisablePassAction info=NULL
+  disable im pass action -> 1 level=0 code=-
+58 p DisableVacuousAction info=NULL
+  disable p vacuous action -> 1 level=0 code=-
+65 p Success attempt=55
+65 p Start attempt=65
+75 p Failure attempt=65
+75 p Start attempt=75
+78 step 6
+78 p EnableFailAction info=NULL
+  enable p fail action -> 1 level=0 code=-
+78 im EnablePassAction info=NULL
+  enable im pass action -> 1 level=0 code=-
+78 p EnableNonvacuousAction info=NULL
+  enable p nonvacuous action -> 1 level=0 code=-
+85 p Failure attempt=75
+85 p Start attempt=85
+88 step 7
+88 SysOff obj=NULL
+  system off u_sub -> 1 level=0 code=-
+95 p Success attempt=85
+95 p Start attempt=95
+98 step 8
+98 SysOn obj=NULL
+  system on -> 1 level=0 code=-
+98 p Kill info=NULL
+98 SysKill obj=NULL
+  system kill p -> 1 level=0 code=-
+98 SysReset obj=NULL
+  system reset tb -> 1 level=0 code=-
+105 p Start attempt=105
+108 step 9
+108 SysDisablePassAction obj=NULL
+  system disable pass -> 1 level=0 code=-
+108 SysEnablePassAction obj=NULL
+  system enable pass -> 1 level=0 code=-
+108 SysDisableFailAction obj=NULL
+  system disable fail -> 1 level=0 code=-
+108 SysEnableFailAction obj=NULL
+  system enable fail -> 1 level=0 code=-
+108 SysDisableVacuousAction obj=NULL
+  system disable vacuous -> 1 level=0 code=-
+108 SysEnableNonvacuousAction obj=NULL
+  system enable nonvacuous -> 1 level=0 code=-
+115 p Success attempt=105
+115 p Start attempt=115
+118 step 10
+  enable step -> 0 level=3 code=LLG_VPI_UNSUPPORTED
+  disable step -> 1 level=0 code=-
+  system end u_sub -> 0 level=3 code=LLG_VPI_ARGUMENT
+118 p Kill info=NULL
+118 SysEnd obj=NULL
+  system end -> 1 level=0 code=-
+  enable p after the end -> 0 level=3 code=LLG_VPI_CONTROL
+  register after the end -> 0 level=3 code=LLG_VPI_CALLBACK
+  system callback after the end -> 0 level=3 code=LLG_VPI_CALLBACK
+p_pass=3 p_fail=2 im_pass=4 im_fail=5 df_pass=5 df_fail=5
+p counters: attempts=10 success=3 vacuous=0 failure=3 disabled=0 killed=4
+im callbacks: start=10 success=5 failure=5 kill=0
+im counters: attempts=10 success=5 vacuous=0 failure=5 disabled=0 killed=0
+df callbacks: start=10 success=5 failure=5 kill=0
+df counters: attempts=10 success=5 vacuous=0 failure=5 disabled=0 killed=0
+s_x callbacks: start=11 success=4 failure=7 kill=0
+s_x counters: attempts=11 success=4 vacuous=0 failure=7 disabled=0 killed=0

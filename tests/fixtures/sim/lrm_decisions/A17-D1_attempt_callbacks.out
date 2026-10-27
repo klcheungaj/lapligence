@@ -1,0 +1,31 @@
+5 p1 Start attempt=5 time_type=sim
+5 c1 Start attempt=5 time_type=sim
+5 s1 Start attempt=5 time_type=sim
+15 p1 Success attempt=5 time_type=sim
+15 p1 Start attempt=15 time_type=sim
+15 c1 Start attempt=15 time_type=sim
+15 c1 Failure attempt=5 time_type=sim failExpr=NULL
+15 s1 Start attempt=15 time_type=sim
+15 s1 Success attempt=5 time_type=sim
+25 p1 Success attempt=15 time_type=sim
+25 p1 Start attempt=25 time_type=sim
+25 c1 Start attempt=25 time_type=sim
+25 c1 Failure attempt=15 time_type=sim failExpr=NULL
+25 s1 Start attempt=25 time_type=sim
+25 s1 Success attempt=5 time_type=sim
+25 s1 Success attempt=15 time_type=sim
+35 p1 Failure attempt=25 time_type=sim failExpr=NULL
+35 p1 Start attempt=35 time_type=sim
+35 p1 VacuousSuccess attempt=35 time_type=sim
+35 c1 Start attempt=35 time_type=sim
+35 c1 Success attempt=25 time_type=sim
+35 c1 Failure attempt=35 time_type=sim failExpr=NULL
+35 s1 Start attempt=35 time_type=sim
+45 p1 Start attempt=45 time_type=sim
+45 p1 VacuousSuccess attempt=45 time_type=sim
+45 c1 Start attempt=45 time_type=sim
+45 c1 Failure attempt=45 time_type=sim failExpr=NULL
+45 s1 Start attempt=45 time_type=sim
+p1 attempts=5 success=2 vacuous=2 failure=1
+c1 attempts=5 success=1 vacuous=0 failure=0
+s1 attempts=5 success=3 vacuous=0 failure=0
