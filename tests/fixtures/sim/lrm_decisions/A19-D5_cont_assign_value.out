@@ -1,0 +1,7 @@
+tb.w_zero = tb.narrow (1010) value=00001010 size=8
+  name=NULL level=3
+tb.w_sign = tb.neg (1101) value=11111101 size=8
+  name=NULL level=3
+tb.w_trunc = tb.wide (101010111100) value=10111100 size=8
+  name=NULL level=3
+hdl 00001010 11111101 10111100

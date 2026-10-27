@@ -62,6 +62,9 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   `typedef_id`/`typedef_depth` of each aggregate member and the
   `LLG_SLANG_TYPEDEF_BUILTIN` auxiliary bit of a typedef renaming a built-in
   type.
+- An instance array node stores its declared range in `auxiliary` (left in
+  bits 0-31, right in bits 32-63); the instances it holds keep their indexed
+  names.
 - Typedef-name and type-parameter lexical kinds come from Slang's resolved
   symbol kind (`TypeAlias`, `TypeParameter`); value parameters keep the
   parameter kind. Cast

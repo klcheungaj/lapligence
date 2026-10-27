@@ -156,7 +156,7 @@ pub use storage::{
 };
 mod vpi;
 pub use vpi::{
-    IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConstant,
+    IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn, IrVpiConstant,
     IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiTypespec, IrVpiTypespecKind,
     IrVpiTypespecMember, IrVpiVarKind,
 };

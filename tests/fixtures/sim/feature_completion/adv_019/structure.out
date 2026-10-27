@@ -1,0 +1,72 @@
+vpiModule tb def=tb top=1
+  event tb.ev array_member=0 value=error
+  process vpiAlways line=53 always_type=4
+  process vpiAlways line=54 always_type=1
+  process vpiInitial line=55
+  process vpiFinal line=62
+  assign line=46 size=1 net_decl=0 lhs=vpiNet:tb.w1=1 rhs=vpiRegBit:tb.r0[0]=1 value=1
+  vpiTask tb.fire auto=0
+  vpiFunction tb.inc auto=1 func_type=5 size=32 signed=1
+  vpiGate tb.g1 def=and prim_type=1 size=2 value=1
+    term 0 dir=2 expr=vpiNet:tb.g_out=1 value=1
+    term 1 dir=1 expr=vpiRegBit:tb.r0[0]=1 value=1
+    term 2 dir=1 expr=vpiRegBit:tb.r0[1]=1 value=1
+  vpiGate tb.ng[0] def=nand prim_type=2 size=2 value=1 index=0
+    term 0 dir=2 expr=vpiNetBit:tb.ga[0]=1 value=1
+    term 1 dir=1 expr=vpiRegBit:tb.r0[0]=1 value=1
+    term 2 dir=1 expr=vpiRegBit:tb.r0[2]=0 value=0
+  vpiGate tb.ng[1] def=nand prim_type=2 size=2 value=1 index=1
+    term 0 dir=2 expr=vpiNetBit:tb.ga[1]=1 value=1
+    term 1 dir=1 expr=vpiRegBit:tb.r0[1]=1 value=1
+    term 2 dir=1 expr=vpiRegBit:tb.r0[3]=0 value=0
+  vpiUdp tb.ud def=udp_and prim_type=28 size=2 value=0
+    term 0 dir=2 expr=vpiNet:tb.u_out=0 value=0
+    term 1 dir=1 expr=vpiRegBit:tb.r0[2]=0 value=0
+    term 2 dir=1 expr=vpiRegBit:tb.r0[3]=0 value=0
+  vpiGateArray tb.ng size=2 [1:0] elements ng[1](1,member=1) ng[0](0,member=1)
+  vpiModuleArray tb.u size=2 [1:0] elements u[1](1,member=1) u[0](0,member=1)
+vpiInterface tb.bi def=bus_if top=0
+  modport tb.bi.dst
+  modport tb.bi.src
+  port clk index=0 dir=1 type=port size=1 scalar=1 low=vpiReg:tb.bi.clk=0 high=vpiReg:tb.clk=0
+    bit0 vpiPortBit dir=1 size=1 low=vpiRegBit:tb.bi.clk[0]=0 high=vpiRegBit:tb.clk[0]=0
+    bits=1
+  vpiTask tb.bi.ping auto=1
+vpiModule tb.single def=leaf top=0
+  port a index=0 dir=1 type=port size=4 scalar=0 low=vpiReg:tb.single.a=1010 high=vpiConstant:(null)=1010
+    bit0 vpiPortBit dir=1 size=1 low=vpiRegBit:tb.single.a[3]=1 high=NULL
+    bits=4
+  port y index=1 dir=2 type=port size=4 scalar=0 low=vpiReg:tb.single.y=0101 high=vpiNet:tb.r2=0101
+    bit0 vpiPortBit dir=2 size=1 low=vpiRegBit:tb.single.y[3]=0 high=vpiNetBit:tb.r2[3]=0
+    bits=4
+  assign line=23 size=4 net_decl=0 lhs=vpiReg:tb.single.y=0101 rhs=vpiOperation:(null) value=error
+vpiModule tb.sk def=sink top=0
+  port b index=0 dir=5 type=modport low=vpiRefObj:b def=dst high=vpiRefObj:dst actual=vpiModport:tb.bi.dst
+  port seen index=1 dir=2 type=port size=8 scalar=0 low=vpiReg:tb.sk.seen=xxxxxxxx high=vpiNet:tb.s=xxxxxxxx
+    bit0 vpiPortBit dir=2 size=1 low=vpiRegBit:tb.sk.seen[7]=x high=vpiNetBit:tb.s[7]=x
+    bits=8
+  process vpiAlways line=27 always_type=3
+vpiModule tb.u[0] def=leaf top=0
+  port a index=0 dir=1 type=port size=4 scalar=0 low=vpiReg:tb.u[0].a=0011 high=vpiReg:tb.r0=0011
+    bit0 vpiPortBit dir=1 size=1 low=vpiRegBit:tb.u[0].a[3]=0 high=vpiRegBit:tb.r0[3]=0
+    bits=4
+  port y index=1 dir=2 type=port size=4 scalar=0 low=vpiReg:tb.u[0].y=1100 high=NULL
+    bit0 vpiPortBit dir=2 size=1 low=vpiRegBit:tb.u[0].y[3]=1 high=NULL
+    bits=4
+  assign line=23 size=4 net_decl=0 lhs=vpiReg:tb.u[0].y=1100 rhs=vpiOperation:(null) value=error
+vpiModule tb.u[1] def=leaf top=0
+  port a index=0 dir=1 type=port size=4 scalar=0 low=vpiReg:tb.u[1].a=0011 high=vpiReg:tb.r0=0011
+    bit0 vpiPortBit dir=1 size=1 low=vpiRegBit:tb.u[1].a[3]=0 high=vpiRegBit:tb.r0[3]=0
+    bits=4
+  port y index=1 dir=2 type=port size=4 scalar=0 low=vpiReg:tb.u[1].y=1100 high=NULL
+    bit0 vpiPortBit dir=2 size=1 low=vpiRegBit:tb.u[1].y[3]=1 high=NULL
+    bits=4
+  assign line=23 size=4 net_decl=0 lhs=vpiReg:tb.u[1].y=1100 rhs=vpiOperation:(null) value=error
+failures=0
+cb tb.ev at 5 value=NULL
+ev at 5
+cb tb.ev at 10 value=NULL
+fire level=0
+ev at 10
+inc 2
+final

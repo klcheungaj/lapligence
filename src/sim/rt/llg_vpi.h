@@ -19,6 +19,8 @@ extern "C" {
 #define LLG_VPI_OBJ_MEMBER 0x40u      /* member of the struct/union row `parent` */
 #define LLG_VPI_OBJ_SLICE 0x80u       /* value: low `width` bits of `packed` */
 #define LLG_VPI_OBJ_RECORD 0x100u     /* unpacked struct/union: members hold the value */
+#define LLG_VPI_OBJ_UNNAMED 0x200u    /* no vpiName/vpiFullName; never found by name */
+#define LLG_VPI_OBJ_QUALIFIER 0x400u  /* vpiNetDeclAssign / vpiAutomatic */
 
 /* Typespecs (IEEE 1800-2009 37.23). The generated model emits interned
  * tables; fields naming an optional entry hold its index + 1 (0: none),
@@ -84,6 +86,36 @@ typedef struct {
     uint32_t node_count;
 } llg_vpi_type_tables_t;
 
+/* How a call argument is visible to applications (llg_vpi_compile_arg_t). */
+#define LLG_VPI_ARG_EXPRESSION 0 /* read-only value snapshot (vpiOperation) */
+#define LLG_VPI_ARG_CONSTANT 1   /* literal (vpiConstant, const_type) */
+#define LLG_VPI_ARG_OBJECT 2     /* catalog object `object` */
+#define LLG_VPI_ARG_SELECT 3     /* bits [offset, offset+select_width) of `object` */
+#define LLG_VPI_ARG_ELEMENT 4    /* element `offset` (row-major) of array `object` */
+
+typedef struct {
+    uint32_t width;
+    int8_t is_signed;
+    int8_t is_real;
+    int8_t ref_kind;          /* LLG_VPI_ARG_* */
+    int const_type;           /* vpiConstType of a constant */
+    int64_t object;           /* catalog index, or -1 */
+    uint64_t offset;
+    uint32_t select_width;
+    int64_t left;             /* declared bounds of a select */
+    int64_t right;
+} llg_vpi_compile_arg_t;
+
+/* One expression connection of a structure object (37.14, 37.31, 37.43):
+ * the high connection of a port, the lhs and rhs of a continuous
+ * assignment, a primitive terminal. `ref` says how the application sees it;
+ * `value` holds the digits of a constant (0/1/x/z, most significant first). */
+typedef struct {
+    llg_vpi_compile_arg_t ref;
+    int direction;            /* vpiInput/vpiOutput/vpiInout of a terminal, else 0 */
+    const char* value;
+} llg_vpi_conn_t;
+
 /* One catalog row. Generated models emit a static array of these; the
  * runtime only borrows it and indexes it on the first VPI use. */
 typedef struct llg_vpi_model_object {
@@ -108,32 +140,18 @@ typedef struct llg_vpi_model_object {
     const int64_t* dims;      /* unpacked (left, right) pairs, outermost first */
     uint32_t dim_count;
     uint32_t port_index;
-    struct llg_vpi_model_object* target; /* a port's low connection */
+    struct llg_vpi_model_object* target; /* a port's low connection; the interface or
+                                          * modport of an interface port */
     llg_net_t* net;           /* resolved net behind `packed`, for force/release */
     const char* constant;     /* parameter: 0/1/x/z digits MSB first, or text */
     double real_constant;     /* real parameter value */
     uint32_t typespec;        /* vpiTypespec: typespec index + 1, 0: none */
+    int detail;               /* vpiAlwaysType, vpiPrimType, vpiFuncType, vpiPortType,
+                               * or the element vpiType of an instance array */
+    llg_event_t* event;       /* named event */
+    const llg_vpi_conn_t* conns;
+    uint32_t conn_count;
 } llg_vpi_model_object_t;
-
-/* How a call argument is visible to applications (llg_vpi_compile_arg_t). */
-#define LLG_VPI_ARG_EXPRESSION 0 /* read-only value snapshot (vpiOperation) */
-#define LLG_VPI_ARG_CONSTANT 1   /* literal (vpiConstant, const_type) */
-#define LLG_VPI_ARG_OBJECT 2     /* catalog object `object` */
-#define LLG_VPI_ARG_SELECT 3     /* bits [offset, offset+select_width) of `object` */
-#define LLG_VPI_ARG_ELEMENT 4    /* element `offset` (row-major) of array `object` */
-
-typedef struct {
-    uint32_t width;
-    int8_t is_signed;
-    int8_t is_real;
-    int8_t ref_kind;          /* LLG_VPI_ARG_* */
-    int const_type;           /* vpiConstType of a constant */
-    int64_t object;           /* catalog index, or -1 */
-    uint64_t offset;
-    uint32_t select_width;
-    int64_t left;             /* declared bounds of a select */
-    int64_t right;
-} llg_vpi_compile_arg_t;
 
 /* A built-in system task or function the model runs natively and its first
  * call site (file may be NULL). */

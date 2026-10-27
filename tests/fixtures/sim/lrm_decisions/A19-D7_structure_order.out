@@ -1,0 +1,8 @@
+process vpiAlways name=NULL(3)
+process vpiInitial name=NULL(3)
+process vpiFinal name=NULL(3)
+assign tb.w2
+assign tb.w1
+vpiModuleArray tb.c: c[2] c[3] c[4]
+port port_in low=vpiRefObj:port_in high=vpiRefObj:sink actual=vpiModport:tb.bus.sink
+port value tb.c[3].value[2](name=NULL,3) tb.c[3].value[1](name=NULL,3) tb.c[3].value[0](name=NULL,3)

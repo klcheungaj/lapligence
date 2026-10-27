@@ -28,6 +28,21 @@ pub enum IrVpiObjectKind {
     /// storage (`vpiStructVar`/`vpiUnionVar` by [`IrVpiVarKind`]); it has no
     /// value of its own (IEEE 1800-2009 37.24 detail 1).
     Record,
+    /// A named event (`vpiNamedEvent`, 37.25) backed by [`IrVpiObject::event`].
+    NamedEvent,
+    /// An `initial`, `always` or `final` procedure (37.58); unnamed.
+    Process,
+    /// A continuous assignment (37.43); unnamed, `conns` holds lhs and rhs.
+    ContAssign,
+    /// A task or function declaration (37.37); a scope.
+    TaskFunc,
+    /// A gate, switch or UDP instance (37.31); `conns` holds its terminals.
+    Primitive,
+    /// A module, interface or primitive instance array (37.11); `dims`
+    /// holds its declared ranges, outermost first.
+    InstanceArray,
+    /// A modport of an interface instance (37.7).
+    Modport,
 }
 
 impl IrVpiObjectKind {
@@ -46,6 +61,13 @@ impl IrVpiObjectKind {
             Self::Parameter => "vpiParameter",
             Self::Port => "vpiPort",
             Self::Record => "vpiStructVar",
+            Self::NamedEvent => "vpiNamedEvent",
+            Self::Process => "vpiInitial",
+            Self::ContAssign => "vpiContAssign",
+            Self::TaskFunc => "vpiTask",
+            Self::Primitive => "vpiGate",
+            Self::InstanceArray => "vpiModuleArray",
+            Self::Modport => "vpiModport",
         }
     }
 
@@ -53,7 +75,12 @@ impl IrVpiObjectKind {
     pub const fn is_scope(self) -> bool {
         matches!(
             self,
-            Self::Module | Self::Interface | Self::GenScope | Self::NamedBegin | Self::NamedFork
+            Self::Module
+                | Self::Interface
+                | Self::GenScope
+                | Self::NamedBegin
+                | Self::NamedFork
+                | Self::TaskFunc
         )
     }
 }
@@ -198,6 +225,40 @@ pub struct IrVpiObject {
     /// The value is the low `width` bits of a wider signal: a member of an
     /// unpacked union, which shares one storage extent.
     pub(in crate::sim) slice: bool,
+    /// The exact `vpiType` code name when [`IrVpiObjectKind::c_type`] is
+    /// only the family default (`vpiAlways`, `vpiFunction`, `vpiUdp`, ...).
+    pub(in crate::sim) type_code: Option<&'static str>,
+    /// Kind-specific property code name: `vpiAlwaysType` of a process,
+    /// `vpiPrimType` of a primitive, `vpiFuncType` of a function,
+    /// `vpiPortType` of a port, element `vpiType` of an instance array.
+    pub(in crate::sim) detail: Option<&'static str>,
+    /// Index into [`super::IrModel::events`] of a named event.
+    pub(in crate::sim) event: Option<usize>,
+    /// Expression connections: the high connection of a port, the lhs and
+    /// rhs of a continuous assignment, the terminals of a primitive.
+    pub(in crate::sim) conns: Vec<IrVpiConn>,
+    /// The object has no name (processes, continuous assignments, unnamed
+    /// primitives): name lookup never finds it.
+    pub(in crate::sim) unnamed: bool,
+    /// Declared ranges of an instance array, outermost first.
+    pub(in crate::sim) dims: Vec<(i64, i64)>,
+    /// `vpiNetDeclAssign` of a continuous assignment, `vpiAutomatic` of a
+    /// task or function.
+    pub(in crate::sim) qualifier: bool,
+}
+
+/// One expression connection of a structure object: how the application
+/// sees the expression (an object, a select, an element, a constant or an
+/// opaque expression), with its self-determined width.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct IrVpiConn {
+    pub(in crate::sim) reference: IrVpiArgRef,
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+    /// Terminal direction of a primitive terminal.
+    pub(in crate::sim) direction: IrVpiDirection,
+    /// Value digits (`0`/`1`/`x`/`z`, most significant first) of a constant.
+    pub(in crate::sim) value: Option<String>,
 }
 
 /// `vpiType` of a typespec (IEEE 1800-2009 37.23, Annex M).

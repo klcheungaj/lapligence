@@ -392,10 +392,13 @@ the runtime probe is `runtime_value_storage`'s `vpi_ownership` and the unit
 checks are `sim::build::vpi_static::tests` and
 `sim::codegen::lowering::collection::vpi::tests`.
 
-ADV-019 family 1 (typespecs, structure and union members) uses
+ADV-019 families 1 and 2 (typespecs, structure and union members, structure
+objects) use
 `-E 'binary(sim_feature_completion) & test(adv_019::)'`: `typespecs` prints the
-typespec tree of each declaration and `members` reads, finds, watches and
-writes members, both linked as static archives. Decisions A19-D1..D4 are in
+typespec tree of each declaration, `members` reads, finds, watches and
+writes members and `structure` walks ports, processes, assignments, tasks,
+primitives, instance arrays and named events, all linked as static archives.
+Decisions A19-D1..D8 are in
 `sim_lrm_decisions` (`-E 'test(/a19_d/)'`); the unit checks are
 `core::db::database::capture::tests`,
 `sim::codegen::lowering::collection::vpi::tests` and

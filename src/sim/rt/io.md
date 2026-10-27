@@ -128,6 +128,21 @@ lookup. A whole-array record holds one watch entry per element (bounded by
 the outermost dispatch ends, so callbacks may register/remove any callback.
 Watches end with the runtime lifetime (`free_value_watches`), so VPI removal
 after cleanup is a no-op.
+A `cbValueChange` on a named event counts a watch on its event object
+(`llg_event_watch_add`, `vpi_watches`): every trigger of a watched object calls
+the same value-watch hook with the object as key after waking its waiters, so
+the callback runs before the woken processes (A19-D8); unwatched objects pay one
+predictable branch per trigger. The count belongs to the VPI layer, so
+`llg_event_object_reset` keeps it.
+Structure objects (ADV-019 family 2) are catalog rows without storage:
+`conns` gives each its expression connections (port high connection, cont
+assign lhs/rhs, primitive terminals) as compile-argument references plus
+constant digits, which `conn_handle`/`read_conn` turn into the object, select,
+element or a `SLOT_CONN` handle. Port bits, primitive terminals and interface
+port reference objects are dynamic slots on their row (`SLOT_PORTBIT`,
+`SLOT_PRIMTERM`, `SLOT_REFOBJ`). Unnamed rows (`LLG_VPI_OBJ_UNNAMED`) are left
+out of the name index; instance array elements are found by composing the
+array's full name with the indices.
 `vpi_put_value` fails in read-only regions without touching the runtime's
 fatal region check; zero-delay time callbacks are refused there before
 scheduling. `vpi_control` stop/finish use `llg_rt_control_stop/finish`

@@ -373,6 +373,9 @@ pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), S
 
 fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError> {
     let valid = match (node.kind, node.subkind, node.operation) {
+        // An instance array level keeps its declared range: left in bits
+        // 0-31, right in bits 32-63 (ABI v54); any pair of int32 is valid.
+        (1, 193, _) => true,
         // Module definitions and elaborated instances carry the resolved
         // `unconnected_drive` value for omitted input links.
         // A checker instance carries its instantiation context instead.

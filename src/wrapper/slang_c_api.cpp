@@ -2620,8 +2620,13 @@ public:
         result.flags |= LLG_SLANG_SEMANTIC_TOP;
       addTimeScale(result, symbol.getDefinition().timeScale);
     }
-    if constexpr (std::same_as<T, InstanceArraySymbol>)
+    if constexpr (std::same_as<T, InstanceArraySymbol>) {
       result.subkind = LLG_SLANG_INSTANCE_ARRAY;
+      // The declared [left:right] of this array level (ABI v54), for the
+      // VPI instance array objects (IEEE 1800-2009 37.11).
+      result.auxiliary = uint64_t(uint32_t(symbol.range.left)) |
+                         (uint64_t(uint32_t(symbol.range.right)) << 32);
+    }
     if constexpr (std::same_as<T, InstanceBodySymbol> ||
                   std::same_as<T, CheckerInstanceBodySymbol>)
       result.subkind = LLG_SLANG_INSTANCE_BODY;

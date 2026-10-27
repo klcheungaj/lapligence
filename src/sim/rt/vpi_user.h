@@ -69,6 +69,29 @@ typedef struct llg_vpi_handle* vpiHandle;
 #define vpiBitVar 620
 #define vpiPackedArrayVar 623
 
+/* Structure objects (37.5-37.14, 37.25, 37.31, 37.37, 37.43, 37.58). */
+#define vpiAlways 1
+#define vpiContAssign 8
+#define vpiFunction 20
+#define vpiGate 21
+#define vpiInitial 24
+#define vpiIODecl 28
+#define vpiNamedEvent 34
+#define vpiPortBit 45
+#define vpiPrimTerm 46
+#define vpiSwitch 55
+#define vpiTask 59
+#define vpiUdp 65
+#define vpiUdpDefn 66
+#define vpiGateArray 111
+#define vpiModuleArray 112
+#define vpiPrimitiveArray 113
+#define vpiSwitchArray 117
+#define vpiUdpArray 118
+#define vpiInstanceArray 121
+#define vpiTaskFunc 127
+#define vpiNamedEventArray 129
+
 /* Scalar logic values. */
 #define vpi0 0
 #define vpi1 1
@@ -97,6 +120,14 @@ typedef struct llg_vpi_handle* vpiHandle;
 #define vpiBit 90
 #define vpiInternalScope 92
 #define vpiVariables 100
+#define vpiDelay 72
+#define vpiHighConn 76
+#define vpiLhs 77
+#define vpiRhs 82
+#define vpiProcess 99
+#define vpiExpr 102
+#define vpiPrimitive 103
+#define vpiStmt 104
 #define vpiPorts 125
 
 /* Generic properties and the module/net/value properties. */
@@ -109,16 +140,19 @@ typedef struct llg_vpi_handle* vpiHandle;
 #define vpiLineNo 6
 #define vpiTopModule 7
 #define vpiDefName 9
+#define vpiProtected 10
 #define vpiTimeUnit 11
 #define vpiTimePrecision 12
 #define vpiScalar 17
 #define vpiVector 18
+#define vpiExplicitName 19
 #define vpiDirection 20
 #define vpiInput 1
 #define vpiOutput 2
 #define vpiInout 3
 #define vpiMixedIO 4
 #define vpiNoDirection 5
+#define vpiConnByName 21
 #define vpiNetType 22
 #define vpiWire 1
 #define vpiWand 2
@@ -135,6 +169,38 @@ typedef struct llg_vpi_handle* vpiHandle;
 #define vpiUwire 13
 #define vpiArray 28
 #define vpiPortIndex 29
+#define vpiTermIndex 30
+#define vpiStrength0 31
+#define vpiStrength1 32
+#define vpiPrimType 33
+#define vpiAndPrim 1
+#define vpiNandPrim 2
+#define vpiNorPrim 3
+#define vpiOrPrim 4
+#define vpiXorPrim 5
+#define vpiXnorPrim 6
+#define vpiBufPrim 7
+#define vpiNotPrim 8
+#define vpiBufif0Prim 9
+#define vpiBufif1Prim 10
+#define vpiNotif0Prim 11
+#define vpiNotif1Prim 12
+#define vpiNmosPrim 13
+#define vpiPmosPrim 14
+#define vpiCmosPrim 15
+#define vpiRnmosPrim 16
+#define vpiRpmosPrim 17
+#define vpiRcmosPrim 18
+#define vpiRtranPrim 19
+#define vpiRtranif0Prim 20
+#define vpiRtranif1Prim 21
+#define vpiTranPrim 22
+#define vpiTranif0Prim 23
+#define vpiTranif1Prim 24
+#define vpiPullupPrim 25
+#define vpiPulldownPrim 26
+#define vpiSeqPrim 27
+#define vpiCombPrim 28
 #define vpiConstType 40
 #define vpiDecConst 1
 #define vpiRealConst 2
@@ -144,9 +210,11 @@ typedef struct llg_vpi_handle* vpiHandle;
 #define vpiStringConst 6
 #define vpiIntConst 7
 #define vpiTimeConst 8
+#define vpiNetDeclAssign 43
 #define vpiScheduled 46
 #define vpiAutomatic 50
 #define vpiIteratorType 57
+#define vpiOffset 60
 #define vpiValid 64
 #define vpiValidFalse 0
 #define vpiValidTrue 1

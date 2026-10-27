@@ -93,6 +93,7 @@ static void event_trigger_object_unchecked(llg_event_object_t* ev) {
     }
     free(wake);
     deferred_trigger_event(ev);
+    if (LLG_CO_UNLIKELY(ev->vpi_watches) && value_watch_hook) value_watch_hook(ev);
 }
 
 static void event_trigger_object(llg_event_object_t* ev) {
@@ -114,6 +115,19 @@ int llg_clocking_event_observed(llg_event_t* event) {
 
 void llg_event_trigger(llg_event_t* ev) {
     event_trigger_object(ev ? ev->object : NULL);
+}
+
+void llg_event_watch_add(llg_event_object_t* ev) {
+    if (!ev) return;
+    if (ev->vpi_watches == UINT32_MAX) {
+        fputs("llg runtime fatal: event watch count overflow\n", stderr);
+        abort();
+    }
+    ev->vpi_watches++;
+}
+
+void llg_event_watch_remove(llg_event_object_t* ev) {
+    if (ev && ev->vpi_watches) ev->vpi_watches--;
 }
 
 int llg_event_triggered(const llg_event_t* ev) {

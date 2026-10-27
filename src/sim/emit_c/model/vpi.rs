@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::sim::ir::{
-    IrVpiArgRef, IrVpiCompileCall, IrVpiConstant, IrVpiObject, IrVpiTypespec, IrVpiTypespecKind,
-    IrVpiVarKind,
+    IrVpiArgRef, IrVpiCompileCall, IrVpiConn, IrVpiConstant, IrVpiObject, IrVpiTypespec,
+    IrVpiTypespecKind, IrVpiVarKind,
 };
 
 /// Marker suffix that keeps a port apart from the declaration it connects,
@@ -40,6 +40,11 @@ struct Entry {
     member: bool,
     slice: bool,
     record: bool,
+    detail: &'static str,
+    event: String,
+    conns: Vec<IrVpiConn>,
+    unnamed: bool,
+    qualifier: bool,
 }
 
 impl Entry {
@@ -73,6 +78,11 @@ impl Entry {
             member: false,
             slice: false,
             record: false,
+            detail: "0",
+            event: "NULL".to_owned(),
+            conns: Vec::new(),
+            unnamed: false,
+            qualifier: false,
         }
     }
 }
@@ -172,6 +182,29 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
         } else {
             object.var_kind.c_type()
         };
+        let event = object
+            .event
+            .and_then(|event| model.events.get(event))
+            .filter(|event| !event.is_array())
+            .map_or_else(|| "NULL".to_owned(), |event| format!("&{}", event.c_name));
+        if object.kind == IrVpiObjectKind::NamedEvent && event == "NULL" {
+            continue;
+        }
+        let dims = if object.kind == IrVpiObjectKind::InstanceArray {
+            let Some(dims) = object
+                .dims
+                .iter()
+                .map(|(left, right)| {
+                    Some((i32::try_from(*left).ok()?, i32::try_from(*right).ok()?))
+                })
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            dims
+        } else {
+            dims
+        };
         let (type_code, subtype) = match object.kind {
             IrVpiObjectKind::Reg => (object.var_kind.c_type(), "0"),
             IrVpiObjectKind::RealVar => (element_type, "0"),
@@ -181,7 +214,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             }
             IrVpiObjectKind::Port => (object.kind.c_type(), object.direction.c_code()),
             IrVpiObjectKind::Record => (object.var_kind.c_type(), "0"),
-            kind => (kind.c_type(), "0"),
+            kind => (object.type_code.unwrap_or(kind.c_type()), "0"),
         };
         entries.insert(
             object.full_name.clone(),
@@ -214,6 +247,11 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 member: object.member,
                 slice: object.slice,
                 record: object.kind == IrVpiObjectKind::Record,
+                detail: object.detail.unwrap_or("0"),
+                event,
+                conns: object.conns.clone(),
+                unnamed: object.unnamed,
+                qualifier: object.qualifier,
             },
         );
     }
@@ -383,11 +421,44 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
                 .join(", ")
         ));
     }
+    let object = |name: &str| indices.get(name).copied();
+    for (index, entry) in entries.iter().enumerate() {
+        if entry.conns.is_empty() {
+            continue;
+        }
+        out.push_str(&format!(
+            "static const llg_vpi_conn_t llg_vpi_conns_{index}[] = {{\n"
+        ));
+        for conn in &entry.conns {
+            out.push_str(&format!(
+                "    {{ {{ .width = {}, .is_signed = {}, .ref_kind = {} }}, .direction = {}, .value = {} }},\n",
+                conn.width,
+                u8::from(conn.signed),
+                arg_reference(&conn.reference, &object),
+                if conn.direction == crate::sim::ir::IrVpiDirection::None {
+                    "0"
+                } else {
+                    conn.direction.c_code()
+                },
+                conn.value
+                    .as_deref()
+                    .map_or_else(|| "NULL".to_owned(), c_string_literal),
+            ));
+        }
+        out.push_str("};\n");
+    }
     out.push_str("static llg_vpi_model_object_t llg_vpi_objects[] = {\n");
     for (index, entry) in entries.iter().enumerate() {
         let path = entry.full.strip_suffix(PORT_MARKER).unwrap_or(&entry.full);
         let parts = split_name(path);
         let parent_path = (parts.len() > 1).then(|| parts[..parts.len() - 1].join("\u{1f}"));
+        // An unnamed object's key ends in a hidden part; its displayed
+        // name is its scope's (it reports no vpiFullName).
+        let path = if entry.unnamed {
+            parent_path.clone().unwrap_or_default()
+        } else {
+            path.to_owned()
+        };
         let pointer = |index: Option<usize>| {
             index.map_or_else(
                 || "NULL".to_owned(),
@@ -435,6 +506,12 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         if entry.record {
             flags.push("LLG_VPI_OBJ_RECORD");
         }
+        if entry.unnamed {
+            flags.push("LLG_VPI_OBJ_UNNAMED");
+        }
+        if entry.qualifier {
+            flags.push("LLG_VPI_OBJ_QUALIFIER");
+        }
         let (constant, real_constant) = match &entry.constant {
             Some(IrVpiConstant::Bits(digits)) => (c_string_literal(digits), "0.0".to_owned()),
             Some(IrVpiConstant::Text(text)) => {
@@ -454,6 +531,11 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
             flags.join(" | ")
         };
         let (left, right) = entry.range.unwrap_or((0, 0));
+        let conns = if entry.conns.is_empty() {
+            "NULL".to_owned()
+        } else {
+            format!("llg_vpi_conns_{index}")
+        };
         let (dims, dim_count) = if entry.dims.is_empty() {
             ("NULL".to_owned(), 0)
         } else {
@@ -464,7 +546,8 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
 .width = {}u, .is_signed = {}, .is_real = {}, .is_net = {}, .packed = {}, .real = {}, .parent = {}, \
 .time_unit_fs = {}ULL, .subtype = {}, .flags = {}, .left = {left}LL, .right = {right}LL, \
 .dims = {dims}, .dim_count = {dim_count}u, .port_index = {}u, .target = {target}, .net = {}, \
-.constant = {constant}, .real_constant = {real_constant}, .typespec = {}u }},\n",
+.constant = {constant}, .real_constant = {real_constant}, .typespec = {}u, .detail = {}, \
+.event = {}, .conns = {conns}, .conn_count = {}u }},\n",
             entry.type_code,
             c_string_literal(&entry.name),
             c_string_literal(&path.replace('\u{1f}', ".")),
@@ -484,6 +567,9 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
             entry.port_index,
             entry.net_pointer,
             entry.typespec.map_or(0, |typespec| typespec + 1),
+            entry.detail,
+            entry.event,
+            entry.conns.len(),
         ));
     }
     out.push_str("};\n");
@@ -763,6 +849,40 @@ pub(in crate::sim::emit_c) fn vpi_builtin_check(model: &IrModel) -> Option<Strin
     })
 }
 
+/// The `ref_kind` and reference fields of an argument or connection
+/// descriptor; a reference to an object outside the catalog is an
+/// expression.
+fn arg_reference(reference: &IrVpiArgRef, object: &dyn Fn(&str) -> Option<usize>) -> String {
+    let expression = "LLG_VPI_ARG_EXPRESSION, .object = -1".to_owned();
+    match reference {
+        IrVpiArgRef::Expression => expression,
+        IrVpiArgRef::Constant(kind) => {
+            format!("LLG_VPI_ARG_CONSTANT, .const_type = {kind}, .object = -1")
+        }
+        IrVpiArgRef::Object(name) => object(name).map_or(expression, |index| {
+            format!("LLG_VPI_ARG_OBJECT, .object = {index}")
+        }),
+        IrVpiArgRef::Select {
+            object: name,
+            lsb,
+            width,
+            left,
+            right,
+        } => object(name).map_or(expression, |index| {
+            format!(
+                "LLG_VPI_ARG_SELECT, .object = {index}, .offset = {lsb}ULL, \
+.select_width = {width}u, .left = {left}LL, .right = {right}LL"
+            )
+        }),
+        IrVpiArgRef::Element {
+            object: name,
+            index: element,
+        } => object(name).map_or(expression, |index| {
+            format!("LLG_VPI_ARG_ELEMENT, .object = {index}, .offset = {element}ULL")
+        }),
+    }
+}
+
 /// Emit type-only descriptors for every source-level VPI call site. The
 /// generated `main` invokes these after plugin startup, so compiletf/sizetf
 /// runs before start-of-simulation callbacks or user processes. Values are
@@ -784,34 +904,7 @@ pub(super) fn render_vpi_compile_calls(model: &IrModel, out: &mut String) {
             out.push_str("    { 0, 0, 0 },\n");
         }
         for arg in &call.args {
-            let expression = "LLG_VPI_ARG_EXPRESSION, .object = -1".to_owned();
-            let reference = match &arg.reference {
-                IrVpiArgRef::Expression => expression,
-                IrVpiArgRef::Constant(kind) => {
-                    format!("LLG_VPI_ARG_CONSTANT, .const_type = {kind}, .object = -1")
-                }
-                IrVpiArgRef::Object(name) => object(name).map_or(expression, |index| {
-                    format!("LLG_VPI_ARG_OBJECT, .object = {index}")
-                }),
-                IrVpiArgRef::Select {
-                    object: name,
-                    lsb,
-                    width,
-                    left,
-                    right,
-                } => object(name).map_or(expression, |index| {
-                    format!(
-                        "LLG_VPI_ARG_SELECT, .object = {index}, .offset = {lsb}ULL, \
-.select_width = {width}u, .left = {left}LL, .right = {right}LL"
-                    )
-                }),
-                IrVpiArgRef::Element {
-                    object: name,
-                    index: element,
-                } => object(name).map_or(expression, |index| {
-                    format!("LLG_VPI_ARG_ELEMENT, .object = {index}, .offset = {element}ULL")
-                }),
-            };
+            let reference = arg_reference(&arg.reference, &object);
             out.push_str(&format!(
                 "    {{ .width = {}, .is_signed = {}, .is_real = {}, .ref_kind = {reference} }},\n",
                 arg.width,
@@ -825,7 +918,7 @@ pub(super) fn render_vpi_compile_calls(model: &IrModel, out: &mut String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{member_tree, render_vpi_typespecs};
+    use super::{arg_reference, member_tree, render_vpi_typespecs};
     use crate::sim::ir::{IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember};
 
     fn member(name: &str, typespec: usize, lsb: u32, width: u32) -> IrVpiTypespecMember {
@@ -890,6 +983,31 @@ mod tests {
                 ("hi", 12, 4, Some(0), (0, 0)),
                 ("lo", 8, 4, Some(0), (0, 0)),
             ]
+        );
+    }
+
+    #[test]
+    fn references_outside_the_catalog_become_expressions() {
+        use crate::sim::ir::IrVpiArgRef;
+        let object = |name: &str| (name == "tb\u{1f}r").then_some(4);
+        let select = IrVpiArgRef::Select {
+            object: "tb\u{1f}r".to_owned(),
+            lsb: 2,
+            width: 1,
+            left: 2,
+            right: 2,
+        };
+        assert_eq!(
+            arg_reference(&select, &object),
+            "LLG_VPI_ARG_SELECT, .object = 4, .offset = 2ULL, .select_width = 1u, .left = 2LL, .right = 2LL"
+        );
+        assert_eq!(
+            arg_reference(&IrVpiArgRef::Object("tb\u{1f}gone".to_owned()), &object),
+            "LLG_VPI_ARG_EXPRESSION, .object = -1"
+        );
+        assert_eq!(
+            arg_reference(&IrVpiArgRef::Constant("vpiBinaryConst"), &object),
+            "LLG_VPI_ARG_CONSTANT, .const_type = vpiBinaryConst, .object = -1"
         );
     }
 

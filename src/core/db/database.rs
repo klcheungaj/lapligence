@@ -250,6 +250,9 @@ pub struct Db {
     /// whole connection expressions, so consumers that need the element's
     /// own part select (pass switches) derive it from this position.
     primitive_array_positions: HashMap<NodeId, PrimitiveArrayPosition>,
+    /// Declared `(left, right)` of each instance array level (IEEE 1800-2009
+    /// 37.11), keyed by its [`NodeKind::InstanceArray`] node.
+    instance_array_ranges: HashMap<NodeId, (i32, i32)>,
     /// Source library of each elaborated instance (its selected definition's
     /// library), package and compilation unit, copied from the frontend's
     /// library binding so `%l` survives snapshot destruction.
@@ -422,6 +425,7 @@ impl Db {
             checker_actuals: HashMap::new(),
             unconnected_drives: HashMap::new(),
             primitive_array_positions: HashMap::new(),
+            instance_array_ranges: HashMap::new(),
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
@@ -511,6 +515,7 @@ impl Db {
             checker_actuals: HashMap::new(),
             unconnected_drives: HashMap::new(),
             primitive_array_positions: HashMap::new(),
+            instance_array_ranges: HashMap::new(),
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
@@ -714,6 +719,13 @@ impl Db {
     /// `None` for a single instance.
     pub fn primitive_array_position(&self, id: NodeId) -> Option<PrimitiveArrayPosition> {
         self.primitive_array_positions.get(&id).copied()
+    }
+
+    /// The declared `(left, right)` range of an instance array level
+    /// ([`NodeKind::InstanceArray`]); a multidimensional array nests one
+    /// level per dimension, outermost first.
+    pub fn instance_array_range(&self, id: NodeId) -> Option<(i32, i32)> {
+        self.instance_array_ranges.get(&id).copied()
     }
 
     pub fn unconnected_drive(&self, id: NodeId) -> UnconnectedDrive {

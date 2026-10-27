@@ -9,7 +9,7 @@
 use super::*;
 use crate::core::db::{ConstantSource, ConstantType, Direction, NetType, TypeId, TypedefRef};
 use crate::sim::ir::{
-    IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConstant,
+    IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn, IrVpiConstant,
     IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiTypespec, IrVpiTypespecKind,
     IrVpiTypespecMember, IrVpiVarKind,
 };
@@ -113,6 +113,8 @@ impl Codegen<'_> {
                         | NodeKind::Array { .. }
                         | NodeKind::Param { .. }
                         | NodeKind::Port { .. }
+                        | NodeKind::FuncTask { .. }
+                        | NodeKind::NamedEvent
                 ) && !node.name.is_empty();
                 if named {
                     path.push(node.name.clone());
@@ -582,6 +584,297 @@ impl Codegen<'_> {
         }
     }
 
+    /// How an application sees expression `node` as a structure connection:
+    /// a catalog object, a constant select or element of one, a literal
+    /// with its value, or an opaque expression (IEEE 1800-2009 37.54).
+    fn vpi_conn(&self, node: NodeId, direction: IrVpiDirection) -> IrVpiConn {
+        let width = self.fixed_value_width(node).unwrap_or(0);
+        let signed = self
+            .query_descriptor(node)
+            .is_some_and(|descriptor| descriptor.info.signed);
+        // The owned database does not tell implicit conversions (a narrower
+        // right-hand side extended to its target) from casts, so a
+        // conversion of a named object or select shows that object: its
+        // value is the operand's, which a cont assign value converts again.
+        let mut inner = node;
+        while let NodeKind::Expr(ExprKind::Cast {
+            operand,
+            size_cast: false,
+            ..
+        }) = self.kind(inner)
+        {
+            inner = *operand;
+        }
+        if !matches!(
+            self.kind(inner),
+            NodeKind::Expr(
+                ExprKind::Constant { .. }
+                    | ExprKind::Ref { .. }
+                    | ExprKind::HierPath { .. }
+                    | ExprKind::ScopeRef { .. }
+                    | ExprKind::BitSelect { .. }
+                    | ExprKind::PartSelect { .. }
+                    | ExprKind::ArraySelect { .. }
+            )
+        ) {
+            inner = node;
+        }
+        let (width, signed) = if inner == node {
+            (width, signed)
+        } else {
+            (
+                self.fixed_value_width(inner).unwrap_or(width),
+                self.query_descriptor(inner)
+                    .map_or(signed, |descriptor| descriptor.info.signed),
+            )
+        };
+        let conn = |reference| IrVpiConn {
+            reference,
+            width,
+            signed,
+            direction,
+            value: None,
+        };
+        match self.kind(inner) {
+            NodeKind::Expr(ExprKind::Constant {
+                value,
+                size,
+                const_type,
+                source,
+                ..
+            }) => {
+                let Ok(constant) = read_const_from(value, *size) else {
+                    return conn(IrVpiArgRef::Expression);
+                };
+                if constant.real.is_some() || constant.width == 0 {
+                    return conn(IrVpiArgRef::Expression);
+                }
+                let bit = |plane: &[u64], index: u32| {
+                    plane
+                        .get((index / 64) as usize)
+                        .is_some_and(|word| word >> (index % 64) & 1 != 0)
+                };
+                let digits = (0..constant.width)
+                    .rev()
+                    .map(|index| {
+                        if bit(&constant.z, index) {
+                            'z'
+                        } else if bit(&constant.x, index) {
+                            'x'
+                        } else if bit(&constant.bits, index) {
+                            '1'
+                        } else {
+                            '0'
+                        }
+                    })
+                    .collect::<String>();
+                IrVpiConn {
+                    reference: IrVpiArgRef::Constant(vpi_const_type(*const_type, source)),
+                    width: constant.width,
+                    signed: constant.signed,
+                    direction,
+                    value: Some(digits),
+                }
+            }
+            NodeKind::Expr(ExprKind::ScopeRef { target }) => {
+                conn(IrVpiArgRef::Object(self.vpi_full_name(*target)))
+            }
+            NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. }) => {
+                let target = self.vpi_reference_target(inner);
+                let reference = target
+                    .filter(|target| {
+                        matches!(self.kind(*target), NodeKind::Param { value: Some(_), .. })
+                            || self.sig_globals.contains_key(target)
+                            || self.array_globals.contains_key(target)
+                            || self.event_globals.contains_key(target)
+                            || matches!(self.kind(*target), NodeKind::ModuleInst { .. })
+                    })
+                    .map_or(IrVpiArgRef::Expression, |target| {
+                        IrVpiArgRef::Object(self.vpi_full_name(target))
+                    });
+                conn(reference)
+            }
+            _ => conn(self.vpi_select_reference(inner)),
+        }
+    }
+
+    /// Catalog key of an unnamed object of `scope`: a hidden last path part
+    /// that keeps source order among its siblings.
+    fn vpi_unnamed_key(&self, scope: &str, tag: char, id: NodeId) -> String {
+        let node = self.node(id);
+        format!(
+            "{scope}{SEPARATOR}\u{1e}#{tag}{:010}{:06}{:010}",
+            node.line,
+            node.col,
+            id.index()
+        )
+    }
+
+    /// The structure rows of a gate, switch or UDP instance (37.31). An
+    /// element of a primitive array is named after the array and its index.
+    fn vpi_primitive_row(
+        &self,
+        id: NodeId,
+        array_of: &HashMap<NodeId, NodeId>,
+        template: IrVpiObject,
+    ) -> Option<IrVpiObject> {
+        let NodeKind::Gate {
+            class,
+            prim_type,
+            terms,
+            udp,
+            ..
+        } = self.kind(id)
+        else {
+            return None;
+        };
+        let node = self.node(id);
+        // The elements of an array hang off a frontend container; the
+        // array's own parent is their scope.
+        let owner = array_of
+            .get(&id)
+            .map_or(node.parent, |array| self.node(*array).parent);
+        let scope = self.vpi_full_name(owner?);
+        let mut name = node.name.clone();
+        if name.is_empty() {
+            if let (Some(position), Some(array)) =
+                (self.db.primitive_array_position(id), array_of.get(&id))
+            {
+                let (left, right) = self.db.instance_array_range(*array)?;
+                let step = if left >= right { 1 } else { -1 };
+                let index = i64::from(right) + i64::from(position.slice) * step;
+                name = format!("{}[{index}]", self.node(*array).name);
+            }
+        }
+        let (full_name, unnamed) = if name.is_empty() {
+            (self.vpi_unnamed_key(&scope, 'g', id), true)
+        } else {
+            (format!("{scope}{SEPARATOR}{name}"), false)
+        };
+        let udp_type = matches!(
+            prim_type,
+            PrimitiveType::Sequential | PrimitiveType::Combinational
+        );
+        let switch = matches!(
+            prim_type,
+            PrimitiveType::Nmos
+                | PrimitiveType::Pmos
+                | PrimitiveType::Cmos
+                | PrimitiveType::Rnmos
+                | PrimitiveType::Rpmos
+                | PrimitiveType::Rcmos
+                | PrimitiveType::Rtran
+                | PrimitiveType::Rtranif0
+                | PrimitiveType::Rtranif1
+                | PrimitiveType::Tran
+                | PrimitiveType::Tranif0
+                | PrimitiveType::Tranif1
+        );
+        let type_code = match class {
+            PrimClass::Udp => "vpiUdp",
+            PrimClass::Switch => "vpiSwitch",
+            PrimClass::Gate => "vpiGate",
+            PrimClass::Array if udp_type => "vpiUdp",
+            PrimClass::Array if switch => "vpiSwitch",
+            PrimClass::Array => "vpiGate",
+        };
+        let (detail, keyword) = vpi_prim_type(*prim_type)?;
+        let mut ordered = terms.iter().collect::<Vec<_>>();
+        ordered.sort_by_key(|term| term.term_index);
+        let conns = ordered
+            .iter()
+            .map(|term| {
+                let direction = match term.direction {
+                    Direction::Input => IrVpiDirection::Input,
+                    Direction::Output => IrVpiDirection::Output,
+                    Direction::Inout => IrVpiDirection::Inout,
+                    _ => IrVpiDirection::None,
+                };
+                self.vpi_conn(term.expr, direction)
+            })
+            .collect();
+        Some(IrVpiObject {
+            full_name,
+            name: if unnamed { String::new() } else { name },
+            definition_name: Some(
+                udp.as_ref()
+                    .map_or_else(|| keyword.to_owned(), |table| table.name.clone()),
+            ),
+            kind: IrVpiObjectKind::Primitive,
+            type_code: Some(type_code),
+            detail: Some(detail),
+            conns,
+            unnamed,
+            ..template
+        })
+    }
+
+    /// Whether task or function `id` belongs to an instance or generate
+    /// scope (not a class or package), so its full name is hierarchical.
+    fn vpi_declared_in_instance(&self, id: NodeId) -> bool {
+        let mut current = self.node(id).parent;
+        while let Some(parent) = current {
+            match self.kind(parent) {
+                NodeKind::ModuleInst { .. } | NodeKind::GenScope => return true,
+                NodeKind::Stmt(_) => current = self.node(parent).parent,
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// The row of a module, interface or primitive instance array (37.11):
+    /// its declared ranges (one nested array level per dimension) and the
+    /// `vpiType` of its elements.
+    fn vpi_instance_array_row(&self, id: NodeId) -> Option<IrVpiObject> {
+        let node = self.node(id);
+        let mut dims = Vec::new();
+        let mut level = id;
+        let element = loop {
+            let (left, right) = self.db.instance_array_range(level)?;
+            dims.push((i64::from(left), i64::from(right)));
+            let first = *self.node(level).children.first()?;
+            match self.kind(first) {
+                NodeKind::InstanceArray => level = first,
+                _ => break first,
+            }
+        };
+        let (type_code, detail) = match self.kind(element) {
+            NodeKind::ModuleInst {
+                is_interface: true, ..
+            } => ("vpiInterfaceArray", "vpiInterface"),
+            NodeKind::ModuleInst { .. } => ("vpiModuleArray", "vpiModule"),
+            NodeKind::Gate { .. } => {
+                let primitive =
+                    self.vpi_primitive_row(element, &HashMap::new(), IrVpiObject::default())?;
+                match primitive.type_code {
+                    Some("vpiUdp") => ("vpiUdpArray", "vpiUdp"),
+                    Some("vpiSwitch") => ("vpiSwitchArray", "vpiSwitch"),
+                    _ => ("vpiGateArray", "vpiGate"),
+                }
+            }
+            _ => return None,
+        };
+        // Gate arrays are one-dimensional (IEEE 1800-2009 28.3); a deeper
+        // primitive array would leave its elements unnamed.
+        if detail != "vpiModule" && detail != "vpiInterface" && dims.len() != 1 {
+            return None;
+        }
+        Some(IrVpiObject {
+            full_name: format!(
+                "{}{SEPARATOR}{}",
+                self.vpi_full_name(node.parent?),
+                node.name
+            ),
+            name: node.name.clone(),
+            kind: IrVpiObjectKind::InstanceArray,
+            type_code: Some(type_code),
+            detail: Some(detail),
+            dims,
+            ..IrVpiObject::default()
+        })
+    }
+
     /// Capture the source-owned hierarchy and storage identities used by the
     /// generated VPI catalog.  This runs after collection has assigned stable
     /// IR indices but before optimization can prune any otherwise dead signal.
@@ -628,6 +921,16 @@ impl Codegen<'_> {
             .iter()
             .filter_map(|((_, node), info)| info.static_signal.as_ref().map(|s| (*node, s.ir)))
             .collect::<HashMap<_, _>>();
+
+        // Elements of primitive arrays are unnamed; their array names them.
+        let mut array_of = HashMap::new();
+        for id in self.db.node_ids() {
+            if matches!(self.kind(id), NodeKind::InstanceArray) {
+                for child in &self.node(id).children {
+                    array_of.insert(*child, id);
+                }
+            }
+        }
 
         for id in self.db.node_ids() {
             if !reachable(self.db, id, tops) {
@@ -889,8 +1192,129 @@ impl Codegen<'_> {
                         ..IrVpiObject::default()
                     }));
                 }
+                NodeKind::NamedEvent | NodeKind::Var { .. }
+                    if !node.name.is_empty() && self.event_globals.contains_key(&id) =>
+                {
+                    insert(source(IrVpiObject {
+                        full_name: self.vpi_full_name(id),
+                        name: node.name.clone(),
+                        kind: IrVpiObjectKind::NamedEvent,
+                        event: Some(self.event_globals[&id].ir),
+                        ..IrVpiObject::default()
+                    }));
+                }
+                NodeKind::Process { kind } => {
+                    let (type_code, detail) = match kind {
+                        ProcessKind::Initial => ("vpiInitial", None),
+                        ProcessKind::Final => ("vpiFinal", None),
+                        ProcessKind::Always { always_type } => (
+                            "vpiAlways",
+                            match always_type {
+                                AlwaysKind::Always => Some("vpiAlways"),
+                                AlwaysKind::Comb => Some("vpiAlwaysComb"),
+                                AlwaysKind::FlipFlop => Some("vpiAlwaysFF"),
+                                AlwaysKind::Latch => Some("vpiAlwaysLatch"),
+                                AlwaysKind::Unsupported => None,
+                            },
+                        ),
+                    };
+                    let scope = self.vpi_full_name(id);
+                    insert(source(IrVpiObject {
+                        full_name: self.vpi_unnamed_key(&scope, 'p', id),
+                        kind: IrVpiObjectKind::Process,
+                        type_code: Some(type_code),
+                        detail,
+                        unnamed: true,
+                        ..IrVpiObject::default()
+                    }));
+                }
+                NodeKind::ContAssign { net_decl, .. } if node.children.len() >= 2 => {
+                    let lhs = self.vpi_conn(node.children[0], IrVpiDirection::None);
+                    let rhs = self.vpi_conn(node.children[1], IrVpiDirection::None);
+                    let scope = self.vpi_full_name(id);
+                    insert(source(IrVpiObject {
+                        full_name: self.vpi_unnamed_key(&scope, 'c', id),
+                        kind: IrVpiObjectKind::ContAssign,
+                        width: lhs.width,
+                        conns: vec![lhs, rhs],
+                        unnamed: true,
+                        qualifier: *net_decl,
+                        ..IrVpiObject::default()
+                    }));
+                }
+                NodeKind::FuncTask {
+                    is_task,
+                    automatic,
+                    ret,
+                    ..
+                } if !node.name.is_empty() && self.vpi_declared_in_instance(id) => {
+                    let detail = match (is_task, ret) {
+                        (true, _) | (false, None) => None,
+                        (false, Some(ret)) => Some(match ret.kind.as_str() {
+                            "integer" => "vpiIntFunc",
+                            "real" | "shortreal" | "realtime" => "vpiRealFunc",
+                            "time" => "vpiTimeFunc",
+                            _ if ret.width.is_none() => "vpiOtherFunc",
+                            _ if ret.signed => "vpiSizedSignedFunc",
+                            _ => "vpiSizedFunc",
+                        }),
+                    };
+                    insert(source(IrVpiObject {
+                        full_name: self.vpi_full_name(id),
+                        name: node.name.clone(),
+                        kind: IrVpiObjectKind::TaskFunc,
+                        type_code: Some(if *is_task { "vpiTask" } else { "vpiFunction" }),
+                        detail,
+                        width: ret.as_ref().and_then(|ret| ret.width).unwrap_or(0),
+                        signed: ret.as_ref().is_some_and(|ret| ret.signed),
+                        qualifier: *automatic,
+                        ..IrVpiObject::default()
+                    }));
+                }
+                NodeKind::Gate { .. } => {
+                    if let Some(row) =
+                        self.vpi_primitive_row(id, &array_of, source(IrVpiObject::default()))
+                    {
+                        insert(row);
+                    }
+                }
+                NodeKind::InstanceArray
+                    if !node.name.is_empty()
+                        && node.parent.is_some_and(|parent| {
+                            !matches!(self.kind(parent), NodeKind::InstanceArray)
+                        }) =>
+                {
+                    if let Some(row) = self.vpi_instance_array_row(id) {
+                        insert(source(row));
+                    }
+                }
+                NodeKind::ModPort
+                    if !node.name.is_empty()
+                        && node.parent.is_some_and(|parent| {
+                            matches!(self.kind(parent), NodeKind::ModuleInst { .. })
+                        }) =>
+                {
+                    let Some(parent) = node.parent else {
+                        continue;
+                    };
+                    insert(source(IrVpiObject {
+                        full_name: format!(
+                            "{}{SEPARATOR}{}",
+                            self.vpi_full_name(parent),
+                            node.name
+                        ),
+                        name: node.name.clone(),
+                        kind: IrVpiObjectKind::Modport,
+                        ..IrVpiObject::default()
+                    }));
+                }
                 NodeKind::Port {
-                    direction, low, ty, ..
+                    direction,
+                    low,
+                    ty,
+                    high_expr,
+                    high_open,
+                    ..
                 } => {
                     // The components of a multi-port are not module ports of
                     // their own, and an unnamed port (a select or concatenation
@@ -914,6 +1338,19 @@ impl Codegen<'_> {
                         .filter(|child| is_module_port(**child))
                         .count();
                     let width = ty.width.unwrap_or(0);
+                    // An interface or modport port connects an interface
+                    // instance (37.14 detail 1, 37.15).
+                    let interface = node.children.iter().find_map(|child| {
+                        let NodeKind::IfaceConn { actual, modport } = self.kind(*child) else {
+                            return None;
+                        };
+                        let actual = self.vpi_full_name(*actual);
+                        Some(if modport.is_empty() {
+                            ("vpiInterfacePort", actual)
+                        } else {
+                            ("vpiModportPort", format!("{actual}{SEPARATOR}{modport}"))
+                        })
+                    });
                     insert(source(IrVpiObject {
                         // A port and the declaration it connects share one
                         // name; the port lives in its own namespace.
@@ -929,7 +1366,17 @@ impl Codegen<'_> {
                             _ => IrVpiDirection::None,
                         },
                         port_index: u32::try_from(port_index).unwrap_or(u32::MAX),
-                        port_target: low.map(|low| self.vpi_full_name(low)),
+                        port_target: interface
+                            .as_ref()
+                            .map(|(_, actual)| actual.clone())
+                            .or_else(|| low.map(|low| self.vpi_full_name(low))),
+                        detail: interface.as_ref().map(|(port_type, _)| *port_type),
+                        conns: match (high_expr, high_open, interface.is_some()) {
+                            (Some(high), false, false) => {
+                                vec![self.vpi_conn(*high, IrVpiDirection::None)]
+                            }
+                            _ => Vec::new(),
+                        },
                         ..IrVpiObject::default()
                     }));
                 }
@@ -1368,6 +1815,41 @@ fn vpi_net_type(net_type: NetType) -> &'static str {
     }
 }
 
+/// `vpiPrimType` code name and gate keyword of a primitive (37.31, 37.32).
+fn vpi_prim_type(prim_type: PrimitiveType) -> Option<(&'static str, &'static str)> {
+    Some(match prim_type {
+        PrimitiveType::And => ("vpiAndPrim", "and"),
+        PrimitiveType::Nand => ("vpiNandPrim", "nand"),
+        PrimitiveType::Nor => ("vpiNorPrim", "nor"),
+        PrimitiveType::Or => ("vpiOrPrim", "or"),
+        PrimitiveType::Xor => ("vpiXorPrim", "xor"),
+        PrimitiveType::Xnor => ("vpiXnorPrim", "xnor"),
+        PrimitiveType::Buf => ("vpiBufPrim", "buf"),
+        PrimitiveType::Not => ("vpiNotPrim", "not"),
+        PrimitiveType::Bufif0 => ("vpiBufif0Prim", "bufif0"),
+        PrimitiveType::Bufif1 => ("vpiBufif1Prim", "bufif1"),
+        PrimitiveType::Notif0 => ("vpiNotif0Prim", "notif0"),
+        PrimitiveType::Notif1 => ("vpiNotif1Prim", "notif1"),
+        PrimitiveType::Nmos => ("vpiNmosPrim", "nmos"),
+        PrimitiveType::Pmos => ("vpiPmosPrim", "pmos"),
+        PrimitiveType::Cmos => ("vpiCmosPrim", "cmos"),
+        PrimitiveType::Rnmos => ("vpiRnmosPrim", "rnmos"),
+        PrimitiveType::Rpmos => ("vpiRpmosPrim", "rpmos"),
+        PrimitiveType::Rcmos => ("vpiRcmosPrim", "rcmos"),
+        PrimitiveType::Rtran => ("vpiRtranPrim", "rtran"),
+        PrimitiveType::Rtranif0 => ("vpiRtranif0Prim", "rtranif0"),
+        PrimitiveType::Rtranif1 => ("vpiRtranif1Prim", "rtranif1"),
+        PrimitiveType::Tran => ("vpiTranPrim", "tran"),
+        PrimitiveType::Tranif0 => ("vpiTranif0Prim", "tranif0"),
+        PrimitiveType::Tranif1 => ("vpiTranif1Prim", "tranif1"),
+        PrimitiveType::Pullup => ("vpiPullupPrim", "pullup"),
+        PrimitiveType::Pulldown => ("vpiPulldownPrim", "pulldown"),
+        PrimitiveType::Sequential => ("vpiSeqPrim", ""),
+        PrimitiveType::Combinational => ("vpiCombPrim", ""),
+        PrimitiveType::Unsupported => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{packed_offset, vpi_const_type};
@@ -1421,6 +1903,30 @@ mod tests {
         assert_eq!(inner_typedef(at(1)), at(0));
         assert_eq!(inner_typedef(at(0)), None);
         assert_eq!(inner_typedef(None), None);
+    }
+
+    #[test]
+    fn primitive_types_name_their_annex_k_codes_and_keywords() {
+        use super::vpi_prim_type;
+        use crate::core::db::PrimitiveType;
+        assert_eq!(
+            vpi_prim_type(PrimitiveType::And),
+            Some(("vpiAndPrim", "and"))
+        );
+        assert_eq!(
+            vpi_prim_type(PrimitiveType::Tranif1),
+            Some(("vpiTranif1Prim", "tranif1"))
+        );
+        assert_eq!(
+            vpi_prim_type(PrimitiveType::Pulldown),
+            Some(("vpiPulldownPrim", "pulldown"))
+        );
+        // A UDP is named by its declaration, not a keyword (37.32 detail 2).
+        assert_eq!(
+            vpi_prim_type(PrimitiveType::Sequential),
+            Some(("vpiSeqPrim", ""))
+        );
+        assert_eq!(vpi_prim_type(PrimitiveType::Unsupported), None);
     }
 
     #[test]

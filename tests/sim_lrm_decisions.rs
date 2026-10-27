@@ -2092,6 +2092,42 @@ fn a19_d4_typespec_identity() {
 }
 
 #[test]
+fn a19_d5_cont_assign_value() {
+    run_vpi_decision(
+        "A19-D5_cont_assign_value",
+        &["task $d5()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D5_cont_assign_value.out"),
+    );
+}
+
+#[test]
+fn a19_d6_primitive_names() {
+    run_vpi_decision(
+        "A19-D6_primitive_names",
+        &["task $d6()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D6_primitive_names.out"),
+    );
+}
+
+#[test]
+fn a19_d7_structure_order() {
+    run_vpi_decision(
+        "A19-D7_structure_order",
+        &["task $d7()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D7_structure_order.out"),
+    );
+}
+
+#[test]
+fn a19_d8_named_event_callback() {
+    run_vpi_decision(
+        "A19-D8_named_event_callback",
+        &["task $d8_watch()", "task $d8_put()", "task $d8_delay()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D8_named_event_callback.out"),
+    );
+}
+
+#[test]
 fn s44_d1_covergroup_type_per_declaration() {
     run_decision(
         "S44-D1_covergroup_type_per_declaration",

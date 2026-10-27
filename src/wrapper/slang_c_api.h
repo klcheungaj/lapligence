@@ -1301,7 +1301,10 @@ typedef struct {
    * instance array (ABI v41) stores the element count of the whole array in
    * bits 32-63 and, in bits 0-31, its slice of a connection as wide as the
    * array: 0 is the least significant slice, owned by the right-hand indices
-   * (IEEE 1800-2009 28.3.6). Zero for every other primitive instance. */
+   * (IEEE 1800-2009 28.3.6). Zero for every other primitive instance. An
+   * instance array node (ABI v54) stores its declared range: the left bound
+   * in bits 0-31 and the right bound in bits 32-63, each a two's-complement
+   * int32. */
   uint64_t auxiliary;
   /* Assertion sequence metadata. A zero repetition kind means that the
    * range fields are unused; max UINT32_MAX denotes an unbounded range. */
