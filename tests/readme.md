@@ -836,47 +836,15 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   (`fixtures/lsp/genvar/`, `genvar-fallback/`).
 - Explorer roots honor configured tops/source graphs; keep recursive children,
   leaves, typed contents, declaration fallback and useful roots under truncation;
-  never return shadow URIs. Tokens keep parameters/localparams
-  `variable.readonly` in dimensions/expressions/actuals, type parameters
-  `typeParameter`, named, implicit (`.a`) and interface port labels
-  `function.connectionLabel`, value and type parameter labels
-  `function.readonly.connectionLabel` (actuals keep their own types),
-  compiler directives `keyword` (with
-  `controlFlow` for conditional compilation), enum items
-  `enumMember.readonly` (plus `declaration` at declarations, anonymous and
-  ranged enums included). Keyword-derived words are classified by text and
-  stay `keyword` with exactly one llg modifier at every occurrence:
-  `typedef`/`struct`/`union`/`enum` get `typeDefinition`, `input`/`output`/
-  `inout`/`ref` get `direction`, and built-in data and net types plus kind and
-  qualifier words (`logic`, `wire`, `int`, `genvar`, `parameter`, `const`,
-  `default`, `automatic`, `static`, ...) get `primitive`, and control-flow
-  words (`if`, `else`, `case`, `endcase`, loops, `return`/`break`/`continue`,
-  `wait`, ...) get `controlFlow`. A case, case-inside, case-generate,
-  property-case or randsequence-case item `default`, an if/case `unique`/
-  `unique0`/`priority`, a disable statement's `disable`, the keyword of an
-  `initial`/`final`/`always*` procedure and the `assign`/`alias`/`deassign`/
-  `force`/`release` of continuous, alias and procedural continuous
-  assignments get `controlFlow` from the capture, not the text, while
-  `disable iff`, a uniqueness-constraint `unique`, a UDP `initial`, the
-  `always` property operator and every other `default` do not; the legend holds only standard
-  token types and appends these modifiers after `connectionLabel`
-  ([legend contract](../src/bin/llg_ls/readme.md#semantic-token-legend)).
-  The remaining keywords (`module`, `begin`, `fork`, `iff`, `inside`, ...) are
-  `keyword` without modifier bits, and user typedef names keep `type` (never
-  `defaultLibrary`).
-  A reference the capture could not resolve
-  (unbound plain `identifier` lexical kind) gets no token, so the editor leaves
-  it uncolored; declarations and kind-known references keep theirs. Resolved
-  names keep their kind even inside a block that one undeclared name makes
-  invalid: scope qualifiers (`pk::f`) are `namespace`, hierarchical path steps
-  and instance names (`u0.o`) are bound `variable` with the final member's own
-  kind, named, labeled and generate block names (`gb[0].q`, `disable blk`,
-  `end : blk`) are `namespace` (`declaration` at the opening name, whose
-  definition end labels and references reach), and system tasks, functions and
-  built-in methods (`$bits`, `$display`, `q.size`) are
-  `function.defaultLibrary`. All of this holds for committed and isolated
-  buffers, including missing children (library-unit capture elaborates no
-  hierarchy, so Slang leaves hierarchical names there unresolved).
+  never return shadow URIs.
+- Semantic tokens follow the numbered rules of
+  [semantic token requirements](../docs/semantic_tokens.md).
+  `lsp_stdio/semantic_token_requirements.rs` checks every `ST` rule with exact
+  type and modifier bits in both serving paths over
+  `fixtures/semantic_tokens/requirements.sv`; the unit tests in
+  `src/bin/llg_ls/semantic_tokens.rs` repeat the classification in every
+  capture profile (isolated, `library_units` off and on; library-unit capture
+  elaborates no hierarchy, so hierarchical names there may stay unresolved).
   Keep the compact-capture tests.
 
 Fixtures use `fixtures/lsp/test.json` (schema `llg.lsp.fixture/v1`), the
