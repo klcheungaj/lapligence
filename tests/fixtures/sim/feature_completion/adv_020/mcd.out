@@ -1,0 +1,73 @@
+open v1: single=1 level=0 differs from m=1
+open v1 again: same=1 level=0
+open the $fopen channel's file: same as m=1 level=0
+open the $fopen fd's file: 0 level=3
+open NULL: 0 level=3
+open empty: 0 level=3
+open in a missing directory: 0 level=3
+name a: adv020_v1.txt level=0
+name m: adv020_hdl.txt level=0
+name fd: adv020_fd.txt level=0
+name 1: stdout level=0
+name stderr fd: stderr level=0
+name 0: NULL level=3
+name a|m: NULL level=3
+name unopened: NULL level=3
+name unopened fd: NULL level=3
+name buffer reused: 1 now adv020_hdl.txt
+printf a: 5 level=0
+printf a|m: 11 level=0
+to channel 1
+printf 1: 13 level=0
+to channel 1 and a
+printf 1|a: 19 level=0
+printf 0: -1 level=3
+printf unopened: -1 level=3
+printf a|unopened: 8 level=3
+printf fd: -1 level=3
+printf empty: 0 level=0
+printf 700 characters: 700 level=0
+vprintf a: 8 level=0
+vprintf unopened: -1 level=3
+printf NULL format: -1 level=3
+flush a: 0 level=0
+flush 1|a: 0 level=0
+flush 0: 1 level=3
+flush unopened: 1 level=3
+flush a|unopened: 1 level=3
+flush fd: 1 level=3
+close 1: 1 level=3
+channel 1 is still open
+printf 1 after close: 24 level=0
+close 0: 0 level=3
+close unopened: same=1 level=3
+close fd: same=1 level=3
+close b|unopened: unopened left=1 level=3
+name b after close: NULL level=3
+printf b after close: -1 level=3
+close b again: same=1 level=3
+close 1|b: 1|b left=1 level=3
+open v3 reuses b's channel: 1 level=0
+close v3: 0 level=0
+name m after $fclose: NULL level=3
+close m after $fclose: same=1 level=3
+close a: 0 level=0
+[adv020_v1.txt]
+| to a
+| to a and m
+| to channel 1 and a
+| partial
+| <700 characters>
+| v=abc 7
+[adv020_hdl.txt]
+| hdl 1
+| to a and m
+| hdl 2
+[adv020_fd.txt]
+| fd still open
+[adv020_v2.txt]
+| closed with an unopened channel
+[adv020_v3.txt]
+[adv020_v4.txt]
+| hdl into a vpi channel
+done
