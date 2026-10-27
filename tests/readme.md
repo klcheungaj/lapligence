@@ -392,19 +392,23 @@ the runtime probe is `runtime_value_storage`'s `vpi_ownership` and the unit
 checks are `sim::build::vpi_static::tests` and
 `sim::codegen::lowering::collection::vpi::tests`.
 
-ADV-019 families 1 and 2 (typespecs, structure and union members, structure
-objects) use
+ADV-019 families 1 to 4 (typespecs, structure and union members, structure,
+expression and statement objects) use
 `-E 'binary(sim_feature_completion) & test(adv_019::)'`: `typespecs` prints the
 typespec tree of each declaration, `members` reads, finds, watches and
 writes members and `structure` walks ports, processes, assignments, tasks,
 primitives, instance arrays and named events, all linked as static archives;
-`timing` (VPI-T1) walks module paths and timing checks with their terms.
-Decisions A19-D1..D10 are in
+`timing` (VPI-T1) walks module paths and timing checks with their terms;
+`expressions` walks expression trees with their values and `vpiDecompile`,
+and `statements` the statement trees of processes, tasks and functions.
+Decisions A19-D1..D13 are in
 `sim_lrm_decisions` (`-E 'test(/a19_d/)'`); the unit checks are
 `core::db::database::capture::tests`,
 `sim::codegen::lowering::collection::vpi::tests`,
 `sim::codegen::lowering::collection::vpi::timing::tests` and
-`sim::emit_c::model::vpi::tests`.
+`sim::emit_c::model::vpi::tests`; `sim_043`'s
+`generated_model_omits_the_catalog_by_default` checks that the code tables
+exist only in VPI models.
 
 ADV-020's VPI parity fixtures use
 `-E 'binary(sim_feature_completion) & test(adv_020::)'`. `symbols` takes the

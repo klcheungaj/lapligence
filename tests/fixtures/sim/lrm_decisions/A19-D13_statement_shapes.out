@@ -1,0 +1,17 @@
+vpiBegin line=16
+  vpiDelayControl line=17
+    vpiNullStmt line=17
+  vpiEventControl line=18 event=a or b op=35 operands=2
+    vpiNullStmt line=18
+  vpiEventControl line=19 event=posedge a or negedge b iff c op=35 operands=2
+    vpiNullStmt line=19
+  vpiAssignment line=20 op=62 lhs=k rhs=NULL
+  vpiAssignment line=21 op=65 lhs=k rhs=NULL
+  vpiAssignment line=22 op=24 lhs=k rhs=2
+  vpiIf line=23 qualifier=1
+    vpiAssignment line=23 op=82 lhs=k rhs=3
+  vpiCase line=24 qualifier=17
+task two line=12
+  vpiBegin line=13
+    vpiAssignment line=13 op=82 lhs=k rhs=1
+    vpiAssignment line=14 op=82 lhs=k rhs=2
