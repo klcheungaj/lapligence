@@ -70,6 +70,8 @@ mod inactive_ranges;
 mod macro_hover;
 #[path = "lsp_stdio/macro_tokens.rs"]
 mod macro_tokens;
+#[path = "lsp_stdio/package_imports.rs"]
+mod package_imports;
 
 const FIXTURE_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/lsp");
 const MODULE_EXPLORER_FIXTURE_DIR: &str = concat!(

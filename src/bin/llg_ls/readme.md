@@ -63,6 +63,16 @@ compilation unit, so a macro defined only in another project file is unknown
 in both. A syntax error, an unknown macro or an include outside the
 committed set degrades the stream per token: the tokens Slang recovered stay.
 
+Both paths also see the same packages. A package is a design-wide name, so
+the isolated parse adds, as library units of the default library, the
+committed project files that declare a package the buffer names (`pkg::` in
+an import, export or scoped name, also in its admitted headers), and the
+packages those name in turn (`features/package_context.rs`). No module of
+those files becomes a top and none of their tokens enter the buffer's stream.
+An imported item has its own kind's token wherever it is used, and the names
+of an import item are references: `pkg` is `namespace` and the imported name
+has the kind of what it imports; both navigate to the package declarations.
+
 The legend lists only standard LSP token types; llg-specific modifiers follow
 the standard modifiers (their indices are stable). Clients receive both lists
 in `semanticTokensProvider.legend`. llg modifiers:

@@ -822,6 +822,14 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   project file is unknown in both paths (separate compilation units): its
   diagnostic is published and the rest of the buffer stays tokenized. Unsaved
   edits expand new macros with the committed include context.
+- `lsp_stdio/package_imports.rs`: package items used through compilation-unit,
+  header and body wildcard imports, explicit import items and `pkg::name`,
+  from a package in another file (also one exported from a third package) or
+  the same file, keep their own kinds, and definition, hover and references
+  reach the package declarations in both serving paths, which agree token for
+  token. Import item names are references (`namespace`, the imported kind),
+  never document symbols; unsaved edits resolve through the committed
+  package units.
 - `lsp_stdio/black_box.rs`: an unknown module yields one Slang `UnknownModule`
   error on its name, fresh analysis is committed, siblings/parents stay
   elaborated and navigable, black-box actuals bind to the parent scope and the

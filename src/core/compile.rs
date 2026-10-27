@@ -4550,21 +4550,26 @@ pub fn parse_source(
     text: &str,
     defines: &[String],
 ) -> Result<ParseOnlyOut, StartupError> {
-    parse_source_in_context(name, text, defines, &[], Vec::new())
+    parse_source_in_context(name, text, defines, &[], Vec::new(), Vec::new())
 }
 
-/// Compile one supplied buffer as the only compilation unit, with the include
-/// context of a project compile: `include_dirs` are its logical search
-/// prefixes and `includes` the include-only buffers it admitted. An include
-/// outside that set is a frontend diagnostic, never a filesystem read, so the
-/// buffer sees exactly the headers (and the macros they define) that its
-/// project compile admitted. Tokens are projected for `name` only.
+/// Compile one supplied buffer as the only elaborated compilation unit, with
+/// the include context of a project compile: `include_dirs` are its logical
+/// search prefixes and `includes` the include-only buffers it admitted. An
+/// include outside that set is a frontend diagnostic, never a filesystem
+/// read, so the buffer sees exactly the headers (and the macros they define)
+/// that its project compile admitted. `dependencies` are other admitted units
+/// the buffer needs declarations from (the packages it imports): each is its
+/// own compilation unit, parsed as a library unit of the default library so
+/// its packages resolve without any of its modules becoming a top. Tokens
+/// are projected for `name` only.
 pub fn parse_source_in_context(
     name: &str,
     text: &str,
     defines: &[String],
     include_dirs: &[String],
     includes: Vec<OwnedSource>,
+    dependencies: Vec<OwnedSource>,
 ) -> Result<ParseOnlyOut, StartupError> {
     let limits = Limits::default();
     let source_bytes = (name.len() as u64)
@@ -4598,16 +4603,31 @@ pub fn parse_source_in_context(
             "isolated defines exceed the Slang ABI limit",
         ));
     }
+    // The default library (no `default_library` override keeps Slang's
+    // `work`): a library-unit tree there is never an inferred top, while its
+    // packages are design-wide names like those of any other unit.
+    let library_sources: Vec<_> = dependencies
+        .into_iter()
+        .filter(|dependency| dependency.name != name)
+        .map(|dependency| LibrarySource::new(dependency.name, dependency.text, "work"))
+        .collect();
     let mut sources = Vec::with_capacity(includes.len() + 1);
     sources.push(OwnedSource::compilation_unit(name, text));
     // Include buffers keep the include-only role whatever the caller passed,
-    // so a second compilation unit can never enter the isolated parse. The
-    // buffer itself may be in the context (a unit another unit includes);
-    // the supplied text wins.
+    // so a second elaborated compilation unit can never enter the isolated
+    // parse. The buffer itself or a dependency may be in the context (a unit
+    // another unit includes); Slang takes one buffer per path, so the
+    // supplied text or the dependency's buffer serves that include, as the
+    // unit's own buffer does in the project compile.
     sources.extend(
         includes
             .into_iter()
-            .filter(|include| include.name != name)
+            .filter(|include| {
+                include.name != name
+                    && !library_sources
+                        .iter()
+                        .any(|dependency| dependency.name == include.name)
+            })
             .map(|include| OwnedSource {
                 is_compilation_unit: false,
                 ..include
@@ -4616,6 +4636,7 @@ pub fn parse_source_in_context(
     let opts = CompileOpts {
         defines: defines.to_vec(),
         include_dirs: include_dirs.to_vec(),
+        library_sources,
         limits,
         ..CompileOpts::default()
     };

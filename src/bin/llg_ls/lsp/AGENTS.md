@@ -48,7 +48,7 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
 ## Requests and shutdown
 
 - Isolated tokens use captured revisions, admitted text and the committed
-  analysis' include context (never a file read); recheck staleness
+  analysis' include and package context (never a file read); recheck staleness
   before cache lookup, flight admission and the blocking compile. Saturated
   single-flight tables refuse new work and fall back to committed tokens.
 - Shutdown clears roots, caches, flights, watchers and the private process

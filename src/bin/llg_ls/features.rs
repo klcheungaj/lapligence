@@ -3,8 +3,8 @@
 //! Cached feature queries are pure: they take a shared [`Analysis`] plus a
 //! position and return LSP payloads.  [`semantic_tokens_for_open_document`]
 //! is the narrow exception: it performs one blocking, isolated compile of an
-//! admitted open buffer with the include context of the committed analysis
-//! ([`IncludeContext`]). No `Client` and no async here — the
+//! admitted open buffer with the include and package context of the committed
+//! analysis ([`IncludeContext`]). No `Client` and no async here — the
 //! tower-lsp backend (`lsp.rs` and `lsp/`) owns caching, staging, scheduling,
 //! and request handling.
 //!
@@ -47,6 +47,7 @@ use llg::core::tokens::{self, DeclTarget, FileTokens, ParseDeclPositions, RefBin
 
 mod analysis;
 mod fallback;
+mod package_context;
 mod requests;
 mod slang;
 mod source_graph;
@@ -54,6 +55,7 @@ mod symbol_index;
 
 pub(crate) use analysis::*;
 pub(crate) use fallback::*;
+pub(crate) use package_context::*;
 pub(crate) use requests::*;
 pub(crate) use slang::*;
 pub(crate) use source_graph::*;
