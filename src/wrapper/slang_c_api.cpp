@@ -1477,6 +1477,10 @@ struct Capture {
                       uint32_t role, uint32_t kind = LLG_SLANG_LEXICAL_UNKNOWN) {
     if (auto body = macroBodySpan(token.location(), token.rawText())) {
       lexicalBinding(*body, semanticId, role, kind, true);
+      // The expansion copy keeps its use-site binding as well. Body text is
+      // directive text, which the edition checks skip; a compilation-unit
+      // forward reference is decided at the use site, where it expands.
+      lexicalBinding(span(token.range()), semanticId, role, kind);
       return;
     }
     lexicalBinding(tokenSpan(token), semanticId, role, kind);

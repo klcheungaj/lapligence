@@ -117,6 +117,9 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   its lexical bindings are keyed by the body range and bind the body token:
   every expansion binds it again, and the merge keeps a kind and role only
   when all bindings agree (and a target only when the targets agree too).
+  The expansion copy also keeps a binding at its use-site range; it gives
+  the copy no kind or role, only the compilation-unit forward-reference
+  flag, which is decided where the macro expands.
   The formal arguments of a `` `define `` and the body tokens that spell them
   are `LLG_SLANG_LEXICAL_MACRO_FORMAL`; other body names are identifiers
   until an expansion binds them. The net type of `` `default_nettype ``
