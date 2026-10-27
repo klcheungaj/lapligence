@@ -49,6 +49,10 @@ pub enum IrVpiObjectKind {
     /// A timing check (37.36); unnamed, `conns` holds its arguments and
     /// terminal conditions, [`IrVpiObject::timing`] its limits.
     Tchk,
+    /// A string, chandle or class variable, or a dynamic array, queue or
+    /// associative array (37.17, 37.29): [`IrVpiObject::storage`] names its
+    /// storage and [`IrVpiObject::shape`] its value shape.
+    Dynamic,
 }
 
 impl IrVpiObjectKind {
@@ -76,6 +80,7 @@ impl IrVpiObjectKind {
             Self::Modport => "vpiModport",
             Self::ModPath => "vpiModPath",
             Self::Tchk => "vpiTchk",
+            Self::Dynamic => "vpiUndefined",
         }
     }
 
@@ -259,6 +264,10 @@ pub struct IrVpiObject {
     /// Delays of a module path, timing check, primitive or continuous
     /// assignment (`vpi_get_delays`/`vpi_put_delays`).
     pub(in crate::sim) timing: Option<IrVpiTiming>,
+    /// Storage of a [`IrVpiObjectKind::Dynamic`] object.
+    pub(in crate::sim) storage: Option<super::IrVpiStorage>,
+    /// Shape index (into [`super::IrVpiDynamic::shapes`]) of a dynamic object.
+    pub(in crate::sim) shape: Option<usize>,
 }
 
 /// The delays or limits of a catalog object and the runtime values that

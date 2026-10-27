@@ -14,6 +14,7 @@ use crate::sim::ir::{
     IrVpiTypespecMember, IrVpiVarKind,
 };
 
+mod dynamic;
 mod timing;
 pub(in super::super) use timing::VpiTimingMetadata;
 
@@ -930,6 +931,7 @@ impl Codegen<'_> {
             objects.entry(object.full_name.clone()).or_insert(object);
         };
         let mut typespecs = TypespecTable::default();
+        let mut dynamic = crate::sim::ir::IrVpiDynamic::default();
         let static_locals = self
             .proc_local_instances
             .iter()
@@ -957,6 +959,15 @@ impl Codegen<'_> {
                 time_unit_fs: self.timescale_of_node(id).unit_fs,
                 ..object
             };
+            // Strings, handles and containers (37.17, 37.29).
+            if let Some(storage) = self.vpi_dynamic_storage(model, id) {
+                if let Some(row) =
+                    self.vpi_dynamic_row(model, &mut dynamic, &mut typespecs, id, storage)
+                {
+                    insert(source(row));
+                }
+                continue;
+            }
             match self.kind(id) {
                 NodeKind::ModuleInst {
                     def_name,
@@ -1408,8 +1419,10 @@ impl Codegen<'_> {
         for row in timing.rows {
             insert(row);
         }
+        self.vpi_dynamic_classes(model, &mut dynamic, &mut typespecs);
         model.vpi_objects = objects.into_values().collect();
         model.vpi_typespecs = typespecs.entries;
+        model.vpi_dynamic = dynamic;
         Ok(())
     }
 

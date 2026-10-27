@@ -827,6 +827,7 @@ fn finish_generation(
     if !options.vpi && model.vpi_compile_calls.is_empty() {
         model.vpi_objects.clear();
         model.vpi_typespecs.clear();
+        model.vpi_dynamic = Default::default();
         model.vpi_catalog = false;
     }
     // Assertion coverage tables serve only `$coverage_*` calls and VPI
