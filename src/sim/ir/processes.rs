@@ -136,6 +136,10 @@ pub struct IrProcess {
     /// Elaborated program-instance identity, independent of the process label.
     /// Descendants inherit this origin at runtime, even in module-defined tasks.
     pub(in crate::sim) program: Option<u32>,
+    /// A procedure of a checker body: scheduled in the Reactive region like
+    /// a program process (IEEE 1800-2009 17.7.3), so its nonblocking
+    /// assignments update in Re-NBA, but never part of a program's lifetime.
+    pub(in crate::sim) checker: bool,
     pub(in crate::sim) origin: crate::sim::semantic::Origin,
     /// Never spawned: the process only hosts callbacks in `pre_fns` that the
     /// runtime calls directly (sequence match-item calls), so its coroutine
@@ -223,6 +227,7 @@ impl IrProcess {
             pre_fns,
             body,
             program: None,
+            checker: false,
             origin,
             callback_host: false,
             port_link: false,
@@ -282,6 +287,15 @@ impl IrProcess {
     /// module/Active scheduling and do not participate in program completion.
     pub(in crate::sim) fn set_program(&mut self, instance: Option<u32>) {
         self.program = instance;
+    }
+
+    /// Whether this process is a checker procedure (Reactive scheduling).
+    pub fn is_checker(&self) -> bool {
+        self.checker
+    }
+
+    pub(in crate::sim) fn set_checker(&mut self, checker: bool) {
+        self.checker = checker;
     }
 
     pub fn origin(&self) -> &crate::sim::semantic::Origin {

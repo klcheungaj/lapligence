@@ -224,6 +224,61 @@ impl Db {
             })
             .map(|(index, _)| NodeId::from_index(index))
             .collect();
+        let mut checker_instances = HashMap::new();
+        let mut checker_actuals = HashMap::new();
+        for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
+            if semantic.kind != SemanticKind::Instance
+                || semantic.subkind != crate::ffi::slang::SEMANTIC_INSTANCE_CHECKER
+            {
+                continue;
+            }
+            let instance = NodeId::from_index(index);
+            checker_instances.insert(
+                instance,
+                CheckerInstanceInfo {
+                    procedural: semantic.auxiliary & crate::ffi::slang::CHECKER_PROCEDURAL != 0,
+                    bound: semantic.auxiliary & crate::ffi::slang::CHECKER_BOUND != 0,
+                    nested: semantic.auxiliary & crate::ffi::slang::CHECKER_NESTED != 0,
+                    unit_time_scale: semantic.auxiliary
+                        & crate::ffi::slang::CHECKER_UNIT_TIME_SCALE
+                        != 0,
+                    default_disable: edge_target(
+                        &ids,
+                        semantic_edges(snapshot, semantic)?,
+                        SemanticEdgeRole::DefaultDisable,
+                    )?,
+                },
+            );
+            for edge in semantic_edges(snapshot, semantic)? {
+                if edge.role != SemanticEdgeRole::CheckerActual {
+                    continue;
+                }
+                let expression = semantic_id(&ids, edge.target_id)?;
+                if !matches!(
+                    snapshot.semantic_nodes.get(expression.index()),
+                    Some(node) if matches!(
+                        node.kind,
+                        SemanticKind::Expression
+                            | SemanticKind::SystemCall
+                            | SemanticKind::MethodCall
+                            | SemanticKind::FunctionCall
+                    )
+                ) {
+                    return Err(DbError::InvalidSnapshot(
+                        "checker actual does not name an expression".into(),
+                    ));
+                }
+                let actual = CheckerActual {
+                    instance,
+                    default: edge.index & crate::ffi::slang::CHECKER_ACTUAL_DEFAULT != 0,
+                };
+                if checker_actuals.insert(expression, actual).is_some() {
+                    return Err(DbError::InvalidSnapshot(
+                        "checker actual names an expression twice".into(),
+                    ));
+                }
+            }
+        }
         let source_libraries = snapshot
             .source_libraries
             .iter()
@@ -462,6 +517,13 @@ impl Db {
                 {
                     continue;
                 }
+                // A checker instance's instantiation-context disable
+                // condition is metadata (`checker_instances`), not a member.
+                if semantic.kind == SemanticKind::Instance
+                    && edge.role == SemanticEdgeRole::DefaultDisable
+                {
+                    continue;
+                }
                 if semantic.kind == SemanticKind::Unsupported
                     && semantic.subkind == crate::ffi::slang::SEMANTIC_PATTERN_STRUCTURE
                     && edge.role == SemanticEdgeRole::Declaration
@@ -492,6 +554,7 @@ impl Db {
                         | SemanticEdgeRole::LowConnection
                         | SemanticEdgeRole::SourceIdentity
                         | SemanticEdgeRole::ReturnOwner
+                        | SemanticEdgeRole::CheckerActual
                 ) {
                     children.push(semantic_id(&ids, edge.target_id)?);
                 }
@@ -1432,6 +1495,8 @@ impl Db {
             conditional_patterns,
             conditional_pattern_fields,
             program_instances,
+            checker_instances,
+            checker_actuals,
             unconnected_drives,
             primitive_array_positions,
             instance_array_ranges,
@@ -2145,5 +2210,79 @@ mod tests {
             assert_eq!(db.port_internal_expression(simple), None);
         }
         assert_eq!(db.port_internal_expression(p), None);
+    }
+
+    #[test]
+    fn checker_instances_actuals_and_default_disable_are_recorded() {
+        let source = "checker inner(logic x, event ck = $inferred_clock); \
+            bit h; always @(ck) h <= x; endchecker \
+            checker outer(logic a, event clk, logic r = $inferred_disable); \
+            default clocking @clk; endclocking \
+            bit n; always @(clk) n <= a; inner i1(a); \
+            a1: assert property (disable iff (r) a); endchecker \
+            module dut(input logic c, input logic d); endmodule \
+            checker bound(logic v); endchecker \
+            module top; logic clk, a, rst; default disable iff rst; \
+            outer u(a, posedge clk); dut d(clk, a); endmodule \
+            bind dut bound b(d);";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "checkers.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        assert!(db.has_checker_instances());
+        let named = |name: &str| {
+            db.checker_instances()
+                .into_iter()
+                .find(|id| db.node(*id).name == name)
+                .unwrap_or_else(|| panic!("checker instance `{name}`"))
+        };
+        let (u, i1, b) = (named("u"), named("i1"), named("b"));
+        assert!(matches!(
+            db.node_kind(u),
+            NodeKind::ModuleInst { def_name, .. } if def_name == "outer"
+        ));
+        let info = db.checker_instance(u).unwrap();
+        assert!(!info.procedural && !info.bound && !info.nested);
+        assert!(info.unit_time_scale);
+        // `default disable iff rst` of the instantiating module.
+        let disable = info.default_disable.expect("default disable");
+        assert!(matches!(
+            db.node_kind(disable),
+            NodeKind::Expr(ExprKind::Ref { target: Some(t) }) if db.node(*t).name == "rst"
+        ));
+        assert_eq!(db.node(i1).parent, Some(u));
+        assert!(db.checker_instance(i1).unwrap().nested);
+        assert!(db.checker_instance(b).unwrap().bound);
+        // Formal references in the bodies name their instance.
+        let actuals = db
+            .node_ids()
+            .filter_map(|id| db.checker_actual(id).map(|actual| actual.instance))
+            .collect::<Vec<_>>();
+        assert!(actuals.contains(&u));
+        assert!(actuals.contains(&i1));
+        assert!(actuals.iter().all(|instance| [u, i1, b].contains(instance)));
+        // A module without checkers keeps the tables empty.
+        let plain = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "plain.sv",
+                "module top; logic a; endmodule",
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let plain = Db::from_slang(&plain.snapshot).unwrap();
+        assert!(!plain.has_checker_instances());
+        assert!(plain.checker_instances().is_empty());
     }
 }

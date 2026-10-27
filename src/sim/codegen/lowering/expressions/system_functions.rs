@@ -100,6 +100,34 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// A checker formal read in checker procedural code stands for the
+    /// sampled value of its actual argument (IEEE 1800-2009 17.3). Context
+    /// value functions are resolved by the assertion lowering instead.
+    pub(in super::super) fn checker_formal_read(
+        &mut self,
+        scope_path: &str,
+        node: NodeId,
+    ) -> Result<Option<IrExpr>, String> {
+        if self.db.checker_actual(node).is_none()
+            || matches!(
+                self.kind(node),
+                NodeKind::SysCall { name } if name == "$inferred_clock" || name == "$inferred_disable"
+            )
+        {
+            return Ok(None);
+        }
+        self.checker_sampling = false;
+        let value = self.lower_sampled_func_expr(scope_path, "$sampled", &[node]);
+        self.checker_sampling = true;
+        value.map(Some).map_err(|error| {
+            format!(
+                "checker formal at {} stands for the sampled value of its actual argument \
+                 (IEEE 1800-2009 17.3), which llg cannot sample: {error}",
+                self.source_location(node)
+            )
+        })
+    }
+
     fn lower_sampled_func_expr(
         &mut self,
         scope_path: &str,
@@ -301,6 +329,43 @@ impl<'a> Codegen<'a> {
         name: &str,
         call: NodeId,
     ) -> Result<IrExpr, String> {
+        // A checker formal defaulting to `$inferred_disable` is the disable
+        // condition where the checker is instantiated, or 1'b0 (16.15.7,
+        // 17.4), wherever the checker reads it.
+        if name == "$inferred_disable" {
+            if let Some(actual) = self.db.checker_actual(call) {
+                let condition = self
+                    .db
+                    .checker_instance(actual.instance)
+                    .and_then(|checker| checker.default_disable);
+                return match condition {
+                    Some(condition) if self.checker_sampling => {
+                        self.checker_sampling = false;
+                        let value =
+                            self.lower_sampled_func_expr(scope_path, "$sampled", &[condition]);
+                        self.checker_sampling = true;
+                        value
+                    }
+                    Some(condition) => self.lower_expr(scope_path, condition),
+                    None => Ok(IrExpr::new(
+                        IrExprKind::Const(
+                            crate::sim::ir::IrConst::packed(
+                                vec![0],
+                                vec![0],
+                                vec![0],
+                                1,
+                                false,
+                                None,
+                            )
+                            .map_err(|error| error.to_string())?,
+                        ),
+                        1,
+                        false,
+                        None,
+                    )),
+                };
+            }
+        }
         if let Some(error) = self.clock_resolution_misuse(call, name) {
             return Err(error);
         }

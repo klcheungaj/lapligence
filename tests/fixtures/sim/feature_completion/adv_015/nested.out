@@ -1,0 +1,9 @@
+15 tb.u.i1.c_in cover x
+25 tb.u.c_ab cover s_ab
+25 tb.u.i1.c_in cover x
+35 tb.u.i1.c_in cover x
+45 tb.u.a_ab fail n=0
+50 tb.u.d1 deferred fail
+55 tb.u.i1.c_in cover x
+tb.u n=0
+tb.u.i1 hits=4

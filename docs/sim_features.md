@@ -678,7 +678,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Programs bind into module types, instance lists and single instances
   (and, by decision S32-D2, into interfaces) and run in the target's context
   ([sim_032](../tests/fixtures/sim/feature_completion/sim_032/readme.md)).
-  Checker/coverage injection is outside the selected scope.
+  A checker bound into a module runs in the target's context like a static
+  checker instance there (ADV-015); covergroup injection is outside the
+  selected scope.
   SV §23.11 **[SV-2005]**.
 
 ## 4. Scheduling & processes
@@ -2629,9 +2631,28 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   String literal actuals of `string` formals reach the application as string
   constants and the scope operand of `$list` as a module handle; string variables passed to VPI are a located compile error.
   SV ch.36-38, V ch.20–27 **[1995/2001]**.
-- ⬜ **Checkers** — Checker execution and checker bind are not implemented;
-  module/interface structural bind and ordinary assertion instances do not imply
-  checker support. SV **[SV-2009]**.
+- 🟨 **Checkers** (ADV-015) — Static checker instances in modules,
+  interfaces, programs, generate blocks and other checkers, and checkers
+  injected by `bind`, run as their own hierarchy scopes (`%m`, VPI module
+  scopes) with formals, checker variables, `always`/`initial`/`final`
+  procedures, assertions, covers, `let`, functions, sequences, properties,
+  default clocking/disable, covergroups and nested checkers. Checker
+  procedures and action blocks run in Reactive and their nonblocking
+  assignments mature in Re-NBA (17.7.3); they read formals as the sampled
+  values of their actuals and substitute event formals directly (17.3,
+  A15-D1), while deferred assertion items read current values (A15-D2).
+  `$inferred_clock`/`$inferred_disable` defaults take the instantiation
+  context's default clocking and disable, also through nested checkers. The
+  17.5 statement restrictions and the 17.7.1 assignment rules (nonblocking
+  only, own variables, longest static prefix, Single Assignment Rule) are
+  located errors; the later revision's `always_ff`/`always_comb`/
+  `always_latch` checker procedures and output formals are edition errors.
+  A checker declared in `$unit` takes the `$unit` time scale (A15-D3).
+  Free variables (`rand`, assume-set solving) and procedural checker
+  instances are located limits
+  ([known issue](known_issues.md#checker-limits-after-adv-015);
+  [adv_015](../tests/fixtures/sim/feature_completion/adv_015/readme.md)).
+  SV ch.17 **[SV-2009]**.
 - 🟨 **Functional coverage** (SIM-044, SIM-045, SIM-046) — Covergroup declarations in modules,
   interfaces, packages and classes (embedded, constructed only by the class
   `new`), instances created by `new` with `input` (integral, real, string and

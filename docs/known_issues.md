@@ -1905,6 +1905,41 @@ the global clock tick.
 `neg_expect.sv`, `neg_async_abort.sv` and `neg_endpoint.sv` in
 [adv_014](../tests/fixtures/sim/feature_completion/adv_014/readme.md).
 
+## Checker limits after ADV-015
+
+**Status:** open (ADV-015 boundary).
+
+### Symptom
+
+A free checker variable (`rand`, SV 17.7) is rejected at its declaration
+("free checker variable `r` is not supported: llg does not randomize free
+variables or solve assume sets"), and a checker instantiated in procedural
+code (SV 17.3, 17.3.1) is rejected at the instantiation ("checker instance in
+procedural code ... instantiate the checker outside the procedure").
+
+### Cause
+
+Free variables need random initial values, re-randomization of active free
+variables before Observed in every time step or at their assume-set clock
+events, assume-set solving with bounded attempts (17.7.2) and current-value
+reads of active free variables in assertions. A procedural checker instance
+queues its static assertions on the pending procedural assertion queue of
+its process (16.15.6), which llg has for procedural concurrent assertions
+but not for whole checker bodies.
+
+### Intended direction
+
+Keep a per-model table of free-variable sets (signal, active flag, clock
+events, constraint functions) solved at the top of the Observed set by the
+existing constraint solver, with zero cost for designs without free
+variables; queue a procedural checker's static assertions through the
+procedural assertion queue of the enclosing process.
+
+### Reproduce
+
+`neg_free_var.sv` and `neg_procedural.sv` in
+[adv_015](../tests/fixtures/sim/feature_completion/adv_015/readme.md).
+
 ## DPI-C import limits (SIM-040)
 
 **Status:** open. SIM-040 marshals packed, sized unpacked and open-array
@@ -2147,7 +2182,8 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - objects outside the generated catalog: sparse fixed arrays (stored in a keyed
   container), dynamic arrays, queues, associative arrays, strings, class
   objects and their properties, automatic variables, named event arrays,
-  tasks and functions of classes and packages, programs and checkers;
+  tasks and functions of classes and packages, programs, and checker objects
+  (a checker instance is a module scope with its variables; VPI-C1);
 - structure relations that are not exposed (ADV-019 family 2): expression
   trees, so a connection or right-hand side that is not an object, a
   constant select or element, or a literal is a `vpiOperation` without a

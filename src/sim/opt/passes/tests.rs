@@ -202,6 +202,7 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
             pre_fns: Vec::new(),
             body,
             program: None,
+            checker: false,
             origin: crate::sim::semantic::Origin::Synthetic {
                 reason: "optimizer fixture".to_owned(),
             },

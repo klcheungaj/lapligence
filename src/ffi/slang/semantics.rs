@@ -64,6 +64,7 @@ pub(super) fn decode_semantic_edge(
         40 => SemanticEdgeRole::Weight,
         41 => SemanticEdgeRole::RandJoin,
         42 => SemanticEdgeRole::Typedef,
+        43 => SemanticEdgeRole::CheckerActual,
         _ => return Err(invalid_native("semantic edge has an unknown role")),
     };
     Ok(SemanticEdge {
@@ -308,7 +309,7 @@ fn decode_semantic_kind(raw: u32) -> Result<SemanticKind, SlangError> {
 
 pub(super) fn validate_semantic_subkind(kind: u32, subkind: u32) -> Result<(), SlangError> {
     let valid = match kind {
-        1 => matches!(subkind, 0 | 192 | 193),
+        1 => matches!(subkind, 0 | 192 | 193 | super::SEMANTIC_INSTANCE_CHECKER),
         4 => matches!(subkind, 0 | 195 | 196),
         8 => matches!(subkind, 0 | 128..=141),
         13 => matches!(subkind, 0..=6),
@@ -377,6 +378,15 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         (1, 193, _) => true,
         // Module definitions and elaborated instances carry the resolved
         // `unconnected_drive` value for omitted input links.
+        // A checker instance carries its instantiation context instead.
+        (1, super::SEMANTIC_INSTANCE_CHECKER, _) => {
+            node.auxiliary
+                & !(super::CHECKER_PROCEDURAL
+                    | super::CHECKER_BOUND
+                    | super::CHECKER_NESTED
+                    | super::CHECKER_UNIT_TIME_SCALE)
+                == 0
+        }
         (1 | 24, _, _) => {
             let allowed = UNCONNECTED_PULL0 | UNCONNECTED_PULL1;
             node.auxiliary & !allowed == 0 && node.auxiliary.count_ones() <= 1

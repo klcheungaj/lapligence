@@ -2257,6 +2257,20 @@ impl<'a> Codegen<'a> {
     }
 
     fn emit_covergroup_sample(&mut self, group: NodeId) -> Result<(), String> {
+        // A covergroup of a checker reads checker formals as the sampled
+        // values of their actual arguments (IEEE 1800-2009 17.3, 17.6).
+        let checker = self.db.has_checker_instances()
+            && self
+                .db
+                .checker_instance(self.covergroup_inst(group))
+                .is_some();
+        let previous = std::mem::replace(&mut self.checker_sampling, checker);
+        let result = self.emit_covergroup_sample_body(group);
+        self.checker_sampling = previous;
+        result
+    }
+
+    fn emit_covergroup_sample_body(&mut self, group: NodeId) -> Result<(), String> {
         let lowering = self.covergroups[&group].clone();
         let info = self
             .db

@@ -26,6 +26,7 @@ fn process_model(body: Vec<IrStmt>) -> IrModel {
         pre_fns: Vec::new(),
         body,
         program: None,
+        checker: false,
         origin: crate::sim::semantic::Origin::Synthetic {
             reason: "validation fixture".to_owned(),
         },

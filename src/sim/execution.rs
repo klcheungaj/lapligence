@@ -613,7 +613,7 @@ fn build_processes(ir: &mut IrModel) -> Vec<ExecutionProcess> {
                 entry: 0,
                 blocks,
                 effects: Vec::new(),
-                region: if process.is_program() {
+                region: if process.is_program() || process.is_checker() {
                     ScheduleRegion::Reactive
                 } else {
                     ScheduleRegion::Active

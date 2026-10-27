@@ -114,12 +114,44 @@ impl Codegen<'_> {
         if let [EventSpec::Named(event) | EventSpec::AnyChange { sig: event }] = specs.as_slice() {
             if matches!(self.kind(*event), NodeKind::SysCall { name } if name == "$inferred_clock")
             {
-                let clock = self.inferred_assertion_clock(path, node)?;
+                let clock = match self.db.checker_actual(*event) {
+                    Some(actual) => self.checker_inferred_clock(path, actual.instance, node)?,
+                    None => self.inferred_assertion_clock(path, node)?,
+                };
                 self.assertion_inferred_resolved.insert(node, clock);
                 return Ok(clock);
             }
         }
         self.assertion_clock_from_specs(path, &specs, 0)
+    }
+
+    /// `$inferred_clock` as a checker formal default (IEEE 1800-2009 17.4):
+    /// the clock inferred where the checker is instantiated. A static
+    /// instance takes the default clocking in effect at the instantiation.
+    fn checker_inferred_clock(
+        &mut self,
+        path: &str,
+        checker: NodeId,
+        node: NodeId,
+    ) -> Result<SampledClock, String> {
+        let context = self.node(checker).parent;
+        let clock = match context {
+            Some(context) => {
+                let previous = std::mem::replace(&mut self.inst, context);
+                let clock = self.lower_default_sampled_clock(path);
+                self.inst = previous;
+                clock?
+            }
+            None => None,
+        };
+        clock.ok_or_else(|| {
+            format!(
+                "$inferred_clock at {} has no clock at the instantiation of checker `{}`: \
+                 no default clocking applies there (IEEE 1800-2009 16.15.7, 17.4)",
+                self.source_location(node),
+                self.node(checker).name
+            )
+        })
     }
 
     /// `$inferred_clock` (IEEE 1800-2009 16.15.7): the clock that flows to

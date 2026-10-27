@@ -287,6 +287,7 @@ fn waveform_model_emits_controls_hierarchy_and_final_time_close() {
         pre_fns: Vec::new(),
         body: controls,
         program: None,
+        checker: false,
         origin: crate::sim::semantic::Origin::Synthetic {
             reason: "emitter fixture".to_owned(),
         },

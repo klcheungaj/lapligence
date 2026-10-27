@@ -340,3 +340,33 @@ fn vpi_partitioned_net_arrays_keep_declared_shapes_and_values() {
     })
     .expect("VPI electrical range shapes");
 }
+
+#[test]
+fn vpi_checker_instances_are_hierarchy_scopes() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for optimization in [sim::opt::OptConfig::default(), sim::opt::OptConfig::none()] {
+        sim_harness::with_frontend_temp_cwd("vpi-checker", |dir| {
+            let executable = build_model_with_opts(
+                dir,
+                "vpi_checker.sv",
+                &fixture("vpi_checker.sv"),
+                &["task $vpi_checker"],
+                &optimization,
+            );
+            let plugin = compile_plugin(dir, "vpi_checker.c");
+            let output = run_plugin(dir, &executable, &plugin);
+            assert!(output.status.success(), "VPI simulation failed: {output:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                "tb.u_chk def=outer_chk parent=tb vars=1\n\
+                 tb.u_chk.u_inner def=inner_chk parent=tb.u_chk vars=1\n\
+                 tb.u_chk.count=2\ntb.u_chk.u_inner.hits=2\n"
+            );
+            Ok(())
+        })
+        .expect("VPI checker fixture should complete");
+    }
+}

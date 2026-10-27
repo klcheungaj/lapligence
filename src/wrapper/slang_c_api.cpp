@@ -1597,8 +1597,10 @@ uint32_t semanticSymbolKind(SymbolKind kind) {
   switch (kind) {
     case SymbolKind::Definition: return LLG_SLANG_SEMANTIC_DEFINITION;
     case SymbolKind::Instance:
-    case SymbolKind::InstanceArray: return LLG_SLANG_SEMANTIC_INSTANCE;
+    case SymbolKind::InstanceArray:
+    case SymbolKind::CheckerInstance: return LLG_SLANG_SEMANTIC_INSTANCE;
     case SymbolKind::InstanceBody:
+    case SymbolKind::CheckerInstanceBody:
     case SymbolKind::AnonymousProgram: return LLG_SLANG_SEMANTIC_SCOPE;
     case SymbolKind::Package: return LLG_SLANG_SEMANTIC_PACKAGE;
     case SymbolKind::ClassType:
@@ -2625,8 +2627,11 @@ public:
       result.auxiliary = uint64_t(uint32_t(symbol.range.left)) |
                          (uint64_t(uint32_t(symbol.range.right)) << 32);
     }
-    if constexpr (std::same_as<T, InstanceBodySymbol>)
+    if constexpr (std::same_as<T, InstanceBodySymbol> ||
+                  std::same_as<T, CheckerInstanceBodySymbol>)
       result.subkind = LLG_SLANG_INSTANCE_BODY;
+    if constexpr (std::same_as<T, CheckerInstanceSymbol>)
+      describeCheckerInstance(result, symbol);
     if constexpr (std::same_as<T, GenerateBlockSymbol>) {
       result.subkind = LLG_SLANG_GENERATE_BLOCK;
       std::string externalName = symbol.getExternalName();
@@ -2872,6 +2877,9 @@ public:
             : LLG_SLANG_VARIABLE_LIFETIME_STATIC;
         if (symbol.flags.has(VariableFlags::Const))
           result.auxiliary |= LLG_SLANG_VARIABLE_CONST;
+        // A free checker variable (IEEE 1800-2009 17.7).
+        if (symbol.flags.has(VariableFlags::CheckerFreeVariable))
+          result.auxiliary |= LLG_SLANG_VARIABLE_RAND;
         if constexpr (std::same_as<T, ClassPropertySymbol>) {
           if (symbol.randMode == RandMode::Rand)
             result.auxiliary |= LLG_SLANG_VARIABLE_RAND;
@@ -2993,8 +3001,13 @@ public:
       captureCoverageSymbol(id, symbol);
     parents.push_back(id);
     if constexpr (std::same_as<T, InstanceBodySymbol> ||
+                  std::same_as<T, CheckerInstanceBodySymbol> ||
                   std::same_as<T, GenerateBlockSymbol>)
       disableScopes.push_back(&symbol);
+    if constexpr (std::same_as<T, CheckerInstanceSymbol>) {
+      if (!capture.declarationOnly)
+        pushCheckerActuals(id, symbol);
+    }
     // Slang's visitor does not descend into a modport port expression
     // `.p(expr)`. Capture it under the port so the low-connection role
     // below names a fully captured expression rather than a placeholder.
@@ -3183,8 +3196,23 @@ public:
       }
     }
     if constexpr (std::same_as<T, InstanceBodySymbol> ||
+                  std::same_as<T, CheckerInstanceBodySymbol> ||
                   std::same_as<T, GenerateBlockSymbol>)
       disableScopes.pop_back();
+    if constexpr (std::same_as<T, CheckerInstanceSymbol>) {
+      if (!capture.declarationOnly) {
+        checkerActuals.pop_back();
+        // The `default disable iff` condition at the instantiation, which a
+        // `$inferred_disable` formal default stands for (16.15.7, 17.4).
+        if (!disableScopes.empty()) {
+          const Scope& scope = *disableScopes.back();
+          if (const Expression* disable = scope.getCompilation().getDefaultDisable(scope)) {
+            disable->visit(*this);
+            capture.semanticRole(id, disable, LLG_SLANG_EDGE_DEFAULT_DISABLE);
+          }
+        }
+      }
+    }
     parents.pop_back();
     // The component ports of a concatenated port expression (`.p({a, b})`,
     // IEEE 1800-2009 23.2.2.1) are not scope members, but each one carries
@@ -3225,6 +3253,8 @@ public:
     attach(id);
     if (!markVisited(id))
       return;
+    if (!checkerActuals.empty())
+      markCheckerActual(id, expression);
     bindNameTokens(expression);
     bindValueNameToken(expression, true);
     if constexpr (std::same_as<T, InvalidExpression>)
@@ -5152,6 +5182,207 @@ private:
     }
   }
 
+  // A checker instance (IEEE 1800-2009 17.3) is an instance node with the
+  // checker subkind; its body is an instance body. The name keeps every
+  // declared index of an instance array element, like a module instance.
+  void describeCheckerInstance(LlgSlangSemanticNode& result,
+                               const CheckerInstanceSymbol& symbol) {
+    result.subkind = LLG_SLANG_INSTANCE_CHECKER;
+    if (!symbol.arrayPath.empty()) {
+      SmallVector<ConstantRange, 8> dimensions;
+      symbol.getArrayDimensions(dimensions);
+      if (dimensions.size() != symbol.arrayPath.size())
+        throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                            "checker array path and dimensions disagree");
+      std::string indexedName(symbol.getArrayName());
+      for (size_t i = 0; i < dimensions.size(); ++i) {
+        if (symbol.arrayPath[i] >= dimensions[i].width())
+          throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
+                              "checker array position is outside its dimension");
+        const int64_t index = int64_t(dimensions[i].lower()) +
+                              int64_t(symbol.arrayPath[i]);
+        indexedName += "[" + std::to_string(index) + "]";
+      }
+      result.name = storeString(capture.output, indexedName);
+    }
+    const CheckerInstanceBodySymbol& body = symbol.body;
+    result.definition_name = storeString(capture.output, body.checker.name);
+    if (body.isProcedural)
+      result.auxiliary |= LLG_SLANG_CHECKER_PROCEDURAL;
+    if (body.flags.has(InstanceFlags::FromBind))
+      result.auxiliary |= LLG_SLANG_CHECKER_BOUND;
+    if (body.instanceDepth > 0)
+      result.auxiliary |= LLG_SLANG_CHECKER_NESTED;
+    if (body.flags.has(InstanceFlags::Uninstantiated))
+      result.flags |= LLG_SLANG_SEMANTIC_UNINSTANTIATED;
+    // A checker has no time scale of its own: it takes the scale of the
+    // scope that declares it, like its other declaration context (17.2).
+    // Slang reports the compilation default for a compilation unit without
+    // a time unit declaration; the consumer applies its `$unit` default.
+    if (const Scope* declaring = body.checker.getParentScope()) {
+      const Symbol& scope = declaring->asSymbol();
+      if (scope.kind == SymbolKind::CompilationUnit &&
+          !compilationUnitDeclaresTimeScale(scope.as<CompilationUnitSymbol>()))
+        result.auxiliary |= LLG_SLANG_CHECKER_UNIT_TIME_SCALE;
+      else
+        addTimeScale(result, declaring->getTimeScale());
+    }
+  }
+
+  // Formal references of the checker instances being captured. Slang binds
+  // a reference to a checker formal by binding the actual argument (or the
+  // formal's default) in its own context and stamping the reference's
+  // syntax on the result (AssertionInstanceExpression::bindPort and
+  // Expression::create). The body expressions a formal reference expanded
+  // to are therefore those whose syntax is one of the declaration's
+  // identifier names spelling a formal, unless the name resolves to a
+  // checker-local declaration that shadows the formal.
+  struct CheckerActuals {
+    uint64_t instance;
+    const CheckerInstanceBodySymbol* body;
+    // Identifier syntax in the checker declaration spelling a formal name,
+    // and the syntax of each formal's default value (second: true).
+    const std::unordered_map<const syntax::SyntaxNode*,
+                             std::pair<std::string_view, bool>>* references;
+    uint32_t next = 0;
+  };
+  std::vector<CheckerActuals> checkerActuals;
+  std::unordered_map<const CheckerSymbol*,
+                     std::unordered_map<const syntax::SyntaxNode*,
+                                        std::pair<std::string_view, bool>>>
+      checkerReferences;
+
+  const std::unordered_map<const syntax::SyntaxNode*, std::pair<std::string_view, bool>>&
+  checkerFormalReferences(const CheckerSymbol& checker) {
+    auto [it, inserted] = checkerReferences.try_emplace(&checker);
+    if (!inserted)
+      return it->second;
+    std::unordered_set<std::string_view> names;
+    for (const AssertionPortSymbol* port : checker.ports) {
+      if (!port->name.empty())
+        names.insert(port->name);
+    }
+    const syntax::SyntaxNode* declaration = checker.getSyntax();
+    if (names.empty() || !declaration ||
+        declaration->kind != syntax::SyntaxKind::CheckerDeclaration)
+      return it->second;
+    auto& references = it->second;
+    // A default value's own expression keeps its syntax where the expansion
+    // is not wrapped (an event formal's clocking event, for example).
+    for (const AssertionPortSymbol* port : checker.ports) {
+      if (const auto* value = checkerActualExpression(port->defaultValueSyntax))
+        references.emplace(value, std::make_pair(port->name, true));
+    }
+    auto visitor = syntax::makeSyntaxVisitor(
+        [&](auto&, const syntax::IdentifierNameSyntax& name) {
+          const std::string_view text = name.identifier.valueText();
+          if (const auto found = names.find(text); found != names.end())
+            references.emplace(&name, std::make_pair(*found, false));
+        });
+    for (const syntax::MemberSyntax* member :
+         declaration->as<syntax::CheckerDeclarationSyntax>().members)
+      member->visit(visitor);
+    return references;
+  }
+
+  void pushCheckerActuals(uint64_t id, const CheckerInstanceSymbol& symbol) {
+    checkerActuals.push_back(
+        {id, &symbol.body, &checkerFormalReferences(symbol.body.checker), 0});
+  }
+
+  static bool declaredWithin(const Symbol& symbol, const Scope& scope) {
+    for (const Scope* current = symbol.getParentScope(); current;
+         current = current->asSymbol().getParentScope()) {
+      if (current == &scope)
+        return true;
+    }
+    return false;
+  }
+
+  static const syntax::ExpressionSyntax* checkerActualExpression(
+      const syntax::PropertyExprSyntax* actual) {
+    if (!actual || actual->kind != syntax::SyntaxKind::SimplePropertyExpr)
+      return nullptr;
+    const syntax::SequenceExprSyntax* sequence =
+        actual->as<syntax::SimplePropertyExprSyntax>().expr;
+    if (sequence->kind != syntax::SyntaxKind::SimpleSequenceExpr)
+      return nullptr;
+    const auto& simple = sequence->as<syntax::SimpleSequenceExprSyntax>();
+    if (simple.repetition)
+      return nullptr;
+    const syntax::ExpressionSyntax* expression = simple.expr.get();
+    while (expression->kind == syntax::SyntaxKind::ParenthesizedExpression)
+      expression = expression->as<syntax::ParenthesizedExpressionSyntax>().expression;
+    return expression;
+  }
+
+  // Records `id` as the expansion of a checker formal (17.3). A formal of a
+  // checker instantiated in another checker is connected directly, not
+  // sampled (17.3.2): when its actual is itself the parent's formal, the
+  // expansion belongs to the parent's formal, otherwise it is not recorded.
+  // A default value is recorded at the instance that uses it.
+  void markCheckerActual(uint64_t id, const Expression& expression) {
+    if (!expression.syntax)
+      return;
+    const syntax::SyntaxNode* reference = expression.syntax;
+    size_t level = checkerActuals.size();
+    while (level-- > 0) {
+      CheckerActuals& entry = checkerActuals[level];
+      const auto found = entry.references->find(reference);
+      if (found == entry.references->end())
+        continue;
+      const CheckerInstanceBodySymbol& body = *entry.body;
+      if (const Symbol* target = expression.getSymbolReference();
+          target && declaredWithin(*target, body))
+        return;
+      const auto [name, defaultSyntax] = found->second;
+      const AssertionPortSymbol* port = nullptr;
+      for (const AssertionPortSymbol* candidate : body.checker.ports) {
+        if (candidate->name == name)
+          port = candidate;
+      }
+      const Symbol* formal = body.find(name);
+      if (!port || !formal)
+        return;
+      const auto binding = body.assertionDetails.argumentMap.find(formal);
+      if (binding == body.assertionDetails.argumentMap.end())
+        return;
+      const syntax::PropertyExprSyntax* actual = std::get<0>(binding->second);
+      const bool isDefault = actual && actual == port->defaultValueSyntax;
+      if (defaultSyntax && !isDefault)
+        continue;
+      if (!isDefault && body.instanceDepth > 0) {
+        const syntax::ExpressionSyntax* forwarded = checkerActualExpression(actual);
+        if (!forwarded || forwarded->kind != syntax::SyntaxKind::IdentifierName ||
+            level == 0)
+          return;
+        reference = forwarded;
+        continue;
+      }
+      const uint32_t flag = isDefault ? LLG_SLANG_CHECKER_ACTUAL_DEFAULT : 0;
+      capture.semanticEdge(entry.instance, LLG_SLANG_EDGE_CHECKER_ACTUAL, id,
+                           entry.next++ | flag);
+      // An event formal in an event control expands to the actual's
+      // clocking event; its event expressions are what consumers resolve.
+      if (expression.kind == ExpressionKind::ClockingEvent)
+        markCheckerEvents(entry, expression.as<ClockingEventExpression>().timingControl,
+                          flag);
+      return;
+    }
+  }
+
+  void markCheckerEvents(CheckerActuals& entry, const TimingControl& timing, uint32_t flag) {
+    if (timing.kind == TimingControlKind::SignalEvent) {
+      capture.semanticEdge(entry.instance, LLG_SLANG_EDGE_CHECKER_ACTUAL,
+                           capture.ensureSemantic(&timing.as<SignalEventControl>().expr),
+                           entry.next++ | flag);
+    }
+    else if (timing.kind == TimingControlKind::EventList) {
+      for (const TimingControl* event : timing.as<EventListControl>().events)
+        markCheckerEvents(entry, *event, flag);
+    }
+  }
+
   static void addDefinitionKind(LlgSlangSemanticNode& node,
                                 DefinitionKind kind) {
     switch (kind) {
@@ -5411,7 +5642,8 @@ private:
       if (const Expression* initializer = symbol.getInitializer())
         capture.semanticRole(id, initializer, LLG_SLANG_EDGE_INITIALIZER);
     }
-    if constexpr (std::same_as<T, InstanceBodySymbol>) {
+    if constexpr (std::same_as<T, InstanceBodySymbol> ||
+                  std::same_as<T, CheckerInstanceBodySymbol>) {
       // The default clocking in effect for this instance, including one named
       // by a `default clocking id;` item (IEEE 1800-2009 14.12). Slang keeps
       // that reference only in its compilation; the edge is appended, never
@@ -7680,6 +7912,31 @@ private:
   Capture& capture;
 };
 
+// The checker declarations that have an elaborated instance below `root`.
+// Built only when the unused-declaration check reports a checker.
+std::unordered_set<const Symbol*> collectInstantiatedCheckers(const RootSymbol& root) {
+  std::unordered_set<const Symbol*> result;
+  root.visit(makeVisitor([&](auto& visitor, const CheckerInstanceSymbol& instance) {
+    result.insert(&instance.body.checker);
+    visitor.visitDefault(instance);
+  }));
+  return result;
+}
+
+// Whether `symbol` is declared in the body of a checker instance that is not
+// procedural (IEEE 1800-2009 17.3), at any nesting depth.
+bool inStaticCheckerBody(const Symbol* symbol) {
+  for (const Scope* scope = symbol ? symbol->getParentScope() : nullptr; scope;
+       scope = scope->asSymbol().getParentScope()) {
+    const Symbol& owner = scope->asSymbol();
+    if (owner.kind == SymbolKind::CheckerInstanceBody)
+      return !owner.as<CheckerInstanceBodySymbol>().isProcedural;
+    if (owner.kind == SymbolKind::InstanceBody)
+      return false;
+  }
+  return false;
+}
+
 class CaptureClient final : public DiagnosticClient {
 public:
   CaptureClient(Capture& capture, uint32_t provider)
@@ -7688,7 +7945,8 @@ public:
   void issue(DiagnosticEngine& diagnosticEngine, const Diagnostic& diagnostic) {
     root = &diagnostic;
     rootIndex = LLG_SLANG_INVALID_ID;
-    if (diagnostic.isError() && diagnostic.code != diag::AlwaysWithoutTimingControl)
+    if (diagnostic.isError() && diagnostic.code != diag::AlwaysWithoutTimingControl &&
+        diagnostic.code != diag::AlwaysInChecker)
       capture.output.flags |= LLG_SLANG_SNAPSHOT_HAS_ERRORS;
     diagnosticEngine.issue(diagnostic);
     root = nullptr;
@@ -8585,6 +8843,11 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   // overlapping module paths stay a warning: each is an active path and the
   // smallest delay applies (1800-2009 30.5.3, decision A7-D4).
   engine.setSeverity(diag::SpecifyBlockParam, DiagnosticSeverity::Error);
+  // IEEE 1800-2009 17.5 admits `always` procedures in a checker body
+  // (checker_always_construct ::= always statement); the frontend follows
+  // the later revision, which replaced them with always_comb/_latch/_ff.
+  // The owned checker lowering enforces the 2009 statement restrictions.
+  engine.setSeverity(diag::AlwaysInChecker, DiagnosticSeverity::Ignored);
   Diagnostics pragmaDiagnostics = engine.setMappingsFromPragmas();
   for (const Diagnostic& diagnostic : pragmaDiagnostics)
     compilationClient->issue(engine, diagnostic);
@@ -8618,6 +8881,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     manager.analyze(compilation);
     Diagnostics diagnostics = manager.getDiagnostics();
     diagnostics.sort(sourceManager);
+    std::optional<std::unordered_set<const Symbol*>> instantiatedCheckers;
     engine.clearClients();
     auto analysisClient = std::make_shared<CaptureClient>(
         capture, LLG_SLANG_DIAG_ANALYSIS);
@@ -8631,6 +8895,23 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
           diagnostic.symbol && diagnostic.symbol->kind == SymbolKind::Subroutine &&
           dpiExportName(capture, diagnostic.symbol->as<SubroutineSymbol>()))
         continue;
+      // The frontend infers no clock for a `$inferred_clock` formal default
+      // of a static checker instance, but 16.15.7 and 17.4 take the clock
+      // that flows to the instantiation (its default clocking). The owned
+      // checker lowering resolves it there and reports a located error when
+      // none applies.
+      if (diagnostic.code == diag::NoInferredClock && inStaticCheckerBody(diagnostic.symbol))
+        continue;
+      // The unused-declaration check does not count a checker instantiated
+      // with the module instantiation syntax (IEEE 1800-2009 17.3) as a use.
+      if ((diagnostic.code == diag::UnusedAssertionDecl ||
+           diagnostic.code == diag::UnusedPackageAssertionDecl) &&
+          diagnostic.symbol && diagnostic.symbol->kind == SymbolKind::Checker) {
+        if (!instantiatedCheckers)
+          instantiatedCheckers = collectInstantiatedCheckers(root);
+        if (instantiatedCheckers->contains(diagnostic.symbol))
+          continue;
+      }
       analysisClient->issue(engine, diagnostic);
     }
     output->flags |= LLG_SLANG_SNAPSHOT_ANALYSIS_RAN;

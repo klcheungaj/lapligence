@@ -1,0 +1,10 @@
+15 tb.f.a2 d=1 seen=0
+25 tb.c.a1 fail cnt=2
+25 tb.f.a2 d=2 seen=1
+35 tb.c.a1 fail cnt=3
+35 tb.f.a2 d=3 seen=2
+45 tb.f.a2 d=4 seen=3
+55 tb.f.a2 d=5 seen=4
+65 tb.f.a2 d=6 seen=5
+tb.c cnt=7
+tb.f seen=6 seen_e=9

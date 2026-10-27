@@ -60,8 +60,8 @@ pub use randsequence::{
 };
 mod nodes;
 pub use nodes::{
-    CaseItem, GateTerm, Node, NodeKind, PatternCaseItem, PrimClass, ProcessKind, RandCaseItem,
-    UdpLocation, UdpRow, UdpTable,
+    CaseItem, CheckerActual, CheckerInstanceInfo, GateTerm, Node, NodeKind, PatternCaseItem,
+    PrimClass, ProcessKind, RandCaseItem, UdpLocation, UdpRow, UdpTable,
 };
 mod assertions;
 pub use assertions::{
@@ -235,6 +235,13 @@ pub struct Db {
     /// metadata rather than inferred from names or source text so simulator
     /// scheduling can distinguish it after the Slang snapshot is released.
     program_instances: HashSet<NodeId>,
+    /// Checker instances (IEEE 1800-2009 17.3). Each is a hierarchy instance
+    /// ([`NodeKind::ModuleInst`]) whose children are the elaborated checker
+    /// body; this table keeps its checker identity and context.
+    checker_instances: HashMap<NodeId, CheckerInstanceInfo>,
+    /// Checker-body expressions that a formal reference expanded to, with
+    /// the checker instance whose formal it is (IEEE 1800-2009 17.3).
+    checker_actuals: HashMap<NodeId, CheckerActual>,
     /// Definition-level pull behavior for omitted input ports, copied from
     /// the frontend's directive state while the snapshot is imported.
     unconnected_drives: HashMap<NodeId, UnconnectedDrive>,
@@ -414,6 +421,8 @@ impl Db {
             conditional_patterns: HashMap::new(),
             conditional_pattern_fields: HashMap::new(),
             program_instances: HashSet::new(),
+            checker_instances: HashMap::new(),
+            checker_actuals: HashMap::new(),
             unconnected_drives: HashMap::new(),
             primitive_array_positions: HashMap::new(),
             instance_array_ranges: HashMap::new(),
@@ -502,6 +511,8 @@ impl Db {
             conditional_patterns: HashMap::new(),
             conditional_pattern_fields: HashMap::new(),
             program_instances: HashSet::new(),
+            checker_instances: HashMap::new(),
+            checker_actuals: HashMap::new(),
             unconnected_drives: HashMap::new(),
             primitive_array_positions: HashMap::new(),
             instance_array_ranges: HashMap::new(),
@@ -636,6 +647,30 @@ impl Db {
     /// metadata and therefore report `false`.
     pub fn is_program_instance(&self, id: NodeId) -> bool {
         self.program_instances.contains(&id)
+    }
+
+    /// Checker identity of an elaborated instance (IEEE 1800-2009 17.3).
+    pub fn checker_instance(&self, id: NodeId) -> Option<&CheckerInstanceInfo> {
+        self.checker_instances.get(&id)
+    }
+
+    /// Every checker instance in node order.
+    pub fn checker_instances(&self) -> Vec<NodeId> {
+        let mut instances = self.checker_instances.keys().copied().collect::<Vec<_>>();
+        instances.sort_unstable_by_key(|id| id.0);
+        instances
+    }
+
+    /// Whether any checker is instantiated, so designs without checkers skip
+    /// every checker-specific pass.
+    pub fn has_checker_instances(&self) -> bool {
+        !self.checker_instances.is_empty()
+    }
+
+    /// The checker formal a checker-body expression expanded from, when it
+    /// is the expansion of a formal reference (IEEE 1800-2009 17.3).
+    pub fn checker_actual(&self, id: NodeId) -> Option<CheckerActual> {
+        self.checker_actuals.get(&id).copied()
     }
 
     /// Library that bound an elaborated instance's definition, or that holds

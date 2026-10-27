@@ -755,6 +755,11 @@ impl<'a> Codegen<'a> {
         scope_path: &str,
         h: NodeId,
     ) -> Result<IrExpr, String> {
+        if self.checker_sampling {
+            if let Some(value) = self.checker_formal_read(scope_path, h)? {
+                return Ok(value);
+            }
+        }
         // A random variable inside a constraint stands for its solver value.
         if let Some(placeholder) = self.random_placeholder(h) {
             return Ok(placeholder);

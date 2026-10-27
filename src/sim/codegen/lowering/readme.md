@@ -12,6 +12,7 @@ semantic nodes into typed IR. C generation belongs to `emit_c`, not these module
 | `randomization/` | `randomize()`/`std::randomize()` sites, constraint problems for the C11 solver and `rand_mode`/`constraint_mode` state. |
 | `coverage.rs` | Constructed covergroups (SIM-044, SIM-045): synthetic instance class layouts, coverpoint bin tables (19.5-19.5.6), crosses and select expressions (19.6), option checks (19.7), `sample` methods, sampler processes, per-instance event waiters and block-event samplers, `new`, method calls and coverage queries. Declarations never constructed or called produce nothing. |
 | `coverage/transitions.rs` | Transition bins (19.5.1) as compile-time automata: value classes, per-step accept sets, repetition states, `[]` expansion, coverable-sequence counts and `detect_overlap` pairs. |
+| `checkers.rs` | Checker instances (ADV-015): the 17.5 checker `always` statement restrictions, the 17.7.1 assignment rules and the free-variable limit, run only when the design instantiates a checker. Checker processes run in Reactive (`IrProcess::set_checker`); formal reads become `$sampled` reads of their actuals through `Codegen::checker_sampling` and `Db::checker_actual`, and `$inferred_clock`/`$inferred_disable` resolve to the instantiation context in `clocking_context.rs` and `assertions.rs`. |
 | Assertion, clocking and event helpers | Sampling/evaluator contexts, sequence plans, qualifiers, captures and regions. |
 
 Fixed-value collection preserves immediate rows/members, declaration order and

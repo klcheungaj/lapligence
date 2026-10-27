@@ -152,17 +152,31 @@ impl EmitCtx<'_, '_> {
             }) => (specs, *implicit, *body),
             _ => unreachable!("non-event-control passed to lower_event_control"),
         };
-        let specs = specs.clone();
-        self.cg.ensure_event_spec_endpoints(&self.path, &specs)?;
+        let specs = match self.cg.checker_inferred_event_specs(specs)? {
+            Some(inferred) => inferred,
+            None => specs.clone(),
+        };
+        // A checker formal in an event control is substituted directly, not
+        // sampled (IEEE 1800-2009 17.3).
+        let sampling = std::mem::replace(&mut self.cg.checker_sampling, false);
+        let wait = (|| -> Result<Vec<IrStmt>, String> {
+            self.cg.ensure_event_spec_endpoints(&self.path, &specs)?;
+            let body = body.ok_or_else(|| "event_control without body".to_string())?;
+            Ok(
+                if !implicit
+                    && (self.event_specs_need_process(&specs)
+                        || self.specs_read_unbound_ref_formal(&specs))
+                {
+                    self.lower_process_evaluated_event(h, &specs)?
+                } else {
+                    vec![self.lower_event_wait(&specs, implicit, body)?]
+                },
+            )
+        })();
+        self.cg.checker_sampling = sampling;
+        let mut out = wait?;
         let specs = &specs;
         let body = body.ok_or_else(|| "event_control without body".to_string())?;
-        let mut out = if !implicit
-            && (self.event_specs_need_process(specs) || self.specs_read_unbound_ref_formal(specs))
-        {
-            self.lower_process_evaluated_event(h, specs)?
-        } else {
-            vec![self.lower_event_wait(specs, implicit, body)?]
-        };
         self.saw_wait = true;
         // The body may be a `Stmt(Empty)` placeholder for a bare
         // `@(posedge clk);`; skip it.
@@ -172,12 +186,14 @@ impl EmitCtx<'_, '_> {
             // only while lowering the controlled body; nested controls save
             // and restore their own inferred domain.
             let previous_clock = self.cg.sampled_clock;
-            if let Some(clock) = self
+            let sampling = std::mem::replace(&mut self.cg.checker_sampling, false);
+            let inferred = self
                 .cg
                 .lower_sampled_clock_spec(&self.path, specs)
                 .ok()
-                .flatten()
-            {
+                .flatten();
+            self.cg.checker_sampling = sampling;
+            if let Some(clock) = inferred {
                 self.cg.sampled_clock = Some(clock);
             }
             let body_result = self.lower_stmt(body);
@@ -1036,6 +1052,8 @@ impl EmitCtx<'_, '_> {
         &mut self,
         specs: &[EventSpec],
     ) -> Result<Vec<(IrWaitSrc, IrEdge)>, String> {
+        let inferred = self.cg.checker_inferred_event_specs(specs)?;
+        let specs = inferred.as_deref().unwrap_or(specs);
         let mut lowered = Vec::with_capacity(specs.len());
         for spec in specs {
             match self.global_clock_events(spec)? {

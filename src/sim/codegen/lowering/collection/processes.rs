@@ -2040,7 +2040,16 @@ impl<'a> Codegen<'a> {
         // 16.15.6: procedural concurrent assertions without a clock of their
         // own take the clock this procedure infers.
         self.procedure_body = Some(stmt);
-        let (body_stmts, mut pre_fns, shape) = {
+        // A checker procedure reads its formals' sampled values (17.3) and
+        // runs in the Reactive region (17.7.3).
+        // A deferred assertion item of a checker is handled as in a module
+        // (17.3.1): it runs in the Active region and re-executes when the
+        // actuals it reads change, reading their current values (decision
+        // A15-D3).
+        let checker_procedure =
+            self.db.checker_instance(inst).is_some() && deferred_assertion_member.is_none();
+        let previous_sampling = std::mem::replace(&mut self.checker_sampling, checker_procedure);
+        let lowered = (|| -> Result<_, String> {
             let mut ctx = EmitCtx::new(self, path.to_string(), inst, "0", None, is_final);
             ctx.process_kind = always_type;
             let mut body_stmts = pattern_decls;
@@ -2093,8 +2102,10 @@ impl<'a> Codegen<'a> {
             } else {
                 IrShape::Loop
             };
-            (body_stmts, pre_fns, shape)
-        };
+            Ok((body_stmts, pre_fns, shape))
+        })();
+        self.checker_sampling = previous_sampling;
+        let (body_stmts, mut pre_fns, shape) = lowered?;
         self.procedure_body = None;
         pre_fns.extend(std::mem::take(&mut self.pending_container_pre_fns));
         let kind_label = if is_initial {
@@ -2116,6 +2127,7 @@ impl<'a> Codegen<'a> {
             origin,
         );
         process.set_program(self.db.is_program_instance(inst).then_some(inst.0));
+        process.set_checker(checker_procedure);
         if matches!(ir_kind, IrProcessKind::Always | IrProcessKind::FlipFlop)
             && matches!(process.shape, IrShape::Loop)
             && matches!(
