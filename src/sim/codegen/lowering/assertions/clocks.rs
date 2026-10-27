@@ -126,14 +126,23 @@ impl Codegen<'_> {
     }
 
     /// `$inferred_clock` as a checker formal default (IEEE 1800-2009 17.4):
-    /// the clock inferred where the checker is instantiated. A static
-    /// instance takes the default clocking in effect at the instantiation.
+    /// the clock inferred where the checker is instantiated. A procedural
+    /// instance takes the clock its procedure infers (16.15.6), else, like a
+    /// static instance, the default clocking in effect at the instantiation.
     fn checker_inferred_clock(
         &mut self,
         path: &str,
         checker: NodeId,
         node: NodeId,
     ) -> Result<SampledClock, String> {
+        if let Some(body) = self.procedural_checker_body(checker) {
+            let previous = self.procedure_body.replace(body);
+            let clock = self.procedure_assertion_clock(path, node);
+            self.procedure_body = previous;
+            if let Some(clock) = clock? {
+                return Ok(clock);
+            }
+        }
         let context = self.node(checker).parent;
         let clock = match context {
             Some(context) => {

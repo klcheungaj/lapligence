@@ -2644,8 +2644,13 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   read with current values (A15-D5); predicate assumptions constrain the
   solve, and an unsuccessful attempt leaves the values and lets the
   assumption fail. A formal passed to a `let` reads the sampled actual.
-  Sampled value functions of active free variables, unpacked free variables
-  and procedural checker instances are located limits
+  A procedural checker instance (17.3.1) runs its procedures every time
+  step and queues its static assertions, and those of its nested static
+  checkers, on its procedure's procedural assertion queue whenever the
+  instantiation executes; `$inferred_clock` takes the procedure's inferred
+  clock (17.4). Sampled value functions of active free variables, unpacked
+  free variables and automatic or `const'` actuals of procedural checkers
+  are located limits
   ([known issue](known_issues.md#checker-limits-after-adv-015);
   [adv_015](../tests/fixtures/sim/feature_completion/adv_015/readme.md)).
   SV ch.17 **[SV-2009]**.

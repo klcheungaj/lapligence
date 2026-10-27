@@ -3691,6 +3691,13 @@ public:
         capture.output.semantic_nodes[static_cast<size_t>(id)].target_id = target;
       }
     }
+    if constexpr (std::same_as<T, ProceduralCheckerStatement>) {
+      // `result` may move once ensureSemantic grows the node table.
+      result.subkind = LLG_SLANG_STMT_PROCEDURAL_CHECKER;
+      uint32_t ordinal = 0;
+      for (const Symbol* instance : statement.instances)
+        proceduralCheckerEdges(id, *instance, ordinal);
+    }
     parents.push_back(id);
     if constexpr (std::same_as<T, VariableDeclStatement>)
       handle(statement.symbol);
@@ -3709,6 +3716,21 @@ public:
       captureRandSequence(id, statement);
     parents.pop_back();
     addStatementRoles(statement, id);
+  }
+
+  // The checker instances a procedural checker statement instantiates, array
+  // elements in element order. Slang resolves them by name in the statement's
+  // scope, which also holds them as members, so each is captured there.
+  void proceduralCheckerEdges(uint64_t id, const Symbol& symbol, uint32_t& ordinal) {
+    if (symbol.kind == SymbolKind::InstanceArray) {
+      for (const Symbol* element : symbol.as<InstanceArraySymbol>().elements)
+        proceduralCheckerEdges(id, *element, ordinal);
+      return;
+    }
+    if (symbol.kind != SymbolKind::CheckerInstance)
+      return;
+    capture.semanticEdge(id, LLG_SLANG_EDGE_PROCEDURAL_CHECKER,
+                         capture.ensureSemantic(&symbol), ordinal++);
   }
 
   // The `default disable iff` condition inferred for a concurrent assertion

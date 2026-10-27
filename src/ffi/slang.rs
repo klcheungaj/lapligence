@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 55;
+const ABI_VERSION: u32 = 57;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -942,6 +942,9 @@ pub const SEMANTIC_STMT_CONCURRENT_RESTRICT: u32 = 71;
 /// lowering rejects them with their source location instead of treating a
 /// surviving pattern as an empty case.
 pub const SEMANTIC_STMT_PATTERN_CASE: u32 = 233;
+/// A checker instantiation in procedural code (IEEE 1800-2009 17.3.1);
+/// [`SemanticEdgeRole::ProceduralChecker`] edges name its instances.
+pub const SEMANTIC_STMT_PROCEDURAL_CHECKER: u32 = 238;
 
 /// Conditional pattern subtype tags defined by the C ABI. Pattern nodes stay
 /// in the unsupported semantic category until a consumer proves the subtype
@@ -1203,6 +1206,9 @@ pub enum SemanticEdgeRole {
     /// reference expanded to (IEEE 1800-2009 17.3); the index has
     /// [`CHECKER_ACTUAL_DEFAULT`] set for a formal's default value.
     CheckerActual,
+    /// From a procedural checker statement to each checker instance it
+    /// instantiates (IEEE 1800-2009 17.3.1); the index is the ordinal.
+    ProceduralChecker,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

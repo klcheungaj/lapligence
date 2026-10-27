@@ -10,6 +10,7 @@ use super::*;
 use std::collections::BTreeMap;
 
 mod free_variables;
+mod procedural;
 pub(super) use free_variables::FreeSetPlan;
 
 /// The free variables of one checker instance (17.7) and the variables its
@@ -31,6 +32,7 @@ struct AssignedBits {
 impl Codegen<'_> {
     /// IEEE 1800-2009 17.5 and 17.7.1 restrictions on checker procedures.
     pub(super) fn validate_checker_constructs(&mut self) -> Result<(), String> {
+        self.collect_procedural_checker_bodies();
         for checker in self.db.checker_instances() {
             let mut free = Vec::new();
             let mut assigned: BTreeMap<u32, Vec<AssignedBits>> = BTreeMap::new();

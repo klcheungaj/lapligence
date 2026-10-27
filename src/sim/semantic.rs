@@ -1159,14 +1159,6 @@ fn simulation_node_detail(db: &Db, id: NodeId) -> String {
             };
         }
     }
-    // A checker instantiated in procedural code needs its assertions queued
-    // as procedural concurrent assertions (IEEE 1800-2009 17.4), which llg
-    // does not implement; name the construct instead of the frontend kind.
-    if db.semantic_detail(id) == Some("ProceduralChecker") {
-        return "checker instance in procedural code (IEEE 1800-2009 17.4); instantiate \
-                the checker outside the procedure"
-            .to_owned();
-    }
     db.semantic_detail(id)
         .filter(|detail| !detail.is_empty())
         .map(ToOwned::to_owned)

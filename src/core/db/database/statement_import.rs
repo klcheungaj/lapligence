@@ -112,6 +112,19 @@ pub(super) fn statement_from_slang(
                 items,
             }
         }
+        crate::ffi::slang::SEMANTIC_STMT_PROCEDURAL_CHECKER => {
+            let mut instances = edges
+                .iter()
+                .filter(|edge| edge.role == SemanticEdgeRole::ProceduralChecker)
+                .collect::<Vec<_>>();
+            instances.sort_by_key(|edge| edge.index);
+            StmtKind::ProceduralChecker {
+                instances: instances
+                    .into_iter()
+                    .map(|edge| semantic_id(ids, edge.target_id))
+                    .collect::<Result<_, _>>()?,
+            }
+        }
         crate::ffi::slang::SEMANTIC_STMT_PATTERN_CASE => {
             let selectors = edges
                 .iter()

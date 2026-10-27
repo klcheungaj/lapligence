@@ -11,7 +11,7 @@ declares `` `timescale 1ns / 1ns ``. Every expected line was derived by hand
 from the stimulus and the clauses quoted below, not copied from a simulator
 transcript. Line numbers refer to the `pdftotext -layout` extraction
 `SystemVerilog-1800-2009.txt`. The portable decision cases `A15-D1` to
-`A15-D3` live in `tests/fixtures/sim/lrm_decisions/`.
+`A15-D5` live in `tests/fixtures/sim/lrm_decisions/`.
 
 Run the suite with:
 
@@ -27,6 +27,7 @@ scripts/run-tests.sh -E 'binary(sim_feature_completion) & test(adv_015::)'
 | `boundary.sv` | disjoint bits of one variable from two procedures, named block, two instances, unused checker (A01) |
 | `free_vars.sv` | free variables: LRM observer model assumptions (`|=>` and `|->`), range assumption, `const` and assigned free variables, initialized active variable in the first time step, explicitly and implicitly clocked redraws (A02) |
 | `free_unsat.sv` | an assume set without solution fails its assumption when checked; an independent set and an X state value (A02) |
+| `procedural.sv` | procedural checker instances: gated, in a loop, in an `initial` procedure, nested static subchecker, inferred procedure clock, beside a static instance (A03) |
 | `let_formals.sv` | checker formals passed to lets declared inside and outside the checker: ordered, named and default arguments, a one-formal let, a let calling a let, repeated calls (A01) |
 | `neg_*.sv` | 17.5 and 17.7.1 restrictions, later-revision forms, located limits (A03) |
 
@@ -150,5 +151,27 @@ free variable) and `neg_free_unpacked` (an unpacked free variable) are
 located limits; see the
 [known issue](../../../../../docs/known_issues.md#checker-limits-after-adv-015).
 
-Located limit (A03): procedural checker instances (17.3.1, L28345-28347)
-are rejected at their location.
+Procedural checker instances (17.3.1 L28345-28351, L28398-28399; 17.4
+L28490-28491), `procedural`. Clocks rise at 5, 15, ..., 45; `a` is 0 until
+32, `b` 1 until 42, `en` 1 from 12 to 32. `outside` is static: `p1` fails at
+5, 15, 25 and its `sub` at 45. `gated` is reached only while `en` is 1, at
+15 and 25, where its queued `p1` fails; its `n` still counts every edge
+(n=1 at 15). The loop reaches `loop` twice per edge, so each failure of its
+nested `sub` (reading `a`) appears twice at 5, 15 and 25. `once`, in an
+`initial` procedure, is queued once and checked at the first edge only.
+`gated` and `loop` take `posedge clk` from `blk` for `$inferred_clock`, and
+`%m` keeps the named block. Actions read `n` before its Re-NBA update.
+
+> If the checker is procedural, all static assertion statements in the checker are added to the pending
+> procedural assertion queue for their process when the checker instantiation is reached in process
+> execution, and then may mature or be flushed like any procedural concurrent assertion (see 16.15.6.2).
+
+> If the checker is statically instantiated inside another checker, any of its static assertions are treated
+> as if instantiated in the parent checker, and thus will also be queued when an instantiation of its top-
+> level ancestor in the checker hierarchy is visited in procedural code.
+
+> Each of the three instantiations has its own version of sum, which is updated at every positive clock
+> edge, regardless of whether that instance was visited in procedural code.
+
+`neg_procedural_automatic` (an automatic actual, whose current value 17.3
+substitutes when the assertions are queued) is a located limit.

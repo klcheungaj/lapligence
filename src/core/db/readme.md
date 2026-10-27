@@ -101,7 +101,11 @@ context's default disable, and `Db::checker_actual` marks the body
 expressions a formal reference expanded to (its actual or default), so
 lowering can read their sampled values. A formal passed as an argument of a
 let, sequence or property instance, declared in the checker or outside it,
-is marked where the instance's formal expands to it.
+is marked where the instance's formal expands to it. A procedural checker
+instance is hoisted from the statement block around its instantiation to
+the enclosing instance or generate scope, keeping its full name through
+named blocks (17.3.1: its contents exist in every time step), and its
+`StmtKind::ProceduralChecker` statement names the instances it creates.
 Typed references distinguish subroutine
 bodies, indexed pattern keys, event qualifiers and ordered conditional clauses.
 Concrete loop-generate blocks use the array name and source index as one

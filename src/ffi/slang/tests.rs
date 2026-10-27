@@ -850,7 +850,12 @@ fn sequential_predicate_pattern_edge_decodes_and_unknown_roles_still_fail() {
         .semantic_edges;
     assert_eq!(decoded[0].role, SemanticEdgeRole::CheckerActual);
     assert_eq!(decoded[0].index, 2 | CHECKER_ACTUAL_DEFAULT);
-    let message = invalid_native_message(stream(&tables(edge(44, 2, 0))));
+    let decoded = stream(&tables(edge(44, 1, 0)))
+        .expect("procedural checker role (ABI 57)")
+        .semantic_edges;
+    assert_eq!(decoded[0].role, SemanticEdgeRole::ProceduralChecker);
+    assert_eq!(decoded[0].index, 1);
+    let message = invalid_native_message(stream(&tables(edge(45, 2, 0))));
     assert!(message.contains("unknown role"), "{message}");
 }
 

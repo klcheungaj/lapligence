@@ -555,6 +555,7 @@ impl Db {
                         | SemanticEdgeRole::SourceIdentity
                         | SemanticEdgeRole::ReturnOwner
                         | SemanticEdgeRole::CheckerActual
+                        | SemanticEdgeRole::ProceduralChecker
                 ) {
                     children.push(semantic_id(&ids, edge.target_id)?);
                 }
@@ -1391,6 +1392,7 @@ impl Db {
         }
 
         assign_semantic_full_names(&mut nodes)?;
+        hoist_procedural_checkers(&mut nodes, &checker_instances);
         let mut elaborated_type_ranges = Vec::new();
         for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
             let id = NodeId::from_index(index);
@@ -1682,6 +1684,52 @@ fn instance_array_ranges(snapshot: &SlangSnapshot) -> HashMap<NodeId, (i32, i32)
             (NodeId::from_index(index), (left, right))
         })
         .collect()
+}
+
+/// Make each procedural checker instance a child of the instance or generate
+/// scope that encloses its instantiation statement. The frontend keeps it as
+/// a member of the statement block around the statement, but all its
+/// contents other than static assertions "are considered to exist during
+/// every time step, regardless of whether the checker is static or
+/// procedural" (IEEE 1800-2009 17.3.1), as in a static instance. Runs after
+/// full names are assigned, so the instance keeps its hierarchical name
+/// through named blocks.
+fn hoist_procedural_checkers(nodes: &mut [Node], checkers: &HashMap<NodeId, CheckerInstanceInfo>) {
+    let mut moves = Vec::new();
+    for (&instance, info) in checkers {
+        if !info.procedural {
+            continue;
+        }
+        let Some(block) = nodes[instance.index()].parent else {
+            continue;
+        };
+        let mut owner = Some(block);
+        while let Some(scope) = owner {
+            if !matches!(nodes[scope.index()].kind, NodeKind::Stmt(StmtKind::Begin)) {
+                break;
+            }
+            owner = nodes[scope.index()].parent;
+        }
+        let Some(owner) = owner.filter(|owner| {
+            *owner != block
+                && matches!(
+                    nodes[owner.index()].kind,
+                    NodeKind::ModuleInst { .. } | NodeKind::GenScope
+                )
+        }) else {
+            continue;
+        };
+        moves.push((instance, block, owner));
+    }
+    // Instances keep their capture order among the owner's children.
+    moves.sort_unstable_by_key(|(instance, _, _)| instance.index());
+    for (instance, block, owner) in moves {
+        nodes[block.index()]
+            .children
+            .retain(|child| *child != instance);
+        nodes[owner.index()].children.push(instance);
+        nodes[instance.index()].parent = Some(owner);
+    }
 }
 
 #[cfg(test)]
@@ -2284,5 +2332,51 @@ mod tests {
         let plain = Db::from_slang(&plain.snapshot).unwrap();
         assert!(!plain.has_checker_instances());
         assert!(plain.checker_instances().is_empty());
+    }
+    #[test]
+    fn procedural_checker_instances_are_hoisted_and_named_by_their_statement() {
+        let source = "checker pc(logic a, event clk); a1: assert property (@clk a); endchecker \
+            module top; logic clk, a; \
+            always @(posedge clk) begin : blk if (a) begin pc u(a, posedge clk); end end \
+            endmodule";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "procedural.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let u = db
+            .checker_instances()
+            .into_iter()
+            .find(|id| db.node(*id).name == "u")
+            .expect("procedural checker instance");
+        assert!(db.checker_instance(u).unwrap().procedural);
+        // A child of the module, keeping its name through the named block.
+        let top = db.node(u).parent.expect("hoisted parent");
+        assert!(matches!(db.node_kind(top), NodeKind::ModuleInst { .. }));
+        assert!(db.node(top).children.contains(&u));
+        assert_eq!(&*db.node(u).full_name, "top.blk.u");
+        assert_eq!(
+            db.node_ids()
+                .filter(|id| db.node(*id).children.contains(&u))
+                .count(),
+            1
+        );
+        let statements = db
+            .node_ids()
+            .filter_map(|id| match db.node_kind(id) {
+                NodeKind::Stmt(StmtKind::ProceduralChecker { instances }) => {
+                    Some(instances.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(statements, vec![vec![u]]);
     }
 }

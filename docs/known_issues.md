@@ -1921,32 +1921,34 @@ these limits:
 - Only predicate assumptions (`C`, `A |-> C`, `A |=> C` with Boolean `A`
   and `C`, no abort) constrain the solve; other assume forms in an assume
   set trigger solving at their clock events but are only checked.
-- The assume set of an instance excludes nothing for const-cast or
-  automatic actuals, which only procedural instances can have.
 
-A checker instantiated in procedural code (SV 17.3, 17.3.1) is rejected at
-the instantiation ("checker instance in procedural code ... instantiate the
-checker outside the procedure").
+A checker instantiated in procedural code (SV 17.3, 17.3.1) queues its
+static assertions on its procedure's procedural assertion queue, but an
+actual argument with an automatic variable or a `const'` cast is rejected
+at its use in the checker ("automatic variable `v` in a procedural
+concurrent assertion takes its value when the assertion is queued").
 
 ### Cause
 
 17.7.2 does not require a solution to be found, so llg enforces the forms
 whose current-step obligation it can express on the constraint solver.
 Sampled histories of variables that are read with current values have no
-defined meaning in llg's sampling model. A procedural checker instance
-queues its static assertions on the pending procedural assertion queue of
-its process (16.15.6), which llg has for procedural concurrent assertions
-but not for whole checker bodies.
+defined meaning in llg's sampling model. The current value of an automatic
+or `const'` actual is substituted whenever a static assertion of the
+checker is queued (17.3), and llg's procedural assertion queue keeps no
+values with a queued instance (the same limit as for procedural concurrent
+assertions, SIM-099).
 
 ### Intended direction
 
 Derive the current-step obligations of sequence and property assumptions
-from their pending attempts; queue a procedural checker's static assertions
-through the procedural assertion queue of the enclosing process.
+from their pending attempts; capture queued values with each procedural
+assertion instance.
 
 ### Reproduce
 
-`neg_free_history.sv`, `neg_free_unpacked.sv` and `neg_procedural.sv` in
+`neg_free_history.sv`, `neg_free_unpacked.sv` and
+`neg_procedural_automatic.sv` in
 [adv_015](../tests/fixtures/sim/feature_completion/adv_015/readme.md).
 
 ## DPI-C import limits (SIM-040)

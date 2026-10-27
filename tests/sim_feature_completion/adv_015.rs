@@ -206,15 +206,26 @@ fn unsupported_free_variable_forms_are_located() {
     );
 }
 
-/// A03: procedural checker instances are located limits, not silent
-/// results.
+/// A03: a procedural checker instance queues its static assertions, and
+/// those of its nested static checkers, on its procedure's procedural
+/// assertion queue each time its instantiation executes, takes the clock its
+/// procedure infers for `$inferred_clock`, and runs its other contents in
+/// every time step.
+#[test]
+fn procedural_checker_instances_queue_static_assertions() {
+    sim_cli::run_case_checked_matrix(SUITE, "procedural", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("procedural.out"))
+    });
+}
+
+/// A03: an automatic value passed to a procedural checker is a located
+/// limit, not a silently sampled value.
 #[test]
 fn unsupported_checker_forms_are_located() {
     sim_cli::reject_case(
         SUITE,
-        "neg_procedural",
-        "checker instance in procedural code (IEEE 1800-2009 17.4); instantiate the checker \
-         outside the procedure` at ",
+        "neg_procedural_automatic",
+        "neg_procedural_automatic.sv:6:29: automatic variable `v` in a procedural concurrent \
+         assertion takes its value when the assertion is queued (IEEE 1800-2009 16.15.6.1)",
     );
-    sim_cli::reject_case(SUITE, "neg_procedural", "neg_procedural.sv:10:5");
 }

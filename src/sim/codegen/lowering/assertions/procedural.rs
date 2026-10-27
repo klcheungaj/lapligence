@@ -213,6 +213,28 @@ impl Codegen<'_> {
         }
     }
 
+    /// The clocking event that procedure body `body` infers for a checker
+    /// instantiated in it, which its `$inferred_clock` formal defaults
+    /// stand for (17.4), or `None` when the procedure infers none.
+    pub(in crate::sim::codegen) fn procedure_inferred_event(
+        &self,
+        body: NodeId,
+        origin: NodeId,
+    ) -> Result<Option<EventSpec>, String> {
+        match self.infer_procedure_clock(body) {
+            None => Ok(None),
+            Some(ProcedureClock::Edge(spec)) => Ok(Some(spec)),
+            Some(ProcedureClock::BothEdges(signal)) => Err(format!(
+                "{}: the clock inferred from the procedure (`edge` of the expression at line \
+                 {}, column {}) cannot clock a checker in llg; pass the checker a posedge or \
+                 negedge clock (IEEE 1800-2009 16.15.6, 17.4)",
+                self.source_location(origin),
+                self.node(signal).line,
+                self.node(signal).col
+            )),
+        }
+    }
+
     /// Lower a concurrent assertion reached in procedural code: register it
     /// as procedural assertion `index` and return the statement that queues
     /// one of its instances.

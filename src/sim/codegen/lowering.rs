@@ -1789,6 +1789,13 @@ struct Codegen<'a> {
     free_set_plans: Vec<checkers::FreeSetPlan>,
     /// Source name of each active free variable signal, for diagnostics.
     free_variable_names: HashMap<usize, String>,
+    /// Procedural assertion indices of the static assertions of each
+    /// procedural checker instance, registered when its instantiation
+    /// statement is first lowered (17.3.1; `checkers/procedural.rs`).
+    procedural_checker_queues: HashMap<NodeId, Vec<u32>>,
+    /// Body of the procedure that instantiates each procedural checker
+    /// instance, whose inferred clock `$inferred_clock` defaults take (17.4).
+    procedural_checker_bodies: HashMap<NodeId, NodeId>,
     /// `%m` text of the concurrent assertion being lowered (SV 21.2.1.6: its
     /// label names a block around it): the scope reported by its action
     /// blocks and match-item system tasks, which run on hidden host processes
@@ -2128,6 +2135,8 @@ impl<'a> Codegen<'a> {
             assertion_action_procs: HashSet::new(),
             checker_free: Vec::new(),
             free_set_plans: Vec::new(),
+            procedural_checker_queues: HashMap::new(),
+            procedural_checker_bodies: HashMap::new(),
             free_variable_names: HashMap::new(),
             assertion_display_scope: None,
             sampled_clock: None,
