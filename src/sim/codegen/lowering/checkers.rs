@@ -22,13 +22,16 @@ impl Codegen<'_> {
     pub(super) fn validate_checker_constructs(&self) -> Result<(), String> {
         for checker in self.db.checker_instances() {
             let mut assigned: BTreeMap<u32, Vec<AssignedBits>> = BTreeMap::new();
-            let mut pending = self.node(checker).children.clone();
+            // Visit members in source order, so a Single Assignment Rule
+            // violation is reported at the later assignment.
+            let mut pending: Vec<NodeId> =
+                self.node(checker).children.iter().rev().copied().collect();
             while let Some(member) = pending.pop() {
                 match self.kind(member) {
                     // A nested checker validates its own procedures.
                     NodeKind::ModuleInst { .. } => {}
                     NodeKind::GenScope | NodeKind::GenScopeArray => {
-                        pending.extend(self.node(member).children.iter().copied());
+                        pending.extend(self.node(member).children.iter().rev().copied());
                     }
                     // Free checker variables need assume-set solving before
                     // Observed (17.7.2), which is not implemented: reject them
@@ -100,8 +103,12 @@ impl Codegen<'_> {
                 None => Ok(()),
             },
             NodeKind::Stmt(
-                StmtKind::ImmediateAssertion { .. } | StmtKind::ConcurrentAssertion { .. },
+                StmtKind::ImmediateAssertion { deferred: true, .. }
+                | StmtKind::ConcurrentAssertion { .. },
             ) => Ok(()),
+            NodeKind::Stmt(StmtKind::ImmediateAssertion { .. }) => {
+                illegal("a simple immediate assertion (only deferred and concurrent assertions are allowed)")
+            }
             NodeKind::Stmt(StmtKind::Assign {
                 blocking: false,
                 delay: None,

@@ -2285,7 +2285,12 @@ impl<'a> Codegen<'a> {
 
     /// Visit every node and select the finest resolved module precision.
     fn walk_files(&mut self, node: NodeId) {
-        if matches!(self.kind(node), NodeKind::ModuleInst { .. }) {
+        if matches!(self.kind(node), NodeKind::ModuleInst { .. })
+            && !self
+                .db
+                .checker_instance(node)
+                .is_some_and(|checker| checker.unit_time_scale)
+        {
             let ts = self.timescale_of_node(node);
             self.design_precision_fs = self.design_precision_fs.min(ts.precision_fs);
         }

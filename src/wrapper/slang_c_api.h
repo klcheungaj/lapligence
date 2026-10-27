@@ -1263,7 +1263,11 @@ enum {
   /* Injected by a bind directive (IEEE 1800-2009 23.11). */
   LLG_SLANG_CHECKER_BOUND = 1ull << 1,
   /* Instantiated in another checker's body (17.3.2). */
-  LLG_SLANG_CHECKER_NESTED = 1ull << 2
+  LLG_SLANG_CHECKER_NESTED = 1ull << 2,
+  /* Declared in a compilation unit without timeunit/timeprecision: the
+   * instance carries no time scale and takes the `$unit` default, which a
+   * `timescale directive does not set (IEEE 1800-2009 3.14.2.3). */
+  LLG_SLANG_CHECKER_UNIT_TIME_SCALE = 1ull << 3
 };
 #define LLG_SLANG_CHECKER_ACTUAL_DEFAULT 0x80000000u
 

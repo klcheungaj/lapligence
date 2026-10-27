@@ -381,7 +381,10 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         // A checker instance carries its instantiation context instead.
         (1, super::SEMANTIC_INSTANCE_CHECKER, _) => {
             node.auxiliary
-                & !(super::CHECKER_PROCEDURAL | super::CHECKER_BOUND | super::CHECKER_NESTED)
+                & !(super::CHECKER_PROCEDURAL
+                    | super::CHECKER_BOUND
+                    | super::CHECKER_NESTED
+                    | super::CHECKER_UNIT_TIME_SCALE)
                 == 0
         }
         (1 | 24, _, _) => {

@@ -94,6 +94,12 @@ actual (`Db::multi_port_components`, `Db::multi_port_of`).
 ordinary `ExprKind::Cast` nodes. `Db::is_parenthesized_assertion` marks
 assertion expressions written in parentheses, which the frontend binds away;
 clock flow stops at them (16.14.3).
+A checker instance (IEEE 1800-2009 17.3) is a `ModuleInst` whose body
+flattens like a module's; `Db::checker_instance` records procedural, bound
+and nested instantiation, a `$unit` time scale and the instantiation
+context's default disable, and `Db::checker_actual` marks the body
+expressions a formal reference expanded to (its actual or default), so
+lowering can read their sampled values.
 Typed references distinguish subroutine
 bodies, indexed pattern keys, event qualifiers and ordered conditional clauses.
 Concrete loop-generate blocks use the array name and source index as one

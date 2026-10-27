@@ -1014,6 +1014,8 @@ pub const SEMANTIC_INSTANCE_CHECKER: u32 = 197;
 pub const CHECKER_PROCEDURAL: u64 = 1 << 0;
 pub const CHECKER_BOUND: u64 = 1 << 1;
 pub const CHECKER_NESTED: u64 = 1 << 2;
+/// Declared in a compilation unit without a time unit declaration.
+pub const CHECKER_UNIT_TIME_SCALE: u64 = 1 << 3;
 /// Index bit of a [`SemanticEdgeRole::CheckerActual`] edge naming a formal's
 /// default value rather than an explicit actual argument.
 pub const CHECKER_ACTUAL_DEFAULT: u32 = 1 << 31;

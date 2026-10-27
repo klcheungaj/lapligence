@@ -423,6 +423,15 @@ impl<'a> Codegen<'a> {
                 ..
             } = self.kind(id)
             {
+                // A checker declared in `$unit` without a time unit
+                // declaration runs at the `$unit` default (F2-D2).
+                if self
+                    .db
+                    .checker_instance(id)
+                    .is_some_and(|checker| checker.unit_time_scale)
+                {
+                    return self.unit_default_timescale;
+                }
                 return Timescale {
                     unit_fs: time_exponent_to_fs(*timeunit),
                     precision_fs: time_exponent_to_fs(*timeprecision),
@@ -517,7 +526,14 @@ impl<'a> Codegen<'a> {
             .node_ids()
             .filter(|id| self.is_runtime_environment(*id) && self.namespace_has_code(*id))
             .collect::<Vec<_>>();
-        let mut undeclared_unit = false;
+        // A checker declared in `$unit` without a time unit declaration
+        // takes the `$unit` default scale (walk_files skips it).
+        let mut undeclared_unit = self.db.has_checker_instances()
+            && self.db.checker_instances().into_iter().any(|checker| {
+                self.db
+                    .checker_instance(checker)
+                    .is_some_and(|info| info.unit_time_scale)
+            });
         for namespace in namespaces {
             match self.db.declaration_time_scale(namespace) {
                 Some(_) => {

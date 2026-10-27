@@ -5217,8 +5217,16 @@ private:
       result.flags |= LLG_SLANG_SEMANTIC_UNINSTANTIATED;
     // A checker has no time scale of its own: it takes the scale of the
     // scope that declares it, like its other declaration context (17.2).
-    if (const Scope* declaring = body.checker.getParentScope())
-      addTimeScale(result, declaring->getTimeScale());
+    // Slang reports the compilation default for a compilation unit without
+    // a time unit declaration; the consumer applies its `$unit` default.
+    if (const Scope* declaring = body.checker.getParentScope()) {
+      const Symbol& scope = declaring->asSymbol();
+      if (scope.kind == SymbolKind::CompilationUnit &&
+          !compilationUnitDeclaresTimeScale(scope.as<CompilationUnitSymbol>()))
+        result.auxiliary |= LLG_SLANG_CHECKER_UNIT_TIME_SCALE;
+      else
+        addTimeScale(result, declaring->getTimeScale());
+    }
   }
 
   // Formal references of the checker instances being captured. Slang binds

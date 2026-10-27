@@ -241,6 +241,10 @@ pub struct CheckerInstanceInfo {
     pub bound: bool,
     /// Instantiated in the body of another checker (17.3.2).
     pub nested: bool,
+    /// Declared in a compilation unit without `timeunit`/`timeprecision`:
+    /// the instance takes the `$unit` default time scale (3.14.2.3), not
+    /// the scale recorded on its node.
+    pub unit_time_scale: bool,
     /// The `default disable iff` condition in effect where the checker is
     /// instantiated, which `$inferred_disable` stands for (16.15.7).
     pub default_disable: Option<NodeId>,
