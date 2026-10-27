@@ -231,6 +231,8 @@ typedef struct {
     size_t value_strength_capacity;
     s_vpi_time value_time;
     char str_buffer[1024];        /* vpi_get_str result for composed names */
+    char* mcd_name;               /* vpi_mcd_name result, overwritten by each call */
+    size_t mcd_name_capacity;
 } llg_vpi_state_t;
 
 static llg_vpi_state_t g_vpi;
@@ -4516,6 +4518,7 @@ void llg_vpi_shutdown(void) {
     free(g_vpi.scratch);
     free(g_vpi.value_text);
     free(g_vpi.value_strength);
+    free(g_vpi.mcd_name);
     for (int i = 0; i < g_vpi.plugin_count; ++i) llg_dl_close(g_vpi.plugin_handles[i]);
     memset(&g_vpi, 0, sizeof(g_vpi));
 }
@@ -4560,6 +4563,219 @@ PLI_INT32 vpi_flush(void) {
     vpi_enter();
     /* 38.5: returns 0 on success and nonzero on failure. */
     return fflush(stdout) == 0 ? 0 : 1;
+}
+
+/* ── multichannel descriptors (38.24-38.29) ───────────────────────────────
+ * The runtime's $fopen table serves both sides, so descriptors, file names
+ * and output order are shared with $fopen/$fdisplay/$fclose. Selected
+ * channels that are not open are skipped and reported, as $fdisplay does
+ * (decision S25-D7); a $fopen file descriptor (bit 31) is not an mcd. */
+
+static int vpi_mcd_is_fd(PLI_UINT32 mcd, const char* routine) {
+    if (!(mcd & UINT32_C(0x80000000))) return 0;
+    vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_MCD",
+                   "%s: 0x%08x is a file descriptor, not a multichannel descriptor",
+                   routine, (unsigned)mcd);
+    return 1;
+}
+
+static void vpi_mcd_unopened(PLI_UINT32 channels, const char* routine) {
+    vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_MCD",
+                   "%s: multichannel descriptor 0x%08x selects no open channel",
+                   routine, (unsigned)channels);
+}
+
+PLI_UINT32 vpi_mcd_open(PLI_BYTE8* file) {
+    vpi_enter();
+    if (!file || !*file) {
+        vpi_error("LLG_VPI_ARGUMENT", "vpi_mcd_open needs a file name");
+        return 0;
+    }
+    uint32_t open_fd = 0;
+    PLI_UINT32 mcd = llg_file_mcd_open((const char*)file, &open_fd);
+    if (open_fd)
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_MCD",
+                       "vpi_mcd_open: `%s` is open as file descriptor 0x%08x, which is not a "
+                       "multichannel descriptor",
+                       (const char*)file, (unsigned)open_fd);
+    else if (!mcd)
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_MCD", "vpi_mcd_open: cannot open `%s`",
+                       (const char*)file);
+    return mcd;
+}
+
+PLI_UINT32 vpi_mcd_close(PLI_UINT32 mcd) {
+    vpi_enter();
+    if (vpi_mcd_is_fd(mcd, "vpi_mcd_close")) return mcd;
+    PLI_UINT32 unclosed = llg_file_mcd_close(mcd);
+    if (!mcd) {
+        vpi_mcd_unopened(mcd, "vpi_mcd_close");
+    } else if (unclosed & 1u) {
+        vpi_error("LLG_VPI_MCD", "vpi_mcd_close: channel 1 (the standard output) cannot be closed");
+    } else if (unclosed) {
+        vpi_mcd_unopened(unclosed, "vpi_mcd_close");
+    }
+    return unclosed;
+}
+
+PLI_BYTE8* vpi_mcd_name(PLI_UINT32 cd) {
+    vpi_enter();
+    const char* name = llg_file_name(cd);
+    if (!name) {
+        vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_MCD",
+                       "vpi_mcd_name: 0x%08x is not one open channel or file descriptor",
+                       (unsigned)cd);
+        return NULL;
+    }
+    /* 38.26: the result is overwritten by the next call; the channel may
+     * close before that, so the name is copied. */
+    size_t length = strlen(name) + 1u;
+    if (length > g_vpi.mcd_name_capacity) {
+        char* grown = (char*)realloc(g_vpi.mcd_name, length);
+        if (!grown) {
+            vpi_error("LLG_VPI_NOMEM", "vpi_mcd_name allocation failed");
+            return NULL;
+        }
+        g_vpi.mcd_name = grown;
+        g_vpi.mcd_name_capacity = length;
+    }
+    memcpy(g_vpi.mcd_name, name, length);
+    return (PLI_BYTE8*)g_vpi.mcd_name;
+}
+
+PLI_INT32 vpi_mcd_vprintf(PLI_UINT32 mcd, PLI_BYTE8* format, va_list ap) {
+    vpi_enter();
+    if (!format) {
+        vpi_error("LLG_VPI_ARGUMENT", "null vpi_mcd_vprintf format");
+        return EOF;
+    }
+    if (vpi_mcd_is_fd(mcd, "vpi_mcd_printf")) return EOF;
+    /* Format once, then write the same bytes to every selected channel. */
+    char local[512];
+    va_list sized;
+    va_copy(sized, ap);
+    int length = vsnprintf(local, sizeof(local), (const char*)format, sized);
+    va_end(sized);
+    if (length < 0) {
+        vpi_error("LLG_VPI_ARGUMENT", "vpi_mcd_printf: invalid format");
+        return EOF;
+    }
+    char* text = local;
+    if ((size_t)length >= sizeof(local)) {
+        text = (char*)malloc((size_t)length + 1u);
+        if (!text) {
+            vpi_error("LLG_VPI_NOMEM", "vpi_mcd_printf allocation failed");
+            return EOF;
+        }
+        vsnprintf(text, (size_t)length + 1u, (const char*)format, ap);
+    }
+    PLI_UINT32 written = llg_file_mcd_write(mcd, text, (size_t)length);
+    if (text != local) free(text);
+    if (!written || written != mcd) vpi_mcd_unopened(mcd & ~written, "vpi_mcd_printf");
+    /* 38.28: the number of characters printed, or EOF when nothing was. */
+    return written ? length : EOF;
+}
+
+PLI_INT32 vpi_mcd_printf(PLI_UINT32 mcd, PLI_BYTE8* format, ...) {
+    va_list ap;
+    va_start(ap, format);
+    PLI_INT32 result = vpi_mcd_vprintf(mcd, format, ap);
+    va_end(ap);
+    return result;
+}
+
+PLI_INT32 vpi_mcd_flush(PLI_UINT32 mcd) {
+    vpi_enter();
+    if (vpi_mcd_is_fd(mcd, "vpi_mcd_flush")) return 1;
+    PLI_UINT32 flushed = llg_file_mcd_flush(mcd);
+    if (!mcd || flushed != mcd) {
+        vpi_mcd_unopened(mcd & ~flushed, "vpi_mcd_flush");
+        return 1;
+    }
+    /* 38.25: 0 on success, nonzero on failure. */
+    return 0;
+}
+
+/* ── routines llg does not provide yet ─────────────────────────────────────
+ * Defined so that applications written against the full Annex K/M headers
+ * link; each fails through vpi_chk_error() without reading or writing its
+ * arguments, never with a guessed success. */
+
+static void vpi_unsupported_routine(const char* routine, const char* reason) {
+    vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_UNSUPPORTED", "%s is not supported by llg (%s)",
+                   routine, reason);
+}
+
+vpiHandle vpi_handle_multi(PLI_INT32 type, vpiHandle ref_handle1, vpiHandle ref_handle2, ...) {
+    (void)type;
+    (void)ref_handle1;
+    (void)ref_handle2;
+    vpi_enter();
+    vpi_unsupported_routine("vpi_handle_multi", "no vpiPortInst or vpiInterModPath objects");
+    return NULL;
+}
+
+void vpi_get_delays(vpiHandle object, p_vpi_delay delay_p) {
+    (void)object;
+    (void)delay_p;
+    vpi_enter();
+    vpi_unsupported_routine("vpi_get_delays", "no VPI delay objects");
+}
+
+void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
+    (void)object;
+    (void)delay_p;
+    vpi_enter();
+    vpi_unsupported_routine("vpi_put_delays", "no VPI delay objects");
+}
+
+void vpi_get_value_array(vpiHandle object, p_vpi_arrayvalue arrayvalue_p, PLI_INT32* index_p,
+                         PLI_UINT32 num) {
+    (void)object;
+    (void)arrayvalue_p;
+    (void)index_p;
+    (void)num;
+    vpi_enter();
+    vpi_unsupported_routine("vpi_get_value_array", "read the elements with vpi_get_value");
+}
+
+void vpi_put_value_array(vpiHandle object, p_vpi_arrayvalue arrayvalue_p, PLI_INT32* index_p,
+                         PLI_UINT32 num) {
+    (void)object;
+    (void)arrayvalue_p;
+    (void)index_p;
+    (void)num;
+    vpi_enter();
+    vpi_unsupported_routine("vpi_put_value_array", "write the elements with vpi_put_value");
+}
+
+PLI_INT32 vpi_get_data(PLI_INT32 id, PLI_BYTE8* dataLoc, PLI_INT32 numOfBytes) {
+    (void)id;
+    (void)dataLoc;
+    (void)numOfBytes;
+    vpi_enter();
+    vpi_unsupported_routine("vpi_get_data", "no save/restart");
+    return 0;
+}
+
+PLI_INT32 vpi_put_data(PLI_INT32 id, PLI_BYTE8* dataLoc, PLI_INT32 numOfBytes) {
+    (void)id;
+    (void)dataLoc;
+    (void)numOfBytes;
+    vpi_enter();
+    vpi_unsupported_routine("vpi_put_data", "no save/restart");
+    return 0;
+}
+
+vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
+                                    vpi_assertion_callback_func* cb_rtn, PLI_BYTE8* user_data) {
+    (void)assertion;
+    (void)reason;
+    (void)cb_rtn;
+    (void)user_data;
+    vpi_enter();
+    vpi_unsupported_routine("vpi_register_assertion_cb", "no assertion callbacks");
+    return NULL;
 }
 
 /* 38.4: vpiStop and vpiFinish take the diagnostic level of $stop/$finish

@@ -1994,6 +1994,42 @@ fn s43_d9_postponed_systf_read_only() {
 }
 
 #[test]
+fn a20_d1_mcd_file_descriptor() {
+    run_vpi_decision(
+        "A20-D1_mcd_file_descriptor",
+        &["task $d1(input integer fd)"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D1_mcd_file_descriptor.out"),
+    );
+}
+
+#[test]
+fn a20_d2_mcd_name_standard_streams() {
+    run_vpi_decision(
+        "A20-D2_mcd_name_standard_streams",
+        &["task $d2(input integer fd)"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D2_mcd_name_standard_streams.out"),
+    );
+}
+
+#[test]
+fn a20_d3_mcd_printf_channels() {
+    run_vpi_decision(
+        "A20-D3_mcd_printf_channels",
+        &["task $d3(input integer a, input integer b)"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D3_mcd_printf_channels.out"),
+    );
+}
+
+#[test]
+fn a20_d4_mcd_close_unopened() {
+    run_vpi_decision(
+        "A20-D4_mcd_close_unopened",
+        &["task $d4()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D4_mcd_close_unopened.out"),
+    );
+}
+
+#[test]
 fn s44_d1_covergroup_type_per_declaration() {
     run_decision(
         "S44-D1_covergroup_type_per_declaration",

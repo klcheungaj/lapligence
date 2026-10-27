@@ -2526,7 +2526,15 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   other variable types, `vpiParameter`, `vpiPort`, `vpiRange`, array elements,
   `vpiBit`, `vpiArgument`), `vpi_get`/`vpi_get_str` type, name, size, range,
   sign, direction, net type, array and port properties, `vpi_compare_objects`,
-  `vpi_release_handle`/`vpi_free_object` and `vpi_get_vlog_info`. Objects are
+  `vpi_release_handle`/`vpi_free_object` and `vpi_get_vlog_info`. The
+  multichannel-descriptor routines `vpi_mcd_open/close/name/printf/vprintf/flush`
+  share the `$fopen` table with the built-in file tasks (ADV-020, decisions
+  A20-D1..D4). `vpi_user.h` and `sv_vpi_user.h` declare every IEEE 1800-2009
+  Annex K/M routine and the model defines each, so applications written for
+  the full headers link; `vpi_handle_multi`, `vpi_get_delays`/`vpi_put_delays`,
+  `vpi_get_value_array`/`vpi_put_value_array`, `vpi_get_data`/`vpi_put_data`
+  and `vpi_register_assertion_cb` are not supported and fail with a
+  `vpi_chk_error` error (`docs/known_issues.md`). Objects are
   modules, interfaces, generate scopes (SV 27.4 names), named blocks, ports,
   parameters, nets, variables with their exact types (`vpiIntVar`,
   `vpiBitVar`, `vpiByteVar`, `vpiTimeVar`, ...), unpacked arrays and their

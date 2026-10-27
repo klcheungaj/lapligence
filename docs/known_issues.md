@@ -2157,6 +2157,14 @@ with no error status, as for a name that denotes nothing (S42-D11):
   2^20 elements (register it on the elements), or with `vpiStrengthVal` to see
   strength-only changes (it runs on value changes only);
 - `vpi_control(vpiReset)` and `vpiSetInteractiveScope`;
+- the routines `vpi_handle_multi` (no `vpiPortInst`/`vpiInterModPath`
+  objects), `vpi_get_delays`/`vpi_put_delays` (no delay objects),
+  `vpi_get_value_array`/`vpi_put_value_array` (read and write elements with
+  `vpi_get_value`/`vpi_put_value`), `vpi_get_data`/`vpi_put_data` (no
+  save/restart) and `vpi_register_assertion_cb` (no assertion callbacks).
+  They are declared and defined so that applications link, and return
+  NULL, 0 or nothing with an `LLG_VPI_UNSUPPORTED` error without reading or
+  writing their arguments;
 - user VPI system functions in read-only evaluators other than
   `$strobe`/`$monitor` arguments (evaluated event controls, force
   re-evaluation, functions called from those evaluators).

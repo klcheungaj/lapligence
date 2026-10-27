@@ -178,12 +178,12 @@ uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode) {
     }
     // Files the simulation creates follow LLG_SIM_OUT_DIR; reads ("r", "r+")
     // keep resolving from the current directory.
-    if (mode_copy[0] == 'w' || mode_copy[0] == 'a') {
-        char* resolved = llg_output_path(path_copy);
-        free(path_copy);
-        path_copy = resolved;
-    }
-    FILE* stream = fopen(path_copy, mode_copy);
+    // The slot keeps the path as given, for vpi_mcd_name().
+    char* resolved = (mode_copy[0] == 'w' || mode_copy[0] == 'a')
+                         ? llg_output_path(path_copy)
+                         : NULL;
+    FILE* stream = fopen(resolved ? resolved : path_copy, mode_copy);
+    free(resolved);
     if (!stream) {
         char message[160];
         snprintf(message, sizeof(message), "file open failed: %s", strerror(errno));
@@ -192,9 +192,9 @@ uint32_t llg_file_open(llg_string_t path, llg_string_t mode, int has_mode) {
         free(mode_copy);
         return 0;
     }
-    free(path_copy);
     free(mode_copy);
     llg_file_slots[slot_index].stream = stream;
+    llg_file_slots[slot_index].name = path_copy;
     llg_file_slots[slot_index].open = 1;
     llg_file_slots[slot_index].owned = 1;
     llg_file_slots[slot_index].error = 0;
@@ -211,23 +211,128 @@ static uint32_t llg_file_without_slot(uint32_t descriptor, unsigned slot) {
     return descriptor & ~llg_file_mcd_bit(slot);
 }
 
+static void llg_file_close_slot(unsigned i) {
+    llg_monitors_cancel_slot(i);
+    for (llg_strobe_t* e = g.strobes; e; e = e->next)
+        if (e->typed) e->descriptor = llg_file_without_slot(e->descriptor, i);
+    llg_file_slot_t* slot = &llg_file_slots[i];
+    // Preopened streams are borrowed from the host. Invalidate their HDL
+    // descriptors without closing the host's diagnostic/output channel.
+    int result = slot->owned ? fclose(slot->stream) : 0;
+    slot->stream = NULL;
+    slot->open = 0;
+    slot->owned = 0;
+    slot->pushback_len = 0;
+    free(slot->name);
+    slot->name = NULL;
+    if (result != 0) llg_file_slot_failure(slot, "file close failed");
+}
+
 void llg_file_close(uint32_t descriptor) {
     if (!llg_file_mask_valid(descriptor)) return;
-    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
-        if (!llg_file_selected(descriptor, i)) continue;
-        llg_monitors_cancel_slot(i);
-        for (llg_strobe_t* e = g.strobes; e; e = e->next)
-            if (e->typed) e->descriptor = llg_file_without_slot(e->descriptor, i);
-        llg_file_slot_t* slot = &llg_file_slots[i];
-        // Preopened streams are borrowed from the host. Invalidate their HDL
-        // descriptors without closing the host's diagnostic/output channel.
-        int result = slot->owned ? fclose(slot->stream) : 0;
-        slot->stream = NULL;
-        slot->open = 0;
-        slot->owned = 0;
-        slot->pushback_len = 0;
-        if (result != 0) llg_file_slot_failure(slot, "file close failed");
+    for (unsigned i = 0; i < LLG_FILE_SLOTS; i++)
+        if (llg_file_selected(descriptor, i)) llg_file_close_slot(i);
+}
+
+/* VPI multichannel-descriptor services (IEEE 1800-2009 38.24-38.29). They
+ * share the $fopen table, so a descriptor from either side works on both. */
+
+static int llg_file_mcd_channel_open(unsigned slot) {
+    return llg_file_slots[slot].open && llg_file_slots[slot].stream;
+}
+
+uint32_t llg_file_mcd_open(const char* path, uint32_t* open_fd) {
+    llg_file_init_table();
+    *open_fd = 0;
+    if (!path || !*path) return 0;
+    // 38.27: a file already open as a channel returns that channel's
+    // descriptor. A $fopen file descriptor (bit 31) is not an MCD; a second
+    // write stream would truncate and interleave with it, so a file open
+    // only as an FD is refused. Names compare as given, not as resolved paths.
+    for (unsigned i = LLG_FILE_MCD_FIRST; i < LLG_FILE_MCD_END; i++)
+        if (llg_file_mcd_channel_open(i) && llg_file_slots[i].name &&
+            strcmp(llg_file_slots[i].name, path) == 0)
+            return llg_file_mcd_bit(i);
+    for (unsigned i = LLG_FILE_FD_FIRST; i < LLG_FILE_SLOTS; i++)
+        if (llg_file_mcd_channel_open(i) && llg_file_slots[i].name &&
+            strcmp(llg_file_slots[i].name, path) == 0) {
+            *open_fd = LLG_FILE_FD_TAG | i;
+            return 0;
+        }
+    llg_string_t no_mode = {0};
+    return llg_file_open(llg_string_bytes(path, strlen(path)), no_mode, 0);
+}
+
+uint32_t llg_file_mcd_close(uint32_t mcd) {
+    llg_file_init_table();
+    if (mcd & LLG_FILE_FD_TAG) return mcd;
+    uint32_t unclosed = 0;
+    for (unsigned i = LLG_FILE_STDOUT; i < LLG_FILE_MCD_END; i++) {
+        uint32_t bit = llg_file_mcd_bit(i);
+        if (!bit || !(mcd & bit)) continue;
+        // 38.24: channel 1 (the tool's output and log) cannot be closed.
+        if (i == LLG_FILE_STDOUT || !llg_file_mcd_channel_open(i)) {
+            unclosed |= bit;
+            continue;
+        }
+        llg_file_close_slot(i);
     }
+    return unclosed;
+}
+
+const char* llg_file_name(uint32_t descriptor) {
+    llg_file_init_table();
+    unsigned slot = LLG_FILE_SLOTS;
+    if (descriptor & LLG_FILE_FD_TAG) {
+        slot = descriptor & ~LLG_FILE_FD_TAG;
+        if (slot >= LLG_FILE_SLOTS || (slot >= 3u && slot < LLG_FILE_FD_FIRST)) return NULL;
+    } else {
+        // A single-channel descriptor names exactly one channel.
+        if (!descriptor || (descriptor & (descriptor - 1u))) return NULL;
+        for (unsigned i = LLG_FILE_STDOUT; i < LLG_FILE_MCD_END; i++)
+            if (llg_file_mcd_bit(i) == descriptor) slot = i;
+        if (slot == LLG_FILE_SLOTS) return NULL;
+    }
+    if (!llg_file_mcd_channel_open(slot)) return NULL;
+    if (llg_file_slots[slot].name) return llg_file_slots[slot].name;
+    static const char* const host_names[3] = {"stdin", "stdout", "stderr"};
+    return slot < 3u ? host_names[slot] : NULL;
+}
+
+uint32_t llg_file_mcd_write(uint32_t mcd, const char* text, size_t length) {
+    llg_file_init_table();
+    if (mcd & LLG_FILE_FD_TAG) return 0;
+    uint32_t written = 0;
+    for (unsigned i = LLG_FILE_STDOUT; i < LLG_FILE_MCD_END; i++) {
+        uint32_t bit = llg_file_mcd_bit(i);
+        if (!bit || !(mcd & bit) || !llg_file_mcd_channel_open(i)) continue;
+        llg_file_slot_t* slot = &llg_file_slots[i];
+        // Flushed per call like $fdisplay output, so the two interleave in
+        // call order on a shared channel.
+        if ((length && fwrite(text, 1, length, slot->stream) != length) ||
+            fflush(slot->stream) != 0) {
+            llg_file_slot_failure(slot, "file output failed");
+            continue;
+        }
+        written |= bit;
+    }
+    return written;
+}
+
+uint32_t llg_file_mcd_flush(uint32_t mcd) {
+    llg_file_init_table();
+    if (mcd & LLG_FILE_FD_TAG) return 0;
+    uint32_t flushed = 0;
+    for (unsigned i = LLG_FILE_STDOUT; i < LLG_FILE_MCD_END; i++) {
+        uint32_t bit = llg_file_mcd_bit(i);
+        if (!bit || !(mcd & bit) || !llg_file_mcd_channel_open(i)) continue;
+        if (fflush(llg_file_slots[i].stream) != 0) {
+            llg_file_slot_failure(&llg_file_slots[i], "file flush failed");
+            continue;
+        }
+        flushed |= bit;
+    }
+    return flushed;
 }
 
 int llg_file_flush(uint32_t descriptor, int all) {

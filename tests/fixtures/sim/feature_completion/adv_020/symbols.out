@@ -1,0 +1,22 @@
+routines: 42 of 42 resolved
+lookup tb: handle level=0 code=-
+vpi_handle_multi: NULL level=3 code=LLG_VPI_UNSUPPORTED
+  vpi_handle_multi is not supported by llg (no vpiPortInst or vpiInterModPath objects)
+vpi_get_delays: void level=3 code=LLG_VPI_UNSUPPORTED
+  vpi_get_delays is not supported by llg (no VPI delay objects)
+vpi_put_delays: void level=3 code=LLG_VPI_UNSUPPORTED
+  vpi_put_delays is not supported by llg (no VPI delay objects)
+delay record: da=same no_of_delays=1 time_type=2 low=77
+vpi_get_value_array: void level=3 code=LLG_VPI_UNSUPPORTED
+  vpi_get_value_array is not supported by llg (read the elements with vpi_get_value)
+vpi_put_value_array: void level=3 code=LLG_VPI_UNSUPPORTED
+  vpi_put_value_array is not supported by llg (write the elements with vpi_put_value)
+array record: values=11,22 integers=same
+vpi_get_data: 0 level=3 code=LLG_VPI_UNSUPPORTED
+  vpi_get_data is not supported by llg (no save/restart)
+vpi_put_data: 0 level=3 code=LLG_VPI_UNSUPPORTED
+  vpi_put_data is not supported by llg (no save/restart)
+data buffer: abc
+vpi_register_assertion_cb: NULL level=3 code=LLG_VPI_UNSUPPORTED
+  vpi_register_assertion_cb is not supported by llg (no assertion callbacks)
+vpi_get after the errors: vpiModule level=0 code=-

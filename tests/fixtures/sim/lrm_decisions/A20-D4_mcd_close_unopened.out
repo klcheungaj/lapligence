@@ -1,0 +1,10 @@
+flush 0: nonzero level=3
+flush unopened: nonzero level=3
+close 1: unclosed bits level=3
+channel 1 still writes
+printf 1 after close: 23
+close 0: 0 level=3
+close unopened: unclosed bits level=3
+close open|unopened: unclosed bits level=3
+close closed channel: unclosed bits level=3
+close reopened channel: 0 level=0

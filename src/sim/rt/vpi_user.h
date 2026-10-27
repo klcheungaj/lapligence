@@ -1,8 +1,9 @@
 /*
  * vpi_user.h — the VPI surface exported by a generated Lapligence model.
  *
- * This is a source-compatible subset of the IEEE 1800-2009 Annex K/M VPI
- * declarations, with the standard constant values.  Unsupported objects and properties fail through
+ * It declares every routine of the IEEE 1800-2009 Annex K listing and a
+ * source-compatible subset of its types and constants, with the standard
+ * values.  Unsupported routines, objects and properties fail through
  * vpi_chk_error(); they do not return guessed values.  The header is emitted
  * beside every generated model so an application can build against the same
  * ABI without depending on the vendored frontend headers.
@@ -20,9 +21,12 @@ extern "C" {
 
 typedef int32_t PLI_INT32;
 typedef uint32_t PLI_UINT32;
+typedef int16_t PLI_INT16;
+typedef uint16_t PLI_UINT16;
 typedef int64_t PLI_INT64;
 typedef uint64_t PLI_UINT64;
 typedef char PLI_BYTE8;
+typedef unsigned char PLI_UBYTE8;
 
 typedef struct llg_vpi_handle* vpiHandle;
 
@@ -190,6 +194,16 @@ typedef struct t_vpi_time {
 #define vpiSuppressTime 3
 #endif
 
+/* Delay records of vpi_get_delays()/vpi_put_delays() (38.10, 38.32). */
+typedef struct t_vpi_delay {
+    struct t_vpi_time* da;
+    PLI_INT32 no_of_delays;
+    PLI_INT32 time_type;
+    PLI_INT32 mtm_flag;
+    PLI_INT32 append_flag;
+    PLI_INT32 pulsere_flag;
+} s_vpi_delay, *p_vpi_delay;
+
 #ifndef VPI_VECVAL
 #define VPI_VECVAL
 typedef struct t_vpi_vecval {
@@ -231,6 +245,29 @@ typedef struct t_vpi_value {
 #define vpiTimeVal 11
 #define vpiObjTypeVal 12
 #define vpiSuppressVal 13
+#define vpiShortIntVal 14
+#define vpiLongIntVal 15
+#define vpiShortRealVal 16
+#define vpiRawTwoStateVal 17
+#define vpiRawFourStateVal 18
+
+/* Array value record of vpi_get_value_array()/vpi_put_value_array() (38.16,
+ * 38.35). `longints` is PLI_INT64*, as the 38.16 definition gives it; the
+ * Annex K listing's PLI_INT16* is a misprint of that field. */
+typedef struct t_vpi_arrayvalue {
+    PLI_UINT32 format;
+    PLI_UINT32 flags;
+    union {
+        PLI_INT32* integers;
+        PLI_INT16* shortints;
+        PLI_INT64* longints;
+        PLI_BYTE8* rawvals;
+        struct t_vpi_vecval* vectors;
+        struct t_vpi_time* times;
+        double* reals;
+        float* shortreals;
+    } value;
+} s_vpi_arrayvalue, *p_vpi_arrayvalue;
 
 #define vpiNoDelay 1
 #define vpiInertialDelay 2
@@ -321,6 +358,11 @@ typedef struct t_vpi_error_info {
 #define vpiReset 68
 #define vpiSetInteractiveScope 69
 
+/* The 41 routines of Annex K, in its order. Those llg does not provide yet
+ * (vpi_handle_multi, vpi_get_delays/vpi_put_delays,
+ * vpi_get_value_array/vpi_put_value_array, vpi_get_data/vpi_put_data) are
+ * defined so that applications link, and fail through vpi_chk_error()
+ * (LLG_VPI_UNSUPPORTED) without touching their arguments. */
 vpiHandle vpi_register_cb(p_cb_data cb_data_p);
 PLI_INT32 vpi_remove_cb(vpiHandle cb_obj);
 void vpi_get_cb_info(vpiHandle object, p_cb_data cb_data_p);
@@ -329,31 +371,57 @@ void vpi_get_systf_info(vpiHandle object, p_vpi_systf_data systf_data_p);
 
 vpiHandle vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope);
 vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index);
-vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 num_index,
-                                    PLI_INT32* index_array);
+
 vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle);
+vpiHandle vpi_handle_multi(PLI_INT32 type, vpiHandle ref_handle1,
+                           vpiHandle ref_handle2, ...);
 vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle);
 vpiHandle vpi_scan(vpiHandle iterator);
 
 PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle object);
 PLI_INT64 vpi_get64(PLI_INT32 property, vpiHandle object);
 PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle object);
+
+void vpi_get_delays(vpiHandle object, p_vpi_delay delay_p);
+void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p);
+
 void vpi_get_value(vpiHandle object, p_vpi_value value_p);
 vpiHandle vpi_put_value(vpiHandle object, p_vpi_value value_p,
                         p_vpi_time time_p, PLI_INT32 flags);
+void vpi_get_value_array(vpiHandle object, p_vpi_arrayvalue arrayvalue_p,
+                         PLI_INT32* index_p, PLI_UINT32 num);
+void vpi_put_value_array(vpiHandle object, p_vpi_arrayvalue arrayvalue_p,
+                         PLI_INT32* index_p, PLI_UINT32 num);
+
 void vpi_get_time(vpiHandle object, p_vpi_time time_p);
+
+/* Multichannel descriptors are shared with $fopen/$fdisplay/$fclose: bit 0
+ * is the standard output, bits 1-30 are files, and a descriptor with bit 31
+ * set is a $fopen file descriptor, which these routines refuse except for
+ * vpi_mcd_name(). */
+PLI_UINT32 vpi_mcd_open(PLI_BYTE8* fileName);
+PLI_UINT32 vpi_mcd_close(PLI_UINT32 mcd);
+PLI_BYTE8* vpi_mcd_name(PLI_UINT32 cd);
+PLI_INT32 vpi_mcd_printf(PLI_UINT32 mcd, PLI_BYTE8* format, ...);
+PLI_INT32 vpi_printf(PLI_BYTE8* format, ...);
 
 PLI_INT32 vpi_compare_objects(vpiHandle object1, vpiHandle object2);
 PLI_INT32 vpi_chk_error(p_vpi_error_info error_info_p);
 PLI_INT32 vpi_free_object(vpiHandle object);
 PLI_INT32 vpi_release_handle(vpiHandle object);
 PLI_INT32 vpi_get_vlog_info(p_vpi_vlog_info vlog_info_p);
+
+PLI_INT32 vpi_get_data(PLI_INT32 id, PLI_BYTE8* dataLoc, PLI_INT32 numOfBytes);
+PLI_INT32 vpi_put_data(PLI_INT32 id, PLI_BYTE8* dataLoc, PLI_INT32 numOfBytes);
 void* vpi_get_userdata(vpiHandle object);
 PLI_INT32 vpi_put_userdata(vpiHandle object, void* userdata);
-PLI_INT32 vpi_printf(PLI_BYTE8* format, ...);
 PLI_INT32 vpi_vprintf(PLI_BYTE8* format, va_list ap);
+PLI_INT32 vpi_mcd_vprintf(PLI_UINT32 mcd, PLI_BYTE8* format, va_list ap);
 PLI_INT32 vpi_flush(void);
+PLI_INT32 vpi_mcd_flush(PLI_UINT32 mcd);
 PLI_INT32 vpi_control(PLI_INT32 operation, ...);
+vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 num_index,
+                                    PLI_INT32* index_array);
 
 /* Startup entry point expected from a VPI shared object. As in the Annex K
  * header, a Windows DLL exports it (PLI_DLLESPEC), so the model finds it with

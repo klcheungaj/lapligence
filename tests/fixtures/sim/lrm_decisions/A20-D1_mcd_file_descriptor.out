@@ -1,0 +1,6 @@
+fd: bit31=1
+printf: EOF level=3
+flush: nonzero level=3
+close: unclosed level=3
+open: 0 level=3
+file: design line

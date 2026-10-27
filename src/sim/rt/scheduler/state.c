@@ -851,6 +851,9 @@ static llg_process_handle_t* process_handle_new(llg_proc_t* proc) {
 
 typedef struct {
     FILE* stream;
+    // The path the file was opened with (owned), served by vpi_mcd_name();
+    // NULL for the preopened host streams.
+    char* name;
     int open;
     int owned;
     int error;
