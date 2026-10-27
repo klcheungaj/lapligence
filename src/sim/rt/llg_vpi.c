@@ -426,11 +426,11 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
         if (object->conns[i].condition > object->conn_count) return 0;
     }
     if (object->timing) {
-        const llg_vpi_timing_t* timing = object->timing;
-        if ((timing->op_count && !timing->ops) || (timing->declared_count && !timing->declared))
+        const llg_vpi_timing_t* tm = object->timing;
+        if ((tm->op_count && !tm->ops) || (tm->declared_count && !tm->declared))
             return 0;
-        for (uint32_t i = 0; i < timing->op_count; ++i) {
-            const llg_sdf_op_t* op = &timing->ops[i];
+        for (uint32_t i = 0; i < tm->op_count; ++i) {
+            const llg_sdf_op_t* op = &tm->ops[i];
             int valid = op->kind == LLG_SDF_PATH ? op->path != NULL
                         : op->kind == LLG_SDF_GATE ? op->gate != NULL
                         : op->kind == LLG_SDF_CHECK ? op->check != NULL && op->checks != NULL
@@ -1575,10 +1575,10 @@ static int delay_ticks(const s_vpi_time* time, int type, const llg_vpi_model_obj
     return 1;
 }
 
-/* The op of `timing` holding limit `limit` of a timing check, or NULL. */
-static const llg_sdf_op_t* limit_op(const llg_vpi_timing_t* timing, uint32_t limit) {
-    for (uint32_t i = 0; i < timing->op_count; ++i)
-        if (timing->ops[i].first == limit) return &timing->ops[i];
+/* The op of `tm` holding limit `limit` of a timing check, or NULL. */
+static const llg_sdf_op_t* limit_op(const llg_vpi_timing_t* tm, uint32_t limit) {
+    for (uint32_t i = 0; i < tm->op_count; ++i)
+        if (tm->ops[i].first == limit) return &tm->ops[i];
     return NULL;
 }
 
@@ -1589,13 +1589,13 @@ static const llg_sdf_op_t* limit_op(const llg_vpi_timing_t* timing, uint32_t lim
  * values; primitive and continuous assignment delays are rise, fall and
  * turn-off. */
 static int64_t current_delay(const llg_vpi_model_object_t* object, int kind, uint32_t index) {
-    const llg_vpi_timing_t* timing = object->timing;
-    if (kind == DELAYS_PATH && timing->op_count && timing->ops[0].path)
-        return (int64_t)timing->ops[0].path->delays[index];
-    if (kind == DELAYS_PRIMITIVE && timing->op_count && timing->ops[0].gate)
-        return (int64_t)timing->ops[0].gate[index];
+    const llg_vpi_timing_t* tm = object->timing;
+    if (kind == DELAYS_PATH && tm->op_count && tm->ops[0].path)
+        return (int64_t)tm->ops[0].path->delays[index];
+    if (kind == DELAYS_PRIMITIVE && tm->op_count && tm->ops[0].gate)
+        return (int64_t)tm->ops[0].gate[index];
     if (kind == DELAYS_TCHK) {
-        const llg_sdf_op_t* op = limit_op(timing, index);
+        const llg_sdf_op_t* op = limit_op(tm, index);
         int second = op && (op->flags & LLG_SDF_SECOND);
         if (op && op->kind == LLG_SDF_CHECK && op->check)
             return second ? op->check->limit2 : op->check->limit;
@@ -1604,7 +1604,7 @@ static int64_t current_delay(const llg_vpi_model_object_t* object, int kind, uin
             return second ? op->checks->pairs[op->index].after
                           : op->checks->pairs[op->index].before;
     }
-    return index < timing->declared_count ? timing->declared[index] : 0;
+    return index < tm->declared_count ? tm->declared[index] : 0;
 }
 
 /* Validate the delay record against the object (38.10, 38.32): the object
@@ -1745,7 +1745,7 @@ void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
     llg_vpi_model_object_t* row = NULL;
     int kind = delay_record(object, delay_p, "vpi_put_delays", &row);
     if (kind == DELAYS_NONE) return;
-    const llg_vpi_timing_t* timing = row->timing;
+    const llg_vpi_timing_t* tm = row->timing;
     if (kind == DELAYS_CONT_ASSIGN) {
         vpi_error("LLG_VPI_DELAYS",
                   "vpi_put_delays: the delays of a continuous assignment are read-only (37.43)");
@@ -1757,7 +1757,7 @@ void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
                   "delays are not writable");
         return;
     }
-    if (!timing->op_count) {
+    if (!tm->op_count) {
         vpi_error("LLG_VPI_DELAYS",
                   kind == DELAYS_PRIMITIVE
                       ? "vpi_put_delays: llg writes the delays of primitives declared with "
@@ -1807,16 +1807,16 @@ void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
                         : value < 0 && current < INT64_MIN - value ? INT64_MIN
                                                                    : current + value;
             }
-            const llg_sdf_op_t* op = limit_op(timing, k);
+            const llg_sdf_op_t* op = limit_op(tm, k);
             int signed_limit = row->detail == vpiNoChange || (op && op->kind == LLG_SDF_PAIR);
             if (value < 0 && !signed_limit) value = 0;
             limits[k] = value;
         }
-        llg_sdf_annotation_t annotation = {timing->ops, timing->op_count, limits};
+        llg_sdf_annotation_t annotation = {tm->ops, tm->op_count, limits};
         llg_sdf_apply(&annotation);
         return;
     }
-    llg_sdf_op_t* ops = (llg_sdf_op_t*)calloc(timing->op_count, sizeof(*ops));
+    llg_sdf_op_t* ops = (llg_sdf_op_t*)calloc(tm->op_count, sizeof(*ops));
     if (!ops) {
         vpi_error("LLG_VPI_NOMEM", "vpi_put_delays: out of memory");
         return;
@@ -1831,8 +1831,8 @@ void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
         /* Two delays: turn-off is the smaller (28.16). */
         values[2] = n == 3 ? given[0][2] : (given[0][0] < given[0][1] ? given[0][0] : given[0][1]);
     }
-    for (uint32_t i = 0; i < timing->op_count; ++i) {
-        ops[i] = timing->ops[i];
+    for (uint32_t i = 0; i < tm->op_count; ++i) {
+        ops[i] = tm->ops[i];
         ops[i].first = 0;
         ops[i].derive = 0;
         ops[i].flags = (uint8_t)(append ? LLG_SDF_INCREMENT : 0u);
@@ -1848,7 +1848,7 @@ void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
             ops[i].error = 0;
         }
     }
-    llg_sdf_annotation_t annotation = {ops, timing->op_count, values};
+    llg_sdf_annotation_t annotation = {ops, tm->op_count, values};
     llg_sdf_apply(&annotation);
     free(ops);
 }
