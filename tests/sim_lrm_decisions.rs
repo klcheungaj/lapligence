@@ -3578,6 +3578,30 @@ fn a14_d4_future_action_controls() {
 }
 
 #[test]
+fn a15_d1_checker_reactive_sampling() {
+    run_decision(
+        "A15-D1_checker_reactive_sampling",
+        include_str!("fixtures/sim/lrm_decisions/A15-D1_checker_reactive_sampling.out"),
+    );
+}
+
+#[test]
+fn a15_d2_checker_deferred_current() {
+    run_decision(
+        "A15-D2_checker_deferred_current",
+        include_str!("fixtures/sim/lrm_decisions/A15-D2_checker_deferred_current.out"),
+    );
+}
+
+#[test]
+fn a15_d3_checker_unit_time_scale() {
+    run_decision(
+        "A15-D3_checker_unit_time_scale",
+        include_str!("fixtures/sim/lrm_decisions/A15-D3_checker_unit_time_scale.out"),
+    );
+}
+
+#[test]
 fn t0_d1_initializer_no_event() {
     run_decision(
         "T0-D1_initializer_no_event",

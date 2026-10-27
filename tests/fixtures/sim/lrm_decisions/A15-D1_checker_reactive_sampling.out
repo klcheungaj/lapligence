@@ -1,0 +1,4 @@
+15 d=1 seen=0
+25 d=2 seen=1
+35 d=3 seen=2
+final seen=3 hits=1
