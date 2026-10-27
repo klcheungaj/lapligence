@@ -400,3 +400,139 @@ fn st_23_and_st_27_unresolved_names_and_syntax_errors_in_both_serving_paths() {
     }
     client.shutdown();
 }
+
+const BUILTIN_SOURCE: &str = include_str!("../fixtures/semantic_tokens/builtin_functions.sv");
+
+/// Built-in calls in recovered syntax and after an unresolved receiver.
+const BUILTIN_ERRORS_SOURCE: &str = "module bif_err;\n\
+  int n;\n\
+  initial begin\n\
+    n = $clog2(4) + ghost.size();\n\
+    $display(\"%0d\", n);\n\
+    broken (\n\
+  end\n\
+endmodule\n";
+
+const LIB: &[&str] = &["defaultLibrary"];
+
+const BUILTIN_CHECKS: &[Check] = &[
+    // ST-40: `$name` in every context.
+    ("ST-40", "$clog2(n)", 0, 0, "function", LIB),
+    ("ST-40", "$clog2(16)", 0, 0, "function", LIB),
+    ("ST-40", "$bits(int)", 0, 0, "function", LIB),
+    ("ST-40", "$countones(x)", 0, 0, "function", LIB),
+    ("ST-40", "$clog2(D))", 0, 0, "function", LIB),
+    ("ST-40", "$clog2(D)-1", 0, 0, "function", LIB),
+    ("ST-40", "$ceil", 0, 0, "function", LIB),
+    ("ST-40", "$floor", 0, 0, "function", LIB),
+    ("ST-40", "$ln", 0, 0, "function", LIB),
+    ("ST-40", "$sqrt", 0, 0, "function", LIB),
+    ("ST-40", "$bits(addr)", 0, 0, "function", LIB),
+    ("ST-40", "$signed", 0, 0, "function", LIB),
+    ("ST-40", "$unsigned", 0, 0, "function", LIB),
+    ("ST-40", "$clog2(D) > 2", 0, 0, "function", LIB),
+    ("ST-40", "$display", 0, 0, "function", LIB),
+    ("ST-40", "$size", 0, 0, "function", LIB),
+    ("ST-40", "$countones(v)", 0, 0, "function", LIB),
+    ("ST-40", "$bif_unknown", 0, 0, "function", LIB),
+    ("ST-40", "`BIF_LOG2(8)", 0, 0, "macro", NONE),
+    // ST-41: built-in methods.
+    ("ST-41", "q.size()", 0, 2, "function", LIB),
+    ("ST-41", "srandom", 0, 0, "function", LIB),
+    ("ST-41", "randomize() with", 0, 0, "function", LIB),
+    ("ST-41", "qq.size() - 1", 0, 3, "function", LIB),
+    ("ST-41", "qq.size;", 0, 3, "function", LIB),
+    ("ST-41", "push_back", 0, 0, "function", LIB),
+    ("ST-41", "unique()", 0, 0, "function", LIB),
+    ("ST-41", "and()", 0, 0, "function", LIB),
+    ("ST-41", "sum() with", 0, 0, "function", LIB),
+    ("ST-41", "len()", 0, 0, "function", LIB),
+    ("ST-41", "next().name", 0, 0, "function", LIB),
+    ("ST-41", "name()", 0, 0, "function", LIB),
+    ("ST-41", "put(1)", 0, 0, "function", LIB),
+    ("ST-41", "self()", 0, 0, "function", LIB),
+    ("ST-41", "randomize(n)", 0, 0, "function", LIB),
+    // ST-42: the std package qualifier and built-in class names.
+    ("ST-42", "std::", 0, 0, "namespace", NONE),
+    ("ST-42", "process::", 0, 0, "class", NONE),
+    // ST-43: user subroutines keep `function` without `defaultLibrary`.
+    ("ST-43", "pf(int", 0, 0, "function", DECL),
+    ("ST-43", "pf(3)", 0, 0, "function", NONE),
+    ("ST-43", "size();\n    return", 0, 0, "function", DECL),
+    ("ST-43", "obj.size()", 0, 4, "function", NONE),
+];
+
+/// ST-40 to ST-43 over the wire in both serving paths, with an unresolved
+/// receiver (ST-43) and recovered syntax (ST-40) in a second file.
+#[test]
+fn st_40_to_st_43_builtin_functions_and_methods_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("st_builtins.sv");
+    let errors_path = root.join("st_builtin_errors.sv");
+    fs::write(&path, BUILTIN_SOURCE).expect("write built-in fixture");
+    fs::write(&errors_path, BUILTIN_ERRORS_SOURCE).expect("write built-in error fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    let uri = file_uri(&path);
+    let errors_uri = file_uri(&errors_path);
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+    wait_for_diagnostics(&mut client, &errors_uri, |_| true);
+    for (file, uri, source, checks) in [
+        (&path, &uri, BUILTIN_SOURCE, BUILTIN_CHECKS),
+        (
+            &errors_path,
+            &errors_uri,
+            BUILTIN_ERRORS_SOURCE,
+            &[
+                ("ST-40", "$clog2", 0, 0, "function", LIB),
+                ("ST-40", "$display", 0, 0, "function", LIB),
+                ("ST-40", "n = $clog2", 0, 0, "variable", NONE),
+            ][..],
+        ),
+    ] {
+        let mut streams = Vec::new();
+        for opened in [false, true] {
+            if opened {
+                client.open(file, source).expect("open built-in buffer");
+            }
+            let result = client
+                .request(
+                    "textDocument/semanticTokens/full",
+                    json!({ "textDocument": { "uri": uri } }),
+                )
+                .expect("built-in semantic token response");
+            let rows = semantic_token_rows(&result, &types, &modifiers);
+            let label = if opened { "open buffer" } else { "project" };
+            for check in checks {
+                assert_check(&rows, source, check, label);
+            }
+            if source == BUILTIN_ERRORS_SOURCE {
+                let (line, col) = position_of(source, "ghost.size", 0);
+                assert!(
+                    !rows.iter().any(|row| row.line == line
+                        && (row.character == col || row.character == col + 6)),
+                    "ST-43 {label}: unresolved receiver or its method has a token"
+                );
+            }
+            // ST-21: nothing of the `BIF_LOG2` body is painted over its use.
+            if source == BUILTIN_SOURCE {
+                let (line, col) = position_of(source, "`BIF_LOG2(8)", 0);
+                assert!(
+                    rows.iter().all(|row| row.line != line
+                        || row.character <= col
+                        || row.character >= col + 9),
+                    "ST-21 {label}: expansion token over the use site"
+                );
+            }
+            streams.push(result["data"].clone());
+        }
+        assert_eq!(streams[0], streams[1], "ST-24: serving paths differ");
+    }
+    client.shutdown();
+}

@@ -1934,4 +1934,60 @@ endmodule\n";
             assert_eq!(at(11, "holder", 0), TT_CLASS, "{profile}");
         }
     }
+
+    /// ST-40 to ST-43 in every capture profile: `$name` tokens from their
+    /// spelling in constant contexts, macro bodies and for an unknown name;
+    /// built-in methods (keyword-spelled, `with` clauses, built-in classes,
+    /// implicit class methods) as `function` + `defaultLibrary`; user
+    /// subroutines that share a built-in name without it.
+    #[test]
+    fn builtin_functions_and_methods_are_default_library_in_every_profile() {
+        let source = include_str!("../../../tests/fixtures/semantic_tokens/builtin_functions.sv");
+        let library = 1 << TM_DEFAULT_LIBRARY;
+        let at = |needle: &str, offset: u32| {
+            let index = source
+                .find(needle)
+                .unwrap_or_else(|| panic!("no {needle:?}"));
+            let line = source[..index].matches('\n').count() as u32;
+            let start = source[..index].rfind('\n').map_or(0, |i| i + 1);
+            (line, (index - start) as u32 + offset)
+        };
+        let expect: &[(&str, u32, u32, u32)] = &[
+            ("$clog2(n)", 0, TT_FUNCTION, library),
+            ("$clog2(16)", 0, TT_FUNCTION, library),
+            ("$bits(int)", 0, TT_FUNCTION, library),
+            ("$clog2(D)-1", 0, TT_FUNCTION, library),
+            ("$bits(addr)", 0, TT_FUNCTION, library),
+            ("$clog2(D) > 2", 0, TT_FUNCTION, library),
+            ("$ceil", 0, TT_FUNCTION, library),
+            ("$bif_unknown", 0, TT_FUNCTION, library),
+            ("q.size()", 2, TT_FUNCTION, library),
+            ("srandom", 0, TT_FUNCTION, library),
+            ("randomize() with", 0, TT_FUNCTION, library),
+            ("unique()", 0, TT_FUNCTION, library),
+            ("and()", 0, TT_FUNCTION, library),
+            ("sum() with", 0, TT_FUNCTION, library),
+            ("next().name", 0, TT_FUNCTION, library),
+            ("put(1)", 0, TT_FUNCTION, library),
+            ("self()", 0, TT_FUNCTION, library),
+            ("randomize(n)", 0, TT_FUNCTION, library),
+            ("std::", 0, TT_NAMESPACE, 0),
+            ("pf(3)", 0, TT_FUNCTION, 0),
+            ("obj.size()", 4, TT_FUNCTION, 0),
+        ];
+        for (profile, tokens) in profiles(source) {
+            for &(needle, offset, token_type, modifiers) in expect {
+                let (line, col) = at(needle, offset);
+                let token = tokens
+                    .iter()
+                    .find(|t| t.0 == line && t.1 == col)
+                    .unwrap_or_else(|| panic!("{profile}: no token at {needle:?}: {tokens:?}"));
+                assert_eq!(
+                    (token.3, token.4),
+                    (token_type, modifiers),
+                    "{profile}: {needle:?}"
+                );
+            }
+        }
+    }
 }

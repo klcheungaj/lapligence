@@ -89,7 +89,7 @@ positional words and bindings come from the capture in
   member declaration.
 - **ST-19** Functions and tasks are `function`; system tasks and functions
   and built-in methods (`$display`, `q.size`) are `function` +
-  `defaultLibrary`.
+  `defaultLibrary` (every context: ST-40 to ST-43).
 - **ST-20** Named, implicit (`.a`) and interface port connection labels are
   `function` + `connectionLabel`, and value and type parameter connection
   labels (`#(.W(2))`, `#(.T(logic))`) are `function` + `readonly` +
@@ -104,6 +104,40 @@ positional words and bindings come from the capture in
 - **ST-23** Strings are `string`, numbers `number`, operators and
   punctuation (also `->`) `operator`. Comments and attribute names get no
   token.
+
+## Built-in functions and methods
+
+Stock VS Code colors `function` and `function.defaultLibrary` alike
+(`support.function`, Dark+ `#DCDCAA`); `defaultLibrary` marks what the
+language provides, as rust-analyzer marks the standard library.
+
+- **ST-40** Every written `$name` is `function` + `defaultLibrary` (5.6.3:
+  "A name following the $ is interpreted as a system task or a system
+  function"), known from the token itself, wherever it is written: procedural
+  code, continuous assignments, constant contexts (`localparam W =
+  $clog2(N)`, parameter defaults, port, net and typedef dimensions
+  `[$clog2(D)-1:0]`, `typedef logic [$bits(x)-1:0] t;`, generate
+  conditions), package and class scope, `` `define `` bodies and macro
+  actual arguments, recovered syntax, and an unknown `$foo` (whose
+  diagnostic is still published). `$root` and `$unit` are scope names, not
+  system names. An expansion copy that is not written at the use site gets
+  no token (ST-21).
+- **ST-41** Built-in methods are `function` + `defaultLibrary`, with or
+  without parentheses, chained (`q.size() - 1`, `e.next().name()`) and with a
+  `with` clause: array, queue and associative-array methods (7.5, 7.9, 7.10,
+  7.12, including the keyword-spelled `unique and or xor`), string methods
+  (6.16), enum methods (6.19.5), the event `triggered` property (15.5.3),
+  `randomize` in the class and scope forms (18.6, 18.7, 18.12),
+  `rand_mode` and `constraint_mode` (18.8, 18.9), the implicit class methods
+  `srandom get_randstate set_randstate` (18.13), and the methods of the
+  built-in classes `process`, `semaphore` and `mailbox` (9.7, 15).
+- **ST-42** The `std` of `std::randomize` is `namespace` (the built-in
+  package, with no navigation target); built-in class names keep `class`.
+- **ST-43** User-defined functions, tasks and methods stay `function`
+  without `defaultLibrary`, also when they share a built-in method's name
+  (`obj.size()` on a user class). A method whose receiver Slang cannot
+  resolve (`ghost.size()`) gets no token (ST-22): only the receiver's type
+  says whether the name is built in.
 
 ## Serving paths
 

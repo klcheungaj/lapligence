@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 46u
+#define LLG_SLANG_ABI_VERSION 47u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1304,8 +1304,12 @@ enum {
   LLG_SLANG_LEXICAL_OPERATOR = 22,
   LLG_SLANG_LEXICAL_IDENTIFIER = 23,
   LLG_SLANG_LEXICAL_GENVAR = 24,
-  /* A system task or function name, or a built-in method name (ABI v42):
-   * resolved by Slang to a built-in subroutine, so it has no semantic target. */
+  /* A system task or function name, or a built-in method name (ABI v42,
+   * v47): it has no semantic target. Since v47 every written `$name` token
+   * has this kind, also in constant contexts and when Slang cannot resolve
+   * it; built-in methods include keyword-named array methods (`unique`,
+   * `and`, `or`, `xor`) and source-less methods of built-in classes
+   * (`mailbox`, `semaphore`, `process`, class `srandom`). */
   LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE = 25,
   /* A named statement block, labeled statement or generate block name
    * (ABI v43): a declaration, an end label, or a reference bound to the

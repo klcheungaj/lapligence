@@ -3933,11 +3933,17 @@ private:
         bindScopeQualifiers(*expression.syntax, target);
     }
     else if constexpr (std::same_as<T, CallExpression>) {
+      // `q.sum() with (item)` wraps the invocation `q.sum()` in the method
+      // node, so unwrap both forms until the name itself is reached.
       const syntax::SyntaxNode* name = expression.syntax;
-      if (name->kind == syntax::SyntaxKind::InvocationExpression)
-        name = name->template as<syntax::InvocationExpressionSyntax>().left;
-      else if (name->kind == syntax::SyntaxKind::ArrayOrRandomizeMethodExpression)
-        name = name->template as<syntax::ArrayOrRandomizeMethodExpressionSyntax>().method;
+      while (true) {
+        if (name->kind == syntax::SyntaxKind::InvocationExpression)
+          name = name->template as<syntax::InvocationExpressionSyntax>().left;
+        else if (name->kind == syntax::SyntaxKind::ArrayOrRandomizeMethodExpression)
+          name = name->template as<syntax::ArrayOrRandomizeMethodExpressionSyntax>().method;
+        else
+          break;
+      }
       const auto token = name->getLastToken();
       if (token.valueText() != expression.getSubroutineName())
         return;
@@ -3945,13 +3951,40 @@ private:
         capture.lexicalBinding(token, LLG_SLANG_INVALID_ID,
                                LLG_SLANG_LEXICAL_ROLE_NONE,
                                LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE);
+        // `std::randomize` (IEEE 1800-2009 18.12) names the built-in std
+        // package, which has no source to navigate to: give the qualifier the
+        // package kind without a target.
+        if (name->kind == syntax::SyntaxKind::ScopedName) {
+          const auto& scoped = name->template as<syntax::ScopedNameSyntax>();
+          const auto qualifier = scoped.left->getLastToken();
+          if (scoped.separator.kind == parsing::TokenKind::DoubleColon &&
+              scoped.left->kind == syntax::SyntaxKind::IdentifierName &&
+              qualifier.valueText() == "std")
+            capture.lexicalBinding(qualifier, LLG_SLANG_INVALID_ID,
+                                   LLG_SLANG_LEXICAL_ROLE_NONE,
+                                   LLG_SLANG_LEXICAL_PACKAGE);
+        }
         return;
       }
       const SubroutineSymbol* target = std::get<0>(expression.subroutine);
       if (!target)
         return;
-      capture.lexicalBinding(token, lexicalTarget(*target),
-                             LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+      // A method Slang builds without source is built in: the methods of the
+      // std package classes (`process`, `semaphore`, `mailbox`; IEEE
+      // 1800-2009 9.7, 15.1 "These built-in classes reside in the built-in
+      // std package") and the implicit class methods (`srandom`,
+      // `get_randstate`, `set_randstate`, 18.13.3 to 18.13.5). It is sent
+      // like a system method; a user override has syntax and stays a
+      // reference.
+      if (!target->getSyntax()) {
+        capture.lexicalBinding(token, LLG_SLANG_INVALID_ID,
+                               LLG_SLANG_LEXICAL_ROLE_NONE,
+                               LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE);
+      }
+      else {
+        capture.lexicalBinding(token, lexicalTarget(*target),
+                               LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+      }
       bindScopeQualifiers(*name, *target);
     }
   }
@@ -6449,6 +6482,19 @@ public:
     for (auto& token : capture.output.lexical_tokens) {
       const bool expandedMacro = token.kind == LLG_SLANG_LEXICAL_MACRO &&
           (token.flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) != 0;
+      // The array methods `unique`, `and`, `or` and `xor` (IEEE 1800-2009
+      // 7.12.1, 7.12.3) are spelled as keywords; the call binding makes them
+      // built-in methods instead.
+      if (token.kind == LLG_SLANG_LEXICAL_KEYWORD) {
+        auto it = connectionLabels.find(
+            {token.range.file_id, token.range.start, token.range.end});
+        if (it != connectionLabels.end() &&
+            it->second.kind == LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE) {
+          token.kind = LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE;
+          token.role = LLG_SLANG_LEXICAL_ROLE_NONE;
+        }
+        continue;
+      }
       if ((token.kind != LLG_SLANG_LEXICAL_IDENTIFIER && !expandedMacro) ||
           token.range.file_id == LLG_SLANG_INVALID_ID)
         continue;
@@ -6755,6 +6801,19 @@ private:
     if (kind == LLG_SLANG_LEXICAL_KEYWORD && controlKeyword.valid() &&
         token.location() == controlKeyword)
       flags |= LLG_SLANG_LEXICAL_CONTROL_FLOW;
+    // A `$name` is a system task or function by its spelling (IEEE 1800-2009
+    // 5.6.3: "A name following the $ is interpreted as a system task or a
+    // system function"), so it keeps the system kind wherever it is written:
+    // constant contexts the semantic capture does not visit (dimensions,
+    // generate conditions), a name Slang reports as unknown, recovered
+    // syntax and macro bodies. Only an expansion copy that no written
+    // argument maps back to stays macro text, so nothing of a body is
+    // painted over a use site.
+    const bool expansionCopy =
+        (flags & LLG_SLANG_LEXICAL_MACRO_EXPANSION) != 0 &&
+        (flags & LLG_SLANG_LEXICAL_MACRO_ARGUMENT) == 0 && macroArgumentDepth == 0;
+    if (token.kind == parsing::TokenKind::SystemIdentifier && !expansionCopy)
+      kind = LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE;
     // Names in directives and macro bodies are macro text. Names written in
     // macro arguments and their expanded copies are ordinary names.
     if (kind == LLG_SLANG_LEXICAL_IDENTIFIER && macroArgumentDepth == 0 &&

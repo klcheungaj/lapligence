@@ -2335,7 +2335,10 @@ stock VS Code themes except where noted.
   checked), a use of a type parameter inside a module whose instance
   overrides it (`#(.T(logic [1:0]))`) is `type`, not `typeParameter` (same
   `#4EC9B0` in Dark+); the declaration stays `typeParameter`.
-- A generate `case (expr)` condition has no reference token.
+- A generate `case (expr)` condition has no reference token, and neither
+  have the user names of a generate `if (expr)` condition (`D` in
+  `if ($clog2(D) > 2)`, found by LS-BIF); `$name` calls there are tokenized
+  from their spelling (ST-40).
 
 ### Cause
 

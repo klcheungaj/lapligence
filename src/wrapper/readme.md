@@ -66,7 +66,13 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   path steps to the symbols of Slang's resolved path, `disable` targets and
   symbol operands, called subroutine names, and interface-port type names.
   System subroutine and built-in method names get the
-  `LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE` kind with no target. Slang wraps a
+  `LLG_SLANG_LEXICAL_SYSTEM_SUBROUTINE` kind with no target: every written
+  `$name` token from its spelling (also where no expression is captured, or
+  Slang cannot resolve it), keyword-spelled array methods (`unique`, `and`,
+  `or`, `xor`), and methods Slang builds without syntax (std `process`,
+  `semaphore`, `mailbox` and the implicit class `srandom`, `get_randstate`,
+  `set_randstate`). The `std` of `std::randomize` gets the package kind with
+  no target. Slang wraps a
   failed statement or expression, with its enclosing list, in an Invalid node
   the AST visitor never enters; capture walks that child for lexical bindings
   only (no semantic nodes), so only the names Slang could not resolve stay
