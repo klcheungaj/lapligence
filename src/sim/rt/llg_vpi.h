@@ -22,6 +22,7 @@ extern "C" {
 #define LLG_VPI_OBJ_UNNAMED 0x200u    /* no vpiName/vpiFullName; never found by name */
 #define LLG_VPI_OBJ_QUALIFIER 0x400u  /* vpiNetDeclAssign / vpiAutomatic */
 #define LLG_VPI_OBJ_ACTIVATION 0x800u /* activation_* name what `disable` targets */
+#define LLG_VPI_OBJ_DYNAMIC 0x1000u   /* string, handle or container: `storage`, `shape` */
 
 /* Typespecs (IEEE 1800-2009 37.23). The generated model emits interned
  * tables; fields naming an optional entry hold its index + 1 (0: none),
@@ -192,7 +193,92 @@ typedef struct llg_vpi_model_object {
     uint32_t activation_declaration;
     uint32_t activation_instance;
     const llg_vpi_timing_t* timing; /* delays of a path, check, primitive, cont assign */
+    /* A dynamic object (LLG_VPI_OBJ_DYNAMIC): its storage (llg_string_t,
+     * void* handle or container), the change marker a handle store
+     * publishes (NULL for strings and containers, which publish their own),
+     * and its shape index + 1 in the dynamic tables. */
+    void* storage;
+    sv4_t* dependency;
+    uint32_t shape;
 } llg_vpi_model_object_t;
+
+/* Dynamic objects (IEEE 1800-2009 37.17, 37.27-37.29, 37.3.7): the value
+ * shapes of strings, handles, containers and class properties, and the
+ * class layouts a class object exposes. Shapes refer to earlier shapes only
+ * (container elements). */
+enum {
+    LLG_VPI_SHAPE_PACKED = 0,    /* sv4_t */
+    LLG_VPI_SHAPE_REAL = 1,      /* double */
+    LLG_VPI_SHAPE_STRING = 2,    /* llg_string_t */
+    LLG_VPI_SHAPE_CLASS = 3,     /* void*: a collected class object */
+    LLG_VPI_SHAPE_CHANDLE = 4,   /* void*: a foreign pointer */
+    LLG_VPI_SHAPE_CONTAINER = 5, /* dynamic array, queue or associative array */
+    LLG_VPI_SHAPE_OTHER = 6,     /* listed without a value */
+};
+/* Associative array index kinds. */
+enum {
+    LLG_VPI_KEY_NONE = 0,
+    LLG_VPI_KEY_INTEGRAL = 1,
+    LLG_VPI_KEY_STRING = 2,
+    LLG_VPI_KEY_OTHER = 3,       /* wildcard: elements are not reachable */
+};
+
+typedef struct {
+    int type;                 /* vpiType of a variable of this shape */
+    uint8_t shape;            /* LLG_VPI_SHAPE_* */
+    uint8_t array_type;       /* vpiDynamicArray, vpiQueueArray, vpiAssocArray */
+    uint8_t values;           /* container elements are llg_value_t, not sv4_t */
+    uint8_t key;              /* LLG_VPI_KEY_* */
+    uint32_t width;           /* packed width */
+    int8_t is_signed;
+    int8_t two_state;
+    int8_t shortreal;
+    uint32_t class_index;     /* class layout + 1 of a class handle; 0: built-in */
+    uint32_t element;         /* container element shape */
+    uint32_t typespec;        /* typespec index + 1 of a packed value; 0: none */
+} llg_vpi_shape_t;
+
+typedef struct {
+    const char* name;         /* NULL: a hidden runtime field, not a property */
+    uint32_t shape;
+} llg_vpi_class_field_t;
+
+typedef struct {
+    const char* name;
+    uint32_t base;            /* base class layout + 1; 0: none */
+    uint32_t first_field;     /* field_count fields, base fields first */
+    uint32_t field_count;
+} llg_vpi_class_t;
+
+/* Field kinds the generated object accessor reports, matching the model's
+ * class field slots: the shape of a property must agree before VPI reads it. */
+enum {
+    LLG_VPI_FIELD_PACKED = 0,
+    LLG_VPI_FIELD_REAL = 1,
+    LLG_VPI_FIELD_STRING = 2,
+    LLG_VPI_FIELD_HANDLE = 3,
+    LLG_VPI_FIELD_PAYLOAD = 4,  /* owned container or record */
+};
+
+typedef struct {
+    const llg_vpi_shape_t* shapes;
+    uint32_t shape_count;
+    const llg_vpi_class_t* classes;
+    uint32_t class_count;
+    const llg_vpi_class_field_t* fields;
+    uint32_t field_count;
+    /* The class layout of a live object (0 when it was reclaimed). */
+    int (*object)(void* handle, uint32_t* class_id);
+    /* The storage of field `index` of a live object and its kind. */
+    void* (*field)(void* handle, uint32_t index, unsigned* kind);
+} llg_vpi_dynamic_tables_t;
+
+/* The dynamic tables of the catalog, borrowed like the catalog and
+ * validated on the first VPI use; NULL for a model without them. */
+int llg_vpi_model_dynamic(const llg_vpi_dynamic_tables_t* tables);
+/* cbCreateObj (38.36.1): models generated with the catalog report every
+ * class object after its constructor (or shallow copy) completed. */
+void llg_vpi_object_created(void* handle);
 
 /* A built-in system task or function the model runs natively and its first
  * call site (file may be NULL). */

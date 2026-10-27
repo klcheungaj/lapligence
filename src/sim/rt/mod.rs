@@ -25,13 +25,18 @@
 pub mod gmp;
 
 /// The bounded public VPI declarations and generated-model bridge.
-/// The DPI-C bridge and `svdpi.h` routines (`llg_dpi.c`) follow the VPI
+/// The dynamic-object layer (`llg_vpi_dynamic.c`) follows `llg_vpi.c` in
+/// the same translation unit, whose private helpers it uses. The DPI-C bridge and `svdpi.h` routines (`llg_dpi.c`) follow the VPI
 /// bridge in the same translation unit, which every model links, so user
 /// libraries always resolve them.
 pub fn vpi_sources() -> (&'static str, &'static str) {
     (
         include_str!("vpi_user.h"),
-        concat!(include_str!("llg_vpi.c"), include_str!("llg_dpi.c")),
+        concat!(
+            include_str!("llg_vpi.c"),
+            include_str!("llg_vpi_dynamic.c"),
+            include_str!("llg_dpi.c")
+        ),
     )
 }
 

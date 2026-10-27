@@ -408,6 +408,10 @@ static void gc_tracer_release(llg_gc_tracer_t* tracer) {
     *tracer = (llg_gc_tracer_t){0};
 }
 
+static llg_gc_reclaim_fn llg_gc_reclaim;
+
+void llg_gc_reclaim_hook(llg_gc_reclaim_fn hook) { llg_gc_reclaim = hook; }
+
 static void gc_finalize_free(llg_gc_header_t* object) {
     if (object->type->finalize) object->type->finalize(object);
     free(object);
@@ -484,6 +488,10 @@ void llg_gc_collect(void) {
         gc_index_remove_slot(i);
     }
     gc_tracer_release(&tracer);
+    // Every unreachable object is still intact: the hook (VPI) sees them all
+    // before the first finalizer runs. The header is the object's address.
+    if (LLG_CO_UNLIKELY(llg_gc_reclaim != NULL) && found)
+        llg_gc_reclaim((void* const*)dead, found);
     // Finalizers release fields only and never follow handles, so cycles and
     // order are irrelevant.
     for (size_t i = 0; i < found; ++i) {
