@@ -412,6 +412,90 @@ pub(super) fn dpi_packed_result(
 /// Inputs are borrowed from the caller's registered slots. Every foreign result
 /// is staged before any output publication can reenter HDL or invalidate inputs.
 pub(super) fn render_dpi_thunk(model: &IrModel, f: &IrFunc) -> Result<String, String> {
+    render_thunk(model, f, &f.c_name, false)
+}
+
+/// Name of the thunk body a foreign call context runs for suspendable
+/// import `f` (see [`render_dpi_context_shim`]).
+fn context_body_name(f: &IrFunc) -> String {
+    format!("{}_fcb", f.c_name)
+}
+
+/// A context imported task of a design whose exported tasks can consume
+/// time (ADV-018): the ordinary thunk, renamed, runs on a foreign call
+/// context, and the coroutine `<c_name>` started by the caller hands it the
+/// run token, runs every exported task frame it requests as an arena call
+/// (resume point `resume`) and finishes when the thunk returned. `dispatch`
+/// is the frame's resume dispatch. The frame holds the thunk's parameters as
+/// coroutine fields, `_dpi_ctx` and `_dpi_slot`.
+pub(super) fn render_dpi_context_shim(
+    model: &IrModel,
+    f: &IrFunc,
+    resume: u32,
+    dispatch: &str,
+) -> Result<String, String> {
+    if !f.is_task || !dpi_import(f)?.is_context() {
+        return Err(format!(
+            "DPI-C import `{}` cannot suspend: only a context imported task can",
+            f.c_name
+        ));
+    }
+    let name = &f.c_name;
+    let body = context_body_name(f);
+    let mut out = render_thunk(model, f, &body, true)?;
+    let arguments = super::functions::frame_param_fields(f)
+        .into_iter()
+        .map(|(ty, field)| {
+            if ty == "sv4_t" {
+                format!("&F->{field}")
+            } else {
+                format!("F->{field}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    out.push_str(&format!(
+        "static void {name}_fct(void* frame) {{
+    {name}_frame_t* F = ({name}_frame_t*)frame;
+    {body}({arguments});
+}}
+"
+    ));
+    out.push_str(&format!(
+        "static llg_co_status_t {name}(llg_co_frame_t* co, llg_co_chain_t* ch) {{
+    {name}_frame_t* F = ({name}_frame_t*)co;
+{dispatch}    F->_dpi_ctx = llg_dpi_context_begin(ch, {name}_fct, F);
+    if (!F->_dpi_ctx) {{
+        {name}_fct(F);
+        LLG_CO_EXIT_CHECK(ch);
+        return LLG_CO_DONE;
+    }}
+    for (;;) {{
+        F->_dpi_slot = llg_dpi_context_run(F->_dpi_ctx);
+        if (!F->_dpi_slot) break;
+        LLG_CO_CALL_ARENA(co, ch, {resume}, F->_dpi_slot->desc, F->_dpi_slot);
+    }}
+    llg_dpi_context_end(F->_dpi_ctx);
+    F->_dpi_ctx = NULL;
+    LLG_CO_EXIT_CHECK(ch);
+    return LLG_CO_DONE;
+}}
+
+"
+    ));
+    Ok(out)
+}
+
+/// The thunk of import `f`, named `name`. An `abandonable` thunk runs on a
+/// foreign call context: when the context unwinds a killed process, it
+/// returns right after the foreign call without touching the process's
+/// storage.
+fn render_thunk(
+    model: &IrModel,
+    f: &IrFunc,
+    name: &str,
+    abandonable: bool,
+) -> Result<String, String> {
     let dpi = dpi_import(f)?;
     // Without a context import or an export no foreign code can observe
     // the call-chain state, so calls stay uninstrumented (SV 35.5.3).
@@ -443,7 +527,7 @@ pub(super) fn render_dpi_thunk(model: &IrModel, f: &IrFunc) -> Result<String, St
     out.push_str(&format!(
         "static {} {}({}) {{\n",
         internal_return_type(f),
-        f.c_name,
+        name,
         func_params(f)
     ));
     let guard = if f.ret_string {
@@ -584,6 +668,13 @@ pub(super) fn render_dpi_thunk(model: &IrModel, f: &IrFunc) -> Result<String, St
     }
     if guarded {
         out.push_str("    llg_dpi_guard_pop(&_dpi_guard);\n");
+    }
+    if abandonable {
+        // The process was killed while the foreign code waited in an
+        // export: its storage belongs to its own cleanup now (ADV-018).
+        out.push_str(&format!(
+            "    if (LLG_CO_UNLIKELY(llg_dpi_context_abandoned())) {{\n        llg_dpi_import_abandoned(&_dpi_call, _dpi_status, {c_name_literal});\n        return;\n    }}\n"
+        ));
     }
     if instrumented {
         out.push_str(&format!(

@@ -41,6 +41,7 @@ static void process_handle_shutdown(llg_proc_t* proc) {
 }
 
 static void release_killed_proc_resources(llg_proc_t* proc) {
+    if (process_end_hook) process_end_hook(proc, 1);
     value_scopes_unwind(proc);
     activation_unwind_proc(proc);
     llg_frame_release(proc->frame);

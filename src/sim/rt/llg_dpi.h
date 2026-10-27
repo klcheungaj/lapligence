@@ -87,8 +87,9 @@ void llg_dpi_init_c(const llg_dpi_type_t* type, void* out);
  * declarations. Generated thunks save, set and restore the call-chain state
  * on every crossing between SystemVerilog and foreign code, so a nested
  * SV -> C -> SV -> C chain sees the scope of its innermost context import
- * and gets the outer state back when each call returns. Nothing suspends
- * inside a chain: exported tasks are zero-time. */
+ * and gets the outer state back when each call returns. A chain whose
+ * exported task consumes time runs its foreign code on a foreign call
+ * context (below). */
 
 /* Entry of one exported subroutine in a scope: `id` numbers the exported C
  * identifier model-wide, `fn` is that scope's export thunk (cast to its
@@ -127,9 +128,9 @@ typedef struct llg_dpi_call {
  * on the thunk's C stack. A fatal svdpi.h access in that foreign code
  * (S40-D6) abandons it: the runtime pops the innermost guard and jumps back
  * to its thunk, which restores the chain state, releases its value scopes
- * from `mark` and returns without copying anything out. Imports run
- * synchronously on one native stack (an exported task cannot consume time),
- * so the guards nest like the calls. */
+ * from `mark` and returns without copying anything out. The guards of one
+ * native stack nest like its calls; each foreign call context keeps its own
+ * guard stack (llg_dpi_context_switch). */
 typedef struct llg_dpi_guard {
     jmp_buf jump;
     struct llg_dpi_guard* outer;
@@ -160,6 +161,11 @@ void llg_dpi_import_enter(llg_dpi_call_t* saved, llg_dpi_scope_t* scope, int tas
  * 0), a disable that the foreign code did not acknowledge is a fatal
  * error (35.9 item c). */
 void llg_dpi_import_leave(const llg_dpi_call_t* saved, const char* c_name, int task);
+/* The import's process was killed while its foreign code waited in an
+ * export (ADV-018): restore the chain state and check that the task
+ * returned 1 (35.9 item b). Nothing is copied out and the value scopes are
+ * left to the process's cleanup. */
+void llg_dpi_import_abandoned(const llg_dpi_call_t* saved, int status, const char* c_name);
 /* Check an imported task's disable-protocol result (35.9 item b) and
  * return nonzero when its outputs must not be copied out (it was disabled
  * or broke the protocol, a fatal error). */
@@ -178,6 +184,49 @@ int llg_dpi_export_enter(llg_dpi_call_t* saved);
 /* Restore the chain state; for an exported task return the disable status
  * of 35.9 item a) (1 when a disable now cancels the calling import). */
 int llg_dpi_export_leave(const llg_dpi_call_t* saved, int task);
+/* Restore the chain state of an export whose calling process was killed
+ * while the exported task waited, and return 1 (35.9 item a). */
+int llg_dpi_export_abandoned(const llg_dpi_call_t* saved);
+
+/* ---- Foreign call contexts (ADV-018; foreign_contexts/readme.md) ----
+ *
+ * A context imported task of a design with an exported task that can
+ * consume time is a coroutine shim: its thunk body runs on a context, an
+ * OS thread with its own native stack, while a run token keeps exactly one
+ * thread running. When the foreign code calls such an exported task, the
+ * export thunk pushes the task's coroutine frame on the calling chain's
+ * arena and hands the token back; the shim runs the frame as an arena call
+ * on the scheduler thread, so the task's waits suspend the process like any
+ * task call, and then resumes the context. These entry points are defined
+ * in llg_dpi_context.c, which only models with such shims link. */
+typedef struct llg_dpi_context llg_dpi_context_t;
+/* The thunk body a context runs, given the shim's frame. */
+typedef void (*llg_dpi_body_fn)(void* frame);
+/* Take a context from the pool (or start one) for one call of the shim
+ * running in `chain`. NULL when no thread can be started: the shim then
+ * runs `body` directly and a waiting export is refused. */
+llg_dpi_context_t* llg_dpi_context_begin(llg_co_chain_t* chain, llg_dpi_body_fn body, void* frame);
+/* Hand the token to `context` until it returns it. Returns the anchor of an
+ * exported task frame to run, or NULL once the body returned (or the
+ * context was parked for good after a fatal protocol violation). */
+llg_co_anchor_t* llg_dpi_context_run(llg_dpi_context_t* context);
+/* The body returned: give the context back to the pool. */
+void llg_dpi_context_end(llg_dpi_context_t* context);
+/* An export thunk of an exported task that can consume time: push the
+ * task's frame (`desc`) on the calling chain's arena. NULL, after a fatal
+ * error, when the caller is not a context (an imported function, or a
+ * context import that cannot suspend; SV 35.8). */
+llg_co_anchor_t* llg_dpi_export_begin(const llg_co_desc_t* desc, const char* c_name);
+/* The frame holds the arguments: hand the token back until the task
+ * returned. Nonzero when the calling process was killed meanwhile (the
+ * frame is gone; the thunk returns llg_dpi_export_abandoned). */
+int llg_dpi_export_wait(llg_co_anchor_t* slot);
+/* Nonzero while the token holder unwinds a killed process's chain. */
+int llg_dpi_context_abandoned(void);
+/* Hooks between llg_dpi.c and llg_dpi_context.c (contexts only). */
+void llg_dpi_context_hooks(void (*park)(void), void (*shutdown)(void));
+llg_dpi_guard_t* llg_dpi_context_switch(llg_dpi_guard_t* guards, int unwinding);
+void llg_dpi_chain_snapshot(llg_dpi_call_t* out);
 
 #ifdef __cplusplus
 }

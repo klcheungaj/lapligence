@@ -88,6 +88,14 @@ pub(super) fn owned_packed_result(function: &IrFunc) -> bool {
 pub(super) fn owned_dpi_thunk(model: &IrModel, function: &IrFunc) -> Result<String, String> {
     render_dpi_thunk(model, function)
 }
+pub(super) fn owned_dpi_context_shim(
+    model: &IrModel,
+    function: &IrFunc,
+    resume: u32,
+    dispatch: &str,
+) -> Result<String, String> {
+    dpi::render_dpi_context_shim(model, function, resume, dispatch)
+}
 
 // ── Model rendering ───────────────────────────────────────────────────────────
 
@@ -1320,7 +1328,11 @@ fn render_model(
             continue;
         }
         if execution.analysis().is_coroutine_function(index) {
-            continue;
+            // A suspendable DPI-C import shim still calls its foreign
+            // function (ADV-018).
+            if f.dpi_import().is_some() {
+                out.push_str(&dpi_external_prototype(f)?);
+            }
         } else {
             out.push_str(&func_prototype(f)?);
         }
@@ -1387,7 +1399,11 @@ fn render_model(
         |function| execution.analysis().is_coroutine_function(function),
         &mut out,
     );
-    out.push_str(&render_dpi_export_bodies(model)?);
+    out.push_str(&render_dpi_export_bodies(model, |function| {
+        coroutine_functions
+            .get(&function)
+            .map(|artifact| artifact.frame_type.clone())
+    })?);
     // Three passes lower comb drivers, links, then always/initial processes,
     // so every comb process, link, and process runs at t=0 in that order;
     // push order equals spawn order.

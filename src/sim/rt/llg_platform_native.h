@@ -3,7 +3,8 @@
 //
 // Kept apart from llg_platform.h because the Windows side needs <windows.h>,
 // whose macros must not reach the flat scheduler translation unit; only the
-// waveform writer (threads) and the VPI bridge (plugins) include this header.
+// waveform writer and the foreign call contexts (threads) and the VPI bridge
+// (plugins) include this header.
 #ifndef LLG_PLATFORM_NATIVE_H
 #define LLG_PLATFORM_NATIVE_H
 
@@ -58,6 +59,15 @@ static inline int llg_thread_start(llg_thread_t* thread, llg_thread_fn fn, void*
     (void)snprintf(error, error_size, "Win32 error %lu", (unsigned long)GetLastError());
     return 1;
 }
+// Like llg_thread_start with `stack_bytes` of reserved stack (committed as
+// it is touched).
+static inline int llg_thread_start_sized(llg_thread_t* thread, llg_thread_fn fn, void* arg,
+                                         size_t stack_bytes, char* error, size_t error_size) {
+    *thread = CreateThread(NULL, stack_bytes, fn, arg, STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
+    if (*thread) return 0;
+    (void)snprintf(error, error_size, "Win32 error %lu", (unsigned long)GetLastError());
+    return 1;
+}
 static inline void llg_thread_join(llg_thread_t thread) {
     (void)WaitForSingleObject(thread, INFINITE);
     CloseHandle(thread);
@@ -90,6 +100,19 @@ static inline int llg_thread_equal(llg_thread_id_t a, llg_thread_id_t b) {
 static inline int llg_thread_start(llg_thread_t* thread, llg_thread_fn fn, void* arg,
                                    char* error, size_t error_size) {
     int rc = pthread_create(thread, NULL, fn, arg);
+    if (rc == 0) return 0;
+    (void)snprintf(error, error_size, "%s", strerror(rc));
+    return 1;
+}
+static inline int llg_thread_start_sized(llg_thread_t* thread, llg_thread_fn fn, void* arg,
+                                         size_t stack_bytes, char* error, size_t error_size) {
+    pthread_attr_t attributes;
+    int rc = pthread_attr_init(&attributes);
+    if (rc == 0) {
+        rc = pthread_attr_setstacksize(&attributes, stack_bytes);
+        if (rc == 0) rc = pthread_create(thread, &attributes, fn, arg);
+        (void)pthread_attr_destroy(&attributes);
+    }
     if (rc == 0) return 0;
     (void)snprintf(error, error_size, "%s", strerror(rc));
     return 1;

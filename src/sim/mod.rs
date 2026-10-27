@@ -117,6 +117,7 @@ pub(crate) fn write_sim_sources(
         ("sv_vpi_user.h", rt::sv_vpi_header()),
         ("llg_vpi.h", vpi_bridge_h),
         ("llg_vpi.c", vpi_c),
+        ("llg_dpi_context.c", rt::foreign_context_source()),
         ("llg_container.h", container_h),
         ("llg_container.c", container_c),
         ("llg_string.h", string_h),

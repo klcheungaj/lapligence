@@ -57,6 +57,15 @@ pub fn vpi_bridge_header() -> &'static str {
     concat!(include_str!("llg_dpi.h"), include_str!("llg_vpi.h"))
 }
 
+/// Foreign call contexts for DPI-C chains whose exported tasks consume time
+/// (ADV-018, `foreign_contexts/readme.md`), written as `llg_dpi_context.c`.
+/// Its declarations are in the bridge header (`llg_dpi.h`). It is a
+/// translation unit of its own in the runtime archive, so only models whose
+/// suspendable import shims reference it link it and the thread library.
+pub fn foreign_context_source() -> &'static str {
+    include_str!("foreign_contexts/llg_dpi_context.c")
+}
+
 /// Scheduler-independent deterministic random-stream service.  It owns the
 /// PCG stream, hierarchy derivation, unbiased ranges, and state serialization.
 pub fn rng_sources() -> (&'static str, &'static str) {

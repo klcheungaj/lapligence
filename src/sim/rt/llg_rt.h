@@ -2464,6 +2464,12 @@ llg_proc_t* llg_spawn_program_instance_in_region(const llg_co_desc_t* desc,
 // callbacks without a process. The scheduler sets and clears this around
 // every resume and installs a transient process record around each final.
 llg_proc_t* llg_current(void);
+// Foreign call contexts (ADV-018, llg_dpi_context.c) observe the end of a
+// process before its value scopes, activations and frames are released:
+// `unwind` is 1 for a killed process, whose suspended DPI chains are
+// unwound through the disable protocol, and 0 for one that completed,
+// finished the simulation or is torn down, whose chains never resume.
+void llg_rt_set_process_end_hook(void (*hook)(llg_proc_t* proc, int unwind));
 // Return the activation frame retained by a process, or NULL for ordinary
 // static-storage processes. The returned pointer is borrowed from `self`.
 llg_frame_t* llg_proc_frame(llg_proc_t* self);
