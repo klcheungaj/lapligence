@@ -24,6 +24,10 @@ pub enum IrVpiObjectKind {
     NetArray,
     Parameter,
     Port,
+    /// An unpacked structure or union variable whose members keep their own
+    /// storage (`vpiStructVar`/`vpiUnionVar` by [`IrVpiVarKind`]); it has no
+    /// value of its own (IEEE 1800-2009 37.24 detail 1).
+    Record,
 }
 
 impl IrVpiObjectKind {
@@ -41,6 +45,7 @@ impl IrVpiObjectKind {
             Self::NetArray => "vpiNetArray",
             Self::Parameter => "vpiParameter",
             Self::Port => "vpiPort",
+            Self::Record => "vpiStructVar",
         }
     }
 
@@ -184,6 +189,122 @@ pub struct IrVpiObject {
     /// Full name of the object a port's low connection refers to.
     pub(in crate::sim) port_target: Option<String>,
     pub(in crate::sim) constant: Option<IrVpiConstant>,
+    /// Index into [`super::IrModel::vpi_typespecs`] (`vpiTypespec`), or
+    /// `None` for a type llg exposes no typespec for.
+    pub(in crate::sim) typespec: Option<usize>,
+    /// A member of the structure or union variable named by the full-name
+    /// prefix (`vpiStructUnionMember`).
+    pub(in crate::sim) member: bool,
+    /// The value is the low `width` bits of a wider signal: a member of an
+    /// unpacked union, which shares one storage extent.
+    pub(in crate::sim) slice: bool,
+}
+
+/// `vpiType` of a typespec (IEEE 1800-2009 37.23, Annex M).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum IrVpiTypespecKind {
+    #[default]
+    Logic,
+    Bit,
+    Int,
+    Integer,
+    ShortInt,
+    LongInt,
+    Byte,
+    Time,
+    Real,
+    ShortReal,
+    String,
+    Enum,
+    Struct,
+    Union,
+    /// An unpacked array (`vpiArrayTypespec`).
+    Array,
+}
+
+impl IrVpiTypespecKind {
+    pub const fn c_type(self) -> &'static str {
+        match self {
+            Self::Logic => "vpiLogicTypespec",
+            Self::Bit => "vpiBitTypespec",
+            Self::Int => "vpiIntTypespec",
+            Self::Integer => "vpiIntegerTypespec",
+            Self::ShortInt => "vpiShortIntTypespec",
+            Self::LongInt => "vpiLongIntTypespec",
+            Self::Byte => "vpiByteTypespec",
+            Self::Time => "vpiTimeTypespec",
+            Self::Real => "vpiRealTypespec",
+            Self::ShortReal => "vpiShortRealTypespec",
+            Self::String => "vpiStringTypespec",
+            Self::Enum => "vpiEnumTypespec",
+            Self::Struct => "vpiStructTypespec",
+            Self::Union => "vpiUnionTypespec",
+            Self::Array => "vpiArrayTypespec",
+        }
+    }
+
+    /// The `vpiType` of a variable (or structure member) of this type.
+    pub const fn var_type(self) -> &'static str {
+        match self {
+            Self::Logic => "vpiReg",
+            Self::Bit => "vpiBitVar",
+            Self::Int => "vpiIntVar",
+            Self::Integer => "vpiIntegerVar",
+            Self::ShortInt => "vpiShortIntVar",
+            Self::LongInt => "vpiLongIntVar",
+            Self::Byte => "vpiByteVar",
+            Self::Time => "vpiTimeVar",
+            Self::Real => "vpiRealVar",
+            Self::ShortReal => "vpiShortRealVar",
+            Self::String => "vpiStringVar",
+            Self::Enum => "vpiEnumVar",
+            Self::Struct => "vpiStructVar",
+            Self::Union => "vpiUnionVar",
+            Self::Array => "vpiRegArray",
+        }
+    }
+}
+
+/// One typespec of the VPI catalog. Typespecs are interned: equal entries
+/// share one index, so `vpi_compare_objects` sees one object per type.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct IrVpiTypespec {
+    pub(in crate::sim) kind: IrVpiTypespecKind,
+    /// Typedef name (`vpiName`); `None` for a type without one.
+    pub(in crate::sim) name: Option<String>,
+    /// `vpiTypedefAlias`: the typespec of the typedef or built-in type this
+    /// typedef renames.
+    pub(in crate::sim) alias: Option<usize>,
+    /// `vpiElemTypespec`: this type without its leftmost dimension.
+    pub(in crate::sim) element: Option<usize>,
+    /// `vpiBaseTypespec` of an enum.
+    pub(in crate::sim) base: Option<usize>,
+    /// Bits of a fixed packed value, or of a fixed unpacked image; 0 for
+    /// other types.
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+    pub(in crate::sim) two_state: bool,
+    /// `vpiPacked` of a structure or union; `None` when unknown (a tagged
+    /// union).
+    pub(in crate::sim) packed: Option<bool>,
+    pub(in crate::sim) tagged: bool,
+    /// `(left, right)` of each dimension at this level, leftmost first:
+    /// packed ranges of a logic/bit typespec, unpacked ranges of an array.
+    pub(in crate::sim) ranges: Vec<(i64, i64)>,
+    pub(in crate::sim) members: Vec<IrVpiTypespecMember>,
+    /// Enum constants: name and value digits, most significant first.
+    pub(in crate::sim) enum_consts: Vec<(String, String)>,
+}
+
+/// One `vpiTypespecMember` of a structure or union typespec.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct IrVpiTypespecMember {
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) typespec: usize,
+    /// Least significant bit of the member in its container's packed value
+    /// (or fixed unpacked image), when the container has one.
+    pub(in crate::sim) lsb: Option<u32>,
+    pub(in crate::sim) width: u32,
 }
 
 /// How a VPI call argument is visible to the application: as the object it

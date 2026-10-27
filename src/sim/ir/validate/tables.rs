@@ -69,10 +69,21 @@ impl Validator<'_> {
                     "VPI object cannot reference both signal and array storage",
                 );
             }
+            if object
+                .typespec
+                .is_some_and(|typespec| typespec >= self.model.vpi_typespecs.len())
+            {
+                return self.fail(path, "VPI object references an out-of-bounds typespec");
+            }
             match object.kind {
                 kind if kind.is_scope() => {
                     if object.signal.is_some() || object.array.is_some() {
                         return self.fail(path, "VPI scope cannot reference value storage");
+                    }
+                }
+                IrVpiObjectKind::Record => {
+                    if object.signal.is_some() || object.array.is_some() {
+                        return self.fail(path, "VPI record members keep their own storage");
                     }
                 }
                 IrVpiObjectKind::Parameter | IrVpiObjectKind::Port => {
@@ -120,6 +131,28 @@ impl Validator<'_> {
                         self.validate_width(object.width, &format!("{path}.width"))?;
                     }
                 }
+            }
+        }
+
+        // Typespecs refer only to earlier entries, so the table has no cycle.
+        for (idx, typespec) in self.model.vpi_typespecs.iter().enumerate() {
+            let path = format!("vpi_typespecs[{idx}]");
+            let references = [typespec.alias, typespec.element, typespec.base]
+                .into_iter()
+                .flatten()
+                .chain(typespec.members.iter().map(|member| member.typespec));
+            if references.into_iter().any(|reference| reference >= idx) {
+                return self.fail(path, "VPI typespec references a later or its own entry");
+            }
+            let named = |text: &str| !text.is_empty() && !text.contains('\0');
+            if typespec.name.as_deref().is_some_and(|name| !named(name))
+                || typespec.members.iter().any(|member| !named(&member.name))
+                || typespec
+                    .enum_consts
+                    .iter()
+                    .any(|(name, digits)| !named(name) || !named(digits))
+            {
+                return self.fail(path, "VPI typespec names must be non-empty and NUL-free");
             }
         }
 

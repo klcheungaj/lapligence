@@ -474,7 +474,7 @@ pub(in crate::sim::emit_c) fn main(
             model.dpi_scopes().len()
         ));
     }
-    out.push_str(&format!("    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_startup_static(LLG_VPI_STATIC_ROUTINES) || !llg_vpi_startup()) goto start_failed;\n", c_string_literal(model.design_name())));
+    out.push_str(&format!("    if (!llg_vpi_model_init({}, llg_vpi_objects, llg_vpi_object_count) || !llg_vpi_model_types(llg_vpi_type_tables) || !llg_vpi_startup_static(LLG_VPI_STATIC_ROUTINES) || !llg_vpi_startup()) goto start_failed;\n", c_string_literal(model.design_name())));
     if let Some(check) = crate::sim::emit_c::model::vpi::vpi_builtin_check(model) {
         out.push_str(&format!("    if (!{check}) goto start_failed;\n"));
     }

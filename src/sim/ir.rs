@@ -157,7 +157,8 @@ pub use storage::{
 mod vpi;
 pub use vpi::{
     IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConstant,
-    IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiVarKind,
+    IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiTypespec, IrVpiTypespecKind,
+    IrVpiTypespecMember, IrVpiVarKind,
 };
 
 /// Upper bound on one generated `llg_net_t`'s driver count. The runtime stores
@@ -625,6 +626,8 @@ pub struct IrModel {
     /// Stable owned VPI object identities captured before lowering storage is
     /// optimized. Empty for hand-built IR fixtures that do not enable VPI.
     pub(in crate::sim) vpi_objects: Vec<IrVpiObject>,
+    /// Interned typespecs the catalog objects name (IEEE 1800-2009 37.23).
+    pub(in crate::sim) vpi_typespecs: Vec<IrVpiTypespec>,
     /// Type-only VPI call sites run through compiletf/sizetf before the
     /// generated scheduler starts. Empty for hand-built IR fixtures.
     pub(in crate::sim) vpi_compile_calls: Vec<IrVpiCompileCall>,
@@ -791,6 +794,7 @@ impl IrModel {
             spawns: parts.spawns,
             final_spawns: parts.final_spawns,
             vpi_objects: Vec::new(),
+            vpi_typespecs: Vec::new(),
             vpi_compile_calls: Vec::new(),
             vpi_builtin_calls: Vec::new(),
             vpi_catalog: true,
@@ -914,6 +918,10 @@ impl IrModel {
 
     pub fn vpi_objects(&self) -> &[IrVpiObject] {
         &self.vpi_objects
+    }
+
+    pub fn vpi_typespecs(&self) -> &[IrVpiTypespec] {
+        &self.vpi_typespecs
     }
 
     pub fn vpi_compile_calls(&self) -> &[IrVpiCompileCall] {

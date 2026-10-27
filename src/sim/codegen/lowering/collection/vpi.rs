@@ -7,13 +7,86 @@
 //! and parameter values are copied into [`IrVpiObject`].
 
 use super::*;
-use crate::core::db::{ConstantSource, ConstantType, Direction, NetType};
+use crate::core::db::{ConstantSource, ConstantType, Direction, NetType, TypeId, TypedefRef};
 use crate::sim::ir::{
     IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConstant,
-    IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiVarKind,
+    IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiTypespec, IrVpiTypespecKind,
+    IrVpiTypespecMember, IrVpiVarKind,
 };
 
 const SEPARATOR: &str = "\u{1f}";
+
+/// Typedef aliases and nested types a typespec may chain through before the
+/// capture gives up on naming it; deeper chains get no typespec.
+const MAX_TYPESPEC_DEPTH: u32 = 256;
+
+/// The interned typespec table under construction (IEEE 1800-2009 37.23).
+/// Entries refer to earlier entries only, so equal types intern bottom-up to
+/// one index.
+#[derive(Default)]
+struct TypespecTable {
+    entries: Vec<IrVpiTypespec>,
+    index: HashMap<IrVpiTypespec, usize>,
+}
+
+impl TypespecTable {
+    fn intern(&mut self, typespec: IrVpiTypespec) -> usize {
+        if let Some(index) = self.index.get(&typespec) {
+            return *index;
+        }
+        let index = self.entries.len();
+        self.entries.push(typespec.clone());
+        self.index.insert(typespec, index);
+        index
+    }
+}
+
+/// The typedef reference of the next dimension level, or `None` once the
+/// typedef has been passed.
+fn inner_typedef(naming: Option<TypedefRef>) -> Option<TypedefRef> {
+    let naming = naming?;
+    Some(TypedefRef {
+        typedef: naming.typedef,
+        depth: naming.depth.checked_sub(1)?,
+    })
+}
+
+/// The built-in integral typespec kind of a packed value without explicit
+/// ranges, from its width and state domain (6.11: the integer types are the
+/// only packed types without a declared range wider than one bit).
+fn builtin_integral(width: u32, two_state: bool) -> IrVpiTypespecKind {
+    match (two_state, width) {
+        (true, 8) => IrVpiTypespecKind::Byte,
+        (true, 16) => IrVpiTypespecKind::ShortInt,
+        (true, 32) => IrVpiTypespecKind::Int,
+        (true, 64) => IrVpiTypespecKind::LongInt,
+        (false, 32) => IrVpiTypespecKind::Integer,
+        (false, 64) => IrVpiTypespecKind::Time,
+        (true, _) => IrVpiTypespecKind::Bit,
+        (false, _) => IrVpiTypespecKind::Logic,
+    }
+}
+
+/// The catalog variable kind of a value of typespec kind `kind`.
+fn typespec_var_kind(kind: IrVpiTypespecKind, ranges: usize) -> IrVpiVarKind {
+    match kind {
+        IrVpiTypespecKind::Logic if ranges > 1 => IrVpiVarKind::PackedArray,
+        IrVpiTypespecKind::Bit if ranges > 1 => IrVpiVarKind::PackedArray,
+        IrVpiTypespecKind::Logic | IrVpiTypespecKind::Array => IrVpiVarKind::Logic,
+        IrVpiTypespecKind::Bit => IrVpiVarKind::Bit,
+        IrVpiTypespecKind::Int => IrVpiVarKind::Int,
+        IrVpiTypespecKind::Integer => IrVpiVarKind::Integer,
+        IrVpiTypespecKind::ShortInt => IrVpiVarKind::ShortInt,
+        IrVpiTypespecKind::LongInt => IrVpiVarKind::LongInt,
+        IrVpiTypespecKind::Byte => IrVpiVarKind::Byte,
+        IrVpiTypespecKind::Time => IrVpiVarKind::Time,
+        IrVpiTypespecKind::Real | IrVpiTypespecKind::String => IrVpiVarKind::Real,
+        IrVpiTypespecKind::ShortReal => IrVpiVarKind::ShortReal,
+        IrVpiTypespecKind::Enum => IrVpiVarKind::Enum,
+        IrVpiTypespecKind::Struct => IrVpiVarKind::Struct,
+        IrVpiTypespecKind::Union => IrVpiVarKind::Union,
+    }
+}
 
 impl Codegen<'_> {
     /// The unit-separated hierarchical path of a scope or declaration, with
@@ -70,6 +143,424 @@ impl Codegen<'_> {
         self.db.packed_dimensions(id).map_or(0, <[_]>::len)
     }
 
+    /// The typespec of the declared type of `id`, named by the typedefs the
+    /// declaration names (IEEE 1800-2009 37.23).
+    fn vpi_declared_typespec(&self, table: &mut TypespecTable, id: NodeId) -> Option<usize> {
+        let descriptor = self.db.type_descriptor(id)?;
+        self.vpi_typespec(table, descriptor, self.db.declared_typedef(id), 0)
+    }
+
+    /// The typespec of `descriptor`, whose typedef (if any) `naming` gives
+    /// relative to this level. A typedef at this level names the typespec;
+    /// when it renames another typedef or a built-in type, the renamed type
+    /// is its `vpiTypedefAlias` and shares its structure (detail 1 and 6).
+    fn vpi_typespec(
+        &self,
+        table: &mut TypespecTable,
+        descriptor: &TypeDescriptor,
+        naming: Option<TypedefRef>,
+        depth: u32,
+    ) -> Option<usize> {
+        if depth > MAX_TYPESPEC_DEPTH {
+            return None;
+        }
+        let Some(typedef) = naming.filter(|naming| naming.depth == 0) else {
+            let typespec = self.vpi_typespec_level(table, descriptor, naming, depth)?;
+            return Some(table.intern(typespec));
+        };
+        let renamed = self.db.declared_typedef(typedef.typedef);
+        let alias = match renamed {
+            Some(renamed) if renamed.depth == 0 => {
+                Some(self.vpi_typespec(table, descriptor, Some(renamed), depth + 1)?)
+            }
+            _ if self.db.typedef_renames_builtin(typedef.typedef) => {
+                Some(self.vpi_typespec(table, descriptor, None, depth + 1)?)
+            }
+            _ => None,
+        };
+        let mut typespec = match alias {
+            Some(alias) => table.entries[alias].clone(),
+            None => self.vpi_typespec_level(table, descriptor, renamed, depth)?,
+        };
+        typespec.name = Some(self.node(typedef.typedef).name.clone());
+        typespec.alias = alias;
+        Some(table.intern(typespec))
+    }
+
+    /// One unnamed typespec level; `naming` (if any) applies below it.
+    fn vpi_typespec_level(
+        &self,
+        table: &mut TypespecTable,
+        descriptor: &TypeDescriptor,
+        naming: Option<TypedefRef>,
+        depth: u32,
+    ) -> Option<IrVpiTypespec> {
+        let info = &descriptor.info;
+        match &descriptor.shape {
+            TypeShape::PackedAtom { ranges } => {
+                let ranges = ranges
+                    .iter()
+                    .map(|range| {
+                        Some((
+                            i64::try_from(range.left).ok()?,
+                            i64::try_from(range.right).ok()?,
+                        ))
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                let width = info.width?;
+                match info.kind.as_str() {
+                    "enum" => self.vpi_enum_typespec(table, descriptor, &ranges, width),
+                    "struct" | "union" | "array" | "other" => None,
+                    _ => Some(self.vpi_integral_typespec(
+                        table,
+                        &ranges,
+                        width,
+                        info.signed,
+                        descriptor.two_state,
+                        naming,
+                        depth,
+                    )?),
+                }
+            }
+            TypeShape::Real { shortreal } => Some(IrVpiTypespec {
+                kind: if *shortreal {
+                    IrVpiTypespecKind::ShortReal
+                } else {
+                    IrVpiTypespecKind::Real
+                },
+                ..IrVpiTypespec::default()
+            }),
+            TypeShape::String => Some(IrVpiTypespec {
+                kind: IrVpiTypespecKind::String,
+                ..IrVpiTypespec::default()
+            }),
+            TypeShape::Aggregate(layout) => {
+                let fixed = Self::fixed_descriptor_width(descriptor);
+                let mut members = Vec::with_capacity(layout.members.len());
+                for (index, member) in layout.members.iter().enumerate() {
+                    let member_naming = layout
+                        .type_id
+                        .and_then(|aggregate| self.db.member_typedef(aggregate, index));
+                    let typespec =
+                        self.vpi_typespec(table, &member.descriptor, member_naming, depth + 1)?;
+                    let lsb = fixed.and_then(|_| {
+                        Self::fixed_descriptor_path(
+                            descriptor,
+                            &[AggregatePathPart::Member(member.name.clone())],
+                        )
+                        .map(|(_, offset)| offset)
+                    });
+                    members.push(IrVpiTypespecMember {
+                        name: member.name.clone(),
+                        typespec,
+                        lsb,
+                        width: Self::fixed_descriptor_width(&member.descriptor).unwrap_or(0),
+                    });
+                }
+                Some(IrVpiTypespec {
+                    kind: match layout.kind {
+                        AggregateKind::PackedStruct | AggregateKind::UnpackedStruct => {
+                            IrVpiTypespecKind::Struct
+                        }
+                        _ => IrVpiTypespecKind::Union,
+                    },
+                    width: fixed.unwrap_or(0),
+                    signed: info.signed,
+                    two_state: descriptor.two_state,
+                    packed: match layout.kind {
+                        AggregateKind::PackedStruct | AggregateKind::PackedUnion => Some(true),
+                        AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion => Some(false),
+                        AggregateKind::TaggedUnion => None,
+                    },
+                    tagged: layout.kind == AggregateKind::TaggedUnion,
+                    members,
+                    ..IrVpiTypespec::default()
+                })
+            }
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } => {
+                let (first, rest) = dimensions.split_first()?;
+                let inner = inner_typedef(naming);
+                let element = if rest.is_empty() {
+                    self.vpi_typespec(table, element, inner, depth + 1)?
+                } else {
+                    let rest = TypeDescriptor {
+                        shape: TypeShape::FixedArray {
+                            dimensions: rest.to_vec(),
+                            element: element.clone(),
+                        },
+                        ..descriptor.clone()
+                    };
+                    self.vpi_typespec(table, &rest, inner, depth + 1)?
+                };
+                Some(IrVpiTypespec {
+                    kind: IrVpiTypespecKind::Array,
+                    element: Some(element),
+                    width: Self::fixed_descriptor_width(descriptor).unwrap_or(0),
+                    ranges: std::iter::once(first)
+                        .chain(rest)
+                        .map(|(left, right)| (i64::from(*left), i64::from(*right)))
+                        .collect(),
+                    ..IrVpiTypespec::default()
+                })
+            }
+            TypeShape::Container { .. } | TypeShape::Opaque { .. } => None,
+        }
+    }
+
+    /// A logic, bit or built-in integer typespec with packed `ranges`; its
+    /// element drops the leftmost range (37.23 detail 8).
+    #[allow(clippy::too_many_arguments)]
+    fn vpi_integral_typespec(
+        &self,
+        table: &mut TypespecTable,
+        ranges: &[(i64, i64)],
+        width: u32,
+        signed: bool,
+        two_state: bool,
+        naming: Option<TypedefRef>,
+        depth: u32,
+    ) -> Option<IrVpiTypespec> {
+        let Some((_, rest)) = ranges.split_first() else {
+            return Some(IrVpiTypespec {
+                kind: builtin_integral(width, two_state),
+                width,
+                signed,
+                two_state,
+                ..IrVpiTypespec::default()
+            });
+        };
+        let extent = |(left, right): &(i64, i64)| left.abs_diff(*right) + 1;
+        let outer = u32::try_from(extent(&ranges[0])).ok()?;
+        let element_width = width.checked_div(outer)?;
+        let inner = inner_typedef(naming);
+        if depth > MAX_TYPESPEC_DEPTH {
+            return None;
+        }
+        // The signedness of a packed array covers the whole array; its
+        // subarrays are unsigned (7.4.1).
+        let element = match inner.filter(|inner| inner.depth == 0) {
+            Some(typedef) => {
+                let element = TypeDescriptor {
+                    id: TypeId(u64::MAX),
+                    two_state,
+                    name: String::new(),
+                    info: crate::core::model::TypeInfo {
+                        kind: if two_state { "bit" } else { "logic" }.to_owned(),
+                        width: Some(element_width),
+                        signed: false,
+                        type_name: None,
+                    },
+                    shape: TypeShape::PackedAtom {
+                        ranges: rest
+                            .iter()
+                            .map(|(left, right)| crate::core::db::PackedRange {
+                                left: i128::from(*left),
+                                right: i128::from(*right),
+                            })
+                            .collect(),
+                    },
+                };
+                self.vpi_typespec(table, &element, Some(typedef), depth + 1)?
+            }
+            None => {
+                let typespec = self.vpi_integral_typespec(
+                    table,
+                    rest,
+                    element_width,
+                    false,
+                    two_state,
+                    inner,
+                    depth + 1,
+                )?;
+                table.intern(typespec)
+            }
+        };
+        Some(IrVpiTypespec {
+            kind: if two_state {
+                IrVpiTypespecKind::Bit
+            } else {
+                IrVpiTypespecKind::Logic
+            },
+            width,
+            signed,
+            two_state,
+            ranges: ranges.to_vec(),
+            element: Some(element),
+            ..IrVpiTypespec::default()
+        })
+    }
+
+    /// An enum typespec with its constants and base typespec; the packed
+    /// ranges of an enum descriptor are those of its base type.
+    fn vpi_enum_typespec(
+        &self,
+        table: &mut TypespecTable,
+        descriptor: &TypeDescriptor,
+        ranges: &[(i64, i64)],
+        width: u32,
+    ) -> Option<IrVpiTypespec> {
+        let metadata = self.db.enum_type_metadata(descriptor.id)?;
+        let base = self.vpi_integral_typespec(
+            table,
+            ranges,
+            width,
+            metadata.signed,
+            metadata.two_state,
+            None,
+            0,
+        )?;
+        let base = table.intern(base);
+        let enum_consts = metadata
+            .members
+            .iter()
+            .map(|member| {
+                let Val::Bits(bits) = &member.value else {
+                    return None;
+                };
+                let digits = bits
+                    .bits
+                    .iter()
+                    .map(|bit| match bit {
+                        Bit::Zero => '0',
+                        Bit::One => '1',
+                        Bit::X => 'x',
+                        Bit::Z => 'z',
+                    })
+                    .collect::<String>();
+                Some((member.name.clone(), digits))
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(IrVpiTypespec {
+            kind: IrVpiTypespecKind::Enum,
+            base: Some(base),
+            width,
+            signed: metadata.signed,
+            two_state: metadata.two_state,
+            enum_consts,
+            ..IrVpiTypespec::default()
+        })
+    }
+
+    /// Catalog rows of an unpacked structure or union variable whose members
+    /// keep their own leaf storage: the record row, then one row per member
+    /// with a packed or real leaf and one record row per nested unpacked
+    /// structure. Members llg keeps elsewhere (unpacked arrays, strings,
+    /// handles, containers, and unpacked structures inside unions) are not
+    /// catalog objects.
+    #[allow(clippy::too_many_arguments)]
+    fn vpi_record_rows(
+        &self,
+        table: &mut TypespecTable,
+        rows: &mut Vec<IrVpiObject>,
+        template: &IrVpiObject,
+        descriptor: &TypeDescriptor,
+        naming: Option<TypedefRef>,
+        path: &[AggregatePathPart],
+        leaves: &[AggregateMemberInfo],
+        depth: u32,
+    ) {
+        let TypeShape::Aggregate(layout) = &descriptor.shape else {
+            return;
+        };
+        if depth > MAX_TYPESPEC_DEPTH {
+            return;
+        }
+        let union = layout.kind == AggregateKind::UnpackedUnion;
+        rows.push(IrVpiObject {
+            kind: IrVpiObjectKind::Record,
+            var_kind: if union {
+                IrVpiVarKind::Union
+            } else {
+                IrVpiVarKind::Struct
+            },
+            typespec: self.vpi_typespec(table, descriptor, naming, depth),
+            ..template.clone()
+        });
+        for (index, member) in layout.members.iter().enumerate() {
+            let member_naming = layout
+                .type_id
+                .and_then(|aggregate| self.db.member_typedef(aggregate, index));
+            let mut member_path = path.to_vec();
+            member_path.push(AggregatePathPart::Member(member.name.clone()));
+            let row = IrVpiObject {
+                full_name: format!("{}{SEPARATOR}{}", template.full_name, member.name),
+                name: member.name.clone(),
+                member: true,
+                ..template.clone()
+            };
+            let nested_record = matches!(&member.descriptor.shape,
+                TypeShape::Aggregate(nested) if matches!(nested.kind,
+                    AggregateKind::UnpackedStruct | AggregateKind::UnpackedUnion));
+            if nested_record {
+                if !union {
+                    self.vpi_record_rows(
+                        table,
+                        rows,
+                        &row,
+                        &member.descriptor,
+                        member_naming,
+                        &member_path,
+                        leaves,
+                        depth + 1,
+                    );
+                }
+                continue;
+            }
+            let Some(signal) = leaves
+                .iter()
+                .find(|leaf| leaf.path == member_path)
+                .and_then(|leaf| leaf.signal.as_ref())
+            else {
+                continue;
+            };
+            let typespec = self.vpi_typespec(table, &member.descriptor, member_naming, depth + 1);
+            let real = signal.real;
+            let width = if real {
+                0
+            } else {
+                Self::fixed_descriptor_width(&member.descriptor).unwrap_or(signal.width)
+            };
+            let kind = typespec.map(|typespec| table.entries[typespec].kind);
+            let ranges = typespec.map_or(0, |typespec| table.entries[typespec].ranges.len());
+            rows.push(IrVpiObject {
+                kind: if real {
+                    IrVpiObjectKind::RealVar
+                } else {
+                    IrVpiObjectKind::Reg
+                },
+                width,
+                signed: member.descriptor.info.signed,
+                real,
+                signal: Some(signal.ir),
+                var_kind: kind.map_or_else(
+                    || IrVpiVarKind::from_type_kind(&member.ty.kind, member.packed_ranges.len()),
+                    |kind| typespec_var_kind(kind, ranges),
+                ),
+                packed_range: (!real)
+                    .then(|| {
+                        member
+                            .packed_ranges
+                            .first()
+                            .and_then(|range| {
+                                Some((
+                                    i64::try_from(range.left).ok()?,
+                                    i64::try_from(range.right).ok()?,
+                                ))
+                            })
+                            .or_else(|| (width > 1).then(|| (i64::from(width) - 1, 0)))
+                    })
+                    .flatten(),
+                two_state: member.two_state,
+                typespec,
+                slice: !real && width < signal.width,
+                ..row
+            });
+        }
+    }
+
     /// Capture the source-owned hierarchy and storage identities used by the
     /// generated VPI catalog.  This runs after collection has assigned stable
     /// IR indices but before optimization can prune any otherwise dead signal.
@@ -110,6 +601,7 @@ impl Codegen<'_> {
         let mut insert = |object: IrVpiObject| {
             objects.entry(object.full_name.clone()).or_insert(object);
         };
+        let mut typespecs = TypespecTable::default();
         let static_locals = self
             .proc_local_instances
             .iter()
@@ -225,8 +717,41 @@ impl Codegen<'_> {
                         packed_range: (!real).then(|| self.vpi_packed_range(id, width)).flatten(),
                         net_type: net.then(|| net_type.unwrap_or("vpiWire")),
                         two_state,
+                        typespec: self.vpi_declared_typespec(&mut typespecs, id),
                         ..IrVpiObject::default()
                     }));
+                }
+                // An unpacked structure or union kept as member leaves
+                // (procedural-block records are not catalog objects).
+                NodeKind::Var { .. }
+                    if self
+                        .unpacked_aggregates
+                        .get(&id)
+                        .is_some_and(|info| !info.columns)
+                        && !self.block_records.contains_key(&id) =>
+                {
+                    let Some(descriptor) = self.db.type_descriptor(id) else {
+                        continue;
+                    };
+                    let template = source(IrVpiObject {
+                        full_name: self.vpi_full_name(id),
+                        name: node.name.clone(),
+                        ..IrVpiObject::default()
+                    });
+                    let mut rows = Vec::new();
+                    self.vpi_record_rows(
+                        &mut typespecs,
+                        &mut rows,
+                        &template,
+                        descriptor,
+                        self.db.declared_typedef(id),
+                        &[],
+                        &self.unpacked_aggregates[&id].leaves,
+                        0,
+                    );
+                    for row in rows {
+                        insert(row);
+                    }
                 }
                 NodeKind::Array { ty } => {
                     let Some(info) = self.array_globals.get(&id) else {
@@ -266,6 +791,7 @@ impl Codegen<'_> {
                             .flatten(),
                         net_type: net.then_some("vpiWire"),
                         two_state: array.two_state,
+                        typespec: self.vpi_declared_typespec(&mut typespecs, id),
                         ..IrVpiObject::default()
                     }));
                 }
@@ -318,6 +844,7 @@ impl Codegen<'_> {
                             .flatten(),
                         local_param: *local,
                         constant: Some(constant),
+                        typespec: self.vpi_declared_typespec(&mut typespecs, id),
                         ..IrVpiObject::default()
                     }));
                 }
@@ -369,6 +896,7 @@ impl Codegen<'_> {
             }
         }
         model.vpi_objects = objects.into_values().collect();
+        model.vpi_typespecs = typespecs.entries;
         Ok(())
     }
 
@@ -826,6 +1354,32 @@ mod tests {
             vpi_const_type(ConstantType::Real, &exact("1.5")),
             "vpiRealConst"
         );
+    }
+
+    #[test]
+    fn integral_types_without_ranges_map_to_the_builtin_typespecs() {
+        use super::builtin_integral;
+        use crate::sim::ir::IrVpiTypespecKind as Kind;
+        assert_eq!(builtin_integral(8, true), Kind::Byte);
+        assert_eq!(builtin_integral(16, true), Kind::ShortInt);
+        assert_eq!(builtin_integral(32, true), Kind::Int);
+        assert_eq!(builtin_integral(64, true), Kind::LongInt);
+        assert_eq!(builtin_integral(32, false), Kind::Integer);
+        assert_eq!(builtin_integral(64, false), Kind::Time);
+        assert_eq!(builtin_integral(1, true), Kind::Bit);
+        assert_eq!(builtin_integral(1, false), Kind::Logic);
+    }
+
+    #[test]
+    fn typedef_depth_steps_down_one_dimension_per_level() {
+        use super::inner_typedef;
+        use crate::core::db::{NodeId, TypedefRef};
+        let typedef = NodeId::from_index(7);
+        let at = |depth| Some(TypedefRef { typedef, depth });
+        assert_eq!(inner_typedef(at(2)), at(1));
+        assert_eq!(inner_typedef(at(1)), at(0));
+        assert_eq!(inner_typedef(at(0)), None);
+        assert_eq!(inner_typedef(None), None);
     }
 
     #[test]

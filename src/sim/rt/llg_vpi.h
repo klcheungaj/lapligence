@@ -3,7 +3,7 @@
 #define LLG_VPI_H
 
 #include "llg_rt.h"
-#include "vpi_user.h"
+#include "sv_vpi_user.h" /* vpi_user.h and the typespec types the catalog names */
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,6 +16,73 @@ extern "C" {
 #define LLG_VPI_OBJ_SHORTREAL 0x08u   /* writes round through float */
 #define LLG_VPI_OBJ_RANGE 0x10u       /* left/right hold the packed range */
 #define LLG_VPI_OBJ_TEXT 0x20u        /* `constant` is string-parameter text */
+#define LLG_VPI_OBJ_MEMBER 0x40u      /* member of the struct/union row `parent` */
+#define LLG_VPI_OBJ_SLICE 0x80u       /* value: low `width` bits of `packed` */
+#define LLG_VPI_OBJ_RECORD 0x100u     /* unpacked struct/union: members hold the value */
+
+/* Typespecs (IEEE 1800-2009 37.23). The generated model emits interned
+ * tables; fields naming an optional entry hold its index + 1 (0: none),
+ * other indices are plain table positions. */
+#define LLG_VPI_TS_SIGNED 0x01u
+#define LLG_VPI_TS_TWO_STATE 0x02u
+#define LLG_VPI_TS_PACKED 0x04u       /* vpiPacked struct/union */
+#define LLG_VPI_TS_UNPACKED 0x08u     /* struct/union known not to be packed */
+#define LLG_VPI_TS_TAGGED 0x10u
+
+typedef struct {
+    int type;                 /* vpiXxxTypespec */
+    const char* name;         /* typedef name, or NULL */
+    uint32_t alias;           /* vpiTypedefAlias: index + 1 */
+    uint32_t element;         /* vpiElemTypespec: index + 1 */
+    uint32_t base;            /* vpiBaseTypespec of an enum: index + 1 */
+    uint32_t width;           /* bits of a fixed packed value or image, else 0 */
+    uint32_t flags;           /* LLG_VPI_TS_* */
+    uint32_t first_range;     /* (left, right) pairs, leftmost first */
+    uint32_t range_count;
+    uint32_t first_member;    /* vpiTypespecMember entries */
+    uint32_t member_count;
+    uint32_t first_const;     /* vpiEnumConst entries */
+    uint32_t const_count;
+    uint32_t first_node;      /* top-level member nodes of a value of this type */
+    uint32_t node_count;
+} llg_vpi_typespec_t;
+
+typedef struct {
+    const char* name;
+    uint32_t typespec;        /* index */
+} llg_vpi_typespec_member_t;
+
+typedef struct {
+    const char* name;
+    const char* value;        /* 0/1/x/z digits, most significant first */
+} llg_vpi_enum_const_t;
+
+/* A member of a packed struct/union value (or a fixed unpacked image) at an
+ * absolute bit offset in the value; the children of a node are contiguous. */
+typedef struct {
+    const char* name;
+    int type;                 /* vpiType of the member variable */
+    uint32_t typespec;        /* index */
+    uint32_t lsb;
+    uint32_t width;
+    uint32_t flags;           /* LLG_VPI_TS_SIGNED, LLG_VPI_TS_TWO_STATE */
+    uint32_t parent;          /* node index + 1; 0: a top-level member */
+    uint32_t first_child;
+    uint32_t child_count;
+} llg_vpi_member_node_t;
+
+typedef struct {
+    const llg_vpi_typespec_t* typespecs;
+    uint32_t typespec_count;
+    const int64_t* ranges;    /* range_count (left, right) pairs */
+    uint32_t range_count;
+    const llg_vpi_typespec_member_t* members;
+    uint32_t member_count;
+    const llg_vpi_enum_const_t* consts;
+    uint32_t const_count;
+    const llg_vpi_member_node_t* nodes;
+    uint32_t node_count;
+} llg_vpi_type_tables_t;
 
 /* One catalog row. Generated models emit a static array of these; the
  * runtime only borrows it and indexes it on the first VPI use. */
@@ -45,6 +112,7 @@ typedef struct llg_vpi_model_object {
     llg_net_t* net;           /* resolved net behind `packed`, for force/release */
     const char* constant;     /* parameter: 0/1/x/z digits MSB first, or text */
     double real_constant;     /* real parameter value */
+    uint32_t typespec;        /* vpiTypespec: typespec index + 1, 0: none */
 } llg_vpi_model_object_t;
 
 /* How a call argument is visible to applications (llg_vpi_compile_arg_t). */
@@ -90,6 +158,9 @@ typedef struct {
  * first VPI use, so models that never load an application pay nothing. */
 int llg_vpi_model_init(const char* design_name,
                        llg_vpi_model_object_t* objects, size_t object_count);
+/* The typespec tables the catalog rows name, borrowed like the catalog and
+ * validated on the first VPI use; NULL for a model without a catalog. */
+int llg_vpi_model_types(const llg_vpi_type_tables_t* tables);
 int llg_vpi_startup(void);
 /* Run a statically linked application's startup table (the model links the
  * archive that defines it) before LLG_VPI_PLUGIN libraries are loaded. */

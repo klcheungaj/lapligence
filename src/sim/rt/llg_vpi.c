@@ -59,6 +59,10 @@ typedef enum {
     SLOT_FIRED_CB,  /* one-shot callback that ran or cannot occur: llg_vpi_cb_done_t */
     SLOT_EVENT,     /* vpiSchedEvent */
     SLOT_ASSERTION, /* assertion coverage item `left` (39.3) */
+    SLOT_MEMBER,    /* struct/union member: object + element + member node `aux` */
+    SLOT_TYPESPEC,  /* typespec `aux` (static slot) */
+    SLOT_TSMEMBER,  /* typespec member `aux` (static slot) */
+    SLOT_ENUMCONST, /* enum constant `aux` (static slot) */
 } llg_vpi_slot_kind_t;
 
 enum {
@@ -73,6 +77,7 @@ typedef enum {
     ITER_ELEMENTS,  /* array elements, created on scan */
     ITER_BITS,      /* vector bits, created on scan */
     ITER_ARGUMENTS, /* arguments of the active call, created on scan */
+    ITER_MEMBERS,   /* member nodes [left, left + count), created on scan */
 } llg_vpi_iter_kind_t;
 
 struct llg_vpi_callsite;
@@ -147,6 +152,8 @@ typedef struct {
     uint64_t element;
     uint32_t lsb;
     uint32_t span;            /* 0: the whole value */
+    int8_t is_signed;         /* the value read through this target */
+    int8_t two_state;         /* writes convert x/z to 0 */
 } llg_vpi_target_t;
 
 typedef struct llg_vpi_event {
@@ -180,6 +187,11 @@ typedef struct {
     uint32_t* first_child;    /* row + 1 */
     uint32_t* next_sibling;   /* row + 1 */
     uint64_t* element_counts;
+    const llg_vpi_type_tables_t* types; /* typespec tables, or NULL */
+    uint32_t typespec_base;   /* static typespec slots follow the catalog rows */
+    uint32_t tsmember_base;   /* then typespec members */
+    uint32_t enumconst_base;  /* then enum constants */
+    uint32_t static_count;    /* slots below this index are never freed */
     llg_vpi_slot_t* slots;
     size_t slot_count;
     size_t slot_capacity;
@@ -339,6 +351,14 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
     if (!object->name || !object->full_name ||
         object->width >= LLG_SUPPORTED_WIDTH_LIMIT)
         return 0;
+    if (object->typespec &&
+        (!g_vpi.types || object->typespec > g_vpi.types->typespec_count))
+        return 0;
+    if (object->flags & LLG_VPI_OBJ_RECORD)
+        return (object->type == vpiStructVar || object->type == vpiUnionVar) &&
+               !object->packed && !object->real;
+    if ((object->flags & LLG_VPI_OBJ_SLICE) && (object->is_real || !object->packed))
+        return 0;
     if (object->parent && !model_pointer_index(object->parent, &parent)) return 0;
     if (object->target && !model_pointer_index(object->target, &target)) return 0;
     if (object->dim_count && !object->dims) return 0;
@@ -355,6 +375,40 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
         return object->is_real ? object->real != NULL && object->width == 0
                                : object->packed != NULL && object->width != 0;
     return 0;
+}
+
+/* Every index of the borrowed typespec tables is in range, and every child
+ * window of a member node lies in the node table. */
+static int types_valid(const llg_vpi_type_tables_t* t) {
+    if (!t) return 1;
+    if ((t->typespec_count && !t->typespecs) || (t->range_count && !t->ranges) ||
+        (t->member_count && !t->members) || (t->const_count && !t->consts) ||
+        (t->node_count && !t->nodes))
+        return 0;
+    for (uint32_t i = 0; i < t->typespec_count; ++i) {
+        const llg_vpi_typespec_t* ts = &t->typespecs[i];
+        if (ts->alias > t->typespec_count || ts->element > t->typespec_count ||
+            ts->base > t->typespec_count ||
+            ts->first_range > t->range_count || ts->range_count > t->range_count - ts->first_range ||
+            ts->first_member > t->member_count ||
+            ts->member_count > t->member_count - ts->first_member ||
+            ts->first_const > t->const_count || ts->const_count > t->const_count - ts->first_const ||
+            ts->first_node > t->node_count || ts->node_count > t->node_count - ts->first_node)
+            return 0;
+    }
+    for (uint32_t i = 0; i < t->member_count; ++i)
+        if (!t->members[i].name || t->members[i].typespec >= t->typespec_count) return 0;
+    for (uint32_t i = 0; i < t->const_count; ++i)
+        if (!t->consts[i].name || !t->consts[i].value) return 0;
+    for (uint32_t i = 0; i < t->node_count; ++i) {
+        const llg_vpi_member_node_t* node = &t->nodes[i];
+        if (!node->name || node->typespec >= t->typespec_count || node->parent > t->node_count ||
+            node->first_child > t->node_count ||
+            node->child_count > t->node_count - node->first_child ||
+            node->width >= LLG_SUPPORTED_WIDTH_LIMIT || node->lsb >= LLG_SUPPORTED_WIDTH_LIMIT)
+            return 0;
+    }
+    return 1;
 }
 
 static int compare_rows(const void* left, const void* right) {
@@ -387,6 +441,11 @@ static int vpi_ready(void) {
         return 0;
     }
     size_t count = g_vpi.object_count;
+    if (!types_valid(g_vpi.types)) {
+        vpi_set_error(vpiPLI, vpiError, "LLG_VPI_MODEL", "invalid VPI typespec tables");
+        g_vpi.failed = 1;
+        return 0;
+    }
     for (size_t i = 0; i < count; ++i) {
         if (!model_object_valid(&g_vpi.objects[i])) {
             vpi_set_errorf(vpiPLI, vpiError, "LLG_VPI_MODEL",
@@ -395,7 +454,19 @@ static int vpi_ready(void) {
             return 0;
         }
     }
-    size_t capacity = count + 64u;
+    /* Typespecs, their members and enum constants are static slots after
+     * the catalog rows, so each has one handle for the whole run. */
+    const llg_vpi_type_tables_t* types = g_vpi.types;
+    size_t typespecs = types ? types->typespec_count : 0u;
+    size_t tsmembers = types ? types->member_count : 0u;
+    size_t enumconsts = types ? types->const_count : 0u;
+    size_t static_count = count + typespecs + tsmembers + enumconsts;
+    if (static_count >= LLG_VPI_INDEX_MASK - 1u) {
+        vpi_set_error(vpiPLI, vpiError, "LLG_VPI_LIMIT", "VPI catalog exceeds the handle index space");
+        g_vpi.failed = 1;
+        return 0;
+    }
+    size_t capacity = static_count + 64u;
     g_vpi.slots = (llg_vpi_slot_t*)calloc(capacity, sizeof(*g_vpi.slots));
     /* One extra row keeps the allocations non-empty for a model built
      * without a catalog (no `--vpi`), whose applications see no objects. */
@@ -418,7 +489,27 @@ static int vpi_ready(void) {
         return 0;
     }
     g_vpi.slot_capacity = capacity;
-    g_vpi.slot_count = count;
+    g_vpi.slot_count = static_count;
+    g_vpi.typespec_base = (uint32_t)count;
+    g_vpi.tsmember_base = (uint32_t)(count + typespecs);
+    g_vpi.enumconst_base = (uint32_t)(count + typespecs + tsmembers);
+    g_vpi.static_count = (uint32_t)static_count;
+    for (size_t i = count; i < static_count; ++i) {
+        llg_vpi_slot_t* slot = &g_vpi.slots[i];
+        slot->generation = g_vpi.model_generation;
+        slot->object = LLG_VPI_NONE;
+        slot->element = LLG_VPI_NO_ELEMENT;
+        if (i < g_vpi.tsmember_base) {
+            slot->kind = SLOT_TYPESPEC;
+            slot->aux = (int32_t)(i - count);
+        } else if (i < g_vpi.enumconst_base) {
+            slot->kind = SLOT_TSMEMBER;
+            slot->aux = (int32_t)(i - g_vpi.tsmember_base);
+        } else {
+            slot->kind = SLOT_ENUMCONST;
+            slot->aux = (int32_t)(i - g_vpi.enumconst_base);
+        }
+    }
     g_vpi.sorted_count = 0;
     /* Children keep catalog order: link in reverse. */
     for (size_t i = count; i-- > 0;) {
@@ -515,7 +606,7 @@ static uint32_t alloc_slot(llg_vpi_slot_kind_t kind) {
 
 static void release_slot(uint32_t index) {
     llg_vpi_slot_t* slot = &g_vpi.slots[index];
-    if (slot->kind == SLOT_FREE || index < g_vpi.object_count) return;
+    if (slot->kind == SLOT_FREE || index < g_vpi.static_count) return;
     free(slot->items);
     uint32_t generation = slot->generation;
     memset(slot, 0, sizeof(*slot));
@@ -650,6 +741,76 @@ static int packed_offset(const llg_vpi_model_object_t* object, int64_t index, ui
     return 1;
 }
 
+/* ── typespecs and members (37.17, 37.23, 37.24) ────────────────────────── */
+
+static const llg_vpi_typespec_t* typespec_at(uint32_t index) {
+    const llg_vpi_type_tables_t* t = g_vpi.types;
+    return t && index < t->typespec_count ? &t->typespecs[index] : NULL;
+}
+
+/* An optional typespec reference (index + 1, 0: none). */
+static const llg_vpi_typespec_t* typespec_ref(uint32_t reference) {
+    return reference ? typespec_at(reference - 1u) : NULL;
+}
+
+static uint32_t typespec_index(const llg_vpi_typespec_t* typespec) {
+    return (uint32_t)(typespec - g_vpi.types->typespecs);
+}
+
+static const llg_vpi_member_node_t* node_at(uint32_t index) {
+    const llg_vpi_type_tables_t* t = g_vpi.types;
+    return t && index < t->node_count ? &t->nodes[index] : NULL;
+}
+
+static vpiHandle typespec_handle(const llg_vpi_typespec_t* typespec) {
+    return typespec ? encode_handle(g_vpi.typespec_base + typespec_index(typespec)) : NULL;
+}
+
+/* The typespec of an element value: its array typespec without every
+ * unpacked dimension. */
+static const llg_vpi_typespec_t* element_typespec(const llg_vpi_model_object_t* object) {
+    const llg_vpi_typespec_t* typespec = typespec_ref(object->typespec);
+    for (uint32_t guard = 0; typespec && typespec->type == vpiArrayTypespec && guard <= object->dim_count;
+         ++guard)
+        typespec = typespec_ref(typespec->element);
+    return typespec;
+}
+
+/* The typespec of the value a row, element or member handle names. */
+static const llg_vpi_typespec_t* value_typespec(const llg_vpi_slot_t* slot) {
+    llg_vpi_model_object_t* object = row_object(slot->object);
+    switch (slot->kind) {
+        case SLOT_OBJECT:
+            return object ? typespec_ref(object->typespec) : NULL;
+        case SLOT_ELEMENT:
+            return element_typespec(object);
+        case SLOT_MEMBER: {
+            const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
+            return node ? typespec_at(node->typespec) : NULL;
+        }
+        default:
+            return NULL;
+    }
+}
+
+static int is_aggregate_typespec(const llg_vpi_typespec_t* typespec) {
+    return typespec && (typespec->type == vpiStructTypespec || typespec->type == vpiUnionTypespec);
+}
+
+static vpiHandle make_member(uint32_t row, uint64_t element, uint32_t node_index) {
+    const llg_vpi_member_node_t* node = node_at(node_index);
+    if (!node) return NULL;
+    uint32_t index = alloc_slot(SLOT_MEMBER);
+    if (index == LLG_VPI_NONE) return NULL;
+    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    slot->object = row;
+    slot->element = element;
+    slot->aux = (int32_t)node_index;
+    slot->lsb = node->lsb;
+    slot->span = node->width;
+    return encode_handle(index);
+}
+
 /* ── value storage ──────────────────────────────────────────────────────── */
 
 static sv4_t* packed_cell(const llg_vpi_target_t* target) {
@@ -690,15 +851,15 @@ static void export_words(sv4_t value, s_vpi_vecval* words) {
     llg_sv4_export_vpi32(value, words, word_count(llg_sv4_width(value)), sizeof(*words));
 }
 
-/* Parameter value from its four-state digit text. */
-static sv4_t parameter_value(const llg_vpi_model_object_t* object) {
-    uint32_t width = object->width ? object->width : 1u;
-    sv4_t value = sv4_zero(width, object->is_signed);
+/* A value from four-state digit text (MSB first), or from string text. */
+static sv4_t digits_value(const char* text, uint32_t width, int is_signed, int string) {
+    width = width ? width : 1u;
+    sv4_t value = sv4_zero(width, (int8_t)is_signed);
     s_vpi_vecval* words = scratch_words(word_count(width));
     if (!words) return value;
-    const char* text = object->constant ? object->constant : "";
+    if (!text) text = "";
     size_t length = strlen(text);
-    if (object->flags & LLG_VPI_OBJ_TEXT) {
+    if (string) {
         for (size_t i = 0; i < length && i * 8u < width; ++i) {
             unsigned char ch = (unsigned char)text[length - 1u - i];
             for (unsigned bit = 0; bit < 8u && i * 8u + bit < width; ++bit) {
@@ -716,6 +877,12 @@ static sv4_t parameter_value(const llg_vpi_model_object_t* object) {
     }
     llg_sv4_import_vpi32(&value, words, word_count(width), sizeof(*words));
     return value;
+}
+
+/* Parameter value from its four-state digit text. */
+static sv4_t parameter_value(const llg_vpi_model_object_t* object) {
+    return digits_value(object->constant, object->width, object->is_signed,
+                        (object->flags & LLG_VPI_OBJ_TEXT) != 0);
 }
 
 /* Read the whole value (object or element) of a target, then its select. */
@@ -781,8 +948,10 @@ static void write_target(const llg_vpi_target_t* target, const llg_vpi_datum_t* 
     sv4_t* cell = packed_cell(target);
     if (target->span) {
         sv4_t updated = sv4_clone(cell);
-        sv4_t part = datum->is_real ? sv4_from_real(datum->real, target->span, 0)
-                                    : sv4_resize(datum->packed, target->span, 0);
+        sv4_t part = datum->is_real ? sv4_from_real(datum->real, target->span, target->is_signed)
+                                    : sv4_resize(datum->packed, target->span, target->is_signed);
+        /* A two-state member of a four-state structure stores 0 for x/z. */
+        if (target->two_state) sv4_replace(&part, sv4_to_two_state(part));
         sv4_part_select_set(&updated, (int64_t)target->lsb + target->span - 1,
                             (int64_t)target->lsb, part);
         if (object->flags & LLG_VPI_OBJ_TWO_STATE)
@@ -821,16 +990,21 @@ static llg_force_part_t force_part(const llg_vpi_target_t* target) {
 /* Resolve a value-bearing handle to its storage target. Argument snapshots,
  * constants and calls have no target; see read_handle. */
 static int handle_target(const llg_vpi_slot_t* slot, llg_vpi_target_t* target) {
+    llg_vpi_model_object_t* object = row_object(slot->object);
     target->object = slot->object;
     target->element = LLG_VPI_NO_ELEMENT;
     target->lsb = 0;
     target->span = 0;
+    target->is_signed = object ? object->is_signed : 0;
+    target->two_state = 0;
     switch (slot->kind) {
-        case SLOT_OBJECT: {
-            llg_vpi_model_object_t* object = row_object(slot->object);
-            return object && (has_storage(object) || object->type == vpiParameter) &&
-                   !is_array_type(object->type);
-        }
+        case SLOT_OBJECT:
+            if (!object || !(has_storage(object) || object->type == vpiParameter) ||
+                is_array_type(object->type))
+                return 0;
+            /* An unpacked union member is the low bits of the shared extent. */
+            if (object->flags & LLG_VPI_OBJ_SLICE) target->span = object->width;
+            return 1;
         case SLOT_ELEMENT:
             target->element = slot->element;
             return 1;
@@ -838,7 +1012,19 @@ static int handle_target(const llg_vpi_slot_t* slot, llg_vpi_target_t* target) {
             target->element = slot->element;
             target->lsb = slot->lsb;
             target->span = slot->span;
+            target->is_signed = 0;
             return 1;
+        case SLOT_MEMBER: {
+            const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
+            /* An unpacked array member has no value of its own (37.17). */
+            if (!node || node->type == vpiRegArray || !node->width) return 0;
+            target->element = slot->element;
+            target->lsb = slot->lsb;
+            target->span = slot->span;
+            target->is_signed = (node->flags & LLG_VPI_TS_SIGNED) != 0;
+            target->two_state = (node->flags & LLG_VPI_TS_TWO_STATE) != 0;
+            return 1;
+        }
         default:
             return 0;
     }
@@ -857,8 +1043,7 @@ static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is
     memset(out, 0, sizeof(*out));
     out->packed = VPI_EMPTY;
     if (handle_target(slot, &target)) {
-        llg_vpi_model_object_t* object = row_object(target.object);
-        *is_signed = target.span ? 0 : object->is_signed;
+        *is_signed = target.is_signed;
         return read_target(&target, out);
     }
     switch (slot->kind) {
@@ -867,6 +1052,21 @@ static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is
             llg_sv4_set_signed(&out->packed, 1);
             *is_signed = 1;
             return 1;
+        case SLOT_ENUMCONST: {
+            /* An enum constant has the value of its enum's base type. */
+            const llg_vpi_enum_const_t* constant = &g_vpi.types->consts[slot->aux];
+            const llg_vpi_typespec_t* owner = NULL;
+            for (uint32_t i = 0; i < g_vpi.types->typespec_count && !owner; ++i) {
+                const llg_vpi_typespec_t* typespec = &g_vpi.types->typespecs[i];
+                if ((uint32_t)slot->aux >= typespec->first_const &&
+                    (uint32_t)slot->aux - typespec->first_const < typespec->const_count)
+                    owner = typespec;
+            }
+            if (!owner) return 0;
+            *is_signed = (owner->flags & LLG_VPI_TS_SIGNED) != 0;
+            out->packed = digits_value(constant->value, owner->width, *is_signed, 0);
+            return 1;
+        }
         case SLOT_ARGUMENT: {
             llg_vpi_call_t* call = slot_call(slot);
             if (!call || slot->aux < 0 || slot->aux >= call->arg_count) return 0;
@@ -1453,6 +1653,16 @@ int llg_vpi_model_init(const char* design_name,
     return 1;
 }
 
+int llg_vpi_model_types(const llg_vpi_type_tables_t* tables) {
+    if (!g_vpi.initialized || g_vpi.indexed) {
+        vpi_set_error(vpiCompile, vpiError, "LLG_VPI_MODEL",
+                      "VPI typespec tables registered outside model initialization");
+        return 0;
+    }
+    g_vpi.types = tables;
+    return 1;
+}
+
 static int run_startup_table(void (*const* startup)(void), const char* origin) {
     for (int i = 0; i < LLG_VPI_MAX_STARTUP_ROUTINES; ++i) {
         if (!startup[i]) return 1;
@@ -1631,6 +1841,8 @@ static vpiHandle assertion_by_name(const char* name, vpiHandle scope);
  * (generate blocks), so the longest catalog prefix wins. */
 /* `*selected` reports whether `name` names an object followed by a select
  * that does not resolve (an index outside the declared range). */
+static vpiHandle member_from_suffix(uint32_t row, const char* suffix);
+
 static vpiHandle lookup_full_name(const char* name, int* selected) {
     *selected = 0;
     uint32_t row = find_row(name);
@@ -1641,12 +1853,18 @@ static vpiHandle lookup_full_name(const char* name, int* selected) {
     memcpy(prefix, name, length + 1u);
     vpiHandle found = NULL;
     for (size_t cut = length; cut-- > 0 && !found;) {
-        if (name[cut] != '[') continue;
+        if (name[cut] != '[' && name[cut] != '.') continue;
         prefix[cut] = '\0';
         row = find_row(prefix);
         if (row != LLG_VPI_NONE) {
-            *selected = 1;
-            found = select_from_suffix(row, name + cut);
+            /* A member suffix that names nothing is an ordinary negative
+             * answer (S42-D2); only a bad select of an object is an error. */
+            if (strchr(name + cut, '.')) {
+                found = member_from_suffix(row, name + cut);
+            } else {
+                *selected = 1;
+                found = select_from_suffix(row, name + cut);
+            }
         }
         prefix[cut] = name[cut];
     }
@@ -1735,6 +1953,55 @@ static vpiHandle select_from_suffix(uint32_t row, const char* suffix) {
         return NULL;
     }
     return count == 1 ? bit_by_index(row, LLG_VPI_NO_ELEMENT, indices[0], BIT_QUIET) : NULL;
+}
+
+/* `[i]...` element indices (an array row) then `.member` steps through the
+ * member nodes of the value's typespec: `tb.s.a.b`, `tb.arr[1].a`. */
+static vpiHandle member_from_suffix(uint32_t row, const char* suffix) {
+    llg_vpi_model_object_t* object = row_object(row);
+    const char* p = suffix;
+    uint64_t element = LLG_VPI_NO_ELEMENT;
+    if (*p == '[') {
+        int64_t indices[16];
+        int count = 0;
+        while (*p == '[' && count < 16) {
+            ++p;
+            if (!parse_index(&p, &indices[count]) || *p != ']') return NULL;
+            ++p;
+            ++count;
+        }
+        if (*p != '.' || !is_array_type(object->type)) return NULL;
+        vpiHandle base = element_by_indices(row, indices, count, 1);
+        uint32_t base_index;
+        llg_vpi_slot_t* slot = decode_handle(base, &base_index);
+        if (!slot) return NULL;
+        element = slot->element;
+        release_slot(base_index);
+    }
+    const llg_vpi_typespec_t* typespec = element == LLG_VPI_NO_ELEMENT
+        ? typespec_ref(object->typespec) : element_typespec(object);
+    if (!is_aggregate_typespec(typespec) || (object->flags & LLG_VPI_OBJ_RECORD) ||
+        object->is_net || (element == LLG_VPI_NO_ELEMENT && !has_storage(object)))
+        return NULL;
+    uint32_t first = typespec->first_node, count = typespec->node_count, node = LLG_VPI_NONE;
+    while (*p == '.') {
+        const char* segment = ++p;
+        while (*p && *p != '.') ++p;
+        size_t length = (size_t)(p - segment);
+        node = LLG_VPI_NONE;
+        for (uint32_t i = 0; i < count; ++i) {
+            const char* candidate = node_at(first + i)->name;
+            if (strlen(candidate) == length && memcmp(candidate, segment, length) == 0) {
+                node = first + i;
+                break;
+            }
+        }
+        if (node == LLG_VPI_NONE) return NULL;
+        first = node_at(node)->first_child;
+        count = node_at(node)->child_count;
+    }
+    if (*p || node == LLG_VPI_NONE) return NULL;
+    return make_member(row, element, node);
 }
 
 vpiHandle vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope) {
@@ -2128,6 +2395,16 @@ static int handle_bound(const llg_vpi_slot_t* slot, int left, int64_t* value) {
         case SLOT_RANGE:
             *value = left ? slot->left : slot->right;
             return 1;
+        case SLOT_MEMBER:
+        case SLOT_TYPESPEC: {
+            /* 37.23 detail 9: the leftmost packed or unpacked dimension. */
+            const llg_vpi_typespec_t* typespec = slot->kind == SLOT_TYPESPEC
+                ? typespec_at((uint32_t)slot->aux) : value_typespec(slot);
+            if (!typespec || !typespec->range_count) return 0;
+            const int64_t* range = &g_vpi.types->ranges[2u * typespec->first_range];
+            *value = left ? range[0] : range[1];
+            return 1;
+        }
         default:
             return 0;
     }
@@ -2152,7 +2429,40 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     if (slot->kind == SLOT_ASSERTION) return assertion_relation(type, slot);
     llg_vpi_model_object_t* object = row_object(slot->object);
     switch (type) {
+        case vpiTypespec: {
+            if (slot->kind != SLOT_OBJECT && slot->kind != SLOT_ELEMENT &&
+                slot->kind != SLOT_MEMBER && slot->kind != SLOT_TSMEMBER)
+                break;
+            if (slot->kind == SLOT_OBJECT && object && is_scope_type(object->type)) break;
+            const llg_vpi_typespec_t* typespec = slot->kind == SLOT_TSMEMBER
+                ? typespec_at(g_vpi.types->members[slot->aux].typespec) : value_typespec(slot);
+            if (typespec) return typespec_handle(typespec);
+            vpi_error("LLG_VPI_UNSUPPORTED", "llg exposes no typespec for the type of this object");
+            return NULL;
+        }
+        case vpiTypedefAlias:
+        case vpiElemTypespec:
+        case vpiBaseTypespec: {
+            if (slot->kind != SLOT_TYPESPEC) break;
+            const llg_vpi_typespec_t* typespec = typespec_at((uint32_t)slot->aux);
+            if (type == vpiBaseTypespec && typespec->type != vpiEnumTypespec) break;
+            /* A typespec without the relation yields NULL with no error
+             * (37.23 details 1 and 8). */
+            uint32_t reference = type == vpiTypedefAlias ? typespec->alias
+                                 : type == vpiElemTypespec ? typespec->element : typespec->base;
+            return typespec_handle(typespec_ref(reference));
+        }
         case vpiParent:
+            if (slot->kind == SLOT_MEMBER) {
+                /* 37.17 detail 26: the enclosing member, else the struct or
+                 * union variable (or array element) that holds the member. */
+                const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
+                if (node && node->parent)
+                    return make_member(slot->object, slot->element, node->parent - 1u);
+                return slot->element == LLG_VPI_NO_ELEMENT
+                           ? object_handle(slot->object)
+                           : make_element(slot->object, slot->element, NULL);
+            }
             if (slot->kind == SLOT_OBJECT)
                 return object && object->parent ? object_handle(row_of(object->parent)) : NULL;
             if (slot->kind == SLOT_ELEMENT || slot->kind == SLOT_RANGE)
@@ -2314,6 +2624,129 @@ static vpiHandle iterate_children(int type, uint32_t parent) {
     return make_list_iterator(type, items, (uint32_t)count);
 }
 
+/* vpiMember (37.24): the member rows of an unpacked structure or union kept
+ * as member storage, in declaration order, or the member nodes of a packed
+ * value, an element of an array of structures, or an enclosing member. */
+static vpiHandle iterate_members(const llg_vpi_slot_t* slot) {
+    llg_vpi_model_object_t* object = row_object(slot->object);
+    const llg_vpi_typespec_t* typespec = value_typespec(slot);
+    if (slot->kind == SLOT_OBJECT && object && (object->flags & LLG_VPI_OBJ_RECORD)) {
+        uint32_t row = slot->object;
+        /* Without a typespec the rows keep catalog order. */
+        if (!typespec) {
+            uint32_t children = 0;
+            for (uint32_t child = g_vpi.first_child[row]; child; child = g_vpi.next_sibling[child - 1u])
+                ++children;
+            uintptr_t* items = (uintptr_t*)calloc(children + 1u, sizeof(*items));
+            if (!items) {
+                vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+                return NULL;
+            }
+            uint32_t count = 0;
+            for (uint32_t child = g_vpi.first_child[row]; child; child = g_vpi.next_sibling[child - 1u])
+                if (g_vpi.objects[child - 1u].flags & LLG_VPI_OBJ_MEMBER)
+                    items[count++] = (uintptr_t)object_handle(child - 1u);
+            return make_list_iterator(vpiMember, items, count);
+        }
+        uintptr_t* items = (uintptr_t*)calloc(typespec->member_count + 1u, sizeof(*items));
+        if (!items) {
+            vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+            return NULL;
+        }
+        uint32_t count = 0;
+        size_t length = strlen(object->full_name);
+        for (uint32_t i = 0; i < typespec->member_count; ++i) {
+            const char* name = g_vpi.types->members[typespec->first_member + i].name;
+            size_t total = length + 1u + strlen(name) + 1u;
+            char* full = (char*)malloc(total);
+            if (!full) break;
+            snprintf(full, total, "%s.%s", object->full_name, name);
+            uint32_t member = find_row(full);
+            free(full);
+            /* Members kept outside the catalog (unpacked arrays, strings,
+             * handles) have no row. */
+            if (member != LLG_VPI_NONE && row_object(member)->parent == object)
+                items[count++] = (uintptr_t)object_handle(member);
+        }
+        return make_list_iterator(vpiMember, items, count);
+    }
+    if ((slot->kind != SLOT_OBJECT && slot->kind != SLOT_ELEMENT && slot->kind != SLOT_MEMBER) ||
+        !is_aggregate_typespec(typespec)) {
+        vpi_error("LLG_VPI_RELATION", "vpiMember iterates a structure or union variable");
+        return NULL;
+    }
+    if (object && object->is_net) {
+        /* Members of a struct net are nets (37.16); llg exposes none. */
+        vpi_error("LLG_VPI_UNSUPPORTED", "members of a structure or union net are not VPI objects");
+        return NULL;
+    }
+    uint32_t first = typespec->first_node, count = typespec->node_count;
+    if (slot->kind == SLOT_MEMBER) {
+        const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
+        first = node->first_child;
+        count = node->child_count;
+    }
+    if (!count) {
+        if (typespec->member_count)
+            vpi_error("LLG_VPI_UNSUPPORTED", "the members of this value are not VPI objects");
+        return NULL;
+    }
+    uint32_t row = slot->object;
+    uint64_t element = slot->element;
+    uint32_t index = alloc_slot(SLOT_ITERATOR);
+    if (index == LLG_VPI_NONE) return NULL;
+    llg_vpi_slot_t* iterator = &g_vpi.slots[index];
+    iterator->iter_kind = ITER_MEMBERS;
+    iterator->object = row;
+    iterator->element = element;
+    iterator->left = first;
+    iterator->count = count;
+    iterator->aux = vpiMember;
+    return encode_handle(index);
+}
+
+/* vpiTypespecMember, vpiEnumConst and vpiRange of a typespec (37.23). */
+static vpiHandle iterate_typespec(const llg_vpi_slot_t* slot, int type) {
+    const llg_vpi_typespec_t* typespec = typespec_at((uint32_t)slot->aux);
+    uint32_t count, base;
+    if (type == vpiTypespecMember && is_aggregate_typespec(typespec)) {
+        count = typespec->member_count;
+        base = g_vpi.tsmember_base + typespec->first_member;
+    } else if (type == vpiEnumConst && typespec->type == vpiEnumTypespec) {
+        count = typespec->const_count;
+        base = g_vpi.enumconst_base + typespec->first_const;
+    } else if (type == vpiRange && (typespec->type == vpiLogicTypespec ||
+                                    typespec->type == vpiBitTypespec ||
+                                    typespec->type == vpiArrayTypespec)) {
+        count = typespec->range_count;
+        base = LLG_VPI_NONE;
+    } else {
+        vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-many relation for this typespec");
+        return NULL;
+    }
+    if (!count) return NULL;
+    uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    uint32_t made = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (base != LLG_VPI_NONE) {
+            items[made++] = (uintptr_t)encode_handle(base + i);
+            continue;
+        }
+        uint32_t range = alloc_slot(SLOT_RANGE);
+        if (range == LLG_VPI_NONE) break;
+        const int64_t* bounds = &g_vpi.types->ranges[2u * (typespec->first_range + i)];
+        g_vpi.slots[range].left = bounds[0];
+        g_vpi.slots[range].right = bounds[1];
+        g_vpi.slots[range].aux = (int32_t)i;
+        items[made++] = (uintptr_t)encode_handle(range);
+    }
+    return make_list_iterator(type, items, made);
+}
+
 vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     vpi_enter();
     if (!vpi_ready()) return NULL;
@@ -2350,6 +2783,8 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         own_by_call(index, call);
         return encode_handle(index);
     }
+    if (type == vpiMember) return iterate_members(slot);
+    if (slot->kind == SLOT_TYPESPEC) return iterate_typespec(slot, type);
     llg_vpi_model_object_t* object = row_object(slot->object);
     if (slot->kind == SLOT_OBJECT && object && is_array_type(object->type) &&
         (type == vpiRange || type == vpiReg || type == vpiNet || type == vpiMemoryWord ||
@@ -2469,6 +2904,8 @@ vpiHandle vpi_scan(vpiHandle iterator_handle) {
             int64_t sv_index = left >= right ? right + (int64_t)offset : right - (int64_t)offset;
             return make_select(row, element, offset, 1, sv_index, sv_index, NULL);
         }
+        case ITER_MEMBERS:
+            return make_member(slot->object, slot->element, (uint32_t)slot->left + position);
         case ITER_ARGUMENTS: {
             llg_vpi_callsite_t* site = (llg_vpi_callsite_t*)slot->pointer;
             if (!site->active) {
@@ -2526,6 +2963,13 @@ static int handle_type(const llg_vpi_slot_t* slot) {
         case SLOT_FIRED_CB: return vpiCallback;
         case SLOT_EVENT: return vpiSchedEvent;
         case SLOT_ASSERTION: return assertion_type(slot_item(slot));
+        case SLOT_MEMBER: {
+            const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
+            return node ? node->type : vpiUndefined;
+        }
+        case SLOT_TYPESPEC: return typespec_at((uint32_t)slot->aux)->type;
+        case SLOT_TSMEMBER: return vpiTypespecMember;
+        case SLOT_ENUMCONST: return vpiEnumConst;
         default: return vpiUndefined;
     }
 }
@@ -2537,7 +2981,8 @@ static int handle_width(const llg_vpi_slot_t* slot, uint32_t* width, int* is_sig
     *real = 0;
     switch (slot->kind) {
         case SLOT_OBJECT:
-            if (!object || is_scope_type(object->type)) return 0;
+            if (!object || is_scope_type(object->type) || (object->flags & LLG_VPI_OBJ_RECORD))
+                return 0;
             if (object->is_real) {
                 *real = 1;
                 return 1;
@@ -2556,6 +3001,20 @@ static int handle_width(const llg_vpi_slot_t* slot, uint32_t* width, int* is_sig
         case SLOT_SELECT:
             *width = slot->span;
             return 1;
+        case SLOT_MEMBER: {
+            const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
+            if (!node || node->type == vpiRegArray || !node->width) return 0;
+            *width = node->width;
+            *is_signed = (node->flags & LLG_VPI_TS_SIGNED) != 0;
+            return 1;
+        }
+        case SLOT_ENUMCONST: {
+            llg_vpi_datum_t datum;
+            if (!read_handle(slot, &datum, is_signed)) return 0;
+            *width = llg_sv4_width(datum.packed);
+            datum_destroy(&datum);
+            return 1;
+        }
         case SLOT_CONSTANT:
             *width = 32;
             *is_signed = 1;
@@ -2587,6 +3046,37 @@ static PLI_INT32 unsupported_property(void) {
     return vpiUndefined;
 }
 
+/* vpiPacked of a struct/union typespec; unknown for a tagged union. */
+static PLI_INT32 packed_property(const llg_vpi_typespec_t* typespec) {
+    if (!is_aggregate_typespec(typespec) ||
+        !(typespec->flags & (LLG_VPI_TS_PACKED | LLG_VPI_TS_UNPACKED)))
+        return unsupported_property();
+    return (typespec->flags & LLG_VPI_TS_PACKED) != 0;
+}
+
+/* The properties 37.23 gives typespecs; typespec members and enum
+ * constants carry only their type and name. */
+static PLI_INT32 typespec_property(const llg_vpi_slot_t* slot, int property) {
+    if (slot->kind != SLOT_TYPESPEC) return unsupported_property();
+    const llg_vpi_typespec_t* typespec = typespec_at((uint32_t)slot->aux);
+    switch (property) {
+        case vpiPacked:
+            return packed_property(typespec);
+        case vpiTagged:
+            if (typespec->type != vpiUnionTypespec) return unsupported_property();
+            return (typespec->flags & LLG_VPI_TS_TAGGED) != 0;
+        case vpiVector:
+            if (typespec->type != vpiLogicTypespec && typespec->type != vpiBitTypespec)
+                return unsupported_property();
+            return typespec->range_count > 0;
+        case vpiArrayType:
+            if (typespec->type != vpiArrayTypespec) return unsupported_property();
+            return vpiStaticArray;
+        default:
+            return unsupported_property();
+    }
+}
+
 PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
     vpi_enter();
     if (!handle && (property == vpiTimeUnit || property == vpiTimePrecision)) {
@@ -2603,6 +3093,10 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         return value > INT32_MAX ? INT32_MAX : (PLI_INT32)value;
     }
     if (is_coverage_type_property(property)) return instance_coverage(slot, property);
+    if (slot->kind == SLOT_TYPESPEC || slot->kind == SLOT_TSMEMBER || slot->kind == SLOT_ENUMCONST) {
+        if (property == vpiType) return handle_type(slot);
+        return typespec_property(slot, property);
+    }
     llg_vpi_model_object_t* object = row_object(slot->object);
     int type = handle_type(slot);
     uint32_t width = 0;
@@ -2611,7 +3105,13 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
     switch (property) {
         case vpiType:
             return type;
-        case vpiSize:
+        case vpiSize: {
+            /* 37.17 detail 9: an unpacked structure or union reports its
+             * number of fields. */
+            const llg_vpi_typespec_t* value_type = value_typespec(slot);
+            if (is_aggregate_typespec(value_type) && (value_type->flags & LLG_VPI_TS_UNPACKED))
+                return (PLI_INT32)value_type->member_count;
+        }
             if (slot->kind == SLOT_OBJECT && object && is_array_type(object->type)) {
                 uint64_t count = g_vpi.element_counts[slot->object];
                 return count > INT32_MAX ? INT32_MAX : (PLI_INT32)count;
@@ -2648,6 +3148,14 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if (slot->kind != SLOT_OBJECT || !object || !is_array_type(object->type))
                 return unsupported_property();
             return vpiStaticArray;
+        case vpiStructUnionMember:
+            if (slot->kind == SLOT_MEMBER) return 1;
+            if ((slot->kind == SLOT_OBJECT && object && is_variable_type(object->type)) ||
+                slot->kind == SLOT_ELEMENT)
+                return slot->kind == SLOT_OBJECT && (object->flags & LLG_VPI_OBJ_MEMBER) != 0;
+            return unsupported_property();
+        case vpiPacked:
+            return packed_property(value_typespec(slot));
         case vpiIsMemory:
             if (slot->kind != SLOT_OBJECT || !object || !is_array_type(object->type))
                 return unsupported_property();
@@ -2786,15 +3294,38 @@ static const char* type_name(int type) {
         case vpiImmediateAssert: return "vpiImmediateAssert";
         case vpiImmediateAssume: return "vpiImmediateAssume";
         case vpiImmediateCover: return "vpiImmediateCover";
+        case vpiLongIntTypespec: return "vpiLongIntTypespec";
+        case vpiShortRealTypespec: return "vpiShortRealTypespec";
+        case vpiByteTypespec: return "vpiByteTypespec";
+        case vpiShortIntTypespec: return "vpiShortIntTypespec";
+        case vpiIntTypespec: return "vpiIntTypespec";
+        case vpiStringTypespec: return "vpiStringTypespec";
+        case vpiEnumTypespec: return "vpiEnumTypespec";
+        case vpiEnumConst: return "vpiEnumConst";
+        case vpiIntegerTypespec: return "vpiIntegerTypespec";
+        case vpiTimeTypespec: return "vpiTimeTypespec";
+        case vpiRealTypespec: return "vpiRealTypespec";
+        case vpiStructTypespec: return "vpiStructTypespec";
+        case vpiUnionTypespec: return "vpiUnionTypespec";
+        case vpiBitTypespec: return "vpiBitTypespec";
+        case vpiLogicTypespec: return "vpiLogicTypespec";
+        case vpiArrayTypespec: return "vpiArrayTypespec";
+        case vpiTypespecMember: return "vpiTypespecMember";
         default: return NULL;
     }
 }
 
-/* Name of an element or select, composed in the vpi_get_str buffer. */
+/* Name of an element or select, composed in the vpi_get_str buffer. A
+ * member's name is its own; its full name continues the containing value's
+ * full name with every enclosing member (`tb.s.inner.x`, `tb.a[2].x`). */
 static char* composed_name(const llg_vpi_slot_t* slot, int full) {
     llg_vpi_model_object_t* object = row_object(slot->object);
     char* buffer = g_vpi.str_buffer;
     size_t capacity = sizeof(g_vpi.str_buffer);
+    if (slot->kind == SLOT_MEMBER && !full) {
+        const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
+        return node ? (char*)node->name : NULL;
+    }
     int written = snprintf(buffer, capacity, "%s", full ? object->full_name : object->name);
     if (written < 0 || (size_t)written >= capacity) return NULL;
     size_t at = (size_t)written;
@@ -2815,6 +3346,21 @@ static char* composed_name(const llg_vpi_slot_t* slot, int full) {
             if (written < 0 || (size_t)written >= capacity - at) return NULL;
             at += (size_t)written;
         }
+    }
+    if (slot->kind == SLOT_MEMBER) {
+        /* Enclosing members, outermost first: collect the chain upwards. */
+        uint32_t chain[64];
+        uint32_t depth = 0;
+        for (uint32_t node = (uint32_t)slot->aux + 1u; node && depth < 64u;) {
+            chain[depth++] = node - 1u;
+            node = node_at(node - 1u)->parent;
+        }
+        while (depth-- > 0) {
+            written = snprintf(buffer + at, capacity - at, ".%s", node_at(chain[depth])->name);
+            if (written < 0 || (size_t)written >= capacity - at) return NULL;
+            at += (size_t)written;
+        }
+        return buffer;
     }
     if (slot->kind == SLOT_SELECT) {
         if (slot->span == 1)
@@ -2859,11 +3405,22 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
             break;
         case SLOT_ELEMENT:
         case SLOT_SELECT:
+        case SLOT_MEMBER:
             if (property == vpiName || property == vpiFullName) {
                 char* name = composed_name(slot, property == vpiFullName);
                 if (name) return (PLI_BYTE8*)name;
             }
             if (property == vpiFile && object->file) return (PLI_BYTE8*)object->file;
+            break;
+        case SLOT_TYPESPEC:
+            /* 37.23 detail 1: a type without a typedef has no name. */
+            if (property == vpiName) return (PLI_BYTE8*)typespec_at((uint32_t)slot->aux)->name;
+            break;
+        case SLOT_TSMEMBER:
+            if (property == vpiName) return (PLI_BYTE8*)g_vpi.types->members[slot->aux].name;
+            break;
+        case SLOT_ENUMCONST:
+            if (property == vpiName) return (PLI_BYTE8*)g_vpi.types->consts[slot->aux].name;
             break;
         case SLOT_SYSTF:
             if (property == vpiName) return (PLI_BYTE8*)((llg_vpi_registration_t*)slot->pointer)->name;
@@ -3104,7 +3661,7 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
         return NULL;
     }
     uint32_t width = target.span ? target.span : object->width;
-    int is_signed = target.span ? 0 : object->is_signed;
+    int is_signed = target.is_signed;
     switch (mode) {
         case vpiNoDelay:
         case vpiInertialDelay:
@@ -3214,6 +3771,14 @@ void vpi_get_time(vpiHandle object, p_vpi_time time) {
 /* Identity of the simulation object a handle refers to (38.3). */
 static int handle_identity(const llg_vpi_slot_t* slot, uint32_t index, uint64_t identity[4]) {
     llg_vpi_target_t target;
+    if (slot->kind == SLOT_MEMBER) {
+        /* Members of a union share bits; the member node tells them apart. */
+        identity[0] = 2u + slot->kind;
+        identity[1] = slot->object;
+        identity[2] = slot->element;
+        identity[3] = (uint64_t)(uint32_t)slot->aux;
+        return 1;
+    }
     if (handle_target(slot, &target) || slot->kind == SLOT_OBJECT) {
         identity[0] = 1;
         identity[1] = slot->object;
@@ -3912,7 +4477,7 @@ static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
     cb->target = target;
     cb->scope = object;
     cb->value_type = whole_array ? value_type_of(object, 0) : handle_type(slot);
-    cb->value_signed = target.span ? 0 : object->is_signed;
+    cb->value_signed = target.is_signed;
     cb->index = slot->kind == SLOT_ELEMENT ? element_index(object, target.element) : 0;
     if (target.span) {
         llg_vpi_datum_t datum;
@@ -4489,7 +5054,7 @@ void llg_vpi_shutdown(void) {
     llg_time_slot_hook(NULL);
     while (g_vpi.cbs) vpi_cb_retire(g_vpi.cbs);
     free(g_vpi.watch_buckets);
-    for (size_t i = g_vpi.object_count; i < g_vpi.slot_count; ++i) {
+    for (size_t i = g_vpi.static_count; i < g_vpi.slot_count; ++i) {
         llg_vpi_slot_t* slot = &g_vpi.slots[i];
         if (slot->kind == SLOT_EVENT && slot->pointer) {
             llg_vpi_event_t* event = (llg_vpi_event_t*)slot->pointer;
