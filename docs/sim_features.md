@@ -2549,7 +2549,14 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpi_get_value_array`/`vpi_put_value_array` (38.16, 38.35) read and write
   sections of static unpacked variable arrays (gets also net arrays) in every
   format the clauses define, with `vpiUserAllocFlag`, `vpiOneValue` and
-  `vpiPropagateOff` (ADV-020, decisions A20-D5..D8). Objects are
+  `vpiPropagateOff` (ADV-020, decisions A20-D5..D8). `cbForce`/`cbRelease`
+  run after every force or release statement (all statements with a NULL
+  object, or those writing a variable, net, element, select, member or array
+  element) with a `vpiForce`/`vpiRelease` handle whose `vpiLhs` is the
+  forced object and the left-hand value; `cbDisable` runs when `disable`
+  ends a named block, named fork or task, or a block enclosing a registered
+  system task call; `cbAssign`/`cbDeassign` register and never run;
+  `vpi_control(vpiReset/vpiSetInteractiveScope)` fail (A20-D9..D11). Objects are
   modules, interfaces, generate scopes (SV 27.4 names), named blocks, ports,
   parameters, nets, variables with their exact types (`vpiIntVar`,
   `vpiBitVar`, `vpiByteVar`, `vpiTimeVar`, ...), unpacked arrays and their

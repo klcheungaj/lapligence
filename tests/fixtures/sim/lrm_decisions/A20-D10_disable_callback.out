@@ -1,0 +1,13 @@
+register tb.outer: handle level=0
+register tb.outer.inner: handle level=0
+register tb.selfb: handle level=0
+register NULL: NULL level=3
+register tb.v: NULL level=3
+register tb: NULL level=3
+register $d10_call: handle level=0
+cbDisable tb.outer: vpiNamedBegin at 1 value=NULL
+cbDisable $d10_call: vpiSysTaskCall at 1 value=NULL
+after disable outer at 1
+after second disable at 2
+cbDisable tb.selfb: vpiNamedBegin at 2 value=NULL
+done at 2

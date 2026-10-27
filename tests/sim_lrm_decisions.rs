@@ -2092,6 +2092,33 @@ fn a20_d8_value_array_net_array() {
 }
 
 #[test]
+fn a20_d9_force_release_callbacks() {
+    run_vpi_decision(
+        "A20-D9_force_release_callbacks",
+        &["task $d9()", "task $d9_vpi()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D9_force_release_callbacks.out"),
+    );
+}
+
+#[test]
+fn a20_d10_disable_callback() {
+    run_vpi_decision(
+        "A20-D10_disable_callback",
+        &["task $d10()", "task $d10_call()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D10_disable_callback.out"),
+    );
+}
+
+#[test]
+fn a20_d11_control_reset_interactive() {
+    run_vpi_decision(
+        "A20-D11_control_reset_interactive",
+        &["task $d11()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D11_control_reset_interactive.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",

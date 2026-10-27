@@ -2186,14 +2186,22 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - `vpi_handle(vpiUse, iterator)` and the relations not listed in
   `docs/sim_features.md`;
 - callback reasons other than `cbValueChange`, the seven time reasons,
-  `cbEndOfCompile`, `cbStartOfSimulation` and `cbEndOfSimulation`: `cbStmt`,
-  `cbForce`/`cbRelease`, `cbAssign`/`cbDeassign`, `cbDisable`, the class,
-  frame and thread reasons, `cbError`/`cbPLIError`/`cbTchkViolation`/
-  `cbSignal` and the save, restart, reset and interactive features;
+  `cbEndOfCompile`, `cbStartOfSimulation`, `cbEndOfSimulation`,
+  `cbForce`/`cbRelease`, `cbAssign`/`cbDeassign` (accepted; they never run,
+  since procedural `assign`/`deassign` is rejected) and `cbDisable`:
+  `cbStmt`, the class, frame and thread reasons, `cbError`/`cbPLIError`/
+  `cbTchkViolation`/`cbSignal` and the save, restart, reset and interactive
+  features;
+- the `vpiForce`/`vpiRelease` handle of a `cbForce`/`cbRelease` callback has
+  only `vpiType` and `vpiLhs`, and `vpiLhs` is NULL with an error for a
+  concatenation (no expression objects); `cbDisable` on a system task call
+  watches the named blocks enclosing it (its `vpiScope` chain), so a call in
+  a task body does not see `disable` of the task;
 - `cbValueChange` on a whole unpacked array of more than
   2^20 elements (register it on the elements), or with `vpiStrengthVal` to see
   strength-only changes (it runs on value changes only);
-- `vpi_control(vpiReset)` and `vpiSetInteractiveScope`;
+- `vpi_control(vpiReset)` and `vpiSetInteractiveScope` return 0 with an
+  error (no `$reset`, no interactive mode; decision A20-D11);
 - `vpi_put_value_array` to a net array (its elements are read-only to VPI,
   as for `vpi_put_value`; decision A20-D8), and `vpiPropagateOff`, which is
   accepted but still notifies every fanout (A20-D7);

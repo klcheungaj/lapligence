@@ -1,0 +1,17 @@
+register blk: handle level=0 code=-
+register fk: handle level=0 code=-
+register work: handle level=0 code=-
+register outer2.inner: handle level=0 code=-
+register selfb: handle level=0 code=-
+register NULL: NULL level=3 code=LLG_VPI_CALLBACK
+register v: NULL level=3 code=LLG_VPI_CALLBACK
+register v[0]: NULL level=3 code=LLG_VPI_CALLBACK
+register module: NULL level=3 code=LLG_VPI_CALLBACK
+register $inner call: handle level=0 code=-
+cbDisable blk: vpiNamedBegin tb.blk at 1 value=NULL
+cbDisable work: vpiTask tb.work at 3 value=NULL
+cbDisable fk: vpiNamedFork tb.fk at 4 value=NULL
+cbDisable $inner call: vpiSysTaskCall $inner at 5 value=NULL
+selfb starts at 6
+cbDisable selfb: vpiNamedBegin tb.selfb at 6 value=NULL
+done at 6

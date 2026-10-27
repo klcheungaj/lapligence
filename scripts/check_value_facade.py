@@ -15,9 +15,10 @@ METADATA = {
     # llg_dpi_type_t layout tables: `width` is a DPI payload bit count.
     'rt/llg_dpi.c': ('element', 'type', 'type->element', 'type->members[m].type'),
     'rt/llg_rt_selftest.c': ('net', ''),
-    # VPI catalog rows, argument shapes, structure-object connections and
-    # force-part descriptors carry metadata widths, not value payloads.
-    'rt/llg_vpi.c': ('args[i]', 'argument', 'call->args[i]', 'conn->ref', 'g_vpi.objects[row]',
+    # VPI catalog rows, argument shapes, structure-object connections,
+    # force-part and net-alias descriptors carry metadata widths, not value
+    # payloads.
+    'rt/llg_vpi.c': ('alias', 'args[i]', 'argument', 'call->args[i]', 'conn->ref', 'g_vpi.objects[row]',
                      'node', 'object', 'object->conns[i].ref', 'owner', 'part', 'port->target',
                      'ref', 'site->args[i]', 'target'),
     'rt/llg_wave.c': ('g_wave.regs[alias]', 'g_wave.regs[i]', 'reg'),

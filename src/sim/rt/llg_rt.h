@@ -2716,6 +2716,12 @@ int llg_activation_cancelled(void);
 // operations that may reach this call.
 void llg_disable_target(llg_proc_t* self, uint32_t declaration,
                         uint32_t instance);
+// Observer of `disable` (VPI cbDisable): runs inside llg_disable_target after
+// it disabled at least one activation or fork group of (declaration,
+// instance), before the disabling process unwinds. Without a hook each
+// disable pays one predictable branch.
+typedef void (*llg_disable_watch_fn)(uint32_t declaration, uint32_t instance);
+void llg_disable_watch_hook(llg_disable_watch_fn hook);
 
 // ── Coroutine arms ───────────────────────────────────────────────────────────
 //
@@ -3324,6 +3330,15 @@ void llg_release(sv4_t* sig);
 // borrowed and copied into the live entry.
 void llg_force_value_parts(const llg_force_part_t* parts, int n_parts, sv4_t value);
 void llg_force_real_value(double* target, double value);
+// Observer of force and release statements (VPI cbForce/cbRelease). It runs
+// after each statement took effect: `release` is 0 for a force and 1 for a
+// release; a packed statement passes its borrowed parts (`real` NULL), a real
+// one its target (`parts` NULL, `n_parts` 0). The constant-value VPI entry
+// points above do not report. Without a hook each statement pays one
+// predictable branch.
+typedef void (*llg_force_watch_fn)(int release, const llg_force_part_t* parts, int n_parts,
+                                   double* real);
+void llg_force_watch_hook(llg_force_watch_fn hook);
 
 // Borrowed command line of the run (argc; argv through `argv`).
 int llg_rt_command_line(char*** argv);

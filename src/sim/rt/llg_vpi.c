@@ -67,6 +67,8 @@ typedef enum {
     SLOT_PRIMTERM,  /* terminal `aux` of primitive row `object` */
     SLOT_PORTBIT,   /* bit `aux` (from the LSB) of port row `object` */
     SLOT_REFOBJ,    /* interface port `object` reference: `aux` 0 low, 1 high */
+    SLOT_STMT,      /* force/release statement `aux` (vpiForce, vpiRelease) of a
+                     * running cbForce/cbRelease dispatch: llg_vpi_stmt_t */
 } llg_vpi_slot_kind_t;
 
 enum {
@@ -173,6 +175,25 @@ typedef struct llg_vpi_event {
     struct llg_vpi_event** prev_link;
 } llg_vpi_event_t;
 
+/* The force or release statement a cbForce/cbRelease dispatch reports. It
+ * lives on the dispatching stack; its SLOT_STMT handle is released before
+ * the dispatch returns. */
+typedef struct {
+    int release;
+    const llg_force_part_t* parts;
+    int n_parts;
+    double* real;
+} llg_vpi_stmt_t;
+
+/* A catalog row that owns storage, by address (cbForce/cbRelease reverse
+ * lookup from a force part to the object it writes). */
+typedef struct {
+    uintptr_t begin;
+    uint64_t count;           /* elements */
+    size_t size;              /* bytes per element */
+    uint32_t row;
+} llg_vpi_storage_t;
+
 /* A value read from a VPI-visible source, independently owned. */
 typedef struct {
     int is_real;
@@ -251,6 +272,11 @@ typedef struct {
     size_t mcd_name_capacity;
     void* array_values;           /* vpi_get_value_array result, overwritten by each call */
     size_t array_values_capacity;
+    uint32_t force_cbs;           /* live cbForce/cbRelease/cbAssign/cbDeassign records */
+    uint32_t disable_cbs;         /* live cbDisable records */
+    int quiet_force;              /* vpi_put_value force/release: not a statement */
+    llg_vpi_storage_t* storage;   /* rows with storage by address, built on demand */
+    size_t storage_count;
 } llg_vpi_state_t;
 
 static llg_vpi_state_t g_vpi;
@@ -2749,6 +2775,147 @@ static int handle_bound(const llg_vpi_slot_t* slot, int left, int64_t* value) {
     }
 }
 
+/* ── force and release statements (38.36.1) ─────────────────────────────── */
+
+static int compare_storage(const void* left, const void* right) {
+    const llg_vpi_storage_t *a = (const llg_vpi_storage_t*)left, *b = (const llg_vpi_storage_t*)right;
+    return a->begin < b->begin ? -1 : a->begin > b->begin ? 1 : 0;
+}
+
+/* Index the rows that own storage (variables, nets, arrays and members kept
+ * as their own signals; not union slices, which share one extent) by
+ * address, once. */
+static int storage_index(void) {
+    if (g_vpi.storage || !g_vpi.object_count) return 1;
+    llg_vpi_storage_t* entries =
+        (llg_vpi_storage_t*)calloc(g_vpi.object_count, sizeof(*entries));
+    if (!entries) {
+        vpi_error("LLG_VPI_NOMEM", "VPI storage index allocation failed");
+        return 0;
+    }
+    size_t count = 0;
+    for (uint32_t row = 0; row < g_vpi.object_count; ++row) {
+        const llg_vpi_model_object_t* object = &g_vpi.objects[row];
+        if (!has_storage(object) || (object->flags & LLG_VPI_OBJ_SLICE) ||
+            !(object->type == vpiNet || is_variable_type(object->type) ||
+              is_array_type(object->type)))
+            continue;
+        llg_vpi_storage_t* entry = &entries[count++];
+        entry->begin = object->is_real ? (uintptr_t)object->real : (uintptr_t)object->packed;
+        entry->count = is_array_type(object->type) ? g_vpi.element_counts[row] : 1u;
+        entry->size = object->is_real ? sizeof(double) : sizeof(sv4_t);
+        entry->row = row;
+    }
+    qsort(entries, count, sizeof(*entries), compare_storage);
+    g_vpi.storage = entries;
+    g_vpi.storage_count = count;
+    return 1;
+}
+
+/* The row and element whose storage is `address`, or 0. */
+static int storage_row(const void* address, uint32_t* row, uint64_t* element) {
+    uintptr_t key = (uintptr_t)address;
+    size_t low = 0, high = g_vpi.storage_count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (g_vpi.storage[middle].begin <= key) low = middle + 1u;
+        else high = middle;
+    }
+    if (!low) return 0;
+    const llg_vpi_storage_t* entry = &g_vpi.storage[low - 1u];
+    uintptr_t offset = key - entry->begin;
+    if (offset % entry->size || offset / entry->size >= entry->count) return 0;
+    *row = entry->row;
+    *element = is_array_type(g_vpi.objects[entry->row].type) ? offset / entry->size
+                                                             : LLG_VPI_NO_ELEMENT;
+    return 1;
+}
+
+/* The row and element a force part writes. A net array element is its own
+ * net; it is found through the alias that publishes the net, bit for bit,
+ * into the array cell. */
+static int part_location(const llg_force_part_t* part, uint32_t* row, uint64_t* element) {
+    if (storage_row(part->target, row, element)) return 1;
+    const llg_net_t* net = part->net;
+    if (!net) return 0;
+    for (int i = 0; i < net->n_aliases; ++i) {
+        const llg_net_alias_t* alias = net->aliases[i];
+        if (alias->publication_target && alias->n_parts == 1 && alias->parts[0].net == net &&
+            alias->parts[0].signal_bit == 0 && alias->parts[0].group_bit == 0 &&
+            alias->parts[0].bit_count == alias->width &&
+            alias->width == llg_sv4_width(*part->target) &&
+            storage_row(alias->publication_target, row, element))
+            return 1;
+    }
+    return 0;
+}
+
+/* Declared packed index of storage bit `offset` (inverse of packed_offset). */
+static int64_t declared_index(const llg_vpi_model_object_t* object, uint32_t offset) {
+    int64_t left, right;
+    packed_range(object, &left, &right);
+    return left >= right ? right + (int64_t)offset : right - (int64_t)offset;
+}
+
+/* The one object a statement writes: a whole variable, net, element or
+ * member, or a contiguous range of one (its parts may split it bit by bit).
+ * 0 for a concatenation or storage without a catalog object. */
+static int statement_target(const llg_vpi_stmt_t* stmt, uint32_t* row, uint64_t* element,
+                            uint32_t* lsb, uint32_t* width) {
+    if (stmt->real) {
+        *lsb = *width = 0;
+        return storage_row(stmt->real, row, element);
+    }
+    if (stmt->n_parts <= 0 || !part_location(&stmt->parts[0], row, element)) return 0;
+    int64_t low = stmt->parts[0].right, high = stmt->parts[0].left;
+    int64_t shift = (int64_t)stmt->parts[0].value_lsb - low;
+    uint64_t bits = 0;
+    for (int i = 0; i < stmt->n_parts; ++i) {
+        const llg_force_part_t* part = &stmt->parts[i];
+        uint32_t part_row;
+        uint64_t part_element;
+        if (!part_location(part, &part_row, &part_element) || part_row != *row ||
+            part_element != *element || (int64_t)part->value_lsb - part->right != shift)
+            return 0;
+        if (part->right < low) low = part->right;
+        if (part->left > high) high = part->left;
+        bits += part->width;
+    }
+    if (bits != (uint64_t)(high - low + 1)) return 0;
+    *lsb = (uint32_t)low;
+    *width = (uint32_t)bits;
+    return 1;
+}
+
+/* A handle for the object a statement writes, or NULL (no error). */
+static vpiHandle statement_lhs(const llg_vpi_stmt_t* stmt) {
+    uint32_t row, lsb, width;
+    uint64_t element;
+    if (!statement_target(stmt, &row, &element, &lsb, &width)) return NULL;
+    const llg_vpi_model_object_t* object = row_object(row);
+    if (stmt->real || (lsb == 0 && width == object->width))
+        return element == LLG_VPI_NO_ELEMENT ? object_handle(row) : make_element(row, element, NULL);
+    return make_select(row, element, lsb, width, declared_index(object, lsb + width - 1u),
+                       declared_index(object, lsb), NULL);
+}
+
+/* 38.36.1: vpiLhs of the reported statement. A statement whose left-hand
+ * side is a concatenation has no expression object in llg. */
+static vpiHandle statement_relation(int type, const llg_vpi_slot_t* slot) {
+    const llg_vpi_stmt_t* stmt = (const llg_vpi_stmt_t*)slot->pointer;
+    if (type == vpiLhs) {
+        vpiHandle lhs = statement_lhs(stmt);
+        if (!lhs && !g_vpi.error_pending)
+            vpi_error("LLG_VPI_UNSUPPORTED",
+                      "this left-hand side is a concatenation or has no catalog object; llg "
+                      "has no expression objects");
+        return lhs;
+    }
+    vpi_error("LLG_VPI_UNSUPPORTED",
+              "a force or release statement has only the vpiLhs relation in llg");
+    return NULL;
+}
+
 vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     vpi_enter();
     if (type == vpiSysTfCall || type == vpiSysFuncCall || type == vpiSysTaskCall) {
@@ -2766,6 +2933,7 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     llg_vpi_slot_t* slot = checked_handle(ref_handle, &index);
     if (!slot) return NULL;
     if (slot->kind == SLOT_ASSERTION) return assertion_relation(type, slot);
+    if (slot->kind == SLOT_STMT) return statement_relation(type, slot);
     llg_vpi_model_object_t* object = row_object(slot->object);
     switch (type) {
         case vpiTypespec: {
@@ -3388,6 +3556,7 @@ static int handle_type(const llg_vpi_slot_t* slot) {
         case SLOT_PRIMTERM: return vpiPrimTerm;
         case SLOT_PORTBIT: return vpiPortBit;
         case SLOT_REFOBJ: return vpiRefObj;
+        case SLOT_STMT: return slot->aux;
         default: return vpiUndefined;
     }
 }
@@ -3533,6 +3702,7 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         if (!assertion_property(slot, property, &value)) return unsupported_property();
         return value > INT32_MAX ? INT32_MAX : (PLI_INT32)value;
     }
+    if (slot->kind == SLOT_STMT) return property == vpiType ? slot->aux : unsupported_property();
     if (is_coverage_type_property(property)) return instance_coverage(slot, property);
     if (slot->kind == SLOT_TYPESPEC || slot->kind == SLOT_TSMEMBER || slot->kind == SLOT_ENUMCONST) {
         if (property == vpiType) return handle_type(slot);
@@ -3764,6 +3934,8 @@ static const char* type_name(int type) {
         case vpiInterface: return "vpiInterface";
         case vpiGenScope: return "vpiGenScope";
         case vpiNamedBegin: return "vpiNamedBegin";
+        case vpiForce: return "vpiForce";
+        case vpiRelease: return "vpiRelease";
         case vpiNamedFork: return "vpiNamedFork";
         case vpiNet: return "vpiNet";
         case vpiReg: return "vpiReg";
@@ -4268,6 +4440,7 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
             if (!value_from_vpi(input, object->is_real ? 0 : width, is_signed, object->is_real,
                                 &datum))
                 return NULL;
+            /* Not a force statement: no cbForce (decision A20-D9). */
             if (object->is_real) {
                 llg_force_real_value(real_cell(&target), datum.real);
             } else {
@@ -4281,12 +4454,15 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
             return NULL;
         }
         case vpiReleaseFlag: {
+            /* Not a release statement: no cbRelease (decision A20-D9). */
+            ++g_vpi.quiet_force;
             if (object->is_real) {
                 llg_release_real(real_cell(&target));
             } else {
                 llg_force_part_t part = force_part(&target);
                 llg_release_parts(&part, 1, 0, 0);
             }
+            --g_vpi.quiet_force;
             /* 38.34: value_p receives the value after the release. */
             if (input) {
                 llg_vpi_datum_t datum;
@@ -4854,6 +5030,8 @@ typedef enum {
     CB_TIME,       /* a region callback of one time slot */
     CB_NEXT_TIME,  /* cbNextSimTime */
     CB_VALUE,      /* cbValueChange */
+    CB_FORCE,      /* cbForce, cbRelease, cbAssign, cbDeassign */
+    CB_DISABLE,    /* cbDisable */
 } llg_vpi_cb_kind_t;
 
 typedef struct llg_vpi_cb {
@@ -4881,6 +5059,13 @@ typedef struct llg_vpi_cb {
      * unpacked array one per element (decision S43-D7). */
     struct llg_vpi_watch* watches;
     uint64_t watch_total;
+    /* CB_FORCE: 0 every statement (NULL obj), 1 statements writing `target`,
+     * 2 statements writing an element of the array row `target.object`. */
+    int force_filter;
+    /* CB_DISABLE on a system task or function call: its call site (the
+     * record watches the scopes that enclose it), else NULL and the record
+     * watches the row `target.object`. */
+    llg_vpi_callsite_t* site;
 } llg_vpi_cb_t;
 
 /* One watched storage address of a cbValueChange record. */
@@ -5023,6 +5208,8 @@ static void vpi_cb_detach(llg_vpi_cb_t* cb, llg_vpi_cb_done_t* done) {
         cb->scheduled = 0;
     }
     if (cb->kind == CB_VALUE) cb_watches_unlink(cb);
+    if (cb->kind == CB_FORCE) --g_vpi.force_cbs;
+    if (cb->kind == CB_DISABLE) --g_vpi.disable_cbs;
     if (cb->waiting) {
         cb->waiting = 0;
         --g_vpi.next_time_pending;
@@ -5319,6 +5506,254 @@ static void vpi_value_changed(const void* key) {
     dispatch_end();
 }
 
+/* Whether a force or release statement writes what a CB_FORCE record
+ * watches: overlapping bits of the same object (or element), or an element
+ * of a watched array. */
+static int statement_writes(const llg_vpi_cb_t* cb, const llg_vpi_stmt_t* stmt) {
+    if (!cb->force_filter) return 1;
+    const llg_vpi_model_object_t* object = row_object(cb->target.object);
+    uint32_t row;
+    uint64_t element;
+    if (stmt->real) {
+        if (!storage_row(stmt->real, &row, &element) || row != cb->target.object) return 0;
+        return cb->force_filter == 2 || element == cb->target.element;
+    }
+    int64_t low = cb->target.span ? (int64_t)cb->target.lsb : 0;
+    int64_t high = low + (int64_t)(cb->target.span ? cb->target.span : object->width) - 1;
+    for (int i = 0; i < stmt->n_parts; ++i) {
+        const llg_force_part_t* part = &stmt->parts[i];
+        if (!part_location(part, &row, &element) || row != cb->target.object) continue;
+        if (cb->force_filter == 2) return 1;
+        if (element == cb->target.element && part->right <= high && part->left >= low) return 1;
+    }
+    return 0;
+}
+
+static int matches_statement(const llg_vpi_cb_t* cb, const void* context) {
+    const llg_vpi_stmt_t* stmt = (const llg_vpi_stmt_t*)context;
+    return cb->kind == CB_FORCE && cb->data.reason == (stmt->release ? cbRelease : cbForce) &&
+           statement_writes(cb, stmt);
+}
+
+/* The value of a statement's left-hand side after it took effect (38.36.1):
+ * its parts' current bits placed at their offsets in the right-hand value. */
+static void statement_value(const llg_vpi_stmt_t* stmt, llg_vpi_datum_t* out, int* type,
+                            int* is_signed) {
+    memset(out, 0, sizeof(*out));
+    out->packed = VPI_EMPTY;
+    *type = vpiReg;
+    *is_signed = 0;
+    uint32_t row;
+    uint64_t element;
+    if (stmt->real) {
+        out->is_real = 1;
+        out->real = *stmt->real;
+        *type = vpiRealVar;
+        return;
+    }
+    uint32_t width = 0;
+    for (int i = 0; i < stmt->n_parts; ++i) {
+        const llg_force_part_t* part = &stmt->parts[i];
+        uint64_t top = (uint64_t)part->value_lsb + part->width;
+        if (top > width) width = (uint32_t)top;
+    }
+    out->packed = sv4_zero(width ? width : 1u, 0);
+    for (int i = 0; i < stmt->n_parts; ++i) {
+        const llg_force_part_t* part = &stmt->parts[i];
+        if (!part->width) continue;
+        sv4_t bits = sv4_part_select(*part->target, part->left, part->right);
+        sv4_part_select_set(&out->packed, (int64_t)part->value_lsb + part->width - 1,
+                            (int64_t)part->value_lsb, bits);
+        sv4_destroy(&bits);
+    }
+    /* A whole variable, net or element keeps its own type and sign. */
+    uint32_t lsb, bits;
+    if (statement_target(stmt, &row, &element, &lsb, &bits)) {
+        const llg_vpi_model_object_t* object = row_object(row);
+        if (lsb == 0 && bits == object->width && bits == width) {
+            *type = value_type_of(object, element);
+            *is_signed = object->is_signed;
+            llg_sv4_set_signed(&out->packed, (int8_t)object->is_signed);
+        }
+    }
+}
+
+/* Runtime force-watch hook: a force or release statement took effect. The
+ * matching records run in registration order with a vpiForce or vpiRelease
+ * handle that is valid until the dispatch returns. */
+static void vpi_force_event(int release, const llg_force_part_t* parts, int n_parts,
+                            double* real) {
+    if (!g_vpi.force_cbs || g_vpi.quiet_force || !g_vpi.indexed) return;
+    llg_vpi_stmt_t stmt = {release, parts, n_parts, real};
+    llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
+    size_t count;
+    llg_vpi_cb_t** items = collect_cbs(g_vpi.cbs, matches_statement, &stmt, buffer, &count);
+    if (!count) {
+        if (items != buffer) free(items);
+        return;
+    }
+    dispatch_begin();
+    llg_vpi_datum_t datum;
+    int type, is_signed;
+    statement_value(&stmt, &datum, &type, &is_signed);
+    uint32_t index = alloc_slot(SLOT_STMT);
+    uint32_t generation = 0;
+    vpiHandle handle = NULL;
+    if (index != LLG_VPI_NONE) {
+        g_vpi.slots[index].aux = release ? vpiRelease : vpiForce;
+        g_vpi.slots[index].pointer = &stmt;
+        generation = g_vpi.slots[index].generation;
+        handle = encode_handle(index);
+    }
+    for (size_t i = 0; i < count; ++i) {
+        llg_vpi_cb_t* cb = items[i];
+        if (cb->removed) continue;
+        s_cb_data data;
+        s_vpi_time time;
+        s_vpi_value value;
+        base_data(cb, &data);
+        data.obj = handle;
+        data.time = callback_time(cb->time.type, cb->scope, llg_time(), &time);
+        if (cb->value.format != vpiSuppressVal) {
+            memset(&value, 0, sizeof(value));
+            value.format = cb->value.format;
+            fill_value(&datum, is_signed, type, &value);
+            data.value = &value;
+        }
+        invoke_cb(cb, &data);
+    }
+    /* The application may have released the handle (and the slot may have
+     * been reused) while a callback ran. */
+    if (index != LLG_VPI_NONE && g_vpi.slots[index].kind == SLOT_STMT &&
+        g_vpi.slots[index].generation == generation)
+        release_slot(index);
+    datum_destroy(&datum);
+    if (items != buffer) free(items);
+    dispatch_end();
+}
+
+/* Bind a cbForce/cbRelease/cbAssign/cbDeassign record to its object: NULL
+ * for every statement, a variable, net, element, part-select or member, or a
+ * whole unpacked array (each element). 38.36.1: never a bit-select. */
+static int bind_force_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
+    if (data->value && data->value->format != vpiSuppressVal &&
+        (data->value->format < vpiBinStrVal || data->value->format > vpiObjTypeVal)) {
+        vpi_error("LLG_VPI_CALLBACK", "unsupported callback value format");
+        return 0;
+    }
+    if (!storage_index()) return 0;
+    if (!data->obj) return 1;
+    llg_vpi_slot_t* slot = checked_handle(data->obj, NULL);
+    if (!slot) return 0;
+    int type = handle_type(slot);
+    if (type == vpiNetBit || type == vpiRegBit) {
+        vpi_error("LLG_VPI_CALLBACK",
+                  "a force, release, assign or deassign callback cannot be placed on a bit-select");
+        return 0;
+    }
+    llg_vpi_target_t target;
+    if (handle_target(slot, &target)) {
+        llg_vpi_model_object_t* object = row_object(target.object);
+        if (object->type == vpiParameter || !has_storage(object)) {
+            vpi_error("LLG_VPI_CALLBACK", "a parameter or constant is never forced");
+            return 0;
+        }
+        cb->force_filter = 1;
+        cb->target = target;
+        cb->scope = object;
+        return 1;
+    }
+    llg_vpi_model_object_t* array = slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
+    if (!array || !is_array_type(array->type) || !has_storage(array)) {
+        vpi_error("LLG_VPI_CALLBACK",
+                  "a force, release, assign or deassign callback needs a variable, net, array, "
+                  "element, part-select or member handle, or NULL");
+        return 0;
+    }
+    cb->force_filter = 2;
+    cb->target.object = slot->object;
+    cb->target.element = LLG_VPI_NO_ELEMENT;
+    cb->scope = array;
+    return 1;
+}
+
+/* ── cbDisable (38.36.1) ────────────────────────────────────────────────── */
+
+static int row_is_activation(const llg_vpi_model_object_t* object, const uint32_t* identity) {
+    return (object->flags & LLG_VPI_OBJ_ACTIVATION) &&
+           object->activation_declaration == identity[0] &&
+           object->activation_instance == identity[1];
+}
+
+/* A record on a named block, task or function runs when `disable` names it;
+ * one on a system task or function call runs when a named block that
+ * encloses the call (its vpiScope or an outer scope) is disabled. */
+static int matches_disable(const llg_vpi_cb_t* cb, const void* context) {
+    const uint32_t* identity = (const uint32_t*)context;
+    if (cb->kind != CB_DISABLE) return 0;
+    if (!cb->site) return row_is_activation(row_object(cb->target.object), identity);
+    for (const llg_vpi_model_object_t* scope = cb->site->scope; scope; scope = scope->parent)
+        if (row_is_activation(scope, identity)) return 1;
+    return 0;
+}
+
+/* Runtime disable-watch hook: `disable` ended the activations of one
+ * declaration in one instance. */
+static void vpi_disabled(uint32_t declaration, uint32_t instance) {
+    if (!g_vpi.disable_cbs || !g_vpi.indexed) return;
+    uint32_t identity[2] = {declaration, instance};
+    llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
+    size_t count;
+    dispatch_begin();
+    llg_vpi_cb_t** items = collect_cbs(g_vpi.cbs, matches_disable, identity, buffer, &count);
+    for (size_t i = 0; i < count; ++i) {
+        llg_vpi_cb_t* cb = items[i];
+        if (cb->removed) continue;
+        s_cb_data data;
+        s_vpi_time time;
+        base_data(cb, &data);
+        data.time = callback_time(cb->time.type, cb->scope, llg_time(), &time);
+        invoke_cb(cb, &data);
+    }
+    if (items != buffer) free(items);
+    dispatch_end();
+}
+
+/* 38.36.1: obj is a system task or function call, named begin, named fork,
+ * task or function. */
+static int bind_disable_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
+    llg_vpi_slot_t* slot = data->obj ? checked_handle(data->obj, NULL) : NULL;
+    if (!data->obj) {
+        vpi_error("LLG_VPI_CALLBACK", "cbDisable needs an object");
+        return 0;
+    }
+    if (!slot) return 0;
+    if (slot->kind == SLOT_CALL) {
+        llg_vpi_callsite_t* site = (llg_vpi_callsite_t*)slot->pointer;
+        /* A call without a generated site (legacy entry points) has no
+         * scope and does not outlive the call. */
+        if (site->id == UINT64_MAX) {
+            vpi_error("LLG_VPI_CALLBACK", "this system task or function call has no source scope");
+            return 0;
+        }
+        cb->site = site;
+        cb->scope = site->scope;
+        return 1;
+    }
+    llg_vpi_model_object_t* object = slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
+    if (!object || !(object->type == vpiNamedBegin || object->type == vpiNamedFork ||
+                     object->type == vpiTask || object->type == vpiFunction)) {
+        vpi_error("LLG_VPI_CALLBACK",
+                  "cbDisable needs a system task or function call, named begin, named fork, "
+                  "task or function");
+        return 0;
+    }
+    cb->target.object = slot->object;
+    cb->target.element = LLG_VPI_NO_ELEMENT;
+    cb->scope = object;
+    return 1;
+}
+
 /* Region, delay rules and recurrence of each time reason (Table 4-1,
  * 38.36.2). Returns 0 with the error recorded when it cannot be placed. */
 static int schedule_time_cb(llg_vpi_cb_t* cb, uint64_t ticks) {
@@ -5499,6 +5934,13 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         }
     } else if (reason == cbValueChange) {
         kind = CB_VALUE;
+    } else if (reason == cbForce || reason == cbRelease || reason == cbAssign ||
+               reason == cbDeassign) {
+        /* cbAssign/cbDeassign are accepted but never run: llg rejects
+         * procedural assign and deassign statements (decision A20-D9). */
+        kind = CB_FORCE;
+    } else if (reason == cbDisable) {
+        kind = CB_DISABLE;
     } else if (reason == cbNextSimTime || time_reason(reason)) {
         kind = reason == cbNextSimTime ? CB_NEXT_TIME : CB_TIME;
         if (g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
@@ -5510,7 +5952,8 @@ vpiHandle vpi_register_cb(p_cb_data data) {
                       "unsupported or invalid VPI callback registration");
         return NULL;
     }
-    if (kind == CB_VALUE && g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
+    if ((kind == CB_VALUE || kind == CB_FORCE || kind == CB_DISABLE) &&
+        g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
         vpi_error("LLG_VPI_CALLBACK", "the simulation has ended; no value can change");
         return NULL;
     }
@@ -5551,6 +5994,14 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         vpi_cb_free(cb);
         return NULL;
     }
+    if (kind == CB_FORCE && !bind_force_cb(cb, data)) {
+        vpi_cb_free(cb);
+        return NULL;
+    }
+    if (kind == CB_DISABLE && !bind_disable_cb(cb, data)) {
+        vpi_cb_free(cb);
+        return NULL;
+    }
     cb->data.time = data->time ? &cb->time : NULL;
     cb->data.value = data->value ? &cb->value : NULL;
     uint32_t index = alloc_slot(SLOT_CALLBACK);
@@ -5573,6 +6024,14 @@ vpiHandle vpi_register_cb(p_cb_data data) {
     *g_vpi.cbs_tail = cb;
     g_vpi.cbs_tail = &cb->next;
     if (kind == CB_VALUE) llg_value_watch_hook(vpi_value_changed);
+    if (kind == CB_FORCE) {
+        ++g_vpi.force_cbs;
+        llg_force_watch_hook(vpi_force_event);
+    }
+    if (kind == CB_DISABLE) {
+        ++g_vpi.disable_cbs;
+        llg_disable_watch_hook(vpi_disabled);
+    }
     if (kind == CB_NEXT_TIME) {
         cb->waiting = 1;
         ++g_vpi.next_time_pending;
@@ -6025,6 +6484,8 @@ void llg_vpi_shutdown(void) {
      * (no-ops once the runtime lifetime ended) before freeing them. */
     llg_value_watch_hook(NULL);
     llg_time_slot_hook(NULL);
+    llg_force_watch_hook(NULL);
+    llg_disable_watch_hook(NULL);
     while (g_vpi.cbs) vpi_cb_retire(g_vpi.cbs);
     free(g_vpi.watch_buckets);
     for (size_t i = g_vpi.static_count; i < g_vpi.slot_count; ++i) {
@@ -6058,6 +6519,7 @@ void llg_vpi_shutdown(void) {
     free(g_vpi.value_strength);
     free(g_vpi.mcd_name);
     free(g_vpi.array_values);
+    free(g_vpi.storage);
     for (int i = 0; i < g_vpi.plugin_count; ++i) llg_dl_close(g_vpi.plugin_handles[i]);
     memset(&g_vpi, 0, sizeof(g_vpi));
 }
@@ -6298,8 +6760,11 @@ vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
 }
 
 /* 38.4: vpiStop and vpiFinish take the diagnostic level of $stop/$finish
- * and act when the application routine returns. vpiReset ($reset, Annex D)
- * and interactive scopes are not provided. */
+ * and act when the application routine returns. vpiReset executes $reset,
+ * an optional Annex D task llg does not provide, and llg has no interactive
+ * mode whose scope vpiSetInteractiveScope could change: both return 0 (38.4:
+ * "0 (false) on a failure") with vpiError and leave the run as it was
+ * (decision A20-D11). */
 PLI_INT32 vpi_control(PLI_INT32 operation, ...) {
     vpi_enter();
     if (operation >= vpiCoverageStart && operation <= vpiCoverageSave) {
@@ -6316,6 +6781,15 @@ PLI_INT32 vpi_control(PLI_INT32 operation, ...) {
         }
         va_end(ap);
         return status;
+    }
+    if (operation == vpiReset) {
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "vpiReset executes $reset, an optional Annex D task llg does not provide");
+        return 0;
+    }
+    if (operation == vpiSetInteractiveScope) {
+        vpi_error("LLG_VPI_UNSUPPORTED", "llg has no interactive mode or interactive scope");
+        return 0;
     }
     if (operation != vpiStop && operation != vpiFinish) {
         vpi_error("LLG_VPI_UNSUPPORTED", "unsupported vpi_control operation");

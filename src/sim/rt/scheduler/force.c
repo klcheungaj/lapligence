@@ -7,6 +7,10 @@ static void llg_net_propagation_sync(llg_net_t* net);
 static void llg_net_strength_publish(llg_net_t* net);
 static void llg_switch_net_changed(llg_net_t* net);
 
+static llg_force_watch_fn force_watch_hook;
+
+void llg_force_watch_hook(llg_force_watch_fn hook) { force_watch_hook = hook; }
+
 // Grow one live-binding table to hold at least `needed` entries. The grown copy
 // is completed before it replaces the old table, so an allocation failure
 // aborts without a partially rebound registry. Only `used` entries are copied.
@@ -281,6 +285,7 @@ void llg_force_expr_parts(const llg_force_part_t* parts, int n_parts,
     llg_force_entry_t* entry = force_prepare_packed(
         parts, n_parts, stream_slice, stream_right_to_left, eval, reads, n_reads);
     force_evaluate_entry(entry);
+    if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(0, parts, n_parts, NULL);
 }
 
 void llg_force_real(double* target, llg_force_real_eval_fn eval,
@@ -317,6 +322,7 @@ void llg_force_real(double* target, llg_force_real_eval_fn eval,
     entry->eval = NULL;
     entry->n_reads = n_reads;
     force_evaluate_entry(entry);
+    if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(0, NULL, 0, target);
 }
 
 void llg_release_parts(const llg_force_part_t* parts, int n_parts,
@@ -341,6 +347,7 @@ void llg_release_parts(const llg_force_part_t* parts, int n_parts,
         if (nets[i] && nets[i]->switch_net) llg_switch_net_changed(nets[i]);
     }
     free(nets);
+    if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(1, parts, n_parts, NULL);
 }
 
 void llg_release_real(double* target) {
@@ -351,9 +358,10 @@ void llg_release_real(double* target) {
             // A procedural real variable retains the forced value; no saved
             // value exists to restore.
             force_free_entry(entry);
-            return;
+            break;
         }
     }
+    if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(1, NULL, 0, target);
 }
 
 void llg_force(sv4_t* sig, sv4_t value) {
@@ -365,6 +373,7 @@ void llg_force(sv4_t* sig, sv4_t value) {
     llg_force_entry_t* entry = force_prepare_packed(&part, 1, 0, 0, NULL, NULL, 0);
     sv4_copy(&entry->value, &value);
     force_entry_targets(entry);
+    if (LLG_CO_UNLIKELY(force_watch_hook != NULL)) force_watch_hook(0, &part, 1, NULL);
 }
 
 // Constant-value force of explicit storage parts (vpi_put_value with

@@ -1,4 +1,4 @@
-# ADV-020 fixtures: VPI symbol parity and multichannel descriptors
+# ADV-020 fixtures: VPI symbol parity, multichannel descriptors, value arrays and callbacks
 
 Each `<name>.sv` has a C application `<name>.c` that registers the system
 tasks and functions the HDL calls. `tests/sim_feature_completion/adv_020.rs`
@@ -203,6 +203,73 @@ design's unpacked arrays; the design prints the arrays after the puts.
   elements"), an array of unpacked structures, a raw format to a real array
   and a NULL `arrayvalue_p`.
 
+## force_callbacks (38.36.1)
+
+`$watch` registers, in this order, `cbForce` and `cbRelease` with a NULL
+object, `cbForce` on the part-select `tb.n[7:4]`, `cbRelease` on the net array
+`tb.na`, `cbForce` on `tb.r` and `cbRelease` on `tb.n`, then tries `cbForce` on
+the bit-select `tb.n[0]` and on the parameter `tb.P`, and registers `cbAssign`
+(NULL object) and `cbDeassign` on `tb.v`. Each callback prints its label, the
+time, `vpiType` of its object, the full name of `vpiLhs` and the value in the
+registered format.
+
+- **Registration.** L64695-L64697: "For force and release callbacks, if this
+  is set to NULL, every force and release shall generate a callback.";
+  L64788-L64789: "It is illegal to attempt to place a callback for reason
+  cbForce, cbRelease, or cbDisable on a variable bit-select." The bit-select
+  and the parameter (never forced) are refused with level 3. `cbAssign` and
+  `cbDeassign` register; llg rejects procedural `assign`/`deassign`, so they
+  never run (decision A20-D9).
+- **Object and value.** L64780-L64783: "For cbForce, cbRelease, cbAssign, and
+  cbDeassign callbacks, the object returned in the obj field shall be a handle
+  to the force, release, assign, or deassign statement. The value field shall
+  contain the resultant value of the left-hand expression. In the case of a
+  release, the value field shall contain the value after the release has
+  occurred." The object is `vpiForce` or `vpiRelease`; `vpiLhs` is the forced
+  variable, net, select or net array element (`tb.na[1]`). A concatenation
+  has no expression object in llg: `vpiLhs` is NULL with an error (`lhs=none
+  (lhs error)`), and the value is the concatenation (`c3`).
+- **Statements.** 10.6.2 (L13390-L13393): "When released, then if the
+  variable is not driven by a continuous assignment ... the variable shall
+  not immediately change value and shall maintain its current value until the
+  next procedural assignment to the variable is executed."; (L13399-L13400)
+  "When released, the net shall immediately be assigned the value determined
+  by the drivers of the net." `force v = 8'h5a` (binary `01011010`);
+  `release v` keeps the forced value `5a`; `force n = 8'hf0` also runs the
+  `tb.n[7:4]` record, while `force n[3:0]` writes none of its bits and does
+  not; `release n` gives the driven value `22` (the `tb.n` record asks for
+  `vpiObjTypeVal`, a vector for an 8-bit net); `force r = 2.5` gives the real
+  to `r-force` and, to the binary and hex records, the real truncated to a
+  64-bit integer (decision S42-D9); `release na[1]` runs the `tb.na` record
+  with the element's driven value 1. `force w = v + 8'd1` reports `5b`; the
+  later write of `v` reevaluates the force without a callback, and `release w`
+  reports the value it kept, `41` (decision A20-D9).
+- **VPI forces.** `$vpi_force` forces and releases `tb.w` with `vpi_put_value`;
+  no callback runs (A20-D9) and `w`, then `n`, keep 5.
+- **Handle lifetime.** `$stale` reads `vpiType` of the last statement handle
+  after its callback returned: level 3, the handle is gone. It then removes
+  the NULL-object `cbForce` record, so the last `force v` runs no callback
+  and the last `release v` runs only the `cbRelease` record.
+
+## disable (38.36.1)
+
+`$watch_disable` places `cbDisable` on the named block `tb.blk`, the named
+fork `tb.fk`, the task `tb.work`, the inner block `tb.outer2.inner` and the
+block `tb.selfb`, and tries a NULL object, the variable `tb.v`, the
+bit-select `tb.v[0]` and the module `tb`, which are refused with level 3
+(L64785-L64786: "For a cbDisable callback, obj shall be a handle to a system
+task call, system function call, named begin, named fork, task, or function.").
+`$inner`, called inside `tb.outer2.inner`, places one on its own call handle.
+
+L64648-L64649: "cbDisable After a named block or task containing a system
+task or system function has been disabled." The records run when `disable
+blk` (time 1), `disable work` (3), `disable fk` (4) and the self-disable of
+`selfb` (6) end their targets, with the registered object and a NULL value.
+`disable blk` at time 2, when `blk` already ended, runs nothing.
+`disable outer2` (5) ends the block enclosing the `$inner` call, so the call's
+record runs, while the record on `tb.outer2.inner`, which `disable` did not
+name, does not (decision A20-D10). No disabled block prints its message.
+
 ## Decisions
 
 The choices where the text is silent are the portable cases A20-D1 to A20-D4
@@ -214,4 +281,7 @@ or partly closed channels (A20-D3), and closing or flushing channels that are
 not open (A20-D4). The value-array choices are A20-D5 (argument errors, get
 flags, no partial writes), A20-D6 (x and z read as 0 in the raw two-state
 form), A20-D7 (`vpiPropagateOff` still propagates) and A20-D8 (no puts to net
-arrays).
+arrays). The callback choices are A20-D9 (`cbForce`/`cbRelease` timing,
+object matching and VPI forces; `cbAssign`/`cbDeassign` never run) and A20-D10
+(`cbDisable` timing, inactive and enclosing blocks); A20-D11 covers
+`vpi_control(vpiReset)` and `vpiSetInteractiveScope`.

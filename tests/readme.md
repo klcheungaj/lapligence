@@ -410,8 +410,9 @@ address of every Annex K/M routine and runs as an `LLG_VPI_PLUGIN` plugin (a
 Windows DLL linked against the model import library) and as a static archive
 (every host); `mcd` exercises `vpi_mcd_*` on the `$fopen` table;
 `value_array` reads and writes array sections with
-`vpi_get_value_array`/`vpi_put_value_array`. Decisions
-A20-D1..D8 are in `sim_lrm_decisions` (`-E 'test(/a20_d/)'`); the export list
+`vpi_get_value_array`/`vpi_put_value_array`; `force_callbacks` and `disable`
+cover `cbForce`/`cbRelease`/`cbAssign`/`cbDeassign` and `cbDisable`. Decisions
+A20-D1..D11 are in `sim_lrm_decisions` (`-E 'test(/a20_d/)'`); the export list
 check is `sim::build::import_library::tests`.
 
 SIM-043's callback fixtures use
