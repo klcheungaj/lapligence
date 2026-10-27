@@ -142,6 +142,7 @@ static void sequence_attempt_discard(llg_sequence_attempt_t* attempt);
 static void free_sequence_pools(void);
 static void free_property_pool(void);
 static void free_property_attempts(llg_concurrent_assertion_t* assertion);
+static void property_inst_free(llg_property_inst_t* inst);
 static void future_assertion_free(llg_concurrent_assertion_t* assertion);
 
 static void free_assertion_attempts(llg_concurrent_assertion_t* assertion) {
@@ -172,20 +173,32 @@ static void free_assertion_attempts(llg_concurrent_assertion_t* assertion) {
     free_property_attempts(assertion);
 }
 
-/* The evaluation attempts of `assertion` that have reported no result
- * (40.5.3 "in progress"): simple attempts, property attempts, sequence
- * attempts without a shared evaluation (each its own attempt, as every
- * cover sequence attempt is), and once each undecided implication
- * evaluation, whose antecedent and consequent threads share one record. */
-static uint64_t assertion_attempts_in_progress(const llg_concurrent_assertion_t* assertion) {
+/* Visit once each evaluation attempt of `assertion` that has reported no
+ * result (40.5.3 "in progress"): simple attempts, property attempts,
+ * sequence attempts without a shared evaluation (each its own attempt, as
+ * every cover sequence attempt is), and once each undecided implication
+ * evaluation, whose antecedent and consequent threads share one record and
+ * its start time. With `only`, visit just the attempts that began at
+ * `start`. Raises `event` for each visited attempt when `event` >= 0 and
+ * returns how many were visited. */
+static uint64_t assertion_attempts_visit(const llg_concurrent_assertion_t* assertion, int only,
+                                         uint64_t start, int event) {
     uint64_t count = 0;
-    for (const llg_assertion_attempt_t* a = assertion->attempts; a; a = a->next) count++;
-    for (const llg_property_inst_t* a = assertion->property_attempts; a; a = a->next) count++;
+#define LLG_VISIT(begun)                                                                \
+    do {                                                                                \
+        if (only && (begun) != start) break;                                            \
+        count++;                                                                        \
+        if (event >= 0) llg_acov_notify(assertion->acov, event, (begun));               \
+    } while (0)
+    for (const llg_assertion_attempt_t* a = assertion->attempts; a; a = a->next)
+        LLG_VISIT(a->start);
+    for (const llg_property_inst_t* a = assertion->property_attempts; a; a = a->next)
+        LLG_VISIT(a->launch.time);
     for (const llg_sequence_attempt_t* a = assertion->sequence_antecedents; a; a = a->next)
-        count += !a->eval || (a->eval_owner && !a->eval->decided);
+        if (!a->eval || (a->eval_owner && !a->eval->decided)) LLG_VISIT(a->start);
     for (const llg_sequence_attempt_t* a = assertion->sequence_consequents; a; a = a->next) {
         if (!a->eval) {
-            count++;
+            LLG_VISIT(a->start);
             continue;
         }
         if (a->eval->decided || a->eval->antecedent_live) continue;
@@ -193,9 +206,75 @@ static uint64_t assertion_attempts_in_progress(const llg_concurrent_assertion_t*
         // first consequent thread only.
         const llg_sequence_attempt_t* first = assertion->sequence_consequents;
         while (first->eval != a->eval) first = first->next;
-        count += first == a;
+        if (first == a) LLG_VISIT(a->start);
     }
+#undef LLG_VISIT
     return count;
+}
+
+static uint64_t assertion_attempts_in_progress(const llg_concurrent_assertion_t* assertion) {
+    return assertion_attempts_visit(assertion, 0, 0, -1);
+}
+
+/* Raise the end event of every attempt in progress of a watched assertion
+ * that disable iff (`killed` 0) or a control (`killed` 1) ends. */
+static void assertion_attempts_notify_end(const llg_concurrent_assertion_t* assertion, int killed,
+                                          int only, uint64_t start) {
+    (void)assertion_attempts_visit(assertion, only, start,
+                                   killed ? LLG_ACOV_EVENT_KILLED : LLG_ACOV_EVENT_DISABLED);
+}
+
+/* vpiAssertionKill (39.5.2): discard the attempts of `assertion` that began
+ * at `start`, counted as killed; the assertion stays enabled and keeps its
+ * other attempts. */
+static void assertion_kill_attempts_at(llg_concurrent_assertion_t* assertion, uint64_t start) {
+    uint64_t count = assertion_attempts_visit(assertion, 1, start, -1);
+    if (assertion->acov && LLG_CO_UNLIKELY(assertion->acov->watches))
+        assertion_attempts_notify_end(assertion, 1, 1, start);
+    llg_acov_end_attempts(assertion->acov, count, 1);
+    llg_assertion_attempt_t** simple = &assertion->attempts;
+    assertion->attempts_tail = NULL;
+    while (*simple) {
+        llg_assertion_attempt_t* attempt = *simple;
+        if (attempt->start != start) {
+            assertion->attempts_tail = attempt;
+            simple = &attempt->next;
+            continue;
+        }
+        *simple = attempt->next;
+        free(attempt);
+    }
+    llg_sequence_attempt_t** lists[] = {&assertion->sequence_antecedents,
+                                        &assertion->sequence_consequents};
+    llg_sequence_attempt_t** tails[] = {&assertion->sequence_antecedents_tail,
+                                        &assertion->sequence_consequents_tail};
+    for (size_t list = 0; list < 2u; list++) {
+        llg_sequence_attempt_t** link = lists[list];
+        *tails[list] = NULL;
+        while (*link) {
+            llg_sequence_attempt_t* attempt = *link;
+            if (attempt->start != start) {
+                *tails[list] = attempt;
+                link = &attempt->next;
+                continue;
+            }
+            *link = attempt->next;
+            sequence_attempt_discard(attempt);
+        }
+    }
+    llg_property_inst_t** property = &assertion->property_attempts;
+    assertion->property_attempts_tail = NULL;
+    while (*property) {
+        llg_property_inst_t* attempt = *property;
+        if (attempt->launch.time != start) {
+            assertion->property_attempts_tail = attempt;
+            property = &attempt->next;
+            continue;
+        }
+        *property = attempt->next;
+        attempt->next = NULL;
+        property_inst_free(attempt);
+    }
 }
 
 static void free_assertions(void) {
@@ -349,6 +428,8 @@ void llg_rt_cleanup(void) {
     free_region_callbacks();
     free_sampled_values();
     free_assertions();
+    llg_acov_events_release();
+    g.assertions_ended = 0;
     free_sequence_pools();
     free_clocking_edges();
     free_clocking_drives();

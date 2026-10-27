@@ -798,8 +798,9 @@ static void property_report(llg_concurrent_assertion_t* assertion, llg_property_
     int pass = root->status == LLG_PROP_TRUE;
     int vacuous = pass && (assertion->kind == LLG_ASSERTION_COVER ? root->cover_vacuous
                                                                   : !root->nonvacuous);
+    uint64_t start = root->launch.time;
     property_inst_free(root);
-    assertion_result(assertion, pass, vacuous);
+    assertion_result(assertion, pass, vacuous, start);
 }
 
 static void property_unlink_attempt(llg_concurrent_assertion_t* assertion,
@@ -869,8 +870,7 @@ static void property_attempt_begin(llg_concurrent_assertion_t* assertion,
 
 /* Asynchronous accept_on/reject_on read sampled values, which are fixed for
  * a whole time step, so one check per step and assertion is exact. */
-static void property_assertions_async(void) {
-    if (!g.property_async_count) return;
+static void property_assertions_async_pass(void) {
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion && !g.finish;
          assertion = assertion->next) {
         if (!assertion->property_async || !assertion->property_attempts ||
@@ -895,6 +895,13 @@ static void property_assertions_async(void) {
     }
 }
 
+static void property_assertions_async(void) {
+    if (!g.property_async_count) return;
+    assertion_events_enter();
+    property_assertions_async_pass();
+    assertion_events_leave();
+}
+
 /* At the end of simulation an attempt that is still pending fails if it
  * waits on an `s_eventually` obligation and otherwise ends without a result
  * (16.13.21 calls both "Pending"; decisions S38-D1, A13-D7). Covers and
@@ -915,9 +922,10 @@ static int settle_property_attempts_at_end(void) {
             attempts = attempt->next;
             int fails = settled &&
                         property_end_fails(attempt, assertion->property->nodes, eventuality);
+            uint64_t start = attempt->launch.time;
             property_inst_free(attempt);
             if (fails) {
-                assertion_result(assertion, 0, 0);
+                assertion_result(assertion, 0, 0, start);
                 reported = 1;
             }
         }

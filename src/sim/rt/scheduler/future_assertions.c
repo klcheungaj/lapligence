@@ -121,12 +121,28 @@ static int future_assertion_defer_end(llg_concurrent_assertion_t* assertion, int
     free_assertion_clock_events(assertion);
     // Consecutive markers discard the same attempts: the first one counts
     // them as killed or disabled.
-    if (assertion->lag_tail->marker) return 1;
+    if (assertion->lag_tail->marker && !assertion->lag_tail->kill_one) return 1;
     llg_assertion_lag_t* entry = future_lag_alloc(assertion);
     entry->marker = 1;
     entry->killed = killed ? 1 : 0;
     future_lag_append(assertion, entry);
     return 1;
+}
+
+/* vpiAssertionKill of the attempts that began at `start` (39.5.2). With
+ * entries queued the kill is a marker at the end of the queue, as for
+ * $assertkill; otherwise it happens now. */
+static void future_assertion_kill_at(llg_concurrent_assertion_t* assertion, uint64_t start) {
+    if (!assertion->lag_head || assertion->lag_replaying) {
+        assertion_kill_attempts_at(assertion, start);
+        return;
+    }
+    llg_assertion_lag_t* entry = future_lag_alloc(assertion);
+    entry->marker = 1;
+    entry->killed = 1;
+    entry->kill_one = 1;
+    entry->kill_start = start;
+    future_lag_append(assertion, entry);
 }
 
 /* The attempts a queued leading-clock event begins, decided in its own time
@@ -187,9 +203,12 @@ static void future_assertion_replay(llg_concurrent_assertion_t* assertion) {
         assertion->lag_head = entry->next;
         if (!assertion->lag_head) assertion->lag_tail = NULL;
         assertion->lag_replaying = 1;
+        // Attempt events belong to the entry's time step (39.4.2.1).
+        g.assertion_replay_time1 = entry->time + 1u;
         if (entry->marker) {
             assertion->clock_history = assertion->clock_history_tail = NULL;
-            end_assertion_attempts(assertion, entry->killed);
+            if (entry->kill_one) assertion_kill_attempts_at(assertion, entry->kill_start);
+            else end_assertion_attempts(assertion, entry->killed);
         } else {
             assertion->clock_history = entry->history;
             assertion->clock_history_tail = NULL;
@@ -217,6 +236,7 @@ static void future_assertion_replay(llg_concurrent_assertion_t* assertion) {
             assertion->lag_starts = 0;
         }
         assertion->lag_replaying = 0;
+        g.assertion_replay_time1 = 0;
         // The history list belongs to the entry; detach before recycling.
         assertion->clock_history = assertion->clock_history_tail = NULL;
         future_lag_recycle(assertion, entry);
@@ -251,7 +271,7 @@ static void future_assertion_observed(llg_concurrent_assertion_t* assertion) {
         end_assertion_attempts(assertion, 0);
         free_assertion_clock_events(assertion);
         if (root_event && assertion_would_start(assertion))
-            llg_acov_disabled_attempt(assertion->acov);
+            llg_acov_disabled_attempt(assertion->acov, g.now);
         if (root_event) procedural_disabled_starts(assertion);
         return;
     }

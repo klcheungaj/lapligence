@@ -412,15 +412,16 @@ static void assertion_kill_deferred(uint64_t types, uint64_t directives,
             immediate_selected(LLG_ASSERTION_TYPE_DEFERRED, report->kind, report->label,
                                report->scope, types, directives, scopes, count)) {
             // A killed pending check is an attempt that was killed (40.5.3).
-            llg_acov_attempt(report->acov);
+            llg_acov_attempt(report->acov, g.now);
             llg_acov_end_attempts(report->acov, 1u, 1);
+            llg_acov_notify(report->acov, LLG_ACOV_EVENT_KILLED, g.now);
             deferred_report_drop(report);
         }
     }
 }
 
-int llg_assertion_control(int kind, const sv4_t* args, int n_args,
-                          const char* const* scopes, int n_scopes) {
+static int assertion_control_apply(int kind, const sv4_t* args, int n_args,
+                                   const char* const* scopes, int n_scopes) {
     if (!region_can_mutate("assertion control")) return 0;
     if (kind < LLG_ASSERTION_CONTROL_ON || kind > LLG_ASSERTION_CONTROL_VACUOUS_OFF ||
         n_args < 0 || n_args > 4 || n_scopes < 0 ||
@@ -482,7 +483,8 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
         if (!selected) continue;
         switch (operation) {
             case LLG_ASSERTION_CONTROL_ON:
-                assertion->enabled = 1;
+                // After vpiAssertionSysEnd no assertion starts again (39.5.1).
+                assertion->enabled = !g.assertions_ended;
                 break;
             case LLG_ASSERTION_CONTROL_OFF:
                 assertion->enabled = 0;
@@ -529,6 +531,14 @@ int llg_assertion_control(int kind, const sv4_t* args, int n_args,
     return 1;
 }
 
+int llg_assertion_control(int kind, const sv4_t* args, int n_args,
+                          const char* const* scopes, int n_scopes) {
+    assertion_events_enter();
+    int result = assertion_control_apply(kind, args, n_args, scopes, n_scopes);
+    assertion_events_leave();
+    return result;
+}
+
 int llg_assertion_expect_start(uint64_t identity, int has_fail_action) {
     if (!region_can_mutate("expect scheduling")) return 0;
     llg_concurrent_assertion_t* assertion = find_assertion(identity);
@@ -555,6 +565,7 @@ static void assertion_attempt_enqueue(llg_concurrent_assertion_t* assertion) {
     llg_assertion_attempt_t* attempt = (llg_assertion_attempt_t*)llg_checked_calloc(
         1, sizeof(*attempt), "concurrent assertion attempt");
     attempt->due = 1;
+    attempt->start = assertion_event_time();
     if (assertion->attempts_tail) {
         assertion->attempts_tail->next = attempt;
     } else {

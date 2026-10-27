@@ -449,10 +449,15 @@ pub(in crate::sim::emit_c) fn assertion_tables(model: &IrModel, out: &mut String
             .iter()
             .map(|item| {
                 format!(
-                    "{{ .identity = UINT64_C({}), .name = {}, .full_name = {}, .instance = {}, .kind = {}, .form = {} }}",
+                    "{{ .identity = UINT64_C({}), .name = {}, .full_name = {}, .file = {}, .line = {}u, .column = {}u, .instance = {}, .kind = {}, .form = {} }}",
                     item.identity,
                     c_string_literal(&item.name),
                     c_string_literal(&item.full_name),
+                    item.file
+                        .as_deref()
+                        .map_or_else(|| "NULL".to_owned(), c_string_literal),
+                    item.line,
+                    item.column,
                     index(item.instance),
                     item.kind.runtime_name(),
                     item.form.runtime_name()

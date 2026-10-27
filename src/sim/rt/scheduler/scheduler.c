@@ -413,8 +413,10 @@ static void run_end_of_simulation_assertions(void) {
     g.process_queues[LLG_REGION_REACTIVE].head = NULL;
     g.process_queues[LLG_REGION_REACTIVE].tail = NULL;
     g.finish = 0;
-    if (settle_property_attempts_at_end() && !g.finish)
-        (void)run_region_queue(LLG_REGION_REACTIVE);
+    assertion_events_enter();
+    int reported = settle_property_attempts_at_end();
+    assertion_events_leave();
+    if (reported && !g.finish) (void)run_region_queue(LLG_REGION_REACTIVE);
     llg_proc_queue_t* queue = &g.process_queues[LLG_REGION_REACTIVE];
     if (abandoned.head) {
         if (queue->tail) queue->tail->next_region = abandoned.head;

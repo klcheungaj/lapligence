@@ -274,6 +274,9 @@ typedef struct {
     size_t array_values_capacity;
     uint32_t force_cbs;           /* live cbForce/cbRelease/cbAssign/cbDeassign records */
     uint32_t disable_cbs;         /* live cbDisable records */
+    uint32_t assertion_cbs;       /* live vpi_register_assertion_cb records */
+    int assertion_sys_started;    /* cbAssertionSysInitialized ran (39.4.1) */
+    int assertions_ended;         /* vpiAssertionSysEnd or the end of the run */
     int quiet_force;              /* vpi_put_value force/release: not a statement */
     llg_vpi_storage_t* storage;   /* rows with storage by address, built on demand */
     size_t storage_count;
@@ -2629,6 +2632,12 @@ static vpiHandle assertion_relation(int type, const llg_vpi_slot_t* slot) {
         vpi_error("LLG_VPI_NOT_FOUND", "the assertion's instance is not in the VPI catalog");
         return NULL;
     }
+    if (item && (type == vpiClockingEvent || type == vpiDisableCondition || type == vpiProperty)) {
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "assertion clocking events, disable conditions and properties are expressions, "
+                  "which llg does not expose as VPI objects");
+        return NULL;
+    }
     vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-one relation for this object");
     return NULL;
 }
@@ -2639,6 +2648,16 @@ static int assertion_property(const llg_vpi_slot_t* slot, int property, uint64_t
     if (!item) return 0;
     switch (property) {
         case vpiIsDeferred: *value = item->form == LLG_ACOV_DEFERRED; return 1;
+        /* The statement's source position (39.3.2). */
+        case vpiLineNo:
+        case vpiStartLine:
+            if (!item->line) return 0;
+            *value = item->line;
+            return 1;
+        case vpiColumn:
+            if (!item->column) return 0;
+            *value = item->column;
+            return 1;
         case vpiCovered:
             /* Attempted, succeeded at least once and never failed (40.5.3). */
             *value = item->attempts && item->successes && !item->failures;
@@ -4162,6 +4181,7 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
                 const llg_acov_instance_t* owner = llg_acov_instance_at((size_t)item->instance);
                 if (item->instance >= 0 && owner) return (PLI_BYTE8*)owner->definition;
             }
+            if (property == vpiFile && item->file) return (PLI_BYTE8*)item->file;
             break;
         }
         default:
@@ -5033,6 +5053,8 @@ typedef enum {
     CB_VALUE,      /* cbValueChange */
     CB_FORCE,      /* cbForce, cbRelease, cbAssign, cbDeassign */
     CB_DISABLE,    /* cbDisable */
+    CB_ASSERTION,  /* vpi_register_assertion_cb (39.4.2) */
+    CB_ASSERT_SYS, /* cbAssertionSys* (39.4.1) */
 } llg_vpi_cb_kind_t;
 
 typedef struct llg_vpi_cb {
@@ -5067,7 +5089,15 @@ typedef struct llg_vpi_cb {
      * record watches the scopes that enclose it), else NULL and the record
      * watches the row `target.object`. */
     llg_vpi_callsite_t* site;
+    /* CB_ASSERTION: the routine, its assertion item and whether the reason
+     * is an attempt event (the item is then watched). data.obj is the
+     * record's own assertion handle, data.cb_rtn NULL. */
+    vpi_assertion_callback_func* assertion_rtn;
+    uint32_t assertion_item;
+    int assertion_attempt;
 } llg_vpi_cb_t;
+
+static void assertion_cb_release(llg_vpi_cb_t* cb);
 
 /* One watched storage address of a cbValueChange record. */
 typedef struct llg_vpi_watch {
@@ -5211,6 +5241,7 @@ static void vpi_cb_detach(llg_vpi_cb_t* cb, llg_vpi_cb_done_t* done) {
     if (cb->kind == CB_VALUE) cb_watches_unlink(cb);
     if (cb->kind == CB_FORCE) --g_vpi.force_cbs;
     if (cb->kind == CB_DISABLE) --g_vpi.disable_cbs;
+    if (cb->kind == CB_ASSERTION) assertion_cb_release(cb);
     if (cb->waiting) {
         cb->waiting = 0;
         --g_vpi.next_time_pending;
@@ -5755,6 +5786,154 @@ static int bind_disable_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
     return 1;
 }
 
+/* ── assertion callbacks (39.4) ─────────────────────────────────────────── */
+
+/* The attempt reasons a record watches its item for, and the control
+ * reasons vpi_control raises (39.4.2). */
+static int assertion_attempt_reason(int reason) {
+    return reason == cbAssertionStart || reason == cbAssertionSuccess ||
+           reason == cbAssertionVacuousSuccess || reason == cbAssertionFailure ||
+           reason == cbAssertionDisabledEvaluation || reason == cbAssertionKill;
+}
+
+static int assertion_control_reason(int reason) {
+    return reason == cbAssertionDisable || reason == cbAssertionEnable ||
+           reason == cbAssertionReset || reason == cbAssertionDisablePassAction ||
+           reason == cbAssertionEnablePassAction || reason == cbAssertionDisableFailAction ||
+           reason == cbAssertionEnableFailAction || reason == cbAssertionDisableVacuousAction ||
+           reason == cbAssertionEnableNonvacuousAction;
+}
+
+static int assertion_system_reason(int reason) {
+    return reason == cbAssertionSysInitialized || reason == cbAssertionSysOn ||
+           reason == cbAssertionSysOff || reason == cbAssertionSysKill ||
+           reason == cbAssertionSysEnd || reason == cbAssertionSysReset ||
+           reason == cbAssertionSysEnablePassAction || reason == cbAssertionSysEnableFailAction ||
+           reason == cbAssertionSysDisablePassAction || reason == cbAssertionSysDisableFailAction ||
+           reason == cbAssertionSysEnableNonvacuousAction ||
+           reason == cbAssertionSysDisableVacuousAction;
+}
+
+/* The assertion handle a record passes to its routine. The record owns one
+ * handle; when the application released it, a new one replaces it. */
+static vpiHandle assertion_cb_handle(llg_vpi_cb_t* cb) {
+    llg_vpi_slot_t* slot = decode_handle(cb->data.obj, NULL);
+    if (slot && slot->kind == SLOT_ASSERTION && slot->left == (int64_t)cb->assertion_item)
+        return cb->data.obj;
+    cb->data.obj = assertion_handle(cb->assertion_item);
+    return cb->data.obj;
+}
+
+static void assertion_cb_release(llg_vpi_cb_t* cb) {
+    --g_vpi.assertion_cbs;
+    if (cb->assertion_attempt) llg_acov_watch(cb->assertion_item, -1);
+    uint32_t index;
+    llg_vpi_slot_t* slot = decode_handle(cb->data.obj, &index);
+    if (slot && slot->kind == SLOT_ASSERTION && slot->left == (int64_t)cb->assertion_item)
+        release_slot(index);
+    cb->data.obj = NULL;
+}
+
+typedef struct {
+    uint32_t item;
+    int reason;
+} llg_vpi_assertion_match_t;
+
+static int matches_assertion(const llg_vpi_cb_t* cb, const void* context) {
+    const llg_vpi_assertion_match_t* match = (const llg_vpi_assertion_match_t*)context;
+    return cb->kind == CB_ASSERTION && cb->assertion_item == match->item &&
+           cb->data.reason == match->reason;
+}
+
+/* Run the records of `reason` on `item`. `start` is the attempt's start
+ * time, or NULL for the reasons without attempt information (39.4.2: kill
+ * and the control reasons pass a NULL info pointer). Each routine gets its
+ * own copies of the time and attempt information. The routine's return
+ * value is not specified by 39.4.2 and is ignored. */
+static void invoke_assertion_cbs(uint32_t item, int reason, uint64_t cb_time,
+                                 const uint64_t* start) {
+    if (!g_vpi.assertion_cbs || !g_vpi.indexed) return;
+    llg_vpi_assertion_match_t match = {item, reason};
+    llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
+    size_t count;
+    dispatch_begin();
+    llg_vpi_cb_t** items = collect_cbs(g_vpi.cbs, matches_assertion, &match, buffer, &count);
+    for (size_t i = 0; i < count; ++i) {
+        llg_vpi_cb_t* cb = items[i];
+        if (cb->removed) continue;
+        vpiHandle assertion = assertion_cb_handle(cb);
+        if (!assertion) continue;
+        s_vpi_time time;
+        (void)callback_time(vpiSimTime, NULL, cb_time, &time);
+        s_vpi_attempt_info info;
+        memset(&info, 0, sizeof(info));
+        if (start) (void)callback_time(vpiSimTime, NULL, *start, &info.attemptStartTime);
+        (void)cb->assertion_rtn(reason, &time, assertion, start ? &info : NULL,
+                                cb->data.user_data);
+    }
+    if (items != buffer) free(items);
+    dispatch_end();
+}
+
+/* Runtime assertion hook: one attempt event of a watched item. */
+static void vpi_assertion_event(const llg_acov_item_t* item, int event, uint64_t cb_time,
+                                uint64_t start) {
+    const llg_acov_item_t* first = llg_acov_item_at(0);
+    if (!first || item < first || g_vpi.assertions_ended) return;
+    static const int reasons[] = {cbAssertionStart,   cbAssertionSuccess,
+                                  cbAssertionVacuousSuccess, cbAssertionFailure,
+                                  cbAssertionDisabledEvaluation, cbAssertionKill};
+    if (event < 0 || (size_t)event >= sizeof(reasons) / sizeof(reasons[0])) return;
+    int reason = reasons[event];
+    invoke_assertion_cbs((uint32_t)(item - first), reason, cb_time,
+                         reason == cbAssertionKill ? NULL : &start);
+}
+
+static int matches_assertion_system(const llg_vpi_cb_t* cb, const void* context) {
+    return cb->kind == CB_ASSERT_SYS && cb->data.reason == *(const int*)context;
+}
+
+/* The cbAssertionSys* records of `reason`. cbAssertionSysInitialized and
+ * cbAssertionSysEnd occur once, so their records retire after they ran. */
+static void invoke_assertion_system(int reason) {
+    if (!g_vpi.indexed) return;
+    llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
+    size_t count;
+    dispatch_begin();
+    llg_vpi_cb_t** items = collect_cbs(g_vpi.cbs, matches_assertion_system, &reason, buffer, &count);
+    int one_shot = reason == cbAssertionSysInitialized || reason == cbAssertionSysEnd;
+    for (size_t i = 0; i < count; ++i) {
+        llg_vpi_cb_t* cb = items[i];
+        if (cb->removed) continue;
+        s_cb_data data;
+        s_vpi_time time;
+        base_data(cb, &data);
+        data.time = callback_time(cb->time.type, NULL, llg_time(), &time);
+        invoke_cb(cb, &data);
+        if (one_shot) vpi_cb_fired(cb);
+    }
+    if (items != buffer) free(items);
+    dispatch_end();
+}
+
+/* 39.5.1 vpiAssertionSysEnd and the end of the run: no assertion callback
+ * occurs any more, so every record goes. A record that ran keeps its
+ * handle as a fired copy (S43-D4); the others become stale. */
+static void assertion_callbacks_end(void) {
+    if (g_vpi.assertions_ended) return;
+    g_vpi.assertions_ended = 1;
+    invoke_assertion_system(cbAssertionSysEnd);
+    dispatch_begin();
+    for (llg_vpi_cb_t* cb = g_vpi.cbs; cb;) {
+        llg_vpi_cb_t* next = cb->next;
+        if (!cb->removed && (cb->kind == CB_ASSERTION || cb->kind == CB_ASSERT_SYS))
+            vpi_cb_retire(cb);
+        cb = next;
+    }
+    dispatch_end();
+    llg_assertion_watch_hook(NULL);
+}
+
 /* Region, delay rules and recurrence of each time reason (Table 4-1,
  * 38.36.2). Returns 0 with the error recorded when it cannot be placed. */
 static int schedule_time_cb(llg_vpi_cb_t* cb, uint64_t ticks) {
@@ -5942,6 +6121,30 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         kind = CB_FORCE;
     } else if (reason == cbDisable) {
         kind = CB_DISABLE;
+    } else if (assertion_system_reason(reason)) {
+        kind = CB_ASSERT_SYS;
+        if (reason == cbAssertionSysInitialized && g_vpi.assertion_sys_started) {
+            /* It occurred at the start of the run: accepted, never runs
+             * (as S43-D4). */
+            if (!vpi_ready()) return NULL;
+            llg_vpi_cb_done_t* done = cb_done_new(data);
+            if (!done) {
+                vpi_error("LLG_VPI_NOMEM", "VPI callback allocation failed");
+                return NULL;
+            }
+            uint32_t index = alloc_slot(SLOT_FIRED_CB);
+            if (index == LLG_VPI_NONE) {
+                free(done);
+                return NULL;
+            }
+            fired_attach(index, done);
+            return encode_handle(index);
+        }
+        if (g_vpi.assertions_ended || g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
+            vpi_error("LLG_VPI_CALLBACK",
+                      "the assertion system has ended; no assertion system callback can occur");
+            return NULL;
+        }
     } else if (reason == cbNextSimTime || time_reason(reason)) {
         kind = reason == cbNextSimTime ? CB_NEXT_TIME : CB_TIME;
         if (g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
@@ -6098,12 +6301,20 @@ void llg_vpi_start_simulation(void) {
     invoke_action(cbEndOfCompile);
     g_vpi.phase = LLG_VPI_PHASE_RUNNING;
     invoke_action(cbStartOfSimulation);
+    /* The assertion system initializes and starts after the start
+     * callbacks (39.4.1 allows either order). */
+    g_vpi.assertion_sys_started = 1;
+    invoke_assertion_system(cbAssertionSysInitialized);
+    invoke_assertion_system(cbAssertionSysOn);
     g_vpi.starting = 0;
 }
 
 void llg_vpi_end_simulation(void) {
     /* Once per model run, whichever of advance and close gets here first. */
     if (!g_vpi.initialized || g_vpi.phase != LLG_VPI_PHASE_RUNNING) return;
+    /* All assertions have completed (39.4.1 cbAssertionSysEnd "typically
+     * occurs after the end of simulation"), before cbEndOfSimulation. */
+    assertion_callbacks_end();
     g_vpi.phase = LLG_VPI_PHASE_ENDED;
     invoke_action(cbEndOfSimulation);
     g_vpi.running = 0;
@@ -6487,6 +6698,7 @@ void llg_vpi_shutdown(void) {
     llg_time_slot_hook(NULL);
     llg_force_watch_hook(NULL);
     llg_disable_watch_hook(NULL);
+    llg_assertion_watch_hook(NULL);
     while (g_vpi.cbs) vpi_cb_retire(g_vpi.cbs);
     free(g_vpi.watch_buckets);
     for (size_t i = g_vpi.static_count; i < g_vpi.slot_count; ++i) {
@@ -6749,15 +6961,229 @@ PLI_INT32 vpi_put_data(PLI_INT32 id, PLI_BYTE8* dataLoc, PLI_INT32 numOfBytes) {
     return 0;
 }
 
+/* 39.4.2: a callback on one assertion statement. The attempt reasons run
+ * from the runtime's attempt events, the control reasons from vpi_control
+ * (39.5.2). Sequence and property instances are not VPI objects in llg, and
+ * there are no step callbacks: those registrations fail with vpiError. */
 vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
                                     vpi_assertion_callback_func* cb_rtn, PLI_BYTE8* user_data) {
-    (void)assertion;
-    (void)reason;
-    (void)cb_rtn;
-    (void)user_data;
     vpi_enter();
-    vpi_unsupported_routine("vpi_register_assertion_cb", "no assertion callbacks");
+    if (!cb_rtn) {
+        vpi_error("LLG_VPI_CALLBACK", "vpi_register_assertion_cb needs a callback routine");
+        return NULL;
+    }
+    if (reason == cbAssertionStepSuccess || reason == cbAssertionStepFailure) {
+        vpi_error("LLG_VPI_UNSUPPORTED", "llg has no assertion step callbacks");
+        return NULL;
+    }
+    int attempt = assertion_attempt_reason(reason);
+    if (!attempt && !assertion_control_reason(reason)) {
+        vpi_error("LLG_VPI_CALLBACK", "invalid vpi_register_assertion_cb reason");
+        return NULL;
+    }
+    llg_vpi_slot_t* slot = checked_handle(assertion, NULL);
+    if (!slot) return NULL;
+    if (slot->kind != SLOT_ASSERTION || !slot_item(slot)) {
+        vpi_error("LLG_VPI_CALLBACK", "vpi_register_assertion_cb needs an assertion handle");
+        return NULL;
+    }
+    if (g_vpi.assertions_ended || g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
+        vpi_error("LLG_VPI_CALLBACK",
+                  "the assertion system has ended; no assertion callback can occur");
+        return NULL;
+    }
+    uint32_t item = (uint32_t)slot->left;
+    llg_vpi_cb_t* cb = (llg_vpi_cb_t*)calloc(1, sizeof(*cb));
+    if (!cb) {
+        vpi_error("LLG_VPI_NOMEM", "VPI callback allocation failed");
+        return NULL;
+    }
+    cb->kind = CB_ASSERTION;
+    cb->last = VPI_EMPTY;
+    cb->time.type = vpiSimTime;
+    cb->value.format = vpiSuppressVal;
+    cb->data.reason = reason;
+    cb->data.user_data = user_data;
+    cb->assertion_rtn = cb_rtn;
+    cb->assertion_item = item;
+    cb->assertion_attempt = attempt;
+    uint32_t index = alloc_slot(SLOT_CALLBACK);
+    if (index == LLG_VPI_NONE) {
+        vpi_cb_free(cb);
+        return NULL;
+    }
+    cb->data.obj = assertion_handle(item);
+    if (!cb->data.obj) {
+        release_slot(index);
+        vpi_cb_free(cb);
+        return NULL;
+    }
+    g_vpi.slots[index].pointer = cb;
+    cb->slot = index;
+    cb->sequence = g_vpi.cb_sequence++;
+    cb->registered_at = llg_time();
+    if (!g_vpi.cbs_tail) g_vpi.cbs_tail = &g_vpi.cbs;
+    cb->prev_link = g_vpi.cbs_tail;
+    *g_vpi.cbs_tail = cb;
+    g_vpi.cbs_tail = &cb->next;
+    ++g_vpi.assertion_cbs;
+    if (attempt) {
+        llg_acov_watch(item, 1);
+        llg_assertion_watch_hook(vpi_assertion_event);
+    }
+    return encode_handle(index);
+}
+
+/* ── assertion control (39.5) ───────────────────────────────────────────── */
+
+typedef struct {
+    int operation; /* vpi_control operation */
+    int runtime;   /* LLG_ACOV_OP_* */
+    int reason;    /* callback reason it raises, 0 for none */
+} llg_vpi_assertion_op_t;
+
+/* 39.5.2: the operations on one assertion and the callback each raises. */
+static const llg_vpi_assertion_op_t assertion_ops[] = {
+    {vpiAssertionDisable, LLG_ACOV_OP_DISABLE, cbAssertionDisable},
+    {vpiAssertionEnable, LLG_ACOV_OP_ENABLE, cbAssertionEnable},
+    {vpiAssertionReset, LLG_ACOV_OP_RESET, cbAssertionReset},
+    {vpiAssertionKill, LLG_ACOV_OP_KILL, 0},
+    {vpiAssertionDisablePassAction, LLG_ACOV_OP_PASS_OFF, cbAssertionDisablePassAction},
+    {vpiAssertionEnablePassAction, LLG_ACOV_OP_PASS_ON, cbAssertionEnablePassAction},
+    {vpiAssertionDisableFailAction, LLG_ACOV_OP_FAIL_OFF, cbAssertionDisableFailAction},
+    {vpiAssertionEnableFailAction, LLG_ACOV_OP_FAIL_ON, cbAssertionEnableFailAction},
+    {vpiAssertionDisableVacuousAction, LLG_ACOV_OP_VACUOUS_OFF, cbAssertionDisableVacuousAction},
+    {vpiAssertionEnableNonvacuousAction, LLG_ACOV_OP_NONVACUOUS_ON,
+     cbAssertionEnableNonvacuousAction},
+};
+
+/* 39.5.1: the system operations, applied to each selected assertion, and
+ * the system callback each raises. */
+static const llg_vpi_assertion_op_t assertion_system_ops[] = {
+    {vpiAssertionSysOn, LLG_ACOV_OP_ENABLE, cbAssertionSysOn},
+    {vpiAssertionSysOff, LLG_ACOV_OP_DISABLE, cbAssertionSysOff},
+    {vpiAssertionSysKill, LLG_ACOV_OP_KILL_ALL, cbAssertionSysKill},
+    {vpiAssertionSysEnd, LLG_ACOV_OP_KILL_ALL, cbAssertionSysEnd},
+    {vpiAssertionSysReset, LLG_ACOV_OP_RESET, cbAssertionSysReset},
+    {vpiAssertionSysEnablePassAction, LLG_ACOV_OP_PASS_ON, cbAssertionSysEnablePassAction},
+    {vpiAssertionSysEnableFailAction, LLG_ACOV_OP_FAIL_ON, cbAssertionSysEnableFailAction},
+    {vpiAssertionSysDisablePassAction, LLG_ACOV_OP_PASS_OFF, cbAssertionSysDisablePassAction},
+    {vpiAssertionSysDisableFailAction, LLG_ACOV_OP_FAIL_OFF, cbAssertionSysDisableFailAction},
+    {vpiAssertionSysEnableNonvacuousAction, LLG_ACOV_OP_NONVACUOUS_ON,
+     cbAssertionSysEnableNonvacuousAction},
+    {vpiAssertionSysDisableVacuousAction, LLG_ACOV_OP_VACUOUS_OFF,
+     cbAssertionSysDisableVacuousAction},
+};
+
+static const llg_vpi_assertion_op_t* find_assertion_op(const llg_vpi_assertion_op_t* table,
+                                                       size_t count, int operation) {
+    for (size_t i = 0; i < count; ++i)
+        if (table[i].operation == operation) return &table[i];
     return NULL;
+}
+
+static int is_assertion_control(int operation) {
+    return operation >= vpiAssertionDisable && operation <= vpiAssertionSysDisableVacuousAction;
+}
+
+/* The assertion item of an assertion handle, or -1 with the error set. */
+static int64_t control_item(vpiHandle handle) {
+    llg_vpi_slot_t* slot = checked_handle(handle, NULL);
+    if (!slot) return -1;
+    if (slot->kind != SLOT_ASSERTION || !slot_item(slot)) {
+        vpi_error("LLG_VPI_ARGUMENT", "assertion control needs an assertion handle");
+        return -1;
+    }
+    return slot->left;
+}
+
+/* An attempt start time argument (39.5.2), in simulation time units. */
+static int control_start_time(const s_vpi_time* time, uint64_t* start) {
+    int ok = 0;
+    if (time) *start = ticks_from_time(time, NULL, &ok);
+    if (!ok) vpi_error("LLG_VPI_ARGUMENT",
+                       "assertion attempt start time needs a vpiSimTime or vpiScaledRealTime time");
+    return ok;
+}
+
+/* Whether item `index` lies in instance `scope` or below it. */
+static int item_in_instance(size_t index, int32_t scope) {
+    int32_t instance = llg_acov_item_at(index)->instance;
+    while (instance >= 0) {
+        if (instance == scope) return 1;
+        const llg_acov_instance_t* node = llg_acov_instance_at((size_t)instance);
+        instance = node ? node->parent : -1;
+    }
+    return 0;
+}
+
+static PLI_INT32 assertion_control(int operation, va_list ap) {
+    if (g_vpi.assertions_ended || g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
+        vpi_error("LLG_VPI_CONTROL", "the assertion system has ended (vpiAssertionSysEnd)");
+        return 0;
+    }
+    vpiHandle handle = va_arg(ap, vpiHandle);
+    if (operation == vpiAssertionEnableStep || operation == vpiAssertionDisableStep) {
+        int64_t item = control_item(handle);
+        uint64_t start = 0;
+        if (item < 0 || !control_start_time(va_arg(ap, p_vpi_time), &start)) return 0;
+        if (operation == vpiAssertionEnableStep) {
+            vpi_error("LLG_VPI_UNSUPPORTED", "llg has no assertion step callbacks");
+            return 0;
+        }
+        /* Stepping is never enabled, so disabling it has no effect. */
+        return 1;
+    }
+    const llg_vpi_assertion_op_t* op =
+        find_assertion_op(assertion_ops, sizeof(assertion_ops) / sizeof(assertion_ops[0]), operation);
+    if (op) {
+        int64_t item = control_item(handle);
+        uint64_t start = 0;
+        if (item < 0) return 0;
+        if (operation == vpiAssertionKill && !control_start_time(va_arg(ap, p_vpi_time), &start))
+            return 0;
+        (void)llg_acov_control((size_t)item, op->runtime, start);
+        if (op->reason) invoke_assertion_cbs((uint32_t)item, op->reason, llg_time(), NULL);
+        return 1;
+    }
+    op = find_assertion_op(assertion_system_ops,
+                           sizeof(assertion_system_ops) / sizeof(assertion_system_ops[0]), operation);
+    if (!op) {
+        vpi_error("LLG_VPI_UNSUPPORTED", "unsupported vpi_control operation");
+        return 0;
+    }
+    /* NULL selects every assertion; an instance its assertions and those
+     * below it; an assertion handle that assertion (39.5.1). */
+    int64_t only = -1;
+    int32_t scope = -1;
+    if (handle) {
+        llg_vpi_slot_t* slot = checked_handle(handle, NULL);
+        if (!slot) return 0;
+        if (operation == vpiAssertionSysEnd) {
+            vpi_error("LLG_VPI_ARGUMENT", "vpiAssertionSysEnd ends the whole assertion system: "
+                                          "pass a NULL handle");
+            return 0;
+        }
+        if (slot->kind == SLOT_ASSERTION && slot_item(slot)) {
+            only = slot->left;
+        } else {
+            scope = slot_instance(slot);
+            if (scope < 0) {
+                vpi_error("LLG_VPI_ARGUMENT",
+                          "assertion system control needs NULL, an instance or an assertion "
+                          "handle");
+                return 0;
+            }
+        }
+    }
+    if (operation == vpiAssertionSysEnd) llg_assertions_end();
+    for (size_t i = 0; i < llg_acov_item_count(); ++i) {
+        if (only >= 0 ? (int64_t)i != only : handle && !item_in_instance(i, scope)) continue;
+        (void)llg_acov_control(i, op->runtime, 0);
+    }
+    if (operation == vpiAssertionSysEnd) assertion_callbacks_end();
+    else invoke_assertion_system(op->reason);
+    return 1;
 }
 
 /* 38.4: vpiStop and vpiFinish take the diagnostic level of $stop/$finish
@@ -6768,6 +7194,13 @@ vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
  * (decision A20-D11). */
 PLI_INT32 vpi_control(PLI_INT32 operation, ...) {
     vpi_enter();
+    if (is_assertion_control(operation)) {
+        va_list ap;
+        va_start(ap, operation);
+        PLI_INT32 status = assertion_control(operation, ap);
+        va_end(ap);
+        return status;
+    }
     if (operation >= vpiCoverageStart && operation <= vpiCoverageSave) {
         va_list ap;
         va_start(ap, operation);

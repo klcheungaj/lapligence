@@ -151,6 +151,9 @@ impl Codegen<'_> {
                 name: assertion.label.clone(),
                 full_name: full_name(&assertion.scope, &assertion.label),
                 instance: None,
+                file: None,
+                line: 0,
+                column: 0,
             });
         }
         for (identity, item) in std::mem::take(&mut self.immediate_assertion_items) {
@@ -161,12 +164,25 @@ impl Codegen<'_> {
                 full_name: full_name(&item.scope, &item.label),
                 name: item.label,
                 instance: None,
+                file: None,
+                line: 0,
+                column: 0,
             });
         }
         items.sort_by_key(|item| item.identity);
         items.dedup_by_key(|item| item.identity);
         for item in &mut items {
             item.instance = self.coverage_item_instance(item.identity);
+            if let Some(node) = usize::try_from(item.identity)
+                .ok()
+                .filter(|index| *index < self.db.node_count())
+                .map(NodeId::from_index)
+            {
+                let node = self.node(node);
+                item.file = node.file.as_deref().map(str::to_owned);
+                item.line = node.line;
+                item.column = node.col;
+            }
         }
         let instances = self.coverage_instances().table.clone();
         model.assertion_coverage = Some(IrAssertionCoverage { items, instances });

@@ -910,6 +910,7 @@ static int sequence_spawn_consequents(llg_concurrent_assertion_t* assertion,
             antecedent->matched = 1;
             llg_sequence_attempt_t* consequent = sequence_attempt_new(
                 assertion->consequent_sequence, cycle, antecedent->graph, endpoint->locals);
+            consequent->start = antecedent->start;
             if (antecedent->eval) {
                 consequent->eval = antecedent->eval;
                 antecedent->eval->pending++;

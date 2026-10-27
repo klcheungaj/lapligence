@@ -56,15 +56,9 @@ void llg_acov_model(llg_acov_item_t* items, size_t n_items, const llg_acov_insta
     for (size_t i = 0; i < llg_acov_n_items; ++i) {
         llg_acov_zero(&llg_acov_items[i]);
         llg_acov_items[i].stopped = 0;
+        llg_acov_items[i].control = 0;
+        llg_acov_items[i].watches = 0;
     }
-}
-
-static void llg_acov_release(void) {
-    llg_acov_items = NULL;
-    llg_acov_n_items = 0;
-    llg_acov_instances = NULL;
-    llg_acov_n_instances = 0;
-    llg_acov_present = 0;
 }
 
 // The item of the assertion statement `identity`, or NULL (no table, or
@@ -86,31 +80,244 @@ static void llg_acov_add(uint64_t* counter, uint64_t count) {
     *counter = count > UINT64_MAX - *counter ? UINT64_MAX : *counter + count;
 }
 
-static void llg_acov_attempt(llg_acov_item_t* item) {
-    if (item && !item->stopped) llg_acov_add(&item->attempts, 1u);
+// ── VPI assertion callbacks (39.4.2) ────────────────────────────────────────
+//
+// An item's attempt events go to the VPI hook only while it is watched.
+// Inside the assertion engines (assertion_events_enter/leave) they are
+// queued and delivered in order when the outermost engine call returns.
+
+static llg_assertion_watch_fn llg_assertion_watch;
+
+void llg_assertion_watch_hook(llg_assertion_watch_fn hook) { llg_assertion_watch = hook; }
+
+void llg_acov_watch(size_t index, int delta) {
+    if (index >= llg_acov_n_items) return;
+    llg_acov_item_t* item = &llg_acov_items[index];
+    if (delta > 0) item->watches++;
+    else if (item->watches) item->watches--;
 }
 
-static void llg_acov_result(llg_acov_item_t* item, int success, int vacuous) {
-    if (!item || item->stopped) return;
-    if (success) llg_acov_add(vacuous ? &item->vacuous : &item->successes, 1u);
-    else if (item->kind != LLG_ASSERTION_COVER) llg_acov_add(&item->failures, 1u);
+// The time an attempt event belongs to: the replayed time step of an
+// assertion with global clocking future sampled value functions, else now.
+static uint64_t assertion_event_time(void) {
+    return g.assertion_replay_time1 ? g.assertion_replay_time1 - 1u : g.now;
 }
 
-// `count` running attempts ended disabled (disable iff) or killed.
+static void assertion_events_flush(void) {
+    llg_acov_event_queue_t* queue = &g.assertion_events;
+    // A callback may raise further events; FIFO order holds across nesting.
+    while (queue->count) {
+        llg_acov_event_t event = queue->items[queue->head];
+        queue->head = (queue->head + 1u) % queue->capacity;
+        queue->count--;
+        if (llg_assertion_watch && event.item->watches)
+            llg_assertion_watch(event.item, event.event, event.cb_time, event.start);
+    }
+    queue->head = 0;
+}
+
+static void assertion_events_enter(void) { g.assertion_event_depth++; }
+
+static void assertion_events_leave(void) {
+    if (--g.assertion_event_depth == 0 && LLG_CO_UNLIKELY(g.assertion_events.count))
+        assertion_events_flush();
+}
+
+static void assertion_event_push(const llg_acov_item_t* item, int event, uint64_t cb_time,
+                                 uint64_t start) {
+    llg_acov_event_queue_t* queue = &g.assertion_events;
+    if (queue->count == queue->capacity) {
+        size_t capacity = queue->capacity ? queue->capacity * 2u : 16u;
+        llg_acov_event_t* items =
+            (llg_acov_event_t*)llg_checked_malloc(capacity, sizeof(*items), "assertion events");
+        for (size_t i = 0; i < queue->count; ++i)
+            items[i] = queue->items[(queue->head + i) % queue->capacity];
+        free(queue->items);
+        queue->items = items;
+        queue->capacity = capacity;
+        queue->head = 0;
+    }
+    queue->items[(queue->head + queue->count) % queue->capacity] =
+        (llg_acov_event_t){item, cb_time, start, event};
+    queue->count++;
+}
+
+static void llg_acov_event(llg_acov_item_t* item, int event, uint64_t start) {
+    if (!llg_assertion_watch) return;
+    uint64_t cb_time = event == LLG_ACOV_EVENT_START ? start : assertion_event_time();
+    if (g.assertion_event_depth || g.assertion_events.count)
+        assertion_event_push(item, event, cb_time, start);
+    else
+        llg_assertion_watch(item, event, cb_time, start);
+}
+
+static void llg_acov_notify(llg_acov_item_t* item, int event, uint64_t start) {
+    if (LLG_CO_UNLIKELY(item != NULL && item->watches != 0)) llg_acov_event(item, event, start);
+}
+
+// The hook stays: final procedures run after the runtime cleanup and their
+// immediate assertions still report (VPI removes the hook at shutdown).
+static void llg_acov_events_release(void) {
+    free(g.assertion_events.items);
+    g.assertion_events = (llg_acov_event_queue_t){0};
+    g.assertion_event_depth = 0;
+}
+
+static void llg_acov_attempt(llg_acov_item_t* item, uint64_t start) {
+    if (!item) return;
+    if (!item->stopped) llg_acov_add(&item->attempts, 1u);
+    llg_acov_notify(item, LLG_ACOV_EVENT_START, start);
+}
+
+static void llg_acov_result(llg_acov_item_t* item, int success, int vacuous, uint64_t start) {
+    if (!item) return;
+    if (!item->stopped) {
+        if (success) llg_acov_add(vacuous ? &item->vacuous : &item->successes, 1u);
+        else if (item->kind != LLG_ASSERTION_COVER) llg_acov_add(&item->failures, 1u);
+    }
+    llg_acov_notify(item,
+                    !success  ? LLG_ACOV_EVENT_FAILURE
+                    : vacuous ? LLG_ACOV_EVENT_VACUOUS
+                              : LLG_ACOV_EVENT_SUCCESS,
+                    start);
+}
+
+// `count` running attempts ended disabled (disable iff) or killed. The
+// callers raise one event per attempt themselves (llg_acov_notify).
 static void llg_acov_end_attempts(llg_acov_item_t* item, uint64_t count, int killed) {
     if (!item || item->stopped || !count) return;
     llg_acov_add(killed ? &item->killed : &item->disabled, count);
 }
 
 // An attempt that starts while its disable iff condition holds (40.5.3).
-static void llg_acov_disabled_attempt(llg_acov_item_t* item) {
-    llg_acov_attempt(item);
+static void llg_acov_disabled_attempt(llg_acov_item_t* item, uint64_t start) {
+    llg_acov_attempt(item, start);
     llg_acov_end_attempts(item, 1u, 0);
+    llg_acov_notify(item, LLG_ACOV_EVENT_DISABLED, start);
 }
 
 void llg_acov_check(llg_acov_item_t* item, int passed) {
-    llg_acov_attempt(item);
-    llg_acov_result(item, passed != 0, 0);
+    llg_acov_attempt(item, g.now);
+    llg_acov_result(item, passed != 0, 0, g.now);
+}
+
+// ── VPI assertion control (39.5) ────────────────────────────────────────────
+
+void llg_assertions_end(void) { g.assertions_ended = 1; }
+
+// Discard the pending deferred reports of `item` (39.5.3: a control that
+// discards attempts also flushes their unmatured reports), each an attempt
+// killed (S46-D8). Every pending report belongs to the current time step.
+static void llg_acov_flush_deferred(llg_acov_item_t* item) {
+    for (uint32_t i = 0; g.deferred_pending_live && i < g.deferred_pending.count; i++) {
+        llg_deferred_assertion_report_t* report = &g.deferred_pending.items[i];
+        if (!report->live || report->kind == LLG_DEFERRED_PROCEDURAL || report->acov != item)
+            continue;
+        llg_acov_attempt(item, g.now);
+        llg_acov_end_attempts(item, 1u, 1);
+        llg_acov_notify(item, LLG_ACOV_EVENT_KILLED, g.now);
+        deferred_report_drop(report);
+    }
+}
+
+// Discard every attempt of a concurrent assertion record, counted as
+// killed, and its pending procedural instances (39.5.3).
+static void llg_acov_discard_record(llg_concurrent_assertion_t* assertion) {
+    end_assertion_attempts(assertion, 1);
+    assertion->edge_pending = 0;
+    if (assertion->procedural) {
+        procedural_cancel_pending(assertion);
+        assertion->procedural_matured = 0;
+    }
+}
+
+static void llg_acov_record_control(llg_concurrent_assertion_t* assertion, int operation,
+                                    uint64_t start) {
+    switch (operation) {
+        case LLG_ACOV_OP_DISABLE: assertion->enabled = 0; break;
+        case LLG_ACOV_OP_ENABLE: assertion->enabled = !g.assertions_ended; break;
+        case LLG_ACOV_OP_KILL:
+            if (assertion->future_clock) future_assertion_kill_at(assertion, start);
+            else assertion_kill_attempts_at(assertion, start);
+            break;
+        case LLG_ACOV_OP_KILL_ALL:
+            assertion->enabled = 0;
+            llg_acov_discard_record(assertion);
+            break;
+        case LLG_ACOV_OP_RESET:
+            llg_acov_discard_record(assertion);
+            assertion->enabled = !g.assertions_ended;
+            assertion->pass_action_off = 0;
+            assertion->vacuous_action_off = 0;
+            assertion->fail_action_off = 0;
+            break;
+        case LLG_ACOV_OP_PASS_OFF:
+            assertion_apply_action_control(assertion, LLG_ASSERTION_CONTROL_PASS_OFF);
+            break;
+        case LLG_ACOV_OP_PASS_ON:
+            assertion_apply_action_control(assertion, LLG_ASSERTION_CONTROL_PASS_ON);
+            break;
+        case LLG_ACOV_OP_FAIL_OFF:
+            assertion_apply_action_control(assertion, LLG_ASSERTION_CONTROL_FAIL_OFF);
+            break;
+        case LLG_ACOV_OP_FAIL_ON:
+            assertion_apply_action_control(assertion, LLG_ASSERTION_CONTROL_FAIL_ON);
+            break;
+        case LLG_ACOV_OP_VACUOUS_OFF:
+            assertion_apply_action_control(assertion, LLG_ASSERTION_CONTROL_VACUOUS_OFF);
+            break;
+        case LLG_ACOV_OP_NONVACUOUS_ON:
+            assertion_apply_action_control(assertion, LLG_ASSERTION_CONTROL_NONVACUOUS_ON);
+            break;
+        default: break;
+    }
+}
+
+// Immediate and deferred items keep their controls on the item: the
+// generated code of a model with a VPI catalog reads them per check.
+static void llg_acov_item_control(llg_acov_item_t* item, int operation, uint64_t start) {
+    uint8_t off = g.assertions_ended ? LLG_ACOV_CTL_OFF : 0u;
+    switch (operation) {
+        case LLG_ACOV_OP_DISABLE: item->control |= LLG_ACOV_CTL_OFF; break;
+        case LLG_ACOV_OP_ENABLE: item->control = (uint8_t)((item->control & ~LLG_ACOV_CTL_OFF) | off); break;
+        case LLG_ACOV_OP_KILL:
+            if (start == g.now) llg_acov_flush_deferred(item);
+            break;
+        case LLG_ACOV_OP_KILL_ALL:
+            item->control |= LLG_ACOV_CTL_OFF;
+            llg_acov_flush_deferred(item);
+            break;
+        case LLG_ACOV_OP_RESET:
+            llg_acov_flush_deferred(item);
+            item->control = off;
+            break;
+        case LLG_ACOV_OP_PASS_OFF: item->control |= LLG_ACOV_CTL_PASS_OFF | LLG_ACOV_CTL_VACUOUS_OFF; break;
+        case LLG_ACOV_OP_PASS_ON:
+            item->control &= (uint8_t)~(LLG_ACOV_CTL_PASS_OFF | LLG_ACOV_CTL_VACUOUS_OFF);
+            break;
+        case LLG_ACOV_OP_FAIL_OFF: item->control |= LLG_ACOV_CTL_FAIL_OFF; break;
+        case LLG_ACOV_OP_FAIL_ON: item->control &= (uint8_t)~LLG_ACOV_CTL_FAIL_OFF; break;
+        case LLG_ACOV_OP_VACUOUS_OFF: item->control |= LLG_ACOV_CTL_VACUOUS_OFF; break;
+        case LLG_ACOV_OP_NONVACUOUS_ON: item->control &= (uint8_t)~LLG_ACOV_CTL_PASS_OFF; break;
+        default: break;
+    }
+}
+
+int llg_acov_control(size_t index, int operation, uint64_t start) {
+    if (index >= llg_acov_n_items || operation < LLG_ACOV_OP_DISABLE ||
+        operation > LLG_ACOV_OP_NONVACUOUS_ON)
+        return 0;
+    llg_acov_item_t* item = &llg_acov_items[index];
+    assertion_events_enter();
+    if (item->form == LLG_ACOV_IMMEDIATE || item->form == LLG_ACOV_DEFERRED) {
+        llg_acov_item_control(item, operation, start);
+    } else {
+        for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
+             assertion = assertion->next)
+            if (assertion->acov == item) llg_acov_record_control(assertion, operation, start);
+    }
+    assertion_events_leave();
+    return 1;
 }
 
 // ── Database section ────────────────────────────────────────────────────────
