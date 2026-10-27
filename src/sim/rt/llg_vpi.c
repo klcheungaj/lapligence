@@ -4687,11 +4687,12 @@ void vpi_get_value_array(vpiHandle handle, p_vpi_arrayvalue arrayvalue_p, PLI_IN
                  * first. The two-state form reads x and z as 0 (decision
                  * A20-D6). */
                 int four = format == vpiRawFourStateVal;
-                for (size_t g = 0; g < groups; ++g) {
-                    unsigned shift = (unsigned)(g % 4u) * 8u;
-                    uint32_t a = bits[g / 4u].aval >> shift, b = bits[g / 4u].bval >> shift;
-                    out[g] = (unsigned char)(four ? a : a & ~b);
-                    if (four) out[groups + g] = (unsigned char)b;
+                for (size_t group = 0; group < groups; ++group) {
+                    unsigned shift = (unsigned)(group % 4u) * 8u;
+                    uint32_t a = bits[group / 4u].aval >> shift;
+                    uint32_t b = bits[group / 4u].bval >> shift;
+                    out[group] = (unsigned char)(four ? a : a & ~b);
+                    if (four) out[groups + group] = (unsigned char)b;
                 }
                 break;
             }
@@ -4763,10 +4764,10 @@ static int array_element_datum(const llg_vpi_model_object_t* object, PLI_UINT32 
          * vpiRawFourStateVal; vpiRawTwoStateVal has none (B is 0). */
         size_t groups = ((size_t)width + 7u) / 8u;
         int with_b = format == vpiRawFourStateVal && !(object->flags & LLG_VPI_OBJ_TWO_STATE);
-        for (size_t g = 0; g < groups; ++g) {
-            unsigned shift = (unsigned)(g % 4u) * 8u;
-            words[g / 4u].aval |= (uint32_t)in[g] << shift;
-            if (with_b) words[g / 4u].bval |= (uint32_t)in[groups + g] << shift;
+        for (size_t group = 0; group < groups; ++group) {
+            unsigned shift = (unsigned)(group % 4u) * 8u;
+            words[group / 4u].aval |= (uint32_t)in[group] << shift;
+            if (with_b) words[group / 4u].bval |= (uint32_t)in[groups + group] << shift;
         }
     }
     uint32_t top = width % 32u;
