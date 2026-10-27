@@ -1,0 +1,84 @@
+2 c=0
+3 g=0
+4 y=0
+11 c=1
+12 g=1
+13 y=1
+22 c=0
+23 g=0
+24 y=0
+-- stage 0
+path 2: 3 4
+path 1: 3
+path 3: 3 4 3
+path 6: 3 4 3 3 4 4
+path 12 ps: 3000 4000 3000 3000 4000 4000 3000 3000 4000 4000 4000 3000
+path pulse: 3 3 3 4 4 4
+path mtm pulse: 3 3 3 3 3 3 3 3 3
+path 4: error level=3 vpi_get_delays: 4 delays do not suit this module path (1, 2, 3, 6 or 12)
+gb 3: 2 3 2
+gb pulse: 2 2 2 3 3 3
+gb 1: error level=3 vpi_get_delays: 1 delays do not suit this primitive (2 or 3)
+nb 2: 0 0
+cont 3: 1 2 3
+setup 1: 2
+setup 2: error level=3 vpi_get_delays: 2 delays do not suit this timing check (the number of limits of the check)
+setup pulse: error level=3 vpi_get_delays: a timing check has no pulse limits
+setuphold 2: 3 1
+net: error level=3 vpi_get_delays applies to module paths, timing checks, primitives and continuous assignments; llg has no port (MIPD) or intermodule path delays
+suppress: error level=3 vpi_get_delays needs time_type vpiScaledRealTime or vpiSimTime
+null record: error level=3 vpi_get_delays needs a delay record with an s_vpi_time array
+cbTchkViolation all checks: registered
+cbTchkViolation one check: registered
+cbTchkViolation one check: refused
+put path 7 8: ok
+path 2: 7 8
+path pulse: 7 3 3 8 4 4
+put gb mtm: ok
+gb 3: 5 6 5
+gb mtm: 5 5 5 6 6 6
+put nb: error level=3 vpi_put_delays: llg writes the delays of primitives declared with constant delays; this primitive has none
+put cont: error level=3 vpi_put_delays: the delays of a continuous assignment are read-only (37.43)
+put path negative: error level=3 vpi_put_delays: module path and primitive delays are not negative
+put gb pulse: error level=3 vpi_put_delays: primitive delays are inertial; llg keeps no pulse limits for them
+31 c=1
+35 g=1
+37 y=1
+42 c=0
+46 g=0
+48 y=0
+-- stage 1
+append path 1: ok
+path 2: 8 9
+path pulse: 8 3 3 9 4 4
+61 c=1
+65 g=1
+68 y=1
+72 c=0
+76 g=0
+79 y=0
+83 c=1
+88 c=0
+90 y=1
+95 y=0
+-- stage 2
+put path pulse: ok
+path pulse: 8 8 8 9 9 9
+106 c=1
+111 c=0
+violation at 121000: $setup line 12
+-- stage 3
+setup 1: 2000
+put setup 1: ok
+setup 1: 1
+put setuphold 5 2: ok
+setuphold 2: 5 2
+put setuphold 1: error level=3 vpi_put_delays: 1 delays do not suit this timing check (the number of limits of the check)
+-- stage 4
+append setup 2: ok
+setup 1: 3
+violation at 142000: $setup line 12
+-- stage 5
+violations=2 one-check=0
+append setup -5: ok
+setup 1: 0

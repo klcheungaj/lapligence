@@ -131,6 +131,9 @@ pub(in super::super) struct SdfState {
     /// Instances with an annotated timing check limit.
     checks: HashSet<NodeId>,
     gate_order: Vec<NodeId>,
+    /// Gates given a writable delay slot for VPI applications only (no
+    /// annotation targets them).
+    vpi_gates: HashSet<NodeId>,
     /// Interconnect loads: each annotated load port bit (instance, port
     /// index, bit offset in the port), its distinct sources (entries from 1)
     /// and, once lowered, its interconnect path.
@@ -734,6 +737,72 @@ impl Codegen<'_> {
         Ok(())
     }
 
+    /// Make every delay `vpi_put_delays` may write runtime storage, as an
+    /// SDF annotation of it would (models generated for VPI applications,
+    /// IEEE 1800-2009 38.32): each gate or UDP declared with a delay gets a
+    /// writable delay slot, every instance with timing checks reports its
+    /// current limits, and with negative timing checks resettles its
+    /// `$setuphold`/`$recrem` limits at run time. Runs after the SDF files
+    /// are read, before any target is lowered.
+    pub(in super::super) fn reserve_vpi_delays(&mut self) {
+        let design = self.design_nodes();
+        let mut gates = Vec::new();
+        for id in &design {
+            if let NodeKind::Gate {
+                delay: Some(_),
+                prim_type,
+                ..
+            } = self.kind(*id)
+            {
+                if !super::switches::is_pass_switch(*prim_type) {
+                    gates.push(*id);
+                }
+            }
+        }
+        let mut checks = HashSet::new();
+        let mut pairs = HashSet::new();
+        for check in self.db.timing_checks() {
+            let Some(instance) = self.owning_inst(check.node) else {
+                continue;
+            };
+            checks.insert(instance);
+            if matches!(
+                check.kind,
+                crate::core::db::TimingCheckKind::SetupHold
+                    | crate::core::db::TimingCheckKind::RecRem
+            ) {
+                pairs.insert(instance);
+            }
+        }
+        if gates.is_empty() && checks.is_empty() {
+            return;
+        }
+        let state = self.sdf.get_or_insert_with(Box::default);
+        for gate in gates {
+            if !state.gates.contains_key(&gate) {
+                state.gates.insert(gate, state.gate_order.len() as u32);
+                state.gate_order.push(gate);
+                state.vpi_gates.insert(gate);
+            }
+        }
+        state.checks.extend(checks);
+        state.pairs.extend(pairs);
+    }
+
+    /// Drop the VPI-only delay slot of `gate`, whose delay is computed at
+    /// run time: the gate keeps its own delay, which no VPI application can
+    /// then write. Returns whether the slot was VPI-only.
+    pub(in super::super) fn release_vpi_gate_slot(&mut self, gate: NodeId) -> bool {
+        let Some(state) = self.sdf.as_mut() else {
+            return false;
+        };
+        if !state.vpi_gates.remove(&gate) {
+            return false;
+        }
+        state.gates.remove(&gate);
+        true
+    }
+
     /// Whether an annotation rewrites a timing check limit of `instance`.
     pub(in super::super) fn sdf_check_instance(&self, instance: NodeId) -> bool {
         self.sdf
@@ -766,7 +835,12 @@ impl Codegen<'_> {
         let Some(mut state) = self.sdf.take() else {
             return Ok(());
         };
-        let (catalog, _) = self.build_sdf_catalog(tops);
+        // VPI applications alone may leave nothing to annotate.
+        let catalog = if state.annotations.is_empty() {
+            SdfTargets::new()
+        } else {
+            self.build_sdf_catalog(tops).0
+        };
         let mut unmapped = Vec::new();
         let mut negative_limits = Vec::new();
         for (file, annotation, mipd) in &state.annotations {

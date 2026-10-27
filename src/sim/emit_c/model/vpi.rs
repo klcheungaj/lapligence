@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::sim::ir::{
-    IrVpiArgRef, IrVpiCompileCall, IrVpiConn, IrVpiConstant, IrVpiObject, IrVpiTypespec,
-    IrVpiTypespecKind, IrVpiVarKind,
+    IrSdfTarget, IrVpiArgRef, IrVpiCompileCall, IrVpiConn, IrVpiConstant, IrVpiObject, IrVpiTiming,
+    IrVpiTypespec, IrVpiTypespecKind, IrVpiVarKind,
 };
 
 /// Marker suffix that keeps a port apart from the declaration it connects,
@@ -46,6 +46,7 @@ struct Entry {
     unnamed: bool,
     qualifier: bool,
     activation: Option<(u32, u32)>,
+    timing: Option<IrVpiTiming>,
 }
 
 impl Entry {
@@ -85,6 +86,7 @@ impl Entry {
             unnamed: false,
             qualifier: false,
             activation: None,
+            timing: None,
         }
     }
 }
@@ -255,6 +257,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 unnamed: object.unnamed,
                 qualifier: object.qualifier,
                 activation: object.activation,
+                timing: object.timing.clone(),
             },
         );
     }
@@ -433,8 +436,18 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
             "static const llg_vpi_conn_t llg_vpi_conns_{index}[] = {{\n"
         ));
         for conn in &entry.conns {
+            let timing = if conn.role == crate::sim::ir::IrVpiConnRole::Connection {
+                String::new()
+            } else {
+                format!(
+                    ", .role = {}, .edge = 0x{:02x}, .condition = {}u",
+                    conn.role.c_code(),
+                    conn.edge,
+                    conn.condition.map_or(0, |index| index + 1)
+                )
+            };
             out.push_str(&format!(
-                "    {{ {{ .width = {}, .is_signed = {}, .ref_kind = {} }}, .direction = {}, .value = {} }},\n",
+                "    {{ {{ .width = {}, .is_signed = {}, .ref_kind = {} }}, .direction = {}, .value = {}{timing} }},\n",
                 conn.width,
                 u8::from(conn.signed),
                 arg_reference(&conn.reference, &object),
@@ -450,6 +463,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         }
         out.push_str("};\n");
     }
+    let timing = render_vpi_timing(model, &entries, out);
     out.push_str("static llg_vpi_model_object_t llg_vpi_objects[] = {\n");
     for (index, entry) in entries.iter().enumerate() {
         let path = entry.full.strip_suffix(PORT_MARKER).unwrap_or(&entry.full);
@@ -555,7 +569,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
 .dims = {dims}, .dim_count = {dim_count}u, .port_index = {}u, .target = {target}, .net = {}, \
 .constant = {constant}, .real_constant = {real_constant}, .typespec = {}u, .detail = {}, \
 .event = {}, .conns = {conns}, .conn_count = {}u, .activation_declaration = {declaration}u, \
-.activation_instance = {instance}u }},\n",
+.activation_instance = {instance}u, .timing = {} }},\n",
             entry.type_code,
             c_string_literal(&entry.name),
             c_string_literal(&path.replace('\u{1f}', ".")),
@@ -578,12 +592,133 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
             entry.detail,
             entry.event,
             entry.conns.len(),
+            timing[index],
         ));
     }
     out.push_str("};\n");
     out.push_str(
         "static const size_t llg_vpi_object_count = sizeof(llg_vpi_objects) / sizeof(llg_vpi_objects[0]);\n",
     );
+}
+
+/// The delay records of the timing rows (`llg_vpi_timing_t`): the model
+/// values each row's delays live in, as `llg_sdf_op_t` operations on the
+/// path, check and gate pools, and its declared values. Returns the
+/// `.timing` initializer of every entry.
+fn render_vpi_timing(model: &IrModel, entries: &[Entry], out: &mut String) -> Vec<String> {
+    let row_starts = super::storage::path_row_starts(model);
+    let check_starts = super::storage::timing_check_starts(model);
+    let path_row = |set: u32, destination: u32, path: u32| {
+        row_starts
+            .get(set as usize)
+            .and_then(|set| set.get(destination as usize))
+            .map(|first| first + path as usize)
+    };
+    let gates = model.sdf_gate_delays().len();
+    let checks = model.timing_checks();
+    let mut fields = Vec::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        let Some(timing) = &entry.timing else {
+            fields.push("NULL".to_owned());
+            continue;
+        };
+        // A target outside the model's pools (no such row) is left out:
+        // the value is then read as declared and cannot be written.
+        let ops = timing
+            .targets
+            .iter()
+            .filter_map(|(limit, target)| {
+                let target = match *target {
+                    IrSdfTarget::Path {
+                        set,
+                        destination,
+                        path,
+                    } => format!(
+                        ".kind = LLG_SDF_PATH, .path = &llg_path_row_pool[{}]",
+                        path_row(set, destination, path)?
+                    ),
+                    IrSdfTarget::Check { set, check, second } => {
+                        let set_checks = checks.get(set as usize)?;
+                        if check as usize >= set_checks.checks().len() {
+                            return None;
+                        }
+                        format!(
+                            ".kind = LLG_SDF_CHECK, .flags = {}u, .check = \
+                             &llg_timing_check_pool[{}], .checks = &llg_timing_set_{set}",
+                            if second { 4 } else { 0 },
+                            check_starts.get(set as usize)? + check as usize
+                        )
+                    }
+                    IrSdfTarget::Pair { set, pair, after } => {
+                        checks.get(set as usize)?;
+                        format!(
+                            ".kind = LLG_SDF_PAIR, .flags = {}u, .index = {pair}u, .checks = \
+                             &llg_timing_set_{set}",
+                            if after { 4 } else { 0 }
+                        )
+                    }
+                    IrSdfTarget::Gate { slot } if (slot as usize) < gates => format!(
+                        ".kind = LLG_SDF_GATE, .gate = &llg_sdf_gate_delays[{}]",
+                        3 * slot
+                    ),
+                    _ => return None,
+                };
+                Some(format!("{{ {target}, .first = {limit}u }}"))
+            })
+            .collect::<Vec<_>>();
+        if !ops.is_empty() {
+            out.push_str(&format!(
+                "static const llg_sdf_op_t llg_vpi_ops_{index}[] = {{ {} }};\n",
+                ops.join(", ")
+            ));
+        }
+        if !timing.declared.is_empty() {
+            out.push_str(&format!(
+                "static const int64_t llg_vpi_declared_{index}[] = {{ {} }};\n",
+                timing
+                    .declared
+                    .iter()
+                    .map(|value| if *value == i64::MIN {
+                        "(-9223372036854775807LL - 1)".to_owned()
+                    } else {
+                        format!("{value}LL")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+        out.push_str(&format!(
+            "static const llg_vpi_timing_t llg_vpi_timing_{index} = {{ .ops = {}, .op_count = {}u, \
+             .declared = {}, .declared_count = {}u, .count = {}u, .polarity = {}, \
+             .data_polarity = {}, .has_ifnone = {} }};\n",
+            if ops.is_empty() {
+                "NULL".to_owned()
+            } else {
+                format!("llg_vpi_ops_{index}")
+            },
+            ops.len(),
+            if timing.declared.is_empty() {
+                "NULL".to_owned()
+            } else {
+                format!("llg_vpi_declared_{index}")
+            },
+            timing.declared.len(),
+            timing.count,
+            if timing.polarity.is_empty() {
+                "0"
+            } else {
+                timing.polarity
+            },
+            if timing.data_polarity.is_empty() {
+                "0"
+            } else {
+                timing.data_polarity
+            },
+            u8::from(timing.has_ifnone),
+        ));
+        fields.push(format!("&llg_vpi_timing_{index}"));
+    }
+    fields
 }
 
 /// One node of the member tree of a packed value (or fixed unpacked image):

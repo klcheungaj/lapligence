@@ -160,6 +160,21 @@ port reference objects are dynamic slots on their row (`SLOT_PORTBIT`,
 `SLOT_PRIMTERM`, `SLOT_REFOBJ`). Unnamed rows (`LLG_VPI_OBJ_UNNAMED`) are left
 out of the name index; instance array elements are found by composing the
 array's full name with the indices.
+Module paths and timing checks (VPI-T1) are unnamed `vpiModPath`/`vpiTchk`
+rows whose conns carry a role (`LLG_VPI_ROLE_*`: path input, output, data,
+condition, check reference/data term, argument, notifier, term condition),
+an edge and a condition index; terms are `SLOT_TERM` handles on the conn.
+Their `llg_vpi_timing_t` holds the declared delays or limits in ticks and
+the `llg_sdf_op_t` list that addresses the runtime tables; primitives and
+continuous assignments carry one too. `vpi_get_delays` reads the live
+tables (path delays and `llg_module_path_pulse_limits`, gate triples, check
+limits); `vpi_put_delays` builds an annotation from the row's ops and runs
+it through `llg_sdf_apply`, so a write behaves as SDF annotation does. Writes
+need the tables codegen reserves for a `--vpi`/`--dpi-lib` model
+(`llg_vpi_model_delays`, which also passes the min:typ:max selection).
+`cbTchkViolation` installs the timing-check violation hook on its first
+registration and maps the check back to its row through an index built on
+the first violation; the hook is removed at shutdown.
 `vpi_put_value` fails in read-only regions without touching the runtime's
 fatal region check; zero-delay time callbacks are refused there before
 scheduling. `vpi_control` stop/finish use `llg_rt_control_stop/finish`

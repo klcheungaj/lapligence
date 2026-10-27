@@ -115,7 +115,43 @@ typedef struct {
     llg_vpi_compile_arg_t ref;
     int direction;            /* vpiInput/vpiOutput/vpiInout of a terminal, else 0 */
     const char* value;
+    int role;                 /* LLG_VPI_ROLE_* of a module path or timing check entry */
+    int edge;                 /* vpiEdge of a path or timing check terminal */
+    uint32_t condition;       /* a terminal's condition: conn index + 1, 0: none */
 } llg_vpi_conn_t;
+
+/* Roles of the connections of a module path (37.35) or timing check
+ * (37.36). A timing check lists its arguments in source order (vpiExpr),
+ * then the conditions its terminals name. */
+#define LLG_VPI_ROLE_CONNECTION 0 /* any other structure connection */
+#define LLG_VPI_ROLE_PATH_IN 1    /* vpiModPathIn path term */
+#define LLG_VPI_ROLE_PATH_OUT 2   /* vpiModPathOut path term */
+#define LLG_VPI_ROLE_PATH_DATA 3  /* vpiModDataPathIn path term */
+#define LLG_VPI_ROLE_CONDITION 4  /* vpiCondition of a path */
+#define LLG_VPI_ROLE_TCHK_REF 5   /* vpiTchkRefTerm tchk term */
+#define LLG_VPI_ROLE_TCHK_DATA 6  /* vpiTchkDataTerm tchk term */
+#define LLG_VPI_ROLE_ARGUMENT 7   /* another timing check argument (vpiExpr) */
+#define LLG_VPI_ROLE_NOTIFIER 8   /* vpiTchkNotifier (also a vpiExpr argument) */
+#define LLG_VPI_ROLE_TERM_COND 9  /* a terminal condition, not an argument */
+
+/* Delays of a module path, timing check, primitive or continuous assignment
+ * (vpi_get_delays/vpi_put_delays, 38.10, 38.32). `ops` are the runtime
+ * values back-annotation writes, in the form llg_sdf_apply takes; an op's
+ * `first` is the index of the timing check limit it holds. `declared` holds
+ * the values as elaborated, in design-precision ticks (twelve transition
+ * delays of a path, the limits of a check, rise/fall/turn-off of a
+ * primitive or continuous assignment), read when no op holds them. `count`
+ * is the number of delays or limits the source gives (0: none). */
+typedef struct {
+    const llg_sdf_op_t* ops;
+    uint32_t op_count;
+    const int64_t* declared;
+    uint32_t declared_count;
+    uint32_t count;
+    int polarity;             /* vpiPolarity of a path */
+    int data_polarity;        /* vpiDataPolarity of a path */
+    int has_ifnone;           /* vpiModPathHasIfNone */
+} llg_vpi_timing_t;
 
 /* One catalog row. Generated models emit a static array of these; the
  * runtime only borrows it and indexes it on the first VPI use. */
@@ -155,6 +191,7 @@ typedef struct llg_vpi_model_object {
     /* Named block, task or function: the llg_disable_target identity. */
     uint32_t activation_declaration;
     uint32_t activation_instance;
+    const llg_vpi_timing_t* timing; /* delays of a path, check, primitive, cont assign */
 } llg_vpi_model_object_t;
 
 /* A built-in system task or function the model runs natively and its first
@@ -183,6 +220,11 @@ int llg_vpi_model_init(const char* design_name,
 /* The typespec tables the catalog rows name, borrowed like the catalog and
  * validated on the first VPI use; NULL for a model without a catalog. */
 int llg_vpi_model_types(const llg_vpi_type_tables_t* tables);
+/* How the model was generated for vpi_put_delays: `writable` is 1 when every
+ * delay the catalog names is runtime storage (generated for VPI
+ * applications), `delay_select` the min:typ:max operand the model uses (0
+ * min, 1 typ, 2 max), which a put with mtm values takes. */
+void llg_vpi_model_delays(int writable, int delay_select);
 int llg_vpi_startup(void);
 /* Run a statically linked application's startup table (the model links the
  * archive that defines it) before LLG_VPI_PLUGIN libraries are loaded. */
