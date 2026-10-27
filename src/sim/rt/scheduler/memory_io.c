@@ -955,6 +955,7 @@ static void llg_file_cleanup(void) {
     for (unsigned i = 0; i < LLG_FILE_SLOTS; i++) {
         if (llg_file_slots[i].owned && llg_file_slots[i].open && llg_file_slots[i].stream)
             fclose(llg_file_slots[i].stream);
+        free(llg_file_slots[i].name);
     }
     memset(llg_file_slots, 0, sizeof(llg_file_slots));
     llg_files_initialized = 0;

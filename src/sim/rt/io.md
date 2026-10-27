@@ -97,6 +97,12 @@ buffers valid until the next query/shutdown. Puts go through `llg_ba`/`llg_ba_d`
 force table (`llg_force_value_parts`, `llg_force_real_value`, release through
 `llg_release_parts`/`llg_release_real`). Tear down VPI/runtime queues before
 model storage.
+`vpi_mcd_*` (38.24-38.29) run on the `$fopen` table through `llg_file_mcd_*`
+and `llg_file_name` (`llg_rt.h`): channels opened on either side work on both,
+VPI writes are flushed per call like `$fdisplay` so the two interleave in call
+order, closing a channel cancels its monitors and strobes as `$fclose` does,
+and each slot keeps the name it was opened with. A file descriptor (bit 31) is
+refused except by `vpi_mcd_name` (A20-D1..D4).
 Built-ins are never dispatched to a registration under their name: after
 plugin startup, `llg_vpi_check_builtin_overrides` fails the start, naming the
 call, when an application registered a built-in the model runs natively

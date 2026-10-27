@@ -2164,6 +2164,24 @@ int llg_file_eof(uint32_t descriptor);
 void llg_file_display_typed(uint32_t descriptor, const char* fmt,
                             llg_fmt_arg_t* args, int n, const char* scope,
                             int newline);
+// VPI multichannel-descriptor services (IEEE 1800-2009 38.24-38.29) over the
+// same table, for `llg_vpi.c`. Channel masks select bit 0 (stdout) and the
+// `$fopen` MCD channels; a descriptor with bit 31 set is an FD, which only
+// `llg_file_name` accepts.
+// `llg_file_mcd_open` borrows `path`, returns the open channel already named
+// `path` or opens a new one in write mode, and returns 0 on failure; it sets
+// `*open_fd` to the FD when the failure is that `path` is open as an FD.
+uint32_t llg_file_mcd_open(const char* path, uint32_t* open_fd);
+// Closes the selected open channels other than stdout; returns the selected
+// channels left unclosed (stdout, channels not open, or the whole FD).
+uint32_t llg_file_mcd_close(uint32_t mcd);
+// The path a single open channel or FD was opened with ("stdin", "stdout",
+// "stderr" for the host streams), borrowed until it closes; NULL otherwise.
+const char* llg_file_name(uint32_t descriptor);
+// Write `length` bytes to each selected open channel and flush it; returns
+// the channels written (`llg_file_mcd_flush`: flushed).
+uint32_t llg_file_mcd_write(uint32_t mcd, const char* text, size_t length);
+uint32_t llg_file_mcd_flush(uint32_t mcd);
 
 // ── Memory file tasks ────────────────────────────────────────────────────────
 // Consume an owned path and read/write a fixed packed memory view. `dims` and
