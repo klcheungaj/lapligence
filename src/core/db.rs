@@ -28,8 +28,9 @@ pub use database::{
     ProductionRule, PulseStyle, RandQualifier, RandomizeCall, RandomizeForm, SpecifyItem,
     SpecifyItemKind, Specparam, StmtKind, StreamOperand, StreamingDirection, TimeLiteralScale,
     TimeUnit, TimingCheck, TimingCheckKind, TimingEdges, TimingEvent, TypeDescriptor, TypeId,
-    TypeShape, UdpLocation, UdpRow, UdpTable, ValueCopySemantics, ValueDefaultSemantics,
-    ValueDestroySemantics, ValueEqualitySemantics, VariableLifetime, VariableLifetimeQualifier,
+    TypeShape, TypedefRef, UdpLocation, UdpRow, UdpTable, ValueCopySemantics,
+    ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics, VariableLifetime,
+    VariableLifetimeQualifier,
 };
 pub use domain::{
     AlwaysKind, CapturedSemanticKind, CaseKind, ConstantType, Direction, JoinKind, NetType,

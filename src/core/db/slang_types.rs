@@ -154,6 +154,30 @@ impl<'a> SlangTypeProjector<'a> {
             .collect()
     }
 
+    /// The immediate element descriptor of every packed array whose base is
+    /// a packed structure, union or enum, keyed by the array type identity.
+    /// Their descriptors are flattened packed atoms, so this keeps the
+    /// element structure that VPI typespecs expose (IEEE 1800-2009 37.23).
+    pub fn packed_array_elements(&self) -> Result<HashMap<TypeId, TypeDescriptor>, String> {
+        let mut elements = HashMap::new();
+        for ty in self.types.values() {
+            if ty.kind != TypeKind::PackedArray
+                || !matches!(
+                    self.packed_base(ty)?.kind,
+                    TypeKind::PackedStruct | TypeKind::PackedUnion | TypeKind::Enum
+                )
+            {
+                continue;
+            }
+            let element = self.element_type(ty, "packed array")?;
+            elements.insert(
+                TypeId(ty.id),
+                self.descriptor(element, &mut HashSet::new())?,
+            );
+        }
+        Ok(elements)
+    }
+
     fn unpacked_element(&self, ty: &'a SlangType) -> Result<&'a SlangType, String> {
         let mut current = ty;
         let mut seen = HashSet::new();
@@ -777,6 +801,7 @@ mod tests {
         }];
         let members = [TypeMember {
             initializer_constant_id: None,
+            typedef: None,
             name: "data".to_owned(),
             type_id: 1,
             bit_offset: 0,
@@ -824,6 +849,7 @@ mod tests {
         let members = [
             TypeMember {
                 initializer_constant_id: None,
+                typedef: None,
                 name: "leaf".to_owned(),
                 type_id: 0,
                 bit_offset: 0,
@@ -831,6 +857,7 @@ mod tests {
             },
             TypeMember {
                 initializer_constant_id: None,
+                typedef: None,
                 name: "inner".to_owned(),
                 type_id: 1,
                 bit_offset: 0,
@@ -873,6 +900,7 @@ mod tests {
             types.push(aggregate);
             members.push(TypeMember {
                 initializer_constant_id: None,
+                typedef: None,
                 name: format!("level_{index}"),
                 type_id: if index == 0 { 0 } else { id - 1 },
                 bit_offset: 0,
@@ -902,6 +930,7 @@ mod tests {
         let members = [
             TypeMember {
                 initializer_constant_id: None,
+                typedef: None,
                 name: "byte".to_owned(),
                 type_id: 0,
                 bit_offset: 0,
@@ -909,6 +938,7 @@ mod tests {
             },
             TypeMember {
                 initializer_constant_id: None,
+                typedef: None,
                 name: "word".to_owned(),
                 type_id: 1,
                 bit_offset: 0,
@@ -954,6 +984,7 @@ mod tests {
             .zip([0, 1])
             .map(|(name, type_id)| TypeMember {
                 initializer_constant_id: None,
+                typedef: None,
                 name: name.to_owned(),
                 type_id,
                 bit_offset: 0,

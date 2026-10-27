@@ -1,7 +1,8 @@
 /*
  * sv_vpi_user.h — the SystemVerilog VPI extensions a generated Lapligence
  * model supports: the assertion and coverage subset of IEEE 1800-2009
- * Annex M, with the standard constant values, and the Annex M routine
+ * Annex M, the typespec, structure-member and enum-constant objects, with
+ * the standard constant values, and the Annex M routine
  * vpi_register_assertion_cb(). It includes vpi_user.h, which
  * already carries the Annex M object types of the catalog (vpiInterface,
  * the SystemVerilog variable types).
@@ -10,6 +11,43 @@
 #define SV_VPI_USER_H
 
 #include "vpi_user.h"
+
+/* Typespecs, members and enum constants (37.17, 37.23, 37.24). */
+#define vpiTypespec 605
+#define vpiLogicVar vpiReg
+#define vpiArrayVar vpiRegArray
+#define vpiVarBit vpiRegBit
+#define vpiStringVar 616
+#define vpiLongIntTypespec 625
+#define vpiShortRealTypespec 626
+#define vpiByteTypespec 627
+#define vpiShortIntTypespec 628
+#define vpiIntTypespec 629
+#define vpiClassTypespec 630
+#define vpiStringTypespec 631
+#define vpiEnumTypespec 633
+#define vpiEnumConst 634
+#define vpiIntegerTypespec 635
+#define vpiTimeTypespec 636
+#define vpiRealTypespec 637
+#define vpiStructTypespec 638
+#define vpiUnionTypespec 639
+#define vpiBitTypespec 640
+#define vpiLogicTypespec 641
+#define vpiArrayTypespec 642
+#define vpiVoidTypespec 643
+#define vpiTypespecMember 644
+#define vpiPackedArrayTypespec 692
+#define vpiTypedefAlias 701
+#define vpiIndexTypespec 702
+#define vpiBaseTypespec 703
+#define vpiElemTypespec 704
+#define vpiTypedef 725
+#define vpiMember 742
+#define vpiElement 743
+#define vpiStructUnionMember 615
+#define vpiPacked 630
+#define vpiTagged 632
 
 /* Assertion object types (39.3.2). */
 #define vpiAssert 686

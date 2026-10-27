@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 48;
+const ABI_VERSION: u32 = 52;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -658,6 +658,10 @@ pub struct TypeMember {
     pub bit_width: u64,
     /// Constant-table identity of an explicit aggregate member initializer.
     pub initializer_constant_id: Option<u64>,
+    /// The typedef the member's declared type names (IEEE 1800-2009 37.23):
+    /// the semantic node of the typedef declaration and the number of packed
+    /// and fixed unpacked dimensions declared above it.
+    pub typedef: Option<(u64, u32)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -897,6 +901,9 @@ pub(crate) const CLASS_INTERFACE: u64 = 1 << 2;
 /// resolved module metadata.
 pub(crate) const UNCONNECTED_PULL0: u64 = 1 << 16;
 pub(crate) const UNCONNECTED_PULL1: u64 = 1 << 17;
+/// On a typedef node: the typedef renames a built-in type keyword
+/// (IEEE 1800-2009 37.23 detail 6).
+pub(crate) const TYPEDEF_BUILTIN: u64 = 1 << 0;
 pub(crate) const NEW_CLASS_SUPER: u64 = 1 << 0;
 pub(crate) const CALL_SUPER: u64 = 1 << 0;
 /// The built-in class `randomize()` method (IEEE 1800-2009 18.6.1).
@@ -1177,6 +1184,9 @@ pub enum SemanticEdgeRole {
     Weight,
     /// A randsequence rule's `rand join` expression (18.17.5).
     RandJoin,
+    /// The typedef declaration a declared type names (IEEE 1800-2009
+    /// 37.23); the index counts the dimensions declared above it.
+    Typedef,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1854,6 +1864,8 @@ struct RawTypeMember {
     bit_offset: u64,
     bit_width: u64,
     initializer_constant_id: u64,
+    typedef_id: u64,
+    typedef_depth: u64,
 }
 
 #[repr(C)]

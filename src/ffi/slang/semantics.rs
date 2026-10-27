@@ -63,6 +63,7 @@ pub(super) fn decode_semantic_edge(
         39 => SemanticEdgeRole::DefaultDisable,
         40 => SemanticEdgeRole::Weight,
         41 => SemanticEdgeRole::RandJoin,
+        42 => SemanticEdgeRole::Typedef,
         _ => return Err(invalid_native("semantic edge has an unknown role")),
     };
     Ok(SemanticEdge {
@@ -562,6 +563,9 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
             let (count, slice) = (node.auxiliary >> 32, node.auxiliary & u64::from(u32::MAX));
             node.auxiliary == 0 || slice < count
         }
+        // A typedef (an unsupported-kind node with detail `TypeAlias`) marks
+        // that it renames a built-in type (IEEE 1800-2009 37.23 detail 6).
+        (255, _, _) => node.auxiliary & !super::TYPEDEF_BUILTIN == 0,
         (19, 69, 40) => node.auxiliary == 0 || node.flags & 1 != 0,
         (19, 69, 41) => node.auxiliary > 0 || node.flags & 1 != 0,
         _ => node.auxiliary == 0,

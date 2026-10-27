@@ -1,7 +1,10 @@
 //! Vpi.
 
 use super::*;
-use crate::sim::ir::{IrVpiArgRef, IrVpiCompileCall, IrVpiConstant, IrVpiObject, IrVpiVarKind};
+use crate::sim::ir::{
+    IrVpiArgRef, IrVpiCompileCall, IrVpiConstant, IrVpiObject, IrVpiTypespec, IrVpiTypespecKind,
+    IrVpiVarKind,
+};
 
 /// Marker suffix that keeps a port apart from the declaration it connects,
 /// which has the same hierarchical name (see `collection/vpi.rs`).
@@ -33,6 +36,10 @@ struct Entry {
     net_pointer: String,
     constant: Option<IrVpiConstant>,
     time_unit_fs: u64,
+    typespec: Option<usize>,
+    member: bool,
+    slice: bool,
+    record: bool,
 }
 
 impl Entry {
@@ -62,6 +69,10 @@ impl Entry {
             net_pointer: "NULL".to_owned(),
             constant: None,
             time_unit_fs: 0,
+            typespec: None,
+            member: false,
+            slice: false,
+            record: false,
         }
     }
 }
@@ -169,6 +180,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 (object.kind.c_type(), element_type)
             }
             IrVpiObjectKind::Port => (object.kind.c_type(), object.direction.c_code()),
+            IrVpiObjectKind::Record => (object.var_kind.c_type(), "0"),
             kind => (kind.c_type(), "0"),
         };
         entries.insert(
@@ -198,6 +210,10 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 net_pointer,
                 constant: object.constant.clone(),
                 time_unit_fs: object.time_unit_fs,
+                typespec: object.typespec,
+                member: object.member,
+                slice: object.slice,
+                record: object.kind == IrVpiObjectKind::Record,
             },
         );
     }
@@ -345,10 +361,12 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         // Applications loaded into this model see no design objects.
         out.push_str(
             "static llg_vpi_model_object_t* const llg_vpi_objects = NULL;\n\
-             static const size_t llg_vpi_object_count = 0;\n",
+             static const size_t llg_vpi_object_count = 0;\n\
+             static const llg_vpi_type_tables_t* const llg_vpi_type_tables = NULL;\n",
         );
         return;
     }
+    render_vpi_typespecs(model.vpi_typespecs(), out);
     let entries = catalog_for(model);
     let indices = catalog_indices(&entries);
     for (index, entry) in entries.iter().enumerate() {
@@ -408,6 +426,15 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         if entry.range.is_some() {
             flags.push("LLG_VPI_OBJ_RANGE");
         }
+        if entry.member {
+            flags.push("LLG_VPI_OBJ_MEMBER");
+        }
+        if entry.slice {
+            flags.push("LLG_VPI_OBJ_SLICE");
+        }
+        if entry.record {
+            flags.push("LLG_VPI_OBJ_RECORD");
+        }
         let (constant, real_constant) = match &entry.constant {
             Some(IrVpiConstant::Bits(digits)) => (c_string_literal(digits), "0.0".to_owned()),
             Some(IrVpiConstant::Text(text)) => {
@@ -437,7 +464,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
 .width = {}u, .is_signed = {}, .is_real = {}, .is_net = {}, .packed = {}, .real = {}, .parent = {}, \
 .time_unit_fs = {}ULL, .subtype = {}, .flags = {}, .left = {left}LL, .right = {right}LL, \
 .dims = {dims}, .dim_count = {dim_count}u, .port_index = {}u, .target = {target}, .net = {}, \
-.constant = {constant}, .real_constant = {real_constant} }},\n",
+.constant = {constant}, .real_constant = {real_constant}, .typespec = {}u }},\n",
             entry.type_code,
             c_string_literal(&entry.name),
             c_string_literal(&path.replace('\u{1f}', ".")),
@@ -456,12 +483,233 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
             flags,
             entry.port_index,
             entry.net_pointer,
+            entry.typespec.map_or(0, |typespec| typespec + 1),
         ));
     }
     out.push_str("};\n");
     out.push_str(
         "static const size_t llg_vpi_object_count = sizeof(llg_vpi_objects) / sizeof(llg_vpi_objects[0]);\n",
     );
+}
+
+/// One node of the member tree of a packed value (or fixed unpacked image):
+/// a member of the value, or of an enclosing member, at an absolute bit
+/// offset in that value.
+struct MemberNode {
+    name: String,
+    typespec: usize,
+    lsb: u32,
+    width: u32,
+    parent: Option<usize>,
+    children: (usize, usize),
+}
+
+/// Append the member tree of a value of typespec `root` to `nodes`, children
+/// of each node contiguous (breadth first). Returns `(first, count)` of the
+/// top-level members.
+fn member_tree(
+    typespecs: &[IrVpiTypespec],
+    root: usize,
+    nodes: &mut Vec<MemberNode>,
+) -> (usize, usize) {
+    // (typespec, absolute lsb of that value, parent node)
+    let mut queue = std::collections::VecDeque::from([(root, 0u32, None::<usize>)]);
+    let mut top = (nodes.len(), 0);
+    while let Some((typespec, base, parent)) = queue.pop_front() {
+        let members = &typespecs[typespec].members;
+        if members.iter().any(|member| member.lsb.is_none()) {
+            continue;
+        }
+        let first = nodes.len();
+        for member in members {
+            let lsb = base.saturating_add(member.lsb.unwrap_or(0));
+            nodes.push(MemberNode {
+                name: member.name.clone(),
+                typespec: member.typespec,
+                lsb,
+                width: member.width,
+                parent,
+                children: (0, 0),
+            });
+            let index = nodes.len() - 1;
+            if matches!(
+                typespecs[member.typespec].kind,
+                IrVpiTypespecKind::Struct | IrVpiTypespecKind::Union
+            ) {
+                queue.push_back((member.typespec, lsb, Some(index)));
+            }
+        }
+        match parent {
+            Some(parent) => nodes[parent].children = (first, members.len()),
+            None => top = (first, members.len()),
+        }
+    }
+    top
+}
+
+/// Emit the interned typespec tables (IEEE 1800-2009 37.23) and the member
+/// trees of packed structure and union values. Indices are table positions;
+/// fields that name an optional entry hold index + 1, 0 for none.
+fn render_vpi_typespecs(typespecs: &[IrVpiTypespec], out: &mut String) {
+    let mut ranges = Vec::new();
+    let mut members = Vec::new();
+    let mut consts = Vec::new();
+    let mut nodes = Vec::new();
+    let mut rows = Vec::with_capacity(typespecs.len());
+    for (index, typespec) in typespecs.iter().enumerate() {
+        let range = (ranges.len(), typespec.ranges.len());
+        ranges.extend(typespec.ranges.iter().copied());
+        let member = (members.len(), typespec.members.len());
+        members.extend(
+            typespec
+                .members
+                .iter()
+                .map(|member| (member.name.clone(), member.typespec)),
+        );
+        let constant = (consts.len(), typespec.enum_consts.len());
+        consts.extend(typespec.enum_consts.iter().cloned());
+        let tree = if matches!(
+            typespec.kind,
+            IrVpiTypespecKind::Struct | IrVpiTypespecKind::Union
+        ) && typespec.width > 0
+        {
+            member_tree(typespecs, index, &mut nodes)
+        } else {
+            (0, 0)
+        };
+        let mut flags = Vec::new();
+        if typespec.signed {
+            flags.push("LLG_VPI_TS_SIGNED");
+        }
+        if typespec.two_state {
+            flags.push("LLG_VPI_TS_TWO_STATE");
+        }
+        match typespec.packed {
+            Some(true) => flags.push("LLG_VPI_TS_PACKED"),
+            Some(false) => flags.push("LLG_VPI_TS_UNPACKED"),
+            None => {}
+        }
+        if typespec.tagged {
+            flags.push("LLG_VPI_TS_TAGGED");
+        }
+        let flags = if flags.is_empty() {
+            "0u".to_owned()
+        } else {
+            flags.join(" | ")
+        };
+        let optional = |entry: Option<usize>| entry.map_or(0, |entry| entry + 1);
+        rows.push(format!(
+            "    {{ {}, {}, {}u, {}u, {}u, {}u, {flags}, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u }},\n",
+            typespec.kind.c_type(),
+            typespec
+                .name
+                .as_deref()
+                .map_or_else(|| "NULL".to_owned(), c_string_literal),
+            optional(typespec.alias),
+            optional(typespec.element),
+            optional(typespec.base),
+            typespec.width,
+            range.0,
+            range.1,
+            member.0,
+            member.1,
+            constant.0,
+            constant.1,
+            tree.0,
+            tree.1,
+        ));
+    }
+    let table = |out: &mut String, ty: &str, name: &str, items: Vec<String>| {
+        if items.is_empty() {
+            out.push_str(&format!("#define {name} NULL\n"));
+        } else {
+            out.push_str(&format!("static const {ty} {name}_rows[] = {{\n"));
+            for item in items {
+                out.push_str(&item);
+            }
+            out.push_str(&format!("}};\n#define {name} {name}_rows\n"));
+        }
+    };
+    out.push_str("\n/* typespecs of the VPI catalog (37.23) */\n");
+    let range_count = ranges.len();
+    table(
+        out,
+        "int64_t",
+        "llg_vpi_ts_ranges",
+        ranges
+            .iter()
+            .map(|(left, right)| format!("    {left}LL, {right}LL,\n"))
+            .collect(),
+    );
+    let member_count = members.len();
+    table(
+        out,
+        "llg_vpi_typespec_member_t",
+        "llg_vpi_ts_members",
+        members
+            .iter()
+            .map(|(name, typespec)| format!("    {{ {}, {typespec}u }},\n", c_string_literal(name)))
+            .collect(),
+    );
+    let const_count = consts.len();
+    table(
+        out,
+        "llg_vpi_enum_const_t",
+        "llg_vpi_ts_consts",
+        consts
+            .iter()
+            .map(|(name, digits)| {
+                format!(
+                    "    {{ {}, {} }},\n",
+                    c_string_literal(name),
+                    c_string_literal(digits)
+                )
+            })
+            .collect(),
+    );
+    let node_count = nodes.len();
+    table(
+        out,
+        "llg_vpi_member_node_t",
+        "llg_vpi_ts_nodes",
+        nodes
+            .iter()
+            .map(|node| {
+                let typespec = &typespecs[node.typespec];
+                let var_type = typespec.kind.var_type();
+                let mut flags = Vec::new();
+                if typespec.signed {
+                    flags.push("LLG_VPI_TS_SIGNED");
+                }
+                if typespec.two_state {
+                    flags.push("LLG_VPI_TS_TWO_STATE");
+                }
+                let flags = if flags.is_empty() {
+                    "0u".to_owned()
+                } else {
+                    flags.join(" | ")
+                };
+                format!(
+                    "    {{ {}, {var_type}, {}u, {}u, {}u, {flags}, {}u, {}u, {}u }},\n",
+                    c_string_literal(&node.name),
+                    node.typespec,
+                    node.lsb,
+                    node.width,
+                    node.parent.map_or(0, |parent| parent + 1),
+                    node.children.0,
+                    node.children.1,
+                )
+            })
+            .collect(),
+    );
+    let typespec_count = rows.len();
+    table(out, "llg_vpi_typespec_t", "llg_vpi_ts_types", rows);
+    out.push_str(&format!(
+        "static const llg_vpi_type_tables_t llg_vpi_type_tables_value = {{ llg_vpi_ts_types, {typespec_count}u, \
+llg_vpi_ts_ranges, {range_count}u, llg_vpi_ts_members, {member_count}u, llg_vpi_ts_consts, {const_count}u, \
+llg_vpi_ts_nodes, {node_count}u }};\n\
+static const llg_vpi_type_tables_t* const llg_vpi_type_tables = &llg_vpi_type_tables_value;\n"
+    ));
 }
 
 /// Catalog row of the scope enclosing each call site, for `vpiScope`.
@@ -572,5 +820,97 @@ pub(super) fn render_vpi_compile_calls(model: &IrModel, out: &mut String) {
             ));
         }
         out.push_str("};\n");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{member_tree, render_vpi_typespecs};
+    use crate::sim::ir::{IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember};
+
+    fn member(name: &str, typespec: usize, lsb: u32, width: u32) -> IrVpiTypespecMember {
+        IrVpiTypespecMember {
+            name: name.to_owned(),
+            typespec,
+            lsb: Some(lsb),
+            width,
+        }
+    }
+
+    /// `struct packed { struct packed { logic [3:0] hi; logic [3:0] lo; }
+    /// inner; logic [7:0] s; }`: nested members get absolute offsets and the
+    /// children of every node are contiguous.
+    fn nested() -> Vec<IrVpiTypespec> {
+        let logic = |width| IrVpiTypespec {
+            kind: IrVpiTypespecKind::Logic,
+            width,
+            ranges: vec![(i64::from(width) - 1, 0)],
+            ..IrVpiTypespec::default()
+        };
+        let inner = IrVpiTypespec {
+            kind: IrVpiTypespecKind::Struct,
+            width: 8,
+            packed: Some(true),
+            members: vec![member("hi", 0, 4, 4), member("lo", 0, 0, 4)],
+            ..IrVpiTypespec::default()
+        };
+        let outer = IrVpiTypespec {
+            kind: IrVpiTypespecKind::Struct,
+            width: 16,
+            packed: Some(true),
+            members: vec![member("inner", 1, 8, 8), member("s", 2, 0, 8)],
+            ..IrVpiTypespec::default()
+        };
+        vec![logic(4), inner, logic(8), outer]
+    }
+
+    #[test]
+    fn member_trees_use_absolute_offsets_and_contiguous_children() {
+        let typespecs = nested();
+        let mut nodes = Vec::new();
+        let top = member_tree(&typespecs, 3, &mut nodes);
+        assert_eq!(top, (0, 2));
+        let summary = nodes
+            .iter()
+            .map(|node| {
+                (
+                    node.name.as_str(),
+                    node.lsb,
+                    node.width,
+                    node.parent,
+                    node.children,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            summary,
+            [
+                ("inner", 8, 8, None, (2, 2)),
+                ("s", 0, 8, None, (0, 0)),
+                ("hi", 12, 4, Some(0), (0, 0)),
+                ("lo", 8, 4, Some(0), (0, 0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_member_without_a_fixed_offset_has_no_member_tree() {
+        let mut typespecs = nested();
+        typespecs[3].members[1].lsb = None;
+        let mut nodes = Vec::new();
+        assert_eq!(member_tree(&typespecs, 3, &mut nodes).1, 0);
+        assert!(nodes.is_empty());
+    }
+
+    #[test]
+    fn typespec_tables_use_index_plus_one_for_optional_references() {
+        let mut typespecs = nested();
+        typespecs[0].element = Some(2);
+        typespecs[0].name = Some("nib_t".to_owned());
+        let mut out = String::new();
+        render_vpi_typespecs(&typespecs, &mut out);
+        assert!(out.contains("{ vpiLogicTypespec, \"nib_t\", 0u, 3u, 0u, 4u, 0u, 0u, 1u, 0u, 0u, 0u, 0u, 0u, 0u },"), "{out}");
+        assert!(out.contains("#define llg_vpi_ts_consts NULL"), "{out}");
+        assert!(out.contains("llg_vpi_ts_nodes, 6u"), "{out}");
     }
 }

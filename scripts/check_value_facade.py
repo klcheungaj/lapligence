@@ -17,7 +17,8 @@ METADATA = {
     'rt/llg_rt_selftest.c': ('net', ''),
     # VPI catalog rows, argument shapes and force-part descriptors carry
     # metadata widths, not value payloads.
-    'rt/llg_vpi.c': ('args[i]', 'argument', 'call->args[i]', 'object', 'part', 'site->args[i]'),
+    'rt/llg_vpi.c': ('args[i]', 'argument', 'call->args[i]', 'node', 'object', 'owner', 'part',
+                     'site->args[i]', 'target'),
     'rt/llg_wave.c': ('g_wave.regs[alias]', 'g_wave.regs[i]', 'reg'),
     'rt/scheduler/activations.c': ('binding->descriptor',),
     'rt/scheduler/concurrent_assertions.c': ('local',),

@@ -1,0 +1,73 @@
+tb.c vpiEnumVar
+  typespec: vpiEnumTypespec name=colors
+    alias: vpiEnumTypespec name=primary_colors
+      base: vpiBitTypespec name=(null) vector=1 ranges [0:2]
+        elem: vpiBitTypespec name=(null) vector=0
+      const red 000 0 vpiEnumConst
+      const yellow 001 1 vpiEnumConst
+      const blue 010 2 vpiEnumConst
+    base: vpiBitTypespec name=(null) vector=1 ranges [0:2]
+      elem: vpiBitTypespec name=(null) vector=0
+    const red 000 0 vpiEnumConst
+    const yellow 001 1 vpiEnumConst
+    const blue 010 2 vpiEnumConst
+tb.t vpiTimeVar
+  typespec: vpiTimeTypespec name=my_time
+    alias: vpiTimeTypespec name=(null)
+tb.n vpiIntVar
+  typespec: vpiIntTypespec name=count_t
+    alias: vpiIntTypespec name=(null)
+tb.arr vpiRegArray
+  typespec: vpiArrayTypespec name=(null) static=1 ranges [3:0] [6:4]
+    elem: vpiArrayTypespec name=unparrtype static=1 ranges [6:4]
+      elem: vpiPackedArrayTypespec name=parrtype2 vector=1 ranges [2:1]
+        elem: vpiPackedArrayTypespec name=parrtype vector=1 ranges [1:3]
+          elem: vpiStructTypespec name=(null) packed=1
+            member vpiTypespecMember i1
+              typespec: vpiIntTypespec name=(null)
+            member vpiTypespecMember bvec
+              typespec: vpiBitTypespec name=(null) vector=0
+tb.u vpiUnionVar
+  typespec: vpiUnionTypespec name=pu_t packed=1 tagged=0
+    member vpiTypespecMember w
+      typespec: vpiLogicTypespec name=(null) vector=1 ranges [7:0]
+        elem: vpiLogicTypespec name=(null) vector=0
+    member vpiTypespecMember p
+      typespec: vpiStructTypespec name=pk_t packed=1
+        member vpiTypespecMember hi
+          typespec: vpiLogicTypespec name=(null) vector=1 ranges [3:0]
+            elem: vpiLogicTypespec name=(null) vector=0
+        member vpiTypespecMember lo
+          typespec: vpiBitTypespec name=(null) vector=1 ranges [1:0] [2:3]
+            elem: vpiBitTypespec name=(null) vector=1 ranges [2:3]
+              elem: vpiBitTypespec name=(null) vector=0
+tb.cs vpiStructVar
+  typespec: vpiStructTypespec name=C packed=0
+    member vpiTypespecMember B
+      typespec: vpiStructTypespec name=(null) packed=0
+        member vpiTypespecMember a
+          typespec: vpiIntTypespec name=(null)
+    member vpiTypespecMember r
+      typespec: vpiRealTypespec name=(null)
+    member vpiTypespecMember n
+      typespec: vpiLogicTypespec name=nib_t vector=1 ranges [3:0]
+        elem: vpiLogicTypespec name=(null) vector=0
+tb.b vpiByteVar
+  typespec: vpiByteTypespec name=(null)
+tb.si vpiShortIntVar
+  typespec: vpiShortIntTypespec name=(null)
+tb.li vpiLongIntVar
+  typespec: vpiLongIntTypespec name=(null)
+tb.ig vpiIntegerVar
+  typespec: vpiIntegerTypespec name=(null)
+tb.sc vpiReg
+  typespec: vpiLogicTypespec name=(null) vector=0
+tb.rl vpiRealVar
+  typespec: vpiRealTypespec name=(null)
+tb.P vpiParameter
+  typespec: vpiIntTypespec name=count_t
+    alias: vpiIntTypespec name=(null)
+tb.w vpiNet
+  typespec: vpiLogicTypespec name=(null) vector=1 ranges [3:0]
+    elem: vpiLogicTypespec name=(null) vector=0
+vpiIndexTypespec of an enum typespec: NULL level=3

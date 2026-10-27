@@ -120,6 +120,27 @@ pub struct TypeDescriptor {
     pub shape: TypeShape,
 }
 
+/// The typedef a declared type names (IEEE 1800-2009 37.23): the typedef
+/// declaration node and the number of packed and fixed unpacked dimensions
+/// declared above it (0: the declared type is the typedef itself).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TypedefRef {
+    pub typedef: NodeId,
+    pub depth: u32,
+}
+
+/// Owned typedef names. Canonical type records carry no typedef names, so
+/// typespec names come from these declaration references.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TypedefNames {
+    /// Declarations and typedefs, by the node whose declared type names one.
+    pub(crate) declared: HashMap<NodeId, TypedefRef>,
+    /// Typedefs that rename a built-in type keyword.
+    pub(crate) builtin: HashSet<NodeId>,
+    /// Aggregate members, by canonical aggregate type and member index.
+    pub(crate) members: HashMap<(TypeId, u32), TypedefRef>,
+}
+
 /// One declared member of an enumerated type, retained in declaration order.
 ///
 /// Enum values are copied from Slang's resolved constants while the snapshot

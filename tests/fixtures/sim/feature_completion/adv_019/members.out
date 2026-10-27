@@ -1,0 +1,40 @@
+vpiStructVar tb.ns size=18 packed=1 value=283f6
+  vpiStructVar tb.ns.inner name=inner size=8 member=1 packed=1 value=a0 parent=ns typespec=vpiStructTypespec
+    vpiReg tb.ns.inner.hi name=hi size=4 member=1 value=a parent=inner typespec=vpiLogicTypespec
+    vpiBitVar tb.ns.inner.lo name=lo size=4 member=1 value=0 parent=inner typespec=vpiBitTypespec
+  vpiReg tb.ns.s name=s size=8 member=1 value=fd parent=ns typespec=vpiLogicTypespec
+  vpiEnumVar tb.ns.st name=st size=2 member=1 value=2 parent=ns typespec=vpiEnumTypespec
+vpiUnionVar tb.pu size=8 packed=1 value=96
+  vpiReg tb.pu.w name=w size=8 member=1 value=96 parent=pu typespec=vpiLogicTypespec
+  vpiStructVar tb.pu.p name=p size=8 member=1 packed=1 value=96 parent=pu typespec=vpiStructTypespec
+    vpiReg tb.pu.p.hi name=hi size=4 member=1 value=9 parent=p typespec=vpiLogicTypespec
+    vpiBitVar tb.pu.p.lo name=lo size=4 member=1 value=6 parent=p typespec=vpiBitTypespec
+vpiStructVar tb.up size=4 packed=0 value: level=3
+  vpiIntVar tb.up.a name=a size=32 member=1 value=00000007 parent=up typespec=vpiIntTypespec
+  vpiReg tb.up.b name=b size=8 member=1 value=5x parent=up typespec=vpiLogicTypespec
+  vpiRealVar tb.up.r name=r size=64 member=1 value=1.5 parent=up typespec=vpiRealTypespec
+  vpiStructVar tb.up.p name=p size=8 member=1 packed=1 value=3c parent=up typespec=vpiStructTypespec
+    vpiReg tb.up.p.hi name=hi size=4 member=1 value=3 parent=p typespec=vpiLogicTypespec
+    vpiBitVar tb.up.p.lo name=lo size=4 member=1 value=c parent=p typespec=vpiBitTypespec
+vpiRegArray tb.uarr size=2
+vpiStructVar tb.uarr[0] size=2 packed=0 value: level=3
+  vpiIntVar tb.uarr[0].a name=a size=32 member=1 value=00000001 parent=uarr[0] typespec=vpiIntTypespec
+  vpiReg tb.uarr[0].b name=b size=8 member=1 value=02 parent=uarr[0] typespec=vpiLogicTypespec
+vpiStructVar tb.uarr[1] size=2 packed=0 value: level=3
+  vpiIntVar tb.uarr[1].a name=a size=32 member=1 value=0000000b parent=uarr[1] typespec=vpiIntTypespec
+  vpiReg tb.uarr[1].b name=b size=8 member=1 value=22 parent=uarr[1] typespec=vpiLogicTypespec
+by name tb.ns.inner.lo: tb.ns.inner.lo level=0 parent=tb.ns.inner
+by name tb.uarr[1].b: tb.uarr[1].b level=0 parent=tb.uarr[1]
+by name tb.up.p.hi: tb.up.p.hi level=0 parent=tb.up.p
+by name tb.ns.missing: NULL level=0
+members of plain: NULL level=3
+callback level=0
+put tb.ns.inner.lo = 9 level=0
+put tb.ns.s = -1 level=0
+put tb.pu.p.hi = 0 level=0
+put tb.up.a = -4 level=0
+put tb.up.p.lo = 1 level=0
+put tb.uarr[1].b = 90 level=0
+put tb.uarr[0] = 3 level=3
+hdl: ns=2a7fe inner.lo=9 s=-1 pu=06 up.a=-4 up.p=31 uarr[1].b=5a
+change tb.ns.inner.hi = 1

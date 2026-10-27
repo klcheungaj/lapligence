@@ -13,11 +13,65 @@ impl Db {
         let udp_tables = udp_tables_from_slang(snapshot, &mut source_positions)?;
         let specify = specify_tables_from_slang(snapshot, &ids)?;
         let mut source_identities = HashMap::new();
+        // IEEE 1800-2009 37.23: a typedef reference names a declaration with
+        // detail `TypeAlias` and a name; any other target (a typedef of a
+        // scope the capture did not visit) leaves the type unnamed.
+        let typedef_target = |target: u64| -> Result<Option<NodeId>, DbError> {
+            let named = usize::try_from(target)
+                .ok()
+                .and_then(|index| snapshot.semantic_nodes.get(index))
+                .is_some_and(|node| {
+                    node.detail.as_str() == "TypeAlias" && !node.name.as_str().is_empty()
+                });
+            Ok(if named {
+                Some(semantic_id(&ids, target)?)
+            } else {
+                None
+            })
+        };
+        let mut typedefs = TypedefNames::default();
         for semantic in &snapshot.semantic_nodes {
             let id = NodeId::from_index(semantic.id as usize);
+            if semantic.detail.as_str() == "TypeAlias"
+                && semantic.auxiliary & crate::ffi::slang::TYPEDEF_BUILTIN != 0
+            {
+                typedefs.builtin.insert(id);
+            }
             for edge in semantic_edges(snapshot, semantic)? {
                 if edge.role == SemanticEdgeRole::SourceIdentity {
                     source_identities.insert(id, semantic_id(&ids, edge.target_id)?);
+                }
+                if edge.role == SemanticEdgeRole::Typedef {
+                    if let Some(typedef) = typedef_target(edge.target_id)? {
+                        typedefs.declared.insert(
+                            id,
+                            TypedefRef {
+                                typedef,
+                                depth: edge.index,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        for ty in &snapshot.types {
+            let members = usize::try_from(ty.member_start)
+                .ok()
+                .zip(usize::try_from(ty.member_count).ok())
+                .and_then(|(start, count)| {
+                    snapshot.type_members.get(start..start.checked_add(count)?)
+                })
+                .ok_or_else(|| {
+                    DbError::InvalidSnapshot(format!("type {} member window is invalid", ty.id))
+                })?;
+            for (index, member) in members.iter().enumerate() {
+                let Some((target, depth)) = member.typedef else {
+                    continue;
+                };
+                if let Some(typedef) = typedef_target(target)? {
+                    typedefs
+                        .members
+                        .insert((TypeId(ty.id), index as u32), TypedefRef { typedef, depth });
                 }
             }
         }
@@ -338,6 +392,9 @@ impl Db {
         let mut packed_pattern_elements = HashMap::new();
         let mailbox_elements = type_projector
             .mailbox_elements()
+            .map_err(DbError::InvalidSnapshot)?;
+        let packed_array_elements = type_projector
+            .packed_array_elements()
             .map_err(DbError::InvalidSnapshot)?;
         let mut enum_types = HashMap::new();
         let mut packed_dimensions = HashMap::new();
@@ -1409,6 +1466,8 @@ impl Db {
             packed_pattern_elements,
             mailbox_elements,
             enum_types,
+            typedefs,
+            packed_array_elements,
             packed_dimensions,
             two_state_types,
             assertion_local_vars,
@@ -1683,6 +1742,86 @@ mod tests {
         // An input port's value is a default for an unconnected port
         // (23.2.2.4), never a variable initializer.
         assert!(db.var_initializer(storage("top.c.i")).is_none());
+    }
+
+    #[test]
+    fn typedef_references_name_declared_types_aliases_and_members() {
+        // IEEE 1800-2009 37.23 details 1, 6 and 8.
+        let source = "package p; typedef logic [3:0] nib_t; endpackage \
+            module top; \
+            typedef enum bit [0:2] {red, yellow, blue} primary_colors; \
+            typedef primary_colors colors; \
+            typedef time my_time; \
+            typedef struct packed { int i1; bit bvec; } [1:3] parrtype; \
+            typedef parrtype [2:1] parrtype2; \
+            typedef parrtype2 unparrtype [6:4]; \
+            typedef struct { p::nib_t n; p::nib_t pair [2]; int plain; } rec_t; \
+            colors c; my_time t; unparrtype arr [3:0]; rec_t r; logic [7:0] v; \
+            initial $display(\"%0d %0d %0d %0d\", c, t, arr[0][4], r.plain, v); endmodule";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "typedefs.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let declaration = |name: &str| {
+            db.node_ids()
+                .find(|id| {
+                    matches!(
+                        db.node_kind(*id),
+                        NodeKind::Var { .. } | NodeKind::Array { .. }
+                    ) && db.node(*id).name == name
+                })
+                .unwrap_or_else(|| panic!("variable `{name}`"))
+        };
+        let named = |reference: Option<TypedefRef>| {
+            reference.map(|reference| (db.node(reference.typedef).name.clone(), reference.depth))
+        };
+        let typedef_of = |name: &str| named(db.declared_typedef(declaration(name)));
+        assert_eq!(typedef_of("c"), Some(("colors".to_owned(), 0)));
+        assert_eq!(typedef_of("t"), Some(("my_time".to_owned(), 0)));
+        assert_eq!(typedef_of("arr"), Some(("unparrtype".to_owned(), 1)));
+        assert_eq!(typedef_of("r"), Some(("rec_t".to_owned(), 0)));
+        assert_eq!(typedef_of("v"), None);
+        // Each typedef names the typedef it aliases, at its own depth.
+        let chain = |reference: TypedefRef| db.declared_typedef(reference.typedef);
+        let colors = db.declared_typedef(declaration("c")).unwrap();
+        assert_eq!(named(chain(colors)), Some(("primary_colors".to_owned(), 0)));
+        let primary = chain(colors).unwrap();
+        assert_eq!(chain(primary), None);
+        assert!(!db.typedef_renames_builtin(primary.typedef));
+        let my_time = db.declared_typedef(declaration("t")).unwrap();
+        assert!(db.typedef_renames_builtin(my_time.typedef));
+        assert_eq!(chain(my_time), None);
+        let unparrtype = db.declared_typedef(declaration("arr")).unwrap();
+        assert_eq!(named(chain(unparrtype)), Some(("parrtype2".to_owned(), 1)));
+        let parrtype2 = chain(unparrtype).unwrap();
+        assert_eq!(named(chain(parrtype2)), Some(("parrtype".to_owned(), 1)));
+        assert_eq!(chain(chain(parrtype2).unwrap()), None);
+        // Aggregate members keep their typedef by member position.
+        let layout = db.aggregate_layout(declaration("r")).unwrap();
+        let aggregate = layout.type_id.unwrap();
+        assert_eq!(
+            named(db.member_typedef(aggregate, 0)),
+            Some(("nib_t".to_owned(), 0))
+        );
+        assert_eq!(
+            named(db.member_typedef(aggregate, 1)),
+            Some(("nib_t".to_owned(), 1))
+        );
+        assert_eq!(db.member_typedef(aggregate, 2), None);
+        // Packed arrays of structures keep their element structure.
+        let packed = db.type_descriptor(parrtype2.typedef).unwrap();
+        let element = db.packed_array_element(packed.id).unwrap();
+        assert!(matches!(element.shape, TypeShape::PackedAtom { ref ranges } if ranges.len() == 1));
+        let base = db.packed_array_element(element.id).unwrap();
+        assert!(matches!(base.shape, TypeShape::Aggregate(_)));
     }
 
     #[test]

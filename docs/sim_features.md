@@ -2549,7 +2549,18 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   modules, interfaces, generate scopes (SV 27.4 names), named blocks, ports,
   parameters, nets, variables with their exact types (`vpiIntVar`,
   `vpiBitVar`, `vpiByteVar`, `vpiTimeVar`, ...), unpacked arrays and their
-  elements, bit-selects and part-selects. `vpi_get_value` serves every Table
+  elements, bit-selects and part-selects. Typespecs (ADV-019, 37.23):
+  `vpiTypespec` of variables, nets, parameters and members gives logic, bit,
+  integer-atom, time, real, string, enum, struct, union, packed array and
+  array typespecs with `vpiName` (the typedef name), `vpiTypedefAlias`,
+  `vpiElemTypespec` (one dimension at a time), `vpiBaseTypespec`, `vpiRange`
+  with `vpiLeftRange`/`vpiRightRange`, `vpiTypespecMember`, `vpiEnumConst`
+  (name and value), `vpiPacked`, `vpiTagged` and `vpiVector`; structure and
+  union members (37.24) are `vpiMember` objects with `vpiStructUnionMember`,
+  `vpiParent`, `vpi_handle_by_name` paths (`tb.s.f`, `tb.arr[1].f`) and
+  member values, writes and `cbValueChange`, packed or unpacked, nested and
+  in elements of unpacked arrays of structures (decisions A19-D1..D4).
+  `vpi_get_value` serves every Table
   38-3 format with exact X/Z; `vpi_put_value` writes through the storage APIs
   with no delay, inertial, transport and pure-transport delays,
   `vpiReturnEvent`/`vpiCancelEvent`, force and release. User system tasks and
@@ -2558,7 +2569,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   generation-checked: stale, released or invalid handles give a
   `vpi_chk_error` level, never a use-after-free. Applications load from
   `LLG_VPI_PLUGIN` (a Windows DLL links against the model's import library,
-  `llg --dpi-import-lib`) or link as a static archive with `--dpi-lib`. Decisions S42-D1..D13 in `docs/lrm_decisions.md`; limits in
+  `llg --dpi-import-lib`) or link as a static archive with `--dpi-lib`. Decisions S42-D1..D13 and A19-D1..D4 in `docs/lrm_decisions.md`; limits in
   `docs/known_issues.md` ("VPI object model limits"). Callbacks (SIM-043):
   `cbValueChange` on variables, nets, ports, array elements, whole unpacked
   arrays (each element write, with its index) and bit/part selects (value,

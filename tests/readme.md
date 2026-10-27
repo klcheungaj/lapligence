@@ -392,6 +392,15 @@ the runtime probe is `runtime_value_storage`'s `vpi_ownership` and the unit
 checks are `sim::build::vpi_static::tests` and
 `sim::codegen::lowering::collection::vpi::tests`.
 
+ADV-019 family 1 (typespecs, structure and union members) uses
+`-E 'binary(sim_feature_completion) & test(adv_019::)'`: `typespecs` prints the
+typespec tree of each declaration and `members` reads, finds, watches and
+writes members, both linked as static archives. Decisions A19-D1..D4 are in
+`sim_lrm_decisions` (`-E 'test(/a19_d/)'`); the unit checks are
+`core::db::database::capture::tests`,
+`sim::codegen::lowering::collection::vpi::tests` and
+`sim::emit_c::model::vpi::tests`.
+
 ADV-020's VPI parity fixtures use
 `-E 'binary(sim_feature_completion) & test(adv_020::)'`. `symbols` takes the
 address of every Annex K/M routine and runs as an `LLG_VPI_PLUGIN` plugin (a
