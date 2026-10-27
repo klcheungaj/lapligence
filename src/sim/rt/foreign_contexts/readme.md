@@ -59,12 +59,14 @@ condition variable. There is no parallel HDL and no parallel foreign code.
 | `ucontext` (`swapcontext`) | yes | glibc only; musl has no `makecontext` | deprecated API | none | needs fiber annotations (ASan, TSan) | 0.6 us round trip |
 | Windows fibers | yes | n/a | n/a | yes | n/a | not measurable here |
 | libaco / assembly stack switch | yes | per-ABI assembly | per-ABI assembly | per-ABI assembly | unsupported | ~0.05 us |
-| **OS-thread contexts + run token** | **yes** | **yes** | **yes** | **yes** | **unchanged** | **57 us round trip** |
+| **OS-thread contexts + run token** | **yes** | **yes** | **yes** | **yes** | **unchanged** | **57 us round trip sleeping, ~1 us polling** |
 
 The switch costs are pthread mutex/condition ping-pong and `swapcontext`
 round trips measured on the 32-core WSL2 development host under load;
-bare-metal Linux typically shows 5-10 us for the
-thread hand-off. Threads are the only candidate that builds from the same
+bare-metal Linux typically shows 5-10 us for a hand-off that wakes a
+sleeping thread. The run token therefore polls briefly before it sleeps
+(below), which brings a hand-off that returns quickly to about a
+microsecond. Threads are the only candidate that builds from the same
 C11 source on every target ABI, needs no assembly or deprecated API, and runs
 unchanged under ASan, UBSan and TSan (each hand-off is a mutex
 acquire/release pair, so TSan sees the ordering). The plan excludes
@@ -91,6 +93,18 @@ ever before.
   switches the per-participant DPI state (the open-array guard stack and the
   unwinding flag), sets the token and signals only the receiver; the giver
   then waits on its own condition variable until the token returns.
+- Before sleeping, a waiting participant polls its own wake flag up to
+  `LLG_DPI_CONTEXT_SPIN` times (65536 by default, measured at about 15 us on
+  the x86-64 development host and not yet on other targets; a compile-time
+  tunable of the model build, 0 sleeps at once).
+  Most hand-offs return within that bound (foreign code that returns at
+  once, a zero-time export), and waking a sleeping thread costs tens of
+  microseconds. Measured on 20000 calls of a context import task on the
+  development host: about 3 us per call that also calls an exported task,
+  against 125 us when every hand-off sleeps; a direct import call costs
+  0.6 us. A chain that stays suspended spends at most one bound of CPU
+  time per suspension before it sleeps. The token itself is read only under
+  the mutex, so the flag adds no ordering of its own.
 - `llg_dpi_now` (the scope/site/depth chain state) stays one global: every
   crossing saves the state it replaces and restores it on the way back, and
   the scheduler thread only runs when every context is blocked in

@@ -1962,8 +1962,9 @@ outside them.
   consume time runs its C code on a foreign call context (an OS thread with
   its own stack, [design](../src/sim/rt/foreign_contexts/readme.md)), whether
   or not that call reaches such a task: each call costs two thread
-  hand-offs, and each call of a waiting exported task two more (tens of
-  microseconds on a loaded host). The C code must not rely on running on
+  hand-offs, and each call of a waiting exported task two more (about a
+  microsecond each while the other thread is still polling, tens of
+  microseconds once it sleeps). The C code must not rely on running on
   the main thread (thread-local storage, thread affinity of other
   libraries). Its stack is `LLG_DPI_CONTEXT_STACK_BYTES` (8 MiB by default;
   set it with `LLG_CFLAGS=-DLLG_DPI_CONTEXT_STACK_BYTES=<bytes>`).

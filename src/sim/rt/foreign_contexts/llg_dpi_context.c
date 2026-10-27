@@ -25,6 +25,17 @@
 #define LLG_DPI_CONTEXT_STACK_BYTES (8u * 1024u * 1024u)
 #endif
 
+// Polls of its own wake flag a participant makes before it sleeps on its
+// condition variable. Most hand-offs come back within microseconds (a zero-time
+// export, foreign code that returns at once), while waking a sleeping thread
+// costs tens of microseconds per hand-off. The default bound measured about
+// 15 us on the x86-64 development host (other cores and MSVC builds differ),
+// and a chain that stays suspended spends at most one bound of CPU time per
+// suspension. 0 always sleeps at once.
+#ifndef LLG_DPI_CONTEXT_SPIN
+#define LLG_DPI_CONTEXT_SPIN 65536u
+#endif
+
 enum {
     LLG_DPI_CONTEXT_IDLE = 0,
     LLG_DPI_CONTEXT_DONE = 1,   // the body returned
@@ -34,6 +45,7 @@ enum {
 
 typedef struct llg_dpi_party {
     llg_cond_t wake;
+    llg_atomic_int_t go;           // set with the token, polled before sleeping
     struct llg_dpi_party* resumer; // who resumed it, and gets the token back
     llg_dpi_guard_t* guards;       // its open-array guard stack while parked
     int unwinding;                 // its chain belongs to a killed process
@@ -86,12 +98,33 @@ static void contexts_switch(llg_dpi_party_t* to) {
     from->guards = llg_dpi_context_switch(to->guards, to->unwinding);
     g_contexts.running = to;
     g_contexts.token = to;
+    llg_atomic_int_store(&to->go, 1);
     llg_cond_signal(&to->wake);
 }
 
-// With the mutex held: block `self` until the token comes back to it.
+// One poll of a wake flag. It needs only eventual visibility, because the
+// poller takes the mutex before it runs on; on MSVC it is a plain volatile
+// read rather than llg_atomic_int_load's interlocked operation.
+static inline int contexts_poll(const llg_atomic_int_t* flag) {
+#if LLG_COMPILER_MSVC
+    return (int)*flag;
+#else
+    return atomic_load_explicit(flag, memory_order_relaxed);
+#endif
+}
+
+// With the mutex held: block `self` until the token comes back to it. It polls
+// `go` without the mutex first; the token itself is read only under the mutex,
+// which also orders the giver's writes before this participant runs on.
 static void contexts_wait(llg_dpi_party_t* self) {
+    if (g_contexts.token != self && LLG_DPI_CONTEXT_SPIN != 0) {
+        llg_mutex_unlock(&g_contexts.mutex);
+        for (unsigned i = 0; i < LLG_DPI_CONTEXT_SPIN && !contexts_poll(&self->go); i++) {
+        }
+        llg_mutex_lock(&g_contexts.mutex);
+    }
     while (g_contexts.token != self) llg_cond_wait(&self->wake, &g_contexts.mutex);
+    llg_atomic_int_store(&self->go, 0);
 }
 
 // Resume `context` and wait until it hands the token back.
