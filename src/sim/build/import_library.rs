@@ -115,7 +115,9 @@ pub(super) const PROVIDED_SVDPI_ROUTINES: &[&str] = &[
     "svSizeOfArray",
 ];
 
-/// The VPI routines `vpi_user.h` declares, all defined by `llg_vpi.c`.
+/// The VPI routines `vpi_user.h` (the 41 of IEEE 1800-2009 Annex K) and
+/// `sv_vpi_user.h` (`vpi_register_assertion_cb`, Annex M) declare, all
+/// defined by `llg_vpi.c`.
 pub(super) const VPI_ROUTINES: &[&str] = &[
     "vpi_chk_error",
     "vpi_compare_objects",
@@ -125,20 +127,34 @@ pub(super) const VPI_ROUTINES: &[&str] = &[
     "vpi_get",
     "vpi_get64",
     "vpi_get_cb_info",
+    "vpi_get_data",
+    "vpi_get_delays",
     "vpi_get_str",
     "vpi_get_systf_info",
     "vpi_get_time",
     "vpi_get_userdata",
     "vpi_get_value",
+    "vpi_get_value_array",
     "vpi_get_vlog_info",
     "vpi_handle",
     "vpi_handle_by_index",
     "vpi_handle_by_multi_index",
     "vpi_handle_by_name",
+    "vpi_handle_multi",
     "vpi_iterate",
+    "vpi_mcd_close",
+    "vpi_mcd_flush",
+    "vpi_mcd_name",
+    "vpi_mcd_open",
+    "vpi_mcd_printf",
+    "vpi_mcd_vprintf",
     "vpi_printf",
+    "vpi_put_data",
+    "vpi_put_delays",
     "vpi_put_userdata",
     "vpi_put_value",
+    "vpi_put_value_array",
+    "vpi_register_assertion_cb",
     "vpi_register_cb",
     "vpi_register_systf",
     "vpi_release_handle",
@@ -279,6 +295,7 @@ mod tests {
         }
         let declared_vpi: BTreeSet<&str> = vpi_header
             .lines()
+            .chain(crate::sim::rt::sv_vpi_header().lines())
             .filter(|line| !line.starts_with(char::is_whitespace) && !line.starts_with('#'))
             .filter_map(|line| line.split('(').next())
             .filter_map(|head| head.rsplit(&['*', ' '][..]).next())
