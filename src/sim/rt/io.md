@@ -120,6 +120,20 @@ reports a `SLOT_STMT` handle released before the dispatch returns. VPI's own
 force/release puts do not report (A20-D9). Rows of named blocks, tasks and
 functions carry their `llg_disable_target` identity
 (`LLG_VPI_OBJ_ACTIVATION`) for `cbDisable` (A20-D10).
+Assertion callbacks (39.4) use `llg_assertion_watch_hook`. The runtime raises
+an attempt event (start, success, vacuous success, failure, disabled, killed)
+with the attempt's start time only for an assertion item whose `watches`
+count `vpi_register_assertion_cb` raised; every engine attempt record
+carries its start time for this. Events raised inside the assertion engines
+are queued and delivered when the outermost engine call returns
+(`assertion_events_enter`/`leave` in `coverage/assertions.c`), so a callback
+may call `vpi_control`, `vpi_put_value` or remove callbacks without seeing a
+half-updated attempt list. `vpi_control` assertion operations go through
+`llg_acov_control`: concurrent assertions change their runtime record,
+immediate and deferred ones the item's `control` bits, which the generated
+code of a model with a VPI catalog reads per check. The item table stays
+bound after the runtime cleanup so `cbEndOfSimulation` reads final counters
+(A17-D1..D3).
 Built-ins are never dispatched to a registration under their name: after
 plugin startup, `llg_vpi_check_builtin_overrides` fails the start, naming the
 call, when an application registered a built-in the model runs natively

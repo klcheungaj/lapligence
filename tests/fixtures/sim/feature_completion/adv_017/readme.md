@@ -68,7 +68,7 @@ before it.
   permitted."). The system callbacks (39.4.1) run once per system control;
   cbAssertionSysInitialized and cbAssertionSysOn run after
   cbStartOfSimulation (L65579: "The assertion system can initialize before
-  cbStartOfSimulation does or afterwards."). Decision A17-D4.
+  cbStartOfSimulation does or afterwards."). Decision A17-D3.
 - **Counters.** 40.5.3 L66651: "in progress = attempts - (successes +
   vacuous success + disabled + killed + failures)".
 - **Static information.** 39.3.2 L65565: "Assertion source information: the

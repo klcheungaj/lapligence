@@ -2266,8 +2266,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   relations; `vpiTchkTerm` and `vpiPathTerm` handles have no own source
   location;
 - the routines `vpi_handle_multi` (no `vpiPortInst`/`vpiInterModPath`
-  objects), `vpi_get_data`/`vpi_put_data` (no
-  save/restart) and `vpi_register_assertion_cb` (no assertion callbacks).
+  objects) and `vpi_get_data`/`vpi_put_data` (no save/restart).
   They are declared and defined so that applications link, and return
   NULL, 0 or nothing with an `LLG_VPI_UNSUPPORTED` error without reading or
   writing their arguments;
@@ -2405,10 +2404,28 @@ counterpart, for assertion coverage.
 - Type options (`type_option.weight`, `goal`, `comment`,
   `merge_instances`) are not saved; a loaded run uses the current model's
   type options.
-- VPI: assertion handles answer the static 39.3.2 properties and the 40.5.3
-  counters, but not source location (`vpiFile`/`vpiLineNo`), clocking or
-  expressions; assertion callbacks (`cbAssertionStart` and the 39.4/39.5
-  system callbacks) are not implemented. An assertion label that is also
+- VPI assertion API (ADV-017): assertion handles answer the static 39.3.2
+  properties, `vpiFile`/`vpiLineNo`/`vpiColumn` and the 40.5.3 counters,
+  and run the 39.4 callbacks and 39.5 controls, with these limits:
+  - the clocking event, disable condition and property of an assertion
+    (`vpiClockingEvent`, `vpiDisableCondition`, `vpiProperty`), the
+    failure expression (`failExpr` is NULL) and `vpiEndLine`/`vpiEndColumn`
+    are not available: llg has no VPI expression objects;
+  - sequence and property instances (`vpiSequenceInst`, `vpiPropertyInst`)
+    and their declarations are not VPI objects, so callbacks on them
+    cannot be placed;
+  - step callbacks (`cbAssertionStepSuccess`/`StepFailure`,
+    `vpiAssertionEnableStep`) fail with `LLG_VPI_UNSUPPORTED`;
+  - the 39.5.1 controls take NULL, an instance or an assertion handle,
+    not a `vpiCollection`;
+  - `vpiAssertionReset` does not reset the shared `$past` sampling of the
+    assertion's operands;
+  - for an assertion with global clocking future functions, an attempt
+    that starts while its `disable iff` holds runs its callbacks at once,
+    not at the next global clock tick;
+  - FSM coverage objects (40.5.3 `vpiFsm`, `vpiFsmStates`) and the 40.4 FSM
+    pragmas are not recognized.
+  An assertion label that is also
   listed by the object catalog as a named block is found as the assertion
   by `vpi_handle_by_name`.
 - `vpi_get(vpiAssertCoverage, instance)` and `vpi_control` with an
