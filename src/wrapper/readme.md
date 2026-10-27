@@ -78,7 +78,10 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   failed statement or expression, with its enclosing list, in an Invalid node
   the AST visitor never enters; capture walks that child for lexical bindings
   only (no semantic nodes), so only the names Slang could not resolve stay
-  unbound identifiers.
+  unbound identifiers. The width of a size cast (`(W-1)'(x)`, IEEE 1800-2009
+  6.24.1) is evaluated and discarded by Slang, so capture looks its names up
+  again in the scope of the symbol or statement block being visited and binds
+  them as references (`bindSizeCastNames`).
 - Named statement blocks, labeled statements (Slang makes each one a named
   block) and generate block names get `LLG_SLANG_LEXICAL_BLOCK` from the
   syntax, so declaration-only capture classifies them too: the opening name is
@@ -120,9 +123,9 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   (`none` included) is a keyword.
 - Class specializations: the names written in a `C#(...)::name` value
   assignment bind from the overridden parameter initializer when this use
-  site wrote it, else by lookup in the innermost instance body or generate
-  block being captured (Slang shares a specialization between equal
-  assignments).
+  site wrote it, else by lookup in the context of the symbol or statement
+  block being visited, the same context as size cast widths (Slang shares a
+  specialization between equal assignments).
 
 ## Parameter overrides
 

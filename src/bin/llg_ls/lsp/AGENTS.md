@@ -51,6 +51,9 @@ Components: [readme](readme.md), [handlers](handlers/readme.md). Server rules:
   analysis' include and package context (never a file read); recheck staleness
   before cache lookup, flight admission and the blocking compile. Saturated
   single-flight tables refuse new work and fall back to committed tokens.
+- Record each token request's inputs under the capture lock; a commit that
+  changes them sends `workspace/semanticTokens/refresh` from a spawned task
+  (`ServedTokenInputs` docs), never from a request handler.
 - Shutdown clears roots, caches, flights, watchers and the private process
   mirror; only the per-process child of the staging root is ever removed
   (`--staging-dir` handling: `main.rs`).

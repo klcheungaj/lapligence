@@ -432,6 +432,7 @@ impl Backend {
                 *tracker_counts.entry(file.clone()).or_default() += 1;
             }
         }
+        let refresh_supported = state.semantic_tokens_refresh;
         let Some(root) = state.roots.get_mut(key) else {
             return CommitOutcome::default();
         };
@@ -531,6 +532,7 @@ impl Backend {
         // servable commit the root keeps serving None.  Watcher
         // re-registration follows the SAME predicate so roots that are not
         // strictly valid still register their resolved include dependencies.
+        let snapshot_replaced = result.analysis.is_none() || usable;
         if result.analysis.is_none() {
             root.last_good = None;
             // The served snapshot changed (it disappeared): memoized results
@@ -552,6 +554,18 @@ impl Backend {
             });
             root.analysis_epoch = next_analysis_epoch();
         }
+        // Token requests record their inputs only for a client that takes
+        // refresh requests, so nothing is compared otherwise.
+        let semantic_tokens_refresh = refresh_supported && {
+            let defines = root.descriptor.effective_config().compile.defines;
+            let empty = features::IncludeContext::default();
+            let context = root
+                .last_good
+                .as_ref()
+                .map_or(&empty, |analysis| analysis.include_context.as_ref());
+            root.served_tokens
+                .take_refresh(snapshot_replaced, &defines, context)
+        };
         let mut keys: BTreeSet<Url> = root.diagnostics.keys().cloned().collect();
         keys.extend(current.keys().cloned());
         // A URI that just became multi-root tracked is dropped silently here:
@@ -602,6 +616,7 @@ impl Backend {
             valid_commit: usable,
             watchers_refresh,
             module_explorer_changed,
+            semantic_tokens_refresh,
         }
     }
 }

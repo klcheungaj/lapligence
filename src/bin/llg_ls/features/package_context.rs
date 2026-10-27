@@ -292,6 +292,17 @@ impl PackageContext {
         context
     }
 
+    /// Whether `other` holds the same package-declaring units, in the same
+    /// order and with the same texts, so every selection from either is the
+    /// same. Header facts derive from the include buffers, which
+    /// [`IncludeContext::same_inputs`] compares.
+    pub fn same_units(&self, other: &PackageContext) -> bool {
+        self.units.len() == other.units.len()
+            && self.units.iter().zip(&other.units).all(|(a, b)| {
+                a.name == b.name && (Arc::ptr_eq(&a.text, &b.text) || a.text == b.text)
+            })
+    }
+
     /// `scan` with the declarations and references of every admitted header
     /// it includes, transitively.
     fn with_headers(&self, mut scan: PackageScan) -> PackageScan {

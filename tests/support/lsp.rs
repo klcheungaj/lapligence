@@ -310,7 +310,9 @@ impl LspProcess {
         roots: &[(&str, &Path)],
         options: Value,
     ) -> Result<Value, String> {
-        self.initialize_with_dynamic_registration(roots, options, true)
+        let result = self.initialize_with_dynamic_registration(roots, options, true, false)?;
+        self.wait_ready()?;
+        Ok(result)
     }
 
     pub(crate) fn initialize_static(
@@ -318,7 +320,30 @@ impl LspProcess {
         roots: &[(&str, &Path)],
         options: Value,
     ) -> Result<Value, String> {
-        self.initialize_with_dynamic_registration(roots, options, false)
+        let result = self.initialize_with_dynamic_registration(roots, options, false, false)?;
+        self.wait_ready()?;
+        Ok(result)
+    }
+
+    /// Initialize like an editor that advertises
+    /// `workspace.semanticTokens.refreshSupport` and sends its first requests
+    /// at once: returns after `initialized` without waiting for the first
+    /// analysis ([`Self::wait_ready`]).
+    pub(crate) fn initialize_with_token_refresh(
+        &mut self,
+        roots: &[(&str, &Path)],
+        options: Value,
+    ) -> Result<Value, String> {
+        self.initialize_with_dynamic_registration(roots, options, true, true)
+    }
+
+    /// Wait for the ready log the server sends after the initial analysis of
+    /// every root.
+    pub(crate) fn wait_ready(&mut self) -> Result<(), String> {
+        self.wait_for_notification_where("window/logMessage", |params| {
+            params.get("message").and_then(Value::as_str) == Some(READY_MESSAGE)
+        })
+        .map(|_| ())
     }
 
     fn initialize_with_dynamic_registration(
@@ -326,6 +351,7 @@ impl LspProcess {
         roots: &[(&str, &Path)],
         options: Value,
         dynamic_registration: bool,
+        token_refresh: bool,
     ) -> Result<Value, String> {
         let workspace_folders: Vec<_> = roots
             .iter()
@@ -344,7 +370,8 @@ impl LspProcess {
                         "configuration": true,
                         "workspaceFolders": true,
                         "didChangeWatchedFiles": { "dynamicRegistration": dynamic_registration },
-                        "didChangeWorkspaceFolders": { "dynamicRegistration": dynamic_registration }
+                        "didChangeWorkspaceFolders": { "dynamicRegistration": dynamic_registration },
+                        "semanticTokens": { "refreshSupport": token_refresh }
                     },
                     "textDocument": {
                         "publishDiagnostics": { "relatedInformation": true },
@@ -354,9 +381,6 @@ impl LspProcess {
             }),
         )?;
         self.send_notification("initialized", json!({}))?;
-        self.wait_for_notification_where("window/logMessage", |params| {
-            params.get("message").and_then(Value::as_str) == Some(READY_MESSAGE)
-        })?;
         Ok(result)
     }
 

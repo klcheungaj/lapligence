@@ -109,6 +109,24 @@ positional words and bindings come from the capture in
   and `import pk::x` is `namespace`, and `x` has the type of what it imports
   (ST-12, ST-13, ST-14, ST-19). Definition requests on either name reach the
   package or member declaration.
+- **ST-52** The names in the width of a size cast (6.24.1: "If the casting
+  type is a constant expression with a positive integral value, the
+  expression in parentheses shall be padded or truncated to the size
+  specified") keep their types in both paths, and definition reaches the
+  declaration the cast's scope sees (a block-local name shadows the
+  module's). Slang evaluates the width and keeps no expression for it, so
+  the capture looks its names up again in the scope of the cast
+  (`bindSizeCastNames` in `src/wrapper/slang_c_api.cpp`). Fixture:
+  `tests/fixtures/semantic_tokens/size_casts.sv`.
+
+  ```systemverilog
+  localparam int W = 16, K = 8;
+  assign y = (W - K)'(a);   // W and K: variable + readonly
+  always_comb begin : blk
+    localparam int W = 12;
+    v = W'(a);              // this W is the block's
+  end
+  ```
 
 ## Built-in functions and methods
 
@@ -195,7 +213,8 @@ assign w = `A + `ABC(p, q);                 // `A, `ABC: macro
   methods do not. Names written in the value parameter assignment
   (`Util2#($size(in))`) keep their types (ST-14, ST-17, ST-40); when Slang
   shares the specialization with an earlier equal assignment, they are
-  looked up in the enclosing instance body or generate block. The same holds
+  looked up in the scope of the symbol or statement block that contains the
+  reference, as size cast widths are (ST-52). The same holds
   in a `` `define `` body (ST-64).
 - **ST-66** A delay `#10` or `#1ns` is `operator` and `number` (ST-23). The
   server is a document-color provider (`colorProvider`) and answers every
@@ -231,6 +250,42 @@ assign w = `A + `ABC(p, q);                 // `A, `ABC: macro
   a top and none of their tokens enter the buffer's stream
   (`src/bin/llg_ls/features/package_context.rs`). A package is a design-wide
   name (3.13 b), unlike a macro (ST-25).
+- **ST-50** A stream depends on other files only through what a commit
+  holds: the committed snapshot for an unopened file, and the root's
+  `[compile] defines` plus the committed include and package context for an
+  open buffer. When a commit changes what a stream served since the previous
+  commit was computed from (the defines, an include or package unit text, the
+  include directories, or a replaced snapshot), the server sends
+  `workspace/semanticTokens/refresh` to a client that advertises
+  `workspace.semanticTokens.refreshSupport`, so the editor re-requests its
+  visible streams. A client asks for tokens as soon as it opens a document,
+  usually before the first analysis commits (an editor restoring its open
+  files); without the refresh the package items of that first stream stay
+  uncolored until the next edit. A commit that leaves those inputs equal
+  sends nothing (`ServedTokenInputs` in
+  `src/bin/llg_ls/lsp/handlers/state.rs`).
+- **ST-51** A root without `llg.toml` resolves packages from every file the
+  default discovery finds (the root directory, recursive `.v`/`.sv`), in
+  both paths, whichever of the files is open. The fixture is an anonymised
+  user report (`tests/fixtures/semantic_tokens/pkg_example_top.sv` and
+  `pkg_example_pkg.sv`): a header import of a package in another file, with
+  `` `default_nettype none ``, an `` `ifndef ``-guarded macro used as a
+  delay, `` `ifdef ``-guarded ports and nets and an instance of an unknown
+  module.
+
+  ```systemverilog
+  `default_nettype none
+  module ex_top
+      import ex_pkg::*;   // ex_pkg is declared in pkg_example_pkg.sv
+  (
+      input wire clk,
+  `ifndef EX_NARROW
+      input wire [3:0] i_lane1,
+  `endif
+      output wire busy
+  );
+      mode_t mode = IDLE; // type, enumMember + readonly
+  ```
 
 ## Client mappings (VS Code)
 

@@ -2291,30 +2291,27 @@ gaps below remain.
 ### Symptom
 
 - Attribute names (`(* keep *)`) get no token.
-- A name in a class specialization's value assignment (`C#(n)::f()`) whose
-  specialization Slang shares with an earlier equal assignment is looked up
-  in the enclosing instance body or generate block, not in the statement
-  block or class scope that wrote it, so a block-local or class-scope name
-  there stays unresolved and gets no token (ST-65).
 - An open buffer requested before its root's first analysis commits has no
-  include context, so header macros are unknown there until the next request
-  after the commit (the server sends no `workspace/semanticTokens/refresh`).
+  include context, so header macros are unknown there; a client without
+  `semanticTokens.refreshSupport` keeps that stream until its next request
+  (clients with it get a refresh, ST-50).
 
 ### Cause
 
 The capture (`LexicalCapture` in `src/wrapper/slang_c_api.cpp`) gives
-attribute names no kind. Slang keeps only one parameter initializer per
-specialization and the semantic capture tracks no statement or class scope
-for its fallback lookup. The isolated parse reads the include context of the
+attribute names no kind. The isolated parse reads the include context of the
 committed analysis only.
 
 ### Intended direction
 
-Give attribute names a decorator kind; track the innermost lookup scope in
-the semantic capture; send a semantic-token refresh after a commit that
-changes an open buffer's include context.
+Give attribute names a decorator kind.
 
 ### Reproduce
+
+Request semantic tokens for a file with `(* keep *) logic a;`: the stream
+has no token at `keep`.
+
+## Reproduce
 
 Run `llg_ls --dump-tokens` on a file with `` `define ADD(a, b) ((a) + (b)) ``:
 `a` and `b` in the definition are `macro`.
@@ -2366,9 +2363,10 @@ method, and a named sequence referenced by an assertion.
 
 ## Open-buffer token parse sees other files through packages only (llg_ls)
 
-**Status:** partially fixed by LS-PKG. Package items used through any import
-form or `pkg::name` resolve in both serving paths, and import item names are
-references ([token requirements](semantic_tokens.md));
+**Status:** partially fixed by LS-PKG and LS-PKG-2. Package items used through
+any import form or `pkg::name` resolve in both serving paths, import item names
+are references, and a stream served before a context change is refreshed
+([token requirements](semantic_tokens.md));
 the gaps below remain in the open-buffer path only.
 
 ### Symptom
@@ -2381,10 +2379,9 @@ the gaps below remain in the open-buffer path only.
   project file is unknown in the open-buffer stream: an interface port type
   `ifc_x bus` gets no token (the project stream has `interface`). Unknown
   module instances are black boxes in both paths.
-- An open buffer requested before its root's first analysis commits has no
-  package context, and a package file edit reaches an open buffer's stream
-  only on its next request after the commit (no
-  `workspace/semanticTokens/refresh` is sent).
+- A client without `workspace.semanticTokens.refreshSupport` keeps a stream
+  served before a context change (the first analysis, a package file edit)
+  until its next request; clients with it are refreshed (ST-50).
 
 ### Cause
 

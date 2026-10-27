@@ -60,6 +60,10 @@ module mac_top(input logic clk);
     #10 cnt = 1;
     #1ns cnt = 2;
   end
+  initial begin : blk
+    localparam int BL = 4;
+    cnt = Util2#(BL)::width();
+  end
 endmodule
 module mac_other;
   int hits;

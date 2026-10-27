@@ -22,7 +22,8 @@ once, in the library (`llg::config`), and both binaries use it.
   "path": … }] } }`). `llg_ls --dump-tokens <PATH>` uses the same loader: the
   `llg.toml` of the directory (or of the nearest ancestor of the file) given.
   A missing file uses safe defaults (root as the sole source directory,
-  recursive `.v`/`.sv`, built-in excludes). The server watches the file and any
+  recursive `.v`/`.sv`, built-in excludes), so a package declared in any
+  discovered file resolves in every other one, open or not. The server watches the file and any
   parsed-config change hot-reloads the root, with no restart.
 - Relative paths inside the file resolve from the directory containing it;
   absolute paths are accepted. Program names (`build.cc`, `build.cmake`,
@@ -495,7 +496,11 @@ the last committed analysis, so its macros match the project analysis; an
 include the buffer has newly gained resolves after the next analysis commits.
 The committed project files that declare the packages the buffer names
 (transitively) join that compile as library units, so imported and
-`pkg::name` items resolve as in the project analysis.
+`pkg::name` items resolve as in the project analysis. A stream served before
+a commit that changes these inputs (the first analysis, a package or header
+edit, a `[compile] defines` reload) is followed by
+`workspace/semanticTokens/refresh` when the client supports it, so the editor
+re-requests it ([ST-50](semantic_tokens.md#serving-paths)).
 
 Config reloads are bounded independently of the analysis budgets: at most
 `MAX_CONFIG_BYTES` (1 MiB) plus one byte is read from `llg.toml`. Oversized and

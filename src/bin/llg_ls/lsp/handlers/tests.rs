@@ -77,6 +77,7 @@ fn empty_backend_state() -> BackendState {
         next_generation: 0,
         discovery: Default::default(),
         client_order: Default::default(),
+        semantic_tokens_refresh: false,
     }
 }
 
@@ -697,6 +698,7 @@ fn oversized_compile_job_publishes_limit_and_retains_last_good_snapshot() {
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
+            served_tokens: Default::default(),
         },
     );
     let state = Arc::new(Mutex::new(BackendState {
@@ -716,6 +718,7 @@ fn oversized_compile_job_publishes_limit_and_retains_last_good_snapshot() {
         next_generation: 0,
         discovery: Default::default(),
         client_order: Default::default(),
+        semantic_tokens_refresh: false,
     }));
     let job = RootJob {
         key: root.clone(),
@@ -785,6 +788,7 @@ fn open_token_freshness_barrier_rejects_stale_revision_before_admission() {
         next_generation: 0,
         discovery: Default::default(),
         client_order: Default::default(),
+        semantic_tokens_refresh: false,
     }));
     let registry = Arc::new(OpenTokenFlightRegistry::new());
 
@@ -1124,6 +1128,7 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
+            served_tokens: Default::default(),
         },
     );
     let state = Arc::new(Mutex::new(BackendState {
@@ -1143,6 +1148,7 @@ fn commit_job_publishes_fileless_diagnostics_on_an_open_compiled_file() {
         next_generation: 0,
         discovery: Default::default(),
         client_order: Default::default(),
+        semantic_tokens_refresh: false,
     }));
     let mut analysis = features::empty_analysis();
     analysis.diagnostics.push(Diag {
@@ -1232,6 +1238,7 @@ fn commit_job_serves_features_from_partial_analyses() {
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
+            served_tokens: Default::default(),
         },
     );
     let state = Arc::new(Mutex::new(BackendState {
@@ -1251,6 +1258,7 @@ fn commit_job_serves_features_from_partial_analyses() {
         next_generation: 0,
         discovery: Default::default(),
         client_order: Default::default(),
+        semantic_tokens_refresh: false,
     }));
     let commit = |generation: u64, analysis: Option<Analysis>| {
         state
@@ -1391,6 +1399,7 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
+            served_tokens: Default::default(),
         },
     );
     let state = Arc::new(Mutex::new(BackendState {
@@ -1411,6 +1420,7 @@ fn commit_job_publishes_closed_files_and_suppresses_unchanged_payloads() {
         next_generation: 0,
         discovery: Default::default(),
         client_order: Default::default(),
+        semantic_tokens_refresh: false,
     }));
 
     let files = vec![
@@ -2200,6 +2210,7 @@ fn watcher_options_cover_config_sources_and_include_deps() {
         next_generation: 0,
         discovery: Default::default(),
         client_order: Default::default(),
+        semantic_tokens_refresh: false,
     };
     state.roots.insert(
         root.clone(),
@@ -2219,6 +2230,7 @@ fn watcher_options_cover_config_sources_and_include_deps() {
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
+            served_tokens: Default::default(),
         },
     );
     let options = watcher_options_from_state(&state);
@@ -2264,6 +2276,7 @@ fn reload_keeps_last_valid_config_on_malformed_reload() {
         next_generation: 0,
         discovery: Default::default(),
         client_order: Default::default(),
+        semantic_tokens_refresh: false,
     };
     state.roots.insert(
         root.clone(),
@@ -2285,6 +2298,7 @@ fn reload_keeps_last_valid_config_on_malformed_reload() {
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
+            served_tokens: Default::default(),
         },
     );
     // A malformed reload must retain the last-valid config.
@@ -2389,6 +2403,7 @@ fn dep_dependents_maps_every_dependent_root() {
         next_generation: 0,
         discovery: Default::default(),
         client_order: Default::default(),
+        semantic_tokens_refresh: false,
     };
     state.roots.insert(
         root_a.clone(),
@@ -2408,6 +2423,7 @@ fn dep_dependents_maps_every_dependent_root() {
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
+            served_tokens: Default::default(),
         },
     );
     state.roots.insert(
@@ -2428,6 +2444,7 @@ fn dep_dependents_maps_every_dependent_root() {
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
+            served_tokens: Default::default(),
         },
     );
     rebuild_dep_dependents(&mut state);
@@ -2595,6 +2612,7 @@ fn two_root_state_with_shared_file(
         next_generation: 0,
         discovery: Default::default(),
         client_order: Default::default(),
+        semantic_tokens_refresh: false,
     };
     state.roots.insert(
         root_a.clone(),
@@ -2614,6 +2632,7 @@ fn two_root_state_with_shared_file(
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
+            served_tokens: Default::default(),
         },
     );
     state.roots.insert(
@@ -2634,6 +2653,7 @@ fn two_root_state_with_shared_file(
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
+            served_tokens: Default::default(),
         },
     );
     rebuild_dep_dependents(&mut state);
@@ -2803,6 +2823,7 @@ fn single_root_state(root: &Path, discovered: Vec<PathBuf>) -> BackendState {
             pending_parent_id: None,
             scheduler: SchedulerState::default(),
             analysis_epoch: 0,
+            served_tokens: Default::default(),
         },
     );
     state
@@ -3196,4 +3217,86 @@ fn a_job_of_a_replaced_root_does_not_release_the_new_roots_slot() {
         &root,
         replacement_generation
     ));
+}
+
+/// A commit asks for a semantic-token refresh only when a stream served
+/// since the previous commit may differ: an isolated parse whose defines or
+/// include context (compared by text, as every commit snapshots anew) changed,
+/// or a project stream whose snapshot was replaced.
+#[test]
+fn served_token_inputs_refresh_only_when_a_served_stream_may_differ() {
+    use crate::features::{IncludeContext, PackageContext};
+    use state::ServedTokenInputs;
+    let context = |package: &str, header: &str| {
+        Arc::new(IncludeContext {
+            include_dirs: vec!["/r".to_owned()],
+            includes: vec![("/r/h.svh".to_owned(), Arc::new(header.to_owned()))],
+            packages: PackageContext::new(
+                [("/r/p.sv".to_owned(), Arc::new(package.to_owned()))],
+                &[],
+            ),
+        })
+    };
+    let pkg = "package p; localparam X = 1; endpackage\n";
+    let edited = "package p; localparam X = 2; endpackage\n";
+    let defines = vec!["A=1".to_owned()];
+    let mut served = ServedTokenInputs::default();
+    assert!(
+        !served.take_refresh(true, &defines, &context(pkg, "")),
+        "nothing served"
+    );
+
+    served.record_isolated(&defines, &context(pkg, ""));
+    served.record_isolated(&defines, &context(pkg, ""));
+    assert!(
+        !served.take_refresh(true, &defines, &context(pkg, "")),
+        "equal texts in new allocations"
+    );
+    assert!(
+        !served.take_refresh(true, &defines, &context(edited, "")),
+        "the decision clears the record"
+    );
+
+    for (what, new_defines, new_context) in [
+        ("package text", defines.clone(), context(edited, "")),
+        ("header text", defines.clone(), context(pkg, "`define H")),
+        ("defines", Vec::new(), context(pkg, "")),
+        (
+            "first commit",
+            defines.clone(),
+            Arc::new(IncludeContext::default()),
+        ),
+    ] {
+        served.record_isolated(&defines, &context(pkg, ""));
+        assert!(
+            served.take_refresh(true, &new_defines, &new_context),
+            "{what} changed"
+        );
+    }
+    served.record_isolated(&defines, &Arc::new(IncludeContext::default()));
+    assert!(
+        served.take_refresh(false, &defines, &context(pkg, "")),
+        "a stream served before the first commit gains packages"
+    );
+
+    served.record_isolated(&defines, &context(pkg, ""));
+    served.record_isolated(&[], &context(pkg, ""));
+    assert!(
+        served.take_refresh(true, &defines, &context(pkg, "")),
+        "isolated parses with different inputs"
+    );
+
+    served.record_snapshot();
+    assert!(
+        !served.take_refresh(false, &defines, &context(pkg, "")),
+        "the snapshot was kept"
+    );
+    assert!(
+        served.take_refresh(true, &defines, &context(pkg, "")),
+        "the kept record refreshes once the snapshot is replaced"
+    );
+    assert!(
+        !served.take_refresh(true, &defines, &context(pkg, "")),
+        "a refresh clears the record"
+    );
 }
