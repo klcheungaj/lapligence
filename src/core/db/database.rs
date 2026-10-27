@@ -39,12 +39,13 @@ use std::error::Error;
 use std::fmt;
 
 mod types;
+use types::TypedefNames;
 pub use types::{
     AggregateKind, AggregateLayout, AggregateMember, ArrayKind, ArrayMeta,
     AssignmentPatternKeyType, AssociativeIndex, ClassMetadata, DpiImportInfo, DpiOpenType,
     ElaboratedTypeRanges, EnumMember, EnumTypeMetadata, PackedMember, PackedRange, TypeDescriptor,
-    TypeId, TypeShape, ValueCopySemantics, ValueDefaultSemantics, ValueDestroySemantics,
-    ValueEqualitySemantics,
+    TypeId, TypeShape, TypedefRef, ValueCopySemantics, ValueDefaultSemantics,
+    ValueDestroySemantics, ValueEqualitySemantics,
 };
 mod constraints;
 use constraints::{constraint_block_from_slang, constraint_from_slang, ordered_targets};
@@ -322,6 +323,8 @@ pub struct Db {
     mailbox_elements: HashMap<TypeId, TypeDescriptor>,
     /// Ordered enum members keyed by Slang's canonical type identity.
     enum_types: HashMap<TypeId, EnumTypeMetadata>,
+    /// Typedef names of declared types and aggregate members (37.23).
+    typedefs: TypedefNames,
     /// Ordered ranges of multidimensional packed declarations.
     packed_dimensions: HashMap<NodeId, Vec<PackedRange>>,
     /// True for declarations whose complete packed type has a two-state base.
@@ -440,6 +443,7 @@ impl Db {
             packed_pattern_elements: HashMap::new(),
             mailbox_elements: HashMap::new(),
             enum_types: HashMap::new(),
+            typedefs: TypedefNames::default(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
             assertion_local_vars: HashSet::new(),
@@ -525,6 +529,7 @@ impl Db {
             packed_pattern_elements: HashMap::new(),
             mailbox_elements: HashMap::new(),
             enum_types: HashMap::new(),
+            typedefs: TypedefNames::default(),
             packed_dimensions: HashMap::new(),
             two_state_types: HashSet::new(),
             assertion_local_vars: HashSet::new(),
@@ -1101,6 +1106,26 @@ impl Db {
     /// Return the owned declaration-order member table for an enum type.
     pub fn enum_type_metadata(&self, id: TypeId) -> Option<&EnumTypeMetadata> {
         self.enum_types.get(&id)
+    }
+
+    /// The typedef the declared type of `id` names (IEEE 1800-2009 37.23):
+    /// for a variable, net or parameter its declared type, for a typedef
+    /// declaration the typedef it aliases. `None` when no typedef is named.
+    pub fn declared_typedef(&self, id: NodeId) -> Option<TypedefRef> {
+        self.typedefs.declared.get(&id).copied()
+    }
+
+    /// Whether typedef declaration `id` renames a built-in type keyword such
+    /// as `time` (37.23 detail 6); its typedef alias is then that type.
+    pub fn typedef_renames_builtin(&self, id: NodeId) -> bool {
+        self.typedefs.builtin.contains(&id)
+    }
+
+    /// The typedef the declared type of member `member` (declaration order)
+    /// of aggregate type `aggregate` names.
+    pub fn member_typedef(&self, aggregate: TypeId, member: usize) -> Option<TypedefRef> {
+        let member = u32::try_from(member).ok()?;
+        self.typedefs.members.get(&(aggregate, member)).copied()
     }
 
     pub fn packed_dimensions(&self, id: NodeId) -> Option<&[PackedRange]> {

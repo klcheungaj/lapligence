@@ -102,6 +102,13 @@ pub(super) fn decode_type_member(
         type_id: member.type_id,
         bit_offset: member.bit_offset,
         bit_width: member.bit_width,
+        typedef: (member.typedef_id != INVALID_ID)
+            .then(|| {
+                u32::try_from(member.typedef_depth)
+                    .map(|depth| (member.typedef_id, depth))
+                    .map_err(|_| invalid_native("type member typedef depth is too large"))
+            })
+            .transpose()?,
     })
 }
 

@@ -441,6 +441,9 @@ struct Capture {
   // Small nodes retain cheap scans. Only high-fanout parents pay for indexes;
   // positions refer to the authoritative ordered edge vector, never its memory.
   static constexpr size_t kIndexedSemanticEdgeThreshold = 64;
+  // Dimensions walked to reach the typedef of a declared type; a type that
+  // nests more is reported without a typedef name.
+  static constexpr uint64_t kMaxTypedefDimensions = 64;
   static uint64_t semanticEdgeKey(uint32_t role, uint32_t index) {
     return (static_cast<uint64_t>(role) << 32) | index;
   }
@@ -1029,8 +1032,10 @@ struct Capture {
         }
         initializerId = constant(value);
       }
+      const auto [typedefId, typedefDepth] = declaredTypedef(field->getType());
       members.push_back({storeString(output, field->name), type(field->getType()),
-                         field->bitOffset, field->getType().getBitWidth(), initializerId});
+                         field->bitOffset, field->getType().getBitWidth(), initializerId,
+                         typedefId, typedefDepth});
     }
     const uint64_t memberStart = output.type_members.size();
     chargeRecord(output, members.size() * sizeof(LlgSlangTypeMember));
@@ -1044,6 +1049,31 @@ struct Capture {
     result.member_start = memberStart;
     result.member_count = members.size();
     return id;
+  }
+
+  // The typedef a declared type names (IEEE 1800-2009 37.23), as the
+  // semantic node of its declaration and the number of packed and fixed
+  // unpacked dimensions declared above it. Canonical type records drop
+  // typedef names, so typespec names come only from these references.
+  std::pair<uint64_t, uint64_t> declaredTypedef(const Type& declared) {
+    const Type* current = &declared;
+    for (uint64_t depth = 0; depth < kMaxTypedefDimensions; depth++) {
+      if (current->isAlias())
+        return {ensureSemantic(&current->as<TypeAliasType>()), depth};
+      if (current->kind == SymbolKind::PackedArrayType)
+        current = &current->as<PackedArrayType>().elementType;
+      else if (current->kind == SymbolKind::FixedSizeUnpackedArrayType)
+        current = &current->as<FixedSizeUnpackedArrayType>().elementType;
+      else
+        break;
+    }
+    return {LLG_SLANG_INVALID_ID, 0};
+  }
+
+  void typedefEdge(uint64_t source, const Type& declared) {
+    const auto [target, depth] = declaredTypedef(declared);
+    if (target != LLG_SLANG_INVALID_ID)
+      semanticEdge(source, LLG_SLANG_EDGE_TYPEDEF, target, static_cast<uint32_t>(depth));
   }
 
   uint64_t constant(const ConstantValue& value) {
@@ -2484,6 +2514,7 @@ public:
     }
     if constexpr (std::derived_from<T, ValueSymbol>) {
       result.type_id = capture.type(symbol.getType());
+      capture.typedefEdge(id, symbol.getType());
       const Scope* parent = symbol.getParentScope();
       if (parent && parent->asSymbol().kind == SymbolKind::CompilationUnit)
         capture.unitValueDeclarations.emplace(id, symbol.location);
@@ -2526,8 +2557,23 @@ public:
     }
     if constexpr (std::same_as<T, TypeParameterSymbol>)
       result.type_id = capture.type(symbol.getTypeAlias());
-    if constexpr (std::same_as<T, TypeAliasType>)
-      result.type_id = capture.type(symbol.targetType.getType());
+    if constexpr (std::same_as<T, TypeAliasType>) {
+      const Type& target = symbol.targetType.getType();
+      result.type_id = capture.type(target);
+      capture.typedefEdge(id, target);
+      switch (target.kind) {
+        case SymbolKind::ScalarType:
+        case SymbolKind::PredefinedIntegerType:
+        case SymbolKind::FloatingType:
+        case SymbolKind::StringType:
+        case SymbolKind::CHandleType:
+        case SymbolKind::EventType:
+          result.auxiliary |= LLG_SLANG_TYPEDEF_BUILTIN;
+          break;
+        default:
+          break;
+      }
+    }
     if constexpr (std::same_as<T, EnumValueSymbol>)
       result.constant_id = capture.constant(symbol.getValue());
     // An unresolved instance keeps the definition name it was written with

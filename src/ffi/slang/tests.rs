@@ -350,6 +350,8 @@ fn malformed_type_component_and_windows_are_rejected() {
         type_id: 9,
         bit_offset: 0,
         bit_width: 1,
+        typedef_id: INVALID_ID,
+        typedef_depth: 0,
     };
     invalid_native_message(stream(&types(vec![ty], vec![member])));
     let member = RawTypeMember {
@@ -838,7 +840,12 @@ fn sequential_predicate_pattern_edge_decodes_and_unknown_roles_still_fail() {
             .semantic_edges;
         assert_eq!(decoded[0].role, role);
     }
-    let message = invalid_native_message(stream(&tables(edge(42, 2, 0))));
+    let decoded = stream(&tables(edge(42, 1, 0)))
+        .expect("typedef role (ABI 52)")
+        .semantic_edges;
+    assert_eq!(decoded[0].role, SemanticEdgeRole::Typedef);
+    assert_eq!(decoded[0].index, 1);
+    let message = invalid_native_message(stream(&tables(edge(43, 2, 0))));
     assert!(message.contains("unknown role"), "{message}");
 }
 

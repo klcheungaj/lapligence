@@ -777,6 +777,7 @@ mod tests {
         }];
         let members = [TypeMember {
             initializer_constant_id: None,
+            typedef: None,
             name: "data".to_owned(),
             type_id: 1,
             bit_offset: 0,
@@ -824,6 +825,7 @@ mod tests {
         let members = [
             TypeMember {
                 initializer_constant_id: None,
+                typedef: None,
                 name: "leaf".to_owned(),
                 type_id: 0,
                 bit_offset: 0,
@@ -831,6 +833,7 @@ mod tests {
             },
             TypeMember {
                 initializer_constant_id: None,
+                typedef: None,
                 name: "inner".to_owned(),
                 type_id: 1,
                 bit_offset: 0,
@@ -873,6 +876,7 @@ mod tests {
             types.push(aggregate);
             members.push(TypeMember {
                 initializer_constant_id: None,
+                typedef: None,
                 name: format!("level_{index}"),
                 type_id: if index == 0 { 0 } else { id - 1 },
                 bit_offset: 0,
@@ -902,6 +906,7 @@ mod tests {
         let members = [
             TypeMember {
                 initializer_constant_id: None,
+                typedef: None,
                 name: "byte".to_owned(),
                 type_id: 0,
                 bit_offset: 0,
@@ -909,6 +914,7 @@ mod tests {
             },
             TypeMember {
                 initializer_constant_id: None,
+                typedef: None,
                 name: "word".to_owned(),
                 type_id: 1,
                 bit_offset: 0,
@@ -954,6 +960,7 @@ mod tests {
             .zip([0, 1])
             .map(|(name, type_id)| TypeMember {
                 initializer_constant_id: None,
+                typedef: None,
                 name: name.to_owned(),
                 type_id,
                 bit_offset: 0,

@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 48u
+#define LLG_SLANG_ABI_VERSION 52u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -317,6 +317,12 @@ typedef struct {
   uint64_t bit_width;
   /* Snapshot constant ID for an explicit member default, or INVALID_ID. */
   uint64_t initializer_constant_id;
+  /* The typedef the member's declared type names (IEEE 1800-2009 37.23):
+     the semantic node of its typedef declaration, or INVALID_ID, and the
+     number of packed and fixed unpacked dimensions declared above it (0:
+     the member's type is the typedef itself). */
+  uint64_t typedef_id;
+  uint64_t typedef_depth;
 } LlgSlangTypeMember;
 
 /* One owned truth table attached to a user-defined primitive declaration,
@@ -730,6 +736,14 @@ enum {
 enum {
   LLG_SLANG_UNCONNECTED_PULL0 = 1ull << 16,
   LLG_SLANG_UNCONNECTED_PULL1 = 1ull << 17
+};
+
+/* Typedef qualifiers carried in the auxiliary of a TypeAlias node (detail
+ * "TypeAlias"). BUILTIN: the typedef renames a built-in type keyword such as
+ * `time` or `int` (IEEE 1800-2009 37.23 detail 6), so its typedef alias is
+ * that built-in type rather than another typedef. */
+enum {
+  LLG_SLANG_TYPEDEF_BUILTIN = 1ull << 0
 };
 
 /* New-class expression qualifiers carried in auxiliary. */
@@ -1222,7 +1236,13 @@ enum {
   LLG_SLANG_EDGE_DEFAULT_DISABLE = 39,
   /* A randsequence rule's `:=` weight and rand join expression. */
   LLG_SLANG_EDGE_WEIGHT = 40,
-  LLG_SLANG_EDGE_RAND_JOIN = 41
+  LLG_SLANG_EDGE_RAND_JOIN = 41,
+  /* The typedef declaration the declared type of a variable, net,
+   * parameter or typedef names (IEEE 1800-2009 37.23). The index counts the
+   * packed and fixed unpacked dimensions declared above it: 0 when the
+   * declared type is the typedef itself (for a typedef, the typedef it
+   * aliases). At most one edge per declaration. */
+  LLG_SLANG_EDGE_TYPEDEF = 42
 };
 
 typedef struct {

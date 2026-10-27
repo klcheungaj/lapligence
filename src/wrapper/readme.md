@@ -56,6 +56,12 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   the enclosing module/generate scope even when isolated analysis lacks the
   child; labels bind to child ports. Recovery is navigation-only under unchanged
   limits.
+- Type records are canonical. The typedef a declared type names is exported
+  separately: an `LLG_SLANG_EDGE_TYPEDEF` edge from each value declaration and
+  typedef to the typedef declaration (index: dimensions declared above it), the
+  `typedef_id`/`typedef_depth` of each aggregate member and the
+  `LLG_SLANG_TYPEDEF_BUILTIN` auxiliary bit of a typedef renaming a built-in
+  type.
 - Typedef-name and type-parameter lexical kinds come from Slang's resolved
   symbol kind (`TypeAlias`, `TypeParameter`); value parameters keep the
   parameter kind. Cast

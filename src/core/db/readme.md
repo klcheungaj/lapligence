@@ -38,6 +38,11 @@ use declaration IDs rather than names. Assignment-pattern nodes also retain thei
 including canonical identity and ranges, for type-key matching after snapshot
 destruction. Each `std::mailbox #(T)` specialization retains the descriptor of
 its `T`, resolved in the specializing scope, keyed by the class type identity.
+Type records are canonical and carry no typedef names; `Db::declared_typedef`
+(variables, nets, parameters and typedefs, from `LLG_SLANG_EDGE_TYPEDEF`),
+`Db::member_typedef` (aggregate members) and `Db::typedef_renames_builtin`
+keep the typedef each declared type names, with the number of dimensions
+declared above it, for VPI typespec names (IEEE 1800-2009 37.23).
 Constrained randomization (IEEE 1800-2009 clause 18) is captured as typed
 data: `NodeKind::ConstraintBlock` (qualifiers and the root constraint) and
 `NodeKind::Constraint` (list, expression, implication, if-else, solve-before,
