@@ -2290,24 +2290,29 @@ gaps below remain.
 
 ### Symptom
 
-- Macro formal arguments inside `` `define `` are `macro`, not `parameter`
-  (the C/C++ grammar analogue), and attribute names (`(* keep *)`) get no
-  token.
+- Attribute names (`(* keep *)`) get no token.
+- A name in a class specialization's value assignment (`C#(n)::f()`) whose
+  specialization Slang shares with an earlier equal assignment is looked up
+  in the enclosing instance body or generate block, not in the statement
+  block or class scope that wrote it, so a block-local or class-scope name
+  there stays unresolved and gets no token (ST-65).
 - An open buffer requested before its root's first analysis commits has no
   include context, so header macros are unknown there until the next request
   after the commit (the server sends no `workspace/semanticTokens/refresh`).
 
 ### Cause
 
-The capture (`LexicalCapture` in `src/wrapper/slang_c_api.cpp`) keeps the
-whole `` `define `` body as directive tokens without a formal-argument role.
-The isolated parse reads the include context of the committed analysis only.
+The capture (`LexicalCapture` in `src/wrapper/slang_c_api.cpp`) gives
+attribute names no kind. Slang keeps only one parameter initializer per
+specialization and the semantic capture tracks no statement or class scope
+for its fallback lookup. The isolated parse reads the include context of the
+committed analysis only.
 
 ### Intended direction
 
-Give formal arguments a parameter kind in the capture, attribute names a
-decorator kind; send a semantic-token
-refresh after a commit that changes an open buffer's include context.
+Give attribute names a decorator kind; track the innermost lookup scope in
+the semantic capture; send a semantic-token refresh after a commit that
+changes an open buffer's include context.
 
 ### Reproduce
 

@@ -144,6 +144,71 @@ language provides, as rust-analyzer marks the standard library.
   resolve (`ghost.size()`) gets no token (ST-22): only the receiver's type
   says whether the name is built in.
 
+## Macros, directives, class scope and delays
+
+Stock VS Code gives `macro` the scope `entity.name.function.preprocessor`
+(`tokenClassificationRegistry.ts`: `registerTokenType('macro', ...,
+[['entity.name.function.preprocessor']])`), which Dark+ and Light+ color
+exactly like `keyword` (`dark_vs.json`: `#569cd6` for both,
+`light_vs.json`: `#0000ff` for both), so a macro name looks like `wire` or
+`reg` while the directive word keeps the control-flow color (CL-02). The
+rules below are checked over `tests/fixtures/semantic_tokens/macros_and_class_scope.sv`.
+
+```systemverilog
+`define A 32                                // `define: keyword+controlFlow; A: macro+declaration
+`define ABC(x,y) ((x)+(y))                  // x, y: parameter (+declaration in the formal list)
+assign w = `A + `ABC(p, q);                 // `A, `ABC: macro
+`default_nettype none                       // none: keyword+primitive
+`ifdef XXX                                  // XXX: macro (also `ifndef, `elsif, `undef)
+`define WR(v) Util2#($size(v))::write_dr(v) // Util2: class; write_dr: function+static
+```
+
+- **ST-60** The name a `` `define `` declares is `macro` + `declaration` and
+  a use site `` `A `` is `macro` (ST-21); no client mapping changes their
+  color.
+- **ST-61** The net type operand of `` `default_nettype `` (22.8) is
+  `keyword` + `primitive` like `wire` or `logic`, `none` included; only the
+  directive word is `controlFlow`.
+- **ST-62** The macro name operand of `` `ifdef ``, `` `ifndef ``,
+  `` `elsif `` (22.6) and `` `undef `` (22.5.2) is `macro`, not a keyword.
+- **ST-63** A formal argument of a `` `define `` (22.5.1) is `parameter`, as
+  clangd and rust-analyzer send the parameters of a function
+  (`HighlightingKind::Parameter` → `"parameter"`): `declaration` at its name
+  in the formal list, and no modifier at every body token that spells it. A
+  body name that spells no formal is not a parameter (ST-64).
+- **ST-64** The body (replacement text) of a `` `define `` is highlighted
+  like source: keywords keep the classes of ST-02 to ST-09, and numbers,
+  strings, operators, system names (ST-40) and macro usages (ST-21) keep
+  their types. Slang keeps, for every expanded token, the body location it
+  was copied from; each body name takes the type and modifiers that the
+  macro's expansions give the name at that location (ST-10 to ST-20, ST-65).
+  When the expansions disagree on the type or role, or the macro is never
+  expanded in the compiled source, the name is unresolved (ST-22) and gets
+  no token. Body names are text of the macro, not references of the design:
+  they bind no navigation target and are not indexed, so references and a
+  rename of the design name leave the `` `define `` unchanged.
+- **ST-65** In a class-scope name `C::f()`, `C#(...)::f()`, `C#(...)::T` and
+  nested `C::Inner::f()` (8.23, 8.25.1), every class qualifier is `class`,
+  `f` is `function` (ST-19) and `T` keeps its type (ST-12). A class method
+  declared `static` (8.10) adds `static` at its declaration and every
+  reference, as clangd sends a static method (`function` + `static`); other
+  methods do not. Names written in the value parameter assignment
+  (`Util2#($size(in))`) keep their types (ST-14, ST-17, ST-40); when Slang
+  shares the specialization with an earlier equal assignment, they are
+  looked up in the enclosing instance body or generate block. The same holds
+  in a `` `define `` body (ST-64).
+- **ST-66** A delay `#10` or `#1ns` is `operator` and `number` (ST-23). The
+  server is a document-color provider (`colorProvider`) and answers every
+  `textDocument/documentColor` with an empty list. VS Code shows its default
+  color decorators (a color picker beside `#10`, read as a hex color) only
+  when no provider answers with an array
+  (`src/vs/editor/contrib/colorPicker/browser/color.ts`, `_findColorData`:
+  `if (validDocumentColorProviderFound) { return colorData; }`, where a
+  provider counts when `Array.isArray(documentColors)`, and the default
+  provider runs only after that, with `editor.defaultColorDecorators` at
+  its default `"auto"`). A client that sets
+  `"editor.defaultColorDecorators": "always"` still sees them.
+
 ## Serving paths
 
 - **ST-24** The project stream (committed analysis of an unopened file) and
@@ -169,10 +234,9 @@ language provides, as rust-analyzer marks the standard library.
 
 ## Client mappings (VS Code)
 
-VS Code gives `keyword` the default scope `keyword.control` and `macro`
-`entity.name.function.preprocessor`
+VS Code gives `keyword` the default scope `keyword.control`
 (`src/vs/platform/theme/common/tokenClassificationRegistry.ts`), and no
-server-sent type or modifier changes those defaults, so the client extension
+server-sent type or modifier changes that default, so the client extension
 contributes `semanticTokenScopes` per Verilog and SystemVerilog language id.
 rust-analyzer's extension makes the same `keyword` and `keyword.controlFlow`
 contribution for Rust.
@@ -181,8 +245,9 @@ contribution for Rust.
   the keyword color (Dark+ `#569CD6`).
 - **CL-02** `keyword.controlFlow` maps to `keyword.control.<lang>` (Dark+
   `#C586C0`); a selector with the modifier outscores the bare type.
-- **CL-03** `macro` maps to `keyword.control.<lang>`, so macro use sites and
-  defined names look like directives (`#C586C0`).
+- **CL-03** (withdrawn 2026-10-27) No `macro` mapping: the stock `macro`
+  scope already takes the keyword color (ST-60). A client that added
+  `macro` → `keyword.control.<lang>` removes it.
 - **CL-04** Optionally, `keyword.typeDefinition`, `keyword.direction` and
   `keyword.primitive` map to `storage.type.<lang>` / `storage.modifier.<lang>`
   (also `#569CD6` in Dark+).
@@ -195,8 +260,7 @@ extension can set the colors in `settings.json`:
 "editor.semanticTokenColorCustomizations": {
   "rules": {
     "keyword:systemverilog": "#569cd6",
-    "keyword.controlFlow:systemverilog": "#c586c0",
-    "macro:systemverilog": "#c586c0"
+    "keyword.controlFlow:systemverilog": "#c586c0"
   }
 }
 ```
