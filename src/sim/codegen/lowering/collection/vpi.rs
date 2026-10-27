@@ -811,6 +811,14 @@ impl Codegen<'_> {
 
     /// Whether task or function `id` belongs to an instance or generate
     /// scope (not a class or package), so its full name is hierarchical.
+    /// The runtime activation identity `disable` uses for a named block,
+    /// task or function, when it has one.
+    fn vpi_activation(&self, id: NodeId) -> Option<(u32, u32)> {
+        self.activation_target(id)
+            .ok()
+            .map(|target| (target.declaration(), target.instance()))
+    }
+
     fn vpi_declared_in_instance(&self, id: NodeId) -> bool {
         let mut current = self.node(id).parent;
         while let Some(parent) = current {
@@ -987,6 +995,7 @@ impl Codegen<'_> {
                         } else {
                             IrVpiObjectKind::NamedBegin
                         },
+                        activation: self.vpi_activation(id),
                         ..IrVpiObject::default()
                     }));
                 }
@@ -1268,6 +1277,7 @@ impl Codegen<'_> {
                         width: ret.as_ref().and_then(|ret| ret.width).unwrap_or(0),
                         signed: ret.as_ref().is_some_and(|ret| ret.signed),
                         qualifier: *automatic,
+                        activation: self.vpi_activation(id),
                         ..IrVpiObject::default()
                     }));
                 }
