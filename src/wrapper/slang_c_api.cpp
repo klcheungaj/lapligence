@@ -3030,7 +3030,9 @@ public:
         captureProduction(id, symbol);
     }
     else {
+      const Symbol* outer = std::exchange(lookupOwner, &symbol);
       visitDefault(symbol);
+      lookupOwner = outer;
     }
     if constexpr (std::same_as<T, TimingPathSymbol>) {
       if (!capture.declarationOnly)
@@ -3376,6 +3378,20 @@ public:
     capture.replaceChildRoles(id, LLG_SLANG_EDGE_OPERAND);
   }
 
+  // The statements of a block with its own scope (named, or declaring
+  // variables) look names up in that scope: the visitor reaches them through
+  // the block statement, not through its block symbol.
+  template<std::derived_from<Statement> T>
+  void visitStatementChildren(const T& statement) {
+    const Symbol* outer = lookupOwner;
+    if constexpr (std::same_as<T, BlockStatement>) {
+      if (statement.blockSymbol)
+        lookupOwner = statement.blockSymbol;
+    }
+    visitDefault(statement);
+    lookupOwner = outer;
+  }
+
   template<std::derived_from<Statement> T>
   void handle(const T& statement) {
     if (capture.declarationOnly) {
@@ -3390,7 +3406,7 @@ public:
       bindStatementNames(statement);
       if constexpr (std::same_as<T, InvalidStatement>)
         bindInvalidSubtree(statement.child);
-      visitDefault(statement);
+      visitStatementChildren(statement);
       return;
     }
     const uint64_t id = capture.ensureSemantic(&statement);
@@ -3535,7 +3551,7 @@ public:
           handle(*dimension.loopVar);
       }
     }
-    visitDefault(statement);
+    visitStatementChildren(statement);
     if constexpr (std::same_as<T, ConcurrentAssertionStatement>) {
       if (const Expression* disable = defaultDisable(statement))
         disable->visit(*this);
@@ -3801,6 +3817,28 @@ private:
                                    : capture.ensureSemantic(&symbol);
   }
 
+  // The width of a size cast `w'(x)` (IEEE 1800-2009 6.24.1) is a constant
+  // expression that Slang binds, evaluates and discards, so no expression
+  // carries its names; they are looked up again in the context of the
+  // symbol or block being visited. A type cast is bound by
+  // captureTypeNameReference instead: its target is a data type or names an
+  // alias, which a size cast's integral result type never is.
+  void bindSizeCastNames(const ConversionExpression& expression) {
+    if (!lookupOwner || expression.isImplicit() || !expression.type ||
+        expression.type->isAlias() ||
+        expression.syntax->kind != syntax::SyntaxKind::CastExpression)
+      return;
+    const auto& left = *expression.syntax->template as<syntax::CastExpressionSyntax>().left;
+    if (syntax::DataTypeSyntax::isKind(left.kind))
+      return;
+    if (const Scope* scope = lookupOwner->as_if<Scope>()) {
+      captureNames(left, ASTContext(*scope, LookupLocation::max));
+    }
+    else if (const Scope* scope = lookupOwner->getParentScope()) {
+      captureNames(left, ASTContext(*scope, LookupLocation::after(*lookupOwner)));
+    }
+  }
+
   // Declaration-only capture keeps no expression nodes, so the token of each
   // resolved value reference is bound here instead; full capture derives the
   // same bindings from its reference nodes. Also used inside invalid subtrees,
@@ -3906,6 +3944,9 @@ private:
     }
     else if constexpr (std::same_as<T, HierarchicalValueExpression>) {
       bindHierarchicalPath(*expression.syntax, expression.ref);
+    }
+    else if constexpr (std::same_as<T, ConversionExpression>) {
+      bindSizeCastNames(expression);
     }
     else if constexpr (std::same_as<T, ArbitrarySymbolExpression>) {
       const Symbol& target = *expression.symbol;
@@ -4790,6 +4831,10 @@ private:
   std::unordered_set<const syntax::SyntaxNode*> sourceBodies;
   std::unordered_set<const syntax::SyntaxNode*> sourceGenerateBlocks;
   std::vector<const UninstantiatedDefSymbol*> sourceConnections;
+  // The innermost symbol or statement block whose members, statements and
+  // expressions are being visited: the lookup context of the names Slang
+  // binds and then discards (bindSizeCastNames).
+  const Symbol* lookupOwner = nullptr;
 
   uint64_t captureReferenceTarget(const Symbol& symbol) {
     const uint64_t id = capture.ensureSemantic(&symbol);

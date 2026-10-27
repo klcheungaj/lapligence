@@ -623,3 +623,89 @@ fn st_40_to_st_43_builtin_functions_and_methods_in_both_serving_paths() {
     }
     client.shutdown();
 }
+
+/// Size casts of ST-52, with a package width and a block-local width that
+/// shadows the module's.
+const SIZE_CAST_SOURCE: &str = include_str!("../fixtures/semantic_tokens/size_casts.sv");
+
+const SIZE_CAST_CHECKS: &[Check] = &[
+    ("ST-52", "SC_W - SC_K)'", 0, 0, "variable", RO),
+    ("ST-52", "SC_W - SC_K)'", 0, 7, "variable", RO),
+    ("ST-52", "SC_W'(a)", 0, 0, "variable", RO),
+    ("ST-52", "sc_t'(a)", 0, 0, "type", NONE),
+    ("ST-52", "sc_pkg::SC_P'", 0, 0, "namespace", NONE),
+    ("ST-52", "sc_pkg::SC_P'", 0, 8, "variable", RO),
+    ("ST-52", "SC_W'(a)", 1, 0, "variable", RO),
+    ("ST-52", "SC_P + SC_K", 0, 0, "variable", RO),
+    ("ST-52", "SC_P + SC_K", 0, 7, "variable", RO),
+];
+
+/// ST-52 in both serving paths: every name of a size cast width has its
+/// token, and definition reaches the declaration the cast's scope sees (the
+/// block-local `SC_W` inside `blk`, the package's `SC_P`).
+#[test]
+fn st_52_size_cast_widths_bind_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("st_size_casts.sv");
+    fs::write(&path, SIZE_CAST_SOURCE).expect("write size cast fixture");
+    let uri = file_uri(&path);
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+    let mut streams = Vec::new();
+    for opened in [false, true] {
+        if opened {
+            client
+                .open(&path, SIZE_CAST_SOURCE)
+                .expect("open size cast buffer");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("size cast semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        let label = if opened { "open buffer" } else { "project" };
+        for check in SIZE_CAST_CHECKS {
+            assert_check(&rows, SIZE_CAST_SOURCE, check, label);
+        }
+        for (needle, occurrence, offset, declaration) in [
+            ("SC_W - SC_K)'", 0, 0, "SC_W = 16"),
+            ("SC_W - SC_K)'", 0, 7, "SC_K = 8"),
+            ("SC_W'(a)", 0, 0, "SC_W = 16"),
+            ("SC_W'(a)", 1, 0, "SC_W = 12"),
+            ("sc_pkg::SC_P'", 0, 8, "SC_P = 4"),
+            ("SC_P + SC_K", 0, 0, "SC_P = 4"),
+        ] {
+            let (line, col) = position_of(SIZE_CAST_SOURCE, needle, occurrence);
+            let response = client
+                .request(
+                    "textDocument/definition",
+                    json!({
+                        "textDocument": { "uri": uri },
+                        "position": { "line": line, "character": col + offset }
+                    }),
+                )
+                .expect("size cast definition response");
+            let what = format!("ST-52 {label} {needle:?}#{occurrence}+{offset}");
+            let (target, start) = single_location(&response, &what);
+            let expected = position_of(SIZE_CAST_SOURCE, declaration, 0);
+            assert_eq!(target, uri, "{what}");
+            assert_eq!(
+                (start["line"].as_u64(), start["character"].as_u64()),
+                (Some(expected.0), Some(expected.1)),
+                "{what}: {response}"
+            );
+        }
+        streams.push(result["data"].clone());
+    }
+    assert_eq!(streams[0], streams[1], "ST-24: serving paths differ");
+    client.shutdown();
+}

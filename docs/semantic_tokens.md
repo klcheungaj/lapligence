@@ -109,6 +109,24 @@ positional words and bindings come from the capture in
   and `import pk::x` is `namespace`, and `x` has the type of what it imports
   (ST-12, ST-13, ST-14, ST-19). Definition requests on either name reach the
   package or member declaration.
+- **ST-52** The names in the width of a size cast (6.24.1: "If the casting
+  type is a constant expression with a positive integral value, the
+  expression in parentheses shall be padded or truncated to the size
+  specified") keep their types in both paths, and definition reaches the
+  declaration the cast's scope sees (a block-local name shadows the
+  module's). Slang evaluates the width and keeps no expression for it, so
+  the capture looks its names up again in the scope of the cast
+  (`bindSizeCastNames` in `src/wrapper/slang_c_api.cpp`). Fixture:
+  `tests/fixtures/semantic_tokens/size_casts.sv`.
+
+  ```systemverilog
+  localparam int W = 16, K = 8;
+  assign y = (W - K)'(a);   // W and K: variable + readonly
+  always_comb begin : blk
+    localparam int W = 12;
+    v = W'(a);              // this W is the block's
+  end
+  ```
 
 ## Built-in functions and methods
 
