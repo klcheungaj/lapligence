@@ -1,0 +1,7 @@
+vpiStructVar tb.arr[1] size=2
+get element level=3
+put element level=3
+member a = 00000003
+member b = 04
+put tb.arr[1].b level=0
+arr[1].a=3 arr[1].b=5a arr[0].b=02

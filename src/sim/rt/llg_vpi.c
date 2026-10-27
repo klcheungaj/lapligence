@@ -797,6 +797,14 @@ static int is_aggregate_typespec(const llg_vpi_typespec_t* typespec) {
     return typespec && (typespec->type == vpiStructTypespec || typespec->type == vpiUnionTypespec);
 }
 
+/* 37.24 detail 1: an element or member that is a whole unpacked structure
+ * or union has no value even when its storage is a packed image. */
+static int whole_unpacked_aggregate(const llg_vpi_slot_t* slot) {
+    if (slot->kind != SLOT_ELEMENT && slot->kind != SLOT_MEMBER) return 0;
+    const llg_vpi_typespec_t* typespec = value_typespec(slot);
+    return is_aggregate_typespec(typespec) && (typespec->flags & LLG_VPI_TS_UNPACKED);
+}
+
 static vpiHandle make_member(uint32_t row, uint64_t element, uint32_t node_index) {
     const llg_vpi_member_node_t* node = node_at(node_index);
     if (!node) return NULL;
@@ -3465,6 +3473,11 @@ void vpi_get_value(vpiHandle handle, p_vpi_value output) {
     }
     llg_vpi_slot_t* slot = checked_handle(handle, NULL);
     if (!slot) return;
+    if (whole_unpacked_aggregate(slot)) {
+        vpi_error("LLG_VPI_VALUE",
+                  "an entire unpacked structure or union has no value; access its members");
+        return;
+    }
     int type = handle_type(slot);
     llg_vpi_datum_t datum;
     int is_signed = 0;
@@ -3648,6 +3661,11 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
         return NULL;
     }
     llg_vpi_target_t target;
+    if (whole_unpacked_aggregate(slot)) {
+        vpi_error("LLG_VPI_VALUE",
+                  "an entire unpacked structure or union cannot receive a value; write its members");
+        return NULL;
+    }
     if (!handle_target(slot, &target)) {
         vpi_error("LLG_VPI_VALUE", slot->kind == SLOT_ARGUMENT
                       ? "this argument is an expression, not a writable object"

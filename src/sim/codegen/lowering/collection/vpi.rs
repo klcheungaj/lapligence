@@ -724,9 +724,21 @@ impl Codegen<'_> {
                     };
                     let typespec = self.vpi_declared_typespec(&mut typespecs, id);
                     // 37.18: a packed array of structures, unions or enums
-                    // is a vpiPackedArrayVar.
-                    let packed_array = typespec.is_some_and(|typespec| {
-                        typespecs.entries[typespec].kind == IrVpiTypespecKind::PackedArray
+                    // is a vpiPackedArrayVar; an integer atom or time
+                    // declared through a typedef keeps its keyword's kind.
+                    let typed_kind = typespec.and_then(|typespec| {
+                        let kind = typespecs.entries[typespec].kind;
+                        matches!(
+                            kind,
+                            IrVpiTypespecKind::PackedArray
+                                | IrVpiTypespecKind::Int
+                                | IrVpiTypespecKind::Integer
+                                | IrVpiTypespecKind::ShortInt
+                                | IrVpiTypespecKind::LongInt
+                                | IrVpiTypespecKind::Byte
+                                | IrVpiTypespecKind::Time
+                        )
+                        .then(|| typespec_var_kind(kind, 0))
                     });
                     insert(source(IrVpiObject {
                         full_name: self.vpi_full_name(id),
@@ -737,14 +749,12 @@ impl Codegen<'_> {
                         real,
                         net,
                         signal: Some(ir),
-                        var_kind: if packed_array {
-                            IrVpiVarKind::PackedArray
-                        } else {
+                        var_kind: typed_kind.unwrap_or_else(|| {
                             IrVpiVarKind::from_type_kind(
                                 &ty.kind,
                                 self.vpi_packed_dimension_count(id),
                             )
-                        },
+                        }),
                         packed_range: (!real).then(|| self.vpi_packed_range(id, width)).flatten(),
                         net_type: net.then(|| net_type.unwrap_or("vpiWire")),
                         two_state,

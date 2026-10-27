@@ -38,7 +38,8 @@ Each `<ID>_<name>.sv` file is:
    S41-D1 to S41-D8), build it as a shared DPI-C library (the S40 and S41
    cases include `svdpi.h`) and load it with the simulator's DPI library option.
    For S99-D6 the `.c` file is a VPI application (`vpi_user.h`,
-   `vlog_startup_routines`); load it with the simulator's VPI option.
+   `vlog_startup_routines`); load it with the simulator's VPI option. The
+   A19 `.c` files are VPI applications too and include `sv_vpi_user.h`.
    The A12 cases read SDF files (`<ID>_<name>.sdf`, and for A12-D5 and
    A12-D6 a second SDF or a configuration file of the same prefix); run them
    in the directory that holds those files.
@@ -532,6 +533,15 @@ a switch. MOS, CMOS and resistive MOS switches stay unsupported by design.
 | S43-D8 | **`vpi_control(vpiFinish)`** in a callback acts as `$finish` when it returns: it returns 1, no later region of the slot runs (a pending `$strobe` does not print), final procedures run, `cbEndOfSimulation` runs once. A level outside 0-2 is accepted and reports like level 1; `vpiReset` returns 0 with an error. | 38.4 L61983-61995; 20.2 L34124-34126; 38.36.3 L65009-65010 | `S43-D8_control_finish_after_callback` (`.sv` and `.c`) | LRM text for the action; industry-standard behaviour for other levels (llg previously refused them); return values are llg choices. Some simulators end the run inside `vpi_control(vpiFinish)`, so the calling routine does not continue; llg returns to it, since the clause executes `$finish` "upon return of the application routine". Some simulators implement `vpiReset` (the optional `$reset`, Annex D); llg does not. |
 | S43-D9 | **User VPI functions in `$strobe`/`$monitor`** run in the read-only Postponed region: they read and return values; their design writes fail with `vpiError` and change nothing (writing their own result is allowed). | 4.4.2.9 L3212-3214; 38.34 (silent on reporting) | `S43-D9_postponed_systf_read_only` (`.sv` and `.c`) | LRM text for the restriction; the error report is an llg choice. Some simulators let such a function write a design variable; llg follows the clause text, which makes writes in the Postponed region illegal. |
 | S43-D10 | **`vpi_control` from `cbStartOfSimulation`** is honoured when the callback returns: `vpiFinish` ends the run before any process runs (final procedures and `cbEndOfSimulation` at time 0); `vpiStop` reports `$stop` at time 0 and then follows the stop policy (the default continues). | 38.4 L61983-61991; 38.36.3 L65007 | `S43-D10_control_from_start_of_simulation` (`.sv` and `.c`) | industry-standard behaviour (llg previously refused `vpiStop` before the run) |
+
+## VPI typespecs and members (ADV-019)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| A19-D1 | **`vpiStringVal` of an enum** variable or constant reads its value as ASCII, 8 bits per character from the most significant group; it is not the constant's name, which `vpiName` of the constant gives. | 38.15 L62664-62665 | `A19-D1_enum_string_value` (`.sv` and `.c`) | LRM text (37.23 adds no enum rule) |
+| A19-D2 | **Typespec names and aliases.** A typespec reached through a typedef has its name; a built-in or inline type has a NULL name. A typedef of a typedef has a `vpiTypedefAlias` to that typedef; a typedef of a keyword type (`time`, `int`) has one to the unnamed built-in typespec; a typedef of a type written with packed dimensions (`logic [3:0]`) has a NULL `vpiTypedefAlias`. | 37.23 L59170-59174, L59200-59206 | `A19-D2_typedef_alias` (`.sv` and `.c`) | LRM text for typedef chains and `time`; llg choice for other keyword types and for types with dimensions (the text is silent) |
+| A19-D3 | **Elements of unpacked arrays of unpacked structures** are `vpiStructVar` objects: `vpiSize` is the field count and `vpi_get_value`/`vpi_put_value` of the whole element fail with `vpiError`; their members read and write the fields. | 37.17 L58763; 37.24 L59271-59272 | `A19-D3_unpacked_struct_elements` (`.sv` and `.c`) | LRM text for variables, applied to elements by llg (changed: the element used to read and write as one packed vector of its fields) |
+| A19-D4 | **Typespec identity.** Typespecs are one object per described type and name: declarations through one typedef, or written with the same built-in type and ranges, share a typespec (`vpi_compare_objects` 1); a typedef and the same type written inline, or two typedefs of one type, are different objects. | 38.3 L61867-61868 | `A19-D4_typespec_identity` (`.sv` and `.c`) | llg choice (37.23 does not say whether a typespec is one object per type or per declaration) |
 
 ## VPI multichannel descriptors (ADV-020)
 

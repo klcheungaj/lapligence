@@ -2136,8 +2136,21 @@ with no error status, as for a name that denotes nothing (S42-D11):
 
 - objects outside the generated catalog: sparse fixed arrays (stored in a keyed
   container), dynamic arrays, queues, associative arrays, strings, class
-  objects and their properties, structure and union members (`vpiMember`),
-  interface ports and modports, automatic variables;
+  objects and their properties, interface ports and modports, automatic
+  variables;
+- structure and union members that are not exposed: members of structure or
+  union nets, members of a record kept in columns (an unpacked structure
+  whose instances the optimizer split into per-field arrays), unpacked
+  array, string, handle and dynamic members of an unpacked structure, and
+  unpacked structures inside an unpacked union; bit and part selects of a
+  member (`tb.s.f[1]`); `vpiElement` of a `vpiPackedArrayVar`;
+- typespec gaps: properties other than `vpiType`, `vpiName`, `vpiPacked`,
+  `vpiTagged`, `vpiVector`, `vpiArrayType` and the unpacked-aggregate
+  `vpiSize` (for example `vpiSigned` or `vpiSize` of a vector typespec), the
+  `vpiTypedef` iteration of a scope, `vpiIndexTypespec`, class, interface,
+  void and chandle typespecs, typespec member `vpiExpr` defaults, the name of
+  a typedef used as an enum's base type (the base typespec is unnamed), and
+  `vpiPacked` of a tagged union;
 - subarray handles: `vpi_handle_by_multi_index` with fewer indices than the
   array has unpacked dimensions, and bit handles of a `vpiPackedArrayVar`;
 - expression structure: an argument that is not a whole object, a constant

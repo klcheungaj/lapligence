@@ -1,0 +1,6 @@
+tb.c: vpiEnumTypespec name=colors -> vpiEnumTypespec name=primary_colors -> NULL
+tb.t: vpiTimeTypespec name=my_time -> vpiTimeTypespec name=NULL -> NULL
+tb.n: vpiIntTypespec name=count_t -> vpiIntTypespec name=NULL -> NULL
+tb.a: vpiLogicTypespec name=nib_t -> NULL
+tb.b: vpiLogicTypespec name=nib2_t -> vpiLogicTypespec name=nib_t -> NULL
+tb.raw: vpiLogicTypespec name=NULL -> NULL

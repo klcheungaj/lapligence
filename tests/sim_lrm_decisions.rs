@@ -2030,6 +2030,42 @@ fn a20_d4_mcd_close_unopened() {
 }
 
 #[test]
+fn a19_d1_enum_string_value() {
+    run_vpi_decision(
+        "A19-D1_enum_string_value",
+        &["task $d1()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D1_enum_string_value.out"),
+    );
+}
+
+#[test]
+fn a19_d2_typedef_alias() {
+    run_vpi_decision(
+        "A19-D2_typedef_alias",
+        &["task $d2()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D2_typedef_alias.out"),
+    );
+}
+
+#[test]
+fn a19_d3_unpacked_struct_elements() {
+    run_vpi_decision(
+        "A19-D3_unpacked_struct_elements",
+        &["task $d3()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D3_unpacked_struct_elements.out"),
+    );
+}
+
+#[test]
+fn a19_d4_typespec_identity() {
+    run_vpi_decision(
+        "A19-D4_typespec_identity",
+        &["task $d4()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D4_typespec_identity.out"),
+    );
+}
+
+#[test]
 fn s44_d1_covergroup_type_per_declaration() {
     run_decision(
         "S44-D1_covergroup_type_per_declaration",
