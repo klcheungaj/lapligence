@@ -2,10 +2,10 @@
  * sv_vpi_user.h — the SystemVerilog VPI extensions a generated Lapligence
  * model supports: the assertion and coverage subset of IEEE 1800-2009
  * Annex M, the typespec, structure-member and enum-constant objects, with
- * the standard constant values, and the Annex M routine
- * vpi_register_assertion_cb(). It includes vpi_user.h, which
- * already carries the Annex M object types of the catalog (vpiInterface,
- * the SystemVerilog variable types).
+ * the standard constant values, the assertion callback and control
+ * constants, and the Annex M routine vpi_register_assertion_cb(). It
+ * includes vpi_user.h, which already carries the Annex M object types of
+ * the catalog (vpiInterface, the SystemVerilog variable types).
  */
 #ifndef SV_VPI_USER_H
 #define SV_VPI_USER_H
@@ -119,8 +119,44 @@
 #define vpiImmediateCover 695
 #define vpiAssertion 744
 
-/* Assertion properties. */
+/* Assertion properties and relations (39.3.2). The clocking event,
+ * disable condition and property of an assertion are expressions, which
+ * llg does not expose: those relations fail through vpi_chk_error(). */
 #define vpiIsDeferred 657
+#define vpiDisableCondition 689
+#define vpiClockingEvent 690
+#define vpiProperty 718
+#define vpiStartLine 661
+#define vpiColumn 662
+#define vpiEndLine 663
+#define vpiEndColumn 664
+
+/* Assertion control (39.5.1, 39.5.2). Step callbacks are not supported:
+ * vpiAssertionEnableStep fails through vpi_chk_error(). */
+#define vpiAssertionDisable 620
+#define vpiAssertionEnable 621
+#define vpiAssertionReset 622
+#define vpiAssertionKill 623
+#define vpiAssertionEnableStep 624
+#define vpiAssertionDisableStep 625
+#define vpiAssertionClockSteps 626
+#define vpiAssertionSysOn 627
+#define vpiAssertionSysOff 628
+#define vpiAssertionSysKill 632
+#define vpiAssertionSysEnd 629
+#define vpiAssertionSysReset 630
+#define vpiAssertionDisablePassAction 633
+#define vpiAssertionEnablePassAction 634
+#define vpiAssertionDisableFailAction 635
+#define vpiAssertionEnableFailAction 636
+#define vpiAssertionDisableVacuousAction 637
+#define vpiAssertionEnableNonvacuousAction 638
+#define vpiAssertionSysEnablePassAction 639
+#define vpiAssertionSysEnableFailAction 640
+#define vpiAssertionSysDisablePassAction 641
+#define vpiAssertionSysDisableFailAction 642
+#define vpiAssertionSysEnableNonvacuousAction 643
+#define vpiAssertionSysDisableVacuousAction 644
 
 /* Coverage control (40.5.2). */
 #define vpiCoverageStart 750
@@ -159,11 +195,10 @@
 #define SV_COV_OK 1
 #define SV_COV_PARTIAL 2
 
-/* Assertion callbacks (39.4.2). The routine is declared and defined so that
- * applications link; llg does not run assertion callbacks yet, so it returns
- * NULL with a vpi_chk_error() error (LLG_VPI_UNSUPPORTED). */
-/* Assertion callback reasons (Annex M), the `reason` of
- * vpi_register_assertion_cb(). */
+/* Assertion callback reasons (Annex M): the `reason` of
+ * vpi_register_assertion_cb() (39.4.2) and, for the cbAssertionSys*
+ * reasons, of vpi_register_cb() (39.4.1). The step reasons are refused
+ * through vpi_chk_error(): llg has no step callbacks. */
 #define cbAssertionStart 606
 #define cbAssertionSuccess 607
 #define cbAssertionFailure 608

@@ -162,6 +162,11 @@ void llg_deferred_assertion_scoped(int kind, int passed, uint64_t identity,
         return;
     }
     llg_acov_item_t* item = llg_acov_find(identity);
+    // vpiAssertionDisable stops new checks of this item (39.5.2).
+    if (item && (item->control & LLG_ACOV_CTL_OFF)) {
+        llg_frame_release(frame);
+        return;
+    }
     if (silent && !item) {
         llg_frame_release(frame);
         return;
@@ -249,8 +254,8 @@ static void deferred_report_execute(llg_deferred_assertion_report_t* report) {
         return;
     }
     // The check is an attempt with this outcome once its report matures.
-    llg_acov_attempt(report->acov);
-    llg_acov_result(report->acov, report->passed, 0);
+    llg_acov_attempt(report->acov, g.now);
+    llg_acov_result(report->acov, report->passed, 0, g.now);
     if (report->count_only) {
         llg_frame_release(frame);
         return;
@@ -260,6 +265,9 @@ static void deferred_report_execute(llg_deferred_assertion_report_t* report) {
     // Action controls are read when the report executes (SV 20.12).
     int allowed = deferred_action_enabled(report->kind, report->passed, report->label,
                                           report->scope);
+    if (report->acov &&
+        (report->acov->control & (report->passed ? LLG_ACOV_CTL_PASS_OFF : LLG_ACOV_CTL_FAIL_OFF)))
+        allowed = 0;
     if (report->action) {
         if (allowed) {
             g.in_deferred_action = 1;

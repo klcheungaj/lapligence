@@ -2272,6 +2272,33 @@ fn a20_d15_tchk_violation_callback() {
 }
 
 #[test]
+fn a17_d1_attempt_callbacks() {
+    run_vpi_decision(
+        "A17-D1_attempt_callbacks",
+        &["task $d1()"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D1_attempt_callbacks.out"),
+    );
+}
+
+#[test]
+fn a17_d2_control_callbacks() {
+    run_vpi_decision(
+        "A17-D2_control_callbacks",
+        &["task $d2()", "task $d2_step(input integer n)"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D2_control_callbacks.out"),
+    );
+}
+
+#[test]
+fn a17_d3_system_control() {
+    run_vpi_decision(
+        "A17-D3_system_control",
+        &["task $d3()", "task $d3_step(input integer n)"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D3_system_control.out"),
+    );
+}
+
+#[test]
 fn s44_d1_covergroup_type_per_declaration() {
     run_decision(
         "S44-D1_covergroup_type_per_declaration",

@@ -135,15 +135,16 @@ int llg_assertion_endpoint(uint64_t identity, uint32_t index, llg_event_t* event
     return 1;
 }
 
+/* `start` is the time the attempt began (39.4.2 attemptStartTime). */
 static void assertion_result(llg_concurrent_assertion_t* assertion, int success,
-                             int vacuous) {
+                             int vacuous, uint64_t start) {
     int suppressed;
     if (assertion->endpoint_event) {
         if (success && !vacuous) sequence_endpoint_matched(assertion);
         return;
     }
     if (vacuous) assertion_vacuous();
-    llg_acov_result(assertion->acov, success, vacuous);
+    llg_acov_result(assertion->acov, success, vacuous, start);
     if (success) {
         // Cover counts and pass actions represent a hit: every success
         // except a cover-vacuous one, whose implication had no antecedent
@@ -192,11 +193,11 @@ static int assertion_attempt_starts(llg_concurrent_assertion_t* assertion) {
     if (assertion->single_attempt) {
         if (assertion->single_attempt_started) return 0;
         assertion->single_attempt_started = 1;
-        llg_acov_attempt(assertion->acov);
+        llg_acov_attempt(assertion->acov, assertion_event_time());
         return 1;
     }
     if (assertion->kind != LLG_ASSERTION_EXPECT) {
-        llg_acov_attempt(assertion->acov);
+        llg_acov_attempt(assertion->acov, assertion_event_time());
         return 1;
     }
     if (!assertion->expect_active || assertion->expect_started) return 0;
@@ -215,13 +216,15 @@ static uint64_t assertion_root_starts(llg_concurrent_assertion_t* assertion) {
         // count as attempts when the event is evaluated.
         uint64_t starts = assertion->lag_starts;
         assertion->lag_starts = 0;
-        for (uint64_t index = 0; index < starts; index++) llg_acov_attempt(assertion->acov);
+        for (uint64_t index = 0; index < starts; index++)
+            llg_acov_attempt(assertion->acov, assertion_event_time());
         return starts;
     }
     if (!assertion->procedural) return (uint64_t)assertion_attempt_starts(assertion);
     uint64_t starts = assertion->procedural_matured;
     assertion->procedural_matured = 0;
-    for (uint64_t index = 0; index < starts; index++) llg_acov_attempt(assertion->acov);
+    for (uint64_t index = 0; index < starts; index++)
+        llg_acov_attempt(assertion->acov, assertion_event_time());
     return starts;
 }
 
@@ -241,7 +244,7 @@ static int assertion_would_start(const llg_concurrent_assertion_t* assertion) {
 static void procedural_disabled_starts(llg_concurrent_assertion_t* assertion) {
     if (!assertion->procedural) return;
     for (uint64_t index = 0; index < assertion->procedural_matured; index++)
-        llg_acov_disabled_attempt(assertion->acov);
+        llg_acov_disabled_attempt(assertion->acov, g.now);
     assertion->procedural_matured = 0;
     assertion->procedural_disabled_tick = g.now + 1;
 }
@@ -260,8 +263,11 @@ static void end_assertion_attempts(llg_concurrent_assertion_t* assertion, int ki
     // An assertion with future global sampled functions discards the
     // attempts running at this point of its deferred queue (16.9.4).
     if (assertion->future_clock && future_assertion_defer_end(assertion, killed)) return;
-    if (assertion->acov)
+    if (assertion->acov) {
+        if (LLG_CO_UNLIKELY(assertion->acov->watches))
+            assertion_attempts_notify_end(assertion, killed, 0, 0);
         llg_acov_end_attempts(assertion->acov, assertion_attempts_in_progress(assertion), killed);
+    }
     free_assertion_attempts(assertion);
 }
 
@@ -269,8 +275,11 @@ static void assertion_disable_signal_changed(sv4_t* signal) {
     if (!signal) return;
     for (llg_concurrent_assertion_t* assertion = g.assertions; assertion;
          assertion = assertion->next) {
-        if (assertion->disable == signal && sv4_to_bool(*signal))
+        if (assertion->disable == signal && sv4_to_bool(*signal)) {
+            assertion_events_enter();
             end_assertion_attempts(assertion, 0);
+            assertion_events_leave();
+        }
     }
 }
 
@@ -285,8 +294,9 @@ static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
         llg_assertion_attempt_t* attempt = assertion->attempts;
         assertion->attempts = attempt->next;
         if (!assertion->attempts) assertion->attempts_tail = NULL;
-        assertion_result(assertion, success, vacuous);
+        uint64_t start = attempt->start;
         free(attempt);
+        assertion_result(assertion, success, vacuous, start);
         if (g.finish) return;
     }
     llg_sequence_attempt_t** lists[] = {
@@ -307,9 +317,10 @@ static void assertion_abort_attempts(llg_concurrent_assertion_t* assertion) {
             llg_assertion_eval_t* eval = attempt->eval;
             int report = !eval || !eval->decided;
             if (eval) eval->decided = 1;
+            uint64_t start = attempt->start;
             sequence_attempt_discard(attempt);
             if (report)
-                assertion_result(assertion, success, vacuous);
+                assertion_result(assertion, success, vacuous, start);
             if (g.finish) return;
         }
         *tails[list_index] = NULL;
@@ -325,7 +336,9 @@ static void assertion_abort_condition_changed(void) {
             (assertion->kind != LLG_ASSERTION_EXPECT || assertion->expect_active) &&
             assertion->abort_condition && !assertion->abort_sync &&
             assertion->abort_condition(assertion->data)) {
+            assertion_events_enter();
             assertion_abort_attempts(assertion);
+            assertion_events_leave();
             if (g.finish) return;
         }
     }
@@ -416,7 +429,7 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
                 ev_matches_changed(old, value, assertion->edge) &&
                 (!assertion->clock_gate || assertion->clock_gate(NULL))) {
                 if (assertion_would_start(assertion))
-                    llg_acov_disabled_attempt(assertion->acov);
+                    llg_acov_disabled_attempt(assertion->acov, g.now);
                 procedural_disabled_starts(assertion);
             }
             continue;
@@ -467,9 +480,10 @@ static void sequence_antecedent_finished(llg_concurrent_assertion_t* assertion,
     int vacuous = !attempt->matched && (!eval || !eval->decided);
     int pass = attempt->matched && eval && !eval->decided && eval->pending == 0;
     if (eval && (vacuous || pass)) eval->decided = 1;
+    uint64_t start = attempt->start;
     sequence_attempt_discard(attempt);
-    if (vacuous) assertion_result(assertion, 1, 1);
-    else if (pass) assertion_result(assertion, 1, 0);
+    if (vacuous) assertion_result(assertion, 1, 1, start);
+    else if (pass) assertion_result(assertion, 1, 0, start);
 }
 
 static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* assertion,
@@ -513,12 +527,14 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
         if (!assertion->antecedent_sequence) {
             llg_sequence_attempt_t* attempt = sequence_attempt_new(
                 assertion->consequent_sequence, cycle, NULL, NULL);
+            attempt->start = event_time;
             sequence_attempt_append(&assertion->sequence_consequents,
                                     &assertion->sequence_consequents_tail, attempt);
             continue;
         }
         llg_sequence_attempt_t* attempt = sequence_attempt_new(
             assertion->antecedent_sequence, cycle, NULL, NULL);
+        attempt->start = event_time;
         attempt->eval = assertion_eval_new();
         attempt->eval_owner = 1;
         int accepted = 0;
@@ -562,7 +578,7 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
                  accepted && endpoint && !g.finish; endpoint = endpoint->next) {
                 if (endpoint->empty || !sequence_mult_enumerable(endpoint->mult)) continue;
                 for (uint64_t match = 0; match < endpoint->mult && !g.finish; match++)
-                    assertion_result(assertion, 1, 0);
+                    assertion_result(assertion, 1, 0, attempt->start);
             }
             if (alive) {
                 consequent_link = &attempt->next;
@@ -586,8 +602,9 @@ static int run_sequence_concurrent_assertion(llg_concurrent_assertion_t* asserti
                          (!accepted || (eval->pending == 1 && !eval->antecedent_live));
                 if (report) eval->decided = 1;
             }
+            uint64_t start = attempt->start;
             sequence_attempt_discard(attempt);
-            if (report) assertion_result(assertion, accepted, 0);
+            if (report) assertion_result(assertion, accepted, 0, start);
             if (assertion->kind == LLG_ASSERTION_EXPECT && !assertion->expect_active)
                 return 1;
             if (g.finish) return 0;
@@ -611,14 +628,14 @@ static void abort_new_attempts(llg_concurrent_assertion_t* assertion, int had_pe
     } else if (assertion->lag_replaying) {
         starts = !had_pending && assertion->lag_starts;
         assertion->lag_starts = 0;
-        if (starts) llg_acov_attempt(assertion->acov);
+        if (starts) llg_acov_attempt(assertion->acov, assertion_event_time());
     } else {
         starts = !had_pending && assertion->enabled;
-        if (starts) llg_acov_attempt(assertion->acov);
+        if (starts) llg_acov_attempt(assertion->acov, assertion_event_time());
     }
     for (; starts && !g.finish; starts--)
         assertion_result(assertion, assertion->abort_reject ? 0 : 1,
-                         assertion->abort_reject ? 0 : 1);
+                         assertion->abort_reject ? 0 : 1, assertion_event_time());
 }
 
 /* Begin one attempt of a predicate assertion (no sequence or property
@@ -627,10 +644,10 @@ static void simple_attempt_begin(llg_concurrent_assertion_t* assertion) {
     int antecedent = assertion->antecedent == NULL ||
                      assertion->antecedent(assertion->data) != 0;
     if (!antecedent) {
-        assertion_result(assertion, 1, 1);
+        assertion_result(assertion, 1, 1, assertion_event_time());
     } else if (assertion->overlapped) {
         assertion_result(assertion, assertion->consequent(assertion->data) != 0,
-                         0);
+                         0, assertion_event_time());
     } else {
         assertion_attempt_enqueue(assertion);
     }
@@ -691,8 +708,9 @@ static void simple_assertion_edge(llg_concurrent_assertion_t* assertion) {
         assertion->attempts = attempt->next;
         if (!assertion->attempts) assertion->attempts_tail = NULL;
         int success = assertion->consequent(assertion->data) != 0;
-        assertion_result(assertion, success, 0);
+        uint64_t start = attempt->start;
         free(attempt);
+        assertion_result(assertion, success, 0, start);
         if (g.finish) return;
     }
 
@@ -723,7 +741,7 @@ static void run_concurrent_assertion(llg_concurrent_assertion_t* assertion) {
         assertion->edge_pending = 0;
         end_assertion_attempts(assertion, 0);
         if (root_event && assertion_would_start(assertion))
-            llg_acov_disabled_attempt(assertion->acov);
+            llg_acov_disabled_attempt(assertion->acov, g.now);
         if (root_event) procedural_disabled_starts(assertion);
         return;
     }
@@ -790,7 +808,7 @@ static void procedural_begin_at_tick(llg_concurrent_assertion_t* assertion) {
         return;
     }
     if (assertion->property) {
-        llg_acov_attempt(assertion->acov);
+        llg_acov_attempt(assertion->acov, assertion_event_time());
         property_attempt_begin(assertion, &assertion->procedural_event);
         return;
     }
@@ -827,7 +845,7 @@ static void procedural_begin_at_tick(llg_concurrent_assertion_t* assertion) {
         }
         return;
     }
-    llg_acov_attempt(assertion->acov);
+    llg_acov_attempt(assertion->acov, assertion_event_time());
     simple_attempt_begin(assertion);
 }
 
@@ -839,7 +857,7 @@ static void procedural_instance_mature(llg_concurrent_assertion_t* assertion) {
     if (assertion_root_event_pending(assertion)) {
         assertion->procedural_matured++;
     } else if (assertion->procedural_disabled_tick == g.now + 1) {
-        llg_acov_disabled_attempt(assertion->acov);
+        llg_acov_disabled_attempt(assertion->acov, g.now);
     } else if (assertion->procedural_tick == g.now + 1) {
         // A deferred assertion has not evaluated that event yet.
         if (assertion->future_clock) future_assertion_add_start(assertion);
@@ -863,7 +881,7 @@ static void procedural_assertions_mature(void) {
     }
 }
 
-static int run_concurrent_assertions(void) {
+static int run_concurrent_assertions_pass(void) {
     procedural_assertions_mature();
     if (g.finish) return 0;
     g.assertion_edges_pending = 0;
@@ -873,6 +891,13 @@ static int run_concurrent_assertions(void) {
         if (g.finish) return 0;
     }
     return 1;
+}
+
+static int run_concurrent_assertions(void) {
+    assertion_events_enter();
+    int ok = run_concurrent_assertions_pass();
+    assertion_events_leave();
+    return ok && !g.finish;
 }
 
 static void flush_assertion_attempts(void) {

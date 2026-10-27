@@ -3749,11 +3749,21 @@ typedef struct llg_acov_item {
     uint64_t identity;    /* the statement's owned semantic identity */
     const char* name;     /* label; "" when unnamed */
     const char* full_name; /* hierarchical name; "" when unnamed */
+    const char* file;     /* source file of the statement; NULL when unknown */
+    uint32_t line;        /* source line and column (39.3.2); 0 when unknown */
+    uint32_t column;
     int32_t instance;     /* owning instance index, -1 for $root */
     uint8_t kind;         /* LLG_ASSERTION_ASSERT/ASSUME/COVER */
     uint8_t form;         /* LLG_ACOV_* */
     /* Run-time state: collection stopped by $coverage_control (40.3.2.1). */
     uint8_t stopped;
+    /* Run-time state of an immediate or deferred item: the LLG_ACOV_CTL_*
+     * bits VPI assertion control set (39.5); concurrent assertions keep
+     * theirs on their runtime record. */
+    uint8_t control;
+    /* Run-time state: VPI assertion callbacks placed on the item (39.4.2).
+     * The attempt events of an unwatched item cost one test each. */
+    uint32_t watches;
     /* 40.5.3 counters. successes are nonvacuous (matches of a cover
      * sequence); failures count assert/assume only. */
     uint64_t attempts;
@@ -3806,6 +3816,62 @@ size_t llg_acov_covered_in(int32_t instance);
 int32_t llg_coverage_control_vpi(int control, int type, int32_t instance, int64_t item);
 /* vpiCoverageSave (`merge` 0) and vpiCoverageMerge (`merge` 1). */
 int32_t llg_coverage_file_vpi(int merge, int type, const char* name);
+
+/* ── VPI assertion callbacks and control (IEEE 1800-2009 39.4, 39.5) ──
+ *
+ * The attempt events of an item with `watches` reach the hook in the order
+ * they happen. An event raised inside the assertion engines (an Observed
+ * pass, a disable iff or abort condition change, a control task, a VPI
+ * control) is queued and delivered when the engine returns, so a callback
+ * may call any VPI routine, assertion control included, and never sees an
+ * attempt list half updated. `cb_time` is the time of the event: for an
+ * assertion with global clocking future sampled value functions the event
+ * is delivered at the following global clock tick (39.4.2.1). `start` is
+ * the time the attempt began. */
+enum {
+    LLG_ACOV_EVENT_START = 0,
+    LLG_ACOV_EVENT_SUCCESS = 1,  /* nonvacuous success, or a cover match */
+    LLG_ACOV_EVENT_VACUOUS = 2,  /* vacuous success */
+    LLG_ACOV_EVENT_FAILURE = 3,  /* also a cover attempt that did not match */
+    LLG_ACOV_EVENT_DISABLED = 4, /* disable iff ended the attempt */
+    LLG_ACOV_EVENT_KILLED = 5,   /* a control discarded the attempt */
+};
+typedef void (*llg_assertion_watch_fn)(const llg_acov_item_t* item, int event, uint64_t cb_time,
+                                       uint64_t start);
+void llg_assertion_watch_hook(llg_assertion_watch_fn hook);
+/* Add (`delta` 1) or remove (-1) one watch of item `index`. */
+void llg_acov_watch(size_t index, int delta);
+
+/* Control bits of an immediate or deferred item (llg_acov_item_t.control). */
+enum {
+    LLG_ACOV_CTL_OFF = 1,
+    LLG_ACOV_CTL_PASS_OFF = 2,
+    LLG_ACOV_CTL_VACUOUS_OFF = 4,
+    LLG_ACOV_CTL_FAIL_OFF = 8,
+};
+
+/* The operations of 39.5.2 on one item; the 39.5.1 system operations apply
+ * them to every selected item. RESET, KILL and KILL_ALL discard attempts in
+ * progress, which count as killed (40.5.3) and raise LLG_ACOV_EVENT_KILLED. */
+enum {
+    LLG_ACOV_OP_DISABLE = 0,
+    LLG_ACOV_OP_ENABLE = 1,
+    LLG_ACOV_OP_RESET = 2,
+    LLG_ACOV_OP_KILL = 3,     /* the attempts that began at `start` */
+    LLG_ACOV_OP_KILL_ALL = 4, /* every attempt in progress, then disable */
+    LLG_ACOV_OP_PASS_OFF = 5,
+    LLG_ACOV_OP_PASS_ON = 6,
+    LLG_ACOV_OP_FAIL_OFF = 7,
+    LLG_ACOV_OP_FAIL_ON = 8,
+    LLG_ACOV_OP_VACUOUS_OFF = 9,
+    LLG_ACOV_OP_NONVACUOUS_ON = 10,
+};
+/* Apply `operation` to item `index`. Returns 0 for an index out of range or
+ * an unknown operation. */
+int llg_acov_control(size_t index, int operation, uint64_t start);
+/* vpiAssertionSysEnd (39.5.1): from now on no control task or VPI control
+ * enables an assertion again. */
+void llg_assertions_end(void);
 
 #ifdef __cplusplus
 }

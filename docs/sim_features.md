@@ -2545,9 +2545,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   share the `$fopen` table with the built-in file tasks (ADV-020, decisions
   A20-D1..D4). `vpi_user.h` and `sv_vpi_user.h` declare every IEEE 1800-2009
   Annex K/M routine and the model defines each, so applications written for
-  the full headers link; `vpi_handle_multi`, `vpi_get_data`/`vpi_put_data`
-  and `vpi_register_assertion_cb` are not supported and fail with a
-  `vpi_chk_error` error (`docs/known_issues.md`).
+  the full headers link; `vpi_handle_multi` and `vpi_get_data`/`vpi_put_data`
+  are not supported and fail with a `vpi_chk_error` error
+  (`docs/known_issues.md`).
   `vpi_get_value_array`/`vpi_put_value_array` (38.16, 38.35) read and write
   sections of static unpacked variable arrays (gets also net arrays) in every
   format the clauses define, with `vpiUserAllocFlag`, `vpiOneValue` and
@@ -2640,8 +2640,19 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   design writes are rejected there); other read-only evaluators (event
   controls, force re-evaluation) still reject them. Assertion handles,
   their coverage counters and the coverage operations of `vpi_control`
-  (SIM-046) are described under the coverage control API; other assertion
-  objects and assertion callbacks (SV 39.4, 39.5) are not implemented.
+  (SIM-046) are described under the coverage control API. Assertion
+  callbacks and control (SV 39.4, 39.5, ADV-017): `vpi_register_assertion_cb`
+  runs `cbAssertionStart`, `Success`, `VacuousSuccess`, `Failure`,
+  `DisabledEvaluation` and `Kill` for every concurrent, immediate and
+  deferred assertion (multiclock, global clocking future and checker-owned
+  ones included), with the attempt start time, in step with the 40.5.3
+  counters; the control reasons run from `vpi_control`, which implements
+  every 39.5.1 system and 39.5.2 assertion operation (decisions
+  A17-D1..D3); the `cbAssertionSys*` reasons run at the start and end of
+  the run and on the system controls. Assertion handles report `vpiFile`,
+  `vpiLineNo` and `vpiColumn`. Step callbacks, sequence and property
+  instance objects and assertion expressions are not implemented and fail
+  with a `vpi_chk_error` error.
   A system function in a void cast (SV §13.4.1) is called as a function: a
   built-in runs its own lowering (a `$random(seed)` still updates `seed`) and
   a registered VPI function its calltf; only a discarded `string` result of a

@@ -871,18 +871,37 @@ impl Frame<'_, '_> {
                         c_string_literal(scope)
                     )
                 });
-                if let Some(query) = &controls {
-                    self.line(format!("if ({query} & LLG_IMMEDIATE_CHECKED) {{"));
-                }
-                let condition = self.condition(condition)?;
                 // Assertion coverage counts each enabled check (S46-D8).
-                let item = self
+                let item_index = self
                     .ctx
                     .model
                     .assertion_coverage
                     .as_ref()
-                    .and_then(|table| table.item_index(*identity))
-                    .map(|index| format!("&llg_model_acov_items[{index}]"));
+                    .and_then(|table| table.item_index(*identity));
+                let item = item_index.map(|index| format!("&llg_model_acov_items[{index}]"));
+                // VPI assertion control (39.5.2) keeps the controls of an
+                // immediate item on the item; only models with a VPI catalog
+                // read them.
+                let item_control = item_index
+                    .filter(|_| self.ctx.model.vpi_catalog)
+                    .map(|index| format!("llg_model_acov_items[{index}].control"));
+                let guard = |rule: &str, bit: &str| -> Option<String> {
+                    let mut terms = Vec::new();
+                    if let Some(query) = &controls {
+                        terms.push(format!("({query} & {rule})"));
+                    }
+                    if let Some(control) = &item_control {
+                        terms.push(format!("!({control} & {bit})"));
+                    }
+                    (!terms.is_empty()).then(|| terms.join(" && "))
+                };
+                let checked = guard("LLG_IMMEDIATE_CHECKED", "LLG_ACOV_CTL_OFF");
+                let pass_guard = guard("LLG_IMMEDIATE_PASS_ACTION", "LLG_ACOV_CTL_PASS_OFF");
+                let fail_guard = guard("LLG_IMMEDIATE_FAIL_ACTION", "LLG_ACOV_CTL_FAIL_OFF");
+                if let Some(checked) = &checked {
+                    self.line(format!("if ({checked}) {{"));
+                }
+                let condition = self.condition(condition)?;
                 self.line(format!("if ({condition}) {{"));
                 if let Some(item) = &item {
                     self.line(format!("llg_acov_check({item}, 1);"));
@@ -893,11 +912,11 @@ impl Frame<'_, '_> {
                     ));
                 }
                 if let Some(body) = if_true {
-                    if let Some(query) = &controls {
-                        self.line(format!("if ({query} & LLG_IMMEDIATE_PASS_ACTION) {{"));
+                    if let Some(pass_guard) = &pass_guard {
+                        self.line(format!("if ({pass_guard}) {{"));
                     }
                     self.block(body)?;
-                    if controls.is_some() {
+                    if pass_guard.is_some() {
                         self.line("}");
                     }
                 }
@@ -907,9 +926,9 @@ impl Frame<'_, '_> {
                 }
                 let default_failure =
                     if_false.is_none() && *kind != IrImmediateAssertionKind::Cover;
-                if let Some(query) = &controls {
+                if let Some(fail_guard) = &fail_guard {
                     if if_false.is_some() || default_failure {
-                        self.line(format!("if ({query} & LLG_IMMEDIATE_FAIL_ACTION) {{"));
+                        self.line(format!("if ({fail_guard}) {{"));
                     }
                 }
                 if let Some(body) = if_false {
@@ -919,15 +938,15 @@ impl Frame<'_, '_> {
                         "llg_assertion_failure({kind_name}, {identity}ULL, {label}, {location});"
                     ));
                 }
-                if controls.is_some() && default_failure {
+                if fail_guard.is_some() && default_failure {
                     // $assertfailoff also stops the default failure report,
                     // but the failure is still counted (SV 20.12).
                     self.line(format!("}} else llg_assertion_failure_quiet({kind_name});"));
-                } else if controls.is_some() && if_false.is_some() {
+                } else if fail_guard.is_some() && if_false.is_some() {
                     self.line("}");
                 }
                 self.line("}");
-                if controls.is_some() {
+                if checked.is_some() {
                     self.line("}");
                 }
             }

@@ -40,7 +40,6 @@ static uint64_t* llg_cov_group_hashes;
 // Assertion coverage (coverage/assertions.c) contributes its own section.
 static int llg_acov_available(void);
 static uint64_t llg_acov_schema_hash(void);
-static void llg_acov_release(void);
 
 // ── Hashing ─────────────────────────────────────────────────────────────────
 
@@ -977,7 +976,9 @@ void llg_cov_end_of_run(void) {
 }
 
 static void llg_cov_db_release(void) {
-    llg_acov_release();
+    // The assertion item table stays bound: it is static model storage, and
+    // VPI applications read the final counters in cbEndOfSimulation, after
+    // this cleanup (40.5.3). The next llg_acov_model rebinds it.
     free(llg_cov_db_name);
     llg_cov_db_name = NULL;
     free(llg_cov_group_hashes);

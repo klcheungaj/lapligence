@@ -201,6 +201,7 @@ typedef struct llg_assertion_attempt {
     struct llg_assertion_attempt* next;
     /* 1 means the consequent is due on the next matching clock edge. */
     uint64_t due;
+    uint64_t start; /* time the attempt began (39.4.2 attemptStartTime) */
 } llg_assertion_attempt_t;
 
 /* One sequence clock event identity (time slot, cumulative tick, clock). */
@@ -307,6 +308,9 @@ typedef struct llg_sequence_attempt {
     /* Zero-delay processing rank of `graph` when it is owned by a property
      * program rather than the assertion's antecedent/consequent slots. */
     const uint32_t* rank;
+    /* Time its assertion attempt began (39.4.2 attemptStartTime); a
+     * consequent inherits its antecedent's. */
+    uint64_t start;
 } llg_sequence_attempt_t;
 
 /* Local-variable values flowing from an antecedent match into a property
@@ -399,6 +403,10 @@ typedef struct llg_assertion_lag {
     uint8_t marker;
     uint8_t killed;
     uint8_t has_root;
+    /* A kill marker of vpiAssertionKill: only the attempts that began at
+     * `kill_start` (39.5.2). */
+    uint8_t kill_one;
+    uint64_t kill_start;
     /* Action controls in force at the events (SV 20.12): their results
      * belong to this time step. */
     uint8_t pass_action_off;
@@ -420,12 +428,37 @@ typedef struct llg_matched_slot {
 
 /* Assertion coverage hooks (coverage/assertions.c, IEEE 1800-2009 40.5.3).
  * Every hook accepts a NULL item: a model without assertion coverage
- * tables, an `expect` or a sequence end point. */
+ * tables, an `expect` or a sequence end point. `start` is the time the
+ * attempt began, reported to VPI assertion callbacks (39.4.2). */
 static llg_acov_item_t* llg_acov_find(uint64_t identity);
-static void llg_acov_attempt(llg_acov_item_t* item);
-static void llg_acov_result(llg_acov_item_t* item, int success, int vacuous);
+static void llg_acov_attempt(llg_acov_item_t* item, uint64_t start);
+static void llg_acov_result(llg_acov_item_t* item, int success, int vacuous, uint64_t start);
 static void llg_acov_end_attempts(llg_acov_item_t* item, uint64_t count, int killed);
-static void llg_acov_disabled_attempt(llg_acov_item_t* item);
+static void llg_acov_disabled_attempt(llg_acov_item_t* item, uint64_t start);
+// One attempt of a watched item ended (`event` LLG_ACOV_EVENT_DISABLED or
+// _KILLED); the counters are updated separately, per batch.
+static void llg_acov_notify(llg_acov_item_t* item, int event, uint64_t start);
+// The assertion engines bracket their work so that attempt events raised
+// inside reach VPI callbacks only when the engine returns.
+static void assertion_events_enter(void);
+static void assertion_events_leave(void);
+static uint64_t assertion_event_time(void);
+static void llg_acov_events_release(void);
+
+/* An attempt event queued for the VPI assertion callbacks. */
+typedef struct {
+    const llg_acov_item_t* item;
+    uint64_t cb_time;
+    uint64_t start;
+    int event;
+} llg_acov_event_t;
+
+typedef struct {
+    llg_acov_event_t* items;
+    size_t head;
+    size_t count;
+    size_t capacity;
+} llg_acov_event_queue_t;
 
 typedef struct llg_concurrent_assertion {
     struct llg_concurrent_assertion* next;
@@ -727,6 +760,15 @@ typedef struct {
     // (future_assertions.c); NULL outside a replay.
     const sv4_t* assertion_lag_slots;
     uint32_t assertion_lag_slot_count;
+    // Time + 1 of the queue entry being replayed by such an assertion, the
+    // time its attempt events belong to (39.4.2.1); 0 outside a replay.
+    uint64_t assertion_replay_time1;
+    // VPI assertion callbacks (coverage/assertions.c): engine nesting depth
+    // and the attempt events raised inside it, delivered when it returns.
+    uint32_t assertion_event_depth;
+    llg_acov_event_queue_t assertion_events;
+    // vpiAssertionSysEnd ran: no control enables an assertion again.
+    int assertions_ended;
     // Registered property assertions with an asynchronous abort condition.
     uint64_t property_async_count;
     llg_deferred_trigger_t* deferred_triggers;

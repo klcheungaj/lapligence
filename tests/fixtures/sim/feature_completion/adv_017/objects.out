@@ -1,0 +1,33 @@
+assertions of the design:
+  vpiAssert name=r1 full=tb.r1 file=objects.sv line=24 column=5 deferred=0 module=tb def=tb
+  vpiCover name=c1 full=tb.c1 file=objects.sv line=25 column=5 deferred=0 module=tb def=tb
+  vpiImmediateAssert name=d1 full=tb.d1 file=objects.sv line=27 column=9 deferred=1 module=tb def=tb
+  vpiImmediateCover name=i1 full=tb.i1 file=objects.sv line=28 column=9 deferred=0 module=tb def=tb
+  vpiAssume name=l_v full=tb.u_leaf.l_v file=objects.sv line=13 column=5 deferred=0 module=tb.u_leaf def=leaf
+  vpiImmediateAssert name=NULL full=NULL file=objects.sv line=15 column=9 deferred=0 module=tb.u_leaf def=leaf
+  vpiAssert name=k_x full=tb.u_chk.k_x file=objects.sv line=9 column=5 deferred=0 module=tb.u_chk def=chk
+assertions of tb.u_leaf:
+  vpiAssume name=l_v full=tb.u_leaf.l_v file=objects.sv line=13 column=5 deferred=0 module=tb.u_leaf def=leaf
+  vpiImmediateAssert name=NULL full=NULL file=objects.sv line=15 column=9 deferred=0 module=tb.u_leaf def=leaf
+assertions of tb.u_chk:
+  vpiAssert name=k_x full=tb.u_chk.k_x file=objects.sv line=9 column=5 deferred=0 module=tb.u_chk def=chk
+by name k_x below tb.u_chk: tb.u_chk.k_x
+relations of r1:
+  vpiClockingEvent -> 0 level=3 code=LLG_VPI_UNSUPPORTED
+  vpiDisableCondition -> 0 level=3 code=LLG_VPI_UNSUPPORTED
+  vpiProperty -> 0 level=3 code=LLG_VPI_UNSUPPORTED
+  vpiEndLine -> -1 level=3 code=LLG_VPI_UNSUPPORTED
+  vpiScope is tb -> 1 level=0 code=-
+5 r1 Start attempt=5
+5 remover call 1 attempt=5
+15 r1 Success attempt=5
+15 r1 Start attempt=15
+15 r1 Kill info=NULL
+15 killer: kill attempt 15 -> 1
+15 remover call 2 attempt=15
+15 remover removes itself -> 1
+25 r1 Start attempt=25
+35 r1 Success attempt=25
+35 r1 Start attempt=35
+r1 attempts=4 success=2 killed=1 covered=1
+remover ran 2 times

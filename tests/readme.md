@@ -410,6 +410,14 @@ Decisions A19-D1..D13 are in
 `generated_model_omits_the_catalog_by_default` checks that the code tables
 exist only in VPI models.
 
+ADV-017's assertion API fixtures use
+`-E 'binary(sim_feature_completion) & test(adv_017::)'`: `lifecycle`
+correlates assertion callbacks with HDL action counters and the 40.5.3
+counters (also linked as a static archive), `control` drives every
+`vpi_control` assertion operation, and `objects` checks the 39.3 static
+information and reentrant callbacks. Decisions A17-D1..D3 are in
+`sim_lrm_decisions` (`-E 'test(/a17_d/)'`).
+
 ADV-020's VPI parity fixtures use
 `-E 'binary(sim_feature_completion) & test(adv_020::)'`. `symbols` takes the
 address of every Annex K/M routine and runs as an `LLG_VPI_PLUGIN` plugin (a

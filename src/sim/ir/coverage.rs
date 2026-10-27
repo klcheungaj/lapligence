@@ -966,6 +966,11 @@ pub struct IrAssertionItem {
     /// [`IrAssertionCoverage::instances`]; `None` for a statement outside
     /// every instance (a class or package subroutine), owned by `$root`.
     pub(in crate::sim) instance: Option<u32>,
+    /// The statement's source file, line and column (39.3.2); `None` and 0
+    /// when the frontend recorded none.
+    pub(in crate::sim) file: Option<String>,
+    pub(in crate::sim) line: u32,
+    pub(in crate::sim) column: u32,
 }
 
 /// One elaborated module, interface or program instance of the hierarchy
