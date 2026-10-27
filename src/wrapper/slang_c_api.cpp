@@ -3003,6 +3003,9 @@ public:
       if (symbol.wrapped.kind == SymbolKind::EnumValue)
         handle(symbol.wrapped.template as<EnumValueSymbol>());
     }
+    if constexpr (std::same_as<T, ExplicitImportSymbol> ||
+                  std::same_as<T, WildcardImportSymbol>)
+      bindImportItem(symbol);
     if constexpr (std::same_as<T, NetAliasSymbol>) {
       uint32_t index = 0;
       for (const Expression* expression : symbol.getNetReferences())
@@ -4000,6 +4003,38 @@ private:
         tokens.push_back(name.as<syntax::ClassNameSyntax>().identifier);
         break;
       default: break;
+    }
+  }
+
+  // An import or export item `pkg::name` / `pkg::*` (IEEE 1800-2009 26.3,
+  // 26.6) names a package and, unless it is `*`, one of its members. Neither
+  // name declares anything in the importing scope; Slang's import symbol sits
+  // at the item name, so without these bindings the member name would read as
+  // a declaration of its own. An unresolved package or member stays unbound.
+  template<typename T>
+  void bindImportItem(const T& symbol) {
+    const syntax::SyntaxNode* syntaxNode = symbol.getSyntax();
+    if (!syntaxNode || syntaxNode->kind != syntax::SyntaxKind::PackageImportItem)
+      return;
+    const auto& item = syntaxNode->as<syntax::PackageImportItemSyntax>();
+    const PackageSymbol* package = nullptr;
+    if constexpr (std::same_as<T, ExplicitImportSymbol>)
+      package = symbol.package();
+    else
+      package = symbol.getPackage();
+    if (!package)
+      return;
+    capture.lexicalBinding(item.package, lexicalTarget(*package),
+                           LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+    if constexpr (std::same_as<T, ExplicitImportSymbol>) {
+      const Symbol* imported = symbol.importedSymbol();
+      // An enum value is visible in its package through a transparent
+      // member; references elsewhere bind the value itself.
+      if (imported && imported->kind == SymbolKind::TransparentMember)
+        imported = &imported->template as<TransparentMemberSymbol>().wrapped;
+      if (imported)
+        capture.lexicalBinding(item.item, lexicalTarget(*imported),
+                               LLG_SLANG_LEXICAL_ROLE_REFERENCE);
     }
   }
 
