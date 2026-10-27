@@ -215,6 +215,12 @@ static int observed_pending(void) {
 }
 
 static int run_observed_set(void) {
+    // Active free checker variables are solved "when an implementation is
+    // about to begin the Observed region" (IEEE 1800-2009 17.7.2).
+    if (g.free_sets) {
+        solve_free_variables();
+        if (g.finish) return 0;
+    }
     if (!run_region_queue(LLG_REGION_PRE_OBSERVED_PLI)) return 0;
     if (!run_region_queue(LLG_REGION_PRE_OBSERVED)) return 0;
     if (!run_region_queue(LLG_REGION_OBSERVED)) return 0;

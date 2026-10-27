@@ -17,11 +17,13 @@ use crate::sim::ir::{
     IrClassField, IrClassFieldType, IrDynamicCast, IrObjectQuery, IrObjectStmt, IrRandStmt,
 };
 
+mod free_variables;
 mod modes;
 mod problems;
 mod sites;
 mod templates;
 
+pub(super) use free_variables::FreeSolveVar;
 use modes::ModeCall;
 
 /// One hidden off bit of a random variable or constraint block.

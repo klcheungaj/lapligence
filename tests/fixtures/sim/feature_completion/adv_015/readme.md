@@ -25,6 +25,8 @@ scripts/run-tests.sh -E 'binary(sim_feature_completion) & test(adv_015::)'
 | `nested.sv` | `$inferred_clock`/`$inferred_disable`, nested checker with an inferred clock, let/function/sequence, cover, deferred assertion item, final (A01) |
 | `bind.sv` | checker bound into a module, interface port actuals, covergroup, subchecker (A01) |
 | `boundary.sv` | disjoint bits of one variable from two procedures, named block, two instances, unused checker (A01) |
+| `free_vars.sv` | free variables: LRM observer model assumptions (`|=>` and `|->`), range assumption, `const` and assigned free variables, initialized active variable in the first time step, explicitly and implicitly clocked redraws (A02) |
+| `free_unsat.sv` | an assume set without solution fails its assumption when checked; an independent set and an X state value (A02) |
 | `let_formals.sv` | checker formals passed to lets declared inside and outside the checker: ordered, named and default arguments, a one-formal let, a let calling a let, repeated calls (A01) |
 | `neg_*.sv` | 17.5 and 17.7.1 restrictions, later-revision forms, located limits (A03) |
 
@@ -106,9 +108,47 @@ not define (17.2 L28109-28110: a `checker_port_item` has no direction; 17.5
 L28496-28499 allows only `initial`, `always` and `final` procedures) and are
 edition errors.
 
-Located limits (A02): free variables (17.7, L28630-28631) and procedural
-checker instances (17.3.1, L28345-28347) are rejected at their location; see
-the [known issue](../../../../../docs/known_issues.md#checker-limits-after-adv-015).
+Free variables (17.7 L28630-28631, L28766, L28777-28780; 17.7.2
+L28884-28890, L28894-28895, L28946-28949, L28958-28962, L28973-28974,
+L28976-28979, L28982-28983), `free_vars`, `free_unsat`. Every printed value
+is forced by these lines, whatever the drawn values: after a tick with
+reset sampled 1, m1 owes `!flag`; with valid sampled 0, m3 does; `r` lies
+in its assumed range at every event and the assertions, which read the
+current solved value, never fail; `idx` (`rand const`) never changes; the
+assigned `t` is inactive and toggles; `k` keeps its initializer 9 at time 0;
+`w` (explicitly clocked, in no assumption) and `v` (implicitly clocked) are
+redrawn at most clock events (more than 4 of 10, with 16-bit values). The
+`stuck` set has no solution, so its assumption fails at each event; `free`
+solves `p == s + 1` once `s` is known.
 
 > Checker variables may have an optional rand qualifier. In this case, they are called free variables; free vari-
 > ables may behave non-deterministically.
+
+> All free checker variables, both const and non-const, active and inactive, are initialized with
+> unconstrained random values unless explicitly initialized in their declaration.
+
+> When a solution attempt is made on an assume set, values shall be sought for all active checker variables
+> such that, together with the inactive variables and state, none of the assumptions will fail in that time step. If
+> a set of such values is found, the solution attempt is successful. Otherwise, any values may be chosen for the
+> active variables and the solution attempt is unsuccessful. There is no requirement that a solution be found if
+> it exists or that “dead end” states (states where no solution exists) be avoided.
+
+> Empty assume sets shall be considered to have an implicit assume set clock event in every time step before
+> the Observed region.
+
+> When an implementation is about to begin the Observed region, it shall solve for all the active free variables.
+> When solving, non-active variables are either sampled or not as described in 17.3. Checker procedures and
+> properties shall not use sampled values of active free checker variables; current values shall be read so that
+> up-to-date solved values are visible.
+
+> When a solution attempt is unsuccessful, any resulting assumption failure(s) do not occur until an unsatis-
+> fied property is clocked and checked in the Observed region.
+
+llg leaves the variables unchanged after an unsuccessful attempt (one of
+the "any values"). `neg_free_history` (a sampled value function of an active
+free variable) and `neg_free_unpacked` (an unpacked free variable) are
+located limits; see the
+[known issue](../../../../../docs/known_issues.md#checker-limits-after-adv-015).
+
+Located limit (A03): procedural checker instances (17.3.1, L28345-28347)
+are rejected at their location.

@@ -48,10 +48,10 @@ pub(super) enum DirectRead {
 }
 
 /// One problem ready to be fed: its builder plus the blocks' enable values.
-struct ProblemPlan {
-    builder: ProblemBuilder,
-    vars: Vec<VarPlan>,
-    blocks: Vec<IrExpr>,
+pub(super) struct ProblemPlan {
+    pub(super) builder: ProblemBuilder,
+    pub(super) vars: Vec<VarPlan>,
+    pub(super) blocks: Vec<IrExpr>,
 }
 
 impl Codegen<'_> {
@@ -1086,6 +1086,20 @@ impl Codegen<'_> {
         site: &str,
         after_commit: Vec<IrStmt>,
     ) -> Result<Vec<IrStmt>, String> {
+        let prefix = format!("_llg_rand_{}", node.index());
+        self.feed_problem_tagged(&prefix, plan, stream, result, site, after_commit)
+    }
+
+    /// [`Self::feed_problem`] with locals named after `prefix`.
+    pub(super) fn feed_problem_tagged(
+        &mut self,
+        prefix: &str,
+        plan: ProblemPlan,
+        stream: Option<IrChandleExpr>,
+        result: &str,
+        site: &str,
+        after_commit: Vec<IrStmt>,
+    ) -> Result<Vec<IrStmt>, String> {
         let ProblemPlan {
             builder,
             vars,
@@ -1096,7 +1110,7 @@ impl Codegen<'_> {
         let calls = builder.calls;
         let units = builder.units;
         self.model.rand_problems.push(builder.problem);
-        let tag = format!("_llg_rand_{}_{problem}", node.index());
+        let tag = format!("{prefix}_{problem}");
         let rand = |statement: IrRandStmt| IrStmt::Randomize(Box::new(statement));
         let mut statements = vec![rand(IrRandStmt::Begin { problem })];
         // Problems with units: the instance walk feeds the other units'

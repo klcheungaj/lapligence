@@ -377,7 +377,9 @@ impl Validator<'_> {
                         self.validate_event_ref(&IrEventRef::Static(*event), formals, path)?;
                         64
                     }
-                    IrRuntimeQuery::WaitRefreshed => 1,
+                    IrRuntimeQuery::WaitRefreshed
+                    | IrRuntimeQuery::CheckerAssume { .. }
+                    | IrRuntimeQuery::InitialTimeStep => 1,
                     IrRuntimeQuery::ExpectOutcome(identity) => {
                         if !self.model.assertions.iter().any(|assertion| {
                             assertion.identity == *identity

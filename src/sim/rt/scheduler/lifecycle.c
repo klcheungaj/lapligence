@@ -316,6 +316,7 @@ void llg_rt_cleanup(void) {
     free_deferred_triggers();
     free_deferred_assertions();
     free_assertion_rules();
+    free_sets_release();
     // Groups own only child-list nodes; process objects are owned once by
     // all_procs and are released separately below.
     for (int i = 0; i < g.n_procs; i++) {

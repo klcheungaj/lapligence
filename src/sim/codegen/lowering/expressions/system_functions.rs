@@ -208,6 +208,27 @@ impl<'a> Codegen<'a> {
         if !super::super::assertions::sampled_compatible(&argument) {
             return Err(sampled_argument_error(name, scope_path, &argument));
         }
+        // An active free checker variable is read with its current value,
+        // not sampled (17.7.2); a history of its sampled values would
+        // contradict that, so llg rejects it rather than choose one.
+        if !self.model.free_variables.is_empty() {
+            let mut reads = std::collections::BTreeSet::new();
+            super::super::assertions::sampled_signal_reads(&argument, &mut reads);
+            if let Some(signal) = reads
+                .into_iter()
+                .find(|signal| self.model.reads_current_value(*signal))
+            {
+                return Err(format!(
+                    "{}: {name} of active free checker variable `{}` is not supported: llg reads \
+                     active free variables with their current value (IEEE 1800-2009 17.7.2) and \
+                     keeps no sampled history of them",
+                    self.source_location(args[0]),
+                    self.free_variable_names
+                        .get(&signal)
+                        .map_or("", String::as_str)
+                ));
+            }
+        }
         // SV 16.9.3: "expression1 and expression2 may be any expression
         // allowed in assertions", and 16.6.1 excludes noninteger operands
         // there; F.3.4.4 derives `$rose/$fell/$stable/$changed` from `$past`.

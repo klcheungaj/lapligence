@@ -800,12 +800,21 @@ typedef struct {
     llg_rng_state_t* rng_initializer;
     size_t rng_scope_capacity;
     size_t rng_scope_count;
+    // Free checker variable sets (free_variables.c), in registration order;
+    // the set being solved and its stream, which randomize draws from.
+    struct llg_free_set* free_sets;
+    struct llg_free_set* free_solving;
+    llg_rng_state_t* free_rng;
+    int free_sets_resolved;
     int argc;
     char** argv;
     llg_q_queue_t* q_queues;
 } llg_rt_ctx_t;
 
 static llg_rt_ctx_t g;
+
+// Defined in free_variables.c, after the assertion engine it reads.
+static void free_sets_release(void);
 
 static void process_status_set(llg_proc_t* proc, int status) {
     if (!proc) return;

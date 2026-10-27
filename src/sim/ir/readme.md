@@ -65,6 +65,10 @@ action identities rather than ordinary procedural blocks. An assertion with
 global clocking future sampled value functions carries `IrAssertionFuture`;
 its `IrSampledFunc::Captured` operands and future status calls number capture
 slots below its slot count, and the validator admits them only there.
+`IrModel::free_variables` lists the active free checker variables that
+sampled contexts read with current values, and each `IrFreeSet` names a
+capture-free solve callback and the assume identities of one checker
+instance (17.7.2).
 
 Large designs hold many statement vectors and expression trees at once, and
 every slot is sized by its enum's largest variant. Rare or optional payloads

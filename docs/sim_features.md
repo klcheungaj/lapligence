@@ -2637,8 +2637,15 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   located errors; the later revision's `always_ff`/`always_comb`/
   `always_latch` checker procedures and output formals are edition errors.
   A checker declared in `$unit` takes the `$unit` time scale (A15-D3).
-  Free variables (`rand`, assume-set solving) and procedural checker
-  instances are located limits
+  Free variables (17.7) start random unless initialized (an initialized
+  active one keeps its value in the first time step, A15-D4); active free
+  variables are solved on the constraint solver before the Observed region
+  at their assume set clock events, or every time step without assumes, and
+  read with current values (A15-D5); predicate assumptions constrain the
+  solve, and an unsuccessful attempt leaves the values and lets the
+  assumption fail. A formal passed to a `let` reads the sampled actual.
+  Sampled value functions of active free variables, unpacked free variables
+  and procedural checker instances are located limits
   ([known issue](known_issues.md#checker-limits-after-adv-015);
   [adv_015](../tests/fixtures/sim/feature_completion/adv_015/readme.md)).
   SV ch.17 **[SV-2009]**.

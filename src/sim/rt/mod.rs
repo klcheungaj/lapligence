@@ -149,6 +149,7 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
             include_str!("scheduler/concurrent_assertions.c"),
             include_str!("scheduler/properties.c"),
             include_str!("scheduler/future_assertions.c"),
+            include_str!("scheduler/free_variables.c"),
             include_str!("scheduler/monitors.c"),
             include_str!("scheduler/scheduler.c"),
             include_str!("scheduler/output.c"),

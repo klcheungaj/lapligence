@@ -25,6 +25,8 @@
 mod containers;
 pub(in crate::sim) use containers::shared_container_capture_name;
 pub(in crate::sim) use native_values::shared_native_capture_name;
+mod checkers;
+pub use checkers::IrFreeSet;
 mod native_access;
 pub use native_access::{IrClassAllocation, IrNativeAccess, IrNativeAccessKind};
 mod native_values;
@@ -644,6 +646,12 @@ pub struct IrModel {
     /// Constraint problems of randomize calls (IEEE 1800-2009 18), one per
     /// call site and dynamic class; each owns one runtime solver session.
     pub(in crate::sim) rand_problems: Vec<IrRandProblem>,
+    /// Active free checker variables, ascending: assertions and other
+    /// sampled contexts read their current value (IEEE 1800-2009 17.7.2).
+    pub(in crate::sim) free_variables: Vec<usize>,
+    /// Assume-based randomization of active free checker variables, one set
+    /// per checker instance that has them.
+    pub(in crate::sim) free_sets: Vec<IrFreeSet>,
     /// Elaborated covergroup declarations (IEEE 1800-2009 19), indexed by
     /// coverage statements and queries.
     pub(in crate::sim) covergroups: Vec<IrCovergroup>,
@@ -800,6 +808,8 @@ impl IrModel {
             vpi_catalog: true,
             random: IrRandomUse::default(),
             rand_problems: Vec::new(),
+            free_variables: Vec::new(),
+            free_sets: Vec::new(),
             covergroups: Vec::new(),
             coverage_types: Vec::new(),
             assertion_coverage: None,
@@ -825,6 +835,14 @@ impl IrModel {
     }
     pub fn signals(&self) -> &[IrSignal] {
         &self.signals
+    }
+    /// Whether `signal` is an active free checker variable, which sampled
+    /// contexts read with its current value (IEEE 1800-2009 17.7.2).
+    pub fn reads_current_value(&self, signal: usize) -> bool {
+        !self.free_variables.is_empty() && self.free_variables.binary_search(&signal).is_ok()
+    }
+    pub fn free_sets(&self) -> &[IrFreeSet] {
+        &self.free_sets
     }
     /// Shared combinational UDP definitions in deterministic lowering order.
     pub fn udp_tables(&self) -> &[IrUdpTable] {

@@ -586,6 +586,9 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     let lowering_stage = crate::profile::Stage::new("lowering");
     let mut cg = Codegen::new(&semantic);
     let tops = collect_tops(&mut cg)?;
+    if !cg.checker_free.is_empty() {
+        cg.plan_free_variables()?;
+    }
     if let Some(waveform) = waveform {
         // A depth applies below each top instance, like `$dumpvars(depth, top)`;
         // depth 0 with no scopes selects the complete design.
@@ -674,6 +677,9 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
         if cg.pending_specializations.is_empty() {
             break;
         }
+    }
+    if !cg.checker_free.is_empty() {
+        cg.emit_free_variable_sets()?;
     }
     cg.attach_release_reevaluation();
     cg.finish_switch_network()?;
@@ -1775,6 +1781,14 @@ struct Codegen<'a> {
     /// Assertion action helpers are registered by the runtime and must not
     /// also be spawned as ordinary design processes at time zero.
     assertion_action_procs: HashSet<String>,
+    /// Free variables of each checker instance that has them, with the
+    /// checker variables its procedures assign (17.7.2; `checkers.rs`).
+    checker_free: Vec<checkers::CheckerFree>,
+    /// Active free variables per checker instance, from
+    /// `plan_free_variables` until `emit_free_variable_sets`.
+    free_set_plans: Vec<checkers::FreeSetPlan>,
+    /// Source name of each active free variable signal, for diagnostics.
+    free_variable_names: HashMap<usize, String>,
     /// `%m` text of the concurrent assertion being lowered (SV 21.2.1.6: its
     /// label names a block around it): the scope reported by its action
     /// blocks and match-item system tasks, which run on hidden host processes
@@ -2112,6 +2126,9 @@ impl<'a> Codegen<'a> {
             armed_procs: HashSet::new(),
             wave_variable_targets: Vec::new(),
             assertion_action_procs: HashSet::new(),
+            checker_free: Vec::new(),
+            free_set_plans: Vec::new(),
+            free_variable_names: HashMap::new(),
             assertion_display_scope: None,
             sampled_clock: None,
             expect_action_clock: None,

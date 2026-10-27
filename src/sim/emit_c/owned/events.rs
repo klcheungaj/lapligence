@@ -433,6 +433,19 @@ impl Frame<'_, '_> {
                 1,
                 false,
             ),
+            IrRuntimeQuery::CheckerAssume { assume, due } => self.value(
+                format!(
+                    "sv4_from_u64(llg_checker_assume_flag({assume}u, {}) ? 1ULL : 0ULL, 1, 0)",
+                    u8::from(*due)
+                ),
+                1,
+                false,
+            ),
+            IrRuntimeQuery::InitialTimeStep => self.value(
+                "sv4_from_u64(llg_time() == 0 ? 1ULL : 0ULL, 1, 0)".to_owned(),
+                1,
+                false,
+            ),
             IrRuntimeQuery::SequenceTriggered(endpoint) => self.value(
                 format!("sv4_from_u64(llg_sequence_triggered({endpoint}u) ? 1ULL : 0ULL, 1, 0)"),
                 1,

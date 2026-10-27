@@ -3602,6 +3602,22 @@ fn a15_d3_checker_unit_time_scale() {
 }
 
 #[test]
+fn a15_d4_free_initial_step() {
+    run_decision(
+        "A15-D4_free_initial_step",
+        include_str!("fixtures/sim/lrm_decisions/A15-D4_free_initial_step.out"),
+    );
+}
+
+#[test]
+fn a15_d5_free_assume_solving() {
+    run_decision(
+        "A15-D5_free_assume_solving",
+        include_str!("fixtures/sim/lrm_decisions/A15-D5_free_assume_solving.out"),
+    );
+}
+
+#[test]
 fn t0_d1_initializer_no_event() {
     run_decision(
         "T0-D1_initializer_no_event",

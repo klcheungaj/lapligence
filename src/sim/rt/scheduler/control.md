@@ -206,3 +206,14 @@ recycled through `g` free lists released by `llg_rt_cleanup`; keep steady-state
 stepping allocation-free. Live tokens plus attempts count against
 `LLG_SEQUENCE_THREAD_LIMIT`; exhaustion is a reported failure, never a dropped
 attempt.
+
+Free checker variables (`free_variables.c`, IEEE 1800-2009 17.7.2):
+`llg_checker_free_set` registers one set per checker instance (solve
+callback, assume identities resolved by one sorted pass on the first solve,
+a stream derived like a static process of the instance). The top of every
+Observed set calls `solve_free_variables` only when a set exists: a set
+with assumes solves when a leading clock event of one of them waits for
+that pass, a set without assumes once per time step. While the callback
+runs, `llg_checker_assume_flag` reports each assume's event and pending
+`|=>` consequent, randomize draws from the set's stream and an unsolved
+problem returns 0 without a report.
