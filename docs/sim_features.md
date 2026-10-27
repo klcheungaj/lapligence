@@ -2418,11 +2418,22 @@ array arguments are diagnosed as illegal (§16.6.1); fixed unpacked arrays, unpa
 queues and unpacked element selections are explicit unsupported rejections
 ([known issue](known_issues.md#sampled-value-arguments-without-sampled-storage),
 [SIM-035 fixtures](../tests/fixtures/sim/feature_completion/sim_035/readme.md)).
-Future global functions are legal in SV2009 property/sequence contexts under
-§16.9.4, with global clocking, nonnesting and match-item restrictions and
-delayed assertion actions; their rejection is an implementation gap (ADV-014).
-Procedural and action-block uses remain illegal. `$global_clock` is a
-clocking event wherever one may appear (§14.14), and `$inferred_clock`/
+The future global functions `$future_gclk`, `$rising_gclk`, `$falling_gclk`,
+`$steady_gclk` and `$changing_gclk` (§16.9.4) read the sampled value at the
+first global clock tick strictly after the calling time step, also from
+assertion clocks that do not tick with the global clock: an assertion calling
+them captures the operands of each clock event and evaluates the event at
+that tick, so its actions run there, while `disable iff`, `$assertkill`,
+`$assertoff` and the action controls act with respect to the attempt's own
+interval; ticks after the last global clock tick are never evaluated
+([adv_014](../tests/fixtures/sim/feature_completion/adv_014/readme.md),
+[decisions A14-D1-D4](lrm_decisions.md#global-clocking-future-sampled-value-functions-adv-014)).
+Pending evaluations count against `LLG_SEQUENCE_THREAD_LIMIT`. Nesting, match
+items, action blocks, procedural code and missing global clocking are
+frontend errors; `expect`, asynchronous `accept_on`/`reject_on` and sequence
+end points with these functions are located rejections
+([known issue](known_issues.md#global-clocking-future-sampled-value-function-limits)).
+`$global_clock` is a clocking event wherever one may appear (§14.14), and `$inferred_clock`/
 `$inferred_disable` formal defaults resolve at the instance (§16.15.7)
 ([adv_013](../tests/fixtures/sim/feature_completion/adv_013/readme.md)).
 SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
