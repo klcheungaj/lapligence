@@ -179,6 +179,14 @@ impl<'a> Codegen<'a> {
             let Some(actual) = self.db.checker_actual(*event) else {
                 return Ok(current);
             };
+            // A procedural instance takes the clock its procedure infers
+            // (16.15.6), else the default clocking.
+            if let Some(body) = self.procedural_checker_body(actual.instance) {
+                if let Some(spec) = self.procedure_inferred_event(body, *event)? {
+                    current = Some(vec![spec]);
+                    continue;
+                }
+            }
             let block = self
                 .node(actual.instance)
                 .parent

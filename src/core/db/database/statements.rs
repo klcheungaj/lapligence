@@ -191,6 +191,13 @@ pub enum StmtKind {
         dimensions: Vec<Option<(i32, i32)>>,
         body: NodeId,
     },
+    /// A checker instantiated in procedural code (IEEE 1800-2009 17.3.1):
+    /// the checker instance nodes it instantiates, array elements in
+    /// element order. The instances are hierarchy nodes of the enclosing
+    /// scope, not children of the statement.
+    ProceduralChecker {
+        instances: Vec<NodeId>,
+    },
     Unsupported {
         object_type: ObjectType,
     },

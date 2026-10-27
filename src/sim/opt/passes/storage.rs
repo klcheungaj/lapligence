@@ -169,6 +169,10 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         vpi_delay_select: _,
         random: _,
         rand_problems: _,
+        // Free variables are signals the solve callbacks write and the
+        // assertions read; both are walked with their owners.
+        free_variables: _,
+        free_sets: _,
         // Coverage metadata names no storage; samples read through statements.
         covergroups: _,
         coverage_types: _,

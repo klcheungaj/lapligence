@@ -20,6 +20,8 @@ impl Validator<'_> {
             problem.validate(&format!("rand_problems[{idx}]"))?;
         }
 
+        self.validate_free_variables()?;
+
         for (idx, group) in self.model.covergroups.iter().enumerate() {
             if let Err(detail) = group.validate(self.model.coverage_types.len()) {
                 return self.fail(format!("covergroups[{idx}]"), detail);
@@ -1534,6 +1536,63 @@ impl Validator<'_> {
             match &signal.ty {
                 IrType::Packed { width, .. } if control.bit < *width => {}
                 _ => return self.fail(at, "control bit outside a packed signal"),
+            }
+        }
+        Ok(())
+    }
+
+    /// Active free checker variables are ascending packed signals; each set
+    /// names a declared capture-free solve callback and assume statements.
+    fn validate_free_variables(&self) -> ValidationResult {
+        let variables = &self.model.free_variables;
+        if variables.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return self.fail(
+                "free_variables",
+                "free variables must be strictly ascending",
+            );
+        }
+        for (idx, signal) in variables.iter().enumerate() {
+            if !matches!(
+                self.model.signals.get(*signal),
+                Some(IrSignal {
+                    ty: IrType::Packed { .. },
+                    ..
+                })
+            ) {
+                return self.fail(
+                    format!("free_variables[{idx}]"),
+                    "a free variable must be packed signal storage",
+                );
+            }
+        }
+        for (idx, set) in self.model.free_sets.iter().enumerate() {
+            let path = format!("free_sets[{idx}]");
+            if set.label.is_empty() || set.label.contains('\0') {
+                return self.fail(path, "free variable set label must be non-empty C text");
+            }
+            let declared = self.model.processes.iter().any(|process| {
+                process.callback_host
+                    && process.pre_fns.iter().any(|pre| {
+                        matches!(
+                            pre,
+                            IrPreFn::DeferredAssertion { c_name, captures, .. }
+                                if *c_name == set.solve && captures.is_empty()
+                        )
+                    })
+            });
+            if !declared {
+                return self.fail(path, "free variable solve callback is not declared");
+            }
+            for identity in &set.assumes {
+                if !self.model.assertions.iter().any(|assertion| {
+                    assertion.identity == *identity
+                        && assertion.kind == IrConcurrentAssertionKind::Assume
+                }) {
+                    return self.fail(
+                        path,
+                        format!("free variable set names unknown assume {identity}"),
+                    );
+                }
             }
         }
         Ok(())

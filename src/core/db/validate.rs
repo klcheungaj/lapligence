@@ -955,6 +955,7 @@ fn statement_refs(statement: &StmtKind, refs: &mut Vec<NodeId>) {
             refs.extend(vars.iter().flatten().copied());
             refs.push(*body);
         }
+        StmtKind::ProceduralChecker { instances } => refs.extend(instances.iter().copied()),
         StmtKind::Begin
         | StmtKind::Empty
         | StmtKind::WaitFork

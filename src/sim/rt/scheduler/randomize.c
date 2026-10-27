@@ -212,6 +212,10 @@ int32_t llg_randomize_step(const llg_cr_problem_t* problem, llg_cr_session_t* s,
     llg_cr_report_t report;
     llg_cr_status_t status = llg_cr_step(s, &rng, &report);
     if (status == LLG_CR_NEED_CALLS) return 4;
+    // A free variable solve that finds no solution is an unsuccessful
+    // attempt, not an error (IEEE 1800-2009 17.7.2): its caller chooses
+    // other values, and the assumptions report any failure.
+    if (g.free_rng) return status == LLG_CR_OK;
     return randomize_report(problem, status, &report, site);
 }
 

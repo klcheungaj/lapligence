@@ -3113,6 +3113,21 @@ int llg_assertion_future_status(int kind, uint32_t slot, const sv4_t* future);
 // 16.15.6): a leading clock event begins one attempt per matured instance of
 // it, never one on its own. Call after the registration, before run.
 int llg_assertion_procedural(uint64_t identity, uint32_t index);
+/* Free checker variables (IEEE 1800-2009 17.7.2). `solve` assigns the active
+ * free variables of one checker instance; the runtime calls it with a NULL
+ * frame just before the Observed region, once per time step when `count` is
+ * 0 (implicitly clocked variables) and otherwise whenever a leading clock
+ * event of one of the `count` assume statements `assumes` (identities,
+ * copied) waits for that Observed pass. `label` names a process of the
+ * checker instance and selects the instance stream the set draws from.
+ * Register after the assertions, before run. */
+typedef void (*llg_free_solve_fn)(llg_frame_t* frame);
+int llg_checker_free_set(llg_free_solve_fn solve, const uint64_t* assumes, uint32_t count,
+                         const char* label);
+/* While `solve` runs: whether assume `assume` of the set (its index in
+ * `assumes`) has a clock event in this pass (`due` 0), or also owes the
+ * consequent of a pending `|=>` attempt at it (`due` 1). 0 otherwise. */
+int llg_checker_assume_flag(uint32_t assume, int due);
 // Queue one pending instance of procedural assertion `index` on the current
 // process. Flush points and `disable` clear pending instances like pending
 // deferred assertion reports (16.15.6.2, 16.15.6.4); the Observed region

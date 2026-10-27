@@ -9,6 +9,18 @@
 use super::*;
 use std::collections::BTreeMap;
 
+mod free_variables;
+mod procedural;
+pub(super) use free_variables::FreeSetPlan;
+
+/// The free variables of one checker instance (17.7) and the variables its
+/// procedures assign, which makes a free variable inactive (17.7.2).
+pub(super) struct CheckerFree {
+    checker: NodeId,
+    variables: Vec<NodeId>,
+    assigned: HashSet<NodeId>,
+}
+
 /// One assigned bit interval of a checker variable, in declared index
 /// coordinates, with the assignment that writes it (17.7.1 SAR).
 struct AssignedBits {
@@ -19,8 +31,10 @@ struct AssignedBits {
 
 impl Codegen<'_> {
     /// IEEE 1800-2009 17.5 and 17.7.1 restrictions on checker procedures.
-    pub(super) fn validate_checker_constructs(&self) -> Result<(), String> {
+    pub(super) fn validate_checker_constructs(&mut self) -> Result<(), String> {
+        self.collect_procedural_checker_bodies();
         for checker in self.db.checker_instances() {
+            let mut free = Vec::new();
             let mut assigned: BTreeMap<u32, Vec<AssignedBits>> = BTreeMap::new();
             // Visit members in source order, so a Single Assignment Rule
             // violation is reported at the later assignment.
@@ -33,20 +47,11 @@ impl Codegen<'_> {
                     NodeKind::GenScope | NodeKind::GenScopeArray => {
                         pending.extend(self.node(member).children.iter().rev().copied());
                     }
-                    // Free checker variables need assume-set solving before
-                    // Observed (17.7.2), which is not implemented: reject them
-                    // rather than simulate them as ordinary variables.
-                    NodeKind::Var { .. }
+                    NodeKind::Var { .. } | NodeKind::Array { .. }
                         if self.db.rand_qualifier(member)
                             != crate::core::db::RandQualifier::None =>
                     {
-                        return Err(format!(
-                            "{}: free checker variable `{}` is not supported: llg does not \
-                             randomize free variables or solve assume sets (IEEE 1800-2009 \
-                             17.7, 17.7.2)",
-                            self.source_location(member),
-                            self.node(member).name
-                        ));
+                        free.push(member);
                     }
                     NodeKind::Process {
                         kind:
@@ -61,6 +66,14 @@ impl Codegen<'_> {
                     }
                     _ => {}
                 }
+            }
+            if !free.is_empty() {
+                let assigned = assigned.keys().map(|variable| NodeId(*variable)).collect();
+                self.checker_free.push(CheckerFree {
+                    checker,
+                    variables: free,
+                    assigned,
+                });
             }
         }
         Ok(())

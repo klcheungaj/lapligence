@@ -8,11 +8,14 @@
 //! is a Warning, unless every driver is a constant select of disjoint bits
 //! or unpacked elements (continuous assignments such as `assign w[0] = ...`
 //! and port links such as `.p(v[3])` or `.p(w[1])` on an unpacked `w`). A
-//! process drives the whole signal it writes, element or not.
+//! process drives the whole signal it writes, element or not, except a
+//! checker procedure: each of its assignments drives only the constant bits
+//! of its target, which the Single Assignment Rule keeps disjoint (IEEE
+//! 1800-2009 17.7.1).
 
 use std::collections::HashMap;
 
-use crate::core::db::{NodeId, NodeKind};
+use crate::core::db::{Db, NodeId, NodeKind, StmtKind};
 use crate::core::lint::rules::analysis::{
     all_nodes, collect_element_writes, driven_bit_interval, port_link_drivers, signal_scope_path,
     DrivenBits,
@@ -39,6 +42,15 @@ impl LintRule for MultiDriverRule {
         }
         for id in all_nodes(db) {
             match db.node_kind(id) {
+                NodeKind::Process { .. } if in_checker(db, id) => {
+                    for assignment in assignments(db, id) {
+                        let target = db.node(assignment).children.first().copied();
+                        for w in collect_element_writes(db, assignment) {
+                            let bits = target.and_then(|target| driven_bit_interval(db, target, w));
+                            drivers.entry(w).or_default().push(bits);
+                        }
+                    }
+                }
                 NodeKind::Process { .. } => {
                     // collect_element_writes dedupes per root, so a process
                     // counts as one driver even when it assigns the signal
@@ -85,6 +97,33 @@ impl LintRule for MultiDriverRule {
     }
 }
 
+/// Whether `node` belongs to a checker instance: its innermost enclosing
+/// instance is a checker.
+fn in_checker(db: &Db, node: NodeId) -> bool {
+    let mut current = db.node(node).parent;
+    while let Some(scope) = current {
+        if matches!(db.node_kind(scope), NodeKind::ModuleInst { .. }) {
+            return db.checker_instance(scope).is_some();
+        }
+        current = db.node(scope).parent;
+    }
+    false
+}
+
+/// The assignment statements in the body of process `process`.
+fn assignments(db: &Db, process: NodeId) -> Vec<NodeId> {
+    let mut found = Vec::new();
+    let mut stack = vec![process];
+    while let Some(node) = stack.pop() {
+        if matches!(db.node_kind(node), NodeKind::Stmt(StmtKind::Assign { .. })) {
+            found.push(node);
+            continue;
+        }
+        stack.extend(db.node(node).children.iter().copied());
+    }
+    found
+}
+
 /// True when two of the drivers can drive a common bit; a driver without a
 /// constant region covers the whole signal. Sorted by elements, a region is
 /// followed by the regions inside it, and regions of the same elements by
@@ -122,6 +161,24 @@ mod tests {
         assert_eq!(d.severity, LintSeverity::Warning);
         assert!(d.message.contains("`x`"), "mentions x: {}", d.message);
         assert!(d.message.contains("2 drivers"), "count is 2: {}", d.message);
+    }
+
+    #[test]
+    fn checker_procedures_driving_disjoint_bits_are_separate_drivers() {
+        let source = "checker c(logic a, event clk);\n\
+             \x20 bit [2:0] b;\n\
+             \x20 always @(clk) b[0] <= a;\n\
+             \x20 always @(clk) b[2:1] <= {a, !a};\n\
+             \x20 bit [1:0] d;\n\
+             \x20 always @(clk) d <= {a, a};\n\
+             \x20 always @(clk) d[1] <= a;\n\
+             endchecker\n\
+             module top;\n  logic clk, x;\n  c u(x, posedge clk);\nendmodule\n";
+        let diags = lint_design(source, "top");
+        let got = rule_diags(&diags, "multi-driver");
+        // `b` has disjoint bits per procedure; `d[1]` is written twice.
+        assert_eq!(got.len(), 1, "{:?}", diags);
+        assert!(got[0].message.contains("`d`"), "{}", got[0].message);
     }
 
     #[test]

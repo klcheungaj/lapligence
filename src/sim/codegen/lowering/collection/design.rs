@@ -197,7 +197,9 @@ impl<'a> Codegen<'a> {
     }
 
     fn collect_instance(&mut self, inst: NodeId, path: &str) -> Result<(), String> {
-        let display_path = self.instance_display_path(inst);
+        let display_path = self
+            .procedural_checker_display_path(inst)
+            .unwrap_or_else(|| self.instance_display_path(inst));
         self.display_paths.insert(path.to_owned(), display_path);
         self.instance_paths.insert(inst, path.to_owned());
         self.scope_nodes.insert(path.to_owned(), inst);
@@ -388,10 +390,10 @@ impl<'a> Codegen<'a> {
         // The frontend reports a repeated instance name only as a warning
         // when a bind injects it (SV §23.11 places bound instances in the
         // target's name space, where a repeated name is illegal).
-        let mut child_names: HashSet<&str> = HashSet::new();
+        let mut child_names: HashSet<String> = HashSet::new();
         for c in &self.node(inst).children {
             if matches!(self.kind(*c), NodeKind::ModuleInst { .. })
-                && !child_names.insert(self.node(*c).name.as_str())
+                && !child_names.insert(self.child_instance_name(inst, *c))
             {
                 let node = self.node(*c);
                 return Err(format!(
@@ -406,15 +408,65 @@ impl<'a> Codegen<'a> {
         }
         for c in &self.node(inst).children {
             if matches!(self.kind(*c), NodeKind::ModuleInst { .. }) {
-                let cname = self.node(*c).name.clone();
-                if cname.is_empty() {
+                if self.node(*c).name.is_empty() {
                     return Err(format!("unnamed child instance in `{path}`"));
                 }
-                let child_path = format!("{path}.{}", display_ident(&cname));
+                let child_path = format!("{path}.{}", self.child_instance_name(inst, *c));
                 self.collect_instance(*c, &child_path)?;
             }
         }
         Ok(())
+    }
+
+    /// `%m` name of a procedural checker instance, which keeps the named
+    /// blocks around its instantiation statement, or of a checker nested in
+    /// one; `None` for every other instance.
+    fn procedural_checker_display_path(&self, inst: NodeId) -> Option<String> {
+        let info = self.db.checker_instance(inst)?;
+        let node = self.node(inst);
+        if info.procedural {
+            let parent = node.parent?;
+            let prefix = format!("{}.", self.node(parent).full_name);
+            let suffix = node
+                .full_name
+                .strip_prefix(prefix.as_str())
+                .unwrap_or(&node.name);
+            return Some(format!("{}.{suffix}", self.instance_display_path(parent)));
+        }
+        if !info.nested || !self.queued_by_procedural_checker(inst) {
+            return None;
+        }
+        let owner = self.owning_checker(inst)?;
+        let owner_display = self
+            .procedural_checker_display_path(owner)
+            .unwrap_or_else(|| self.instance_display_path(owner));
+        Some(format!("{owner_display}.{}", node.name))
+    }
+
+    /// The path components of child instance `child` below `parent`: its
+    /// name, preceded for a procedural checker instance by the named blocks
+    /// around its instantiation statement, which stay in its hierarchical
+    /// name (IEEE 1800-2009 17.3.1).
+    pub(super) fn child_instance_name(&self, parent: NodeId, child: NodeId) -> String {
+        let node = self.node(child);
+        let procedural = self
+            .db
+            .checker_instance(child)
+            .is_some_and(|checker| checker.procedural);
+        let prefix = format!("{}.", self.node(parent).full_name);
+        match node.full_name.strip_prefix(prefix.as_str()) {
+            Some(blocks) if procedural && blocks.len() > node.name.len() => {
+                let blocks = &blocks[..blocks.len() - node.name.len()];
+                let mut name = String::new();
+                for block in blocks.split('.').filter(|block| !block.is_empty()) {
+                    name.push_str(&display_ident(block));
+                    name.push('.');
+                }
+                name.push_str(&display_ident(&node.name));
+                name
+            }
+            _ => display_ident(&node.name),
+        }
     }
 
     /// Procedural-block records of the processes directly in `scope`,
@@ -749,7 +801,7 @@ impl<'a> Codegen<'a> {
         // nested gen scopes), under their full instance path.
         for c in &self.node(gs).children {
             if matches!(self.kind(*c), NodeKind::ModuleInst { .. }) {
-                let child_path = format!("{gs_path}.{}", display_ident(&self.node(*c).name));
+                let child_path = format!("{gs_path}.{}", self.child_instance_name(gs, *c));
                 self.collect_instance(*c, &child_path)?;
             }
         }

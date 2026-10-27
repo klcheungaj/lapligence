@@ -206,11 +206,16 @@ impl<'a> Codegen<'a> {
                 }
             }
             Pass::Procs => {
+                // A procedural checker's instantiation statement queues its
+                // static assertions instead (17.3.1).
+                let queued = self.queued_by_procedural_checker(inst);
                 for c in &self.node(inst).children {
-                    if matches!(
-                        self.kind(*c),
-                        NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. })
-                    ) {
+                    if !queued
+                        && matches!(
+                            self.kind(*c),
+                            NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. })
+                        )
+                    {
                         self.emit_concurrent_assertion(inst, path, *c)?;
                     }
                 }
@@ -272,7 +277,9 @@ impl<'a> Codegen<'a> {
                 NodeKind::Process { .. } if pass == Pass::Procs => {
                     self.emit_process(inst, &gs_path, child)?
                 }
-                NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. }) if pass == Pass::Procs => {
+                NodeKind::Stmt(StmtKind::ConcurrentAssertion { .. })
+                    if pass == Pass::Procs && !self.queued_by_procedural_checker(inst) =>
+                {
                     self.emit_concurrent_assertion(inst, &gs_path, child)?
                 }
                 NodeKind::GenScope => self.emit_gen_scope(inst, child, &gs_path, pass)?,
@@ -1902,7 +1909,41 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// The concurrent assertions of an assertion member of a module or
+    /// checker body: the synthetic `always` process the frontend makes for a
+    /// concurrent assertion item, located at the assertion or at the label
+    /// block around it. A user-written `always` starts at its keyword.
+    pub(in crate::sim::codegen) fn assertion_member_assertions(
+        &self,
+        proc: NodeId,
+    ) -> Option<Vec<NodeId>> {
+        let NodeKind::Process {
+            kind:
+                ProcessKind::Always {
+                    always_type: AlwaysKind::Always,
+                },
+        } = self.kind(proc)
+        else {
+            return None;
+        };
+        let body = self.node(proc).children.first().copied()?;
+        let (process, statement) = (self.node(proc), self.node(body));
+        if (process.line, process.col) != (statement.line, statement.col) {
+            return None;
+        }
+        let mut assertions = Vec::new();
+        (self.assertion_only_body(body, &mut assertions) && !assertions.is_empty())
+            .then_some(assertions)
+    }
+
     fn emit_process(&mut self, inst: NodeId, path: &str, proc: NodeId) -> Result<(), String> {
+        // A procedural checker's instantiation statement queues its static
+        // assertions instead (17.3.1).
+        if self.queued_by_procedural_checker(inst)
+            && self.assertion_member_assertions(proc).is_some()
+        {
+            return Ok(());
+        }
         // Effect collection resolves callees before EmitCtx::new installs its
         // context. Never reuse the previous process's instance for this scan.
         self.inst = inst;

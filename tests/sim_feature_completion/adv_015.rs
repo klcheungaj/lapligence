@@ -78,6 +78,16 @@ fn disjoint_assignments_and_independent_instances() {
     });
 }
 
+/// A01: a checker formal passed to a let declared inside or outside the
+/// checker reads the sampled value of its actual, through ordered, named
+/// and default arguments, nested lets and repeated calls.
+#[test]
+fn let_arguments_read_sampled_formals() {
+    sim_cli::run_case_checked_matrix(SUITE, "let_formals", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("let_formals.out"))
+    });
+}
+
 /// A03: the 17.5 and 17.7.1 restrictions on checker procedures are located
 /// errors.
 #[test]
@@ -159,21 +169,63 @@ fn later_revision_checker_forms_are_edition_errors() {
     );
 }
 
-/// A02/A03: free checker variables and procedural checker instances are
-/// located limits, not silent results.
+/// A02: free variables start random or initialized, active ones are solved
+/// at their assume set clock events (or every time step) and read with
+/// their current values, constant and assigned ones are not redrawn.
+#[test]
+fn free_variables_are_solved_before_observed() {
+    sim_cli::run_case_checked_matrix(SUITE, "free_vars", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("free_vars.out"))
+    });
+}
+
+/// A02: an assume set without a solution is an unsuccessful attempt whose
+/// assumption fails when checked; another instance's set is still solved.
+#[test]
+fn unsuccessful_solution_attempts_fail_their_assumptions() {
+    sim_cli::run_case_checked_matrix(SUITE, "free_unsat", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("free_unsat.out"))
+    });
+}
+
+/// A02/A03: free variable forms llg does not randomize are located limits.
+#[test]
+fn unsupported_free_variable_forms_are_located() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_free_history",
+        "neg_free_history.sv:6:35: $rose of active free checker variable `f` is not supported: \
+         llg reads active free variables with their current value (IEEE 1800-2009 17.7.2) and \
+         keeps no sampled history of them",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_free_unpacked",
+        "neg_free_unpacked.sv:4:12: free checker variable `f` of an unpacked type is not \
+         supported: llg randomizes packed integral free variables (IEEE 1800-2009 17.7.2)",
+    );
+}
+
+/// A03: a procedural checker instance queues its static assertions, and
+/// those of its nested static checkers, on its procedure's procedural
+/// assertion queue each time its instantiation executes, takes the clock its
+/// procedure infers for `$inferred_clock`, and runs its other contents in
+/// every time step.
+#[test]
+fn procedural_checker_instances_queue_static_assertions() {
+    sim_cli::run_case_checked_matrix(SUITE, "procedural", &[], &|label, output| {
+        assert_line_set(label, output, fixture!("procedural.out"))
+    });
+}
+
+/// A03: an automatic value passed to a procedural checker is a located
+/// limit, not a silently sampled value.
 #[test]
 fn unsupported_checker_forms_are_located() {
     sim_cli::reject_case(
         SUITE,
-        "neg_free_var",
-        "neg_free_var.sv:4:12: free checker variable `r` is not supported: llg does not \
-         randomize free variables or solve assume sets (IEEE 1800-2009 17.7, 17.7.2)",
+        "neg_procedural_automatic",
+        "neg_procedural_automatic.sv:6:29: automatic variable `v` in a procedural concurrent \
+         assertion takes its value when the assertion is queued (IEEE 1800-2009 16.15.6.1)",
     );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_procedural",
-        "checker instance in procedural code (IEEE 1800-2009 17.4); instantiate the checker \
-         outside the procedure` at ",
-    );
-    sim_cli::reject_case(SUITE, "neg_procedural", "neg_procedural.sv:10:5");
 }

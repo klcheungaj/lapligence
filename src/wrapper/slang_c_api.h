@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 55u
+#define LLG_SLANG_ABI_VERSION 57u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -888,6 +888,9 @@ enum {
    * the owned database cannot reduce a surviving pattern to an empty case
    * before G3-01 implements matching. */
   LLG_SLANG_STMT_PATTERN_CASE = 233,
+  /* A checker instantiation in procedural code (IEEE 1800-2009 17.3.1);
+   * PROCEDURAL_CHECKER edges name the instances. */
+  LLG_SLANG_STMT_PROCEDURAL_CHECKER = 238,
   /* AssertionExprKind tags. */
   LLG_SLANG_ASSERTION_EXPR_INVALID = 1,
   LLG_SLANG_ASSERTION_EXPR_SIMPLE = 2,
@@ -1253,7 +1256,11 @@ enum {
    * argument of a checker instantiated outside any checker, or a formal's
    * default value. The index is the occurrence ordinal; bit 31 is set for a
    * default value (LLG_SLANG_CHECKER_ACTUAL_DEFAULT). Not a child edge. */
-  LLG_SLANG_EDGE_CHECKER_ACTUAL = 43
+  LLG_SLANG_EDGE_CHECKER_ACTUAL = 43,
+  /* From a PROCEDURAL_CHECKER statement to each checker instance
+   * (INSTANCE_CHECKER) it instantiates, array elements in element order;
+   * the index is the ordinal. Not a child edge. */
+  LLG_SLANG_EDGE_PROCEDURAL_CHECKER = 44
 };
 
 /* Checker instance auxiliary bits and CHECKER_ACTUAL index flag. */

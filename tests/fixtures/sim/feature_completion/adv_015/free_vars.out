@@ -1,0 +1,10 @@
+0 k=9
+15 after reset flag=0
+25 after reset flag=0
+75 after reset flag=0
+75 invalid flag=0
+85 after reset flag=0
+85 invalid flag=0
+95 after reset flag=0
+explicit w redrawn=1
+implicit v redrawn=1

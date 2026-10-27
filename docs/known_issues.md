@@ -1912,33 +1912,44 @@ the global clock tick.
 
 ### Symptom
 
-A free checker variable (`rand`, SV 17.7) is rejected at its declaration
-("free checker variable `r` is not supported: llg does not randomize free
-variables or solve assume sets"), and a checker instantiated in procedural
-code (SV 17.3, 17.3.1) is rejected at the instantiation ("checker instance in
-procedural code ... instantiate the checker outside the procedure").
+Free checker variables (SV 17.7, 17.7.2) are randomized and solved, with
+these limits:
+
+- A sampled value function (`$past`, `$rose`, ...) of an active free
+  variable is rejected ("$rose of active free checker variable `f` is not
+  supported").
+- An unpacked, real or enum free variable is rejected at its declaration.
+- Only predicate assumptions (`C`, `A |-> C`, `A |=> C` with Boolean `A`
+  and `C`, no abort) constrain the solve; other assume forms in an assume
+  set trigger solving at their clock events but are only checked.
+
+A checker instantiated in procedural code (SV 17.3, 17.3.1) queues its
+static assertions on its procedure's procedural assertion queue, but an
+actual argument with an automatic variable or a `const'` cast is rejected
+at its use in the checker ("automatic variable `v` in a procedural
+concurrent assertion takes its value when the assertion is queued").
 
 ### Cause
 
-Free variables need random initial values, re-randomization of active free
-variables before Observed in every time step or at their assume-set clock
-events, assume-set solving with bounded attempts (17.7.2) and current-value
-reads of active free variables in assertions. A procedural checker instance
-queues its static assertions on the pending procedural assertion queue of
-its process (16.15.6), which llg has for procedural concurrent assertions
-but not for whole checker bodies.
+17.7.2 does not require a solution to be found, so llg enforces the forms
+whose current-step obligation it can express on the constraint solver.
+Sampled histories of variables that are read with current values have no
+defined meaning in llg's sampling model. The current value of an automatic
+or `const'` actual is substituted whenever a static assertion of the
+checker is queued (17.3), and llg's procedural assertion queue keeps no
+values with a queued instance (the same limit as for procedural concurrent
+assertions, SIM-099).
 
 ### Intended direction
 
-Keep a per-model table of free-variable sets (signal, active flag, clock
-events, constraint functions) solved at the top of the Observed set by the
-existing constraint solver, with zero cost for designs without free
-variables; queue a procedural checker's static assertions through the
-procedural assertion queue of the enclosing process.
+Derive the current-step obligations of sequence and property assumptions
+from their pending attempts; capture queued values with each procedural
+assertion instance.
 
 ### Reproduce
 
-`neg_free_var.sv` and `neg_procedural.sv` in
+`neg_free_history.sv`, `neg_free_unpacked.sv` and
+`neg_procedural_automatic.sv` in
 [adv_015](../tests/fixtures/sim/feature_completion/adv_015/readme.md).
 
 ## DPI-C import limits (SIM-040)

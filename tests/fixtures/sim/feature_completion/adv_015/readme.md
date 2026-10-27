@@ -11,7 +11,7 @@ declares `` `timescale 1ns / 1ns ``. Every expected line was derived by hand
 from the stimulus and the clauses quoted below, not copied from a simulator
 transcript. Line numbers refer to the `pdftotext -layout` extraction
 `SystemVerilog-1800-2009.txt`. The portable decision cases `A15-D1` to
-`A15-D3` live in `tests/fixtures/sim/lrm_decisions/`.
+`A15-D5` live in `tests/fixtures/sim/lrm_decisions/`.
 
 Run the suite with:
 
@@ -25,6 +25,10 @@ scripts/run-tests.sh -E 'binary(sim_feature_completion) & test(adv_015::)'
 | `nested.sv` | `$inferred_clock`/`$inferred_disable`, nested checker with an inferred clock, let/function/sequence, cover, deferred assertion item, final (A01) |
 | `bind.sv` | checker bound into a module, interface port actuals, covergroup, subchecker (A01) |
 | `boundary.sv` | disjoint bits of one variable from two procedures, named block, two instances, unused checker (A01) |
+| `free_vars.sv` | free variables: LRM observer model assumptions (`|=>` and `|->`), range assumption, `const` and assigned free variables, initialized active variable in the first time step, explicitly and implicitly clocked redraws (A02) |
+| `free_unsat.sv` | an assume set without solution fails its assumption when checked; an independent set and an X state value (A02) |
+| `procedural.sv` | procedural checker instances: gated, in a loop, in an `initial` procedure, nested static subchecker, inferred procedure clock, beside a static instance (A03) |
+| `let_formals.sv` | checker formals passed to lets declared inside and outside the checker: ordered, named and default arguments, a one-formal let, a let calling a let, repeated calls (A01) |
 | `neg_*.sv` | 17.5 and 17.7.1 restrictions, later-revision forms, located limits (A03) |
 
 ## Clauses the expectations rely on
@@ -38,6 +42,13 @@ L28308-28310):
 > —      Arguments that cannot be sampled, such as events, sequences, and properties, are treated similarly
 >        to such arguments for sequences and properties (see 16.8): they are substituted directly for the
 >        formal argument when it is used in statements or expressions within the checker.
+
+Let arguments (11.13, L16782-16783), `let_formals`: a checker formal used as
+a let argument is still a reference to the formal, so it reads the sampled
+value of its actual like a direct reference:
+
+> The let body gets expanded with the actual arguments by replacing the formal arguments with the actual
+> arguments.
 
 Nested checkers (17.3, L28322-28323):
 
@@ -98,9 +109,69 @@ not define (17.2 L28109-28110: a `checker_port_item` has no direction; 17.5
 L28496-28499 allows only `initial`, `always` and `final` procedures) and are
 edition errors.
 
-Located limits (A02): free variables (17.7, L28630-28631) and procedural
-checker instances (17.3.1, L28345-28347) are rejected at their location; see
-the [known issue](../../../../../docs/known_issues.md#checker-limits-after-adv-015).
+Free variables (17.7 L28630-28631, L28766, L28777-28780; 17.7.2
+L28884-28890, L28894-28895, L28946-28949, L28958-28962, L28973-28974,
+L28976-28979, L28982-28983), `free_vars`, `free_unsat`. Every printed value
+is forced by these lines, whatever the drawn values: after a tick with
+reset sampled 1, m1 owes `!flag`; with valid sampled 0, m3 does; `r` lies
+in its assumed range at every event and the assertions, which read the
+current solved value, never fail; `idx` (`rand const`) never changes; the
+assigned `t` is inactive and toggles; `k` keeps its initializer 9 at time 0;
+`w` (explicitly clocked, in no assumption) and `v` (implicitly clocked) are
+redrawn at most clock events (more than 4 of 10, with 16-bit values). The
+`stuck` set has no solution, so its assumption fails at each event; `free`
+solves `p == s + 1` once `s` is known.
 
 > Checker variables may have an optional rand qualifier. In this case, they are called free variables; free vari-
 > ables may behave non-deterministically.
+
+> All free checker variables, both const and non-const, active and inactive, are initialized with
+> unconstrained random values unless explicitly initialized in their declaration.
+
+> When a solution attempt is made on an assume set, values shall be sought for all active checker variables
+> such that, together with the inactive variables and state, none of the assumptions will fail in that time step. If
+> a set of such values is found, the solution attempt is successful. Otherwise, any values may be chosen for the
+> active variables and the solution attempt is unsuccessful. There is no requirement that a solution be found if
+> it exists or that “dead end” states (states where no solution exists) be avoided.
+
+> Empty assume sets shall be considered to have an implicit assume set clock event in every time step before
+> the Observed region.
+
+> When an implementation is about to begin the Observed region, it shall solve for all the active free variables.
+> When solving, non-active variables are either sampled or not as described in 17.3. Checker procedures and
+> properties shall not use sampled values of active free checker variables; current values shall be read so that
+> up-to-date solved values are visible.
+
+> When a solution attempt is unsuccessful, any resulting assumption failure(s) do not occur until an unsatis-
+> fied property is clocked and checked in the Observed region.
+
+llg leaves the variables unchanged after an unsuccessful attempt (one of
+the "any values"). `neg_free_history` (a sampled value function of an active
+free variable) and `neg_free_unpacked` (an unpacked free variable) are
+located limits; see the
+[known issue](../../../../../docs/known_issues.md#checker-limits-after-adv-015).
+
+Procedural checker instances (17.3.1 L28345-28351, L28398-28399; 17.4
+L28490-28491), `procedural`. Clocks rise at 5, 15, ..., 45; `a` is 0 until
+32, `b` 1 until 42, `en` 1 from 12 to 32. `outside` is static: `p1` fails at
+5, 15, 25 and its `sub` at 45. `gated` is reached only while `en` is 1, at
+15 and 25, where its queued `p1` fails; its `n` still counts every edge
+(n=1 at 15). The loop reaches `loop` twice per edge, so each failure of its
+nested `sub` (reading `a`) appears twice at 5, 15 and 25. `once`, in an
+`initial` procedure, is queued once and checked at the first edge only.
+`gated` and `loop` take `posedge clk` from `blk` for `$inferred_clock`, and
+`%m` keeps the named block. Actions read `n` before its Re-NBA update.
+
+> If the checker is procedural, all static assertion statements in the checker are added to the pending
+> procedural assertion queue for their process when the checker instantiation is reached in process
+> execution, and then may mature or be flushed like any procedural concurrent assertion (see 16.15.6.2).
+
+> If the checker is statically instantiated inside another checker, any of its static assertions are treated
+> as if instantiated in the parent checker, and thus will also be queued when an instantiation of its top-
+> level ancestor in the checker hierarchy is visited in procedural code.
+
+> Each of the three instantiations has its own version of sum, which is updated at every positive clock
+> edge, regardless of whether that instance was visited in procedural code.
+
+`neg_procedural_automatic` (an automatic actual, whose current value 17.3
+substitutes when the assertions are queued) is a located limit.

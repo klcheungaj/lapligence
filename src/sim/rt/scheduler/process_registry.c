@@ -202,6 +202,8 @@ static void service_program_completions(void) {
  * The root stream is the safe fallback for initialization callbacks and
  * embedding code that invokes the service outside a coroutine. */
 static llg_rng_state_t* llg_process_rng(void) {
+    // A free variable solve runs outside any process on its set's stream.
+    if (g.free_rng) return g.free_rng;
     llg_proc_t* process = llg_current();
     if (process) return &process->rng;
     return g.rng_initializer ? g.rng_initializer : &g.rng_root;

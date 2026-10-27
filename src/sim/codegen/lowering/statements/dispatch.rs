@@ -275,6 +275,12 @@ impl EmitCtx<'_, '_> {
                 kind: ConcurrentAssertionKind::Restrict,
                 ..
             }) => Ok(Vec::new()),
+            // Reaching a procedural checker instantiation queues its static
+            // assertions (17.3.1).
+            NodeKind::Stmt(StmtKind::ProceduralChecker { instances }) => {
+                let instances = instances.clone();
+                self.cg.lower_procedural_checkers(&instances)
+            }
             NodeKind::Stmt(StmtKind::ConcurrentAssertion {
                 kind,
                 if_true,

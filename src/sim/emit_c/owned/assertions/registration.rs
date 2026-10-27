@@ -276,6 +276,27 @@ pub(in crate::sim::emit_c) fn render(model: &IrModel) -> Result<String, String> 
             ));
         }
     }
+    // Free checker variable sets name assumes registered above.
+    for set in model.free_sets() {
+        let assumes = if set.assumes().is_empty() {
+            "NULL".to_owned()
+        } else {
+            format!(
+                "(const uint64_t[]){{ {} }}",
+                set.assumes()
+                    .iter()
+                    .map(|identity| format!("{identity}ULL"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        out.push_str(&format!(
+            "    if (!llg_checker_free_set({}, {assumes}, {}u, {})) return 0;\n",
+            set.solve(),
+            set.assumes().len(),
+            c_string_literal(set.label()),
+        ));
+    }
     out.push_str("    return !llg_rt_failed();\n}\n\n");
     Ok(out)
 }

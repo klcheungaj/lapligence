@@ -112,6 +112,16 @@ pub enum IrRuntimeQuery {
     /// (1-bit unsigned two-state): it matched in this time step (IEEE
     /// 1800-2009 16.9.11). Procedural reads use the endpoint's event instead.
     SequenceTriggered(u32),
+    /// While a free checker variable set solves (see
+    /// [`IrFreeSet`](crate::sim::ir::IrFreeSet)), whether the set's assume
+    /// at position `assume` has a clock event before this Observed region,
+    /// or, with `due`, also a pending `|=>` attempt whose consequent that
+    /// event checks (1-bit unsigned two-state).
+    CheckerAssume { assume: u32, due: bool },
+    /// Whether simulation time is still 0 (1-bit unsigned two-state): an
+    /// initialized active free variable keeps its initial value in the
+    /// first time step (IEEE 1800-2009 17.7).
+    InitialTimeStep,
 }
 
 /// Structural expression kinds.  The self-determined width/signedness/fill of
