@@ -127,7 +127,12 @@ call with `llg_dpi_import_enter/leave`; every import call site sets
 `llg_dpi_next_site` just before the call (decision S41-D3), and an
 uninstrumented thunk clears it after the call. Context imports carry the effects of
 every exported body (`execution::effects_for_function`), so cancellation
-checks follow them.
+checks follow them. When an exported task can consume time, a context
+imported task is a coroutine shim (ADV-018, `model/dpi.rs`
+`render_dpi_context_shim`): its renamed thunk (`<fn>_fcb`) runs on a foreign
+call context and returns right after the foreign call when the process was
+killed; the waiting export's thunk fills the task's (possibly shared) frame
+type on the chain arena and the shim runs it with `LLG_CO_CALL_ARENA`.
 DPI input strings remain borrowed for the call. Snapshot the foreign return and
 all string outputs before the first copy-out or input destruction, preserving
 aliased foreign pointers. VPI argument arrays borrow registered slots only for

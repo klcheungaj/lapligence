@@ -21,8 +21,8 @@ String/chandle/native paths need typed owners/captures; chandles stay `void *`,
 never integers. Preserve explicit C names and pure/context qualifiers in canonical
 `svdpi.h` scalar thunks; reject missing/conflicting libraries/signatures before
 simulation and retain packed/open-array/ref guards. Exports (`IrFunc::dpi_export`)
-keep the import formal/result rules, reject time-consuming tasks (ADV-018),
-reserved or colliding C identifiers and duplicate (scope, C identifier) pairs;
+keep the import formal/result rules (exported tasks may consume time:
+ADV-018), reject reserved or colliding C identifiers and duplicate (scope, C identifier) pairs;
 `finish_dpi` sorts `IrModel::dpi_scopes` by name (the runtime binary-searches
 them) and import call sites carry `dpi_site` for `svGetCallerInfo` (S41-D3).
 Static export formal storage: `IrDpiExport::storage` docs.

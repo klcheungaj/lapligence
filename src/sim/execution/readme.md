@@ -45,6 +45,11 @@ optimizer and hash iteration order cannot affect site identity. Inline-expanded
 task statements remain in their host and therefore consume the host's resume
 numbers; existing inline-recursion rejection remains unchanged.
 
+A context DPI-C imported task inherits the effects of every exported body,
+so it suspends when an exported task can consume time (ADV-018). It has no
+body; analysis gives it one arena call site (`Call { callee: None }`), the
+exported task frame its foreign code requests.
+
 `execution/recursion.rs` finds recursion among synchronous (non-suspending)
 subprograms so that SystemVerilog recursion depth never consumes native stack.
 Its graph has one node per non-inline subprogram with a body that is not

@@ -269,12 +269,28 @@ impl ExecutionAnalysis {
         let mut drafts = BTreeMap::<CoroutineId, Vec<SiteDraft>>::new();
         for function in &coroutine_functions {
             let mut sites = Vec::new();
-            scan_statements(
-                &ir.funcs[*function].body,
-                &OperationPath::default(),
-                function_effects,
-                &mut sites,
-            );
+            let definition = &ir.funcs[*function];
+            if definition.dpi_import().is_some() {
+                // A suspendable context import (ADV-018) has no body: its
+                // one resume point is the arena call of an exported task
+                // that its foreign code requests.
+                sites.push(SiteDraft {
+                    path: OperationPath::default(),
+                    operation: SuspensionOperation::Call { callee: None },
+                    call: Some(DirectCall {
+                        callee: None,
+                        indirect: true,
+                    }),
+                    origin: Some(definition.origin().clone()),
+                });
+            } else {
+                scan_statements(
+                    &definition.body,
+                    &OperationPath::default(),
+                    function_effects,
+                    &mut sites,
+                );
+            }
             drafts.insert(CoroutineId::Function(*function), sites);
         }
         for (function, definition) in ir.funcs.iter().enumerate() {

@@ -512,11 +512,6 @@ impl Codegen<'_> {
             ));
         }
         let is_task = matches!(self.kind(ft), NodeKind::FuncTask { is_task: true, .. });
-        if is_task && self.task_has_wait(ft, inst) {
-            return Err(format!(
-                "DPI-C export task `{name}` (C identifier `{c_name}`) can consume time; exported tasks that suspend are not supported (ADV-018)"
-            ));
-        }
         let ret = self.dpi_return_type(ft)?;
         let types = self.dpi_formal_types(ft, formals, formals_ir)?;
         let mut key = format!("task={};return={ret:?}", is_task as u8);

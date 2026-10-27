@@ -567,6 +567,13 @@ struct llg_proc {
     llg_co_chain_t chain; // last: LLG_CO_ROOT(&chain) follows the record
 };
 
+/* Set only once a model starts a foreign call context (ADV-018). */
+static void (*process_end_hook)(llg_proc_t* proc, int unwind) = NULL;
+
+void llg_rt_set_process_end_hook(void (*hook)(llg_proc_t* proc, int unwind)) {
+    process_end_hook = hook;
+}
+
 static void free_proc_record(llg_proc_t* proc) {
     if (!proc) return;
     llg_co_arena_release(&proc->chain.arena);

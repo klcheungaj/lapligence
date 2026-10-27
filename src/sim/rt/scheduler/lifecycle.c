@@ -31,6 +31,7 @@ static void free_proc_storage(llg_proc_t* p) {
         mailbox_unlink_wait(&p->wait);
     wait_payload_release(&p->wait);
     wait_retained_drop(p);
+    if (process_end_hook) process_end_hook(p, 0);
     value_scopes_unwind(p);
     activation_unwind_proc(p);
     llg_frame_release(p->frame);

@@ -871,7 +871,7 @@ fn directory_is_empty(directory: &Path) -> bool {
 
 /// File names [`super::write_sim_sources`] always writes (must mirror its
 /// fixed list there) plus this module's own `CMakeLists.txt`.
-const FIXED_SOURCE_NAMES: [&str; 27] = [
+const FIXED_SOURCE_NAMES: [&str; 28] = [
     "llg_rt.h",
     "llg_rt.c",
     "llg_value.h",
@@ -888,6 +888,7 @@ const FIXED_SOURCE_NAMES: [&str; 27] = [
     "sv_vpi_user.h",
     "llg_vpi.h",
     "llg_vpi.c",
+    "llg_dpi_context.c",
     "llg_container.h",
     "llg_container.c",
     "llg_string.h",
@@ -1200,13 +1201,30 @@ fn write_cmakelists(
         )
         .replace("{WAVE_SETUP}", if waveform { WAVE_CMAKE } else { "" })
         .replace("{IMPORT_LIBRARY}", import_library::CMAKE)
-        .replace("{DPI_LINK}", &dpi_link_setup(opts)?)
+        .replace(
+            "{DPI_LINK}",
+            &(dpi_link_setup(opts)? + foreign_context_link(extra)),
+        )
         + &value::cmake_setup(opts, "sim")?;
     writer.write(&out_dir.join("CMakeLists.txt"), cmakelists)?;
     writer.write(
         &out_dir.join(import_library::DEF_FILE),
         import_library::module_definition(extra),
     )
+}
+
+/// The platform thread library for a model whose suspendable DPI-C import
+/// shims start foreign call contexts (`llg_dpi_context.c`, ADV-018); other
+/// models never pull that archive member and keep their link line.
+fn foreign_context_link(extra: &[(&str, &str)]) -> &'static str {
+    let uses_contexts = extra
+        .iter()
+        .any(|(name, source)| name.ends_with(".c") && source.contains("llg_dpi_context_begin("));
+    if uses_contexts {
+        "\nfind_package(Threads REQUIRED)\ntarget_link_libraries(sim PRIVATE Threads::Threads)"
+    } else {
+        ""
+    }
 }
 
 fn validate_dpi_libraries(opts: &CmakeBuildOpts) -> Result<(), BuildError> {
@@ -1528,6 +1546,7 @@ fn runtime_source_names_for(
         "llg_rt.c",
         "llg_random.c",
         "llg_vpi.c",
+        "llg_dpi_context.c",
         "llg_container.c",
         "llg_string.c",
     ];

@@ -184,7 +184,7 @@ fn render_function(
     frame.cell_eligibility = frame_cells::CellEligibility::analyze(ctx, &function.body);
     if function.dpi.is_some() {
         if coroutine {
-            return Err("a DPI subprogram cannot be a coroutine".to_owned());
+            return dpi_context_shim(ctx, function, frame);
         }
         return Ok((
             super::super::model::owned_dpi_thunk(ctx.model, function)?,
@@ -737,6 +737,48 @@ fn render_function(
     };
     let source = format!("static {return_type} {name}({signature}) {{\n{coroutine_prologue}    if ({depth} >= 256) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n{prologue}{body}\n}}\n{macro_epilogue}");
     Ok((source, layout, sites))
+}
+
+/// The coroutine of a suspendable context import (ADV-018): its one resume
+/// point is the arena call of an exported task the foreign code requests.
+fn dpi_context_shim(
+    ctx: &RCtx<'_>,
+    function: &IrFunc,
+    mut frame: Frame<'_, '_>,
+) -> Result<
+    (
+        String,
+        Option<super::super::frame_layout::FrameLayout>,
+        usize,
+    ),
+    String,
+> {
+    if frame.synchronous {
+        return Err(format!(
+            "DPI-C import `{}` cannot be a recursive coroutine",
+            function.c_name
+        ));
+    }
+    let index = ctx
+        .model
+        .funcs
+        .iter()
+        .position(|candidate| candidate.c_name == function.c_name)
+        .ok_or_else(|| "DPI-C import is missing from its model".to_owned())?;
+    let slot = frame.take_call_slot(index, "llg_co_anchor_t")?;
+    if slot.mechanism != crate::sim::execution::CallMechanism::Arena {
+        return Err(format!(
+            "DPI-C import `{}` call site {} is not an arena call",
+            function.c_name, slot.resume
+        ));
+    }
+    frame.frame_field("llg_dpi_context_t*", "_dpi_ctx")?;
+    frame.frame_field("llg_co_anchor_t*", "_dpi_slot")?;
+    let dispatch = frame.dispatch();
+    let finished = frame.into_coframe()?;
+    let source =
+        super::super::model::owned_dpi_context_shim(ctx.model, function, slot.resume, &dispatch)?;
+    Ok((source, Some(finished.layout), 0))
 }
 
 pub(in crate::sim::emit_c) fn coroutine_process<'a, 'm>(

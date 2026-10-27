@@ -307,8 +307,16 @@ static llg_dpi_scope_t* llg_dpi_table = NULL;
 static size_t llg_dpi_table_count = 0;
 /* The live call-chain state; each crossing keeps the state it replaced. */
 static llg_dpi_call_t llg_dpi_now = {NULL, NULL, 0, LLG_DPI_CHAIN_NONE, 0};
-/* Innermost guarded foreign call (llg_dpi_guard_t). */
+/* Innermost guarded foreign call (llg_dpi_guard_t) of the thread that holds
+ * the run token; foreign call contexts swap it on each hand-off. */
 static llg_dpi_guard_t* llg_dpi_guard_top = NULL;
+/* The token holder is a foreign call context unwinding after its process was
+ * killed (ADV-018): the chain is disabled and may not call exports. */
+static int llg_dpi_unwinding = 0;
+/* Hooks of the foreign call contexts (llg_dpi_context.c), set when the first
+ * context starts, so models without one never link that unit. */
+static void (*llg_dpi_park_hook)(void) = NULL;
+static void (*llg_dpi_context_shutdown_hook)(void) = NULL;
 
 void llg_dpi_model_init(llg_dpi_scope_t* scopes, size_t count) {
     llg_dpi_table = scopes;
@@ -317,6 +325,7 @@ void llg_dpi_model_init(llg_dpi_scope_t* scopes, size_t count) {
 }
 
 void llg_dpi_shutdown(void) {
+    if (llg_dpi_context_shutdown_hook) llg_dpi_context_shutdown_hook();
     for (size_t i = 0; i < llg_dpi_table_count; ++i) {
         llg_dpi_user_t* entry = llg_dpi_table[i].user;
         while (entry) {
@@ -331,6 +340,27 @@ void llg_dpi_shutdown(void) {
     llg_dpi_next_site = NULL;
     memset(&llg_dpi_now, 0, sizeof(llg_dpi_now));
     llg_dpi_guard_top = NULL;
+    llg_dpi_unwinding = 0;
+}
+
+void llg_dpi_context_hooks(void (*park)(void), void (*shutdown)(void)) {
+    llg_dpi_park_hook = park;
+    llg_dpi_context_shutdown_hook = shutdown;
+}
+
+llg_dpi_guard_t* llg_dpi_context_switch(llg_dpi_guard_t* guards, int unwinding) {
+    llg_dpi_guard_t* previous = llg_dpi_guard_top;
+    llg_dpi_guard_top = guards;
+    llg_dpi_unwinding = unwinding;
+    return previous;
+}
+
+void llg_dpi_chain_snapshot(llg_dpi_call_t* out) {
+    *out = llg_dpi_now;
+}
+
+int llg_dpi_context_abandoned(void) {
+    return llg_dpi_unwinding;
 }
 
 /* The table entry `scope` designates, or NULL for any other value: user
@@ -401,6 +431,17 @@ void llg_dpi_import_leave(const llg_dpi_call_t* saved, const char* c_name, int t
     }
 }
 
+void llg_dpi_import_abandoned(const llg_dpi_call_t* saved, int status, const char* c_name) {
+    llg_dpi_now = *saved;
+    if (status == 0) {
+        char detail[160];
+        snprintf(detail, sizeof(detail),
+                 "`%s` returned 0 although a disable cancelled it (SV 35.9 item b)",
+                 c_name);
+        llg_dpi_fatal("DPI-C import task ", c_name, detail);
+    }
+}
+
 int llg_dpi_task_status(int status, const char* c_name) {
     int disabled = llg_activation_cancelled();
     if (status != 0 && !disabled) {
@@ -439,14 +480,17 @@ llg_dpi_fn_t llg_dpi_export_target(uint32_t id, const char* c_name, int task) {
         return NULL;
     }
     /* 35.8 makes an exported task called from an imported function illegal
-     * without a mandated check; exported tasks never suspend, so the call
-     * runs (decision S41-D8). */
+     * without a mandated check; a zero-time task runs (decision S41-D8). One
+     * that can consume time is refused by llg_dpi_export_begin. */
     (void)task;
-    if (llg_activation_cancelled()) {
+    if (llg_dpi_unwinding || llg_activation_cancelled()) {
         snprintf(detail, sizeof(detail),
                  "`%s` was called after a disable cancelled the calling import "
                  "(SV 35.9 item d)", c_name);
         llg_dpi_fatal("DPI-C export ", c_name, detail);
+        /* Foreign code unwinding a killed process must not run on: its
+         * context blocks for good instead of returning (ADV-018). */
+        if (llg_dpi_unwinding && llg_dpi_park_hook) llg_dpi_park_hook();
         return NULL;
     }
     llg_dpi_scope_t* scope = llg_dpi_now.scope;
@@ -469,6 +513,11 @@ int llg_dpi_export_enter(llg_dpi_call_t* saved) {
     llg_dpi_now.chain = LLG_DPI_CHAIN_NONE;
     llg_dpi_now.site = NULL;
     return saved->depth + 1;
+}
+
+int llg_dpi_export_abandoned(const llg_dpi_call_t* saved) {
+    llg_dpi_now = *saved;
+    return 1;
 }
 
 int llg_dpi_export_leave(const llg_dpi_call_t* saved, int task) {
@@ -559,7 +608,8 @@ int svGetCallerInfo(const char** fileName, int* lineNumber) {
 }
 
 int svIsDisabledState(void) {
-    return llg_dpi_now.chain != LLG_DPI_CHAIN_NONE && llg_activation_cancelled();
+    return llg_dpi_now.chain != LLG_DPI_CHAIN_NONE &&
+           (llg_dpi_unwinding || llg_activation_cancelled());
 }
 
 void svAckDisabledState(void) {
