@@ -289,6 +289,7 @@ mod references;
 mod selections;
 
 mod assertions;
+mod checkers;
 mod collection;
 pub use collection::SdfCommand;
 mod containers;
@@ -518,6 +519,9 @@ fn checked_semantic(db: &Db) -> Result<crate::sim::semantic::SemanticModel<'_>, 
 /// The design's top instances after the program checks.
 fn collect_tops(cg: &mut Codegen<'_>) -> Result<Vec<NodeId>, String> {
     cg.validate_program_constructs()?;
+    if cg.db.has_checker_instances() {
+        cg.validate_checker_constructs()?;
+    }
     let tops = cg.collect_design()?;
     if tops.is_empty() {
         return Err("no top modules in the elaborated design".to_string());
@@ -1818,6 +1822,11 @@ struct Codegen<'a> {
     assertion_inferred_origin: Option<NodeId>,
     assertion_inferred_resolved: HashMap<NodeId, SampledClock>,
     assertion_default_disable: Option<Option<NodeId>>,
+    /// Lowering code of a checker body where a checker formal stands for
+    /// the sampled value of its actual argument (IEEE 1800-2009 17.3):
+    /// checker procedures and action blocks, not property expressions or
+    /// event controls.
+    checker_sampling: bool,
     /// Slang-materialized local assertion declarations currently being
     /// lowered into one sequence graph. The map is scoped to the graph so
     /// every runtime attempt receives an independent slot set.
@@ -2119,6 +2128,7 @@ impl<'a> Codegen<'a> {
             assertion_inferred_origin: None,
             assertion_inferred_resolved: HashMap::new(),
             assertion_default_disable: None,
+            checker_sampling: false,
             assertion_local_bindings: None,
             assertion_controls_used: None,
             sequence_endpoints: HashMap::new(),

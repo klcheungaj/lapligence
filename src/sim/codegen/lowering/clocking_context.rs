@@ -156,6 +156,48 @@ impl<'a> Codegen<'a> {
         }
     }
 
+    /// The event of a `$inferred_clock` checker formal default used as an
+    /// event control (IEEE 1800-2009 17.4): the default clocking event where
+    /// the checker is instantiated, which 16.15.7 makes the current resolved
+    /// event expression there.
+    pub(super) fn checker_inferred_event_specs(
+        &self,
+        specs: &[EventSpec],
+    ) -> Result<Option<Vec<EventSpec>>, String> {
+        let mut current: Option<Vec<EventSpec>> = None;
+        // Each step moves to the enclosing instantiation, so the walk is
+        // bounded by the checker nesting depth.
+        loop {
+            let specs = current.as_deref().unwrap_or(specs);
+            let [EventSpec::Named(event) | EventSpec::AnyChange { sig: event }] = specs else {
+                return Ok(current);
+            };
+            if !matches!(self.kind(*event), NodeKind::SysCall { name } if name == "$inferred_clock")
+            {
+                return Ok(current);
+            }
+            let Some(actual) = self.db.checker_actual(*event) else {
+                return Ok(current);
+            };
+            let block = self
+                .node(actual.instance)
+                .parent
+                .and_then(|context| self.default_clocking_block(context))
+                .and_then(|block| self.db.clocking_block(block));
+            match block {
+                Some(info) => current = Some(info.event_specs.clone()),
+                None => {
+                    return Err(format!(
+                        "$inferred_clock at {} has no clock at the instantiation of checker \
+                         `{}`: no default clocking applies there (IEEE 1800-2009 16.15.7, 17.4)",
+                        self.source_location(*event),
+                        self.node(actual.instance).name
+                    ))
+                }
+            }
+        }
+    }
+
     pub(super) fn default_clocking_block(&self, inst: NodeId) -> Option<NodeId> {
         if let Some(block) = self
             .owner_instance(inst)

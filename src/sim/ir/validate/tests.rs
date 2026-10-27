@@ -167,6 +167,7 @@ fn rejects_out_of_bounds_signal_reference() {
             lhs: IrLhs::Whole(1),
         }],
         program: None,
+        checker: false,
         origin: crate::sim::semantic::Origin::Synthetic {
             reason: "validation fixture".to_owned(),
         },
@@ -1714,6 +1715,7 @@ fn force_dependencies_must_name_persistent_fixed_arrays() {
                 dependencies: vec![dependency],
             }],
             program: None,
+            checker: false,
             origin: crate::sim::semantic::Origin::Synthetic {
                 reason: "validation fixture".to_owned(),
             },
@@ -1769,6 +1771,7 @@ fn runtime_queries_name_existing_storage_with_their_fixed_shape() {
                 two_state: true,
             }],
             program: None,
+            checker: false,
             origin: crate::sim::semantic::Origin::Synthetic {
                 reason: "validation fixture".to_owned(),
             },

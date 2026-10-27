@@ -472,7 +472,11 @@ impl Codegen<'_> {
             self.named_scope_suffix(path, assertion)
         );
         let previous = self.assertion_display_scope.replace(display);
+        // Property operands are sampled by the assertion itself; only its
+        // action blocks read checker formals as procedural code.
+        let previous_sampling = std::mem::replace(&mut self.checker_sampling, false);
         let result = self.emit_concurrent_assertion_scoped(inst, path, assertion);
+        self.checker_sampling = previous_sampling;
         self.assertion_display_scope = previous;
         result
     }
@@ -530,8 +534,20 @@ impl Codegen<'_> {
     /// condition: the default disable condition at the assertion statement,
     /// or `None` for 1'b0 when no default disable declaration applies.
     pub(super) fn inferred_disable(&self, condition: NodeId) -> Option<Option<NodeId>> {
-        matches!(self.kind(condition), NodeKind::SysCall { name } if name == "$inferred_disable")
-            .then(|| self.assertion_default_disable.flatten())
+        if !matches!(self.kind(condition), NodeKind::SysCall { name } if name == "$inferred_disable")
+        {
+            return None;
+        }
+        // A checker formal default stands for the condition where the
+        // checker is instantiated (17.4), not where it is declared.
+        if let Some(actual) = self.db.checker_actual(condition) {
+            return Some(
+                self.db
+                    .checker_instance(actual.instance)
+                    .and_then(|checker| checker.default_disable),
+            );
+        }
+        Some(self.assertion_default_disable.flatten())
     }
 
     fn emit_concurrent_assertion_clocked(
@@ -1126,6 +1142,7 @@ impl Codegen<'_> {
             return Ok(None);
         };
         let specs = info.event_specs.clone();
+        let specs = self.checker_inferred_event_specs(&specs)?.unwrap_or(specs);
         self.sampled_clock_source(path, specs).map(Some)
     }
 
@@ -2515,11 +2532,18 @@ impl Codegen<'_> {
         };
         let action_path = format!("{path}.assertion[{}].{arm}", assertion.index());
         let display_scope = self.assertion_display_scope.clone();
+        // A checker action block reads formals' sampled values (17.3).
+        let previous_sampling = std::mem::replace(
+            &mut self.checker_sampling,
+            self.db.checker_instance(inst).is_some(),
+        );
         let mut ctx = EmitCtx::new(self, action_path.clone(), inst, "0", None, false);
         ctx.display_scope = display_scope.map(|scope| (scope, Some(assertion)));
         // Each action runs as its own spawned process (16.14.1 action blocks
         // are procedural code); timing controls suspend only that process.
-        let body = ctx.lower_stmt(statement)?;
+        let body = ctx.lower_stmt(statement);
+        ctx.cg.checker_sampling = previous_sampling;
+        let body = body?;
         let mut pre_fns = std::mem::take(&mut ctx.pre_fns);
         pre_fns.extend(std::mem::take(&mut self.pending_container_pre_fns));
         let writes = self.ir_process_writes(self.collect_process_writes(statement)?);
