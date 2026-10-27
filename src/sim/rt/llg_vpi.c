@@ -4253,8 +4253,8 @@ static void decompile_constant(llg_vpi_text_t* text, const llg_vpi_code_t* node)
              bits == 4 ? 'h' : bits == 3 ? 'o' : 'b');
     text_put(text, buffer);
     size_t groups = (width + bits - 1u) / bits;
-    for (size_t g = groups; g-- > 0;) {
-        size_t end = width - g * bits;
+    for (size_t group = groups; group-- > 0;) {
+        size_t end = width - group * bits;
         size_t start = end > bits ? end - bits : 0;
         unsigned value = 0;
         char digit = 0;
