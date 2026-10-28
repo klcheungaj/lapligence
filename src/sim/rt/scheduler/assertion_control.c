@@ -485,9 +485,13 @@ static int assertion_control_apply(int kind, const sv4_t* args, int n_args,
             case LLG_ASSERTION_CONTROL_ON:
                 // After vpiAssertionSysEnd no assertion starts again (39.5.1).
                 assertion->enabled = !g.assertions_ended;
+                // A control task raises cbAssertionEnable/cbAssertionDisable
+                // like the VPI control of the same effect (decision A17-D2).
+                llg_acov_notify(assertion->acov, LLG_ACOV_EVENT_CONTROL_ON, g.now);
                 break;
             case LLG_ASSERTION_CONTROL_OFF:
                 assertion->enabled = 0;
+                llg_acov_notify(assertion->acov, LLG_ACOV_EVENT_CONTROL_OFF, g.now);
                 break;
             case LLG_ASSERTION_CONTROL_KILL:
                 assertion->enabled = 0;
@@ -506,6 +510,7 @@ static int assertion_control_apply(int kind, const sv4_t* args, int n_args,
                     assertion->expect_active = 0;
                     wake_assertion_waiter(assertion->identity);
                 }
+                llg_acov_notify(assertion->acov, LLG_ACOV_EVENT_CONTROL_OFF, g.now);
                 break;
             case LLG_ASSERTION_CONTROL_PASS_ON:
             case LLG_ASSERTION_CONTROL_PASS_OFF:

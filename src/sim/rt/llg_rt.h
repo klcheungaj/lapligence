@@ -3863,7 +3863,8 @@ enum {
 
 /* The operations of 39.5.2 on one item; the 39.5.1 system operations apply
  * them to every selected item. RESET, KILL and KILL_ALL discard attempts in
- * progress, which count as killed (40.5.3) and raise LLG_ACOV_EVENT_KILLED. */
+ * progress, which count as killed (40.5.3); KILL and KILL_ALL raise
+ * LLG_ACOV_EVENT_KILLED for each, RESET raises none (decision A17-D2). */
 enum {
     LLG_ACOV_OP_DISABLE = 0,
     LLG_ACOV_OP_ENABLE = 1,
@@ -3880,6 +3881,10 @@ enum {
 /* Apply `operation` to item `index`. Returns 0 for an index out of range or
  * an unknown operation. */
 int llg_acov_control(size_t index, int operation, uint64_t start);
+/* Whether item `index` has an attempt in progress that began at `start`
+ * (vpiAssertionKill). Attempts of an assertion with global clocking future
+ * sampled value functions that are still queued count as present. */
+int llg_acov_attempt_at(size_t index, uint64_t start);
 /* vpiAssertionSysEnd (39.5.1): from now on no control task or VPI control
  * enables an assertion again. */
 void llg_assertions_end(void);

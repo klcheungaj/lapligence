@@ -7901,18 +7901,22 @@ static void invoke_assertion_cbs(uint32_t item, int reason, uint64_t cb_time,
     dispatch_end();
 }
 
-/* Runtime assertion hook: one attempt event of a watched item. */
+/* Runtime assertion hook: one attempt event of a watched item, or the
+ * effect of a control task on it. */
 static void vpi_assertion_event(const llg_acov_item_t* item, int event, uint64_t cb_time,
                                 uint64_t start) {
     const llg_acov_item_t* first = llg_acov_item_at(0);
     if (!first || item < first || g_vpi.assertions_ended) return;
     static const int reasons[] = {cbAssertionStart,   cbAssertionSuccess,
                                   cbAssertionVacuousSuccess, cbAssertionFailure,
-                                  cbAssertionDisabledEvaluation, cbAssertionKill};
+                                  cbAssertionDisabledEvaluation, cbAssertionKill,
+                                  cbAssertionDisable, cbAssertionEnable};
     if (event < 0 || (size_t)event >= sizeof(reasons) / sizeof(reasons[0])) return;
     int reason = reasons[event];
-    invoke_assertion_cbs((uint32_t)(item - first), reason, cb_time,
-                         reason == cbAssertionKill ? NULL : &start);
+    /* 39.4.2: kill and the control reasons pass a NULL info pointer. */
+    int no_info = reason == cbAssertionKill || reason == cbAssertionDisable ||
+                  reason == cbAssertionEnable;
+    invoke_assertion_cbs((uint32_t)(item - first), reason, cb_time, no_info ? NULL : &start);
 }
 
 static int matches_assertion_system(const llg_vpi_cb_t* cb, const void* context) {
@@ -8999,8 +9003,10 @@ PLI_INT32 vpi_put_data(PLI_INT32 id, PLI_BYTE8* dataLoc, PLI_INT32 numOfBytes) {
 
 /* 39.4.2: a callback on one assertion statement. The attempt reasons run
  * from the runtime's attempt events, the control reasons from vpi_control
- * (39.5.2). Sequence and property instances are not VPI objects in llg, and
- * there are no step callbacks: those registrations fail with vpiError. */
+ * (39.5.2) and cbAssertionDisable/cbAssertionEnable also from the control
+ * tasks. Sequence and property instances are not VPI objects in llg. A step
+ * callback is accepted but never runs: stepping cannot be enabled (decision
+ * A17-D2). */
 vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
                                     vpi_assertion_callback_func* cb_rtn, PLI_BYTE8* user_data) {
     vpi_enter();
@@ -9008,12 +9014,9 @@ vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
         vpi_error("LLG_VPI_CALLBACK", "vpi_register_assertion_cb needs a callback routine");
         return NULL;
     }
-    if (reason == cbAssertionStepSuccess || reason == cbAssertionStepFailure) {
-        vpi_error("LLG_VPI_UNSUPPORTED", "llg has no assertion step callbacks");
-        return NULL;
-    }
+    int step = reason == cbAssertionStepSuccess || reason == cbAssertionStepFailure;
     int attempt = assertion_attempt_reason(reason);
-    if (!attempt && !assertion_control_reason(reason)) {
+    if (!attempt && !step && !assertion_control_reason(reason)) {
         vpi_error("LLG_VPI_CALLBACK", "invalid vpi_register_assertion_cb reason");
         return NULL;
     }
@@ -9042,7 +9045,9 @@ vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
     cb->data.user_data = user_data;
     cb->assertion_rtn = cb_rtn;
     cb->assertion_item = item;
-    cb->assertion_attempt = attempt;
+    /* The runtime raises attempt events and the control-task events only
+     * for watched items. */
+    cb->assertion_attempt = attempt || reason == cbAssertionDisable || reason == cbAssertionEnable;
     uint32_t index = alloc_slot(SLOT_CALLBACK);
     if (index == LLG_VPI_NONE) {
         vpi_cb_free(cb);
@@ -9063,7 +9068,7 @@ vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
     *g_vpi.cbs_tail = cb;
     g_vpi.cbs_tail = &cb->next;
     ++g_vpi.assertion_cbs;
-    if (attempt) {
+    if (cb->assertion_attempt) {
         llg_acov_watch(item, 1);
         llg_assertion_watch_hook(vpi_assertion_event);
     }
@@ -9163,12 +9168,12 @@ static PLI_INT32 assertion_control(int operation, va_list ap) {
         int64_t item = control_item(handle);
         uint64_t start = 0;
         if (item < 0 || !control_start_time(va_arg(ap, p_vpi_time), &start)) return 0;
-        if (operation == vpiAssertionEnableStep) {
-            vpi_error("LLG_VPI_UNSUPPORTED", "llg has no assertion step callbacks");
-            return 0;
-        }
-        /* Stepping is never enabled, so disabling it has no effect. */
-        return 1;
+        /* Stepping is never enabled: enabling it fails, and so does
+         * disabling it, which has nothing to act on (decision A17-D2). */
+        vpi_error("LLG_VPI_UNSUPPORTED", operation == vpiAssertionEnableStep
+                                             ? "llg has no assertion step callbacks"
+                                             : "assertion stepping is not enabled");
+        return 0;
     }
     const llg_vpi_assertion_op_t* op =
         find_assertion_op(assertion_ops, sizeof(assertion_ops) / sizeof(assertion_ops[0]), operation);
@@ -9176,8 +9181,14 @@ static PLI_INT32 assertion_control(int operation, va_list ap) {
         int64_t item = control_item(handle);
         uint64_t start = 0;
         if (item < 0) return 0;
-        if (operation == vpiAssertionKill && !control_start_time(va_arg(ap, p_vpi_time), &start))
-            return 0;
+        if (operation == vpiAssertionKill) {
+            if (!control_start_time(va_arg(ap, p_vpi_time), &start)) return 0;
+            if (!llg_acov_attempt_at((size_t)item, start)) {
+                vpi_error("LLG_VPI_ARGUMENT",
+                          "no attempt of this assertion that began at that time is in progress");
+                return 0;
+            }
+        }
         (void)llg_acov_control((size_t)item, op->runtime, start);
         if (op->reason) invoke_assertion_cbs((uint32_t)item, op->reason, llg_time(), NULL);
         return 1;

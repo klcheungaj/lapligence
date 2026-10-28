@@ -2,7 +2,7 @@
 0 SysOn obj=NULL
 cb info: reason=Reset obj=p cb_rtn=NULL
   late cbAssertionSysInitialized -> 1 level=0 code=-
-  step callback -> 0 level=3 code=LLG_VPI_UNSUPPORTED
+  step callback -> 1 level=0 code=-
   assertion callback on a module -> 0 level=3 code=LLG_VPI_CALLBACK
   assertion callback without a routine -> 0 level=3 code=LLG_VPI_CALLBACK
   assertion callback with a time reason -> 0 level=3 code=LLG_VPI_CALLBACK
@@ -28,11 +28,10 @@ cb info: reason=Reset obj=p cb_rtn=NULL
 38 step 3
 38 p Kill info=NULL
   kill p attempt 35 -> 1 level=0 code=-
-  kill p attempt 7 -> 1 level=0 code=-
+  kill p attempt 7 -> 0 level=3 code=LLG_VPI_ARGUMENT
   kill with vpiSuppressTime -> 0 level=3 code=LLG_VPI_ARGUMENT
 45 p Start attempt=45
 48 step 4
-48 p Kill info=NULL
 48 p Reset info=NULL
   reset p -> 1 level=0 code=-
 55 p Start attempt=55
@@ -87,7 +86,7 @@ cb info: reason=Reset obj=p cb_rtn=NULL
 115 p Start attempt=115
 118 step 10
   enable step -> 0 level=3 code=LLG_VPI_UNSUPPORTED
-  disable step -> 1 level=0 code=-
+  disable step -> 0 level=3 code=LLG_VPI_UNSUPPORTED
   system end u_sub -> 0 level=3 code=LLG_VPI_ARGUMENT
 118 p Kill info=NULL
 118 SysEnd obj=NULL

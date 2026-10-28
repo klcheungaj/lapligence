@@ -142,8 +142,12 @@ static void assertion_event_push(const llg_acov_item_t* item, int event, uint64_
     queue->count++;
 }
 
+// Set while a reset discards attempts: they count as killed but raise no
+// event, so a reset runs no cbAssertionKill (decision A17-D2).
+static int llg_acov_reset_quiet;
+
 static void llg_acov_event(llg_acov_item_t* item, int event, uint64_t start) {
-    if (!llg_assertion_watch) return;
+    if (!llg_assertion_watch || (event == LLG_ACOV_EVENT_KILLED && llg_acov_reset_quiet)) return;
     uint64_t cb_time = event == LLG_ACOV_EVENT_START ? start : assertion_event_time();
     if (g.assertion_event_depth || g.assertion_events.count)
         assertion_event_push(item, event, cb_time, start);
@@ -248,7 +252,9 @@ static void llg_acov_record_control(llg_concurrent_assertion_t* assertion, int o
             llg_acov_discard_record(assertion);
             break;
         case LLG_ACOV_OP_RESET:
+            llg_acov_reset_quiet = 1;
             llg_acov_discard_record(assertion);
+            llg_acov_reset_quiet = 0;
             assertion->enabled = !g.assertions_ended;
             assertion->pass_action_off = 0;
             assertion->vacuous_action_off = 0;
@@ -291,7 +297,9 @@ static void llg_acov_item_control(llg_acov_item_t* item, int operation, uint64_t
             llg_acov_flush_deferred(item);
             break;
         case LLG_ACOV_OP_RESET:
+            llg_acov_reset_quiet = 1;
             llg_acov_flush_deferred(item);
+            llg_acov_reset_quiet = 0;
             item->control = off;
             break;
         case LLG_ACOV_OP_PASS_OFF: item->control |= LLG_ACOV_CTL_PASS_OFF | LLG_ACOV_CTL_VACUOUS_OFF; break;
@@ -321,6 +329,29 @@ int llg_acov_control(size_t index, int operation, uint64_t start) {
     }
     assertion_events_leave();
     return 1;
+}
+
+int llg_acov_attempt_at(size_t index, uint64_t start) {
+    if (index >= llg_acov_n_items) return 0;
+    const llg_acov_item_t* item = &llg_acov_items[index];
+    if (item->form == LLG_ACOV_IMMEDIATE || item->form == LLG_ACOV_DEFERRED) {
+        // Only a deferred report pending in this time step is in progress.
+        if (start != g.now) return 0;
+        for (uint32_t i = 0; g.deferred_pending_live && i < g.deferred_pending.count; i++) {
+            const llg_deferred_assertion_report_t* report = &g.deferred_pending.items[i];
+            if (report->live && report->kind != LLG_DEFERRED_PROCEDURAL && report->acov == item)
+                return 1;
+        }
+        return 0;
+    }
+    for (const llg_concurrent_assertion_t* assertion = g.assertions; assertion;
+         assertion = assertion->next) {
+        if (assertion->acov != item) continue;
+        // Queued leading-clock events begin their attempts when they replay.
+        if (assertion->future_clock && assertion->lag_head && !assertion->lag_replaying) return 1;
+        if (assertion_attempts_visit(assertion, 1, start, -1)) return 1;
+    }
+    return 0;
 }
 
 // ── Database section ────────────────────────────────────────────────────────

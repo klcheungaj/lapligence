@@ -127,10 +127,10 @@ so `SysInitialized` and `SysOn` run at 0 after the start of simulation.
 `u_sub.s_x` (only `p` traced; the others are tallied) and the 9 control
 reasons on `p`, `im` and `df`. `vpi_get_cb_info` of an assertion callback
 gives its reason and assertion, with a NULL `cb_rtn` (the routine has the
-39.4.2 signature, not `cb_rtn`'s). Specified errors: a late
-`cbAssertionSysInitialized` is accepted and never runs (as S43-D4); step
-reasons, a module handle, a NULL routine and a time reason fail with level
-3.
+39.4.2 signature, not `cb_rtn`'s). A late `cbAssertionSysInitialized` is
+accepted and never runs (as S43-D4); a step callback is accepted and never
+runs, as stepping cannot be enabled (A17-D2). A module handle, a NULL
+routine and a time reason fail with level 3.
 
 `a` is 1 throughout; `b` is 0 until 50, 1 from 50 to 70, 0 from 70 to 90,
 then 1, so sampled `b` at 5..115 is 0 0 0 0 0 1 1 0 0 1 1 1.
@@ -142,9 +142,9 @@ then 1, so sampled `b` at 5..115 is 0 0 0 0 0 1 1 0 0 1 1 1.
 | 15 | | 5 fails (fail action: `p_fail` 1); no new attempt |
 | 28 | 2 | Enable on p, im, df |
 | 35 | | start 35 |
-| 38 | 3 | kill 35: Kill; kill 7 returns 1 and does nothing; `vpiSuppressTime` fails |
+| 38 | 3 | kill 35: Kill; kill 7 (no such attempt) returns 0 with level 3; `vpiSuppressTime` fails |
 | 45 | | start 45 |
-| 48 | 4 | Reset: Kill 45, then Reset |
+| 48 | 4 | Reset: 45 discarded (counted as killed, no Kill callback), then Reset |
 | 55 | | start 55 |
 | 58 | 5 | p fail action off, im pass action off, p vacuous action off |
 | 65 | | 55 succeeds (`p_pass` 1); start 65 |
@@ -157,7 +157,7 @@ then 1, so sampled `b` at 5..115 is 0 0 0 0 0 1 1 0 0 1 1 1.
 | 105 | | start 105 |
 | 108 | 9 | the six system action operations, one callback each |
 | 115 | | 105 succeeds (`p_pass` 3); start 115 |
-| 118 | 10 | EnableStep fails; DisableStep returns 1; SysEnd with a scope fails; SysEnd: Kill 115, SysEnd; then controls and registrations fail |
+| 118 | 10 | EnableStep and DisableStep fail; SysEnd with a scope fails; SysEnd: Kill 115, SysEnd; then controls and registrations fail |
 | 122 | | `$asserton` cannot restart anything |
 
 `p`: attempts 10, success 3, failure 3, killed 4. `im` (`assert (b)` at each
