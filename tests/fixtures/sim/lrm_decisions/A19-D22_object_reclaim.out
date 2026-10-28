@@ -1,0 +1,21 @@
+setup level=0
+first seen b id=1 a id=2
+reclaim Base id=2 v=1 time=NULL
+  navigate null level=3
+  put level=3
+  register refused level=3
+reclaim Base id=1 v=2 time=NULL
+  navigate null level=3
+  put level=3
+  register refused level=3
+end of object id=1
+held property level=3
+held object id=-1 level=3
+callback handle id=-1 level=3
+a id=3 created=Derived
+a.v=3 link=1
+reclaim Derived id=3 v=3 time=NULL
+  navigate null level=3
+  put level=3
+  register refused level=3
+done
