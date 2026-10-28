@@ -88,6 +88,52 @@ typedef struct {
     uint32_t node_count;
 } llg_vpi_type_tables_t;
 
+/* Expression and statement objects (IEEE 1800-2009 37.54-37.74) of a
+ * model generated for VPI applications: one static row per object. The
+ * children of a row are contiguous rows; each names the relation that
+ * reaches it from its parent (`role`: vpiOperand, vpiLhs, vpiStmt, ...).
+ * Fields naming an optional entry hold its index + 1 (0: none). */
+#define LLG_VPI_CODE_SIGNED 0x01u
+#define LLG_VPI_CODE_REAL 0x02u       /* real-valued expression */
+#define LLG_VPI_CODE_HIDDEN 0x04u     /* implicit conversion: evaluated, never an object */
+#define LLG_VPI_CODE_OPAQUE 0x08u     /* expression llg does not decompose: no operands or value */
+#define LLG_VPI_CODE_ALIAS 0x10u      /* stands for catalog row `object` (a reference, a named block) */
+#define LLG_VPI_CODE_BLOCKING 0x20u   /* vpiBlocking */
+#define LLG_VPI_CODE_CONSTANT 0x40u   /* vpiConstantSelect */
+#define LLG_VPI_CODE_USER 0x80u       /* vpiUserDefn of a system task or function call */
+#define LLG_VPI_CODE_LOCALS 0x100u    /* vpiLocalVarDecls of a for statement */
+#define LLG_VPI_CODE_TWO_STATE 0x200u /* a conversion to a two-state type */
+#define LLG_VPI_CODE_STRING 0x400u    /* a constant whose text is the string's characters */
+
+typedef struct {
+    int16_t type;             /* vpiType */
+    int16_t subtype;          /* vpiOpType, vpiConstType, vpiCaseType, vpiIndexedPartSelectType */
+    int16_t role;             /* relation from the parent; 0 for a root */
+    int16_t qualifier;        /* vpiQualifier of if, if-else and case */
+    uint32_t flags;           /* LLG_VPI_CODE_* */
+    uint32_t width;           /* vpiSize of an expression */
+    uint32_t file;            /* file table index + 1 */
+    uint32_t line;
+    int32_t object;           /* catalog row it stands for or names, or -1 */
+    uint32_t scope;           /* enclosing scope: catalog row + 1 */
+    uint32_t first;           /* first child row */
+    uint32_t count;           /* children */
+    uint32_t data;            /* text index + 1 (constant digits or text, a call, object or
+                               * label name); range index + 1 of a select */
+    uint32_t typespec;        /* vpiTypespec of a cast: typespec index + 1 */
+} llg_vpi_code_t;
+
+typedef struct {
+    const llg_vpi_code_t* nodes;
+    uint32_t node_count;
+    const char* const* texts;
+    uint32_t text_count;
+    const char* const* files;
+    uint32_t file_count;
+    const int64_t* ranges;    /* (left, right) of the dimension a select indexes */
+    uint32_t range_count;
+} llg_vpi_code_tables_t;
+
 /* How a call argument is visible to applications (llg_vpi_compile_arg_t). */
 #define LLG_VPI_ARG_EXPRESSION 0 /* read-only value snapshot (vpiOperation) */
 #define LLG_VPI_ARG_CONSTANT 1   /* literal (vpiConstant, const_type) */
@@ -106,6 +152,7 @@ typedef struct {
     uint32_t select_width;
     int64_t left;             /* declared bounds of a select */
     int64_t right;
+    uint32_t code;            /* the expression object (llg_vpi_code_t row + 1), or 0 */
 } llg_vpi_compile_arg_t;
 
 /* One expression connection of a structure object (37.14, 37.31, 37.43):
@@ -200,6 +247,8 @@ typedef struct llg_vpi_model_object {
     void* storage;
     sv4_t* dependency;
     uint32_t shape;
+    uint32_t code;            /* vpiStmt of a process, task or function, the
+                               * statement of a named block: code row + 1 */
 } llg_vpi_model_object_t;
 
 /* Dynamic objects (IEEE 1800-2009 37.17, 37.27-37.29, 37.3.7): the value
@@ -306,6 +355,9 @@ int llg_vpi_model_init(const char* design_name,
 /* The typespec tables the catalog rows name, borrowed like the catalog and
  * validated on the first VPI use; NULL for a model without a catalog. */
 int llg_vpi_model_types(const llg_vpi_type_tables_t* tables);
+/* The expression and statement tables, borrowed like the catalog and
+ * validated on the first VPI use; NULL for a model generated without them. */
+int llg_vpi_model_code(const llg_vpi_code_tables_t* tables);
 /* How the model was generated for vpi_put_delays: `writable` is 1 when every
  * delay the catalog names is runtime storage (generated for VPI
  * applications), `delay_select` the min:typ:max operand the model uses (0

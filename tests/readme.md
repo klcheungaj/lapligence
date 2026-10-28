@@ -392,25 +392,29 @@ the runtime probe is `runtime_value_storage`'s `vpi_ownership` and the unit
 checks are `sim::build::vpi_static::tests` and
 `sim::codegen::lowering::collection::vpi::tests`.
 
-ADV-019 families 1 to 3 (typespecs, structure and union members, structure
-objects, dynamic objects) use
+ADV-019 families 1 to 5 (typespecs, structure and union members, structure,
+expression, statement and dynamic objects) use
 `-E 'binary(sim_feature_completion) & test(adv_019::)'`: `typespecs` prints the
 typespec tree of each declaration, `members` reads, finds, watches and
 writes members and `structure` walks ports, processes, assignments, tasks,
 primitives, instance arrays and named events, all linked as static archives;
-`timing` (VPI-T1) walks module paths and timing checks with their terms.
-Family 3 (VPI-O4): `dynamic` walks string, chandle and class variables,
+`timing` (VPI-T1) walks module paths and timing checks with their terms;
+`expressions` walks expression trees with their values and `vpiDecompile`,
+and `statements` the statement trees of processes, tasks and functions.
+Family 5 (VPI-O4): `dynamic` walks string, chandle and class variables,
 class objects, definitions and typespecs and dynamic, queue and associative
 array elements; `gc` follows class objects through `cbCreateObj`,
 `cbReclaimObj` and `cbEndOfObject` under `LLG_GC_STRESS=1 LLG_GC_VERIFY=1`.
-Decisions A19-D1..D10 and A19-D21..D23 (A19-D22 under the same collector
+Decisions A19-D1..D13 and A19-D21..D23 (A19-D22 under the same collector
 settings) are in
 `sim_lrm_decisions` (`-E 'test(/a19_d/)'`); the unit checks are
 `core::db::database::capture::tests`,
 `sim::codegen::lowering::collection::vpi::tests`,
 `sim::codegen::lowering::collection::vpi::timing::tests`,
 `sim::emit_c::model::vpi::tests`, `sim::emit_c::model::vpi::dynamic::tests`
-and `sim::ir::vpi_dynamic::tests`.
+and `sim::ir::vpi_dynamic::tests`; `sim_043`'s
+`generated_model_omits_the_catalog_by_default` checks that the code tables
+exist only in VPI models.
 
 ADV-017's assertion API fixtures use
 `-E 'binary(sim_feature_completion) & test(adv_017::)'`: `lifecycle`

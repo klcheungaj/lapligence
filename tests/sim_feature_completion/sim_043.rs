@@ -281,5 +281,10 @@ fn generated_model_omits_the_catalog_by_default() {
     assert!(!without.contains("\"tb.mem\""));
     assert!(with.contains("static llg_vpi_model_object_t llg_vpi_objects[] = {"));
     assert!(with.contains("\"tb.mem\""));
+    // Expression and statement objects (ADV-019 families 3 and 4) are
+    // generated only for VPI models.
+    assert!(without.contains("llg_vpi_code_tables = NULL;"));
+    assert!(!without.contains("llg_vpi_code_rows"));
+    assert!(with.contains("static const llg_vpi_code_t llg_vpi_code_rows[] = {"));
     assert!(without.len() < with.len());
 }

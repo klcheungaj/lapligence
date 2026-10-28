@@ -4,8 +4,8 @@ use super::*;
 
 mod dynamic;
 use crate::sim::ir::{
-    IrSdfTarget, IrVpiArgRef, IrVpiCompileCall, IrVpiConn, IrVpiConstant, IrVpiObject, IrVpiTiming,
-    IrVpiTypespec, IrVpiTypespecKind, IrVpiVarKind,
+    IrSdfTarget, IrVpiArgRef, IrVpiCode, IrVpiCompileCall, IrVpiConn, IrVpiConstant, IrVpiObject,
+    IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiVarKind,
 };
 
 /// Marker suffix that keeps a port apart from the declaration it connects,
@@ -51,6 +51,7 @@ struct Entry {
     timing: Option<IrVpiTiming>,
     /// `(storage, dependency, shape)` of a dynamic object.
     dynamic: Option<(String, String, usize)>,
+    code: Option<u32>,
 }
 
 impl Entry {
@@ -92,6 +93,7 @@ impl Entry {
             activation: None,
             timing: None,
             dynamic: None,
+            code: None,
         }
     }
 }
@@ -273,6 +275,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 activation: object.activation,
                 timing: object.timing.clone(),
                 dynamic,
+                code: object.code,
             },
         );
     }
@@ -421,7 +424,8 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         out.push_str(
             "static llg_vpi_model_object_t* const llg_vpi_objects = NULL;\n\
              static const size_t llg_vpi_object_count = 0;\n\
-             static const llg_vpi_type_tables_t* const llg_vpi_type_tables = NULL;\n",
+             static const llg_vpi_type_tables_t* const llg_vpi_type_tables = NULL;\n\
+             static const llg_vpi_code_tables_t* const llg_vpi_code_tables = NULL;\n",
         );
         dynamic::render_vpi_dynamic(model, out);
         return;
@@ -464,10 +468,11 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
                 )
             };
             out.push_str(&format!(
-                "    {{ {{ .width = {}, .is_signed = {}, .ref_kind = {} }}, .direction = {}, .value = {}{timing} }},\n",
+                "    {{ {{ .width = {}, .is_signed = {}, .ref_kind = {}{} }}, .direction = {}, .value = {}{timing} }},\n",
                 conn.width,
                 u8::from(conn.signed),
                 arg_reference(&conn.reference, &object),
+                code_field(conn.code),
                 if conn.direction == crate::sim::ir::IrVpiDirection::None {
                     "0"
                 } else {
@@ -599,7 +604,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
 .dims = {dims}, .dim_count = {dim_count}u, .port_index = {}u, .target = {target}, .net = {}, \
 .constant = {constant}, .real_constant = {real_constant}, .typespec = {}u, .detail = {}, \
 .event = {}, .conns = {conns}, .conn_count = {}u, .activation_declaration = {declaration}u, \
-.activation_instance = {instance}u, .timing = {}{dynamic} }},\n",
+.activation_instance = {instance}u, .timing = {}{}{dynamic} }},\n",
             entry.type_code,
             c_string_literal(&entry.name),
             c_string_literal(&path.replace('\u{1f}', ".")),
@@ -623,12 +628,153 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
             entry.event,
             entry.conns.len(),
             timing[index],
+            code_field(entry.code),
         ));
     }
     out.push_str("};\n");
     out.push_str(
         "static const size_t llg_vpi_object_count = sizeof(llg_vpi_objects) / sizeof(llg_vpi_objects[0]);\n",
     );
+    render_vpi_code(model, &indices, out);
+}
+
+/// The `.code` initializer of a catalog row, connection or argument that
+/// has an expression or statement object; nothing otherwise.
+fn code_field(code: Option<u32>) -> String {
+    code.map_or_else(String::new, |code| {
+        format!(", .code = {}u", u64::from(code) + 1)
+    })
+}
+
+/// Emit the expression and statement objects (`llg_vpi_code_tables_t`):
+/// one positional row per object, deduplicated texts and select ranges, and
+/// the source files. A model generated without them gets NULL tables.
+fn render_vpi_code(
+    model: &IrModel,
+    indices: &std::collections::HashMap<&str, usize>,
+    out: &mut String,
+) {
+    use std::collections::HashMap;
+    use std::fmt::Write as _;
+    let codes = model.vpi_code();
+    if codes.is_empty() {
+        out.push_str("static const llg_vpi_code_tables_t* const llg_vpi_code_tables = NULL;\n");
+        return;
+    }
+    // IR objects resolve to emitted rows by name: emission may add scope
+    // rows or drop objects without storage.
+    let row = |object: Option<usize>| {
+        object
+            .and_then(|object| model.vpi_objects().get(object))
+            .and_then(|object| indices.get(object.full_name.as_str()))
+            .map_or(-1, |row| i64::try_from(*row).unwrap_or(-1))
+    };
+    let mut texts = Vec::<&str>::new();
+    let mut text_index = HashMap::<&str, usize>::new();
+    let mut ranges = Vec::<(i64, i64)>::new();
+    let mut range_index = HashMap::<(i64, i64), usize>::new();
+    let mut rows = String::with_capacity(codes.len() * 72);
+    for code in codes {
+        let data = match (&code.text, code.range) {
+            (Some(text), _) => {
+                let next = texts.len();
+                let index = *text_index.entry(text.as_str()).or_insert_with(|| {
+                    texts.push(text.as_str());
+                    next
+                });
+                index + 1
+            }
+            (None, Some(range)) => {
+                let next = ranges.len();
+                let index = *range_index.entry(range).or_insert_with(|| {
+                    ranges.push(range);
+                    next
+                });
+                index + 1
+            }
+            (None, None) => 0,
+        };
+        let flags = IrVpiCode::FLAG_NAMES
+            .iter()
+            .enumerate()
+            .filter(|(bit, _)| code.flags & (1 << bit) != 0)
+            .map(|(_, name)| *name)
+            .collect::<Vec<_>>();
+        let flags = if flags.is_empty() {
+            "0u".to_owned()
+        } else {
+            flags.join("|")
+        };
+        let object = if code.flags & IrVpiCode::ALIAS != 0 || code.object.is_some() {
+            row(code.object)
+        } else {
+            -1
+        };
+        let scope = row(code.scope);
+        let _ = writeln!(
+            rows,
+            "    {{ {}, {}, {}, {}, {flags}, {}u, {}u, {}u, {object}, {}u, {}u, {}u, {data}u, {}u }},",
+            code.type_code,
+            code.subtype,
+            code.role,
+            code.qualifier,
+            code.width,
+            code.file.map_or(0, |file| u64::from(file) + 1),
+            code.line,
+            scope + 1,
+            code.first,
+            code.count,
+            code.typespec.map_or(0, |typespec| typespec + 1),
+        );
+    }
+    out.push_str("static const llg_vpi_code_t llg_vpi_code_rows[] = {\n");
+    out.push_str(&rows);
+    out.push_str("};\n");
+    let list = |name: &str, items: Vec<String>, ty: &str, out: &mut String| {
+        if items.is_empty() {
+            return "NULL".to_owned();
+        }
+        out.push_str(&format!("static const {ty} {name}[] = {{\n"));
+        for item in items {
+            out.push_str(&format!("    {item},\n"));
+        }
+        out.push_str("};\n");
+        name.to_owned()
+    };
+    let text_count = texts.len();
+    let texts = list(
+        "llg_vpi_code_texts",
+        texts.into_iter().map(c_string_literal).collect(),
+        "char* const",
+        out,
+    );
+    let file_count = model.vpi_code_files().len();
+    let files = list(
+        "llg_vpi_code_files",
+        model
+            .vpi_code_files()
+            .iter()
+            .map(|file| c_string_literal(file))
+            .collect(),
+        "char* const",
+        out,
+    );
+    let range_count = ranges.len();
+    let ranges = list(
+        "llg_vpi_code_ranges",
+        ranges
+            .into_iter()
+            .map(|(left, right)| format!("{left}LL, {right}LL"))
+            .collect(),
+        "int64_t",
+        out,
+    );
+    out.push_str(&format!(
+        "static const llg_vpi_code_tables_t llg_vpi_code_value = {{ llg_vpi_code_rows, {}u, \
+{texts}, {text_count}u, {files}, {file_count}u, {ranges}, {range_count}u }};\n\
+static const llg_vpi_code_tables_t* const llg_vpi_code_tables = &llg_vpi_code_value;\n",
+        codes.len()
+    ));
 }
 
 /// The delay records of the timing rows (`llg_vpi_timing_t`): the model
@@ -1079,10 +1225,11 @@ pub(super) fn render_vpi_compile_calls(model: &IrModel, out: &mut String) {
         for arg in &call.args {
             let reference = arg_reference(&arg.reference, &object);
             out.push_str(&format!(
-                "    {{ .width = {}, .is_signed = {}, .is_real = {}, .ref_kind = {reference} }},\n",
+                "    {{ .width = {}, .is_signed = {}, .is_real = {}, .ref_kind = {reference}{} }},\n",
                 arg.width,
                 u8::from(arg.signed),
-                u8::from(arg.real)
+                u8::from(arg.real),
+                code_field(arg.code),
             ));
         }
         out.push_str("};\n");
@@ -1241,5 +1388,80 @@ mod tests {
         assert!(out.contains("{ vpiLogicTypespec, \"nib_t\", 0u, 3u, 0u, 4u, 0u, 0u, 1u, 0u, 0u, 0u, 0u, 0u, 0u },"), "{out}");
         assert!(out.contains("#define llg_vpi_ts_consts NULL"), "{out}");
         assert!(out.contains("llg_vpi_ts_nodes, 6u"), "{out}");
+    }
+
+    /// `assign y = a + 2` with `a` a catalog variable: children follow
+    /// their parent, optional references are index + 1, an alias names the
+    /// emitted row and literal texts are interned once.
+    #[test]
+    fn code_rows_are_positional_with_interned_texts() {
+        use crate::sim::ir::IrVpiCode;
+        let mut model = IrModel::new("tb".to_owned(), 1).expect("model");
+        model.vpi_objects.push(IrVpiObject {
+            full_name: "tb".to_owned(),
+            name: "tb".to_owned(),
+            kind: IrVpiObjectKind::Module,
+            ..IrVpiObject::default()
+        });
+        model.vpi_objects.push(IrVpiObject {
+            full_name: "tb\u{1f}a".to_owned(),
+            name: "a".to_owned(),
+            kind: IrVpiObjectKind::Reg,
+            width: 8,
+            ..IrVpiObject::default()
+        });
+        let mut add = IrVpiCode::new("vpiOperation");
+        add.subtype = "vpiAddOp";
+        add.width = 32;
+        add.file = Some(0);
+        add.line = 4;
+        add.scope = Some(0);
+        add.first = 1;
+        add.count = 2;
+        let mut a = IrVpiCode::new("0");
+        a.role = "vpiOperand";
+        a.flags = IrVpiCode::ALIAS;
+        a.object = Some(1);
+        a.text = Some("a".to_owned());
+        let mut two = IrVpiCode::new("vpiConstant");
+        two.subtype = "vpiDecConst";
+        two.role = "vpiOperand";
+        two.flags = IrVpiCode::SIGNED;
+        two.width = 32;
+        two.text = Some("2".to_owned());
+        let mut again = IrVpiCode::new("0");
+        again.flags = IrVpiCode::ALIAS;
+        again.object = Some(1);
+        again.text = Some("a".to_owned());
+        model.vpi_code = vec![add, a, two, again];
+        model.vpi_code_files = vec!["t.sv".to_owned()];
+        let mut out = String::new();
+        render_vpi_metadata(&model, &mut out);
+        assert!(
+            out.contains(
+                "{ vpiOperation, vpiAddOp, 0, 0, 0u, 32u, 1u, 4u, -1, 1u, 1u, 2u, 0u, 0u },"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "{ 0, 0, vpiOperand, 0, LLG_VPI_CODE_ALIAS, 0u, 0u, 0u, 1, 0u, 0u, 0u, 1u, 0u },"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains("{ vpiConstant, vpiDecConst, vpiOperand, 0, LLG_VPI_CODE_SIGNED, 32u, 0u, 0u, -1, 0u, 0u, 0u, 2u, 0u },"),
+            "{out}"
+        );
+        assert!(
+            out.contains("{ 0, 0, 0, 0, LLG_VPI_CODE_ALIAS, 0u, 0u, 0u, 1, 0u, 0u, 0u, 1u, 0u },"),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "{ llg_vpi_code_rows, 4u, llg_vpi_code_texts, 2u, llg_vpi_code_files, 1u, NULL, 0u }"
+            ),
+            "{out}"
+        );
     }
 }

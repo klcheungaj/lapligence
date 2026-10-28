@@ -2219,6 +2219,33 @@ fn a19_d10_tchk_objects() {
 }
 
 #[test]
+fn a19_d11_decompile_format() {
+    run_vpi_decision(
+        "A19-D11_decompile_format",
+        &["task $d11()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D11_decompile_format.out"),
+    );
+}
+
+#[test]
+fn a19_d12_expression_values() {
+    run_vpi_decision(
+        "A19-D12_expression_values",
+        &["task $d12()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D12_expression_values.out"),
+    );
+}
+
+#[test]
+fn a19_d13_statement_shapes() {
+    run_vpi_decision(
+        "A19-D13_statement_shapes",
+        &["task $d13()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D13_statement_shapes.out"),
+    );
+}
+
+#[test]
 fn a19_d21_dynamic_values() {
     run_vpi_decision(
         "A19-D21_dynamic_values",

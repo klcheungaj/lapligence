@@ -705,7 +705,7 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
         crate::ffi::slang::DelaySelection::Typical => 1,
         crate::ffi::slang::DelaySelection::Max => 2,
     };
-    cg.populate_vpi_metadata(&mut model, &tops, timing)?;
+    cg.populate_vpi_metadata(&mut model, &tops, timing, options.vpi)?;
     cg.populate_vpi_builtin_calls(&mut model);
     cg.finish_dpi(&mut model)?;
     cg.populate_assertion_coverage(&mut model);
@@ -828,6 +828,8 @@ fn finish_generation(
         model.vpi_objects.clear();
         model.vpi_typespecs.clear();
         model.vpi_dynamic = Default::default();
+        model.vpi_code.clear();
+        model.vpi_code_files.clear();
         model.vpi_catalog = false;
     }
     // Assertion coverage tables serve only `$coverage_*` calls and VPI
@@ -1635,6 +1637,10 @@ struct Codegen<'a> {
     events: Vec<EventInfo>,
     /// NamedEvent arena node → lowered event info.
     event_globals: HashMap<NodeId, EventInfo>,
+    /// The argument expressions of each VPI call site, by site index, from
+    /// which a model generated for VPI applications builds their expression
+    /// objects (IEEE 1800-2009 37.38).
+    vpi_call_args: Vec<Vec<NodeId>>,
     /// Automatic named events declared in subroutine bodies: the binding
     /// name of their activation-owned handle (`IrStmt::EventDeclare`).
     local_event_handles: HashMap<NodeId, String>,
@@ -2092,6 +2098,7 @@ impl<'a> Codegen<'a> {
             block_native_initializers: Vec::new(),
             events: Vec::new(),
             event_globals: HashMap::new(),
+            vpi_call_args: Vec::new(),
             local_event_handles: HashMap::new(),
             fork_sets: None,
             shared_locals: HashSet::new(),

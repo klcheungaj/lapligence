@@ -1,4 +1,4 @@
-/* ADV-019 family 3, collection: cbCreateObj, cbReclaimObj and cbEndOfObject
+/* ADV-019 family 5, collection: cbCreateObj, cbReclaimObj and cbEndOfObject
  * on the class objects of gc.sv (IEEE 1800-2009 37.3.7, 37.29, 38.36.1),
  * and the handles into an object after it is reclaimed. Objects that die in
  * one collection are reported in any order, so the reclaimed values are

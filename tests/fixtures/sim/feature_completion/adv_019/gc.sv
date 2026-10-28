@@ -1,4 +1,4 @@
-// ADV-019 family 3, collection: the VPI application gc.c follows class
+// ADV-019 family 5, collection: the VPI application gc.c follows class
 // objects from construction to reclamation (IEEE 1800-2009 37.3.7, 37.29,
 // 38.36.1). Run with LLG_GC_STRESS=1 and LLG_GC_VERIFY=1: every safe point
 // after an allocation collects, so an object no variable refers to is

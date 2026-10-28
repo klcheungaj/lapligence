@@ -158,9 +158,9 @@ pub use storage::{
 };
 mod vpi;
 pub use vpi::{
-    IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn, IrVpiConnRole,
-    IrVpiConstant, IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiTiming, IrVpiTypespec,
-    IrVpiTypespecKind, IrVpiTypespecMember, IrVpiVarKind,
+    IrVpiArgRef, IrVpiBuiltinCall, IrVpiCode, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn,
+    IrVpiConnRole, IrVpiConstant, IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiTiming,
+    IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember, IrVpiVarKind,
 };
 mod vpi_dynamic;
 pub use vpi_dynamic::{
@@ -637,6 +637,12 @@ pub struct IrModel {
     /// Value shapes and class layouts of the dynamic catalog objects
     /// (strings, handles, containers, class objects; 37.17, 37.29).
     pub(in crate::sim) vpi_dynamic: IrVpiDynamic,
+    /// Expression and statement objects (IEEE 1800-2009 37.54-37.74),
+    /// captured only for models generated for VPI applications
+    /// (`CodegenOptions::vpi`); empty otherwise.
+    pub(in crate::sim) vpi_code: Vec<IrVpiCode>,
+    /// Source files the [`IrVpiCode::file`] entries name.
+    pub(in crate::sim) vpi_code_files: Vec<String>,
     /// Type-only VPI call sites run through compiletf/sizetf before the
     /// generated scheduler starts. Empty for hand-built IR fixtures.
     pub(in crate::sim) vpi_compile_calls: Vec<IrVpiCompileCall>,
@@ -818,6 +824,8 @@ impl IrModel {
             vpi_objects: Vec::new(),
             vpi_typespecs: Vec::new(),
             vpi_dynamic: IrVpiDynamic::default(),
+            vpi_code: Vec::new(),
+            vpi_code_files: Vec::new(),
             vpi_compile_calls: Vec::new(),
             vpi_builtin_calls: Vec::new(),
             vpi_catalog: true,
@@ -961,6 +969,14 @@ impl IrModel {
 
     pub fn vpi_dynamic(&self) -> &IrVpiDynamic {
         &self.vpi_dynamic
+    }
+
+    pub fn vpi_code(&self) -> &[IrVpiCode] {
+        &self.vpi_code
+    }
+
+    pub fn vpi_code_files(&self) -> &[String] {
+        &self.vpi_code_files
     }
 
     pub fn vpi_compile_calls(&self) -> &[IrVpiCompileCall] {

@@ -1,4 +1,4 @@
-// ADV-019 family 3: the VPI application dynamic.c walks the string, chandle
+// ADV-019 family 5: the VPI application dynamic.c walks the string, chandle
 // and class variables, the class objects they refer to, the class
 // definitions and typespecs, and the dynamic arrays, queues and associative
 // arrays of this module (IEEE 1800-2009 37.17, 37.27-37.29), then writes

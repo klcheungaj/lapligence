@@ -2214,12 +2214,8 @@ with no error status, as for a name that denotes nothing (S42-D11):
   `cbSizeChange`; `vpi_put_value` with a
   delay, force or release on a string, property or element (decisions
   A19-D21, A19-D23);
-- structure relations that are not exposed (ADV-019 family 2): expression
-  trees, so a connection or right-hand side that is not an object, a
-  constant select or element, or a literal is a `vpiOperation` without a
-  value (and so is the value of a continuous assignment with such a
-  right-hand side, or of a primitive whose output is one); `vpiStmt` of a
-  process, task or function; `vpiDelay`, `vpiStrength0/1` and cont assign
+- structure relations that are not exposed (ADV-019 family 2):
+  `vpiDelay`, `vpiStrength0/1` and cont assign
   bits; `vpiReturn` and `vpiIODecl` of tasks, functions and modports;
   `vpiPortInst`, `vpiExplicitName` and `vpiConnByName`; elements of
   multidimensional primitive arrays, and `vpiIndex` of an element of a
@@ -2244,12 +2240,25 @@ with no error status, as for a name that denotes nothing (S42-D11):
   `vpiPacked` of a tagged union;
 - subarray handles: `vpi_handle_by_multi_index` with fewer indices than the
   array has unpacked dimensions, and bit handles of a `vpiPackedArrayVar`;
-- expression structure: an argument that is not a whole object, a constant
-  element or select, or a literal is a `vpiOperation` value snapshot without
-  `vpiOperand` traversal. A variable converted to the formal's type (for
-  example an 8-bit variable passed to a 16-bit formal) is such a snapshot too,
-  because the owned database does not mark implicit conversions apart from
-  casts;
+- expression and statement objects (ADV-019 families 3 and 4, decisions
+  A19-D11 to A19-D13) exist only in models built with `--vpi`, `--dpi-lib`
+  or a user system task call site. `vpi_get_value` of a function call, a
+  system function call or an expression with side effects (`i++`, an
+  assignment), and of every expression containing one, fails, although
+  38.15 asks for a full evaluation including the side effects. Assignment
+  patterns, streaming concatenations, `<->`, tagged and `let` expressions,
+  sequence and property expressions, class method calls and members reached
+  through a hierarchical path are opaque objects: their type, size and line
+  only (relations, values and `vpiDecompile` fail); so are pattern `case`,
+  `randcase`, cycle delays, `expect` and assertion statements. A reference to
+  a variable outside the catalog (an automatic variable or argument) is an
+  object with its name and type but no value. A labeled statement appears as
+  a named block holding the statement (37.56 detail 1 gives the statement
+  itself the label as `vpiName`). Among expressions only casts have a
+  `vpiTypespec`, only selects a `vpiParent`; statements have no `vpiParent`
+  and `vpiUse` is not exposed. An argument that is not a whole object keeps
+  the size and value of the formal it is passed to (a call snapshot) while
+  its relations and `vpiDecompile` are those of the expression;
 - `vpi_handle(vpiUse, iterator)` and the relations not listed in
   `docs/sim_features.md`;
 - callback reasons other than `cbValueChange`, the seven time reasons,
@@ -2257,7 +2266,8 @@ with no error status, as for a name that denotes nothing (S42-D11):
   `cbForce`/`cbRelease`, `cbAssign`/`cbDeassign` (accepted; they never run,
   since procedural `assign`/`deassign` is rejected), `cbDisable` and the
   class object reasons `cbCreateObj`, `cbReclaimObj` and `cbEndOfObject`:
-  `cbStmt`, `cbSizeChange`, the frame and thread reasons, `cbError`/`cbPLIError`/
+  `cbStmt` (a statement has no execution hook; adding one would cost every
+  model statement a check), `cbSizeChange`, the frame and thread reasons, `cbError`/`cbPLIError`/
   `cbSignal` and the save, restart, reset and interactive
   features;
 - the `vpiForce`/`vpiRelease` handle of a `cbForce`/`cbRelease` callback has

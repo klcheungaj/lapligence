@@ -2594,6 +2594,22 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   (`vpiTaskFunc`, scopes with `vpiFuncType`, `vpiSize`, `vpiAutomatic`) and
   named events (`vpiNamedEvent`: `vpi_put_value` triggers, `cbValueChange`
   runs at each trigger), decisions A19-D5..D8.
+  Expression and statement objects (ADV-019 families 3 and 4, 37.54-37.74):
+  right-hand sides, connections, terminals and system task arguments that
+  are not whole objects are expression trees: `vpiOperation` (`vpiOpType`,
+  `vpiOperand`), `vpiConstant` (`vpiConstType`), `vpiBitSelect`,
+  `vpiPartSelect`, `vpiIndexedPartSelect` and `vpiVarSelect` (`vpiParent`,
+  `vpiIndex`, ranges, `vpiConstantSelect`), `vpiFuncCall` and
+  `vpiSysFuncCall` (`vpiArgument`, `vpiFunction`), each with `vpiSize`,
+  `vpiDecompile` and a current value. `vpiStmt` of processes, tasks,
+  functions and named blocks gives the statement trees: begin and fork
+  blocks, assignments (`vpiLhs`, `vpiRhs`, `vpiBlocking`, `vpiOpType`,
+  delay, event and repeat controls), `if`, `case` with case items, loops
+  (`for` with init and increment statements, `while`, `repeat`, `do`,
+  `forever`, `foreach`), delay and event controls, waits, event triggers,
+  task and system task calls, `disable`, `return`, `break`, `continue`,
+  force and release, each with `vpiLineNo` and `vpiFile`. Built from
+  compact static tables only for VPI models; decisions A19-D11..D13.
   Dynamic objects (VPI-O4; 37.17, 37.27-37.29, 38.36.1): instance-scope
   string, chandle and class variables and dynamic, queue and associative
   arrays are catalog objects (`vpiStringVar`, `vpiChandleVar`,
@@ -2619,7 +2635,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   generation-checked: stale, released or invalid handles give a
   `vpi_chk_error` level, never a use-after-free. Applications load from
   `LLG_VPI_PLUGIN` (a Windows DLL links against the model's import library,
-  `llg --dpi-import-lib`) or link as a static archive with `--dpi-lib`. Decisions S42-D1..D13 and A19-D1..D4 in `docs/lrm_decisions.md`; limits in
+  `llg --dpi-import-lib`) or link as a static archive with `--dpi-lib`. Decisions S42-D1..D13 and A19-D1..D13 in `docs/lrm_decisions.md`; limits in
   `docs/known_issues.md` ("VPI object model limits"). Callbacks (SIM-043):
   `cbValueChange` on variables, nets, ports, array elements, whole unpacked
   arrays (each element write, with its index) and bit/part selects (value,

@@ -174,6 +174,20 @@ port reference objects are dynamic slots on their row (`SLOT_PORTBIT`,
 `SLOT_PRIMTERM`, `SLOT_REFOBJ`). Unnamed rows (`LLG_VPI_OBJ_UNNAMED`) are left
 out of the name index; instance array elements are found by composing the
 array's full name with the indices.
+Expression and statement objects (ADV-019 families 3 and 4) live in
+`llg_vpi_code_tables_t` (registered by `llg_vpi_model_code`, NULL without a
+catalog): one 48-byte `llg_vpi_code_t` per expression or statement, its
+children contiguous after it with the relation that reaches each (`role`),
+plus interned texts (names, literal digits), file names and select ranges.
+Process, task, function and named-block rows, connections and call-site
+arguments point at their root with `code` (index + 1). Entries flagged
+`LLG_VPI_CODE_ALIAS` stand for a catalog row and hand out that row's
+handle; `LLG_VPI_CODE_HIDDEN` entries are implicit conversions, skipped for
+handles and applied when evaluating; `LLG_VPI_CODE_OPAQUE` entries answer
+type, size and line only. Other entries become `SLOT_CODE` handles on
+demand. `code_eval` evaluates a tree through the value facade with the
+frontend's widths; `decompile` rebuilds the source spelling with Table 11-2
+precedence into one buffer that each `vpiDecompile` overwrites.
 Dynamic objects (VPI-O4, `llg_vpi_dynamic.c`) are catalog rows flagged
 `LLG_VPI_OBJ_DYNAMIC` whose `storage` is the string, handle or container
 global and whose `shape` indexes `llg_vpi_dynamic_tables`. Class objects,

@@ -1,4 +1,4 @@
-# ADV-019 fixtures: VPI typespecs, structure and union members, structure objects, dynamic objects
+# ADV-019 fixtures: VPI typespecs, structure and union members, structure, expression, statement and dynamic objects
 
 Each `<name>.sv` has a C application `<name>.c` that registers the system task
 the design calls. `tests/sim_feature_completion/adv_019.rs` links it as a
@@ -196,8 +196,8 @@ unnamed processes and assignments in source order, decision A19-D7).
   value the right-hand side converted to the left-hand side size. `assign
   w1 = r0[0]` has lhs `tb.w1`, rhs the bit select `tb.r0[0]` and value `1`
   (`r0 = 4'h3`). In `leaf`, `assign y = ~a` has an operation on its right:
-  llg exposes no expression trees (VPI-O3), so the rhs is a `vpiOperation`
-  without a value and the assignment's value fails too.
+  the rhs is a `vpiOperation` (family 3) whose value is `~a`, `1100` in
+  `u[0]` and `u[1]` and `0101` in `single`, and so is the assignment's.
 - Tasks and functions. 37.37 lists `vpiAutomatic`, `vpiFuncType`,
   `vpiSize` and `vpiSigned`; detail 12 (L60024-L60026) makes `vpiSize` the
   return size. `inc` (an automatic function returning `int`) prints
@@ -237,6 +237,144 @@ unnamed processes and assignments in source order, decision A19-D7).
   event to toggle." `$fire` at time 10 does so: the callback runs inside the
   put, then `fire level=0`, then the woken process (decision A19-D8). `inc
   2` and the `final` line close the run.
+
+## expressions (37.54, 37.55, 37.19, 37.38)
+
+`expressions.c` walks expression trees. `$exprs` (at time 1) prints its own
+three arguments, the right-hand side of every continuous assignment of `tb`
+(in source order) and the high connection of `u.a`. Each line shows
+`vpiType`, `vpiOpType` or `vpiConstType`, `vpiName` when there is one,
+`vpiSize`, `vpiConstantSelect` and `vpiIndexedPartSelectType` of selects,
+`vpiDecompile` and the value (`vpiObjTypeVal`: a real prints with `%g`,
+everything else as `vpiBinStrVal`; `error` when `vpi_get_value` fails).
+Below it come the operands, the parent and index or range expressions of a
+select, and the arguments of a call. After each assignment its own value is
+printed. `$again` (time 2, after `a = 1` and `i = 1`) re-reads the saved
+right-hand sides: expression handles stay valid and evaluate the current
+values. `failures=0` closes the walk when `vpiParent` of `w[i * 4 +: 8]` is
+`tb.w`.
+
+- Operands. 37.55 detail 1 (L60881-L60882): "For an operator whose type is
+  vpiMultiConcatOp, the first operand shall be the multiplier expression.
+  The remaining operands shall be the expressions within the concatenation."
+  `{2{n[1:0]}}` has the operands `2` and `n[1:0]`. Operands are the
+  expressions as written; the conversions the design applies to them are
+  not objects (decision A19-D12), so `a` in `a + b * 2` is the 8-bit `tb.a`
+  while the sum is 32 bits wide (`2` is an `int`, 11.6.1). A reference to a
+  net or variable is that object (`vpiReg`, `vpiIntVar`, `vpiRealVar`).
+- Decompilation. 37.55 detail 2 (L60883-L60885): "The property
+  vpiDecompile shall return a string with a functionally equivalent
+  expression to the original expression within the source code. Parentheses
+  shall be added only to preserve precedence. Each operand and operator
+  shall be separated by a single space character. No additional white space
+  shall be added due to parentheses." So `(a + b) * (a - b)` keeps its
+  parentheses and `a + b * 2` needs none; the spelling of unary operators,
+  literals and casts is decision A19-D11 (`~ a`, `8'shf0`, `1.0`,
+  `int'(r)`). A variable decompiles to its name.
+- Selects. 37.55 detail 10 (L60961-L60962): "For a part-select or indexed
+  part-select, the vpiParent object shall correspond to the expression
+  formed by removing the part-select range from the expression represented
+  by the part-select or indexed part-select itself." `mem[i][3:0]` has the
+  parent `mem[i]`, a `vpiVarSelect` (37.19) whose parent is the array
+  `tb.mem` and whose index is `i`. 37.54 detail 3 (L60813-L60815): a
+  bit-select is a constant select when "every associated index expression is
+  an elaboration time constant expression, and — vpiConstantSelect returns
+  TRUE for the parent of the bit-select"; `w[17]` and `a[3:0]` are, `w[i *
+  4 +: 8]` and `mem[i]` are not (detail 9, L60941-L60944, and 37.19 detail
+  1, L58988-L58991, for part and var selects). `pk[1]` selects one element of
+  the packed dimension `[0:3]` of `pk`, a `vpiBitSelect` of 8 bits, and
+  `pk[i -: 2]` two elements of 16 bits (`pk[1:2]` for `i = 2`, 11.5.1).
+  `w[17]` is outside `w[15:0]` and reads `x` (11.5.1).
+- Values. 38.15 (L62541-L62542): "The VPI routine vpi_get_value() shall
+  retrieve the simulation value of VPI objects." With `a = 8'h5a`,
+  `b = 8'h0f`, `n = 4'b10x1`, `s = -3`, `i = 2`, `r = 1.5`, `w = 16'hbeef`
+  and `pk = {1, 2, 3, 4}`: `a + b * 2 = 0x78`, `(a + b) * (a - b) = 0x69 *
+  0x4b = 0x1ec3`, `a > b` so the conditional is `a - b = 0x4b`, `-s >>> 1 =
+  1`, `mem[2][3:0] = 3`, `a ==? 8'b0101xxxx = 1` (the x bits of the right
+  operand match anything, 11.4.6), `!n = 0` (`n` has a 1 bit), `r * 2.0 =
+  3`, `int'(r) = 2` (rounded, 6.24.1) plus `8'shf0 = -16` gives `-14`. A
+  function call (`twice(3)`) and a system function call (`$clog2(i)`) have no
+  value in llg (decision A19-D12): their lines and the assignments that hold
+  them print `value=error`. After `a = 1` and `i = 1`, `$again` reads `0x1f`,
+  `16 * -14 = 0xff20`, `0001x1x1`, `b - a = 0x0e`, `w[4 +: 8] = 0xee`,
+  `mem[1][3:0] = 2`, `pk[0:1] = 0x0102` and `a ==? ... = 0`.
+- Calls. 37.38 relates a function call to its `vpiFunction` and its
+  `vpiArgument` expressions; `twice` is `tb.twice` with `vpiFuncType`
+  `vpiSizedSignedFunc` (5). `$clog2` is built in (`vpiUserDefn` 0).
+- Arguments and connections. `$exprs` declares typed formals
+  (`logic [7:0]`, `real`, `string`); its arguments are the operation `~a &
+  b`, the real division `r / 4 = 0.375` and the string constant `"hi"`
+  (`vpiStringConst`, 6), each decompiled. The connection of `u.a` is the
+  operation `a ^ b = 01010101`.
+
+## statements (37.56-37.74, 37.12)
+
+`statements.c` walks the statements of every process (source order, 37.58),
+task and function of `tb` through `vpiStmt`. Each line shows the statement
+type, `vpiLineNo`, the file name of `vpiFile` and `vpiName` when it has one,
+then by type: `vpiBlocking` and `vpiOpType` of assignments with the
+decompiled `vpiLhs`, `vpiRhs` and timing control; `vpiQualifier`,
+`vpiCaseType` and `vpiLocalVarDecls`; the decompiled `vpiCondition`; the
+`vpiDelay` of a delay control; the event of an event statement; the target
+of `disable`; the task and the arguments of calls. Sub-statements follow
+indented (`vpiStmt`, `vpiElseStmt`, case items with their `vpiExpr`, `for`
+init and increment statements). It ends with `tb.main` found by name, a
+`cbStmt` registration and `vpiStmt` of a variable.
+
+- Processes. 37.58 diagram (L61076-L61092): a process has one `stmt`. The
+  `always #5 clk = ~clk` statement is a delay control (37.63) whose
+  statement is the assignment; `always @(posedge clk or negedge clk)` an
+  event control (37.60) whose condition is one `vpiEventOrOp` (decision
+  A19-D13). The nonblocking `q <= #1 a + b` is an assignment with
+  `vpiBlocking` 0 and its delay control; 37.63 detail 1 (L61206): "For delay
+  control associated with assignment, the statement shall always be NULL."
+- Assignments. 37.59 detail 1 (L61124-L61126): "vpiOpType shall return
+  vpiAssignmentOp for normal assignments (both blocking ‘=’ and nonblocking
+  ‘<=’). For assignment operators, vpiOpType shall return a value that
+  corresponds to the operator that is combined with the assignment". `a +=
+  2` and `count += by` print `op=24` (`vpiAddOp`), plain assignments
+  `op=82`; `i++` and `k++` are assignments with `vpiPostIncOp` (62) and no
+  right-hand side (decision A19-D13). `a = repeat (2) @(posedge clk) b`
+  has a `vpiRepeatControl` (37.64) with its count and event.
+- Blocks. 37.12 detail 1 (L58069-L58070): "A named begin or named fork shall
+  always be a scope." `main` is the catalog `vpiNamedBegin` `tb.main` (also
+  found by name, with the same first statement); its declaration `int k`
+  is not a statement. The `fork` holds its two branches.
+- Tasks and functions. 37.12 detail 5 (L58098-L58100): "A task func can
+  have zero or more statements (see 13.3 and 13.4). If the number of
+  statements is greater than 1, the vpiStmt relation shall return an unnamed
+  begin that contains the statements of the task or function. If the number
+  of statements is zero, the vpiStmt relation shall return NULL." `bump` and
+  `clamp` print a `vpiBegin` at their first statement's line; `nothing`
+  prints `stmt NULL` with no error. `return v` is a `vpiReturnStmt` whose
+  `vpiCondition` is `v` (37.73).
+- Conditions and loops. `if`/`else if` chains nest `vpiIfElse` objects
+  (37.66) with `vpiQualifier` 0, `priority if` has `vpiPriorityQualifier`
+  (2) and `unique case` `vpiUniqueQualifier` (1) with `vpiCaseType`
+  `vpiCaseExact` (1). 37.67 detail 1 (L61292): "The case item shall group
+  all case conditions that branch to the same statement."; detail 2
+  (L61293): "vpi_iterate() shall return NULL for the default case item".
+  `for (int i = 0; ...)` declares its variable (37.12 detail 2, L58081:
+  "A for statement shall be a scope if and only if the vpiLocalVarDecls
+  property returns TRUE"), so it prints `local_vars=1` and an init
+  assignment to `i`; `repeat`, `while` and `do ... while` print their
+  conditions, `foreach (arr[j])` its array and loop variable `j` (37.70
+  details 1-2, L61358-L61361), `forever` its begin, and `break`/`continue`
+  are `vpiBreak`/`vpiContinue`.
+- Waits, events and the rest. `wait (count > 0)` is a `vpiWait` (37.62);
+  `@(ev or posedge clk);` and `#2;` control a `vpiNullStmt` (decision
+  A19-D13); `-> ev` is a `vpiEventStmt` whose `vpiNamedEvent` is `tb.ev`
+  (37.57); `disable main` names `tb.main` through `vpiExpr` (37.72);
+  `force` has `vpiLhs` and `vpiRhs`, `release` only `vpiLhs` (37.74). A
+  system task call prints its name and decompiled arguments.
+- Refusals. llg has no per-statement callbacks: `vpi_register_cb` with
+  `cbStmt` returns NULL with `vpiError` (level 3), and `vpiStmt` of a
+  variable is not a relation (`vpiError`).
+- The run. The design prints `count 11 a 7 b 7 q 14` at time 201: `count =
+  clamp(0 + 20) = 10`, then `bump(1)`; `a` doubles from 5 to 10, so `b = 2`,
+  then the fork sets `b = 9` (the wait is already satisfied) and `b = 7`
+  one unit later, and `a = b` after two clock edges; `q` is released after
+  its force and the next clock edge drives `a + b = 14`.
 
 ## timing (37.35, 37.36)
 

@@ -14,6 +14,7 @@ use crate::sim::ir::{
     IrVpiTypespecMember, IrVpiVarKind,
 };
 
+mod code;
 mod dynamic;
 mod timing;
 pub(in super::super) use timing::VpiTimingMetadata;
@@ -892,11 +893,16 @@ impl Codegen<'_> {
     /// Capture the source-owned hierarchy and storage identities used by the
     /// generated VPI catalog.  This runs after collection has assigned stable
     /// IR indices but before optimization can prune any otherwise dead signal.
+    /// Fill the catalog. With `code` (a model generated for VPI
+    /// applications) the expression and statement objects of processes,
+    /// tasks and functions, structure connections and call arguments are
+    /// added too (IEEE 1800-2009 37.54-37.74).
     pub(in super::super) fn populate_vpi_metadata(
         &self,
         model: &mut IrModel,
         tops: &[NodeId],
         mut timing: VpiTimingMetadata,
+        code: bool,
     ) -> Result<(), String> {
         use std::collections::BTreeMap;
 
@@ -930,6 +936,9 @@ impl Codegen<'_> {
         let mut insert = |object: IrVpiObject| {
             objects.entry(object.full_name.clone()).or_insert(object);
         };
+        // The rows whose statements or connection expressions become code
+        // objects, by catalog key, with the scope key of their objects.
+        let mut owners: Vec<(String, String, CodeOwner)> = Vec::new();
         let mut typespecs = TypespecTable::default();
         let mut dynamic = crate::sim::ir::IrVpiDynamic::default();
         let static_locals = self
@@ -1245,8 +1254,12 @@ impl Codegen<'_> {
                         ),
                     };
                     let scope = self.vpi_full_name(id);
+                    let key = self.vpi_unnamed_key(&scope, 'p', id);
+                    if let Some(statement) = node.children.first().filter(|_| code) {
+                        owners.push((key.clone(), scope.clone(), CodeOwner::Statement(*statement)));
+                    }
                     insert(source(IrVpiObject {
-                        full_name: self.vpi_unnamed_key(&scope, 'p', id),
+                        full_name: key,
                         kind: IrVpiObjectKind::Process,
                         type_code: Some(type_code),
                         detail,
@@ -1258,8 +1271,16 @@ impl Codegen<'_> {
                     let lhs = self.vpi_conn(node.children[0], IrVpiDirection::None);
                     let rhs = self.vpi_conn(node.children[1], IrVpiDirection::None);
                     let scope = self.vpi_full_name(id);
+                    let key = self.vpi_unnamed_key(&scope, 'c', id);
+                    if code {
+                        owners.push((
+                            key.clone(),
+                            scope.clone(),
+                            CodeOwner::Conns(vec![node.children[0], node.children[1]]),
+                        ));
+                    }
                     insert(source(IrVpiObject {
-                        full_name: self.vpi_unnamed_key(&scope, 'c', id),
+                        full_name: key,
                         kind: IrVpiObjectKind::ContAssign,
                         width: lhs.width,
                         conns: vec![lhs, rhs],
@@ -1286,8 +1307,12 @@ impl Codegen<'_> {
                             _ => "vpiSizedFunc",
                         }),
                     };
+                    let key = self.vpi_full_name(id);
+                    if let Some(body) = self.db.subroutine_body(id).filter(|_| code) {
+                        owners.push((key.clone(), key.clone(), CodeOwner::Statement(body)));
+                    }
                     insert(source(IrVpiObject {
-                        full_name: self.vpi_full_name(id),
+                        full_name: key,
                         name: node.name.clone(),
                         kind: IrVpiObjectKind::TaskFunc,
                         type_code: Some(if *is_task { "vpiTask" } else { "vpiFunction" }),
@@ -1308,6 +1333,19 @@ impl Codegen<'_> {
                             ..IrVpiObject::default()
                         }),
                     ) {
+                        if let (true, NodeKind::Gate { terms, .. }) = (code, self.kind(id)) {
+                            let mut ordered = terms.iter().collect::<Vec<_>>();
+                            ordered.sort_by_key(|term| term.term_index);
+                            let scope = row
+                                .full_name
+                                .rsplit_once(SEPARATOR)
+                                .map_or_else(String::new, |(scope, _)| scope.to_owned());
+                            owners.push((
+                                row.full_name.clone(),
+                                scope,
+                                CodeOwner::Conns(ordered.iter().map(|term| term.expr).collect()),
+                            ));
+                        }
                         insert(row);
                     }
                 }
@@ -1384,10 +1422,21 @@ impl Codegen<'_> {
                             ("vpiModportPort", format!("{actual}{SEPARATOR}{modport}"))
                         })
                     });
+                    let key = format!("{}{SEPARATOR}\u{1e}port", self.vpi_full_name(id));
+                    if let (true, Some(high), false, None) =
+                        (code, high_expr, *high_open, interface.as_ref())
+                    {
+                        // The high connection lives in the instantiating scope.
+                        let scope = self
+                            .node(parent)
+                            .parent
+                            .map_or_else(String::new, |outer| self.vpi_full_name(outer));
+                        owners.push((key.clone(), scope, CodeOwner::Conns(vec![*high])));
+                    }
                     insert(source(IrVpiObject {
                         // A port and the declaration it connects share one
                         // name; the port lives in its own namespace.
-                        full_name: format!("{}{SEPARATOR}\u{1e}port", self.vpi_full_name(id)),
+                        full_name: key,
                         name: node.name.clone(),
                         kind: IrVpiObjectKind::Port,
                         width,
@@ -1421,9 +1470,85 @@ impl Codegen<'_> {
         }
         self.vpi_dynamic_classes(model, &mut dynamic, &mut typespecs);
         model.vpi_objects = objects.into_values().collect();
+        if code {
+            self.populate_vpi_code(model, &mut typespecs, owners);
+        }
         model.vpi_typespecs = typespecs.entries;
         model.vpi_dynamic = dynamic;
         Ok(())
+    }
+
+    /// Build the expression and statement objects of the catalog rows in
+    /// `owners` and of the VPI call arguments, and link them to their rows.
+    fn populate_vpi_code(
+        &self,
+        model: &mut IrModel,
+        typespecs: &mut TypespecTable,
+        owners: Vec<(String, String, CodeOwner)>,
+    ) {
+        let mut statements = Vec::new();
+        let mut conns = Vec::new();
+        let mut arguments = Vec::new();
+        let (code, files, named_blocks) = {
+            let mut tables = code::CodeTables::new(self, model, typespecs);
+            for (key, scope, owner) in owners {
+                let Some(row) = tables.row(&key) else {
+                    continue;
+                };
+                let scope = tables.row(&scope);
+                match owner {
+                    CodeOwner::Statement(statement) => {
+                        if let Some(entry) = tables.statement_root(statement, scope) {
+                            statements.push((row, entry));
+                        }
+                    }
+                    CodeOwner::Conns(expressions) => {
+                        let object = &model.vpi_objects[row];
+                        if object.conns.len() != expressions.len() {
+                            continue;
+                        }
+                        for (index, expression) in expressions.into_iter().enumerate() {
+                            if matches!(
+                                object.conns[index].reference,
+                                IrVpiArgRef::Expression | IrVpiArgRef::Constant(_)
+                            ) {
+                                let entry = tables.expression_root(expression, scope);
+                                conns.push((row, index, entry));
+                            }
+                        }
+                    }
+                }
+            }
+            for (site, call) in model.vpi_compile_calls.iter().enumerate() {
+                let Some(nodes) = self.vpi_call_args.get(site) else {
+                    continue;
+                };
+                let scope = call.scope.as_deref().and_then(|scope| tables.row(scope));
+                for (index, (argument, node)) in call.args.iter().zip(nodes).enumerate() {
+                    if matches!(
+                        argument.reference,
+                        IrVpiArgRef::Expression | IrVpiArgRef::Constant(_)
+                    ) {
+                        arguments.push((site, index, tables.expression_root(*node, scope)));
+                    }
+                }
+            }
+            tables.finish()
+        };
+        for (row, entry) in statements {
+            model.vpi_objects[row].code = Some(entry);
+        }
+        for (row, entry) in named_blocks {
+            model.vpi_objects[row].code.get_or_insert(entry);
+        }
+        for (row, index, entry) in conns {
+            model.vpi_objects[row].conns[index].code = Some(entry);
+        }
+        for (site, index, entry) in arguments {
+            model.vpi_compile_calls[site].args[index].code = Some(entry);
+        }
+        model.vpi_code = code;
+        model.vpi_code_files = files;
     }
 
     /// Record every built-in system subroutine the design calls and llg runs
@@ -1483,6 +1608,7 @@ impl Codegen<'_> {
                 signed: arg.signed,
                 real: arg.is_real(),
                 reference: self.vpi_argument_reference(*node, arg),
+                code: None,
             })
             .collect();
         let mut scope = self.node(call).parent;
@@ -1500,6 +1626,10 @@ impl Codegen<'_> {
             scope = node.parent;
         }
         let site = self.model.vpi_compile_calls.len();
+        if self.vpi_call_args.len() < site {
+            self.vpi_call_args.resize(site, Vec::new());
+        }
+        self.vpi_call_args.push(arg_nodes.to_vec());
         let mut descriptor = IrVpiCompileCall::new(name.to_owned(), descriptors);
         descriptor.time_unit_fs = self.timescale_of_node(call).unit_fs;
         descriptor.scope = scope.map(|id| self.vpi_full_name(id));
@@ -1789,6 +1919,15 @@ impl Codegen<'_> {
             _ => IrVpiArgRef::Expression,
         }
     }
+}
+
+/// A catalog row whose statement or connection expressions become code
+/// objects.
+enum CodeOwner {
+    /// The `vpiStmt` of a process, task or function.
+    Statement(NodeId),
+    /// The source expression of each connection, in connection order.
+    Conns(Vec<NodeId>),
 }
 
 /// `vpiConstType` code name of a literal argument. Integral literals keep

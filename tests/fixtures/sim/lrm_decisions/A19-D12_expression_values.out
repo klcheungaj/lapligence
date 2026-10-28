@@ -1,0 +1,20 @@
+a + b:
+  rhs vpiOperation size=16 value=0000000100010000
+    operand vpiReg size=8 value=11110000
+    operand vpiReg size=8 value=00100000
+a[9]:
+  rhs vpiBitSelect size=1 value=x
+a[n]:
+  rhs vpiBitSelect size=1 value=x
+mem[n]:
+  rhs vpiVarSelect size=8 value=xxxxxxxx
+pk[0]:
+  rhs vpiBitSelect size=4 value=1010
+r + 1:
+  rhs vpiOperation size=64 value=1.25
+    operand vpiRealVar size=64 value=0.25
+    operand vpiConstant size=32 value=00000000000000000000000000000001
+one() + 1:
+  rhs vpiOperation size=32 value=error level=3
+    operand vpiFuncCall size=32 value=error level=3
+    operand vpiConstant size=32 value=00000000000000000000000000000001
