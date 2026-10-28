@@ -8955,8 +8955,11 @@ PLI_INT32 vpi_mcd_printf(PLI_UINT32 mcd, PLI_BYTE8* format, ...) {
 PLI_INT32 vpi_mcd_flush(PLI_UINT32 mcd) {
     vpi_enter();
     if (vpi_mcd_is_fd(mcd, "vpi_mcd_flush")) return 1;
+    /* Descriptor 0 names no channel: there is nothing to flush, which
+     * succeeds (decision A20-D4). */
+    if (!mcd) return 0;
     PLI_UINT32 flushed = llg_file_mcd_flush(mcd);
-    if (!mcd || flushed != mcd) {
+    if (flushed != mcd) {
         vpi_mcd_unopened(mcd & ~flushed, "vpi_mcd_flush");
         return 1;
     }

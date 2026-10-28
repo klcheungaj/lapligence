@@ -1,4 +1,4 @@
-flush 0: nonzero level=3
+flush 0: 0 level=0
 flush unopened: nonzero level=3
 close 1: unclosed bits level=3
 channel 1 still writes

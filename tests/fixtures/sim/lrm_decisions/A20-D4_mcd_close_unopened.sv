@@ -3,8 +3,9 @@
 // channel that is not open returns its bit; closing a descriptor of an open
 // and an unopened channel closes the open one and returns the other bit;
 // vpi_mcd_close(0) returns 0. Each of these sets a vpiError status. A
-// successful close returns 0 with no error. vpi_mcd_flush of descriptor 0 or
-// of an unopened channel returns nonzero with vpiError.
+// successful close returns 0 with no error. vpi_mcd_flush of descriptor 0
+// flushes nothing and returns 0 with no error; of an unopened channel it
+// returns nonzero with vpiError.
 //
 // IEEE 1800-2009 38.24 (SystemVerilog-1800-2009.txt L63515-63521):
 //   "On success, this routine shall return a 0; on error, it shall return the
@@ -14,7 +15,8 @@
 //   the current log file".
 // 38.25 (L63543): vpi_mcd_flush returns "0 if successful; nonzero if
 //   unsuccessful."
-// The status levels and the result of descriptor 0 are llg choices.
+// The status levels and the results of descriptor 0 are llg choices; the
+// flush of descriptor 0 follows industry-standard behaviour.
 //
 // Build A20-D4_mcd_close_unopened.c as a VPI application (llg: static archive
 // given to --dpi-lib; `task $d4()` declared as a system task).

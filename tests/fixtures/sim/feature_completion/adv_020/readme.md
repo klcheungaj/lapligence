@@ -101,7 +101,8 @@ values are not printed; the checks print relations between them.
   unopened channel, as `$fdisplay` reaches the open channels of a descriptor
   and reports the others (decision S25-D7).
 - **flush.** 0 for `a` and `1|a` (38.25, L63543: "0 if successful; nonzero if
-  unsuccessful."); 1 with level 3 for descriptor 0, an unopened channel,
+  unsuccessful."); 0 without an error for descriptor 0, which names nothing
+  to flush (decision A20-D4); 1 with level 3 for an unopened channel,
   `a|unopened` and `fd`.
 - **close.** 38.24 (L63515-L63521): "On success, this routine shall return a
   0; on error, it shall return the mcd value of the unclosed channels. ...
