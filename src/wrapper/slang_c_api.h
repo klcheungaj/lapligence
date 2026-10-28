@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 58u
+#define LLG_SLANG_ABI_VERSION 59u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1473,6 +1473,50 @@ typedef struct {
   LlgSlangString label;
 } LlgSlangEditionFinding;
 
+/* One protected envelope (IEEE 1800-2009 34; Verilog-XL `protected and
+ * `protect) found among the directives of the parsed syntax trees. The
+ * frontend cannot decrypt: it skips every key, digest and data block (each
+ * becomes skipped-token trivia) and parses the text around them.
+ *
+ * `kind` is LLG_SLANG_PROTECT_DECRYPTION for a decryption envelope
+ * (`pragma protect begin_protected ... end_protected`, or the legacy
+ * `protected ... `endprotected): its content is protected and not available.
+ * LLG_SLANG_PROTECT_ENCRYPTION is an encryption envelope (`pragma protect
+ * begin ... end`, or the legacy `protect ... `endprotect): plaintext that an
+ * encrypting tool would protect, parsed as ordinary source.
+ *
+ * `range` runs from the start of the opening directive to the end of the
+ * closing one, physical in the opening directive's file. Without a matching
+ * closing directive in that file it ends at the end of the file and
+ * LLG_SLANG_PROTECT_UNTERMINATED is set. LLG_SLANG_PROTECT_LEGACY marks the
+ * Verilog-XL directive forms. An envelope opened inside another (the frontend
+ * tracks the nesting) gets its own record. Records are sorted by file and
+ * start offset, one per opening directive; each also yields at least one
+ * lexical token, so the lexical token limit bounds their count.
+ *
+ * `scope` is the declared-name range of the innermost module, interface,
+ * program or package declaration whose text holds the opening directive (the
+ * same range as that definition's semantic node), or an invalid range when
+ * the envelope lies outside every such declaration. An envelope that directly
+ * follows a declaration whose end keyword is missing (the keyword is inside
+ * the protected text) is attributed to that declaration. */
+enum {
+  LLG_SLANG_PROTECT_DECRYPTION = 1,
+  LLG_SLANG_PROTECT_ENCRYPTION = 2
+};
+
+enum {
+  LLG_SLANG_PROTECT_LEGACY = 1u << 0,
+  LLG_SLANG_PROTECT_UNTERMINATED = 1u << 1
+};
+
+typedef struct {
+  LlgSlangSourceRange range;
+  LlgSlangSourceRange scope;
+  uint32_t kind;
+  uint32_t flags;
+} LlgSlangProtectedEnvelope;
+
 /* Capture stream (ABI v15).
  *
  * llg_slang_compile() does not return a snapshot owner. After Slang has
@@ -1522,6 +1566,7 @@ typedef struct {
   uint64_t source_library_count;
   uint64_t line_directive_count;
   uint64_t edition_finding_count;
+  uint64_t protected_envelope_count;
 } LlgSlangStreamHeader;
 
 typedef struct {
@@ -1564,6 +1609,9 @@ typedef struct {
   uint32_t (*edition_findings)(void* context,
                                const LlgSlangEditionFinding* records,
                                uint64_t count);
+  uint32_t (*protected_envelopes)(void* context,
+                                  const LlgSlangProtectedEnvelope* records,
+                                  uint64_t count);
   uint32_t (*end)(void* context);
 } LlgSlangSink;
 

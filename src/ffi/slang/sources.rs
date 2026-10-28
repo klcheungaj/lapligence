@@ -80,6 +80,45 @@ pub(super) fn finish_line_directives(
     Ok(unique)
 }
 
+const PROTECT_DECRYPTION: u32 = 1;
+const PROTECT_ENCRYPTION: u32 = 2;
+const PROTECT_LEGACY: u32 = 1 << 0;
+const PROTECT_UNTERMINATED: u32 = 1 << 1;
+
+/// Copy one protected envelope, rejecting unknown kinds, reserved flag bits,
+/// missing ranges and records out of file/start order (the ABI sorts them).
+pub(super) fn decode_protected_envelope(
+    item: &RawProtectedEnvelope,
+    files: &[File],
+    previous: Option<&ProtectedEnvelope>,
+) -> Result<ProtectedEnvelope, SlangError> {
+    let range = decode_range(item.range, files)?
+        .ok_or_else(|| invalid_native("protected envelope has no source range"))?;
+    let scope = decode_range(item.scope, files)?;
+    let kind = match item.kind {
+        PROTECT_DECRYPTION => ProtectedEnvelopeKind::Decryption,
+        PROTECT_ENCRYPTION => ProtectedEnvelopeKind::Encryption,
+        _ => return Err(invalid_native("protected envelope has an unknown kind")),
+    };
+    if item.flags & !(PROTECT_LEGACY | PROTECT_UNTERMINATED) != 0 {
+        return Err(invalid_native("protected envelope has unknown flags"));
+    }
+    if previous.is_some_and(|previous| {
+        (previous.range.file_id, previous.range.start) >= (range.file_id, range.start)
+    }) {
+        return Err(invalid_native(
+            "protected envelope records are not sorted by file and start",
+        ));
+    }
+    Ok(ProtectedEnvelope {
+        range,
+        scope,
+        kind,
+        legacy: item.flags & PROTECT_LEGACY != 0,
+        unterminated: item.flags & PROTECT_UNTERMINATED != 0,
+    })
+}
+
 /// Copy one syntax-profile finding, rejecting unknown or unbounded ranges and
 /// empty labels.
 pub(super) fn decode_edition_finding(

@@ -208,6 +208,14 @@ fn run(options: DriverOptions) -> i32 {
         }
         Err(compile::CompileError::FrontendDiagnostics(diagnostics)) => {
             for d in &diagnostics {
+                // Constructs rejected by design (protected source) keep the
+                // `error: <location>: unsupported: ...` shape of the
+                // simulator's other by-design rejections.
+                let located = format!("{}: {}", d.location(), d.message);
+                if sim::legacy_unsupported::is_diagnostic_list(&located) {
+                    eprintln!("error: {located}");
+                    continue;
+                }
                 eprintln!(
                     "{:?}: {} {}",
                     d.severity,

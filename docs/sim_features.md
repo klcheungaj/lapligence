@@ -67,9 +67,9 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 8. Continuous/structural | 5 | 8 | 2 | 1 | 0 | 0 | 16 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 0 | 7 |
 | 10. System tasks/functions | 12 | 8 | 2 | 4 | 0 | 0 | 26 |
-| 11. Compiler directives | 6 | 1 | 0 | 1 | 0 | 0 | 8 |
+| 11. Compiler directives | 6 | 1 | 0 | 2 | 0 | 0 | 9 |
 | 12. Verification/foreign interfaces | 1 | 14 | 0 | 1 | 3 | 0 | 19 |
-| **Total** | **49** | **81** | **5** | **8** | **3** | **1** | **147** |
+| **Total** | **49** | **81** | **5** | **9** | **3** | **1** | **148** |
 
 **131 rows have some source implementation; 81 of those remain partial and one
 is accepted.** The accepted row (`always_ff` and writer rules) carries
@@ -2134,6 +2134,21 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (charge and delay-mode directives) is not supported by llg` instead of being
   accepted and ignored; one inside an inactive `` `ifdef`` branch is not
   reported. V Annex D; SV Annex E **[1995]**.
+- 🚫 **Protected source envelopes** — Encrypted (protected) source is
+  unsupported (user decision 2026-10-27): `llg` has no decryption keys and
+  does not decrypt. Every envelope in the compiled sources, active or nested,
+  inside a module body, around whole modules or after a plaintext header,
+  stops the run before elaboration output with one line at its opening
+  directive: `unsupported: protected envelope `` `pragma protect
+  begin_protected`` (protected source envelopes) is not supported by llg`;
+  the Verilog-XL `` `protected`` form reads `` `protected``, a missing closing
+  directive adds `unterminated`, and encryption envelopes (`` `pragma protect
+  begin``/`end`, `` `protect``/`` `endprotect``), whose protection settings
+  `llg` would not honor, read `encryption envelope`. The encoded text is never
+  skipped silently. Protect keywords outside any envelope stay pragmas without
+  simulation effect. `llg_ls` instead indexes such files with the protected
+  text as a black box ([LSP protected source](config.md#lsp-protected-source)). SV §34
+  ([ADV-030](../tests/sim_feature_completion/adv_030.rs)) **[1364-2005/SV-2009]**.
 - 🟨 **`` `unconnected_drive `` / `` `nounconnected_drive ``** — An omitted
   input net formal, including a net-array formal, receives a pull0/pull1
   contribution that competes with the formal's internal drivers and net type

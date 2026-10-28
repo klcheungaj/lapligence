@@ -11,7 +11,9 @@
 //! never run as a no-op or fail generically. [`diagnostic`] is the single
 //! message shape; [`scan`] finds the constructs the owned database exposes
 //! directly, and lowering uses [`diagnostic`] for the forms it must classify
-//! itself or that the scan cannot reach.
+//! itself or that the scan cannot reach. Protected source envelopes (user
+//! decision 2026-10-27) use the same shape but are rejected by the checked
+//! frontend compile (`core::compile`), before any database exists.
 
 use super::semantic::SemanticModel;
 use crate::core::db::{NetType, NodeKind, PrimitiveType, StmtKind};

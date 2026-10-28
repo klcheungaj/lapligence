@@ -48,6 +48,7 @@ use llg::core::tokens::{self, DeclTarget, FileTokens, ParseDeclPositions, RefBin
 mod analysis;
 mod fallback;
 mod package_context;
+mod protected;
 mod requests;
 mod slang;
 mod source_graph;
@@ -56,6 +57,7 @@ mod symbol_index;
 pub(crate) use analysis::*;
 pub(crate) use fallback::*;
 pub(crate) use package_context::*;
+pub(crate) use protected::*;
 pub(crate) use requests::*;
 pub(crate) use slang::*;
 pub(crate) use source_graph::*;

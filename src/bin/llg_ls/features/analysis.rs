@@ -1023,6 +1023,39 @@ pub(super) fn analyze_inner_slang(
         }
     };
     crate::llg_debug!("event=slang.compile.end outcome={} root={} generation={} diagnostics={} semantic_nodes={} lexical_tokens={} elapsed_us={}", if out.ok() { "ok" } else { "error" }, root, generation, out.diagnostics.len(), out.snapshot.semantic_nodes.len(), out.snapshot.lexical_tokens.len(), started.elapsed().as_micros());
+    let mut out = out;
+    let protected = ProtectedSource::new(&out.snapshot);
+    let protected_view = (!protected.is_empty()).then(|| {
+        let texts: HashMap<_, _> = out
+            .snapshot
+            .files
+            .iter()
+            .map(|file| (file.name.as_str(), file.text.as_str()))
+            .collect();
+        (
+            protected.dispositions(),
+            protected.hints(&texts),
+            protected_lint_extents(&protected, &out.snapshot),
+        )
+    });
+    drop(protected);
+    let (dispositions, protected_hints, protected_extents) = protected_view.unwrap_or_default();
+    let mut hinted_errors = false;
+    if !dispositions.is_empty() {
+        out.retain_frontend_diagnostics(|index, _, projected| match dispositions[index] {
+            Disposition::Keep => true,
+            Disposition::Drop => false,
+            Disposition::Hint(reason) => {
+                hinted_errors |= matches!(
+                    projected.severity,
+                    Severity::Fatal | Severity::Syntax | Severity::Error
+                );
+                projected.severity = Severity::Info;
+                projected.message = hint_message(&projected.message, reason);
+                true
+            }
+        });
+    }
 
     let source_texts: Vec<_> = out
         .snapshot
@@ -1039,7 +1072,7 @@ pub(super) fn analyze_inner_slang(
         out.snapshot.lexical_tokens.len(),
         started.elapsed().as_micros()
     );
-    let frontend_diagnostics = project_snapshot_diagnostics(
+    let mut frontend_diagnostics = project_snapshot_diagnostics(
         &out.snapshot
             .files
             .iter()
@@ -1050,8 +1083,18 @@ pub(super) fn analyze_inner_slang(
             })
             .collect::<Vec<_>>(),
         &out.snapshot,
+        &dispositions,
     );
-    let frontend_ok = out.ok();
+    frontend_diagnostics.extend(protected_hints);
+    // Errors that protected source explains no longer fail the frontend.
+    let frontend_ok = out.ok()
+        || (hinted_errors
+            && !out.diagnostics.iter().any(|diagnostic| {
+                matches!(
+                    diagnostic.severity,
+                    Severity::Fatal | Severity::Syntax | Severity::Error
+                )
+            }));
     let database = (!opts.library_units).then(|| llg::core::db::Db::from_slang(&out.snapshot));
     let module_graph = module_graph_from_slang(
         &out.snapshot,
@@ -1061,7 +1104,10 @@ pub(super) fn analyze_inner_slang(
     let (model, lint_diags, db_error) = match database {
         Some(Ok(db)) => {
             let model = DesignModel::from_db(&db);
-            let lint_diags = lint::lint_with_config(&db, &model, lint_cfg);
+            let mut lint_diags = lint::lint_with_config(&db, &model, lint_cfg);
+            if !protected_extents.is_empty() {
+                lint_diags.retain(|finding| !inside_extents(&protected_extents, finding));
+            }
             (model, lint_diags, None)
         }
         other => {
@@ -1124,6 +1170,41 @@ pub(super) fn analyze_inner_slang(
     .with_configured_top(opts.top.clone());
     analysis.attach_frontend_diagnostics(frontend_diagnostics);
     analysis
+}
+
+/// File name and 1-based inclusive line/column bounds of one protected
+/// declaration.
+type LintExtent = (String, (u32, u32), (u32, u32));
+
+/// Line/column extents of the protected declarations of `snapshot`.
+fn protected_lint_extents(
+    protected: &ProtectedSource<'_>,
+    snapshot: &llg::ffi::slang::Snapshot,
+) -> Vec<LintExtent> {
+    protected
+        .protected_extents()
+        .filter_map(|(file_id, start, end)| {
+            let file = snapshot.files.iter().find(|file| file.id == file_id)?;
+            let positions = tokens::SourcePositions::new(&file.text);
+            Some((
+                file.name.clone(),
+                positions.position(start),
+                positions.position(end),
+            ))
+        })
+        .collect()
+}
+
+/// Whether `finding` lies in one of the protected `extents`: the hidden text
+/// may use or drive what the declaration's plaintext declares.
+fn inside_extents(extents: &[LintExtent], finding: &LintDiag) -> bool {
+    let Some(file) = finding.file.as_deref() else {
+        return false;
+    };
+    let position = (finding.line, finding.col);
+    extents
+        .iter()
+        .any(|(name, start, end)| name == file && *start <= position && position <= *end)
 }
 
 /// Recover a bounded declaration-level workspace after full elaboration

@@ -15,7 +15,8 @@ use std::{fmt, ptr, slice, str};
 
 mod sources;
 use sources::{
-    decode_edition_finding, decode_line_directive, decode_source_library, finish_line_directives,
+    decode_edition_finding, decode_line_directive, decode_protected_envelope,
+    decode_source_library, finish_line_directives,
 };
 mod node_flags;
 pub use node_flags::SemanticFlags;
@@ -41,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 58;
+const ABI_VERSION: u32 = 59;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1674,6 +1675,37 @@ pub struct EditionFinding {
 /// `LLG_SLANG_MAX_EDITION_FINDINGS`.
 pub const MAX_EDITION_FINDINGS: u64 = 4096;
 
+/// What a protected envelope holds (IEEE 1800-2009 34.2); mirrors
+/// `LLG_SLANG_PROTECT_*` kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProtectedEnvelopeKind {
+    /// `begin_protected ... end_protected` or Verilog-XL `` `protected ``:
+    /// encrypted content the frontend skipped.
+    Decryption,
+    /// `begin ... end` or Verilog-XL `` `protect ``: plaintext an encrypting
+    /// tool would protect, parsed as ordinary source.
+    Encryption,
+}
+
+/// One protected envelope of the compiled sources (`LlgSlangProtectedEnvelope`).
+/// `range` runs from the opening directive to the end of the closing one, or
+/// to the end of the file when `unterminated`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProtectedEnvelope {
+    pub range: SourceRange,
+    /// Declared-name range of the innermost module, interface, program or
+    /// package declaration holding the envelope (the range of that
+    /// definition's semantic node); `None` outside every declaration. An
+    /// envelope directly after a declaration whose end keyword is missing
+    /// belongs to that declaration.
+    pub scope: Option<SourceRange>,
+    pub kind: ProtectedEnvelopeKind,
+    /// Verilog-XL directive form (`` `protected ``/`` `protect ``).
+    pub legacy: bool,
+    /// No matching closing directive before the end of the file.
+    pub unterminated: bool,
+}
+
 /// Fully owned observations from one Slang compilation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
@@ -1704,6 +1736,9 @@ pub struct Snapshot {
     /// Syntax-profile findings of a Verilog-2001 compilation, in capture
     /// order; empty for every other edition.
     pub edition_findings: Vec<EditionFinding>,
+    /// Protected envelopes sorted by file and start offset, one per opening
+    /// directive.
+    pub protected_envelopes: Vec<ProtectedEnvelope>,
 }
 
 impl Snapshot {
@@ -1936,6 +1971,15 @@ struct RawEditionFinding {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+struct RawProtectedEnvelope {
+    range: RawRange,
+    scope: RawRange,
+    kind: u32,
+    flags: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 struct RawUdpRow {
     inputs: RawString,
     state: u32,
@@ -2046,6 +2090,7 @@ struct RawStreamHeader {
     source_library_count: u64,
     line_directive_count: u64,
     edition_finding_count: u64,
+    protected_envelope_count: u64,
 }
 
 type RawBatch<T> = unsafe extern "C" fn(*mut std::ffi::c_void, *const T, u64) -> u32;
@@ -2073,6 +2118,7 @@ struct RawSink {
     source_libraries: RawBatch<RawSourceLibrary>,
     line_directives: RawBatch<RawLineDirective>,
     edition_findings: RawBatch<RawEditionFinding>,
+    protected_envelopes: RawBatch<RawProtectedEnvelope>,
     end: unsafe extern "C" fn(*mut std::ffi::c_void) -> u32,
 }
 

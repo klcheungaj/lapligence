@@ -27,6 +27,7 @@ use port_connections::pos_of;
 mod classes;
 mod packages;
 mod parameter_connections;
+mod protected;
 mod shadow_paths;
 
 /// The host path a `file:` URI names. `Url::path` keeps the URI spelling

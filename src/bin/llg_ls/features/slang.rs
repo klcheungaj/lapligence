@@ -12,9 +12,12 @@ pub(crate) struct SlangSource<'a> {
     pub(crate) is_compilation_unit: bool,
 }
 
+/// Project the frontend diagnostics of `snapshot` that `dispositions` (one
+/// per diagnostic; missing entries keep) does not drop.
 pub(super) fn project_snapshot_diagnostics(
     inputs: &[SlangSource<'_>],
     snapshot: &Snapshot,
+    dispositions: &[Disposition],
 ) -> Vec<(String, LspDiagnostic)> {
     let inputs_by_name: HashMap<_, _> = inputs
         .iter()
@@ -35,8 +38,16 @@ pub(super) fn project_snapshot_diagnostics(
     snapshot
         .diagnostics
         .iter()
-        .filter(|diagnostic| diagnostic.severity != SlangSeverity::Ignored)
-        .filter_map(|diagnostic| {
+        .enumerate()
+        .filter(|(_, diagnostic)| diagnostic.severity != SlangSeverity::Ignored)
+        .filter_map(|(index, diagnostic)| {
+            let disposition = dispositions
+                .get(index)
+                .copied()
+                .unwrap_or(Disposition::Keep);
+            if disposition == Disposition::Drop {
+                return None;
+            }
             let primary = diagnostic
                 .primary
                 .and_then(|range| project_range(range, &files_by_id, &inputs_by_name));
@@ -72,20 +83,30 @@ pub(super) fn project_snapshot_diagnostics(
                     diagnostic.subsystem, diagnostic.code, diagnostic.name
                 )
             };
-            Some((
-                path,
-                LspDiagnostic {
-                    range,
-                    severity: Some(match diagnostic.severity {
+            let (severity, message) = match disposition {
+                Disposition::Hint(reason) => (
+                    DiagnosticSeverity::HINT,
+                    hint_message(&diagnostic.message, reason),
+                ),
+                _ => (
+                    match diagnostic.severity {
                         SlangSeverity::Ignored => unreachable!(),
                         SlangSeverity::Note => DiagnosticSeverity::INFORMATION,
                         SlangSeverity::Warning => DiagnosticSeverity::WARNING,
                         SlangSeverity::Error | SlangSeverity::Fatal => DiagnosticSeverity::ERROR,
-                    }),
+                    },
+                    diagnostic.message.clone(),
+                ),
+            };
+            Some((
+                path,
+                LspDiagnostic {
+                    range,
+                    severity: Some(severity),
                     code: Some(NumberOrString::String(format!("slang.{provider}.{name}"))),
                     code_description: None,
                     source: Some(format!("slang-{provider}")),
-                    message: diagnostic.message.clone(),
+                    message,
                     related_information: (!related_information.is_empty())
                         .then_some(related_information),
                     tags: None,
@@ -128,7 +149,7 @@ fn project_range(
     ))
 }
 
-fn byte_position(text: &str, offset: u64) -> Position {
+pub(super) fn byte_position(text: &str, offset: u64) -> Position {
     let mut end = usize::try_from(offset)
         .unwrap_or(usize::MAX)
         .min(text.len());

@@ -9,7 +9,8 @@ in-memory buffers and returns owned diagnostics plus a `ffi::slang::Snapshot`;
 
 - `compile.rs`, `compile/`: admission, library mapping and configurations
   (`library_mapping.rs`, `library_configs.rs`), definition search
-  (`definition_search.rs`), edition checks (`editions.rs`), `` `line`` positions.
+  (`definition_search.rs`), edition checks (`editions.rs`), protected-source
+  rejection (`protected.rs`), `` `line`` positions.
   Each file's module docs state its rules.
 - `db.rs`, `db/`: validated arena, import, test builder, `SourceMap`.
 - `value.rs`, `elab.rs`: four-state values (`value.rs` docs give the planes) and

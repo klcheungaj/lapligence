@@ -69,6 +69,9 @@ invocation locations in configuration diagnostics.
   Compilation-unit lexical uses keep declaration-order violations, including
   macro expansions.
 - `edition_findings` records come only from a Verilog-2001 compile.
+- `protected_envelopes` are sorted by file and start; the count is bounded by
+  the lexical token limit, kinds and flags are closed sets, and `scope` is the
+  enclosing declaration's name range or none.
 - A `default disable iff` expression (`LLG_SLANG_EDGE_DEFAULT_DISABLE`) is owned
   by the first assertion statement that uses it. `restrict property` is kept as
   `ConcurrentAssertionKind::Restrict`, which the simulator does not verify.

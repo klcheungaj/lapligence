@@ -312,6 +312,7 @@ struct CaptureOutput {
   std::vector<LlgSlangSourceLibrary> source_libraries;
   std::vector<LlgSlangLineDirective> line_directives;
   std::vector<LlgSlangEditionFinding> edition_findings;
+  std::vector<LlgSlangProtectedEnvelope> protected_envelopes;
 };
 
 namespace {
@@ -7154,7 +7155,99 @@ public:
     visitDefault(syntax);
   }
 
+  // Protect pragma keywords (IEEE 1800-2009 34.5.1-34.5.4) that open and
+  // close envelopes. Matching the keyword spelling is how the frontend's own
+  // pragma handlers dispatch; one directive may carry several expressions.
+  void handle(const syntax::PragmaDirectiveSyntax& syntax) {
+    if (syntax.name.valueText() == "protect") {
+      for (const syntax::PragmaExpressionSyntax* argument : syntax.args) {
+        if (argument->kind != syntax::SyntaxKind::SimplePragmaExpression)
+          continue;
+        const std::string_view keyword =
+            argument->as<syntax::SimplePragmaExpressionSyntax>().value.valueText();
+        if (keyword == "begin_protected")
+          protectOpen(syntax, LLG_SLANG_PROTECT_DECRYPTION, 0);
+        else if (keyword == "end_protected")
+          protectClose(syntax, LLG_SLANG_PROTECT_DECRYPTION, 0);
+        else if (keyword == "begin")
+          protectOpen(syntax, LLG_SLANG_PROTECT_ENCRYPTION, 0);
+        else if (keyword == "end")
+          protectClose(syntax, LLG_SLANG_PROTECT_ENCRYPTION, 0);
+      }
+    }
+    visitDefault(syntax);
+  }
+
+  // Verilog-XL envelope directives (lexed with legacy protect enabled).
+  void handle(const syntax::SimpleDirectiveSyntax& syntax) {
+    switch (syntax.kind) {
+      case syntax::SyntaxKind::ProtectedDirective:
+        protectOpen(syntax, LLG_SLANG_PROTECT_DECRYPTION, LLG_SLANG_PROTECT_LEGACY);
+        break;
+      case syntax::SyntaxKind::EndProtectedDirective:
+        protectClose(syntax, LLG_SLANG_PROTECT_DECRYPTION, LLG_SLANG_PROTECT_LEGACY);
+        break;
+      case syntax::SyntaxKind::ProtectDirective:
+        protectOpen(syntax, LLG_SLANG_PROTECT_ENCRYPTION, LLG_SLANG_PROTECT_LEGACY);
+        break;
+      case syntax::SyntaxKind::EndProtectDirective:
+        protectClose(syntax, LLG_SLANG_PROTECT_ENCRYPTION, LLG_SLANG_PROTECT_LEGACY);
+        break;
+      default:
+        break;
+    }
+    visitDefault(syntax);
+  }
+
+  // Emits the envelopes still open at the end of the walk (no closing
+  // directive in their file) and orders all records by file and start. An
+  // include file parsed into several trees reports each envelope once.
+  void finishProtectedEnvelopes() {
+    for (auto& [file, open] : openEnvelopes) {
+      const uint64_t fileLen = capture.output.files[static_cast<size_t>(file)].byte_len;
+      for (const LlgSlangProtectedEnvelope& envelope : open) {
+        LlgSlangProtectedEnvelope record = envelope;
+        record.range.end = fileLen;
+        record.flags |= LLG_SLANG_PROTECT_UNTERMINATED;
+        pushProtectedEnvelope(record);
+      }
+    }
+    openEnvelopes.clear();
+    auto& envelopes = capture.output.protected_envelopes;
+    std::sort(envelopes.begin(), envelopes.end(), [](const auto& left, const auto& right) {
+      return std::tie(left.range.file_id, left.range.start, left.range.end) <
+             std::tie(right.range.file_id, right.range.start, right.range.end);
+    });
+    envelopes.erase(std::unique(envelopes.begin(), envelopes.end(),
+                                [](const auto& left, const auto& right) {
+                                  return left.range.file_id == right.range.file_id &&
+                                         left.range.start == right.range.start;
+                                }),
+                    envelopes.end());
+  }
+
+  // Declarations that can hold protected text (IEEE 1800-2009 34.3: an
+  // envelope may replace any part of the source). Their names identify the
+  // enclosing definition of an envelope.
+  void handle(const syntax::ModuleDeclarationSyntax& syntax) {
+    designScopes.push_back({syntax.getFirstToken().location(), syntax.header->name});
+    visitDefault(syntax);
+    designScopes.pop_back();
+    // The frontend fabricates a missing end keyword at the end of the file;
+    // protected text directly after the declaration holds it.
+    if (syntax.endmodule.isMissing() && !missingEndScope)
+      missingEndScope = syntax.header->name;
+  }
+
   void visitToken(parsing::Token token) {
+    if (directiveDepth == 0) {
+      // Trivia before a declaration's first token lies outside it.
+      size_t depth = designScopes.size();
+      if (depth != 0 && token.location() == designScopes.back().first)
+        depth--;
+      triviaScope = depth != 0 ? std::optional(designScopes[depth - 1].second)
+                               : std::nullopt;
+    }
     for (const parsing::Trivia& trivia : token.trivia()) {
       for (parsing::Token skipped : trivia.getSkippedTokens())
         addToken(skipped, LLG_SLANG_LEXICAL_SKIPPED);
@@ -7165,6 +7258,9 @@ public:
         directiveDepth--;
       }
     }
+    if (directiveDepth == 0 && !token.isMissing() &&
+        token.kind != parsing::TokenKind::EndOfFile)
+      missingEndScope.reset();
     addToken(token, 0);
   }
 
@@ -7556,6 +7652,45 @@ private:
     }
   }
 
+  void protectOpen(const syntax::SyntaxNode& directive, uint32_t kind, uint32_t flags) {
+    const LlgSlangSourceRange range = capture.span(directive.sourceRange());
+    if (range.file_id == LLG_SLANG_INVALID_ID)
+      return;
+    LlgSlangSourceRange scope{LLG_SLANG_INVALID_ID, 0, 0};
+    if (triviaScope)
+      scope = capture.span(triviaScope->range());
+    else if (missingEndScope)
+      scope = capture.span(missingEndScope->range());
+    // The end of one syntax tree is followed by the next tree's tokens; a
+    // declaration only owns envelopes of its own file.
+    if (scope.file_id != range.file_id)
+      scope = {LLG_SLANG_INVALID_ID, 0, 0};
+    openEnvelopes[range.file_id].push_back({range, scope, kind, flags});
+  }
+
+  // Closes the innermost open envelope of the same kind and form in the
+  // directive's file; an unmatched closing directive (which the frontend
+  // reports) closes nothing.
+  void protectClose(const syntax::SyntaxNode& directive, uint32_t kind, uint32_t flags) {
+    const LlgSlangSourceRange range = capture.span(directive.sourceRange());
+    if (range.file_id == LLG_SLANG_INVALID_ID)
+      return;
+    auto found = openEnvelopes.find(range.file_id);
+    if (found == openEnvelopes.end() || found->second.empty())
+      return;
+    LlgSlangProtectedEnvelope envelope = found->second.back();
+    if (envelope.kind != kind || envelope.flags != flags)
+      return;
+    found->second.pop_back();
+    envelope.range.end = std::max(envelope.range.start, range.end);
+    pushProtectedEnvelope(envelope);
+  }
+
+  void pushProtectedEnvelope(const LlgSlangProtectedEnvelope& envelope) {
+    chargeRecord(capture.output, sizeof(LlgSlangProtectedEnvelope));
+    capture.output.protected_envelopes.push_back(envelope);
+  }
+
   void lineDirective(SourceLocation location) {
     const SourceLocation physical = capture.physicalLocation(location);
     if (!physical.valid())
@@ -7584,6 +7719,16 @@ private:
 
   Capture& capture;
   std::unordered_set<const syntax::SyntaxNode*> directives;
+  // Open protected envelopes per file, innermost last.
+  std::map<uint64_t, std::vector<LlgSlangProtectedEnvelope>> openEnvelopes;
+  // Enclosing module/interface/program/package declarations: first token and
+  // declared name, innermost last.
+  std::vector<std::pair<SourceLocation, parsing::Token>> designScopes;
+  // The declaration enclosing the trivia of the token being visited.
+  std::optional<parsing::Token> triviaScope;
+  // The innermost declaration whose end keyword is missing, until the next
+  // real token.
+  std::optional<parsing::Token> missingEndScope;
   uint32_t directiveDepth = 0;
   uint32_t skippedDepth = 0;
   // Nesting depth inside the written actual arguments of a macro usage.
@@ -9023,6 +9168,11 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     preprocessorOptions.keywordMapping.emplace_back(path, edition.keywordVersion);
   parsing::LexerOptions lexerOptions;
   lexerOptions.languageVersion = edition.languageVersion;
+  // Verilog-XL `protected/`endprotected envelopes are lexed (the encoded text
+  // is skipped like a pragma protect data block) instead of being reported as
+  // unknown directives; `protect/`endprotect become ignored directives.
+  // Protected envelopes are reported through the capture.
+  lexerOptions.enableLegacyProtect = true;
   parsing::ParserOptions parserOptions;
   parserOptions.languageVersion = edition.languageVersion;
   Bag parseOptions;
@@ -9269,6 +9419,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
   for (const auto& tree : compilation.getSyntaxTrees())
     tree->root().visit(lexicalCapture);
   lexicalCapture.bindSemanticTokens();
+  lexicalCapture.finishProtectedEnvelopes();
   if (edition.snapshotFlag == LLG_SLANG_SNAPSHOT_EDITION_VERILOG_2001) {
     Verilog2001SyntaxProfile profile(capture);
     for (const auto& tree : compilation.getSyntaxTrees())
@@ -9299,7 +9450,8 @@ bool sinkComplete(const LlgSlangSink& sink) {
          sink.parameters && sink.instances && sink.semantic_edges &&
          sink.semantic_nodes && sink.udp_rows && sink.udp_tables &&
          sink.lexical_tokens && sink.source_libraries &&
-         sink.line_directives && sink.edition_findings && sink.end;
+         sink.line_directives && sink.edition_findings &&
+         sink.protected_envelopes && sink.end;
 }
 
 void checkSink(uint32_t status) {
@@ -9342,6 +9494,7 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
       output.source_libraries.size(),
       output.line_directives.size(),
       output.edition_findings.size(),
+      output.protected_envelopes.size(),
   };
   checkSink(sink.begin(sink.context, &header));
   streamTable(sink, sink.files, output.files);
@@ -9366,6 +9519,7 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
   streamTable(sink, sink.source_libraries, output.source_libraries);
   streamTable(sink, sink.line_directives, output.line_directives);
   streamTable(sink, sink.edition_findings, output.edition_findings);
+  streamTable(sink, sink.protected_envelopes, output.protected_envelopes);
   checkSink(sink.end(sink.context));
 }
 
@@ -9546,6 +9700,11 @@ void metadataImpl(const LlgSlangMetadataRequest& request,
     preprocessorOptions.keywordMapping.emplace_back(path, edition.keywordVersion);
   parsing::LexerOptions lexerOptions;
   lexerOptions.languageVersion = edition.languageVersion;
+  // Verilog-XL `protected/`endprotected envelopes are lexed (the encoded text
+  // is skipped like a pragma protect data block) instead of being reported as
+  // unknown directives; `protect/`endprotect become ignored directives.
+  // The metadata parse lexes exactly as the compile does.
+  lexerOptions.enableLegacyProtect = true;
   parsing::ParserOptions parserOptions;
   parserOptions.languageVersion = edition.languageVersion;
   Bag parseOptions;

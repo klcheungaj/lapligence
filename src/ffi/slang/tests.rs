@@ -24,6 +24,7 @@ struct Tables {
     source_libraries: Vec<RawSourceLibrary>,
     line_directives: Vec<RawLineDirective>,
     edition_findings: Vec<RawEditionFinding>,
+    protected_envelopes: Vec<RawProtectedEnvelope>,
 }
 
 impl Tables {
@@ -49,6 +50,7 @@ impl Tables {
             source_library_count: self.source_libraries.len() as u64,
             line_directive_count: self.line_directives.len() as u64,
             edition_finding_count: self.edition_findings.len() as u64,
+            protected_envelope_count: self.protected_envelopes.len() as u64,
         }
     }
 }
@@ -103,7 +105,8 @@ fn drive(sink: &RawSink, header: &RawStreamHeader, tables: &Tables, batch: usize
         lexical_tokens: lexical_tokens,
         source_libraries: source_libraries,
         line_directives: line_directives,
-        edition_findings: edition_findings
+        edition_findings: edition_findings,
+        protected_envelopes: protected_envelopes
     );
     // SAFETY: `context` is the sink's builder.
     unsafe { (sink.end)(context) }
@@ -1091,6 +1094,109 @@ fn edition_finding_records_are_bounded_and_keep_capture_order() {
         (vec![record(0, 4, 21, b"cast")], "outside its file"),
         (vec![record(INVALID_ID, 0, 0, b"cast")], "no source range"),
         (vec![record(0, 1, 2, b"")], "empty label"),
+    ] {
+        let error = invalid_native_message(stream(&tables(records)));
+        assert!(error.contains(message), "{error}");
+    }
+}
+
+#[test]
+fn protected_envelope_records_decode_kinds_flags_and_order() {
+    let name = b"a.sv";
+    let files = vec![RawFile {
+        id: 0,
+        name: RawString {
+            data: name.as_ptr(),
+            len: name.len() as u64,
+        },
+        byte_len: 40,
+    }];
+    let tables = |protected_envelopes: Vec<RawProtectedEnvelope>| Tables {
+        files: files.clone(),
+        protected_envelopes,
+        ..Tables::default()
+    };
+    let no_scope = RawRange {
+        file_id: INVALID_ID,
+        start: 0,
+        end: 0,
+    };
+    let record = |file_id, start, end, kind, flags| RawProtectedEnvelope {
+        range: RawRange {
+            file_id,
+            start,
+            end,
+        },
+        scope: no_scope,
+        kind,
+        flags,
+    };
+    let mut scoped = record(0, 2, 10, 1, 0);
+    scoped.scope = RawRange {
+        file_id: 0,
+        start: 0,
+        end: 1,
+    };
+    let decoded = stream(&tables(vec![scoped, record(0, 12, 40, 2, 3)]))
+        .expect("valid records")
+        .protected_envelopes;
+    assert_eq!(
+        decoded,
+        vec![
+            ProtectedEnvelope {
+                range: SourceRange {
+                    file_id: 0,
+                    start: 2,
+                    end: 10
+                },
+                scope: Some(SourceRange {
+                    file_id: 0,
+                    start: 0,
+                    end: 1
+                }),
+                kind: ProtectedEnvelopeKind::Decryption,
+                legacy: false,
+                unterminated: false,
+            },
+            ProtectedEnvelope {
+                range: SourceRange {
+                    file_id: 0,
+                    start: 12,
+                    end: 40
+                },
+                scope: None,
+                kind: ProtectedEnvelopeKind::Encryption,
+                legacy: true,
+                unterminated: true,
+            },
+        ]
+    );
+    for (records, message) in [
+        (vec![record(1, 0, 1, 1, 0)], "unknown file"),
+        (vec![record(0, 4, 41, 1, 0)], "outside its file"),
+        (vec![record(INVALID_ID, 0, 0, 1, 0)], "no source range"),
+        (vec![record(0, 1, 2, 0, 0)], "unknown kind"),
+        (vec![record(0, 1, 2, 3, 0)], "unknown kind"),
+        (vec![record(0, 1, 2, 1, 4)], "unknown flags"),
+        (
+            vec![RawProtectedEnvelope {
+                scope: RawRange {
+                    file_id: 0,
+                    start: 3,
+                    end: 41,
+                },
+                ..record(0, 1, 2, 1, 0)
+            }],
+            "outside its file",
+        ),
+        (
+            vec![record(0, 5, 9, 1, 0), record(0, 5, 9, 1, 0)],
+            "not sorted",
+        ),
+        (
+            vec![record(0, 6, 9, 1, 0), record(0, 1, 3, 1, 0)],
+            "not sorted",
+        ),
     ] {
         let error = invalid_native_message(stream(&tables(records)));
         assert!(error.contains(message), "{error}");
