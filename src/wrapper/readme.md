@@ -24,6 +24,12 @@ a BODY edge to their inline constraints. `dist` expressions keep their items and
 `:=`/`:/` weights as ordered roles; foreach constraints name their loop variables.
 Loop-generate entries retain their parent array's external name and their
 elaborated source index for owned hierarchical paths.
+Protected envelopes (`pragma protect begin_protected`/`begin`, and the
+Verilog-XL `` `protected``/`` `protect`` directives, lexed with Slang's legacy
+protect option) are captured from the directive trivia as one record per
+opening directive, with the enclosing module/interface/program/package name;
+Slang itself skips the encoded blocks and cannot decrypt
+([consumers](../../docs/config.md#lsp-protected-source)).
 
 Native source access is cache-only. Ordered library include prefixes attach to
 their named `SourceLibrary` and cannot authorize a native filesystem read.

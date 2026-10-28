@@ -11,6 +11,7 @@ Analysis and request projections: `features.rs` and `features/`. Components:
 - `source_graph.rs`, `fallback.rs`: source-level graph and syntax-error extraction.
 - `symbol_index.rs`, `requests.rs`: indexes and pure projections.
 - `package_context.rs`: package-declaring units an isolated token parse adds.
+- `protected.rs`: protected envelopes as black boxes (diagnostic dispositions).
 - `tests.rs`, `tests/`: helpers and domain regressions.
 
 ## Rules

@@ -519,6 +519,23 @@ instance-specific parameter values, widths, and elaborated hierarchy are not
 available in that snapshot. A previous full snapshot remains preferred after
 a failing edit. Simulator compilation retains its independent capture limits.
 
+## LSP protected source
+
+`llg_ls` indexes files with protected (encrypted) envelopes (IEEE 1800-2009
+clause 34, and the Verilog-XL `` `protected`` form) without decrypting them;
+the protected text is a black box. Each decryption envelope gets one hint
+(`llg.protected-envelope`) at its opening directive instead of the frontend's
+"cannot be decrypted" warnings, and the encoded blocks carry no semantic
+tokens. A definition whose plaintext header (name, parameters, ports) precedes
+the envelope stays a normal symbol for hover, navigation, symbols and port
+checks; unused/undriven findings inside it are not reported. Errors that only
+the hidden text can explain become hints: the missing end keyword of a
+declaration that the envelope finishes, a hierarchical name that continues
+into an instance of a protected definition, and, when an envelope lies
+outside every declaration, an unknown module it may define. Other errors are
+unchanged. `llg` rejects protected source
+([feature status](sim_features.md#11-compiler-directives-affecting-simulation)).
+
 ## LSP diagnostic logging
 
 Language-server logging uses stderr or `LLG_LOG_FILE`; stdout is reserved

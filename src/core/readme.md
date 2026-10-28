@@ -14,7 +14,10 @@ retain native pointers nor reopen source paths.
 | `lint/` | Shared rules over the owned DB/design model. |
 
 Library-map selection, source-preserving native map configuration parsing and strict
-edition checks are shared by execution and navigation. See the
+edition checks are shared by execution and navigation. `compile_checked` rejects
+every protected (encrypted) envelope with one unsupported-by-design error
+(`compile/protected.rs`); unchecked compiles keep the envelopes for the language
+server's black-box handling. See the
 [database](db/readme.md), [linter](lint/readme.md) and
 [source map](../../docs/source_layout.md).
 

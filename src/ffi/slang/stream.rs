@@ -81,9 +81,10 @@ pub(super) enum Table {
     SourceLibraries,
     LineDirectives,
     EditionFindings,
+    ProtectedEnvelopes,
 }
 
-const TABLE_COUNT: usize = Table::EditionFindings as usize + 1;
+const TABLE_COUNT: usize = Table::ProtectedEnvelopes as usize + 1;
 const TABLES: [Table; TABLE_COUNT] = [
     Table::Files,
     Table::RelatedDiagnostics,
@@ -103,6 +104,7 @@ const TABLES: [Table; TABLE_COUNT] = [
     Table::SourceLibraries,
     Table::LineDirectives,
     Table::EditionFindings,
+    Table::ProtectedEnvelopes,
 ];
 
 impl Table {
@@ -126,6 +128,7 @@ impl Table {
             Self::SourceLibraries => "source library records",
             Self::LineDirectives => "line directive records",
             Self::EditionFindings => "edition finding records",
+            Self::ProtectedEnvelopes => "protected envelope records",
         }
     }
 
@@ -149,6 +152,7 @@ impl Table {
             Self::SourceLibraries => std::mem::size_of::<RawSourceLibrary>(),
             Self::LineDirectives => std::mem::size_of::<RawLineDirective>(),
             Self::EditionFindings => std::mem::size_of::<RawEditionFinding>(),
+            Self::ProtectedEnvelopes => std::mem::size_of::<RawProtectedEnvelope>(),
         }
     }
 }
@@ -209,6 +213,7 @@ pub(super) struct StreamBuilder {
     source_libraries: Vec<SourceLibraryBinding>,
     line_directives: Vec<LineDirective>,
     edition_findings: Vec<EditionFinding>,
+    protected_envelopes: Vec<ProtectedEnvelope>,
 }
 
 impl StreamBuilder {
@@ -252,6 +257,7 @@ impl StreamBuilder {
             source_libraries: Vec::new(),
             line_directives: Vec::new(),
             edition_findings: Vec::new(),
+            protected_envelopes: Vec::new(),
         }
     }
 
@@ -291,6 +297,7 @@ impl StreamBuilder {
             source_libraries: self.source_libraries,
             line_directives: self.line_directives,
             edition_findings: self.edition_findings,
+            protected_envelopes: self.protected_envelopes,
         };
         Ok((snapshot, self.profile))
     }
@@ -333,6 +340,7 @@ impl StreamBuilder {
             raw.source_library_count,
             raw.line_directive_count,
             raw.edition_finding_count,
+            raw.protected_envelope_count,
         ];
         let header = Header {
             flags: raw.flags,
@@ -426,6 +434,12 @@ impl StreamBuilder {
             MAX_EDITION_FINDINGS,
             "edition finding records",
         )?;
+        // Every envelope opens with a directive whose tokens are captured.
+        enforce_count(
+            header.count(Table::ProtectedEnvelopes),
+            limits.max_lexical_tokens,
+            "protected envelope records",
+        )?;
         let mut output_bytes = 0_u64;
         for table in TABLES {
             let bytes = header
@@ -471,6 +485,8 @@ impl StreamBuilder {
             .reserve_exact(capacity(Table::LineDirectives));
         self.edition_findings
             .reserve_exact(capacity(Table::EditionFindings));
+        self.protected_envelopes
+            .reserve_exact(capacity(Table::ProtectedEnvelopes));
         self.header = Some(header);
         // Native capture is complete once the header arrives; the stream
         // phase covers delivery and decoding.
@@ -839,6 +855,19 @@ impl StreamBuilder {
         }
         Ok(())
     }
+
+    pub(super) fn protected_envelopes(
+        &mut self,
+        raw: &[RawProtectedEnvelope],
+    ) -> Result<(), SlangError> {
+        self.enter(Table::ProtectedEnvelopes, raw.len())?;
+        for item in raw {
+            let envelope =
+                decode_protected_envelope(item, &self.files, self.protected_envelopes.last())?;
+            self.protected_envelopes.push(envelope);
+        }
+        Ok(())
+    }
 }
 
 /// Run one receiver for a sink callback, recording its first error.
@@ -955,6 +984,7 @@ batch_receivers! {
     sink_source_libraries: RawSourceLibrary => SourceLibraries, source_libraries;
     sink_line_directives: RawLineDirective => LineDirectives, line_directives;
     sink_edition_findings: RawEditionFinding => EditionFindings, edition_findings;
+    sink_protected_envelopes: RawProtectedEnvelope => ProtectedEnvelopes, protected_envelopes;
 }
 
 /// The callback table whose context is `builder`. The returned value borrows
@@ -982,6 +1012,7 @@ pub(super) fn sink_for(builder: &mut StreamBuilder) -> RawSink {
         source_libraries: sink_source_libraries,
         line_directives: sink_line_directives,
         edition_findings: sink_edition_findings,
+        protected_envelopes: sink_protected_envelopes,
         end: sink_end,
     }
 }

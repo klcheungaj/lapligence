@@ -9,6 +9,7 @@ supplement elaborated data for precise navigation and highlighting.
 | `analysis.rs` | Blocking analysis assembly. |
 | `source_graph.rs` | Owned source-level module graph. |
 | `fallback.rs` | Syntax-error feature extraction. |
+| `protected.rs` | Protected envelopes as black boxes: hints instead of errors the hidden text explains ([behavior](../../../../docs/config.md#lsp-protected-source)). |
 | `symbol_index.rs`, `requests.rs` | Declaration/reference indexes and pure projections. |
 | `tests.rs`, `tests/` | Shared helpers and domain regressions. |
 

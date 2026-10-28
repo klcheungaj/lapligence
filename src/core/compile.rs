@@ -12,15 +12,21 @@ use std::path::{Path, PathBuf};
 
 pub use crate::ffi::slang::{
     CompilationUnitMode, DelaySelection, Diagnostic as SlangDiagnostic, DiagnosticProvider,
-    DiagnosticSeverity, DiagnosticSubsystem, LanguageEdition, Snapshot, Source, SourceRange,
+    DiagnosticSeverity, DiagnosticSubsystem, LanguageEdition, ProtectedEnvelope,
+    ProtectedEnvelopeKind, Snapshot, Source, SourceRange,
 };
 mod definition_search;
 mod editions;
 mod library_configs;
 mod library_mapping;
 mod positions;
+mod protected;
 use editions::edition_diagnostics;
 use library_mapping::{library_match_pattern, LibraryMapBuffers, LibrarySpecificity};
+pub use protected::{
+    envelope_directive, is_protected_envelope_warning, protected_source_diagnostics,
+    PROTECTED_ENVELOPE_WARNING, PROTECTED_SOURCE_FAMILY,
+};
 
 /// A source buffer owned by a compile request.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -520,6 +526,36 @@ impl CompileOut {
     pub fn ok(&self) -> bool {
         !self.snapshot.has_errors() && !self.owned_errors
     }
+
+    /// Keep or rewrite each projected frontend diagnostic. `decide` receives
+    /// the index of the frontend diagnostic in `snapshot.diagnostics`, the
+    /// frontend record and its projection, which it may edit; returning
+    /// `false` removes the projection. Owned (edition) diagnostics are kept.
+    pub fn retain_frontend_diagnostics(
+        &mut self,
+        decide: impl FnMut(usize, &SlangDiagnostic, &mut Diag) -> bool,
+    ) {
+        retain_frontend_diagnostics(&self.snapshot, &mut self.diagnostics, decide);
+    }
+}
+
+/// [`CompileOut::retain_frontend_diagnostics`] over a compile projection,
+/// whose leading entries are the non-ignored frontend diagnostics in order
+/// ([`project_diagnostics`]).
+fn retain_frontend_diagnostics(
+    snapshot: &Snapshot,
+    diagnostics: &mut Vec<Diag>,
+    mut decide: impl FnMut(usize, &SlangDiagnostic, &mut Diag) -> bool,
+) {
+    let mut frontend = snapshot
+        .diagnostics
+        .iter()
+        .enumerate()
+        .filter(|(_, diagnostic)| diagnostic.severity != DiagnosticSeverity::Ignored);
+    diagnostics.retain_mut(|projected| match frontend.next() {
+        Some((index, diagnostic)) => decide(index, diagnostic, projected),
+        None => true,
+    });
 }
 
 #[derive(Debug)]
@@ -4521,7 +4557,15 @@ pub fn compile_sources_checked(
     checked(compile_sources(sources, opts).map_err(CompileError::Startup)?)
 }
 
+/// Accept a compile for elaboration or simulation. Frontend errors and every
+/// protected envelope (which this flow cannot compile; see
+/// [`protected_source_diagnostics`]) reject it.
 fn checked(out: CompileOut) -> Result<CompileOut, CompileError> {
+    if !out.snapshot.protected_envelopes.is_empty() {
+        return Err(CompileError::FrontendDiagnostics(
+            protected::reject_protected_source(&out.snapshot, out.diagnostics),
+        ));
+    }
     if out.ok() {
         Ok(out)
     } else {
