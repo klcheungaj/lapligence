@@ -152,6 +152,136 @@ llg_frame_t* llg_proc_frame(llg_proc_t* self) {
     return self ? self->frame : NULL;
 }
 
+// ── Delayed Active-region calls ──────────────────────────────────────────────
+//
+// A carrier is an unregistered process record (registry_slot -1, no handle,
+// no program, no RNG stream) whose root frame holds the call. It is linked
+// into g.delayed_calls from scheduling until its callback starts, the only
+// window in which llg_cancel_delayed_call or cleanup discard it. Once
+// started it completes like any top-level process and proc_retire_completed
+// retires it, so the run loop has no carrier-specific branch.
+
+typedef struct {
+    llg_co_frame_t co;
+    uint64_t ticks;
+    llg_region_callback_fn callback;
+    void* data;
+    llg_proc_t* prev; // g.delayed_calls links while pending
+    llg_proc_t* next;
+    int pending;
+} llg_delayed_call_frame_t;
+LLG_CO_ROOT_FRAME_OK(llg_delayed_call_frame_t);
+
+static llg_co_status_t delayed_call_body(llg_co_frame_t* co, llg_co_chain_t* ch);
+static const llg_co_desc_t delayed_call_desc = {
+    delayed_call_body, "delayed call", sizeof(llg_delayed_call_frame_t), NULL, 0, 0};
+
+static llg_delayed_call_frame_t* delayed_call_frame(llg_proc_t* carrier) {
+    return (llg_delayed_call_frame_t*)LLG_CO_ROOT(&carrier->chain);
+}
+
+static int proc_is_delayed_call(const llg_proc_t* proc) {
+    return proc->chain.root == &delayed_call_desc;
+}
+
+static void delayed_call_unlink(llg_proc_t* carrier) {
+    llg_delayed_call_frame_t* F = delayed_call_frame(carrier);
+    if (!F->pending) return;
+    F->pending = 0;
+    if (F->prev) delayed_call_frame(F->prev)->next = F->next;
+    else g.delayed_calls = F->next;
+    if (F->next) delayed_call_frame(F->next)->prev = F->prev;
+    F->prev = F->next = NULL;
+}
+
+static llg_co_status_t delayed_call_body(llg_co_frame_t* co, llg_co_chain_t* ch) {
+    llg_delayed_call_frame_t* F = (llg_delayed_call_frame_t*)co;
+    LLG_CO_DISPATCH_BEGIN(co)
+    LLG_CO_RESUME_CASE(1)
+    LLG_CO_DISPATCH_END(co)
+    if (F->ticks != 0) {
+        LLG_CO_AWAIT(co, ch, 1, llg_arm_time(LLG_CO_OWNER(ch, llg_proc_t), F->ticks));
+    }
+    // Started: from here on the call can no longer be cancelled.
+    delayed_call_unlink(LLG_CO_OWNER(ch, llg_proc_t));
+    F->callback(F->data);
+    return LLG_CO_DONE;
+}
+
+int llg_schedule_delayed_call(const char* name, llg_region_callback_fn callback,
+                              void* data, uint64_t ticks,
+                              llg_delayed_call_id_t* id) {
+    if (!callback || g.config_error || ticks > UINT64_MAX - g.now) return 0;
+    if (!region_can_mutate("delayed call scheduling")) return 0;
+    llg_proc_t* p = (llg_proc_t*)llg_checked_calloc(
+        1, sizeof(*p) + sizeof(llg_delayed_call_frame_t), "delayed call carrier");
+#ifdef LLG_CO_DEBUG
+    memset(LLG_CO_ROOT(&p->chain), LLG_CO_POISON_BYTE, sizeof(llg_delayed_call_frame_t));
+#endif
+    p->name = name;
+    llg_co_start(&p->chain, &delayed_call_desc, p);
+    llg_delayed_call_frame_t* F = delayed_call_frame(p);
+    F->ticks = ticks;
+    F->callback = callback;
+    F->data = data;
+    F->prev = NULL;
+    F->next = g.delayed_calls;
+    F->pending = 1;
+    if (g.delayed_calls) delayed_call_frame(g.delayed_calls)->prev = p;
+    g.delayed_calls = p;
+    p->registry_slot = -1;
+    p->status = LLG_PROCESS_RUNNING;
+    p->budget_time = g.now;
+    p->region = LLG_REGION_ACTIVE;
+    if (ticks == 0) {
+        // A zero-delay call is an Active event of the current slot, after
+        // the work already queued there.
+        enqueue_region(p, LLG_REGION_ACTIVE);
+    } else {
+        // Run the first turn now, whatever the caller (a process turn, a
+        // region callback or startup before llg_rt_run): it arms `#ticks`,
+        // so the timer enters the timed queue in issue order.
+        llg_proc_t* caller = g.current;
+        g.current = p;
+        llg_co_status_t status = llg_co_run(&p->chain);
+        g.current = caller;
+        if (status != LLG_CO_PENDING)
+            llg_rt_co_bad_state(LLG_CO_ROOT(&p->chain), "delayed call did not suspend");
+    }
+    if (id) {
+        id->generation = llg_event_generation;
+        id->carrier = p;
+    }
+    return 1;
+}
+
+// Unlink a carrier that has not started from its timer or region queue and
+// free it. It is never the current process.
+static void delayed_call_discard(llg_proc_t* carrier) {
+    delayed_call_unlink(carrier);
+    llg_wait_t* w = &carrier->wait;
+    if (w->kind != W_NONE) {
+        remove_waiters_entry(w);
+        remove_timed_entry(w);
+        wait_payload_release(w);
+        g.wait_count--;
+    }
+    if (carrier->queued) remove_region_entry(carrier);
+    free_proc_record(carrier);
+}
+
+int llg_cancel_delayed_call(llg_delayed_call_id_t id) {
+    if (id.generation != llg_event_generation || !id.carrier ||
+        !delayed_call_frame(id.carrier)->pending)
+        return 0;
+    delayed_call_discard(id.carrier);
+    return 1;
+}
+
+static void free_delayed_calls(void) {
+    while (g.delayed_calls) delayed_call_discard(g.delayed_calls);
+}
+
 static void proc_complete(llg_proc_t* self) {
     if (!self || self->completed || self->killed) return;
     // Natural process termination is the other join_none eligibility

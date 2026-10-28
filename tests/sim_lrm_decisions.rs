@@ -1857,11 +1857,11 @@ fn s42_d4_sizetf_once() {
 }
 
 #[test]
-fn s42_d5_delayed_put_nba() {
+fn s42_d5_delayed_put_active() {
     run_vpi_decision(
-        "S42-D5_delayed_put_nba",
-        &["task $d5()"],
-        include_str!("fixtures/sim/lrm_decisions/S42-D5_delayed_put_nba.out"),
+        "S42-D5_delayed_put_active",
+        &["task $d5()", "task $d5_zero()"],
+        include_str!("fixtures/sim/lrm_decisions/S42-D5_delayed_put_active.out"),
     );
 }
 

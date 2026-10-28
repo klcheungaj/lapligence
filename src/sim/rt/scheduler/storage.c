@@ -631,6 +631,8 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
                                            sv4_t value);
 struct llg_concurrent_assertion;
 static void free_assertion_clock_events(struct llg_concurrent_assertion* assertion);
+static int proc_is_delayed_call(const llg_proc_t* proc);
+static void free_delayed_calls(void);
 static void wake_proc(llg_proc_t* p);
 static int wait_held_by_suspension(llg_wait_t* w);
 static void wake_assertion_waiter(uint64_t identity);
