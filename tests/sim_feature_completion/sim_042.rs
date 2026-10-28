@@ -87,6 +87,113 @@ fn values_cover_every_format_and_put_mode() {
     );
 }
 
+const PUT_REGION: &[&str] = &["--define-system-task", "task $put_region()"];
+const PUT_REGION_OUT: &str =
+    include_str!("../fixtures/sim/feature_completion/sim_042/put_region.out");
+
+/// S42-D5: delayed puts are Active-region events ordered with process
+/// wakeups; cancellation and event removal in each delay mode; a put still
+/// pending at `$finish` never applies.
+#[test]
+fn delayed_puts_are_active_events_in_scheduling_order() {
+    let directory = sim_harness::TempDir::new("sim042").expect("temporary directory");
+    let Some(library) = plugin(&directory, "put_region", &[]) else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "put_region",
+        PUT_REGION_OUT,
+        PUT_REGION,
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}
+
+/// A vpiStop from a Pre-Active `cbAfterDelay` callback at time 4, before
+/// that slot's Active events: the default policy resumes and every pending
+/// put still applies at its time.
+#[test]
+fn delayed_puts_survive_a_resumed_stop() {
+    let directory = sim_harness::TempDir::new("sim042-stop").expect("temporary directory");
+    let Some(library) = plugin(&directory, "put_region", &[]) else {
+        return;
+    };
+    let expected = PUT_REGION_OUT.replace("4 cp=1\n", "4 stop\n4 cp=1\n");
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "put_region",
+        PUT_REGION,
+        &[("LLG_VPI_PLUGIN", &library), ("SIM042_PUT_STOP", "1")],
+        &|label, output| {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{label}: {stderr}");
+            assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+            assert_eq!(
+                stderr.matches("$stop at time 4").count(),
+                1,
+                "{label}: {stderr}"
+            );
+        },
+    );
+}
+
+/// Under `--stop-policy exit` the stop suspends with puts pending; closing
+/// the model discards them (sanitizer lanes check their reclamation) and
+/// runs no final procedure.
+#[test]
+fn delayed_puts_pending_at_an_exit_policy_stop_are_discarded() {
+    let directory = sim_harness::TempDir::new("sim042-stop").expect("temporary directory");
+    let Some(library) = plugin(&directory, "put_region", &[]) else {
+        return;
+    };
+    let end = PUT_REGION_OUT.find("4 cp=1").expect("time 4 line");
+    let expected = format!("{}4 stop\n", &PUT_REGION_OUT[..end]);
+    let mut args = PUT_REGION.to_vec();
+    args.extend(["--stop-policy", "exit"]);
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "put_region",
+        &args,
+        &[("LLG_VPI_PLUGIN", &library), ("SIM042_PUT_STOP", "1")],
+        &|label, output| {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{label}: {stderr}");
+            assert_eq!(String::from_utf8_lossy(&output.stdout), expected, "{label}");
+            assert_eq!(
+                stderr.matches("$stop at time 4").count(),
+                1,
+                "{label}: {stderr}"
+            );
+        },
+    );
+}
+
+/// Pending delayed puts are future events: a run without `$finish` lasts
+/// until the last one applies, then runs its final procedure.
+#[test]
+fn pending_delayed_puts_keep_the_simulation_alive() {
+    let directory = sim_harness::TempDir::new("sim042").expect("temporary directory");
+    let Some(library) = plugin(&directory, "put_alive", &[]) else {
+        return;
+    };
+    sim_cli::run_case_checked_matrix_with_env(
+        SUITE,
+        "put_alive",
+        &["--define-system-task", "task $put_alive()"],
+        &[("LLG_VPI_PLUGIN", &library)],
+        &|label, output| {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(output.status.success(), "{label}: {stderr}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                include_str!("../fixtures/sim/feature_completion/sim_042/put_alive.out"),
+                "{label}"
+            );
+            assert!(stderr.contains("at time 7"), "{label}: {stderr}");
+        },
+    );
+}
+
 #[test]
 fn system_functions_follow_the_return_conventions() {
     let directory = sim_harness::TempDir::new("sim042").expect("temporary directory");
