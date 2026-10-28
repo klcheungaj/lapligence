@@ -21,6 +21,7 @@ METADATA = {
     'rt/llg_vpi.c': ('alias', 'args[i]', 'argument', 'call->args[i]', 'conn->ref', 'g_vpi.objects[row]',
                      'node', 'object', 'object->conns[i].ref', 'owner', 'part', 'port->target',
                      'ref', 'site->args[i]', 'target'),
+    'rt/llg_vpi_dynamic.c': ('shape',),
     'rt/llg_wave.c': ('g_wave.regs[alias]', 'g_wave.regs[i]', 'reg'),
     'rt/scheduler/activations.c': ('binding->descriptor',),
     'rt/scheduler/concurrent_assertions.c': ('local',),

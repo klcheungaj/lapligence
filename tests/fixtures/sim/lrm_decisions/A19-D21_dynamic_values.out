@@ -1,0 +1,16 @@
+tb.s vpiStringVar size=2
+tb.s string="AB"
+tb.s bin="0100000101000010"
+tb.s hex="4142"
+tb.s int=16706
+tb.e string=""
+tb.e hex="00"
+tb.e size=0
+put int level=3
+put string level=0 size=3
+tb.c vpiChandleVar
+tb.c int level=3
+tb.c hex level=3
+put chandle level=3
+watch string refused level=3
+s=xyz e= c=1

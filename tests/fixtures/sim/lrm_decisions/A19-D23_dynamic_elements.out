@@ -1,0 +1,10 @@
+hold da[1] aa[5] sa["k"]
+string key index=null level=3
+missing key=null level=3
+delayed put level=3
+watch array refused level=3
+watch element refused level=3
+check da[1]=21 aa[5]=50 sa[k]=v
+check da[1] level=3 aa[5] level=3 sa[k] level=3
+check da[1] level=3 aa[5]=55 sa[k]=w
+da.size=1 aa[5]=55

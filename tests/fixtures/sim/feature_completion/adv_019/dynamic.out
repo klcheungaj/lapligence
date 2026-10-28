@@ -1,0 +1,54 @@
+vpiStringVar s full=tb.s size=2 value=hi
+vpiChandleVar ch full=tb.ch value: level=3
+vpiClassVar p full=tb.p value: level=3 objid=1 declared=Packet
+  vpiClassObj id=1 created=LinkedPacket alloc=2 automatic=1
+    vpiIntVar id full: level=3 size=32 value=3
+    vpiStringVar name full: level=3 size=3 value=pkt
+    vpiRealVar weight full: level=3 value=1.5
+    vpiClassVar next full: level=3 value: level=3 objid=2 declared=Packet
+    vpiArrayVar data full: level=3 size=1 arraytype=4
+      vpiByteVar data[0] index=0 member=1 value=7
+    vpiReg tag full: level=3 size=8 value=90
+vpiClassVar none full=tb.none value: level=3 objid=0 declared=Packet obj=null
+vpiArrayVar ring full=tb.ring size=2 arraytype=4
+  vpiClassVar ring[0] index=0 member=1 objid=1 obj=set
+  vpiClassVar ring[1] index=1 member=1 objid=0 obj=null
+vpiArrayVar da full=tb.da size=3 arraytype=2
+  vpiIntVar da[0] index=0 member=1 value=0
+  vpiIntVar da[1] index=1 member=1 value=11
+  vpiIntVar da[2] index=2 member=1 value=0
+vpiArrayVar q full=tb.q size=2 arraytype=4
+  vpiByteVar q[0] index=0 member=1 value=1
+  vpiByteVar q[1] index=1 member=1 value=2
+vpiArrayVar aa full=tb.aa size=2 arraytype=3
+  vpiIntVar aa[-2] index=-2 member=1 value=9
+  vpiIntVar aa[5] index=5 member=1 value=7
+vpiArrayVar sa full=tb.sa size=1 arraytype=3
+  vpiStringVar sa["k"] index: level=3 member=1 value=v
+same object=1
+LinkedPacket vpiClassTypespec classtype=3 automatic=1 defn=vpiClassDefn LinkedPacket
+  vpiExtends base=Packet
+  declares vpiReg tag value: level=3
+Packet vpiClassTypespec classtype=3 automatic=1 defn=vpiClassDefn Packet
+  extends=null level=0
+  declares vpiIntVar id value: level=3
+  declares vpiStringVar name value: level=3
+  declares vpiRealVar weight value: level=3
+  declares vpiClassVar next value: level=3
+  declares vpiArrayVar data value: level=3
+  derived LinkedPacket
+tb.s hex=6869
+by name vpiIntVar id value=3
+missing tb.da[3]=null tb.aa[6]=null tb.p.nope=null
+put tb.p.id = 42 level=0
+put tb.q[0] = -5 level=0
+put tb.aa[5] = 70 level=0
+put tb.p.next.id = 44 level=0
+put tb.da[2] level=0
+put int to tb.s level=3
+put tb.s level=0
+put to class obj level=3
+s=world id=42 da[2]=33 q[0]=-5 aa[5]=70 sa[k]=v tag=5a next.id=44
+name=pkt weight=1.5 ch=1 none=1
+tb.q[1] after delete level=3
+tb.q[0]=2 size=1

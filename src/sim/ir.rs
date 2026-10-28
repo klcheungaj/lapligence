@@ -162,6 +162,10 @@ pub use vpi::{
     IrVpiConnRole, IrVpiConstant, IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiTiming,
     IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember, IrVpiVarKind,
 };
+mod vpi_dynamic;
+pub use vpi_dynamic::{
+    IrVpiArrayType, IrVpiClass, IrVpiDynamic, IrVpiField, IrVpiKey, IrVpiShape, IrVpiStorage,
+};
 
 /// Upper bound on one generated `llg_net_t`'s driver count. The runtime stores
 /// the count in a C `int`; this is a representation limit checked before
@@ -630,6 +634,9 @@ pub struct IrModel {
     pub(in crate::sim) vpi_objects: Vec<IrVpiObject>,
     /// Interned typespecs the catalog objects name (IEEE 1800-2009 37.23).
     pub(in crate::sim) vpi_typespecs: Vec<IrVpiTypespec>,
+    /// Value shapes and class layouts of the dynamic catalog objects
+    /// (strings, handles, containers, class objects; 37.17, 37.29).
+    pub(in crate::sim) vpi_dynamic: IrVpiDynamic,
     /// Expression and statement objects (IEEE 1800-2009 37.54-37.74),
     /// captured only for models generated for VPI applications
     /// (`CodegenOptions::vpi`); empty otherwise.
@@ -816,6 +823,7 @@ impl IrModel {
             final_spawns: parts.final_spawns,
             vpi_objects: Vec::new(),
             vpi_typespecs: Vec::new(),
+            vpi_dynamic: IrVpiDynamic::default(),
             vpi_code: Vec::new(),
             vpi_code_files: Vec::new(),
             vpi_compile_calls: Vec::new(),
@@ -957,6 +965,10 @@ impl IrModel {
 
     pub fn vpi_typespecs(&self) -> &[IrVpiTypespec] {
         &self.vpi_typespecs
+    }
+
+    pub fn vpi_dynamic(&self) -> &IrVpiDynamic {
+        &self.vpi_dynamic
     }
 
     pub fn vpi_code(&self) -> &[IrVpiCode] {

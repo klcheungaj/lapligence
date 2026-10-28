@@ -2192,10 +2192,28 @@ of a handle or value; `vpi_handle_by_name` of such an object returns NULL
 with no error status, as for a name that denotes nothing (S42-D11):
 
 - objects outside the generated catalog: sparse fixed arrays (stored in a keyed
-  container), dynamic arrays, queues, associative arrays, strings, class
-  objects and their properties, automatic variables, named event arrays,
-  tasks and functions of classes and packages, programs, and checker objects
-  (a checker instance is a module scope with its variables; VPI-C1);
+  container), automatic variables, frames (`vpiFrame`) and threads
+  (`vpiThread`), named event arrays, tasks and functions of classes and
+  packages, programs, and checker objects (a checker instance is a module
+  scope with its variables; VPI-C1);
+- dynamic objects (VPI-O4) other than instance-scope string, chandle and class
+  variables and dynamic, queue and associative arrays: those of packages,
+  blocks, tasks and functions, fixed-size arrays
+  of class handles, static class properties, events and virtual interfaces;
+  mailbox and semaphore objects (`vpiClassType`, `vpiMessages`,
+  `vpiWaitingProcesses`; their typespecs are NULL); a class object's
+  `vpiMethods`, `vpiParameter`, `vpiConstraint`, `vpiNamedEvent`,
+  `vpiInterfaceDecl` and `vpiInternalScope`, `vpiArgument` of `vpiExtends`,
+  `vpiVisibility`, `vpiRandType` and specialized parameterized class names;
+  elements of nested containers and of arrays of records or fixed arrays
+  (listed as `vpiUndefined` objects without a value), associative arrays
+  with a wildcard index or keys of more than 64 bits, and `vpiIndex` of a
+  string key (decision A19-D23); `vpiFullName` of a dynamic array element
+  inside a class object; `cbValueChange` on chandle variables, class
+  properties, strings and arrays (the last three excluded by 38.36.1) and
+  `cbSizeChange`; `vpi_put_value` with a
+  delay, force or release on a string, property or element (decisions
+  A19-D21, A19-D23);
 - structure relations that are not exposed (ADV-019 family 2):
   `vpiDelay`, `vpiStrength0/1` and cont assign
   bits; `vpiReturn` and `vpiIODecl` of tasks, functions and modports;
@@ -2215,8 +2233,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - typespec gaps: properties other than `vpiType`, `vpiName`, `vpiPacked`,
   `vpiTagged`, `vpiVector`, `vpiArrayType` and the unpacked-aggregate
   `vpiSize` (for example `vpiSigned` or `vpiSize` of a vector typespec), the
-  `vpiTypedef` iteration of a scope, `vpiIndexTypespec`, class, interface,
-  void and chandle typespecs, typespec member `vpiExpr` defaults, the name of
+  `vpiTypedef` iteration of a scope, `vpiIndexTypespec`, interface, void
+  and chandle typespecs (class typespecs are reached from class variables
+  and objects, VPI-O4), typespec member `vpiExpr` defaults, the name of
   a typedef used as an enum's base type (the base typespec is unnamed), and
   `vpiPacked` of a tagged union;
 - subarray handles: `vpi_handle_by_multi_index` with fewer indices than the
@@ -2245,9 +2264,10 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - callback reasons other than `cbValueChange`, the seven time reasons,
   `cbEndOfCompile`, `cbStartOfSimulation`, `cbEndOfSimulation`,
   `cbForce`/`cbRelease`, `cbAssign`/`cbDeassign` (accepted; they never run,
-  since procedural `assign`/`deassign` is rejected) and `cbDisable`:
+  since procedural `assign`/`deassign` is rejected), `cbDisable` and the
+  class object reasons `cbCreateObj`, `cbReclaimObj` and `cbEndOfObject`:
   `cbStmt` (a statement has no execution hook; adding one would cost every
-  model statement a check), the class, frame and thread reasons, `cbError`/`cbPLIError`/
+  model statement a check), `cbSizeChange`, the frame and thread reasons, `cbError`/`cbPLIError`/
   `cbSignal` and the save, restart, reset and interactive
   features;
 - the `vpiForce`/`vpiRelease` handle of a `cbForce`/`cbRelease` callback has

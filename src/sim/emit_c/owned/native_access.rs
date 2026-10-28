@@ -190,6 +190,11 @@ impl Frame<'_, '_> {
             self.statement(statement)?;
         }
         self.construction_stack.pop();
+        // cbCreateObj (IEEE 1800-2009 38.36.1): only models generated with
+        // the VPI class layouts report constructed objects.
+        if !self.ctx.model.vpi_dynamic().classes.is_empty() {
+            self.line(format!("llg_vpi_object_created({result});"));
+        }
         self.end_block();
         Ok(result)
     }

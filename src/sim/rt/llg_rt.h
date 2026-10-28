@@ -346,6 +346,13 @@ void llg_gc_trace_assoc_values(const void* payload, llg_gc_tracer_t* tracer);
 // returns 0 and changes nothing; an unbalanced unpin is fatal.
 int llg_gc_pin(void* handle);
 int llg_gc_unpin(void* handle);
+// Reclamation hook (VPI cbReclaimObj, IEEE 1800-2009 38.36.1): called once
+// per collection with every object found unreachable, before any of them is
+// finalized; `objects` is borrowed for the call. The hook must not allocate
+// collected objects. A collection that finds nothing unreachable does not
+// call it. NULL removes it.
+typedef void (*llg_gc_reclaim_fn)(void* const* objects, size_t count);
+void llg_gc_reclaim_hook(llg_gc_reclaim_fn hook);
 // Collect now. Only the scheduler's safe points and embeddings without a
 // running process may call it.
 void llg_gc_collect(void);

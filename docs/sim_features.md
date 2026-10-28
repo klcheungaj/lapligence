@@ -2611,6 +2611,22 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   task and system task calls, `disable`, `return`, `break`, `continue`,
   force and release, each with `vpiLineNo` and `vpiFile`. Built from
   compact static tables only for VPI models; decisions A19-D11..D13.
+  Dynamic objects (VPI-O4; 37.17, 37.27-37.29, 38.36.1): instance-scope
+  string, chandle and class variables and dynamic, queue and associative
+  arrays are catalog objects (`vpiStringVar`, `vpiChandleVar`,
+  `vpiClassVar`, `vpiArrayVar` with `vpiArrayType`); `vpiClassObj` reaches
+  the class object with `vpiObjId`, `vpiClassTypespec` (declared and created
+  class), `vpiAllocScheme` and its properties in `vpiVariables` (values,
+  writes, nested class handles and arrays), `vpi_handle_by_name` paths
+  (`tb.p.next.id`, `tb.q[0]`, `tb.aa[5]`); class typespecs and definitions
+  give `vpiClassDefn`, `vpiExtends`, `vpiDerivedClasses`, `vpiClassType`
+  and the declared properties; array elements iterate with names, values,
+  writes and `vpiIndex`, selected by index or key at each access.
+  `cbCreateObj`, `cbReclaimObj` and `cbEndOfObject` follow construction,
+  shallow copies and collection; handles track objects without pinning
+  them and are released when the collector reclaims the object;
+  `cbValueChange` watches class variables (decisions A19-D21..D23). Models
+  without a VPI catalog emit no tables and no creation calls.
   `vpi_get_value` serves every Table
   38-3 format with exact X/Z; `vpi_put_value` writes through the storage APIs
   with no delay, inertial, transport and pure-transport delays,

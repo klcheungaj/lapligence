@@ -1,4 +1,4 @@
-# ADV-019 fixtures: VPI typespecs, structure and union members, structure, expression and statement objects
+# ADV-019 fixtures: VPI typespecs, structure and union members, structure, expression, statement and dynamic objects
 
 Each `<name>.sv` has a C application `<name>.c` that registers the system task
 the design calls. `tests/sim_feature_completion/adv_019.rs` links it as a
@@ -407,3 +407,140 @@ check, `vpiModule` is the instance).
   `notifier` only for `$setup` (decision A19-D10).
 - Refusals. `vpi_iterate(vpiExpr)` on a path and `vpi_get(vpiTchkType)` on a
   path are `vpiError` (`level=3`).
+
+## dynamic (37.3.7, 37.17, 37.27-37.29)
+
+`dynamic.c` prints, for each module variable, `vpiType`, `vpiName`,
+`vpiFullName` (or the status level), and then by kind: for an array var
+`vpiSize`, `vpiArrayType` and every element of `vpi_iterate(vpiMemoryWord)`
+with its `vpiIndex`, `vpiArrayMember` and value (class var elements print
+`vpiObjId` and whether `vpiClassObj` is set); for a class var its value
+status, `vpiObjId`, the `vpiName` of its `vpiClassTypespec` and the class obj
+it refers to with every property of `vpi_iterate(vpiVariables)`; otherwise
+`vpiSize` where it is defined and the value (`vpiIntVal`, `vpiRealVal` or
+`vpiStringVal` by type). It then walks the class typespecs and definitions,
+reads by name, writes values that the design prints, deletes `q[0]` and reads
+the element handles it held.
+
+- Values. 37.17 detail 11 (L58766): "Variables of type vpiArrayVar or
+  vpiClassVar do not have a value property." Class vars and array vars
+  print `value: level=3`. A chandle var has no value format either
+  (`tb.ch`, decision A19-D21); a string var reads as `vpiStringVal` and,
+  in other formats, as its packed image (`tb.s hex=6869`, decision A19-D21).
+- Sizes. 37.17 detail 9 (L58760-L58762): "vpiSize for a variable array shall
+  return the number of variables in the array. ... For a string var, it shall
+  return the number of characters that the variable currently contains."
+  `tb.s` has 2 characters, `name` 3, `da` 3 elements, `q` 2, `aa` 2, `sa`
+  1; `vpiSize` of a real property is not defined and is not printed.
+- Array types. 37.17 detail 21 (L58819): "vpiArrayType can be one of
+  vpiStaticArray, vpiDynamicArray, vpiAssocArray, or vpiQueue." The
+  `sv_vpi_user.h` codes are `vpiDynamicArray` 2, `vpiAssocArray` 3 and
+  `vpiQueueArray` 4.
+- Elements. 37.17 detail 18 (L58780-L58781): "If a variable is an element of
+  an array (the vpiArrayMember property is TRUE), the vpiIndex iterator shall
+  return the indexing expressions that select that specific variable out of
+  the array." Elements are named `<array>[<index>]`; associative elements come
+  in key order (`aa[-2]` before `aa[5]`), and a string key prints quoted with
+  no index constant (`sa["k"]`, `index: level=3`, decision A19-D23).
+- Object identity. 37.29 detail 1 (L59610-L59612): "The property vpiObjId is
+  a class object's identifier. It is a property of a live object and
+  guaranteed to be unique with respect to all other dynamic objects that
+  support this property for as long as the object is alive." Detail 2
+  (L59613-L59614): "For a class var, its vpiObjId is the identifier of the
+  object it references or 0, indicating it is not referencing any object."
+  llg numbers objects from 1 in the order VPI first sees them (decision
+  A19-D22): `p` refers to object 1, `p.next` to 2, `none` and `ring[1]` are 0,
+  and `ring[0]` refers to object 1 (`same object=1`).
+- Declared and created class. 37.29 detail 5 (L59619-L59622): "For a class
+  var, vpiClassTypespec shall return the class typespec with which the class
+  var was declared in the SystemVerilog source text. If the class var has the
+  value of NULL, the vpiClassObj relationship applied to the class var shall
+  return a null handle. vpiClassTypespec when applied to a class obj handle
+  shall return the class typespec with which the class obj was created." `p`
+  is declared `Packet` and refers to a `LinkedPacket` (the clause's own
+  example); `none` prints `obj=null`.
+- Properties. 37.29 detail 6 (L59648-L59649): "From a class obj, the
+  iterations over vpiVariables ... shall return both static and automatic
+  properties". The object's properties come in declaration order, inherited
+  ones first (`id`, `name`, `weight`, `next`, `data`, then `tag`). 37.17
+  detail 25 (L58825): "A non-static data member of a class var does not have
+  a vpiFullName property." Every property prints `full: level=3`.
+- Lifetime. 37.3.7 (L57563-L57564): "vpiDynamicScheme indicates the object
+  was allocated in dynamic memory and may be a class object or part
+  thereof." The class obj prints `alloc=2` (`vpiDynamicScheme`) and
+  `automatic=1`; L57544-L57545: "vpiAutomatic is also a property of a class
+  defn or class typespec, indicating the default lifetime for variables of
+  any of its declared tasks/functions", which is automatic for class
+  methods.
+- Definitions. 37.28 detail 9 (L59561): "The vpiExtends relation shall return
+  the base class typespec, if any, from which a given class typespec is
+  derived." 37.27 detail 6 (L59478-L59479): "The relation from extends to class
+  typespec provides the base class." 37.27 detail 5 (L59477): "The
+  vpiDerivedClasses iterator shall return all the class defns derived from
+  the given class defn." `LinkedPacket` extends `Packet`; `Packet` has no
+  `vpiExtends` (NULL, no error) and derives `LinkedPacket`. `vpiClassType` is
+  `vpiUserDefinedClass` (3). A definition's `vpiVariables` are the properties
+  it declares itself (inherited ones are reached through `vpiExtends`), and
+  37.27 detail 2 (L59481-L59482): "vpi_get_value() and vpi_put_value() are not
+  allowed for variable and event handles obtained from class defn handles."
+  Each prints `value: level=3`.
+- Names. 37.29 detail 9 (L59657-L59658): "vpi_handle_by_name() shall accept a
+  full name to a non-static data member, even though it does not have a
+  vpiFullName property." `tb.p.id` finds the property; `tb.p.next.id`,
+  `tb.q[0]` and `tb.aa[5]` find a property and elements. A name past the
+  current size, a missing key or an unknown property is NULL.
+- Writes. Integral elements and properties take `vpiIntVal`; a string takes
+  only `vpiStringVal` (`put int to tb.s level=3`, decision A19-D21); a class
+  obj has no value (`level=3`). The design prints the written values. After
+  `q.delete(0)` the handle held for `tb.q[1]` reports `level=3` and the one
+  held for `tb.q[0]` reads the element now at index 0 (`2`): element handles
+  select by index or key at each access (decision A19-D23).
+
+## gc (37.3.7, 37.29, 38.36.1)
+
+`gc.c` registers `cbCreateObj` and `cbReclaimObj` on the `Node` and `Leaf`
+class typespecs, `cbValueChange` on `tb.tmp`, takes handles to the object
+`tb.tmp` refers to after `make(2)` (the object, `tb.tmp.v` and
+`tb.tmp.items[0]`) with `cbReclaimObj` and `cbEndOfObject` on that object,
+and prints at each `$check` the sorted values of the objects reclaimed since
+the last one. The test runs with `LLG_GC_STRESS=1 LLG_GC_VERIFY=1`: a
+collection runs at every safe point after an allocation, so an object is
+reclaimed in the time step it becomes unreachable, and an access to a
+reclaimed object would be a fatal error.
+
+- Registration. 38.36.1 (L64692-L64695): "For cbCreateObj, this field shall be
+  assigned a handle to a class typespec object. For a cbReclaimObj, this
+  field shall be assigned either a handle to a class typespec or a class obj.
+  With a class typespec, any class object of that type shall generate a
+  callback." `cbCreateObj` (700) on a class var is refused (`level=3`).
+- Creation. 38.36.1 (L64650-L64652): cbCreateObj runs "After the class
+  constructor call has completed and the internal state of a class object
+  has been initialized, or for shallow copy, after the copy operation has
+  completed." `keep` (v=1), `make(2)`, the shallow copy `new keep` (v=1),
+  `cycle()` (10, 11) and `leaf()` (20, a `Leaf`, reported only by the
+  `Leaf` callback: an object's type is the class it was created with,
+  decision A19-D22). Objects receive `vpiObjId` 1 to 6 in that order.
+- Reclamation. 38.36.1 (L64653-L64656): cbReclaimObj runs "Before the class
+  object has been reclaimed by the automatic memory management, when it has
+  been marked as no longer being used. When control is returned from this
+  callback, any handles to this class object, its properties or their
+  subelements, and any associated callbacks should be considered invalid."
+  L64775-L64778: "The time field of the s_cb_data structure will be NULL. ...
+  All VPI properties of the class obj are accessible. Using this handle as a
+  reference for purposes of navigation or registering callbacks is
+  undefined." In the held object's callback its properties read (`v=2`),
+  navigation through `link` and a write to `v` are refused (`level=3`,
+  decision A19-D22). The `cbEndOfObject` callback (L64672-L64676) runs for
+  the same object with a NULL time. Object 2 dies when `copy()` replaces
+  it (check 1), the cycle 10-11 when `cycle()` returns (check 2), the leaf
+  when `leaf()` returns (check 3) and the copy when `tmp` becomes null
+  (check 4); `keep` stays.
+- Stale handles. After check 1's collection the held object, property and
+  element handles report `level=3` and `vpiObjId` reads `vpiUndefined` (-1);
+  `tb.tmp.v` resolves again to the property of the object `tmp` now refers
+  to.
+- Class var changes. 38.36.1 (L64766-L64767): "The cbValueChange callback may
+  be placed on a class var and will be called when its value changes, which
+  indicates that it is referring to a new dynamic object (including a newly
+  constructed one) or no object." `tmp` changes in `make(2)`, `copy()` and
+  `tmp = null`: 2 changes at checks 1-3, 3 at check 4.

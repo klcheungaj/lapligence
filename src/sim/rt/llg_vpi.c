@@ -4,9 +4,10 @@
 // Handles are opaque encodings of (slot index, generation): the runtime never
 // dereferences an application-supplied handle, so a stale, released or
 // malformed handle is a checked vpi_chk_error() error instead of a
-// use-after-free. Every object a handle can name lives in static model storage
-// (the generated catalog and its value cells), so no handle pins a collected
-// object.
+// use-after-free. Catalog objects live in static model storage (the generated
+// catalog and its value cells). Handles into class objects (llg_vpi_dynamic.c)
+// never pin them: the collector reports each reclaimed object and every handle
+// into it is released first.
 
 #include "llg_vpi.h"
 #include "sv_vpi_user.h"
@@ -70,6 +71,15 @@ typedef enum {
     SLOT_TERM,      /* path term or tchk term: connection `aux` of row `object` */
     SLOT_STMT,      /* force/release statement `aux` (vpiForce, vpiRelease) of a
                      * running cbForce/cbRelease dispatch: llg_vpi_stmt_t */
+    /* Dynamic objects (llg_vpi_dynamic.c). */
+    SLOT_CLASSOBJ,  /* class object `pointer` */
+    SLOT_PROPERTY,  /* property `aux` of class `right`: of object `pointer`, or of the
+                     * class definition when `pointer` is NULL */
+    SLOT_DYNELEM,   /* element of the container row `object` or of property `aux` of
+                     * object `pointer`, named by index or key (`lsb`, `element`, `items`) */
+    SLOT_CLASSDEFN, /* class definition `aux` (static slot) */
+    SLOT_CLASSTS,   /* class typespec `aux` (static slot) */
+    SLOT_EXTENDS,   /* extends object of class `aux` (static slot) */
     SLOT_CODE,      /* expression or statement object: code row `aux` */
     SLOT_COLLECTION, /* vpiCollection: `count` members in `items`, each a
                       * catalog row << 1 or an assertion item << 1 | 1 */
@@ -88,6 +98,7 @@ typedef enum {
     ITER_BITS,      /* vector bits, created on scan */
     ITER_ARGUMENTS, /* arguments of the active call, created on scan */
     ITER_MEMBERS,   /* member nodes [left, left + count), created on scan */
+    ITER_DYN,       /* properties, container elements, derived classes (llg_vpi_dynamic.c) */
     ITER_CODE,      /* code rows [left, left + count) whose role is `aux` */
 } llg_vpi_iter_kind_t;
 
@@ -294,6 +305,30 @@ typedef struct {
 static llg_vpi_state_t g_vpi;
 static uint32_t g_vpi_generation;
 
+/* Dynamic objects: llg_vpi_dynamic.c, appended to this translation unit. */
+struct llg_vpi_cb;
+static int dyn_tables_valid(void);
+static size_t dyn_static_slot_count(void);
+static void dyn_static_slots(uint32_t base);
+static int dyn_row_valid(const llg_vpi_model_object_t* object);
+static int dyn_slot(const llg_vpi_slot_t* slot);
+static int dyn_type(const llg_vpi_slot_t* slot);
+static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled);
+static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled);
+static vpiHandle dyn_scan(llg_vpi_slot_t* slot, uint32_t position);
+static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled);
+static const char* dyn_get_str(int property, llg_vpi_slot_t* slot, int* handled);
+static void dyn_get_value(llg_vpi_slot_t* slot, p_vpi_value output);
+static void dyn_put_value(llg_vpi_slot_t* slot, p_vpi_value input, int mode);
+static int dyn_compare(const llg_vpi_slot_t* a, uint32_t a_index, const llg_vpi_slot_t* b,
+                       uint32_t b_index);
+static vpiHandle dyn_handle_by_index(llg_vpi_slot_t* slot, PLI_INT32 index);
+static vpiHandle dyn_by_suffix(uint32_t row, const char* suffix);
+static int dyn_bind_value_cb(struct llg_vpi_cb* cb, llg_vpi_slot_t* slot);
+static int dyn_bind_object_cb(struct llg_vpi_cb* cb, const s_cb_data* data);
+static void dyn_object_cb_added(void);
+static void dyn_object_cb_removed(void);
+static void dyn_shutdown(void);
 static int code_tables_valid(const llg_vpi_code_tables_t* t);
 static PLI_INT32 unsupported_property(void);
 
@@ -423,6 +458,8 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
     if (object->typespec &&
         (!g_vpi.types || object->typespec > g_vpi.types->typespec_count))
         return 0;
+    if (object->flags & LLG_VPI_OBJ_DYNAMIC) return dyn_row_valid(object);
+    if (object->storage || object->dependency || object->shape) return 0;
     if (object->flags & LLG_VPI_OBJ_RECORD)
         return (object->type == vpiStructVar || object->type == vpiUnionVar) &&
                !object->packed && !object->real;
@@ -537,7 +574,7 @@ static int vpi_ready(void) {
         return 0;
     }
     size_t count = g_vpi.object_count;
-    if (!types_valid(g_vpi.types)) {
+    if (!types_valid(g_vpi.types) || !dyn_tables_valid()) {
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_MODEL", "invalid VPI typespec tables");
         g_vpi.failed = 1;
         return 0;
@@ -561,7 +598,7 @@ static int vpi_ready(void) {
     size_t typespecs = types ? types->typespec_count : 0u;
     size_t tsmembers = types ? types->member_count : 0u;
     size_t enumconsts = types ? types->const_count : 0u;
-    size_t static_count = count + typespecs + tsmembers + enumconsts;
+    size_t static_count = count + typespecs + tsmembers + enumconsts + dyn_static_slot_count();
     if (static_count >= LLG_VPI_INDEX_MASK - 1u) {
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_LIMIT", "VPI catalog exceeds the handle index space");
         g_vpi.failed = 1;
@@ -611,6 +648,8 @@ static int vpi_ready(void) {
             slot->aux = (int32_t)(i - g_vpi.enumconst_base);
         }
     }
+    /* Class definitions, typespecs and extends objects follow. */
+    dyn_static_slots((uint32_t)(count + typespecs + tsmembers + enumconsts));
     g_vpi.sorted_count = 0;
     /* Children keep catalog order: link in reverse. */
     for (size_t i = count; i-- > 0;) {
@@ -2720,7 +2759,9 @@ static vpiHandle lookup_full_name(const char* name, int* selected) {
         if (row != LLG_VPI_NONE) {
             /* A member suffix that names nothing is an ordinary negative
              * answer (S42-D2); only a bad select of an object is an error. */
-            if (strchr(name + cut, '.')) {
+            if (g_vpi.objects[row].flags & LLG_VPI_OBJ_DYNAMIC) {
+                found = dyn_by_suffix(row, name + cut);
+            } else if (strchr(name + cut, '.')) {
                 found = member_from_suffix(row, name + cut);
             } else {
                 *selected = 1;
@@ -2956,6 +2997,7 @@ vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
     vpi_enter();
     llg_vpi_slot_t* slot = checked_handle(object, NULL);
     if (!slot) return NULL;
+    if (dyn_slot(slot)) return dyn_handle_by_index(slot, index);
     int64_t value = index;
     if (slot->kind == SLOT_OBJECT) {
         llg_vpi_model_object_t* base = row_object(slot->object);
@@ -4812,6 +4854,11 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     if (!slot) return NULL;
     if (slot->kind == SLOT_ASSERTION) return assertion_relation(type, slot);
     if (slot->kind == SLOT_STMT) return statement_relation(type, slot);
+    if (dyn_slot(slot)) {
+        int handled;
+        vpiHandle result = dyn_handle(type, slot, &handled);
+        if (handled) return result;
+    }
     if (slot->kind == SLOT_CODE) return code_relation(type, (uint32_t)slot->aux);
     uint32_t argument = argument_code(slot);
     if (argument != LLG_VPI_NONE) return code_relation(type, argument);
@@ -5281,6 +5328,11 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         return encode_handle(index);
     }
     if (type == vpiMember && slot->kind == SLOT_COLLECTION) return iterate_collection(slot);
+    if (dyn_slot(slot)) {
+        int handled;
+        vpiHandle result = dyn_iterate(type, slot, &handled);
+        if (handled) return result;
+    }
     if (type == vpiMember) return iterate_members(slot);
     if (slot->kind == SLOT_TYPESPEC) return iterate_typespec(slot, type);
     if (slot->kind == SLOT_CODE) return iterate_code((uint32_t)slot->aux, type);
@@ -5462,6 +5514,8 @@ vpiHandle vpi_scan(vpiHandle iterator_handle) {
             }
             return argument_handle(site, site->active, (int)position);
         }
+        case ITER_DYN:
+            return dyn_scan(slot, position);
         default:
             return NULL;
     }
@@ -5490,6 +5544,7 @@ static int argument_type(const llg_vpi_slot_t* slot) {
 }
 
 static int handle_type(const llg_vpi_slot_t* slot) {
+    if (dyn_slot(slot)) return dyn_type(slot);
     llg_vpi_model_object_t* object = row_object(slot->object);
     switch (slot->kind) {
         case SLOT_OBJECT: return object->type;
@@ -5691,6 +5746,17 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         return value > INT32_MAX ? INT32_MAX : (PLI_INT32)value;
     }
     if (slot->kind == SLOT_STMT) return property == vpiType ? slot->aux : unsupported_property();
+    if (dyn_slot(slot)) {
+        int handled;
+        PLI_INT64 value = dyn_get(property, slot, &handled);
+        if (handled) {
+            if (value > INT32_MAX || value < INT32_MIN) {
+                vpi_error("LLG_VPI_PROPERTY", "the property value needs vpi_get64");
+                return vpiUndefined;
+            }
+            return (PLI_INT32)value;
+        }
+    }
     if (slot->kind == SLOT_CODE) return code_property((uint32_t)slot->aux, property);
     {
         /* An argument's expression object answers its own properties; its
@@ -5948,6 +6014,13 @@ PLI_INT64 vpi_get64(PLI_INT32 property, vpiHandle handle) {
         if (!assertion_property(slot, property, &value)) return unsupported_property();
         return value > INT64_MAX ? INT64_MAX : (PLI_INT64)value;
     }
+    /* vpiObjId is an int64 property (37.29). */
+    if (slot && dyn_slot(slot)) {
+        vpi_enter();
+        int handled;
+        PLI_INT64 result = dyn_get(property, slot, &handled);
+        if (handled) return result;
+    }
     return (PLI_INT64)vpi_get(property, handle);
 }
 
@@ -6147,6 +6220,11 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
     vpi_enter();
     llg_vpi_slot_t* slot = checked_handle(handle, NULL);
     if (!slot) return NULL;
+    if (dyn_slot(slot)) {
+        int handled;
+        const char* text = dyn_get_str(property, slot, &handled);
+        if (handled) return (PLI_BYTE8*)text;
+    }
     llg_vpi_model_object_t* object = row_object(slot->object);
     if (property == vpiType) {
         const char* name = type_name(handle_type(slot));
@@ -6267,6 +6345,10 @@ void vpi_get_value(vpiHandle handle, p_vpi_value output) {
     }
     llg_vpi_slot_t* slot = checked_handle(handle, NULL);
     if (!slot) return;
+    if (dyn_slot(slot)) {
+        dyn_get_value(slot, output);
+        return;
+    }
     if (whole_unpacked_aggregate(slot)) {
         vpi_error("LLG_VPI_VALUE",
                   "an entire unpacked structure or union has no value; access its members");
@@ -6465,6 +6547,10 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
         vpi_set_errorf(vpiRun, vpiError, "LLG_VPI_READ_ONLY",
                        "vpi_put_value is not allowed in the read-only %s region",
                        llg_region_name(llg_current_region()));
+        return NULL;
+    }
+    if (dyn_slot(slot)) {
+        dyn_put_value(slot, input, mode);
         return NULL;
     }
     llg_vpi_target_t target;
@@ -7000,6 +7086,8 @@ PLI_INT32 vpi_compare_objects(vpiHandle object1, vpiHandle object2) {
     if (!first) return 0;
     llg_vpi_slot_t* second = checked_handle(object2, &second_index);
     if (!second) return 0;
+    int dynamic = dyn_compare(first, first_index, second, second_index);
+    if (dynamic >= 0) return dynamic;
     uint64_t a[4], b[4];
     handle_identity(first, first_index, a);
     handle_identity(second, second_index, b);
@@ -7122,6 +7210,7 @@ typedef enum {
     CB_ASSERTION,  /* vpi_register_assertion_cb (39.4.2) */
     CB_ASSERT_SYS, /* cbAssertionSys* (39.4.1) */
     CB_TCHK,       /* cbTchkViolation */
+    CB_OBJECT,     /* cbCreateObj, cbReclaimObj, cbEndOfObject (llg_vpi_dynamic.c) */
 } llg_vpi_cb_kind_t;
 
 typedef struct llg_vpi_cb {
@@ -7172,12 +7261,19 @@ typedef struct llg_vpi_cb {
 
 static void assertion_cb_release(llg_vpi_cb_t* cb);
 
+/* What a watch key is: published storage whose value the callback reports,
+ * a named event's llg_event_object_t, or the change marker of a value VPI
+ * cannot read (a class variable): both of the latter report a NULL value. */
+#define LLG_VPI_WATCH_VALUE 0
+#define LLG_VPI_WATCH_EVENT 1
+#define LLG_VPI_WATCH_OPAQUE 2
+
 /* One watched storage address of a cbValueChange record. */
 typedef struct llg_vpi_watch {
     const void* key;
     llg_vpi_cb_t* cb;
     uint64_t element;         /* array element of a whole-array record, else LLG_VPI_NO_ELEMENT */
-    int event;                /* `key` is a named event's llg_event_object_t */
+    int event;                /* LLG_VPI_WATCH_* */
     struct llg_vpi_watch* next;
 } llg_vpi_watch_t;
 
@@ -7265,7 +7361,8 @@ static int watch_insert(llg_vpi_watch_t* watch) {
         g_vpi.watch_buckets = table;
         g_vpi.watch_capacity = capacity;
     }
-    if (watch->event) llg_event_watch_add((llg_event_object_t*)(uintptr_t)watch->key);
+    if (watch->event == LLG_VPI_WATCH_EVENT)
+        llg_event_watch_add((llg_event_object_t*)(uintptr_t)watch->key);
     else if (!llg_value_watch_add(watch->key)) return 0;
     size_t bucket = watch_bucket(watch->key, g_vpi.watch_capacity);
     watch->next = g_vpi.watch_buckets[bucket];
@@ -7281,7 +7378,8 @@ static void watch_unlink(llg_vpi_watch_t* watch) {
         *link = watch->next;
         watch->next = NULL;
         --g_vpi.watch_count;
-        if (watch->event) llg_event_watch_remove((llg_event_object_t*)(uintptr_t)watch->key);
+        if (watch->event == LLG_VPI_WATCH_EVENT)
+            llg_event_watch_remove((llg_event_object_t*)(uintptr_t)watch->key);
         else llg_value_watch_remove(watch->key);
         return;
     }
@@ -7316,6 +7414,7 @@ static void vpi_cb_detach(llg_vpi_cb_t* cb, llg_vpi_cb_done_t* done) {
     if (cb->kind == CB_DISABLE) --g_vpi.disable_cbs;
     if (cb->kind == CB_ASSERTION) assertion_cb_release(cb);
     if (cb->kind == CB_TCHK) --g_vpi.tchk_cbs;
+    if (cb->kind == CB_OBJECT) dyn_object_cb_removed();
     if (cb->waiting) {
         cb->waiting = 0;
         --g_vpi.next_time_pending;
@@ -8144,6 +8243,8 @@ static const void* watch_key(const llg_vpi_target_t* target) {
 static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
     llg_vpi_slot_t* slot = checked_handle(data->obj, NULL);
     if (!slot) return 0;
+    int dynamic = dyn_bind_value_cb(cb, slot);
+    if (dynamic >= 0) return dynamic;
     if (slot->kind == SLOT_OBJECT && g_vpi.objects[slot->object].type == vpiNamedEvent) {
         /* 38.36.1: the callback runs after each trigger of the event's
          * synchronization object (the one it names at registration). */
@@ -8160,7 +8261,7 @@ static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
         watch->key = object->event->object;
         watch->cb = cb;
         watch->element = LLG_VPI_NO_ELEMENT;
-        watch->event = 1;
+        watch->event = LLG_VPI_WATCH_EVENT;
         cb->watches = watch;
         cb->watch_total = 1;
         cb->target.object = slot->object;
@@ -8301,6 +8402,8 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         }
     } else if (reason == cbTchkViolation) {
         kind = CB_TCHK;
+    } else if (reason == cbCreateObj || reason == cbReclaimObj || reason == cbEndOfObject) {
+        kind = CB_OBJECT;
     } else if (reason == cbNextSimTime || time_reason(reason)) {
         kind = reason == cbNextSimTime ? CB_NEXT_TIME : CB_TIME;
         if (g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
@@ -8312,7 +8415,8 @@ vpiHandle vpi_register_cb(p_cb_data data) {
                       "unsupported or invalid VPI callback registration");
         return NULL;
     }
-    if ((kind == CB_VALUE || kind == CB_FORCE || kind == CB_DISABLE || kind == CB_TCHK) &&
+    if ((kind == CB_VALUE || kind == CB_FORCE || kind == CB_DISABLE || kind == CB_TCHK ||
+         kind == CB_OBJECT) &&
         g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
         vpi_error("LLG_VPI_CALLBACK", "the simulation has ended; no value can change");
         return NULL;
@@ -8366,6 +8470,10 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         vpi_cb_free(cb);
         return NULL;
     }
+    if (kind == CB_OBJECT && !dyn_bind_object_cb(cb, data)) {
+        vpi_cb_free(cb);
+        return NULL;
+    }
     cb->data.time = data->time ? &cb->time : NULL;
     cb->data.value = data->value ? &cb->value : NULL;
     uint32_t index = alloc_slot(SLOT_CALLBACK);
@@ -8400,6 +8508,7 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         ++g_vpi.tchk_cbs;
         llg_timing_violation_hook(vpi_tchk_violation);
     }
+    if (kind == CB_OBJECT) dyn_object_cb_added();
     if (kind == CB_NEXT_TIME) {
         cb->waiting = 1;
         ++g_vpi.next_time_pending;
@@ -8901,6 +9010,7 @@ void llg_vpi_shutdown(void) {
     free(g_vpi.decompiled);
     free(g_vpi.storage);
     for (int i = 0; i < g_vpi.plugin_count; ++i) llg_dl_close(g_vpi.plugin_handles[i]);
+    dyn_shutdown();
     memset(&g_vpi, 0, sizeof(g_vpi));
 }
 

@@ -51,7 +51,12 @@ impl Frame<'_, '_> {
                     return Err(pending("class copy in read-only callbacks"));
                 }
                 let source = self.chandle(source)?;
-                return Ok(self.scalar("void*", format!("llg_class_copy_{class}({source})")));
+                let copy = self.scalar("void*", format!("llg_class_copy_{class}({source})"));
+                // cbCreateObj also reports a shallow copy (38.36.1).
+                if !self.ctx.model.vpi_dynamic().classes.is_empty() {
+                    self.line(format!("llg_vpi_object_created({copy});"));
+                }
+                return Ok(copy);
             }
             IrChandleExpr::RandInstance { problem, inst } => {
                 let handle = self.rand_instance(*problem, inst)?;

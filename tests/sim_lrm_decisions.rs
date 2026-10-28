@@ -1793,6 +1793,16 @@ fn f2_d2_unit_default_timescale() {
 /// at startup. Static linking works on every host, so these cases need no
 /// run-time plugin loader. `prototypes` declare the system tasks/functions.
 fn run_vpi_decision(case: &str, prototypes: &[&str], expected: &str) {
+    run_vpi_decision_with_env(case, prototypes, expected, &[]);
+}
+
+/// [`run_vpi_decision`] with runtime environment `envs` on every run.
+fn run_vpi_decision_with_env(
+    case: &str,
+    prototypes: &[&str],
+    expected: &str,
+    envs: &[(&str, &str)],
+) {
     let directory = crate::sim_harness::TempDir::new("lrm-s42").expect("temporary directory");
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = root.join(format!("tests/fixtures/sim/lrm_decisions/{case}.c"));
@@ -1804,7 +1814,7 @@ fn run_vpi_decision(case: &str, prototypes: &[&str], expected: &str) {
         args.extend(["--define-system-task", prototype]);
     }
     args.extend(["--dpi-lib", archive.as_str()]);
-    sim_cli::run_case_backend_parity(SUITE, case, expected, &args, &[]);
+    sim_cli::run_case_backend_parity(SUITE, case, expected, &args, envs);
 }
 
 #[test]
@@ -2232,6 +2242,36 @@ fn a19_d13_statement_shapes() {
         "A19-D13_statement_shapes",
         &["task $d13()"],
         include_str!("fixtures/sim/lrm_decisions/A19-D13_statement_shapes.out"),
+    );
+}
+
+#[test]
+fn a19_d21_dynamic_values() {
+    run_vpi_decision(
+        "A19-D21_dynamic_values",
+        &["task $d21()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D21_dynamic_values.out"),
+    );
+}
+
+#[test]
+fn a19_d22_object_reclaim() {
+    // A collection at every safe point after an allocation reclaims each
+    // object in the time step it becomes unreachable.
+    run_vpi_decision_with_env(
+        "A19-D22_object_reclaim",
+        &["task $d22_setup()", "task $d22_hold()", "task $d22_check()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D22_object_reclaim.out"),
+        &[("LLG_GC_STRESS", "1"), ("LLG_GC_VERIFY", "1")],
+    );
+}
+
+#[test]
+fn a19_d23_dynamic_elements() {
+    run_vpi_decision(
+        "A19-D23_dynamic_elements",
+        &["task $d23_hold()", "task $d23_check()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D23_dynamic_elements.out"),
     );
 }
 

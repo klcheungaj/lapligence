@@ -74,6 +74,33 @@
 #define vpiOtherFunc 6
 #define vpiWaitingProcesses 734
 
+/* Dynamic objects: strings, chandles, class definitions, variables and
+ * objects, dynamic arrays, queues and associative arrays (37.3.7, 37.17,
+ * 37.27-37.29), and their callback reasons (38.36.1). */
+#define vpiClassVar 615
+#define vpiClassObj 621
+#define vpiChandleVar 622
+#define vpiChandleTypespec 632
+#define vpiClassDefn 652
+#define vpiExtends 677
+#define vpiDerivedClasses 727
+#define vpiMethods 730
+#define vpiDynamicArray 2
+#define vpiAssocArray 3
+#define vpiQueueArray 4
+#define vpiClassType 640
+#define vpiMailboxClass 1
+#define vpiSemaphoreClass 2
+#define vpiUserDefinedClass 3
+#define vpiAllocScheme 658
+#define vpiAutomaticScheme 1
+#define vpiDynamicScheme 2
+#define vpiOtherScheme 3
+#define vpiObjId 660
+#define cbSizeChange 605
+#define cbCreateObj 700
+#define cbReclaimObj 701
+#define cbEndOfObject 702
 /* Statement and expression objects (37.55-37.73). */
 #define vpiReturn 666
 #define vpiDoWhile 670

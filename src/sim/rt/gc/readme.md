@@ -15,7 +15,11 @@ a per-instance event waiter holds its object in its captured frame. Addresses th
 are reported with `llg_gc_visit_interior`.
 
 Finalizers release fields only and never follow handles, so cycles and order
-do not matter. A collector allocation failure abandons the whole collection
+do not matter. One reclaim hook (`llg_gc_reclaim_hook`, installed by the VPI layer once
+an application observes a class object or registers an object callback) sees
+every unreachable object of a collection, all still intact, before the first
+finalizer runs; it must not allocate collected objects or run model code.
+Without a hook the collector pays one predictable branch per collection. A collector allocation failure abandons the whole collection
 before anything is finalized, counts it and doubles the threshold.
 Registrations are released by `llg_rt_cleanup` and re-made after
 `llg_rt_init`; objects are model storage freed by `llg_gc_teardown` at model

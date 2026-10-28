@@ -127,6 +127,27 @@ impl Validator<'_> {
                         return self.fail(path, "VPI parameter is missing its value");
                     }
                 }
+                IrVpiObjectKind::Dynamic => {
+                    if object.signal.is_some() || object.array.is_some() {
+                        return self.fail(path, "VPI dynamic object keeps its own storage");
+                    }
+                    let storage = match object.storage {
+                        Some(crate::sim::ir::IrVpiStorage::Object(index)) => {
+                            index < self.model.objects.len()
+                        }
+                        Some(crate::sim::ir::IrVpiStorage::Container(index)) => {
+                            index < self.model.containers.len()
+                        }
+                        None => false,
+                    };
+                    if !storage
+                        || object
+                            .shape
+                            .is_none_or(|shape| shape >= self.model.vpi_dynamic.shapes.len())
+                    {
+                        return self.fail(path, "VPI dynamic object has no valid storage or shape");
+                    }
+                }
                 IrVpiObjectKind::RegArray | IrVpiObjectKind::NetArray => {
                     let Some(array) = object.array else {
                         return self.fail(path, "VPI array is missing array storage");
@@ -166,6 +187,8 @@ impl Validator<'_> {
                 }
             }
         }
+
+        self.model.vpi_dynamic.validate(self.model)?;
 
         // Typespecs refer only to earlier entries, so the table has no cycle.
         for (idx, typespec) in self.model.vpi_typespecs.iter().enumerate() {

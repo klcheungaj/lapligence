@@ -1,6 +1,8 @@
 //! Vpi.
 
 use super::*;
+
+mod dynamic;
 use crate::sim::ir::{
     IrSdfTarget, IrVpiArgRef, IrVpiCode, IrVpiCompileCall, IrVpiConn, IrVpiConstant, IrVpiObject,
     IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiVarKind,
@@ -47,6 +49,8 @@ struct Entry {
     qualifier: bool,
     activation: Option<(u32, u32)>,
     timing: Option<IrVpiTiming>,
+    /// `(storage, dependency, shape)` of a dynamic object.
+    dynamic: Option<(String, String, usize)>,
     code: Option<u32>,
 }
 
@@ -88,6 +92,7 @@ impl Entry {
             qualifier: false,
             activation: None,
             timing: None,
+            dynamic: None,
             code: None,
         }
     }
@@ -211,7 +216,16 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
         } else {
             dims
         };
+        let dynamic = if object.kind == IrVpiObjectKind::Dynamic {
+            let Some(storage) = dynamic::row_storage(model, object) else {
+                continue;
+            };
+            Some(storage)
+        } else {
+            None
+        };
         let (type_code, subtype) = match object.kind {
+            IrVpiObjectKind::Dynamic => (dynamic::row_type(model, object), "0"),
             IrVpiObjectKind::Reg => (object.var_kind.c_type(), "0"),
             IrVpiObjectKind::RealVar => (element_type, "0"),
             IrVpiObjectKind::Net => ("vpiNet", object.net_type.unwrap_or("vpiWire")),
@@ -260,6 +274,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 qualifier: object.qualifier,
                 activation: object.activation,
                 timing: object.timing.clone(),
+                dynamic,
                 code: object.code,
             },
         );
@@ -412,9 +427,11 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
              static const llg_vpi_type_tables_t* const llg_vpi_type_tables = NULL;\n\
              static const llg_vpi_code_tables_t* const llg_vpi_code_tables = NULL;\n",
         );
+        dynamic::render_vpi_dynamic(model, out);
         return;
     }
     render_vpi_typespecs(model.vpi_typespecs(), out);
+    dynamic::render_vpi_dynamic(model, out);
     let entries = catalog_for(model);
     let indices = catalog_indices(&entries);
     for (index, entry) in entries.iter().enumerate() {
@@ -537,6 +554,19 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         if entry.activation.is_some() {
             flags.push("LLG_VPI_OBJ_ACTIVATION");
         }
+        if entry.dynamic.is_some() {
+            flags.push("LLG_VPI_OBJ_DYNAMIC");
+        }
+        let dynamic =
+            entry
+                .dynamic
+                .as_ref()
+                .map_or_else(String::new, |(storage, dependency, shape)| {
+                    format!(
+                        ", .storage = {storage}, .dependency = {dependency}, .shape = {}u",
+                        shape + 1
+                    )
+                });
         let (declaration, instance) = entry.activation.unwrap_or((0, 0));
         let (constant, real_constant) = match &entry.constant {
             Some(IrVpiConstant::Bits(digits)) => (c_string_literal(digits), "0.0".to_owned()),
@@ -574,7 +604,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
 .dims = {dims}, .dim_count = {dim_count}u, .port_index = {}u, .target = {target}, .net = {}, \
 .constant = {constant}, .real_constant = {real_constant}, .typespec = {}u, .detail = {}, \
 .event = {}, .conns = {conns}, .conn_count = {}u, .activation_declaration = {declaration}u, \
-.activation_instance = {instance}u, .timing = {}{} }},\n",
+.activation_instance = {instance}u, .timing = {}{}{dynamic} }},\n",
             entry.type_code,
             c_string_literal(&entry.name),
             c_string_literal(&path.replace('\u{1f}', ".")),

@@ -196,6 +196,19 @@ type, size and line only. Other entries become `SLOT_CODE` handles on
 demand. `code_eval` evaluates a tree through the value facade with the
 frontend's widths; `decompile` rebuilds the source spelling with Table 11-2
 precedence into one buffer that each `vpiDecompile` overwrites.
+Dynamic objects (VPI-O4, `llg_vpi_dynamic.c`) are catalog rows flagged
+`LLG_VPI_OBJ_DYNAMIC` whose `storage` is the string, handle or container
+global and whose `shape` indexes `llg_vpi_dynamic_tables`. Class objects,
+properties and elements are dynamic slots (`SLOT_CLASSOBJ`, `SLOT_PROPERTY`,
+`SLOT_DYNELEM`) that keep the object's address, never a reference the
+collector sees; an element keeps (row or property, index or key) and
+re-resolves at each access. A live table assigns `vpiObjId`s and marks
+objects some handle names. The collector's reclaim hook marks the dying
+objects, runs `cbReclaimObj`/`cbEndOfObject` (navigation and puts refused),
+releases every slot and iterator into them and forgets their ids; with no
+named object and no object callback it returns at once. A class variable's
+`cbValueChange` watches the variable's `_llg_dep` change marker
+(`LLG_VPI_WATCH_OPAQUE`, NULL value).
 Module paths and timing checks (VPI-T1) are unnamed `vpiModPath`/`vpiTchk`
 rows whose conns carry a role (`LLG_VPI_ROLE_*`: path input, output, data,
 condition, check reference/data term, argument, notifier, term condition),
