@@ -2433,7 +2433,14 @@ counterpart, for assertion coverage.
     them, and the sequence instance of a `cover sequence` gets no failure
     (A17-D5);
   - step callbacks (`cbAssertionStepSuccess`/`StepFailure`,
-    `vpiAssertionEnableStep`) fail with `LLG_VPI_UNSUPPORTED`;
+    `vpiAssertionEnableStep`) fail with `LLG_VPI_UNSUPPORTED`, and
+    `vpiAssertionDisableStep` returns 1 without effect (A17-D2). A step
+    (39.4.2) reports the expressions matched and the source and destination
+    states of the F.5.1 rewriting; llg's simple, sequence, property and
+    future engines number no such states and record no matched leaves, so
+    a step callback could only be a stub. Providing them needs a state
+    numbering shared by all engines and a per-thread hook behind the item's
+    `watches` gate (no cost without a registration);
   - `vpiAssertionReset` does not reset the shared `$past` sampling of the
     assertion's operands;
   - for an assertion with global clocking future functions, an attempt
