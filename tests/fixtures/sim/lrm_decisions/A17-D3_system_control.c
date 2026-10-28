@@ -33,7 +33,11 @@ static PLI_INT32 on_system(p_cb_data data) {
         case cbAssertionSysReset: name = "SysReset"; break;
         case cbAssertionSysEnd: name = "SysEnd"; break;
     }
-    vpi_printf("%u %s\n", (unsigned)data->time->low, name);
+    /* 38.36.3 defines no time field for simulator action callbacks: read the
+     * time with vpi_get_time. */
+    s_vpi_time now = {vpiSimTime, 0, 0, 0.0};
+    vpi_get_time(NULL, &now);
+    vpi_printf("%u %s\n", (unsigned)now.low, name);
     if (data->reason == cbEndOfSimulation)
         vpi_printf("t1 attempts=%d success=%d killed=%d; s1 attempts=%d success=%d\n",
                    (int)vpi_get(vpiAssertAttemptCovered, t1), (int)vpi_get(vpiAssertSuccessCovered, t1),

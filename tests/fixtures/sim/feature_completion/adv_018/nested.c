@@ -17,9 +17,12 @@ static int intact(const char* pattern, size_t size, char fill)
 DPI_DLLESPEC int c_outer(int depth, int* result)
 {
     svScope scope = svGetScope();
-    const char* name = svGetNameFromScope(scope);
+    /* Annex H does not say how long the name string stays valid (some
+     * simulators reuse one buffer): keep a copy across the suspension. */
+    char name[64];
+    snprintf(name, sizeof(name), "%s", svGetNameFromScope(scope));
     char pattern[512];
-    char tag[32];
+    char tag[80];
     char fill = name[strlen(name) - 1];
     int got = -1;
     memset(pattern, fill, sizeof(pattern));
@@ -35,7 +38,8 @@ DPI_DLLESPEC int c_outer(int depth, int* result)
 DPI_DLLESPEC int c_inner(int depth, int* result)
 {
     svScope own = svGetScope();
-    const char* name = svGetNameFromScope(own);
+    char name[64];
+    snprintf(name, sizeof(name), "%s", svGetNameFromScope(own));
     const char* other_name = strcmp(name, "tb.u1") == 0 ? "tb.u2" : "tb.u1";
     svScope other = svGetScopeFromName(other_name);
     volatile int local = depth * 7;

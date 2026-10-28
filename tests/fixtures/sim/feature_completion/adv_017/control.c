@@ -76,7 +76,11 @@ static PLI_INT32 on_attempt(PLI_INT32 reason, p_vpi_time time, vpiHandle asserti
 }
 
 static PLI_INT32 on_system(p_cb_data data) {
-    vpi_printf("%u %s obj=%s\n", (unsigned)data->time->low, reason_name(data->reason),
+    /* 38.36.3 defines no time field for simulator action callbacks: read the
+     * time with vpi_get_time. */
+    s_vpi_time now = {vpiSimTime, 0, 0, 0.0};
+    vpi_get_time(NULL, &now);
+    vpi_printf("%u %s obj=%s\n", (unsigned)now.low, reason_name(data->reason),
                data->obj ? "set" : "NULL");
     return 0;
 }

@@ -11,6 +11,9 @@
 // assertion callback can be placed, and $asserton starts no attempt. At the
 // end of a simulation that did not issue it, cbAssertionSysEnd runs before
 // cbEndOfSimulation.
+// Some simulators refuse a scope handle or NULL for some system controls and
+// keep callbacks, registrations and controls working after
+// vpiAssertionSysEnd; llg follows 39.5.1.
 //
 // IEEE 1800-2009 39.5.1 (SystemVerilog-1800-2009.txt L65825-L65827): "a
 // second handle argument that is either a vpiHandle for a scope or a
