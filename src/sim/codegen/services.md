@@ -126,11 +126,7 @@ SystemVerilog strings remain separate native owners.
 
 Sampled-value functions intern one `IrSampledClock` per lowered clocking event
 and gate and one `IrSampledDomain` per (clock, sample expression), keeping the
-deepest `$past` depth, so overlapping calls share history. A call in a
-concurrent assertion statement (not in a sequence end point) records the
-statement as `reset_owner`; models with assertion items emit it as the `_of`
-runtime read, so a `vpiAssertionReset` hides earlier ticks from that
-assertion only (A17-D8). A single direct
+deepest `$past` depth, so overlapping calls share history. A single direct
 packed-signal edge is an `Edge` clock; any other legal event list is an `Event`
 clock ticked by a synthetic `WaitEvents` + `SampledClockTick` process spawned
 before other time-zero processes. `iff` and the `$past` gate read current

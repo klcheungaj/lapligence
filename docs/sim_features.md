@@ -2412,7 +2412,7 @@ before its evaluation (repeated ticks in a step count once) and returns the
 initial value (declaration value or type default) before enough ticks; value
 change functions compare the calling step's Preponed value with the most
 recent strictly earlier tick, also between edges; a `vpiAssertionReset`
-restarts the history the reset assertion's calls see (A17-D8). `iff` and the `$past` gate
+keeps the history (A17-D8). `iff` and the `$past` gate
 read current values when the clock occurs. Outside any assertion, a
 procedural `$sampled` returns the Preponed value of every packed or real signal
 it reads, registered without per-slot history. Real, shortreal and realtime

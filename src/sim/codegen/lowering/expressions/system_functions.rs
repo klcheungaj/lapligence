@@ -329,10 +329,13 @@ impl<'a> Codegen<'a> {
         } else {
             (1, false)
         };
-        let call = IrSampledCall::new(kind, argument, Some(domain), ticks)
-            .with_reset_owner(self.sampled_reset_owner);
         Ok(IrExpr::new(
-            IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(call))),
+            IrExprKind::SysFunc(Box::new(IrSysFunc::Sampled(IrSampledCall::new(
+                kind,
+                argument,
+                Some(domain),
+                ticks,
+            )))),
             width,
             signed,
             None,

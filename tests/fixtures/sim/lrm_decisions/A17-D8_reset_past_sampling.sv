@@ -1,27 +1,22 @@
-// Decision A17-D8: vpiAssertionReset (and vpiAssertionSysReset) also
-// resets the past() sampling the assertion uses, while every other reader
-// of the same sampled values keeps its history. After a reset in time step
-// T, the $past and value change function calls of the assertion's
-// statement (property, disable condition and action blocks) take no tick of
-// a step before T as a prior tick, so they return the initial value as at
-// the start of simulation; a tick in step T itself counts. Clock ticks:
-// 5, 15, ..., 45; a rises at 7 and stays 1; $d8 resets p1 and r1 at 20.
-// p1 and p2 fail at 25 only when $past(a) sees the tick at 15; r1 and r2
-// fail at 25 only when $rose(a) compares with the initial value.
+// Decision A17-D8: vpiAssertionReset (and vpiAssertionSysReset) discards
+// the attempts in progress and restores the assertion's controls, but keeps
+// the history its sampled value functions read: after a reset, the $past and
+// value change function calls of the assertion's statement return what they
+// would have returned without the reset, like those of an identical
+// assertion that was not reset. Clock ticks: 5, 15, ..., 45; a rises at 7
+// and stays 1; $d8 resets p1 and r1 at 20. p1 and p2 fail at 25, 35 and 45
+// because $past(a) sees the tick at 15; r1 and r2 fail only at 15, because
+// at 25 $rose(a) compares with the tick at 15.
 //
-// IEEE 1800-2009 39.5.2 (SystemVerilog-1800-2009.txt L65901-L65902):
+// IEEE 1800-2009 39.5.2 (SystemVerilog-1800-2009.txt L65899-L65900):
 // "vpiAssertionReset discards all current attempts in progress for this
-// assertion and resets this assertion to its initial state."; L65940-L65941:
+// assertion and resets this assertion to its initial state."; L65941-L65942:
 // "vpiAssertionKill discards the given attempt, but leaves the assertion
 // enabled and does not reset any state used by this assertion (e.g., past()
-// sampling)." 16.9.3 L22770-L22772: "If there do not exist k strictly prior
-// time steps in which the event ev iff expression2 occurred, then the value
-// returned from the $past function is the result of evaluating expression1
-// using the initial values of the variables comprising it." Which ticks a
-// reset forgets is not stated; llg keeps those of the reset's step. Some
-// simulators keep the history across a reset; llg follows the clause text
-// because it names past() sampling as state used by the assertion, which
-// reset returns to its initial state and kill leaves alone.
+// sampling)." The text does not say whether the sampled history belongs to
+// the "initial state" a reset restores; llg keeps it, as industry-standard
+// behaviour does (the history is shared with every other reader of the same
+// sampled values).
 //
 // Build A17-D8_reset_past_sampling.c as a VPI application (llg: static
 // archive given to --dpi-lib; `task $d8()` declared as a system task).

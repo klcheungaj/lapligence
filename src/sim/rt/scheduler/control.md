@@ -44,12 +44,8 @@ through `llg_sampled_clock_tick` from a generated waiting process. Each domain
 keeps a ring of one sample per ticked time step (a repeated tick overwrites
 the step), growing up to its registered `$past` depth plus the current step and
 then reused in place; status functions compare a step-cached Preponed
-evaluation with the latest strictly earlier tick. The `_of` variants read for
-one concurrent assertion: after a `vpiAssertionReset` of it (the item's
-`reset_time1`, looked up only once any reset happened) ticks of earlier steps
-are no prior ticks for it, while other readers keep the shared ring (A17-D8).
-Never retain history for an undeclared reader: memory must not grow with
-simulated time.
+evaluation with the latest strictly earlier tick. Never retain history for an
+undeclared reader: memory must not grow with simulated time.
 
 Slot history retains any/positive/negative occurrence independently, so a later
 opposite edge cannot erase an earlier match. Time advance drops all entries except
