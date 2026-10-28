@@ -2443,9 +2443,6 @@ counterpart, for assertion coverage.
     `watches` gate (no cost without a registration);
   - `vpiAssertionReset` does not reset the shared `$past` sampling of the
     assertion's operands;
-  - for an assertion with global clocking future functions, an attempt
-    that starts while its `disable iff` holds runs its callbacks at once,
-    not at the next global clock tick;
   - FSM coverage objects (40.5.3 `vpiFsm`, `vpiFsmStates`) and the 40.4 FSM
     pragmas are not recognized.
   An assertion label that is also

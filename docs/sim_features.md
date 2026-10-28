@@ -2646,7 +2646,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `DisabledEvaluation` and `Kill` for every concurrent, immediate and
   deferred assertion (multiclock, global clocking future and checker-owned
   ones included), with the attempt start time, in step with the 40.5.3
-  counters; the control reasons run from `vpi_control`, which implements
+  counters (a future-function assertion's attempt that starts while
+  `disable iff` holds reports at the next global clock tick, A17-D7); the control reasons run from `vpi_control`, which implements
   every 39.5.1 system and 39.5.2 assertion operation, the system ones
   also on a `vpiCollection` made with `vpi_create` (decisions A17-D1..D3,
   A17-D6); the `cbAssertionSys*` reasons run at the start and end of

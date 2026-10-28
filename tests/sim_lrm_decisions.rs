@@ -2308,6 +2308,15 @@ fn a17_d6_assertion_collections() {
 }
 
 #[test]
+fn a17_d7_future_disabled_start() {
+    run_vpi_decision(
+        "A17-D7_future_disabled_start",
+        &["task $d7()"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D7_future_disabled_start.out"),
+    );
+}
+
+#[test]
 fn a17_d2_control_callbacks() {
     run_vpi_decision(
         "A17-D2_control_callbacks",

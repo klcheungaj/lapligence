@@ -172,7 +172,9 @@ current sampled values, so results and actions belong to that global tick
 while every interval rule is that of the event. `end_assertion_attempts`
 (disable iff, `$assertkill`) appends a marker instead while entries are
 queued, so a discard reaches exactly the attempts running at its point;
-consecutive markers coalesce. A procedural instance maturing after the step's
+consecutive markers coalesce. An attempt that starts while `disable iff`
+holds is queued as a disabled start, so its callbacks run at the next global
+tick with the results before it (A17-D7). A procedural instance maturing after the step's
 leading-clock event was queued adds to that entry. Entries count against
 `LLG_SEQUENCE_THREAD_LIMIT` and are recycled per assertion with their operand
 owners; the end of the run drops the queue (A14-D3) and cleanup frees it.

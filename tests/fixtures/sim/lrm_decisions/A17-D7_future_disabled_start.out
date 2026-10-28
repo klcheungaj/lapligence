@@ -1,0 +1,7 @@
+now=15 cb_time=13 f1 Start attempt=13
+now=15 cb_time=13 f1 Success attempt=13
+now=25 cb_time=21 f1 Start attempt=21
+now=25 cb_time=21 f1 Disabled attempt=21
+now=45 cb_time=35 f1 Start attempt=35
+now=45 cb_time=35 f1 Disabled attempt=35
+f1 attempts=3 success=1
