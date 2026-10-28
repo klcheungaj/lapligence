@@ -384,9 +384,10 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                 if cg.db.is_implicit_conversion(id) {
                     code.flags |= IrVpiCode::HIDDEN;
                 } else {
-                    // 37.55 detail 3: the typespec of the cast's target type.
+                    // 37.55 detail 3: the typespec of the cast's target type,
+                    // named after the typedef the cast names.
                     code.typespec = cg.db.type_descriptor(id).and_then(|descriptor| {
-                        cg.vpi_typespec(self.typespecs, descriptor, None, 0)
+                        cg.vpi_typespec(self.typespecs, descriptor, cg.db.declared_typedef(id), 0)
                     });
                     if *size_cast {
                         code.text = Some(code.width.to_string());

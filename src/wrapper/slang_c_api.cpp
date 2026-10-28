@@ -3359,6 +3359,9 @@ public:
     if constexpr (std::same_as<T, ConversionExpression>) {
       if (expression.isImplicit())
         result.flags |= LLG_SLANG_SEMANTIC_IMPLICIT_CONVERSION;
+      else
+        // A cast to a typedef (`nib_t'(x)`) names it (37.55 detail 3).
+        capture.typedefEdge(id, *expression.type);
       if (expression.conversionKind == ConversionKind::Propagated)
         result.flags |= LLG_SLANG_SEMANTIC_PROPAGATED_CONVERSION;
       if (expression.isConstCast)

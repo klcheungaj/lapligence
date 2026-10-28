@@ -1162,7 +1162,8 @@ impl Db {
 
     /// The typedef the declared type of `id` names (IEEE 1800-2009 37.23):
     /// for a variable, net or parameter its declared type, for a typedef
-    /// declaration the typedef it aliases. `None` when no typedef is named.
+    /// declaration the typedef it aliases, for an explicit cast its target
+    /// type. `None` when no typedef is named.
     pub fn declared_typedef(&self, id: NodeId) -> Option<TypedefRef> {
         self.typedefs.declared.get(&id).copied()
     }
