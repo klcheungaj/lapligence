@@ -2434,8 +2434,6 @@ counterpart, for assertion coverage.
     (A17-D5);
   - step callbacks (`cbAssertionStepSuccess`/`StepFailure`,
     `vpiAssertionEnableStep`) fail with `LLG_VPI_UNSUPPORTED`;
-  - the 39.5.1 controls take NULL, an instance or an assertion handle,
-    not a `vpiCollection`;
   - `vpiAssertionReset` does not reset the shared `$past` sampling of the
     assertion's operands;
   - for an assertion with global clocking future functions, an attempt

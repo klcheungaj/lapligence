@@ -2299,6 +2299,15 @@ fn a17_d5_instance_callbacks() {
 }
 
 #[test]
+fn a17_d6_assertion_collections() {
+    run_vpi_decision(
+        "A17-D6_assertion_collections",
+        &["task $d6(input integer n)"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D6_assertion_collections.out"),
+    );
+}
+
+#[test]
 fn a17_d2_control_callbacks() {
     run_vpi_decision(
         "A17-D2_control_callbacks",

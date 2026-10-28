@@ -71,6 +71,8 @@ typedef enum {
     SLOT_STMT,      /* force/release statement `aux` (vpiForce, vpiRelease) of a
                      * running cbForce/cbRelease dispatch: llg_vpi_stmt_t */
     SLOT_CODE,      /* expression or statement object: code row `aux` */
+    SLOT_COLLECTION, /* vpiCollection: `count` members in `items`, each a
+                      * catalog row << 1 or an assertion item << 1 | 1 */
 } llg_vpi_slot_kind_t;
 
 enum {
@@ -3032,6 +3034,8 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
 /* ── assertions and coverage (39.3, 40.5) ───────────────────────────────── */
 
 static vpiHandle make_list_iterator(int type, uintptr_t* items, uint32_t count);
+static vpiHandle iterate_collection(const llg_vpi_slot_t* slot);
+static int item_in_instance(size_t index, int32_t scope);
 
 static const llg_acov_item_t* slot_item(const llg_vpi_slot_t* slot) {
     if (!slot || slot->kind != SLOT_ASSERTION || slot->left < 0) return NULL;
@@ -5276,6 +5280,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         own_by_call(index, call);
         return encode_handle(index);
     }
+    if (type == vpiMember && slot->kind == SLOT_COLLECTION) return iterate_collection(slot);
     if (type == vpiMember) return iterate_members(slot);
     if (slot->kind == SLOT_TYPESPEC) return iterate_typespec(slot, type);
     if (slot->kind == SLOT_CODE) return iterate_code((uint32_t)slot->aux, type);
@@ -5506,6 +5511,7 @@ static int handle_type(const llg_vpi_slot_t* slot) {
             return code != LLG_VPI_NONE ? code_type(code_at(code)) : argument_type(slot);
         }
         case SLOT_CODE: return code_type(code_at((uint32_t)slot->aux));
+        case SLOT_COLLECTION: return vpiCollection;
         case SLOT_CALLBACK:
         case SLOT_FIRED_CB: return vpiCallback;
         case SLOT_EVENT: return vpiSchedEvent;
@@ -5991,6 +5997,7 @@ static const char* type_name(int type) {
         case vpiImmediateAssert: return "vpiImmediateAssert";
         case vpiImmediateAssume: return "vpiImmediateAssume";
         case vpiImmediateCover: return "vpiImmediateCover";
+        case vpiCollection: return "vpiCollection";
         case vpiPropertySpec: return "vpiPropertySpec";
         case vpiPropertyInst: return "vpiPropertyInst";
         case vpiSequenceInst: return "vpiSequenceInst";
@@ -9223,6 +9230,90 @@ vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
     return encode_handle(index);
 }
 
+/* ── collections (39.5.1; IEEE P1800-2005 30.4.2) ─────────────────────── */
+
+/* vpi_create(vpiCollection, collection or NULL, member or NULL): add a
+ * module, interface or program instance or an assertion to a collection,
+ * made when `collection` is NULL; returns the collection (A17-D6). */
+vpiHandle vpi_create(PLI_INT32 type, vpiHandle collection, vpiHandle object) {
+    vpi_enter();
+    if (type != vpiCollection) {
+        vpi_error("LLG_VPI_UNSUPPORTED", "llg creates only vpiCollection objects");
+        return NULL;
+    }
+    uintptr_t member = 0;
+    if (object) {
+        llg_vpi_slot_t* slot = checked_handle(object, NULL);
+        if (!slot) return NULL;
+        if (slot->kind == SLOT_ASSERTION && slot_item(slot)) {
+            member = ((uintptr_t)slot->left << 1) | 1u;
+        } else if (slot_instance(slot) >= 0) {
+            member = (uintptr_t)slot->object << 1;
+        } else {
+            vpi_error("LLG_VPI_ARGUMENT",
+                      "a collection holds module, interface and program instances and "
+                      "assertions");
+            return NULL;
+        }
+    }
+    uint32_t index;
+    if (collection) {
+        llg_vpi_slot_t* slot = checked_handle(collection, &index);
+        if (!slot) return NULL;
+        if (slot->kind != SLOT_COLLECTION) {
+            vpi_error("LLG_VPI_ARGUMENT", "vpi_create adds to a vpiCollection handle");
+            return NULL;
+        }
+    } else {
+        index = alloc_slot(SLOT_COLLECTION);
+        if (index == LLG_VPI_NONE) return NULL;
+        collection = encode_handle(index);
+    }
+    if (!object) return collection;
+    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    uintptr_t* items = (uintptr_t*)realloc(slot->items, (slot->count + 1u) * sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI collection allocation failed");
+        return NULL;
+    }
+    items[slot->count++] = member;
+    slot->items = items;
+    return collection;
+}
+
+/* vpi_iterate(vpiMember, collection): its members in insertion order. */
+static vpiHandle iterate_collection(const llg_vpi_slot_t* slot) {
+    if (!slot->count) return NULL;
+    uint32_t count = slot->count;
+    uintptr_t* members = (uintptr_t*)malloc(count * sizeof(*members));
+    uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
+    if (!members || !items) {
+        free(members);
+        free(items);
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    /* Making handles may move the slot array: copy the members first. */
+    memcpy(members, slot->items, count * sizeof(*members));
+    uint32_t made = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        vpiHandle handle = (members[i] & 1u) ? assertion_handle((size_t)(members[i] >> 1))
+                                             : object_handle((uint32_t)(members[i] >> 1));
+        if (!handle) break;
+        items[made++] = (uintptr_t)handle;
+    }
+    free(members);
+    return make_list_iterator(vpiMember, items, made);
+}
+
+/* Whether item `index` is selected by collection member `member`. */
+static int item_in_member(size_t index, uintptr_t member) {
+    if (member & 1u) return (size_t)(member >> 1) == index;
+    llg_vpi_model_object_t* object = row_object((uint32_t)(member >> 1));
+    int32_t scope = object ? llg_acov_instance_named(object->full_name) : -1;
+    return scope >= 0 && item_in_instance(index, scope);
+}
+
 /* ── assertion control (39.5) ───────────────────────────────────────────── */
 
 typedef struct {
@@ -9345,6 +9436,8 @@ static PLI_INT32 assertion_control(int operation, va_list ap) {
      * below it; an assertion handle that assertion (39.5.1). */
     int64_t only = -1;
     int32_t scope = -1;
+    uintptr_t* members = NULL;
+    uint32_t member_count = 0;
     if (handle) {
         llg_vpi_slot_t* slot = checked_handle(handle, NULL);
         if (!slot) return 0;
@@ -9353,7 +9446,18 @@ static PLI_INT32 assertion_control(int operation, va_list ap) {
                                           "pass a NULL handle");
             return 0;
         }
-        if (slot->kind == SLOT_ASSERTION && slot_item(slot)) {
+        if (slot->kind == SLOT_COLLECTION) {
+            /* Each member selects as a single handle would (A17-D6). A
+             * callback the control raises may add to the collection, so
+             * the members are copied. */
+            member_count = slot->count;
+            members = (uintptr_t*)malloc((member_count ? member_count : 1u) * sizeof(*members));
+            if (!members) {
+                vpi_error("LLG_VPI_NOMEM", "VPI collection allocation failed");
+                return 0;
+            }
+            if (member_count) memcpy(members, slot->items, member_count * sizeof(*members));
+        } else if (slot->kind == SLOT_ASSERTION && slot_item(slot)) {
             only = slot->left;
         } else {
             scope = slot_instance(slot);
@@ -9367,9 +9471,16 @@ static PLI_INT32 assertion_control(int operation, va_list ap) {
     }
     if (operation == vpiAssertionSysEnd) llg_assertions_end();
     for (size_t i = 0; i < llg_acov_item_count(); ++i) {
-        if (only >= 0 ? (int64_t)i != only : handle && !item_in_instance(i, scope)) continue;
+        if (members) {
+            uint32_t m = 0;
+            while (m < member_count && !item_in_member(i, members[m])) ++m;
+            if (m == member_count) continue;
+        } else if (only >= 0 ? (int64_t)i != only : handle && !item_in_instance(i, scope)) {
+            continue;
+        }
         (void)llg_acov_control(i, op->runtime, 0);
     }
+    free(members);
     if (operation == vpiAssertionSysEnd) assertion_callbacks_end();
     else invoke_assertion_system(op->reason);
     return 1;

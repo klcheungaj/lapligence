@@ -417,7 +417,7 @@ counters (also linked as a static archive), `control` drives every
 `vpi_control` assertion operation, `objects` checks the 39.3 static
 information and reentrant callbacks, and `relations` (`--vpi`) walks the
 37.45-37.51 relations, sequence and property instances and declarations,
-`failExpr` and instance callbacks. Decisions A17-D1..D5 are in
+`failExpr` and instance callbacks. Decisions A17-D1..D6 are in
 `sim_lrm_decisions` (`-E 'test(/a17_d/)'`).
 
 ADV-020's VPI parity fixtures use

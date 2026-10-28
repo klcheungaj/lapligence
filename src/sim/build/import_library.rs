@@ -116,12 +116,14 @@ pub(super) const PROVIDED_SVDPI_ROUTINES: &[&str] = &[
 ];
 
 /// The VPI routines `vpi_user.h` (the 41 of IEEE 1800-2009 Annex K) and
-/// `sv_vpi_user.h` (`vpi_register_assertion_cb`, Annex M) declare, all
-/// defined by `llg_vpi.c`.
+/// `sv_vpi_user.h` (`vpi_register_assertion_cb`, Annex M, and the
+/// collection constructor `vpi_create` of IEEE P1800-2005 30.4.2) declare,
+/// all defined by `llg_vpi.c`.
 pub(super) const VPI_ROUTINES: &[&str] = &[
     "vpi_chk_error",
     "vpi_compare_objects",
     "vpi_control",
+    "vpi_create",
     "vpi_flush",
     "vpi_free_object",
     "vpi_get",

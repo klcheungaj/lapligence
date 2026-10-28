@@ -268,6 +268,18 @@ vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
                                     vpi_assertion_callback_func* cb_rtn,
                                     PLI_BYTE8* user_data);
 
+/* Collections of handles. IEEE 1800-2009 39.5.1 lets the assertion system
+ * controls take "a vpiCollection of handles for a list of scopes" but
+ * defines neither the constant nor a constructor; llg takes both from IEEE
+ * P1800-2005 30.4.2: vpi_create(vpiCollection, NULL, obj) makes a
+ * collection, vpi_create(vpiCollection, collection, obj) adds obj to it and
+ * returns it (obj may be NULL), vpi_iterate(vpiMember, collection) scans
+ * it and vpi_release_handle() frees it. An llg collection holds module,
+ * interface and program instances and assertions, the handles 39.5.1
+ * selects with (decision A17-D6). */
+#define vpiCollection 810
+vpiHandle vpi_create(PLI_INT32 prop, vpiHandle h, vpiHandle obj);
+
 #ifdef __cplusplus
 }
 #endif
