@@ -772,6 +772,9 @@ typedef struct {
     llg_acov_event_queue_t assertion_events;
     // vpiAssertionSysEnd ran: no control enables an assertion again.
     int assertions_ended;
+    // A vpiAssertionReset reached a concurrent assertion item: the sampled
+    // value calls of assertions look up their item's reset time only then.
+    int assertion_reset_seen;
     // Registered property assertions with an asynchronous abort condition.
     uint64_t property_async_count;
     llg_deferred_trigger_t* deferred_triggers;

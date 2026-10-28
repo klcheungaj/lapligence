@@ -374,6 +374,25 @@ static const sv4_t* sampled_domain_prior(const llg_sampled_domain_t* domain,
     return &domain->samples[(domain->newest + domain->capacity - back) % domain->capacity];
 }
 
+// The time step plus 1 of the last vpiAssertionReset of concurrent
+// assertion `assertion` (0 none): its sampled value calls take no tick of
+// an earlier time step as a prior tick (39.5.2), as if the simulation began
+// in the reset's step.
+static uint64_t sampled_reset_time1(uint64_t assertion) {
+    if (!g.assertion_reset_seen) return 0;
+    const llg_acov_item_t* item = llg_acov_find(assertion);
+    return item ? item->reset_time1 : 0;
+}
+
+// sampled_domain_prior for a call of an assertion reset at `reset_time1`.
+static const sv4_t* sampled_domain_prior_since(const llg_sampled_domain_t* domain,
+                                               uint64_t ticks, uint64_t reset_time1) {
+    const sv4_t* prior = sampled_domain_prior(domain, ticks);
+    if (!prior || !reset_time1) return prior;
+    size_t index = (size_t)(prior - domain->samples);
+    return domain->times[index] + 1u < reset_time1 ? NULL : prior;
+}
+
 sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks) {
     llg_sampled_domain_t* domain = find_sampled_domain(identity);
     if (!domain) {
@@ -393,6 +412,30 @@ void llg_sampled_domain_past_to(sv4_t* dst, uint64_t identity, uint64_t ticks) {
         return;
     }
     const sv4_t* prior = ticks ? sampled_domain_prior(domain, ticks) : NULL;
+    sv4_copy(dst, prior ? prior : &domain->initial);
+}
+
+sv4_t llg_sampled_domain_past_of(uint64_t identity, uint64_t ticks, uint64_t assertion) {
+    llg_sampled_domain_t* domain = find_sampled_domain(identity);
+    if (!domain) {
+        report_sampled_failure("sampled-value domain is not registered", identity);
+        return sv4_x(1, 0);
+    }
+    const sv4_t* prior =
+        ticks ? sampled_domain_prior_since(domain, ticks, sampled_reset_time1(assertion)) : NULL;
+    return sv4_clone(prior ? prior : &domain->initial);
+}
+
+void llg_sampled_domain_past_of_to(sv4_t* dst, uint64_t identity, uint64_t ticks,
+                                   uint64_t assertion) {
+    llg_sampled_domain_t* domain = find_sampled_domain(identity);
+    if (!domain) {
+        report_sampled_failure("sampled-value domain is not registered", identity);
+        sv4_replace(dst, sv4_x(1, 0));
+        return;
+    }
+    const sv4_t* prior =
+        ticks ? sampled_domain_prior_since(domain, ticks, sampled_reset_time1(assertion)) : NULL;
     sv4_copy(dst, prior ? prior : &domain->initial);
 }
 
@@ -419,7 +462,7 @@ static const sv4_t* sampled_domain_current(llg_sampled_domain_t* domain) {
     return &domain->current;
 }
 
-int llg_sampled_domain_status(uint64_t identity, int kind) {
+static int sampled_domain_status_since(uint64_t identity, int kind, uint64_t reset_time1) {
     llg_sampled_domain_t* domain = find_sampled_domain(identity);
     if (!domain) {
         report_sampled_failure("sampled-value domain is not registered", identity);
@@ -429,7 +472,7 @@ int llg_sampled_domain_status(uint64_t identity, int kind) {
     // the most recent strictly prior tick, or with the initial value at or
     // before the first tick (16.9.3).
     sv4_t current = *sampled_domain_current(domain);
-    const sv4_t* prior = sampled_domain_prior(domain, 1);
+    const sv4_t* prior = sampled_domain_prior_since(domain, 1, reset_time1);
     sv4_t previous = prior ? *prior : domain->initial;
     switch (kind) {
         case 0: return sampled_domain_lsb_one(current) && !sampled_domain_lsb_one(previous);
@@ -444,6 +487,14 @@ int llg_sampled_domain_status(uint64_t identity, int kind) {
             g.finish = 1;
             return 0;
     }
+}
+
+int llg_sampled_domain_status(uint64_t identity, int kind) {
+    return sampled_domain_status_since(identity, kind, 0);
+}
+
+int llg_sampled_domain_status_of(uint64_t identity, int kind, uint64_t assertion) {
+    return sampled_domain_status_since(identity, kind, sampled_reset_time1(assertion));
 }
 
 static void sample_preponed_values(void) {

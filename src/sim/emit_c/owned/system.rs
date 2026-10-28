@@ -53,11 +53,14 @@ impl Frame<'_, '_> {
                     let domain = call
                         .domain
                         .ok_or_else(|| "sampled past call has no domain".to_owned())?;
-                    self.value(
-                        format!("llg_sampled_domain_past({domain}, {}ULL)", call.ticks),
-                        expr.width,
-                        expr.signed,
-                    )
+                    let code = match crate::sim::emit_c::sampled_reset_owner(self.ctx.model, call) {
+                        Some(owner) => format!(
+                            "llg_sampled_domain_past_of({domain}, {}ULL, {owner}ULL)",
+                            call.ticks
+                        ),
+                        None => format!("llg_sampled_domain_past({domain}, {}ULL)", call.ticks),
+                    };
+                    self.value(code, expr.width, expr.signed)
                 }
                 // Global clocking future functions (SV 16.9.4) run while their
                 // assertion evaluates a queued clock event at the next global
@@ -114,13 +117,16 @@ impl Frame<'_, '_> {
                         IrSampledFunc::RealChanged => 5,
                         _ => unreachable!("handled above"),
                     };
-                    self.value(
-                        format!(
-                            "sv4_from_u64(llg_sampled_domain_status({domain}, {status}), 1, 0)"
-                        ),
-                        1,
-                        false,
-                    )
+                    let status_call =
+                        match crate::sim::emit_c::sampled_reset_owner(self.ctx.model, call) {
+                            Some(owner) => {
+                                format!(
+                                    "llg_sampled_domain_status_of({domain}, {status}, {owner}ULL)"
+                                )
+                            }
+                            None => format!("llg_sampled_domain_status({domain}, {status})"),
+                        };
+                    self.value(format!("sv4_from_u64({status_call}, 1, 0)"), 1, false)
                 }
             },
             IrSysFunc::Bits(arg) => {

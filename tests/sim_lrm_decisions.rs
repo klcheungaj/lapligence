@@ -2317,6 +2317,15 @@ fn a17_d7_future_disabled_start() {
 }
 
 #[test]
+fn a17_d8_reset_past_sampling() {
+    run_vpi_decision(
+        "A17-D8_reset_past_sampling",
+        &["task $d8()"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D8_reset_past_sampling.out"),
+    );
+}
+
+#[test]
 fn a17_d2_control_callbacks() {
     run_vpi_decision(
         "A17-D2_control_callbacks",

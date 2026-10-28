@@ -1861,6 +1861,11 @@ struct Codegen<'a> {
     assertion_inferred_origin: Option<NodeId>,
     assertion_inferred_resolved: HashMap<NodeId, SampledClock>,
     assertion_default_disable: Option<Option<NodeId>>,
+    /// The concurrent assertion whose statement is being lowered: its
+    /// sampled value function calls forget the history before a
+    /// `vpiAssertionReset` of it (39.5.2). `None` outside assertions and in
+    /// sequence end points, which no single assertion owns.
+    sampled_reset_owner: Option<u64>,
     /// Lowering code of a checker body where a checker formal stands for
     /// the sampled value of its actual argument (IEEE 1800-2009 17.3):
     /// checker procedures and action blocks, not property expressions or
@@ -2173,6 +2178,7 @@ impl<'a> Codegen<'a> {
             assertion_inferred_origin: None,
             assertion_inferred_resolved: HashMap::new(),
             assertion_default_disable: None,
+            sampled_reset_owner: None,
             checker_sampling: false,
             assertion_local_bindings: None,
             assertion_controls_used: None,

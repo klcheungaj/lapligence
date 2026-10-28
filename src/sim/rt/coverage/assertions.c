@@ -246,6 +246,12 @@ static void llg_acov_record_control(llg_concurrent_assertion_t* assertion, int o
             break;
         case LLG_ACOV_OP_RESET:
             llg_acov_discard_record(assertion);
+            // Reset, unlike kill, also resets the past() sampling the
+            // assertion uses (39.5.2).
+            if (assertion->acov) {
+                assertion->acov->reset_time1 = g.now + 1u;
+                g.assertion_reset_seen = 1;
+            }
             assertion->enabled = !g.assertions_ended;
             assertion->pass_action_off = 0;
             assertion->vacuous_action_off = 0;

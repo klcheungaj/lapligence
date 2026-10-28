@@ -777,6 +777,10 @@ pub struct IrSampledCall {
     pub(in crate::sim) argument: Box<IrExpr>,
     pub(in crate::sim) domain: Option<usize>,
     pub(in crate::sim) ticks: u64,
+    /// The identity of the concurrent assertion whose statement makes the
+    /// call: a `vpiAssertionReset` of it hides the ticks before the reset
+    /// from the call (39.5.2). `None` outside assertions.
+    pub(in crate::sim) reset_owner: Option<u64>,
 }
 
 impl IrSampledCall {
@@ -791,7 +795,13 @@ impl IrSampledCall {
             argument: Box::new(argument),
             domain,
             ticks,
+            reset_owner: None,
         }
+    }
+
+    pub(in crate::sim) fn with_reset_owner(mut self, owner: Option<u64>) -> Self {
+        self.reset_owner = owner;
+        self
     }
 }
 

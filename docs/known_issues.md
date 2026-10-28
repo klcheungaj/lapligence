@@ -2441,8 +2441,6 @@ counterpart, for assertion coverage.
     a step callback could only be a stub. Providing them needs a state
     numbering shared by all engines and a per-thread hook behind the item's
     `watches` gate (no cost without a registration);
-  - `vpiAssertionReset` does not reset the shared `$past` sampling of the
-    assertion's operands;
   - FSM coverage objects (40.5.3 `vpiFsm`, `vpiFsmStates`) and the 40.4 FSM
     pragmas are not recognized.
   An assertion label that is also
