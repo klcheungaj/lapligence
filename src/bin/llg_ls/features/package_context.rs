@@ -1,26 +1,34 @@
-//! Package units for the isolated open-buffer token parse.
+//! Package and definition units for the isolated open-buffer token parse.
 //!
-//! An open buffer is compiled alone, so a package declared in another
-//! admitted project file is unknown to it unless that file joins the parse.
-//! The project compile sees every file: a package is a design-wide name
-//! (IEEE 1800-2009 3.13 b, 26.2), never scoped to a compilation unit. This
+//! An open buffer is compiled alone, so a package or a module, interface,
+//! program, checker or primitive declared in another admitted project file
+//! is unknown to it unless that file joins the parse. The project compile
+//! sees every file: packages and definitions are design-wide names (IEEE
+//! 1800-2009 3.13 a and b, 26.2), never scoped to a compilation unit. This
 //! module selects, per request, the admitted compilation units that declare
-//! the packages the buffer names, transitively through the packages those
-//! units name, so both serving paths resolve the same package items.
+//! the packages and definitions the buffer names, transitively through the
+//! names those units use, so both serving paths resolve the same package
+//! items, instances, interface ports and hierarchical names (`dut.sig`).
 //!
 //! Every package reference is written `name ::` (import and export items,
-//! scoped names; 26.3, 26.6), so one conservative lexical pass per text finds
-//! the candidate names: comments, strings and directives other than
-//! `` `include `` are skipped, `` `include "name" `` operands are followed
-//! through the admitted headers, and the text of macro bodies counts as
-//! written. A spurious name (a class scope, an inactive branch) can only add
-//! a unit to the parse; it never removes one. The facts of every admitted
-//! unit and header are computed once per analysis commit; a request scans
-//! only its own buffer.
+//! scoped names; 26.3, 26.6); a definition is named by a plain identifier
+//! (an instantiation, an interface port type, `virtual ifc`, `bind`). One
+//! conservative lexical pass per text finds the candidate names: comments,
+//! strings and directives other than `` `include `` are skipped,
+//! `` `include "name" `` operands are followed through the admitted headers,
+//! and the text of macro bodies counts as written. A spurious name (a class
+//! scope, an inactive branch, a signal spelled like a module) can only add a
+//! unit to the parse; it never removes one. The facts of every admitted unit
+//! and header are computed once per analysis commit; a request scans only
+//! its own buffer.
+//!
+//! The selected units are library units, so only what the buffer
+//! instantiates is elaborated; a testbench that instantiates the design
+//! elaborates the design's hierarchy, as the project compile does.
 
 use super::*;
 
-/// Package facts of one text from the lexical pass.
+/// Package and definition facts of one text from the lexical pass.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct PackageScan {
     /// Names declared by `package [lifetime] name`.
@@ -29,7 +37,24 @@ pub(crate) struct PackageScan {
     pub references: Vec<String>,
     /// Operands of `` `include "name" `` / `` `include <name> ``.
     pub includes: Vec<String>,
+    /// Names declared by a `module`, `macromodule`, `interface`, `program`,
+    /// `checker` or `primitive` header (`virtual interface` and `extern`
+    /// prototypes declare nothing).
+    pub definitions: Vec<String>,
+    /// Identifiers that name a definition some admitted unit declares
+    /// ([`definition_uses`]); empty until a [`PackageContext`] fills it.
+    pub uses: Vec<String>,
 }
+
+/// Header words that declare a definition (A.1.2, A.1.3, A.5.1; 17.2).
+const DEFINITION_KEYWORDS: &[&str] = &[
+    "module",
+    "macromodule",
+    "interface",
+    "program",
+    "checker",
+    "primitive",
+];
 
 #[derive(Debug, PartialEq, Eq)]
 enum Lexeme<'a> {
@@ -167,27 +192,44 @@ fn push_unique(names: &mut Vec<String>, name: &str) {
     }
 }
 
-/// Scan one text for package declarations, `name ::` references and
-/// include operands.
+/// Scan one text for package and definition declarations, `name ::`
+/// references and include operands.
 pub(crate) fn scan_packages(text: &str) -> PackageScan {
     let mut declares = HashSet::new();
     let mut references = HashSet::new();
     let mut includes = HashSet::new();
+    let mut definitions = HashSet::new();
     // The identifier just before the current lexeme, and how far a
-    // `package [lifetime] name` header has been read.
+    // `package [lifetime] name` or definition header has been read.
     let mut previous: Option<&str> = None;
-    let mut package_header = PackageHeader::None;
+    let mut package_header = Header::None;
+    let mut definition_header = Header::None;
     for lexeme in (Lexemes { text, at: 0 }) {
         package_header = match (package_header, &lexeme) {
-            (_, Lexeme::Identifier("package")) => PackageHeader::Keyword,
-            (PackageHeader::Keyword, Lexeme::Identifier("automatic" | "static")) => {
-                PackageHeader::Lifetime
-            }
-            (PackageHeader::Keyword | PackageHeader::Lifetime, Lexeme::Identifier(name)) => {
+            (_, Lexeme::Identifier("package")) => Header::Keyword,
+            (Header::Keyword, Lexeme::Identifier("automatic" | "static")) => Header::Lifetime,
+            (Header::Keyword | Header::Lifetime, Lexeme::Identifier(name)) => {
                 declares.insert(*name);
-                PackageHeader::None
+                Header::None
             }
-            _ => PackageHeader::None,
+            _ => Header::None,
+        };
+        definition_header = match (definition_header, &lexeme) {
+            // `virtual interface ifc` names an interface (25.9) and an
+            // `extern module` prototype (23.2.1) declares none.
+            (_, Lexeme::Identifier(word)) if DEFINITION_KEYWORDS.contains(word) => {
+                if matches!(previous, Some("virtual" | "extern")) {
+                    Header::None
+                } else {
+                    Header::Keyword
+                }
+            }
+            (Header::Keyword, Lexeme::Identifier("automatic" | "static")) => Header::Lifetime,
+            (Header::Keyword | Header::Lifetime, Lexeme::Identifier(name)) => {
+                definitions.insert(*name);
+                Header::None
+            }
+            _ => Header::None,
         };
         match lexeme {
             Lexeme::DoubleColon => {
@@ -205,39 +247,65 @@ pub(crate) fn scan_packages(text: &str) -> PackageScan {
             _ => None,
         };
     }
-    let sorted = |names: HashSet<&str>| {
-        let mut names: Vec<String> = names.into_iter().map(str::to_owned).collect();
-        names.sort_unstable();
-        names
-    };
     PackageScan {
-        declares: sorted(declares),
-        references: sorted(references),
-        includes: sorted(includes),
+        declares: sorted_names(declares),
+        references: sorted_names(references),
+        includes: sorted_names(includes),
+        definitions: sorted_names(definitions),
+        uses: Vec::new(),
     }
 }
 
+fn sorted_names(names: HashSet<&str>) -> Vec<String> {
+    let mut names: Vec<String> = names.into_iter().map(str::to_owned).collect();
+    names.sort_unstable();
+    names
+}
+
+/// The identifiers of `text` that name one of the `known` definitions, from
+/// the same lexical pass as [`scan_packages`]: every identifier counts, so a
+/// signal spelled like a module only adds that module's unit.
+fn definition_uses(text: &str, known: &HashMap<String, Vec<usize>>) -> Vec<String> {
+    if known.is_empty() {
+        return Vec::new();
+    }
+    let mut uses = HashSet::new();
+    for lexeme in (Lexemes { text, at: 0 }) {
+        if let Lexeme::Identifier(name) = lexeme {
+            if known.contains_key(name) {
+                uses.insert(name);
+            }
+        }
+    }
+    sorted_names(uses)
+}
+
 #[derive(Debug, Clone, Copy)]
-enum PackageHeader {
+enum Header {
     None,
     Keyword,
     Lifetime,
 }
 
-/// One admitted compilation unit that declares at least one package, with
-/// the facts of the headers it includes folded in.
+/// One admitted compilation unit that declares at least one package or
+/// definition, with the facts of the headers it includes folded in.
 #[derive(Debug)]
-struct PackageUnit {
+struct ContextUnit {
     name: String,
     text: Arc<String>,
+    /// Packages the unit names (`name ::`).
     references: Vec<String>,
+    /// Definitions of other units the unit names ([`definition_uses`]).
+    uses: Vec<String>,
 }
 
-/// Package-declaring units and header facts of one admitted project compile.
+/// Package- and definition-declaring units and header facts of one admitted
+/// project compile.
 #[derive(Debug, Default)]
 pub struct PackageContext {
-    units: Vec<PackageUnit>,
+    units: Vec<ContextUnit>,
     by_package: HashMap<String, Vec<usize>>,
+    by_definition: HashMap<String, Vec<usize>>,
     headers: Vec<(String, PackageScan)>,
 }
 
@@ -256,9 +324,10 @@ fn include_names(path: &str, include: &str) -> bool {
 
 impl PackageContext {
     /// Scan the admitted compilation units and include-only headers of one
-    /// project compile. Only units that declare a package (directly or in a
-    /// header they include) are kept; their texts are the shared admission
-    /// snapshots.
+    /// project compile. Only units that declare a package or a definition
+    /// (directly or in a header they include) are kept; their texts are the
+    /// shared admission snapshots. Each unit and header keeps only the
+    /// identifiers that name a definition some kept unit declares.
     pub fn new(
         units: impl IntoIterator<Item = (String, Arc<String>)>,
         headers: &[(String, Arc<String>)],
@@ -270,12 +339,13 @@ impl PackageContext {
                 .collect(),
             ..PackageContext::default()
         };
+        let mut kept = Vec::new();
         for (name, text) in units {
             let scan = context.with_headers(scan_packages(&text));
-            if scan.declares.is_empty() {
+            if scan.declares.is_empty() && scan.definitions.is_empty() {
                 continue;
             }
-            let index = context.units.len();
+            let index = kept.len();
             for package in &scan.declares {
                 context
                     .by_package
@@ -283,19 +353,40 @@ impl PackageContext {
                     .or_default()
                     .push(index);
             }
-            context.units.push(PackageUnit {
+            for definition in &scan.definitions {
+                context
+                    .by_definition
+                    .entry(definition.clone())
+                    .or_default()
+                    .push(index);
+            }
+            kept.push((name, text, scan));
+        }
+        // Definition uses need every declaration first.
+        for (header, (_, text)) in context.headers.iter_mut().zip(headers) {
+            header.1.uses = definition_uses(text, &context.by_definition);
+        }
+        for (name, text, scan) in kept {
+            let mut uses = definition_uses(&text, &context.by_definition);
+            for header in context.included_headers(&scan.includes) {
+                for definition in &context.headers[header].1.uses {
+                    push_unique(&mut uses, definition);
+                }
+            }
+            context.units.push(ContextUnit {
                 name,
                 text,
                 references: scan.references,
+                uses,
             });
         }
         context
     }
 
-    /// Whether `other` holds the same package-declaring units, in the same
-    /// order and with the same texts, so every selection from either is the
-    /// same. Header facts derive from the include buffers, which
-    /// [`IncludeContext::same_inputs`] compares.
+    /// Whether `other` holds the same package- and definition-declaring
+    /// units, in the same order and with the same texts, so every selection
+    /// from either is the same. Header facts derive from the include
+    /// buffers, which [`IncludeContext::same_inputs`] compares.
     pub fn same_units(&self, other: &PackageContext) -> bool {
         self.units.len() == other.units.len()
             && self.units.iter().zip(&other.units).all(|(a, b)| {
@@ -303,53 +394,98 @@ impl PackageContext {
             })
     }
 
-    /// `scan` with the declarations and references of every admitted header
-    /// it includes, transitively.
-    fn with_headers(&self, mut scan: PackageScan) -> PackageScan {
+    /// The indices of the admitted headers `includes` names, transitively.
+    fn included_headers(&self, includes: &[String]) -> Vec<usize> {
         let mut visited = vec![false; self.headers.len()];
-        let mut pending = std::mem::take(&mut scan.includes);
+        let mut found = Vec::new();
+        let mut pending = includes.to_vec();
         while let Some(include) = pending.pop() {
             for (index, (path, header)) in self.headers.iter().enumerate() {
                 if visited[index] || !include_names(path, &include) {
                     continue;
                 }
                 visited[index] = true;
-                for name in &header.declares {
-                    push_unique(&mut scan.declares, name);
-                }
-                for name in &header.references {
-                    push_unique(&mut scan.references, name);
-                }
+                found.push(index);
                 pending.extend(header.includes.iter().cloned());
+            }
+        }
+        found
+    }
+
+    /// `scan` with the declarations, references and definition uses of
+    /// every admitted header it includes, transitively.
+    fn with_headers(&self, mut scan: PackageScan) -> PackageScan {
+        for index in self.included_headers(&scan.includes) {
+            let header = &self.headers[index].1;
+            for name in &header.declares {
+                push_unique(&mut scan.declares, name);
+            }
+            for name in &header.references {
+                push_unique(&mut scan.references, name);
+            }
+            for name in &header.definitions {
+                push_unique(&mut scan.definitions, name);
+            }
+            for name in &header.uses {
+                push_unique(&mut scan.uses, name);
             }
         }
         scan
     }
 
-    /// The package-declaring units an isolated parse of `name` (with `text`)
-    /// needs, in admission order: the declarers of every package the buffer
-    /// names, transitively. The buffer's own unit and the packages it
-    /// declares itself are never added, so its unsaved text stays the only
-    /// version of them.
+    /// The units an isolated parse of `name` (with `text`) needs, in
+    /// admission order: the declarers of every package and definition the
+    /// buffer names, transitively through the names the selected units use.
+    /// The buffer's own unit and the packages and definitions it declares
+    /// itself are never added, so its unsaved text stays the only version of
+    /// them.
     pub fn sources_for(&self, name: &str, text: &str) -> Vec<compile::OwnedSource> {
         if self.units.is_empty() {
             return Vec::new();
         }
-        let scan = self.with_headers(scan_packages(text));
+        let mut scan = scan_packages(text);
+        scan.uses = definition_uses(text, &self.by_definition);
+        let scan = self.with_headers(scan);
         let mut selected = vec![false; self.units.len()];
-        let mut seen: HashSet<&str> = scan.declares.iter().map(String::as_str).collect();
-        let mut pending: Vec<&str> = scan.references.iter().map(String::as_str).collect();
-        while let Some(package) = pending.pop() {
-            if !seen.insert(package) {
+        let mut seen_packages: HashSet<&str> = scan.declares.iter().map(String::as_str).collect();
+        let mut seen_definitions: HashSet<&str> =
+            scan.definitions.iter().map(String::as_str).collect();
+        // `(name, names a definition)`.
+        let mut pending: Vec<(&str, bool)> = scan
+            .references
+            .iter()
+            .map(|package| (package.as_str(), false))
+            .chain(
+                scan.uses
+                    .iter()
+                    .map(|definition| (definition.as_str(), true)),
+            )
+            .collect();
+        while let Some((wanted, definition)) = pending.pop() {
+            let (seen, declarers) = if definition {
+                (&mut seen_definitions, &self.by_definition)
+            } else {
+                (&mut seen_packages, &self.by_package)
+            };
+            if !seen.insert(wanted) {
                 continue;
             }
-            for &index in self.by_package.get(package).into_iter().flatten() {
+            for &index in declarers.get(wanted).into_iter().flatten() {
                 let unit = &self.units[index];
                 if selected[index] || unit.name == name {
                     continue;
                 }
                 selected[index] = true;
-                pending.extend(unit.references.iter().map(String::as_str));
+                pending.extend(
+                    unit.references
+                        .iter()
+                        .map(|package| (package.as_str(), false)),
+                );
+                pending.extend(
+                    unit.uses
+                        .iter()
+                        .map(|definition| (definition.as_str(), true)),
+                );
             }
         }
         self.units
@@ -473,5 +609,74 @@ mod tests {
         );
         assert!(include_names("/ws/inc/uses.svh", "./uses.svh"));
         assert!(!include_names("/ws/inc/xuses.svh", "uses.svh"));
+    }
+
+    #[test]
+    fn scan_finds_definition_headers_but_not_virtual_interfaces_or_prototypes() {
+        let scan = scan_packages(
+            "module automatic m_a; endmodule\nmacromodule m_b; endmodule\n\
+             interface i_a(input logic c); endinterface\nprogram static p_a; endprogram\n\
+             checker c_a; endchecker\nprimitive u_a(o, i); endprimitive\n\
+             module m_c; virtual interface i_x vif; virtual i_y v2; endmodule\n\
+             extern module m_x(input a);\n// module m_comment;\n",
+        );
+        assert_eq!(
+            names(&scan.definitions),
+            ["c_a", "i_a", "m_a", "m_b", "m_c", "p_a", "u_a"]
+        );
+        assert!(scan.declares.is_empty());
+    }
+
+    #[test]
+    fn sources_for_selects_definition_declarers_transitively() {
+        let headers = [unit("/ws/inc/body.svh", "leaf_m u_leaf();\n")];
+        let context = PackageContext::new(
+            [
+                unit("/ws/dut.sv", "module dut_m; mid_m u_mid(); endmodule\n"),
+                unit(
+                    "/ws/mid.sv",
+                    "module mid_m;\n`include \"inc/body.svh\"\nendmodule\n",
+                ),
+                unit("/ws/leaf.sv", "module leaf_m; import l_pkg::*; endmodule\n"),
+                unit("/ws/l_pkg.sv", "package l_pkg; endpackage\n"),
+                unit("/ws/ifc.sv", "interface bus_if; logic req; endinterface\n"),
+                unit("/ws/other.sv", "module other_m; endmodule\n"),
+                unit("/ws/tb.sv", "module tb; dut_m dut(); endmodule\n"),
+            ],
+            &headers,
+        );
+        // An instance pulls in its definition and, through the included
+        // header and the package import, everything below it.
+        assert_eq!(
+            selected(
+                &context,
+                "/ws/tb.sv",
+                "module tb; dut_m dut(); initial $display(dut.u_mid.u_leaf); endmodule"
+            ),
+            ["/ws/dut.sv", "/ws/mid.sv", "/ws/leaf.sv", "/ws/l_pkg.sv"]
+        );
+        // Interface port types and `virtual` interface types name the
+        // interface; unrelated definitions stay out.
+        assert_eq!(
+            selected(
+                &context,
+                "/ws/top.sv",
+                "module top(bus_if.mp b); virtual bus_if v; endmodule"
+            ),
+            ["/ws/ifc.sv"]
+        );
+        // A definition the buffer declares itself is never taken from the
+        // committed units, and the buffer's own unit is never added.
+        assert!(selected(
+            &context,
+            "/ws/x.sv",
+            "module dut_m; endmodule\nmodule t; dut_m d(); endmodule"
+        )
+        .is_empty());
+        assert!(
+            selected(&context, "/ws/dut.sv", "module tb2; dut_m d(); endmodule")
+                .iter()
+                .all(|n| n != "/ws/dut.sv")
+        );
     }
 }

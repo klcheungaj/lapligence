@@ -85,18 +85,18 @@ pub struct Analysis {
     /// so macro-usage hover stays a pure read over committed data.  Empty for
     /// hand-built analyses.
     pub(super) macros: macros::MacroTable,
-    /// Include search prefixes, include-only buffers and package-declaring
-    /// units of the admitted project compile, shared with the isolated
-    /// open-buffer token parse so an open buffer sees the headers (and their
-    /// macros) and the packages its project compile saw. Empty for hand-built
-    /// and preflight-failed analyses.
+    /// Include search prefixes, include-only buffers and package- and
+    /// definition-declaring units of the admitted project compile, shared
+    /// with the isolated open-buffer token parse so an open buffer sees the
+    /// headers (and their macros), packages and definitions its project
+    /// compile saw. Empty for hand-built and preflight-failed analyses.
     pub(crate) include_context: Arc<IncludeContext>,
 }
 
 /// The context one admitted project compile gives an isolated open-buffer
 /// parse: its logical include search prefixes, in order, the admitted
 /// include-only buffers by name and the compilation units that declare
-/// packages ([`PackageContext`]). Texts are the admission snapshots
+/// packages or definitions ([`PackageContext`]). Texts are the admission snapshots
 /// themselves (shared, not copied), so retaining them costs no more than the
 /// committed analysis already pins.
 #[derive(Debug, Default)]

@@ -169,9 +169,10 @@ pub(super) fn semantic_file_matches(left: &str, right: &str) -> bool {
 /// with the configured defines and the include context of the root's
 /// committed project compile, so macros from the buffer itself, its admitted
 /// headers and the configuration expand exactly as in the project stream.
-/// The committed units that declare the packages the buffer names join the
-/// parse as library units ([`PackageContext::sources_for`]), so imported and
-/// scope-qualified package items resolve as in the project stream.
+/// The committed units that declare the packages and definitions the buffer
+/// names join the parse as library units ([`PackageContext::sources_for`]),
+/// so imported and scope-qualified package items, instances, interface ports
+/// and hierarchical names resolve as in the project stream.
 /// Frontend diagnostics do not make this return an error and do not empty
 /// the stream: the tokens the frontend recovered are encoded (missing and
 /// skipped tokens are never captured), so a syntax error or an unknown macro

@@ -2536,11 +2536,18 @@ stock VS Code themes except where noted.
   are read-only.
 - Subroutine arguments are `variable` and class methods `function` (clangd:
   `parameter`, `method`; same Dark+ colors).
-- Modport, clocking-block, covergroup, sequence, property and constraint
-  names are `variable` at their declarations, and references to sequences
-  and properties get no token (they are unbound); a covergroup is a type
-  (`class`, `#4EC9B0`) and a sequence or property is callable (`function`,
-  `#DCDCAA`) in the analogue model.
+- Modport, clocking-block, covergroup and constraint names are `variable`
+  at their declarations; a covergroup is a type (`class`, `#4EC9B0`) in the
+  analogue model. (Sequence, property and let names became `function` and
+  their instances are bound since LS-TOKENS-13, ST-71.)
+- At a let instance (`l(a, b)`, 11.13) neither the let name nor the names
+  of its actual arguments get a token: Slang expands the let to its body
+  expression and keeps no syntax of the call (the actuals carry the syntax
+  of the formal references). Sequence and property instances are bound.
+- In a sequence or property declaration that no assertion instantiates,
+  member names after a select (`f` in `s.f`) and the local variables the
+  declaration declares stay unbound: Slang creates neither without an
+  instance. Instantiated declarations bind them through the instance.
 - In the project stream (found by LS-TOK-10; the open-buffer stream was not
   checked), a use of a type parameter inside a module whose instance
   overrides it (`#(.T(logic [1:0]))`) is `type`, not `typeParameter` (same
@@ -2560,7 +2567,7 @@ callable distinction.
 
 ### Intended direction
 
-Carry the bound semantic detail (port direction, `FormalArgument`, class-scoped subroutine, covergroup, sequence, property)
+Carry the bound semantic detail (port direction, `FormalArgument`, class-scoped subroutine, covergroup)
 into the token kind, bind sequence and property references, and keep the
 symbol index and dump kind names unchanged.
 
@@ -2569,11 +2576,13 @@ symbol index and dump kind names unchanged.
 `llg_ls --dump-tokens` on a module with an output port, a class with a
 method, and a named sequence referenced by an assertion.
 
-## Open-buffer token parse sees other files through packages only (llg_ls)
+## Open-buffer token parse sees other files through packages and definitions only (llg_ls)
 
-**Status:** partially fixed by LS-PKG and LS-PKG-2. Package items used through
-any import form or `pkg::name` resolve in both serving paths, import item names
-are references, and a stream served before a context change is refreshed
+**Status:** partially fixed by LS-PKG, LS-PKG-2 and LS-TOKENS-13. Package items
+used through any import form or `pkg::name` resolve in both serving paths,
+import item names are references, definitions (modules, interfaces, programs,
+checkers, primitives) the buffer names join the parse with their dependencies
+(ST-75), and a stream served before a context change is refreshed
 ([token requirements](semantic_tokens.md));
 the gaps below remain in the open-buffer path only.
 
@@ -2583,10 +2592,11 @@ the gaps below remain in the open-buffer path only.
   see (a `[compile] defines` macro or a header the buffer does not include
   expanding to `pkg::`, a package name built by token pasting) stays unknown
   in the open-buffer stream; its items get no token there.
-- An interface, or another non-package definition, declared only in another
-  project file is unknown in the open-buffer stream: an interface port type
-  `ifc_x bus` gets no token (the project stream has `interface`). Unknown
-  module instances are black boxes in both paths.
+- A definition the buffer names only through text the lexical scan cannot
+  see (a `[compile] defines` macro or a header the buffer does not include
+  expanding to the name, a name built by token pasting) stays unknown in the
+  open-buffer stream. Unknown module instances are black boxes in both
+  paths.
 - A client without `workspace.semanticTokens.refreshSupport` keeps a stream
   served before a context change (the first analysis, a package file edit)
   until its next request; clients with it are refreshed (ST-50).
@@ -2595,9 +2605,10 @@ the gaps below remain in the open-buffer path only.
 
 The isolated parse (`features/requests.rs`) compiles the buffer with the
 committed include context plus the units `PackageContext::sources_for`
-(`features/package_context.rs`) selects by a lexical `name ::` scan of the
-buffer, the headers it includes and the selected units; other definitions
-are not selected.
+(`features/package_context.rs`) selects by a lexical scan (`name ::` for
+packages, any identifier spelling a declared definition) of the buffer, the
+headers it includes and the selected units; names the scan cannot see are
+not selected.
 
 ### Intended direction
 
@@ -2608,5 +2619,6 @@ buffer's context.
 
 ### Reproduce
 
-Open a file with `module top(ifc_x bus); endmodule` where `ifc_x` is declared
-in another project file and request `textDocument/semanticTokens/full`.
+Open a file with `` module top; `MK_INST endmodule `` where a `[compile]
+defines` entry `MK_INST=ifc_x bus();` names an interface declared in another
+project file and request `textDocument/semanticTokens/full`.

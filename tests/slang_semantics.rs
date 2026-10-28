@@ -13,6 +13,9 @@ mod fixed_reductions;
 #[path = "slang_semantics/foreach.rs"]
 mod foreach;
 
+#[path = "slang_semantics/assertion_names.rs"]
+mod assertion_names;
+
 use llg::core::db::{EventTriggerTiming, NodeKind, StmtKind};
 use llg::ffi::slang::{
     self, CompileOptions, CompileRequest, ConstantValue, SemanticEdge, SemanticEdgeRole,

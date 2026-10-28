@@ -1222,3 +1222,255 @@ fn st_60_and_st_67_macro_names_and_assertion_words_in_both_serving_paths() {
     assert_eq!(streams[0], streams[1], "ST-24: serving paths differ");
     client.shutdown();
 }
+
+const ASSERTION_NAMES_SOURCE: &str = include_str!("../fixtures/semantic_tokens/assertion_names.sv");
+/// The interface and module `assertion_names.sv` instantiates, declared in
+/// another project file (ST-75).
+const ASSERTION_NAMES_DUT: &str =
+    include_str!("../fixtures/semantic_tokens/assertion_names_dut.sv");
+
+const VAR: &[&str] = &[];
+const PORT: (&str, &[&str]) = ("parameter", RO);
+
+const ASSERTION_NAME_CHECKS: &[Check] = &[
+    // ST-70: every name of a concurrent assertion, hierarchical steps too.
+    (
+        "ST-70",
+        "(posedge tck) dut.bridge_mode &&",
+        0,
+        9,
+        PORT.0,
+        PORT.1,
+    ),
+    ("ST-70", "dut.bridge_mode && dut", 0, 0, "variable", VAR),
+    ("ST-70", "dut.bridge_mode && dut", 0, 4, "variable", VAR),
+    ("ST-70", "dut.intreg_flash_select==0", 0, 0, "variable", VAR),
+    ("ST-70", "dut.intreg_flash_select==0", 0, 4, "variable", VAR),
+    ("ST-70", "flash1_csn);", 0, 0, PORT.0, PORT.1),
+    ("ST-70", "disable iff (!rst_n)", 0, 14, PORT.0, PORT.1),
+    ("ST-70", "$rose(y)", 0, 6, "variable", VAR),
+    ("ST-70", "$past(a)", 0, 6, PORT.0, PORT.1),
+    ("ST-70", "(@(posedge tck) a |-> b);", 0, 11, PORT.0, PORT.1),
+    ("ST-70", "(@(posedge tck) a |-> b);", 0, 16, PORT.0, PORT.1),
+    ("ST-70", "(@(posedge tck) a |-> b);", 0, 22, PORT.0, PORT.1),
+    ("ST-70", "assert (a && b)", 0, 8, PORT.0, PORT.1),
+    ("ST-70", "assert (a && b)", 0, 13, PORT.0, PORT.1),
+    ("ST-70", "(@(posedge tck) a);", 0, 16, PORT.0, PORT.1),
+    // ST-71: sequence, property and let names, declared and instantiated.
+    ("ST-71", "an_seq(x", 0, 0, "function", DECL),
+    ("ST-71", "an_prop(y);", 0, 0, "function", DECL),
+    ("ST-71", "an_unused(z)", 0, 0, "function", DECL),
+    ("ST-71", "an_and(l, r)", 0, 0, "function", DECL),
+    ("ST-71", "an_seq(y)", 0, 0, "function", NONE),
+    ("ST-71", "an_prop(a)", 0, 0, "function", NONE),
+    ("ST-71", "an_seq(b, 2)", 0, 0, "function", NONE),
+    // ST-72: formals bind to the formal; actuals keep their own types; the
+    // body of a declaration no assertion uses is bound too.
+    ("ST-72", "an_seq(x", 0, 7, "variable", DECL),
+    ("ST-72", "x ##n b", 0, 0, "variable", VAR),
+    ("ST-72", "x ##n b", 0, 4, "variable", VAR),
+    ("ST-72", "x ##n b", 0, 6, PORT.0, PORT.1),
+    ("ST-72", "an_seq(y)", 0, 7, "variable", VAR),
+    ("ST-72", "an_prop(a)", 0, 8, PORT.0, PORT.1),
+    ("ST-72", "an_seq(b, 2)", 0, 7, PORT.0, PORT.1),
+    ("ST-72", "z |-> dut.bridge_mode", 0, 0, "variable", VAR),
+    ("ST-72", "z |-> dut.bridge_mode", 0, 6, "variable", VAR),
+    ("ST-72", "z |-> dut.bridge_mode", 0, 10, "variable", VAR),
+    ("ST-72", "l && r", 0, 0, "variable", VAR),
+    ("ST-72", "l && r", 0, 5, "variable", VAR),
+    // ST-73: event controls.
+    ("ST-73", "@(wire1) q", 0, 2, PORT.0, PORT.1),
+    ("ST-73", "@(a or b)", 0, 2, PORT.0, PORT.1),
+    ("ST-73", "@(a or b)", 0, 7, PORT.0, PORT.1),
+    (
+        "ST-73",
+        "@(posedge tck, negedge rst_n)",
+        0,
+        10,
+        PORT.0,
+        PORT.1,
+    ),
+    (
+        "ST-73",
+        "@(posedge tck, negedge rst_n)",
+        0,
+        23,
+        PORT.0,
+        PORT.1,
+    ),
+    ("ST-73", "@* q", 0, 3, "variable", VAR),
+    ("ST-73", "@(*) q", 0, 5, "variable", VAR),
+    ("ST-73", "@(posedge tck iff rst_n)", 0, 18, PORT.0, PORT.1),
+    (
+        "ST-73",
+        "rst_n) q <= dut.bridge_mode",
+        0,
+        12,
+        "variable",
+        VAR,
+    ),
+    (
+        "ST-73",
+        "rst_n) q <= dut.bridge_mode",
+        0,
+        16,
+        "variable",
+        VAR,
+    ),
+    ("ST-73", "@(bus.req)", 0, 2, "variable", VAR),
+    ("ST-73", "@(bus.req)", 0, 6, "variable", VAR),
+    ("ST-73", "@(posedge tck);", 0, 10, PORT.0, PORT.1),
+    ("ST-73", "wait (a)", 0, 6, PORT.0, PORT.1),
+    ("ST-73", "@(dut.bridge_mode);", 0, 2, "variable", VAR),
+    ("ST-73", "@(dut.bridge_mode);", 0, 6, "variable", VAR),
+    ("ST-73", "@(posedge tck iff g)", 0, 10, PORT.0, PORT.1),
+    ("ST-73", "@(posedge tck iff g)", 0, 18, "variable", VAR),
+    // ST-75: definitions from another project file.
+    ("ST-75", "an_bus_if bus", 0, 0, "interface", NONE),
+    ("ST-75", "an_dut dut", 0, 0, "class", NONE),
+    ("ST-75", "clk(tck)", 0, 0, "function", &["connectionLabel"]),
+];
+
+/// Names in event controls and assertions that one unresolved name does not
+/// take down (ST-74).
+const ASSERTION_ERRORS_SOURCE: &str =
+    "module an_err(input logic tck, input logic a, input logic b);\n\
+  logic q;\n\
+  always @(a or ghost_one) q = a;\n\
+  always @(posedge tck, negedge ghost_two) q <= b;\n\
+  initial @(posedge tck iff ghost_three) q = b;\n\
+  assert property (@(posedge tck) ghost_four && a |-> b);\n\
+endmodule\n";
+
+const ASSERTION_ERROR_CHECKS: &[Check] = &[
+    ("ST-74", "@(a or ghost_one)", 0, 2, PORT.0, PORT.1),
+    (
+        "ST-74",
+        "@(posedge tck, negedge ghost_two)",
+        0,
+        10,
+        PORT.0,
+        PORT.1,
+    ),
+    (
+        "ST-74",
+        "@(posedge tck iff ghost_three)",
+        0,
+        10,
+        PORT.0,
+        PORT.1,
+    ),
+    ("ST-74", "ghost_four && a |-> b", 0, 14, PORT.0, PORT.1),
+    ("ST-74", "ghost_four && a |-> b", 0, 20, PORT.0, PORT.1),
+];
+
+/// ST-70 to ST-75 in both serving paths: names in assertions, sequence,
+/// property and let declarations and event controls keep their types,
+/// definition requests reach the declarations (formals reach the formal, a
+/// hierarchical name the signal in the other file), and an unresolved name
+/// takes no other name of its event control or assertion with it.
+#[test]
+fn st_70_to_st_75_assertion_and_event_control_names_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("st_assertion_names.sv");
+    let dut_path = root.join("st_assertion_names_dut.sv");
+    // The unresolved names stay in a root of their own.
+    let errors_root = fixture.root("root-b");
+    let errors_path = errors_root.join("st_assertion_errors.sv");
+    fs::write(&path, ASSERTION_NAMES_SOURCE).expect("write assertion name fixture");
+    fs::write(&dut_path, ASSERTION_NAMES_DUT).expect("write assertion name definitions");
+    fs::write(&errors_path, ASSERTION_ERRORS_SOURCE).expect("write assertion error fixture");
+    let uri = file_uri(&path);
+    let dut_uri = file_uri(&dut_path);
+    let errors_uri = file_uri(&errors_path);
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(
+            &[("root-a", &root), ("root-b", &errors_root)],
+            default_init_options(),
+        )
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+    wait_for_diagnostics(&mut client, &errors_uri, |_| true);
+    let mut streams = Vec::new();
+    for opened in [false, true] {
+        if opened {
+            client
+                .open(&path, ASSERTION_NAMES_SOURCE)
+                .expect("open assertion name buffer");
+            client
+                .open(&errors_path, ASSERTION_ERRORS_SOURCE)
+                .expect("open assertion error buffer");
+        }
+        let label = if opened { "open buffer" } else { "project" };
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("assertion name semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        for check in ASSERTION_NAME_CHECKS {
+            assert_check(&rows, ASSERTION_NAMES_SOURCE, check, label);
+        }
+        streams.push(result["data"].clone());
+        for (needle, occurrence, offset, target, declaration) in [
+            ("x ##n b", 0, 0, &uri, "x, int n"),
+            ("an_seq(y)", 0, 7, &uri, "y);"),
+            ("an_seq(b, 2)", 0, 0, &uri, "an_seq(x"),
+            ("an_prop(a)", 0, 0, &uri, "an_prop(y);"),
+            ("dut.bridge_mode && dut", 0, 4, &dut_uri, "bridge_mode;"),
+            ("@(bus.req)", 0, 6, &dut_uri, "req;"),
+        ] {
+            let (line, col) = position_of(ASSERTION_NAMES_SOURCE, needle, occurrence);
+            let response = client
+                .request(
+                    "textDocument/definition",
+                    json!({
+                        "textDocument": { "uri": uri },
+                        "position": { "line": line, "character": col + offset }
+                    }),
+                )
+                .expect("assertion name definition response");
+            let what = format!("ST-70..75 {label} {needle:?}+{offset}");
+            let (found, start) = single_location(&response, &what);
+            let text = if target == &uri {
+                ASSERTION_NAMES_SOURCE
+            } else {
+                ASSERTION_NAMES_DUT
+            };
+            let expected = position_of(text, declaration, 0);
+            assert_eq!(&found, target, "{what}");
+            assert_eq!(
+                (start["line"].as_u64(), start["character"].as_u64()),
+                (Some(expected.0), Some(expected.1)),
+                "{what}: {response}"
+            );
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": errors_uri } }),
+            )
+            .expect("assertion error semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        for check in ASSERTION_ERROR_CHECKS {
+            assert_check(&rows, ASSERTION_ERRORS_SOURCE, check, label);
+        }
+        for ghost in ["ghost_one", "ghost_two", "ghost_three", "ghost_four"] {
+            let (line, col) = position_of(ASSERTION_ERRORS_SOURCE, ghost, 0);
+            assert!(
+                !rows
+                    .iter()
+                    .any(|row| row.line == line && row.character == col),
+                "ST-74 {label}: unresolved {ghost} has a token"
+            );
+        }
+    }
+    assert_eq!(streams[0], streams[1], "ST-24: serving paths differ");
+    client.shutdown();
+}

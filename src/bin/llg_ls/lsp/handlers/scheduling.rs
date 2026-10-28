@@ -1260,7 +1260,8 @@ impl Backend {
             // Every admitted include (a unit that another unit includes as
             // well) with the compile's own search prefixes: the isolated
             // open-buffer token parse resolves the same headers from them,
-            // and the same packages from the units that declare them.
+            // and the same packages and definitions from the units that
+            // declare them.
             let shared_text = |path: &PathBuf| {
                 let text = input_snapshots.shared(path)?;
                 Some((path.to_string_lossy().into_owned(), Arc::clone(text)))

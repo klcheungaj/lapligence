@@ -2530,6 +2530,9 @@ public:
         capture.lexicalBinding(*body, id, LLG_SLANG_LEXICAL_ROLE_DECLARATION,
                                LLG_SLANG_LEXICAL_UNKNOWN, true);
     }
+    if constexpr (std::same_as<T, SequenceSymbol> || std::same_as<T, PropertySymbol> ||
+                  std::same_as<T, LetDeclSymbol>)
+      bindAssertionDeclarationNames(symbol, symbol);
     if constexpr (std::derived_from<T, ValueSymbol>) {
       result.type_id = capture.type(symbol.getType());
       capture.typedefEdge(id, symbol.getType());
@@ -3776,6 +3779,7 @@ public:
              std::derived_from<T, Pattern>)
   void handle(const T& node) {
     if (capture.declarationOnly) {
+      bindInvalidChildNames(node);
       visitDefault(node);
       return;
     }
@@ -3783,6 +3787,7 @@ public:
     attach(id);
     if (!markVisited(id))
       return;
+    bindInvalidChildNames(node);
     auto& result = capture.output.semantic_nodes[static_cast<size_t>(id)];
     if constexpr (std::derived_from<T, TimingControl>) {
       result.kind = LLG_SLANG_SEMANTIC_TIMING_CONTROL;
@@ -4150,6 +4155,20 @@ private:
     }
     else if constexpr (std::same_as<T, HierarchicalValueExpression>) {
       bindHierarchicalPath(*expression.syntax, expression.ref);
+    }
+    else if constexpr (std::same_as<T, AssertionInstanceExpression>) {
+      // A sequence, property or let instance (`p(a)`, `s`; IEEE 1800-2009
+      // 16.8, 16.13, 11.13) names its declaration; the node spans the call.
+      const syntax::SyntaxNode* name = expression.syntax;
+      if (name->kind == syntax::SyntaxKind::InvocationExpression)
+        name = name->template as<syntax::InvocationExpressionSyntax>().left;
+      const auto token = name->getLastToken();
+      if (!expression.symbol.name.empty() &&
+          token.valueText() == expression.symbol.name) {
+        capture.lexicalBinding(token, lexicalTarget(expression.symbol),
+                               LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+        bindScopeQualifiers(*name, expression.symbol);
+      }
     }
     else if constexpr (std::same_as<T, ConversionExpression>) {
       bindSizeCastNames(expression);
@@ -4558,6 +4577,18 @@ private:
       }
     }
 
+    // Event controls and assertion expressions in the subtree may wrap their
+    // own invalid child (bindInvalidChildNames).
+    void handle(const InvalidTimingControl& timing) {
+      if (timing.child)
+        timing.child->visit(*this);
+    }
+
+    void handle(const InvalidAssertionExpr& expression) {
+      if (expression.child)
+        expression.child->visit(*this);
+    }
+
     // Declarations are captured from their scopes, never from here.
     template<std::derived_from<Symbol> T>
     void handle(const T&) {}
@@ -4572,6 +4603,17 @@ private:
       return;
     InvalidSubtreeNames names(*this);
     child->visit(names);
+  }
+
+  // An event control or assertion expression in which one name failed to
+  // bind (`@(a or ghost)`, `@(posedge clk iff ghost)`) is wrapped, like an
+  // invalid statement, in an Invalid node whose child no visitor enters, so
+  // the names in it that did resolve are bound here (lexically only).
+  template<typename T>
+  void bindInvalidChildNames(const T& node) {
+    if constexpr (std::same_as<T, InvalidTimingControl> ||
+                  std::same_as<T, InvalidAssertionExpr>)
+      bindInvalidSubtree(node.child);
   }
 
   void captureNames(const syntax::SyntaxNode& syntaxNode, const ASTContext& context) {
@@ -4590,6 +4632,120 @@ private:
         });
     syntaxNode.visit(visitor);
   }
+
+  // The names written in a sequence, property or let declaration (IEEE
+  // 1800-2009 16.8, 16.13, 11.13). Slang binds the body only per instance,
+  // replacing each formal reference by the instance's actual argument
+  // (stamped with the formal reference's syntax), so the instance graph
+  // would bind a formal to an actual of one instance and leave a declaration
+  // that no assertion instantiates unbound. Every name is looked up instead
+  // in the declaration's own scope, where Slang binds the body
+  // (AssertionInstanceExpression::fromLookup: `bodyContext(*symbolScope,
+  // LookupLocation::max)`), so a formal binds to the formal and every other
+  // name to what each instance sees. Lexical bindings only; each declaration
+  // is bound once, whichever instance body holds it.
+  void bindAssertionDeclarationNames(const Symbol& symbol, const Scope& scope) {
+    const syntax::SyntaxNode* declaration = symbol.getSyntax();
+    if (!declaration || !assertionDeclarations.insert(declaration).second)
+      return;
+    const ASTContext context(scope, LookupLocation::max);
+    AssertionDeclarationNames names(*this, context);
+    declaration->visit(names);
+  }
+
+  // Binds the name tokens of one written name (`x`, `w[i]`, `pk::v`,
+  // `dut.bridge_mode`, `s.f`) looked up in `context`: the token of the
+  // symbol found, its scope qualifiers and its hierarchical path steps.
+  // Member names after the found symbol stay to the expression bindings of
+  // the instances.
+  void bindLookupName(const syntax::NameSyntax& name, const ASTContext& context) {
+    LookupResult result;
+    Lookup::name(name, context, LookupFlags::None, result);
+    if (!result.found || result.hasError())
+      return;
+    const Symbol* found = result.found;
+    if (found->kind == SymbolKind::TransparentMember)
+      found = &found->as<TransparentMemberSymbol>().wrapped;
+    if (found->name.empty())
+      return;
+    std::vector<parsing::Token> tokens;
+    collectNameTokens(name, tokens, false);
+    // The found symbol's token is the last one inside the part of the name
+    // the lookup resolved; selects (`.f`, `[i]`) follow it.
+    size_t count = tokens.size();
+    const SourceLocation resolvedEnd = result.nameRange.end();
+    if (!result.selectors.empty() && resolvedEnd.valid()) {
+      while (count > 0 &&
+             tokens[count - 1].location().buffer() == resolvedEnd.buffer() &&
+             tokens[count - 1].location().offset() >= resolvedEnd.offset())
+        count--;
+    }
+    if (count == 0 || tokens[count - 1].valueText() != found->name)
+      return;
+    capture.lexicalBinding(tokens[count - 1], lexicalTarget(*found),
+                           LLG_SLANG_LEXICAL_ROLE_REFERENCE);
+    if (!result.path.empty()) {
+      HierarchicalReference reference;
+      reference.target = found;
+      reference.path = std::span<const HierarchicalReference::Element>(
+          result.path.data(), result.path.size());
+      bindHierarchicalSteps(tokens, count, reference);
+    }
+    else {
+      bindScopeQualifiers(name, *found);
+    }
+  }
+
+  class AssertionDeclarationNames final
+      : public syntax::SyntaxVisitor<AssertionDeclarationNames> {
+  public:
+    AssertionDeclarationNames(SemanticCapture& owner, const ASTContext& context)
+        : owner(owner), context(context) {}
+
+    void handle(const syntax::IdentifierNameSyntax& name) {
+      owner.bindLookupName(name, context);
+    }
+
+    void handle(const syntax::IdentifierSelectNameSyntax& name) {
+      owner.bindLookupName(name, context);
+      visitSelects(name);
+    }
+
+    void handle(const syntax::ScopedNameSyntax& name) {
+      owner.bindLookupName(name, context);
+      visitSelects(name);
+    }
+
+  private:
+    // The index expressions of a name's selects are names of their own;
+    // the steps of the name itself are bound by bindLookupName.
+    void visitSelects(const syntax::SyntaxNode& name) {
+      switch (name.kind) {
+        case syntax::SyntaxKind::ScopedName: {
+          const auto& scoped = name.as<syntax::ScopedNameSyntax>();
+          visitSelects(*scoped.left);
+          visitSelects(*scoped.right);
+          break;
+        }
+        case syntax::SyntaxKind::IdentifierSelectName:
+          for (const syntax::ElementSelectSyntax* select :
+               name.as<syntax::IdentifierSelectNameSyntax>().selectors)
+            select->visit(*this);
+          break;
+        case syntax::SyntaxKind::ClassName:
+          name.as<syntax::ClassNameSyntax>().parameters->visit(*this);
+          break;
+        default: break;
+      }
+    }
+
+    SemanticCapture& owner;
+    const ASTContext& context;
+  };
+
+  // Sequence, property and let declarations already bound
+  // (bindAssertionDeclarationNames).
+  std::unordered_set<const syntax::SyntaxNode*> assertionDeclarations;
 
   void captureScopeConnections(const Scope& scope) {
     const auto* syntaxNode = scope.asSymbol().getSyntax();
@@ -6925,6 +7081,11 @@ uint32_t lexicalKindForSemantic(const LlgSlangSemanticNode& node) {
   // Struct and union members and class properties share the variable kind.
   if (detail == "Field" || detail == "ClassProperty")
     return LLG_SLANG_LEXICAL_FIELD;
+  // Sequences, properties and let declarations are invoked with arguments
+  // like a function (IEEE 1800-2009 16.8, 16.13, 11.13) and have no
+  // semantic kind of their own.
+  if (detail == "Sequence" || detail == "Property" || detail == "LetDecl")
+    return LLG_SLANG_LEXICAL_FUNCTION;
   // Named and labeled statement blocks share the scope kind with instance
   // bodies, compilation units and clocking blocks; the symbol kind tells them
   // apart.

@@ -255,12 +255,62 @@ assign w = `A + `ABC(p, q);                 // `A, `ABC: keyword
   cover sequence (@(posedge clk) a ##1 b);
   ```
 
+## Names in assertions and event controls
+
+The rules below are checked over
+`tests/fixtures/semantic_tokens/assertion_names.sv` (with
+`assertion_names_dut.sv` as another project file) and an inline source with
+unresolved names.
+
+```systemverilog
+assert property (@(posedge tck) dut.bridge_mode && dut.sel == 0 |-> csn);
+sequence s(x); @(posedge tck) x ##1 b; endsequence  // s: function; x: variable
+a1: assert property (s(a));                          // s: function; a: its type
+always @(a or b) q = a;                              // a, b: their types
+```
+
+- **ST-70** Every name in an assertion keeps its type (ST-14 to ST-18):
+  concurrent `assert`, `assume` and `cover` statements in a module and in
+  procedural code, immediate and deferred assertions, the clocking event,
+  the `disable iff` condition, the consequent and the arguments of `$rose`,
+  `$past` and the other sampled value functions. In a hierarchical name
+  (`dut.bridge_mode`) every step has a token: the instance `variable`
+  (ST-17), the signal its own type.
+- **ST-71** The name of a sequence, property or let declaration (16.8,
+  16.13, 11.13) is `function` + `declaration`, and every sequence or
+  property instance (`p(a)`, `s`, in an assertion statement or in another
+  declaration) is `function` and navigates to the declaration: they are
+  invoked with arguments like a function, as clangd and rust-analyzer send
+  callables.
+- **ST-72** A formal argument of a sequence, property or let is `variable`
+  + `declaration` in the formal list and `variable` at every reference in
+  the body, which navigates to the formal, never to an actual of one
+  instance (16.8: "The rewriting algorithm substitutes actual arguments for
+  references to the corresponding formal arguments in the body of the
+  declaration of the named sequence. The rewriting algorithm does not itself
+  account for name resolution and assumes that names have been resolved
+  prior to the substitution of actual arguments"). Every other body name is
+  resolved in the scope of the declaration, also when no assertion
+  instantiates it, and the actual arguments of a sequence or property
+  instance keep their own types.
+- **ST-73** A name in an event control (9.4.2) has the type it has
+  anywhere else: `@(a)`, `@(a or b)`, `@(posedge clk, negedge rst_n)`, an
+  `iff` guard, hierarchical and interface member names (`@(dut.sig)`,
+  `@(bus.req)`), in `always` procedures, `initial` code and tasks, and the
+  condition of `wait`. `@*` and `@(*)` have operator tokens only.
+- **ST-74** A name that does not resolve in an event control or assertion
+  gets no token (ST-22), and every other name of that event control or
+  assertion keeps its token (ST-26). Slang wraps the whole event control or
+  assertion expression in an invalid node, whose resolved names the capture
+  still binds (`bindInvalidChildNames` in `src/wrapper/slang_c_api.cpp`).
+
 ## Serving paths
 
 - **ST-24** The project stream (committed analysis of an unopened file) and
   the open-buffer stream (the buffer compiled with the root's `[compile]
-  defines`, the committed include context and the committed package units of
-  ST-29) agree token for token for the same text.
+  defines`, the committed include context and the committed package and
+  definition units of ST-29 and ST-75) agree token for token for the same
+  text.
 - **ST-25** An open buffer that defines or uses text macros is fully
   tokenized. A macro defined only in another project file is unknown in both
   paths (each file is its own compilation unit).
@@ -277,6 +327,18 @@ assign w = `A + `ABC(p, q);                 // `A, `ABC: keyword
   a top and none of their tokens enter the buffer's stream
   (`src/bin/llg_ls/features/package_context.rs`). A package is a design-wide
   name (3.13 b), unlike a macro (ST-25).
+- **ST-75** A module, interface, program, checker or primitive declared in
+  another project file keeps its types in the open-buffer stream as in the
+  project stream (ST-24): instance and interface type names, connection
+  labels, interface port members and hierarchical names through an instance
+  (`dut.bridge_mode`, ST-70, ST-73). Definitions are design-wide names (3.13
+  a: "The definitions name space unifies all the non-nested module,
+  primitive, program, and interface identifiers defined outside all other
+  declarations"), so the open buffer is compiled with the committed project
+  files that declare the definitions it names (any identifier of the buffer
+  or its admitted headers spelling one), transitively, as library units like
+  the package units of ST-29. A testbench that instantiates the design thus
+  elaborates the design's hierarchy, as the project compile does.
 - **ST-50** A stream depends on other files only through what a commit
   holds: the committed snapshot for an unopened file, and the root's
   `[compile] defines` plus the committed include and package context for an

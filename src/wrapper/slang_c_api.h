@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 59u
+#define LLG_SLANG_ABI_VERSION 60u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1355,6 +1355,8 @@ enum {
   LLG_SLANG_LEXICAL_PORT = 12,
   LLG_SLANG_LEXICAL_VARIABLE = 13,
   LLG_SLANG_LEXICAL_NET = 14,
+  /* Also a sequence, property or let declaration name and every reference
+   * bound to it (ABI v60). */
   LLG_SLANG_LEXICAL_FUNCTION = 15,
   LLG_SLANG_LEXICAL_TASK = 16,
   LLG_SLANG_LEXICAL_METHOD = 17,
@@ -1398,6 +1400,11 @@ enum {
   /* Also the macro name of a `define directive (ABI v46), which has no
    * semantic target. */
   LLG_SLANG_LEXICAL_ROLE_DECLARATION = 1,
+  /* Since ABI v60 also every name written in a sequence, property or let
+   * declaration, bound as the declaration's scope resolves it (a formal binds
+   * to the formal, whether or not an assertion instantiates the
+   * declaration), the name of a sequence or property instance, and the names
+   * that resolved inside an invalid event control or assertion expression. */
   LLG_SLANG_LEXICAL_ROLE_REFERENCE = 2,
   LLG_SLANG_LEXICAL_ROLE_CONNECTION_LABEL = 3,
   LLG_SLANG_LEXICAL_ROLE_KEYWORD = 4,
