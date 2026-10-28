@@ -147,7 +147,7 @@ static void future_assertion_kill_at(llg_concurrent_assertion_t* assertion, uint
 
 /* An attempt that began now while disable iff holds: its disabled result
  * is queued, so its callbacks run at the next global clock tick with the
- * results before it (A14-D1, A17-D7). The starts of one time step share
+ * results before it (39.4.2.1, A17-D7). The starts of one time step share
  * an entry. */
 static void future_assertion_disabled_start(llg_concurrent_assertion_t* assertion) {
     if (!assertion->acov) return;

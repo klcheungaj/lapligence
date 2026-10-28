@@ -13,12 +13,13 @@
 // state (e.g. as a result of disable iff condition becoming true or if an
 // attempt starts when the disable iff is true)."; L65760-L65761:
 // "cbAssertionDisabledEvaluation: cb_time is the time when the assertion
-// reached the disabled state." 16.9.4 L22961-L22962: "Execution of the
-// action block of an assertion containing global clocking future sampled
-// value functions shall be delayed until the global clocking tick that
-// follows the last tick of the assertion clock for the attempt." When the
-// callbacks of such an attempt run is not stated; llg delivers them with
-// the assertion's other results.
+// reached the disabled state." 39.4.2.1 L65787-L65788: "The callback is
+// executed at the nearest tick of the global clock strictly following the
+// callback event"; "cb_time contains the time of the callback event."
+// 16.9.4 L22961-L22962: "Execution of the action block of an assertion
+// containing global clocking future sampled value functions shall be
+// delayed until the global clocking tick that follows the last tick of the
+// assertion clock for the attempt."
 //
 // Build A17-D7_future_disabled_start.c as a VPI application (llg: static
 // archive given to --dpi-lib; `task $d7()` declared as a system task).
