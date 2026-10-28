@@ -129,7 +129,13 @@ carries its start time for this. Events raised inside the assertion engines
 are queued and delivered when the outermost engine call returns
 (`assertion_events_enter`/`leave` in `coverage/assertions.c`), so a callback
 may call `vpi_control`, `vpi_put_value` or remove callbacks without seeing a
-half-updated attempt list. `vpi_control` assertion operations go through
+half-updated attempt list. The Observed pass that evaluates clock ticks
+leaves through `assertion_events_leave_tick`, which sorts its batch by
+instance group, then latest start first, then queue order (A17-D9); an
+unwatched model never queues, so it never sorts. The generated model calls
+`llg_vpi_procedures_started` after spawning its time-zero procedures and
+before the always_comb/always_latch ones; it queues the Active event that
+runs `cbAssertionSysInitialized` and `cbAssertionSysOn` (A17-D10). `vpi_control` assertion operations go through
 `llg_acov_control`: concurrent assertions change their runtime record,
 immediate and deferred ones the item's `control` bits, which the generated
 code of a model with a VPI catalog reads per check. The item table stays

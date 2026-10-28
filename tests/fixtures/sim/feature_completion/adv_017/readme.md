@@ -66,9 +66,14 @@ before it.
   SysEnd ("All assertion callbacks currently installed shall be removed.
   Once this control is issued, no further assertion-related actions shall be
   permitted."). The system callbacks (39.4.1) run once per system control;
-  cbAssertionSysInitialized and cbAssertionSysOn run after
-  cbStartOfSimulation (L65579: "The assertion system can initialize before
-  cbStartOfSimulation does or afterwards."). Decision A17-D3.
+  cbAssertionSysInitialized and cbAssertionSysOn run at time zero after the
+  initial and always procedures took their first turn (L65579: "The
+  assertion system can initialize before cbStartOfSimulation does or
+  afterwards."). Decisions A17-D3, A17-D10.
+- **Order within a tick.** The callbacks of one clock tick are grouped by
+  instance (top-level module's own assertions last) and, within one, every
+  new attempt's start comes before the conclusions of older attempts
+  (decision A17-D9): `p`'s `65 Start` precedes `65 Success attempt=55`.
 - **Counters.** 40.5.3 L66651: "in progress = attempts - (successes +
   vacuous success + disabled + killed + failures)".
 - **Static information.** 39.3.2 L65565: "Assertion source information: the
@@ -121,14 +126,16 @@ Stimulus: `req` 1 at 2, 0 at 42, 1 at 52; `ack` 1 at 12, 0 at 22, 1 at 52;
 
 ## control (A03)
 
-`registration` places a record for each of the 12 assertion system reasons,
-so `SysInitialized` and `SysOn` run at 0 after the start of simulation.
+`registration` places a record for each of the 12 assertion system reasons;
+`SysInitialized` and `SysOn` run at 0 after `$setup`, the initial procedure's
+first turn (A17-D10).
 `$setup` places Start, Success, Failure and Kill on `p`, `im`, `df` and
 `u_sub.s_x` (only `p` traced; the others are tallied) and the 9 control
 reasons on `p`, `im` and `df`. `vpi_get_cb_info` of an assertion callback
-gives its reason and assertion, with a NULL `cb_rtn` (the routine has the
-39.4.2 signature, not `cb_rtn`'s). A late `cbAssertionSysInitialized` is
-accepted and never runs (as S43-D4); a step callback is accepted and never
+gives its reason, its assertion and its routine as `cb_rtn` (the routine has
+the 39.4.2 signature; an application casts it back). The
+`cbAssertionSysInitialized` placed by `$setup` still runs, after `$setup`
+returns, so `SysInitialized` appears twice; a step callback is accepted and never
 runs, as stepping cannot be enabled (A17-D2). A module handle, a NULL
 routine and a time reason fail with level 3.
 

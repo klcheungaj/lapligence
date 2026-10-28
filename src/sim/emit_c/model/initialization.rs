@@ -527,7 +527,17 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
              \x20       return 1;\n\
              \x20   }\n",
     );
+    let mut procedures_started = false;
     for (fname, label) in model.spawn_list() {
+        let deferred = model
+            .processes
+            .iter()
+            .find(|p| p.c_name == fname)
+            .is_some_and(|p| matches!(p.kind(), IrProcessKind::Comb | IrProcessKind::Latch));
+        if deferred && !procedures_started {
+            out.push_str("    llg_vpi_procedures_started();\n");
+            procedures_started = true;
+        }
         let runtime_name = model
             .processes
             .iter()
@@ -563,6 +573,9 @@ pub(super) fn render_main(execution: &ExecutionModel) -> Result<String, String> 
                 region.runtime_symbol()
             ));
         }
+    }
+    if !procedures_started {
+        out.push_str("    llg_vpi_procedures_started();\n");
     }
     // Capture scheduler exit time before user finals. Finals cannot advance
     // time, and registering this first also preserves the timestamp if a

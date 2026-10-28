@@ -14,6 +14,9 @@ enum StartupKind {
     InstanceProgramSpawn,
     ClassSpawn,
     Final,
+    /// `llg_vpi_procedures_started`, between the procedures and the
+    /// deferred always_comb/always_latch spawns.
+    ProceduresStarted,
 }
 
 impl StartupKind {
@@ -27,6 +30,7 @@ impl StartupKind {
             Self::InstanceProgramSpawn => "llg_spawn_program_instance_in_region",
             Self::ClassSpawn => "llg_model_spawn_class",
             Self::Final => "llg_spawn_final",
+            Self::ProceduresStarted => "llg_vpi_procedures_started",
         }
     }
 
@@ -73,6 +77,7 @@ impl StartupKind {
                 ("uint32_t count", "count"),
             ],
             Self::Final => &[("void (*fn)(void)", "fn"), ("const char* name", "name")],
+            Self::ProceduresStarted => &[],
         }
     }
 
@@ -86,6 +91,7 @@ impl StartupKind {
             Self::InstanceProgramSpawn => "llg_model_program_instance_spawn_args_t",
             Self::ClassSpawn => "llg_model_class_spawn_args_t",
             Self::Final => "llg_model_final_args_t",
+            Self::ProceduresStarted => "llg_model_procedures_started_args_t",
         }
     }
 
@@ -579,7 +585,27 @@ pub(in crate::sim::emit_c) fn main(
             }
         }
     }
+    // always_comb and always_latch spawn last (lowering, 9.2.2.2); the
+    // runtime is told when every other time-zero procedure is queued.
+    let deferred_start = model
+        .spawns
+        .iter()
+        .position(|name| {
+            executable_by_name.get(name.as_str()).is_some_and(|item| {
+                matches!(
+                    model.processes[item.semantic_process].kind(),
+                    IrProcessKind::Comb | IrProcessKind::Latch
+                )
+            })
+        })
+        .unwrap_or(model.spawns.len());
+    let deferred = spawns.split_off(deferred_start);
     let mut spawns = merge_class_spawns(spawns);
+    spawns.push(StartupCall {
+        kind: StartupKind::ProceduresStarted,
+        args: Vec::new(),
+    });
+    spawns.extend(merge_class_spawns(deferred));
     let mut semantic_by_name = HashMap::new();
     for process in &model.processes {
         semantic_by_name

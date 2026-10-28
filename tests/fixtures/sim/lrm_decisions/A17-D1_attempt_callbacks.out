@@ -1,23 +1,23 @@
 5 p1 Start attempt=5 time_type=sim
 5 c1 Start attempt=5 time_type=sim
 5 s1 Start attempt=5 time_type=sim
-15 p1 Success attempt=5 time_type=sim
 15 p1 Start attempt=15 time_type=sim
 15 c1 Start attempt=15 time_type=sim
 15 s1 Start attempt=15 time_type=sim
+15 p1 Success attempt=5 time_type=sim
 15 s1 Success attempt=5 time_type=sim
-25 p1 Success attempt=15 time_type=sim
 25 p1 Start attempt=25 time_type=sim
 25 c1 Start attempt=25 time_type=sim
 25 s1 Start attempt=25 time_type=sim
-25 s1 Success attempt=5 time_type=sim
+25 p1 Success attempt=15 time_type=sim
 25 s1 Success attempt=15 time_type=sim
-35 p1 Failure attempt=25 time_type=sim failExpr=set
+25 s1 Success attempt=5 time_type=sim
 35 p1 Start attempt=35 time_type=sim
 35 p1 VacuousSuccess attempt=35 time_type=sim
 35 c1 Start attempt=35 time_type=sim
-35 c1 Success attempt=25 time_type=sim
 35 s1 Start attempt=35 time_type=sim
+35 p1 Failure attempt=25 time_type=sim failExpr=set
+35 c1 Success attempt=25 time_type=sim
 45 p1 Start attempt=45 time_type=sim
 45 p1 VacuousSuccess attempt=45 time_type=sim
 45 c1 Start attempt=45 time_type=sim

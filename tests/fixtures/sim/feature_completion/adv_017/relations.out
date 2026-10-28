@@ -127,14 +127,14 @@ nested callback -> NULL
     failExpr: vpiOperation line=41 decompile=a == b
 15 i1 fail
 15 i2 covered
-15 a_spec failure attempt=5
-    failExpr: vpiOperation line=0 decompile=NULL
 15 a_inst.p1 start vpiPropertyInst attempt=15
 15 c_seq.s1 start vpiSequenceInst attempt=15
+15 a_spec failure attempt=5
+    failExpr: vpiOperation line=0 decompile=NULL
 15 a_spec fail
 25 i2 covered
 25 a_inst.p1 start vpiPropertyInst attempt=25
-25 a_inst.p1 success vpiPropertyInst attempt=5
 25 c_seq.s1 start vpiSequenceInst attempt=25
 25 c_seq.s1 success vpiSequenceInst attempt=15
+25 a_inst.p1 success vpiPropertyInst attempt=5
 25 a_spec pass

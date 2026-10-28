@@ -1,12 +1,12 @@
 0 cbStartOfSimulation
 0 SysInitialized
 0 SysOn
-5 t1 Start attempt=5
 5 s1 Start attempt=5
+5 t1 Start attempt=5
 8 SysOff
   system off tb.u -> 1 level=0
-15 t1 Success attempt=5
 15 t1 Start attempt=15
+15 t1 Success attempt=5
 18 SysOn
   system on -> 1 level=0
 18 t1 Kill info=NULL
@@ -16,8 +16,8 @@
 28 SysReset
   system reset -> 1 level=0
   system end tb.u -> 0 level=3
-35 t1 Start attempt=35
 35 s1 Start attempt=35
+35 t1 Start attempt=35
 38 t1 Kill info=NULL
 38 SysEnd
   system end -> 1 level=0

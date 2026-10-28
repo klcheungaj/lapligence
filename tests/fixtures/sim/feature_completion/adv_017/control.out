@@ -1,11 +1,12 @@
-0 SysInitialized obj=NULL
-0 SysOn obj=NULL
-cb info: reason=Reset obj=p cb_rtn=NULL
+cb info: reason=Reset obj=p cb_rtn=set
   late cbAssertionSysInitialized -> 1 level=0 code=-
   step callback -> 1 level=0 code=-
   assertion callback on a module -> 0 level=3 code=LLG_VPI_CALLBACK
   assertion callback without a routine -> 0 level=3 code=LLG_VPI_CALLBACK
   assertion callback with a time reason -> 0 level=3 code=LLG_VPI_CALLBACK
+0 SysInitialized obj=NULL
+0 SysInitialized obj=NULL
+0 SysOn obj=NULL
 5 p Start attempt=5
 8 step 1
 8 p Disable info=NULL
@@ -42,10 +43,10 @@ cb info: reason=Reset obj=p cb_rtn=NULL
   disable im pass action -> 1 level=0 code=-
 58 p DisableVacuousAction info=NULL
   disable p vacuous action -> 1 level=0 code=-
-65 p Success attempt=55
 65 p Start attempt=65
-75 p Failure attempt=65
+65 p Success attempt=55
 75 p Start attempt=75
+75 p Failure attempt=65
 78 step 6
 78 p EnableFailAction info=NULL
   enable p fail action -> 1 level=0 code=-
@@ -53,13 +54,13 @@ cb info: reason=Reset obj=p cb_rtn=NULL
   enable im pass action -> 1 level=0 code=-
 78 p EnableNonvacuousAction info=NULL
   enable p nonvacuous action -> 1 level=0 code=-
-85 p Failure attempt=75
 85 p Start attempt=85
+85 p Failure attempt=75
 88 step 7
 88 SysOff obj=NULL
   system off u_sub -> 1 level=0 code=-
-95 p Success attempt=85
 95 p Start attempt=95
+95 p Success attempt=85
 98 step 8
 98 SysOn obj=NULL
   system on -> 1 level=0 code=-
@@ -82,8 +83,8 @@ cb info: reason=Reset obj=p cb_rtn=NULL
   system disable vacuous -> 1 level=0 code=-
 108 SysEnableNonvacuousAction obj=NULL
   system enable nonvacuous -> 1 level=0 code=-
-115 p Success attempt=105
 115 p Start attempt=115
+115 p Success attempt=105
 118 step 10
   enable step -> 0 level=3 code=LLG_VPI_UNSUPPORTED
   disable step -> 0 level=3 code=LLG_VPI_UNSUPPORTED

@@ -2,8 +2,9 @@
 // operation selects the assertions: NULL all of them, an instance its own
 // assertions and those below it, an assertion handle that assertion. Each
 // operation runs the assertion system callback of the same name once.
-// cbAssertionSysInitialized and then cbAssertionSysOn run right after
-// cbStartOfSimulation. vpiAssertionSysKill and vpiAssertionSysEnd discard the
+// cbAssertionSysInitialized and then cbAssertionSysOn run at time zero
+// after the initial and always procedures took their first turn (decision
+// A17-D10). vpiAssertionSysKill and vpiAssertionSysEnd discard the
 // attempts in progress, each counted as killed with cbAssertionKill.
 // vpiAssertionSysEnd takes a NULL handle only (it ends the whole system); it
 // runs cbAssertionSysEnd and removes every assertion and assertion system
@@ -27,7 +28,7 @@
 // system has initialized. ... The assertion system can initialize before
 // cbStartOfSimulation does or afterwards."; L65600-L65602: cbAssertionSysEnd
 // "typically occurs after the end of simulation". The scope rules, the
-// NULL-only SysEnd, the order at start and end and counting discarded
+// NULL-only SysEnd, the order at the end and counting discarded
 // attempts as killed are llg choices; vpiCollection handles are decision
 // A17-D6.
 //

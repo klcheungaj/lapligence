@@ -375,6 +375,10 @@ int llg_vpi_compile_calls(const char* const* names,
                           const llg_vpi_compile_arg_t* const* args,
                           const int* arg_counts, int call_count);
 void llg_vpi_start_simulation(void);
+/* The model has queued its time-zero procedures except always_comb and
+ * always_latch (9.2.2.2): the assertion system start callbacks run as the
+ * next Active event of time zero (39.4.1, decision A17-D3). */
+void llg_vpi_procedures_started(void);
 void llg_vpi_end_simulation(void);
 void llg_vpi_shutdown(void);
 /* Run `hook` once at the next llg_vpi_shutdown (DPI-C scope user data). */

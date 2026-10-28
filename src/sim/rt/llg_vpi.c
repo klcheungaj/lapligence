@@ -295,6 +295,7 @@ typedef struct {
     uint32_t disable_cbs;         /* live cbDisable records */
     uint32_t assertion_cbs;       /* live vpi_register_assertion_cb records */
     int assertion_sys_started;    /* cbAssertionSysInitialized ran (39.4.1) */
+    int assertion_sys_scheduled;  /* its time-zero Active event is queued */
     int assertions_ended;         /* vpiAssertionSysEnd or the end of the run */
     uint32_t tchk_cbs;            /* live cbTchkViolation records */
     int quiet_force;              /* vpi_put_value force/release: not a statement */
@@ -8409,8 +8410,8 @@ vpiHandle vpi_register_cb(p_cb_data data) {
     } else if (assertion_system_reason(reason)) {
         kind = CB_ASSERT_SYS;
         if (reason == cbAssertionSysInitialized && g_vpi.assertion_sys_started) {
-            /* It occurred at the start of the run: accepted, never runs
-             * (as S43-D4). */
+            /* It already occurred at time zero: accepted, never runs (as
+             * S43-D4). */
             if (!vpi_ready()) return NULL;
             llg_vpi_cb_done_t* done = cb_done_new(data);
             if (!done) {
@@ -8582,10 +8583,11 @@ void vpi_get_cb_info(vpiHandle handle, p_cb_data output) {
     llg_vpi_slot_t* slot = checked_handle(handle, NULL);
     if (!slot) return;
     const s_cb_data* data = NULL;
+    const llg_vpi_cb_t* cb = NULL;
     if (slot->kind == SLOT_FIRED_CB) {
         data = &((const llg_vpi_cb_done_t*)slot->pointer)->data;
     } else {
-        llg_vpi_cb_t* cb = callback_record(handle, "vpi_get_cb_info");
+        cb = callback_record(handle, "vpi_get_cb_info");
         if (!cb) return;
         data = &cb->data;
     }
@@ -8594,6 +8596,12 @@ void vpi_get_cb_info(vpiHandle handle, p_cb_data output) {
         return;
     }
     *output = *data;
+    /* An assertion callback reports the routine it was placed with; that
+     * routine has the 39.4.2 signature, so an application casts it back
+     * before calling it. The cast goes through void (*)(void), the generic
+     * function pointer type compilers accept without a type warning. */
+    if (cb && cb->kind == CB_ASSERTION)
+        output->cb_rtn = (PLI_INT32(*)(struct t_cb_data*))(void (*)(void))cb->assertion_rtn;
 }
 
 void llg_vpi_start_simulation(void) {
@@ -8604,12 +8612,33 @@ void llg_vpi_start_simulation(void) {
     invoke_action(cbEndOfCompile);
     g_vpi.phase = LLG_VPI_PHASE_RUNNING;
     invoke_action(cbStartOfSimulation);
-    /* The assertion system initializes and starts after the start
-     * callbacks (39.4.1 allows either order). */
+    g_vpi.starting = 0;
+}
+
+/* The assertion system initializes and starts at time zero once the
+ * initial and always procedures have taken their first turn (decision
+ * A17-D3): a cbAssertionSysInitialized or cbAssertionSysOn placed by
+ * vlog_startup_routines, a start callback or one of those turns still
+ * runs, one placed later (a #0 turn, an always_comb, a woken process) has
+ * missed SysInitialized. */
+static void assertion_system_start(void* data) {
+    (void)data;
+    if (g_vpi.assertion_sys_started || !g_vpi.initialized || g_vpi.failed ||
+        g_vpi.phase != LLG_VPI_PHASE_RUNNING)
+        return;
     g_vpi.assertion_sys_started = 1;
     invoke_assertion_system(cbAssertionSysInitialized);
     invoke_assertion_system(cbAssertionSysOn);
-    g_vpi.starting = 0;
+}
+
+void llg_vpi_procedures_started(void) {
+    if (!g_vpi.initialized || g_vpi.failed || g_vpi.phase != LLG_VPI_PHASE_RUNNING ||
+        g_vpi.assertion_sys_started || g_vpi.assertion_sys_scheduled)
+        return;
+    /* An Active event of time zero after the procedures queued so far. */
+    if (llg_schedule_delayed_call("assertion system start", assertion_system_start, NULL, 0,
+                                  NULL))
+        g_vpi.assertion_sys_scheduled = 1;
 }
 
 void llg_vpi_end_simulation(void) {

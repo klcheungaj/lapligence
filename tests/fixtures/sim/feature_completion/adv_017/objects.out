@@ -20,14 +20,14 @@ relations of r1:
   vpiScope is tb -> 1 level=0 code=-
 5 r1 Start attempt=5
 5 remover call 1 attempt=5
-15 r1 Success attempt=5
 15 r1 Start attempt=15
+15 r1 Success attempt=5
 15 r1 Kill info=NULL
 15 killer: kill attempt 15 -> 1
 15 remover call 2 attempt=15
 15 remover removes itself -> 1
 25 r1 Start attempt=25
-35 r1 Success attempt=25
 35 r1 Start attempt=35
+35 r1 Success attempt=25
 r1 attempts=4 success=2 killed=1 covered=1
 remover ran 2 times

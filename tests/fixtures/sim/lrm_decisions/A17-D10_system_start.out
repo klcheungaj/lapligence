@@ -1,0 +1,15 @@
+0 cbStartOfSimulation
+initial A
+0 place in an initial procedure
+initial A after y
+initial B
+0 SysInitialized placed by a startup routine
+0 SysInitialized placed at the start of simulation
+0 SysInitialized placed in an initial procedure
+0 SysOn placed by a startup routine
+0 SysOn placed at the start of simulation
+0 SysOn placed in an initial procedure
+woken by y
+0 place in a woken always procedure
+0 place after #0
+1 place at time 1

@@ -18,6 +18,6 @@
   disable step -> 0 level=3
   enable step -> 0 level=3
   attempts=4 success=2 killed=1
-65 Success attempt=55
 65 Start attempt=65
+65 Success attempt=55
 passes=3 fails=0

@@ -123,6 +123,63 @@ static void assertion_events_leave(void) {
         assertion_events_flush();
 }
 
+static void assertion_events_order(void);
+
+static void assertion_events_leave_tick(void) {
+    if (--g.assertion_event_depth == 0 && LLG_CO_UNLIKELY(g.assertion_events.count)) {
+        assertion_events_order();
+        assertion_events_flush();
+    }
+}
+
+// The order a tick's attempt events reach the application (decision
+// A17-D1): grouped by instance, the instances in hierarchy order with the
+// top-level instances' own assertions after the instances below them; within
+// an instance the attempts that started later first, so every new attempt's
+// start (and a conclusion in its own tick) precedes the conclusions of older
+// attempts. Events of equal group and start keep their engine order, which
+// follows declaration order.
+static size_t assertion_event_group(const llg_acov_item_t* item) {
+    int32_t instance = item->instance;
+    if (instance < 0 || (size_t)instance >= llg_acov_n_instances) return SIZE_MAX;
+    if (llg_acov_instances[instance].parent < 0)
+        return llg_acov_n_instances + (size_t)instance;
+    return (size_t)instance;
+}
+
+static int assertion_event_compare(const void* left, const void* right) {
+    const llg_acov_event_t* a = (const llg_acov_event_t*)left;
+    const llg_acov_event_t* b = (const llg_acov_event_t*)right;
+    size_t group_a = assertion_event_group(a->item), group_b = assertion_event_group(b->item);
+    if (group_a != group_b) return group_a < group_b ? -1 : 1;
+    if (a->start != b->start) return a->start > b->start ? -1 : 1;
+    return a->seq < b->seq ? -1 : a->seq > b->seq ? 1 : 0;
+}
+
+// Sort the queued events of one tick in place (stable through `seq`). The
+// queue is made contiguous first; an already ordered batch is left as is.
+static void assertion_events_order(void) {
+    llg_acov_event_queue_t* queue = &g.assertion_events;
+    size_t count = queue->count;
+    if (count < 2u) return;
+    if (queue->head != 0u) {
+        llg_acov_event_t* items = (llg_acov_event_t*)llg_checked_malloc(
+            queue->capacity, sizeof(*items), "assertion events");
+        for (size_t i = 0; i < count; ++i)
+            items[i] = queue->items[(queue->head + i) % queue->capacity];
+        free(queue->items);
+        queue->items = items;
+        queue->head = 0;
+    }
+    int ordered = 1;
+    for (size_t i = 0; i < count; ++i) {
+        queue->items[i].seq = (uint32_t)i;
+        if (i && assertion_event_compare(&queue->items[i - 1u], &queue->items[i]) > 0)
+            ordered = 0;
+    }
+    if (!ordered) qsort(queue->items, count, sizeof(*queue->items), assertion_event_compare);
+}
+
 static void assertion_event_push(const llg_acov_item_t* item, int event, uint64_t cb_time,
                                  uint64_t start) {
     llg_acov_event_queue_t* queue = &g.assertion_events;
@@ -138,7 +195,7 @@ static void assertion_event_push(const llg_acov_item_t* item, int event, uint64_
         queue->head = 0;
     }
     queue->items[(queue->head + queue->count) % queue->capacity] =
-        (llg_acov_event_t){item, cb_time, start, event};
+        (llg_acov_event_t){item, cb_time, start, event, 0u};
     queue->count++;
 }
 

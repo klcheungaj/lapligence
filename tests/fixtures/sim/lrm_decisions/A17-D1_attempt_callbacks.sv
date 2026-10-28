@@ -10,9 +10,9 @@
 // reason of its own.
 // Times are vpiSimTime; cb_time of cbAssertionStart is the start time; the
 // failure detail failExpr is set (its object is decision A17-D4); the value
-// a callback routine returns is ignored. Within one time step the order of one attempt's start and
-// another attempt's conclusion is not specified: compare the lines of one
-// time as a set.
+// a callback routine returns is ignored. The callbacks of one clock tick
+// follow decision A17-D9: every new attempt's start (with a conclusion in
+// its own tick) before the conclusions of older attempts.
 //
 // IEEE 1800-2009 39.4.2 (SystemVerilog-1800-2009.txt L65666, L65670,
 // L65672, L65675): "cbAssertionStart. An assertion attempt has started.";

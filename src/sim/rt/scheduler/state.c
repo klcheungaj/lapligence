@@ -445,6 +445,9 @@ static void llg_acov_notify(llg_acov_item_t* item, int event, uint64_t start);
 // inside reach VPI callbacks only when the engine returns.
 static void assertion_events_enter(void);
 static void assertion_events_leave(void);
+// assertion_events_leave for a clock tick's Observed pass: the queued events
+// are delivered in tick order (decision A17-D1).
+static void assertion_events_leave_tick(void);
 static uint64_t assertion_event_time(void);
 static void llg_acov_events_release(void);
 
@@ -454,6 +457,7 @@ typedef struct {
     uint64_t cb_time;
     uint64_t start;
     int event;
+    uint32_t seq; /* queue position while a tick's events are ordered */
 } llg_acov_event_t;
 
 typedef struct {

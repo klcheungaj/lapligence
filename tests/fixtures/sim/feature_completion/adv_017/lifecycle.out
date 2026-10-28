@@ -6,12 +6,12 @@ assertion tb.u_hs.c_ack vpiAssert
 assertion tb.u_hs.c_req vpiCover
 5 tb.a_req Start attempt=5
 5 a_req second Start record attempt=5
-15 tb.a_req Success attempt=5
 15 tb.a_req Start attempt=15
 15 a_req second Start record attempt=15
-25 tb.a_req Failure attempt=15
+15 tb.a_req Success attempt=5
 25 tb.a_req Start attempt=25
 25 a_req second Start record attempt=25
+25 tb.a_req Failure attempt=15
 28 tb.a_req Disabled attempt=25
 35 tb.a_req Start attempt=35
 35 a_req second Start record attempt=35
@@ -24,8 +24,8 @@ release a_req handle -> 1
 45 tb.a_req Start attempt=45
 45 tb.a_req VacuousSuccess attempt=45
 55 tb.a_req Start attempt=55
-65 tb.a_req Success attempt=55
 65 tb.a_req Start attempt=65
+65 tb.a_req Success attempt=55
 tb.a_req: start=7 success=2 vacuous=1 failure=1 disabled=1 kill=1
   counters: attempts=7 success=2 vacuous=1 failure=1 disabled=1 killed=1
   attempts started and not concluded: 1

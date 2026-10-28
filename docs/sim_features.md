@@ -2668,8 +2668,10 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `disable iff` holds reports at the next global clock tick, A17-D7); the control reasons run from `vpi_control`, which implements
   every 39.5.1 system and 39.5.2 assertion operation, the system ones
   also on a `vpiCollection` made with `vpi_create` (decisions A17-D1..D3,
-  A17-D6); the `cbAssertionSys*` reasons run at the start and end of
-  the run and on the system controls. Assertion handles report `vpiFile`,
+  A17-D6); the callbacks of one clock tick come in a defined order
+  (A17-D9); the `cbAssertionSys*` reasons run at time zero after the
+  procedures' first turns (A17-D10), at the end of the run and on the
+  system controls. Assertion handles report `vpiFile`,
   `vpiLineNo`, `vpiColumn`, `vpiEndLine` and `vpiEndColumn`; in a model
   generated with `--vpi` they also reach their clocking event, disable
   condition, property (a `vpiPropertySpec` or `vpiPropertyInst`), condition

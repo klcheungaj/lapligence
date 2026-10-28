@@ -2366,6 +2366,29 @@ fn a17_d8_reset_past_sampling() {
 }
 
 #[test]
+fn a17_d9_tick_order() {
+    run_vpi_decision(
+        "A17-D9_tick_order",
+        &["task $d9()"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D9_tick_order.out"),
+    );
+}
+
+#[test]
+fn a17_d10_system_start() {
+    run_vpi_decision(
+        "A17-D10_system_start",
+        &[
+            "task $d10_initial()",
+            "task $d10_woken()",
+            "task $d10_zero()",
+            "task $d10_late()",
+        ],
+        include_str!("fixtures/sim/lrm_decisions/A17-D10_system_start.out"),
+    );
+}
+
+#[test]
 fn a17_d2_control_callbacks() {
     run_vpi_decision(
         "A17-D2_control_callbacks",

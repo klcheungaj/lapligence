@@ -12,5 +12,5 @@ control p -> refused LLG_VPI_ARGUMENT
 25 p start vpiPropertyInst attempt=25
 25 p success vpiPropertyInst attempt=25
 25 s start vpiSequenceInst attempt=25
-25 s success vpiSequenceInst attempt=15
 25 s failure vpiSequenceInst attempt=25
+25 s success vpiSequenceInst attempt=15

@@ -904,7 +904,7 @@ static int run_concurrent_assertions_pass(void) {
 static int run_concurrent_assertions(void) {
     assertion_events_enter();
     int ok = run_concurrent_assertions_pass();
-    assertion_events_leave();
+    assertion_events_leave_tick();
     return ok && !g.finish;
 }
 
