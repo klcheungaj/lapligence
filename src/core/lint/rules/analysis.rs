@@ -74,8 +74,9 @@ pub fn object_width(db: &Db, id: NodeId) -> Option<u32> {
 ///
 /// - `Constant` → captured width (unsized literals like `'1` report size -1 → None).
 /// - `Ref` → width of the referenced object (signal or parameter).
-/// - `BitSelect` → 1; `PartSelect` → `|left - right| + 1`; `IndexedPartSelect`
-///   → the width expression.
+/// - `BitSelect`, `PartSelect`, `IndexedPartSelect` → the width of the
+///   select's elaborated type; without one, the selected element count (1,
+///   `|left - right| + 1` or the width expression).
 /// - `Cast` → the cast target type width.
 /// - `Operation` → per-op rule (see [`op_width`]).
 /// - Anything else (calls, hier paths, unknown) → `None`.
@@ -97,6 +98,34 @@ pub fn expr_width(db: &Db, id: NodeId) -> Option<u32> {
             Some(constant_value_bits(value).map_or(size, |b| size.max(b)))
         }
         NodeKind::Expr(ExprKind::Ref { target }) => target.and_then(|t| object_width(db, t)),
+        NodeKind::Expr(
+            ExprKind::BitSelect { .. }
+            | ExprKind::PartSelect { .. }
+            | ExprKind::IndexedPartSelect { .. },
+        ) => select_type_width(db, id).or_else(|| select_count_width(db, id)),
+        NodeKind::Expr(ExprKind::Cast { ty, .. }) => ty.width,
+        NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => op_width(db, *op, operands),
+        NodeKind::Expr(ExprKind::Conditional {
+            if_true, if_false, ..
+        }) => expr_width(db, *if_true)
+            .zip(expr_width(db, *if_false))
+            .map(|(a, b)| a.max(b)),
+        _ => None,
+    }
+}
+
+/// The width of a select's elaborated type. A select of a dimension above
+/// the last packed one yields whole elements (`pk[i -: 2]` of
+/// `logic [0:3][7:0]` is 16 bits), which only the type records.
+fn select_type_width(db: &Db, id: NodeId) -> Option<u32> {
+    let bits = db.type_descriptor(id)?.fixed_size_bits()?;
+    u32::try_from(bits).ok().filter(|bits| *bits > 0)
+}
+
+/// The selected element count of a select without a recorded type, which
+/// is its width when the selected dimension is the last packed one.
+fn select_count_width(db: &Db, id: NodeId) -> Option<u32> {
+    match db.node_kind(id) {
         NodeKind::Expr(ExprKind::BitSelect { .. }) => Some(1),
         NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
             match (const_i128(db, *left), const_i128(db, *right)) {
@@ -107,13 +136,6 @@ pub fn expr_width(db: &Db, id: NodeId) -> Option<u32> {
         NodeKind::Expr(ExprKind::IndexedPartSelect { width_expr, .. }) => {
             u32::try_from(const_i128(db, *width_expr)?).ok()
         }
-        NodeKind::Expr(ExprKind::Cast { ty, .. }) => ty.width,
-        NodeKind::Expr(ExprKind::Operation { op, operands, .. }) => op_width(db, *op, operands),
-        NodeKind::Expr(ExprKind::Conditional {
-            if_true, if_false, ..
-        }) => expr_width(db, *if_true)
-            .zip(expr_width(db, *if_false))
-            .map(|(a, b)| a.max(b)),
         _ => None,
     }
 }
@@ -1808,6 +1830,26 @@ mod tests {
             expr_width(&db, db.node(assignments[1]).children[1]),
             Some(24)
         );
+    }
+
+    #[test]
+    fn expr_width_counts_whole_elements_of_multidimensional_packed_selects() {
+        let db = db_of(
+            "module t; logic [0:3][7:0] pk; integer i; logic [15:0] w; logic [7:0] b; \
+             assign w = pk[i -: 2]; assign w = pk[1 +: 2]; assign w = pk[1:2]; \
+             assign b = pk[1][3:0]; endmodule",
+        );
+        let assignments = top_cont_assigns(&db);
+        let widths: Vec<Option<u32>> = assignments
+            .iter()
+            .map(|assignment| {
+                let rhs = db.node(*assignment).children[1];
+                // The rhs of `w = pk[...]` is converted to 16 bits; the
+                // select itself is the converted operand.
+                expr_width(&db, rhs)
+            })
+            .collect();
+        assert_eq!(widths, [Some(16), Some(16), Some(16), Some(4)]);
     }
 
     #[test]

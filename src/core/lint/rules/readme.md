@@ -19,7 +19,9 @@ See [shared lint](../readme.md).
 - `width-mismatch` (`width.rs`): a port link compares the port or port expression
   with the connected expression (`.a(n[0])` is one bit), not the whole selected
   signal. A concatenated port (`.p({a, b})`) is judged once, by its name or
-  expression, against the sum of the slices its components connect.
+  expression, against the sum of the slices its components connect. A select
+  is as wide as its elaborated type: whole elements when it selects a dimension
+  above the last packed one (`pk[i -: 2]` of `logic [0:3][7:0]` is 16 bits).
 - `multi-driver` (`multidriver.rs`): writes resolve through unpacked element
   selects (`collect_element_writes`); a bit range inside an element still counts
   as disjoint. Each assignment of a checker procedure drives only its constant
