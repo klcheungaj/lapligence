@@ -2,10 +2,12 @@
 // string var reads as vpiStringVal (its characters) and, in every other
 // format, as its packed image: 8 bits per character, the first character
 // most significant, 8 zero bits for the empty string. vpi_put_value takes
-// only vpiStringVal for a string var; other formats fail with vpiError and
-// leave it unchanged. A chandle var has no VPI value: vpi_get_value and
-// vpi_put_value fail with vpiError. cbValueChange is refused on a string
-// var.
+// vpiStringVal and vpiIntVal (cast to string as 6.16 casts an integral
+// value, A19-D25) for a string var; other formats fail with vpiError and
+// leave it unchanged. A chandle var reads as its 64-bit pointer image
+// (vpiIntVal 0 and vpiHexStrVal "0000000000000000" when null) and
+// vpi_put_value stores a pointer image given in an integral format.
+// cbValueChange is refused on a string var.
 //
 // IEEE 1800-2009 37.17 detail 9 (SystemVerilog-1800-2009.txt
 // L58762): "For a string var, it shall return the number of
@@ -14,7 +16,8 @@
 // dynamic arrays, strings, queues, and associative arrays."; 6.16
 // (L5611): "The string data type is an ordered collection of
 // characters." Table 38-5 and 38.15 list no format for a string or chandle
-// variable; the formats and the errors are llg choices.
+// variable; the formats and the errors are llg choices following
+// industry-standard behaviour.
 //
 // Build A19-D21_dynamic_values.c as a VPI application (llg: static archive
 // given to --dpi-lib; `task $d21()` declared as a system task).

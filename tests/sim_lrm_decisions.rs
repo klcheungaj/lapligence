@@ -2285,6 +2285,15 @@ fn a19_d24_select_names() {
 }
 
 #[test]
+fn a19_d25_string_int_put() {
+    run_vpi_decision(
+        "A19-D25_string_int_put",
+        &["task $d25()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D25_string_int_put.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

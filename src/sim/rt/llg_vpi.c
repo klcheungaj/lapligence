@@ -50,7 +50,8 @@ typedef enum {
     SLOT_OBJECT,    /* catalog row */
     SLOT_ELEMENT,   /* array element: object + element */
     SLOT_SELECT,    /* bit/part-select of an object or element */
-    SLOT_CONSTANT,  /* integer constant (range bound, index) */
+    SLOT_CONSTANT,  /* integer constant (range bound, index), or a vpiStringConst
+                     * with its characters in `items`/`count` */
     SLOT_RANGE,     /* one unpacked range of an array */
     SLOT_ITERATOR,
     SLOT_SYSTF,
@@ -818,6 +819,31 @@ static vpiHandle make_constant(int64_t value, int const_type) {
     return encode_handle(index);
 }
 
+/* A vpiStringConst holding a copy of `length` bytes in `items`/`count`
+ * (an associative array's string key, decision A19-D23). */
+static vpiHandle make_string_constant(const char* bytes, uint32_t length) {
+    char* copy = (char*)malloc((size_t)length + 1u);
+    if (!copy) {
+        vpi_error("LLG_VPI_NOMEM", "VPI constant allocation failed");
+        return NULL;
+    }
+    if (length) memcpy(copy, bytes, length);
+    copy[length] = '\0';
+    uint32_t index = alloc_slot(SLOT_CONSTANT);
+    if (index == LLG_VPI_NONE) {
+        free(copy);
+        return NULL;
+    }
+    g_vpi.slots[index].aux = vpiStringConst;
+    g_vpi.slots[index].items = (uintptr_t*)(void*)copy;
+    g_vpi.slots[index].count = length;
+    return encode_handle(index);
+}
+
+static int is_string_constant(const llg_vpi_slot_t* slot) {
+    return slot->kind == SLOT_CONSTANT && slot->aux == vpiStringConst && slot->items;
+}
+
 /* ── catalog helpers ────────────────────────────────────────────────────── */
 
 static llg_vpi_model_object_t* row_object(uint32_t row) {
@@ -1255,6 +1281,14 @@ static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is
         case SLOT_CODE:
             return code_value((uint32_t)slot->aux, out, is_signed);
         case SLOT_CONSTANT:
+            if (is_string_constant(slot)) {
+                /* 8 bits per character, the first most significant. */
+                uint32_t width = slot->count ? slot->count * 8u : 8u;
+                out->packed = llg_string_to_packed(
+                    llg_string_bytes((const char*)slot->items, slot->count), width, 0);
+                *is_signed = 0;
+                return 1;
+            }
             out->packed = sv4_from_i64(slot->left, 32);
             llg_sv4_set_signed(&out->packed, 1);
             *is_signed = 1;
@@ -5714,8 +5748,8 @@ static int handle_width(const llg_vpi_slot_t* slot, uint32_t* width, int* is_sig
             return 1;
         }
         case SLOT_CONSTANT:
-            *width = 32;
-            *is_signed = 1;
+            *width = is_string_constant(slot) ? (slot->count ? slot->count * 8u : 8u) : 32u;
+            *is_signed = !is_string_constant(slot);
             return 1;
         case SLOT_CODE: {
             const llg_vpi_code_t* node = code_at((uint32_t)slot->aux);
@@ -6363,6 +6397,11 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
             }
             break;
         }
+        case SLOT_CONSTANT:
+            /* A string key decompiles as its characters. */
+            if (is_string_constant(slot) && property == vpiDecompile)
+                return (PLI_BYTE8*)slot->items;
+            break;
         case SLOT_TYPESPEC:
             /* 37.23 detail 1: a type without a typedef has no name. */
             if (property == vpiName) return (PLI_BYTE8*)typespec_at((uint32_t)slot->aux)->name;
