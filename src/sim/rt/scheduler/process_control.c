@@ -139,9 +139,12 @@ static void reap_retired_procs(void) {
 // keep reading the record until then.
 static void proc_retire_completed(llg_proc_t* proc) {
     if (!proc || !proc->completed || proc->killed || proc->grp ||
-        proc->fork_child || proc->registry_slot < 0 || proc->queued ||
-        proc->wait.kind != W_NONE || proc == g.stop_proc)
+        proc->fork_child || proc->queued || proc->wait.kind != W_NONE ||
+        proc == g.stop_proc)
         return;
+    // Unregistered records are final procedures, except delayed-call
+    // carriers, which retire here like any completed top-level process.
+    if (proc->registry_slot < 0 && !proc_is_delayed_call(proc)) return;
     nba_owner_release_all(proc);
     if (proc->fork_groups) return;
     unregister_proc(proc);

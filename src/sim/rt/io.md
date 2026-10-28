@@ -93,8 +93,9 @@ when it returns; the call handle itself persists per call site with its user
 data. sizetf runs once per registration after the first site's compiletf with no
 active call. Retain error records, real catalog width 0 and simulator-owned value
 buffers valid until the next query/shutdown. Puts go through `llg_ba`/`llg_ba_d`
-(no delay), NBA-region callbacks (delayed modes, `vpiSchedEvent` records) or the
-force table (`llg_force_value_parts`, `llg_force_real_value`, release through
+(no delay), delayed calls (`llg_schedule_delayed_call`: delayed modes, one
+carrier process per pending `vpiSchedEvent` record, written in its Active
+turn, decision S42-D5) or the force table (`llg_force_value_parts`, `llg_force_real_value`, release through
 `llg_release_parts`/`llg_release_real`). Tear down VPI/runtime queues before
 model storage.
 `vpi_mcd_*` (38.24-38.29) run on the `$fopen` table through `llg_file_mcd_*`

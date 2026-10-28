@@ -184,7 +184,7 @@ typedef struct llg_vpi_event {
     sv4_t value;
     double real;
     uint64_t time;
-    llg_region_callback_id_t id;
+    llg_delayed_call_id_t id; /* the carrier process while pending */
     uint32_t slot;            /* vpiSchedEvent handle: index + 1, or 0 */
     int pending;
     struct llg_vpi_event* next;
@@ -6410,18 +6410,29 @@ static void vpi_event_finish(llg_vpi_event_t* event) {
     free(event);
 }
 
+/* Runs in the Active turn of the event's carrier process. The event has
+ * occurred before its write starts, so value-change callbacks of the write
+ * see it as no longer scheduled, and a put or cancel they issue can neither
+ * remove it nor free it twice. A handle may be released or cancelled from
+ * such a callback, so the record is not touched after the write. */
 static void vpi_event_fire(void* data) {
     llg_vpi_event_t* event = (llg_vpi_event_t*)data;
+    event->pending = 0;
+    vpi_event_unlink(event);
+    llg_vpi_target_t target = event->target;
     llg_vpi_datum_t datum;
     datum.is_real = event->is_real;
     datum.real = event->real;
     datum.packed = event->value;
-    write_target(&event->target, &datum);
-    vpi_event_finish(event);
+    event->value = VPI_EMPTY;
+    /* The vpiSchedEvent handle keeps the record until it is released. */
+    if (!event->slot) free(event);
+    write_target(&target, &datum);
+    if (!datum.is_real) sv4_destroy(&datum.packed);
 }
 
 static void vpi_event_cancel(llg_vpi_event_t* event) {
-    if (event->pending) llg_cancel_region_callback(event->id);
+    if (event->pending) llg_cancel_delayed_call(event->id);
     vpi_event_finish(event);
 }
 
@@ -6431,6 +6442,10 @@ static int same_object(const llg_vpi_target_t* a, const llg_vpi_target_t* b) {
 
 static vpiHandle schedule_put(const llg_vpi_target_t* target, llg_vpi_datum_t* datum,
                               uint64_t ticks, int mode, int return_event) {
+    if (ticks > UINT64_MAX - llg_time()) {
+        vpi_error("LLG_VPI_TIME", "the vpi_put_value delay passes the last simulation time");
+        return NULL;
+    }
     uint64_t when = llg_time() + ticks;
     for (llg_vpi_event_t* cursor = g_vpi.events; cursor;) {
         llg_vpi_event_t* next = cursor->next;
@@ -6450,9 +6465,11 @@ static vpiHandle schedule_put(const llg_vpi_target_t* target, llg_vpi_datum_t* d
     event->value = VPI_EMPTY;
     if (!datum->is_real) sv4_move(&event->value, &datum->packed);
     event->time = when;
-    /* Delayed puts update in the NBA region of their time slot, like a
-     * delayed nonblocking assignment (decision S42-D7). */
-    if (!llg_schedule_region_callback_id(LLG_REGION_NBA, vpi_event_fire, event, ticks, &event->id)) {
+    /* A delayed put is an Active-region event of its time slot, ordered with
+     * process timer wakeups by when it was scheduled: a runtime carrier
+     * process waits `#ticks` and then writes (decision S42-D5). */
+    if (!llg_schedule_delayed_call("vpi_put_value delay", vpi_event_fire, event, ticks,
+                                   &event->id)) {
         if (!event->is_real) sv4_destroy(&event->value);
         free(event);
         vpi_error("LLG_VPI_SCHEDULE", "the scheduler rejected the delayed VPI write");

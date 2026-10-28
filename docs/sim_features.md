@@ -2629,7 +2629,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   without a VPI catalog emit no tables and no creation calls.
   `vpi_get_value` serves every Table
   38-3 format with exact X/Z; `vpi_put_value` writes through the storage APIs
-  with no delay, inertial, transport and pure-transport delays,
+  with no delay, inertial, transport and pure-transport delays (Active-region
+  events of the target slot in scheduling order, decision S42-D5),
   `vpiReturnEvent`/`vpiCancelEvent`, force and release. User system tasks and
   functions run compiletf, sizetf (once per registration) and calltf with the
   38.34 return conventions and per-call-site user data. Handles are

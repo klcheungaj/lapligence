@@ -383,7 +383,10 @@ with `LLG_VPI_PLUGIN` (on Windows a DLL linked against a model import library)
 and run in both optimizer modes on every backend; `objects` and `systf` also
 link it as a static archive through `--dpi-lib`, `values` also runs with
 `-funsigned-char` (MSVC `/J`), `systf` also runs a model generated after the frontend is
-dropped, and `missing` must stop at startup. `errors` includes the handle
+dropped, and `missing` must stop at startup. `put_region` (delayed puts as
+Active-region events, cancellation in each delay mode) also runs with a
+`vpiStop` under both stop policies, and `put_alive` ends after its last
+pending put. `errors` includes the handle
 churn that the ASan lane exercises
 (`LLG_CC=gcc LLG_CFLAGS='-fsanitize=address,undefined -DLLG_CO_DEBUG'`).
 Decisions S42-D1-D13, with `.c` applications linked as static archives

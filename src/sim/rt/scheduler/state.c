@@ -819,6 +819,7 @@ typedef struct {
     llg_program_t* programs;        // stable origins, owned until runtime cleanup
     int program_completion_pending; // service after the full cancellation batch
     llg_proc_t* retired_procs; // cancelled coroutines awaiting a safe destroy point
+    llg_proc_t* delayed_calls; // pending carriers of llg_schedule_delayed_call
     llg_process_handle_t* process_handles; // stable identities for live/exited procs
     llg_semaphore_t* semaphores; // all semaphore objects owned by this run
     llg_mailbox_t* mailboxes;       // runtime-owned mailbox objects

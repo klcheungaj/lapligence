@@ -110,6 +110,54 @@ checked against a run; no line was accepted only because the run printed it.
   release the variable `f` keeps `aa` until its next assignment, the net `n`
   is recomputed from its driver (`9`), and `value_p` returns those values.
 
+## put_region and put_alive (decision S42-D5)
+
+38.34 (L64174-64175) stores "The delay time before the value is set" in an
+`s_vpi_time` and gives the modes (L64179-64184): "vpiInertialDelay All
+scheduled events on the object shall be removed before this event is
+scheduled.", "vpiTransportDelay All events on the object scheduled for times
+later than this event shall be removed (modified transport delay).",
+"vpiPureTransportDelayNo events on the object shall be removed (transport
+delay).", and (L64194) "vpiCancelEvent A previously scheduled event shall
+be cancelled." The clause does not name a region. Decision S42-D5 makes a
+delayed put an Active-region event of its target slot, ordered with process
+wakeups by when it was scheduled (4.4.2.2, L3145-3148: "The Active region
+holds the current active region set events being evaluated"). Each pending
+put is a runtime carrier process that waits `#delay` and then writes.
+
+**put_region.** `$put_region` runs at time 0, before its caller's `#2`.
+
+- `1 d=9`: the NBA `d <= 9` of time 1 (4.4.2.4).
+- Time 2: the first `initial #2` armed its delay before `$put_region` ran, so
+  it reads the old values (`2 early d=9 e=0 f=0`). The caller armed `#2`
+  after the puts, so it reads the new ones (`2 late d=5 e=6 f=7`). The
+  `always @(d)` process wakes on the write and runs after both
+  (`2 d=5`). The caller's `#0` (4.4.2.3, L3150-3156) and the
+  third process's double `#0` follow; `$strobe` prints in Postponed.
+- Inertial `ci`: 1@4 is cancelled (its handle frees, 38.34); 2@5 is removed
+  by 3@6, so `ci` changes once, `6 ci=3`.
+- Transport `ct`: 2@5 removes the later 1@6; 3@7 is cancelled: `5 ct=2`.
+- Pure transport `cp`: nothing is removed, 3@5 is cancelled: `3 cp=2`,
+  `4 cp=1`.
+- `late` 8@12 is still pending when `$finish` ends the run at 9; it never
+  applies, and the final procedure prints `final at 9 late=0` (9.2.3,
+L11251-11252: "it occurs at the end of simulation time").
+
+With `SIM042_PUT_STOP` a `cbAfterDelay` callback at time 4 prints `4 stop`
+and calls `vpi_control(vpiStop)`. It runs in the Pre-Active region (Table
+4-1, L3610: "cbAfterDelay Pre-Active"), before the `cp` put of that slot. Under the default resume policy the
+run continues and every remaining put applies as above, after `4 stop`.
+Under `--stop-policy exit` the run suspends with the `cp`, `ct`, `ci` and
+`late` puts pending; closing the model discards them, so output ends at
+`4 stop` and no final procedure runs.
+
+**put_alive.** `$put_alive` registers a `cbValueChange` callback on `d`
+and schedules transport 4@5. When that write changes `d` to 4 the callback
+schedules inertial 6@7. The put of the running write has already occurred,
+so the inertial removal finds nothing to remove (L64179-64180). These puts
+are the only future events: the run lasts until both applied (`5 d=4`,
+`7 d=6`), then ends without `$finish` and runs its final procedure at 7.
+
 ## systf (A02)
 
 - `$sum` is a `vpiSizedSignedFunc`; its compiletf checks two arguments for

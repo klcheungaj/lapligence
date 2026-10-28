@@ -3051,6 +3051,33 @@ int llg_schedule_region_callback_id(llg_region_t region,
 // runtime lifetime. `data` stays caller-owned either way.
 int llg_cancel_region_callback(llg_region_callback_id_t id);
 
+// Delayed Active-region calls (VPI delayed puts, 38.34). Each pending call is
+// carried by a runtime-owned carrier process whose coroutine is
+// `#ticks; callback(data); done`. A positive delay puts its timer into the
+// ordinary timed queue when the call is scheduled, so at its time the
+// callback runs in the Active region, ordered with process timer wakeups by
+// scheduling sequence; a zero delay appends the carrier to the current Active
+// region queue. The callback runs in the carrier's process turn, so its
+// writes behave as blocking writes. Carriers stay outside the process
+// registry: kill, disable, program completion, process statistics and
+// process handles never see them, while a pending carrier keeps the
+// simulation alive. $finish and llg_rt_cleanup discard pending carriers
+// without calling them; `data` stays caller-owned. `name` (static storage)
+// names the carrier in diagnostics. Returns 0, scheduling nothing, on a
+// time overflow or in a read-only region.
+typedef struct {
+    uint64_t generation;
+    llg_proc_t* carrier;
+} llg_delayed_call_id_t;
+int llg_schedule_delayed_call(const char* name, llg_region_callback_fn callback,
+                              void* data, uint64_t ticks,
+                              llg_delayed_call_id_t* id);
+// Discard a carrier whose callback has not started. Returns 1 when
+// discarded, 0 when its callback has started or `id` belongs to an earlier
+// runtime lifetime. Within one lifetime an id must not be cancelled after its
+// callback returned (the carrier is then reclaimed).
+int llg_cancel_delayed_call(llg_delayed_call_id_t id);
+
 // Register a signal for a copied, immutable value sampled at the beginning of
 // each time slot. The returned pointer is runtime-owned and valid until the
 // next llg_rt_cleanup. Unregistered signals produce a controlled diagnostic.

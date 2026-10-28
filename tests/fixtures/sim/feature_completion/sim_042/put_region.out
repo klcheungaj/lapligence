@@ -1,0 +1,13 @@
+0 scheduled
+1 d=9
+2 early d=9 e=0 f=0
+2 late d=5 e=6 f=7
+2 d=5
+2 inactive d=5 e=6 f=7
+2 late inactive d=5
+2 postponed d=5 e=6 f=7
+3 cp=2
+4 cp=1
+5 ct=2
+6 ci=3
+final at 9 late=0

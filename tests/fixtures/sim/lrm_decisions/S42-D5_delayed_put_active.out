@@ -1,0 +1,11 @@
+1 d=9
+2 early d=9 e=0 f=0
+2 late d=5 e=6 f=7
+2 d=5
+2 inactive d=5 e=6 f=7
+2 late inactive d=5
+2 postponed d=5 e=6 f=7
+3 same turn z=0
+3 later active z=0
+3 z=3
+3 inactive z=3

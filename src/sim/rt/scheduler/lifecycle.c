@@ -436,6 +436,7 @@ void llg_rt_cleanup(void) {
     free_q_queues();
     llg_string_destroy(&g.time_format.suffix);
 
+    free_delayed_calls();
     for (int i = 0; i < g.n_procs; i++) {
         if (g.all_procs[i]) free_proc_storage(g.all_procs[i]);
     }
