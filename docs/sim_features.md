@@ -2650,9 +2650,16 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   every 39.5.1 system and 39.5.2 assertion operation (decisions
   A17-D1..D3); the `cbAssertionSys*` reasons run at the start and end of
   the run and on the system controls. Assertion handles report `vpiFile`,
-  `vpiLineNo` and `vpiColumn`. Step callbacks, sequence and property
-  instance objects and assertion expressions are not implemented and fail
-  with a `vpi_chk_error` error.
+  `vpiLineNo`, `vpiColumn`, `vpiEndLine` and `vpiEndColumn`; in a model
+  generated with `--vpi` they also reach their clocking event, disable
+  condition, property (a `vpiPropertySpec` or `vpiPropertyInst`), condition
+  and action statements, and `failExpr` names the property expression
+  (A17-D4, 37.45-37.51). Sequence and property instances answer
+  `vpiArgument` and their declaration, which a scope iterates with its
+  formals; an instance that is an assertion's whole property takes start,
+  success and failure callbacks (A17-D5). Step callbacks are not
+  implemented and fail with a `vpi_chk_error` error; property operators are
+  opaque.
   A system function in a void cast (SV §13.4.1) is called as a function: a
   built-in runs its own lowering (a `$random(seed)` still updates `seed`) and
   a registered VPI function its calltf; only a discarded `string` result of a

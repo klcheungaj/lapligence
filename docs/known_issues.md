@@ -2417,13 +2417,21 @@ counterpart, for assertion coverage.
 - VPI assertion API (ADV-017): assertion handles answer the static 39.3.2
   properties, `vpiFile`/`vpiLineNo`/`vpiColumn` and the 40.5.3 counters,
   and run the 39.4 callbacks and 39.5 controls, with these limits:
-  - the clocking event, disable condition and property of an assertion
-    (`vpiClockingEvent`, `vpiDisableCondition`, `vpiProperty`), the
-    failure expression (`failExpr` is NULL) and `vpiEndLine`/`vpiEndColumn`
-    are not available: llg has no VPI expression objects;
-  - sequence and property instances (`vpiSequenceInst`, `vpiPropertyInst`)
-    and their declarations are not VPI objects, so callbacks on them
-    cannot be placed;
+  - the relations of an assertion (`vpiClockingEvent`,
+    `vpiDisableCondition`, `vpiProperty`, `vpiExpr`, `vpiStmt`,
+    `vpiElseStmt`) and `failExpr` exist only in models generated with
+    `--vpi` (or `--dpi-lib`); property and sequence operators are opaque
+    `vpiOperation` objects without operands, value, decompile or line
+    (A17-D4);
+  - a sequence or property declaration keeps no body, variables or formal
+    defaults (`vpiPropertySpec`/`vpiExpr`/`vpiVariables` of a declaration,
+    `vpiExpr` of a formal fail with `LLG_VPI_UNSUPPORTED`: each instance
+    holds its expanded body and its actual arguments), and declarations are
+    not found by `vpi_handle_by_name`;
+  - callbacks on a sequence or property instance run only for an instance
+    that is the whole property of an assertion; a nested instance refuses
+    them, and the sequence instance of a `cover sequence` gets no failure
+    (A17-D5);
   - step callbacks (`cbAssertionStepSuccess`/`StepFailure`,
     `vpiAssertionEnableStep`) fail with `LLG_VPI_UNSUPPORTED`;
   - the 39.5.1 controls take NULL, an instance or an assertion handle,

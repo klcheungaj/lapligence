@@ -2281,6 +2281,24 @@ fn a17_d1_attempt_callbacks() {
 }
 
 #[test]
+fn a17_d4_assertion_relations() {
+    run_vpi_decision(
+        "A17-D4_assertion_relations",
+        &["task $d4()"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D4_assertion_relations.out"),
+    );
+}
+
+#[test]
+fn a17_d5_instance_callbacks() {
+    run_vpi_decision(
+        "A17-D5_instance_callbacks",
+        &["task $d5()"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D5_instance_callbacks.out"),
+    );
+}
+
+#[test]
 fn a17_d2_control_callbacks() {
     run_vpi_decision(
         "A17-D2_control_callbacks",

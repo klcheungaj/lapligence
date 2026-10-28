@@ -3752,6 +3752,12 @@ typedef struct llg_acov_item {
     const char* file;     /* source file of the statement; NULL when unknown */
     uint32_t line;        /* source line and column (39.3.2); 0 when unknown */
     uint32_t column;
+    uint32_t end_line;    /* where the statement ends (37.45); 0 when unknown */
+    uint32_t end_column;
+    /* The statement's VPI expression object entry (llg_vpi_code_t row + 1)
+     * holding its clocking event, disable condition, property, condition
+     * and action statements; 0 in a model without expression objects. */
+    uint32_t code;
     int32_t instance;     /* owning instance index, -1 for $root */
     uint8_t kind;         /* LLG_ASSERTION_ASSERT/ASSUME/COVER */
     uint8_t form;         /* LLG_ACOV_* */

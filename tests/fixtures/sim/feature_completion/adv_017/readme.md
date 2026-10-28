@@ -39,8 +39,8 @@ before it.
   and success callbacks, only the attemptStartTime field is valid."; L65777
   "the content of attemptStartTime is always the start time of the actual
   attempt". cb_time (L65756-L65765) is the start time for cbAssertionStart
-  and the time of the event otherwise. llg's failExpr is NULL: expressions
-  are not VPI objects (A17-D1).
+  and the time of the event otherwise. failExpr is the property expression
+  or immediate condition (decision A17-D4, see `relations` below).
 - **Global clocking future functions.** 39.4.2.1 L65787-L65788: "The
   callback is executed at the nearest tick of the global clock strictly
   following the callback event"; "cb_time contains the time of the callback
@@ -173,9 +173,11 @@ name, full name, file, line and column of the statement (the label for a
 labelled one), `vpiIsDeferred`, the owning instance and its definition. The
 unnamed immediate assertion in `leaf` has no name or full name. Iterating
 from `tb.u_leaf` and from the checker instance `tb.u_chk` gives their own
-assertions; `k_x` is found by name below `tb.u_chk`. `vpiClockingEvent`,
-`vpiDisableCondition`, `vpiProperty` and `vpiEndLine` fail with
-`LLG_VPI_UNSUPPORTED`.
+assertions; `k_x` is found by name below `tb.u_chk`. The model is built
+without `--vpi`, so it has no expression objects: `vpiClockingEvent`,
+`vpiDisableCondition` and `vpiProperty` fail with `LLG_VPI_UNSUPPORTED`
+(`relations` covers them with `--vpi`). `vpiEndLine` of `r1` is 24: the
+statement ends on its own line (37.45, A17-D4).
 
 `r1` (`v` is always 1) has three Start records: a trace, a `killer` that
 kills the attempt starting at 15 from inside its own Start callback, and a
@@ -184,3 +186,80 @@ inside the killer's call, before the next Start record runs; the attempt
 from 15 never succeeds; the remover runs at 5 and 15 only. Attempts 5, 25
 succeed at 15, 35; 35 is in progress: attempts 4, success 2, killed 1;
 `vpiCovered` is 1 (attempted, succeeded, never failed, 40.5.3 L66606).
+
+## relations (37.45-37.51, 39.4.2; ADV-017b)
+
+Built with `--vpi`, so the model has expression objects. `$relations`
+prints, for each assertion in table order, its type, full name, `vpiEndLine`
+and `vpiEndColumn`, `vpiIsClockInferred` and `vpiIsCoverSequence` (-1 where
+the property does not apply: immediate assertions have no clock, only a
+cover is a cover sequence), then each one-to-one relation of 37.46/37.51.
+`decompile=NULL` marks an object without `vpiDecompile` (specifications,
+instances, statements without a decompiled form, opaque operators).
+
+- **End position.** 37.45 lists `vpiEndLine` and `vpiEndColumn` under
+  "location" without defining them; llg gives the statement's last
+  character, `;` included (A17-D4). `a_spec` ends with the `;` at column 43
+  of line 32; `a_inst` at 33:39; `i1` at 41:64 (`... $time);`).
+- **Clocking event.** 37.46 detail 1 (L60456-L60457): "Clocking event is
+  always the actual clocking event on which the assertion is being
+  evaluated, regardless of whether this is explicit or implicit
+  (inferred)." `a_spec`, `c_seq`, `a_bool` write theirs (`posedge clk`,
+  `posedge clk iff a`); `a_inst` and `a_nest` take the clock written in
+  `p1` (line 23) and `p2` (line 26); `a_proc` takes the `negedge clk` of its
+  procedure (line 37, 16.15.6) and `l_def` the default clocking of `leaf`
+  (line 10): those two are inferred (1).
+- **Disable condition.** Only the `disable iff` written in the statement
+  (A17-D4; the text is silent): `a_spec` writes `rst`; the `disable iff
+  (rst)` inside `p1` (`a_inst`) and the `default disable iff (!a)` of
+  `leaf` (`l_def`) are not reported; the others have none (NULL, no
+  error).
+- **Property.** 37.46 shows `vpiProperty` reaching a property instance or a
+  property specification: `a_inst` and `a_nest` instantiate exactly one
+  named property and get the `vpiPropertyInst`; every other statement gets a
+  `vpiPropertySpec` (37.48) with the clocking event and disable condition
+  written in the statement and its `vpiPropertyExpr`: the Boolean `b` and
+  `a` are the variables themselves, `s1(a, 1)` is a `vpiSequenceInst`, and
+  the operators `a |=> b`, `a ##1 b` are opaque `vpiOperation` objects with
+  no decompile and no line (A17-D4).
+- **Statements.** 37.46 and 37.51 give `vpiStmt` and `vpiElseStmt`. An
+  empty action `;` and a missing else action are NULL (A17-D4); `a_spec`
+  has both `$display` actions, `i1` only its else `$display`, `i2` its pass
+  `$display`. Immediate assertions have `vpiExpr` (`a == b`, `a`);
+  concurrent ones have none (NULL).
+- **Instances.** 37.50 detail 1 (L60641-L60644) and 37.52 detail 1
+  (L60739-L60742): "The vpiArgument iterator shall return the ... instance
+  arguments in the order that the formals ... are declared ... If a formal
+  has a default value, that value shall appear as the argument should the
+  instantiation not provide a value". `p1(a, b)` gives `a`, `b`;
+  `s1(a, 1)` gives `a` and the literal 1 (line 34); the nested `s1(a)` of
+  `a_nest` gives `a` and the default 2 (line 19). The declaration (37.47,
+  37.49) is named `tb.p1`, `tb.s1`, `tb.p2` at its `property`/`sequence`
+  line; its formals iterate in declaration order (detail 1). Detail 4:
+  "vpiDirection returns vpiNoDirection if the formal argument is not a
+  local variable argument" (5); `local input logic y` is `vpiInput` (1).
+  Detail 2: "The vpiTypeSpec relation shall return NULL if the formal is
+  untyped": `x` and `s` give NULL, `int n` a `vpiIntTypespec`, `logic y` a
+  `vpiLogicTypespec`. Detail 3's `vpiExpr` (a formal's default), and a
+  declaration's `vpiVariables`, are not kept: `LLG_VPI_UNSUPPORTED`.
+- **Declarations of a scope.** 37.12 lists property and sequence
+  declarations of a scope: `tb` declares `tb.s1`, then `tb.p1` and `tb.p2`;
+  `tb.u_leaf` declares none (NULL iterator, no error).
+- **Instance callbacks.** 39.4.2 L65702-L65704: "The cbAssertionStart,
+  cbAssertionSuccess, and cbAssertionFailure callbacks may also be
+  registered on a sequence instance or a property instance." Placing
+  `cbAssertionVacuousSuccess` fails (`LLG_VPI_CALLBACK`); 39.5.2
+  L65886-L65887: "Only assertion statement handles are valid here, not
+  sequence or property instances" (`vpiAssertionDisable` on an instance:
+  `LLG_VPI_ARGUMENT`). The nested `s1(a)` of `a_nest` refuses a callback
+  (`LLG_VPI_UNSUPPORTED`, A17-D5). `p1` of `a_inst` starts at every
+  posedge (5, 15, 25) and succeeds at 25 for attempt 5 (`a` at 5, `b` at 25,
+  `y` = `b` sampled at 5); `s1(a, 1)` of `c_seq` (`a ##1 b`) starts at 5,
+  15, 25 and matches at 25 for attempt 15; attempt 5 misses (`b` is 0 at 15)
+  and a cover sequence reports no failure (A17-D1, A17-D5).
+- **failExpr.** 39.4.2 L65739: "On a cbAssertionFailure callback, the
+  attemptStartTime and detail.failExpr fields are valid." llg passes the
+  property expression (A17-D4): `i1` fails at 15 (`a` 1, `b` 0) with
+  `a == b`; `a_spec` attempt 5 fails at 15 (`b` 0 at 15) with the opaque
+  `a |=> b`. The run ends at 32, so `a_inst` attempt 15, whose `s1(a)`
+  needs `b` at 35, is still in progress.

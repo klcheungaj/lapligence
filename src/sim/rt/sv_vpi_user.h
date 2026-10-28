@@ -3,7 +3,8 @@
  * model supports: the assertion and coverage subset of IEEE 1800-2009
  * Annex M, the typespec, structure-member and enum-constant objects, with
  * the standard constant values, the assertion callback and control
- * constants, and the Annex M routine vpi_register_assertion_cb(). It
+ * constants, the sequence and property objects, and the Annex M routine
+ * vpi_register_assertion_cb(). It
  * includes vpi_user.h, which already carries the Annex M object types of
  * the catalog (vpiInterface, the SystemVerilog variable types).
  */
@@ -119,9 +120,7 @@
 #define vpiImmediateCover 695
 #define vpiAssertion 744
 
-/* Assertion properties and relations (39.3.2). The clocking event,
- * disable condition and property of an assertion are expressions, which
- * llg does not expose: those relations fail through vpi_chk_error(). */
+/* Assertion properties and relations (37.45, 37.46, 39.3.2). */
 #define vpiIsDeferred 657
 #define vpiDisableCondition 689
 #define vpiClockingEvent 690
@@ -130,6 +129,18 @@
 #define vpiColumn 662
 #define vpiEndLine 663
 #define vpiEndColumn 664
+#define vpiIsClockInferred 649
+#define vpiIsCoverSequence 659
+
+/* Sequence and property objects (37.47-37.50). */
+#define vpiPropertyDecl 655
+#define vpiPropertySpec 656
+#define vpiPropertyExpr 657
+#define vpiPropertyInst 660
+#define vpiSequenceDecl 661
+#define vpiSequenceInst 664
+#define vpiSeqFormalDecl 679
+#define vpiPropFormalDecl 699
 
 /* Assertion control (39.5.1, 39.5.2). Step callbacks are not supported:
  * vpiAssertionEnableStep fails through vpi_chk_error(). */

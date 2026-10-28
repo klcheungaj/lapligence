@@ -1,0 +1,140 @@
+vpiAssert tb.a_spec end=32:43 inferred=0 cover_sequence=-1
+    vpiClockingEvent: vpiOperation line=29 decompile=posedge clk
+    vpiDisableCondition: vpiReg line=16 decompile=rst
+    vpiProperty: vpiPropertySpec line=29 decompile=NULL
+      spec vpiClockingEvent: vpiOperation line=29 decompile=posedge clk
+      spec vpiDisableCondition: vpiReg line=16 decompile=rst
+      spec vpiPropertyExpr: vpiOperation line=0 decompile=NULL
+    vpiExpr: NULL
+    vpiStmt: vpiSysTaskCall line=30 decompile=$display("%0t a_spec pass", $time())
+    vpiElseStmt: vpiSysTaskCall line=32 decompile=$display("%0t a_spec fail", $time())
+vpiAssert tb.a_inst end=33:39 inferred=0 cover_sequence=-1
+    vpiClockingEvent: vpiOperation line=23 decompile=posedge clk
+    vpiDisableCondition: NULL
+    vpiProperty: vpiPropertyInst line=33 decompile=NULL
+    instance vpiPropertyInst name=p1
+      vpiArgument: vpiReg line=16 decompile=a
+      vpiArgument: vpiReg line=16 decompile=b
+      declaration vpiPropertyDecl tb.p1 line=22
+        formal vpiPropFormalDecl x direction=5 typespec=NULL
+    formal vpiExpr: error LLG_VPI_UNSUPPORTED
+        formal vpiPropFormalDecl y direction=1 typespec=vpiLogicTypespec
+    formal vpiExpr: error LLG_VPI_UNSUPPORTED
+    declaration vpiVariables: error LLG_VPI_UNSUPPORTED
+    instance vacuous callback: error LLG_VPI_CALLBACK
+    instance control: error LLG_VPI_ARGUMENT
+    vpiExpr: NULL
+    vpiStmt: NULL
+    vpiElseStmt: NULL
+vpiCover tb.c_seq end=34:52 inferred=0 cover_sequence=1
+    vpiClockingEvent: vpiOperation line=34 decompile=posedge clk
+    vpiDisableCondition: NULL
+    vpiProperty: vpiPropertySpec line=34 decompile=NULL
+      spec vpiClockingEvent: vpiOperation line=34 decompile=posedge clk
+      spec vpiDisableCondition: NULL
+      spec vpiPropertyExpr: vpiSequenceInst line=34 decompile=NULL
+    instance vpiSequenceInst name=s1
+      vpiArgument: vpiReg line=16 decompile=a
+      vpiArgument: vpiConstant line=34 decompile=1
+      declaration vpiSequenceDecl tb.s1 line=19
+        formal vpiSeqFormalDecl x direction=5 typespec=NULL
+    formal vpiExpr: error LLG_VPI_UNSUPPORTED
+        formal vpiSeqFormalDecl n direction=5 typespec=vpiIntTypespec
+    formal vpiExpr: error LLG_VPI_UNSUPPORTED
+    declaration vpiVariables: error LLG_VPI_UNSUPPORTED
+    instance vacuous callback: error LLG_VPI_CALLBACK
+    instance control: error LLG_VPI_ARGUMENT
+    vpiExpr: NULL
+    vpiStmt: NULL
+    vpiElseStmt: NULL
+vpiAssert tb.a_nest end=35:40 inferred=0 cover_sequence=-1
+    vpiClockingEvent: vpiOperation line=26 decompile=posedge clk
+    vpiDisableCondition: NULL
+    vpiProperty: vpiPropertyInst line=35 decompile=NULL
+    instance vpiPropertyInst name=p2
+      vpiArgument: vpiSequenceInst line=35 decompile=NULL
+      declaration vpiPropertyDecl tb.p2 line=25
+        formal vpiPropFormalDecl s direction=5 typespec=NULL
+    formal vpiExpr: error LLG_VPI_UNSUPPORTED
+    declaration vpiVariables: error LLG_VPI_UNSUPPORTED
+    vpiExpr: NULL
+    vpiStmt: NULL
+    vpiElseStmt: NULL
+vpiAssume tb.a_bool end=36:53 inferred=0 cover_sequence=-1
+    vpiClockingEvent: vpiOperation line=36 decompile=posedge clk iff a
+    vpiDisableCondition: NULL
+    vpiProperty: vpiPropertySpec line=36 decompile=NULL
+      spec vpiClockingEvent: vpiOperation line=36 decompile=posedge clk iff a
+      spec vpiDisableCondition: NULL
+      spec vpiPropertyExpr: vpiReg line=16 decompile=b
+    vpiExpr: NULL
+    vpiStmt: NULL
+    vpiElseStmt: NULL
+vpiAssert tb.a_proc end=38:42 inferred=1 cover_sequence=-1
+    vpiClockingEvent: vpiOperation line=37 decompile=negedge clk
+    vpiDisableCondition: NULL
+    vpiProperty: vpiPropertySpec line=38 decompile=NULL
+      spec vpiClockingEvent: NULL
+      spec vpiDisableCondition: NULL
+      spec vpiPropertyExpr: vpiOperation line=0 decompile=NULL
+    vpiExpr: NULL
+    vpiStmt: NULL
+    vpiElseStmt: NULL
+vpiImmediateAssert tb.i1 end=41:64 inferred=-1 cover_sequence=-1
+    vpiClockingEvent: NULL
+    vpiDisableCondition: NULL
+    vpiProperty: NULL
+    vpiExpr: vpiOperation line=41 decompile=a == b
+    vpiStmt: NULL
+    vpiElseStmt: vpiSysTaskCall line=41 decompile=$display("%0t i1 fail", $time())
+vpiImmediateCover tb.i2 end=42:56 inferred=-1 cover_sequence=-1
+    vpiClockingEvent: NULL
+    vpiDisableCondition: NULL
+    vpiProperty: NULL
+    vpiExpr: vpiReg line=16 decompile=a
+    vpiStmt: vpiSysTaskCall line=42 decompile=$display("%0t i2 covered", $time())
+    vpiElseStmt: NULL
+vpiAssert tb.u_leaf.l_def end=12:31 inferred=1 cover_sequence=-1
+    vpiClockingEvent: vpiOperation line=10 decompile=posedge clk
+    vpiDisableCondition: NULL
+    vpiProperty: vpiPropertySpec line=12 decompile=NULL
+      spec vpiClockingEvent: NULL
+      spec vpiDisableCondition: NULL
+      spec vpiPropertyExpr: vpiReg line=9 decompile=a
+    vpiExpr: NULL
+    vpiStmt: NULL
+    vpiElseStmt: NULL
+tb declares tb.s1
+tb declares tb.p1
+tb declares tb.p2
+tb.u_leaf declares nothing
+nested vpiSequenceInst
+    instance vpiSequenceInst name=s1
+      vpiArgument: vpiReg line=16 decompile=a
+      vpiArgument: vpiConstant line=19 decompile=2
+      declaration vpiSequenceDecl tb.s1 line=19
+        formal vpiSeqFormalDecl x direction=5 typespec=NULL
+    formal vpiExpr: error LLG_VPI_UNSUPPORTED
+        formal vpiSeqFormalDecl n direction=5 typespec=vpiIntTypespec
+    formal vpiExpr: error LLG_VPI_UNSUPPORTED
+    declaration vpiVariables: error LLG_VPI_UNSUPPORTED
+    nested callback: error LLG_VPI_UNSUPPORTED
+nested callback -> NULL
+5 i2 covered
+5 a_inst.p1 start vpiPropertyInst attempt=5
+5 c_seq.s1 start vpiSequenceInst attempt=5
+15 i1 failure attempt=15
+    failExpr: vpiOperation line=41 decompile=a == b
+15 i1 fail
+15 i2 covered
+15 a_spec failure attempt=5
+    failExpr: vpiOperation line=0 decompile=NULL
+15 a_inst.p1 start vpiPropertyInst attempt=15
+15 c_seq.s1 start vpiSequenceInst attempt=15
+15 a_spec fail
+25 i2 covered
+25 a_inst.p1 start vpiPropertyInst attempt=25
+25 a_inst.p1 success vpiPropertyInst attempt=5
+25 c_seq.s1 start vpiSequenceInst attempt=25
+25 c_seq.s1 success vpiSequenceInst attempt=15
+25 a_spec pass

@@ -705,10 +705,12 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
         crate::ffi::slang::DelaySelection::Typical => 1,
         crate::ffi::slang::DelaySelection::Max => 2,
     };
+    // The assertion items exist before the catalog, which links each to
+    // its expression objects.
+    cg.populate_assertion_coverage(&mut model);
     cg.populate_vpi_metadata(&mut model, &tops, timing, options.vpi)?;
     cg.populate_vpi_builtin_calls(&mut model);
     cg.finish_dpi(&mut model)?;
-    cg.populate_assertion_coverage(&mut model);
     // Final-block processes render like any other but spawn into the
     // post-simulation phase: they run after `llg_rt_run` returns, not at
     // t=0.

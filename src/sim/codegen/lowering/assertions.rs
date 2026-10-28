@@ -20,6 +20,7 @@ mod locals;
 mod match_calls;
 pub(super) use locals::local_assignment;
 mod procedural;
+pub(in crate::sim::codegen) use procedural::ProcedureClock;
 mod property;
 use crate::core::db::{
     AssertionBinaryOp, AssertionExprKind, AssertionRange, AssertionRepetition,

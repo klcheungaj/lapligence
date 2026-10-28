@@ -1,0 +1,16 @@
+p vacuous success -> refused LLG_VPI_CALLBACK
+p disable -> refused LLG_VPI_CALLBACK
+nested start -> refused LLG_VPI_UNSUPPORTED
+control p -> refused LLG_VPI_ARGUMENT
+5 p start vpiPropertyInst attempt=5
+5 p success vpiPropertyInst attempt=5
+5 s start vpiSequenceInst attempt=5
+15 p start vpiPropertyInst attempt=15
+15 p failure vpiPropertyInst attempt=15
+15 s start vpiSequenceInst attempt=15
+15 s failure vpiSequenceInst attempt=5
+25 p start vpiPropertyInst attempt=25
+25 p success vpiPropertyInst attempt=25
+25 s start vpiSequenceInst attempt=25
+25 s success vpiSequenceInst attempt=15
+25 s failure vpiSequenceInst attempt=25

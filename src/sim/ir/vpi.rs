@@ -403,8 +403,14 @@ impl IrVpiCode {
     pub const TWO_STATE: u32 = 0x200;
     /// A constant whose text is the characters of a string.
     pub const STRING: u32 = 0x400;
+    /// An assertion whose clocking event is inferred, not written in it
+    /// (37.46 `vpiIsClockInferred`).
+    pub const INFERRED: u32 = 0x800;
+    /// Stands for the entry `first` names (an instance's declaration); no
+    /// children.
+    pub const LINK: u32 = 0x1000;
     /// The `LLG_VPI_CODE_*` names of `flags`, lowest bit first.
-    pub const FLAG_NAMES: [&'static str; 11] = [
+    pub const FLAG_NAMES: [&'static str; 13] = [
         "LLG_VPI_CODE_SIGNED",
         "LLG_VPI_CODE_REAL",
         "LLG_VPI_CODE_HIDDEN",
@@ -416,6 +422,8 @@ impl IrVpiCode {
         "LLG_VPI_CODE_LOCALS",
         "LLG_VPI_CODE_TWO_STATE",
         "LLG_VPI_CODE_STRING",
+        "LLG_VPI_CODE_INFERRED",
+        "LLG_VPI_CODE_LINK",
     ];
 
     pub fn new(type_code: &'static str) -> Self {

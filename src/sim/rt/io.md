@@ -133,7 +133,15 @@ half-updated attempt list. `vpi_control` assertion operations go through
 immediate and deferred ones the item's `control` bits, which the generated
 code of a model with a VPI catalog reads per check. The item table stays
 bound after the runtime cleanup so `cbEndOfSimulation` reads final counters
-(A17-D1..D3).
+(A17-D1..D3). An item's `code` names its entry in the expression object
+table (models generated with `--vpi`): the entry is not a handle; its
+children are the 37.46/37.51 relations (`vpiClockingEvent`,
+`vpiDisableCondition`, `vpiProperty`, `vpiExpr`, `vpiStmt`, `vpiElseStmt`).
+Sequence and property declarations are table roots scoped to their
+instance; an instance links to its declaration through a
+`LLG_VPI_CODE_LINK` entry. A record placed on an instance
+(`instance_code`) watches the item whose whole property it is and maps a
+vacuous success to a success (A17-D4, A17-D5).
 Built-ins are never dispatched to a registration under their name: after
 plugin startup, `llg_vpi_check_builtin_overrides` fails the start, naming the
 call, when an application registered a built-in the model runs natively

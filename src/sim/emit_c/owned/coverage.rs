@@ -449,7 +449,7 @@ pub(in crate::sim::emit_c) fn assertion_tables(model: &IrModel, out: &mut String
             .iter()
             .map(|item| {
                 format!(
-                    "{{ .identity = UINT64_C({}), .name = {}, .full_name = {}, .file = {}, .line = {}u, .column = {}u, .instance = {}, .kind = {}, .form = {} }}",
+                    "{{ .identity = UINT64_C({}), .name = {}, .full_name = {}, .file = {}, .line = {}u, .column = {}u, .end_line = {}u, .end_column = {}u, .code = {}u, .instance = {}, .kind = {}, .form = {} }}",
                     item.identity,
                     c_string_literal(&item.name),
                     c_string_literal(&item.full_name),
@@ -458,6 +458,9 @@ pub(in crate::sim::emit_c) fn assertion_tables(model: &IrModel, out: &mut String
                         .map_or_else(|| "NULL".to_owned(), c_string_literal),
                     item.line,
                     item.column,
+                    item.end_line,
+                    item.end_column,
+                    item.code.map_or(0, |code| u64::from(code) + 1),
                     index(item.instance),
                     item.kind.runtime_name(),
                     item.form.runtime_name()

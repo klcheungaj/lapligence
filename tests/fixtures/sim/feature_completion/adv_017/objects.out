@@ -16,7 +16,7 @@ relations of r1:
   vpiClockingEvent -> 0 level=3 code=LLG_VPI_UNSUPPORTED
   vpiDisableCondition -> 0 level=3 code=LLG_VPI_UNSUPPORTED
   vpiProperty -> 0 level=3 code=LLG_VPI_UNSUPPORTED
-  vpiEndLine -> -1 level=3 code=LLG_VPI_UNSUPPORTED
+  vpiEndLine -> 24 level=0 code=-
   vpiScope is tb -> 1 level=0 code=-
 5 r1 Start attempt=5
 5 remover call 1 attempt=5
