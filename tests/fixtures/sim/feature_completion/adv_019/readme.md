@@ -389,11 +389,11 @@ check, `vpiModule` is the instance).
   `vpiDirection`, `vpiEdge` and `vpiExpr`, the path's `vpiCondition`,
   `vpiPathType`, `vpiPolarity`, `vpiDataPolarity` and
   `vpiModPathHasIfNone`. `(a +=> y)` is a parallel path (`type=2`) with
-  polarity `vpiPositive`; `(posedge clk => (q +: d))` has edge
-  `vpiPosedge` (`0x0d`) on its input, `d` as data path input and data
-  polarity `vpiPositive`. `if (en) (b *> y)` is a full path (`type=1`)
-  whose condition is `en`; it and `ifnone (b *> y)` report `ifnone=1`
-  (decision A19-D9).
+  polarity `vpiPositive`, which is also its data polarity (no data source);
+  `(posedge clk => (q +: d))` has edge `vpiPosedge` (`0x0d`) on its input,
+  `d` as data path input and data polarity `vpiPositive`. `if (en) (b *> y)`
+  is a full path (`type=1`) whose condition is `en` (`ifnone=0`); only
+  `ifnone (b *> y)` reports `ifnone=1` (decision A19-D9).
 - Checks. 37.36 details 1-2 (L59948-L59951): "the relationship
   vpiTchkRefTerm shall denote the reference_event or
   controlled_reference_event, while vpiTchkDataTerm shall denote the

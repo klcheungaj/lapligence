@@ -698,7 +698,7 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     // Every driver site and delayed-driver start now exists.
     net_delay_layout::assign_net_delay_layouts(&mut model);
     check_wave_variable_targets(&cg.wave_variable_targets, &model)?;
-    let timing = cg.vpi_timing_metadata(&model, &tops);
+    let timing = cg.vpi_timing_metadata(&tops);
     model.vpi_delays_writable = options.vpi;
     model.vpi_delay_select = match db.delay_selection() {
         crate::ffi::slang::DelaySelection::Min => 0,

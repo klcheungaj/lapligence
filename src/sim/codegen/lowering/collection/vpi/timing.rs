@@ -128,7 +128,6 @@ impl Codegen<'_> {
     /// after lowering, when the model rows exist.
     pub(in super::super::super) fn vpi_timing_metadata(
         &mut self,
-        model: &IrModel,
         tops: &[NodeId],
     ) -> VpiTimingMetadata {
         let mut metadata = VpiTimingMetadata::default();
@@ -159,17 +158,7 @@ impl Codegen<'_> {
                 continue;
             };
             let rows = path_rows.remove(&path.node).unwrap_or_default();
-            // A conditional path shares its terminals with an `ifnone`
-            // path when its rows joined that path's group.
-            let grouped = rows.iter().any(|row| {
-                model
-                    .module_paths
-                    .get(row.set as usize)
-                    .and_then(|set| set.destinations.get(row.destination as usize))
-                    .and_then(|destination| destination.paths.get(row.path as usize))
-                    .is_some_and(|path| path.group != 0)
-            });
-            let row = self.vpi_path_row(path, instance, &rows, grouped);
+            let row = self.vpi_path_row(path, instance, &rows);
             metadata.rows.push(row);
         }
         for check in db.timing_checks() {
@@ -237,14 +226,13 @@ impl Codegen<'_> {
 
     /// The row of one module path declaration of `instance` (37.35): its
     /// terminals, condition and delays, with the model rows it became.
-    /// `vpiModPathHasIfNone` holds for an `ifnone` path and for the paths
-    /// that share its terminals (`grouped`).
+    /// `vpiModPathHasIfNone` holds for an `ifnone` path only, not for the
+    /// state-dependent paths sharing its terminals (decision A19-D9).
     fn vpi_path_row(
         &mut self,
         path: &crate::core::db::ModulePath,
         instance: NodeId,
         rows: &[SdfPathRow],
-        grouped: bool,
     ) -> IrVpiObject {
         let values = path
             .delays
@@ -341,12 +329,14 @@ impl Codegen<'_> {
                 declared,
                 count: path.delays.len() as u32,
                 polarity: polarity_code(path.polarity),
+                // Without a data source the data path is the path itself, so
+                // its polarity is the path's (decision A19-D9).
                 data_polarity: if path.edge.is_some() {
                     polarity_code(path.edge_polarity)
                 } else {
-                    "vpiUnknown"
+                    polarity_code(path.polarity)
                 },
-                has_ifnone: path.condition == PathCondition::IfNone || grouped,
+                has_ifnone: path.condition == PathCondition::IfNone,
             }),
             ..IrVpiObject::default()
         }

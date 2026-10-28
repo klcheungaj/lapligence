@@ -7,10 +7,11 @@
 // vpiNegedge, `edge`: vpiAnyEdge), every other terminal vpiNoEdge.
 // vpi_handle(vpiModDataPathIn) is the data source of an edge-sensitive path
 // (NULL otherwise). vpiDataPolarity is the data source polarity of an
-// edge-sensitive path and vpiUnknown for every other path. vpiCondition is
-// the condition of a state-dependent `if` path and NULL for an `ifnone` or
-// unconditional path. vpiModPathHasIfNone is 1 for an `ifnone` path and for
-// the state-dependent paths that share its terminals, 0 for any other path.
+// edge-sensitive path and the path's own vpiPolarity for every other path.
+// vpiCondition is the condition of a state-dependent `if` path and NULL for
+// an `ifnone` or unconditional path. vpiModPathHasIfNone is 1 for an
+// `ifnone` path only, 0 for any other path, including the state-dependent
+// paths that share its terminals.
 //
 // IEEE 1800-2009 37.35 (SystemVerilog-1800-2009.txt L59873-L59900): the mod
 // path diagram lists vpiModPathin, vpiModPathout and vpiModDataPathin path
@@ -20,7 +21,8 @@
 // vpiModPathHasIfNone"; Annex K L75471: "#define vpiModPathHasIfNone 71 /*
 // Mod path has an ifnone statement */". The clause does not say which paths
 // have an ifnone statement, which terminals carry an edge, or what
-// vpiDataPolarity is for a path without a data source: llg choices.
+// vpiDataPolarity is for a path without a data source: llg choices, the
+// ifnone and data polarity ones following industry-standard behaviour.
 //
 // Build A19-D9_modpath_objects.c as a VPI application (llg: static archive
 // given to --dpi-lib; `task $d9()` declared as a system task).
