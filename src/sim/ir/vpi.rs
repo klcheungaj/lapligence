@@ -419,8 +419,11 @@ impl IrVpiCode {
     /// Stands for the entry `first` names (an instance's declaration); no
     /// children.
     pub const LINK: u32 = 0x1000;
+    /// An unbased unsized literal (`'0`, `'1`, `'x`, `'z`): decompiles as
+    /// written.
+    pub const FILL: u32 = 0x2000;
     /// The `LLG_VPI_CODE_*` names of `flags`, lowest bit first.
-    pub const FLAG_NAMES: [&'static str; 13] = [
+    pub const FLAG_NAMES: [&'static str; 14] = [
         "LLG_VPI_CODE_SIGNED",
         "LLG_VPI_CODE_REAL",
         "LLG_VPI_CODE_HIDDEN",
@@ -434,6 +437,7 @@ impl IrVpiCode {
         "LLG_VPI_CODE_STRING",
         "LLG_VPI_CODE_INFERRED",
         "LLG_VPI_CODE_LINK",
+        "LLG_VPI_CODE_FILL",
     ];
 
     pub fn new(type_code: &'static str) -> Self {

@@ -630,6 +630,9 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         if constant.signed {
             code.flags |= IrVpiCode::SIGNED;
         }
+        if unbased_unsized(source) {
+            code.flags |= IrVpiCode::FILL;
+        }
         code.width = constant.width;
         code.text = Some(constant_digits(&constant));
         (code, Vec::new())
@@ -1517,6 +1520,20 @@ fn vpi_qualifier(check: UniquePriorityCheck) -> &'static str {
 }
 
 /// Four-state digits of an integral constant, most significant first.
+/// Whether a literal is written unbased and unsized (`'0`, `'1`, `'x`,
+/// `'z`; 5.7.1), so its decompiled text keeps that spelling (decision
+/// A19-D11).
+fn unbased_unsized(source: &ConstantSource) -> bool {
+    let ConstantSource::Exact(spelling) = source else {
+        return false;
+    };
+    let mut chars = spelling.trim().chars();
+    matches!(
+        (chars.next(), chars.next(), chars.next()),
+        (Some('\''), Some('0' | '1' | 'x' | 'X' | 'z' | 'Z'), None)
+    )
+}
+
 fn constant_digits(constant: &crate::sim::ir::IrConst) -> String {
     let bit = |plane: &[u64], index: u32| {
         plane
@@ -1602,4 +1619,22 @@ pub(super) fn vpi_op_type(op: Operation) -> Option<&'static str> {
         Operation::Inside => "vpiInsideOp",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unbased_unsized;
+    use crate::core::db::ConstantSource;
+
+    #[test]
+    fn only_unbased_unsized_spellings_keep_their_fill_digit() {
+        let exact = |text: &str| ConstantSource::Exact(text.to_owned());
+        for text in ["'0", "'1", "'x", "'X", "'z", "'Z"] {
+            assert!(unbased_unsized(&exact(text)), "{text}");
+        }
+        for text in ["'b1", "1'b1", "'hx", "0", "'", "\"'x\""] {
+            assert!(!unbased_unsized(&exact(text)), "{text}");
+        }
+        assert!(!unbased_unsized(&ConstantSource::Unavailable));
+    }
 }

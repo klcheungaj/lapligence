@@ -4423,7 +4423,7 @@ static void decompile_list(llg_vpi_text_t* text, const llg_vpi_code_t* node, int
 }
 
 /* A constant as a literal of its vpiConstType: unsized signed 32-bit
- * decimals as written, other integers sized in their radix (binary when
+ * decimals and unbased unsized literals as written, other integers sized in their radix (binary when
  * a hexadecimal or octal digit would mix known and unknown bits). */
 static void decompile_constant(llg_vpi_text_t* text, const llg_vpi_code_t* node) {
     const char* digits = code_text(node);
@@ -4433,6 +4433,15 @@ static void decompile_constant(llg_vpi_text_t* text, const llg_vpi_code_t* node)
         return;
     }
     if (!digits) return;
+    if ((node->flags & LLG_VPI_CODE_FILL) && digits[0]) {
+        /* Every digit is the fill; the literal prints as written, with a
+         * lower-case x or z. */
+        buffer[0] = '\'';
+        buffer[1] = (char)(digits[0] == 'X' ? 'x' : digits[0] == 'Z' ? 'z' : digits[0]);
+        buffer[2] = '\0';
+        text_put(text, buffer);
+        return;
+    }
     if (node->flags & LLG_VPI_CODE_STRING) {
         text_put(text, "\"");
         for (const char* c = digits; *c; ++c) {
