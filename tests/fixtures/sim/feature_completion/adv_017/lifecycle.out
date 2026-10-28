@@ -41,14 +41,14 @@ tb.f_fut: start=7 success=2 vacuous=5 failure=0 disabled=0 kill=0
   attempts started and not concluded: 0
   pass actions: callbacks 7, tb.f_pass 7: match
   fail actions: callbacks 0, tb.f_fail 0: match
-tb.k_cov: start=7 success=2 vacuous=0 failure=4 disabled=0 kill=0
+tb.k_cov: start=7 success=2 vacuous=0 failure=0 disabled=0 kill=0
   counters: attempts=7 success=2 vacuous=0 failure=0 disabled=0 killed=0
-  attempts started and not concluded: 1
+  attempts started and not concluded: 5
   cover hits: callbacks 2, tb.cov_hits 2: match
 tb.u_hs.c_ack: start=7 success=2 vacuous=1 failure=3 disabled=0 kill=0
   counters: attempts=7 success=2 vacuous=1 failure=3 disabled=0 killed=0
   attempts started and not concluded: 1
-tb.u_hs.c_req: start=7 success=2 vacuous=0 failure=4 disabled=0 kill=0
+tb.u_hs.c_req: start=7 success=2 vacuous=0 failure=0 disabled=0 kill=0
   counters: attempts=7 success=2 vacuous=0 failure=0 disabled=0 killed=0
-  attempts started and not concluded: 1
+  attempts started and not concluded: 5
 second Start record ran 4 times

@@ -28,11 +28,11 @@ before it.
   match."; L65688 "cbAssertionKill. An attempt is killed (e.g., as a result
   of a control action, see 39.5.2)." So every attempt that starts reaches
   exactly one of success, vacuous success, failure, disabled or killed, or
-  is still in progress at the end. llg also reports a cover attempt that
-  does not match as cbAssertionFailure (it "fails to reach a success
-  state"), although the 40.5.3 failure counter does not count it (S46-D8);
-  a `cover sequence` reports a success per match (L66654: "there can be
-  multiple matches corresponding to a single attempt"). Decision A17-D1.
+  is still in progress at the end. A cover attempt that does not match
+  runs no callback (a cover reports no failure; the 40.5.3 failure counter
+  does not count it either, S46-D8); a `cover sequence` reports a success
+  per match (L66654: "there can be multiple matches corresponding to a
+  single attempt"). Decision A17-D1.
 - **Attempt information.** L65735-L65736: "On disable, enable, reset, kill,
   pass action, fail action, vacuous action, and nonvacuous action callbacks,
   the returned p_vpi_attempt_info info pointer is NULL"; L65738 "On start
@@ -111,8 +111,9 @@ Stimulus: `req` 1 at 2, 0 at 42, 1 at 52; `ack` 1 at 12, 0 at 22, 1 at 52;
   Tally 7/2/5/0, pass actions 7.
 - `k_cov` (`cover property (req ##1 ack)`): 5 matches at 15, 55 at 65;
   15, 25 and 35 fail at the next edge (ack 0) and 45 at once (req 0); 65 is
-  in progress. Tally 7/2/0/4; the failure counter stays 0 (covers);
-  `cov_hits` 2.
+  in progress. The four attempts without a match run no callback, so the
+  tally is 7/2/0/0 with 5 not concluded; the failure counter stays 0
+  (covers); `cov_hits` 2.
 - `tb.u_hs.c_ack` and `tb.u_hs.c_req`, owned by the checker instance, see the
   same sampled values as `a_req` without its reset and controls: `c_ack`
   succeeds at 15 and 65, fails at 25, 35 and 45 (from 15, 25, 35), is vacuous

@@ -3839,9 +3839,13 @@ enum {
     LLG_ACOV_EVENT_START = 0,
     LLG_ACOV_EVENT_SUCCESS = 1,  /* nonvacuous success, or a cover match */
     LLG_ACOV_EVENT_VACUOUS = 2,  /* vacuous success */
-    LLG_ACOV_EVENT_FAILURE = 3,  /* also a cover attempt that did not match */
+    LLG_ACOV_EVENT_FAILURE = 3,  /* an assert or assume attempt failed */
     LLG_ACOV_EVENT_DISABLED = 4, /* disable iff ended the attempt */
     LLG_ACOV_EVENT_KILLED = 5,   /* a control discarded the attempt */
+    /* $assertoff/$assertkill (CONTROL_OFF) or $asserton (CONTROL_ON)
+     * selected the assertion; `start` is the time of the task. */
+    LLG_ACOV_EVENT_CONTROL_OFF = 6,
+    LLG_ACOV_EVENT_CONTROL_ON = 7,
 };
 typedef void (*llg_assertion_watch_fn)(const llg_acov_item_t* item, int event, uint64_t cb_time,
                                        uint64_t start);

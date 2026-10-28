@@ -175,6 +175,9 @@ static void llg_acov_result(llg_acov_item_t* item, int success, int vacuous, uin
         if (success) llg_acov_add(vacuous ? &item->vacuous : &item->successes, 1u);
         else if (item->kind != LLG_ASSERTION_COVER) llg_acov_add(&item->failures, 1u);
     }
+    // A cover attempt that ends without a match raises no event: a cover
+    // statement has no failure to report (decision A17-D1).
+    if (!success && item->kind == LLG_ASSERTION_COVER) return;
     llg_acov_notify(item,
                     !success  ? LLG_ACOV_EVENT_FAILURE
                     : vacuous ? LLG_ACOV_EVENT_VACUOUS

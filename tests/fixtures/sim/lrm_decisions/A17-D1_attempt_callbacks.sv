@@ -1,11 +1,13 @@
 // Decision A17-D1: assertion attempt callbacks. Every attempt that starts
-// runs cbAssertionStart and then exactly one of cbAssertionSuccess
-// (nonvacuous), cbAssertionVacuousSuccess, cbAssertionFailure,
-// cbAssertionDisabledEvaluation or cbAssertionKill, unless it is still in
-// progress when the simulation ends. A cover property attempt that does not
-// match runs cbAssertionFailure, although the vpiAssertFailureCovered
-// counter does not count it; a cover sequence attempt runs
-// cbAssertionSuccess once per match and nothing when it ends without one.
+// runs cbAssertionStart. An assert or assume attempt then runs exactly one
+// of cbAssertionSuccess (nonvacuous), cbAssertionVacuousSuccess,
+// cbAssertionFailure, cbAssertionDisabledEvaluation or cbAssertionKill,
+// unless it is still in progress when the simulation ends. A cover property
+// attempt runs cbAssertionSuccess when it matches, a cover sequence attempt
+// once per match, and a cover attempt that ends without a match runs no
+// callback (a cover reports no failure). Some simulators report a vacuous
+// success through cbAssertionSuccess; llg follows 39.4.2, which gives it a
+// reason of its own.
 // Times are vpiSimTime; cb_time of cbAssertionStart is the start time; the
 // failure detail failExpr is NULL; the value a callback routine returns is
 // ignored. Within one time step the order of one attempt's start and
@@ -23,8 +25,9 @@
 // attemptStartTime and detail.failExpr fields are valid."; L65756:
 // "cbAssertionStart: cb_time is the time when the assertion attempt has
 // been started." 40.5.3 L66654: cover sequences can have "multiple matches
-// corresponding to a single attempt". The cover failure, failExpr, the time
-// type and the return value are llg choices.
+// corresponding to a single attempt". Running no callback for a cover
+// attempt without a match follows industry-standard behaviour; failExpr,
+// the time type and the return value are llg choices.
 //
 // Build A17-D1_attempt_callbacks.c as a VPI application (llg: static
 // archive given to --dpi-lib; `task $d1()` declared as a system task).
