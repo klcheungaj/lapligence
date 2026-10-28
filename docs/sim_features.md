@@ -2602,7 +2602,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpiPartSelect`, `vpiIndexedPartSelect` and `vpiVarSelect` (`vpiParent`,
   `vpiIndex`, ranges, `vpiConstantSelect`), `vpiFuncCall` and
   `vpiSysFuncCall` (`vpiArgument`, `vpiFunction`), each with `vpiSize`,
-  `vpiDecompile` and a current value. `vpiStmt` of processes, tasks,
+  `vpiDecompile` and a current value; a select is named by its text
+  (`a[3:0]`, decision A19-D24). `vpiStmt` of processes, tasks,
   functions and named blocks gives the statement trees: begin and fork
   blocks, assignments (`vpiLhs`, `vpiRhs`, `vpiBlocking`, `vpiOpType`,
   delay, event and repeat controls), `if`, `case` with case items, loops
@@ -2621,7 +2622,10 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   (`tb.p.next.id`, `tb.q[0]`, `tb.aa[5]`); class typespecs and definitions
   give `vpiClassDefn`, `vpiExtends`, `vpiDerivedClasses`, `vpiClassType`
   and the declared properties; array elements iterate with names, values,
-  writes and `vpiIndex`, selected by index or key at each access.
+  writes and `vpiIndex` (a string key: a `vpiStringConst` constant),
+  selected by index or key at each access; string variables take
+  `vpiStringVal` and `vpiIntVal` writes (A19-D25) and chandle variables read
+  and write their 64-bit pointer image.
   `cbCreateObj`, `cbReclaimObj` and `cbEndOfObject` follow construction,
   shallow copies and collection; handles track objects without pinning
   them and are released when the collector reclaims the object;
