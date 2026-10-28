@@ -2276,6 +2276,15 @@ fn a19_d23_dynamic_elements() {
 }
 
 #[test]
+fn a19_d24_select_names() {
+    run_vpi_decision(
+        "A19-D24_select_names",
+        &["task $d24(input logic [3:0] p, input logic q, input logic [3:0] r, input logic [7:0] m, input logic n, input logic [7:0] v)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D24_select_names.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

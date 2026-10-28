@@ -3581,6 +3581,11 @@ static int code_is_select(int type) {
     return type == vpiBitSelect || type == vpiPartSelect || type == vpiIndexedPartSelect;
 }
 
+/* The selects named by their text (decision A19-D24). */
+static int code_is_named_select(int type) {
+    return code_is_select(type) || type == vpiVarSelect;
+}
+
 static int code_is_statement(int type) {
     switch (type) {
         case vpiBegin: case vpiFork: case vpiNamedBegin: case vpiNamedFork:
@@ -4795,6 +4800,8 @@ static PLI_BYTE8* code_string(uint32_t index, int property) {
                 ((node->flags & LLG_VPI_CODE_OPAQUE) && code_is_expression(node) &&
                  type != vpiOperation && type != vpiConstant))
                 return (PLI_BYTE8*)code_text(node);
+            /* A select is named by its text (decision A19-D24). */
+            if (code_is_named_select(type)) return (PLI_BYTE8*)code_decompile(index);
             if (code_is_statement(type)) return NULL;
             break;
         }
@@ -4805,6 +4812,23 @@ static PLI_BYTE8* code_string(uint32_t index, int property) {
                 snprintf(g_vpi.str_buffer, sizeof(g_vpi.str_buffer), "%s.%s",
                          g_vpi.objects[node->scope - 1u].full_name, name);
                 return (PLI_BYTE8*)g_vpi.str_buffer;
+            }
+            /* A select: its scope's name and its text. */
+            if (code_is_named_select(type)) {
+                llg_vpi_text_t text = {g_vpi.decompiled, 0, g_vpi.decompiled_capacity, 0};
+                text_put(&text, "");
+                if (node->scope) {
+                    text_put(&text, g_vpi.objects[node->scope - 1u].full_name);
+                    text_put(&text, ".");
+                }
+                decompile(&text, index, 0);
+                g_vpi.decompiled = text.text;
+                g_vpi.decompiled_capacity = text.capacity;
+                if (text.failed) {
+                    vpi_error("LLG_VPI_UNSUPPORTED", "llg cannot decompile this expression");
+                    return NULL;
+                }
+                return (PLI_BYTE8*)text.text;
             }
             break;
         }
@@ -6234,16 +6258,21 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
     {
         uint32_t argument = argument_code(slot);
         if (argument != LLG_VPI_NONE &&
-            (property == vpiDecompile || property == vpiName || property == vpiFile))
+            (property == vpiDecompile || property == vpiName || property == vpiFile ||
+             (property == vpiFullName && code_is_named_select(code_type(code_at(argument))))))
             return code_string(argument, property);
     }
     switch (slot->kind) {
         case SLOT_OBJECT:
-            /* Processes, continuous assignments and unnamed primitives
-             * have no name (37.31, 37.43, 37.58). */
+            /* Processes and continuous assignments have no name (37.43,
+             * 37.58). A module path is never found by name but reports the
+             * name it carries as both names (decision A19-D9). */
             if ((object->flags & LLG_VPI_OBJ_UNNAMED) &&
-                (property == vpiName || property == vpiFullName))
+                (property == vpiName || property == vpiFullName)) {
+                if (object->type == vpiModPath && object->name && object->name[0])
+                    return (PLI_BYTE8*)object->name;
                 break;
+            }
             switch (property) {
                 case vpiName: return (PLI_BYTE8*)object->name;
                 case vpiFullName:

@@ -43,7 +43,8 @@ pub enum IrVpiObjectKind {
     InstanceArray,
     /// A modport of an interface instance (37.7).
     Modport,
-    /// A module path declaration (37.35); unnamed, `conns` holds its
+    /// A module path declaration (37.35); unnamed for lookup by name, its
+    /// `name` the reported `<scope>.<in>$<out>`; `conns` holds its
     /// terminals and condition, [`IrVpiObject::timing`] its delays.
     ModPath,
     /// A timing check (37.36); unnamed, `conns` holds its arguments and

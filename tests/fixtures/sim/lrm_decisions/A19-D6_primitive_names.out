@@ -1,6 +1,9 @@
-vpiGate name=NULL(3) full=NULL(3) def=and prim_type=1 index=NULL(0) t0=0 t1=1 t2=0
+vpiGate name=and$1(0) full=tb.and$1(0) def=and prim_type=1 index=NULL(0) t0=0 t1=1 t2=0
 vpiGate name=g_or(0) full=tb.g_or(0) def=or prim_type=4 index=NULL(0) t0=1 t1=1 t2=0
+vpiGate name=or$2(0) full=tb.or$2(0) def=or prim_type=4 index=NULL(0) t0=1 t1=1 t2=0
 vpiGate name=ga[0](0) full=tb.ga[0](0) def=nand prim_type=2 index=0 t0=0 t1=1 t2=1
 vpiGate name=ga[1](0) full=tb.ga[1](0) def=nand prim_type=2 index=1 t0=1 t1=0 t2=1
 by name vpiGate tb.ga[1]
-hdl y0=0 y1=1 ya=01
+by name vpiGate tb.and$1
+by name vpiGate tb.or$2
+hdl y0=0 y1=1 y2=1 ya=01

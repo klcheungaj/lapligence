@@ -1,6 +1,8 @@
 // Decision A19-D9: module path objects. Every module path declaration of an
-// instance is one unnamed vpiModPath (vpiName is NULL), iterated from the
-// instance in source order. vpiModPathIn and vpiModPathOut iterate its
+// instance is one vpiModPath, iterated from the instance in source order.
+// Its vpiName and vpiFullName are both the instance's full name, a period,
+// the first input terminal, `$` and the first output terminal
+// (`tb.u.a$y`); vpi_handle_by_name does not find a path by that name. vpiModPathIn and vpiModPathOut iterate its
 // input and output terminals (vpiPathTerm with vpiDirection vpiInput or
 // vpiOutput and vpiExpr the terminal); the input terminals of an
 // edge-sensitive path carry its edge (posedge: vpiPosedge, negedge:
@@ -20,9 +22,10 @@
 // int: vpiPolarity int: vpiDataPolarity" and "-> hasIfNone bool:
 // vpiModPathHasIfNone"; Annex K L75471: "#define vpiModPathHasIfNone 71 /*
 // Mod path has an ifnone statement */". The clause does not say which paths
-// have an ifnone statement, which terminals carry an edge, or what
-// vpiDataPolarity is for a path without a data source: llg choices, the
-// ifnone and data polarity ones following industry-standard behaviour.
+// have an ifnone statement, which terminals carry an edge, what
+// vpiDataPolarity is for a path without a data source, or what a path's name
+// is: llg choices, the names, ifnone and data polarity ones following
+// industry-standard behaviour.
 //
 // Build A19-D9_modpath_objects.c as a VPI application (llg: static archive
 // given to --dpi-lib; `task $d9()` declared as a system task).

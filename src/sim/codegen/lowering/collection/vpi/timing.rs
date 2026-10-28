@@ -299,9 +299,23 @@ impl Codegen<'_> {
             ));
         }
         let scope = self.vpi_full_name(instance);
+        // A path is never found by name, but reports `<scope>.<in>$<out>`
+        // from its first input and output terminals as both vpiName and
+        // vpiFullName (decision A19-D9).
+        let name = match (path.inputs.first(), path.outputs.first()) {
+            (Some(input), Some(output)) => self
+                .vpi_terminal_text(*input)
+                .zip(self.vpi_terminal_text(*output))
+                .map(|(input, output)| {
+                    format!("{}.{input}${output}", scope.replace(SEPARATOR, "."))
+                })
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
         let node = self.node(path.node);
         IrVpiObject {
             full_name: self.vpi_unnamed_key(&scope, 'm', path.node),
+            name,
             kind: IrVpiObjectKind::ModPath,
             unnamed: true,
             file: node.file().map(str::to_owned),
