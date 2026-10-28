@@ -8750,6 +8750,10 @@ void llg_vpi_procedures_started(void) {
     if (!g_vpi.initialized || g_vpi.failed || g_vpi.phase != LLG_VPI_PHASE_RUNNING ||
         g_vpi.assertion_sys_started || g_vpi.assertion_sys_scheduled)
         return;
+    /* Only an application can place a system callback: a startup routine
+     * that registered nothing leaves the run's scheduler passes as they
+     * are. */
+    if (!g_vpi.cbs && g_vpi.registration_count == 0) return;
     /* An Active event of time zero after the procedures queued so far. */
     if (llg_schedule_delayed_call("assertion system start", assertion_system_start, NULL, 0,
                                   NULL))

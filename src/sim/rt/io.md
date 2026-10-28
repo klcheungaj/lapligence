@@ -134,8 +134,10 @@ leaves through `assertion_events_leave_tick`, which sorts its batch by
 instance group, then latest start first, then queue order (A17-D9); an
 unwatched model never queues, so it never sorts. The generated model calls
 `llg_vpi_procedures_started` after spawning its time-zero procedures and
-before the always_comb/always_latch ones; it queues the Active event that
-runs `cbAssertionSysInitialized` and `cbAssertionSysOn` (A17-D10). `vpi_control` assertion operations go through
+before the always_comb/always_latch ones; when an application registered a
+system task or a callback, it queues the Active event that runs
+`cbAssertionSysInitialized` and `cbAssertionSysOn` (A17-D10); without one
+the run's scheduler passes are unchanged. `vpi_control` assertion operations go through
 `llg_acov_control`: concurrent assertions change their runtime record,
 immediate and deferred ones the item's `control` bits, which the generated
 code of a model with a VPI catalog reads per check. The item table stays
