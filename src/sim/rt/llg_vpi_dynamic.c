@@ -477,8 +477,11 @@ static llg_value_t* dyn_locate(const dyn_place_t* place, const llg_vpi_slot_t* s
     if (slot->lsb == DYN_AT_STRING) {
         const char* key = (const char*)(const void*)slot->items;
         if (shape->values) {
-            llg_value_t* element = llg_assoc_value_element_string(
-                (llg_assoc_value_t*)place->storage, key, slot->count, 0);
+            /* A missing key is no read: test it first so the locator does
+             * not report a read miss. */
+            llg_assoc_value_t* array = (llg_assoc_value_t*)place->storage;
+            if (!llg_assoc_value_exists_string(array, key, slot->count)) return NULL;
+            llg_value_t* element = llg_assoc_value_element_string(array, key, slot->count, 0);
             *exists = element != NULL;
             return element;
         }
@@ -488,7 +491,9 @@ static llg_value_t* dyn_locate(const dyn_place_t* place, const llg_vpi_slot_t* s
     sv4_t key = dyn_integral_key(place, slot->element);
     llg_value_t* element = NULL;
     if (shape->values) {
-        element = llg_assoc_value_element_integral((llg_assoc_value_t*)place->storage, &key, 1, 0);
+        llg_assoc_value_t* array = (llg_assoc_value_t*)place->storage;
+        if (llg_assoc_value_exists_integral(array, key))
+            element = llg_assoc_value_element_integral(array, &key, 1, 0);
         *exists = element != NULL;
     } else {
         *exists = llg_assoc_exists_integral((const llg_assoc_t*)place->storage, key);
