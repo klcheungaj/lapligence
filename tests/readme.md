@@ -866,7 +866,7 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   paths, and a current open buffer never falls back to stale cached tokens.
 - `lsp_stdio/macro_tokens.rs`: both serving paths agree token for token on
   in-source, header (`[compile] include_dirs`) and `[compile] defines` macros;
-  each use site is one `macro` token with no expansion token over it, text
+  each use site is one `keyword` token with no expansion token over it, text
   written in actual arguments (also nested) keeps its own kind, directives are
   keywords and inactive branches have no token. A macro defined only in another
   project file is unknown in both paths (separate compilation units): its

@@ -18,7 +18,6 @@ const TT_PROPERTY: u32 = 9;
 const TT_ENUM_MEMBER: u32 = 10;
 const TT_FUNCTION: u32 = 12;
 const TT_METHOD: u32 = 13;
-const TT_MACRO: u32 = 14;
 const TT_KEYWORD: u32 = 15;
 const TT_STRING: u32 = 18;
 const TT_NUMBER: u32 = 19;
@@ -114,7 +113,11 @@ pub fn encode(nodes: &[TokenInfo]) -> SemanticTokens {
                     token_type = TT_KEYWORD;
                     modifiers |= 1 << TM_CONTROL_FLOW;
                 }
-                Some(BacktickWord::MacroUsage) => token_type = TT_MACRO,
+                // A macro use is a plain keyword (ST-60, user decision
+                // 2026-10-28): the `macro` type takes whatever a client or
+                // theme gives it, and the `keyword` mapping is the one every
+                // llg client sets to the normal keyword color.
+                Some(BacktickWord::MacroUsage) => token_type = TT_KEYWORD,
                 None => {}
             }
         }
@@ -275,9 +278,13 @@ enum KeywordClass {
 /// and case statements (also as conditional generate constructs, A.4.2,
 /// property statements, A.2.10, and constraint `if`/`foreach`, A.1.10, which
 /// select or iterate the same way), loops, jump statements and wait
-/// statements. Block delimiters (`begin`/`end`, `fork`/`join*`), event
-/// qualifiers (`iff`), set membership (`inside`) and pattern words
-/// (`matches`) stay plain keywords.
+/// statements. The assertion statement words `assert assume cover restrict
+/// expect` (A.6.10, A.2.10; user decision, 2026-10-28) are control flow too:
+/// each statement checks its expression and runs its action block or fails.
+/// Block delimiters (`begin`/`end`, `fork`/`join*`), event qualifiers
+/// (`iff`), set membership (`inside`), pattern words (`matches`) and the
+/// `property`/`sequence` of a declaration or assertion statement stay plain
+/// keywords, as `function` does.
 fn keyword_class(name: &str) -> KeywordClass {
     match name {
         "typedef" | "struct" | "union" | "enum" => KeywordClass::TypeDefinition,
@@ -290,7 +297,9 @@ fn keyword_class(name: &str) -> KeywordClass {
         | "none" => KeywordClass::Primitive,
         "if" | "else" | "case" | "casex" | "casez" | "randcase" | "endcase" | "for" | "foreach"
         | "while" | "do" | "repeat" | "forever" | "return" | "break" | "continue" | "wait"
-        | "wait_order" => KeywordClass::ControlFlow,
+        | "wait_order" | "assert" | "assume" | "cover" | "restrict" | "expect" => {
+            KeywordClass::ControlFlow
+        }
         _ => KeywordClass::Other,
     }
 }
@@ -341,7 +350,9 @@ fn token_type_for(kind: i32) -> Option<(u32, u32)> {
         // clangd and rust-analyzer send function parameters.
         TOKEN_SLANG_MACRO_FORMAL => TT_PARAMETER,
         TOKEN_SLANG_METHOD => TT_METHOD,
-        TOKEN_SLANG_MACRO => TT_MACRO,
+        // The name a `define declares or a conditional directive or `undef
+        // names is a plain keyword, like its use sites (ST-60, ST-62).
+        TOKEN_SLANG_MACRO => TT_KEYWORD,
         TOKEN_SLANG_KEYWORD | TOKEN_SLANG_CONTROL_KEYWORD => TT_KEYWORD,
         TOKEN_SLANG_STRING => TT_STRING,
         TOKEN_SLANG_NUMBER => TT_NUMBER,
@@ -461,7 +472,7 @@ mod tests {
         out
     }
 
-    /// Text macros in every capture profile: each use site is one `macro`
+    /// Text macros in every capture profile: each use site is one `keyword`
     /// token, no expansion token is painted over it, and text written in
     /// the actual arguments keeps its own kind at its written position,
     /// through nested macros, a macro argument that is itself a macro, a
@@ -579,18 +590,18 @@ endmodule\n";
                 (found[0].2.clone(), found[0].3, found[0].4)
             };
             for (line, needle, nth, text, token_type, bits) in [
-                (4, "`W", 0, "`W", TT_MACRO, 0),
-                (5, "`W", 0, "`W", TT_MACRO, 0),
-                (6, "`ADD", 0, "`ADD", TT_MACRO, 0),
+                (4, "`W", 0, "`W", TT_KEYWORD, 0),
+                (5, "`W", 0, "`W", TT_KEYWORD, 0),
+                (6, "`ADD", 0, "`ADD", TT_KEYWORD, 0),
                 (6, "v,", 0, "v", TT_PARAMETER, readonly),
                 (6, "1)", 0, "1", TT_NUMBER, 0),
-                (6, "`OUTER", 0, "`OUTER", TT_MACRO, 0),
+                (6, "`OUTER", 0, "`OUTER", TT_KEYWORD, 0),
                 (6, "v)", 0, "v", TT_PARAMETER, readonly),
-                (6, "`ADD", 1, "`ADD", TT_MACRO, 0),
-                (6, "`W", 0, "`W", TT_MACRO, 0),
+                (6, "`ADD", 1, "`ADD", TT_KEYWORD, 0),
+                (6, "`W", 0, "`W", TT_KEYWORD, 0),
                 (6, "L)", 0, "L", TT_VARIABLE, readonly),
-                (7, "`DECL", 0, "`DECL", TT_MACRO, 0),
-                (8, "`UNKNOWN", 0, "`UNKNOWN", TT_MACRO, 0),
+                (7, "`DECL", 0, "`DECL", TT_KEYWORD, 0),
+                (8, "`UNKNOWN", 0, "`UNKNOWN", TT_KEYWORD, 0),
                 (9, "q", 0, "q", TT_VARIABLE, declaration),
                 (9, "v", 0, "v", TT_PARAMETER, readonly),
             ] {
@@ -1427,8 +1438,8 @@ endmodule\n";
     /// Value parameters are constants (`variable` + `readonly`), type
     /// parameters `typeParameter`, port labels `function` and parameter
     /// labels `function` + `readonly` (both with `connectionLabel`), compiler
-    /// directives `keyword` + `controlFlow`, `` `define `` names `macro` +
-    /// `declaration` and a macro usage inside a macro body `macro`, in every
+    /// directives `keyword` + `controlFlow`, `` `define `` names `keyword` +
+    /// `declaration` and a macro usage inside a macro body `keyword`, in every
     /// capture profile.
     #[test]
     fn parameters_labels_and_directives_use_their_analogue_types_in_every_profile() {
@@ -1454,9 +1465,9 @@ endmodule\n";
             for (line, needle, text, token_type, bits) in [
                 (0, "`define", "`define", TT_KEYWORD, control),
                 (1, "`define", "`define", TT_KEYWORD, control),
-                (0, "W 8", "W", TT_MACRO, declaration),
-                (1, "TWICE", "TWICE", TT_MACRO, declaration),
-                (1, "`W", "`W", TT_MACRO, 0),
+                (0, "W 8", "W", TT_KEYWORD, declaration),
+                (1, "TWICE", "TWICE", TT_KEYWORD, declaration),
+                (1, "`W", "`W", TT_KEYWORD, 0),
                 (2, "`ifdef", "`ifdef", TT_KEYWORD, control),
                 (7, "`else", "`else", TT_KEYWORD, control),
                 (9, "`endif", "`endif", TT_KEYWORD, control),

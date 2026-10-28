@@ -95,10 +95,10 @@ positional words and bindings come from the capture in
   labels (`#(.W(2))`, `#(.T(logic))`) are `function` + `readonly` +
   `connectionLabel`, so a label is colored apart from its actual; actuals and
   positional connections keep their own types.
-- **ST-21** A text macro use site `` `NAME `` is one `macro` token and the name
-  in `` `define NAME `` is `macro` + `declaration`. No token of an expansion
-  is painted over the use site; text written in the actual arguments keeps
-  its own type at its written position.
+- **ST-21** A text macro use site `` `NAME `` is one `keyword` token and the
+  name in `` `define NAME `` is `keyword` + `declaration` (ST-60). No token
+  of an expansion is painted over the use site; text written in the actual
+  arguments keeps its own type at its written position.
 - **ST-22** A name the capture could not resolve gets no token, so the editor
   leaves it uncolored.
 - **ST-23** Strings are `string`, numbers `number`, operators and
@@ -164,31 +164,39 @@ language provides, as rust-analyzer marks the standard library.
 
 ## Macros, directives, class scope and delays
 
-Stock VS Code gives `macro` the scope `entity.name.function.preprocessor`
-(`tokenClassificationRegistry.ts`: `registerTokenType('macro', ...,
-[['entity.name.function.preprocessor']])`), which Dark+ and Light+ color
-exactly like `keyword` (`dark_vs.json`: `#569cd6` for both,
-`light_vs.json`: `#0000ff` for both), so a macro name looks like `wire` or
-`reg` while the directive word keeps the control-flow color (CL-02). The
-rules below are checked over `tests/fixtures/semantic_tokens/macros_and_class_scope.sv`.
+Macro names are sent as plain `keyword` (ST-60), so a macro name looks like
+`wire` or `reg` under the `keyword` mapping (CL-01) while the directive word
+keeps the control-flow color (CL-02). The rules below are checked over
+`tests/fixtures/semantic_tokens/macros_and_class_scope.sv`.
 
 ```systemverilog
-`define A 32                                // `define: keyword+controlFlow; A: macro+declaration
+`define A 32                                // `define: keyword+controlFlow; A: keyword+declaration
 `define ABC(x,y) ((x)+(y))                  // x, y: parameter (+declaration in the formal list)
-assign w = `A + `ABC(p, q);                 // `A, `ABC: macro
+assign w = `A + `ABC(p, q);                 // `A, `ABC: keyword
 `default_nettype none                       // none: keyword+primitive
-`ifdef XXX                                  // XXX: macro (also `ifndef, `elsif, `undef)
+`ifdef XXX                                  // XXX: keyword (also `ifndef, `elsif, `undef)
 `define WR(v) Util2#($size(v))::write_dr(v) // Util2: class; write_dr: function+static
 ```
 
-- **ST-60** The name a `` `define `` declares is `macro` + `declaration` and
-  a use site `` `A `` is `macro` (ST-21); no client mapping changes their
-  color.
+- **ST-60** The name a `` `define `` declares is `keyword` + `declaration`
+  and a use site `` `A `` is `keyword` with no modifier (ST-21), whatever the
+  body is (`` `define ABC 012 ``, `` `define ABC 0123 ``, a function-like
+  macro or an empty body), never `controlFlow` and never `macro` (user
+  decision, 2026-10-28: the name renders as a normal keyword). The `macro`
+  type has no color of its own that a client can rely on: stock VS Code
+  gives it the scope `entity.name.function.preprocessor`
+  (`tokenClassificationRegistry.ts`: `registerTokenType('macro', ...,
+  [['entity.name.function.preprocessor']])`), which Dark+ colors `#569cd6`
+  only through `dark_vs.json` (`"scope": ["meta.preprocessor",
+  "entity.name.function.preprocessor"]`), so other themes and any client
+  `macro` mapping (the withdrawn CL-03) paint it otherwise; the user saw
+  `macro` names as `keyword.control`. `keyword` takes the CL-01 scope.
 - **ST-61** The net type operand of `` `default_nettype `` (22.8) is
   `keyword` + `primitive` like `wire` or `logic`, `none` included; only the
   directive word is `controlFlow`.
 - **ST-62** The macro name operand of `` `ifdef ``, `` `ifndef ``,
-  `` `elsif `` (22.6) and `` `undef `` (22.5.2) is `macro`, not a keyword.
+  `` `elsif `` (22.6) and `` `undef `` (22.5.2) is `keyword` with no
+  modifier, like a use site (ST-60).
 - **ST-63** A formal argument of a `` `define `` (22.5.1) is `parameter`, as
   clangd and rust-analyzer send the parameters of a function
   (`HighlightingKind::Parameter` → `"parameter"`): `declaration` at its name
@@ -227,6 +235,25 @@ assign w = `A + `ABC(p, q);                 // `A, `ABC: macro
   provider runs only after that, with `editor.defaultColorDecorators` at
   its default `"auto"`). A client that sets
   `"editor.defaultColorDecorators": "always"` still sees them.
+
+- **ST-67** The assertion statement words `assert assume cover restrict
+  expect` are `keyword` + `controlFlow` everywhere (user decision,
+  2026-10-28): immediate and deferred assertions (16.3, 16.4, A.6.10:
+  "simple_immediate_assert_statement ::= assert ( expression )
+  action_block"), concurrent assertions (A.2.10: "assert property (
+  property_spec ) action_block", "cover sequence ...", "restrict property (
+  property_spec ) ;") and the expect statement (16.18: "expect (
+  property_spec ) action_block"); each runs or skips its action block on
+  the outcome of a check, like `if`/`else` (ST-03). The `property` and
+  `sequence` that follow them, and those of a property or sequence
+  declaration, stay plain keywords (ST-02), as `function` does. Fixture:
+  `tests/fixtures/semantic_tokens/assertions.sv`.
+
+  ```systemverilog
+  assert (a) else $error("e");      // assert, else: keyword+controlFlow
+  a_p: assert property (p_ok);      // property: keyword
+  cover sequence (@(posedge clk) a ##1 b);
+  ```
 
 ## Serving paths
 
@@ -300,9 +327,10 @@ contribution for Rust.
   the keyword color (Dark+ `#569CD6`).
 - **CL-02** `keyword.controlFlow` maps to `keyword.control.<lang>` (Dark+
   `#C586C0`); a selector with the modifier outscores the bare type.
-- **CL-03** (withdrawn 2026-10-27) No `macro` mapping: the stock `macro`
-  scope already takes the keyword color (ST-60). A client that added
-  `macro` → `keyword.control.<lang>` removes it.
+- **CL-03** (withdrawn 2026-10-27) No `macro` mapping. Since 2026-10-28 the
+  server sends no `macro` token (ST-60), so a remaining `macro` mapping has
+  no effect; a client that added `macro` → `keyword.control.<lang>` may
+  remove it.
 - **CL-04** Optionally, `keyword.typeDefinition`, `keyword.direction` and
   `keyword.primitive` map to `storage.type.<lang>` / `storage.modifier.<lang>`
   (also `#569CD6` in Dark+).

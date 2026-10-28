@@ -235,10 +235,10 @@ const CHECKS: &[Check] = &[
     ("ST-20", ".b(bi)", 0, 3, "variable", NONE),
     ("ST-20", "(v, z, bi)", 0, 1, "variable", NONE),
     // ST-21: macros.
-    ("ST-21", "REQ_W 4", 0, 0, "macro", DECL),
-    ("ST-21", "REQ_ADD(a, b)", 0, 0, "macro", DECL),
-    ("ST-21", "`REQ_W;", 0, 0, "macro", NONE),
-    ("ST-21", "`REQ_ADD(v", 0, 0, "macro", NONE),
+    ("ST-21", "REQ_W 4", 0, 0, "keyword", DECL),
+    ("ST-21", "REQ_ADD(a, b)", 0, 0, "keyword", DECL),
+    ("ST-21", "`REQ_W;", 0, 0, "keyword", NONE),
+    ("ST-21", "`REQ_ADD(v", 0, 0, "keyword", NONE),
     ("ST-21", "`REQ_ADD(v, rst)", 0, 9, "variable", NONE),
     ("ST-21", "`REQ_ADD(v, rst)", 0, 12, "parameter", RO),
     // ST-23: literals and operators.
@@ -522,7 +522,7 @@ const BUILTIN_CHECKS: &[Check] = &[
     ("ST-40", "$size", 0, 0, "function", LIB),
     ("ST-40", "$countones(v)", 0, 0, "function", LIB),
     ("ST-40", "$bif_unknown", 0, 0, "function", LIB),
-    ("ST-40", "`BIF_LOG2(8)", 0, 0, "macro", NONE),
+    ("ST-40", "`BIF_LOG2(8)", 0, 0, "keyword", NONE),
     // ST-41: built-in methods.
     ("ST-41", "q.size()", 0, 2, "function", LIB),
     ("ST-41", "srandom", 0, 0, "function", LIB),
@@ -630,22 +630,22 @@ const PRIM: &[&str] = &["primitive"];
 const STATIC: &[&str] = &["static"];
 
 const MACRO_CHECKS: &[Check] = &[
-    // ST-60: the name a `define declares and its use sites are `macro`.
-    ("ST-60", "`define A 32", 0, 8, "macro", DECL),
+    // ST-60: the name a `define declares and its use sites are `keyword`.
+    ("ST-60", "`define A 32", 0, 8, "keyword", DECL),
     ("ST-60", "`define A 32", 0, 0, "keyword", CONTROL),
-    ("ST-60", "`A + `ABC", 0, 0, "macro", NONE),
-    ("ST-60", "`A + `ABC", 0, 5, "macro", NONE),
+    ("ST-60", "`A + `ABC", 0, 0, "keyword", NONE),
+    ("ST-60", "`A + `ABC", 0, 5, "keyword", NONE),
     // ST-61: the net type of `default_nettype is a primitive keyword.
     ("ST-61", "`default_nettype none", 0, 0, "keyword", CONTROL),
     ("ST-61", "`default_nettype none", 0, 17, "keyword", PRIM),
     ("ST-61", "`default_nettype wire", 0, 17, "keyword", PRIM),
     // ST-62: the macro name of a conditional directive or `undef.
     ("ST-62", "`ifdef XXX", 0, 0, "keyword", CONTROL),
-    ("ST-62", "`ifdef XXX", 0, 7, "macro", NONE),
-    ("ST-62", "`elsif ZZZ", 0, 7, "macro", NONE),
-    ("ST-62", "`ifndef YYY", 0, 8, "macro", NONE),
+    ("ST-62", "`ifdef XXX", 0, 7, "keyword", NONE),
+    ("ST-62", "`elsif ZZZ", 0, 7, "keyword", NONE),
+    ("ST-62", "`ifndef YYY", 0, 8, "keyword", NONE),
     ("ST-62", "`undef N", 0, 0, "keyword", CONTROL),
-    ("ST-62", "`undef N", 0, 7, "macro", NONE),
+    ("ST-62", "`undef N", 0, 7, "keyword", NONE),
     // ST-63: formal arguments are parameters, declared in the formal list.
     ("ST-63", "ABC(x,y)", 0, 4, "parameter", DECL),
     ("ST-63", "ABC(x,y)", 0, 6, "parameter", DECL),
@@ -662,8 +662,8 @@ const MACRO_CHECKS: &[Check] = &[
     ("ST-64", "cnt = cnt + 1; if", 0, 10, "operator", NONE),
     ("ST-64", "cnt = cnt + 1; if", 0, 12, "number", NONE),
     ("ST-64", "if (cnt > `A)", 0, 0, "keyword", CONTROL),
-    ("ST-64", "if (cnt > `A)", 0, 10, "macro", NONE),
-    ("ST-64", "`ABC(e, e)", 0, 0, "macro", NONE),
+    ("ST-64", "if (cnt > `A)", 0, 10, "keyword", NONE),
+    ("ST-64", "`ABC(e, e)", 0, 0, "keyword", NONE),
     ("ST-64", "SAME_KIND hits", 0, 10, "variable", NONE),
     ("ST-64", "\"body text\"", 0, 0, "string", NONE),
     ("ST-64", "never_seen + 1", 0, 13, "number", NONE),
@@ -1133,6 +1133,90 @@ fn st_52_size_cast_widths_bind_in_both_serving_paths() {
                 "{what}: {response}"
             );
         }
+        streams.push(result["data"].clone());
+    }
+    assert_eq!(streams[0], streams[1], "ST-24: serving paths differ");
+    client.shutdown();
+}
+
+const ASSERTION_SOURCE: &str = include_str!("../fixtures/semantic_tokens/assertions.sv");
+
+const ASSERTION_CHECKS: &[Check] = &[
+    // ST-60: macro names of every body form are plain keywords.
+    ("ST-60", "`define ABC 012", 0, 0, "keyword", CONTROL),
+    ("ST-60", "`define ABC 012", 0, 8, "keyword", DECL),
+    ("ST-60", "`define ABC 012", 0, 12, "number", NONE),
+    ("ST-60", "`define ABD 0123", 0, 8, "keyword", DECL),
+    ("ST-60", "`define EMPTY", 0, 8, "keyword", DECL),
+    ("ST-60", "`define FN(v)", 0, 8, "keyword", DECL),
+    ("ST-60", "`ABC + `ABD", 0, 0, "keyword", NONE),
+    ("ST-60", "`ABC + `ABD", 0, 7, "keyword", NONE),
+    ("ST-60", "`FN(x)", 0, 0, "keyword", NONE),
+    ("ST-60", "`EMPTY;", 0, 0, "keyword", NONE),
+    // ST-62: a conditional directive operand.
+    ("ST-62", "`ifdef ABC", 0, 7, "keyword", NONE),
+    // ST-67: assertion statement words are control flow; `property` and
+    // `sequence` stay plain.
+    ("ST-67", "assert property", 0, 0, "keyword", CONTROL),
+    ("ST-67", "assert property", 0, 7, "keyword", NONE),
+    ("ST-67", "else $error(\"p\")", 0, 0, "keyword", CONTROL),
+    ("ST-67", "assume property", 0, 0, "keyword", CONTROL),
+    ("ST-67", "cover property", 0, 0, "keyword", CONTROL),
+    ("ST-67", "cover sequence", 0, 0, "keyword", CONTROL),
+    ("ST-67", "cover sequence", 0, 6, "keyword", NONE),
+    ("ST-67", "restrict property", 0, 0, "keyword", CONTROL),
+    ("ST-67", "restrict property", 0, 9, "keyword", NONE),
+    ("ST-67", "assert (x == 1)", 0, 0, "keyword", CONTROL),
+    ("ST-67", "assume (x != 2)", 0, 0, "keyword", CONTROL),
+    ("ST-67", "cover (x == 3)", 0, 0, "keyword", CONTROL),
+    ("ST-67", "assert #0", 0, 0, "keyword", CONTROL),
+    ("ST-67", "assert final", 0, 0, "keyword", CONTROL),
+    ("ST-67", "expect (", 0, 0, "keyword", CONTROL),
+    ("ST-67", "property p_ok", 0, 0, "keyword", NONE),
+    ("ST-67", "sequence s_ab", 0, 0, "keyword", NONE),
+];
+
+/// ST-60, ST-62 and ST-67 over the wire in both serving paths: macro names
+/// whose bodies are unsized or 0-prefixed numbers, empty or function-like are
+/// plain keywords (no stream carries a `macro` token), and the assertion
+/// statement words are control flow.
+#[test]
+fn st_60_and_st_67_macro_names_and_assertion_words_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("st_assertions.sv");
+    fs::write(&path, ASSERTION_SOURCE).expect("write assertion fixture");
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    let uri = file_uri(&path);
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+    let mut streams = Vec::new();
+    for opened in [false, true] {
+        if opened {
+            client
+                .open(&path, ASSERTION_SOURCE)
+                .expect("open assertion buffer");
+        }
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("assertion semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        let label = if opened { "open buffer" } else { "project" };
+        for check in ASSERTION_CHECKS {
+            assert_check(&rows, ASSERTION_SOURCE, check, label);
+        }
+        assert!(
+            rows.iter().all(|row| row.token_type != "macro"),
+            "ST-60 {label}: a macro token in the stream"
+        );
         streams.push(result["data"].clone());
     }
     assert_eq!(streams[0], streams[1], "ST-24: serving paths differ");

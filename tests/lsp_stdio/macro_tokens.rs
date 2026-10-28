@@ -6,7 +6,7 @@
 //   compile admitted (through `[compile] include_dirs`) and `[compile]
 //   defines`. The server compiles every file as its own compilation unit, so
 //   a macro defined only in another project file is unknown in both paths.
-// * a macro use site `` `NAME `` is one `macro` token; no token of the
+// * a macro use site `` `NAME `` is one `keyword` token; no token of the
 //   expansion is painted over it. Text written in the actual arguments keeps
 //   its own kind at its written position, also through nested macros.
 // * directives are `keyword` (conditional ones with `controlFlow`); inactive
@@ -141,7 +141,7 @@ fn no_token_on_line(rows: &[SemanticRow], source: &str, needle: &str) {
     );
 }
 
-/// Use sites of in-source, header and configured macros are `macro`;
+/// Use sites of in-source, header and configured macros are `keyword`;
 /// arguments written in `` `SUM(a, 1)``, a nested `` `NESTED(a)`` and a header
 /// macro keep their own kinds; directives are keywords and inactive branches
 /// carry no token. The project stream and the isolated open-buffer parse
@@ -170,7 +170,7 @@ fn lsp_stdio_macro_use_sites_and_arguments_match_in_both_serving_paths() {
         let token = |needle: &str, occurrence: usize, offset: u64| {
             sole_token(&rows, source, needle, occurrence, offset)
         };
-        let macro_type = ("macro".to_owned(), Vec::<String>::new());
+        let macro_type = ("keyword".to_owned(), Vec::<String>::new());
         for (needle, occurrence) in [
             ("`LOCAL_W-1", 0),
             ("`CFG_WIDTH;", 0),
@@ -257,7 +257,7 @@ fn lsp_stdio_macro_use_sites_and_arguments_match_in_both_serving_paths() {
 }
 
 /// A macro defined only in another project file is unknown (separate
-/// compilation units): the use site keeps its `macro` token, Slang reports the
+/// compilation units): the use site keeps its `keyword` token, Slang reports the
 /// unknown macro, and the rest of the buffer is still tokenized in both
 /// serving paths.
 #[test]
@@ -302,7 +302,7 @@ fn lsp_stdio_unknown_macro_keeps_the_rest_of_the_buffer_in_both_serving_paths() 
         let rows = token_rows(&mut client, &workspace.user, &types, &modifiers);
         assert_eq!(
             sole_token(&rows, source, "`OTHER_W", 0, 0),
-            ("macro".to_owned(), Vec::new()),
+            ("keyword".to_owned(), Vec::new()),
             "opened={opened}"
         );
         assert_eq!(
@@ -358,7 +358,7 @@ fn lsp_stdio_unsaved_macro_edits_use_the_committed_include_context() {
     let rows = token_rows(&mut client, &workspace.top, &types, &modifiers);
     assert_eq!(
         sole_token(&rows, &edited, "`FRESH(s1)", 0, 0),
-        ("macro".to_owned(), Vec::new())
+        ("keyword".to_owned(), Vec::new())
     );
     assert_eq!(
         sole_token(&rows, &edited, "`FRESH(s1)", 0, 7),
@@ -366,7 +366,7 @@ fn lsp_stdio_unsaved_macro_edits_use_the_committed_include_context() {
     );
     assert_eq!(
         sole_token(&rows, &edited, "`HDR_ONE;", 1, 0),
-        ("macro".to_owned(), Vec::new())
+        ("keyword".to_owned(), Vec::new())
     );
     assert_eq!(
         sole_token(&rows, &edited, "fresh =", 0, 0),

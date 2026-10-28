@@ -1855,7 +1855,7 @@ fn semantic_parse_preprocesses_directives_in_the_unchanged_buffer() {
     assert_eq!(token_type_at(&tokens, source, "module"), Some(keyword));
     assert_eq!(
         token_type_at(&tokens, source, "`VALUE;"),
-        Some(legend_index("macro")),
+        Some(legend_index("keyword")),
         "{tokens:?}"
     );
 }
@@ -1883,7 +1883,7 @@ fn semantic_parse_reads_includes_only_from_the_committed_context() {
     // Assert: with the context the include and the macro resolve; without it
     // the include misses (a frontend diagnostic) and the rest of the buffer
     // is still tokenized. Header tokens never enter this file's stream.
-    let macro_type = legend_index("macro");
+    let macro_type = legend_index("keyword");
     assert_eq!(
         token_type_at(&with_context, source, "`HDR_WIDTH"),
         Some(macro_type),
@@ -2017,7 +2017,7 @@ fn semantic_parse_keeps_predefined_expression_macros() {
         &[],
         &Default::default(),
     );
-    let macro_type = legend_index("macro");
+    let macro_type = legend_index("keyword");
     assert_eq!(
         token_type_at(&tokens, source, "`__FILE__"),
         Some(macro_type)
