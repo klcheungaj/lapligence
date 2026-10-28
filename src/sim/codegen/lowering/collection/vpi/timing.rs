@@ -79,19 +79,6 @@ fn tchk_type(kind: TimingCheckKind) -> Option<(&'static str, u32)> {
     })
 }
 
-/// The limit arguments a timing check lists before its notifier: the
-/// limits, a `$width` threshold, the `$nochange` offsets.
-fn limits_before_notifier(kind: TimingCheckKind) -> usize {
-    match kind {
-        TimingCheckKind::SetupHold
-        | TimingCheckKind::RecRem
-        | TimingCheckKind::FullSkew
-        | TimingCheckKind::NoChange
-        | TimingCheckKind::Width => 2,
-        _ => 1,
-    }
-}
-
 /// The model values of limit `limit` (0 the first, 1 the second) of a
 /// check with rows `rows`, as an SDF annotation of that limit targets them
 /// (`map_sdf_annotations`).
@@ -356,8 +343,8 @@ impl Codegen<'_> {
         }
     }
 
-    /// The row of one timing check of `instance` (37.36): its arguments in
-    /// source order, the conditions of its terminals, and its limits with
+    /// The row of one timing check of `instance` (37.36): its terminals, its
+    /// notifier, then its other arguments in source order, the conditions of its terminals, and its limits with
     /// the model rows that hold them.
     fn vpi_tchk_row(
         &mut self,
@@ -389,20 +376,12 @@ impl Codegen<'_> {
             role,
             ..cg.vpi_conn(node, IrVpiDirection::None)
         };
-        let before = limits_before_notifier(check.kind);
-        for limit in check.limits.iter().take(before).flatten() {
-            conns.push(argument(self, *limit, IrVpiConnRole::Argument));
-        }
+        // The notifier follows the terminals, ahead of every limit
+        // (industry-standard order; decision A19-D10).
         if let Some(notifier) = check.notifier {
             conns.push(argument(self, notifier, IrVpiConnRole::Notifier));
         }
-        let mut after = check
-            .limits
-            .iter()
-            .skip(before)
-            .flatten()
-            .copied()
-            .collect::<Vec<_>>();
+        let mut after = check.limits.iter().flatten().copied().collect::<Vec<_>>();
         after.extend(check.stamp_condition);
         after.extend(check.check_condition);
         after.extend(check.delayed.iter().flatten());

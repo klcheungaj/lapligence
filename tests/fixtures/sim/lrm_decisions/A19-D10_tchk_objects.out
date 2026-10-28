@@ -1,8 +1,8 @@
 tchk type=1 ref=tb.u.clk edge=0x0d cond=NULL data=tb.u.d edge=0x00 cond=NULL notifier=tb.u.notifier
-  args: term term const(2) tb.u.notifier
+  args: term term tb.u.notifier const(2)
 tchk type=2 ref=tb.u.clk edge=0x09 cond=NULL data=tb.u.d edge=0x00 cond=tb.u.en notifier=NULL
   args: term term const(1)
 tchk type=4 ref=tb.u.clk edge=0x32 cond=NULL data=NULL notifier=tb.u.notifier
-  args: term const(3) const(1) tb.u.notifier
+  args: term tb.u.notifier const(3) const(1)
 tchk type=8 ref=tb.u.clk edge=0x0d cond=NULL data=tb.u.d edge=0x00 cond=NULL notifier=NULL
   args: term term const(4) const(5) tb.u.en tb.u.en

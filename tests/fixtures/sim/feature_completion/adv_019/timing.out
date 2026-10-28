@@ -1,21 +1,21 @@
 vpiModule tb
 vpiModule tb.u
-  vpiModPath line=13 type=2 polarity=1 data_polarity=1 ifnone=0
+  vpiModPath line=13 name=tb.u.a$y type=2 polarity=1 data_polarity=1 ifnone=0
     in vpiPathTerm edge=0x00 dir=1 expr=vpiNet:tb.u.a
     out vpiPathTerm edge=0x00 dir=2 expr=vpiNet:tb.u.y
     data NULL
     condition=NULL
-  vpiModPath line=14 type=2 polarity=3 data_polarity=1 ifnone=0
+  vpiModPath line=14 name=tb.u.clk$q type=2 polarity=3 data_polarity=1 ifnone=0
     in vpiPathTerm edge=0x0d dir=1 expr=vpiNet:tb.u.clk
     out vpiPathTerm edge=0x00 dir=2 expr=vpiNet:tb.u.q
     data vpiPathTerm edge=0x00 dir=1 expr=vpiNet:tb.u.d
     condition=NULL
-  vpiModPath line=15 type=1 polarity=3 data_polarity=3 ifnone=0
+  vpiModPath line=15 name=tb.u.b$y type=1 polarity=3 data_polarity=3 ifnone=0
     in vpiPathTerm edge=0x00 dir=1 expr=vpiNet:tb.u.b
     out vpiPathTerm edge=0x00 dir=2 expr=vpiNet:tb.u.y
     data NULL
     condition=vpiNet:tb.u.en
-  vpiModPath line=16 type=1 polarity=3 data_polarity=3 ifnone=1
+  vpiModPath line=16 name=tb.u.b$y type=1 polarity=3 data_polarity=3 ifnone=1
     in vpiPathTerm edge=0x00 dir=1 expr=vpiNet:tb.u.b
     out vpiPathTerm edge=0x00 dir=2 expr=vpiNet:tb.u.y
     data NULL
@@ -24,7 +24,7 @@ vpiModule tb.u
     ref vpiTchkTerm edge=0x0d expr=vpiNet:tb.u.clk cond=NULL
     data vpiTchkTerm edge=0x00 expr=vpiNet:tb.u.d cond=NULL
     notifier=vpiReg:tb.u.notifier
-    args tchk_term tchk_term =vpiConstant(2) =vpiReg:tb.u.notifier
+    args tchk_term tchk_term =vpiReg:tb.u.notifier =vpiConstant(2)
   vpiTchk line=18 tchk_type=2
     ref vpiTchkTerm edge=0x0d expr=vpiNet:tb.u.clk cond=NULL
     data vpiTchkTerm edge=0x00 expr=vpiNet:tb.u.d cond=vpiNet:tb.u.en

@@ -66,6 +66,10 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
 - An instance array node stores its declared range in `auxiliary` (left in
   bits 0-31, right in bits 32-63); the instances it holds keep their indexed
   names.
+- A block statement stores the byte offset + 1 of its `begin`/`fork` keyword
+  in `auxiliary`, and a task or function body list the offset + 1 of the
+  token after the subroutine name, so `core::db` reports VPI statement lines
+  without reading syntax.
 - Typedef-name and type-parameter lexical kinds come from Slang's resolved
   symbol kind (`TypeAlias`, `TypeParameter`); value parameters keep the
   parameter kind. Cast

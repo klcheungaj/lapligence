@@ -1079,7 +1079,7 @@ impl Codegen<'_> {
                 NodeKind::Stmt(kind @ (StmtKind::Begin | StmtKind::Fork { .. }))
                     if !node.name.is_empty() && statement_block(self.db, id) =>
                 {
-                    insert(source(IrVpiObject {
+                    let row = source(IrVpiObject {
                         full_name: self.vpi_full_name(id),
                         name: node.name.clone(),
                         kind: if matches!(kind, StmtKind::Fork { .. }) {
@@ -1089,7 +1089,13 @@ impl Codegen<'_> {
                         },
                         activation: self.vpi_activation(id),
                         ..IrVpiObject::default()
-                    }));
+                    });
+                    // The block starts at its `begin`/`fork` keyword
+                    // (decision A19-D13).
+                    insert(IrVpiObject {
+                        line: self.db.block_keyword_line(id).unwrap_or(row.line),
+                        ..row
+                    });
                 }
                 NodeKind::Net { ty, .. } | NodeKind::Var { ty }
                     if self.sig_globals.contains_key(&id) || static_locals.contains_key(&id) =>

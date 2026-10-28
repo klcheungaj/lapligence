@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 57u
+#define LLG_SLANG_ABI_VERSION 58u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1315,7 +1315,12 @@ typedef struct {
    * (IEEE 1800-2009 28.3.6). Zero for every other primitive instance. An
    * instance array node (ABI v54) stores its declared range: the left bound
    * in bits 0-31 and the right bound in bits 32-63, each a two's-complement
-   * int32. */
+   * int32. A block statement (ABI v58) stores the byte offset + 1 of its
+   * `begin` or `fork` keyword in the file of its range (0: unknown); a
+   * statement list that is a task or function body stores, in the file of
+   * that subroutine's range, the byte offset + 1 of the token after the
+   * subroutine name: its port list's `(`, else the `;` ending the header
+   * (0: unknown). */
   uint64_t auxiliary;
   /* Assertion sequence metadata. A zero repetition kind means that the
    * range fields are unused; max UINT32_MAX denotes an unbounded range. */

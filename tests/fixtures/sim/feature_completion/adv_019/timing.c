@@ -63,10 +63,10 @@ static void paths(vpiHandle module) {
     vpiHandle it = vpi_iterate(vpiModPath, module), path;
     if (!it) return;
     while ((path = vpi_scan(it))) {
-        vpi_printf("  %s line=%d type=%d polarity=%d data_polarity=%d ifnone=%d\n",
-                   text(vpiType, path), vpi_get(vpiLineNo, path), vpi_get(vpiPathType, path),
-                   vpi_get(vpiPolarity, path), vpi_get(vpiDataPolarity, path),
-                   vpi_get(vpiModPathHasIfNone, path));
+        vpi_printf("  %s line=%d name=%s type=%d polarity=%d data_polarity=%d ifnone=%d\n",
+                   text(vpiType, path), vpi_get(vpiLineNo, path), text(vpiName, path),
+                   vpi_get(vpiPathType, path), vpi_get(vpiPolarity, path),
+                   vpi_get(vpiDataPolarity, path), vpi_get(vpiModPathHasIfNone, path));
         static const PLI_INT32 kinds[] = {vpiModPathIn, vpiModPathOut};
         static const char* labels[] = {"in", "out"};
         for (int k = 0; k < 2; ++k) {
@@ -79,7 +79,8 @@ static void paths(vpiHandle module) {
         expression("condition", vpi_handle(vpiCondition, path));
         vpi_printf("\n");
         check(vpi_compare_objects(vpi_handle(vpiModule, path), module), "a path's module");
-        check(vpi_get_str(vpiName, path) == NULL, "a path has no name");
+        PLI_BYTE8* name = vpi_get_str(vpiName, path);
+        check(name && !vpi_handle_by_name(name, NULL), "a path is named but not found by name");
     }
     exhausted(it);
 }

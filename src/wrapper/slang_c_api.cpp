@@ -685,6 +685,17 @@ struct Capture {
     return span(token.range());
   }
 
+  // Byte offset + 1 of `location` when it lies in file `file` and below
+  // 2^32 - 1, else 0: a keyword position a statement keeps in `auxiliary`.
+  uint64_t keywordOffset(SourceLocation location, uint64_t file) const {
+    if (!location.valid() || file == LLG_SLANG_INVALID_ID)
+      return 0;
+    const LlgSlangSourceRange at = span(location);
+    if (at.file_id != file || at.start >= UINT32_MAX - 1)
+      return 0;
+    return at.start + 1;
+  }
+
   LlgSlangSourceRange span(SourceRange range) const {
     SourceLocation start = physicalLocation(range.start());
     SourceLocation end = physicalLocation(range.end());
@@ -3575,6 +3586,15 @@ public:
     result.range = capture.span(statement.sourceRange);
     if (statement.bad())
       result.flags |= LLG_SLANG_SEMANTIC_BAD;
+    if constexpr (std::same_as<T, BlockStatement>) {
+      // A block holding one statement spans only that statement; keep
+      // where its `begin` or `fork` keyword is written.
+      if (statement.syntax &&
+          syntax::BlockStatementSyntax::isKind(statement.syntax->kind))
+        result.auxiliary = capture.keywordOffset(
+            statement.syntax->template as<syntax::BlockStatementSyntax>().begin.location(),
+            result.range.file_id);
+    }
     if constexpr (std::same_as<T, CaseStatement>) {
       result.auxiliary = semanticUniquePriorityCheck(statement.check);
       switch (statement.condition) {
@@ -5987,7 +6007,27 @@ private:
         capture.semanticRole(id, component, LLG_SLANG_EDGE_LOW_CONNECTION, index++);
     }
     if constexpr (std::same_as<T, SubroutineSymbol>) {
-      capture.semanticRole(id, &symbol.getBody(), LLG_SLANG_EDGE_BODY);
+      const Statement& body = symbol.getBody();
+      capture.semanticRole(id, &body, LLG_SLANG_EDGE_BODY);
+      // A body of several statements is a list without a source range:
+      // keep where it opens (the token after the name), in the file of the
+      // subroutine.
+      const syntax::SyntaxNode* syntax = symbol.getSyntax();
+      if (syntax && syntax->kind == syntax::SyntaxKind::ClassMethodDeclaration)
+        syntax = syntax->as<syntax::ClassMethodDeclarationSyntax>().declaration;
+      if (body.kind == StatementKind::List && syntax &&
+          syntax::FunctionDeclarationSyntax::isKind(syntax->kind)) {
+        const auto& declaration = syntax->as<syntax::FunctionDeclarationSyntax>();
+        const uint64_t file =
+            capture.output.semantic_nodes[static_cast<size_t>(id)].range.file_id;
+        const parsing::Token open = declaration.prototype->portList
+                               ? declaration.prototype->portList->openParen
+                               : declaration.semi;
+        if (const uint64_t begin = capture.keywordOffset(open.location(), file)) {
+          const uint64_t bodyId = capture.ensureSemantic(&body);
+          capture.output.semantic_nodes[static_cast<size_t>(bodyId)].auxiliary = begin;
+        }
+      }
     }
     if constexpr (std::same_as<T, NetSymbol>) {
       if (const Expression* initializer = symbol.getInitializer()) {
