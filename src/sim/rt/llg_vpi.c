@@ -61,7 +61,8 @@ typedef enum {
     SLOT_EVENT,     /* vpiSchedEvent */
     SLOT_ASSERTION, /* assertion coverage item `left` (39.3) */
     SLOT_MEMBER,    /* struct/union member: object + element + member node `aux` */
-    SLOT_TYPESPEC,  /* typespec `aux` (static slot) */
+    SLOT_TYPESPEC,  /* typespec `aux`: a static slot, or a dynamic one owned by
+                     * declaration row `object` (member node `left` - 1) */
     SLOT_TSMEMBER,  /* typespec member `aux` (static slot) */
     SLOT_ENUMCONST, /* enum constant `aux` (static slot) */
     SLOT_CONN,      /* constant or expression connection `aux` of row `object` */
@@ -907,6 +908,26 @@ static const llg_vpi_member_node_t* node_at(uint32_t index) {
 
 static vpiHandle typespec_handle(const llg_vpi_typespec_t* typespec) {
     return typespec ? encode_handle(g_vpi.typespec_base + typespec_index(typespec)) : NULL;
+}
+
+/* The typespec of a declaration (decision A19-D4): a structure, union or
+ * enum type is one object (its static slot), any other typespec belongs to
+ * the declaration that reaches it, catalog row `row` (and member node
+ * `member` + 1 of a structure member, else 0). The interned table stays
+ * shared; such a handle is a dynamic slot whose identity adds the owner. */
+static vpiHandle declared_typespec_handle(const llg_vpi_typespec_t* typespec, uint32_t row,
+                                          int64_t member) {
+    if (!typespec) return NULL;
+    if (row == LLG_VPI_NONE || typespec->type == vpiStructTypespec ||
+        typespec->type == vpiUnionTypespec || typespec->type == vpiEnumTypespec)
+        return typespec_handle(typespec);
+    uint32_t index = alloc_slot(SLOT_TYPESPEC);
+    if (index == LLG_VPI_NONE) return NULL;
+    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    slot->aux = (int32_t)typespec_index(typespec);
+    slot->object = row;
+    slot->left = member;
+    return encode_handle(index);
 }
 
 /* The typespec of an element value: its array typespec without every
@@ -4908,9 +4929,17 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 slot->kind != SLOT_MEMBER && slot->kind != SLOT_TSMEMBER)
                 break;
             if (slot->kind == SLOT_OBJECT && object && is_scope_type(object->type)) break;
-            const llg_vpi_typespec_t* typespec = slot->kind == SLOT_TSMEMBER
-                ? typespec_at(g_vpi.types->members[slot->aux].typespec) : value_typespec(slot);
-            if (typespec) return typespec_handle(typespec);
+            if (slot->kind == SLOT_TSMEMBER) {
+                const llg_vpi_typespec_t* typespec =
+                    typespec_at(g_vpi.types->members[slot->aux].typespec);
+                if (typespec) return typespec_handle(typespec);
+            } else {
+                const llg_vpi_typespec_t* typespec = value_typespec(slot);
+                if (typespec)
+                    return declared_typespec_handle(
+                        typespec, slot->object,
+                        slot->kind == SLOT_MEMBER ? (int64_t)slot->aux + 1 : 0);
+            }
             vpi_error("LLG_VPI_UNSUPPORTED", "llg exposes no typespec for the type of this object");
             return NULL;
         }
@@ -4924,7 +4953,8 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
              * (37.23 details 1 and 8). */
             uint32_t reference = type == vpiTypedefAlias ? typespec->alias
                                  : type == vpiElemTypespec ? typespec->element : typespec->base;
-            return typespec_handle(typespec_ref(reference));
+            /* A declaration's typespec owns the typespecs below it. */
+            return declared_typespec_handle(typespec_ref(reference), slot->object, slot->left);
         }
         case vpiParent:
             if (slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_PORTBIT || slot->kind == SLOT_TERM)
@@ -7099,6 +7129,14 @@ static int handle_identity(const llg_vpi_slot_t* slot, uint32_t index, uint64_t 
         identity[1] = slot->object;
         identity[2] = 0;
         identity[3] = (uint64_t)(uint32_t)slot->aux;
+        return 1;
+    }
+    if (slot->kind == SLOT_TYPESPEC) {
+        /* A typespec and the declaration that owns it (A19-D4). */
+        identity[0] = 2u + slot->kind;
+        identity[1] = (uint64_t)(uint32_t)slot->aux;
+        identity[2] = slot->object;
+        identity[3] = (uint64_t)slot->left;
         return 1;
     }
     if (slot->kind == SLOT_MEMBER) {
