@@ -121,6 +121,17 @@ procedures separately from fork descendants: last-initial completion cancels tha
 origin's detached descendants; all-program completion ends simulation. `$exit`
 cancels its thread's originating program and returns harmlessly without such origin.
 
+Delayed Active-region calls (`llg_schedule_delayed_call`, used by VPI delayed
+puts) each own one carrier: an unregistered process record (no registry
+slot, handle, program or RNG stream) with a runtime coroutine
+`#ticks; callback; done`. Its first turn runs at scheduling time and arms the
+ordinary timer, so the call matures in timer order with process wakeups; a
+zero delay enqueues it in Active instead. Kill, disable, program completion,
+statistics (`processes=`) and the collector never see carriers; their timers
+keep the run alive. A pending carrier sits on `g.delayed_calls` until its
+callback starts; cancellation and cleanup discard it from there, and a
+started one retires through `proc_retire_completed`.
+
 Future NBAs own values and retained destinations after issuers finish, and can
 advance time without a process waiter. Masked writes merge into current storage.
 Tagged-member NBAs own a copy of their tag checks and re-check the target's tags
