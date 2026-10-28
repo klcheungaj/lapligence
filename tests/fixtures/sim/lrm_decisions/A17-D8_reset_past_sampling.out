@@ -1,0 +1,10 @@
+15 r1 fail
+15 r2 fail
+reset p1 -> 1
+reset r1 -> 1
+25 p2 fail
+25 r1 fail
+35 p1 fail
+35 p2 fail
+45 p1 fail
+45 p2 fail

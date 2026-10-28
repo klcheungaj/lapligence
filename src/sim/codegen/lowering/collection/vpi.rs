@@ -1489,8 +1489,65 @@ impl Codegen<'_> {
         let mut statements = Vec::new();
         let mut conns = Vec::new();
         let mut arguments = Vec::new();
+        let mut assertions = Vec::new();
+        // Each assertion item's statement and the catalog row of its
+        // instance.
+        let items: Vec<(Option<NodeId>, Option<String>)> = model
+            .assertion_coverage
+            .as_ref()
+            .map(|coverage| {
+                coverage
+                    .items
+                    .iter()
+                    .map(|item| {
+                        let statement = usize::try_from(item.identity)
+                            .ok()
+                            .filter(|index| *index < self.db.node_count())
+                            .map(NodeId::from_index);
+                        let scope = item
+                            .instance
+                            .and_then(|index| coverage.instances.get(index as usize))
+                            .map(|instance| instance.path.clone());
+                        (statement, scope)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let (code, files, named_blocks) = {
             let mut tables = code::CodeTables::new(self, model, typespecs);
+            // Declarations first, so the instances of assertions link to
+            // them (37.12: a scope holds its sequence and property
+            // declarations).
+            for node in self.design_nodes() {
+                if !matches!(self.kind(node), NodeKind::Other)
+                    || !matches!(self.db.semantic_detail(node), Some("Sequence" | "Property"))
+                {
+                    continue;
+                }
+                let Some(scope) = self
+                    .node(node)
+                    .parent
+                    .and_then(|parent| tables.row(&self.vpi_full_name(parent)))
+                else {
+                    continue;
+                };
+                tables.declaration_root(node, Some(scope));
+            }
+            for (index, (statement, scope)) in items.iter().enumerate() {
+                let Some(statement) = *statement else {
+                    continue;
+                };
+                if !matches!(
+                    self.kind(statement),
+                    NodeKind::Stmt(
+                        StmtKind::ConcurrentAssertion { .. } | StmtKind::ImmediateAssertion { .. }
+                    )
+                ) {
+                    continue;
+                }
+                let scope = scope.as_deref().and_then(|scope| tables.row(scope));
+                assertions.push((index, tables.assertion_root(statement, scope)));
+            }
             for (key, scope, owner) in owners {
                 let Some(row) = tables.row(&key) else {
                     continue;
@@ -1546,6 +1603,11 @@ impl Codegen<'_> {
         }
         for (site, index, entry) in arguments {
             model.vpi_compile_calls[site].args[index].code = Some(entry);
+        }
+        if let Some(coverage) = model.assertion_coverage.as_mut() {
+            for (index, entry) in assertions {
+                coverage.items[index].code = Some(entry);
+            }
         }
         model.vpi_code = code;
         model.vpi_code_files = files;

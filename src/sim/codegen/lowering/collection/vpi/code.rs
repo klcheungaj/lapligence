@@ -13,6 +13,9 @@ use super::*;
 use crate::core::db::{CaseItem, CaseKind, UniquePriorityCheck};
 use crate::sim::ir::IrVpiCode;
 
+mod assertions;
+use assertions::ClockSource;
+
 /// What one code entry is built from.
 enum Item<'a> {
     Expr(NodeId),
@@ -41,6 +44,24 @@ enum Item<'a> {
     /// A `for` loop whose variables are declared by the enclosing implicit
     /// block: the loop and the declarations.
     ForWithLocals(NodeId, Vec<NodeId>),
+    /// The entry of an assertion statement (37.46, 37.51).
+    Assertion(NodeId),
+    /// The `vpiProperty` of concurrent assertion statement `.1` whose
+    /// property is `.0`.
+    Property(NodeId, NodeId),
+    /// A sequence or property expression.
+    AssertionExpr(NodeId),
+    /// The actual clocking event of an assertion.
+    Clock(ClockSource<'a>),
+    /// An event the frontend does not hold as written (a procedure's
+    /// inferred clock).
+    OwnedEvent(EventSpec, NodeId),
+    /// A sequence or property declaration (37.47, 37.49).
+    Declaration(NodeId),
+    /// A formal of a declaration, with its object type.
+    AssertionFormal(NodeId, &'static str),
+    /// A relation to the root entry it names (an instance's declaration).
+    Link(u32),
 }
 
 type Children<'a> = Vec<(&'static str, Item<'a>)>;
@@ -64,6 +85,8 @@ pub(super) struct CodeTables<'c, 'a> {
     /// The catalog row of the named block the last built statement stands
     /// for, which `place` records with its entry.
     pending_block: Option<usize>,
+    /// The root entry of each sequence and property declaration.
+    declarations: HashMap<NodeId, u32>,
 }
 
 impl<'c, 'a> CodeTables<'c, 'a> {
@@ -92,6 +115,7 @@ impl<'c, 'a> CodeTables<'c, 'a> {
             file_index: HashMap::new(),
             named_blocks: Vec::new(),
             pending_block: None,
+            declarations: HashMap::new(),
         }
     }
 
@@ -114,6 +138,11 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         let row = self.rows.get(self.cg.vpi_full_name(id).as_str()).copied();
         self.decl_rows.borrow_mut().insert(id, row);
         row
+    }
+
+    /// Add assertion statement `id` as a root and return its entry.
+    pub(super) fn assertion_root(&mut self, id: NodeId, scope: Option<usize>) -> u32 {
+        self.root(Item::Assertion(id), scope)
     }
 
     /// Add the expression `id` as a root and return its entry.
@@ -148,7 +177,10 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         code.role = role;
         code.scope = scope;
         let first = self.code.len();
-        code.first = u32::try_from(first).unwrap_or(u32::MAX);
+        // A link keeps the entry it names; it has no children.
+        if code.flags & IrVpiCode::LINK == 0 {
+            code.first = u32::try_from(first).unwrap_or(u32::MAX);
+        }
         code.count = u32::try_from(children.len()).unwrap_or(u32::MAX);
         self.code[slot] = code;
         self.code
@@ -219,6 +251,54 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                 }
                 (code, children, scope)
             }
+            Item::Assertion(id) => {
+                let (code, children) = self.assertion(id);
+                (code, children, scope)
+            }
+            Item::Property(property, statement) => {
+                let (code, children) = self.property(property, statement);
+                (code, children, scope)
+            }
+            Item::AssertionExpr(id) => {
+                let (code, children) = self.assertion_expression(id);
+                (code, children, scope)
+            }
+            Item::Clock(clock) => self.clock(clock, scope),
+            Item::Declaration(id) => {
+                let (code, children) = self.declaration(id);
+                (code, children, scope)
+            }
+            Item::AssertionFormal(id, type_code) => (self.formal(id, type_code), Vec::new(), scope),
+            Item::Link(entry) => {
+                let mut code = IrVpiCode::new("0");
+                code.flags |= IrVpiCode::LINK;
+                code.first = entry;
+                (code, Vec::new(), scope)
+            }
+            Item::OwnedEvent(spec, at) => match spec {
+                EventSpec::Qualified { event, condition } => {
+                    let mut code = self.located("vpiOperation", at);
+                    code.subtype = "vpiIffOp";
+                    let children = vec![
+                        ("vpiOperand", Item::OwnedEvent(*event, at)),
+                        ("vpiOperand", Item::Expr(condition)),
+                    ];
+                    (code, children, scope)
+                }
+                EventSpec::Edge { sig, posedge } => {
+                    let mut code = self.located("vpiOperation", sig);
+                    code.subtype = if posedge {
+                        "vpiPosedgeOp"
+                    } else {
+                        "vpiNegedgeOp"
+                    };
+                    code.width = 1;
+                    (code, vec![("vpiOperand", Item::Expr(sig))], scope)
+                }
+                EventSpec::AnyChange { sig } | EventSpec::Named(sig) => {
+                    self.build(Item::Expr(sig), scope)
+                }
+            },
             Item::Alias(row, at) => {
                 let mut code = self.located("0", at);
                 code.flags |= IrVpiCode::ALIAS;

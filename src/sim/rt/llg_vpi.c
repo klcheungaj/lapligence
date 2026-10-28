@@ -81,6 +81,8 @@ typedef enum {
     SLOT_CLASSTS,   /* class typespec `aux` (static slot) */
     SLOT_EXTENDS,   /* extends object of class `aux` (static slot) */
     SLOT_CODE,      /* expression or statement object: code row `aux` */
+    SLOT_COLLECTION, /* vpiCollection: `count` members in `items`, each a
+                      * catalog row << 1 or an assertion item << 1 | 1 */
 } llg_vpi_slot_kind_t;
 
 enum {
@@ -1188,6 +1190,9 @@ static llg_vpi_call_t* slot_call(const llg_vpi_slot_t* slot) {
 static int read_conn(uint32_t row, uint32_t index, llg_vpi_datum_t* out, int* is_signed);
 static int code_value(uint32_t index, llg_vpi_datum_t* out, int* is_signed);
 static vpiHandle code_handle(uint32_t index);
+static const llg_vpi_code_t* code_at(uint32_t index);
+static uint32_t code_visible(uint32_t index);
+static uint32_t code_child(const llg_vpi_code_t* node, int relation);
 
 /* The width and sign of the value a handle reads, or 0 when it has none. */
 static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is_signed) {
@@ -3071,6 +3076,8 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
 /* ── assertions and coverage (39.3, 40.5) ───────────────────────────────── */
 
 static vpiHandle make_list_iterator(int type, uintptr_t* items, uint32_t count);
+static vpiHandle iterate_collection(const llg_vpi_slot_t* slot);
+static int item_in_instance(size_t index, int32_t scope);
 
 static const llg_acov_item_t* slot_item(const llg_vpi_slot_t* slot) {
     if (!slot || slot->kind != SLOT_ASSERTION || slot->left < 0) return NULL;
@@ -3102,6 +3109,43 @@ static int32_t slot_instance(const llg_vpi_slot_t* slot) {
         (object->type != vpiModule && object->type != vpiInterface))
         return -1;
     return llg_acov_instance_named(object->full_name);
+}
+
+/* vpi_iterate(vpiSequenceDecl | vpiPropertyDecl, scope): the declarations
+ * of a scope (37.12), in source order. The declarations are roots of the
+ * expression object table; the walk is linear in that table. */
+static vpiHandle iterate_declarations(int type, vpiHandle reference) {
+    llg_vpi_slot_t* slot = reference ? checked_handle(reference, NULL) : NULL;
+    if (!slot) {
+        if (!reference)
+            vpi_error("LLG_VPI_RELATION", "sequence and property declarations iterate from a scope");
+        return NULL;
+    }
+    if (slot->kind != SLOT_OBJECT) {
+        vpi_error("LLG_VPI_RELATION", "sequence and property declarations iterate from a scope");
+        return NULL;
+    }
+    uint32_t total = g_vpi.code ? g_vpi.code->node_count : 0u, count = 0;
+    for (uint32_t i = 0; i < total; ++i) {
+        const llg_vpi_code_t* node = &g_vpi.code->nodes[i];
+        if (!node->role && node->type == type && node->scope == slot->object + 1u) ++count;
+    }
+    if (!count) return NULL;
+    uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    uint32_t object = slot->object;
+    count = 0;
+    for (uint32_t i = 0; i < total; ++i) {
+        const llg_vpi_code_t* node = &g_vpi.code->nodes[i];
+        if (node->role || node->type != type || node->scope != object + 1u) continue;
+        vpiHandle handle = code_handle(i);
+        if (!handle) break;
+        items[count++] = (uintptr_t)handle;
+    }
+    return make_list_iterator(type, items, count);
 }
 
 /* vpi_iterate(vpiAssertion, NULL | instance): every item, or the items of
@@ -3161,6 +3205,24 @@ static vpiHandle assertion_by_name(const char* name, vpiHandle scope) {
     return NULL;
 }
 
+/* The one-to-one relations of 37.46 (concurrent) and 37.51 (immediate)
+ * assertions. */
+static int assertion_relation_applies(int type, int relation) {
+    switch (type) {
+        case vpiAssert:
+        case vpiAssume:
+            return relation == vpiClockingEvent || relation == vpiDisableCondition ||
+                   relation == vpiProperty || relation == vpiStmt || relation == vpiElseStmt;
+        case vpiCover:
+            return relation == vpiClockingEvent || relation == vpiDisableCondition ||
+                   relation == vpiProperty || relation == vpiStmt;
+        case vpiImmediateAssert:
+        case vpiImmediateAssume: return relation == vpiExpr || relation == vpiStmt || relation == vpiElseStmt;
+        case vpiImmediateCover: return relation == vpiExpr || relation == vpiStmt;
+        default: return 0;
+    }
+}
+
 static vpiHandle assertion_relation(int type, const llg_vpi_slot_t* slot) {
     const llg_acov_item_t* item = slot_item(slot);
     if (item && (type == vpiScope || type == vpiModule)) {
@@ -3173,14 +3235,36 @@ static vpiHandle assertion_relation(int type, const llg_vpi_slot_t* slot) {
         vpi_error("LLG_VPI_NOT_FOUND", "the assertion's instance is not in the VPI catalog");
         return NULL;
     }
-    if (item && (type == vpiClockingEvent || type == vpiDisableCondition || type == vpiProperty)) {
-        vpi_error("LLG_VPI_UNSUPPORTED",
-                  "assertion clocking events, disable conditions and properties are expressions, "
-                  "which llg does not expose as VPI objects");
-        return NULL;
+    if (item && assertion_relation_applies(assertion_type(item), type)) {
+        const llg_vpi_code_t* node = item->code ? code_at(item->code - 1u) : NULL;
+        if (!node) {
+            vpi_error("LLG_VPI_UNSUPPORTED",
+                      "this model has no expression objects: generate it with --vpi");
+            return NULL;
+        }
+        /* A relation the statement does not have (no disable iff, no else
+         * action) is NULL without an error. */
+        uint32_t child = code_child(node, type);
+        return child == LLG_VPI_NONE ? NULL : code_handle(child);
     }
     vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-one relation for this object");
     return NULL;
+}
+
+/* The expression a failing attempt of `item` reports as failExpr (39.4.2,
+ * decision A17-D4): the property expression of a concurrent assertion (the
+ * property instance, or the vpiPropertyExpr of its property specification)
+ * or the condition of an immediate assertion; LLG_VPI_NONE without
+ * expression objects. */
+static uint32_t assertion_fail_code(const llg_acov_item_t* item) {
+    const llg_vpi_code_t* node = item && item->code ? code_at(item->code - 1u) : NULL;
+    if (!node) return LLG_VPI_NONE;
+    uint32_t child = code_child(node, vpiExpr);
+    if (child != LLG_VPI_NONE) return code_visible(child);
+    child = code_child(node, vpiProperty);
+    const llg_vpi_code_t* property = child == LLG_VPI_NONE ? NULL : code_at(child);
+    if (property && property->type == vpiPropertySpec) child = code_child(property, vpiPropertyExpr);
+    return child == LLG_VPI_NONE ? LLG_VPI_NONE : code_visible(child);
 }
 
 /* An integer property of an assertion handle (39.3.2, 40.5.3). */
@@ -3199,6 +3283,28 @@ static int assertion_property(const llg_vpi_slot_t* slot, int property, uint64_t
             if (!item->column) return 0;
             *value = item->column;
             return 1;
+        case vpiEndLine:
+            if (!item->end_line) return 0;
+            *value = item->end_line;
+            return 1;
+        case vpiEndColumn:
+            if (!item->end_column) return 0;
+            *value = item->end_column;
+            return 1;
+        case vpiIsCoverSequence:
+            if (assertion_type(item) != vpiCover) return 0;
+            *value = item->form == LLG_ACOV_COVER_SEQUENCE;
+            return 1;
+        case vpiIsClockInferred: {
+            /* 37.46: concurrent assertions; the entry records how the clock
+             * was found. */
+            const llg_vpi_code_t* node = item->code ? code_at(item->code - 1u) : NULL;
+            if (item->form != LLG_ACOV_CONCURRENT && item->form != LLG_ACOV_COVER_SEQUENCE)
+                return 0;
+            if (!node) return 0;
+            *value = (node->flags & LLG_VPI_CODE_INFERRED) != 0;
+            return 1;
+        }
         case vpiCovered:
             /* Attempted, succeeded at least once and never failed (40.5.3). */
             *value = item->attempts && item->successes && !item->failures;
@@ -3486,7 +3592,20 @@ static int code_is_statement(int type) {
         case vpiNullStmt: case vpiForce: case vpiRelease: case vpiAssignStmt: case vpiDeassign:
         case vpiTaskCall: case vpiSysTaskCall: case vpiMethodTaskCall:
         case vpiImmediateAssert: case vpiImmediateAssume: case vpiImmediateCover:
-        case vpiAssert:
+        case vpiAssert: case vpiAssume: case vpiCover:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/* The sequence and property objects of 37.47-37.50 that are neither
+ * statements nor expressions with a value. */
+static int code_is_assertion_object(int type) {
+    switch (type) {
+        case vpiPropertySpec: case vpiPropertyInst: case vpiSequenceInst:
+        case vpiPropertyDecl: case vpiSequenceDecl: case vpiPropFormalDecl:
+        case vpiSeqFormalDecl:
             return 1;
         default:
             return 0;
@@ -3501,7 +3620,7 @@ static int code_type(const llg_vpi_code_t* node) {
 
 static int code_is_expression(const llg_vpi_code_t* node) {
     int type = code_type(node);
-    return !code_is_statement(type) && type != vpiCaseItem;
+    return !code_is_statement(type) && type != vpiCaseItem && !code_is_assertion_object(type);
 }
 
 static const char* code_text(const llg_vpi_code_t* node) {
@@ -3545,6 +3664,11 @@ static int code_tables_valid(const llg_vpi_code_tables_t* t) {
         if (node->data > (code_is_select(node->type) ? t->range_count : t->text_count)) return 0;
         if (node->data && !code_is_select(node->type) && !t->texts[node->data - 1u]) return 0;
         if (node->file && !t->files[node->file - 1u]) return 0;
+        /* A link names a root without children of its own. */
+        if ((node->flags & LLG_VPI_CODE_LINK) &&
+            (node->count || node->first >= t->node_count ||
+             (t->nodes[node->first].flags & LLG_VPI_CODE_LINK)))
+            return 0;
     }
     return 1;
 }
@@ -3558,6 +3682,7 @@ int llg_vpi_model_code(const llg_vpi_code_tables_t* tables) {
  * are not objects of their own. */
 static uint32_t code_visible(uint32_t index) {
     const llg_vpi_code_t* node = code_at(index);
+    if (node && (node->flags & LLG_VPI_CODE_LINK)) return node->first;
     while (node && (node->flags & LLG_VPI_CODE_HIDDEN) && node->count) {
         index = node->first;
         node = code_at(index);
@@ -3615,6 +3740,11 @@ static int code_relation_applies(int type, int relation) {
             return relation == vpiParent || relation == vpiLeftRange || relation == vpiRightRange;
         case vpiIndexedPartSelect:
             return relation == vpiParent || relation == vpiBaseExpr || relation == vpiWidthExpr;
+        case vpiPropertySpec:
+            return relation == vpiClockingEvent || relation == vpiDisableCondition ||
+                   relation == vpiPropertyExpr;
+        case vpiSequenceInst: return relation == vpiSequenceDecl;
+        case vpiPropertyInst: return relation == vpiPropertyDecl;
         default:
             return 0;
     }
@@ -3634,6 +3764,9 @@ static int code_iteration_applies(int type, int relation) {
         case vpiVarSelect: return relation == vpiIndex;
         case vpiForeachStmt: return relation == vpiLoopVars;
         case vpiOrderedWait: return relation == vpiCondition;
+        case vpiSequenceInst: case vpiPropertyInst: return relation == vpiArgument;
+        case vpiSequenceDecl: return relation == vpiSeqFormalDecl;
+        case vpiPropertyDecl: return relation == vpiPropFormalDecl;
         default:
             return 0;
     }
@@ -3643,10 +3776,38 @@ static void code_opaque_error(void) {
     vpi_error("LLG_VPI_UNSUPPORTED", "llg does not decompose this expression or statement");
 }
 
+/* The relations of 37.47 and 37.49 llg does not keep: a declaration's body
+ * and variables are expanded into each instance, and a formal's default
+ * appears only as the argument of an instance that omits it. */
+static int code_assertion_unkept(int type, int relation) {
+    switch (type) {
+        case vpiPropertyDecl:
+            return relation == vpiPropertySpec || relation == vpiVariables;
+        case vpiSequenceDecl:
+            return relation == vpiExpr || relation == vpiVariables;
+        case vpiPropFormalDecl:
+        case vpiSeqFormalDecl:
+            return relation == vpiExpr;
+        default:
+            return 0;
+    }
+}
+
 static vpiHandle code_relation(int type, uint32_t index) {
     const llg_vpi_code_t* node = code_at(index);
     if (!node) return NULL;
     if (type == vpiScope) return node->scope ? object_handle(node->scope - 1u) : NULL;
+    if (code_assertion_unkept(node->type, type)) {
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "llg keeps no declaration body, variables or formal default of a sequence or "
+                  "property: each instance holds its expanded body and its actual arguments");
+        return NULL;
+    }
+    if (type == vpiTypespec &&
+        (node->type == vpiPropFormalDecl || node->type == vpiSeqFormalDecl)) {
+        /* 37.47 and 37.49 detail 2: NULL for an untyped formal. */
+        return node->typespec ? typespec_handle(typespec_at(node->typespec - 1u)) : NULL;
+    }
     if (type == vpiTypespec) {
         /* 37.55 detail 5: casts; llg gives no other expression a typespec. */
         if (node->typespec) return typespec_handle(typespec_at(node->typespec - 1u));
@@ -3668,6 +3829,11 @@ static vpiHandle code_relation(int type, uint32_t index) {
 static vpiHandle iterate_code(uint32_t index, int relation) {
     const llg_vpi_code_t* node = code_at(index);
     if (!node) return NULL;
+    if (code_assertion_unkept(node->type, relation)) {
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "llg keeps no variables of a sequence or property declaration");
+        return NULL;
+    }
     if (node->flags & LLG_VPI_CODE_OPAQUE) {
         code_opaque_error();
         return NULL;
@@ -4592,6 +4758,9 @@ static PLI_INT32 code_property(uint32_t index, int property) {
         case vpiUserDefn:
             if (type != vpiSysFuncCall && type != vpiSysTaskCall) break;
             return (node->flags & LLG_VPI_CODE_USER) != 0;
+        case vpiDirection:
+            if (type != vpiPropFormalDecl && type != vpiSeqFormalDecl) break;
+            return node->subtype;
         case vpiFuncType: {
             if (type == vpiFuncCall && node->object >= 0) {
                 const llg_vpi_model_object_t* callee = &g_vpi.objects[node->object];
@@ -4618,6 +4787,8 @@ static PLI_BYTE8* code_string(uint32_t index, int property) {
         case vpiName: {
             /* Calls, references outside the catalog and named blocks
              * outside a process have names; statements carry no label. */
+            if (code_is_assertion_object(type) && type != vpiPropertySpec)
+                return (PLI_BYTE8*)code_text(node);
             if (type == vpiFuncCall || type == vpiTaskCall || type == vpiSysFuncCall ||
                 type == vpiSysTaskCall || type == vpiMethodFuncCall ||
                 type == vpiMethodTaskCall || type == vpiNamedBegin || type == vpiNamedFork ||
@@ -4625,6 +4796,16 @@ static PLI_BYTE8* code_string(uint32_t index, int property) {
                  type != vpiOperation && type != vpiConstant))
                 return (PLI_BYTE8*)code_text(node);
             if (code_is_statement(type)) return NULL;
+            break;
+        }
+        case vpiFullName: {
+            /* 37.47, 37.49: a declaration is named within its scope. */
+            const char* name = code_text(node);
+            if ((type == vpiPropertyDecl || type == vpiSequenceDecl) && node->scope && name) {
+                snprintf(g_vpi.str_buffer, sizeof(g_vpi.str_buffer), "%s.%s",
+                         g_vpi.objects[node->scope - 1u].full_name, name);
+                return (PLI_BYTE8*)g_vpi.str_buffer;
+            }
             break;
         }
         case vpiFile:
@@ -5113,6 +5294,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     vpi_enter();
     if (!vpi_ready()) return NULL;
     if (type == vpiAssertion) return iterate_assertions(ref_handle);
+    if (type == vpiSequenceDecl || type == vpiPropertyDecl) return iterate_declarations(type, ref_handle);
     if (!ref_handle) {
         if (type != vpiModule && type != vpiInterface) {
             vpi_error("LLG_VPI_UNSUPPORTED", "only vpiModule iterates from a NULL reference");
@@ -5145,6 +5327,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         own_by_call(index, call);
         return encode_handle(index);
     }
+    if (type == vpiMember && slot->kind == SLOT_COLLECTION) return iterate_collection(slot);
     if (dyn_slot(slot)) {
         int handled;
         vpiHandle result = dyn_iterate(type, slot, &handled);
@@ -5383,6 +5566,7 @@ static int handle_type(const llg_vpi_slot_t* slot) {
             return code != LLG_VPI_NONE ? code_type(code_at(code)) : argument_type(slot);
         }
         case SLOT_CODE: return code_type(code_at((uint32_t)slot->aux));
+        case SLOT_COLLECTION: return vpiCollection;
         case SLOT_CALLBACK:
         case SLOT_FIRED_CB: return vpiCallback;
         case SLOT_EVENT: return vpiSchedEvent;
@@ -5886,6 +6070,14 @@ static const char* type_name(int type) {
         case vpiImmediateAssert: return "vpiImmediateAssert";
         case vpiImmediateAssume: return "vpiImmediateAssume";
         case vpiImmediateCover: return "vpiImmediateCover";
+        case vpiCollection: return "vpiCollection";
+        case vpiPropertySpec: return "vpiPropertySpec";
+        case vpiPropertyInst: return "vpiPropertyInst";
+        case vpiSequenceInst: return "vpiSequenceInst";
+        case vpiPropertyDecl: return "vpiPropertyDecl";
+        case vpiSequenceDecl: return "vpiSequenceDecl";
+        case vpiPropFormalDecl: return "vpiPropFormalDecl";
+        case vpiSeqFormalDecl: return "vpiSeqFormalDecl";
         case vpiLongIntTypespec: return "vpiLongIntTypespec";
         case vpiShortRealTypespec: return "vpiShortRealTypespec";
         case vpiByteTypespec: return "vpiByteTypespec";
@@ -7076,6 +7268,12 @@ typedef struct llg_vpi_cb {
     vpi_assertion_callback_func* assertion_rtn;
     uint32_t assertion_item;
     int assertion_attempt;
+    /* The failExpr handle the record passes on cbAssertionFailure, owned
+     * like data.obj; NULL until the first failure. */
+    vpiHandle fail_expr;
+    /* A record placed on a sequence or property instance: its code row + 1
+     * (data.obj is then the record's instance handle), else 0. */
+    uint32_t instance_code;
 } llg_vpi_cb_t;
 
 static void assertion_cb_release(llg_vpi_cb_t* cb);
@@ -7861,10 +8059,28 @@ static int assertion_system_reason(int reason) {
  * handle; when the application released it, a new one replaces it. */
 static vpiHandle assertion_cb_handle(llg_vpi_cb_t* cb) {
     llg_vpi_slot_t* slot = decode_handle(cb->data.obj, NULL);
+    if (cb->instance_code) {
+        if (slot && slot->kind == SLOT_CODE && slot->aux == (int32_t)(cb->instance_code - 1u))
+            return cb->data.obj;
+        cb->data.obj = code_handle(cb->instance_code - 1u);
+        return cb->data.obj;
+    }
     if (slot && slot->kind == SLOT_ASSERTION && slot->left == (int64_t)cb->assertion_item)
         return cb->data.obj;
     cb->data.obj = assertion_handle(cb->assertion_item);
     return cb->data.obj;
+}
+
+/* The failExpr of the record's item (decision A17-D4). The record owns one
+ * handle; when the application released it, a new one replaces it. An
+ * expression that is a catalog object has that object's handle. */
+static vpiHandle assertion_cb_fail_expr(llg_vpi_cb_t* cb) {
+    uint32_t code = assertion_fail_code(llg_acov_item_at(cb->assertion_item));
+    if (code == LLG_VPI_NONE) return NULL;
+    llg_vpi_slot_t* slot = decode_handle(cb->fail_expr, NULL);
+    if (slot && slot->kind == SLOT_CODE && slot->aux == (int32_t)code) return cb->fail_expr;
+    cb->fail_expr = code_handle(code);
+    return cb->fail_expr;
 }
 
 static void assertion_cb_release(llg_vpi_cb_t* cb) {
@@ -7872,9 +8088,14 @@ static void assertion_cb_release(llg_vpi_cb_t* cb) {
     if (cb->assertion_attempt) llg_acov_watch(cb->assertion_item, -1);
     uint32_t index;
     llg_vpi_slot_t* slot = decode_handle(cb->data.obj, &index);
-    if (slot && slot->kind == SLOT_ASSERTION && slot->left == (int64_t)cb->assertion_item)
+    if (slot && ((slot->kind == SLOT_ASSERTION && slot->left == (int64_t)cb->assertion_item) ||
+                 (cb->instance_code && slot->kind == SLOT_CODE &&
+                  slot->aux == (int32_t)(cb->instance_code - 1u))))
         release_slot(index);
     cb->data.obj = NULL;
+    slot = decode_handle(cb->fail_expr, &index);
+    if (slot && slot->kind == SLOT_CODE) release_slot(index);
+    cb->fail_expr = NULL;
 }
 
 typedef struct {
@@ -7882,10 +8103,24 @@ typedef struct {
     int reason;
 } llg_vpi_assertion_match_t;
 
+/* A record on an instance sees a vacuous success of its assertion as a
+ * success: the property instance reached a success state (decision
+ * A17-D5). */
 static int matches_assertion(const llg_vpi_cb_t* cb, const void* context) {
     const llg_vpi_assertion_match_t* match = (const llg_vpi_assertion_match_t*)context;
-    return cb->kind == CB_ASSERTION && cb->assertion_item == match->item &&
-           cb->data.reason == match->reason;
+    if (cb->kind != CB_ASSERTION || cb->assertion_item != match->item) return 0;
+    if (cb->data.reason == match->reason) {
+        /* A cover statement reports no failure: a cover attempt without a
+         * match runs no callback on the statement (decision A17-D1), while
+         * the sequence instance of a cover property fails (A17-D5). */
+        if (match->reason == cbAssertionFailure && !cb->instance_code) {
+            const llg_acov_item_t* item = llg_acov_item_at(match->item);
+            if (item && item->kind == LLG_ASSERTION_COVER) return 0;
+        }
+        return 1;
+    }
+    return cb->instance_code && cb->data.reason == cbAssertionSuccess &&
+           match->reason == cbAssertionVacuousSuccess;
 }
 
 /* Run the records of `reason` on `item`. `start` is the attempt's start
@@ -7911,7 +8146,8 @@ static void invoke_assertion_cbs(uint32_t item, int reason, uint64_t cb_time,
         s_vpi_attempt_info info;
         memset(&info, 0, sizeof(info));
         if (start) (void)callback_time(vpiSimTime, NULL, *start, &info.attemptStartTime);
-        (void)cb->assertion_rtn(reason, &time, assertion, start ? &info : NULL,
+        if (reason == cbAssertionFailure) info.detail.failExpr = assertion_cb_fail_expr(cb);
+        (void)cb->assertion_rtn(cb->data.reason, &time, assertion, start ? &info : NULL,
                                 cb->data.user_data);
     }
     if (items != buffer) free(items);
@@ -9021,12 +9257,30 @@ PLI_INT32 vpi_put_data(PLI_INT32 id, PLI_BYTE8* dataLoc, PLI_INT32 numOfBytes) {
     return 0;
 }
 
-/* 39.4.2: a callback on one assertion statement. The attempt reasons run
- * from the runtime's attempt events, the control reasons from vpi_control
- * (39.5.2) and cbAssertionDisable/cbAssertionEnable also from the control
- * tasks. Sequence and property instances are not VPI objects in llg. A step
- * callback is accepted but never runs: stepping cannot be enabled (decision
- * A17-D2). */
+/* The assertion item whose whole property is instance entry `row`, or -1:
+ * its vpiProperty, or the vpiPropertyExpr of its property specification. */
+static int64_t instance_item(uint32_t row) {
+    for (size_t i = 0; i < llg_acov_item_count(); ++i) {
+        const llg_acov_item_t* item = llg_acov_item_at(i);
+        const llg_vpi_code_t* root = item->code ? code_at(item->code - 1u) : NULL;
+        uint32_t property = root ? code_child(root, vpiProperty) : LLG_VPI_NONE;
+        if (property == LLG_VPI_NONE) continue;
+        const llg_vpi_code_t* node = code_at(property);
+        if (node->type == vpiPropertySpec) property = code_child(node, vpiPropertyExpr);
+        if (property != LLG_VPI_NONE && code_visible(property) == row) return (int64_t)i;
+    }
+    return -1;
+}
+
+/* 39.4.2: a callback on one assertion statement, or on a sequence or
+ * property instance. The attempt reasons run from the runtime's attempt
+ * events, the control reasons from vpi_control (39.5.2). An instance takes
+ * cbAssertionStart, cbAssertionSuccess and cbAssertionFailure, raised by the
+ * attempts of the assertion whose whole property it is (decision A17-D5);
+ * a nested instance would need a hook in every sequence engine and fails
+ * with vpiError (decision A17-D6). cbAssertionDisable and cbAssertionEnable
+ * also run from the control tasks. A step callback is accepted but never
+ * runs: stepping cannot be enabled (decision A17-D2). */
 vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
                                     vpi_assertion_callback_func* cb_rtn, PLI_BYTE8* user_data) {
     vpi_enter();
@@ -9042,8 +9296,32 @@ vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
     }
     llg_vpi_slot_t* slot = checked_handle(assertion, NULL);
     if (!slot) return NULL;
-    if (slot->kind != SLOT_ASSERTION || !slot_item(slot)) {
-        vpi_error("LLG_VPI_CALLBACK", "vpi_register_assertion_cb needs an assertion handle");
+    uint32_t instance = 0;
+    int64_t item_index = -1;
+    if (slot->kind == SLOT_CODE &&
+        (code_type(code_at((uint32_t)slot->aux)) == vpiSequenceInst ||
+         code_type(code_at((uint32_t)slot->aux)) == vpiPropertyInst)) {
+        if (reason != cbAssertionStart && reason != cbAssertionSuccess &&
+            reason != cbAssertionFailure) {
+            vpi_error("LLG_VPI_CALLBACK", "a sequence or property instance takes only "
+                                          "cbAssertionStart, cbAssertionSuccess and "
+                                          "cbAssertionFailure (39.4.2)");
+            return NULL;
+        }
+        item_index = instance_item((uint32_t)slot->aux);
+        if (item_index < 0) {
+            vpi_error("LLG_VPI_UNSUPPORTED",
+                      "llg raises instance callbacks only for an instance that is the whole "
+                      "property of an assertion");
+            return NULL;
+        }
+        instance = (uint32_t)slot->aux + 1u;
+    } else if (slot->kind == SLOT_ASSERTION && slot_item(slot)) {
+        item_index = slot->left;
+    } else {
+        vpi_error("LLG_VPI_CALLBACK",
+                  "vpi_register_assertion_cb needs an assertion or a sequence or property "
+                  "instance handle");
         return NULL;
     }
     if (g_vpi.assertions_ended || g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
@@ -9051,7 +9329,7 @@ vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
                   "the assertion system has ended; no assertion callback can occur");
         return NULL;
     }
-    uint32_t item = (uint32_t)slot->left;
+    uint32_t item = (uint32_t)item_index;
     llg_vpi_cb_t* cb = (llg_vpi_cb_t*)calloc(1, sizeof(*cb));
     if (!cb) {
         vpi_error("LLG_VPI_NOMEM", "VPI callback allocation failed");
@@ -9068,12 +9346,13 @@ vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
     /* The runtime raises attempt events and the control-task events only
      * for watched items. */
     cb->assertion_attempt = attempt || reason == cbAssertionDisable || reason == cbAssertionEnable;
+    cb->instance_code = instance;
     uint32_t index = alloc_slot(SLOT_CALLBACK);
     if (index == LLG_VPI_NONE) {
         vpi_cb_free(cb);
         return NULL;
     }
-    cb->data.obj = assertion_handle(item);
+    cb->data.obj = instance ? code_handle(instance - 1u) : assertion_handle(item);
     if (!cb->data.obj) {
         release_slot(index);
         vpi_cb_free(cb);
@@ -9093,6 +9372,90 @@ vpiHandle vpi_register_assertion_cb(vpiHandle assertion, PLI_INT32 reason,
         llg_assertion_watch_hook(vpi_assertion_event);
     }
     return encode_handle(index);
+}
+
+/* ── collections (39.5.1; IEEE P1800-2005 30.4.2) ─────────────────────── */
+
+/* vpi_create(vpiCollection, collection or NULL, member or NULL): add a
+ * module, interface or program instance or an assertion to a collection,
+ * made when `collection` is NULL; returns the collection (A17-D6). */
+vpiHandle vpi_create(PLI_INT32 type, vpiHandle collection, vpiHandle object) {
+    vpi_enter();
+    if (type != vpiCollection) {
+        vpi_error("LLG_VPI_UNSUPPORTED", "llg creates only vpiCollection objects");
+        return NULL;
+    }
+    uintptr_t member = 0;
+    if (object) {
+        llg_vpi_slot_t* slot = checked_handle(object, NULL);
+        if (!slot) return NULL;
+        if (slot->kind == SLOT_ASSERTION && slot_item(slot)) {
+            member = ((uintptr_t)slot->left << 1) | 1u;
+        } else if (slot_instance(slot) >= 0) {
+            member = (uintptr_t)slot->object << 1;
+        } else {
+            vpi_error("LLG_VPI_ARGUMENT",
+                      "a collection holds module, interface and program instances and "
+                      "assertions");
+            return NULL;
+        }
+    }
+    uint32_t index;
+    if (collection) {
+        llg_vpi_slot_t* slot = checked_handle(collection, &index);
+        if (!slot) return NULL;
+        if (slot->kind != SLOT_COLLECTION) {
+            vpi_error("LLG_VPI_ARGUMENT", "vpi_create adds to a vpiCollection handle");
+            return NULL;
+        }
+    } else {
+        index = alloc_slot(SLOT_COLLECTION);
+        if (index == LLG_VPI_NONE) return NULL;
+        collection = encode_handle(index);
+    }
+    if (!object) return collection;
+    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    uintptr_t* items = (uintptr_t*)realloc(slot->items, (slot->count + 1u) * sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI collection allocation failed");
+        return NULL;
+    }
+    items[slot->count++] = member;
+    slot->items = items;
+    return collection;
+}
+
+/* vpi_iterate(vpiMember, collection): its members in insertion order. */
+static vpiHandle iterate_collection(const llg_vpi_slot_t* slot) {
+    if (!slot->count) return NULL;
+    uint32_t count = slot->count;
+    uintptr_t* members = (uintptr_t*)malloc(count * sizeof(*members));
+    uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
+    if (!members || !items) {
+        free(members);
+        free(items);
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    /* Making handles may move the slot array: copy the members first. */
+    memcpy(members, slot->items, count * sizeof(*members));
+    uint32_t made = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        vpiHandle handle = (members[i] & 1u) ? assertion_handle((size_t)(members[i] >> 1))
+                                             : object_handle((uint32_t)(members[i] >> 1));
+        if (!handle) break;
+        items[made++] = (uintptr_t)handle;
+    }
+    free(members);
+    return make_list_iterator(vpiMember, items, made);
+}
+
+/* Whether item `index` is selected by collection member `member`. */
+static int item_in_member(size_t index, uintptr_t member) {
+    if (member & 1u) return (size_t)(member >> 1) == index;
+    llg_vpi_model_object_t* object = row_object((uint32_t)(member >> 1));
+    int32_t scope = object ? llg_acov_instance_named(object->full_name) : -1;
+    return scope >= 0 && item_in_instance(index, scope);
 }
 
 /* ── assertion control (39.5) ───────────────────────────────────────────── */
@@ -9223,6 +9586,8 @@ static PLI_INT32 assertion_control(int operation, va_list ap) {
      * below it; an assertion handle that assertion (39.5.1). */
     int64_t only = -1;
     int32_t scope = -1;
+    uintptr_t* members = NULL;
+    uint32_t member_count = 0;
     if (handle) {
         llg_vpi_slot_t* slot = checked_handle(handle, NULL);
         if (!slot) return 0;
@@ -9231,7 +9596,18 @@ static PLI_INT32 assertion_control(int operation, va_list ap) {
                                           "pass a NULL handle");
             return 0;
         }
-        if (slot->kind == SLOT_ASSERTION && slot_item(slot)) {
+        if (slot->kind == SLOT_COLLECTION) {
+            /* Each member selects as a single handle would (A17-D6). A
+             * callback the control raises may add to the collection, so
+             * the members are copied. */
+            member_count = slot->count;
+            members = (uintptr_t*)malloc((member_count ? member_count : 1u) * sizeof(*members));
+            if (!members) {
+                vpi_error("LLG_VPI_NOMEM", "VPI collection allocation failed");
+                return 0;
+            }
+            if (member_count) memcpy(members, slot->items, member_count * sizeof(*members));
+        } else if (slot->kind == SLOT_ASSERTION && slot_item(slot)) {
             only = slot->left;
         } else {
             scope = slot_instance(slot);
@@ -9245,9 +9621,16 @@ static PLI_INT32 assertion_control(int operation, va_list ap) {
     }
     if (operation == vpiAssertionSysEnd) llg_assertions_end();
     for (size_t i = 0; i < llg_acov_item_count(); ++i) {
-        if (only >= 0 ? (int64_t)i != only : handle && !item_in_instance(i, scope)) continue;
+        if (members) {
+            uint32_t m = 0;
+            while (m < member_count && !item_in_member(i, members[m])) ++m;
+            if (m == member_count) continue;
+        } else if (only >= 0 ? (int64_t)i != only : handle && !item_in_instance(i, scope)) {
+            continue;
+        }
         (void)llg_acov_control(i, op->runtime, 0);
     }
+    free(members);
     if (operation == vpiAssertionSysEnd) assertion_callbacks_end();
     else invoke_assertion_system(op->reason);
     return 1;

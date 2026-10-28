@@ -9,8 +9,8 @@
 // success through cbAssertionSuccess; llg follows 39.4.2, which gives it a
 // reason of its own.
 // Times are vpiSimTime; cb_time of cbAssertionStart is the start time; the
-// failure detail failExpr is NULL; the value a callback routine returns is
-// ignored. Within one time step the order of one attempt's start and
+// failure detail failExpr is set (its object is decision A17-D4); the value
+// a callback routine returns is ignored. Within one time step the order of one attempt's start and
 // another attempt's conclusion is not specified: compare the lines of one
 // time as a set.
 //
@@ -26,8 +26,8 @@
 // "cbAssertionStart: cb_time is the time when the assertion attempt has
 // been started." 40.5.3 L66654: cover sequences can have "multiple matches
 // corresponding to a single attempt". Running no callback for a cover
-// attempt without a match follows industry-standard behaviour; failExpr,
-// the time type and the return value are llg choices.
+// attempt without a match follows industry-standard behaviour; the time
+// type and the return value are llg choices.
 //
 // Build A17-D1_attempt_callbacks.c as a VPI application (llg: static
 // archive given to --dpi-lib; `task $d1()` declared as a system task).

@@ -179,9 +179,6 @@ static void llg_acov_result(llg_acov_item_t* item, int success, int vacuous, uin
         if (success) llg_acov_add(vacuous ? &item->vacuous : &item->successes, 1u);
         else if (item->kind != LLG_ASSERTION_COVER) llg_acov_add(&item->failures, 1u);
     }
-    // A cover attempt that ends without a match raises no event: a cover
-    // statement has no failure to report (decision A17-D1).
-    if (!success && item->kind == LLG_ASSERTION_COVER) return;
     llg_acov_notify(item,
                     !success  ? LLG_ACOV_EVENT_FAILURE
                     : vacuous ? LLG_ACOV_EVENT_VACUOUS
@@ -255,6 +252,12 @@ static void llg_acov_record_control(llg_concurrent_assertion_t* assertion, int o
             llg_acov_reset_quiet = 1;
             llg_acov_discard_record(assertion);
             llg_acov_reset_quiet = 0;
+            // Reset, unlike kill, also resets the past() sampling the
+            // assertion uses (39.5.2).
+            if (assertion->acov) {
+                assertion->acov->reset_time1 = g.now + 1u;
+                g.assertion_reset_seen = 1;
+            }
             assertion->enabled = !g.assertions_ended;
             assertion->pass_action_off = 0;
             assertion->vacuous_action_off = 0;

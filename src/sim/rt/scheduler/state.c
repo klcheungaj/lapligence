@@ -392,7 +392,9 @@ typedef struct llg_assertion_clock_event {
  * Observed pass took, the clock history of their time step, the operands
  * captured for them and the attempts their leading-clock event begins; a
  * marker discards the attempts running at its point of the queue (disable
- * iff or $assertkill). */
+ * iff or $assertkill); `disabled_starts` counts the attempts that began
+ * while disable iff held, whose callbacks belong to the next global clock
+ * tick like every other result of the assertion (A14-D1). */
 typedef struct llg_assertion_lag {
     struct llg_assertion_lag* next;
     uint64_t time;
@@ -400,6 +402,7 @@ typedef struct llg_assertion_lag {
     llg_assertion_clock_event_t* history;
     sv4_t* slots;
     uint64_t starts;
+    uint64_t disabled_starts;
     uint8_t marker;
     uint8_t killed;
     uint8_t has_root;
@@ -769,6 +772,9 @@ typedef struct {
     llg_acov_event_queue_t assertion_events;
     // vpiAssertionSysEnd ran: no control enables an assertion again.
     int assertions_ended;
+    // A vpiAssertionReset reached a concurrent assertion item: the sampled
+    // value calls of assertions look up their item's reset time only then.
+    int assertion_reset_seen;
     // Registered property assertions with an asynchronous abort condition.
     uint64_t property_async_count;
     llg_deferred_trigger_t* deferred_triggers;

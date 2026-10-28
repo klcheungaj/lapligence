@@ -103,3 +103,23 @@ fn static_assertion_information_and_reentrant_callbacks() {
         &[("LLG_VPI_PLUGIN", &library)],
     );
 }
+
+/// A01/A03: assertion relations (37.45-37.51), sequence and property
+/// instances and declarations (37.47-37.50), failExpr and the callbacks of
+/// an instance that is an assertion's whole property (39.4.2, A17-D4 and
+/// A17-D5); a nested instance, a declaration body and a formal default are
+/// specified errors.
+#[test]
+fn assertion_relations_reach_clocks_conditions_properties_and_instances() {
+    let directory = sim_harness::TempDir::new("adv017-rel").expect("temporary directory");
+    let Some(library) = plugin(&directory, "relations") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "relations",
+        include_str!("../fixtures/sim/feature_completion/adv_017/relations.out"),
+        &["--vpi", "--define-system-task", "task $relations()"],
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}

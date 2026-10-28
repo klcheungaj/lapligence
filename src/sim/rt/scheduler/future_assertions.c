@@ -145,6 +145,22 @@ static void future_assertion_kill_at(llg_concurrent_assertion_t* assertion, uint
     future_lag_append(assertion, entry);
 }
 
+/* An attempt that began now while disable iff holds: its disabled result
+ * is queued, so its callbacks run at the next global clock tick with the
+ * results before it (39.4.2.1, A17-D7). The starts of one time step share
+ * an entry. */
+static void future_assertion_disabled_start(llg_concurrent_assertion_t* assertion) {
+    if (!assertion->acov) return;
+    llg_assertion_lag_t* tail = assertion->lag_tail;
+    if (tail && tail->disabled_starts && tail->time == g.now) {
+        tail->disabled_starts++;
+        return;
+    }
+    llg_assertion_lag_t* entry = future_lag_alloc(assertion);
+    entry->disabled_starts = 1;
+    future_lag_append(assertion, entry);
+}
+
 /* The attempts a queued leading-clock event begins, decided in its own time
  * step: assertion controls and procedural maturity are real-time state.
  * Assertion coverage counts them when they are evaluated
@@ -205,7 +221,10 @@ static void future_assertion_replay(llg_concurrent_assertion_t* assertion) {
         assertion->lag_replaying = 1;
         // Attempt events belong to the entry's time step (39.4.2.1).
         g.assertion_replay_time1 = entry->time + 1u;
-        if (entry->marker) {
+        if (entry->disabled_starts) {
+            for (uint64_t index = 0; index < entry->disabled_starts && !g.finish; index++)
+                llg_acov_disabled_attempt(assertion->acov, entry->time);
+        } else if (entry->marker) {
             assertion->clock_history = assertion->clock_history_tail = NULL;
             if (entry->kill_one) assertion_kill_attempts_at(assertion, entry->kill_start);
             else end_assertion_attempts(assertion, entry->killed);
@@ -270,8 +289,7 @@ static void future_assertion_observed(llg_concurrent_assertion_t* assertion) {
             root_event = event->signal == assertion->clock && event->edge == assertion->edge;
         end_assertion_attempts(assertion, 0);
         free_assertion_clock_events(assertion);
-        if (root_event && assertion_would_start(assertion))
-            llg_acov_disabled_attempt(assertion->acov, g.now);
+        if (root_event && assertion_would_start(assertion)) assertion_disabled_start(assertion);
         if (root_event) procedural_disabled_starts(assertion);
         return;
     }

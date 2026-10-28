@@ -28,8 +28,8 @@
 // cbStartOfSimulation does or afterwards."; L65600-L65602: cbAssertionSysEnd
 // "typically occurs after the end of simulation". The scope rules, the
 // NULL-only SysEnd, the order at start and end and counting discarded
-// attempts as killed are llg choices; vpiCollection handles are not
-// supported.
+// attempts as killed are llg choices; vpiCollection handles are decision
+// A17-D6.
 //
 // Build A17-D3_system_control.c as a VPI application (llg: static archive
 // given to --dpi-lib; `task $d3()` and `task $d3_step(input integer n)`

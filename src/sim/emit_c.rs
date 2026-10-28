@@ -33,6 +33,21 @@ pub(crate) fn require_owned_emission() -> Result<(), EmitError> {
     Err(EmitError::new(OWNER_MIGRATION_DIAGNOSTIC))
 }
 
+/// The assertion whose `vpiAssertionReset` a sampled value call observes
+/// (39.5.2): its owner when the model has an assertion item for it, which
+/// VPI control needs. Other calls read the shared history directly.
+fn sampled_reset_owner(
+    model: &crate::sim::ir::IrModel,
+    call: &crate::sim::ir::IrSampledCall,
+) -> Option<u64> {
+    let owner = call.reset_owner?;
+    model
+        .assertion_coverage
+        .as_ref()?
+        .item_index(owner)
+        .map(|_| owner)
+}
+
 fn check_capacity(width: u128) -> Result<(), EmitError> {
     if width >= u128::from(LLG_WIDTH_LIMIT) {
         Err(EmitError::new(format!(

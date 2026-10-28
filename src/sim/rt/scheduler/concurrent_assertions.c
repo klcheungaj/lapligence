@@ -8,6 +8,7 @@ static void future_assertion_observed(llg_concurrent_assertion_t* assertion);
 static int future_assertion_defer_end(llg_concurrent_assertion_t* assertion, int killed);
 static void future_assertion_add_start(llg_concurrent_assertion_t* assertion);
 static void future_assertion_drop(llg_concurrent_assertion_t* assertion);
+static void future_assertion_disabled_start(llg_concurrent_assertion_t* assertion);
 
 static void assertion_action(llg_concurrent_assertion_t* assertion,
                              const llg_co_desc_t* desc) {
@@ -238,13 +239,21 @@ static int assertion_would_start(const llg_concurrent_assertion_t* assertion) {
            !assertion->procedural && assertion->kind != LLG_ASSERTION_EXPECT;
 }
 
+/* An attempt begins while disable iff holds and is disabled at once
+ * (40.5.3). An assertion with global clocking future functions delivers
+ * it at the next global clock tick, as its other results (A14-D1). */
+static void assertion_disabled_start(llg_concurrent_assertion_t* assertion) {
+    if (assertion->future_clock) future_assertion_disabled_start(assertion);
+    else llg_acov_disabled_attempt(assertion->acov, g.now);
+}
+
 /* A leading clock event of a procedural assertion arrived while disable iff
  * holds: every matured instance begins an attempt that is disabled at once
  * (40.5.3), and so does one that matures later in this time step. */
 static void procedural_disabled_starts(llg_concurrent_assertion_t* assertion) {
     if (!assertion->procedural) return;
     for (uint64_t index = 0; index < assertion->procedural_matured; index++)
-        llg_acov_disabled_attempt(assertion->acov, g.now);
+        assertion_disabled_start(assertion);
     assertion->procedural_matured = 0;
     assertion->procedural_disabled_tick = g.now + 1;
 }
@@ -428,8 +437,7 @@ static void assertion_clock_signal_changed(sv4_t* signal, sv4_t old,
             if (assertion->clock == signal &&
                 ev_matches_changed(old, value, assertion->edge) &&
                 (!assertion->clock_gate || assertion->clock_gate(NULL))) {
-                if (assertion_would_start(assertion))
-                    llg_acov_disabled_attempt(assertion->acov, g.now);
+                if (assertion_would_start(assertion)) assertion_disabled_start(assertion);
                 procedural_disabled_starts(assertion);
             }
             continue;
@@ -857,7 +865,7 @@ static void procedural_instance_mature(llg_concurrent_assertion_t* assertion) {
     if (assertion_root_event_pending(assertion)) {
         assertion->procedural_matured++;
     } else if (assertion->procedural_disabled_tick == g.now + 1) {
-        llg_acov_disabled_attempt(assertion->acov, g.now);
+        assertion_disabled_start(assertion);
     } else if (assertion->procedural_tick == g.now + 1) {
         // A deferred assertion has not evaluated that event yet.
         if (assertion->future_clock) future_assertion_add_start(assertion);

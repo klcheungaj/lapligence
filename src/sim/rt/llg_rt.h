@@ -3196,6 +3196,12 @@ sv4_t llg_sampled_domain_past(uint64_t identity, uint64_t ticks);
 /// 1 fell, 2 stable, 3 changed; 4 stable and 5 changed compare 64-bit real
 /// images numerically (`==` on the decoded reals).
 int llg_sampled_domain_status(uint64_t identity, int kind);
+/// The same reads made by concurrent assertion `assertion` (its statement
+/// identity): ticks in time steps before the last `vpiAssertionReset` of it
+/// are no longer prior ticks (39.5.2), so the call falls back to the
+/// initial value as at the start of simulation (16.9.3).
+sv4_t llg_sampled_domain_past_of(uint64_t identity, uint64_t ticks, uint64_t assertion);
+int llg_sampled_domain_status_of(uint64_t identity, int kind, uint64_t assertion);
 // Clocking input copies. Each publishes a changed sample to its waiters.
 // llg_clocking_sample copies the Preponed (#1step) value; observed copies are
 // queued into the current time slot's observed region; history copies read the
@@ -3427,6 +3433,8 @@ void llg_sequence_local_read_to(sv4_t* dst, void* attempt, uint32_t slot);
 void llg_system_to(sv4_t* dst, llg_string_t* command, int has_command);
 void llg_frame_read_value_to(sv4_t* dst, const llg_frame_t* frame, size_t slot);
 void llg_sampled_domain_past_to(sv4_t* dst, uint64_t identity, uint64_t ticks);
+void llg_sampled_domain_past_of_to(sv4_t* dst, uint64_t identity, uint64_t ticks,
+                                   uint64_t assertion);
 void llg_assertion_captured_to(sv4_t* dst, uint32_t slot);
 void llg_rt_ref_read_to(sv4_t* dst, const llg_ref_t* ref);
 /* String destination forms: `X_to(dst, ...)` replaces the expression owner at
@@ -3786,6 +3794,12 @@ typedef struct llg_acov_item {
     const char* file;     /* source file of the statement; NULL when unknown */
     uint32_t line;        /* source line and column (39.3.2); 0 when unknown */
     uint32_t column;
+    uint32_t end_line;    /* where the statement ends (37.45); 0 when unknown */
+    uint32_t end_column;
+    /* The statement's VPI expression object entry (llg_vpi_code_t row + 1)
+     * holding its clocking event, disable condition, property, condition
+     * and action statements; 0 in a model without expression objects. */
+    uint32_t code;
     int32_t instance;     /* owning instance index, -1 for $root */
     uint8_t kind;         /* LLG_ASSERTION_ASSERT/ASSUME/COVER */
     uint8_t form;         /* LLG_ACOV_* */
@@ -3806,6 +3820,9 @@ typedef struct llg_acov_item {
     uint64_t failures;
     uint64_t disabled;
     uint64_t killed;
+    /* Run-time state: the time step of the last vpiAssertionReset plus 1
+     * (0 none); the item's sampled value calls forget the ticks before it. */
+    uint64_t reset_time1;
 } llg_acov_item_t;
 
 typedef struct llg_acov_instance {
@@ -3866,7 +3883,7 @@ enum {
     LLG_ACOV_EVENT_START = 0,
     LLG_ACOV_EVENT_SUCCESS = 1,  /* nonvacuous success, or a cover match */
     LLG_ACOV_EVENT_VACUOUS = 2,  /* vacuous success */
-    LLG_ACOV_EVENT_FAILURE = 3,  /* an assert or assume attempt failed */
+    LLG_ACOV_EVENT_FAILURE = 3,  /* also a cover attempt that did not match */
     LLG_ACOV_EVENT_DISABLED = 4, /* disable iff ended the attempt */
     LLG_ACOV_EVENT_KILLED = 5,   /* a control discarded the attempt */
     /* $assertoff/$assertkill (CONTROL_OFF) or $asserton (CONTROL_ON)

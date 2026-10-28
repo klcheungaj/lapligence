@@ -44,8 +44,12 @@ through `llg_sampled_clock_tick` from a generated waiting process. Each domain
 keeps a ring of one sample per ticked time step (a repeated tick overwrites
 the step), growing up to its registered `$past` depth plus the current step and
 then reused in place; status functions compare a step-cached Preponed
-evaluation with the latest strictly earlier tick. Never retain history for an
-undeclared reader: memory must not grow with simulated time.
+evaluation with the latest strictly earlier tick. The `_of` variants read for
+one concurrent assertion: after a `vpiAssertionReset` of it (the item's
+`reset_time1`, looked up only once any reset happened) ticks of earlier steps
+are no prior ticks for it, while other readers keep the shared ring (A17-D8).
+Never retain history for an undeclared reader: memory must not grow with
+simulated time.
 
 Slot history retains any/positive/negative occurrence independently, so a later
 opposite edge cannot erase an earlier match. Time advance drops all entries except
@@ -172,7 +176,9 @@ current sampled values, so results and actions belong to that global tick
 while every interval rule is that of the event. `end_assertion_attempts`
 (disable iff, `$assertkill`) appends a marker instead while entries are
 queued, so a discard reaches exactly the attempts running at its point;
-consecutive markers coalesce. A procedural instance maturing after the step's
+consecutive markers coalesce. An attempt that starts while `disable iff`
+holds is queued as a disabled start, so its callbacks run at the next global
+tick with the results before it (A17-D7). A procedural instance maturing after the step's
 leading-clock event was queued adds to that entry. Entries count against
 `LLG_SEQUENCE_THREAD_LIMIT` and are recycled per assertion with their operand
 owners; the end of the run drops the queue (A14-D3) and cleanup frees it.

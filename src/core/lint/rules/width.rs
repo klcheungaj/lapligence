@@ -229,6 +229,17 @@ mod tests {
     }
 
     #[test]
+    fn indexed_select_of_packed_elements_has_the_elements_width() {
+        let diags = lint_design(
+            "module wm1;\n  logic [0:3][7:0] pk;\n  integer i;\n  logic [15:0] w;\n  \
+             logic [7:0] b;\n  assign w = pk[i -: 2];\n  assign b = pk[i];\nendmodule\n",
+            "wm1",
+        );
+        let got = rule_diags(&diags, "width-mismatch");
+        assert!(got.is_empty(), "no width finding: {:?}", got);
+    }
+
+    #[test]
     fn truncation_is_a_warning() {
         let diags = lint_design(
             "module wm2;\n  logic [3:0] x;\n  assign x = 8'hff;\nendmodule\n",

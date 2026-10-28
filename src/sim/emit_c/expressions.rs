@@ -895,8 +895,17 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                         let domain = call
                             .domain
                             .ok_or_else(|| "sampled past call has no domain".to_string())?;
+                        let code = match crate::sim::emit_c::sampled_reset_owner(ctx.model, call) {
+                            Some(owner) => format!(
+                                "llg_sampled_domain_past_of({}, {}ULL, {}ULL)",
+                                domain, call.ticks, owner
+                            ),
+                            None => {
+                                format!("llg_sampled_domain_past({}, {}ULL)", domain, call.ticks)
+                            }
+                        };
                         RenderedExpr {
-                            code: format!("llg_sampled_domain_past({}, {}ULL)", domain, call.ticks),
+                            code,
                             width: e.width,
                             signed: e.signed,
                             fill: None,
@@ -931,11 +940,15 @@ pub(super) fn render_expr_impl(ctx: &RCtx<'_>, e: &IrExpr) -> Result<RenderedExp
                             IrSampledFunc::RealChanged => 5,
                             _ => unreachable!(),
                         };
+                        let status_call =
+                            match crate::sim::emit_c::sampled_reset_owner(ctx.model, call) {
+                                Some(owner) => format!(
+                                    "llg_sampled_domain_status_of({domain}, {status}, {owner}ULL)"
+                                ),
+                                None => format!("llg_sampled_domain_status({domain}, {status})"),
+                            };
                         RenderedExpr {
-                            code: format!(
-                                "sv4_from_u64((uint64_t)llg_sampled_domain_status({}, {}), 1, 0)",
-                                domain, status
-                            ),
+                            code: format!("sv4_from_u64((uint64_t){status_call}, 1, 0)"),
                             width: 1,
                             signed: false,
                             fill: None,

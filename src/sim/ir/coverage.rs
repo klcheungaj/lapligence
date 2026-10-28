@@ -971,6 +971,14 @@ pub struct IrAssertionItem {
     pub(in crate::sim) file: Option<String>,
     pub(in crate::sim) line: u32,
     pub(in crate::sim) column: u32,
+    /// Where the statement ends (37.45 `vpiEndLine`, `vpiEndColumn`); 0
+    /// when unknown.
+    pub(in crate::sim) end_line: u32,
+    pub(in crate::sim) end_column: u32,
+    /// The statement's entry in [`super::IrModel::vpi_code`], which holds
+    /// its clocking event, disable condition, property, condition and
+    /// action statements (37.46, 37.51); `None` without expression objects.
+    pub(in crate::sim) code: Option<u32>,
 }
 
 /// One elaborated module, interface or program instance of the hierarchy

@@ -423,8 +423,10 @@ ADV-017's assertion API fixtures use
 `-E 'binary(sim_feature_completion) & test(adv_017::)'`: `lifecycle`
 correlates assertion callbacks with HDL action counters and the 40.5.3
 counters (also linked as a static archive), `control` drives every
-`vpi_control` assertion operation, and `objects` checks the 39.3 static
-information and reentrant callbacks. Decisions A17-D1..D3 are in
+`vpi_control` assertion operation, `objects` checks the 39.3 static
+information and reentrant callbacks, and `relations` (`--vpi`) walks the
+37.45-37.51 relations, sequence and property instances and declarations,
+`failExpr` and instance callbacks. Decisions A17-D1..D8 are in
 `sim_lrm_decisions` (`-E 'test(/a17_d/)'`).
 
 ADV-020's VPI parity fixtures use

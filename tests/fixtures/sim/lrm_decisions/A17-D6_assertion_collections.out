@@ -1,0 +1,11 @@
+collection type=vpiCollection
+  member vpiModule tb.u1
+  member vpiAssert tb.t1
+add a net -> refused LLG_VPI_ARGUMENT
+create a vpiModule -> refused LLG_VPI_UNSUPPORTED
+0 cbAssertionSysOff
+SysOff on the collection -> ok
+tb.t1 attempts=0
+tb.t2 attempts=2
+tb.u1.k attempts=0
+tb.u2.k attempts=2

@@ -12,7 +12,7 @@
 25 s1 Start attempt=25 time_type=sim
 25 s1 Success attempt=5 time_type=sim
 25 s1 Success attempt=15 time_type=sim
-35 p1 Failure attempt=25 time_type=sim failExpr=NULL
+35 p1 Failure attempt=25 time_type=sim failExpr=set
 35 p1 Start attempt=35 time_type=sim
 35 p1 VacuousSuccess attempt=35 time_type=sim
 35 c1 Start attempt=35 time_type=sim

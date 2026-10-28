@@ -20,6 +20,7 @@ mod locals;
 mod match_calls;
 pub(super) use locals::local_assignment;
 mod procedural;
+pub(in crate::sim::codegen) use procedural::ProcedureClock;
 mod property;
 use crate::core::db::{
     AssertionBinaryOp, AssertionExprKind, AssertionRange, AssertionRepetition,
@@ -504,7 +505,9 @@ impl Codegen<'_> {
         };
         let previous_origin = self.assertion_inferred_origin.replace(assertion);
         let previous_disable = self.assertion_default_disable.replace(default_disable);
+        let previous_owner = self.sampled_reset_owner.replace(assertion.index() as u64);
         let result = self.emit_concurrent_assertion_resolved(inst, path, assertion, property);
+        self.sampled_reset_owner = previous_owner;
         self.assertion_inferred_origin = previous_origin;
         self.assertion_default_disable = previous_disable;
         result

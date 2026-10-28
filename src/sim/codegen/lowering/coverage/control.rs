@@ -154,6 +154,9 @@ impl Codegen<'_> {
                 file: None,
                 line: 0,
                 column: 0,
+                end_line: 0,
+                end_column: 0,
+                code: None,
             });
         }
         for (identity, item) in std::mem::take(&mut self.immediate_assertion_items) {
@@ -167,6 +170,9 @@ impl Codegen<'_> {
                 file: None,
                 line: 0,
                 column: 0,
+                end_line: 0,
+                end_column: 0,
+                code: None,
             });
         }
         items.sort_by_key(|item| item.identity);
@@ -182,6 +188,10 @@ impl Codegen<'_> {
                 item.file = node.file.as_deref().map(str::to_owned);
                 item.line = node.line;
                 item.column = node.col;
+                // The frontend's end column is the one after the last
+                // character; 37.45 reports the last character's (A17-D4).
+                item.end_line = node.end_line;
+                item.end_column = node.end_col.saturating_sub(1);
             }
         }
         let instances = self.coverage_instances().table.clone();

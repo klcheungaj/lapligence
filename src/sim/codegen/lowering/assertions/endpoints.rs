@@ -187,6 +187,7 @@ impl Codegen<'_> {
         // An endpoint is an attempt context of its own, not a part of the
         // sequence or process being lowered.
         let saved_clock = self.sampled_clock.take();
+        let saved_owner = self.sampled_reset_owner.take();
         let saved_leading = self.assertion_leading_clock.take();
         let saved_depth = std::mem::replace(&mut self.assertion_instance_depth, 0);
         let saved_capture =
@@ -216,6 +217,7 @@ impl Codegen<'_> {
             .ok_or_else(|| "sequence endpoint body is missing".to_owned())
         })();
         self.sampled_clock = saved_clock;
+        self.sampled_reset_owner = saved_owner;
         self.assertion_leading_clock = saved_leading;
         self.assertion_instance_depth = saved_depth;
         self.assertion_local_capture_at_attempt_entry = saved_capture;

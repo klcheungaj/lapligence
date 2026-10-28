@@ -45,6 +45,15 @@ impl Validator<'_> {
             if let Err(detail) = table.validate() {
                 return self.fail("assertion_coverage", detail);
             }
+            if table.items.iter().any(|item| {
+                item.code
+                    .is_some_and(|code| code as usize >= self.model.vpi_code.len())
+            }) {
+                return self.fail(
+                    "assertion_coverage",
+                    "an assertion item names an unknown expression object",
+                );
+            }
         }
 
         for (idx, object) in self.model.vpi_objects.iter().enumerate() {

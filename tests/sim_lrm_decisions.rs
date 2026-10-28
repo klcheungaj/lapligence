@@ -2321,6 +2321,51 @@ fn a17_d1_attempt_callbacks() {
 }
 
 #[test]
+fn a17_d4_assertion_relations() {
+    run_vpi_decision(
+        "A17-D4_assertion_relations",
+        &["task $d4()"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D4_assertion_relations.out"),
+    );
+}
+
+#[test]
+fn a17_d5_instance_callbacks() {
+    run_vpi_decision(
+        "A17-D5_instance_callbacks",
+        &["task $d5()"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D5_instance_callbacks.out"),
+    );
+}
+
+#[test]
+fn a17_d6_assertion_collections() {
+    run_vpi_decision(
+        "A17-D6_assertion_collections",
+        &["task $d6(input integer n)"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D6_assertion_collections.out"),
+    );
+}
+
+#[test]
+fn a17_d7_future_disabled_start() {
+    run_vpi_decision(
+        "A17-D7_future_disabled_start",
+        &["task $d7()"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D7_future_disabled_start.out"),
+    );
+}
+
+#[test]
+fn a17_d8_reset_past_sampling() {
+    run_vpi_decision(
+        "A17-D8_reset_past_sampling",
+        &["task $d8()"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D8_reset_past_sampling.out"),
+    );
+}
+
+#[test]
 fn a17_d2_control_callbacks() {
     run_vpi_decision(
         "A17-D2_control_callbacks",

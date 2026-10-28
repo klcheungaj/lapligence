@@ -2411,7 +2411,8 @@ is independent of simulated time. `$past` counts clock time steps strictly
 before its evaluation (repeated ticks in a step count once) and returns the
 initial value (declaration value or type default) before enough ticks; value
 change functions compare the calling step's Preponed value with the most
-recent strictly earlier tick, also between edges. `iff` and the `$past` gate
+recent strictly earlier tick, also between edges; a `vpiAssertionReset`
+restarts the history the reset assertion's calls see (A17-D8). `iff` and the `$past` gate
 read current values when the clock occurs. Outside any assertion, a
 procedural `$sampled` returns the Preponed value of every packed or real signal
 it reads, registered without per-slot history. Real, shortreal and realtime
@@ -2663,13 +2664,22 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `DisabledEvaluation` and `Kill` for every concurrent, immediate and
   deferred assertion (multiclock, global clocking future and checker-owned
   ones included), with the attempt start time, in step with the 40.5.3
-  counters; the control reasons run from `vpi_control`, which implements
-  every 39.5.1 system and 39.5.2 assertion operation (decisions
-  A17-D1..D3); the `cbAssertionSys*` reasons run at the start and end of
+  counters (a future-function assertion's attempt that starts while
+  `disable iff` holds reports at the next global clock tick, A17-D7); the control reasons run from `vpi_control`, which implements
+  every 39.5.1 system and 39.5.2 assertion operation, the system ones
+  also on a `vpiCollection` made with `vpi_create` (decisions A17-D1..D3,
+  A17-D6); the `cbAssertionSys*` reasons run at the start and end of
   the run and on the system controls. Assertion handles report `vpiFile`,
-  `vpiLineNo` and `vpiColumn`. Step callbacks, sequence and property
-  instance objects and assertion expressions are not implemented and fail
-  with a `vpi_chk_error` error.
+  `vpiLineNo`, `vpiColumn`, `vpiEndLine` and `vpiEndColumn`; in a model
+  generated with `--vpi` they also reach their clocking event, disable
+  condition, property (a `vpiPropertySpec` or `vpiPropertyInst`), condition
+  and action statements, and `failExpr` names the property expression
+  (A17-D4, 37.45-37.51). Sequence and property instances answer
+  `vpiArgument` and their declaration, which a scope iterates with its
+  formals; an instance that is an assertion's whole property takes start,
+  success and failure callbacks (A17-D5). Step callbacks are not
+  implemented and fail with a `vpi_chk_error` error; property operators are
+  opaque.
   A system function in a void cast (SV §13.4.1) is called as a function: a
   built-in runs its own lowering (a `$random(seed)` still updates `seed`) and
   a registered VPI function its calltf; only a discarded `string` result of a

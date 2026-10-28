@@ -13,5 +13,5 @@ vpi_put_data: 0 level=3 code=LLG_VPI_UNSUPPORTED
   vpi_put_data is not supported by llg (no save/restart)
 data buffer: abc
 vpi_register_assertion_cb: NULL level=3 code=LLG_VPI_CALLBACK
-  vpi_register_assertion_cb needs an assertion handle
+  vpi_register_assertion_cb needs an assertion or a sequence or property instance handle
 vpi_get after the errors: vpiModule level=0 code=-
