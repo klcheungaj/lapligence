@@ -1,7 +1,8 @@
 // A19-D11: vpiDecompile spells each operand and operator once, separated by
 // one space, with parentheses only where precedence needs them (37.55 detail
-// 2). The companion prints the decompiled right-hand side of every
-// continuous assignment.
+// 2). An unbased unsized literal keeps its spelling ('x, '0, '1, 'z); a real
+// literal prints in its shortest round-trip form (1e-9). The companion prints
+// the decompiled right-hand side of every continuous assignment.
 module tb;
   typedef logic [3:0] nib_t;
   logic [7:0] a = 8'd9, b = 8'd4, c = 8'd2;

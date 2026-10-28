@@ -24,13 +24,13 @@ assign e_mul line=26
   assign value=0001111011000011
 assign e_cat line=27
   rhs vpiOperation op=33 size=8 dec="{a[3:0], {2{n[1:0]}}}" value=1010x1x1
-    operand vpiPartSelect size=4 constant_select=1 dec="a[3:0]" value=1010
+    operand vpiPartSelect name=a[3:0] size=4 constant_select=1 dec="a[3:0]" value=1010
       parent vpiReg name=a size=8 dec="a" value=01011010
       left vpiConstant const=1 size=32 dec="3" value=00000000000000000000000000000011
       right vpiConstant const=1 size=32 dec="0" value=00000000000000000000000000000000
     operand vpiOperation op=34 size=4 dec="{2{n[1:0]}}" value=x1x1
       operand vpiConstant const=1 size=32 dec="2" value=00000000000000000000000000000010
-      operand vpiPartSelect size=2 constant_select=1 dec="n[1:0]" value=x1
+      operand vpiPartSelect name=n[1:0] size=2 constant_select=1 dec="n[1:0]" value=x1
         parent vpiReg name=n size=4 dec="n" value=10x1
         left vpiConstant const=1 size=32 dec="1" value=00000000000000000000000000000001
         right vpiConstant const=1 size=32 dec="0" value=00000000000000000000000000000000
@@ -48,7 +48,7 @@ assign e_ter line=28
       operand vpiReg name=a size=8 dec="a" value=01011010
   assign value=01001011
 assign e_ips line=29
-  rhs vpiIndexedPartSelect size=8 constant_select=0 indexed=1 dec="w[i * 4 +: 8]" value=10111110
+  rhs vpiIndexedPartSelect name=w[i * 4 +: 8] size=8 constant_select=0 indexed=1 dec="w[i * 4 +: 8]" value=10111110
     parent vpiReg name=w size=16 dec="w" value=1011111011101111
     base vpiOperation op=25 size=32 dec="i * 4" value=00000000000000000000000000001000
       operand vpiIntVar name=i size=32 dec="i" value=00000000000000000000000000000010
@@ -62,26 +62,26 @@ assign e_neg line=30
     operand vpiConstant const=1 size=32 dec="1" value=00000000000000000000000000000001
   assign value=00000001
 assign e_mem line=31
-  rhs vpiPartSelect size=4 constant_select=0 dec="mem[i][3:0]" value=0011
-    parent vpiVarSelect size=8 constant_select=0 dec="mem[i]" value=00110011
+  rhs vpiPartSelect name=mem[i][3:0] size=4 constant_select=0 dec="mem[i][3:0]" value=0011
+    parent vpiVarSelect name=mem[i] size=8 constant_select=0 dec="mem[i]" value=00110011
       parent vpiRegArray name=mem size=4 dec="(null)" value=error
       index vpiIntVar name=i size=32 dec="i" value=00000000000000000000000000000010
     left vpiConstant const=1 size=32 dec="3" value=00000000000000000000000000000011
     right vpiConstant const=1 size=32 dec="0" value=00000000000000000000000000000000
   assign value=00000011
 assign e_pk line=32
-  rhs vpiBitSelect size=8 constant_select=1 dec="pk[1]" value=00000010
+  rhs vpiBitSelect name=pk[1] size=8 constant_select=1 dec="pk[1]" value=00000010
     parent vpiPackedArrayVar name=pk size=32 dec="pk" value=00000001000000100000001100000100
     index vpiConstant const=1 size=32 dec="1" value=00000000000000000000000000000001
   assign value=00000010
 assign e_pkr line=33
-  rhs vpiIndexedPartSelect size=16 constant_select=0 indexed=2 dec="pk[i -: 2]" value=0000001000000011
+  rhs vpiIndexedPartSelect name=pk[i -: 2] size=16 constant_select=0 indexed=2 dec="pk[i -: 2]" value=0000001000000011
     parent vpiPackedArrayVar name=pk size=32 dec="pk" value=00000001000000100000001100000100
     base vpiIntVar name=i size=32 dec="i" value=00000000000000000000000000000010
     width vpiConstant const=1 size=32 dec="2" value=00000000000000000000000000000010
   assign value=0000001000000011
 assign e_bit line=34
-  rhs vpiBitSelect size=1 constant_select=1 dec="w[17]" value=x
+  rhs vpiBitSelect name=w[17] size=1 constant_select=1 dec="w[17]" value=x
     parent vpiReg name=w size=16 dec="w" value=1011111011101111
     index vpiConstant const=1 size=32 dec="17" value=00000000000000000000000000010001
   assign value=x

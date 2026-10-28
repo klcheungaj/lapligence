@@ -1,5 +1,5 @@
 hold da[1] aa[5] sa["k"]
-string key index=null level=3
+string key index=set level=0
 missing key=null level=3
 delayed put level=3
 watch array refused level=3

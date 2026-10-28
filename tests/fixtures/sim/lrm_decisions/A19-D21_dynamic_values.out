@@ -6,11 +6,11 @@ tb.s int=16706
 tb.e string=""
 tb.e hex="00"
 tb.e size=0
-put int level=3
+put int level=0
 put string level=0 size=3
 tb.c vpiChandleVar
-tb.c int level=3
-tb.c hex level=3
-put chandle level=3
+tb.c int=0
+tb.c hex="0000000000000000"
+put chandle level=0
 watch string refused level=3
 s=xyz e= c=1

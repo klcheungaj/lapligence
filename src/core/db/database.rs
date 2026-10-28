@@ -253,6 +253,11 @@ pub struct Db {
     /// Declared `(left, right)` of each instance array level (IEEE 1800-2009
     /// 37.11), keyed by its [`NodeKind::InstanceArray`] node.
     instance_array_ranges: HashMap<NodeId, (i32, i32)>,
+    /// Keyword lines of statements whose range does not start at them: a
+    /// written block whose `begin`/`fork` keyword is on another line than
+    /// its range's start, and a task or function body list (no range) where
+    /// it opens.
+    keyword_lines: HashMap<NodeId, u32>,
     /// Source library of each elaborated instance (its selected definition's
     /// library), package and compilation unit, copied from the frontend's
     /// library binding so `%l` survives snapshot destruction.
@@ -426,6 +431,7 @@ impl Db {
             unconnected_drives: HashMap::new(),
             primitive_array_positions: HashMap::new(),
             instance_array_ranges: HashMap::new(),
+            keyword_lines: HashMap::new(),
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
@@ -516,6 +522,7 @@ impl Db {
             unconnected_drives: HashMap::new(),
             primitive_array_positions: HashMap::new(),
             instance_array_ranges: HashMap::new(),
+            keyword_lines: HashMap::new(),
             source_libraries: HashMap::new(),
             declaration_time_scales: HashMap::new(),
             class_declaring_scopes: HashMap::new(),
@@ -726,6 +733,27 @@ impl Db {
     /// level per dimension, outermost first.
     pub fn instance_array_range(&self, id: NodeId) -> Option<(i32, i32)> {
         self.instance_array_ranges.get(&id).copied()
+    }
+
+    /// The line of the `begin` or `fork` keyword of written block `id`
+    /// (a [`StmtKind::Begin`] or [`StmtKind::Fork`] node) when it is not the
+    /// node's own line: a block of one statement spans only that statement.
+    pub fn block_keyword_line(&self, id: NodeId) -> Option<u32> {
+        self.keyword_lines.get(&id).copied().filter(|_| {
+            matches!(
+                self.nodes.get(id.index()).map(Node::kind),
+                Some(NodeKind::Stmt(StmtKind::Begin | StmtKind::Fork { .. }))
+            )
+        })
+    }
+
+    /// The line where task or function body list `id` (several statements,
+    /// no range of its own) opens: the token after the subroutine name.
+    pub fn subroutine_body_line(&self, id: NodeId) -> Option<u32> {
+        self.keyword_lines
+            .get(&id)
+            .copied()
+            .filter(|_| self.semantic_detail(id) == Some("List"))
     }
 
     pub fn unconnected_drive(&self, id: NodeId) -> UnconnectedDrive {

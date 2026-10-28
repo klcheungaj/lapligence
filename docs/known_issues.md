@@ -2207,8 +2207,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   `vpiVisibility`, `vpiRandType` and specialized parameterized class names;
   elements of nested containers and of arrays of records or fixed arrays
   (listed as `vpiUndefined` objects without a value), associative arrays
-  with a wildcard index or keys of more than 64 bits, and `vpiIndex` of a
-  string key (decision A19-D23); `vpiFullName` of a dynamic array element
+  with a wildcard index or keys of more than 64 bits; `vpiFullName` of a dynamic array element
   inside a class object; `cbValueChange` on chandle variables, class
   properties, strings and arrays (the last three excluded by 38.36.1) and
   `cbSizeChange`; `vpi_put_value` with a

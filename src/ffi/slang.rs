@@ -41,7 +41,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 57;
+const ABI_VERSION: u32 = 58;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -920,7 +920,15 @@ pub const SEMANTIC_UNIQUE_PRIORITY_UNIQUE0: u64 = 2;
 pub const SEMANTIC_UNIQUE_PRIORITY_PRIORITY: u64 = 3;
 
 /// Procedural for-loop statement tag owned by the C ABI.
+/// A written `begin` block; its `auxiliary`, as a `fork` block's (subkinds
+/// 56-58), keeps the keyword's byte offset + 1 in its own range's file (0:
+/// unknown).
+pub const SEMANTIC_STMT_BLOCK: u32 = 32;
 pub const SEMANTIC_STMT_FOR: u32 = 35;
+/// A statement list; as a task or function body its `auxiliary` keeps the
+/// byte offset + 1, in the subroutine's file, of the token after the name,
+/// or 0.
+pub const SEMANTIC_STMT_LIST: u32 = 60;
 
 /// Immediate assertion statement tags owned by the C ABI.
 pub const SEMANTIC_STMT_IMMEDIATE_ASSERT: u32 = 61;
@@ -1368,7 +1376,9 @@ pub struct SemanticNode {
     /// Slang slice size; variables store their resolved lifetime tag;
     /// conditional/case statements store a `SEMANTIC_UNIQUE_PRIORITY_*` tag;
     /// a primitive instance array element stores the array's element count
-    /// (bits 32-63) and its least-significant-first slice (bits 0-31).
+    /// (bits 32-63) and its least-significant-first slice (bits 0-31);
+    /// block statements and subroutine body lists store keyword offsets
+    /// ([`SEMANTIC_STMT_BLOCK`], [`SEMANTIC_STMT_LIST`]).
     pub auxiliary: u64,
     assertion: Option<Box<AssertionMetadata>>,
 }

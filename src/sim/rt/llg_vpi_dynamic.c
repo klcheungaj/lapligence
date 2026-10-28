@@ -581,7 +581,11 @@ static void dyn_read(const llg_vpi_shape_t* shape, void* storage, p_vpi_value ou
                       "a class variable has no value; use vpiClassObj and vpiObjId (37.17 detail 11)");
             return;
         case LLG_VPI_SHAPE_CHANDLE:
-            vpi_error("LLG_VPI_VALUE", "a chandle variable has no VPI value format (decision A19-D21)");
+            /* The pointer as a 64-bit unsigned two-state image, 0 for null
+             * (decision A19-D21). */
+            datum.packed = sv4_from_u64((uint64_t)(uintptr_t)*(void* const*)storage, 64, 0);
+            fill_value(&datum, 0, vpiLongIntVar, output);
+            datum_destroy(&datum);
             return;
         case LLG_VPI_SHAPE_CONTAINER:
             vpi_error("LLG_VPI_VALUE", "an array variable has no value; access its elements (37.17 detail 11)");
@@ -613,17 +617,55 @@ static int dyn_real_input(const llg_vpi_shape_t* shape, const s_vpi_value* input
     return 1;
 }
 
-static int dyn_string_input(const s_vpi_value* input, const char** text) {
+/* The string a put stores: vpiStringVal text, or a vpiIntVal converted as
+ * an integral cast to string (6.16: 32 bits, 8 per character, every zero
+ * byte removed; decision A19-D21). Owned by the caller. */
+static int dyn_string_input(const s_vpi_value* input, llg_string_t* out) {
+    if (input && input->format == vpiIntVal) {
+        uint32_t bits = (uint32_t)input->value.integer;
+        char bytes[4];
+        size_t count = 0;
+        for (int shift = 24; shift >= 0; shift -= 8) {
+            char byte = (char)((bits >> shift) & 0xffu);
+            if (byte) bytes[count++] = byte;
+        }
+        *out = llg_string_bytes(bytes, count);
+        return 1;
+    }
     if (!input || input->format != vpiStringVal || !input->value.str) {
-        vpi_error("LLG_VPI_VALUE", "a string receives a vpiStringVal value (decision A19-D21)");
+        vpi_error("LLG_VPI_VALUE",
+                  "a string receives a vpiStringVal or vpiIntVal value (decision A19-D21)");
         return 0;
     }
-    *text = input->value.str;
+    *out = llg_string_bytes(input->value.str, strlen(input->value.str));
     return 1;
 }
 
-/* Write a property or variable (vpiNoDelay). */
-static void dyn_write(const llg_vpi_shape_t* shape, void* storage, const s_vpi_value* input) {
+/* The pointer a chandle put stores: a vpiIntVal zero-extended, any other
+ * format as a 64-bit unsigned value with x and z bits 0 (decision
+ * A19-D21). */
+static int dyn_chandle_input(const s_vpi_value* input, void** out) {
+    if (input && input->format == vpiIntVal) {
+        *out = (void*)(uintptr_t)(uint32_t)input->value.integer;
+        return 1;
+    }
+    if (input && input->format == vpiRealVal) {
+        vpi_error("LLG_VPI_FORMAT", "a chandle receives no vpiRealVal value (decision A19-D21)");
+        return 0;
+    }
+    llg_vpi_datum_t datum;
+    if (!value_from_vpi(input, 64, 0, 0, &datum)) return 0;
+    sv4_t known = sv4_to_two_state(datum.packed);
+    *out = (void*)(uintptr_t)sv4_to_u64(known);
+    sv4_destroy(&known);
+    datum_destroy(&datum);
+    return 1;
+}
+
+/* Write a property or variable (vpiNoDelay); `dependency` is the change
+ * marker of a chandle variable, or NULL. */
+static void dyn_write(const llg_vpi_shape_t* shape, void* storage, sv4_t* dependency,
+                      const s_vpi_value* input) {
     switch (shape->shape) {
         case LLG_VPI_SHAPE_PACKED: {
             sv4_t value;
@@ -638,12 +680,20 @@ static void dyn_write(const llg_vpi_shape_t* shape, void* storage, const s_vpi_v
             return;
         }
         case LLG_VPI_SHAPE_STRING: {
-            const char* text;
-            if (!dyn_string_input(input, &text)) return;
+            llg_string_t value;
+            if (!dyn_string_input(input, &value)) return;
             /* The store publishes the string's own change marker. */
-            llg_string_t value = llg_string_bytes(text, strlen(text));
             llg_string_move_take((llg_string_t*)storage, &value);
             llg_string_destroy(&value);
+            return;
+        }
+        case LLG_VPI_SHAPE_CHANDLE: {
+            void* value;
+            if (!dyn_chandle_input(input, &value)) return;
+            void** target = (void**)storage;
+            int changed = *target != value;
+            *target = value;
+            if (changed && dependency) llg_dependency_changed(dependency);
             return;
         }
         default:
@@ -721,9 +771,9 @@ static void dyn_element_put(const llg_vpi_slot_t* slot, const s_vpi_value* input
             if (!dyn_real_input(shape, input, &value)) return;
             *(double*)storage = value;
         } else {
-            const char* text;
-            if (!dyn_string_input(input, &text)) return;
-            llg_string_bytes_to((llg_string_t*)storage, text, strlen(text));
+            llg_string_t value;
+            if (!dyn_string_input(input, &value)) return;
+            llg_string_replace((llg_string_t*)storage, value);
         }
         /* The container publishes the change to waiting processes. */
         dyn_touch(&place);
@@ -887,10 +937,9 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
                 return make_property(slot->pointer, class_index, (uint32_t)slot->aux);
             }
             if (type == vpiIndex) {
-                if (slot->lsb == DYN_AT_STRING) {
-                    vpi_error("LLG_VPI_UNSUPPORTED", "a string key has no index constant in llg");
-                    return NULL;
-                }
+                /* A string key is a string constant (decision A19-D23). */
+                if (slot->lsb == DYN_AT_STRING)
+                    return make_string_constant((const char*)slot->items, slot->count);
                 if (slot->lsb == DYN_AT_INTEGRAL) {
                     dyn_place_t place;
                     if (!dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux,
@@ -1150,6 +1199,8 @@ static PLI_INT64 dyn_size(const dyn_place_t* place, int* ok) {
     if (shape->shape == LLG_VPI_SHAPE_CONTAINER && place->storage)
         return (PLI_INT64)dyn_container_size(place);
     if (shape->shape == LLG_VPI_SHAPE_PACKED) return shape->width;
+    /* A chandle reads as a 64-bit image (decision A19-D21). */
+    if (shape->shape == LLG_VPI_SHAPE_CHANDLE) return 64;
     *ok = 0;
     return 0;
 }
@@ -1372,7 +1423,9 @@ static void dyn_put_value(llg_vpi_slot_t* slot, p_vpi_value input, int mode) {
         vpi_error("LLG_VPI_VALUE", "a property of a class definition has no value (37.27 detail 2)");
         return;
     }
-    dyn_write(place.shape, place.storage, input);
+    sv4_t* dependency = slot->kind == SLOT_OBJECT && place.row != LLG_VPI_NONE
+                            ? g_vpi.objects[place.row].dependency : NULL;
+    dyn_write(place.shape, place.storage, dependency, input);
 }
 
 /* vpi_compare_objects of two dynamic handles: 1 same object, 0 different,

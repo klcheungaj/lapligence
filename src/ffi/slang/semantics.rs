@@ -528,6 +528,11 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         // auxiliary marker distinguishes the ordered form. Conditional and
         // case statements use the same scalar for their qualifier.
         (18, 42, _) => node.auxiliary <= 1,
+        // A block keeps its keyword's offset + 1, a subroutine body list
+        // the offset + 1 of where it opens.
+        (18, super::SEMANTIC_STMT_BLOCK | 56..=58 | super::SEMANTIC_STMT_LIST, _) => {
+            node.auxiliary <= u64::from(u32::MAX)
+        }
         // Immediate assertions reserve two bits to preserve deferred/final
         // syntax until the simulator can either execute or reject it.
         (18, 61..=63, _) => node.auxiliary <= 3,

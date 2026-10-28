@@ -390,6 +390,7 @@ impl Db {
             .collect();
         let primitive_array_positions = primitive_array_positions(snapshot);
         let instance_array_ranges = instance_array_ranges(snapshot);
+        let keyword_lines = statement_keyword_lines(snapshot, &mut source_positions)?;
         let mut arrays = HashMap::new();
         let mut event_arrays = HashMap::new();
         let mut subroutine_arrays = HashMap::new();
@@ -1502,6 +1503,7 @@ impl Db {
             unconnected_drives,
             primitive_array_positions,
             instance_array_ranges,
+            keyword_lines,
             source_libraries,
             declaration_time_scales,
             class_declaring_scopes,
@@ -1684,6 +1686,50 @@ fn instance_array_ranges(snapshot: &SlangSnapshot) -> HashMap<NodeId, (i32, i32)
             (NodeId::from_index(index), (left, right))
         })
         .collect()
+}
+
+/// The keyword lines blocks and subroutine body lists carry in
+/// `auxiliary` (a byte offset + 1): a block's `begin`/`fork` line when its
+/// range starts on another line, and the line where a body list opens.
+fn statement_keyword_lines(
+    snapshot: &SlangSnapshot,
+    positions: &mut SourcePositions<'_>,
+) -> Result<HashMap<NodeId, u32>, DbError> {
+    let mut line_at = |file_id: u64, offset: u64| -> Result<u32, DbError> {
+        let at = crate::ffi::slang::SourceRange {
+            file_id,
+            start: offset,
+            end: offset,
+        };
+        positions.range_position(at).map(|(_, line, _, _, _)| line)
+    };
+    let mut lines = HashMap::new();
+    for (index, node) in snapshot.semantic_nodes.iter().enumerate() {
+        if node.kind != SemanticKind::Statement || node.auxiliary == 0 {
+            continue;
+        }
+        let offset = node.auxiliary - 1;
+        match node.subkind {
+            crate::ffi::slang::SEMANTIC_STMT_BLOCK | 56..=58 => {
+                let Some(range) = node.range else { continue };
+                let keyword = line_at(range.file_id, offset)?;
+                if keyword != line_at(range.file_id, range.start)? {
+                    lines.insert(NodeId::from_index(index), keyword);
+                }
+            }
+            crate::ffi::slang::SEMANTIC_STMT_LIST => {
+                let parent = node
+                    .parent_id()
+                    .and_then(|parent| usize::try_from(parent).ok())
+                    .and_then(|parent| snapshot.semantic_nodes.get(parent))
+                    .and_then(|parent| parent.range);
+                let Some(range) = parent else { continue };
+                lines.insert(NodeId::from_index(index), line_at(range.file_id, offset)?);
+            }
+            _ => {}
+        }
+    }
+    Ok(lines)
 }
 
 /// Make each procedural checker instance a child of the instance or generate

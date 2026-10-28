@@ -41,6 +41,9 @@ enum Item<'a> {
     Control(&'a IntraControl, NodeId),
     /// An omitted argument (37.38 detail 8).
     NullOp(NodeId),
+    /// The constant `1` an increment or decrement adds or subtracts, at
+    /// the position of the operation.
+    One(NodeId),
     /// A `for` loop whose variables are declared by the enclosing implicit
     /// block: the loop and the declarations.
     ForWithLocals(NodeId, Vec<NodeId>),
@@ -193,7 +196,9 @@ impl<'c, 'a> CodeTables<'c, 'a> {
     fn located(&mut self, type_code: &'static str, id: NodeId) -> IrVpiCode {
         let node = self.cg.node(id);
         let mut code = IrVpiCode::new(type_code);
-        code.line = node.line;
+        // A written block starts at its `begin` or `fork` keyword (decision
+        // A19-D13), even when its range is only its one statement's.
+        code.line = self.cg.db.block_keyword_line(id).unwrap_or(node.line);
         if let Some(file) = node.file() {
             let next = u32::try_from(self.files.len()).unwrap_or(u32::MAX);
             let index = *self.file_index.entry(file.to_owned()).or_insert_with(|| {
@@ -220,12 +225,17 @@ impl<'c, 'a> CodeTables<'c, 'a> {
             Item::Stmt(id) => self.statement(id, scope),
             Item::Body(at, statements) => {
                 // A statement list has no position of its own: the begin
-                // that stands for it starts at its first statement.
+                // that stands for a task or function body starts where the
+                // body opens, after the subroutine name (decision A19-D13),
+                // any other at its first statement.
                 let anchor = match statements.first() {
                     Some(first) if self.cg.node(at).line == 0 => *first,
                     _ => at,
                 };
-                let code = self.located("vpiBegin", anchor);
+                let mut code = self.located("vpiBegin", anchor);
+                if let Some(opening) = self.cg.db.subroutine_body_line(at) {
+                    code.line = opening;
+                }
                 let children = statements
                     .into_iter()
                     .filter_map(|id| Some(("vpiStmt", self.statement_item(id)?)))
@@ -363,6 +373,14 @@ impl<'c, 'a> CodeTables<'c, 'a> {
             Item::NullOp(at) => {
                 let mut code = self.located("vpiOperation", at);
                 code.subtype = "vpiNullOp";
+                (code, Vec::new(), scope)
+            }
+            Item::One(at) => {
+                let mut code = self.located("vpiConstant", at);
+                code.subtype = "vpiDecConst";
+                code.flags |= IrVpiCode::SIGNED;
+                code.width = 32;
+                code.text = Some(format!("{:032b}", 1));
                 (code, Vec::new(), scope)
             }
             Item::ForWithLocals(id, declarations) => {
@@ -611,6 +629,9 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         }
         if constant.signed {
             code.flags |= IrVpiCode::SIGNED;
+        }
+        if unbased_unsized(source) {
+            code.flags |= IrVpiCode::FILL;
         }
         code.width = constant.width;
         code.text = Some(constant_digits(&constant));
@@ -1371,9 +1392,9 @@ impl<'c, 'a> CodeTables<'c, 'a> {
     }
 
     /// An expression used as a statement: a call, an increment or
-    /// decrement (a `vpiAssignment` whose `vpiOpType` is the operator,
-    /// 37.59 detail 1), an assignment expression, else an opaque null
-    /// statement.
+    /// decrement (a `vpiAssignment` adding or subtracting a constant `1`,
+    /// as `k += 1` is under 37.59 detail 1; decision A19-D13), an
+    /// assignment expression, else an opaque null statement.
     fn expression_statement(&mut self, id: NodeId) -> (IrVpiCode, Children<'a>) {
         let cg = self.cg;
         let mut inner = id;
@@ -1394,13 +1415,20 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                 ..
             }) => {
                 let mut code = self.located("vpiAssignment", inner);
-                code.subtype = vpi_op_type(*op).unwrap_or("vpiAssignmentOp");
+                code.subtype = match op {
+                    Operation::PostIncrement | Operation::PreIncrement => "vpiAddOp",
+                    _ => "vpiSubOp",
+                };
                 code.flags |= IrVpiCode::BLOCKING;
                 let children = operands
                     .first()
-                    .map(|operand| ("vpiLhs", Item::Expr(*operand)))
-                    .into_iter()
-                    .collect();
+                    .map(|operand| {
+                        vec![
+                            ("vpiLhs", Item::Expr(*operand)),
+                            ("vpiRhs", Item::One(inner)),
+                        ]
+                    })
+                    .unwrap_or_default();
                 (code, children)
             }
             NodeKind::Expr(ExprKind::Operation {
@@ -1492,6 +1520,20 @@ fn vpi_qualifier(check: UniquePriorityCheck) -> &'static str {
 }
 
 /// Four-state digits of an integral constant, most significant first.
+/// Whether a literal is written unbased and unsized (`'0`, `'1`, `'x`,
+/// `'z`; 5.7.1), so its decompiled text keeps that spelling (decision
+/// A19-D11).
+fn unbased_unsized(source: &ConstantSource) -> bool {
+    let ConstantSource::Exact(spelling) = source else {
+        return false;
+    };
+    let mut chars = spelling.trim().chars();
+    matches!(
+        (chars.next(), chars.next(), chars.next()),
+        (Some('\''), Some('0' | '1' | 'x' | 'X' | 'z' | 'Z'), None)
+    )
+}
+
 fn constant_digits(constant: &crate::sim::ir::IrConst) -> String {
     let bit = |plane: &[u64], index: u32| {
         plane
@@ -1577,4 +1619,22 @@ pub(super) fn vpi_op_type(op: Operation) -> Option<&'static str> {
         Operation::Inside => "vpiInsideOp",
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unbased_unsized;
+    use crate::core::db::ConstantSource;
+
+    #[test]
+    fn only_unbased_unsized_spellings_keep_their_fill_digit() {
+        let exact = |text: &str| ConstantSource::Exact(text.to_owned());
+        for text in ["'0", "'1", "'x", "'X", "'z", "'Z"] {
+            assert!(unbased_unsized(&exact(text)), "{text}");
+        }
+        for text in ["'b1", "1'b1", "'hx", "0", "'", "\"'x\""] {
+            assert!(!unbased_unsized(&exact(text)), "{text}");
+        }
+        assert!(!unbased_unsized(&ConstantSource::Unavailable));
+    }
 }

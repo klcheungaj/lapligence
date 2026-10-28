@@ -492,9 +492,17 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         let parts = split_name(path);
         let parent_path = (parts.len() > 1).then(|| parts[..parts.len() - 1].join("\u{1f}"));
         // An unnamed object's key ends in a hidden part; its displayed
-        // name is its scope's (it reports no vpiFullName).
+        // name is its scope's (it reports no vpiFullName). A named object
+        // keyed that way (a generated primitive name) displays as its
+        // scope and name.
+        let hidden = parts.last().is_some_and(|part| part.starts_with('\u{1e}'));
         let path = if entry.unnamed {
             parent_path.clone().unwrap_or_default()
+        } else if hidden {
+            match &parent_path {
+                Some(parent) => format!("{parent}\u{1f}{}", entry.name),
+                None => entry.name.clone(),
+            }
         } else {
             path.to_owned()
         };
@@ -1376,6 +1384,36 @@ mod tests {
         let other = row("tb.other");
         assert!(!other.contains("LLG_VPI_OBJ_ACTIVATION"), "{other}");
         assert!(other.contains(".activation_declaration = 0u"), "{other}");
+    }
+
+    /// A generated primitive name keeps its hidden source-order key but
+    /// displays as scope and name; an unnamed object displays as its scope.
+    #[test]
+    fn hidden_keys_display_generated_names_and_hide_unnamed_ones() {
+        let mut model = IrModel::new("tb".to_owned(), 1).expect("model");
+        model.vpi_objects.push(IrVpiObject {
+            full_name: "tb".to_owned(),
+            name: "tb".to_owned(),
+            kind: IrVpiObjectKind::Module,
+            ..IrVpiObject::default()
+        });
+        model.vpi_objects.push(IrVpiObject {
+            full_name: "tb\u{1f}\u{1e}00000001".to_owned(),
+            name: "and$1".to_owned(),
+            kind: IrVpiObjectKind::Primitive,
+            ..IrVpiObject::default()
+        });
+        model.vpi_objects.push(IrVpiObject {
+            full_name: "tb\u{1f}\u{1e}00000002".to_owned(),
+            name: String::new(),
+            kind: IrVpiObjectKind::Process,
+            unnamed: true,
+            ..IrVpiObject::default()
+        });
+        let mut out = String::new();
+        render_vpi_metadata(&model, &mut out);
+        assert!(out.contains(".full_name = \"tb.and$1\""), "{out}");
+        assert!(!out.contains('\u{1e}'), "{out}");
     }
 
     #[test]

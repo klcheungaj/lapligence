@@ -1,0 +1,5 @@
+put 0x00000043 level=0 -> "C" size=1
+put 0x00414200 level=0 -> "AB" size=2
+put 0x41424344 level=0 -> "ABCD" size=4
+put 0x00000000 level=0 -> "" size=0
+hdl s= len=0

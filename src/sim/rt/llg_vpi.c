@@ -50,7 +50,8 @@ typedef enum {
     SLOT_OBJECT,    /* catalog row */
     SLOT_ELEMENT,   /* array element: object + element */
     SLOT_SELECT,    /* bit/part-select of an object or element */
-    SLOT_CONSTANT,  /* integer constant (range bound, index) */
+    SLOT_CONSTANT,  /* integer constant (range bound, index), or a vpiStringConst
+                     * with its characters in `items`/`count` */
     SLOT_RANGE,     /* one unpacked range of an array */
     SLOT_ITERATOR,
     SLOT_SYSTF,
@@ -61,7 +62,8 @@ typedef enum {
     SLOT_EVENT,     /* vpiSchedEvent */
     SLOT_ASSERTION, /* assertion coverage item `left` (39.3) */
     SLOT_MEMBER,    /* struct/union member: object + element + member node `aux` */
-    SLOT_TYPESPEC,  /* typespec `aux` (static slot) */
+    SLOT_TYPESPEC,  /* typespec `aux`: a static slot, or a dynamic one owned by
+                     * declaration row `object` (member node `left` - 1) */
     SLOT_TSMEMBER,  /* typespec member `aux` (static slot) */
     SLOT_ENUMCONST, /* enum constant `aux` (static slot) */
     SLOT_CONN,      /* constant or expression connection `aux` of row `object` */
@@ -818,6 +820,31 @@ static vpiHandle make_constant(int64_t value, int const_type) {
     return encode_handle(index);
 }
 
+/* A vpiStringConst holding a copy of `length` bytes in `items`/`count`
+ * (an associative array's string key, decision A19-D23). */
+static vpiHandle make_string_constant(const char* bytes, uint32_t length) {
+    char* copy = (char*)malloc((size_t)length + 1u);
+    if (!copy) {
+        vpi_error("LLG_VPI_NOMEM", "VPI constant allocation failed");
+        return NULL;
+    }
+    if (length) memcpy(copy, bytes, length);
+    copy[length] = '\0';
+    uint32_t index = alloc_slot(SLOT_CONSTANT);
+    if (index == LLG_VPI_NONE) {
+        free(copy);
+        return NULL;
+    }
+    g_vpi.slots[index].aux = vpiStringConst;
+    g_vpi.slots[index].items = (uintptr_t*)(void*)copy;
+    g_vpi.slots[index].count = length;
+    return encode_handle(index);
+}
+
+static int is_string_constant(const llg_vpi_slot_t* slot) {
+    return slot->kind == SLOT_CONSTANT && slot->aux == vpiStringConst && slot->items;
+}
+
 /* ── catalog helpers ────────────────────────────────────────────────────── */
 
 static llg_vpi_model_object_t* row_object(uint32_t row) {
@@ -908,6 +935,26 @@ static const llg_vpi_member_node_t* node_at(uint32_t index) {
 
 static vpiHandle typespec_handle(const llg_vpi_typespec_t* typespec) {
     return typespec ? encode_handle(g_vpi.typespec_base + typespec_index(typespec)) : NULL;
+}
+
+/* The typespec of a declaration (decision A19-D4): a structure, union or
+ * enum type is one object (its static slot), any other typespec belongs to
+ * the declaration that reaches it, catalog row `row` (and member node
+ * `member` + 1 of a structure member, else 0). The interned table stays
+ * shared; such a handle is a dynamic slot whose identity adds the owner. */
+static vpiHandle declared_typespec_handle(const llg_vpi_typespec_t* typespec, uint32_t row,
+                                          int64_t member) {
+    if (!typespec) return NULL;
+    if (row == LLG_VPI_NONE || typespec->type == vpiStructTypespec ||
+        typespec->type == vpiUnionTypespec || typespec->type == vpiEnumTypespec)
+        return typespec_handle(typespec);
+    uint32_t index = alloc_slot(SLOT_TYPESPEC);
+    if (index == LLG_VPI_NONE) return NULL;
+    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    slot->aux = (int32_t)typespec_index(typespec);
+    slot->object = row;
+    slot->left = member;
+    return encode_handle(index);
 }
 
 /* The typespec of an element value: its array typespec without every
@@ -1235,6 +1282,14 @@ static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is
         case SLOT_CODE:
             return code_value((uint32_t)slot->aux, out, is_signed);
         case SLOT_CONSTANT:
+            if (is_string_constant(slot)) {
+                /* 8 bits per character, the first most significant. */
+                uint32_t width = slot->count ? slot->count * 8u : 8u;
+                out->packed = llg_string_to_packed(
+                    llg_string_bytes((const char*)slot->items, slot->count), width, 0);
+                *is_signed = 0;
+                return 1;
+            }
             out->packed = sv4_from_i64(slot->left, 32);
             llg_sv4_set_signed(&out->packed, 1);
             *is_signed = 1;
@@ -3582,6 +3637,11 @@ static int code_is_select(int type) {
     return type == vpiBitSelect || type == vpiPartSelect || type == vpiIndexedPartSelect;
 }
 
+/* The selects named by their text (decision A19-D24). */
+static int code_is_named_select(int type) {
+    return code_is_select(type) || type == vpiVarSelect;
+}
+
 static int code_is_statement(int type) {
     switch (type) {
         case vpiBegin: case vpiFork: case vpiNamedBegin: case vpiNamedFork:
@@ -4398,7 +4458,7 @@ static void decompile_list(llg_vpi_text_t* text, const llg_vpi_code_t* node, int
 }
 
 /* A constant as a literal of its vpiConstType: unsized signed 32-bit
- * decimals as written, other integers sized in their radix (binary when
+ * decimals and unbased unsized literals as written, other integers sized in their radix (binary when
  * a hexadecimal or octal digit would mix known and unknown bits). */
 static void decompile_constant(llg_vpi_text_t* text, const llg_vpi_code_t* node) {
     const char* digits = code_text(node);
@@ -4408,6 +4468,15 @@ static void decompile_constant(llg_vpi_text_t* text, const llg_vpi_code_t* node)
         return;
     }
     if (!digits) return;
+    if ((node->flags & LLG_VPI_CODE_FILL) && digits[0]) {
+        /* Every digit is the fill; the literal prints as written, with a
+         * lower-case x or z. */
+        buffer[0] = '\'';
+        buffer[1] = (char)(digits[0] == 'X' ? 'x' : digits[0] == 'Z' ? 'z' : digits[0]);
+        buffer[2] = '\0';
+        text_put(text, buffer);
+        return;
+    }
     if (node->flags & LLG_VPI_CODE_STRING) {
         text_put(text, "\"");
         for (const char* c = digits; *c; ++c) {
@@ -4796,6 +4865,8 @@ static PLI_BYTE8* code_string(uint32_t index, int property) {
                 ((node->flags & LLG_VPI_CODE_OPAQUE) && code_is_expression(node) &&
                  type != vpiOperation && type != vpiConstant))
                 return (PLI_BYTE8*)code_text(node);
+            /* A select is named by its text (decision A19-D24). */
+            if (code_is_named_select(type)) return (PLI_BYTE8*)code_decompile(index);
             if (code_is_statement(type)) return NULL;
             break;
         }
@@ -4806,6 +4877,23 @@ static PLI_BYTE8* code_string(uint32_t index, int property) {
                 snprintf(g_vpi.str_buffer, sizeof(g_vpi.str_buffer), "%s.%s",
                          g_vpi.objects[node->scope - 1u].full_name, name);
                 return (PLI_BYTE8*)g_vpi.str_buffer;
+            }
+            /* A select: its scope's name and its text. */
+            if (code_is_named_select(type)) {
+                llg_vpi_text_t text = {g_vpi.decompiled, 0, g_vpi.decompiled_capacity, 0};
+                text_put(&text, "");
+                if (node->scope) {
+                    text_put(&text, g_vpi.objects[node->scope - 1u].full_name);
+                    text_put(&text, ".");
+                }
+                decompile(&text, index, 0);
+                g_vpi.decompiled = text.text;
+                g_vpi.decompiled_capacity = text.capacity;
+                if (text.failed) {
+                    vpi_error("LLG_VPI_UNSUPPORTED", "llg cannot decompile this expression");
+                    return NULL;
+                }
+                return (PLI_BYTE8*)text.text;
             }
             break;
         }
@@ -4885,9 +4973,17 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 slot->kind != SLOT_MEMBER && slot->kind != SLOT_TSMEMBER)
                 break;
             if (slot->kind == SLOT_OBJECT && object && is_scope_type(object->type)) break;
-            const llg_vpi_typespec_t* typespec = slot->kind == SLOT_TSMEMBER
-                ? typespec_at(g_vpi.types->members[slot->aux].typespec) : value_typespec(slot);
-            if (typespec) return typespec_handle(typespec);
+            if (slot->kind == SLOT_TSMEMBER) {
+                const llg_vpi_typespec_t* typespec =
+                    typespec_at(g_vpi.types->members[slot->aux].typespec);
+                if (typespec) return typespec_handle(typespec);
+            } else {
+                const llg_vpi_typespec_t* typespec = value_typespec(slot);
+                if (typespec)
+                    return declared_typespec_handle(
+                        typespec, slot->object,
+                        slot->kind == SLOT_MEMBER ? (int64_t)slot->aux + 1 : 0);
+            }
             vpi_error("LLG_VPI_UNSUPPORTED", "llg exposes no typespec for the type of this object");
             return NULL;
         }
@@ -4901,7 +4997,8 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
              * (37.23 details 1 and 8). */
             uint32_t reference = type == vpiTypedefAlias ? typespec->alias
                                  : type == vpiElemTypespec ? typespec->element : typespec->base;
-            return typespec_handle(typespec_ref(reference));
+            /* A declaration's typespec owns the typespecs below it. */
+            return declared_typespec_handle(typespec_ref(reference), slot->object, slot->left);
         }
         case vpiParent:
             if (slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_PORTBIT || slot->kind == SLOT_TERM)
@@ -5652,8 +5749,8 @@ static int handle_width(const llg_vpi_slot_t* slot, uint32_t* width, int* is_sig
             return 1;
         }
         case SLOT_CONSTANT:
-            *width = 32;
-            *is_signed = 1;
+            *width = is_string_constant(slot) ? (slot->count ? slot->count * 8u : 8u) : 32u;
+            *is_signed = !is_string_constant(slot);
             return 1;
         case SLOT_CODE: {
             const llg_vpi_code_t* node = code_at((uint32_t)slot->aux);
@@ -6235,16 +6332,21 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
     {
         uint32_t argument = argument_code(slot);
         if (argument != LLG_VPI_NONE &&
-            (property == vpiDecompile || property == vpiName || property == vpiFile))
+            (property == vpiDecompile || property == vpiName || property == vpiFile ||
+             (property == vpiFullName && code_is_named_select(code_type(code_at(argument))))))
             return code_string(argument, property);
     }
     switch (slot->kind) {
         case SLOT_OBJECT:
-            /* Processes, continuous assignments and unnamed primitives
-             * have no name (37.31, 37.43, 37.58). */
+            /* Processes and continuous assignments have no name (37.43,
+             * 37.58). A module path is never found by name but reports the
+             * name it carries as both names (decision A19-D9). */
             if ((object->flags & LLG_VPI_OBJ_UNNAMED) &&
-                (property == vpiName || property == vpiFullName))
+                (property == vpiName || property == vpiFullName)) {
+                if (object->type == vpiModPath && object->name && object->name[0])
+                    return (PLI_BYTE8*)object->name;
                 break;
+            }
             switch (property) {
                 case vpiName: return (PLI_BYTE8*)object->name;
                 case vpiFullName:
@@ -6296,6 +6398,11 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
             }
             break;
         }
+        case SLOT_CONSTANT:
+            /* A string key decompiles as its characters. */
+            if (is_string_constant(slot) && property == vpiDecompile)
+                return (PLI_BYTE8*)slot->items;
+            break;
         case SLOT_TYPESPEC:
             /* 37.23 detail 1: a type without a typedef has no name. */
             if (property == vpiName) return (PLI_BYTE8*)typespec_at((uint32_t)slot->aux)->name;
@@ -7071,6 +7178,14 @@ static int handle_identity(const llg_vpi_slot_t* slot, uint32_t index, uint64_t 
         identity[1] = slot->object;
         identity[2] = 0;
         identity[3] = (uint64_t)(uint32_t)slot->aux;
+        return 1;
+    }
+    if (slot->kind == SLOT_TYPESPEC) {
+        /* A typespec and the declaration that owns it (A19-D4). */
+        identity[0] = 2u + slot->kind;
+        identity[1] = (uint64_t)(uint32_t)slot->aux;
+        identity[2] = slot->object;
+        identity[3] = (uint64_t)slot->left;
         return 1;
     }
     if (slot->kind == SLOT_MEMBER) {

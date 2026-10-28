@@ -1,17 +1,16 @@
-// Decision A19-D4: typespec identity. Two typespec handles are the same
-// object (vpi_compare_objects returns 1) when they describe the same type
-// with the same name: variables declared with one typedef share its
-// typespec, and two declarations written with the same built-in type and
-// ranges share one unnamed typespec. Typespecs that differ in name (a
-// typedef and the same type written inline, or two typedefs of one type)
-// are different objects.
+// Decision A19-D4: typespec identity. A typespec belongs to its
+// declaration: the vpiTypespec handles of two declarations are different
+// objects (vpi_compare_objects returns 0) even when both use one typedef or
+// the same built-in type and ranges; two vpiTypespec handles of one
+// declaration are the same object (1). A struct, union or enum type is the
+// exception: it is one object shared by every declaration of that type.
 //
 // IEEE 1800-2009 38.3 (SystemVerilog-1800-2009.txt L61867-61868):
 //   "The VPI routine vpi_compare_objects() shall return 1 (TRUE) if the two
 //    handles refer to the same underlying simulation object at the time the
 //    function is called, provided that the simulation object exists."
 // 37.23 does not say whether a typespec is one object per type or one per
-// declaration; this is an llg choice.
+// declaration; this is an llg choice following industry-standard behaviour.
 //
 // Build A19-D4_typespec_identity.c as a VPI application (llg: static archive
 // given to --dpi-lib; `task $d4()` declared as a system task).

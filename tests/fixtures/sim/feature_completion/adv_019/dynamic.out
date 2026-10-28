@@ -1,5 +1,5 @@
 vpiStringVar s full=tb.s size=2 value=hi
-vpiChandleVar ch full=tb.ch value: level=3
+vpiChandleVar ch full=tb.ch size=64 value=0
 vpiClassVar p full=tb.p value: level=3 objid=1 declared=Packet
   vpiClassObj id=1 created=LinkedPacket alloc=2 automatic=1
     vpiIntVar id full: level=3 size=32 value=3
@@ -24,7 +24,7 @@ vpiArrayVar aa full=tb.aa size=2 arraytype=3
   vpiIntVar aa[-2] index=-2 member=1 value=9
   vpiIntVar aa[5] index=5 member=1 value=7
 vpiArrayVar sa full=tb.sa size=1 arraytype=3
-  vpiStringVar sa["k"] index: level=3 member=1 value=v
+  vpiStringVar sa["k"] index=107 member=1 value=v
 same object=1
 LinkedPacket vpiClassTypespec classtype=3 automatic=1 defn=vpiClassDefn LinkedPacket
   vpiExtends base=Packet
@@ -45,7 +45,7 @@ put tb.q[0] = -5 level=0
 put tb.aa[5] = 70 level=0
 put tb.p.next.id = 44 level=0
 put tb.da[2] level=0
-put int to tb.s level=3
+put int to tb.s level=0
 put tb.s level=0
 put to class obj level=3
 s=world id=42 da[2]=33 q[0]=-5 aa[5]=70 sa[k]=v tag=5a next.id=44

@@ -46,9 +46,12 @@ static PLI_INT32 d6(PLI_BYTE8* data) {
         }
         vpi_printf("\n");
     }
-    vpiHandle element = vpi_handle_by_name("tb.ga[1]", NULL);
-    vpi_printf("by name %s %s\n", text(vpi_get_str(vpiType, element)),
-               text(vpi_get_str(vpiFullName, element)));
+    static const char* names[] = {"tb.ga[1]", "tb.and$1", "tb.or$2"};
+    for (int i = 0; i < 3; ++i) {
+        vpiHandle found = vpi_handle_by_name((PLI_BYTE8*)names[i], NULL);
+        vpi_printf("by name %s %s\n", text(vpi_get_str(vpiType, found)),
+                   text(vpi_get_str(vpiFullName, found)));
+    }
     return 0;
 }
 

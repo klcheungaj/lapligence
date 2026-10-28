@@ -717,12 +717,68 @@ impl Codegen<'_> {
         )
     }
 
+    /// The names of the primitive instances written without one (decision
+    /// A19-D6): `<keyword>$<n>` for a gate or switch and `udp$<n>` for a
+    /// UDP, `n` counting the unnamed primitives of the enclosing module
+    /// instance from 1, its UDP instances first, each kind in elaboration
+    /// order (generate blocks included). Elements of primitive arrays are
+    /// named by their array.
+    fn vpi_unnamed_primitive_names(
+        &self,
+        array_of: &HashMap<NodeId, NodeId>,
+    ) -> HashMap<NodeId, String> {
+        let mut by_instance: HashMap<NodeId, (Vec<NodeId>, Vec<NodeId>)> = HashMap::new();
+        for id in self.db.node_ids() {
+            let NodeKind::Gate { prim_type, .. } = self.kind(id) else {
+                continue;
+            };
+            if !self.node(id).name.is_empty() || array_of.contains_key(&id) {
+                continue;
+            }
+            let mut owner = self.node(id).parent;
+            while let Some(scope) = owner {
+                if matches!(self.kind(scope), NodeKind::ModuleInst { .. }) {
+                    break;
+                }
+                owner = self.node(scope).parent;
+            }
+            let Some(instance) = owner else { continue };
+            let (udps, gates) = by_instance.entry(instance).or_default();
+            if matches!(
+                prim_type,
+                PrimitiveType::Sequential | PrimitiveType::Combinational
+            ) {
+                udps.push(id);
+            } else {
+                gates.push(id);
+            }
+        }
+        let mut names = HashMap::new();
+        for (udps, gates) in by_instance.into_values() {
+            let udp_count = udps.len();
+            for (ordinal, id) in udps.into_iter().chain(gates).enumerate() {
+                let keyword = match self.kind(id) {
+                    NodeKind::Gate { prim_type, .. } if ordinal >= udp_count => {
+                        vpi_prim_type(*prim_type).map(|(_, keyword)| keyword)
+                    }
+                    _ => Some("udp"),
+                };
+                if let Some(keyword) = keyword {
+                    names.insert(id, format!("{keyword}${}", ordinal + 1));
+                }
+            }
+        }
+        names
+    }
+
     /// The structure rows of a gate, switch or UDP instance (37.31). An
-    /// element of a primitive array is named after the array and its index.
+    /// element of a primitive array is named after the array and its index;
+    /// an instance written without a name by `unnamed_names`.
     fn vpi_primitive_row(
         &self,
         id: NodeId,
         array_of: &HashMap<NodeId, NodeId>,
+        unnamed_names: &HashMap<NodeId, String>,
         template: IrVpiObject,
     ) -> Option<IrVpiObject> {
         let NodeKind::Gate {
@@ -753,10 +809,15 @@ impl Codegen<'_> {
                 name = format!("{}[{index}]", self.node(*array).name);
             }
         }
-        let (full_name, unnamed) = if name.is_empty() {
-            (self.vpi_unnamed_key(&scope, 'g', id), true)
-        } else {
-            (format!("{scope}{SEPARATOR}{name}"), false)
+        // A generated name keeps the source-ordered key of an unnamed
+        // object; the emitted full name is its scope's and the name.
+        let (full_name, unnamed) = match unnamed_names.get(&id) {
+            Some(generated) if name.is_empty() => {
+                name = generated.clone();
+                (self.vpi_unnamed_key(&scope, 'g', id), false)
+            }
+            _ if name.is_empty() => (self.vpi_unnamed_key(&scope, 'g', id), true),
+            _ => (format!("{scope}{SEPARATOR}{name}"), false),
         };
         let udp_type = matches!(
             prim_type,
@@ -860,8 +921,12 @@ impl Codegen<'_> {
             } => ("vpiInterfaceArray", "vpiInterface"),
             NodeKind::ModuleInst { .. } => ("vpiModuleArray", "vpiModule"),
             NodeKind::Gate { .. } => {
-                let primitive =
-                    self.vpi_primitive_row(element, &HashMap::new(), IrVpiObject::default())?;
+                let primitive = self.vpi_primitive_row(
+                    element,
+                    &HashMap::new(),
+                    &HashMap::new(),
+                    IrVpiObject::default(),
+                )?;
                 match primitive.type_code {
                     Some("vpiUdp") => ("vpiUdpArray", "vpiUdp"),
                     Some("vpiSwitch") => ("vpiSwitchArray", "vpiSwitch"),
@@ -956,6 +1021,7 @@ impl Codegen<'_> {
                 }
             }
         }
+        let primitive_names = self.vpi_unnamed_primitive_names(&array_of);
 
         for id in self.db.node_ids() {
             if !reachable(self.db, id, tops) {
@@ -1013,7 +1079,7 @@ impl Codegen<'_> {
                 NodeKind::Stmt(kind @ (StmtKind::Begin | StmtKind::Fork { .. }))
                     if !node.name.is_empty() && statement_block(self.db, id) =>
                 {
-                    insert(source(IrVpiObject {
+                    let row = source(IrVpiObject {
                         full_name: self.vpi_full_name(id),
                         name: node.name.clone(),
                         kind: if matches!(kind, StmtKind::Fork { .. }) {
@@ -1023,7 +1089,13 @@ impl Codegen<'_> {
                         },
                         activation: self.vpi_activation(id),
                         ..IrVpiObject::default()
-                    }));
+                    });
+                    // The block starts at its `begin`/`fork` keyword
+                    // (decision A19-D13).
+                    insert(IrVpiObject {
+                        line: self.db.block_keyword_line(id).unwrap_or(row.line),
+                        ..row
+                    });
                 }
                 NodeKind::Net { ty, .. } | NodeKind::Var { ty }
                     if self.sig_globals.contains_key(&id) || static_locals.contains_key(&id) =>
@@ -1328,6 +1400,7 @@ impl Codegen<'_> {
                     if let Some(row) = self.vpi_primitive_row(
                         id,
                         &array_of,
+                        &primitive_names,
                         source(IrVpiObject {
                             timing: timing.delays.remove(&id),
                             ..IrVpiObject::default()
@@ -1832,6 +1905,36 @@ impl Codegen<'_> {
     }
 
     /// An index fixed at elaboration: a literal or a parameter reference.
+    /// The spelling of a module path terminal (30.4.3: a net or port, or a
+    /// constant bit- or part-select of one), or `None` for another form.
+    fn vpi_terminal_text(&self, node: NodeId) -> Option<String> {
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::Cast { operand, .. }) => self.vpi_terminal_text(*operand),
+            NodeKind::Expr(ExprKind::Ref { .. }) => {
+                Some(self.node(node).name.clone()).filter(|name| !name.is_empty())
+            }
+            NodeKind::Expr(ExprKind::BitSelect { base, index }) => Some(format!(
+                "{}[{}]",
+                self.vpi_terminal_text(*base)?,
+                self.vpi_constant_index(*index)?
+            )),
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
+                Some(format!(
+                    "{}[{}]",
+                    self.vpi_terminal_text(*base)?,
+                    self.vpi_constant_index(indices[0])?
+                ))
+            }
+            NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => Some(format!(
+                "{}[{}:{}]",
+                self.vpi_terminal_text(*base)?,
+                self.vpi_constant_index(*left)?,
+                self.vpi_constant_index(*right)?
+            )),
+            _ => None,
+        }
+    }
+
     fn vpi_constant_index(&self, index: NodeId) -> Option<i64> {
         match self.kind(index) {
             NodeKind::Expr(ExprKind::Constant { value, size, .. }) => {

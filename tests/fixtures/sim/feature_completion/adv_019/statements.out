@@ -9,7 +9,7 @@ vpiInitial - line=25
     stmt vpiAssignment line=27 file=statements.sv blocking=1 op=82 lhs="a" rhs="8'd1"
     stmt vpiFor line=28 file=statements.sv local_vars=1 cond="i < 2"
       init vpiAssignment line=28 file=statements.sv blocking=1 op=82 lhs="i" rhs="0"
-      inc vpiAssignment line=28 file=statements.sv blocking=1 op=62 lhs="i" rhs=NULL
+      inc vpiAssignment line=28 file=statements.sv blocking=1 op=24 lhs="i" rhs="1"
       stmt vpiAssignment line=28 file=statements.sv blocking=1 op=24 lhs="a" rhs="2"
     stmt vpiWhile line=29 file=statements.sv cond="a < 8"
       stmt vpiAssignment line=29 file=statements.sv blocking=1 op=82 lhs="a" rhs="a << 1"
@@ -27,7 +27,7 @@ vpiInitial - line=25
       item expr="4'd2"
         stmt vpiNullStmt line=34 file=statements.sv
       item default
-        stmt vpiBegin line=36 file=statements.sv
+        stmt vpiBegin line=35 file=statements.sv
           stmt vpiAssignment line=36 file=statements.sv blocking=1 op=82 lhs="count" rhs="0"
     stmt vpiIf line=39 file=statements.sv qualifier=2 cond="sel[0]"
       stmt vpiTaskCall line=39 file=statements.sv name=bump task=tb.bump arg="1"
@@ -38,7 +38,7 @@ vpiInitial - line=25
         stmt vpiAssignment line=42 file=statements.sv blocking=1 op=82 lhs="b" rhs="8'd9"
     stmt vpiAssignment line=44 file=statements.sv blocking=1 op=82 lhs="a" rhs="b" control=vpiRepeatControl count="2" event="posedge clk"
     stmt vpiDoWhile line=45 file=statements.sv cond="k < 3"
-      stmt vpiAssignment line=45 file=statements.sv blocking=1 op=62 lhs="k" rhs=NULL
+      stmt vpiAssignment line=45 file=statements.sv blocking=1 op=24 lhs="k" rhs="1"
     stmt vpiForeachStmt line=46 file=statements.sv array=vpiRegArray:tb.arr loop_var=vpiIntVar:j
       stmt vpiAssignment line=46 file=statements.sv blocking=1 op=82 lhs="arr[j]" rhs="j"
     stmt vpiForever line=47 file=statements.sv
@@ -63,11 +63,11 @@ vpiInitial - line=59
       stmt vpiSysTaskCall line=61 file=statements.sv name=$display arg=""count %0d a %0d b %0d q %0d"" arg="count" arg="a" arg="b" arg="q"
     stmt vpiSysTaskCall line=62 file=statements.sv name=$finish
 vpiTask bump line=13
-  stmt vpiBegin line=14 file=statements.sv
+  stmt vpiBegin line=13 file=statements.sv
     stmt vpiAssignment line=14 file=statements.sv blocking=1 op=24 lhs="count" rhs="by"
     stmt vpiEventStmt line=15 file=statements.sv event=tb.ev
 vpiFunction clamp line=17
-  stmt vpiBegin line=18 file=statements.sv
+  stmt vpiBegin line=17 file=statements.sv
     stmt vpiIf line=18 file=statements.sv qualifier=0 cond="v > 10"
       stmt vpiReturnStmt line=18 file=statements.sv cond="10"
     stmt vpiReturnStmt line=19 file=statements.sv cond="v"

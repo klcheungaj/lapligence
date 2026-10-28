@@ -1,6 +1,6 @@
 tb.n1 tb.n1: 1
-tb.n1 tb.n2: 1
-tb.x tb.y: 1
+tb.n1 tb.n2: 0
+tb.x tb.y: 0
 tb.n1 tb.o: 0
 tb.n1 tb.x: 0
 tb.x tb.z: 0

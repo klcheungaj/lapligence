@@ -284,7 +284,8 @@ values. `failures=0` closes the walk when `vpiParent` of `w[i * 4 +: 8]` is
   1, L58988-L58991, for part and var selects). `pk[1]` selects one element of
   the packed dimension `[0:3]` of `pk`, a `vpiBitSelect` of 8 bits, and
   `pk[i -: 2]` two elements of 16 bits (`pk[1:2]` for `i = 2`, 11.5.1).
-  `w[17]` is outside `w[15:0]` and reads `x` (11.5.1).
+  `w[17]` is outside `w[15:0]` and reads `x` (11.5.1). A select is named by
+  its text (`name=mem[i][3:0]`, decision A19-D24).
 - Values. 38.15 (L62541-L62542): "The VPI routine vpi_get_value() shall
   retrieve the simulation value of VPI objects." With `a = 8'h5a`,
   `b = 8'h0f`, `n = 4'b10x1`, `s = -3`, `i = 2`, `r = 1.5`, `w = 16'hbeef`
@@ -333,8 +334,8 @@ init and increment statements). It ends with `tb.main` found by name, a
   ‘<=’). For assignment operators, vpiOpType shall return a value that
   corresponds to the operator that is combined with the assignment". `a +=
   2` and `count += by` print `op=24` (`vpiAddOp`), plain assignments
-  `op=82`; `i++` and `k++` are assignments with `vpiPostIncOp` (62) and no
-  right-hand side (decision A19-D13). `a = repeat (2) @(posedge clk) b`
+  `op=82`; `i++` and `k++` are `vpiAddOp` assignments whose right-hand side
+  is the constant 1 (decision A19-D13). `a = repeat (2) @(posedge clk) b`
   has a `vpiRepeatControl` (37.64) with its count and event.
 - Blocks. 37.12 detail 1 (L58069-L58070): "A named begin or named fork shall
   always be a scope." `main` is the catalog `vpiNamedBegin` `tb.main` (also
@@ -345,7 +346,9 @@ init and increment statements). It ends with `tb.main` found by name, a
   statements is greater than 1, the vpiStmt relation shall return an unnamed
   begin that contains the statements of the task or function. If the number
   of statements is zero, the vpiStmt relation shall return NULL." `bump` and
-  `clamp` print a `vpiBegin` at their first statement's line; `nothing`
+  `clamp` print a `vpiBegin` at the line of the token after their name (the
+  `;` ending the header or the port list), and a written `begin` reports the
+  line of its keyword (the `default` item, line 35; decision A19-D13); `nothing`
   prints `stmt NULL` with no error. `return v` is a `vpiReturnStmt` whose
   `vpiCondition` is `v` (37.73).
 - Conditions and loops. `if`/`else if` chains nest `vpiIfElse` objects
@@ -388,7 +391,9 @@ check, `vpiModule` is the instance).
   `vpiModPathIn`, `vpiModPathOut` and `vpiModDataPathIn` with
   `vpiDirection`, `vpiEdge` and `vpiExpr`, the path's `vpiCondition`,
   `vpiPathType`, `vpiPolarity`, `vpiDataPolarity` and
-  `vpiModPathHasIfNone`. `(a +=> y)` is a parallel path (`type=2`) with
+  `vpiModPathHasIfNone`. A path is named after its instance, first input
+  and first output (`tb.u.a$y`) and is not found by that name (decision
+  A19-D9). `(a +=> y)` is a parallel path (`type=2`) with
   polarity `vpiPositive`, which is also its data polarity (no data source);
   `(posedge clk => (q +: d))` has edge `vpiPosedge` (`0x0d`) on its input,
   `d` as data path input and data polarity `vpiPositive`. `if (en) (b *> y)`
@@ -404,7 +409,8 @@ check, `vpiModule` is the instance).
   `$setup` the reference term is `clk` (second argument), the `&&& en`
   condition sits on the data term of `$hold`, `negedge` is `0x32`,
   `$period` and `$width` have no data term, and `vpiTchkNotifier` is
-  `notifier` only for `$setup` (decision A19-D10).
+  `notifier` only for `$setup`; `vpiExpr` gives the notifier right after
+  the terms (decision A19-D10).
 - Refusals. `vpi_iterate(vpiExpr)` on a path and `vpi_get(vpiTchkType)` on a
   path are `vpiError` (`level=3`).
 
@@ -424,8 +430,8 @@ the element handles it held.
 
 - Values. 37.17 detail 11 (L58766): "Variables of type vpiArrayVar or
   vpiClassVar do not have a value property." Class vars and array vars
-  print `value: level=3`. A chandle var has no value format either
-  (`tb.ch`, decision A19-D21); a string var reads as `vpiStringVal` and,
+  print `value: level=3`. A chandle var reads as its 64-bit pointer image
+  (`tb.ch` is null: `size=64 value=0`, decision A19-D21); a string var reads as `vpiStringVal` and,
   in other formats, as its packed image (`tb.s hex=6869`, decision A19-D21).
 - Sizes. 37.17 detail 9 (L58760-L58762): "vpiSize for a variable array shall
   return the number of variables in the array. ... For a string var, it shall
@@ -440,8 +446,9 @@ the element handles it held.
   an array (the vpiArrayMember property is TRUE), the vpiIndex iterator shall
   return the indexing expressions that select that specific variable out of
   the array." Elements are named `<array>[<index>]`; associative elements come
-  in key order (`aa[-2]` before `aa[5]`), and a string key prints quoted with
-  no index constant (`sa["k"]`, `index: level=3`, decision A19-D23).
+  in key order (`aa[-2]` before `aa[5]`), and a string key prints quoted; its
+  index is a `vpiStringConst` constant holding the key, whose `vpiIntVal` is
+  the key's packed image (`sa["k"]`, `index=107`, decision A19-D23).
 - Object identity. 37.29 detail 1 (L59610-L59612): "The property vpiObjId is
   a class object's identifier. It is a property of a live object and
   guaranteed to be unique with respect to all other dynamic objects that
@@ -490,7 +497,8 @@ the element handles it held.
   `tb.q[0]` and `tb.aa[5]` find a property and elements. A name past the
   current size, a missing key or an unknown property is NULL.
 - Writes. Integral elements and properties take `vpiIntVal`; a string takes
-  only `vpiStringVal` (`put int to tb.s level=3`, decision A19-D21); a class
+  `vpiStringVal` and `vpiIntVal`, cast as 6.16 casts an integral value
+  (`put int to tb.s level=0`, decisions A19-D21, A19-D25); a class
   obj has no value (`level=3`). The design prints the written values. After
   `q.delete(0)` the handle held for `tb.q[1]` reports `level=3` and the one
   held for `tb.q[0]` reads the element now at index 0 (`2`): element handles

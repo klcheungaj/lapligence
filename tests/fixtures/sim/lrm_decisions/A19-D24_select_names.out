@@ -1,0 +1,6 @@
+name=a[3:0] full=tb.a[3:0] by_name=found
+name=a[i] full=tb.a[i] by_name=NULL
+name=mem[i][3:0] full=tb.mem[i][3:0] by_name=NULL
+name=mem[2] full=tb.mem[2] by_name=found
+name=mem[2][1] full=tb.mem[2][1] by_name=found
+name=w[15:8] full=tb.w[15:8] by_name=found

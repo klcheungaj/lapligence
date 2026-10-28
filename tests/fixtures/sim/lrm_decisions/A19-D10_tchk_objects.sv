@@ -7,9 +7,9 @@
 // counted as x (posedge: vpiPosedge, `edge[01, x1]`: vpiEdge01 | vpiEdgex1,
 // none: vpiNoEdge); its vpiCondition is the `&&&` condition (NULL without
 // one). vpiTchkNotifier is the notifier variable (NULL without one).
-// vpiExpr iterates the arguments in source order, skipping empty ones: the
-// events as vpiTchkTerm handles, the others (limits, threshold, notifier,
-// conditions, delayed signals) as their own expressions.
+// vpiExpr iterates the events as vpiTchkTerm handles, then the notifier,
+// then the other arguments (limits, threshold, conditions, delayed signals)
+// in source order as their own expressions, skipping empty ones.
 //
 // IEEE 1800-2009 37.36 details 1-2 (SystemVerilog-1800-2009.txt
 // L59948-L59951): "For the timing checks in 31.2 the relationship
@@ -18,8 +18,9 @@
 // data_event, if any." and "When iterating over vpiExpr from a tchk, the
 // handles returned for a reference_event, a controlled_reference_event, or a
 // data_event shall have the type vpiTchkTerm. All other arguments shall have
-// types matching the expression." The edge bits of an edge list, z as x and
-// skipping empty arguments are llg choices.
+// types matching the expression." The order of vpiExpr (the notifier right
+// after the terms follows industry-standard behaviour), the edge bits of an
+// edge list, z as x and skipping empty arguments are llg choices.
 //
 // Build A19-D10_tchk_objects.c as a VPI application (llg: static archive
 // given to --dpi-lib; `task $d10()` declared as a system task).

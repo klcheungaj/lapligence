@@ -3,8 +3,9 @@
 // an associative key) and selects the element at each access: after the
 // array changes, the handle reads whatever element is now at that index or
 // key, and fails with vpiError while there is none. vpi_handle_by_index
-// selects an associative element by an integral key that exists. A string
-// key has no vpiIndex constant (vpiError). Elements and properties are
+// selects an associative element by an integral key that exists. The
+// vpiIndex of an element with a string key is a vpiConstant of type
+// vpiStringConst holding the key (its value the key's packed image). Elements and properties are
 // written with vpiNoDelay only; a delay mode fails with vpiError.
 // cbValueChange is refused on a dynamic array and on its elements.
 //
@@ -18,8 +19,8 @@
 // handle after use or expect that handle to be released and become invalid
 // when the object ceases to exist." The text does not say whether an
 // element handle follows its storage or its index when the array is
-// resized or reordered; the selection by index or key, the refusals and
-// the delay limit are llg choices.
+// resized or reordered; the selection by index or key, the string key
+// constant, the refusals and the delay limit are llg choices.
 //
 // Build A19-D23_dynamic_elements.c as a VPI application (llg: static archive
 // given to --dpi-lib; `task $d23_hold()` and `task $d23_check()` declared as
