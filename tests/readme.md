@@ -1541,6 +1541,33 @@ also runs its ANSI control. Inspect generated-model reports separately from
 handwritten native probes. Test counts represent repeated optimizer
 executions, not unique designs.
 
+### MSVC and Windows guards on Linux
+
+Default-suite tests that fail on Linux/macOS for classes that otherwise surface
+only in Windows CI; the rules they enforce are in
+[cross-platform handling](../docs/cross_platform.md#windows-msvc). Each takes
+seconds; the Clang checks skip without a Clang driver and on Windows.
+
+- `runtime_strict_sources::runtime_and_companion_c_has_no_implicit_narrowing`:
+  Clang `-Werror=implicit-int-conversion,shorten-64-to-32,…` (MSVC C4244/C4267)
+  over the runtime units in the legacy and compact backends, the non-`compact_*`
+  probes and every C file under `tests/fixtures/`.
+- `runtime_strict_sources::runtime_sources_have_no_truncating_constant_casts`:
+  a scan for constant casts MSVC truncates (C4310) in the same files.
+- `runtime_strict_sources::probe_built_runtime_sources_have_no_code_after_fatal_helpers`:
+  unreachable code after `abort()` helpers (C4702).
+- `vendor_patches::…::test_repositories_check_out_lf_under_a_host_autocrlf_setting`:
+  Git repositories created by tests check out LF under a host
+  `core.autocrlf=true`.
+
+```sh
+scripts/run-tests.sh --test-work-dir /build -E 'test(/^runtime_strict_sources::/) | test(/vendor_patches::/)'
+```
+
+CRT deprecations (C4996) need no scan: every strict harness build defines
+`_CRT_SECURE_NO_WARNINGS`. Text-mode CRLF from the C runtime cannot be
+reproduced on Linux; compare such output after `sim_harness::host_text_to_lf`.
+
 ### Repository gate
 
 ```sh

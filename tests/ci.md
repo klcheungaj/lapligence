@@ -55,7 +55,13 @@ the rules a change must keep. Platform pitfalls are in
   configuration), compiling the bundled `vendor/gmp` subset; no GMP is installed.
   Legacy and portable backends are development references for the parity lanes
   (`LLG_DEV_VALUE_BACKEND`/`LLG_DEV_COMPACT_KERNELS`).
-- The lint job runs `scripts/gmp_tables.py --check` and `scripts/test_ci_cache.py`.
+- The lint job runs `scripts/gmp_tables.py --check` and the `scripts/test_*.py`
+  unit tests it lists on Ubuntu 22.04's Python 3.10; scripts stay importable
+  there and on Rocky Linux 9's 3.9
+  ([Python](../docs/cross_platform.md#ci-shell-and-python)).
+- A Windows-only failure class (MSVC `/W4 /WX`, CRLF) gets a Linux guard in the
+  default suite where one is practical
+  ([guards](readme.md#msvc-and-windows-guards-on-linux)).
 - Lint/sanitizer jobs disable Rust debug info and incremental compilation and
   strip native frontend debug sections, keeping debug assertions and overflow
   checks. Keep nextest's bounded heavyweight group, compatible shared runtime
