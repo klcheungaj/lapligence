@@ -158,6 +158,11 @@ DPI-C and VPI DLLs:
   `/var/folders/...`; handle-derived paths are resolved (see
   [paths](#paths-and-text)). Linux hits the same mismatch for symlinked project
   directories; reproduce by pointing `TMPDIR` at a symlinked directory.
+  In-memory sources (the language server's admitted buffers) keep their
+  caller's spelling, so `core::compile::compile` hands Slang both spellings of
+  each include directory (`slang_include_dirs`); with the resolved one alone,
+  every `` `include`` under a `/var/...` or Windows `RUNNER~1` short-name root
+  failed to open in `llg_ls`.
 - `/dev/fd/N` entries are fdesc device nodes, not symlinks; `secure_fs.rs`
   documents the `F_GETPATH`/`fdopendir` handling. Linux `/proc/self/fd/N` is a
   real link whose reopen creates a new description.
@@ -185,20 +190,31 @@ DPI-C and VPI DLLs:
 
 ## arm64
 
+AArch64 (Linux arm64, macOS arm64, Windows on ARM) and x86_64 differ in ways C
+and Rust code can observe. The sanitizer job runs on Linux x86_64 only, so
+arm64-only undefined or unspecified behaviour reaches CI as a plain output
+mismatch; items name an x86_64 reproduction where one exists.
+
+### Lanes and runners
+
 - Windows on ARM (`aarch64-pc-windows-msvc`): `llg_ls` only. `llg`, generated
   models, DPI/VPI and the C runtime are unsupported;
   `ffi::platform::simulator_unsupported_reason` makes `llg` exit 2. The library,
   frontend, Db and lint code used by `llg_ls` must stay portable there. CI lane:
   [Windows on ARM](../tests/ci.md#windows-on-arm).
-- Plain C `char` is unsigned on AArch64 Linux (also PowerPC, RISC-V, MSVC `/J`)
-  and signed on x86, Apple arm64 and Windows. SV `byte` is C `char` (Table H.1):
-  DPI thunks keep `char` prototypes and sign-extend each foreign byte, and C code
-  (companions included) reads a `byte` through an explicit sign extension, never
-  `%d` of a plain `char`. `-funsigned-char` reproduces AArch64 on x86_64.
-- tower-lsp 0.20 runs notifications concurrently, and slower runners (Rocky
-  arm64) interleave handlers; state written after an `await` must not let an
-  older result replace a newer one (`DiscoveryOrder` in
-  `src/bin/llg_ls/lsp/handlers/state.rs`).
+- `linux-arm64` builds `aarch64-unknown-linux-musl` on `ubuntu-24.04-arm` and
+  runs the suite on Ubuntu 24.04 and Rocky Linux 9 with GCC-built models;
+  `macos-arm64` runs on `macos-15` with Apple Clang models
+  ([triggers and pipelines](../tests/ci.md#triggers-and-pipelines)). Runner
+  speed varies between runs (Rocky arm64 has been the slowest Linux lane; in run
+  110367163025 it was the fastest at 2944 s against 4157-4480 s on x86_64), so
+  no test may depend on timing.
+- tower-lsp 0.20 runs notifications concurrently, and slower runners interleave
+  handlers; state written after an `await` must not let an older result replace
+  a newer one (`DiscoveryOrder` in `src/bin/llg_ls/lsp/handlers/state.rs`).
+- Release executables are native: `scripts/verify-macos-release.sh` rejects any
+  binary that is not a Mach-O arm64 executable, so an x86_64 build running under
+  Rosetta 2 (with x86_64 semantics for everything below) cannot ship.
 - GitHub Windows arm64 runners: use the native `arm64` MSVC tools, not
   `amd64_arm64` (emulated x64 cross tools). Git Bash and Git's `link` are
   emulated x64 and Git's `usr/bin` precedes the MSVC tools on `PATH`; CMake still
@@ -211,6 +227,78 @@ DPI-C and VPI DLLs:
   longer than on x64 (cause unknown) while compile-only tests ran at x64 speed.
   `scripts/ci_windows_runner.py` measures it; opt-in `LLG_CMAKE_TREE_TEMPLATES`
   reduces per-tree work.
+
+### C language and ABI
+
+- Plain C `char` is unsigned on AArch64 Linux (also PowerPC, RISC-V, MSVC `/J`)
+  and signed on x86, Apple arm64 and Windows. SV `byte` is C `char` (Table H.1):
+  DPI thunks keep `char` prototypes and sign-extend each foreign byte, and C code
+  (companions included) reads a `byte` through an explicit sign extension, never
+  `%d` of a plain `char`. `-funsigned-char` reproduces AArch64 on x86_64.
+- The order in which a call's arguments (or an operator's operands) are
+  evaluated is unspecified, and it splits by target: GCC on x86_64 evaluates
+  arguments right to left, GCC on AArch64 and Clang on every target left to
+  right. Never put two calls whose side effects interact in one argument list.
+  VPI is the usual case: every VPI call but `vpi_chk_error` resets the error
+  status (IEEE 1800-2009 38.2), so `vpi_printf("%s %d", vpi_get_str(...),
+  vpi_chk_error(NULL))` printed level 3 on x86_64 and 0 on every arm64 lane
+  (A19-D7, A19-D8); read the status into a variable first.
+  `tests/vpi_application_sources.rs` rejects that shape in test C sources, and
+  `LLG_CC=clang` reproduces the arm64 order on x86_64.
+- `long double` is the 80-bit x87 format on x86_64 Linux, software IEEE
+  binary128 on Linux arm64 (slow) and plain `double` on Apple arm64 and every
+  MSVC target. Never rely on its extra precision for an expected output: the VPI
+  time conversions in `src/sim/rt/llg_vpi.c` that widen through it agree across
+  targets only while the product stays within 2^53.
+- Apple's arm64 ABI passes every variadic argument on the stack in its own
+  8-byte slot, while AAPCS64 (Linux) and x86_64 pass them in registers like named
+  arguments. Call a variadic runtime entry (`llg_display`/`llg_write`, the
+  `svGet*ArrElem*` index lists, `vpi_printf`, `vpi_control`) only through its
+  prototype, never through a non-variadic function pointer or an undeclared
+  name, and pass each argument with the exact type `va_arg` reads (an `int`
+  where a 64-bit value is read leaves the slot's upper half unspecified).
+- Read words out of byte buffers with `memcpy`, as `llg_dpi.c` and
+  `value_gmp/consumer_bridge.c` do. A misaligned dereference is undefined on
+  every target; it happens to work for ordinary loads on x86_64 and AArch64, but
+  AArch64 faults on misaligned atomic and exclusive accesses. The x86_64 UBSan
+  job (`-fsanitize=undefined`) reports misaligned dereferences.
+- `__int128` exists in GCC and Clang on both ISAs, never in MSVC; the runtime
+  does without it (`value/operations.c` divides with `uint64_t` estimates). The
+  runtime uses no x86 or NEON intrinsics; the bundled GMP subset is generic C,
+  with `longlong.h` inline assembly per ISA under GCC/Clang. Put any new
+  compiler-specific code behind `llg_compiler.h`.
+
+### Memory, floating point and pages
+
+- x86_64 keeps loads and stores in program order except a store followed by a
+  load; AArch64 may reorder all four combinations. Threads (`llg_dpi_context`
+  call contexts, the `llg_wave.c` writer thread) share state only through a mutex or the
+  `llg_platform.h` atomics (acquire loads, release stores,
+  `llg_atomic_store_load_fence` for a store-then-load handshake), never through
+  plain or `volatile` variables: a missing barrier that x86_64 forgives is a
+  lost wake-up or a stale read on arm64. MSVC's ARM64 default `/volatile:iso`
+  gives `volatile` no ordering; the MSVC branch uses full-barrier `Interlocked`
+  intrinsics. Safe Rust is unaffected; review any `Ordering::Relaxed` that
+  publishes data.
+- Clang contracts `a * b + c` within one expression into a fused multiply-add
+  by default (`-ffp-contract=on`), which every AArch64 has and baseline x86_64
+  lacks, so `real` results from Clang-built models (macOS arm64, `LLG_CC=clang`
+  on Linux arm64) can differ from x86_64 in the last bit. GCC does not contract
+  in the ISO C11 mode models build with (`CMAKE_C_EXTENSIONS OFF`). Keep
+  expected outputs off the last bit of such expressions;
+  `LLG_CFLAGS=-ffp-contract=off` makes Clang models match x86_64 bit for bit,
+  and `clang -mfma` reproduces arm64 on x86_64.
+- A NaN made by an invalid operation (`0.0/0.0`, `inf - inf`) has the sign bit
+  set on x86_64 (SSE default NaN) and clear on AArch64: glibc prints `-nan`
+  against `nan`, and `$realtobits` differs. Fixtures print NaN properties
+  (`sim_005/real_numeric_extremes`), never a computed NaN's text or bits.
+  Subnormals are kept on both (no flush-to-zero) unless `-ffast-math` is used,
+  which model flags never add.
+- Page size is 4 KiB on x86_64, 16 KiB on Apple arm64 and 4 KiB or 64 KiB on
+  Linux arm64 kernels: never hard-code 4096; `src/ffi/process_memory.rs` asks
+  `sysconf(_SC_PAGESIZE)`. Thread stack defaults depend on the C library, not
+  the ISA (musl 128 KiB, macOS 512 KiB); threads that run HDL code reserve their
+  stack explicitly (`LLG_DPI_CONTEXT_STACK_BYTES`).
 
 ## CI shell
 
