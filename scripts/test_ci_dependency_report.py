@@ -1,6 +1,7 @@
 import json
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -149,6 +150,20 @@ class RenderTest(unittest.TestCase):
         self.assertIn("## Actions\n\nNothing to report.", text)
         self.assertNotIn("unused", text)
         self.assertIn("- action x: timeout", text)
+
+
+class TomlParserTest(unittest.TestCase):
+    def test_module_imports_without_tomllib_and_main_names_the_requirement(self):
+        with mock.patch.object(report, "tomllib", None):
+            with self.assertRaises(SystemExit) as raised:
+                report.main(["--audit-json", "audit.json", "--output", "report.md"])
+        self.assertIn("tomllib", str(raised.exception))
+
+    def test_toml_parser_reads_cargo_tables_when_available(self):
+        if report.tomllib is None:
+            self.skipTest("neither tomllib nor tomli is installed")
+        manifest = report.tomllib.loads('[dependencies]\nserde = { version = "1", features = ["derive"] }\n')
+        self.assertEqual(report.direct_dependencies(manifest), {"serde": ["dependencies"]})
 
 
 if __name__ == "__main__":

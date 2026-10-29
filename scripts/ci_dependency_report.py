@@ -4,10 +4,17 @@ import json
 import re
 import subprocess
 import sys
-import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        tomllib = None
 
 CRATES_INDEX = "https://index.crates.io"
 RUST_REPOSITORY = "https://github.com/rust-lang/rust"
@@ -301,6 +308,8 @@ def main(argv=None):
     parser.add_argument("--github-output", type=Path)
     parser.add_argument("--run-url", default="")
     args = parser.parse_args(argv)
+    if tomllib is None:
+        raise SystemExit("ci_dependency_report.py: reading Cargo.toml needs Python 3.11+ (tomllib) or tomli")
 
     sections, errors, vulnerabilities = gather(args.root, args.audit_json)
     args.output.write_text(render_report(sections, errors, args.run_url), encoding="utf-8")
