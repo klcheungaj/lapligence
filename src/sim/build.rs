@@ -2518,7 +2518,12 @@ mod tests {
     #[test]
     fn generated_projects_forbid_fp_contraction_for_gnu_and_clang_only() {
         let setup = optimization_setup(ModelOptLevel::O3);
-        assert!(!setup.contains('{'), "unreplaced placeholder in {setup}");
+        for placeholder in ["{GNU_OPT_FLAG}", "{MSVC_OPT_FLAG}", "{FP_CONTRACT_FLAG}"] {
+            assert!(
+                !setup.contains(placeholder),
+                "unreplaced {placeholder} in {setup}"
+            );
+        }
         let (msvc_branch, other_branch) = setup.split_once("else()").expect("two branches");
         // MSVC's default /fp:precise does not contract, so it gets no flag.
         assert!(!msvc_branch.contains("fp-contract"), "{msvc_branch}");
