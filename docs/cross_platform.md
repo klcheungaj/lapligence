@@ -302,14 +302,20 @@ mismatch; items name an x86_64 reproduction where one exists.
   gives `volatile` no ordering; the MSVC branch uses full-barrier `Interlocked`
   intrinsics. Safe Rust is unaffected; review any `Ordering::Relaxed` that
   publishes data.
-- Clang contracts `a * b + c` within one expression into a fused multiply-add
-  by default (`-ffp-contract=on`), which every AArch64 has and baseline x86_64
-  lacks, so `real` results from Clang-built models (macOS arm64, `LLG_CC=clang`
-  on Linux arm64) can differ from x86_64 in the last bit. GCC does not contract
-  in the ISO C11 mode models build with (`CMAKE_C_EXTENSIONS OFF`). Keep
-  expected outputs off the last bit of such expressions;
-  `LLG_CFLAGS=-ffp-contract=off` makes Clang models match x86_64 bit for bit,
-  and `clang -mfma` reproduces arm64 on x86_64.
+- Floating-point contraction is off (user decision 2026-10-29): models and the
+  runtime build with `-ffp-contract=off` on GCC, Clang and AppleClang, so each
+  `real` operator rounds on its own and results are bit-identical on every
+  platform and compiler. IEEE 1800 defines `real` as an IEEE 754 double with
+  separate operators. Clang otherwise contracts `a * b + c` within one
+  expression into a fused multiply-add (`-ffp-contract=on`), which every
+  AArch64 has and baseline x86_64 lacks, and GCC contracts in GNU C mode; `real`
+  math is rarely a simulation hot spot. The generated project appends the flag
+  after `LLG_CFLAGS`, so a user flag cannot re-enable it, and the runtime cache
+  key covers it. MSVC needs none from Visual Studio 2022 on: its default
+  `/fp:precise` generates no contractions there (Microsoft's `/fp` reference; older
+  versions could contract under `/fp:precise`, so build models with 2022 or newer).
+  User DPI/VPI C libraries are built by the user and keep the user's flags.
+  Never enable contraction or `-ffast-math` for model or runtime sources.
 - A NaN made by an invalid operation (`0.0/0.0`, `inf - inf`) has the sign bit
   set on x86_64 (SSE default NaN) and clear on AArch64: glibc prints `-nan`
   against `nan`, and `$realtobits` differs. Fixtures print NaN properties

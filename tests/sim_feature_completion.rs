@@ -311,6 +311,9 @@ mod sim_099;
 #[path = "sim_feature_completion/ki_class_defects.rs"]
 mod ki_class_defects;
 
+#[path = "sim_feature_completion/ki_fp_contract.rs"]
+mod ki_fp_contract;
+
 #[test]
 fn component_fixture_integrity() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

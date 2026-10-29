@@ -194,7 +194,17 @@ target_include_directories(llg_runtime PRIVATE ${CMAKE_SOURCE_DIR})
 {WAVE_DEFINITION}
 "#;
 
-// Keep the configuration free of optimization flags so user flags come last.
+/// GCC/Clang/AppleClang flag that forbids fused multiply-add contraction, so
+/// `real` operators round one by one on every host ([cross-platform
+/// guide](../../docs/cross_platform.md#memory-floating-point-and-pages)). MSVC
+/// needs none: its default `/fp:precise` does not contract. The project
+/// appends it after the user flags (the last contraction option wins), so
+/// `LLG_CFLAGS` cannot re-enable contraction. User DPI/VPI libraries are built
+/// by the user and keep the user's flags.
+const FP_CONTRACT_FLAG: &str = "-ffp-contract=off";
+
+// Keep the configuration free of optimization flags so user flags come last,
+// except for the contraction flag, which has no user override.
 // A normal variable shadows the cached user flags without accumulating prefixes
 // when the same build directory is configured again.
 const OPTIMIZATION_CMAKE_TEMPLATE: &str = r#"if(MSVC)
@@ -203,6 +213,9 @@ const OPTIMIZATION_CMAKE_TEMPLATE: &str = r#"if(MSVC)
 else()
   set(CMAKE_C_FLAGS_RELEASE "-DNDEBUG")
   set(CMAKE_C_FLAGS "{GNU_OPT_FLAG} -Wall -Wno-unused-function ${CMAKE_C_FLAGS}")
+  if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} {FP_CONTRACT_FLAG}")
+  endif()
 endif()
 "#;
 
@@ -268,6 +281,7 @@ fn optimization_setup(level: ModelOptLevel) -> String {
     OPTIMIZATION_CMAKE_TEMPLATE
         .replace("{GNU_OPT_FLAG}", level.gnu_flag())
         .replace("{MSVC_OPT_FLAG}", level.msvc_flag())
+        .replace("{FP_CONTRACT_FLAG}", FP_CONTRACT_FLAG)
 }
 
 /// Compile `target` against the bundled zlib under `zlib/`. Its symbols are
@@ -1628,6 +1642,7 @@ fn runtime_cache_key_with_compiler(
         RUNTIME_CMAKELISTS_TEMPLATE,
         include_str!("build/value.rs"),
         OPTIMIZATION_CMAKE_TEMPLATE,
+        FP_CONTRACT_FLAG,
         opts.model_opt_level.gnu_flag(),
         opts.model_opt_level.msvc_flag(),
         RUNTIME_WAVE_DEFINITION,
@@ -2498,6 +2513,51 @@ mod tests {
                 .unwrap(),
             "Release"
         );
+    }
+
+    #[test]
+    fn generated_projects_forbid_fp_contraction_for_gnu_and_clang_only() {
+        let setup = optimization_setup(ModelOptLevel::O3);
+        assert!(!setup.contains('{'), "unreplaced placeholder in {setup}");
+        let (msvc_branch, other_branch) = setup.split_once("else()").expect("two branches");
+        // MSVC's default /fp:precise does not contract, so it gets no flag.
+        assert!(!msvc_branch.contains("fp-contract"), "{msvc_branch}");
+        assert!(!msvc_branch.contains("/fp:"), "{msvc_branch}");
+        // Unknown compilers in the non-MSVC branch are left alone.
+        let guarded = other_branch
+            .split_once("if(CMAKE_C_COMPILER_ID MATCHES \"GNU|Clang\")")
+            .expect("compiler-ID guard")
+            .1;
+        assert!(
+            guarded.contains("set(CMAKE_C_FLAGS \"${CMAKE_C_FLAGS} -ffp-contract=off\")"),
+            "{guarded}"
+        );
+        assert_eq!(other_branch.matches("fp-contract").count(), 1);
+        // The runtime archive and the model share the setup; `--gen-only`
+        // projects and cached-runtime builds both inherit the flag.
+        for template in [CMAKELISTS_TEMPLATE, RUNTIME_CMAKELISTS_TEMPLATE] {
+            assert!(template.contains("{OPTIMIZATION_SETUP}"), "{template}");
+            assert!(!template.contains("-ffast-math"), "{template}");
+        }
+        assert!(!setup.contains("-ffast-math") && !setup.contains("/fp:fast"));
+    }
+
+    #[test]
+    fn written_model_project_carries_the_fp_contract_flag() {
+        let directory =
+            std::env::temp_dir().join(format!("llg-fp-contract-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let extra = [("exports.c", "int llg_unit_probe(void);\n")];
+        generate_model_sources_with_opts(&directory, &extra, &CmakeBuildOpts::default()).unwrap();
+        let cmake = std::fs::read_to_string(directory.join("CMakeLists.txt")).unwrap();
+        let flag = cmake.find("-ffp-contract=off").expect("flag in project");
+        let guard = cmake
+            .find("if(CMAKE_C_COMPILER_ID MATCHES \"GNU|Clang\")")
+            .expect("compiler-ID guard");
+        assert!(guard < flag, "{cmake}");
+        assert_eq!(cmake.matches("-ffp-contract=off").count(), 1, "{cmake}");
+        std::fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]
