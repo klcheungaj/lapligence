@@ -3495,23 +3495,7 @@ public:
     }
     capture.output.semantic_nodes[static_cast<size_t>(id)] = result;
     if (const Symbol* target = expression.getSymbolReference()) {
-      const uint64_t targetId = capture.ensureSemantic(target);
-      auto& targetNode =
-          capture.output.semantic_nodes[static_cast<size_t>(targetId)];
-      if (targetNode.name.len == 0) {
-        targetNode.kind = semanticSymbolKind(target->kind);
-        if (target->kind == SymbolKind::LocalAssertionVar)
-          targetNode.subkind = LLG_SLANG_VARIABLE_ASSERTION_LOCAL;
-        targetNode.name = storeString(capture.output, target->name);
-        targetNode.detail = storeString(capture.output, toString(target->kind));
-        targetNode.range = target->location.valid()
-            ? capture.span(target->location, target->name.size())
-            : LlgSlangSourceRange{LLG_SLANG_INVALID_ID, 0, 0};
-      }
-      if (targetNode.type_id == LLG_SLANG_INVALID_ID &&
-          ValueSymbol::isKind(target->kind)) {
-        targetNode.type_id = capture.type(target->as<ValueSymbol>().getType());
-      }
+      const uint64_t targetId = describeReferenceTarget(*target);
       capture.output.semantic_nodes[static_cast<size_t>(id)].target_id = targetId;
       capture.semanticEdge(id, LLG_SLANG_EDGE_REFERENCE, targetId);
     }
@@ -4070,6 +4054,27 @@ private:
                              LLG_SLANG_LEXICAL_ROLE_REFERENCE);
   }
 
+  // The node of a symbol an expression references (getSymbolReference),
+  // described from the symbol when nothing captured it yet: a struct member
+  // is no scope member, so no traversal visits it.
+  uint64_t describeReferenceTarget(const Symbol& target) {
+    const uint64_t targetId = capture.ensureSemantic(&target);
+    auto& targetNode = capture.output.semantic_nodes[static_cast<size_t>(targetId)];
+    if (targetNode.name.len == 0) {
+      targetNode.kind = semanticSymbolKind(target.kind);
+      if (target.kind == SymbolKind::LocalAssertionVar)
+        targetNode.subkind = LLG_SLANG_VARIABLE_ASSERTION_LOCAL;
+      targetNode.name = storeString(capture.output, target.name);
+      targetNode.detail = storeString(capture.output, toString(target.kind));
+      targetNode.range = target.location.valid()
+          ? capture.span(target.location, target.name.size())
+          : LlgSlangSourceRange{LLG_SLANG_INVALID_ID, 0, 0};
+    }
+    if (targetNode.type_id == LLG_SLANG_INVALID_ID && ValueSymbol::isKind(target.kind))
+      targetNode.type_id = capture.type(target.as<ValueSymbol>().getType());
+    return targetId;
+  }
+
   // Target node of a lexical binding. Declaration-only capture names the
   // node here, as its other syntax bindings do. Full capture keys it by
   // identity only, like its reference edges: the traversal fills every node it
@@ -4618,6 +4623,12 @@ private:
 
     template<std::derived_from<Expression> T>
     void handle(const T& expression) {
+      // Full capture describes a reference target where it captures the
+      // reference; no node is captured here, so describe it as that would.
+      if (!owner.capture.declarationOnly) {
+        if (const Symbol* target = expression.getSymbolReference())
+          owner.describeReferenceTarget(*target);
+      }
       owner.bindValueName(expression);
       owner.bindNameTokens(expression);
       if constexpr (std::same_as<T, InvalidExpression>) {
@@ -4713,7 +4724,7 @@ private:
     if (!declaration || !assertionDeclarations.insert(declaration).second)
       return;
     const ASTContext context(scope, LookupLocation::max);
-    AssertionDeclarationNames names(*this, context);
+    LookupNames names(*this, context);
     declaration->visit(names);
   }
 
@@ -4760,10 +4771,12 @@ private:
     }
   }
 
-  class AssertionDeclarationNames final
-      : public syntax::SyntaxVisitor<AssertionDeclarationNames> {
+  // Binds every name written in a syntax subtree by looking it up in one
+  // context (bindLookupName): assertion declarations and connection actuals
+  // that Slang never binds.
+  class LookupNames final : public syntax::SyntaxVisitor<LookupNames> {
   public:
-    AssertionDeclarationNames(SemanticCapture& owner, const ASTContext& context)
+    LookupNames(SemanticCapture& owner, const ASTContext& context)
         : owner(owner), context(context) {}
 
     void handle(const syntax::IdentifierNameSyntax& name) {
@@ -6492,6 +6505,7 @@ private:
     std::vector<bool> namedGroups(groups.size(), false);
     bool wildcard = false;
     uint32_t orderedIndex = 0;
+    std::unordered_set<std::string_view> namedSeen;
     for (const syntax::PortConnectionSyntax* syntaxConnection :
          instanceSyntax.connections) {
       if (syntaxConnection->kind != syntax::SyntaxKind::NamedPortConnection) {
@@ -6517,17 +6531,27 @@ private:
       const auto& named = syntaxConnection->as<syntax::NamedPortConnectionSyntax>();
       if (named.expr)
         capture.connectionActual(named.expr->sourceRange());
+      const std::string_view name = named.name.valueText();
+      bool connected = false;
       for (size_t index = 0; index < groups.size(); index++) {
         const ConnectionGroup& group = groups[index];
-        if (group.port->name == named.name.valueText()) {
+        if (group.port->name == name) {
           capture.lexicalBinding(named.name, markGroup(group, true),
                                  LLG_SLANG_LEXICAL_ROLE_CONNECTION_LABEL);
           if (!capture.declarationOnly)
             markByName(group);
           namedGroups[index] = true;
+          connected = true;
           break;
         }
       }
+      // Slang binds the actual of the first named connection of each port
+      // only: one naming no port (PortDoesNotExist) or repeating a name
+      // (DuplicatePortConnection) is reported and never bound.
+      if (name.empty() || !namedSeen.insert(name).second)
+        connected = false;
+      if (!connected && named.expr)
+        bindUnboundConnectionNames(symbol, *named.expr);
     }
     // `.*` connects every port not named explicitly by name (23.3.2.4).
     if (wildcard && !capture.declarationOnly) {
@@ -6563,6 +6587,48 @@ private:
       }
     }
   }
+
+  // The actual of a named connection that Slang never binds (see
+  // addConnectionLabelBindings) carries no expression, so none of its names
+  // would get a token. Bind it here in the instance's connection context
+  // (PortConnectionBuilder: the parent scope, after the instance), as Slang
+  // binds a black-box actual (bindUnknownPortConn), and bind the names that
+  // resolve lexically only: no semantic node is added, and no diagnostic
+  // reaches the snapshot, which took them before capture. An assertion
+  // actual, or one whose binding fails (an instance name is not a value), is
+  // looked up name by name instead. Instance array elements share the
+  // syntax, which is bound once.
+  void bindUnboundConnectionNames(const InstanceSymbol& instance,
+                                  const syntax::PropertyExprSyntax& actual) {
+    const Scope* scope = instance.getParentScope();
+    if (!scope || !unboundConnections.insert(&actual).second)
+      return;
+    const ASTContext context(*scope, LookupLocation::after(instance),
+                             ASTFlags::NonProcedural);
+    const syntax::ExpressionSyntax* expression = nullptr;
+    if (actual.kind == syntax::SyntaxKind::SimplePropertyExpr) {
+      const syntax::SequenceExprSyntax* sequence =
+          actual.as<syntax::SimplePropertyExprSyntax>().expr;
+      if (sequence->kind == syntax::SyntaxKind::SimpleSequenceExpr) {
+        const auto& simple = sequence->as<syntax::SimpleSequenceExprSyntax>();
+        if (!simple.repetition)
+          expression = simple.expr;
+      }
+    }
+    if (expression) {
+      const Expression& bound = Expression::bind(
+          *expression, context,
+          ASTFlags::AllowUnboundedLiteral | ASTFlags::StreamingAllowed);
+      bindInvalidSubtree(&bound);
+      if (!bound.bad())
+        return;
+    }
+    LookupNames names(*this, context);
+    actual.visit(names);
+  }
+
+  // Connection actuals already bound by bindUnboundConnectionNames.
+  std::unordered_set<const syntax::SyntaxNode*> unboundConnections;
 
   template<std::derived_from<Expression> T>
   void addExpressionRoles(const T& expression, uint64_t id) {

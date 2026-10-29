@@ -903,7 +903,8 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   file is `requirements_pkg.sv`, built-ins are in `builtin_functions.sv`,
   macros, directive operands, class-scope names and delays, with the empty
   `textDocument/documentColor` answer, are in `macros_and_class_scope.sv`),
-  `size_casts.sv` (ST-52) and the no-config package example
+  `size_casts.sv` (ST-52), `port_connections.sv` with its definition in
+  `port_connections_probe.sv` (ST-76, ST-77) and the no-config package example
   `pkg_example_top.sv` / `pkg_example_pkg.sv` (ST-50, ST-51, started through
   `LspProcess::initialize_with_token_refresh`, which advertises
   `refreshSupport` and does not wait for the first analysis); the unit tests in

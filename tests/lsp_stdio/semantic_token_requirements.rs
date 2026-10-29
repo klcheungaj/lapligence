@@ -1474,3 +1474,157 @@ fn st_70_to_st_75_assertion_and_event_control_names_in_both_serving_paths() {
     assert_eq!(streams[0], streams[1], "ST-24: serving paths differ");
     client.shutdown();
 }
+
+const PORT_CONNECTION_SOURCE: &str =
+    include_str!("../fixtures/semantic_tokens/port_connections.sv");
+/// The definition `port_connections.sv` instantiates, declared in another
+/// project file without most of the ports the instance connects.
+const PORT_CONNECTION_PROBE: &str =
+    include_str!("../fixtures/semantic_tokens/port_connections_probe.sv");
+
+const PORT_CONNECTION_CHECKS: &[Check] = &[
+    // ST-76: actuals of ports the definition declares.
+    ("ST-76", "clk  (clk)", 0, 6, "variable", VAR),
+    ("ST-76", "bw_0 (bw[0])", 0, 6, "variable", VAR),
+    ("ST-76", "bw_1 (bw[1])", 0, 6, "variable", VAR),
+    // ST-76: actuals of ports it does not declare.
+    ("ST-76", "bw_2 (bw[2])", 0, 6, "variable", VAR),
+    ("ST-76", "st_a[0],\n        st_b[0]", 0, 0, "variable", VAR),
+    ("ST-76", "st_b[0],", 0, 0, "variable", VAR),
+    ("ST-76", "st_a[1],", 0, 0, "variable", VAR),
+    ("ST-76", "st_b[1]\n", 0, 0, "variable", VAR),
+    ("ST-76", "dur_0(dur[0])", 0, 6, "variable", VAR),
+    (
+        "ST-76",
+        "cnt[0] + cnt[1] + cnt[2] + cnt[3]",
+        0,
+        0,
+        "variable",
+        VAR,
+    ),
+    (
+        "ST-76",
+        "cnt[0] + cnt[1] + cnt[2] + cnt[3]",
+        0,
+        9,
+        "variable",
+        VAR,
+    ),
+    (
+        "ST-76",
+        "cnt[0] + cnt[1] + cnt[2] + cnt[3]",
+        0,
+        18,
+        "variable",
+        VAR,
+    ),
+    (
+        "ST-76",
+        "cnt[0] + cnt[1] + cnt[2] + cnt[3]",
+        0,
+        27,
+        "variable",
+        VAR,
+    ),
+    ("ST-76", "rec_f(rec.f)", 0, 6, "variable", VAR),
+    ("ST-76", "rec_f(rec.f)", 0, 10, "property", NONE),
+    // ST-76: a repeated connection keeps the label and its actual.
+    (
+        "ST-76",
+        "bw_0 (bw[3])",
+        0,
+        0,
+        "function",
+        &["connectionLabel"],
+    ),
+    ("ST-76", "bw_0 (bw[3])", 0, 6, "variable", VAR),
+    // ST-76: actuals of an unknown definition.
+    ("ST-76", "{st_a[1], st_b[1]}", 0, 1, "variable", VAR),
+    ("ST-76", "{st_a[1], st_b[1]}", 0, 10, "variable", VAR),
+    ("ST-76", "dur_1 (dur[1])", 0, 7, "variable", VAR),
+    ("ST-76", "cnt[1] + cnt[2])", 0, 0, "variable", VAR),
+    ("ST-76", "cnt[1] + cnt[2])", 0, 9, "variable", VAR),
+    // ST-77: out-of-range constant selects (`bw` has 4 elements, `dur` 2,
+    // `cnt` 4) in connections, a continuous assignment and procedural code.
+    ("ST-77", "oob  (bw[7])", 0, 6, "variable", VAR),
+    ("ST-77", "oob   (dur[5])", 0, 7, "variable", VAR),
+    ("ST-77", "bw[6] = dur[4]", 0, 0, "variable", VAR),
+    ("ST-77", "bw[6] = dur[4]", 0, 8, "variable", VAR),
+    ("ST-77", "cnt[9] = cnt[8] + T", 0, 0, "variable", VAR),
+    ("ST-77", "cnt[9] = cnt[8] + T", 0, 9, "variable", VAR),
+    ("ST-77", "cnt[9] = cnt[8] + T", 0, 18, "variable", RO),
+];
+
+/// ST-76 and ST-77 in both serving paths: every name of a port connection
+/// actual keeps its type and navigates to its declaration, whether the
+/// definition (in another project file) declares the port, lacks it or the
+/// connection repeats a port, and for an unknown definition; out-of-range
+/// constant selects keep their names' types everywhere.
+#[test]
+fn st_76_and_st_77_port_connection_actuals_in_both_serving_paths() {
+    let fixture = FixtureTree::new();
+    let root = fixture.root("root-a");
+    let path = root.join("st_port_connections.sv");
+    let probe_path = root.join("st_port_connections_probe.sv");
+    fs::write(&path, PORT_CONNECTION_SOURCE).expect("write port connection fixture");
+    fs::write(&probe_path, PORT_CONNECTION_PROBE).expect("write port connection probe");
+    let uri = file_uri(&path);
+    let mut client = LspProcess::spawn(&fixture.root);
+    let initialize = client
+        .initialize(&[("root-a", &root)], default_init_options())
+        .unwrap();
+    let legend = &initialize["capabilities"]["semanticTokensProvider"]["legend"];
+    let types = legend_names(legend, "tokenTypes");
+    let modifiers = legend_names(legend, "tokenModifiers");
+    wait_for_diagnostics(&mut client, &uri, |_| true);
+    let mut streams = Vec::new();
+    for opened in [false, true] {
+        if opened {
+            client
+                .open(&path, PORT_CONNECTION_SOURCE)
+                .expect("open port connection buffer");
+        }
+        let label = if opened { "open buffer" } else { "project" };
+        let result = client
+            .request(
+                "textDocument/semanticTokens/full",
+                json!({ "textDocument": { "uri": uri } }),
+            )
+            .expect("port connection semantic token response");
+        let rows = semantic_token_rows(&result, &types, &modifiers);
+        for check in PORT_CONNECTION_CHECKS {
+            assert_check(&rows, PORT_CONNECTION_SOURCE, check, label);
+        }
+        streams.push(result["data"].clone());
+        for (needle, offset, declaration) in [
+            ("bw_2 (bw[2])", 6, "bw   [T]"),
+            ("st_b[0],", 0, "st_b [N]"),
+            ("cnt[0] + cnt[1] + cnt[2] + cnt[3]", 27, "cnt  [T]"),
+            ("rec_f(rec.f)", 10, "f;"),
+            ("bw_0 (bw[3])", 6, "bw   [T]"),
+            ("oob  (bw[7])", 6, "bw   [T]"),
+        ] {
+            let (line, col) = position_of(PORT_CONNECTION_SOURCE, needle, 0);
+            let response = client
+                .request(
+                    "textDocument/definition",
+                    json!({
+                        "textDocument": { "uri": uri },
+                        "position": { "line": line, "character": col + offset }
+                    }),
+                )
+                .expect("port connection definition response");
+            let what = format!("ST-76 {label} {needle:?}+{offset}");
+            let (target, start) = single_location(&response, &what);
+            let expected = position_of(PORT_CONNECTION_SOURCE, declaration, 0);
+            assert_eq!(target, uri, "{what}");
+            assert_eq!(
+                (start["line"].as_u64(), start["character"].as_u64()),
+                (Some(expected.0), Some(expected.1)),
+                "{what}: {response}"
+            );
+        }
+    }
+    assert_eq!(streams[0], streams[1], "ST-24: serving paths differ");
+    client.shutdown();
+}

@@ -2621,6 +2621,40 @@ symbol index and dump kind names unchanged.
 `llg_ls --dump-tokens` on a module with an output port, a class with a
 method, and a named sequence referenced by an assertion.
 
+## Unbound connection actuals count as unused (llg_ls, lint)
+
+**Status:** found by LS-TOKENS-14, open. Their names have tokens and
+navigation since LS-TOKENS-14 (ST-76).
+
+### Symptom
+
+A signal read only in the actual of a named connection to a port the
+definition does not declare (`.bw_2(bw[2])` on a probe stub without `bw_2`,
+Slang `PortDoesNotExist`) or of a repeated connection
+(`DuplicatePortConnection`) is reported as unused (Slang `UnusedVariable`,
+lint `unused-signal`), and an out-of-range constant select in such an actual
+gets no `IndexOOB` or `out-of-range-select` diagnostic. The instance already
+carries the port error.
+
+### Cause
+
+Slang never binds these actuals, so neither its analysis nor the owned DB
+sees the reads. The capture binds their names for tokens and navigation
+only (`bindUnboundConnectionNames` in `src/wrapper/slang_c_api.cpp`), after
+the diagnostics are taken, and adds no semantic node.
+
+### Intended direction
+
+Leave the reads out while the port error stands (fixing the port removes
+both findings), or capture the actual as a read-only use that the analysis
+and lint count without lowering it.
+
+### Reproduce
+
+`module s(input logic a); endmodule module t; logic [7:0] b [2]; s u(.a(1'b0),
+.x(b[5])); endmodule` in `llg_ls`: `b` is reported unused and `b[5]` is not
+reported.
+
 ## Open-buffer token parse sees other files through packages and definitions only (llg_ls)
 
 **Status:** partially fixed by LS-PKG, LS-PKG-2 and LS-TOKENS-13. Package items

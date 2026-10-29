@@ -108,7 +108,11 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   unbound identifiers. The width of a size cast (`(W-1)'(x)`, IEEE 1800-2009
   6.24.1) is evaluated and discarded by Slang, so capture looks its names up
   again in the scope of the symbol or statement block being visited and binds
-  them as references (`bindSizeCastNames`).
+  them as references (`bindSizeCastNames`). Slang never binds the actual of a
+  named connection to a port the definition lacks (PortDoesNotExist) or of a
+  repeated one (DuplicatePortConnection); capture binds it in the instance's
+  connection context after the diagnostics are taken and walks it the same
+  way, lexical bindings only (`bindUnboundConnectionNames`).
 - Named statement blocks, labeled statements (Slang makes each one a named
   block) and generate block names get `LLG_SLANG_LEXICAL_BLOCK` from the
   syntax, so declaration-only capture classifies them too: the opening name is

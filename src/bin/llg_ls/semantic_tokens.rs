@@ -1494,6 +1494,58 @@ endmodule\n";
         }
     }
 
+    /// A known definition lacking most connected ports, a repeated port, an
+    /// unknown definition and out-of-range constant selects (ST-76, ST-77).
+    const UNBOUND_CONNECTION_SOURCE: &str = "module probe(input logic clk, input logic [31:0] a0);
+endmodule
+module top;
+  typedef struct packed { logic [7:0] f; } rec_t;
+  logic clk;
+  reg r [2];
+  logic [31:0] bw [4];
+  logic [63:0] cnt [4];
+  rec_t rec;
+  probe u (.clk(clk), .a0(bw[0]), .a1(bw[1]), .st({r[0], r[1]}), .sum(cnt[0] + cnt[3]), .oob(bw[7]), .m(rec.f), .a0(bw[2]));
+  missing v (.st({r[0], r[5]}), .sum(cnt[1] + cnt[9]));
+  assign bw[6] = cnt[8];
+endmodule
+";
+
+    /// Every name of a connection actual keeps its type in every capture
+    /// profile, also where Slang binds no actual (a port the definition does
+    /// not declare, a repeated port), and out-of-range selects keep theirs.
+    #[test]
+    fn unbound_connection_actuals_and_out_of_range_selects_keep_their_types_in_every_profile() {
+        let source = UNBOUND_CONNECTION_SOURCE;
+        for (profile, tokens) in profiles(source) {
+            for (line, word, nth, want) in [
+                (9, "clk", 1, TT_VARIABLE),
+                (9, "bw", 0, TT_VARIABLE),
+                (9, "bw", 1, TT_VARIABLE),
+                (9, "r", 0, TT_VARIABLE),
+                (9, "r", 1, TT_VARIABLE),
+                (9, "cnt", 0, TT_VARIABLE),
+                (9, "cnt", 1, TT_VARIABLE),
+                (9, "bw", 2, TT_VARIABLE),
+                (9, "rec", 0, TT_VARIABLE),
+                (9, "f", 0, TT_PROPERTY),
+                (9, "bw", 3, TT_VARIABLE),
+                (10, "r", 0, TT_VARIABLE),
+                (10, "r", 1, TT_VARIABLE),
+                (10, "cnt", 0, TT_VARIABLE),
+                (10, "cnt", 1, TT_VARIABLE),
+                (11, "bw", 0, TT_VARIABLE),
+                (11, "cnt", 0, TT_VARIABLE),
+            ] {
+                assert_eq!(
+                    type_at(&tokens, source, line, word, nth),
+                    want,
+                    "{profile}: {word}#{nth} on line {line}"
+                );
+            }
+        }
+    }
+
     /// Named, implicit and interface port labels and value and type
     /// parameter labels.
     const CONNECTION_SOURCE: &str = "interface bus_if; logic s; modport mp(input s); endinterface

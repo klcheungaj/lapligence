@@ -127,6 +127,34 @@ positional words and bindings come from the capture in
     v = W'(a);              // this W is the block's
   end
   ```
+- **ST-76** Every name in a port connection actual keeps its type (ST-14
+  to ST-18) and navigates to its declaration, in concatenations, element,
+  part and member selects and arithmetic, whatever the instance connects it
+  to: a port of a known definition, a black box (unknown definition), a
+  port the definition does not declare (a probe stub with fewer ports) and
+  a repeated named connection. Slang binds the actual of neither of the
+  last two (it reports PortDoesNotExist and DuplicatePortConnection), so
+  the capture binds it in the instance's connection context
+  (`bindUnboundConnectionNames` in `src/wrapper/slang_c_api.cpp`) for
+  tokens and navigation only: it adds no semantic node and no diagnostic.
+  Fixture: `tests/fixtures/semantic_tokens/port_connections.sv`, with the
+  definition in `port_connections_probe.sv`.
+
+  ```systemverilog
+  pc_probe probe (            // declares clk, bw_0 and bw_1 only
+      .bw_2  (bw[2]),         // bw: variable
+      .status({st_a[0], st_b[0]}),
+      .sum   (cnt[0] + cnt[1]),
+      .rec_f (rec.f));        // f: property
+  ```
+- **ST-77** A constant select outside the declared range (`bw[7]` of
+  `logic [31:0] bw [4]`) keeps the token of the selected name in port
+  connection actuals, continuous assignments and procedural code; the
+  select is legal and only its value is affected (7.4.6: "If an index
+  expression is out of the address bounds or if any bit in the address is X
+  or Z, then the index shall be invalid. The result of reading from an
+  array with an invalid index shall return the default uninitialized value
+  for the array element type.").
 
 ## Built-in functions and methods
 
