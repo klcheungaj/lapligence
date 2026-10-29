@@ -37,6 +37,13 @@ pub(crate) fn c_compiler_available(compiler: &str) -> bool {
     command.stdin(Stdio::null()).output().is_ok()
 }
 
+/// Every MSVC `/W4 /WX` build here defines `_CRT_SECURE_NO_WARNINGS`, as the
+/// `runtime_value_storage` CMake probes do: the UCRT deprecates portable C11
+/// routines (`sprintf`, `fopen`, `getenv`, ...) in favour of Annex K `_s`
+/// variants (C4996), which strict portable C cannot use. Narrowing and other
+/// `/W4` diagnostics stay errors.
+const CRT_SECURE_NO_WARNINGS: &str = "/D_CRT_SECURE_NO_WARNINGS";
+
 /// Optimization of a [`strict_c11_executable`] build.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Optimize {
@@ -72,7 +79,7 @@ pub(crate) fn strict_c11_executable(
             level,
             "/W4",
             "/WX",
-            "/D_CRT_SECURE_NO_WARNINGS",
+            CRT_SECURE_NO_WARNINGS,
             "/I.",
         ]);
     } else {
@@ -201,7 +208,14 @@ pub(crate) fn static_archive(
     let mut compile = Command::new(&compiler);
     if msvc {
         compile
-            .args(["/nologo", "/std:c11", "/W4", "/WX", "/c"])
+            .args([
+                "/nologo",
+                "/std:c11",
+                "/W4",
+                "/WX",
+                CRT_SECURE_NO_WARNINGS,
+                "/c",
+            ])
             .arg(format!("/I{}", root.join("src/sim/rt").display()))
             .arg(format!("/Fo{}", object.display()));
     } else {
@@ -308,7 +322,15 @@ pub(crate) fn shared_library(
     let library = if msvc {
         let module = directory.join(format!("{stem}_dll.dll"));
         command
-            .args(["/nologo", "/std:c11", "/W4", "/WX", "/LD", "/MD"])
+            .args([
+                "/nologo",
+                "/std:c11",
+                "/W4",
+                "/WX",
+                CRT_SECURE_NO_WARNINGS,
+                "/LD",
+                "/MD",
+            ])
             .arg(format!("/I{}", root.join("src/sim/rt").display()))
             .arg(format!(
                 "/Fo{}",

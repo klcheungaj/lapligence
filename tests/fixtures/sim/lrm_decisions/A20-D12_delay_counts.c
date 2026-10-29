@@ -76,7 +76,7 @@ static PLI_INT32 d12(PLI_BYTE8* data) {
     static const int counts[] = {1, 2, 3, 6, 12, 4};
     for (int i = 0; i < 6; ++i) {
         char label[32];
-        sprintf(label, "path %d", counts[i]);
+        snprintf(label, sizeof(label), "path %d", counts[i]);
         get(label, path, counts[i], 0, 0);
     }
     get("gate 1", gb, 1, 0, 0);

@@ -1268,7 +1268,9 @@ static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is
                  * converted to the left-hand side size (decision A19-D5). */
                 if (!read_conn(slot->object, 1u, out, is_signed)) return 0;
                 if (out->is_real || !object->width) return 1;
-                sv4_t sized = sv4_resize(out->packed, object->width, *is_signed);
+                /* `*is_signed` is a 0/1 flag; the resize takes an `int8_t`. */
+                sv4_t sized =
+                    sv4_resize(out->packed, object->width, (int8_t)(*is_signed != 0));
                 sv4_replace(&out->packed, sized);
                 *is_signed = 0;
                 llg_sv4_set_signed(&out->packed, 0);

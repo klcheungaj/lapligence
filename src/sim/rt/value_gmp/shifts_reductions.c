@@ -39,7 +39,7 @@ g4_t llg_gmp_sv4_shift_wide(g4_t value, g4_t count, int right, int arithmetic) {
     uint64_t shift = cn ? cp[0] : 0;
     if (oversized || shift >= value.width) {
         uint8_t state = right && arithmetic && value.is_signed && value.width
-                            ? llg_gmp_sv4_state(value, value.width - 1u)
+                            ? (uint8_t)llg_gmp_sv4_state(value, value.width - 1u)
                             : 0;
         return llg_gmp_sv4_fill(state, value.width, value.is_signed);
     }
