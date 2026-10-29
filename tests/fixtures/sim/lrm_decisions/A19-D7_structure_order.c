@@ -10,8 +10,10 @@ static PLI_INT32 d7(PLI_BYTE8* data) {
     vpiHandle it = vpi_iterate(vpiProcess, tb);
     while ((h = vpi_scan(it))) {
         const char* name = vpi_get_str(vpiName, h);
-        vpi_printf("process %s name=%s(%d)\n", text(vpi_get_str(vpiType, h)), text(name),
-                   (int)vpi_chk_error(NULL));
+        /* Read the status before the next VPI call resets it: C leaves the
+         * evaluation order of the vpi_printf arguments unspecified. */
+        int level = (int)vpi_chk_error(NULL);
+        vpi_printf("process %s name=%s(%d)\n", text(vpi_get_str(vpiType, h)), text(name), level);
     }
     it = vpi_iterate(vpiContAssign, tb);
     while ((h = vpi_scan(it)))

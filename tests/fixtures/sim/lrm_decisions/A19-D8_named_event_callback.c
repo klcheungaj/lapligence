@@ -19,7 +19,10 @@ static PLI_INT32 watch(PLI_BYTE8* data) {
     s_vpi_value value;
     value.format = vpiIntVal;
     vpi_get_value(ev, &value);
-    vpi_printf("%s get level=%d\n", vpi_get_str(vpiType, ev), (int)vpi_chk_error(NULL));
+    /* Read the status before vpi_get_str resets it: C leaves the evaluation
+     * order of the vpi_printf arguments unspecified. */
+    int level = (int)vpi_chk_error(NULL);
+    vpi_printf("%s get level=%d\n", vpi_get_str(vpiType, ev), level);
     s_cb_data cb;
     s_vpi_time time;
     s_vpi_value format;

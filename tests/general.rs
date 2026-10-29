@@ -45,3 +45,4 @@ mod support_harness;
 mod syn003_pattern_lvalues_import;
 mod test_layout;
 mod vendor_patches;
+mod vpi_application_sources;

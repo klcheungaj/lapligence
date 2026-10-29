@@ -27,7 +27,10 @@ static PLI_INT32 d3(PLI_BYTE8* data) {
     value.format = vpiIntVal;
     value.value.integer = 0x5a;
     vpi_put_value(b, &value, NULL, vpiNoDelay);
-    vpi_printf("put %s level=%d\n", text(vpi_get_str(vpiFullName, b)), (int)vpi_chk_error(NULL));
+    /* Read the status before vpi_get_str resets it: C leaves the evaluation
+     * order of the vpi_printf arguments unspecified. */
+    int level = (int)vpi_chk_error(NULL);
+    vpi_printf("put %s level=%d\n", text(vpi_get_str(vpiFullName, b)), level);
     return 0;
 }
 
