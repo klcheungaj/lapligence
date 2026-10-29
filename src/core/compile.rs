@@ -915,11 +915,12 @@ pub fn compile(opts: &CompileOpts) -> Result<CompileOut, StartupError> {
             "source count exceeds the configured Slang limit",
         ));
     }
+    let in_memory = !opts.sources.is_empty() || !opts.library_sources.is_empty();
     compile_source_groups(
         &owned,
         &[],
         &library_owned,
-        &include_dirs,
+        &slang_include_dirs(&opts.include_dirs, &include_dirs, in_memory),
         &library_include_dirs,
         map_originals,
         &mut library_map_work,
@@ -3613,6 +3614,27 @@ fn resolve_path_include_dirs(include_dirs: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// The include search list [`compile`] hands to Slang: each resolved
+/// directory, then its spelling as given when in-memory sources are present
+/// and the two differ. Path-mode headers are admitted under resolved names,
+/// but in-memory sources keep the names their caller gave them (the language
+/// server names a header `<root>/inc/defs.svh` after the client's spelling of
+/// the root), and Slang's cache-only lookup finds a buffer only through the
+/// spelling it was registered under: with resolved directories alone, every
+/// in-memory include under a symlinked root (macOS `/var`, a Windows 8.3
+/// short name such as `RUNNER~1`) failed to open. Both spellings name one
+/// directory, so the search order between directories is unchanged.
+fn slang_include_dirs(given: &[String], resolved: &[String], in_memory: bool) -> Vec<String> {
+    let mut dirs = Vec::with_capacity(resolved.len());
+    for (given, resolved) in given.iter().zip(resolved) {
+        dirs.push(resolved.clone());
+        if in_memory && normalize_include_dir(given) != normalize_include_dir(resolved) {
+            dirs.push(given.clone());
+        }
+    }
+    dirs
+}
+
 fn resolve_path_include_dir(dir: &str) -> String {
     secure_fs::open_path(Path::new(&normalize_include_dir(dir)))
         .ok()
@@ -5589,6 +5611,51 @@ mod tests {
 
         std::fs::remove_file(&link).expect("remove project link");
         std::fs::remove_dir_all(&real).expect("remove real project");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn in_memory_include_resolves_under_a_symlinked_root_as_given() {
+        let real = temporary_path("symlinked-memory-real");
+        let link = temporary_path("symlinked-memory-link");
+        std::fs::create_dir_all(real.join("inc")).expect("create real include directory");
+        std::os::unix::fs::symlink(&real, &link).expect("link project root");
+
+        // The language server names admitted buffers after the client's
+        // spelling of the root (macOS: /var/..., which resolves to
+        // /private/var/...); the header must be found through the include
+        // directory spelled the same way.
+        let name = |relative: &str| link.join(relative).to_string_lossy().into_owned();
+        let out = compile(&CompileOpts {
+            sources: vec![
+                OwnedSource::compilation_unit(
+                    name("top.sv"),
+                    "`include \"defs.svh\"\nmodule top; wire [`WIDTH-1:0] data; endmodule\n",
+                ),
+                OwnedSource::include(name("inc/defs.svh"), "`define WIDTH 9\n"),
+            ],
+            include_dirs: vec![name("inc")],
+            ..CompileOpts::default()
+        })
+        .expect("compile in-memory sources under a symlinked root");
+        assert!(out.ok(), "diagnostics: {:?}", out.diagnostics);
+
+        std::fs::remove_file(&link).expect("remove project link");
+        std::fs::remove_dir_all(&real).expect("remove real project");
+    }
+
+    #[test]
+    fn slang_include_dirs_add_the_given_spelling_only_for_in_memory_sources() {
+        let given = vec!["/link/inc".to_owned(), "/same".to_owned()];
+        let resolved = vec!["/real/inc".to_owned(), "/same".to_owned()];
+        assert_eq!(
+            slang_include_dirs(&given, &resolved, true),
+            ["/real/inc", "/link/inc", "/same"]
+        );
+        assert_eq!(
+            slang_include_dirs(&given, &resolved, false),
+            ["/real/inc", "/same"]
+        );
     }
 
     #[test]
