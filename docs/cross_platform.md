@@ -37,8 +37,19 @@ neutral interface:
   `join("tests/fixtures/...")`, which keeps a literal `/` on Windows.
 - Compare `Path` components, never strings containing `/`; configured relative
   parts get native separators (`out\w\dump.vcd`).
-- Compare captured child output with LF oracles only after
-  `ffi::platform::native_text_to_lf`.
+- Text read back from disk or a child process can hold CRLF on Windows, whatever
+  the test wrote. Sources: text-mode C runtime writes (console and `stdout` of
+  models and companions, `$fopen` with `"w"`, `$fwrite`/`$fdisplay`, `printf`),
+  Git writing a working tree (`checkout`, `restore`, `clone`, `stash`: Windows
+  images set `core.autocrlf=true` system-wide, and the repository's
+  `.gitattributes` `eol=lf` covers only this checkout, never a repository a test
+  creates), patch tools and generated or configured files. Compare such text with
+  an LF oracle only after `ffi::platform::native_text_to_lf`
+  (`sim_harness::host_text_to_lf`), or make the bytes fixed at the source:
+  binary-mode opens (`"rb"`/`"wb"`) or `core.autocrlf=false` in a repository the
+  test creates (`build_support/vendor_patches.rs` tests). Code that rewrites a
+  file keeps that file's newline convention (`vendor_patches` preserves a CRLF
+  checkout). [Linux guards](../tests/readme.md#msvc-and-windows-guards-on-linux).
 - Match diagnostic fields (message, severity, position), never a whole `Debug`
   dump: Windows test temporary directories drop the test label (`llg-<pid>-<n>`).
 
@@ -70,10 +81,10 @@ Paths and files:
 - Expected diagnostics in tests name the source as llg prints it, with native
   separators (`sim_harness::source_display`); a `/`-joined fixture path matches
   on Linux and macOS and cannot fail there.
-- Text-mode consoles and files write CRLF. `$fopen` passes its mode to C `fopen`
-  unchanged, so text-mode `$ftell`/`$fseek`/`$rewind` positions differ; fixtures
-  and `lrm_decisions` cases that depend on byte positions or unformatted data
-  open files with `"rb"`/`"wb"` (IEEE 1800-2009 21.3.1).
+- `$fopen` passes its mode to C `fopen` unchanged, so text-mode (CRLF, see
+  [paths and text](#paths-and-text)) `$ftell`/`$fseek`/`$rewind` positions
+  differ; fixtures and `lrm_decisions` cases that depend on byte positions or
+  unformatted data open files with `"rb"`/`"wb"` (IEEE 1800-2009 21.3.1).
 
 Processes:
 
@@ -97,9 +108,20 @@ MSVC compiler:
   (C4090; assign elements) and a completed tentative definition
   `static const T x;` (C4132; define the object first). Clang
   `-Wconditional-uninitialized`/`-Wunreachable-code` approximate C4701/C4702.
-  A cast that truncates a complemented constant, `(uint8_t)~FLAG`, is C4310 (GCC
-  and Clang never warn on an explicit cast); mask first, `(uint8_t)(x & ~FLAG)`
+  A cast that truncates a constant is C4310 (GCC and Clang never warn on an
+  explicit cast): a complemented constant, `(uint8_t)~FLAG` (mask first,
+  `(uint8_t)(x & ~FLAG)`), or a literal the type cannot hold, `(PLI_BYTE8)0xff`
+  (plain `char` is signed; `memset` an all-ones byte)
   (`runtime_strict_sources::runtime_sources_have_no_truncating_constant_casts`).
+- Implicit narrowing is C4244 (`int` to `int8_t`, `double` to `float` or an
+  integer) and C4267 (`size_t` to a 32-bit type), errors under `/WX`; convert
+  explicitly after checking the range, e.g. a 0/1 flag as `(int8_t)(flag != 0)`
+  (`runtime_strict_sources::runtime_and_companion_c_has_no_implicit_narrowing`).
+- The UCRT deprecates portable C11 routines (`sprintf`, `fopen`, `getenv`,
+  `strcpy`, ...) in favour of `_s` variants (C4996). Every strict harness build
+  (`tests/support/c_compiler.rs`, `runtime_value_storage` CMake) defines
+  `_CRT_SECURE_NO_WARNINGS`; a new `/W4 /WX` build site needs it too. Fixtures
+  still prefer bounded calls (`snprintf`).
 - C mode lacks `max_align_t` (use `llg_co_max_align_t`). Unnamed enums have an
   `int` underlying type, so brace-initializing a `uint32_t` from an enum ternary
   narrows (C2397); cast. `<chrono>` warning C4530 without `/EHsc` is harmless.
@@ -300,8 +322,14 @@ mismatch; items name an x86_64 reproduction where one exists.
   the ISA (musl 128 KiB, macOS 512 KiB); threads that run HDL code reserve their
   stack explicitly (`LLG_DPI_CONTEXT_STACK_BYTES`).
 
-## CI shell
+## CI shell and Python
 
 - GitHub Actions runs `shell: bash` steps as `bash -eo pipefail`, and `ls` exits
   2 for a missing operand, so `x=$(ls a b 2>/dev/null | head -n 1)` ends the step
   silently; test each candidate with `[ -f ]` in a loop.
+- `scripts/` helpers and their unit tests run on the lint job's Ubuntu 22.04
+  Python 3.10 and on Rocky Linux 9's Python 3.9: no `tomllib` (3.11, fall back
+  to `tomli`), `match` (3.10) or `int.bit_count` (3.10), and no
+  `Path.write_text(newline=)` (3.10). Run
+  `python3 -m unittest discover -s scripts -p 'test_*.py'` under a 3.9
+  interpreter when a script changes.

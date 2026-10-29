@@ -71,7 +71,7 @@ double llg_gmp_sv4_to_real_wide(g4_t value) {
 g4_t llg_gmp_sv4_from_real_wide(double rounded, uint32_t width, int8_t sign) {
     g4_t out = llg_gmp_sv4_zero(width, sign);
     double magnitude = fabs(rounded);
-    if (!magnitude)
+    if (magnitude == 0.0)
         return out;
     int exponent;
     double fraction = frexp(magnitude, &exponent);

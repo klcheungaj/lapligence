@@ -2936,9 +2936,14 @@ mod tests {
             .status()
             .expect("git should be available for vendor patch tests");
         assert!(status.success(), "git init should succeed");
+        // Pin line endings: Git for Windows (and GitHub's Windows images)
+        // set `core.autocrlf=true` system-wide, so a `git checkout` in a test
+        // repository would otherwise rewrite the LF files the test wrote as
+        // CRLF. The local setting outranks system and global configuration.
         for (key, value) in [
             ("user.email", "vendor-patches-tests@example.invalid"),
             ("user.name", "vendor-patches-tests"),
+            ("core.autocrlf", "false"),
         ] {
             let status = Command::new("git")
                 .arg("-C")
@@ -2962,6 +2967,35 @@ mod tests {
             .status()
             .expect("git commit should run");
         assert!(status.success(), "git commit should succeed");
+    }
+
+    /// Linux stand-in for the Windows runner's system-wide
+    /// `core.autocrlf=true`: a global configuration that sets it must not
+    /// change what `git checkout` writes into a test repository.
+    #[test]
+    fn test_repositories_check_out_lf_under_a_host_autocrlf_setting() {
+        let root = temporary_tree();
+        let repository = root.join("repo");
+        fs::create_dir_all(&repository).expect("create repository");
+        fs::write(repository.join("alpha.txt"), "one\nold\n").expect("write source");
+        initialize_repository(&repository);
+        fs::remove_file(repository.join("alpha.txt")).expect("remove checked-in file");
+        let host_config = root.join("host.gitconfig");
+        fs::write(&host_config, "[core]\n\tautocrlf = true\n").expect("write host config");
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(&repository)
+            .args(["checkout", "--quiet", "--", "."])
+            .env("GIT_CONFIG_GLOBAL", &host_config)
+            .status()
+            .expect("git checkout should run");
+        assert!(status.success(), "git checkout should succeed");
+        assert_eq!(
+            fs::read(repository.join("alpha.txt")).unwrap(),
+            b"one\nold\n"
+        );
+
+        fs::remove_dir_all(root).expect("remove temporary patch tree");
     }
 
     #[test]

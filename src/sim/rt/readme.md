@@ -274,7 +274,9 @@ General platform handling: [cross-platform guide](../../../docs/cross_platform.m
   `strict_c11_executable` tests); the warnings to avoid are listed under
   [MSVC compiler](../../../docs/cross_platform.md#windows-msvc). The
   `runtime_strict_sources` suite (`tests/runtime_strict_sources.rs` docs) runs
-  the Clang approximations over every probe-built source. Generated models
+  Clang approximations and a constant-cast scan over the runtime units, the
+  probes and the C fixtures
+  ([guards](../../../tests/readme.md#msvc-and-windows-guards-on-linux)). Generated models
   still forward-declare descriptors as tentative definitions, because mutual
   recursion needs it; they build at `/W3`.
 - User DPI/VPI C code shares the host stack and is covered only by the stack

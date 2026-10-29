@@ -238,8 +238,10 @@ static PLI_INT32 va_put(PLI_BYTE8* data) {
         offset += 12;
     }
     offset -= 12;
-    raw[offset] = (PLI_BYTE8)0xff;
-    raw[offset + 6] = (PLI_BYTE8)0xff;
+    /* All-ones bytes through memset: a cast of 0xff to the plain-char
+     * PLI_BYTE8 truncates a constant (MSVC C4310) where char is signed. */
+    memset(&raw[offset], 0xff, 1);
+    memset(&raw[offset + 6], 0xff, 1);
     memset(&array, 0, sizeof(array));
     array.format = vpiRawFourStateVal;
     array.flags = vpiPropagateOff;
