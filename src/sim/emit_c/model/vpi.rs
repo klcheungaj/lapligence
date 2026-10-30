@@ -4,13 +4,24 @@ use super::*;
 
 mod dynamic;
 use crate::sim::ir::{
-    IrSdfTarget, IrVpiArgRef, IrVpiCode, IrVpiCompileCall, IrVpiConn, IrVpiConstant, IrVpiObject,
-    IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiVarKind,
+    IrSdfTarget, IrVpiArgRef, IrVpiCode, IrVpiCompileCall, IrVpiConn, IrVpiConstant, IrVpiInstance,
+    IrVpiObject, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiVarKind,
 };
 
 /// Marker suffix that keeps a port apart from the declaration it connects,
 /// which has the same hierarchical name (see `collection/vpi.rs`).
 const PORT_MARKER: &str = "\u{1f}\u{1e}port";
+/// The hidden key part of an io declaration, which shares its name with
+/// the port or declaration it declares.
+const IO_MARKER: &str = "\u{1f}\u{1e}io";
+
+/// The displayed path of a catalog key: ports and io declarations live in
+/// their own namespaces under the name they share.
+fn strip_marker(path: &str) -> &str {
+    path.strip_suffix(PORT_MARKER)
+        .or_else(|| path.strip_suffix(IO_MARKER))
+        .unwrap_or(path)
+}
 
 /// One emitted catalog row.
 struct Entry {
@@ -52,6 +63,7 @@ struct Entry {
     /// `(storage, dependency, shape)` of a dynamic object.
     dynamic: Option<(String, String, usize)>,
     code: Option<u32>,
+    instance: Option<IrVpiInstance>,
 }
 
 impl Entry {
@@ -94,6 +106,7 @@ impl Entry {
             timing: None,
             dynamic: None,
             code: None,
+            instance: None,
         }
     }
 }
@@ -243,7 +256,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             IrVpiObjectKind::RegArray | IrVpiObjectKind::NetArray => {
                 (object.kind.c_type(), element_type)
             }
-            IrVpiObjectKind::Port | IrVpiObjectKind::ClockingIoDecl => {
+            IrVpiObjectKind::Port | IrVpiObjectKind::ClockingIoDecl | IrVpiObjectKind::IoDecl => {
                 (object.kind.c_type(), object.direction.c_code())
             }
             IrVpiObjectKind::Record => (object.var_kind.c_type(), "0"),
@@ -289,6 +302,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 timing: object.timing.clone(),
                 dynamic,
                 code: object.code,
+                instance: object.instance.as_deref().cloned(),
             },
         );
     }
@@ -298,7 +312,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
     // definition empty rather than inventing frontend provenance.
     let paths = entries.keys().cloned().collect::<Vec<_>>();
     for path in paths {
-        let path = path.strip_suffix(PORT_MARKER).unwrap_or(&path);
+        let path = strip_marker(&path);
         let parts = split_name(path);
         for depth in 1..parts.len() {
             let prefix = parts[..depth].join("\u{1f}");
@@ -499,9 +513,33 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         out.push_str("};\n");
     }
     let timing = render_vpi_timing(model, &entries, out);
+    for (index, entry) in entries.iter().enumerate() {
+        let Some(instance) = &entry.instance else {
+            continue;
+        };
+        let optional = |text: &Option<String>| {
+            text.as_deref()
+                .map(c_string_literal)
+                .unwrap_or_else(|| "NULL".to_owned())
+        };
+        out.push_str(&format!(
+            "static const llg_vpi_instance_t llg_vpi_instance_{index} = {{ .def_file = {}, \
+.def_line = {}, .library = {}, .cell = {}, .config = {}, .net_type = {}, \
+.unconnected_drive = {}, .cell_define = {}, .automatic = {} }};\n",
+            optional(&instance.def_file),
+            instance.def_line,
+            c_string_literal(&instance.library),
+            c_string_literal(&instance.cell),
+            optional(&instance.config),
+            instance.net_type,
+            instance.unconnected_drive,
+            u8::from(instance.cell_define),
+            u8::from(instance.automatic),
+        ));
+    }
     out.push_str("static llg_vpi_model_object_t llg_vpi_objects[] = {\n");
     for (index, entry) in entries.iter().enumerate() {
-        let path = entry.full.strip_suffix(PORT_MARKER).unwrap_or(&entry.full);
+        let path = strip_marker(&entry.full);
         let parts = split_name(path);
         let parent_path = (parts.len() > 1).then(|| parts[..parts.len() - 1].join("\u{1f}"));
         // An unnamed object's key ends in a hidden part; its displayed
@@ -589,6 +627,11 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
                     )
                 });
         let (declaration, instance) = entry.activation.unwrap_or((0, 0));
+        let definition = if entry.instance.is_some() {
+            format!(", .instance = &llg_vpi_instance_{index}")
+        } else {
+            String::new()
+        };
         let (constant, real_constant) = match &entry.constant {
             Some(IrVpiConstant::Bits(digits)) => (c_string_literal(digits), "0.0".to_owned()),
             Some(IrVpiConstant::Text(text)) => {
@@ -625,7 +668,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
 .dims = {dims}, .dim_count = {dim_count}u, .port_index = {}u, .target = {target}, .net = {}, \
 .constant = {constant}, .real_constant = {real_constant}, .typespec = {}u, .detail = {}, \
 .event = {}, .conns = {conns}, .conn_count = {}u, .activation_declaration = {declaration}u, \
-.activation_instance = {instance}u, .timing = {}{}{dynamic} }},\n",
+.activation_instance = {instance}u, .timing = {}{}{dynamic}{definition} }},\n",
             entry.type_code,
             c_string_literal(&entry.name),
             c_string_literal(&display_name(&path)),

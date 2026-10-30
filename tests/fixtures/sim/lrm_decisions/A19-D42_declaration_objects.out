@@ -1,0 +1,98 @@
+array vpiFullName tb.gb level=0
+array vpiSize 3 level=0
+array vpiGenVar tb.g type=135 level=0
+array vpiModule tb type=32 level=0
+array index 1 NULL level=0
+array index 2 tb.gb[2] level=0
+array index 3 tb.gb[3] level=0
+array index 4 tb.gb[4] level=0
+array index 5 NULL level=0
+array multi index 3 tb.gb[3] level=0
+tb.gb[2] vpiGenScopeArray tb.gb type=133 level=0
+tb.gb[3] vpiGenScopeArray tb.gb type=133 level=0
+tb.gb[4] vpiGenScopeArray tb.gb type=133 level=0
+tb.g vpiType 135 level=0
+tb.g vpiFullName tb.g level=0
+tb.u vpiIODecl iterator=yes level=0
+a vpiType 28 level=0
+a vpiDirection 1 level=0
+a vpiSize 4 level=0
+a vpiScalar 0 level=0
+a vpiVector 1 level=0
+a vpiSigned 0 level=0
+a vpiFullName NULL level=3
+a vpiExpr tb.u.a type=48 level=0
+a vpiTaskFunc NULL type=0 level=0
+a vpiModport NULL type=0 level=0
+a vpiModule tb.u type=32 level=0
+a vpiLeftRange yes 7 level=0
+a vpiRange 1 level=0
+y vpiType 28 level=0
+y vpiDirection 2 level=0
+y vpiSize 1 level=0
+y vpiScalar 1 level=0
+y vpiVector 0 level=0
+y vpiSigned 0 level=0
+y vpiFullName NULL level=3
+y vpiExpr tb.u.y type=48 level=0
+y vpiTaskFunc NULL type=0 level=0
+y vpiModport NULL type=0 level=0
+y vpiModule tb.u type=32 level=0
+y vpiLeftRange NULL 0 level=0
+y vpiRange 0 level=0
+tb.scale vpiIODecl iterator=yes level=0
+x vpiType 28 level=0
+x vpiDirection 1 level=0
+x vpiSize 32 level=0
+x vpiScalar 0 level=0
+x vpiVector 1 level=0
+x vpiSigned 1 level=0
+x vpiFullName NULL level=3
+x vpiExpr NULL type=0 level=0
+x vpiTaskFunc tb.scale type=20 level=0
+x vpiModport NULL type=0 level=0
+x vpiModule tb type=32 level=0
+x vpiLeftRange yes 31 level=0
+x vpiRange 1 level=0
+r vpiType 28 level=0
+r vpiDirection 6 level=0
+r vpiSize 2 level=0
+r vpiScalar 0 level=0
+r vpiVector 1 level=0
+r vpiSigned 0 level=0
+r vpiFullName NULL level=3
+r vpiExpr NULL type=0 level=0
+r vpiTaskFunc tb.scale type=20 level=0
+r vpiModport NULL type=0 level=0
+r vpiModule tb type=32 level=0
+r vpiLeftRange yes 1 level=0
+r vpiRange 1 level=0
+tb.b.src vpiIODecl iterator=yes level=0
+data vpiType 28 level=0
+data vpiDirection 2 level=0
+data vpiSize 4 level=0
+data vpiScalar 0 level=0
+data vpiVector 1 level=0
+data vpiSigned 0 level=0
+data vpiFullName NULL level=3
+data vpiExpr tb.b.data type=48 level=0
+data vpiTaskFunc NULL type=0 level=0
+data vpiModport tb.b.src type=606 level=0
+data vpiModule tb.b type=601 level=0
+data vpiLeftRange yes 3 level=0
+data vpiRange 1 level=0
+ready vpiType 28 level=0
+ready vpiDirection 1 level=0
+ready vpiSize 1 level=0
+ready vpiScalar 1 level=0
+ready vpiVector 0 level=0
+ready vpiSigned 0 level=0
+ready vpiFullName NULL level=3
+ready vpiExpr tb.b.ready type=48 level=0
+ready vpiTaskFunc NULL type=0 level=0
+ready vpiModport tb.b.src type=606 level=0
+ready vpiModule tb.b type=601 level=0
+ready vpiLeftRange NULL 0 level=0
+ready vpiRange 0 level=0
+tb.u.tpd type=54 value=3 level=0
+y=1

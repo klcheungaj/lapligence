@@ -289,6 +289,11 @@ impl Db {
                 ))
             })
             .collect::<Result<HashMap<_, _>, DbError>>()?;
+        let instance_configs = snapshot
+            .source_libraries
+            .iter()
+            .filter_map(|binding| Some((binding.semantic_id, binding.config.clone()?)))
+            .collect::<HashMap<_, _>>();
         let mut declaration_time_scales = HashMap::new();
         for (index, semantic) in snapshot.semantic_nodes.iter().enumerate() {
             let namespace = |node: &crate::ffi::slang::SemanticNode| {
@@ -388,6 +393,8 @@ impl Db {
                 Some((NodeId::from_index(index), drive))
             })
             .collect();
+        let instance_definitions =
+            instance_definitions(snapshot, &ids, &mut source_positions, &instance_configs)?;
         let primitive_array_positions = primitive_array_positions(snapshot);
         let instance_array_ranges = instance_array_ranges(snapshot);
         let keyword_lines = statement_keyword_lines(snapshot, &mut source_positions)?;
@@ -1521,6 +1528,7 @@ impl Db {
             checker_instances,
             checker_actuals,
             unconnected_drives,
+            instance_definitions,
             primitive_array_positions,
             instance_array_ranges,
             keyword_lines,
@@ -1640,6 +1648,55 @@ const LEGACY_DIRECTIVES: [&str; 6] = [
     "delay_mode_unit",
     "delay_mode_zero",
 ];
+
+/// The definition facts of every module, interface and program instance:
+/// its definition's location (the node its target names), `` `celldefine``,
+/// default lifetime and `` `default_nettype`` from the instance auxiliary,
+/// and the configuration controlling its binding.
+fn instance_definitions(
+    snapshot: &SlangSnapshot,
+    ids: &SemanticIds,
+    positions: &mut SourcePositions<'_>,
+    configs: &HashMap<u64, String>,
+) -> Result<HashMap<NodeId, InstanceDefinition>, DbError> {
+    use crate::ffi::slang::{
+        INSTANCE_AUTOMATIC, INSTANCE_CELL_DEFINE, INSTANCE_NET_TYPE_MASK, INSTANCE_NET_TYPE_SHIFT,
+    };
+    let mut definitions = HashMap::new();
+    for semantic in snapshot.semantic_nodes.iter() {
+        if semantic.kind != SemanticKind::Instance
+            || semantic.subkind != crate::ffi::slang::SEMANTIC_INSTANCE_SINGLE
+        {
+            continue;
+        }
+        let Some(definition) = semantic
+            .target_id()
+            .and_then(|target| snapshot.semantic_nodes.get(target as usize))
+        else {
+            continue;
+        };
+        let (file, line, _, _, _) = positions.position(definition)?;
+        let net_code =
+            u32::try_from((semantic.auxiliary >> INSTANCE_NET_TYPE_SHIFT) & INSTANCE_NET_TYPE_MASK)
+                .unwrap_or(0);
+        definitions.insert(
+            semantic_id(ids, semantic.id)?,
+            InstanceDefinition {
+                file,
+                line,
+                cell_define: semantic.auxiliary & INSTANCE_CELL_DEFINE != 0,
+                automatic: semantic.auxiliary & INSTANCE_AUTOMATIC != 0,
+                default_net_type: if net_code == 0 {
+                    NetType::None
+                } else {
+                    net_type_from_subkind(net_code)
+                },
+                config: configs.get(&semantic.id).cloned(),
+            },
+        );
+    }
+    Ok(definitions)
+}
 
 fn legacy_directives(
     snapshot: &SlangSnapshot,

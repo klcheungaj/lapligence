@@ -61,6 +61,7 @@ module dut (input a, input clk, input d, output y);
   reg notifier;
   buf ib (y, a);
   specify
+    specparam tsu = 2;
     (a => y) = (3, 4);
     $setup(d, posedge clk, 2, notifier);
   endspecify

@@ -507,6 +507,8 @@ const DISPATCH: &[(&str, &[Rule])] = &[
             ("vpi_handle", Match::Compare, "type"),
             ("statement_relation", Match::Compare, "type"),
             ("clocking_relation", Match::Compare, "type"),
+            ("declaration_relation", Match::Switch, "type"),
+            ("declaration_relation", Match::Compare, "type"),
             ("assertion_relation", Match::Compare, "type"),
             ("assertion_relation_applies", Match::Compare, "relation"),
             ("code_relation_applies", Match::Compare, "relation"),

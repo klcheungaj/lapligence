@@ -1,0 +1,25 @@
+tb vpiConfig work.cfg
+tb vpiLibrary work
+tb vpiCell tb
+tb vpiDefFile declarations.sv
+tb vpiDefLineNo 8
+tb vpiTop 1
+tb vpiProtected 0
+tb vpiCellInstance 0
+tb vpiDefNetType 1
+tb vpiUnconnDrive 1
+tb vpiDefDelayMode 1
+tb vpiAutomatic 0
+tb.u vpiConfig work.cfg
+tb.u vpiLibrary work
+tb.u vpiCell leaf
+tb.u vpiDefFile declarations.sv
+tb.u vpiDefLineNo 5
+tb.u vpiTop 0
+tb.u vpiProtected 0
+tb.u vpiCellInstance 0
+tb.u vpiDefNetType 1
+tb.u vpiUnconnDrive 1
+tb.u vpiDefDelayMode 1
+tb.u vpiAutomatic 0
+y=1

@@ -10,11 +10,12 @@ use super::*;
 use crate::core::db::{ConstantSource, ConstantType, Direction, NetType, TypeId, TypedefRef};
 use crate::sim::ir::{
     IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn, IrVpiConstant,
-    IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiTypespec, IrVpiTypespecKind,
+    IrVpiDirection, IrVpiInstance, IrVpiObject, IrVpiObjectKind, IrVpiTypespec, IrVpiTypespecKind,
     IrVpiTypespecMember, IrVpiVarKind,
 };
 
 mod code;
+mod declarations;
 mod dynamic;
 mod scopes;
 mod timing;
@@ -917,6 +918,43 @@ impl Codegen<'_> {
             .map(|target| (target.declaration(), target.instance()))
     }
 
+    /// The definition and configuration properties of instance `id` (IEEE
+    /// 1800-2009 37.10, 33.7). Unmapped sources are compiled into library
+    /// `work` (33.3.1); llg rejects the delay-mode directives, so every
+    /// definition has `vpiDelayModeNone`, which the runtime reports itself.
+    fn vpi_instance_properties(&self, id: NodeId) -> Option<IrVpiInstance> {
+        const DEFAULT_SOURCE_LIBRARY: &str = "work";
+        let definition = self.db.instance_definition(id)?;
+        Some(IrVpiInstance {
+            def_file: definition.file.as_deref().map(str::to_owned),
+            def_line: definition.line,
+            library: self
+                .db
+                .source_library(id)
+                .unwrap_or(DEFAULT_SOURCE_LIBRARY)
+                .to_owned(),
+            config: definition.config.clone(),
+            cell: match self.kind(id) {
+                NodeKind::ModuleInst { def_name, .. } => def_name
+                    .split_once('@')
+                    .map_or(def_name.as_str(), |(_, cell)| cell)
+                    .to_owned(),
+                _ => String::new(),
+            },
+            cell_define: definition.cell_define,
+            automatic: definition.automatic,
+            net_type: match definition.default_net_type {
+                NetType::None => "vpiNone",
+                net_type => vpi_net_type(net_type),
+            },
+            unconnected_drive: match self.db.unconnected_drive(id) {
+                crate::core::db::UnconnectedDrive::Pull0 => "vpiPull0",
+                crate::core::db::UnconnectedDrive::Pull1 => "vpiPull1",
+                _ => "vpiHighZ",
+            },
+        })
+    }
+
     fn vpi_declared_in_instance(&self, id: NodeId) -> bool {
         let mut current = self.node(id).parent;
         while let Some(parent) = current {
@@ -1228,6 +1266,7 @@ impl Codegen<'_> {
                             IrVpiObjectKind::Module
                         },
                         top: *is_top,
+                        instance: self.vpi_instance_properties(id).map(Box::new),
                         ..IrVpiObject::default()
                     }));
                 }
@@ -1237,8 +1276,19 @@ impl Codegen<'_> {
                         full_name: path.join(SEPARATOR),
                         name: path.last().cloned().unwrap_or_default(),
                         kind: IrVpiObjectKind::GenScope,
+                        port_target: self.vpi_gen_scope_array_of(id),
                         ..IrVpiObject::default()
                     }));
+                }
+                NodeKind::GenScopeArray => {
+                    if let Some(row) = self.vpi_gen_scope_array_row(id) {
+                        insert(source(row));
+                    }
+                }
+                NodeKind::Genvar { .. } => {
+                    if let Some(row) = self.vpi_genvar_row(id) {
+                        insert(source(row));
+                    }
                 }
                 // An unnamed block that declares items, a `for` that
                 // declares its loop variables, a `foreach` (37.12 details
@@ -1521,6 +1571,8 @@ impl Codegen<'_> {
                             .then(|| self.vpi_packed_range(id, width))
                             .flatten(),
                         local_param: *local,
+                        // 37.26: a specparam is its own object type.
+                        type_code: self.db.specparam(id).map(|_| "vpiSpecParam"),
                         constant: Some(constant),
                         typespec: self.vpi_declared_typespec(&mut typespecs, id),
                         ..IrVpiObject::default()
@@ -1622,6 +1674,9 @@ impl Codegen<'_> {
                         activation: self.vpi_activation(id),
                         ..IrVpiObject::default()
                     }));
+                    for row in self.vpi_argument_io_decls(&mut typespecs, id) {
+                        insert(row);
+                    }
                 }
                 NodeKind::Gate { .. } => {
                     if let Some(row) = self.vpi_primitive_row(
@@ -1678,6 +1733,9 @@ impl Codegen<'_> {
                         kind: IrVpiObjectKind::Modport,
                         ..IrVpiObject::default()
                     }));
+                    for row in self.vpi_modport_io_decls(&mut typespecs, id, parent) {
+                        insert(row);
+                    }
                 }
                 NodeKind::Port {
                     direction,
@@ -1767,6 +1825,36 @@ impl Codegen<'_> {
                         },
                         ..IrVpiObject::default()
                     }));
+                    // 37.13: a module port's io declaration; interface and
+                    // modport ports declare an interface, not a value.
+                    if interface.is_none()
+                        && matches!(
+                            self.kind(parent),
+                            NodeKind::ModuleInst {
+                                is_interface: false,
+                                ..
+                            }
+                        )
+                    {
+                        let declaration = low
+                            .filter(|low| {
+                                matches!(
+                                    self.kind(*low),
+                                    NodeKind::Var { .. } | NodeKind::Net { .. }
+                                )
+                            })
+                            .unwrap_or(id);
+                        insert(self.vpi_io_decl_row(
+                            &mut typespecs,
+                            id,
+                            &self.vpi_full_name(parent),
+                            &node.name,
+                            declarations::vpi_direction(*direction),
+                            port_index,
+                            Some(declaration),
+                            low.map(|low| self.vpi_full_name(low)),
+                        ));
+                    }
                 }
                 _ => {}
             }

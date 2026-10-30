@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 62;
+const ABI_VERSION: u32 = 63;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -902,6 +902,13 @@ pub(crate) const CLASS_INTERFACE: u64 = 1 << 2;
 /// resolved module metadata.
 pub(crate) const UNCONNECTED_PULL0: u64 = 1 << 16;
 pub(crate) const UNCONNECTED_PULL1: u64 = 1 << 17;
+/// Definition facts of an instance node (ABI v62): `` `celldefine``, an
+/// automatic default lifetime, and the `LLG_SLANG_NET_*` code of the
+/// definition's `` `default_nettype`` in bits 20-27 (0 for `none`).
+pub(crate) const INSTANCE_CELL_DEFINE: u64 = 1 << 18;
+pub(crate) const INSTANCE_AUTOMATIC: u64 = 1 << 19;
+pub(crate) const INSTANCE_NET_TYPE_SHIFT: u32 = 20;
+pub(crate) const INSTANCE_NET_TYPE_MASK: u64 = 0xff;
 /// On a typedef node: the typedef renames a built-in type keyword
 /// (IEEE 1800-2009 37.23 detail 6).
 pub(crate) const TYPEDEF_BUILTIN: u64 = 1 << 0;
@@ -1020,6 +1027,8 @@ pub const SEMANTIC_TIMING_CYCLE_DELAY: u32 = 117;
 pub const SEMANTIC_TIMING_ONE_STEP_DELAY: u32 = 118;
 pub const SEMANTIC_SCOPE_CLOCKING_BLOCK: u32 = 230;
 /// Instance subkind of a checker instance (IEEE 1800-2009 17.3).
+/// A module, interface or program instance (`LLG_SLANG_INSTANCE_SINGLE`).
+pub const SEMANTIC_INSTANCE_SINGLE: u32 = 192;
 pub const SEMANTIC_INSTANCE_CHECKER: u32 = 197;
 /// Checker instance metadata in [`SemanticNode::auxiliary`]: instantiated
 /// in procedural code, injected by `bind`, or inside another checker.
@@ -1647,6 +1656,9 @@ pub struct UdpTable {
 pub struct SourceLibraryBinding {
     pub semantic_id: u64,
     pub library: String,
+    /// `library.config` name of the configuration that controls the binding
+    /// of an instance (IEEE 1800-2009 33.7 `vpiConfig`), if one does.
+    pub config: Option<String>,
 }
 
 /// Logical position that one `` `line`` directive gives the physical lines
@@ -2004,6 +2016,7 @@ struct RawUdpTable {
 struct RawSourceLibrary {
     semantic_id: u64,
     library: RawString,
+    config: RawString,
 }
 
 #[repr(C)]

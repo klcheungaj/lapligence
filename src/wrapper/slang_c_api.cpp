@@ -1236,11 +1236,13 @@ struct Capture {
   // Records the library that `%l` and configuration bindings report for one
   // scope node. Callers record each node once; the table is bounded by the
   // semantic node limit and charged like every other export record.
-  void sourceLibrary(uint64_t id, const SourceLibrary* library) {
+  void sourceLibrary(uint64_t id, const SourceLibrary* library,
+                     std::string_view config = {}) {
     if (!library)
       return;
     chargeRecord(output, sizeof(LlgSlangSourceLibrary));
-    output.source_libraries.push_back({id, storeString(output, library->name)});
+    output.source_libraries.push_back({id, storeString(output, library->name),
+                                       storeString(output, config)});
   }
 
   uint64_t ensureSemantic(const void* identity) {
@@ -2695,15 +2697,34 @@ public:
         }
       }
     }
-    if constexpr (std::same_as<T, InstanceSymbol> || std::same_as<T, PackageSymbol> ||
+    if constexpr (std::same_as<T, PackageSymbol> ||
                   std::same_as<T, CompilationUnitSymbol>)
       capture.sourceLibrary(id, symbol.getSourceLibrary());
     if constexpr (std::same_as<T, InstanceSymbol>) {
-      const auto drive = symbol.getDefinition().unconnectedDrive;
+      // The configuration controlling the binding (IEEE 1800-2009 33.7).
+      std::string config;
+      if (symbol.resolvedConfig) {
+        const ConfigBlockSymbol& block = symbol.resolvedConfig->useConfig;
+        if (const SourceLibrary* library = block.getSourceLibrary())
+          config = library->name + "." + std::string(block.name);
+        else
+          config = std::string(block.name);
+      }
+      capture.sourceLibrary(id, symbol.getSourceLibrary(), config);
+      const DefinitionSymbol& definition = symbol.getDefinition();
+      const auto drive = definition.unconnectedDrive;
       if (drive == UnconnectedDrive::Pull0)
         result.auxiliary |= LLG_SLANG_UNCONNECTED_PULL0;
       else if (drive == UnconnectedDrive::Pull1)
         result.auxiliary |= LLG_SLANG_UNCONNECTED_PULL1;
+      if (definition.cellDefine)
+        result.auxiliary |= LLG_SLANG_INSTANCE_CELL_DEFINE;
+      if (definition.defaultLifetime == VariableLifetime::Automatic)
+        result.auxiliary |= LLG_SLANG_INSTANCE_AUTOMATIC;
+      result.auxiliary |=
+          (uint64_t(semanticNetKind(definition.defaultNetType.netKind)) &
+           LLG_SLANG_INSTANCE_NET_TYPE_MASK)
+          << LLG_SLANG_INSTANCE_NET_TYPE_SHIFT;
     }
     if constexpr (std::same_as<T, PackageSymbol>)
       addTimeScale(result, symbol.timeScale);

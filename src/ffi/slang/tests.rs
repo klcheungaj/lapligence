@@ -930,11 +930,20 @@ fn dense_semantic_decode_rejects_malformed_ids_and_references() {
 #[test]
 fn source_library_records_require_known_unique_nodes_and_names() {
     let name = b"rtl";
+    let config = b"rtl.cfg";
     let library = |semantic_id| RawSourceLibrary {
         semantic_id,
         library: RawString {
             data: name.as_ptr(),
             len: name.len() as u64,
+        },
+        config: if semantic_id == 1 {
+            RawString {
+                data: config.as_ptr(),
+                len: config.len() as u64,
+            }
+        } else {
+            empty_raw_string()
         },
     };
     let tables = |libraries: Vec<RawSourceLibrary>, node_count: u64| Tables {
@@ -957,10 +966,12 @@ fn source_library_records_require_known_unique_nodes_and_names() {
             SourceLibraryBinding {
                 semantic_id: 1,
                 library: "rtl".to_owned(),
+                config: Some("rtl.cfg".to_owned()),
             },
             SourceLibraryBinding {
                 semantic_id: 0,
                 library: "rtl".to_owned(),
+                config: None,
             },
         ]
     );
@@ -971,6 +982,7 @@ fn source_library_records_require_known_unique_nodes_and_names() {
     let empty = RawSourceLibrary {
         semantic_id: 0,
         library: empty_raw_string(),
+        config: empty_raw_string(),
     };
     let message = invalid_native_message(stream(&tables(vec![empty], 1)));
     assert!(message.contains("empty name"));

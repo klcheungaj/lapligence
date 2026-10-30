@@ -21,9 +21,13 @@ pub(super) fn decode_source_library(
     if library.is_empty() {
         return Err(invalid_native("source library record has an empty name"));
     }
+    // SAFETY: as above; an instance without a configuration has the empty
+    // string.
+    let config = unsafe { copy_string(item.config, "source library configuration")? };
     Ok(SourceLibraryBinding {
         semantic_id: item.semantic_id,
         library,
+        config: (!config.is_empty()).then_some(config),
     })
 }
 
