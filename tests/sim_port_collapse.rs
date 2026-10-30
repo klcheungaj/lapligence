@@ -295,3 +295,43 @@ endmodule
     );
     assert_eq!(links(&model), 2, "{model}");
 }
+
+/// A constant part-select actual whose bounds depend on a generate loop
+/// variable folds to a constant part-select of each iteration; the link
+/// bodies still share one function, with the bounds as record operands, and
+/// build no index value at run time. The clock input collapses (no link).
+#[test]
+fn generate_part_select_actuals_share_one_link_body() {
+    let model = render(
+        "module leaf(input logic clk, input logic [3:0] in);
+  logic [3:0] cs = 0;
+  always_ff @(posedge clk) cs <= in[0] ? cs + 4'd1 : cs;
+endmodule
+module tb;
+  logic clk = 0;
+  logic [31:0] lfsr = 32'h1;
+  genvar i;
+  for (i = 0; i < 8; i++) begin : g
+    leaf u(clk, lfsr[i % 28 +: 4]);
+  end
+  always #1 clk = ~clk;
+  always @(posedge clk) lfsr <= {lfsr[30:0], lfsr[31] ^ lfsr[21] ^ lfsr[1] ^ lfsr[0]};
+  initial #20 $finish;
+endmodule
+",
+    );
+    assert!(!model.contains("sv4_idx_part_select_value_to"), "{model}");
+    assert!(!model.contains("sv4_bit_select_to"), "{model}");
+    assert!(
+        model.contains("sv4_part_select_to(&_llg_t[0], &G_tb_lfsr, I->v"),
+        "{model}"
+    );
+    // One shared link body and one shared flop body for the eight
+    // iterations, plus the two `tb` always procedures and the initial.
+    assert_eq!(model.matches("LLG_CO_DISPATCH_BEGIN").count(), 5, "{model}");
+    assert_eq!(
+        links_named(&model, ".link\""),
+        0,
+        "links are shared: {model}"
+    );
+}

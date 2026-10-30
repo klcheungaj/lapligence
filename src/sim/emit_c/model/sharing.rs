@@ -496,6 +496,23 @@ fn normalize(
                 // The low bit of a selected wait dependency, a payload like
                 // the selection index the body reads.
                 operand = Some(scalars.operand("uint32_t", value));
+            } else if generated
+                && !value.ends_with('u')
+                && source[..start].trim_end().ends_with(['(', ','])
+                && source[index..].trim_start().starts_with([',', ')'])
+                && arguments
+                    .last()
+                    .is_some_and(|(call, arg)| match call.as_str() {
+                        "sv4_part_select" => (1..=2).contains(arg),
+                        "sv4_part_select_to" => (2..=3).contains(arg),
+                        _ => false,
+                    })
+            {
+                // A constant part-select bound that depends on the iteration
+                // (`v[i % 28 +: 4]` once its index is folded), a payload like
+                // the selection index above. Only a whole `int64_t` argument
+                // moves into the record, so no C expression changes type.
+                operand = Some(scalars.operand("int64_t", value));
             }
         } else {
             index += 1;

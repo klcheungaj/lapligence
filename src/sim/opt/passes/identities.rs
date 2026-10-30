@@ -374,6 +374,17 @@ fn is_zero_const(e: &IrExpr) -> bool {
     matches!(as_packed_const(e).and_then(|v| v.to_u64()), Some(0))
 }
 
+/// The value of a fully known constant select index, read as the runtime
+/// does (`sv4_to_index_i64`: signed values sign-extend).
+fn known_select_index(e: &IrExpr) -> Option<i64> {
+    let value = as_packed_const(e).filter(|value| !value.is_unknown())?;
+    if value.signed {
+        value.to_i128().and_then(|index| i64::try_from(index).ok())
+    } else {
+        value.to_u128().and_then(|index| i64::try_from(index).ok())
+    }
+}
+
 /// Try one algebraic identity at this node; `true` when the node was replaced.
 fn try_identity(e: &mut IrExpr) -> bool {
     match &mut e.kind {
@@ -450,6 +461,54 @@ fn try_identity(e: &mut IrExpr) -> bool {
                     } else {
                         false
                     }
+                }
+                None => false,
+            }
+        }
+        // A bit-select or indexed part-select whose index is a known
+        // constant (a generate loop's `v[i % 28 +: 4]`, a signed literal
+        // `v[31]`) reads the same window as a constant part-select: both
+        // copy `width` bits from the lowest selected position and give x for
+        // positions outside the value. The constant form builds no index
+        // value at run time, and a shared instance body keeps the bounds as
+        // per-instance integers. Only selections starting at bit 0 or above
+        // fold; an x/z index, or `-:` below zero, stays dynamic (all x).
+        IrExprKind::BitSel { base, idx } if e.width == 1 => {
+            match known_select_index(idx).filter(|index| *index >= 0) {
+                Some(index) => {
+                    let base = base.clone();
+                    e.kind = IrExprKind::PartSel {
+                        base,
+                        left: index,
+                        right: index,
+                    };
+                    true
+                }
+                None => false,
+            }
+        }
+        IrExprKind::IdxPartSel {
+            base,
+            base_idx,
+            neg,
+            ..
+        } if e.width > 0 => {
+            let span = i64::from(e.width) - 1;
+            let low = known_select_index(base_idx).and_then(|index| {
+                if *neg {
+                    (index >= 0).then(|| index - span)
+                } else {
+                    Some(index)
+                }
+            });
+            match low
+                .filter(|low| *low >= 0)
+                .and_then(|low| low.checked_add(span).map(|left| (left, low)))
+            {
+                Some((left, right)) => {
+                    let base = base.clone();
+                    e.kind = IrExprKind::PartSel { base, left, right };
+                    true
                 }
                 None => false,
             }
