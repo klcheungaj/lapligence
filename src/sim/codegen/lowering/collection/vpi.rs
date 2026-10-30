@@ -10,7 +10,7 @@ use super::*;
 use crate::core::db::{ConstantSource, ConstantType, Direction, NetType, TypeId, TypedefRef};
 use crate::sim::ir::{
     IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn, IrVpiConstant,
-    IrVpiDirection, IrVpiObject, IrVpiObjectKind, IrVpiTypespec, IrVpiTypespecKind,
+    IrVpiDirection, IrVpiInstance, IrVpiObject, IrVpiObjectKind, IrVpiTypespec, IrVpiTypespecKind,
     IrVpiTypespecMember, IrVpiVarKind,
 };
 
@@ -899,6 +899,43 @@ impl Codegen<'_> {
             .map(|target| (target.declaration(), target.instance()))
     }
 
+    /// The definition and configuration properties of instance `id` (IEEE
+    /// 1800-2009 37.10, 33.7). Unmapped sources are compiled into library
+    /// `work` (33.3.1); llg rejects the delay-mode directives, so every
+    /// definition has `vpiDelayModeNone`, which the runtime reports itself.
+    fn vpi_instance_properties(&self, id: NodeId) -> Option<IrVpiInstance> {
+        const DEFAULT_SOURCE_LIBRARY: &str = "work";
+        let definition = self.db.instance_definition(id)?;
+        Some(IrVpiInstance {
+            def_file: definition.file.as_deref().map(str::to_owned),
+            def_line: definition.line,
+            library: self
+                .db
+                .source_library(id)
+                .unwrap_or(DEFAULT_SOURCE_LIBRARY)
+                .to_owned(),
+            config: definition.config.clone(),
+            cell: match self.kind(id) {
+                NodeKind::ModuleInst { def_name, .. } => def_name
+                    .split_once('@')
+                    .map_or(def_name.as_str(), |(_, cell)| cell)
+                    .to_owned(),
+                _ => String::new(),
+            },
+            cell_define: definition.cell_define,
+            automatic: definition.automatic,
+            net_type: match definition.default_net_type {
+                NetType::None => "vpiNone",
+                net_type => vpi_net_type(net_type),
+            },
+            unconnected_drive: match self.db.unconnected_drive(id) {
+                crate::core::db::UnconnectedDrive::Pull0 => "vpiPull0",
+                crate::core::db::UnconnectedDrive::Pull1 => "vpiPull1",
+                _ => "vpiHighZ",
+            },
+        })
+    }
+
     fn vpi_declared_in_instance(&self, id: NodeId) -> bool {
         let mut current = self.node(id).parent;
         while let Some(parent) = current {
@@ -1081,6 +1118,7 @@ impl Codegen<'_> {
                             IrVpiObjectKind::Module
                         },
                         top: *is_top,
+                        instance: self.vpi_instance_properties(id).map(Box::new),
                         ..IrVpiObject::default()
                     }));
                 }

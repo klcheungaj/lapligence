@@ -204,6 +204,19 @@ typedef struct {
     int has_ifnone;           /* vpiModPathHasIfNone */
 } llg_vpi_timing_t;
 
+/* Definition and configuration properties of a module or interface
+ * instance (IEEE 1800-2009 37.10, 33.7). */
+typedef struct {
+    const char* def_file;     /* vpiDefFile, or NULL */
+    int def_line;             /* vpiDefLineNo */
+    const char* library;      /* vpiLibrary */
+    const char* cell;         /* vpiCell */
+    const char* config;       /* vpiConfig: library.config, or NULL */
+    int net_type;             /* vpiDefNetType (vpiNone: `default_nettype none) */
+    int unconnected_drive;    /* vpiUnconnDrive: vpiHighZ, vpiPull0, vpiPull1 */
+    int8_t cell_define;       /* vpiCellInstance */
+    int8_t automatic;         /* vpiAutomatic: the default lifetime */
+} llg_vpi_instance_t;
 /* One catalog row. Generated models emit a static array of these; the
  * runtime only borrows it and indexes it on the first VPI use. */
 typedef struct llg_vpi_model_object {
@@ -252,6 +265,7 @@ typedef struct llg_vpi_model_object {
     uint32_t shape;
     uint32_t code;            /* vpiStmt of a process, task or function, the
                                * statement of a named block: code row + 1 */
+    const llg_vpi_instance_t* instance; /* instance properties, or NULL */
 } llg_vpi_model_object_t;
 
 /* Dynamic objects (IEEE 1800-2009 37.17, 37.27-37.29, 37.3.7): the value

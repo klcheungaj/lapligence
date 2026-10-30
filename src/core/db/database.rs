@@ -199,6 +199,24 @@ pub struct LegacyDirective {
     pub column: u32,
 }
 
+/// What an elaborated module, interface or program instance knows of the
+/// definition it instantiates (IEEE 1800-2009 37.10, 22.8, 22.10, 33.7).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstanceDefinition {
+    /// Source location of the definition's name.
+    pub file: Option<std::sync::Arc<str>>,
+    pub line: u32,
+    /// Compiled between `` `celldefine`` and `` `endcelldefine``.
+    pub cell_define: bool,
+    /// Declared with an automatic default lifetime (`module automatic`).
+    pub automatic: bool,
+    /// The `` `default_nettype`` in effect for the definition;
+    /// [`NetType::None`] for `none`.
+    pub default_net_type: NetType,
+    /// `library.config` name of the configuration controlling the binding.
+    pub config: Option<String>,
+}
+
 /// One element of a primitive instance array: of a connection as wide as
 /// `count` elements, the element owns slice `slice`, counted from the least
 /// significant one, which belongs to the right-hand indices of the array
@@ -247,6 +265,9 @@ pub struct Db {
     /// Definition-level pull behavior for omitted input ports, copied from
     /// the frontend's directive state while the snapshot is imported.
     unconnected_drives: HashMap<NodeId, UnconnectedDrive>,
+    /// Definition facts of each module, interface and program instance (the
+    /// VPI instance properties of IEEE 1800-2009 37.10).
+    instance_definitions: HashMap<NodeId, InstanceDefinition>,
     /// Position of each element of a primitive instance array (IEEE
     /// 1800-2009 28.3.5-28.3.6): the frontend binds every element to the
     /// whole connection expressions, so consumers that need the element's
@@ -435,6 +456,7 @@ impl Db {
             checker_instances: HashMap::new(),
             checker_actuals: HashMap::new(),
             unconnected_drives: HashMap::new(),
+            instance_definitions: HashMap::new(),
             primitive_array_positions: HashMap::new(),
             instance_array_ranges: HashMap::new(),
             keyword_lines: HashMap::new(),
@@ -528,6 +550,7 @@ impl Db {
             checker_instances: HashMap::new(),
             checker_actuals: HashMap::new(),
             unconnected_drives: HashMap::new(),
+            instance_definitions: HashMap::new(),
             primitive_array_positions: HashMap::new(),
             instance_array_ranges: HashMap::new(),
             keyword_lines: HashMap::new(),
@@ -776,6 +799,11 @@ impl Db {
             .get(&id)
             .copied()
             .filter(|_| self.semantic_detail(id) == Some("List"))
+    }
+
+    /// Definition facts of a module, interface or program instance.
+    pub fn instance_definition(&self, id: NodeId) -> Option<&InstanceDefinition> {
+        self.instance_definitions.get(&id)
     }
 
     pub fn unconnected_drive(&self, id: NodeId) -> UnconnectedDrive {

@@ -279,6 +279,32 @@ pub struct IrVpiObject {
     /// Index into [`super::IrModel::vpi_code`]: the `vpiStmt` of a process,
     /// task or function, or the statement object of a named block.
     pub(in crate::sim) code: Option<u32>,
+    /// Definition and configuration properties of a module or interface
+    /// instance (37.10).
+    pub(in crate::sim) instance: Option<Box<IrVpiInstance>>,
+}
+
+/// The definition and configuration properties of an instance (IEEE
+/// 1800-2009 37.10, 33.7): code names are Annex K constant names.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IrVpiInstance {
+    /// `vpiDefFile`, `vpiDefLineNo`: where the definition is declared.
+    pub(in crate::sim) def_file: Option<String>,
+    pub(in crate::sim) def_line: u32,
+    /// `vpiLibrary`: the library the definition was compiled into.
+    pub(in crate::sim) library: String,
+    /// `vpiConfig`: `library.config` of the controlling configuration.
+    pub(in crate::sim) config: Option<String>,
+    /// `vpiCell`: the name of the cell bound to the instance.
+    pub(in crate::sim) cell: String,
+    /// `vpiCellInstance`.
+    pub(in crate::sim) cell_define: bool,
+    /// `vpiAutomatic`: the definition's default lifetime is automatic.
+    pub(in crate::sim) automatic: bool,
+    /// `vpiDefNetType` (`vpiNone` for `` `default_nettype none``).
+    pub(in crate::sim) net_type: &'static str,
+    /// `vpiUnconnDrive`: `vpiHighZ`, `vpiPull0` or `vpiPull1`.
+    pub(in crate::sim) unconnected_drive: &'static str,
 }
 
 /// The delays or limits of a catalog object and the runtime values that

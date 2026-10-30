@@ -4,8 +4,8 @@ use super::*;
 
 mod dynamic;
 use crate::sim::ir::{
-    IrSdfTarget, IrVpiArgRef, IrVpiCode, IrVpiCompileCall, IrVpiConn, IrVpiConstant, IrVpiObject,
-    IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiVarKind,
+    IrSdfTarget, IrVpiArgRef, IrVpiCode, IrVpiCompileCall, IrVpiConn, IrVpiConstant, IrVpiInstance,
+    IrVpiObject, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiVarKind,
 };
 
 /// Marker suffix that keeps a port apart from the declaration it connects,
@@ -52,6 +52,7 @@ struct Entry {
     /// `(storage, dependency, shape)` of a dynamic object.
     dynamic: Option<(String, String, usize)>,
     code: Option<u32>,
+    instance: Option<IrVpiInstance>,
 }
 
 impl Entry {
@@ -94,6 +95,7 @@ impl Entry {
             timing: None,
             dynamic: None,
             code: None,
+            instance: None,
         }
     }
 }
@@ -276,6 +278,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 timing: object.timing.clone(),
                 dynamic,
                 code: object.code,
+                instance: object.instance.as_deref().cloned(),
             },
         );
     }
@@ -486,6 +489,30 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         out.push_str("};\n");
     }
     let timing = render_vpi_timing(model, &entries, out);
+    for (index, entry) in entries.iter().enumerate() {
+        let Some(instance) = &entry.instance else {
+            continue;
+        };
+        let optional = |text: &Option<String>| {
+            text.as_deref()
+                .map(c_string_literal)
+                .unwrap_or_else(|| "NULL".to_owned())
+        };
+        out.push_str(&format!(
+            "static const llg_vpi_instance_t llg_vpi_instance_{index} = {{ .def_file = {}, \
+.def_line = {}, .library = {}, .cell = {}, .config = {}, .net_type = {}, \
+.unconnected_drive = {}, .cell_define = {}, .automatic = {} }};\n",
+            optional(&instance.def_file),
+            instance.def_line,
+            c_string_literal(&instance.library),
+            c_string_literal(&instance.cell),
+            optional(&instance.config),
+            instance.net_type,
+            instance.unconnected_drive,
+            u8::from(instance.cell_define),
+            u8::from(instance.automatic),
+        ));
+    }
     out.push_str("static llg_vpi_model_object_t llg_vpi_objects[] = {\n");
     for (index, entry) in entries.iter().enumerate() {
         let path = entry.full.strip_suffix(PORT_MARKER).unwrap_or(&entry.full);
@@ -576,6 +603,11 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
                     )
                 });
         let (declaration, instance) = entry.activation.unwrap_or((0, 0));
+        let definition = if entry.instance.is_some() {
+            format!(", .instance = &llg_vpi_instance_{index}")
+        } else {
+            String::new()
+        };
         let (constant, real_constant) = match &entry.constant {
             Some(IrVpiConstant::Bits(digits)) => (c_string_literal(digits), "0.0".to_owned()),
             Some(IrVpiConstant::Text(text)) => {
@@ -612,7 +644,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
 .dims = {dims}, .dim_count = {dim_count}u, .port_index = {}u, .target = {target}, .net = {}, \
 .constant = {constant}, .real_constant = {real_constant}, .typespec = {}u, .detail = {}, \
 .event = {}, .conns = {conns}, .conn_count = {}u, .activation_declaration = {declaration}u, \
-.activation_instance = {instance}u, .timing = {}{}{dynamic} }},\n",
+.activation_instance = {instance}u, .timing = {}{}{dynamic}{definition} }},\n",
             entry.type_code,
             c_string_literal(&entry.name),
             c_string_literal(&path.replace('\u{1f}', ".")),

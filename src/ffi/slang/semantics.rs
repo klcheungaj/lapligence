@@ -391,6 +391,15 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
                     | super::CHECKER_UNIT_TIME_SCALE)
                 == 0
         }
+        // A plain instance also carries its definition facts (ABI v62).
+        (1, super::SEMANTIC_INSTANCE_SINGLE, _) => {
+            let drive = UNCONNECTED_PULL0 | UNCONNECTED_PULL1;
+            let allowed = drive
+                | super::INSTANCE_CELL_DEFINE
+                | super::INSTANCE_AUTOMATIC
+                | super::INSTANCE_NET_TYPE_MASK << super::INSTANCE_NET_TYPE_SHIFT;
+            node.auxiliary & !allowed == 0 && (node.auxiliary & drive).count_ones() <= 1
+        }
         (1 | 24, _, _) => {
             let allowed = UNCONNECTED_PULL0 | UNCONNECTED_PULL1;
             node.auxiliary & !allowed == 0 && node.auxiliary.count_ones() <= 1

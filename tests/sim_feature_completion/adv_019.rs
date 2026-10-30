@@ -176,6 +176,26 @@ fn class_object_callbacks_follow_creation_and_reclamation_under_collection_stres
     );
 }
 
+#[test]
+fn instance_properties_follow_the_definition_and_its_configuration() {
+    let directory = sim_harness::TempDir::new("adv019-declarations").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "declarations", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "declarations",
+        include_str!("../fixtures/sim/feature_completion/adv_019/declarations.out"),
+        &[
+            "--top",
+            "cfg",
+            "--define-system-task",
+            "task $declarations()",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
 /// The answers of one catalog walk: the object types it reached and, per
 /// type, the (kind, name) queries answered without an error.
 struct Walk {

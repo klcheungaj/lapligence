@@ -2330,6 +2330,15 @@ fn a19_d40_static_lifetime_and_allocation() {
 }
 
 #[test]
+fn a19_d41_instance_definition_properties() {
+    run_vpi_decision(
+        "A19-D41_instance_definition_properties",
+        &["task $d41()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D41_instance_definition_properties.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

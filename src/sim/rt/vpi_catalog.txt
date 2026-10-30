@@ -32,6 +32,7 @@
 
 test a17d13 sim_lrm_decisions::a17_d13_fsm_objects
 test a19d28 sim_lrm_decisions::a19_d28_index_and_packed_relations
+test a19decl adv_019::instance_properties_follow_the_definition_and_its_configuration
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
@@ -61,7 +62,7 @@ node null 37.5 type=NULL
 
 node module 37.5 type=vpiModule
   get vpiTopModule implemented walk
-  get vpiDefDecayTime unsupported trireg nets are unsupported (ADV-006)
+  get vpiDefDecayTime unsupported trireg nets and the `default_decay_time directive are unsupported (ADV-006)
   handle vpiIndex implemented walk
   handle vpiGlobalClocking unsupported clocking blocks are not objects
   handle vpiDefaultClocking unsupported clocking blocks are not objects
@@ -198,23 +199,23 @@ node package 37.10 type=vpiPackage default=unsupported packages are not objects
 node instance 37.10 members=package,interface,program,module
   get vpiArray implemented walk
   get vpiArrayMember implemented walk
-  get vpiCellInstance unsupported configuration and compiler-directive properties of instances are not captured
-  get vpiDefNetType unsupported configuration and compiler-directive properties of instances are not captured
-  get vpiDefLineNo unsupported configuration and compiler-directive properties of instances are not captured
-  str vpiDefFile unsupported configuration and compiler-directive properties of instances are not captured
+  get vpiCellInstance implemented walk
+  get vpiDefNetType implemented walk
+  get vpiDefLineNo implemented walk
+  str vpiDefFile implemented walk
   str vpiDefName implemented walk
-  get vpiDefDelayMode unsupported configuration and compiler-directive properties of instances are not captured
+  get vpiDefDelayMode implemented walk
   str vpiName implemented walk
   str vpiFullName implemented walk
-  get vpiProtected unsupported protected envelopes are unsupported
+  get vpiProtected implemented walk
   get vpiTimePrecision implemented walk
   get vpiTimeUnit implemented walk
-  get vpiUnconnDrive unsupported configuration and compiler-directive properties of instances are not captured
-  str vpiLibrary unsupported configuration and compiler-directive properties of instances are not captured
-  str vpiCell unsupported configuration and compiler-directive properties of instances are not captured
-  str vpiConfig unsupported configuration and compiler-directive properties of instances are not captured
-  get vpiAutomatic unsupported the default lifetime of this object is not captured
-  get vpiTop unsupported vpiTop is not implemented (vpiTopModule is)
+  get vpiUnconnDrive implemented walk
+  str vpiLibrary implemented walk
+  str vpiCell implemented walk
+  str vpiConfig implemented a19decl
+  get vpiAutomatic implemented walk
+  get vpiTop implemented walk
   handle vpiInstanceArray unsupported programs and packages are not objects (modules and interfaces answer)
   iterate vpiPort implemented walk
   iterate vpiProgram unsupported programs are not objects
@@ -1954,7 +1955,7 @@ node gen_var 37.80 type=vpiGenVar default=unsupported genvars are not objects
 node gen_scope 37.80 type=vpiGenScope
   get vpiArray implemented walk
   get vpiArrayMember implemented walk
-  get vpiProtected unsupported protected envelopes are unsupported
+  get vpiProtected implemented walk
   get vpiImplicitDecl unsupported net declaration properties are not captured
   handle vpiIndex unsupported generate scope arrays are not objects and the index of a generated scope is not captured
   handle vpiGenScopeArray unsupported generate scope arrays are not objects

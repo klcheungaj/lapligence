@@ -556,6 +556,35 @@ reclaimed object would be a fatal error.
   constructed one) or no object." `tmp` changes in `make(2)`, `copy()` and
   `tmp = null`: 2 changes at checks 1-3, 3 at check 4.
 
+## declarations (37.10, 33.7)
+
+`declarations.c` prints, at time 1, the definition and configuration
+properties of `tb` and `tb.u`; the test elaborates configuration `cfg`
+(`--top cfg`), whose design statement selects `work.tb` (33.4.1). File
+names print without their directory; a refused query prints `error=<level>`.
+
+- Configuration. 33.7 (SystemVerilog-1800-2009.txt L54034-L54039):
+  "vpiLibrary—the library name into which the module was compiled",
+  "vpiCell—the name of the cell bound to the module instance",
+  "vpiConfig—the library.cell name of the config controlling the binding of
+  the module instance". `cfg` binds both instances, so both report
+  `work.cfg`; 33.3.1 (L53381-L53382): a file that matches no library "shall
+  by default be compiled into a library named work", so `vpiLibrary` is
+  `work`; the cells are `tb` and `leaf`.
+- Definition. 37.10 (diagram, L57912-L57915): "definition location int:
+  vpiDefLineNo str: vpiDefFile": `tb` is declared on line 8 and `leaf` on
+  line 5 of `declarations.sv`. `vpiTop` (L57922-L57923) is TRUE for `tb`
+  only. No envelope is protected (34), so `vpiProtected` is FALSE.
+- Directives. Without `` `celldefine``, `` `default_nettype`` or
+  `` `unconnected_drive`` the instances report `vpiCellInstance` 0,
+  `vpiDefNetType` `vpiWire` (1; 22.8 L39771-L39772: "When no
+  `default_nettype directive is present ... implicit nets are of type
+  wire"), `vpiUnconnDrive` `vpiHighZ` (1; Annex K L75188: "No default drive
+  given") and `vpiDefDelayMode` `vpiDelayModeNone` (1; L75194: "no delay mode
+  specified"); both definitions are static, so `vpiAutomatic` is 0 (37.3.7,
+  decision A19-D41).
+- `y=1` is `~a` with `a` 0.
+
 ## catalog (A03; 37.3, 38.6, 38.18, 38.23, 40.5.3)
 
 `catalog.sv` holds an object of most kinds the VPI catalog

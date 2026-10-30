@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 61u
+#define LLG_SLANG_ABI_VERSION 62u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -738,6 +738,21 @@ enum {
   LLG_SLANG_UNCONNECTED_PULL1 = 1ull << 17
 };
 
+/* Definition facts of a module, interface or program instance (ABI v62),
+ * carried in the instance node's auxiliary beside the unconnected-drive bits
+ * for the VPI instance properties (IEEE 1800-2009 37.10): the definition
+ * was compiled between `celldefine and `endcelldefine (22.10), its default
+ * lifetime is automatic, and bits 20-27 hold the LLG_SLANG_NET_* code of its
+ * `default_nettype (22.8; LLG_SLANG_SUBKIND_NONE for `default_nettype none).
+ * The definition's location is the range of the node the instance's
+ * target_id names. */
+enum {
+  LLG_SLANG_INSTANCE_CELL_DEFINE = 1ull << 18,
+  LLG_SLANG_INSTANCE_AUTOMATIC = 1ull << 19
+};
+#define LLG_SLANG_INSTANCE_NET_TYPE_SHIFT 20u
+#define LLG_SLANG_INSTANCE_NET_TYPE_MASK 0xffull
+
 /* Typedef qualifiers carried in the auxiliary of a TypeAlias node (detail
  * "TypeAlias"). BUILTIN: the typedef renames a built-in type keyword such as
  * `time` or `int` (IEEE 1800-2009 37.23 detail 6), so its typedef alias is
@@ -1447,10 +1462,13 @@ typedef struct {
 
 /* Source library of an elaborated instance (its definition's library), a
  * package, or a compilation unit, keyed by semantic node. At most one record
- * per node; nodes without a library have none. */
+ * per node; nodes without a library have none. `config` (ABI v62) is the
+ * `library.config` name of the configuration that controls the binding of an
+ * instance (IEEE 1800-2009 33.7 vpiConfig), empty when none does. */
 typedef struct {
   uint64_t semantic_id;
   LlgSlangString library;
+  LlgSlangString config;
 } LlgSlangSourceLibrary;
 
 /* Logical source position established by one `line directive (IEEE 1364-2001

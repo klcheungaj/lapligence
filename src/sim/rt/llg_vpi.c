@@ -503,6 +503,11 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
     if (object->parent && !model_pointer_index(object->parent, &parent)) return 0;
     if (object->target && !model_pointer_index(object->target, &target)) return 0;
     if (object->dim_count && !object->dims) return 0;
+    if (object->instance &&
+        (!object->instance->library || !object->instance->cell ||
+         (object->type != vpiModule && object->type != vpiInterface &&
+          object->type != vpiProgram)))
+        return 0;
     if (object->conn_count && !object->conns) return 0;
     for (uint32_t i = 0; i < object->conn_count; ++i) {
         const llg_vpi_compile_arg_t* ref = &object->conns[i].ref;
@@ -6500,6 +6505,18 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiModule)
                 return (object->flags & LLG_VPI_OBJ_TOP) || !object->parent;
             return unsupported_property();
+        case vpiTop:
+            /* 37.10: an instance at the top of the hierarchy. */
+            if (slot->kind == SLOT_OBJECT && object && object->instance)
+                return (object->flags & LLG_VPI_OBJ_TOP) || !object->parent;
+            return unsupported_property();
+        case vpiProtected:
+            /* 37.10, 37.80: llg rejects protected envelopes (34), so no
+             * instance or generate scope is protected. */
+            if (slot->kind == SLOT_OBJECT && object &&
+                (object->instance || object->type == vpiGenScope))
+                return 0;
+            return unsupported_property();
         case vpiLocalParam:
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiParameter)
                 return (object->flags & LLG_VPI_OBJ_LOCAL_PARAM) != 0;
@@ -6529,10 +6546,29 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 return log10_unit(unit);
             }
             return unsupported_property();
+        case vpiCellInstance:
+        case vpiDefNetType:
+        case vpiDefLineNo:
+        case vpiDefDelayMode:
+        case vpiUnconnDrive:
+            /* 37.10: the definition properties of an instance. */
+            if (slot->kind != SLOT_OBJECT || !object || !object->instance)
+                return unsupported_property();
+            switch (property) {
+                case vpiCellInstance: return object->instance->cell_define != 0;
+                case vpiDefNetType: return object->instance->net_type;
+                case vpiDefLineNo: return object->instance->def_line;
+                /* llg rejects the delay-mode directives (decision A19-D41). */
+                case vpiDefDelayMode: return vpiDelayModeNone;
+                default: return object->instance->unconnected_drive;
+            }
         case vpiAutomatic:
             if (slot->kind == SLOT_OBJECT && object &&
                 (object->type == vpiTask || object->type == vpiFunction))
                 return (object->flags & LLG_VPI_OBJ_QUALIFIER) != 0;
+            /* 37.3.7: the default lifetime of an instance's subroutines. */
+            if (slot->kind == SLOT_OBJECT && object && object->instance)
+                return object->instance->automatic != 0;
             /* Automatic variables and events are not catalog objects. */
             if (static_variable_slot(slot, object)) return 0;
             return unsupported_property();
@@ -6847,6 +6883,22 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
                 case vpiFile:
                     if (object->file) return (PLI_BYTE8*)object->file;
                     break;
+                case vpiDefFile:
+                case vpiLibrary:
+                case vpiCell:
+                case vpiConfig: {
+                    /* 37.10, 33.7: the definition and its binding. No
+                     * configuration controls an unconfigured design's binding
+                     * (decision A19-D41). */
+                    const llg_vpi_instance_t* instance = object->instance;
+                    const char* text = !instance                  ? NULL
+                                       : property == vpiDefFile ? instance->def_file
+                                       : property == vpiLibrary ? instance->library
+                                       : property == vpiCell    ? instance->cell
+                                                                : instance->config;
+                    if (text) return (PLI_BYTE8*)text;
+                    break;
+                }
                 case vpiDecompile:
                     /* 37.55: nets, variables and parameters are simple
                      * expressions; each decompiles to its name. */
