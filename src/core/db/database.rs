@@ -376,6 +376,9 @@ pub struct Db {
     /// Default clocking block in effect for each elaborated instance, as the
     /// frontend resolved it, including `default clocking id;` references.
     default_clockings: HashMap<NodeId, NodeId>,
+    /// The `default disable iff` expression each elaborated instance declares
+    /// itself (IEEE 1800-2009 16.15), keyed by instance.
+    instance_default_disables: HashMap<NodeId, NodeId>,
     /// Direction of each captured modport port. This is kept separately from
     /// `NodeKind::ModPort` so the frontend-neutral node shape remains stable.
     modport_directions: HashMap<NodeId, Direction>,
@@ -483,6 +486,7 @@ impl Db {
             coverage: CoverageTables::default(),
             clocking_vars: HashMap::new(),
             default_clockings: HashMap::new(),
+            instance_default_disables: HashMap::new(),
             modport_directions: HashMap::new(),
             modport_expressions: HashMap::new(),
             port_expressions: HashMap::new(),
@@ -576,6 +580,7 @@ impl Db {
             coverage: CoverageTables::default(),
             clocking_vars: HashMap::new(),
             default_clockings: HashMap::new(),
+            instance_default_disables: HashMap::new(),
             modport_directions: HashMap::new(),
             modport_expressions: HashMap::new(),
             port_expressions: HashMap::new(),
@@ -949,6 +954,18 @@ impl Db {
     /// All default clocking assignments keyed by instance.
     pub fn default_clockings(&self) -> &HashMap<NodeId, NodeId> {
         &self.default_clockings
+    }
+
+    /// The `default disable iff` expression declared in elaborated instance
+    /// `id` itself, not in an enclosing scope (vpiDefaultDisableIff, IEEE
+    /// 1800-2009 37.5, 37.6, 37.9).
+    pub fn instance_default_disable(&self, id: NodeId) -> Option<NodeId> {
+        self.instance_default_disables.get(&id).copied()
+    }
+
+    /// All instance `default disable iff` expressions keyed by instance.
+    pub fn instance_default_disables(&self) -> &HashMap<NodeId, NodeId> {
+        &self.instance_default_disables
     }
 
     pub fn is_clocking_block(&self, id: NodeId) -> bool {

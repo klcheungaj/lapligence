@@ -8,6 +8,20 @@ pub enum IrVpiObjectKind {
     Module,
     /// An interface instance (`vpiInterface`).
     Interface,
+    /// A program instance (`vpiProgram`, 37.9).
+    Program,
+    /// A package or the compilation unit `$unit` (`vpiPackage`, 37.10);
+    /// [`IrVpiObject::qualifier`] marks `$unit` (`vpiUnit`).
+    Package,
+    /// A clocking block (`vpiClockingBlock`, 37.44): [`IrVpiObject::detail`]
+    /// holds its default input and output edges, [`IrVpiObject::qualifier`]
+    /// marks a global clocking, [`IrVpiObject::code`] the hidden entry whose
+    /// children are its clocking event and default skews.
+    ClockingBlock,
+    /// A clocking io declaration (`vpiClockingIODecl`, 37.44): its
+    /// direction, edges and skews as a clocking block's, `conns[0]` the
+    /// expression it names (`vpiExpr`).
+    ClockingIoDecl,
     /// A generate block instance (`vpiGenScope`), e.g. `g[0]` (SV 27.4).
     GenScope,
     /// A named `begin ... end` block (`vpiNamedBegin`).
@@ -66,6 +80,10 @@ impl IrVpiObjectKind {
         match self {
             Self::Module => "vpiModule",
             Self::Interface => "vpiInterface",
+            Self::Program => "vpiProgram",
+            Self::Package => "vpiPackage",
+            Self::ClockingBlock => "vpiClockingBlock",
+            Self::ClockingIoDecl => "vpiClockingIODecl",
             Self::GenScope => "vpiGenScope",
             Self::NamedBegin => "vpiNamedBegin",
             Self::NamedFork => "vpiNamedFork",
@@ -97,6 +115,9 @@ impl IrVpiObjectKind {
             self,
             Self::Module
                 | Self::Interface
+                | Self::Program
+                | Self::Package
+                | Self::ClockingBlock
                 | Self::GenScope
                 | Self::NamedBegin
                 | Self::NamedFork
@@ -232,9 +253,11 @@ pub struct IrVpiObject {
     pub(in crate::sim) top: bool,
     pub(in crate::sim) local_param: bool,
     pub(in crate::sim) direction: IrVpiDirection,
-    /// Port order within its module, from 0.
+    /// Port order within its module, from 0; the declaration order of a
+    /// clocking io declaration in its block.
     pub(in crate::sim) port_index: u32,
-    /// Full name of the object a port's low connection refers to.
+    /// Full name of the object a port's low connection refers to; of the
+    /// default clocking block of a module, interface or program instance.
     pub(in crate::sim) port_target: Option<String>,
     pub(in crate::sim) constant: Option<IrVpiConstant>,
     /// Index into [`super::IrModel::vpi_typespecs`] (`vpiTypespec`), or
@@ -251,12 +274,16 @@ pub struct IrVpiObject {
     pub(in crate::sim) type_code: Option<&'static str>,
     /// Kind-specific property code name: `vpiAlwaysType` of a process,
     /// `vpiPrimType` of a primitive, `vpiFuncType` of a function,
-    /// `vpiPortType` of a port, element `vpiType` of an instance array.
+    /// `vpiPortType` of a port, element `vpiType` of an instance array,
+    /// the `vpiInputEdge | vpiOutputEdge << 8` of a clocking block or
+    /// clocking io declaration.
     pub(in crate::sim) detail: Option<&'static str>,
     /// Index into [`super::IrModel::events`] of a named event.
     pub(in crate::sim) event: Option<usize>,
     /// Expression connections: the high connection of a port, the lhs and
-    /// rhs of a continuous assignment, the terminals of a primitive.
+    /// rhs of a continuous assignment, the terminals of a primitive, the
+    /// `default disable iff` expression of an instance, the expression of a
+    /// clocking io declaration.
     pub(in crate::sim) conns: Vec<IrVpiConn>,
     /// The object has no name (processes, continuous assignments, unnamed
     /// primitives): name lookup never finds it.
@@ -264,7 +291,7 @@ pub struct IrVpiObject {
     /// Declared ranges of an instance array, outermost first.
     pub(in crate::sim) dims: Vec<(i64, i64)>,
     /// `vpiNetDeclAssign` of a continuous assignment, `vpiAutomatic` of a
-    /// task or function.
+    /// task or function, `vpiUnit` of a package, a global clocking block.
     pub(in crate::sim) qualifier: bool,
     /// Runtime activation identity `(declaration, instance)` of a named
     /// block, task or function: what `disable` names (cbDisable).

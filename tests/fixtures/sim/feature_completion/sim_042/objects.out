@@ -2,7 +2,7 @@ scope=tb.main type=vpiNamedBegin
 module=tb
 top=tb def=tb top_module=1
 modules: u1:vpiModule
-internal: gen[0]:vpiGenScope gen[1]:vpiGenScope main:vpiNamedBegin
+internal: gen[0]:vpiGenScope gen[1]:vpiGenScope main:vpiNamedBegin u1:vpiModule
 variables: b:vpiByteVar:8 bv:vpiBitVar:4 grid:vpiRegArray:6 i:vpiIntVar:32 ii:vpiIntegerVar:32 mem:vpiRegArray:4 r:vpiRealVar:64 t:vpiTimeVar:64 up:vpiReg:4 v:vpiReg:8
 nets: w:vpiNet:4
 reals: r:vpiRealVar:64

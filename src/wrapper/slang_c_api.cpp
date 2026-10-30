@@ -6123,6 +6123,20 @@ private:
         capture.semanticEdge(id, LLG_SLANG_EDGE_CLOCKING,
                              capture.ensureSemantic(clocking));
     }
+    if constexpr (std::same_as<T, InstanceBodySymbol>) {
+      // The `default disable iff` declared in this instance itself (ABI
+      // v62), its vpiDefaultDisableIff (IEEE 1800-2009 37.5, 37.6, 37.9).
+      // Slang keeps it only in its compilation, keyed by the declaring
+      // scope; enclosing scopes do not count.
+      const auto& disables = symbol.getCompilation().getDefaultDisableMap();
+      if (auto it = disables.find(static_cast<const Scope*>(&symbol));
+          it != disables.end()) {
+        parents.push_back(id);
+        it->second->visit(*this);
+        parents.pop_back();
+        capture.semanticRole(id, it->second, LLG_SLANG_EDGE_DEFAULT_DISABLE);
+      }
+    }
     if constexpr (std::same_as<T, ClockingBlockSymbol>) {
       capture.semanticRole(id, &symbol.getEvent(), LLG_SLANG_EDGE_EVENT);
       const ClockingSkew input = symbol.getDefaultInputSkew();

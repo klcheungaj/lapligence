@@ -23,7 +23,8 @@ checked against a run; no line was accepted only because the run printed it.
 - **Hierarchy.** `vpi_iterate(vpiModule, NULL)` returns the one top `tb`
   (`vpiTopModule` 1). Children are returned in catalog order, which is the
   order of their names (S42-D12): `u1`; the internal scopes `gen[0]`,
-  `gen[1]` (generate block names per 27.4) and `main`; the variables `b`
+  `gen[1]` (generate block names per 27.4), `main` and the module instance
+  `u1` (37.12: an instance is a scope, decision A19-D30); the variables `b`
   (`vpiByteVar`), `bv` (`vpiBitVar`), `grid` and `mem` (`vpiRegArray`, size =
   element count, 37.17 detail 9), `i` (`vpiIntVar`), `ii` (`vpiIntegerVar`),
   `r` (`vpiRealVar`, `vpiSize` 64, S42-D8), `t` (`vpiTimeVar`), `up` and `v`

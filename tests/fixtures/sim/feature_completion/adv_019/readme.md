@@ -564,8 +564,12 @@ interfaces with a modport, ports, nets and net arrays, every variable kind,
 class, string and container variables, parameters, gates, a UDP and a
 switch, a module path and a timing check, continuous assignments, a generate
 scope, sequences, properties and concurrent assertions, tasks and functions
-with most statement and expression kinds, and an FSM declared with the
-state-vector pragma (decision A17-D11). `catalog.c` has no expected output
+with most statement and expression kinds, an FSM declared with the
+state-vector pragma (decision A17-D11), a package and a `$unit` variable,
+a program and a program array (decision A19-D29), and clocking blocks in
+the top module, an interface and a program with io declarations, a
+default and a global clocking and a `default disable iff` (decision
+A19-D30). `catalog.c` has no expected output
 file: starting from a NULL reference, it calls `vpi_get` and `vpi_get_str`
 with every property name and `vpi_handle` and `vpi_iterate` with every
 relation name the catalog or the runtime dispatch knows, on up to 40 objects

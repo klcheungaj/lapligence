@@ -413,8 +413,13 @@ static int is_statement_scope_type(int type) {
     return type == vpiBegin || type == vpiFork || type == vpiFor || type == vpiForeachStmt;
 }
 
+/* Module, interface and program instances and packages (37.10). */
+static int is_instance_type(int type) {
+    return type == vpiModule || type == vpiInterface || type == vpiProgram || type == vpiPackage;
+}
+
 static int is_scope_type(int type) {
-    return type == vpiModule || type == vpiInterface || type == vpiGenScope ||
+    return is_instance_type(type) || type == vpiGenScope || type == vpiClockingBlock ||
            type == vpiNamedBegin || type == vpiNamedFork || type == vpiTask ||
            type == vpiFunction || is_statement_scope_type(type);
 }
@@ -440,8 +445,8 @@ static int is_primitive_type(int type) {
 }
 
 static int is_instance_array_type(int type) {
-    return type == vpiModuleArray || type == vpiInterfaceArray || type == vpiGateArray ||
-           type == vpiSwitchArray || type == vpiUdpArray;
+    return type == vpiModuleArray || type == vpiInterfaceArray || type == vpiProgramArray ||
+           type == vpiGateArray || type == vpiSwitchArray || type == vpiUdpArray;
 }
 
 /* Structure objects without a value of their own (37.7, 37.11, 37.25,
@@ -449,7 +454,7 @@ static int is_instance_array_type(int type) {
 static int is_structure_type(int type) {
     return is_process_type(type) || is_primitive_type(type) || is_instance_array_type(type) ||
            type == vpiContAssign || type == vpiNamedEvent || type == vpiModport ||
-           type == vpiModPath || type == vpiTchk;
+           type == vpiModPath || type == vpiTchk || type == vpiClockingIODecl;
 }
 
 static int is_array_type(int type) {
@@ -476,9 +481,9 @@ static int is_variable_type(int type) {
 static int has_array_properties(const llg_vpi_model_object_t* object) {
     if (!object) return 0;
     int type = object->type;
-    return type == vpiModule || type == vpiInterface || type == vpiProgram || type == vpiNet ||
-           type == vpiNamedEvent || type == vpiGenScope || is_primitive_type(type) ||
-           is_array_type(type) || is_variable_type(type);
+    return is_instance_type(type) || type == vpiNet || type == vpiNamedEvent ||
+           type == vpiGenScope || is_primitive_type(type) || is_array_type(type) ||
+           is_variable_type(type);
 }
 
 static int has_storage(const llg_vpi_model_object_t* object) {
@@ -2999,6 +3004,7 @@ static int parse_index(const char** cursor, int64_t* value) {
 }
 
 static vpiHandle element_by_indices(uint32_t row, const int64_t* indices, int count, int quiet);
+static PLI_INT32 release_handle(vpiHandle handle);
 /* How bit_by_index reports a failure: every error, none, or every error
  * except an index outside the declared range. */
 enum { BIT_ERRORS = 0, BIT_QUIET = 1, BIT_QUIET_RANGE = 2 };
@@ -3131,16 +3137,29 @@ vpiHandle vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope) {
             return NULL;
         }
         size_t length = strlen(parent->full_name) + 1u + strlen((const char*)name) + 1u;
-        char* full = (char*)malloc(length);
+        char* full = (char*)malloc(length + 1u);
         if (!full) {
             vpi_error("LLG_VPI_NOMEM", "VPI name allocation failed");
             return NULL;
         }
-        snprintf(full, length, "%s.%s", parent->full_name, (const char*)name);
+        /* 37.10 detail 5: `::` follows a package name. */
+        snprintf(full, length + 1u, "%s%s%s", parent->full_name,
+                 parent->type == vpiPackage ? "::" : ".", (const char*)name);
         result = lookup_full_name(full, &selected);
         free(full);
     } else {
         result = lookup_full_name((const char*)name, &selected);
+    }
+    /* 37.10 detail 6: no object within a compilation unit is found by
+     * name (`$unit` itself is). */
+    if (result) {
+        llg_vpi_slot_t* found = decode_handle(result, NULL);
+        const llg_vpi_model_object_t* row = found ? row_object(found->object) : NULL;
+        for (const llg_vpi_model_object_t* up = row ? row->parent : NULL; up; up = up->parent)
+            if (up->type == vpiPackage && (up->flags & LLG_VPI_OBJ_QUALIFIER)) {
+                release_handle(result);
+                return NULL;
+            }
     }
     /* A labelled assertion is also a named scope of the catalog; the name
      * denotes the assertion (39.3.1). */
@@ -3312,9 +3331,18 @@ static vpiHandle assertion_handle(size_t item) {
 static int32_t slot_instance(const llg_vpi_slot_t* slot) {
     llg_vpi_model_object_t* object = row_object(slot->object);
     if (slot->kind != SLOT_OBJECT || !object ||
-        (object->type != vpiModule && object->type != vpiInterface))
+        (object->type != vpiModule && object->type != vpiInterface &&
+         object->type != vpiProgram))
         return -1;
     return llg_acov_instance_named(object->full_name);
+}
+
+/* A package (or `$unit`) handle: an instance that holds no assertions,
+ * FSMs or coverage of its own (16.14.5: no assertion statement in a
+ * package). */
+static int is_package_slot(const llg_vpi_slot_t* slot) {
+    llg_vpi_model_object_t* object = row_object(slot->object);
+    return slot->kind == SLOT_OBJECT && object && object->type == vpiPackage;
 }
 
 /* vpi_iterate(vpiSequenceDecl | vpiPropertyDecl, scope): the declarations
@@ -3365,7 +3393,8 @@ static vpiHandle iterate_assertions(vpiHandle reference) {
         if (!slot) return NULL;
         llg_vpi_model_object_t* object = row_object(slot->object);
         if (slot->kind != SLOT_OBJECT || !object ||
-            (object->type != vpiModule && object->type != vpiInterface)) {
+            (object->type != vpiModule && object->type != vpiInterface &&
+             object->type != vpiProgram && object->type != vpiPackage)) {
             vpi_error("LLG_VPI_RELATION", "vpiAssertion iterates from NULL or an instance");
             return NULL;
         }
@@ -3541,9 +3570,10 @@ static PLI_INT32 instance_coverage(const llg_vpi_slot_t* slot, int property) {
                   "statement and toggle coverage are not implemented (S46-D5)");
         return vpiUndefined;
     }
+    if (is_package_slot(slot)) return 0;
     int32_t instance = slot_instance(slot);
     if (instance < 0) {
-        vpi_error("LLG_VPI_RELATION", "coverage properties need a module or interface instance");
+        vpi_error("LLG_VPI_RELATION", "coverage properties need an instance");
         return vpiUndefined;
     }
     /* FSM state coverage counts the reached states of the instance's FSMs. */
@@ -3622,9 +3652,10 @@ static vpiHandle fsm_handle(llg_vpi_slot_kind_t kind, size_t fsm, uint32_t state
 static vpiHandle iterate_fsms(vpiHandle reference) {
     llg_vpi_slot_t* slot = reference ? checked_handle(reference, NULL) : NULL;
     if (reference && !slot) return NULL;
+    if (slot && is_package_slot(slot)) return NULL;
     int32_t instance = slot ? slot_instance(slot) : -1;
     if (instance < 0) {
-        vpi_error("LLG_VPI_RELATION", "vpiFsm iterates from a module or interface instance");
+        vpi_error("LLG_VPI_RELATION", "vpiFsm iterates from a module, interface or program instance");
         return NULL;
     }
     size_t total = llg_fcov_count(), count = 0;
@@ -3754,6 +3785,14 @@ static uint32_t enclosing_module(uint32_t row) {
     llg_vpi_model_object_t* object = row_object(row);
     while (object && object->type != vpiModule && object->type != vpiInterface)
         object = object->parent;
+    return object ? row_of(object) : LLG_VPI_NONE;
+}
+
+/* The immediate package, module, interface or program instance of `row`
+ * (37.10 detail 3), `row` itself included. */
+static uint32_t enclosing_instance(uint32_t row) {
+    llg_vpi_model_object_t* object = row_object(row);
+    while (object && !is_instance_type(object->type)) object = object->parent;
     return object ? row_of(object) : LLG_VPI_NONE;
 }
 
@@ -5241,6 +5280,52 @@ static uint32_t statement_scope_code(const llg_vpi_model_object_t* object) {
     return object->code - 1u;
 }
 
+/* The clocking relations of 37.5, 37.6, 37.9 and 37.44 of catalog row
+ * `row`; `*handled` is 0 when `type` is not one of them for that row. */
+static vpiHandle clocking_relation(int type, uint32_t row, int* handled) {
+    llg_vpi_model_object_t* object = row_object(row);
+    *handled = 1;
+    if (object->type == vpiModule || object->type == vpiInterface || object->type == vpiProgram) {
+        if (type == vpiDefaultClocking)
+            return object->target ? object_handle(row_of(object->target)) : NULL;
+        if (type == vpiDefaultDisableIff) return object->conn_count ? conn_handle(row, 0u) : NULL;
+        /* The global clocking declared in the instance (decision A19-D30). */
+        if (type == vpiGlobalClocking && object->type != vpiProgram) {
+            for (uint32_t child = g_vpi.first_child[row]; child;
+                 child = g_vpi.next_sibling[child - 1u])
+                if (g_vpi.objects[child - 1u].type == vpiClockingBlock &&
+                    (g_vpi.objects[child - 1u].flags & LLG_VPI_OBJ_QUALIFIER))
+                    return object_handle(child - 1u);
+            return NULL;
+        }
+    }
+    if (object->type == vpiClockingBlock || object->type == vpiClockingIODecl) {
+        if (type == vpiClockingEvent || type == vpiInputSkew || type == vpiOutputSkew) {
+            if (type == vpiClockingEvent && object->type != vpiClockingBlock) {
+                vpi_error("LLG_VPI_RELATION", "a clocking io declaration has no clocking event");
+                return NULL;
+            }
+            uint32_t code = statement_scope_code(object);
+            if (code == LLG_VPI_NONE) return NULL;
+            uint32_t child = code_child(code_at(code), type);
+            return child == LLG_VPI_NONE ? NULL : code_handle(child);
+        }
+        if (type == vpiExpr && object->type == vpiClockingIODecl)
+            return object->conn_count ? conn_handle(row, 0u) : NULL;
+        if (type == vpiClockingBlock && object->type == vpiClockingIODecl)
+            return object->parent ? object_handle(row_of(object->parent)) : NULL;
+        /* 37.44 gives a clocking block or io declaration no module, and an
+         * io declaration no instance or parent (decision A19-D30). */
+        if (type == vpiModule ||
+            (object->type == vpiClockingIODecl && (type == vpiInstance || type == vpiParent))) {
+            vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-one relation for this object");
+            return NULL;
+        }
+    }
+    *handled = 0;
+    return NULL;
+}
+
 static vpiHandle statement_relation(int type, const llg_vpi_slot_t* slot) {
     const llg_vpi_stmt_t* stmt = (const llg_vpi_stmt_t*)slot->pointer;
     if (type == vpiLhs) {
@@ -5289,6 +5374,11 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
          * 37.70); vpiScope is the enclosing scope. */
         uint32_t code = statement_scope_code(object);
         return code == LLG_VPI_NONE ? NULL : code_relation(type, code);
+    }
+    if (slot->kind == SLOT_OBJECT && object) {
+        int handled;
+        vpiHandle result = clocking_relation(type, slot->object, &handled);
+        if (handled) return result;
     }
     switch (type) {
         case vpiStmt:
@@ -5359,6 +5449,11 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                            ? object_handle(slot->object)
                            : make_element(slot->object, slot->element, NULL);
             }
+            /* 37.9 and 37.10 give programs and packages no parent
+             * (decision A19-D29). */
+            if (slot->kind == SLOT_OBJECT && object &&
+                (object->type == vpiPackage || object->type == vpiProgram))
+                break;
             if (slot->kind == SLOT_OBJECT)
                 return object && object->parent ? object_handle(row_of(object->parent)) : NULL;
             /* A typespec's range has no owning object. */
@@ -5387,6 +5482,7 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 llg_vpi_callsite_t* site = (llg_vpi_callsite_t*)slot->pointer;
                 start = site->scope ? row_of(site->scope) : LLG_VPI_NONE;
             } else if (object) {
+                if (slot->kind == SLOT_OBJECT && object->type == vpiPackage) break;
                 start = slot->kind == SLOT_OBJECT && object->type == vpiModule && object->parent
                             ? row_of(object->parent) : slot->object;
             }
@@ -5403,8 +5499,9 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
         case vpiIndex:
             if (slot->kind == SLOT_OBJECT && object &&
                 (object->type == vpiModule || object->type == vpiInterface ||
-                 is_primitive_type(object->type))) {
-                /* 37.5 detail 2, 37.31 detail 4: NULL outside an array. */
+                 object->type == vpiProgram || is_primitive_type(object->type))) {
+                /* 37.5 detail 2, 37.6 and 37.9 detail 1, 37.31 detail 4:
+                 * NULL outside an array. */
                 int64_t value = 0;
                 int dims = 0;
                 if (instance_array_of(slot->object, &value, &dims) == LLG_VPI_NONE) return NULL;
@@ -5432,14 +5529,15 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
         case vpiInstanceArray:
         case vpiModuleArray:
         case vpiPrimitiveArray:
-            /* 37.5, 37.6, 37.31: the instance array an element belongs to.
+            /* 37.5, 37.6, 37.9, 37.31: the instance array an element belongs to.
              * The text defines no answer outside an array: NULL, with a
              * vpiError for a module or interface (decision A19-D28). */
             if (slot->kind == SLOT_OBJECT && object &&
                 (type == vpiPrimitiveArray ? is_primitive_type(object->type)
                  : type == vpiModuleArray  ? object->type == vpiModule
                                            : object->type == vpiModule ||
-                                                 object->type == vpiInterface)) {
+                                                 object->type == vpiInterface ||
+                                                 object->type == vpiProgram)) {
                 uint32_t array = instance_array_of(slot->object, NULL, NULL);
                 if (array != LLG_VPI_NONE) return object_handle(array);
                 if (type == vpiPrimitiveArray) return NULL;
@@ -5504,14 +5602,17 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
             if (slot->kind == SLOT_REFOBJ) return object_handle(row_of(object->target));
             break;
         case vpiInstance:
-            /* 37.10 detail 3: the immediate module or interface instance. */
+            /* 37.10 detail 3: the immediate package, module, interface or
+             * program instance; an instance's is the one it is declared
+             * in (NULL at the top level). */
             if (object && slot->kind != SLOT_CALL) {
-                uint32_t start = slot->kind == SLOT_OBJECT &&
-                                         (object->type == vpiModule || object->type == vpiInterface) &&
-                                         object->parent
-                                     ? row_of(object->parent) : slot->object;
-                uint32_t module = enclosing_module(start);
-                return module == LLG_VPI_NONE ? NULL : object_handle(module);
+                uint32_t start = slot->object;
+                if (slot->kind == SLOT_OBJECT && is_instance_type(object->type)) {
+                    if (!object->parent) return NULL;
+                    start = row_of(object->parent);
+                }
+                uint32_t instance = enclosing_instance(start);
+                return instance == LLG_VPI_NONE ? NULL : object_handle(instance);
             }
             break;
         case vpiUserSystf:
@@ -5534,11 +5635,17 @@ static int child_matches(const llg_vpi_model_object_t* child, int type) {
         case vpiVariables:
             return is_variable_type(child->type) || child->type == vpiRegArray;
         case vpiInternalScope:
-            return child->type == vpiGenScope || child->type == vpiNamedBegin ||
+            /* 37.12: the instances and clocking blocks below are scopes too
+             * (decision A19-D30). */
+            return (is_instance_type(child->type) && child->type != vpiPackage) ||
+                   child->type == vpiGenScope || child->type == vpiClockingBlock ||
+                   child->type == vpiNamedBegin ||
                    child->type == vpiNamedFork || child->type == vpiTask ||
                    child->type == vpiFunction || is_statement_scope_type(child->type);
         case vpiModule:
             return child->type == vpiModule;
+        case vpiInstance:
+            return is_instance_type(child->type);
         case vpiProcess:
             return is_process_type(child->type);
         case vpiTaskFunc:
@@ -5568,10 +5675,27 @@ static int iteration_type_supported(int type) {
         case vpiTask: case vpiFunction: case vpiPrimitive: case vpiGate: case vpiSwitch:
         case vpiUdp: case vpiModuleArray: case vpiInterfaceArray: case vpiPrimitiveArray:
         case vpiGateArray: case vpiSwitchArray: case vpiUdpArray: case vpiInstanceArray:
-        case vpiModport: case vpiModPath: case vpiTchk:
+        case vpiModport: case vpiModPath: case vpiTchk: case vpiProgram: case vpiProgramArray:
+        case vpiClockingBlock: case vpiClockingIODecl:
             return 1;
         default:
             return 0;
+    }
+}
+
+/* The iterations of a package: the instance items and scope members of
+ * 37.10 and 37.12, not the ports, processes, instances and structure of
+ * modules and interfaces (26.2: a package declares no hierarchy). */
+static int package_iteration(int type) {
+    switch (type) {
+        case vpiPort: case vpiProcess: case vpiContAssign: case vpiModule: case vpiModuleArray:
+        case vpiInterface: case vpiInterfaceArray: case vpiPrimitive: case vpiPrimitiveArray:
+        case vpiGate: case vpiSwitch: case vpiUdp: case vpiGateArray: case vpiSwitchArray:
+        case vpiUdpArray: case vpiInstanceArray: case vpiModport: case vpiModPath: case vpiTchk:
+        case vpiGenScope: case vpiClockingBlock:
+            return 0;
+        default:
+            return 1;
     }
 }
 
@@ -5632,7 +5756,8 @@ static vpiHandle iterate_children(int type, uint32_t parent) {
             items[count++] = (uintptr_t)object_handle(child - 1u);
         }
     }
-    if (type == vpiPort && count > 1) qsort(items, count, sizeof(*items), compare_ports);
+    if ((type == vpiPort || type == vpiClockingIODecl) && count > 1)
+        qsort(items, count, sizeof(*items), compare_ports);
     return make_list_iterator(type, items, (uint32_t)count);
 }
 
@@ -5768,8 +5893,12 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     if (type == vpiFsmStates) return iterate_fsm_states(ref_handle);
     if (type == vpiSequenceDecl || type == vpiPropertyDecl) return iterate_declarations(type, ref_handle);
     if (!ref_handle) {
-        if (type != vpiModule && type != vpiInterface) {
-            vpi_error("LLG_VPI_UNSUPPORTED", "only vpiModule iterates from a NULL reference");
+        /* 37.5 detail 1, 37.10: the top-level instances, packages and
+         * `$unit` included. */
+        if (type != vpiModule && type != vpiInterface && type != vpiProgram &&
+            type != vpiPackage && type != vpiInstance) {
+            vpi_error("LLG_VPI_UNSUPPORTED",
+                      "only instances iterate from a NULL reference");
             return NULL;
         }
         return iterate_children(type, LLG_VPI_NONE);
@@ -5922,6 +6051,25 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     if (slot->kind == SLOT_OBJECT && object && is_scope_type(object->type)) {
         if (!iteration_type_supported(type)) {
             vpi_error("LLG_VPI_UNSUPPORTED", "unsupported VPI iteration type for a scope");
+            return NULL;
+        }
+        /* 37.10, 37.13: instances and generate scopes hold programs and
+         * clocking blocks; 37.44: a clocking block holds io declarations
+         * and its scope's declarations only. */
+        if ((type == vpiProgram || type == vpiProgramArray || type == vpiClockingBlock) &&
+            !is_instance_type(object->type) && object->type != vpiGenScope) {
+            vpi_error("LLG_VPI_RELATION",
+                      "only instances and generate scopes hold programs and clocking blocks");
+            return NULL;
+        }
+        if ((type == vpiClockingIODecl) != (object->type == vpiClockingBlock) &&
+            !(object->type == vpiClockingBlock && is_scope_iteration(type))) {
+            vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-many relation for this object");
+            return NULL;
+        }
+        if (object->type == vpiPackage && !package_iteration(type)) {
+            vpi_error("LLG_VPI_RELATION",
+                      "a package holds no ports, processes, instances or structure (37.10)");
             return NULL;
         }
         return iterate_children(type, slot->object);
@@ -6351,7 +6499,7 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         case vpiArrayMember:
             if (slot->kind == SLOT_OBJECT && object &&
                 (object->type == vpiModule || object->type == vpiInterface ||
-                 is_primitive_type(object->type)))
+                 object->type == vpiProgram || is_primitive_type(object->type)))
                 return instance_array_of(slot->object, NULL, NULL) != LLG_VPI_NONE;
             if (slot->kind == SLOT_OBJECT ? !has_array_properties(object)
                                           : slot->kind != SLOT_ELEMENT &&
@@ -6399,7 +6547,7 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                    object->subtype == vpiReg;
         case vpiDirection:
             if ((slot->kind == SLOT_OBJECT || slot->kind == SLOT_PORTBIT) && object &&
-                object->type == vpiPort)
+                (object->type == vpiPort || object->type == vpiClockingIODecl))
                 return object->subtype ? object->subtype : vpiNoDirection;
             if (slot->kind == SLOT_PRIMTERM || (slot->kind == SLOT_TERM && type == vpiPathTerm)) {
                 const llg_vpi_conn_t* conn = row_conn(slot->object, (uint32_t)slot->aux);
@@ -6476,6 +6624,19 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if (slot->kind == SLOT_SELECT && slot->span == 1 && object && object->is_net)
                 return object->type == vpiNet && object->subtype ? object->subtype : vpiWire;
             return unsupported_property();
+        case vpiInputEdge:
+        case vpiOutputEdge:
+            /* 37.44: the edge of the (default) skew, the clocking event's
+             * for a skew without one (decision A19-D30). */
+            if (slot->kind == SLOT_OBJECT && object &&
+                (object->type == vpiClockingBlock || object->type == vpiClockingIODecl))
+                return (object->detail >> (property == vpiInputEdge ? 0 : 8)) & 0xff;
+            return unsupported_property();
+        case vpiUnit:
+            /* 37.10: TRUE for the compilation unit `$unit`. */
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiPackage)
+                return (object->flags & LLG_VPI_OBJ_QUALIFIER) != 0;
+            return unsupported_property();
         case vpiTopModule:
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiModule)
                 return (object->flags & LLG_VPI_OBJ_TOP) || !object->parent;
@@ -6502,7 +6663,9 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             return unsupported_property();
         case vpiTimeUnit:
         case vpiTimePrecision:
-            if (slot->kind == SLOT_OBJECT && object && is_scope_type(object->type)) {
+            /* 37.44 gives a clocking block no time unit. */
+            if (slot->kind == SLOT_OBJECT && object && is_scope_type(object->type) &&
+                object->type != vpiClockingBlock) {
                 uint64_t precision = llg_time_precision_fs();
                 uint64_t unit = property == vpiTimeUnit ? time_unit_of(object) : precision;
                 if (!unit) unit = precision ? precision : 1u;

@@ -101,6 +101,12 @@ impl Codegen<'_> {
     /// The unit-separated hierarchical path of a scope or declaration, with
     /// generate blocks named per SV 27.4 and named statement blocks included.
     fn vpi_path(&self, id: NodeId) -> Vec<String> {
+        // A package or `$unit` keys its objects apart from a module of the
+        // same name: its key part ends in `::`, the separator its members'
+        // full names take (37.10 detail 5).
+        if let Some(name) = self.vpi_package_name(id) {
+            return vec![format!("{name}::")];
+        }
         match self.kind(id) {
             NodeKind::ModuleInst { .. } | NodeKind::GenScope | NodeKind::GenScopeArray => self
                 .db
@@ -138,6 +144,16 @@ impl Codegen<'_> {
                 }
                 path
             }
+        }
+    }
+
+    /// The name of a package (`vpiPackage`) or of the compilation unit
+    /// (`$unit`, 37.10), or `None` for any other node.
+    fn vpi_package_name(&self, id: NodeId) -> Option<String> {
+        match self.kind(id) {
+            NodeKind::Package => Some(strip_lib(&self.node(id).name)),
+            _ if self.is_compilation_unit(id) => Some("$unit".to_owned()),
+            _ => None,
         }
     }
 
@@ -902,6 +918,9 @@ impl Codegen<'_> {
     fn vpi_declared_in_instance(&self, id: NodeId) -> bool {
         let mut current = self.node(id).parent;
         while let Some(parent) = current {
+            if self.vpi_package_name(parent).is_some() {
+                return true;
+            }
             match self.kind(parent) {
                 NodeKind::ModuleInst { .. } | NodeKind::GenScope => return true,
                 NodeKind::Stmt(_) => current = self.node(parent).parent,
@@ -931,6 +950,9 @@ impl Codegen<'_> {
             NodeKind::ModuleInst {
                 is_interface: true, ..
             } => ("vpiInterfaceArray", "vpiInterface"),
+            NodeKind::ModuleInst { .. } if self.db.is_program_instance(element) => {
+                ("vpiProgramArray", "vpiProgram")
+            }
             NodeKind::ModuleInst { .. } => ("vpiModuleArray", "vpiModule"),
             NodeKind::Gate { .. } => {
                 let primitive = self.vpi_primitive_row(
@@ -949,7 +971,7 @@ impl Codegen<'_> {
         };
         // Gate arrays are one-dimensional (IEEE 1800-2009 28.3); a deeper
         // primitive array would leave its elements unnamed.
-        if detail != "vpiModule" && detail != "vpiInterface" && dims.len() != 1 {
+        if !matches!(detail, "vpiModule" | "vpiInterface" | "vpiProgram") && dims.len() != 1 {
             return None;
         }
         Some(IrVpiObject {
@@ -1040,8 +1062,19 @@ impl Codegen<'_> {
         }
         let primitive_names = self.vpi_unnamed_primitive_names(&array_of);
 
+        // Packages and `$unit` are top-level instances beside the top
+        // modules (37.10).
+        let roots: Vec<NodeId> = tops
+            .iter()
+            .copied()
+            .chain(
+                self.db
+                    .node_ids()
+                    .filter(|id| self.vpi_package_name(*id).is_some()),
+            )
+            .collect();
         for id in self.db.node_ids() {
-            if !reachable(self.db, id, tops) {
+            if !reachable(self.db, id, &roots) {
                 continue;
             }
             let node = self.node(id);
@@ -1060,6 +1093,90 @@ impl Codegen<'_> {
                 }
                 continue;
             }
+            if let Some(name) = self.vpi_package_name(id) {
+                insert(source(IrVpiObject {
+                    full_name: self.vpi_full_name(id),
+                    name: name.clone(),
+                    definition_name: Some(name),
+                    kind: IrVpiObjectKind::Package,
+                    qualifier: self.is_compilation_unit(id),
+                    ..IrVpiObject::default()
+                }));
+                continue;
+            }
+            // A named clocking block and its clocking io declarations
+            // (37.44); an unnamed default clocking block has no name to
+            // key or report.
+            if let Some(info) = self.db.clocking_block(id) {
+                if node.name.is_empty() {
+                    continue;
+                }
+                let key = self.vpi_full_name(id);
+                if code {
+                    owners.push((key.clone(), key.clone(), CodeOwner::Clocking(id, None)));
+                }
+                let clock = clock_edge(&info.event_specs);
+                insert(source(IrVpiObject {
+                    full_name: key,
+                    name: node.name.clone(),
+                    kind: IrVpiObjectKind::ClockingBlock,
+                    detail: Some(edge_pair(
+                        skew_edge(&info.default_input, clock),
+                        skew_edge(&info.default_output, clock),
+                    )),
+                    qualifier: info.is_global,
+                    ..IrVpiObject::default()
+                }));
+                continue;
+            }
+            if let Some(var) = self.db.clocking_var(id) {
+                let Some(info) = self
+                    .db
+                    .clocking_block(var.block)
+                    .filter(|_| !self.node(var.block).name.is_empty())
+                else {
+                    continue;
+                };
+                let clock = clock_edge(&info.event_specs);
+                let (input, output) = clocking_var_skews(var, info);
+                let key = self.vpi_full_name(id);
+                let scope = self.vpi_full_name(var.block);
+                if code {
+                    owners.push((
+                        key.clone(),
+                        scope.clone(),
+                        CodeOwner::Conns(vec![var.expression]),
+                    ));
+                    owners.push((key.clone(), scope, CodeOwner::Clocking(var.block, Some(id))));
+                }
+                insert(source(IrVpiObject {
+                    full_name: key,
+                    name: node.name.clone(),
+                    kind: IrVpiObjectKind::ClockingIoDecl,
+                    direction: match var.direction {
+                        Direction::Input => IrVpiDirection::Input,
+                        Direction::Output => IrVpiDirection::Output,
+                        Direction::Inout => IrVpiDirection::Inout,
+                        _ => IrVpiDirection::None,
+                    },
+                    detail: Some(edge_pair(
+                        input.map_or("0", |skew| skew_edge(skew, clock)),
+                        output.map_or("0", |skew| skew_edge(skew, clock)),
+                    )),
+                    conns: vec![self.vpi_conn(var.expression, IrVpiDirection::None)],
+                    // Declaration order, which vpiClockingIODecl keeps.
+                    port_index: u32::try_from(
+                        self.node(var.block)
+                            .children
+                            .iter()
+                            .take_while(|child| **child != id)
+                            .count(),
+                    )
+                    .unwrap_or(u32::MAX),
+                    ..IrVpiObject::default()
+                }));
+                continue;
+            }
             match self.kind(id) {
                 NodeKind::ModuleInst {
                     def_name,
@@ -1071,12 +1188,30 @@ impl Codegen<'_> {
                     let Some(name) = path.last().cloned() else {
                         continue;
                     };
+                    let key = path.join(SEPARATOR);
+                    // vpiDefaultClocking and vpiDefaultDisableIff (37.5,
+                    // 37.6, 37.9).
+                    let default_clocking = self
+                        .db
+                        .default_clocking(id)
+                        .filter(|block| !self.node(*block).name.is_empty())
+                        .map(|block| self.vpi_full_name(block));
+                    let disable = self.db.instance_default_disable(id);
+                    if let (true, Some(disable)) = (code, disable) {
+                        owners.push((key.clone(), key.clone(), CodeOwner::Conns(vec![disable])));
+                    }
                     insert(source(IrVpiObject {
-                        full_name: path.join(SEPARATOR),
+                        port_target: default_clocking,
+                        conns: disable
+                            .map(|disable| vec![self.vpi_conn(disable, IrVpiDirection::None)])
+                            .unwrap_or_default(),
+                        full_name: key,
                         name,
                         definition_name: Some(def_name.clone()),
                         kind: if *is_interface {
                             IrVpiObjectKind::Interface
+                        } else if self.db.is_program_instance(id) {
+                            IrVpiObjectKind::Program
                         } else {
                             IrVpiObjectKind::Module
                         },
@@ -1675,6 +1810,9 @@ impl Codegen<'_> {
                             statements.push((row, entry));
                         }
                     }
+                    CodeOwner::Clocking(block, var) => {
+                        statements.push((row, tables.clocking_root(block, var, scope)));
+                    }
                     CodeOwner::Conns(expressions) => {
                         let object = &model.vpi_objects[row];
                         if object.conns.len() != expressions.len() {
@@ -2143,6 +2281,83 @@ enum CodeOwner {
     Statement(NodeId),
     /// The source expression of each connection, in connection order.
     Conns(Vec<NodeId>),
+    /// The clocking event and skews of clocking block `.0`, or the skews of
+    /// its clocking io declaration `.1` (37.44).
+    Clocking(NodeId, Option<NodeId>),
+}
+
+/// The edge of a clocking event: that of a single edge event, else none.
+fn clock_edge(specs: &[EventSpec]) -> &'static str {
+    match specs {
+        [EventSpec::Edge { posedge: true, .. }] => "vpiPosedge",
+        [EventSpec::Edge { posedge: false, .. }] => "vpiNegedge",
+        _ => "0",
+    }
+}
+
+/// `vpiInputEdge`/`vpiOutputEdge` of a skew: its own edge, else the edge of
+/// the clocking event it is relative to (14.4; decision A19-D30).
+fn skew_edge(skew: &ClockingSkew, clock: &'static str) -> &'static str {
+    match skew.edge {
+        ClockingEdge::None => clock,
+        ClockingEdge::Posedge => "vpiPosedge",
+        ClockingEdge::Negedge => "vpiNegedge",
+        ClockingEdge::BothEdges => "vpiAnyEdge",
+    }
+}
+
+/// The catalog `detail` of a clocking block or io declaration: the input
+/// edge in the low byte, the output edge in the next.
+fn edge_pair(input: &'static str, output: &'static str) -> &'static str {
+    const EDGES: [&str; 4] = ["0", "vpiPosedge", "vpiNegedge", "vpiAnyEdge"];
+    const PAIRS: [[&str; 4]; 4] = [
+        [
+            "0",
+            "(vpiPosedge << 8)",
+            "(vpiNegedge << 8)",
+            "(vpiAnyEdge << 8)",
+        ],
+        [
+            "vpiPosedge",
+            "(vpiPosedge | vpiPosedge << 8)",
+            "(vpiPosedge | vpiNegedge << 8)",
+            "(vpiPosedge | vpiAnyEdge << 8)",
+        ],
+        [
+            "vpiNegedge",
+            "(vpiNegedge | vpiPosedge << 8)",
+            "(vpiNegedge | vpiNegedge << 8)",
+            "(vpiNegedge | vpiAnyEdge << 8)",
+        ],
+        [
+            "vpiAnyEdge",
+            "(vpiAnyEdge | vpiPosedge << 8)",
+            "(vpiAnyEdge | vpiNegedge << 8)",
+            "(vpiAnyEdge | vpiAnyEdge << 8)",
+        ],
+    ];
+    let at = |edge| EDGES.iter().position(|e| *e == edge).unwrap_or(0);
+    PAIRS[at(input)][at(output)]
+}
+
+/// The effective input and output skews of a clocking io declaration: its
+/// own, else the block's default, for the directions it has (14.3).
+fn clocking_var_skews<'a>(
+    var: &'a crate::core::db::ClockingVarInfo,
+    block: &'a crate::core::db::ClockingBlockInfo,
+) -> (Option<&'a ClockingSkew>, Option<&'a ClockingSkew>) {
+    let own = |skew: &'a ClockingSkew, default: &'a ClockingSkew| {
+        if skew.delay.is_some() || !matches!(skew.edge, ClockingEdge::None) {
+            skew
+        } else {
+            default
+        }
+    };
+    let input = matches!(var.direction, Direction::Input | Direction::Inout)
+        .then(|| own(&var.input, &block.default_input));
+    let output = matches!(var.direction, Direction::Output | Direction::Inout)
+        .then(|| own(&var.output, &block.default_output));
+    (input, output)
 }
 
 /// `vpiConstType` code name of a literal argument. Integral literals keep

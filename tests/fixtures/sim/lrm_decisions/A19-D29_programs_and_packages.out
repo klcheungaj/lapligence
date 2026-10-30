@@ -1,0 +1,37 @@
+top instances 600:$unit 600:pkg 32:tb level=0
+top packages 600:$unit 600:pkg level=0
+top programs NULL level=0
+pkg type=600 pkg level=0
+pkg name=pkg defname=pkg
+pkg vpiUnit 0
+pkg vpiInstance NULL level=0
+pkg vpiParent NULL level=3
+pkg variables 612:pkg::pv level=0
+pkg taskfuncs 20:pkg::pf level=0
+pkg ports NULL level=3
+pkg::pv type=612 pkg::pv level=0
+pv by scope same=1
+pkg::pv vpiInstance type=600 pkg level=0
+pkg::pv vpiScope type=600 pkg level=0
+unit type=600 $unit level=0
+unit vpiUnit 1
+unit variables 612:$unit::uv level=0
+$unit::uv by name NULL level=0
+tb.p type=602 tb.p level=0
+tb.p defname=prg
+tb.p vpiInstance type=32 tb level=0
+tb.p vpiModule type=32 tb level=0
+tb.p vpiParent NULL level=3
+tb.p vpiIndex NULL level=0
+tb.p vpiInstanceArray NULL level=3
+tb.p vpiArrayMember 0
+tb.p.x vpiInstance type=602 tb.p level=0
+tb.p.x vpiModule type=32 tb level=0
+tb programs 602:tb.p 602:tb.pa[0] 602:tb.pa[1] level=0
+tb program arrays 604:tb.pa level=0
+tb.pa type=604 tb.pa level=0
+tb.pa vpiSize 2
+tb.pa instances 602:tb.pa[1] 602:tb.pa[0] level=0
+tb.pa[1] vpiInstanceArray type=604 tb.pa level=0
+tb.pa[1] vpiArrayMember 1
+tb.pa[1] vpiIndex 1 level=0
