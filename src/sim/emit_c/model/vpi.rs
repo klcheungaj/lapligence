@@ -66,7 +66,7 @@ struct Entry {
     instance: Option<IrVpiInstance>,
     strength: Option<(&'static str, &'static str)>,
     implicit: bool,
-    qualifiers: crate::core::db::DeclarationQualifiers,
+    qualifiers: crate::sim::ir::IrVpiQualifiers,
 }
 
 impl Entry {
@@ -631,8 +631,8 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         for (set, flag) in [
             (entry.qualifiers.scalared, "LLG_VPI_OBJ_SCALARED"),
             (entry.qualifiers.vectored, "LLG_VPI_OBJ_VECTORED"),
-            (entry.qualifiers.connected_by_name, "LLG_VPI_OBJ_BY_NAME"),
-            (entry.qualifiers.explicit_port_name, "LLG_VPI_OBJ_EXPLICIT"),
+            (entry.qualifiers.by_name, "LLG_VPI_OBJ_BY_NAME"),
+            (entry.qualifiers.explicit_name, "LLG_VPI_OBJ_EXPLICIT"),
         ] {
             if set {
                 flags.push(flag);

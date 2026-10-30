@@ -12,8 +12,8 @@ use crate::core::db::{
 };
 use crate::sim::ir::{
     IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn, IrVpiConstant,
-    IrVpiDirection, IrVpiInstance, IrVpiObject, IrVpiObjectKind, IrVpiTypespec, IrVpiTypespecKind,
-    IrVpiTypespecMember, IrVpiVarKind,
+    IrVpiDirection, IrVpiInstance, IrVpiObject, IrVpiObjectKind, IrVpiQualifiers, IrVpiTypespec,
+    IrVpiTypespecKind, IrVpiTypespecMember, IrVpiVarKind,
 };
 
 mod code;
@@ -1439,7 +1439,7 @@ impl Codegen<'_> {
                         two_state,
                         typespec,
                         implicit: declared_net && self.db.is_implicit_net(id),
-                        qualifiers: self.db.declaration_qualifiers(id),
+                        qualifiers: vpi_qualifiers(self.db.declaration_qualifiers(id)),
                         ..IrVpiObject::default()
                     }));
                 }
@@ -1848,7 +1848,7 @@ impl Codegen<'_> {
                             }
                             _ => Vec::new(),
                         },
-                        qualifiers: self.db.declaration_qualifiers(id),
+                        qualifiers: vpi_qualifiers(self.db.declaration_qualifiers(id)),
                         ..IrVpiObject::default()
                     }));
                     // 37.13: a module port's io declaration; interface and
@@ -2633,6 +2633,16 @@ fn vpi_strengths(
         Strength::Unspecified | Strength::Unsupported => default,
     };
     (code(strength0), code(strength1))
+}
+
+/// The VPI flags of a net's or port's declaration qualifiers.
+fn vpi_qualifiers(qualifiers: crate::core::db::DeclarationQualifiers) -> IrVpiQualifiers {
+    IrVpiQualifiers {
+        scalared: qualifiers.scalared,
+        vectored: qualifiers.vectored,
+        explicit_name: qualifiers.explicit_port_name,
+        by_name: qualifiers.connected_by_name,
+    }
 }
 
 fn vpi_net_type(net_type: NetType) -> &'static str {

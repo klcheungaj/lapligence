@@ -331,7 +331,17 @@ pub struct IrVpiObject {
     pub(in crate::sim) implicit: bool,
     /// `vpiExplicitScalared`/`vpiExplicitVectored` of a net (37.16),
     /// `vpiExplicitName`/`vpiConnByName` of a port (37.14).
-    pub(in crate::sim) qualifiers: crate::core::db::DeclarationQualifiers,
+    pub(in crate::sim) qualifiers: IrVpiQualifiers,
+}
+
+/// Declaration keywords and port naming of a net or port row (IEEE
+/// 1800-2009 37.14, 37.16).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct IrVpiQualifiers {
+    pub(in crate::sim) scalared: bool,
+    pub(in crate::sim) vectored: bool,
+    pub(in crate::sim) explicit_name: bool,
+    pub(in crate::sim) by_name: bool,
 }
 
 /// The definition and configuration properties of an instance (IEEE

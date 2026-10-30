@@ -6423,8 +6423,8 @@ static void group_push(llg_vpi_spans_t* group, uint32_t row, uint64_t element, u
 static void net_group(const llg_vpi_span_t* start, llg_vpi_spans_t* group) {
     spans_push(group, start->row, start->element, start->lsb, start->width, 0, 0);
     if (!is_net_row(start->row)) return;
-    for (size_t g = 0; g < group->count && !group->failed; ++g) {
-        llg_vpi_span_t span = group->items[g];
+    for (size_t at = 0; at < group->count && !group->failed; ++at) {
+        llg_vpi_span_t span = group->items[at];
         for (size_t i = links_of(span.row); i < g_vpi.link_count; ++i) {
             const llg_vpi_link_t* link = &g_vpi.links[i];
             uint32_t from, to;
@@ -6912,12 +6912,12 @@ static int resolved_net_type(const llg_vpi_slot_t* slot) {
         free(types);
         return own;
     }
-    for (size_t g = 0; g < group.count; ++g) {
+    for (size_t at = 0; at < group.count; ++at) {
         size_t k = 0;
-        while (k < count && rows[k] != group.items[g].row) ++k;
+        while (k < count && rows[k] != group.items[at].row) ++k;
         if (k == count) {
-            rows[count] = group.items[g].row;
-            types[count++] = net_type_of(group.items[g].row);
+            rows[count] = group.items[at].row;
+            types[count++] = net_type_of(group.items[at].row);
         }
     }
     free(group.items);
