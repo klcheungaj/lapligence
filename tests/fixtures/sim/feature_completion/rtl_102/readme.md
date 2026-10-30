@@ -18,11 +18,15 @@ below; none were captured from `llg`.
   `top = e`, `bot = 6`. After `data[3:0] = e`, `v = 0`, `u = a`: `data = 0e`,
   `top = f`, `lane[0] = f`, `bus = fa`.
 - `procedural_views`: `always_comb`, `@(b.bit2)`, NBA and blocking writes
-  through expression ports. `.sum(data[3:0] + data[7:4])` is 4 bits, so
-  `s = 8'(1 + 2) + K = 06`, then `4 + 2 + 3 = 09`, then `4 + b + 3 = 12`.
-  The writer's input port `clk` is a net driven from `tb.clk = 0`; its time-0
-  X to 0 change is a negedge that the waiting `always @(negedge clk)` sees
-  (decision T0-D2), so the negedge writes below already happen at time 0:
+  through expression ports. `.sum(data[3:0] + data[7:4])` is 4 bits.
+  The writer's input port `clk` is a copy of `tb.clk = 0` (the actual has an
+  initializer and the port has a time-0 observer, A21-D1); its time-0 X to 0
+  change is a negedge that the waiting `always @(negedge clk)` sees (decision
+  T0-D2), so the negedge writes below already happen at time 0, after
+  `tb.initial` set `data = 21` and `j = 0`: the input `j` shares `tb.j`
+  (A21-D1), so `hi[3'(j) + 5]` is `hi[5]` and clears `data[5]` (`21 -> 01`).
+  Hence `s = 8'(1 + 0) + K = 04`, then `4 + 0 + 3 = 07`, then (after the
+  posedge NBA `hi = b`) `4 + b + 3 = 12`. Also at time 0,
   `.ascp(asc[2:5])` of `1110_1100` is `1011` and `ascp[3]` is `asc[3] = 0`,
   and `words[3] = be` before the first read.
   `b.wd[i]` selects 8-bit elements at run time (`22`, then `be`, then `be`).
