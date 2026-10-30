@@ -89,6 +89,8 @@ typedef enum {
                       * catalog row << 1 or an assertion item << 1 | 1 */
     SLOT_FSM,        /* FSM `left` of the FSM coverage table (40.5.3) */
     SLOT_FSMSTATE,   /* state `aux` of FSM `left` (40.5.3) */
+    SLOT_IMP,        /* vpiInterModPath (37.33): from port row `left` (bit `right`, -1:
+                      * the whole port) to load port row `object` (bit `aux`, -1: whole) */
     SLOT_CABIT,      /* bit `aux` (vpiOffset, from the LSB) of continuous assignment
                       * row `object` (vpiContAssignBit, 37.43) */
 } llg_vpi_slot_kind_t;
@@ -1849,10 +1851,34 @@ static vpiHandle iterate_roles(uint32_t row, int type, unsigned roles) {
 }
 
 /* The delay object kinds of vpi_get_delays/vpi_put_delays. */
-enum { DELAYS_NONE = 0, DELAYS_PATH, DELAYS_TCHK, DELAYS_PRIMITIVE, DELAYS_CONT_ASSIGN };
+enum {
+    DELAYS_NONE = 0,
+    DELAYS_PATH,
+    DELAYS_TCHK,
+    DELAYS_PRIMITIVE,
+    DELAYS_CONT_ASSIGN,
+    DELAYS_NET,     /* a net, net bit or net array element (37.16) */
+    DELAYS_PORT,    /* module input port delays of a port or port bit (37.14) */
+    DELAYS_CONTROL, /* the delay of a delay control (37.63) */
+};
+
+/* What a delay record addresses: the kind, the object holding the delays
+ * (a port bit's and an intermodule path's load port), the bits of a port
+ * (`bit`, `n_bits`) and the delay expression of a delay control. */
+typedef struct {
+    int kind;
+    llg_vpi_model_object_t* row;
+    uint32_t bit;
+    uint32_t n_bits;
+    uint32_t code;
+    int imp;
+} llg_vpi_delays_t;
 
 static int delay_kind(const llg_vpi_model_object_t* object) {
-    if (!object || !object->timing) return DELAYS_NONE;
+    if (!object) return DELAYS_NONE;
+    if (object->is_net) return DELAYS_NET;
+    if (object->type == vpiPort) return DELAYS_PORT;
+    if (!object->timing) return DELAYS_NONE;
     if (object->type == vpiModPath) return DELAYS_PATH;
     if (object->type == vpiTchk) return DELAYS_TCHK;
     if (is_primitive_type(object->type)) return DELAYS_PRIMITIVE;
@@ -1904,36 +1930,167 @@ static const llg_sdf_op_t* limit_op(const llg_vpi_timing_t* tm, uint32_t limit) 
     return NULL;
 }
 
-/* Current value `index` of the delays or limits of `object`: its runtime
+static int code_type(const llg_vpi_code_t* node);
+
+/* The scheduler ticks of the value of delay expression `code`, which `scope`
+ * evaluates in its time unit as a delay does (9.4.1: x and z are 0, a
+ * negative integral value is an unsigned time; a real one is rounded). */
+static int code_delay_ticks(uint32_t code, const llg_vpi_model_object_t* scope, int64_t* out) {
+    llg_vpi_datum_t value;
+    int is_signed;
+    if (!code_value(code, &value, &is_signed)) return 0;
+    uint64_t precision = llg_time_precision_fs();
+    uint64_t unit = time_unit_of(scope);
+    if (!precision) precision = 1;
+    if (!unit || unit < precision) unit = precision;
+    uint64_t ticks = value.is_real ? sv4_real_delay_ticks(value.real, unit / precision, 1u)
+                                   : sv4_delay_ticks(value.packed, unit / precision);
+    sv4_destroy(&value.packed);
+    *out = ticks > (uint64_t)INT64_MAX ? INT64_MAX : (int64_t)ticks;
+    return 1;
+}
+
+/* The current values of the runtime-valued delays of `object` (its
+ * vpiDelay expressions, 37.3.4), as a driver evaluates them: one value
+ * serves every transition, two give turn-off as the smaller (28.16). */
+static int evaluate_delays(const llg_vpi_model_object_t* object, int64_t out[3]) {
+    const llg_vpi_timing_t* tm = object->timing;
+    if (!tm || !tm->delay || !g_vpi.code) return 0;
+    uint32_t root = tm->delay - 1u;
+    const llg_vpi_code_t* node = code_at(root);
+    if (!node) return 0;
+    uint32_t codes[3];
+    uint32_t count = 0;
+    if (code_type(node) == vpiOperation && node->subtype == vpiListOp) {
+        for (uint32_t i = 0; i < node->count && count < 3u; ++i)
+            codes[count++] = node->first + i;
+    } else {
+        codes[count++] = root;
+    }
+    for (uint32_t i = 0; i < count; ++i)
+        if (!code_delay_ticks(codes[i], object, &out[i])) return 0;
+    if (count == 1) out[1] = out[0];
+    if (count < 3) out[2] = count == 1 ? out[0] : out[0] < out[1] ? out[0] : out[1];
+    return 1;
+}
+
+/* The gate delay table entries of a runtime-valued primitive of a VPI
+ * model (llg_gate_delays_refresh): the delays in use, then the values last
+ * evaluated; NULL for any other primitive. */
+static uint64_t* runtime_gate(const llg_vpi_model_object_t* object) {
+    const llg_vpi_timing_t* tm = object->timing;
+    if (!tm || tm->declared_count || !tm->count || !tm->op_count || !tm->ops[0].gate) return NULL;
+    return tm->ops[0].gate;
+}
+
+/* Interconnect path transition indices (llg_module_path_t.delays). */
+enum { DELAY_T01 = 0, DELAY_T10 = 1, DELAY_T0Z = 2 };
+
+/* The interconnect load of bit `bit` of port `port`: its SDF load, or one
+ * the runtime builds on the port's own net when `create` (NULL when the
+ * port has none and cannot take one). */
+static llg_sdf_load_t* port_load(const llg_vpi_model_object_t* port, uint32_t bit, int create) {
+    const llg_vpi_timing_t* tm = port->timing;
+    for (uint32_t i = 0; tm && i < tm->op_count; ++i)
+        if (tm->ops[i].kind == LLG_SDF_LOAD && tm->ops[i].first == bit) return tm->ops[i].load;
+    const llg_vpi_model_object_t* net = port->target;
+    if (!net || !net->net || net->packed != &net->net->resolved ||
+        net->net->width != port->width)
+        return NULL;
+    llg_net_t* resolved = net->net;
+    if (!create) {
+        /* A stage the runtime built earlier answers; none reads 0. */
+        if (!resolved->path_dest || bit >= resolved->path_dest->n_paths) return NULL;
+        const llg_module_path_t* path = &resolved->path_dest->paths[bit];
+        if (!path->interconnect) return NULL;
+    }
+    return llg_sdf_port_load(resolved, bit);
+}
+
+/* Current value `index` of the delays or limits of `delays`: its runtime
  * value when it has one, else as declared. Path delays are transitions in
  * the order of llg_module_path_t.delays (01, 10, 0z, z1, 1z, z0, ...), so
  * the first one, two, three or six are those of a declaration with as many
- * values; primitive and continuous assignment delays are rise, fall and
- * turn-off. */
-static int64_t current_delay(const llg_vpi_model_object_t* object, int kind, uint32_t index) {
+ * values; primitive, continuous assignment, net and port delays are rise,
+ * fall and turn-off. */
+static int64_t current_delay(const llg_vpi_delays_t* delays, uint32_t index) {
+    const llg_vpi_model_object_t* object = delays->row;
     const llg_vpi_timing_t* tm = object->timing;
-    if (kind == DELAYS_PATH && tm->op_count && tm->ops[0].path)
-        return (int64_t)tm->ops[0].path->delays[index];
-    if (kind == DELAYS_PRIMITIVE && tm->op_count && tm->ops[0].gate)
-        return (int64_t)tm->ops[0].gate[index];
-    if (kind == DELAYS_TCHK) {
-        const llg_sdf_op_t* op = limit_op(tm, index);
-        int second = op && (op->flags & LLG_SDF_SECOND);
-        if (op && op->kind == LLG_SDF_CHECK && op->check)
-            return second ? op->check->limit2 : op->check->limit;
-        if (op && op->kind == LLG_SDF_PAIR && op->checks && op->checks->pairs &&
-            op->index < op->checks->n_pairs)
-            return second ? op->checks->pairs[op->index].after
-                          : op->checks->pairs[op->index].before;
+    int64_t evaluated[3];
+    switch (delays->kind) {
+        case DELAYS_PATH:
+            if (tm->op_count && tm->ops[0].path) return (int64_t)tm->ops[0].path->delays[index];
+            break;
+        case DELAYS_PRIMITIVE: {
+            uint64_t* gate = runtime_gate(object);
+            /* A runtime-valued gate that has not evaluated its delays yet
+             * reads its expressions. */
+            if (gate && gate[3] == UINT64_MAX)
+                return index < 3u && evaluate_delays(object, evaluated) ? evaluated[index] : 0;
+            if (tm->op_count && tm->ops[0].gate) return (int64_t)tm->ops[0].gate[index];
+            break;
+        }
+        case DELAYS_TCHK: {
+            const llg_sdf_op_t* op = limit_op(tm, index);
+            int second = op && (op->flags & LLG_SDF_SECOND);
+            if (op && op->kind == LLG_SDF_CHECK && op->check)
+                return second ? op->check->limit2 : op->check->limit;
+            if (op && op->kind == LLG_SDF_PAIR && op->checks && op->checks->pairs &&
+                op->index < op->checks->n_pairs)
+                return second ? op->checks->pairs[op->index].after
+                              : op->checks->pairs[op->index].before;
+            break;
+        }
+        case DELAYS_NET: {
+            /* The delay the net group uses (a runtime-valued one as last
+             * evaluated); a net without a delay reads 0. */
+            const llg_net_t* net = object->net;
+            if (net && net->net_delayed && index < 3u) {
+                uint64_t value = index == 0u   ? net->propagation_rise
+                                 : index == 1u ? net->propagation_fall
+                                               : net->propagation_turn_off;
+                return value > (uint64_t)INT64_MAX ? INT64_MAX : (int64_t)value;
+            }
+            break;
+        }
+        case DELAYS_PORT: {
+            llg_sdf_load_t* load = port_load(object, delays->bit, 0);
+            if (!load || index >= 3u) return 0;
+            static const int transitions[3] = {DELAY_T01, DELAY_T10, DELAY_T0Z};
+            uint64_t value = load->path->delays[transitions[index]];
+            return value > (uint64_t)INT64_MAX ? INT64_MAX : (int64_t)value;
+        }
+        case DELAYS_CONTROL: {
+            int64_t ticks = 0;
+            return code_delay_ticks(delays->code, object, &ticks) ? ticks : 0;
+        }
+        default:
+            break;
     }
-    return index < tm->declared_count ? tm->declared[index] : 0;
+    if (tm && index < tm->declared_count) return tm->declared[index];
+    /* A runtime-valued delay without a runtime table reads its
+     * expressions. */
+    if (tm && !tm->declared_count && tm->count && index < 3u && evaluate_delays(object, evaluated))
+        return evaluated[index];
+    return 0;
+}
+
+/* The port row and bits of a port or port bit handle. */
+static int port_bits(const llg_vpi_slot_t* slot, llg_vpi_delays_t* out) {
+    out->row = row_object(slot->object);
+    if (!out->row || out->row->type != vpiPort) return 0;
+    out->bit = slot->kind == SLOT_PORTBIT ? (uint32_t)slot->aux : 0u;
+    out->n_bits = slot->kind == SLOT_PORTBIT ? 1u : out->row->width;
+    return 1;
 }
 
 /* Validate the delay record against the object (38.10, 38.32): the object
  * kind, time format, number of delays and flags. Returns the object's
- * delay kind, or DELAYS_NONE with the error recorded. */
+ * delay kind with what it addresses in `out`, or DELAYS_NONE with the
+ * error recorded. */
 static int delay_record(vpiHandle handle, p_vpi_delay delay_p, const char* routine,
-                        llg_vpi_model_object_t** row_out) {
+                        llg_vpi_delays_t* out) {
+    memset(out, 0, sizeof(*out));
     llg_vpi_slot_t* slot = checked_handle(handle, NULL);
     if (!slot) return DELAYS_NONE;
     if (!delay_p || !delay_p->da) {
@@ -1941,17 +2098,80 @@ static int delay_record(vpiHandle handle, p_vpi_delay delay_p, const char* routi
                        "%s needs a delay record with an s_vpi_time array", routine);
         return DELAYS_NONE;
     }
-    /* A continuous assignment bit reads its assignment's delays (37.43). */
-    int bit_read = slot->kind == SLOT_CABIT && strcmp(routine, "vpi_get_delays") == 0;
-    llg_vpi_model_object_t* object =
-        slot->kind == SLOT_OBJECT || bit_read ? row_object(slot->object) : NULL;
-    int kind = delay_kind(object);
+    int read = strcmp(routine, "vpi_get_delays") == 0;
+    int kind = DELAYS_NONE;
+    switch (slot->kind) {
+        case SLOT_OBJECT:
+            out->row = row_object(slot->object);
+            kind = delay_kind(out->row);
+            if (kind == DELAYS_PORT && !port_bits(slot, out)) kind = DELAYS_NONE;
+            /* 37.16 lists only vpi_get_delays for nets. */
+            if (kind == DELAYS_NET && !read) kind = DELAYS_NONE;
+            break;
+        case SLOT_CABIT:
+            /* A continuous assignment bit reads its assignment's delays
+             * (37.43). */
+            out->row = row_object(slot->object);
+            if (read) kind = delay_kind(out->row);
+            break;
+        case SLOT_SELECT:
+        case SLOT_ELEMENT:
+            /* A net bit or a net array element reads its net's delays. */
+            out->row = row_object(slot->object);
+            if (read && out->row && out->row->is_net &&
+                (slot->kind == SLOT_ELEMENT || slot->span == 1) &&
+                handle_type(slot) != vpiPartSelect)
+                kind = DELAYS_NET;
+            break;
+        case SLOT_PORTBIT:
+            if (port_bits(slot, out)) kind = DELAYS_PORT;
+            break;
+        case SLOT_IMP:
+            /* An intermodule path has its load port's delays (decision
+             * A20-D18). */
+            out->row = row_object(slot->object);
+            out->bit = slot->aux < 0 ? 0u : (uint32_t)slot->aux;
+            out->n_bits = slot->aux < 0 ? (out->row ? out->row->width : 0u) : 1u;
+            out->imp = 1;
+            kind = out->row ? DELAYS_PORT : DELAYS_NONE;
+            break;
+        case SLOT_CODE: {
+            const llg_vpi_code_t* node = code_at((uint32_t)slot->aux);
+            if (read && node && code_type(node) == vpiDelayControl) {
+                out->code = code_child(node, vpiDelay);
+                out->row = node->scope ? row_object(node->scope - 1u) : NULL;
+                if (out->code != LLG_VPI_NONE) kind = DELAYS_CONTROL;
+            }
+            break;
+        }
+        default:
+            break;
+    }
     if (kind == DELAYS_NONE) {
         vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_UNSUPPORTED",
-                       "%s applies to module paths, timing checks, primitives and continuous "
-                       "assignments; llg has no port (MIPD) or intermodule path delays",
+                       read ? "%s applies to module paths, timing checks, primitives, continuous "
+                              "assignments, nets, ports, intermodule paths and delay controls"
+                            : "%s applies to module paths, timing checks, primitives, ports and "
+                              "intermodule paths",
                        routine);
         return DELAYS_NONE;
+    }
+    if (kind == DELAYS_PORT) {
+        /* 37.14: module input port delays; detail 2: none for an interface
+         * port. */
+        const llg_vpi_model_object_t* port = out->row;
+        if (port->subtype != vpiInput && port->subtype != vpiInout) {
+            vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_DELAYS",
+                           "%s: only input and inout ports have module input port delays",
+                           routine);
+            return DELAYS_NONE;
+        }
+        if (port->detail == vpiInterfacePort || port->detail == vpiModportPort ||
+            out->n_bits == 0u || out->bit + out->n_bits > port->width) {
+            vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_DELAYS",
+                           "%s: an interface port has no delays (37.14 detail 2)", routine);
+            return DELAYS_NONE;
+        }
     }
     if (delay_p->time_type != vpiScaledRealTime && delay_p->time_type != vpiSimTime) {
         vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_TIME",
@@ -1960,32 +2180,46 @@ static int delay_record(vpiHandle handle, p_vpi_delay delay_p, const char* routi
     }
     int n = delay_p->no_of_delays;
     int legal;
+    const char* what;
+    const char* counts;
     switch (kind) {
         case DELAYS_PATH:
             legal = n == 1 || n == 2 || n == 3 || n == 6 || n == 12;
+            what = "module path";
+            counts = "1, 2, 3, 6 or 12";
             break;
         case DELAYS_TCHK:
-            legal = n == (int)object->timing->count;
+            legal = n == (int)out->row->timing->count;
+            what = "timing check";
+            counts = "the number of limits of the check";
+            break;
+        case DELAYS_CONTROL:
+            legal = n == 1;
+            what = "delay control";
+            counts = "1";
             break;
         default:
             legal = n == 2 || n == 3;
+            what = kind == DELAYS_PRIMITIVE      ? "primitive"
+                   : kind == DELAYS_CONT_ASSIGN ? "continuous assignment"
+                   : kind == DELAYS_NET          ? "net"
+                   : out->imp                    ? "intermodule path"
+                                                 : "port";
+            counts = "2 or 3";
             break;
     }
     if (!legal) {
         vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_DELAYS",
-                       "%s: %d delays do not suit this %s (%s)", routine, n,
-                       kind == DELAYS_PATH ? "module path" : kind == DELAYS_TCHK ? "timing check"
-                       : kind == DELAYS_PRIMITIVE ? "primitive" : "continuous assignment",
-                       kind == DELAYS_PATH ? "1, 2, 3, 6 or 12"
-                       : kind == DELAYS_TCHK ? "the number of limits of the check" : "2 or 3");
+                       "%s: %d delays do not suit this %s (%s)", routine, n, what, counts);
         return DELAYS_NONE;
     }
-    if (delay_p->pulsere_flag && kind == DELAYS_TCHK) {
+    if (delay_p->pulsere_flag && kind != DELAYS_PATH && kind != DELAYS_PRIMITIVE &&
+        kind != DELAYS_CONT_ASSIGN) {
         vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_DELAYS",
-                       "%s: a timing check has no pulse limits", routine);
+                       "%s: a %s has no pulse limits", routine, what);
         return DELAYS_NONE;
     }
-    *row_out = object;
+    out->kind = kind;
     return kind;
 }
 
@@ -2000,13 +2234,14 @@ static size_t delay_slot(const s_vpi_delay* delay_p, uint32_t k, uint32_t which,
 void vpi_get_delays(vpiHandle object, p_vpi_delay delay_p) {
     vpi_enter();
     if (!vpi_ready()) return;
-    llg_vpi_model_object_t* row = NULL;
-    int kind = delay_record(object, delay_p, "vpi_get_delays", &row);
+    llg_vpi_delays_t delays;
+    int kind = delay_record(object, delay_p, "vpi_get_delays", &delays);
     if (kind == DELAYS_NONE) return;
+    llg_vpi_model_object_t* row = delays.row;
     uint32_t n = (uint32_t)delay_p->no_of_delays;
     for (uint32_t k = 0; k < n; ++k) {
         int64_t value[3];
-        value[0] = current_delay(row, kind, k);
+        value[0] = current_delay(&delays, k);
         value[1] = value[0];
         value[2] = value[0];
         if (kind == DELAYS_PATH && row->timing->op_count && row->timing->ops[0].path) {
@@ -2064,12 +2299,45 @@ static void expand_path_values(const int64_t* values, uint32_t n, int64_t* out) 
 #undef LLG_MAX
 }
 
+/* Write the module input port delays (rise, fall, turn-off) of the bits of
+ * `delays` through their interconnect loads, as an SDF PORT entry does
+ * (32.4.4): every source entry of the load takes them, and the load's
+ * interconnect path the result. */
+static void put_port_delays(const llg_vpi_delays_t* delays, const int64_t triple[3], int append) {
+    llg_sdf_op_t* ops = (llg_sdf_op_t*)calloc(delays->n_bits, sizeof(*ops));
+    if (!ops) {
+        vpi_error("LLG_VPI_NOMEM", "vpi_put_delays: out of memory");
+        return;
+    }
+    /* Rise, fall and turn-off as a three-value path delay (Table 30-2). */
+    int64_t values[12];
+    expand_path_values(triple, 3u, values);
+    for (uint32_t i = 0; i < delays->n_bits; ++i) {
+        llg_sdf_load_t* load = port_load(delays->row, delays->bit + i, 1);
+        if (!load) {
+            free(ops);
+            vpi_error("LLG_VPI_DELAYS",
+                      "vpi_put_delays: llg delays only an input or inout port connected to a "
+                      "net of its own that no module path drives");
+            return;
+        }
+        ops[i].kind = LLG_SDF_LOAD;
+        ops[i].flags = (uint8_t)((append ? LLG_SDF_INCREMENT : 0u) | 3u << LLG_SDF_MIPD_SHIFT);
+        ops[i].delay = 0x0fffu;
+        ops[i].load = load;
+    }
+    llg_sdf_annotation_t annotation = {ops, delays->n_bits, values};
+    llg_sdf_apply(&annotation);
+    free(ops);
+}
+
 void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
     vpi_enter();
     if (!vpi_ready()) return;
-    llg_vpi_model_object_t* row = NULL;
-    int kind = delay_record(object, delay_p, "vpi_put_delays", &row);
+    llg_vpi_delays_t delays;
+    int kind = delay_record(object, delay_p, "vpi_put_delays", &delays);
     if (kind == DELAYS_NONE) return;
+    llg_vpi_model_object_t* row = delays.row;
     const llg_vpi_timing_t* tm = row->timing;
     if (kind == DELAYS_CONT_ASSIGN) {
         vpi_error("LLG_VPI_DELAYS",
@@ -2082,11 +2350,10 @@ void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
                   "delays are not writable");
         return;
     }
-    if (!tm->op_count) {
+    if (kind != DELAYS_PORT && !tm->op_count) {
         vpi_error("LLG_VPI_DELAYS",
                   kind == DELAYS_PRIMITIVE
-                      ? "vpi_put_delays: llg writes the delays of primitives declared with "
-                        "constant delays; this primitive has none"
+                      ? "vpi_put_delays: this primitive has no delays to write"
                       : kind == DELAYS_TCHK
                       ? "vpi_put_delays: this timing check is not simulated (timing checks "
                         "are off, or a duplicate or a window that cannot report was dropped)"
@@ -2113,7 +2380,8 @@ void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
             }
             if (!append && given[which][k] < 0 && kind != DELAYS_TCHK) {
                 vpi_error("LLG_VPI_DELAYS",
-                          "vpi_put_delays: module path and primitive delays are not negative");
+                          "vpi_put_delays: module path, primitive and port delays are not "
+                          "negative");
                 return;
             }
         }
@@ -2127,7 +2395,7 @@ void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
         for (uint32_t k = 0; k < n && k < 2u; ++k) {
             int64_t value = given[0][k];
             if (append) {
-                int64_t current = current_delay(row, kind, k);
+                int64_t current = current_delay(&delays, k);
                 value = value > 0 && current > INT64_MAX - value ? INT64_MAX
                         : value < 0 && current < INT64_MIN - value ? INT64_MIN
                                                                    : current + value;
@@ -2141,6 +2409,27 @@ void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
         llg_sdf_apply(&annotation);
         return;
     }
+    /* Two primitive or port delays: turn-off is the smaller (28.16). */
+    int64_t triple[3] = {given[0][0], given[0][1],
+                         n == 3 ? given[0][2]
+                                : (given[0][0] < given[0][1] ? given[0][0] : given[0][1])};
+    if (kind == DELAYS_PORT) {
+        put_port_delays(&delays, triple, append);
+        return;
+    }
+    uint64_t* gate = kind == DELAYS_PRIMITIVE ? runtime_gate(row) : NULL;
+    if (gate && gate[3] == UINT64_MAX) {
+        /* A runtime-valued gate that has not evaluated its delays: they
+         * start from its expressions' current values, which its first
+         * evaluation then keeps (llg_gate_delays_refresh). */
+        int64_t evaluated[3];
+        if (evaluate_delays(row, evaluated)) {
+            for (uint32_t i = 0; i < 3u; ++i)
+                gate[i] = gate[3u + i] = (uint64_t)evaluated[i];
+        } else {
+            gate[0] = gate[1] = gate[2] = 0;
+        }
+    }
     llg_sdf_op_t* ops = (llg_sdf_op_t*)calloc(tm->op_count, sizeof(*ops));
     if (!ops) {
         vpi_error("LLG_VPI_NOMEM", "vpi_put_delays: out of memory");
@@ -2151,10 +2440,7 @@ void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
         for (uint32_t which = 0; which < classes; ++which)
             expand_path_values(given[which], n, values + 12u * which);
     } else {
-        values[0] = given[0][0];
-        values[1] = given[0][1];
-        /* Two delays: turn-off is the smaller (28.16). */
-        values[2] = n == 3 ? given[0][2] : (given[0][0] < given[0][1] ? given[0][0] : given[0][1]);
+        memcpy(values, triple, sizeof(triple));
     }
     for (uint32_t i = 0; i < tm->op_count; ++i) {
         ops[i] = tm->ops[i];
@@ -2176,6 +2462,85 @@ void vpi_put_delays(vpiHandle object, p_vpi_delay delay_p) {
     llg_sdf_annotation_t annotation = {ops, tm->op_count, values};
     llg_sdf_apply(&annotation);
     free(ops);
+}
+
+/* ── intermodule paths (37.33, 38.22) ─────────────────────────────────── */
+
+/* The port row and bit (-1: the whole port) of a port or port bit handle,
+ * or 0. */
+static int port_reference(vpiHandle handle, uint32_t* row, int32_t* bit) {
+    llg_vpi_slot_t* slot = checked_handle(handle, NULL);
+    if (!slot) return 0;
+    const llg_vpi_model_object_t* object = row_object(slot->object);
+    if (!object || object->type != vpiPort ||
+        (slot->kind != SLOT_OBJECT && slot->kind != SLOT_PORTBIT))
+        return 0;
+    *row = slot->object;
+    *bit = slot->kind == SLOT_PORTBIT ? slot->aux : -1;
+    return 1;
+}
+
+/* 38.22: the intermodule path from output (or inout) port `ref1` to input
+ * (or inout) port `ref2`, both ports or port bits of the same size; its
+ * delays are those of its load port (decision A20-D18). */
+static vpiHandle intermodule_path(PLI_INT32 type, vpiHandle ref1, vpiHandle ref2) {
+    if (type != vpiInterModPath) {
+        vpi_error("LLG_VPI_RELATION", "vpi_handle_multi gives only vpiInterModPath objects");
+        return NULL;
+    }
+    uint32_t source, load;
+    int32_t source_bit, load_bit;
+    if (!port_reference(ref1, &source, &source_bit) || !port_reference(ref2, &load, &load_bit)) {
+        if (!vpi_chk_error(NULL))
+            vpi_error("LLG_VPI_RELATION",
+                      "vpi_handle_multi(vpiInterModPath) takes an output port and an input "
+                      "port or port bit");
+        return NULL;
+    }
+    const llg_vpi_model_object_t* from = row_object(source);
+    const llg_vpi_model_object_t* to = row_object(load);
+    uint32_t from_size = source_bit < 0 ? from->width : 1u;
+    uint32_t to_size = load_bit < 0 ? to->width : 1u;
+    if ((from->subtype != vpiOutput && from->subtype != vpiInout) ||
+        (to->subtype != vpiInput && to->subtype != vpiInout) ||
+        (source == load && source_bit == load_bit)) {
+        vpi_error("LLG_VPI_RELATION",
+                  "vpi_handle_multi(vpiInterModPath) takes an output port and an input port, "
+                  "in that order");
+        return NULL;
+    }
+    if (from_size != to_size) {
+        vpi_error("LLG_VPI_RELATION",
+                  "the ports of an intermodule path have the same size (38.22)");
+        return NULL;
+    }
+    uint32_t index = alloc_slot(SLOT_IMP);
+    if (index == LLG_VPI_NONE) return NULL;
+    g_vpi.slots[index].object = load;
+    g_vpi.slots[index].aux = load_bit;
+    g_vpi.slots[index].left = source;
+    g_vpi.slots[index].right = source_bit;
+    return encode_handle(index);
+}
+
+/* 37.33: the ports of an intermodule path, its source first. */
+static vpiHandle iterate_imp_ports(const llg_vpi_slot_t* slot) {
+    uintptr_t* items = (uintptr_t*)calloc(2u, sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    /* make_aux_slot may move the slot table: copy the fields first. */
+    uint32_t source = (uint32_t)slot->left, load = slot->object;
+    int32_t source_bit = (int32_t)slot->right, load_bit = slot->aux;
+    uint32_t made = 0;
+    vpiHandle first = source_bit < 0 ? object_handle(source)
+                                     : make_aux_slot(SLOT_PORTBIT, source, (uint32_t)source_bit);
+    if (first) items[made++] = (uintptr_t)first;
+    vpiHandle second = load_bit < 0 ? object_handle(load)
+                                    : make_aux_slot(SLOT_PORTBIT, load, (uint32_t)load_bit);
+    if (second) items[made++] = (uintptr_t)second;
+    return make_list_iterator(vpiPort, items, made);
 }
 
 /* ── cbTchkViolation (38.36.1) ─────────────────────────────────────────── */
@@ -5727,6 +6092,10 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     if (slot->kind == SLOT_ASSERTION) return assertion_relation(type, slot);
     if (slot->kind == SLOT_FSM || slot->kind == SLOT_FSMSTATE) return fsm_relation(type, slot);
     if (slot->kind == SLOT_STMT) return statement_relation(type, slot);
+    if (slot->kind == SLOT_IMP) {
+        vpi_error("LLG_VPI_RELATION", "an intermodule path has no one-to-one relations (37.33)");
+        return NULL;
+    }
     if (dyn_slot(slot)) {
         int handled;
         vpiHandle result = dyn_handle(type, slot, &handled);
@@ -6020,6 +6389,33 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
         case vpiModDataPathIn:
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiModPath)
                 return role_term(slot->object, LLG_VPI_ROLE_PATH_DATA);
+            break;
+        case vpiDelay:
+            /* 37.3.4: the delay expressions the source gives a primitive or
+             * primitive array, a net (a bit or element: its net's), a
+             * continuous assignment (or one of its bits), a module path or
+             * a timing check: the expression, a vpiListOp operation of
+             * several, or NULL without (decision A20-D16). */
+            if (!object) break;
+            if (slot->kind == SLOT_OBJECT
+                    ? is_primitive_type(object->type) || object->type == vpiGateArray ||
+                          object->type == vpiSwitchArray || object->type == vpiUdpArray ||
+                          object->type == vpiContAssign || object->type == vpiModPath ||
+                          object->type == vpiTchk || object->is_net
+                    : slot->kind == SLOT_CABIT ||
+                          (object->is_net && (slot->kind == SLOT_ELEMENT ||
+                                              slot->kind == SLOT_MEMBER ||
+                                              (slot->kind == SLOT_SELECT && slot->span == 1)))) {
+                if (!g_vpi.code) {
+                    vpi_error("LLG_VPI_UNSUPPORTED",
+                              "delay expressions are objects only in models generated with "
+                              "--vpi or --dpi-lib");
+                    return NULL;
+                }
+                return object->timing && object->timing->delay
+                           ? code_handle(object->timing->delay - 1u)
+                           : NULL;
+            }
             break;
         case vpiTchkRefTerm:
         case vpiTchkDataTerm:
@@ -7333,6 +7729,11 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     uint32_t ref_index;
     llg_vpi_slot_t* slot = checked_handle(ref_handle, &ref_index);
     if (!slot) return NULL;
+    if (slot->kind == SLOT_IMP) {
+        if (type == vpiPort) return iterate_imp_ports(slot);
+        vpi_error("LLG_VPI_RELATION", "an intermodule path iterates only its ports (37.33)");
+        return NULL;
+    }
     if (type == vpiArgument && slot->kind != SLOT_CODE) {
         if (slot->kind != SLOT_CALL) {
             vpi_error("LLG_VPI_RELATION", "vpiArgument iterates a system task or function call");
@@ -7716,6 +8117,7 @@ static int handle_type(const llg_vpi_slot_t* slot) {
         case SLOT_CABIT: return vpiContAssignBit;
         case SLOT_REFOBJ: return vpiRefObj;
         case SLOT_STMT: return slot->aux;
+        case SLOT_IMP: return vpiInterModPath;
         default: return vpiUndefined;
     }
 }
@@ -7895,6 +8297,11 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         return value > INT32_MAX ? INT32_MAX : (PLI_INT32)value;
     }
     if (slot->kind == SLOT_STMT) return property == vpiType ? slot->aux : unsupported_property();
+    if (slot->kind == SLOT_IMP) {
+        /* 37.33: an intermodule path has no properties and no source. */
+        if (property == vpiType) return vpiInterModPath;
+        return property == vpiLineNo ? 0 : unsupported_property();
+    }
     if (dyn_slot(slot)) {
         int handled;
         PLI_INT64 value = dyn_get(property, slot, &handled);
@@ -8456,6 +8863,7 @@ static const char* type_name(int type) {
         case vpiPortBit: return "vpiPortBit";
         case vpiRefObj: return "vpiRefObj";
         case vpiModPath: return "vpiModPath";
+        case vpiInterModPath: return "vpiInterModPath";
         case vpiPathTerm: return "vpiPathTerm";
         case vpiTchk: return "vpiTchk";
         case vpiTchkTerm: return "vpiTchkTerm";
@@ -8575,6 +8983,10 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
     if (property == vpiType) {
         const char* name = type_name(handle_type(slot));
         if (name) return (PLI_BYTE8*)name;
+    }
+    if (slot->kind == SLOT_IMP) {
+        if (property != vpiFile) unsupported_property();
+        return NULL;
     }
     if (slot->kind == SLOT_CODE) return code_string((uint32_t)slot->aux, property);
     if (slot->kind == SLOT_OBJECT && object && is_statement_scope_type(object->type) &&
@@ -9492,6 +9904,13 @@ static int handle_identity(const llg_vpi_slot_t* slot, uint32_t index, uint64_t 
         identity[1] = (uint64_t)(uint32_t)slot->aux;
         identity[2] = slot->object;
         identity[3] = (uint64_t)slot->left;
+        return 1;
+    }
+    if (slot->kind == SLOT_IMP) {
+        identity[0] = 2u + slot->kind;
+        identity[1] = slot->object;
+        identity[2] = ((uint64_t)(uint32_t)slot->left << 32) | (uint32_t)slot->right;
+        identity[3] = (uint64_t)(uint32_t)slot->aux;
         return 1;
     }
     if (slot->kind == SLOT_MEMBER) {
@@ -11688,13 +12107,12 @@ static void vpi_unsupported_routine(const char* routine, const char* reason) {
                    routine, reason);
 }
 
+/* 38.22: the reference handles after the first two are not read (an
+ * intermodule path has two ports). */
 vpiHandle vpi_handle_multi(PLI_INT32 type, vpiHandle ref_handle1, vpiHandle ref_handle2, ...) {
-    (void)type;
-    (void)ref_handle1;
-    (void)ref_handle2;
     vpi_enter();
-    vpi_unsupported_routine("vpi_handle_multi", "no vpiPortInst or vpiInterModPath objects");
-    return NULL;
+    if (!vpi_ready()) return NULL;
+    return intermodule_path(type, ref_handle1, ref_handle2);
 }
 
 PLI_INT32 vpi_get_data(PLI_INT32 id, PLI_BYTE8* dataLoc, PLI_INT32 numOfBytes) {

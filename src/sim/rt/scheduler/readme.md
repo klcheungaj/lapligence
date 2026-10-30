@@ -276,6 +276,23 @@ A path op flagged `LLG_SDF_KEEP_LIMITS` (VPI `vpi_put_delays` without
 delays, so the new delays leave the pulse limits as they were (38.32);
 `llg_module_path_pulse_limits` reads the limits a transition uses.
 
+VPI module input port and intermodule path delays (decisions A20-D17,
+A20-D18) reuse the SDF interconnect load. A port with an SDF load emitted at
+codegen writes that load; otherwise `llg_sdf_port_load` builds, at the first
+`vpi_put_delays`, a run-time stage on the port's net: one interconnect path
+and load per bit (one entry for every source), the net's per-bit inertial
+records and `propagation_enabled`, as a path stage built at codegen has.
+Nets that already carry a path stage, switches or aliases get none (the
+write is refused). `sdf_port_stages_release` restores and frees the stages
+at cleanup, after the inertial drivers. A model that never writes a port
+delay creates none, so it pays nothing.
+
+`llg_gate_delays_refresh` keeps the writable delays of a primitive whose
+delay is an expression of variables (VPI models only, two slots of
+`llg_sdf_gate_delays`): the first slot holds the delays in use, the second
+the expression values last seen; when the expressions give new values, both
+take them, so a `vpi_put_delays` value lasts until an expression changes.
+
 ## Activations, waits and limits
 
 End-of-run report: when no future event remains, the scheduler prints a

@@ -1,11 +1,11 @@
 routines: 42 of 42 resolved
 lookup tb: handle level=0 code=-
-vpi_handle_multi: NULL level=3 code=LLG_VPI_UNSUPPORTED
-  vpi_handle_multi is not supported by llg (no vpiPortInst or vpiInterModPath objects)
+vpi_handle_multi: NULL level=3 code=LLG_VPI_RELATION
+  vpi_handle_multi gives only vpiInterModPath objects
 vpi_get_delays: void level=3 code=LLG_VPI_UNSUPPORTED
-  vpi_get_delays applies to module paths, timing checks, primitives and continuous assignments; llg has no port (MIPD) or intermodule path delays
+  vpi_get_delays applies to module paths, timing checks, primitives, continuous assignments, nets, ports, intermodule paths and delay controls
 vpi_put_delays: void level=3 code=LLG_VPI_UNSUPPORTED
-  vpi_put_delays applies to module paths, timing checks, primitives and continuous assignments; llg has no port (MIPD) or intermodule path delays
+  vpi_put_delays applies to module paths, timing checks, primitives, ports and intermodule paths
 delay record: da=same no_of_delays=1 time_type=2 low=77
 vpi_get_data: 0 level=3 code=LLG_VPI_UNSUPPORTED
   vpi_get_data is not supported by llg (no save/restart)

@@ -2293,18 +2293,25 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - `vpi_put_value_array` to a net array (its elements are read-only to VPI,
   as for `vpi_put_value`; decision A20-D8), and `vpiPropagateOff`, which is
   accepted but still notifies every fanout (A20-D7);
-- delays (VPI-T1): `vpi_get_delays`/`vpi_put_delays` serve module paths,
-  timing checks, primitives and continuous assignments (read-only); on a
-  module, net or port (no MIPD or net delay objects) they are `vpiError`
-  with `LLG_VPI_UNSUPPORTED`. `vpi_put_delays`
-  needs a model generated with `--vpi` or `--dpi-lib` (it reserves the
-  writable delay tables then; otherwise the write is refused), writes only
-  primitives with constant delays, and leaves transitions already
-  scheduled at their times (decisions A20-D12..D14). The delays of
-  delayed timing check signals stay fixed, as for SDF;
+- delays (VPI-T1, VPI-F8): `vpi_get_delays`/`vpi_put_delays` serve module
+  paths, timing checks, primitives, input and inout ports and port bits
+  (module input port delays) and intermodule paths; continuous
+  assignments, nets and delay controls are read-only; a module or an output
+  port is a `vpiError` (decisions A20-D12..D19). `vpi_put_delays` needs a
+  model generated with `--vpi` or `--dpi-lib` (it reserves the writable
+  delay tables then; otherwise the write is refused) and leaves
+  transitions already scheduled at their times. A primitive whose delay is
+  an expression of variables keeps a written delay until one of the
+  expressions changes value; one that changes and changes back before the
+  primitive's next transition keeps the written delay. Port delays need a
+  port connected to a net of its own that no module path, switch or alias
+  drives (otherwise the write is refused). The delays of delayed timing
+  check signals stay fixed, as for SDF. There are no delay device or delay
+  term objects (37.41);
 - `vpiTchkTerm` and `vpiPathTerm` handles have no own source location;
-- the routines `vpi_handle_multi` (no `vpiPortInst`/`vpiInterModPath`
-  objects) and `vpi_get_data`/`vpi_put_data` (no save/restart).
+- `vpi_handle_multi` with a type other than `vpiInterModPath` (no
+  `vpiPortInst` objects) and the routines `vpi_get_data`/`vpi_put_data` (no
+  save/restart).
   They are declared and defined so that applications link, and return
   NULL, 0 or nothing with an `LLG_VPI_UNSUPPORTED` error without reading or
   writing their arguments;

@@ -25,7 +25,7 @@ setup 1: 2
 setup 2: error level=3 vpi_get_delays: 2 delays do not suit this timing check (the number of limits of the check)
 setup pulse: error level=3 vpi_get_delays: a timing check has no pulse limits
 setuphold 2: 3 1
-net: error level=3 vpi_get_delays applies to module paths, timing checks, primitives and continuous assignments; llg has no port (MIPD) or intermodule path delays
+net: 0 0
 suppress: error level=3 vpi_get_delays needs time_type vpiScaledRealTime or vpiSimTime
 null record: error level=3 vpi_get_delays needs a delay record with an s_vpi_time array
 cbTchkViolation all checks: registered
@@ -37,9 +37,9 @@ path pulse: 7 3 3 8 4 4
 put gb mtm: ok
 gb 3: 5 6 5
 gb mtm: 5 5 5 6 6 6
-put nb: error level=3 vpi_put_delays: llg writes the delays of primitives declared with constant delays; this primitive has none
+put nb: error level=3 vpi_put_delays: this primitive has no delays to write
 put cont: error level=3 vpi_put_delays: the delays of a continuous assignment are read-only (37.43)
-put path negative: error level=3 vpi_put_delays: module path and primitive delays are not negative
+put path negative: error level=3 vpi_put_delays: module path, primitive and port delays are not negative
 put gb pulse: error level=3 vpi_put_delays: primitive delays are inertial; llg keeps no pulse limits for them
 31 c=1
 35 g=1

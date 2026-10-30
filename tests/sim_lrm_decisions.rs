@@ -2465,6 +2465,42 @@ fn a20_d15_tchk_violation_callback() {
 }
 
 #[test]
+fn a20_d16_delay_expressions() {
+    run_vpi_decision(
+        "A20-D16_delay_expressions",
+        &["task $d16()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D16_delay_expressions.out"),
+    );
+}
+
+#[test]
+fn a20_d17_port_delays() {
+    run_vpi_decision(
+        "A20-D17_port_delays",
+        &["task $d17(input integer stage)"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D17_port_delays.out"),
+    );
+}
+
+#[test]
+fn a20_d18_intermodule_paths() {
+    run_vpi_decision(
+        "A20-D18_intermodule_paths",
+        &["task $d18()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D18_intermodule_paths.out"),
+    );
+}
+
+#[test]
+fn a20_d19_runtime_delays() {
+    run_vpi_decision(
+        "A20-D19_runtime_delays",
+        &["task $d19(input integer stage)"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D19_runtime_delays.out"),
+    );
+}
+
+#[test]
 fn a21_d1_input_port_shares_actual_variable() {
     run_decision(
         "A21-D1_input_port_shares_actual_variable",

@@ -177,6 +177,12 @@ pub struct IrRuntimeTransitionDelay {
     pub rise: IrDelay,
     pub fall: Option<IrDelay>,
     pub turn_off: Option<IrDelay>,
+    /// A gate of a model generated for VPI applications: its first slot of
+    /// [`super::IrModel::sdf_gate_delays`], followed by a second, holds the
+    /// delays in use and the last evaluated values, so a value
+    /// `vpi_put_delays` writes stays until the expressions change
+    /// (`llg_gate_delays_refresh`).
+    pub writable: Option<u32>,
 }
 
 impl IrRuntimeTransitionDelay {

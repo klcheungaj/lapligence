@@ -2565,9 +2565,17 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   share the `$fopen` table with the built-in file tasks (ADV-020, decisions
   A20-D1..D4). `vpi_user.h` and `sv_vpi_user.h` declare every IEEE 1800-2009
   Annex K/M routine and the model defines each, so applications written for
-  the full headers link; `vpi_handle_multi` and `vpi_get_data`/`vpi_put_data`
-  are not supported and fail with a `vpi_chk_error` error
-  (`docs/known_issues.md`).
+  the full headers link; `vpi_get_data`/`vpi_put_data` are not supported and
+  fail with a `vpi_chk_error` error (`docs/known_issues.md`).
+  Delay objects (VPI-F8, decisions A20-D16..D19): `vpiDelay` gives the delay
+  expressions of primitives, primitive arrays, continuous assignments, nets,
+  module paths, timing checks and delay controls; `vpi_get_delays` reads
+  them all and `vpi_put_delays` writes paths, checks, primitives (also
+  runtime-valued ones), module input port delays of input and inout ports
+  and port bits, and intermodule paths from `vpi_handle_multi(vpiInterModPath,
+  out, in)`. Port and intermodule path delays use a run-time interconnect
+  stage on the port's net, created by the first write, so models that never
+  write one pay nothing.
   `vpi_get_value_array`/`vpi_put_value_array` (38.16, 38.35) read and write
   sections of static unpacked variable arrays (gets also net arrays) in every
   format the clauses define, with `vpiUserAllocFlag`, `vpiOneValue` and
@@ -2584,8 +2592,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpi_get_delays`/`vpi_put_delays` (38.10, 38.32) read and write path,
   timing check and primitive delays with every `mtm_flag`, `append_flag`
   and `pulsere_flag` mode through the SDF annotation path, and read
-  continuous assignment delays; `cbTchkViolation` runs for each reported
-  violation (VPI-T1, decisions A20-D12..D15);
+  continuous assignment, net and delay control delays; `cbTchkViolation`
+  runs for each reported violation (VPI-T1, decisions A20-D12..D15; delay
+  objects A20-D16..D19);
   `vpi_control(vpiReset/vpiSetInteractiveScope)` fail (A20-D9..D11). Objects are
   modules, interfaces, generate scopes (SV 27.4 names), named blocks, ports,
   parameters, nets, variables with their exact types (`vpiIntVar`,

@@ -359,6 +359,7 @@ static void free_mailboxes(void) {
 static void module_paths_release(void); // scheduler/nets.c
 static void timing_checks_release(void); // scheduler/timing_checks.c
 static void sdf_release(void); // scheduler/sdf.c
+static void sdf_port_stages_release(void); // scheduler/sdf.c
 static void switches_release(void); // scheduler/switches.c
 static void llg_fcov_release(void); // coverage/fsm.c
 
@@ -392,6 +393,7 @@ void llg_rt_cleanup(void) {
         sv4_destroy(&driver->mask);
         free(driver);
     }
+    sdf_port_stages_release();
     free_all_nbas();
     free_deferred_triggers();
     free_deferred_assertions();

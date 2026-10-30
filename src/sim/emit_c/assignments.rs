@@ -66,13 +66,22 @@ pub(super) fn render_inertial(
                 (None, Some(_)) => "(_llg_rise < _llg_fall ? _llg_rise : _llg_fall)".to_owned(),
                 (None, None) => "_llg_rise".to_owned(),
             };
-            (
-                format!(
-                    "uint64_t _llg_rise = {rise}; uint64_t _llg_fall = {fall}; \
-                     uint64_t _llg_turn_off = {turn_off}; "
+            let prefix = format!(
+                "uint64_t _llg_rise = {rise}; uint64_t _llg_fall = {fall}; \
+                 uint64_t _llg_turn_off = {turn_off}; "
+            );
+            match delay.writable {
+                // A VPI application may have written the delays in use.
+                Some(slot) => (
+                    format!(
+                        "{prefix}const uint64_t* _llg_delays = llg_gate_delays_refresh(\
+                         &llg_sdf_gate_delays[{}], _llg_rise, _llg_fall, _llg_turn_off); ",
+                        3 * slot
+                    ),
+                    "_llg_delays[0], _llg_delays[1], _llg_delays[2]".to_owned(),
                 ),
-                "_llg_rise, _llg_fall, _llg_turn_off".to_owned(),
-            )
+                None => (prefix, "_llg_rise, _llg_fall, _llg_turn_off".to_owned()),
+            }
         }
     };
     let body = render_inertial_with(ctx, lhs, &rendered, &delays)?;

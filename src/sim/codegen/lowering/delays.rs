@@ -381,6 +381,7 @@ impl<'a> Codegen<'a> {
                 rise,
                 fall: lowered.next(),
                 turn_off: lowered.next(),
+                writable: None,
             },
         )))
     }

@@ -1,0 +1,25 @@
+0 i=0
+s.o to k.i: vpiInterModPath level=0
+k.i to s.o: NULL level=3
+s.a to k.i: NULL level=3
+k.i to k.i: NULL level=3
+s.ov to k.i: NULL level=3
+s.o to NULL: NULL level=3
+vpiModPath: NULL level=3
+s.ov to k.v: vpiInterModPath level=0
+s.ov[0] to k.v[0]: vpiInterModPath level=0
+same ports compare: 1
+port: tb.s.o
+port: tb.k.i
+path: 0 0 0
+put path 2 3 4: ok
+path: 2 3 4
+path 2: 2 3
+k.i: 2 3 4
+path 1: error level=3
+put path 1: error level=3
+vpiName: NULL level=3
+vpiModule: NULL level=3
+vpiDelay: NULL level=3
+12 i=1
+23 i=0

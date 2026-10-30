@@ -46,6 +46,10 @@ test a19d42 sim_lrm_decisions::a19_d42_declaration_objects
 test a19decl adv_019::instance_properties_follow_the_definition_and_its_configuration
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
+test a20d16 sim_lrm_decisions::a20_d16_delay_expressions
+test a20d17 sim_lrm_decisions::a20_d17_port_delays
+test a20d18 sim_lrm_decisions::a20_d18_intermodule_paths
+test a20d19 sim_lrm_decisions::a20_d19_runtime_delays
 test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
 test s42systf sim_042::system_functions_follow_the_return_conventions
 test s42values sim_042::values_cover_every_format_and_put_mode
@@ -358,7 +362,7 @@ node module_array 37.11 type=vpiModuleArray
 
 node primitive_array 37.11 members=gate_array,switch_array,udp_array
   iterate vpiPrimitive implemented walk
-  handle vpiDelay unsupported delay expressions are not exposed (vpi_get_delays reads the values)
+  handle vpiDelay implemented a20d16
 
 node gate_array 37.11 type=vpiGateArray
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
@@ -565,8 +569,8 @@ node ports 37.14 members=port,port_bit
   func vpi_handle_by_index unsupported ports are not indexed
   func vpi_handle_by_multi_index unsupported ports are not indexed
   get vpiConnByName implemented a19d35
-  func vpi_get_delays unsupported port (MIPD) delays are not modelled
-  func vpi_put_delays unsupported port (MIPD) delays are not modelled
+  func vpi_get_delays implemented a20d17
+  func vpi_put_delays implemented a20d17
   get vpiDirection implemented walk
   get vpiExplicitName implemented a19d35
   get vpiPortType implemented walk
@@ -620,7 +624,8 @@ node nets 37.16 members=net,net_bit,array_net
   get vpiArray implemented walk
   get vpiArrayMember implemented walk
   get vpiConstantSelect implemented walk
-  func vpi_get_delays unsupported net delays are not modelled
+  func vpi_get_delays implemented a20d19
+  handle vpiDelay extension a20d16 37.3.4 names nets among the objects whose source delay vpiDelay gives; the nets diagram does not draw it
   get vpiExpanded implemented a19d35
   get vpiImplicitDecl implemented a19d35
   str vpiName implemented walk
@@ -1236,7 +1241,7 @@ node primitive 37.31 members=gate,switch,udp
   func vpi_put_value unsupported vpi_put_value to a sequential UDP is not implemented
   handle vpiPrimitiveArray implemented a19d28
   handle vpiModule implemented walk
-  handle vpiDelay unsupported delay expressions are not exposed (vpi_get_delays reads the values)
+  handle vpiDelay implemented a20d16
   handle vpiIndex implemented walk
   iterate vpiPrimTerm implemented walk
 
@@ -1287,10 +1292,10 @@ node table_entry 37.32 type=vpiTableEntry default=unsupported UDP definitions ar
   get vpiSize
   func vpi_get_value
 
-node inter_mod_path 37.33 type=vpiInterModPath default=unsupported intermodule paths are not objects
-  func vpi_get_delays
-  func vpi_put_delays
-  iterate vpiPort
+node inter_mod_path 37.33 type=vpiInterModPath
+  func vpi_get_delays implemented a20d18
+  func vpi_put_delays implemented a20d18
+  iterate vpiPort implemented walk
 
 node implication 37.34 type=vpiImplication
   handle vpiCondition implemented walk
@@ -1314,7 +1319,7 @@ node mod_path 37.35 type=vpiModPath
   get vpiModPathHasIfNone implemented walk
   handle vpiModule implemented walk
   handle vpiCondition implemented walk
-  handle vpiDelay unsupported delay expressions are not exposed (vpi_get_delays reads the values)
+  handle vpiDelay implemented a20d16
   iterate vpiModDataPathIn implemented walk
   iterate vpiModPathOut implemented walk
   iterate vpiModPathIn implemented walk
@@ -1344,7 +1349,7 @@ node tchk 37.36 type=vpiTchk
   handle vpiTchkRefTerm implemented walk
   handle vpiTchkDataTerm implemented walk
   handle vpiTchkNotifier implemented walk
-  handle vpiDelay unsupported delay expressions are not exposed (vpi_get_delays reads the values)
+  handle vpiDelay implemented a20d16
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
@@ -1529,13 +1534,13 @@ node thread 37.40 type=vpiThread default=unsupported threads are not objects
   handle vpiFrame
   iterate vpiAssertion
 
-node delay_device 37.41 type=vpiDelayDevice default=unsupported delay devices are not modelled (no MIPD or net delay objects)
+node delay_device 37.41 type=vpiDelayDevice default=n/a llg has no delay device objects: module input port and intermodule path delays are reached through their ports and vpiInterModPath (37.3.4: they "do not appear within the SystemVerilog source code"), and net, primitive, path and assignment delays through their objects
   get vpiDelayType
   handle vpiModule
   handle vpiInTerm
   handle vpiOutTerm
 
-node delay_term 37.41 type=vpiDelayTerm default=unsupported delay devices are not modelled (no MIPD or net delay objects)
+node delay_term 37.41 type=vpiDelayTerm default=n/a llg has no delay device objects, so no delay terms (see delay_device); net drivers and loads list the ports and primitive terms instead
   get vpiDelayType
   func vpi_get_value
   iterate vpiDriver
@@ -1548,7 +1553,7 @@ node cont_assign_class 37.43 members=cont_assign,cont_assign_bit
   get vpiStrength0 implemented a19d35
   get vpiStrength1 implemented a19d35
   func vpi_get_value implemented walk
-  handle vpiDelay unsupported delay expressions are not exposed (vpi_get_delays reads the values)
+  handle vpiDelay implemented a20d16
   handle vpiRhs implemented walk
   handle vpiLhs implemented walk
   handle vpiModule implemented walk
@@ -1892,7 +1897,7 @@ node wait_fork 37.62 type=vpiWaitFork
   handle vpiStmt unsupported this statement does not expose its body
 
 node delay_control 37.63 type=vpiDelayControl
-  func vpi_get_delays unsupported delay controls do not answer vpi_get_delays
+  func vpi_get_delays implemented a20d19
   handle vpiStmt implemented walk
   handle vpiDelay implemented walk
 

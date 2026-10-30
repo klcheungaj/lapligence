@@ -195,10 +195,13 @@ typedef struct {
 #define LLG_VPI_ROLE_NOTIFIER 8   /* vpiTchkNotifier (also a vpiExpr argument) */
 #define LLG_VPI_ROLE_TERM_COND 9  /* a terminal condition, not an argument */
 
-/* Delays of a module path, timing check, primitive or continuous assignment
- * (vpi_get_delays/vpi_put_delays, 38.10, 38.32). `ops` are the runtime
- * values back-annotation writes, in the form llg_sdf_apply takes; an op's
- * `first` is the index of the timing check limit it holds. `declared` holds
+/* Delays of a module path, timing check, primitive, continuous assignment,
+ * net or port (vpi_get_delays/vpi_put_delays, 38.10, 38.32). `ops` are the
+ * runtime values back-annotation writes, in the form llg_sdf_apply takes; an
+ * op's `first` is the index of the timing check limit it holds, or the bit
+ * in its port of a port's SDF interconnect load. The two gate delay slots of
+ * a runtime-valued gate (no `declared` values) hold the delays in use and
+ * the values last evaluated (llg_gate_delays_refresh). `declared` holds
  * the values as elaborated, in design-precision ticks (twelve transition
  * delays of a path, the limits of a check, rise/fall/turn-off of a
  * primitive or continuous assignment), read when no op holds them. `count`
@@ -212,6 +215,7 @@ typedef struct {
     int polarity;             /* vpiPolarity of a path */
     int data_polarity;        /* vpiDataPolarity of a path */
     int has_ifnone;           /* vpiModPathHasIfNone */
+    uint32_t delay;           /* vpiDelay expression (37.3.4): code row + 1, 0: none */
 } llg_vpi_timing_t;
 
 /* Definition and configuration properties of a module or interface

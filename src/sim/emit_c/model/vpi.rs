@@ -901,6 +901,7 @@ fn render_vpi_timing(model: &IrModel, entries: &[Entry], out: &mut String) -> Ve
             .map(|first| first + path as usize)
     };
     let gates = model.sdf_gate_delays().len();
+    let loads = model.sdf_loads().len();
     let checks = model.timing_checks();
     let mut fields = Vec::with_capacity(entries.len());
     for (index, entry) in entries.iter().enumerate() {
@@ -947,6 +948,10 @@ fn render_vpi_timing(model: &IrModel, entries: &[Entry], out: &mut String) -> Ve
                         ".kind = LLG_SDF_GATE, .gate = &llg_sdf_gate_delays[{}]",
                         3 * slot
                     ),
+                    // A load port bit (limit: its bit in the port).
+                    IrSdfTarget::Load { load, .. } if (load as usize) < loads => {
+                        format!(".kind = LLG_SDF_LOAD, .load = &llg_sdf_load_{load}")
+                    }
                     _ => return None,
                 };
                 Some(format!("{{ {target}, .first = {limit}u }}"))
@@ -976,7 +981,7 @@ fn render_vpi_timing(model: &IrModel, entries: &[Entry], out: &mut String) -> Ve
         out.push_str(&format!(
             "static const llg_vpi_timing_t llg_vpi_timing_{index} = {{ .ops = {}, .op_count = {}u, \
              .declared = {}, .declared_count = {}u, .count = {}u, .polarity = {}, \
-             .data_polarity = {}, .has_ifnone = {} }};\n",
+             .data_polarity = {}, .has_ifnone = {}, .delay = {}u }};\n",
             if ops.is_empty() {
                 "NULL".to_owned()
             } else {
@@ -1001,6 +1006,7 @@ fn render_vpi_timing(model: &IrModel, entries: &[Entry], out: &mut String) -> Ve
                 timing.data_polarity
             },
             u8::from(timing.has_ifnone),
+            timing.delay.map_or(0, |entry| u64::from(entry) + 1),
         ));
         fields.push(format!("&llg_vpi_timing_{index}"));
     }

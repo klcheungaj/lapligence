@@ -391,3 +391,107 @@ static void sdf_release(void) {
     sdf_limit_tables.count = 0;
     sdf_limit_tables.capacity = 0;
 }
+
+// A runtime-valued gate delay a VPI application may write (38.32): `slot`
+// holds the delays in use, slot + 3 the values the delay expressions had
+// when last evaluated (UINT64_MAX before the first evaluation). New values
+// of the expressions replace the delays in use; a written value stays until
+// then.
+const uint64_t* llg_gate_delays_refresh(uint64_t* slot, uint64_t rise, uint64_t fall,
+                                        uint64_t turn_off) {
+    uint64_t* seen = slot + 3;
+    if (seen[0] != rise || seen[1] != fall || seen[2] != turn_off) {
+        seen[0] = slot[0] = rise;
+        seen[1] = slot[1] = fall;
+        seen[2] = slot[2] = turn_off;
+    }
+    return slot;
+}
+
+// ── Interconnect stages built at run time (VPI MIPD, 37.14, 38.32) ──────────
+// A VPI application may give delays to an input port that no SDF entry
+// annotated. The port's own net then gets the stage lower_sdf_loads builds
+// for an annotated load: a module path set whose one destination is the
+// net, with an interconnect path and a load per net bit. The stage is built
+// and bound on the first write, so a model pays nothing for the ports no
+// application delays; it is released after the inertial records at cleanup.
+
+typedef struct sdf_port_stage {
+    llg_net_t* net;
+    llg_module_path_set_t set;
+    llg_module_path_dest_t dest;
+    llg_module_path_t* paths;  // one per net bit
+    llg_sdf_load_t* loads;     // one per net bit
+    uint64_t* entries;         // LLG_PATH_TRANSITIONS per net bit
+    uint8_t* annotated;        // one per net bit
+    llg_inertial_t** records;  // the net's path-stage records, when allocated here
+    int8_t enabled;            // the net's propagation_enabled before the stage
+    struct sdf_port_stage* next;
+} sdf_port_stage_t;
+
+static sdf_port_stage_t* sdf_port_stages;
+
+llg_sdf_load_t* llg_sdf_port_load(llg_net_t* net, uint32_t bit) {
+    if (!net || bit >= net->width) return NULL;
+    for (sdf_port_stage_t* stage = sdf_port_stages; stage; stage = stage->next) {
+        if (stage->net == net) return &stage->loads[bit];
+    }
+    // A path destination, a switch node or a net viewed under other names
+    // keeps its own publication (as for SDF interconnect loads).
+    if (net->path_dest || net->switch_net || net->n_aliases) return NULL;
+    uint32_t width = net->width;
+    sdf_port_stage_t* stage = llg_checked_calloc(1, sizeof(*stage), "interconnect stage");
+    stage->net = net;
+    stage->paths = llg_checked_calloc(width, sizeof(*stage->paths), "interconnect stage");
+    stage->loads = llg_checked_calloc(width, sizeof(*stage->loads), "interconnect stage");
+    stage->entries = llg_checked_calloc((size_t)width * LLG_PATH_TRANSITIONS,
+                                        sizeof(*stage->entries), "interconnect stage");
+    stage->annotated = llg_checked_calloc(width, sizeof(*stage->annotated), "interconnect stage");
+    for (uint32_t index = 0; index < width; index++) {
+        llg_module_path_t* path = &stage->paths[index];
+        path->source_lsb = index;
+        path->source_width = 1;
+        path->dest_lsb = index;
+        path->dest_width = 1;
+        path->origin = "interconnect";
+        path->interconnect = 1;
+        stage->loads[index].path = path;
+        stage->loads[index].entries = stage->entries + (size_t)index * LLG_PATH_TRANSITIONS;
+        stage->loads[index].annotated = &stage->annotated[index];
+        stage->loads[index].n_entries = 1;
+    }
+    stage->dest.net = net;
+    stage->dest.paths = stage->paths;
+    stage->dest.n_paths = width;
+    stage->set.scope = "interconnect";
+    stage->set.dests = &stage->dest;
+    stage->set.n_dests = 1;
+    stage->enabled = net->propagation_enabled;
+    if (!net->propagation_bits) {
+        stage->records = llg_checked_calloc(width, sizeof(*stage->records), "interconnect stage");
+        net->propagation_bits = stage->records;
+    }
+    net->propagation_enabled = 1;
+    llg_module_paths_start(&stage->set);
+    stage->next = sdf_port_stages;
+    sdf_port_stages = stage;
+    return &stage->loads[bit];
+}
+
+// After module_paths_release unbound the sets and the inertial records
+// were freed (they clear their handles in `bits`).
+static void sdf_port_stages_release(void) {
+    while (sdf_port_stages) {
+        sdf_port_stage_t* stage = sdf_port_stages;
+        sdf_port_stages = stage->next;
+        if (stage->records && stage->net->propagation_bits == stage->records)
+            stage->net->propagation_bits = NULL;
+        stage->net->propagation_enabled = stage->enabled;
+        free(stage->records);
+        free(stage->paths);
+        free(stage->loads);
+        free(stage->entries);
+        free(stage->annotated);
+        free(stage);
+    }
+}

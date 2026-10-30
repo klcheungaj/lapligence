@@ -80,6 +80,9 @@ enum Item<'a> {
     ConstraintPart(NodeId),
     /// One item of the `dist` expression `.1` (37.30).
     Weighted(DistItem, NodeId),
+    /// Several delays of a primitive, net, continuous assignment, module
+    /// path or timing check: one `vpiListOp` operation (37.3.4).
+    Delays(Vec<NodeId>),
 }
 
 type Children<'a> = Vec<(&'static str, Item<'a>)>;
@@ -188,6 +191,31 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         self.root(Item::Expr(id), scope)
     }
 
+    /// Add the `vpiDelay` expression of an object whose source gives the
+    /// delay expressions `delays` and return its entry (37.3.4): the one
+    /// expression, or a `vpiListOp` operation over several. A
+    /// `min:typ:max` expression stands for the operand the simulation
+    /// selects. `None` without delays.
+    pub(super) fn delay_root(&mut self, delays: &[NodeId], scope: Option<usize>) -> Option<u32> {
+        let selected = self.cg.min_typ_max_operand();
+        let delays = delays
+            .iter()
+            .map(|id| match self.cg.kind(*id) {
+                NodeKind::Expr(ExprKind::Operation {
+                    op: Operation::MinTypMax,
+                    operands,
+                    ..
+                }) if operands.len() == 3 => operands[selected.min(2)],
+                _ => *id,
+            })
+            .collect::<Vec<_>>();
+        match delays.as_slice() {
+            [] => None,
+            [delay] => Some(self.root(Item::Expr(*delay), scope)),
+            _ => Some(self.root(Item::Delays(delays), scope)),
+        }
+    }
+
     /// Add the `vpiStmt` of a process, task or function and return its
     /// entry: its statement, the unnamed begin holding the statements of a
     /// body without a block of its own, or nothing for an empty body
@@ -255,6 +283,15 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         match item {
             Item::Expr(id) => {
                 let (code, children) = self.expression(id);
+                (code, children, scope)
+            }
+            Item::Delays(delays) => {
+                let mut code = self.located("vpiOperation", delays[0]);
+                code.subtype = "vpiListOp";
+                let children = delays
+                    .into_iter()
+                    .map(|delay| ("vpiOperand", Item::Expr(delay)))
+                    .collect();
                 (code, children, scope)
             }
             Item::Stmt(id) => self.statement(id, scope),
