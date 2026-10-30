@@ -1676,9 +1676,13 @@ static vpiHandle iterate_packed_ranges(const llg_vpi_slot_t* slot) {
 }
 
 /* The vpiIndex iteration of a net, variable or named event (37.16 details
- * 10 and 22, 37.17 details 13 and 18): the index of a bit, then the
- * indices of the array element that holds it, innermost first; NULL for a
- * whole object outside an array. */
+ * 10 and 22, 37.17 details 5 and 13, 37.18 detail 6, 37.25 detail 1): the
+ * index of a bit, then the indices of the array element that holds it,
+ * innermost first. Outside an array the text makes the iteration NULL for a
+ * net or named event, which return NULL without an error, as do a whole
+ * variable array and a packed array var (no packed parent); it
+ * defines no iteration for another whole variable or for a bit of a vector
+ * outside an array, which raise a vpiError (decision A19-D28). */
 static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
     const llg_vpi_model_object_t* object = row_object(slot->object);
     if (!object) return NULL;
@@ -1687,7 +1691,15 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
                             is_array_type(object->type)
                         ? object->dim_count : 0u;
     uint32_t count = dims + (bit ? 1u : 0u);
-    if (!count) return NULL;
+    if (!dims) {
+        int type = bit ? 0 : handle_type(slot);
+        if (type == vpiNet || type == vpiNamedEvent || type == vpiPackedArrayVar ||
+            type == vpiRegArray)
+            return NULL;
+        vpi_error("LLG_VPI_RELATION", bit ? "vpiIndex iteration of a bit outside an array"
+                                          : "vpiIndex iteration of a variable outside an array");
+        return NULL;
+    }
     /* make_constant may move the slot table: keep no slot pointer across it. */
     int64_t bit_index = slot->left;
     uint64_t rest = slot->element;
@@ -5410,22 +5422,29 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                                               : left + (int64_t)slot->element;
                 return make_constant(value, vpiDecConst);
             }
-            /* A whole net, variable or named event is not an array element:
-             * NULL (decision A19-D28). */
-            if (slot->kind == SLOT_OBJECT && has_index_relation(slot)) return NULL;
+            /* A whole net, variable or named event is not an array element
+             * and has no index: the text defines none (decision A19-D28). */
+            if (slot->kind == SLOT_OBJECT && has_index_relation(slot)) {
+                vpi_error("LLG_VPI_RELATION", "vpiIndex of an object outside an array");
+                return NULL;
+            }
             break;
         case vpiInstanceArray:
         case vpiModuleArray:
         case vpiPrimitiveArray:
-            /* 37.10, 37.31: the instance array an element belongs to, NULL
-             * for an instance outside an array. */
+            /* 37.5, 37.6, 37.31: the instance array an element belongs to.
+             * The text defines no answer outside an array: NULL, with a
+             * vpiError for a module or interface (decision A19-D28). */
             if (slot->kind == SLOT_OBJECT && object &&
                 (type == vpiPrimitiveArray ? is_primitive_type(object->type)
                  : type == vpiModuleArray  ? object->type == vpiModule
                                            : object->type == vpiModule ||
                                                  object->type == vpiInterface)) {
                 uint32_t array = instance_array_of(slot->object, NULL, NULL);
-                return array == LLG_VPI_NONE ? NULL : object_handle(array);
+                if (array != LLG_VPI_NONE) return object_handle(array);
+                if (type == vpiPrimitiveArray) return NULL;
+                vpi_error("LLG_VPI_RELATION", "the instance is not an element of an array");
+                return NULL;
             }
             break;
         case vpiLowConn:

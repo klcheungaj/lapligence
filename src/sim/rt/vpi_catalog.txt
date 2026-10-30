@@ -31,6 +31,7 @@
 # object and are not listed.
 
 test a17d13 sim_lrm_decisions::a17_d13_fsm_objects
+test a19d28 sim_lrm_decisions::a19_d28_index_and_packed_relations
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
@@ -657,30 +658,30 @@ node variables 37.17 members=short_real_var,real_var,byte_var,short_int_var,int_
   handle vpiTypespec implemented walk
   handle vpiParent implemented walk
   handle vpiIndex implemented walk
-  iterate vpiIndex implemented walk
+  iterate vpiIndex implemented a19d28
 
 node short_real_var 37.17 type=vpiShortRealVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
   get vpiScalar implemented walk
   get vpiVector implemented walk
-  handle vpiIndex implemented walk
+  handle vpiIndex implemented a19d28
 
 node real_var 37.17 type=vpiRealVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
   get vpiScalar implemented walk
   get vpiVector implemented walk
-  handle vpiIndex implemented walk
+  handle vpiIndex implemented a19d28
 
 node byte_var 37.17 type=vpiByteVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex implemented walk
+  handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
 node short_int_var 37.17 type=vpiShortIntVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex implemented walk
+  handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
@@ -692,21 +693,21 @@ node int_var 37.17 type=vpiIntVar
 
 node long_int_var 37.17 type=vpiLongIntVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex implemented walk
+  handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
 node integer_var 37.17 type=vpiIntegerVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex implemented walk
+  handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
 node time_var 37.17 type=vpiTimeVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex implemented walk
+  handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
@@ -722,7 +723,8 @@ node array_var 37.17 type=vpiRegArray
   iterate vpiRange implemented walk
   get vpiStructUnionMember implemented walk
   func vpi_get_value unsupported this object has no value in llg
-  handle vpiIndex implemented walk
+  handle vpiIndex error a19d28 the text defines no index for a whole variable array (decision A19-D28)
+  iterate vpiIndex implemented a19d28
   str vpiDecompile unsupported this object does not decompile in llg
   iterate vpiIntVar extension walk a variable array iterates its elements by their own type
 
@@ -737,7 +739,7 @@ node packed_array_var 37.17 type=vpiPackedArrayVar
   handle vpiRightRange implemented walk
   iterate vpiRange implemented walk
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex implemented walk
+  handle vpiIndex implemented a19d28
 
 node bit_var 37.17 type=vpiBitVar
   iterate vpiBit implemented walk
@@ -745,7 +747,7 @@ node bit_var 37.17 type=vpiBitVar
   handle vpiRightRange implemented walk
   iterate vpiRange implemented walk
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex implemented walk
+  handle vpiIndex implemented a19d28
 
 node logic_var 37.17 type=vpiReg
   iterate vpiBit implemented walk
@@ -761,7 +763,7 @@ node struct_var 37.17 type=vpiStructVar
   get vpiPackedArrayMember implemented walk
   get vpiConstantSelect implemented walk
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex implemented walk
+  handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
@@ -772,7 +774,7 @@ node union_var 37.17 type=vpiUnionVar
   get vpiPackedArrayMember implemented walk
   get vpiConstantSelect implemented walk
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex implemented walk
+  handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
@@ -780,7 +782,7 @@ node enum_var 37.17 type=vpiEnumVar
   get vpiPackedArrayMember implemented walk
   get vpiConstantSelect implemented walk
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex implemented walk
+  handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
@@ -791,7 +793,8 @@ node string_var 37.17 type=vpiStringVar
   get vpiScalar implemented walk
   get vpiVector implemented walk
   handle vpiTypespec unsupported this object has no typespec in llg
-  handle vpiIndex implemented walk
+  handle vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
+  iterate vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
   str vpiDecompile unsupported this object does not decompile in llg
 
 node chandle_var 37.17 type=vpiChandleVar
@@ -800,7 +803,8 @@ node chandle_var 37.17 type=vpiChandleVar
   get vpiScalar implemented walk
   get vpiVector implemented walk
   handle vpiTypespec unsupported this object has no typespec in llg
-  handle vpiIndex implemented walk
+  handle vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
+  iterate vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
   str vpiDecompile unsupported this object does not decompile in llg
 
 node class_var 37.17 type=vpiClassVar
@@ -813,7 +817,8 @@ node class_var 37.17 type=vpiClassVar
   func vpi_get_value unsupported this object has no value in llg
   get vpiScalar implemented walk
   get vpiVector implemented walk
-  handle vpiIndex implemented walk
+  handle vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
+  iterate vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
   str vpiDecompile unsupported this object does not decompile in llg
 
 node var_bit 37.17 type=vpiRegBit
@@ -958,7 +963,7 @@ node named_event 37.25 type=vpiNamedEvent
   handle vpiScope implemented walk
   handle vpiModule implemented walk
   handle vpiParent implemented walk
-  handle vpiIndex implemented walk
+  handle vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
   iterate vpiIndex implemented walk
 
 node named_event_array 37.25 type=vpiNamedEventArray default=unsupported named event arrays are not objects
@@ -1128,7 +1133,7 @@ node primitive 37.31 members=gate,switch,udp
   get vpiStrength1 unsupported drive strengths are not exposed
   func vpi_get_value implemented walk
   func vpi_put_value unsupported vpi_put_value to a sequential UDP is not implemented
-  handle vpiPrimitiveArray implemented walk
+  handle vpiPrimitiveArray implemented a19d28
   handle vpiModule implemented walk
   handle vpiDelay unsupported delay expressions are not exposed (vpi_get_delays reads the values)
   handle vpiIndex implemented walk

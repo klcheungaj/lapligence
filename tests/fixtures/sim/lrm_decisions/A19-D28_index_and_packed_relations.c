@@ -79,6 +79,19 @@ static PLI_INT32 d28(PLI_BYTE8* data) {
     indices("tb.mem[1]", element);
     indices("tb.mem2[1][3]", element2);
     indices("tb.mem2[1][3] bit", first_bit(element2));
+    indices("tb.w", get("tb.w"));
+    indices("tb.ev", get("tb.ev"));
+    static const char* const arrays[] = {"tb.bva", "tb.bya", "tb.sia", "tb.iva", "tb.lia",
+                                         "tb.iga", "tb.tva", "tb.rva", "tb.sra", "tb.eva",
+                                         "tb.psa", "tb.pua", "tb.paa"};
+    for (unsigned k = 0; k < sizeof arrays / sizeof arrays[0]; ++k) {
+        vpiHandle array = get(arrays[k]);
+        char label[64];
+        snprintf(label, sizeof label, "%s[1] type=%d", arrays[k],
+                 (int)vpi_get(vpiType, vpi_handle_by_index(array, 1)));
+        indices(label, vpi_handle_by_index(array, 1));
+    }
+    indices("tb.mem", mem);
     ranges("tb.v", get("tb.v"));
     ranges("tb.sc", get("tb.sc"));
     ranges("tb.pa", get("tb.pa"));
@@ -110,6 +123,9 @@ static PLI_INT32 d28(PLI_BYTE8* data) {
     relation("tb.u[0] vpiModuleArray", vpiModuleArray, get("tb.u[0]"));
     relation("tb.single vpiInstanceArray", vpiInstanceArray, get("tb.single"));
     relation("tb.g[1] vpiPrimitiveArray", vpiPrimitiveArray, get("tb.g[1]"));
+    relation("tb.ug[1] vpiPrimitiveArray", vpiPrimitiveArray, get("tb.ug[1]"));
+    relation("tb.us vpiPrimitiveArray", vpiPrimitiveArray, get("tb.us"));
+    relation("tb.tg[1] vpiPrimitiveArray", vpiPrimitiveArray, get("tb.tg[1]"));
     property("tb.w bit vpiNetType", vpiNetType, first_bit(get("tb.w")));
     it = vpi_iterate(vpiPort, get("tb.single"));
     vpiHandle port = it ? vpi_scan(it) : NULL;
