@@ -2312,6 +2312,15 @@ fn a19_d27_statement_scopes() {
 }
 
 #[test]
+fn a19_d28_index_and_packed_relations() {
+    run_vpi_decision(
+        "A19-D28_index_and_packed_relations",
+        &["task $d28()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D28_index_and_packed_relations.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

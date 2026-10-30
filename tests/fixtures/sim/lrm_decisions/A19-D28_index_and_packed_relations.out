@@ -1,0 +1,31 @@
+tb.v vpiIndex NULL level=0 iteration NULL level=0
+tb.v bit vpiIndex handle level=0 iteration 7 level=0
+tb.mem[1] vpiIndex handle level=0 iteration 1 level=0
+tb.mem2[1][3] vpiIndex NULL level=3 iteration 3 1 level=0
+tb.mem2[1][3] bit vpiIndex handle level=0 iteration 3 3 1 level=0
+tb.v ranges [7:0] level=0
+tb.sc ranges NULL level=0
+tb.pa ranges [1:0] [3:0] level=0
+tb.w ranges [3:0] level=0
+tb.mem[1] ranges [3:0] level=0
+tb.w vpiConstantSelect 1
+tb.w bit vpiConstantSelect 1
+tb.v bit vpiConstantSelect 1
+tb.pa vpiConstantSelect 1
+tb.ps vpiConstantSelect 1
+tb.en vpiConstantSelect 1
+tb.pa vpiPacked 1
+tb.pa vpiPackedArrayMember 0
+tb.ps vpiPackedArrayMember 0
+tb.pa vpiElement NULL level=3
+tb.mem vpiVarSelect 48:tb.mem[0] 48:tb.mem[1] 48:tb.mem[2] 48:tb.mem[3]
+tb.rv vpiScalar 0
+tb.rv vpiVector 0
+tb.s vpiScalar 0
+tb.s vpiVector 0
+tb.u[0] vpiInstanceArray tb.u level=0
+tb.u[0] vpiModuleArray tb.u level=0
+tb.single vpiInstanceArray NULL level=0
+tb.g[1] vpiPrimitiveArray tb.g level=0
+tb.w bit vpiNetType 1
+tb.single port bit vpiPortType 44

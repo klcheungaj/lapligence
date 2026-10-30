@@ -65,8 +65,8 @@ node module 37.5 type=vpiModule
   handle vpiGlobalClocking unsupported clocking blocks are not objects
   handle vpiDefaultClocking unsupported clocking blocks are not objects
   handle vpiDefaultDisableIff unsupported default disable iff is not exposed
-  handle vpiInstanceArray unsupported the instance array of an element is not exposed (vpiIndex is)
-  handle vpiModuleArray unsupported the instance array of an element is not exposed (vpiIndex is)
+  handle vpiInstanceArray implemented walk
+  handle vpiModuleArray implemented walk
   iterate vpiInternalScope implemented walk
   iterate vpiPort implemented walk
   iterate vpiInterface implemented walk
@@ -120,7 +120,7 @@ node interface 37.6 type=vpiInterface
   handle vpiGlobalClocking unsupported clocking blocks are not objects
   handle vpiDefaultClocking unsupported clocking blocks are not objects
   handle vpiDefaultDisableIff unsupported default disable iff is not exposed
-  handle vpiInstanceArray unsupported the instance array of an element is not exposed (vpiIndex is)
+  handle vpiInstanceArray implemented walk
   iterate vpiInterfaceTfDecl unsupported interface tf declarations are not objects
   iterate vpiModport implemented walk
   iterate vpiModPath implemented walk
@@ -214,7 +214,7 @@ node instance 37.10 members=package,interface,program,module
   str vpiConfig unsupported configuration and compiler-directive properties of instances are not captured
   get vpiAutomatic unsupported the default lifetime of this object is not captured
   get vpiTop unsupported vpiTop is not implemented (vpiTopModule is)
-  handle vpiInstanceArray unsupported the instance array of an element is not exposed (vpiIndex is)
+  handle vpiInstanceArray unsupported programs and packages are not objects (modules and interfaces answer)
   iterate vpiPort implemented walk
   iterate vpiProgram unsupported programs are not objects
   iterate vpiProgramArray unsupported programs are not objects
@@ -505,7 +505,7 @@ node port 37.14 type=vpiPort
 
 node port_bit 37.14 type=vpiPortBit
   handle vpiParent implemented walk
-  get vpiPortType unsupported vpiPortType of a port bit is not implemented
+  get vpiPortType implemented walk
   get vpiSigned extension walk the sign and width of the object's value
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
@@ -523,7 +523,7 @@ node ref_obj 37.15 type=vpiRefObj
   handle vpiTypespec unsupported this object has no typespec in llg
   handle vpiActual implemented walk
   str vpiDecompile unsupported this object does not decompile in llg
-  get vpiSize unsupported vpiSize of this object is not implemented
+  get vpiSize n/a llg reference objects stand only for interface and modport ports, which have no size
   func vpi_get_value unsupported this object has no value in llg
   get vpiSigned extension walk the sign and width of the object's value
   handle vpiModule extension walk the enclosing scope, instance, module or parent
@@ -534,7 +534,7 @@ node nets 37.16 members=net,net_bit,array_net
   func vpi_handle_by_multi_index implemented s42obj
   get vpiArray implemented walk
   get vpiArrayMember implemented walk
-  get vpiConstantSelect unsupported vpiConstantSelect of nets and variables is not implemented
+  get vpiConstantSelect implemented walk
   func vpi_get_delays unsupported net delays are not modelled
   get vpiExpanded unsupported net declaration properties are not captured
   get vpiImplicitDecl unsupported net declaration properties are not captured
@@ -572,10 +572,10 @@ node nets 37.16 members=net,net_bit,array_net
 node net_bit 37.16 type=vpiNetBit
   handle vpiParent implemented walk
   handle vpiIndex implemented walk
-  iterate vpiIndex unsupported the vpiIndex iteration of selected and element objects is not implemented
-  get vpiArray unsupported vpiArray of this object is not implemented
-  get vpiNetType unsupported vpiNetType of a net bit is not implemented
-  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
+  iterate vpiIndex implemented walk
+  get vpiArray implemented walk
+  get vpiNetType implemented walk
+  get vpiStructUnionMember implemented walk
   handle vpiTypespec unsupported this object has no typespec in llg
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
@@ -583,9 +583,9 @@ node array_net 37.16 type=vpiNetArray
   handle vpiModule implemented walk
   iterate vpiRange implemented walk
   iterate vpiNet implemented walk
-  get vpiNetType unsupported vpiNetType of a net bit is not implemented
+  get vpiNetType implemented walk
   func vpi_get_value unsupported this object has no value in llg
-  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
+  get vpiStructUnionMember implemented walk
   str vpiDecompile unsupported this object does not decompile in llg
   get vpiArrayType extension walk the array properties of array variables (37.17) applied to net arrays
   get vpiIsMemory extension walk the array properties of array variables (37.17) applied to net arrays
@@ -597,9 +597,9 @@ node array_net 37.16 type=vpiNetArray
 node net 37.16 members=struct_net,enum_net,integer_net,time_net,logic_net,packed_array_net
   handle vpiParent implemented walk
   handle vpiIndex implemented walk
-  iterate vpiIndex unsupported the vpiIndex iteration of selected and element objects is not implemented
+  iterate vpiIndex implemented walk
   iterate vpiBit implemented walk
-  iterate vpiRange unsupported vpiRange of packed dimensions is not implemented
+  iterate vpiRange implemented walk
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
 
@@ -657,30 +657,30 @@ node variables 37.17 members=short_real_var,real_var,byte_var,short_int_var,int_
   handle vpiTypespec implemented walk
   handle vpiParent implemented walk
   handle vpiIndex implemented walk
-  iterate vpiIndex unsupported the vpiIndex iteration of selected and element objects is not implemented
+  iterate vpiIndex implemented walk
 
 node short_real_var 37.17 type=vpiShortRealVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  get vpiScalar unsupported vpiScalar of this object is not implemented
-  get vpiVector unsupported vpiVector of this object is not implemented
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  get vpiScalar implemented walk
+  get vpiVector implemented walk
+  handle vpiIndex implemented walk
 
 node real_var 37.17 type=vpiRealVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  get vpiScalar unsupported vpiScalar of this object is not implemented
-  get vpiVector unsupported vpiVector of this object is not implemented
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  get vpiScalar implemented walk
+  get vpiVector implemented walk
+  handle vpiIndex implemented walk
 
 node byte_var 37.17 type=vpiByteVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex implemented walk
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
 node short_int_var 37.17 type=vpiShortIntVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex implemented walk
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
@@ -692,21 +692,21 @@ node int_var 37.17 type=vpiIntVar
 
 node long_int_var 37.17 type=vpiLongIntVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex implemented walk
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
 node integer_var 37.17 type=vpiIntegerVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex implemented walk
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
 node time_var 37.17 type=vpiTimeVar
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex implemented walk
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
@@ -715,53 +715,53 @@ node array_var 37.17 type=vpiRegArray
   get vpiArrayType implemented walk
   get vpiIsMemory implemented walk
   iterate vpiReg implemented walk
-  iterate vpiVarSelect unsupported vpiVarSelect is not implemented (vpiReg iterates the elements)
+  iterate vpiVarSelect implemented walk
   iterate vpiMemoryWord implemented walk
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
   iterate vpiRange implemented walk
-  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
+  get vpiStructUnionMember implemented walk
   func vpi_get_value unsupported this object has no value in llg
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex implemented walk
   str vpiDecompile unsupported this object does not decompile in llg
   iterate vpiIntVar extension walk a variable array iterates its elements by their own type
 
 node packed_array_var 37.17 type=vpiPackedArrayVar
-  get vpiPacked unsupported vpiPacked of a packed array variable is not implemented
-  get vpiPackedArrayMember unsupported vpiPackedArrayMember is not implemented
-  get vpiConstantSelect unsupported vpiConstantSelect of nets and variables is not implemented
-  iterate vpiIndex unsupported the vpiIndex iteration of selected and element objects is not implemented
-  iterate vpiElement unsupported vpiElement of a packed array variable is not implemented
-  iterate vpiBit unsupported vpiBit of this object is not implemented
+  get vpiPacked implemented walk
+  get vpiPackedArrayMember implemented walk
+  get vpiConstantSelect implemented walk
+  iterate vpiIndex implemented walk
+  iterate vpiElement unsupported the sub-elements of a packed array are not objects in llg (vpiBit, vpiRange and part selects reach them; decision A19-D28)
+  iterate vpiBit implemented walk
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
-  iterate vpiRange unsupported vpiRange of packed dimensions is not implemented
+  iterate vpiRange implemented walk
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex implemented walk
 
 node bit_var 37.17 type=vpiBitVar
   iterate vpiBit implemented walk
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
-  iterate vpiRange unsupported vpiRange of packed dimensions is not implemented
+  iterate vpiRange implemented walk
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex implemented walk
 
 node logic_var 37.17 type=vpiReg
   iterate vpiBit implemented walk
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
-  iterate vpiRange unsupported vpiRange of packed dimensions is not implemented
+  iterate vpiRange implemented walk
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
 
 node struct_var 37.17 type=vpiStructVar
   get vpiPacked implemented walk
   iterate vpiMember implemented walk
   iterate vpiBit implemented walk
-  get vpiPackedArrayMember unsupported vpiPackedArrayMember is not implemented
-  get vpiConstantSelect unsupported vpiConstantSelect of nets and variables is not implemented
+  get vpiPackedArrayMember implemented walk
+  get vpiConstantSelect implemented walk
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex implemented walk
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
@@ -769,59 +769,59 @@ node union_var 37.17 type=vpiUnionVar
   get vpiPacked implemented walk
   iterate vpiMember implemented walk
   iterate vpiBit implemented walk
-  get vpiPackedArrayMember unsupported vpiPackedArrayMember is not implemented
-  get vpiConstantSelect unsupported vpiConstantSelect of nets and variables is not implemented
+  get vpiPackedArrayMember implemented walk
+  get vpiConstantSelect implemented walk
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex implemented walk
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
 node enum_var 37.17 type=vpiEnumVar
-  get vpiPackedArrayMember unsupported vpiPackedArrayMember is not implemented
-  get vpiConstantSelect unsupported vpiConstantSelect of nets and variables is not implemented
+  get vpiPackedArrayMember implemented walk
+  get vpiConstantSelect implemented walk
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex implemented walk
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
 node string_var 37.17 type=vpiStringVar
-  get vpiArray unsupported vpiArray of this object is not implemented
-  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
-  get vpiScalar unsupported vpiScalar of this object is not implemented
-  get vpiVector unsupported vpiVector of this object is not implemented
+  get vpiArray implemented walk
+  get vpiStructUnionMember implemented walk
+  get vpiScalar implemented walk
+  get vpiVector implemented walk
   handle vpiTypespec unsupported this object has no typespec in llg
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex implemented walk
   str vpiDecompile unsupported this object does not decompile in llg
 
 node chandle_var 37.17 type=vpiChandleVar
-  get vpiArray unsupported vpiArray of this object is not implemented
-  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
-  get vpiScalar unsupported vpiScalar of this object is not implemented
-  get vpiVector unsupported vpiVector of this object is not implemented
+  get vpiArray implemented walk
+  get vpiStructUnionMember implemented walk
+  get vpiScalar implemented walk
+  get vpiVector implemented walk
   handle vpiTypespec unsupported this object has no typespec in llg
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex implemented walk
   str vpiDecompile unsupported this object does not decompile in llg
 
 node class_var 37.17 type=vpiClassVar
   get vpiObjId implemented walk
   handle vpiClassObj implemented walk
   handle vpiClassTypespec implemented walk
-  get vpiArray unsupported vpiArray of this object is not implemented
-  get vpiSize unsupported vpiSize of this object is not implemented
-  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
+  get vpiArray implemented walk
+  get vpiSize error walk 37.17 detail 9 leaves vpiSize undefined for a class variable
+  get vpiStructUnionMember implemented walk
   func vpi_get_value unsupported this object has no value in llg
-  get vpiScalar unsupported vpiScalar of this object is not implemented
-  get vpiVector unsupported vpiVector of this object is not implemented
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  get vpiScalar implemented walk
+  get vpiVector implemented walk
+  handle vpiIndex implemented walk
   str vpiDecompile unsupported this object does not decompile in llg
 
 node var_bit 37.17 type=vpiRegBit
-  get vpiConstantSelect unsupported vpiConstantSelect of nets and variables is not implemented
-  get vpiArray unsupported vpiArray of this object is not implemented
+  get vpiConstantSelect implemented walk
+  get vpiArray implemented walk
   get vpiAutomatic unsupported the default lifetime of this object is not captured
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
-  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
+  get vpiStructUnionMember implemented walk
   handle vpiTypespec unsupported this object has no typespec in llg
 
 node var_select 37.19 type=vpiVarSelect
@@ -958,8 +958,8 @@ node named_event 37.25 type=vpiNamedEvent
   handle vpiScope implemented walk
   handle vpiModule implemented walk
   handle vpiParent implemented walk
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
-  iterate vpiIndex unsupported the vpiIndex iteration of selected and element objects is not implemented
+  handle vpiIndex implemented walk
+  iterate vpiIndex implemented walk
 
 node named_event_array 37.25 type=vpiNamedEventArray default=unsupported named event arrays are not objects
   str vpiName
@@ -1128,7 +1128,7 @@ node primitive 37.31 members=gate,switch,udp
   get vpiStrength1 unsupported drive strengths are not exposed
   func vpi_get_value implemented walk
   func vpi_put_value unsupported vpi_put_value to a sequential UDP is not implemented
-  handle vpiPrimitiveArray unsupported the instance array of an element is not exposed (vpiIndex is)
+  handle vpiPrimitiveArray implemented walk
   handle vpiModule implemented walk
   handle vpiDelay unsupported delay expressions are not exposed (vpi_get_delays reads the values)
   handle vpiIndex implemented walk
@@ -1951,7 +1951,7 @@ node gen_scope 37.80 type=vpiGenScope
   get vpiArrayMember implemented walk
   get vpiProtected unsupported protected envelopes are unsupported
   get vpiImplicitDecl unsupported net declaration properties are not captured
-  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiIndex unsupported generate scope arrays are not objects and the index of a generated scope is not captured
   handle vpiGenScopeArray unsupported generate scope arrays are not objects
   iterate vpiNet implemented walk
   iterate vpiArrayNet implemented walk

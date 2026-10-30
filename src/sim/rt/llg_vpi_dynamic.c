@@ -1277,6 +1277,22 @@ static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
                     return shape->shape == LLG_VPI_SHAPE_PACKED ? shape->is_signed : 0;
                 case vpiArrayMember:
                     return 0;
+                case vpiArray:
+                    /* Deprecated (37.17 detail 2): TRUE for an array. */
+                    return shape->shape == LLG_VPI_SHAPE_CONTAINER;
+                case vpiScalar:
+                case vpiVector:
+                    /* 37.17 detail 20: FALSE for string, chandle and class
+                     * variables. */
+                    if (shape->shape == LLG_VPI_SHAPE_STRING ||
+                        shape->shape == LLG_VPI_SHAPE_CHANDLE ||
+                        shape->shape == LLG_VPI_SHAPE_CLASS)
+                        return 0;
+                    break;
+                case vpiStructUnionMember:
+                    /* 37.17 detail 17: a member of a structure variable. */
+                    return slot->kind == SLOT_OBJECT &&
+                           (g_vpi.objects[slot->object].flags & LLG_VPI_OBJ_MEMBER) != 0;
                 case vpiAutomatic:
                     return slot->kind == SLOT_PROPERTY;
                 case vpiAllocScheme:

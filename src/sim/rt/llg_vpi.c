@@ -1622,6 +1622,95 @@ static vpiHandle iterate_dims(uint32_t row, int type) {
     return make_list_iterator(type, items, count);
 }
 
+/* Whether a net, variable, bit or named event handle has the vpiIndex
+ * relations of 37.16, 37.17 and 37.25 (an expression object answers its
+ * own). */
+static int has_index_relation(const llg_vpi_slot_t* slot) {
+    if (slot->kind != SLOT_OBJECT && slot->kind != SLOT_ELEMENT &&
+        !(slot->kind == SLOT_SELECT && slot->span == 1))
+        return 0;
+    int type = handle_type(slot);
+    return is_variable_type(type) || type == vpiRegArray || type == vpiNet ||
+           type == vpiNetBit || type == vpiRegBit || type == vpiNamedEvent ||
+           type == vpiStringVar || type == vpiChandleVar || type == vpiClassVar;
+}
+
+/* The ranges of the packed dimensions of a value (37.16 detail 23, 37.17
+ * detail 4), leftmost first: its typespec's ranges, or its one declared
+ * range; NULL for a scalar. A range's vpiParent is the declaration. */
+static vpiHandle iterate_packed_ranges(const llg_vpi_slot_t* slot) {
+    const llg_vpi_model_object_t* object = row_object(slot->object);
+    const llg_vpi_typespec_t* typespec = value_typespec(slot);
+    uint32_t count = 0;
+    const int64_t* bounds = NULL;
+    int64_t single[2];
+    if (typespec && (typespec->type == vpiLogicTypespec || typespec->type == vpiBitTypespec ||
+                     typespec->type == vpiPackedArrayTypespec)) {
+        count = typespec->range_count;
+        bounds = count ? &g_vpi.types->ranges[2u * typespec->first_range] : NULL;
+    } else if (object && (object->flags & LLG_VPI_OBJ_RANGE)) {
+        single[0] = object->left;
+        single[1] = object->right;
+        bounds = single;
+        count = 1;
+    }
+    if (!count) return NULL;
+    uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    uint32_t made = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t range = alloc_slot(SLOT_RANGE);
+        if (range == LLG_VPI_NONE) break;
+        g_vpi.slots[range].object = slot->object;
+        g_vpi.slots[range].left = bounds[2u * i];
+        g_vpi.slots[range].right = bounds[2u * i + 1u];
+        g_vpi.slots[range].aux = (int32_t)i;
+        items[made++] = (uintptr_t)encode_handle(range);
+    }
+    return make_list_iterator(vpiRange, items, made);
+}
+
+/* The vpiIndex iteration of a net, variable or named event (37.16 details
+ * 10 and 22, 37.17 details 13 and 18): the index of a bit, then the
+ * indices of the array element that holds it, innermost first; NULL for a
+ * whole object outside an array. */
+static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
+    const llg_vpi_model_object_t* object = row_object(slot->object);
+    if (!object) return NULL;
+    int bit = slot->kind == SLOT_SELECT && slot->span == 1;
+    uint32_t dims = slot->element != LLG_VPI_NO_ELEMENT && slot->kind != SLOT_OBJECT &&
+                            is_array_type(object->type)
+                        ? object->dim_count : 0u;
+    uint32_t count = dims + (bit ? 1u : 0u);
+    if (!count) return NULL;
+    uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    uint32_t made = 0;
+    if (bit) {
+        vpiHandle index = make_constant(slot->left, vpiDecConst);
+        if (index) items[made++] = (uintptr_t)index;
+    }
+    /* Row-major element number: the last dimension varies fastest. */
+    uint64_t rest = slot->element;
+    for (uint32_t d = dims; d-- > 0;) {
+        int64_t left, right;
+        array_dim(object, d, &left, &right);
+        uint64_t extent = (uint64_t)(left >= right ? left - right : right - left) + 1u;
+        uint64_t offset = rest % extent;
+        rest /= extent;
+        int64_t value = left >= right ? left - (int64_t)offset : left + (int64_t)offset;
+        vpiHandle index = make_constant(value, vpiDecConst);
+        if (index) items[made++] = (uintptr_t)index;
+    }
+    return make_list_iterator(vpiIndex, items, made);
+}
+
 /* A list iterator of `count` auxiliary handles of `kind` on `row`, from aux
  * count - 1 down to 0 when `descending` (port bits, most significant
  * first like vpiBit of a vector). */
@@ -5317,6 +5406,23 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                                               : left + (int64_t)slot->element;
                 return make_constant(value, vpiDecConst);
             }
+            /* A whole net, variable or named event is not an array element:
+             * NULL (decision A19-D28). */
+            if (slot->kind == SLOT_OBJECT && has_index_relation(slot)) return NULL;
+            break;
+        case vpiInstanceArray:
+        case vpiModuleArray:
+        case vpiPrimitiveArray:
+            /* 37.10, 37.31: the instance array an element belongs to, NULL
+             * for an instance outside an array. */
+            if (slot->kind == SLOT_OBJECT && object &&
+                (type == vpiPrimitiveArray ? is_primitive_type(object->type)
+                 : type == vpiModuleArray  ? object->type == vpiModule
+                                           : object->type == vpiModule ||
+                                                 object->type == vpiInterface)) {
+                uint32_t array = instance_array_of(slot->object, NULL, NULL);
+                return array == LLG_VPI_NONE ? NULL : object_handle(array);
+            }
             break;
         case vpiLowConn:
         case vpiHighConn: {
@@ -5671,6 +5777,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         return encode_handle(index);
     }
     if (type == vpiMember && slot->kind == SLOT_COLLECTION) return iterate_collection(slot);
+    if (type == vpiIndex && has_index_relation(slot)) return iterate_indices(slot);
     if (dyn_slot(slot)) {
         int handled;
         vpiHandle result = dyn_iterate(type, slot, &handled);
@@ -5701,12 +5808,14 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     }
     if (slot->kind == SLOT_OBJECT && object && is_array_type(object->type) &&
         (type == vpiRange || type == vpiReg || type == vpiNet || type == vpiMemoryWord ||
-         type == object->subtype)) {
+         type == vpiVarSelect || type == object->subtype)) {
         if (type == vpiRange) return iterate_dims(slot->object, type);
         /* 37.16, 37.17: vpiNet iterates the elements of a net array and
-         * vpiReg those of a variable array, whatever their type. */
+         * vpiReg those of a variable array, whatever their type; vpiVarSelect
+         * the elements of a variable array (37.17 detail 7, decision
+         * A19-D28). */
         if (type != object->subtype && type != vpiMemoryWord &&
-            !(type == vpiReg && object->type == vpiRegArray) &&
+            !((type == vpiReg || type == vpiVarSelect) && object->type == vpiRegArray) &&
             !(type == vpiNet && object->type == vpiNetArray)) {
             vpi_error("LLG_VPI_RELATION", "this array has no elements of the requested type");
             return NULL;
@@ -5762,8 +5871,17 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         }
         return iterate_aux(SLOT_PORTBIT, slot->object, object->width, type, 1);
     }
+    if (type == vpiRange && (slot->kind == SLOT_OBJECT || slot->kind == SLOT_ELEMENT) &&
+        object && !(slot->kind == SLOT_OBJECT && is_array_type(object->type))) {
+        /* 37.16 detail 23, 37.17 detail 4: the packed ranges of a logic or
+         * bit vector or a packed array. */
+        int value_type = handle_type(slot);
+        if (value_type == vpiNet || value_type == vpiReg || value_type == vpiBitVar ||
+            value_type == vpiPackedArrayVar)
+            return iterate_packed_ranges(slot);
+    }
     if (type == vpiBit && (slot->kind == SLOT_OBJECT || slot->kind == SLOT_ELEMENT) && object &&
-        !object->is_real && object->packed && object->type != vpiPackedArrayVar &&
+        !object->is_real && object->packed &&
         !(slot->kind == SLOT_OBJECT && is_array_type(object->type))) {
         uint64_t element = slot->element;
         uint32_t row = slot->object;
@@ -6197,9 +6315,13 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiPort && !object->detail)
                 return property == vpiScalar ? object->width == 1 : object->width > 1;
             if (slot->kind == SLOT_PORTBIT) return property == vpiScalar;
+            /* 37.17 detail 20: FALSE for the other variables (real). */
+            if (has_value && real && is_variable_type(type)) return 0;
             if (!has_value || real || is_structure_type(type)) return unsupported_property();
             return property == vpiScalar ? width == 1 : width > 1;
         case vpiArray:
+            /* A net or variable bit is not an array (37.16, 37.17). */
+            if (slot->kind == SLOT_SELECT && slot->span == 1) return 0;
             if (slot->kind != SLOT_OBJECT || !has_array_properties(object))
                 return unsupported_property();
             return is_array_type(object->type);
@@ -6220,12 +6342,33 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             return vpiStaticArray;
         case vpiStructUnionMember:
             if (slot->kind == SLOT_MEMBER) return 1;
-            if ((slot->kind == SLOT_OBJECT && object && is_variable_type(object->type)) ||
+            /* 37.16 detail 30, 37.17 detail 17: a bit is never a member. */
+            if (slot->kind == SLOT_SELECT && slot->span == 1) return 0;
+            if ((slot->kind == SLOT_OBJECT && object &&
+                 (is_variable_type(object->type) || is_array_type(object->type))) ||
                 slot->kind == SLOT_ELEMENT)
                 return slot->kind == SLOT_OBJECT && (object->flags & LLG_VPI_OBJ_MEMBER) != 0;
             return unsupported_property();
         case vpiPacked:
+            /* 37.18 detail 1: a packed array variable is packed. */
+            if (type == vpiPackedArrayVar) return 1;
             return packed_property(value_typespec(slot));
+        case vpiPackedArrayMember:
+            /* 37.18 detail 4: TRUE only for a sub-element of a packed array,
+             * which llg does not expose (decision A19-D28). */
+            if (type == vpiPackedArrayVar || type == vpiStructVar || type == vpiUnionVar ||
+                type == vpiEnumVar)
+                return 0;
+            return unsupported_property();
+        case vpiConstantSelect:
+            /* 37.16 detail 20, 37.17 detail 27: TRUE for a static object
+             * without a parent or selected by constant indices, which every
+             * catalog net, bit and element is (decision A19-D28). */
+            if (type == vpiNet || type == vpiNetBit || type == vpiNetArray ||
+                type == vpiRegBit || type == vpiPackedArrayVar || type == vpiStructVar ||
+                type == vpiUnionVar || type == vpiEnumVar)
+                return 1;
+            return unsupported_property();
         case vpiIsMemory:
             if (slot->kind != SLOT_OBJECT || !object || !is_array_type(object->type))
                 return unsupported_property();
@@ -6265,7 +6408,9 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 return object->detail;
             return unsupported_property();
         case vpiPortType:
-            if (slot->kind == SLOT_OBJECT && object && object->type == vpiPort)
+            /* 37.14: a port bit has the type of its port. */
+            if ((slot->kind == SLOT_OBJECT || slot->kind == SLOT_PORTBIT) && object &&
+                object->type == vpiPort)
                 return object->detail ? object->detail : vpiPort;
             return unsupported_property();
         case vpiTermIndex:
@@ -6303,6 +6448,10 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 return object->subtype ? object->subtype : vpiWire;
             if (slot->kind == SLOT_ELEMENT && object && object->type == vpiNetArray)
                 return vpiWire;
+            /* A net array and a net bit have their nets' type (37.16). */
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiNetArray) return vpiWire;
+            if (slot->kind == SLOT_SELECT && slot->span == 1 && object && object->is_net)
+                return object->type == vpiNet && object->subtype ? object->subtype : vpiWire;
             return unsupported_property();
         case vpiTopModule:
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiModule)
