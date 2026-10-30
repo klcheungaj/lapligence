@@ -2842,10 +2842,17 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpi_get(vpiFsmStateCoverage, instance)` (A17-D11 to A17-D13). Malformed
   or unresolved pragmas are errors. A model without FSM pragmas, or without
   a `$coverage_*` call or VPI catalog, is generated unchanged and pays
-  nothing. **Statement and toggle coverage are not implemented**: nothing
-  is instrumented, CHECK and START report `SV_COV_NOCOV`, queries return 0,
-  `$coverage_save` writes nothing and VPI reports `LLG_VPI_UNSUPPORTED`
-  (S46-D5). Covergroups are not
+  nothing. **Statement and toggle coverage** (S46-D13, S46-D14, A19-D45):
+  every statement of an instance's procedural code and every bit of its
+  packed nets and variables (generate scopes and ports included) are items,
+  with `SV_COV_STATEMENT` and `SV_COV_TOGGLE` in every `$coverage_*`
+  function, the database's statement and toggle sections,
+  `vpi_get(vpiStatementCoverage | vpiToggleCoverage, instance)` and
+  `vpiCovered`/`vpiCoverMax`/`vpiCoveredCount` on statements, nets,
+  variables and bits. A design whose `$coverage_*` calls name a kind
+  collects it from time 0; a model built with `--vpi` or `--dpi-lib` has
+  both available and stopped until START; any other model is generated
+  unchanged. Covergroups are not
   a 40.3.1 coverage type and are reached only through the 19.8 and 19.9
   methods and tasks. SV 40 **[SV-2005]**.
 - 🟨 **Constrained randomization** — `rand` and `randc` packed integral and

@@ -64,8 +64,7 @@ hook is one NULL test. Concurrent assertions bind their item at registration
 `llg_coverage_call` implements the five 40.3.2 functions with Table 40-1
 statuses; the VPI accessors (`llg_acov_item_at`, `llg_coverage_control_vpi`,
 `llg_coverage_file_vpi`) are the only way `llg_vpi.c` reaches the items.
-Statement and toggle coverage (S46-D5, `assertions.c`) must never return
-`SV_COV_OK` from CHECK.
+An unavailable kind (S46-D5) must never return `SV_COV_OK` from CHECK.
 
 `fsm.c` keeps FSM state coverage (40.4, 40.5.3; A17-D11 to A17-D13). The
 generated `llg_fcov_fsm_t` table (state parts as storage bit ranges, states,
@@ -80,3 +79,26 @@ freed at cleanup. `assertions.c` dispatches `SV_COV_FSM_STATE` to
 `llg_fcov_scope`; the database's FSM section (bit 4) holds its own schema
 hash, the visits and the transitions. `llg_vpi.c` reads the table through
 `llg_fcov_count`/`llg_fcov_at`/`llg_fcov_covered_in`.
+
+`code.c` keeps statement and toggle coverage (40.2.2, 40.3, 40.5.3;
+S46-D13, S46-D14, A19-D45). Codegen emits the tables only when a
+`$coverage_*` call can name the kind (it then starts at time 0) or the VPI
+catalog exists (stopped until START), so other models are unchanged.
+Statements: each entity is a static `uint64_t` the generated code
+increments when the statement starts (`llg_scov_item_t` names it with its
+source position, instance and VPI code row); a counter only grows, and
+start, stop and reset move per-entity offsets (`base`, `mark`), so a
+stopped statement still pays one increment and no branch. Toggles: each
+`llg_tcov_signal_t` names a packed storage and its width; the arena holds
+per signal the last known value, its known bits, the bits seen at 0 and at
+1 and per-bit 0->1 and 1->0 counts. START samples the present value and
+adds a value watch (`llg_value_watch_add`, `value_watch_toggle`), so only a
+collecting signal pays; STOP removes the watch and RESET clears sightings
+and counts but keeps the last value. `llg_tcov_finish` stops every signal
+at runtime cleanup. `assertions.c` dispatches `SV_COV_STATEMENT` and
+`SV_COV_TOGGLE` to the scope tallies here; the database's statement (bit
+8) and toggle (bit 16) sections start with their schema hash (statement
+positions; signal names and widths), and a merge validates the whole
+section before it adds anything. `llg_vpi.c` reads the counts through
+`llg_scov_at_code`/`llg_scov_hits`/`llg_tcov_at_object`/`llg_tcov_bits`
+and the `*_covered_in` instance tallies.

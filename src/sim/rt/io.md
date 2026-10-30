@@ -156,7 +156,13 @@ bound after the runtime cleanup so `cbEndOfSimulation` reads final counters
 coverage table of `coverage/fsm.c` (A17-D13); that table's visits stay
 bound after cleanup too. FSM coverage shares the value-watch rows of
 `cbValueChange` (`value_watch_notify`), so a removed callback leaves the
-FSM's watch in place. An item's `code` names its entry in the expression object
+FSM's watch in place. Statement and toggle coverage (A19-D45): a statement handle
+(`SLOT_CODE`, or the object of a block or loop scope) tallies the
+`coverage/code.c` entities of its code entry and every entry below it
+(`llg_scov_at_code`); a net, variable or bit handle (`SLOT_OBJECT`,
+`SLOT_SELECT`) reads its signal's bits through `llg_tcov_at_object`, whose
+catalog row codegen links by full name. Toggle watches share the same
+value-watch rows. An item's `code` names its entry in the expression object
 table (models generated with `--vpi`): the entry is not a handle; its
 children are the 37.46/37.51 relations (`vpiClockingEvent`,
 `vpiDisableCondition`, `vpiProperty`, `vpiExpr`, `vpiStmt`, `vpiElseStmt`).

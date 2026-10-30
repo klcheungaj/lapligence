@@ -2434,17 +2434,22 @@ services of SIM-046 have their own limits below.
 **Status:** open. SIM-046 provides the 19.8-19.9 query and database
 services for covergroups and the 40.3.2 coverage API, with its VPI
 counterpart, for assertion coverage; ADV-017 adds FSM state coverage from
-the 40.4 pragmas.
+the 40.4 pragmas, and statement and toggle coverage follow S46-D13,
+S46-D14 and A19-D45.
 
 ### Symptom
 
-- **Statement and toggle coverage are not implemented.**
-  `$coverage_control` CHECK and START report `SV_COV_NOCOV`, STOP and RESET
-  report `SV_COV_OK` and do nothing, `$coverage_get` and
-  `$coverage_get_max` return 0, `$coverage_save` returns `SV_COV_NOCOV` and
-  writes nothing, and the VPI coverage properties of those kinds are
-  `vpiUndefined` with `LLG_VPI_UNSUPPORTED` (S46-D5). A NOCOV status is not
-  a claim of support.
+- Statement and toggle coverage are collected only in a model whose
+  `$coverage_*` calls name them (from time 0) or that is built with
+  `--vpi` or `--dpi-lib` (stopped until a START); llg has no command-line
+  coverage switch. A model that loads a VPI application at run time
+  (`LLG_VPI_PLUGIN`) without either has neither kind: queries return 0 and
+  CHECK reports `SV_COV_NOCOV`.
+- Toggle coverage counts packed integral nets and variables of instances,
+  their generate scopes and ports; unpacked arrays, reals, strings,
+  events, handles, class properties, and block, subroutine and package
+  variables have no toggle items (S46-D14). Coverage is reported per bit;
+  no 1800-2009 query reports the 0->1 and 1->0 counts apart.
 - A string scope argument names a module definition only; nested
   definition notation (`"top.sub"` naming a definition inside another) is
   `SV_COV_ERROR` (S46-D6).
@@ -2506,20 +2511,23 @@ the 40.4 pragmas.
 
 ### Cause
 
-Statement and toggle coverage need per-statement or per-bit
-instrumentation of every process; the orchestrator's condition
-(no cost when disabled, an opt-in flag) was not met within SIM-046. The
-database stores counters by compile-time index under an identity hash of
-the model's coverage metadata, which keeps loads exact and atomic.
+Statement and toggle coverage are compiled in only where the source or the
+VPI catalog asks for them, so other models are generated unchanged and pay
+nothing; an always-available mode would cost every model a counter per
+statement. The database stores counters by compile-time index under an
+identity hash of the model's coverage metadata, which keeps loads exact and
+atomic.
 
 ### Intended direction
 
-No owner. Code coverage needs its own plan entry with an opt-in `llg` flag.
+No owner. A command-line switch to collect code coverage without a
+`$coverage_*` call would be an `llg` option feeding the same gating.
 
 ### Reproduce
 
 `tests/fixtures/sim/lrm_decisions/S46-D5_unavailable_kinds.sv`,
-`S46-D6_string_scope_is_definition.sv`;
+`S46-D6_string_scope_is_definition.sv`,
+`S46-D14_toggle_coverage.sv`;
 `tests/fixtures/sim/feature_completion/sim_046/db_errors.sv` (`-G W=3`
 reads a database of the W = 4 model).
 
