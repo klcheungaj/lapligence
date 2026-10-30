@@ -1655,6 +1655,8 @@ static vpiHandle iterate_packed_ranges(const llg_vpi_slot_t* slot) {
         count = 1;
     }
     if (!count) return NULL;
+    /* alloc_slot may move the slot table: keep no slot pointer across it. */
+    uint32_t row = slot->object;
     uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
@@ -1664,7 +1666,7 @@ static vpiHandle iterate_packed_ranges(const llg_vpi_slot_t* slot) {
     for (uint32_t i = 0; i < count; ++i) {
         uint32_t range = alloc_slot(SLOT_RANGE);
         if (range == LLG_VPI_NONE) break;
-        g_vpi.slots[range].object = slot->object;
+        g_vpi.slots[range].object = row;
         g_vpi.slots[range].left = bounds[2u * i];
         g_vpi.slots[range].right = bounds[2u * i + 1u];
         g_vpi.slots[range].aux = (int32_t)i;
@@ -1686,6 +1688,9 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
                         ? object->dim_count : 0u;
     uint32_t count = dims + (bit ? 1u : 0u);
     if (!count) return NULL;
+    /* make_constant may move the slot table: keep no slot pointer across it. */
+    int64_t bit_index = slot->left;
+    uint64_t rest = slot->element;
     uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
@@ -1693,11 +1698,10 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
     }
     uint32_t made = 0;
     if (bit) {
-        vpiHandle index = make_constant(slot->left, vpiDecConst);
+        vpiHandle index = make_constant(bit_index, vpiDecConst);
         if (index) items[made++] = (uintptr_t)index;
     }
     /* Row-major element number: the last dimension varies fastest. */
-    uint64_t rest = slot->element;
     for (uint32_t d = dims; d-- > 0;) {
         int64_t left, right;
         array_dim(object, d, &left, &right);
