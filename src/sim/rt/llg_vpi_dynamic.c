@@ -103,7 +103,7 @@ static int dyn_tables_valid(void) {
     uint32_t typespecs = g_vpi.types ? g_vpi.types->typespec_count : 0u;
     for (uint32_t i = 0; i < t->shape_count; ++i) {
         const llg_vpi_shape_t* shape = &t->shapes[i];
-        if (shape->shape > LLG_VPI_SHAPE_OTHER || shape->class_index > t->class_count ||
+        if (shape->shape > LLG_VPI_SHAPE_EVENT || shape->class_index > t->class_count ||
             shape->typespec > typespecs || shape->width >= LLG_SUPPORTED_WIDTH_LIMIT)
             return 0;
         if (shape->shape == LLG_VPI_SHAPE_PACKED && shape->width == 0) return 0;
@@ -382,7 +382,8 @@ static void* dyn_field_storage(void* object, uint32_t field, const llg_vpi_shape
         case LLG_VPI_SHAPE_REAL: return kind == LLG_VPI_FIELD_REAL ? storage : NULL;
         case LLG_VPI_SHAPE_STRING: return kind == LLG_VPI_FIELD_STRING ? storage : NULL;
         case LLG_VPI_SHAPE_CLASS:
-        case LLG_VPI_SHAPE_CHANDLE: return kind == LLG_VPI_FIELD_HANDLE ? storage : NULL;
+        case LLG_VPI_SHAPE_CHANDLE:
+        case LLG_VPI_SHAPE_EVENT: return kind == LLG_VPI_FIELD_HANDLE ? storage : NULL;
         case LLG_VPI_SHAPE_CONTAINER: return kind == LLG_VPI_FIELD_PAYLOAD ? storage : NULL;
         default: return NULL;
     }
@@ -1463,6 +1464,8 @@ static int dyn_field_listed(uint32_t class_index, uint32_t field, int type) {
     if (!entry || !entry->name) return 0;
     const llg_vpi_shape_t* shape = dyn_shape(entry->shape);
     if (!shape || shape->shape == LLG_VPI_SHAPE_OTHER) return 0;
+    /* An event property is a named event, not a variable (37.25, 37.29). */
+    if (shape->shape == LLG_VPI_SHAPE_EVENT) return type == vpiNamedEvent;
     return !type || shape->type == type;
 }
 
@@ -1527,7 +1530,8 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
                 return dyn_iterate_items(class_index, type, 0,
                                          type == vpiConstraint ? slot->pointer : NULL);
             }
-            if (type == vpiNamedEvent) return NULL;
+            /* 37.29: the object's event properties, inherited ones first. */
+            if (type == vpiNamedEvent) return dyn_iterate_fields(slot->pointer, class_index, 0, type);
             break;
         }
         case SLOT_CLASSITEM:
@@ -1543,8 +1547,10 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
                                           type == vpiVariables ? 0 : type);
             /* 37.27, 37.28 detail 5: the items the class declares. */
             if (dyn_class_iteration(type)) return dyn_iterate_items(class_index, type, 0, NULL);
-            /* llg rejects event properties, so a class declares none. */
-            if (type == vpiNamedEvent) return NULL;
+            /* 37.27, 37.28: the event properties the class declares; they
+             * name no synchronization object. */
+            if (type == vpiNamedEvent)
+                return dyn_iterate_fields(NULL, class_index, dyn_inherited_fields(class_index), type);
             if (type == vpiDerivedClasses && slot->kind == SLOT_CLASSDEFN) {
                 uint32_t count = 0;
                 for (uint32_t i = 0; i < dyn_class_count(); ++i)
@@ -1568,6 +1574,9 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
                 break;
             }
             if (dyn_refuse_dying(place.owner, "vpi_iterate")) return NULL;
+            /* 37.25 detail 1 (named event array): an event property is not
+             * part of an array, so it has no indices. */
+            if (type == vpiIndex && place.shape->shape == LLG_VPI_SHAPE_EVENT) return NULL;
             if (place.shape->shape != LLG_VPI_SHAPE_CONTAINER) {
                 if (slot->kind == SLOT_OBJECT) {
                     *handled = 0;
@@ -1710,9 +1719,52 @@ static PLI_INT64 dyn_random_property(int property, const llg_vpi_slot_t* slot) {
 }
 
 /* vpi_get64(property, slot); `*handled` 0 when llg_vpi.c should answer. */
+/* Whether `slot` is an `event` class property (37.25). Its place's storage
+ * is the handle slot naming the synchronization object (NULL for a property
+ * reached from a class definition). */
+static int dyn_event_property(const llg_vpi_slot_t* slot, dyn_place_t* place) {
+    return slot->kind == SLOT_PROPERTY && dyn_place(slot, place) &&
+           place->shape->shape == LLG_VPI_SHAPE_EVENT;
+}
+
+/* The event handle of an event property of a live object; 0 when the
+ * property has no object (a class definition's) or the object is dying. */
+static int dyn_property_event(const llg_vpi_slot_t* slot, llg_event_t* event, const char* what) {
+    dyn_place_t place;
+    if (!dyn_event_property(slot, &place)) return 0;
+    if (!place.storage) {
+        vpi_error("LLG_VPI_RELATION",
+                  "an event property of a class definition names no event (37.27 detail 2)");
+        return 0;
+    }
+    if (dyn_refuse_dying(place.owner, what)) return 0;
+    event->object = *(llg_event_object_t* const*)place.storage;
+    return 1;
+}
+
+/* 37.25 properties of an event property; others are wrong-object queries. */
+static PLI_INT64 dyn_event_get(int property, const dyn_place_t* place) {
+    switch (property) {
+        case vpiArray:
+        case vpiArrayMember:
+            return 0;
+        case vpiAutomatic:
+            return 1;
+        case vpiAllocScheme:
+            return place->owner ? vpiDynamicScheme : vpiOtherScheme;
+        default:
+            unsupported_property();
+            return vpiUndefined;
+    }
+}
+
 static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
     *handled = 1;
     if (property == vpiType) return dyn_type(slot);
+    {
+        dyn_place_t place;
+        if (dyn_event_property(slot, &place)) return dyn_event_get(property, &place);
+    }
     switch (slot->kind) {
         case SLOT_CLASSDEFN:
         case SLOT_CLASSTS:
@@ -1930,6 +1982,10 @@ static void dyn_get_value(llg_vpi_slot_t* slot, p_vpi_value output) {
         case SLOT_PROPERTY: {
             dyn_place_t place;
             if (!dyn_place(slot, &place)) return;
+            if (place.shape->shape == LLG_VPI_SHAPE_EVENT) {
+                vpi_error("LLG_VPI_VALUE", "a named event has no value (37.25)");
+                return;
+            }
             if (!place.storage) {
                 vpi_error("LLG_VPI_VALUE",
                           "a property of a class definition has no value (37.27 detail 2)");
@@ -1946,6 +2002,20 @@ static void dyn_get_value(llg_vpi_slot_t* slot, p_vpi_value output) {
 
 /* vpi_put_value of a dynamic object: vpiNoDelay writes only. */
 static void dyn_put_value(llg_vpi_slot_t* slot, p_vpi_value input, int mode) {
+    {
+        dyn_place_t place;
+        if (dyn_event_property(slot, &place)) {
+            /* 38.34: a put toggles the named event; value_p may be NULL
+             * (vpi_put_value already refused read-only regions). */
+            llg_event_t event;
+            if (mode != vpiNoDelay) {
+                vpi_error("LLG_VPI_UNSUPPORTED", "llg triggers a named event only with vpiNoDelay");
+                return;
+            }
+            if (dyn_property_event(slot, &event, "vpi_put_value")) llg_event_trigger(&event);
+            return;
+        }
+    }
     if (mode != vpiNoDelay) {
         vpi_error("LLG_VPI_FLAGS",
                   "llg writes strings, class properties and array elements with vpiNoDelay only "
@@ -2014,9 +2084,12 @@ static vpiHandle dyn_property_by_name(void* object, const char* name, size_t len
         const char* candidate = dyn_field(class_index, i)->name;
         if (candidate && strlen(candidate) == length && memcmp(candidate, name, length) == 0)
             /* A property with no VPI form (a virtual interface) names no
-             * object, as in vpiVariables. */
-            return dyn_field_listed(class_index, i, 0) ? make_property(object, class_index, i)
-                                                       : NULL;
+             * object, as in vpiVariables; an event property is a named
+             * event. */
+            return dyn_field_listed(class_index, i, 0) ||
+                           dyn_field_listed(class_index, i, vpiNamedEvent)
+                       ? make_property(object, class_index, i)
+                       : NULL;
     }
     return NULL;
 }

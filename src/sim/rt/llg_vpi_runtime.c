@@ -1066,6 +1066,15 @@ static vpiHandle rts_iterate(int type, vpiHandle reference, int* handled) {
         if (object && object->type == vpiNamedEvent && object->event)
             return rts_event_waiters(object->event);
     }
+    if (type == vpiWaitingProcesses && slot->kind == SLOT_PROPERTY) {
+        /* 37.25 detail 1 for an event property of a class object. */
+        dyn_place_t place;
+        if (dyn_event_property(slot, &place)) {
+            llg_event_t event;
+            return dyn_property_event(slot, &event, "vpiWaitingProcesses") ? rts_event_waiters(&event)
+                                                                           : NULL;
+        }
+    }
     int object_type = handle_type(slot);
     if (type == vpiCallback && rts_callback_owner(object_type)) return rts_callbacks(reference, slot);
     if (type == vpiUse && rts_simple_expr(object_type)) return rts_uses(slot);

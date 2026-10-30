@@ -242,7 +242,10 @@ objects are static slots after the catalog rows, followed by one
 declarations, parameters); a class's items are contiguous, a method's io
 declarations follow it and name it through `owner`. Field records carry the
 rand qualifier, visibility, const flag and the index of the hidden
-`rand_mode` off bit that `vpiIsRandomized` reads. A constraint item names
+`rand_mode` off bit that `vpiIsRandomized` reads. An `event` property has
+shape `LLG_VPI_SHAPE_EVENT`: its storage is the handle slot naming the
+synchronization object, it is listed by `vpiNamedEvent` and not by
+`vpiVariables`, and a put triggers it (decision A19-D45). A constraint item names
 the hidden root code entry of its constraint items (37.30, 37.34) and its
 `constraint_mode` off bit (an object field, or the static signal of a
 static constraint); a constraint obtained from an object is a dynamic

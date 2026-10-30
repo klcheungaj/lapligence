@@ -283,6 +283,7 @@ impl Codegen<'_> {
                         } => self.vpi_packed_shape(typespecs, descriptor, width, signed, two_state),
                         IrClassFieldType::Real { shortreal } => IrVpiShape::Real { shortreal },
                         IrClassFieldType::String => IrVpiShape::String,
+                        IrClassFieldType::Chandle if slot.event => IrVpiShape::Event,
                         IrClassFieldType::Chandle => self
                             .vpi_handle_shape(descriptor)
                             .unwrap_or(IrVpiShape::Other),

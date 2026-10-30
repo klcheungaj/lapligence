@@ -2465,6 +2465,15 @@ fn a19_d44_frames_and_threads() {
 }
 
 #[test]
+fn a19_d45_class_event_properties() {
+    run_vpi_decision(
+        "A19-D45_class_event_properties",
+        &["task $d45()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D45_class_event_properties.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

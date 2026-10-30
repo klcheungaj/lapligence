@@ -2207,8 +2207,10 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - dynamic objects (VPI-O4) other than static string, chandle and class
   variables and dynamic, queue and associative arrays (of instances,
   packages, `$unit`, named blocks and tasks and functions): automatic ones,
-  fixed-size arrays of class handles, static class properties, events and
-  virtual interfaces (variables and class properties);
+  fixed-size arrays of class handles, static class properties (static
+  event properties included), events other than instance event properties
+  of class objects (decision A19-D45), and virtual interfaces (variables and
+  class properties);
   mailbox and semaphore objects (`vpiClassType`, `vpiMessages`,
   `vpiWaitingProcesses`; their typespecs are NULL); `foreach` constraints
   (no 2009 object, decision A19-D37); `vpiInterfaceDecl` and `vpiTypedef`

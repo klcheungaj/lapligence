@@ -92,7 +92,7 @@ pub(super) fn render_vpi_dynamic(model: &IrModel, out: &mut String) {
                     };
                     element = *shape;
                 }
-                IrVpiShape::String | IrVpiShape::Chandle | IrVpiShape::Other => {}
+                IrVpiShape::String | IrVpiShape::Chandle | IrVpiShape::Event | IrVpiShape::Other => {}
             }
             format!(
                 "    {{ {}, {}, {array_type}, {values}u, {key}, {width}u, {}, {}, {}, {class}u, {element}u, {typespec}u }}",
