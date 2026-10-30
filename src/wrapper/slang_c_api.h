@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 60u
+#define LLG_SLANG_ABI_VERSION 61u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1524,6 +1524,64 @@ typedef struct {
   uint32_t flags;
 } LlgSlangProtectedEnvelope;
 
+/* FSM recognition pragmas (IEEE 1800-2009 40.4, ABI v61).
+ *
+ * A LLG_SLANG_FSM_PRAGMA record is one block or one-line comment of the
+ * parsed source whose text, after leading white space, starts with the word
+ * `tool` followed by white space. `text` is the comment's text between its
+ * delimiters (after `//` up to the line end, or between `/` `*` and `*` `/`),
+ * spelled as written; the receiver parses the pragma. `range` is the whole
+ * comment, physical. Comments in inactive conditional text, in directives
+ * (a `define body included) and in the trivia of a macro-expanded token are
+ * not reported. LLG_SLANG_FSM_LINE_COMMENT marks a one-line comment.
+ *
+ * `scope` is the declared-name range of the innermost module, interface or
+ * program declaration whose text holds the comment (the range of that
+ * definition's semantic node), or an invalid range outside every such
+ * declaration (in a package, at compilation-unit level).
+ *
+ * A comment in the trivia of the first declarator name of a declaration (the
+ * position after the keyword, the type and its packed dimensions) is bound
+ * to that declaration: LLG_SLANG_FSM_SIGNAL_DECLARATOR for a data, net or
+ * port declaration, LLG_SLANG_FSM_PARAMETER_DECLARATOR for a parameter or
+ * localparam declaration. The comment then yields one record per
+ * declarator, in declaration order: `declarator` is that declarator's name
+ * range (the range of its semantic nodes) and `ordinal` its position from 0.
+ * The record of an unbound comment has no declarator flag, an invalid
+ * `declarator` and ordinal 0.
+ *
+ * A LLG_SLANG_FSM_INSTANCE record names one elaborated instance
+ * (`instance_id`, its semantic node) of a declaration that holds at least
+ * one pragma, by that declaration's `scope`; its `range` and `declarator`
+ * are invalid, `text` is empty and `flags` and `ordinal` are 0. Pragma
+ * records keep `instance_id` LLG_SLANG_INVALID_ID.
+ *
+ * Pragma records come first, sorted by file, comment start and ordinal, each
+ * comment once even when an include file is parsed into several trees;
+ * instance records follow them. `reserved` is 0. */
+enum {
+  LLG_SLANG_FSM_PRAGMA = 1,
+  LLG_SLANG_FSM_INSTANCE = 2
+};
+
+enum {
+  LLG_SLANG_FSM_LINE_COMMENT = 1u << 0,
+  LLG_SLANG_FSM_SIGNAL_DECLARATOR = 1u << 1,
+  LLG_SLANG_FSM_PARAMETER_DECLARATOR = 1u << 2
+};
+
+typedef struct {
+  LlgSlangSourceRange range;
+  LlgSlangSourceRange scope;
+  LlgSlangSourceRange declarator;
+  uint64_t instance_id;
+  uint32_t kind;
+  uint32_t flags;
+  uint32_t ordinal;
+  uint32_t reserved;
+  LlgSlangString text;
+} LlgSlangFsmPragma;
+
 /* Capture stream (ABI v15).
  *
  * llg_slang_compile() does not return a snapshot owner. After Slang has
@@ -1574,6 +1632,7 @@ typedef struct {
   uint64_t line_directive_count;
   uint64_t edition_finding_count;
   uint64_t protected_envelope_count;
+  uint64_t fsm_pragma_count;
 } LlgSlangStreamHeader;
 
 typedef struct {
@@ -1619,6 +1678,8 @@ typedef struct {
   uint32_t (*protected_envelopes)(void* context,
                                   const LlgSlangProtectedEnvelope* records,
                                   uint64_t count);
+  uint32_t (*fsm_pragmas)(void* context, const LlgSlangFsmPragma* records,
+                          uint64_t count);
   uint32_t (*end)(void* context);
 } LlgSlangSink;
 

@@ -30,6 +30,13 @@ protect option) are captured from the directive trivia as one record per
 opening directive, with the enclosing module/interface/program/package name;
 Slang itself skips the encoded blocks and cannot decrypt
 ([consumers](../../docs/config.md#lsp-protected-source)).
+FSM recognition pragma comments (IEEE 1800-2009 40.4: block or one-line
+comments whose text starts with `tool`) are taken from the leading trivia of
+every source token, positioned by walking back from the token, with the
+enclosing module/interface/program name and, for a comment directly before
+the first declarator of a data, net, port or parameter declaration, every
+declarator of that declaration. Only designs with such comments pay for the
+instance walk that lists each declaration's elaborated instances.
 
 Native source access is cache-only. Ordered library include prefixes attach to
 their named `SourceLibrary` and cannot authorize a native filesystem read.

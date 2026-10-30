@@ -128,6 +128,8 @@ pub use coverage::{
 };
 mod shared;
 use shared::{DenseShared, DenseSharedBuilder};
+mod fsm;
+pub use fsm::{Fsm, FsmPragmaError, FsmStatePart};
 mod specify;
 use specify::{specify_tables_from_slang, SpecifyTables};
 pub use specify::{
@@ -411,6 +413,10 @@ pub struct Db {
     elaborated_type_ranges: Vec<ElaboratedTypeRanges>,
     /// Specify blocks, module paths, specify items and specparam facts.
     specify: SpecifyTables,
+    /// FSMs declared by IEEE 1800-2009 40.4 pragmas, per instance.
+    fsms: Vec<Fsm>,
+    /// Malformed, misplaced or unresolved FSM pragmas.
+    fsm_pragma_errors: Vec<FsmPragmaError>,
 }
 
 impl Db {
@@ -489,6 +495,8 @@ impl Db {
             source_files: HashMap::new(),
             elaborated_type_ranges: Vec::new(),
             specify: SpecifyTables::default(),
+            fsms: Vec::new(),
+            fsm_pragma_errors: Vec::new(),
         }
     }
 
@@ -580,6 +588,8 @@ impl Db {
             source_files: HashMap::new(),
             elaborated_type_ranges: Vec::new(),
             specify: SpecifyTables::default(),
+            fsms: Vec::new(),
+            fsm_pragma_errors: Vec::new(),
         };
         db.validate().map_err(DbError::InvalidDatabase)?;
         Ok(db)
@@ -705,6 +715,18 @@ impl Db {
     /// `` `delay_mode_*`` directives in source order per file.
     pub fn legacy_directives(&self) -> &[LegacyDirective] {
         &self.legacy_directives
+    }
+
+    /// The FSMs that IEEE 1800-2009 40.4 pragmas declare, one per state
+    /// vector and instance, in instance capture order and then source order.
+    pub fn fsms(&self) -> &[Fsm] {
+        &self.fsms
+    }
+
+    /// The FSM pragmas that are malformed, misplaced or name no signal or
+    /// parameter of their module, each reported once per definition.
+    pub fn fsm_pragma_errors(&self) -> &[FsmPragmaError] {
+        &self.fsm_pragma_errors
     }
 
     /// Logical (`` `line``-mapped) positions of admitted source lines.

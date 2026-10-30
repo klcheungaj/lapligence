@@ -82,9 +82,10 @@ pub(super) enum Table {
     LineDirectives,
     EditionFindings,
     ProtectedEnvelopes,
+    FsmPragmas,
 }
 
-const TABLE_COUNT: usize = Table::ProtectedEnvelopes as usize + 1;
+const TABLE_COUNT: usize = Table::FsmPragmas as usize + 1;
 const TABLES: [Table; TABLE_COUNT] = [
     Table::Files,
     Table::RelatedDiagnostics,
@@ -105,6 +106,7 @@ const TABLES: [Table; TABLE_COUNT] = [
     Table::LineDirectives,
     Table::EditionFindings,
     Table::ProtectedEnvelopes,
+    Table::FsmPragmas,
 ];
 
 impl Table {
@@ -129,6 +131,7 @@ impl Table {
             Self::LineDirectives => "line directive records",
             Self::EditionFindings => "edition finding records",
             Self::ProtectedEnvelopes => "protected envelope records",
+            Self::FsmPragmas => "FSM pragma records",
         }
     }
 
@@ -153,6 +156,7 @@ impl Table {
             Self::LineDirectives => std::mem::size_of::<RawLineDirective>(),
             Self::EditionFindings => std::mem::size_of::<RawEditionFinding>(),
             Self::ProtectedEnvelopes => std::mem::size_of::<RawProtectedEnvelope>(),
+            Self::FsmPragmas => std::mem::size_of::<RawFsmPragma>(),
         }
     }
 }
@@ -214,6 +218,10 @@ pub(super) struct StreamBuilder {
     line_directives: Vec<LineDirective>,
     edition_findings: Vec<EditionFinding>,
     protected_envelopes: Vec<ProtectedEnvelope>,
+    fsm_pragmas: Vec<FsmPragma>,
+    fsm_instances: Vec<FsmPragmaInstance>,
+    fsm_scopes: HashSet<sources::FsmScopeKey>,
+    fsm_instance_keys: HashSet<(sources::FsmScopeKey, u64)>,
 }
 
 impl StreamBuilder {
@@ -258,6 +266,10 @@ impl StreamBuilder {
             line_directives: Vec::new(),
             edition_findings: Vec::new(),
             protected_envelopes: Vec::new(),
+            fsm_pragmas: Vec::new(),
+            fsm_instances: Vec::new(),
+            fsm_scopes: HashSet::new(),
+            fsm_instance_keys: HashSet::new(),
         }
     }
 
@@ -298,6 +310,8 @@ impl StreamBuilder {
             line_directives: self.line_directives,
             edition_findings: self.edition_findings,
             protected_envelopes: self.protected_envelopes,
+            fsm_pragmas: self.fsm_pragmas,
+            fsm_instances: self.fsm_instances,
         };
         Ok((snapshot, self.profile))
     }
@@ -341,6 +355,7 @@ impl StreamBuilder {
             raw.line_directive_count,
             raw.edition_finding_count,
             raw.protected_envelope_count,
+            raw.fsm_pragma_count,
         ];
         let header = Header {
             flags: raw.flags,
@@ -487,6 +502,10 @@ impl StreamBuilder {
             .reserve_exact(capacity(Table::EditionFindings));
         self.protected_envelopes
             .reserve_exact(capacity(Table::ProtectedEnvelopes));
+        // FSM pragma records have no count limit of their own: a comment
+        // yields one record per declarator. The record byte check above
+        // bounds them like every other table.
+        self.fsm_pragmas.reserve_exact(capacity(Table::FsmPragmas));
         self.header = Some(header);
         // Native capture is complete once the header arrives; the stream
         // phase covers delivery and decoding.
@@ -868,6 +887,31 @@ impl StreamBuilder {
         }
         Ok(())
     }
+
+    pub(super) fn fsm_pragmas(&mut self, raw: &[RawFsmPragma]) -> Result<(), SlangError> {
+        self.enter(Table::FsmPragmas, raw.len())?;
+        for item in raw {
+            self.charge(item.text)?;
+            match sources::decode_fsm_pragma(
+                item,
+                &self.files,
+                &self.semantic_nodes,
+                self.fsm_pragmas.last(),
+                &self.fsm_scopes,
+                &mut self.fsm_instance_keys,
+            )? {
+                DecodedFsmPragma::Pragma(pragma) => {
+                    if let Some(scope) = pragma.scope {
+                        self.fsm_scopes
+                            .insert((scope.file_id, scope.start, scope.end));
+                    }
+                    self.fsm_pragmas.push(pragma);
+                }
+                DecodedFsmPragma::Instance(instance) => self.fsm_instances.push(instance),
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Run one receiver for a sink callback, recording its first error.
@@ -985,6 +1029,7 @@ batch_receivers! {
     sink_line_directives: RawLineDirective => LineDirectives, line_directives;
     sink_edition_findings: RawEditionFinding => EditionFindings, edition_findings;
     sink_protected_envelopes: RawProtectedEnvelope => ProtectedEnvelopes, protected_envelopes;
+    sink_fsm_pragmas: RawFsmPragma => FsmPragmas, fsm_pragmas;
 }
 
 /// The callback table whose context is `builder`. The returned value borrows
@@ -1013,6 +1058,7 @@ pub(super) fn sink_for(builder: &mut StreamBuilder) -> RawSink {
         line_directives: sink_line_directives,
         edition_findings: sink_edition_findings,
         protected_envelopes: sink_protected_envelopes,
+        fsm_pragmas: sink_fsm_pragmas,
         end: sink_end,
     }
 }

@@ -72,6 +72,13 @@ invocation locations in configuration diagnostics.
 - `protected_envelopes` are sorted by file and start; the count is bounded by
   the lexical token limit, kinds and flags are closed sets, and `scope` is the
   enclosing declaration's name range or none.
+- `fsm_pragmas` (ABI 61) are comments starting with the word `tool` (IEEE
+  1800-2009 40.4), sorted by file, start and declarator ordinal, then the
+  instance records of each declaration holding one. Their count has no limit
+  of its own (one record per bound declarator) and is bounded by the record
+  byte budget. The text must span exactly the comment range minus its
+  delimiters; instance records must name distinct instance nodes of a
+  reported scope. Parsing and binding happen in the owned DB.
 - A `default disable iff` expression (`LLG_SLANG_EDGE_DEFAULT_DISABLE`) is owned
   by the first assertion statement that uses it. `restrict property` is kept as
   `ConcurrentAssertionKind::Restrict`, which the simulator does not verify.
