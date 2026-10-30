@@ -451,6 +451,17 @@ static int is_variable_type(int type) {
 }
 
 /* Objects whose value lives in model storage (not parameters or scopes). */
+/* The catalog objects 37.10, 37.16, 37.17, 37.25, 37.31 and 37.80 give the
+ * vpiArray and vpiArrayMember properties: instances, nets, variables,
+ * named events, primitives and generate scopes. */
+static int has_array_properties(const llg_vpi_model_object_t* object) {
+    if (!object) return 0;
+    int type = object->type;
+    return type == vpiModule || type == vpiInterface || type == vpiProgram || type == vpiNet ||
+           type == vpiNamedEvent || type == vpiGenScope || is_primitive_type(type) ||
+           is_array_type(type) || is_variable_type(type);
+}
+
 static int has_storage(const llg_vpi_model_object_t* object) {
     return object->is_real ? object->real != NULL : object->packed != NULL;
 }
@@ -1239,6 +1250,7 @@ static llg_vpi_call_t* slot_call(const llg_vpi_slot_t* slot) {
 
 static int read_conn(uint32_t row, uint32_t index, llg_vpi_datum_t* out, int* is_signed);
 static int code_value(uint32_t index, llg_vpi_datum_t* out, int* is_signed);
+static int handle_type(const llg_vpi_slot_t* slot);
 static vpiHandle code_handle(uint32_t index);
 static const llg_vpi_code_t* code_at(uint32_t index);
 static uint32_t code_visible(uint32_t index);
@@ -3190,7 +3202,8 @@ static vpiHandle iterate_declarations(int type, vpiHandle reference) {
             vpi_error("LLG_VPI_RELATION", "sequence and property declarations iterate from a scope");
         return NULL;
     }
-    if (slot->kind != SLOT_OBJECT) {
+    const llg_vpi_model_object_t* scope = slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
+    if (!scope || !is_scope_type(scope->type)) {
         vpi_error("LLG_VPI_RELATION", "sequence and property declarations iterate from a scope");
         return NULL;
     }
@@ -3945,7 +3958,9 @@ static int code_relation_applies(int type, int relation) {
             return relation == vpiCondition || relation == vpiStmt || relation == vpiElseStmt;
         case vpiCase: return relation == vpiCondition;
         case vpiCaseItem: case vpiForever: return relation == vpiStmt;
-        case vpiFor: return relation == vpiCondition || relation == vpiStmt;
+        case vpiFor:
+            return relation == vpiForInitStmt || relation == vpiCondition ||
+                   relation == vpiForIncStmt || relation == vpiStmt;
         case vpiForeachStmt: return relation == vpiVariables || relation == vpiStmt;
         case vpiOrderedWait: return relation == vpiStmt || relation == vpiElseStmt;
         case vpiDelayControl: return relation == vpiDelay || relation == vpiStmt;
@@ -4041,11 +4056,14 @@ static vpiHandle code_relation(int type, uint32_t index) {
         code_opaque_error();
         return NULL;
     }
+    /* A child kept for a one-to-many relation (an operand, an argument, a
+     * block statement) is not a one-to-one relation of its owner. */
+    if (!code_relation_applies(code_type(node), type)) {
+        vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-one relation for this object");
+        return NULL;
+    }
     uint32_t child = code_child(node, type);
-    if (child != LLG_VPI_NONE) return code_handle(child);
-    if (code_relation_applies(code_type(node), type)) return NULL;
-    vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-one relation for this object");
-    return NULL;
+    return child != LLG_VPI_NONE ? code_handle(child) : NULL;
 }
 
 /* Iterate the children of entry `index` reached by `relation`. */
@@ -4950,7 +4968,6 @@ static PLI_INT32 code_property(uint32_t index, int property) {
     switch (property) {
         case vpiType: return type;
         case vpiLineNo: return (PLI_INT32)node->line;
-        case vpiValid: return vpiValidTrue;
         case vpiSize:
             if (!expression) break;
             /* A real expression reports its IEEE 754 storage (S42-D8). */
@@ -5158,6 +5175,14 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
             if (slot->kind != SLOT_TYPESPEC) break;
             const llg_vpi_typespec_t* typespec = typespec_at((uint32_t)slot->aux);
             if (type == vpiBaseTypespec && typespec->type != vpiEnumTypespec) break;
+            /* 37.23 detail 8 defines vpiElemTypespec for array, packed
+             * array, bit and logic typespecs and makes it NULL for struct,
+             * union and enum typespecs; other typespecs do not have it. */
+            if (type == vpiElemTypespec && typespec->type != vpiArrayTypespec &&
+                typespec->type != vpiPackedArrayTypespec && typespec->type != vpiBitTypespec &&
+                typespec->type != vpiLogicTypespec && !is_aggregate_typespec(typespec) &&
+                typespec->type != vpiEnumTypespec)
+                break;
             /* A typespec without the relation yields NULL with no error
              * (37.23 details 1 and 8). */
             uint32_t reference = type == vpiTypedefAlias ? typespec->alias
@@ -5180,7 +5205,9 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
             }
             if (slot->kind == SLOT_OBJECT)
                 return object && object->parent ? object_handle(row_of(object->parent)) : NULL;
-            if (slot->kind == SLOT_ELEMENT || slot->kind == SLOT_RANGE)
+            /* A typespec's range has no owning object. */
+            if (slot->kind == SLOT_ELEMENT ||
+                (slot->kind == SLOT_RANGE && slot->object != LLG_VPI_NONE))
                 return object_handle(slot->object);
             if (slot->kind == SLOT_SELECT)
                 return slot->element == LLG_VPI_NO_ELEMENT ? object_handle(slot->object)
@@ -5271,7 +5298,7 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 uint32_t conn = role_conn(slot->object, LLG_VPI_ROLE_CONDITION);
                 return conn == LLG_VPI_NONE ? NULL : conn_handle(slot->object, conn);
             }
-            if (slot->kind == SLOT_TERM) {
+            if (slot->kind == SLOT_TERM && handle_type(slot) == vpiTchkTerm) {
                 const llg_vpi_conn_t* conn = row_conn(slot->object, (uint32_t)slot->aux);
                 return conn && conn->condition ? conn_handle(slot->object, conn->condition - 1u)
                                                : NULL;
@@ -5618,7 +5645,14 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         (type == vpiRange || type == vpiReg || type == vpiNet || type == vpiMemoryWord ||
          type == object->subtype)) {
         if (type == vpiRange) return iterate_dims(slot->object, type);
-        if (type != object->subtype && type != vpiMemoryWord) return NULL;
+        /* 37.16, 37.17: vpiNet iterates the elements of a net array and
+         * vpiReg those of a variable array, whatever their type. */
+        if (type != object->subtype && type != vpiMemoryWord &&
+            !(type == vpiReg && object->type == vpiRegArray) &&
+            !(type == vpiNet && object->type == vpiNetArray)) {
+            vpi_error("LLG_VPI_RELATION", "this array has no elements of the requested type");
+            return NULL;
+        }
         uint32_t index = alloc_slot(SLOT_ITERATOR);
         if (index == LLG_VPI_NONE) return NULL;
         llg_vpi_slot_t* iterator = &g_vpi.slots[index];
@@ -6102,14 +6136,19 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if (!has_value || real || is_structure_type(type)) return unsupported_property();
             return property == vpiScalar ? width == 1 : width > 1;
         case vpiArray:
-            if (slot->kind != SLOT_OBJECT || !object) return unsupported_property();
+            if (slot->kind != SLOT_OBJECT || !has_array_properties(object))
+                return unsupported_property();
             return is_array_type(object->type);
         case vpiArrayMember:
             if (slot->kind == SLOT_OBJECT && object &&
                 (object->type == vpiModule || object->type == vpiInterface ||
                  is_primitive_type(object->type)))
                 return instance_array_of(slot->object, NULL, NULL) != LLG_VPI_NONE;
-            if (!has_value && slot->kind != SLOT_OBJECT) return unsupported_property();
+            if (slot->kind == SLOT_OBJECT ? !has_array_properties(object)
+                                          : slot->kind != SLOT_ELEMENT &&
+                                                slot->kind != SLOT_SELECT &&
+                                                slot->kind != SLOT_MEMBER)
+                return unsupported_property();
             return slot->kind == SLOT_ELEMENT;
         case vpiArrayType:
             if (slot->kind != SLOT_OBJECT || !object || !is_array_type(object->type))
@@ -6270,8 +6309,6 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         case vpiIteratorType:
             if (slot->kind == SLOT_ITERATOR) return slot->aux;
             return unsupported_property();
-        case vpiValid:
-            return vpiValidTrue;
         default:
             return unsupported_property();
     }

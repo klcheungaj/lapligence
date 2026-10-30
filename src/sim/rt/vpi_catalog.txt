@@ -1,0 +1,1990 @@
+# The VPI object model catalog of a generated model: every object of the
+# IEEE 1800-2009 Clause 37 diagrams (and the coverage and FSM objects of
+# 40.5) with its properties, one-to-one relations and iterations, and the
+# answer the runtime (llg_vpi.c, llg_vpi_dynamic.c) gives. It is the single
+# source of truth for the VPI object model; docs/known_issues.md and
+# src/sim/rt/io.md point here. tests/runtime_vpi_catalog.rs checks its
+# syntax, that every implemented row names an existing test and that it
+# lists every case of the runtime dispatch; adv_019::catalog_walk_matches_the_vpi_catalog
+# walks tests/fixtures/sim/feature_completion/adv_019/catalog.sv and checks
+# every answer against it.
+#
+# test <alias> <suite>::<test function>
+# node <id> <clause> type=<vpiType>|members=<id>,... [default=<status> <reason>]
+#     A type node is one object type (type=NULL: a NULL reference handle);
+#     a class node groups other nodes. A type has the rows of its node and of
+#     every class that contains it, the nearest declaration of a row winning.
+#   <kind> <name> [<status> <detail>]
+#     kind: get (vpi_get/vpi_get64), str (vpi_get_str), handle (vpi_handle),
+#     iterate (vpi_iterate), func (the routine given as name applies).
+#     status (a row without one takes the node default):
+#       implemented <test alias>    answers; the test exercises it
+#       extension <test alias> <reason>   answers although the diagram does
+#                                   not list the row (an llg extension)
+#       error <test alias> <reason> the standard error or default is returned
+#       unsupported <reason>        applicable but refused with a vpi_chk_error
+#                                   error (vpiUndefined, NULL)
+#       n/a <reason>                not applicable to what llg supports
+# The walk treats every query that no row of the object's type lists as a
+# wrong-object query, which must fail with a vpiError error (decision A19-D26).
+# vpiType (get, str), vpiLineNo and vpiFile (37.3.2, 37.3.3) apply to every
+# object and are not listed.
+
+test a17d13 sim_lrm_decisions::a17_d13_fsm_objects
+test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
+test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
+test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
+test s42systf sim_042::system_functions_follow_the_return_conventions
+test s42values sim_042::values_cover_every_format_and_put_mode
+test walk adv_019::catalog_walk_matches_the_vpi_catalog
+
+node null 37.5 type=NULL
+  iterate vpiModule implemented walk
+  iterate vpiInstance unsupported vpi_iterate(vpiInstance, NULL) is not implemented (vpiModule is)
+  iterate vpiInterface implemented walk
+  iterate vpiClassDefn unsupported class definitions are reached from class variables and objects only
+  iterate vpiUdpDefn unsupported UDP definitions are not objects
+  handle vpiSysTfCall implemented walk
+  iterate vpiUserSystf unsupported vpi_iterate(vpiUserSystf, NULL) is not implemented
+  handle vpiFrame unsupported frames are not objects
+  iterate vpiAssertion implemented walk
+  iterate vpiThread unsupported threads are not objects
+  iterate vpiCallback unsupported callback iteration from an object is not implemented
+  iterate vpiTimeQueue unsupported the time queue is not exposed
+  handle vpiActiveTimeFormat unsupported $timeformat calls are not objects
+  iterate vpiPackage unsupported packages are not objects
+  get vpiTimeUnit implemented walk
+  get vpiTimePrecision implemented walk
+  handle vpiSysFuncCall extension walk vpiSysTfCall under its call-type names
+  handle vpiSysTaskCall extension walk vpiSysTfCall under its call-type names
+
+node module 37.5 type=vpiModule
+  get vpiTopModule implemented walk
+  get vpiDefDecayTime unsupported trireg nets are unsupported (ADV-006)
+  handle vpiIndex implemented walk
+  handle vpiGlobalClocking unsupported clocking blocks are not objects
+  handle vpiDefaultClocking unsupported clocking blocks are not objects
+  handle vpiDefaultDisableIff unsupported default disable iff is not exposed
+  handle vpiInstanceArray unsupported the instance array of an element is not exposed (vpiIndex is)
+  handle vpiModuleArray unsupported the instance array of an element is not exposed (vpiIndex is)
+  iterate vpiInternalScope implemented walk
+  iterate vpiPort implemented walk
+  iterate vpiInterface implemented walk
+  iterate vpiInterfaceArray implemented walk
+  iterate vpiProcess implemented walk
+  iterate vpiContAssign implemented walk
+  iterate vpiModule implemented walk
+  iterate vpiModuleArray implemented walk
+  iterate vpiPrimitive implemented walk
+  iterate vpiPrimitiveArray implemented walk
+  iterate vpiModPath implemented walk
+  iterate vpiTchk implemented walk
+  iterate vpiDefParam unsupported defparams are not objects
+  iterate vpiIODecl unsupported io declarations are not objects
+  iterate vpiAliasStmt unsupported alias statements are not objects
+  iterate vpiClockingBlock unsupported clocking blocks are not objects
+  iterate vpiGenScopeArray unsupported generate scope arrays are not objects
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  iterate vpiBitVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiByteVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiEnumVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiFunction extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGate extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGateArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGenScope extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInstanceArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntegerVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiLongIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModport extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedBegin extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedFork extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNetArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPackedArrayVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiStructVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitch extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitchArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTask extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTimeVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdp extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdpArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
+
+node interface 37.6 type=vpiInterface
+  handle vpiIndex implemented walk
+  handle vpiGlobalClocking unsupported clocking blocks are not objects
+  handle vpiDefaultClocking unsupported clocking blocks are not objects
+  handle vpiDefaultDisableIff unsupported default disable iff is not exposed
+  handle vpiInstanceArray unsupported the instance array of an element is not exposed (vpiIndex is)
+  iterate vpiInterfaceTfDecl unsupported interface tf declarations are not objects
+  iterate vpiModport implemented walk
+  iterate vpiModPath implemented walk
+  iterate vpiContAssign implemented walk
+  iterate vpiClockingBlock unsupported clocking blocks are not objects
+  iterate vpiInterface implemented walk
+  iterate vpiInterfaceArray implemented walk
+  iterate vpiProcess implemented walk
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  iterate vpiBitVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiByteVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiEnumVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiFunction extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGate extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGateArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGenScope extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInstanceArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntegerVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiLongIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModule extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModuleArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedBegin extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedFork extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNetArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPackedArrayVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPrimitive extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPrimitiveArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiStructVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitch extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitchArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTask extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTchk extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTimeVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdp extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdpArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
+
+node modport 37.7 type=vpiModport
+  get vpiName unsupported a modport reports its name through vpi_get_str
+  handle vpiInterface unsupported a modport does not lead back to its interface
+  iterate vpiIODecl unsupported io declarations are not objects
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  str vpiFullName extension walk the name of the object
+  str vpiName extension walk the name of the object
+
+node interface_tf_decl 37.8 type=vpiInterfaceTfDecl default=unsupported interface tf declarations are not objects
+  get vpiAccessType
+  iterate vpiTask
+  iterate vpiFunction
+
+node program 37.9 type=vpiProgram default=unsupported programs are not objects
+  handle vpiIndex
+  handle vpiDefaultClocking
+  handle vpiDefaultDisableIff
+  handle vpiInstanceArray
+  iterate vpiContAssign
+  iterate vpiClockingBlock
+  iterate vpiInterface
+  iterate vpiInterfaceArray
+  iterate vpiProcess
+
+node package 37.10 type=vpiPackage default=unsupported packages are not objects
+  get vpiUnit
+
+node instance 37.10 members=package,interface,program,module
+  get vpiArray implemented walk
+  get vpiArrayMember implemented walk
+  get vpiCellInstance unsupported configuration and compiler-directive properties of instances are not captured
+  get vpiDefNetType unsupported configuration and compiler-directive properties of instances are not captured
+  get vpiDefLineNo unsupported configuration and compiler-directive properties of instances are not captured
+  str vpiDefFile unsupported configuration and compiler-directive properties of instances are not captured
+  str vpiDefName implemented walk
+  get vpiDefDelayMode unsupported configuration and compiler-directive properties of instances are not captured
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  get vpiProtected unsupported protected envelopes are unsupported
+  get vpiTimePrecision implemented walk
+  get vpiTimeUnit implemented walk
+  get vpiUnconnDrive unsupported configuration and compiler-directive properties of instances are not captured
+  str vpiLibrary unsupported configuration and compiler-directive properties of instances are not captured
+  str vpiCell unsupported configuration and compiler-directive properties of instances are not captured
+  str vpiConfig unsupported configuration and compiler-directive properties of instances are not captured
+  get vpiAutomatic unsupported the default lifetime of this object is not captured
+  get vpiTop unsupported vpiTop is not implemented (vpiTopModule is)
+  handle vpiInstanceArray unsupported the instance array of an element is not exposed (vpiIndex is)
+  iterate vpiPort implemented walk
+  iterate vpiProgram unsupported programs are not objects
+  iterate vpiProgramArray unsupported programs are not objects
+  iterate vpiTaskFunc implemented walk
+  iterate vpiNet implemented walk
+  iterate vpiArrayNet implemented walk
+  iterate vpiVariables implemented walk
+  iterate vpiReg implemented walk
+  iterate vpiRegArray implemented walk
+  iterate vpiMemory unsupported the vpiMemory iteration is not implemented (vpiRegArray is)
+  iterate vpiNamedEvent implemented walk
+  iterate vpiNamedEventArray unsupported named event arrays are not objects
+  iterate vpiParameter implemented walk
+  iterate vpiSpecParam unsupported specparams are not objects
+  iterate vpiAssertion implemented walk
+  iterate vpiTypedef unsupported the vpiTypedef iteration is not implemented
+  iterate vpiClassDefn unsupported class definitions are reached from class variables and objects only
+  get vpiAssertCoverage implemented walk
+  get vpiFsmStateCoverage implemented walk
+  get vpiStatementCoverage unsupported statement coverage is unsupported
+  get vpiToggleCoverage unsupported toggle coverage is unsupported
+  iterate vpiFsm implemented walk
+
+node instance_item 37.10 members=program,program_array,task_func,nets,array_net,variables,named_event,named_event_array,parameters,spec_param,assertion,typespec,class_defn
+  handle vpiInstance implemented walk
+  handle vpiModule implemented walk
+
+node instance_array 37.11 members=primitive_array,interface_array,program_array,module_array
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  get vpiSize implemented walk
+  func vpi_handle_by_index implemented a19struct
+  func vpi_handle_by_multi_index unsupported vpi_handle_by_multi_index of instance arrays is not implemented
+  handle vpiExpr unsupported initialization and default expressions are not exposed
+  iterate vpiRange implemented walk
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+  iterate vpiInstance implemented walk
+
+node interface_array 37.11 type=vpiInterfaceArray
+  iterate vpiParamAssign unsupported parameter assignments are not objects
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  iterate vpiInterface extension walk per-type child iteration (IEEE 1364)
+
+node program_array 37.11 type=vpiProgramArray default=unsupported programs are not objects
+  iterate vpiParamAssign
+
+node module_array 37.11 type=vpiModuleArray
+  iterate vpiParamAssign unsupported parameter assignments are not objects
+  iterate vpiModule implemented walk
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node primitive_array 37.11 members=gate_array,switch_array,udp_array
+  iterate vpiPrimitive implemented walk
+  handle vpiDelay unsupported delay expressions are not exposed (vpi_get_delays reads the values)
+
+node gate_array 37.11 type=vpiGateArray
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  iterate vpiGate extension walk per-type child iteration (IEEE 1364)
+
+node switch_array 37.11 type=vpiSwitchArray
+
+node udp_array 37.11 type=vpiUdpArray
+
+node scope 37.12 members=instance,task_func,named_begin,begin,named_fork,fork,class_defn,class_typespec,class_obj,clocking_block,gen_scope,for,foreach_stmt
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  iterate vpiPropertyDecl implemented walk
+  iterate vpiSequenceDecl implemented walk
+  iterate vpiConcurrentAssertions unsupported the vpiConcurrentAssertions iteration is not implemented (vpiAssertion is)
+  iterate vpiNamedEvent implemented walk
+  iterate vpiNamedEventArray unsupported named event arrays are not objects
+  iterate vpiVariables implemented walk
+  iterate vpiReg implemented walk
+  iterate vpiRegArray implemented walk
+  iterate vpiMemory unsupported the vpiMemory iteration is not implemented (vpiRegArray is)
+  iterate vpiParameter implemented walk
+  iterate vpiInternalScope implemented walk
+  iterate vpiImport unsupported imports are not exposed
+  iterate vpiTypedef unsupported the vpiTypedef iteration is not implemented
+  iterate vpiLetDecl unsupported let declarations are not objects
+
+node task_func 37.12 members=task,function
+  handle vpiStmt implemented walk
+  handle vpiLeftRange unsupported the return range of a function is not exposed
+  handle vpiRightRange unsupported the return range of a function is not exposed
+  handle vpiReturn unsupported the return variable of a function is not an object
+  handle vpiClassDefn unsupported methods of classes are not objects
+  handle vpiParent implemented walk
+  iterate vpiIODecl unsupported io declarations are not objects
+  get vpiMethod implemented walk
+  get vpiAccessType unsupported DPI and interface access properties of tasks and functions are not captured
+  get vpiVisibility implemented walk
+  get vpiVirtual unsupported virtual and pure qualifiers are not captured
+  get vpiAutomatic implemented walk
+  get vpiDPIPure unsupported DPI and interface access properties of tasks and functions are not captured
+  get vpiDPIContext unsupported DPI and interface access properties of tasks and functions are not captured
+  get vpiDPICStr unsupported DPI and interface access properties of tasks and functions are not captured
+  str vpiDPICIdentifier unsupported DPI and interface access properties of tasks and functions are not captured
+
+node named_begin 37.12 type=vpiNamedBegin
+  iterate vpiStmt implemented walk
+  get vpiTimePrecision extension walk the time unit and precision of the enclosing instance
+  get vpiTimeUnit extension walk the time unit and precision of the enclosing instance
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  iterate vpiArrayNet extension walk per-type child iteration (IEEE 1364)
+  iterate vpiBitVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiByteVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiContAssign extension walk per-type child iteration (IEEE 1364)
+  iterate vpiEnumVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiFunction extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGate extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGateArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGenScope extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInstanceArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntegerVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInterface extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInterfaceArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiLongIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModPath extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModport extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModule extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModuleArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedBegin extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedFork extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNet extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNetArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPackedArrayVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPort extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPrimitive extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPrimitiveArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiProcess extension walk per-type child iteration (IEEE 1364)
+  iterate vpiRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiStructVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitch extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitchArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTask extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTaskFunc extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTchk extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTimeVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdp extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdpArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
+
+node begin 37.12 type=vpiBegin
+  iterate vpiStmt implemented walk
+  str vpiFullName unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiPropertyDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiSequenceDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiNamedEvent unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiVariables unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiReg unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiRegArray unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiParameter unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiInternalScope unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+
+node named_fork 37.12 type=vpiNamedFork
+  iterate vpiStmt implemented walk
+  str vpiFullName unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiPropertyDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiSequenceDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiNamedEvent unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiVariables unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiReg unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiRegArray unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiParameter unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiInternalScope unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+
+node fork 37.12 type=vpiFork
+  iterate vpiStmt implemented walk
+  str vpiFullName unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiPropertyDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiSequenceDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiNamedEvent unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiVariables unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiReg unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiRegArray unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiParameter unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiInternalScope unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+
+node scope_item 37.12 members=property_decl,sequence_decl,concurrent_assertion,named_event,named_event_array,variables,parameters,scope,typespec,let_decl,stmt
+  handle vpiScope implemented walk
+
+node io_decl 37.13 type=vpiIODecl default=unsupported io declarations are not objects
+  get vpiDirection
+  str vpiName
+  get vpiScalar
+  get vpiSigned
+  get vpiSize
+  get vpiVector
+  handle vpiExpr
+  handle vpiLeftRange
+  handle vpiRightRange
+  iterate vpiRange
+  handle vpiTypespec
+  handle vpiInstance
+  handle vpiUdpDefn
+  handle vpiTaskFunc
+  handle vpiModule
+  handle vpiModport
+
+node ports 37.14 members=port,port_bit
+  func vpi_handle_by_index unsupported ports are not indexed
+  func vpi_handle_by_multi_index unsupported ports are not indexed
+  get vpiConnByName unsupported port connection style is not captured
+  func vpi_get_delays unsupported port (MIPD) delays are not modelled
+  func vpi_put_delays unsupported port (MIPD) delays are not modelled
+  get vpiDirection implemented walk
+  get vpiExplicitName unsupported port connection style is not captured
+  get vpiPortType implemented walk
+  get vpiScalar implemented walk
+  get vpiSize implemented walk
+  get vpiVector implemented walk
+  handle vpiHighConn implemented walk
+  handle vpiLowConn implemented walk
+  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiInstance implemented walk
+  handle vpiModule implemented walk
+
+node port 37.14 type=vpiPort
+  str vpiName implemented walk
+  get vpiPortIndex implemented walk
+  iterate vpiBit implemented walk
+  get vpiSigned extension walk the sign and width of the object's value
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  str vpiFullName extension walk the name of the object
+
+node port_bit 37.14 type=vpiPortBit
+  handle vpiParent implemented walk
+  get vpiPortType unsupported vpiPortType of a port bit is not implemented
+  get vpiSigned extension walk the sign and width of the object's value
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node ref_obj 37.15 type=vpiRefObj
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  get vpiVirtual unsupported virtual and pure qualifiers are not captured
+  get vpiGeneric unsupported generic interfaces are unsupported
+  str vpiDefName implemented walk
+  iterate vpiPort unsupported the ports a net or variable connects to are not exposed
+  iterate vpiPortInst unsupported the ports a net or variable connects to are not exposed
+  handle vpiInstance implemented walk
+  handle vpiTaskFunc unsupported reference objects of task arguments are not exposed
+  handle vpiParent unsupported the parent of a reference object is not exposed
+  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiActual implemented walk
+  str vpiDecompile unsupported this object does not decompile in llg
+  get vpiSize unsupported vpiSize of this object is not implemented
+  func vpi_get_value unsupported this object has no value in llg
+  get vpiSigned extension walk the sign and width of the object's value
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node nets 37.16 members=net,net_bit,array_net
+  func vpi_handle_by_index implemented s42obj
+  func vpi_handle_by_multi_index implemented s42obj
+  get vpiArray implemented walk
+  get vpiArrayMember implemented walk
+  get vpiConstantSelect unsupported vpiConstantSelect of nets and variables is not implemented
+  func vpi_get_delays unsupported net delays are not modelled
+  get vpiExpanded unsupported net declaration properties are not captured
+  get vpiImplicitDecl unsupported net declaration properties are not captured
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  get vpiNetDeclAssign unsupported net declaration properties are not captured
+  get vpiNetType implemented walk
+  get vpiResolvedNetType unsupported net declaration properties are not captured
+  get vpiScalar implemented walk
+  get vpiExplicitScalared unsupported net declaration properties are not captured
+  get vpiSigned implemented walk
+  get vpiSize implemented walk
+  get vpiStrength0 unsupported drive strengths are not exposed
+  get vpiStrength1 unsupported drive strengths are not exposed
+  get vpiChargeStrength unsupported trireg nets are unsupported (ADV-006)
+  func vpi_get_value implemented walk
+  func vpi_put_value implemented s42obj
+  get vpiVector implemented walk
+  get vpiExplicitVectored unsupported net declaration properties are not captured
+  get vpiStructUnionMember implemented walk
+  iterate vpiPortInst unsupported the ports a net or variable connects to are not exposed
+  iterate vpiPort unsupported the ports a net or variable connects to are not exposed
+  iterate vpiDriver unsupported drivers and loads are not exposed
+  iterate vpiLoad unsupported drivers and loads are not exposed
+  iterate vpiLocalDriver unsupported drivers and loads are not exposed
+  iterate vpiLocalLoad unsupported drivers and loads are not exposed
+  iterate vpiPrimTerm unsupported the terminals, assignments and paths a net or variable feeds are not exposed
+  iterate vpiContAssign unsupported the terminals, assignments and paths a net or variable feeds are not exposed
+  iterate vpiPathTerm unsupported the terminals, assignments and paths a net or variable feeds are not exposed
+  iterate vpiTchkTerm unsupported the terminals, assignments and paths a net or variable feeds are not exposed
+  handle vpiSimNet unsupported nets are not collapsed across hierarchy objects
+  handle vpiTypespec implemented walk
+  handle vpiParent implemented walk
+
+node net_bit 37.16 type=vpiNetBit
+  handle vpiParent implemented walk
+  handle vpiIndex implemented walk
+  iterate vpiIndex unsupported the vpiIndex iteration of selected and element objects is not implemented
+  get vpiArray unsupported vpiArray of this object is not implemented
+  get vpiNetType unsupported vpiNetType of a net bit is not implemented
+  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
+  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node array_net 37.16 type=vpiNetArray
+  handle vpiModule implemented walk
+  iterate vpiRange implemented walk
+  iterate vpiNet implemented walk
+  get vpiNetType unsupported vpiNetType of a net bit is not implemented
+  func vpi_get_value unsupported this object has no value in llg
+  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
+  str vpiDecompile unsupported this object does not decompile in llg
+  get vpiArrayType extension walk the array properties of array variables (37.17) applied to net arrays
+  get vpiIsMemory extension walk the array properties of array variables (37.17) applied to net arrays
+  handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  iterate vpiMemoryWord extension walk per-type child iteration (IEEE 1364)
+
+node net 37.16 members=struct_net,enum_net,integer_net,time_net,logic_net,packed_array_net
+  handle vpiParent implemented walk
+  handle vpiIndex implemented walk
+  iterate vpiIndex unsupported the vpiIndex iteration of selected and element objects is not implemented
+  iterate vpiBit implemented walk
+  iterate vpiRange unsupported vpiRange of packed dimensions is not implemented
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+
+node struct_net 37.16 type=vpiStructNet default=unsupported nets of structure, enum and packed array type report vpiNet
+  get vpiPackedArrayMember
+  iterate vpiMember
+
+node enum_net 37.16 type=vpiEnumNet default=unsupported nets of structure, enum and packed array type report vpiNet
+  get vpiPackedArrayMember
+
+node integer_net 37.16 type=vpiIntegerNet default=unsupported nets of integer and time type report vpiNet
+
+node time_net 37.16 type=vpiTimeNet default=unsupported nets of integer and time type report vpiNet
+
+node logic_net 37.16 type=vpiNet
+  get vpiPacked extension walk whether the net's data type is packed
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node packed_array_net 37.16 type=vpiPackedArrayNet default=unsupported nets of structure, enum and packed array type report vpiNet
+  get vpiPackedArrayMember
+  iterate vpiElement
+
+node variables 37.17 members=short_real_var,real_var,byte_var,short_int_var,int_var,long_int_var,integer_var,time_var,array_var,packed_array_var,bit_var,logic_var,struct_var,union_var,enum_var,string_var,chandle_var,class_var,var_bit
+  func vpi_handle_by_index implemented s42obj
+  func vpi_handle_by_multi_index implemented s42obj
+  get vpiArray implemented walk
+  get vpiArrayMember implemented walk
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  get vpiSigned implemented walk
+  get vpiSize implemented walk
+  get vpiAutomatic implemented walk
+  get vpiAllocScheme implemented walk
+  get vpiConstantVariable unsupported randomization and constant properties of variables are not implemented
+  get vpiIsRandomized unsupported randomization and constant properties of variables are not implemented
+  get vpiRandType unsupported randomization properties are not captured
+  get vpiStructUnionMember implemented walk
+  func vpi_get_value implemented walk
+  func vpi_put_value implemented s42obj
+  get vpiScalar implemented walk
+  get vpiVisibility unsupported vpiVisibility of variables is not implemented
+  get vpiVector implemented walk
+  iterate vpiPort unsupported the ports a net or variable connects to are not exposed
+  iterate vpiPortInst unsupported the ports a net or variable connects to are not exposed
+  handle vpiExpr unsupported initialization and default expressions are not exposed
+  handle vpiModule implemented walk
+  handle vpiInstance implemented walk
+  handle vpiScope implemented walk
+  iterate vpiDriver unsupported drivers and loads are not exposed
+  iterate vpiLoad unsupported drivers and loads are not exposed
+  iterate vpiPrimTerm unsupported the terminals, assignments and paths a net or variable feeds are not exposed
+  iterate vpiContAssign unsupported the terminals, assignments and paths a net or variable feeds are not exposed
+  iterate vpiPathTerm unsupported the terminals, assignments and paths a net or variable feeds are not exposed
+  iterate vpiTchkTerm unsupported the terminals, assignments and paths a net or variable feeds are not exposed
+  handle vpiTypespec implemented walk
+  handle vpiParent implemented walk
+  handle vpiIndex implemented walk
+  iterate vpiIndex unsupported the vpiIndex iteration of selected and element objects is not implemented
+
+node short_real_var 37.17 type=vpiShortRealVar
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiScalar unsupported vpiScalar of this object is not implemented
+  get vpiVector unsupported vpiVector of this object is not implemented
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+
+node real_var 37.17 type=vpiRealVar
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiScalar unsupported vpiScalar of this object is not implemented
+  get vpiVector unsupported vpiVector of this object is not implemented
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+
+node byte_var 37.17 type=vpiByteVar
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+
+node short_int_var 37.17 type=vpiShortIntVar
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+
+node int_var 37.17 type=vpiIntVar
+  handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+
+node long_int_var 37.17 type=vpiLongIntVar
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+
+node integer_var 37.17 type=vpiIntegerVar
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+
+node time_var 37.17 type=vpiTimeVar
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+
+node array_var 37.17 type=vpiRegArray
+  get vpiArrayType implemented walk
+  get vpiIsMemory implemented walk
+  iterate vpiReg implemented walk
+  iterate vpiVarSelect unsupported vpiVarSelect is not implemented (vpiReg iterates the elements)
+  iterate vpiMemoryWord implemented walk
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+  iterate vpiRange implemented walk
+  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
+  func vpi_get_value unsupported this object has no value in llg
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  str vpiDecompile unsupported this object does not decompile in llg
+  iterate vpiIntVar extension walk a variable array iterates its elements by their own type
+
+node packed_array_var 37.17 type=vpiPackedArrayVar
+  get vpiPacked unsupported vpiPacked of a packed array variable is not implemented
+  get vpiPackedArrayMember unsupported vpiPackedArrayMember is not implemented
+  get vpiConstantSelect unsupported vpiConstantSelect of nets and variables is not implemented
+  iterate vpiIndex unsupported the vpiIndex iteration of selected and element objects is not implemented
+  iterate vpiElement unsupported vpiElement of a packed array variable is not implemented
+  iterate vpiBit unsupported vpiBit of this object is not implemented
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+  iterate vpiRange unsupported vpiRange of packed dimensions is not implemented
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+
+node bit_var 37.17 type=vpiBitVar
+  iterate vpiBit implemented walk
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+  iterate vpiRange unsupported vpiRange of packed dimensions is not implemented
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+
+node logic_var 37.17 type=vpiReg
+  iterate vpiBit implemented walk
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+  iterate vpiRange unsupported vpiRange of packed dimensions is not implemented
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+
+node struct_var 37.17 type=vpiStructVar
+  get vpiPacked implemented walk
+  iterate vpiMember implemented walk
+  iterate vpiBit implemented walk
+  get vpiPackedArrayMember unsupported vpiPackedArrayMember is not implemented
+  get vpiConstantSelect unsupported vpiConstantSelect of nets and variables is not implemented
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+
+node union_var 37.17 type=vpiUnionVar
+  get vpiPacked implemented walk
+  iterate vpiMember implemented walk
+  iterate vpiBit implemented walk
+  get vpiPackedArrayMember unsupported vpiPackedArrayMember is not implemented
+  get vpiConstantSelect unsupported vpiConstantSelect of nets and variables is not implemented
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+
+node enum_var 37.17 type=vpiEnumVar
+  get vpiPackedArrayMember unsupported vpiPackedArrayMember is not implemented
+  get vpiConstantSelect unsupported vpiConstantSelect of nets and variables is not implemented
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+  iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
+
+node string_var 37.17 type=vpiStringVar
+  get vpiArray unsupported vpiArray of this object is not implemented
+  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
+  get vpiScalar unsupported vpiScalar of this object is not implemented
+  get vpiVector unsupported vpiVector of this object is not implemented
+  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  str vpiDecompile unsupported this object does not decompile in llg
+
+node chandle_var 37.17 type=vpiChandleVar
+  get vpiArray unsupported vpiArray of this object is not implemented
+  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
+  get vpiScalar unsupported vpiScalar of this object is not implemented
+  get vpiVector unsupported vpiVector of this object is not implemented
+  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  str vpiDecompile unsupported this object does not decompile in llg
+
+node class_var 37.17 type=vpiClassVar
+  get vpiObjId implemented walk
+  handle vpiClassObj implemented walk
+  handle vpiClassTypespec implemented walk
+  get vpiArray unsupported vpiArray of this object is not implemented
+  get vpiSize unsupported vpiSize of this object is not implemented
+  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
+  func vpi_get_value unsupported this object has no value in llg
+  get vpiScalar unsupported vpiScalar of this object is not implemented
+  get vpiVector unsupported vpiVector of this object is not implemented
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  str vpiDecompile unsupported this object does not decompile in llg
+
+node var_bit 37.17 type=vpiRegBit
+  get vpiConstantSelect unsupported vpiConstantSelect of nets and variables is not implemented
+  get vpiArray unsupported vpiArray of this object is not implemented
+  get vpiAutomatic unsupported the default lifetime of this object is not captured
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
+  handle vpiTypespec unsupported this object has no typespec in llg
+
+node var_select 37.19 type=vpiVarSelect
+  get vpiConstantSelect implemented walk
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  get vpiSize implemented walk
+  func vpi_get_value implemented walk
+  func vpi_put_value implemented s42obj
+  handle vpiParent implemented walk
+  handle vpiIndex implemented walk
+  iterate vpiIndex implemented walk
+  handle vpiTypespec unsupported this object has no typespec in llg
+  get vpiScalar extension walk the sign and width of the object's value
+  get vpiSigned extension walk the sign and width of the object's value
+  get vpiVector extension walk the sign and width of the object's value
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node range 37.22 type=vpiRange
+  get vpiSize implemented walk
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node typespec 37.23 members=short_real_typespec,real_typespec,byte_typespec,short_int_typespec,int_typespec,long_int_typespec,integer_typespec,class_typespec,time_typespec,enum_typespec,string_typespec,struct_typespec,union_typespec,bit_typespec,logic_typespec,packed_array_typespec,array_typespec,void_typespec,sequence_typespec,property_typespec,event_typespec,type_parameter
+  str vpiName implemented walk
+  handle vpiTypedefAlias implemented walk
+  handle vpiInstance implemented walk
+
+node short_real_typespec 37.23 type=vpiShortRealTypespec
+
+node real_typespec 37.23 type=vpiRealTypespec
+
+node byte_typespec 37.23 type=vpiByteTypespec
+
+node short_int_typespec 37.23 type=vpiShortIntTypespec
+
+node int_typespec 37.23 type=vpiIntTypespec
+
+node long_int_typespec 37.23 type=vpiLongIntTypespec
+
+node integer_typespec 37.23 type=vpiIntegerTypespec
+
+node time_typespec 37.23 type=vpiTimeTypespec
+
+node enum_typespec 37.23 type=vpiEnumTypespec
+  handle vpiBaseTypespec implemented walk
+  iterate vpiEnumConst implemented walk
+  handle vpiElemTypespec implemented walk
+  handle vpiInstance unsupported this object does not report its instance
+  handle vpiModule unsupported this object does not report its module
+  handle vpiScope unsupported this object does not report its scope
+
+node string_typespec 37.23 type=vpiStringTypespec
+
+node struct_typespec 37.23 type=vpiStructTypespec
+  get vpiPacked implemented walk
+  iterate vpiTypespecMember implemented walk
+  handle vpiElemTypespec implemented walk
+  handle vpiInstance unsupported this object does not report its instance
+  handle vpiModule unsupported this object does not report its module
+  handle vpiScope unsupported this object does not report its scope
+
+node union_typespec 37.23 type=vpiUnionTypespec
+  get vpiPacked implemented walk
+  get vpiTagged implemented walk
+  iterate vpiTypespecMember implemented walk
+  handle vpiElemTypespec implemented walk
+  handle vpiInstance unsupported this object does not report its instance
+  handle vpiModule unsupported this object does not report its module
+  handle vpiScope unsupported this object does not report its scope
+
+node bit_typespec 37.23 type=vpiBitTypespec
+  get vpiVector implemented walk
+  handle vpiElemTypespec implemented walk
+  iterate vpiRange implemented walk
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+
+node logic_typespec 37.23 type=vpiLogicTypespec
+  get vpiVector implemented walk
+  handle vpiElemTypespec implemented walk
+  iterate vpiRange implemented walk
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+
+node packed_array_typespec 37.23 type=vpiPackedArrayTypespec
+  get vpiVector implemented walk
+  handle vpiElemTypespec implemented walk
+  iterate vpiRange implemented walk
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+
+node array_typespec 37.23 type=vpiArrayTypespec
+  get vpiArrayType implemented walk
+  handle vpiIndexTypespec unsupported associative array typespecs are not exposed
+  handle vpiElemTypespec implemented walk
+  iterate vpiRange implemented walk
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+
+node void_typespec 37.23 type=vpiVoidTypespec
+
+node sequence_typespec 37.23 type=vpiSequenceTypespec
+
+node property_typespec 37.23 type=vpiPropertyTypespec
+
+node event_typespec 37.23 type=vpiEventTypespec
+
+node enum_const 37.23 type=vpiEnumConst
+  str vpiName implemented walk
+  func vpi_get_value implemented walk
+  handle vpiEnumTypespec unsupported an enum constant does not lead back to its typespec
+
+node typespec_member 37.23 type=vpiTypespecMember
+  str vpiName implemented walk
+  get vpiRandType unsupported randomization properties are not captured
+  handle vpiTypespec implemented walk
+  handle vpiExpr unsupported initialization and default expressions are not exposed
+
+node named_event 37.25 type=vpiNamedEvent
+  get vpiArray implemented walk
+  get vpiArrayMember implemented walk
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  func vpi_put_value implemented a19struct
+  get vpiAutomatic implemented walk
+  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  iterate vpiWaitingProcesses unsupported threads are not objects
+  handle vpiInstance implemented walk
+  handle vpiScope implemented walk
+  handle vpiModule implemented walk
+  handle vpiParent implemented walk
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  iterate vpiIndex unsupported the vpiIndex iteration of selected and element objects is not implemented
+
+node named_event_array 37.25 type=vpiNamedEventArray default=unsupported named event arrays are not objects
+  str vpiName
+  str vpiFullName
+  func vpi_handle_by_index
+  func vpi_handle_by_multi_index
+  get vpiAutomatic
+  get vpiAllocScheme
+  handle vpiInstance
+  handle vpiModule
+  iterate vpiRange
+  iterate vpiNamedEvent
+
+node parameters 37.26 members=parameter,type_parameter
+  get vpiLocalParam implemented walk
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  handle vpiModule implemented walk
+  handle vpiScope implemented walk
+
+node parameter 37.26 type=vpiParameter
+  get vpiConstType implemented walk
+  get vpiSigned implemented walk
+  get vpiSize implemented walk
+  func vpi_get_value implemented walk
+  handle vpiTypespec implemented walk
+  handle vpiExpr unsupported initialization and default expressions are not exposed
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+  get vpiScalar extension walk the sign and width of the object's value
+  get vpiVector extension walk the sign and width of the object's value
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+
+node type_parameter 37.26 type=vpiTypeParameter default=unsupported type parameters are not objects
+  handle vpiTypespec
+  handle vpiExpr
+
+node spec_param 37.26 type=vpiSpecParam default=unsupported specparams are not objects
+
+node def_param 37.26 type=vpiDefParam default=unsupported defparams are not objects
+  handle vpiModule
+  handle vpiLhs
+  handle vpiRhs
+
+node param_assign 37.26 type=vpiParamAssign default=unsupported parameter assignments are not objects
+  get vpiConnByName
+  handle vpiModule
+  handle vpiScope
+  handle vpiLhs
+  handle vpiRhs
+
+node class_defn 37.27 type=vpiClassDefn
+  str vpiName implemented walk
+  get vpiVirtual unsupported virtual and pure qualifiers are not captured
+  get vpiAutomatic implemented walk
+  handle vpiExtends unsupported class extension objects are not exposed
+  iterate vpiDerivedClasses implemented walk
+  handle vpiInstance unsupported this object does not report its instance
+  handle vpiScope unsupported this object does not report its scope
+  iterate vpiVariables implemented walk
+  iterate vpiMethods unsupported class methods are not objects
+  iterate vpiConstraint unsupported constraints are not objects
+  iterate vpiParameter unsupported class parameters are not objects
+  iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
+  iterate vpiNamedEvent unsupported class events are not objects
+  iterate vpiNamedEventArray unsupported named event arrays are not objects
+  iterate vpiTypedef unsupported the vpiTypedef iteration is not implemented
+  iterate vpiInternalScope unsupported class scopes are not objects
+  handle vpiModule unsupported this object does not report its module
+  str vpiFullName unsupported this object has no full name in llg
+  iterate vpiPropertyDecl unsupported class scopes are not objects
+  iterate vpiSequenceDecl unsupported class scopes are not objects
+  iterate vpiReg unsupported class scopes are not objects
+  iterate vpiRegArray unsupported class scopes are not objects
+  get vpiClassType extension walk the class typespec of a definition (VPI-O4)
+  handle vpiClassTypespec extension walk the class typespec of a definition (VPI-O4)
+  handle vpiTypespec extension walk the class typespec of a definition (VPI-O4)
+
+node extends 37.27 type=vpiExtends default=unsupported class extension objects are not exposed
+  handle vpiClassTypespec
+  iterate vpiArgument
+
+node class_typespec 37.28 type=vpiClassTypespec
+  str vpiName implemented walk
+  get vpiClassType implemented walk
+  get vpiAutomatic implemented walk
+  iterate vpiParamAssign unsupported parameter assignments are not objects
+  handle vpiExtends implemented walk
+  handle vpiClassDefn implemented walk
+  iterate vpiVariables implemented walk
+  iterate vpiMethods unsupported class methods are not objects
+  iterate vpiConstraint unsupported constraints are not objects
+  iterate vpiParameter unsupported class parameters are not objects
+  iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
+  iterate vpiNamedEvent unsupported class events are not objects
+  iterate vpiNamedEventArray unsupported named event arrays are not objects
+  iterate vpiInternalScope unsupported class scopes are not objects
+  handle vpiInstance unsupported this object does not report its instance
+  handle vpiModule unsupported this object does not report its module
+  str vpiFullName unsupported this object has no full name in llg
+  iterate vpiPropertyDecl unsupported class scopes are not objects
+  iterate vpiSequenceDecl unsupported class scopes are not objects
+  iterate vpiReg unsupported class scopes are not objects
+  iterate vpiRegArray unsupported class scopes are not objects
+  handle vpiScope unsupported this object does not report its scope
+  handle vpiTypedefAlias unsupported class typedef aliases are not exposed
+
+node class_obj 37.29 type=vpiClassObj
+  get vpiObjId implemented walk
+  iterate vpiVariables implemented walk
+  handle vpiClassTypespec implemented walk
+  iterate vpiWaitingProcesses unsupported threads are not objects
+  iterate vpiMessages unsupported mailbox and semaphore objects are not exposed
+  iterate vpiMethods unsupported class methods are not objects
+  iterate vpiConstraint unsupported constraints are not objects
+  iterate vpiParameter unsupported class parameters are not objects
+  iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
+  iterate vpiNamedEvent unsupported class events are not objects
+  iterate vpiNamedEventArray unsupported named event arrays are not objects
+  iterate vpiInternalScope unsupported class scopes are not objects
+  get vpiAutomatic implemented walk
+  get vpiAllocScheme implemented walk
+  str vpiName unsupported this object has no name in llg
+  str vpiFullName unsupported this object has no full name in llg
+  iterate vpiPropertyDecl unsupported class scopes are not objects
+  iterate vpiSequenceDecl unsupported class scopes are not objects
+  iterate vpiReg unsupported class scopes are not objects
+  iterate vpiRegArray unsupported class scopes are not objects
+  handle vpiScope unsupported this object does not report its scope
+
+node constraint 37.30 type=vpiConstraint default=unsupported constraints are not objects
+  get vpiVirtual
+  get vpiAutomatic
+  get vpiAllocScheme
+  get vpiExtern n/a the 37.30 diagram names vpiExtern but Annex M defines no constant for it
+  str vpiName
+  str vpiFullName
+  get vpiIsConstraintEnabled
+  handle vpiParent
+  iterate vpiConstraintItem
+
+node constraint_ordering 37.30 type=vpiConstraintOrdering default=unsupported constraints are not objects
+  iterate vpiSolveBefore
+  iterate vpiSolveAfter
+
+node distribution 37.30 type=vpiDistribution default=unsupported constraints and distributions are not objects
+  iterate vpiDistItem
+  handle vpiExpr
+
+node dist_item 37.30 type=vpiDistItem default=unsupported constraints and distributions are not objects
+  get vpiDistType
+  handle vpiValueRange
+  handle vpiWeight
+
+node primitive 37.31 members=gate,switch,udp
+  get vpiArray implemented walk
+  get vpiArrayMember implemented walk
+  str vpiDefName implemented walk
+  func vpi_get_delays implemented a20delays
+  func vpi_put_delays implemented a20delays
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  get vpiPrimType implemented walk
+  get vpiSize implemented walk
+  get vpiStrength0 unsupported drive strengths are not exposed
+  get vpiStrength1 unsupported drive strengths are not exposed
+  func vpi_get_value implemented walk
+  func vpi_put_value unsupported vpi_put_value to a sequential UDP is not implemented
+  handle vpiPrimitiveArray unsupported the instance array of an element is not exposed (vpiIndex is)
+  handle vpiModule implemented walk
+  handle vpiDelay unsupported delay expressions are not exposed (vpi_get_delays reads the values)
+  handle vpiIndex implemented walk
+  iterate vpiPrimTerm implemented walk
+
+node gate 37.31 type=vpiGate
+  get vpiSigned extension walk the sign and width of the object's value
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node switch 37.31 type=vpiSwitch
+  func vpi_get_value unsupported this object has no value in llg
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node udp 37.31 type=vpiUdp
+  handle vpiUdpDefn unsupported UDP definitions are not objects
+  get vpiSigned extension walk the sign and width of the object's value
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node prim_term 37.31 type=vpiPrimTerm
+  get vpiDirection implemented walk
+  get vpiTermIndex implemented walk
+  func vpi_get_value implemented walk
+  handle vpiExpr implemented walk
+  handle vpiPrimitive unsupported a terminal does not lead back to its primitive (vpiParent does)
+  get vpiScalar extension walk the sign and width of the object's value
+  get vpiSigned extension walk the sign and width of the object's value
+  get vpiSize extension walk the sign and width of the object's value
+  get vpiVector extension walk the sign and width of the object's value
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node udp_defn 37.32 type=vpiUdpDefn default=unsupported UDP definitions are not objects
+  str vpiDefName
+  get vpiSize
+  get vpiProtected
+  get vpiPrimType
+  iterate vpiIODecl
+  iterate vpiTableEntry
+  handle vpiInitial
+
+node table_entry 37.32 type=vpiTableEntry default=unsupported UDP definitions are not objects
+  get vpiSize
+  func vpi_get_value
+
+node inter_mod_path 37.33 type=vpiInterModPath default=unsupported intermodule paths are not objects
+  func vpi_get_delays
+  func vpi_put_delays
+  iterate vpiPort
+
+node implication 37.34 type=vpiImplication default=unsupported constraints are not objects
+  handle vpiCondition
+  iterate vpiConstraintExpr
+
+node constr_if 37.34 type=vpiConstrIf default=unsupported constraints are not objects
+  handle vpiCondition
+  iterate vpiConstraintExpr
+
+node constr_if_else 37.34 type=vpiConstrIfElse default=unsupported constraints are not objects
+  handle vpiCondition
+  iterate vpiConstraintExpr
+  iterate vpiElseConst
+
+node mod_path 37.35 type=vpiModPath
+  func vpi_get_delays implemented a20delays
+  func vpi_put_delays implemented a20delays
+  get vpiPathType implemented walk
+  get vpiPolarity implemented walk
+  get vpiDataPolarity implemented walk
+  get vpiModPathHasIfNone implemented walk
+  handle vpiModule implemented walk
+  handle vpiCondition implemented walk
+  handle vpiDelay unsupported delay expressions are not exposed (vpi_get_delays reads the values)
+  iterate vpiModDataPathIn implemented walk
+  iterate vpiModPathOut implemented walk
+  iterate vpiModPathIn implemented walk
+  handle vpiInstance implemented walk
+  handle vpiModDataPathIn extension walk the one-to-one form of IEEE 1364
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  str vpiFullName extension walk the name a path carries (decision A19-D9)
+  str vpiName extension walk the name a path carries (decision A19-D9)
+
+node path_term 37.35 type=vpiPathTerm
+  get vpiDirection implemented walk
+  get vpiEdge implemented walk
+  handle vpiExpr implemented walk
+  handle vpiModPath unsupported a path terminal does not lead back to its path (vpiParent does)
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node tchk 37.36 type=vpiTchk
+  func vpi_get_delays implemented a20delays
+  func vpi_put_delays implemented a20delays
+  get vpiTchkType implemented walk
+  handle vpiModule implemented walk
+  iterate vpiExpr implemented walk
+  handle vpiTchkRefTerm implemented walk
+  handle vpiTchkDataTerm implemented walk
+  handle vpiTchkNotifier implemented walk
+  handle vpiDelay unsupported delay expressions are not exposed (vpi_get_delays reads the values)
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node tchk_term 37.36 type=vpiTchkTerm
+  get vpiEdge implemented walk
+  handle vpiExpr implemented walk
+  handle vpiCondition implemented walk
+  handle vpiTchk unsupported a timing check terminal does not lead back to its check (vpiParent does)
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node function 37.37 type=vpiFunction
+  get vpiSigned implemented walk
+  get vpiSize implemented walk
+  get vpiFuncType implemented walk
+  get vpiTimePrecision extension walk the time unit and precision of the enclosing instance
+  get vpiTimeUnit extension walk the time unit and precision of the enclosing instance
+  iterate vpiArrayNet extension walk per-type child iteration (IEEE 1364)
+  iterate vpiBitVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiByteVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiContAssign extension walk per-type child iteration (IEEE 1364)
+  iterate vpiEnumVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiFunction extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGate extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGateArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGenScope extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInstanceArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntegerVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInterface extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInterfaceArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiLongIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModPath extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModport extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModule extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModuleArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedBegin extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedFork extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNet extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNetArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPackedArrayVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPort extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPrimitive extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPrimitiveArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiProcess extension walk per-type child iteration (IEEE 1364)
+  iterate vpiRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiStructVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitch extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitchArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTask extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTaskFunc extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTchk extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTimeVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdp extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdpArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
+
+node task 37.37 type=vpiTask
+  get vpiTimePrecision extension walk the time unit and precision of the enclosing instance
+  get vpiTimeUnit extension walk the time unit and precision of the enclosing instance
+  iterate vpiArrayNet extension walk per-type child iteration (IEEE 1364)
+  iterate vpiBitVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiByteVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiContAssign extension walk per-type child iteration (IEEE 1364)
+  iterate vpiEnumVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiFunction extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGate extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGateArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGenScope extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInstanceArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntegerVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInterface extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInterfaceArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiLongIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModPath extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModport extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModule extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModuleArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedBegin extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedFork extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNet extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNetArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPackedArrayVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPort extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPrimitive extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPrimitiveArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiProcess extension walk per-type child iteration (IEEE 1364)
+  iterate vpiRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiStructVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitch extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitchArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTask extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTaskFunc extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTchk extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTimeVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdp extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdpArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
+
+node tf_call 37.38 members=task_call,func_call,method_func_call,method_task_call,sys_func_call,sys_task_call
+  str vpiName implemented walk
+  get vpiUserDefn implemented walk
+  str vpiDecompile implemented walk
+  handle vpiScope implemented walk
+  iterate vpiArgument implemented walk
+
+node task_call 37.38 type=vpiTaskCall
+  handle vpiTask implemented walk
+  get vpiUserDefn unsupported vpiUserDefn of task and function calls is not implemented
+
+node func_call 37.38 type=vpiFuncCall
+  get vpiFuncType implemented walk
+  func vpi_get_value unsupported this object has no value in llg
+  handle vpiFunction implemented walk
+  get vpiUserDefn unsupported vpiUserDefn of task and function calls is not implemented
+  handle vpiTypespec unsupported this object has no typespec in llg
+  get vpiScalar extension walk the sign and width of the object's value
+  get vpiSigned extension walk the sign and width of the object's value
+  get vpiVector extension walk the sign and width of the object's value
+
+node method_func_call 37.38 type=vpiMethodFuncCall
+  func vpi_get_value unsupported this object has no value in llg
+  handle vpiFunction unsupported method calls are opaque expression objects
+  handle vpiPrefix unsupported method calls are opaque expression objects
+  handle vpiWith unsupported method calls are opaque expression objects
+  get vpiUserDefn unsupported vpiUserDefn of task and function calls is not implemented
+  iterate vpiArgument unsupported method calls are opaque expression objects
+  handle vpiTypespec unsupported this object has no typespec in llg
+  get vpiScalar extension walk the sign and width of the object's value
+  get vpiSigned extension walk the sign and width of the object's value
+  get vpiVector extension walk the sign and width of the object's value
+
+node method_task_call 37.38 type=vpiMethodTaskCall
+  handle vpiTask unsupported method calls are opaque expression objects
+  handle vpiPrefix unsupported method calls are opaque expression objects
+  handle vpiWith unsupported method calls are opaque expression objects
+  get vpiUserDefn unsupported vpiUserDefn of task and function calls is not implemented
+  str vpiDecompile unsupported this object does not decompile in llg
+  iterate vpiArgument unsupported method calls are opaque expression objects
+
+node sys_func_call 37.38 type=vpiSysFuncCall
+  get vpiFuncType implemented walk
+  func vpi_get_value unsupported this object has no value in llg
+  func vpi_put_value implemented s42systf
+  handle vpiUserSystf unsupported a system function call reached through an expression does not lead to its registration
+  handle vpiTypespec unsupported this object has no typespec in llg
+  get vpiScalar extension walk the sign and width of the object's value
+  get vpiSigned extension walk the sign and width of the object's value
+  get vpiVector extension walk the sign and width of the object's value
+
+node sys_task_call 37.38 type=vpiSysTaskCall
+  handle vpiUserSystf implemented walk
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+
+node user_systf 37.38 type=vpiUserSystf
+  func vpi_get_systf_info implemented s42systf
+  get vpiFuncType extension walk the registration data of vpi_get_systf_info as properties (S99)
+  get vpiUserDefn extension walk the registration data of vpi_get_systf_info as properties (S99)
+  str vpiName extension walk the registration data of vpi_get_systf_info as properties (S99)
+
+node frame 37.39 type=vpiFrame default=unsupported frames are not objects
+  get vpiActive
+  handle vpiOrigin
+  handle vpiParent
+  handle vpiStmt
+  handle vpiThread
+  iterate vpiAutomatics
+
+node thread 37.40 type=vpiThread default=unsupported threads are not objects
+  get vpiActive
+  handle vpiParent
+  handle vpiOrigin
+  iterate vpiThread
+  handle vpiFrame
+  iterate vpiAssertion
+
+node delay_device 37.41 type=vpiDelayDevice default=unsupported delay devices are not modelled (no MIPD or net delay objects)
+  get vpiDelayType
+  handle vpiModule
+  handle vpiInTerm
+  handle vpiOutTerm
+
+node delay_term 37.41 type=vpiDelayTerm default=unsupported delay devices are not modelled (no MIPD or net delay objects)
+  get vpiDelayType
+  func vpi_get_value
+  iterate vpiDriver
+  iterate vpiLoad
+  handle vpiDelayDevice
+
+node cont_assign_class 37.43 members=cont_assign,cont_assign_bit
+  func vpi_get_delays implemented a20delays
+  get vpiNetDeclAssign implemented walk
+  get vpiStrength0 unsupported drive strengths are not exposed
+  get vpiStrength1 unsupported drive strengths are not exposed
+  func vpi_get_value implemented walk
+  handle vpiDelay unsupported delay expressions are not exposed (vpi_get_delays reads the values)
+  handle vpiRhs implemented walk
+  handle vpiLhs implemented walk
+  handle vpiModule implemented walk
+
+node cont_assign 37.43 type=vpiContAssign
+  iterate vpiBit unsupported vpiBit of this object is not implemented
+  get vpiSigned extension walk the sign and width of the object's value
+  get vpiSize extension walk the sign and width of the object's value
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node cont_assign_bit 37.43 type=vpiContAssignBit default=unsupported continuous assignment bits are not objects
+  get vpiOffset
+  handle vpiParent
+
+node clocking_block 37.44 type=vpiClockingBlock default=unsupported clocking blocks are not objects
+  str vpiName
+  str vpiFullName
+  get vpiInputEdge
+  get vpiOutputEdge
+  handle vpiInputSkew
+  handle vpiOutputSkew
+  handle vpiClockingEvent
+  handle vpiInstance
+  iterate vpiClockingIODecl
+  iterate vpiPropertyDecl
+  iterate vpiSequenceDecl
+
+node clocking_io_decl 37.44 type=vpiClockingIODecl default=unsupported clocking blocks are not objects
+  get vpiDirection
+  str vpiName
+  get vpiInputEdge
+  get vpiOutputEdge
+  handle vpiInputSkew
+  handle vpiOutputSkew
+  handle vpiExpr
+
+node assertion 37.45 members=sequence_inst,assert,assume,cover,property_inst,immediate_assert,immediate_assume,immediate_cover
+  str vpiFile implemented walk
+  get vpiStartLine implemented walk
+  get vpiColumn implemented walk
+  get vpiEndLine implemented walk
+  get vpiEndColumn implemented walk
+  str vpiName implemented walk
+  handle vpiInstance unsupported this object does not report its instance
+  handle vpiClockingBlock unsupported clocking blocks are not objects
+  str vpiDefName implemented walk
+  get vpiCovered implemented walk
+  get vpiCoverMax implemented walk
+  get vpiCoveredCount implemented walk
+  get vpiAssertAttemptCovered implemented walk
+  get vpiAssertSuccessCovered implemented walk
+  get vpiAssertFailureCovered implemented walk
+  get vpiAssertVacuousSuccessCovered implemented walk
+  get vpiAssertDisableCovered implemented walk
+  get vpiAssertKillCovered implemented walk
+
+node concurrent_assertion 37.46 members=cover,assert,assume,restrict
+  str vpiFullName implemented walk
+  get vpiIsClockInferred implemented walk
+  handle vpiClockingEvent implemented walk
+  handle vpiStmt implemented walk
+  handle vpiProperty implemented walk
+
+node cover 37.46 type=vpiCover
+  get vpiIsCoverSequence implemented walk
+  handle vpiInstance unsupported this object does not report its instance
+  get vpiIsDeferred extension walk 0 on a concurrent assertion (37.51 gives the property to immediate assertions)
+  handle vpiDisableCondition extension walk the relations of the assertion statement (IEEE 1800-2005)
+
+node assert 37.46 type=vpiAssert
+  handle vpiElseStmt implemented walk
+  handle vpiInstance unsupported this object does not report its instance
+  get vpiIsDeferred extension walk 0 on a concurrent assertion (37.51 gives the property to immediate assertions)
+  handle vpiDisableCondition extension walk the relations of the assertion statement (IEEE 1800-2005)
+
+node assume 37.46 type=vpiAssume
+  handle vpiInstance unsupported this object does not report its instance
+  get vpiIsDeferred extension walk 0 on a concurrent assertion (37.51 gives the property to immediate assertions)
+  handle vpiDisableCondition extension walk the relations of the assertion statement (IEEE 1800-2005)
+  handle vpiElseStmt extension walk the relations of the assertion statement (IEEE 1800-2005)
+
+node restrict 37.46 type=vpiRestrict default=n/a restrict property is not simulated (37.46 detail 2)
+
+node sequence_inst 37.45 type=vpiSequenceInst
+  iterate vpiArgument implemented walk
+  handle vpiSequenceDecl implemented walk
+  handle vpiInstance unsupported this object does not report its instance
+  handle vpiModule unsupported this object does not report its module
+  get vpiStartLine unsupported the source span of a property instance is not recorded
+  get vpiColumn unsupported the source span of a property instance is not recorded
+  get vpiEndLine unsupported the source span of a property instance is not recorded
+  get vpiEndColumn unsupported the source span of a property instance is not recorded
+  str vpiDefName unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiCoverMax unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiCoveredCount unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiAssertAttemptCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiAssertSuccessCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiAssertFailureCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiAssertVacuousSuccessCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiAssertDisableCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiAssertKillCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node property_inst 37.45 type=vpiPropertyInst
+  iterate vpiArgument implemented walk
+  handle vpiPropertyDecl implemented walk
+  handle vpiDisableCondition unsupported the disable condition of a property instance is not exposed
+  handle vpiInstance unsupported this object does not report its instance
+  handle vpiModule unsupported this object does not report its module
+  get vpiStartLine unsupported the source span of a property instance is not recorded
+  get vpiColumn unsupported the source span of a property instance is not recorded
+  get vpiEndLine unsupported the source span of a property instance is not recorded
+  get vpiEndColumn unsupported the source span of a property instance is not recorded
+  str vpiDefName unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiCoverMax unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiCoveredCount unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiAssertAttemptCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiAssertSuccessCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiAssertFailureCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiAssertVacuousSuccessCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiAssertDisableCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  get vpiAssertKillCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node immediate_assert 37.45 type=vpiImmediateAssert
+  handle vpiInstance unsupported this object does not report its instance
+  str vpiFullName extension walk the full name of a labeled immediate assertion (37.46 gives vpiFullName to concurrent assertions)
+
+node immediate_assume 37.45 type=vpiImmediateAssume
+  handle vpiInstance unsupported this object does not report its instance
+  str vpiFullName extension walk the full name of a labeled immediate assertion (37.46 gives vpiFullName to concurrent assertions)
+
+node immediate_cover 37.45 type=vpiImmediateCover
+  handle vpiInstance unsupported this object does not report its instance
+  str vpiFullName extension walk the full name of a labeled immediate assertion (37.46 gives vpiFullName to concurrent assertions)
+
+node property_decl 37.47 type=vpiPropertyDecl
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  iterate vpiVariables unsupported the variables of sequence and property declarations are not objects
+  handle vpiPropertySpec unsupported property declarations do not expose their specification
+  iterate vpiPropFormalDecl implemented walk
+
+node prop_formal_decl 37.47 type=vpiPropFormalDecl default=unsupported formal arguments of properties are not reached by the walk
+  str vpiName
+  get vpiDirection
+  handle vpiExpr
+  handle vpiTypespec
+
+node property_spec 37.48 type=vpiPropertySpec
+  handle vpiClockingEvent implemented walk
+  handle vpiDisableCondition implemented walk
+  handle vpiPropertyExpr implemented walk
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node clocked_property 37.48 type=vpiClockedProp default=unsupported clocked properties are opaque expression objects
+  handle vpiClockingEvent
+  handle vpiPropertyExpr
+
+node case_property 37.48 type=vpiCaseProperty default=unsupported case properties are opaque expression objects
+  handle vpiCondition
+  iterate vpiCasePropertyItem
+
+node case_property_item 37.48 type=vpiCasePropertyItem default=unsupported case properties are opaque expression objects
+  iterate vpiExpr
+  handle vpiPropertyExpr
+
+node sequence_decl 37.49 type=vpiSequenceDecl
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  iterate vpiVariables unsupported the variables of sequence and property declarations are not objects
+  handle vpiExpr unsupported initialization and default expressions are not exposed
+  iterate vpiSeqFormalDecl implemented walk
+
+node seq_formal_decl 37.49 type=vpiSeqFormalDecl
+  str vpiName implemented walk
+  get vpiDirection implemented walk
+  handle vpiExpr unsupported initialization and default expressions are not exposed
+  handle vpiTypespec implemented walk
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node sequence_expr 37.50 members=operation,sequence_inst,distribution,expr
+  iterate vpiMatchItem unsupported sequence match items are not objects
+
+node immediate_assert_x 37.51 members=immediate_assert,immediate_assume
+  handle vpiElseStmt implemented walk
+
+node immediate_assertion 37.51 members=immediate_assert,immediate_assume,immediate_cover
+  get vpiIsDeferred implemented walk
+  handle vpiExpr implemented walk
+  handle vpiStmt implemented walk
+
+node multiclock_sequence_expr 37.52 type=vpiMulticlockSequenceExpr default=unsupported multiclock sequences are opaque expression objects
+  iterate vpiClockedSeq
+
+node clocked_seq 37.52 type=vpiClockedSeq default=unsupported multiclock sequences are opaque expression objects
+  handle vpiClockingEvent
+
+node let_expr 37.53 type=vpiLetExpr default=unsupported let expressions are opaque expression objects
+  iterate vpiArgument
+  handle vpiLetDecl
+
+node let_decl 37.53 type=vpiLetDecl default=unsupported let declarations are not objects
+  str vpiName
+  handle vpiExpr
+  iterate vpiSeqFormalDecl
+
+node simple_expr 37.54 members=nets,variables,ref_obj,parameter,spec_param,var_select,bit_select
+  iterate vpiUse unsupported vpiUse is not exposed
+
+node bit_select 37.54 type=vpiBitSelect
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  get vpiConstantSelect implemented walk
+  handle vpiParent implemented walk
+  handle vpiIndex implemented walk
+  handle vpiTypespec unsupported this object has no typespec in llg
+  get vpiScalar extension walk the sign and width of the object's value
+  get vpiSigned extension walk the sign and width of the object's value
+  get vpiVector extension walk the sign and width of the object's value
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node expr 37.55 members=indexed_part_select,simple_expr,part_select,operation,constant,func_call,method_func_call,sys_func_call,let_expr
+  str vpiDecompile implemented walk
+  get vpiSize implemented walk
+  func vpi_get_value implemented walk
+  handle vpiTypespec implemented walk
+
+node indexed_part_select 37.55 type=vpiIndexedPartSelect
+  get vpiConstantSelect implemented walk
+  get vpiIndexedPartSelectType implemented walk
+  handle vpiBaseExpr implemented walk
+  handle vpiWidthExpr implemented walk
+  handle vpiParent implemented walk
+  handle vpiTypespec unsupported this object has no typespec in llg
+  get vpiScalar extension walk the sign and width of the object's value
+  get vpiSigned extension walk the sign and width of the object's value
+  get vpiVector extension walk the sign and width of the object's value
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  str vpiFullName extension walk the name of the object
+  str vpiName extension walk the name of the object
+
+node part_select 37.55 type=vpiPartSelect
+  get vpiConstantSelect implemented walk
+  handle vpiParent implemented walk
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+  handle vpiTypespec unsupported this object has no typespec in llg
+  get vpiArrayMember extension walk 0: a select is not an array element
+  get vpiScalar extension walk the sign and width of the object's value
+  get vpiSigned extension walk the sign and width of the object's value
+  get vpiVector extension walk the sign and width of the object's value
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  str vpiFullName extension walk the name of the object
+  str vpiName extension walk the name of the object
+
+node operation 37.55 type=vpiOperation
+  get vpiOpType implemented walk
+  get vpiOpStrong unsupported vpiOpStrong is not implemented
+  iterate vpiOperand implemented walk
+  handle vpiTypespec unsupported this object has no typespec in llg
+  get vpiScalar extension walk the sign and width of the object's value
+  get vpiSigned extension walk the sign and width of the object's value
+  get vpiVector extension walk the sign and width of the object's value
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node constant 37.55 type=vpiConstant
+  get vpiConstType implemented walk
+  handle vpiTypespec unsupported this object has no typespec in llg
+  get vpiScalar extension walk the sign and width of the object's value
+  get vpiSigned extension walk the sign and width of the object's value
+  get vpiVector extension walk the sign and width of the object's value
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node atomic_stmt 37.56 members=if,if_else,while,repeat,wait,ordered_wait,wait_fork,case,for,delay_control,event_control,event_stmt,assignment,assign_stmt,deassign,disable,disable_fork,tf_call,forever,force,release,do_while,expect_stmt,foreach_stmt,return_stmt,break,continue,immediate_assert,immediate_assume,immediate_cover,null_stmt
+  str vpiName implemented walk
+  handle vpiProcess unsupported statements have no vpiProcess relation in llg
+
+node stmt 37.58 members=scope,atomic_stmt
+  handle vpiScope implemented walk
+
+node event_stmt 37.57 type=vpiEventStmt
+  get vpiBlocking implemented walk
+  handle vpiNamedEvent implemented walk
+
+node process 37.58 members=initial,final,always
+  handle vpiModule implemented walk
+  handle vpiStmt implemented walk
+
+node initial 37.58 type=vpiInitial
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node final 37.58 type=vpiFinal
+
+node always 37.58 type=vpiAlways
+  get vpiAlwaysType implemented walk
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node assignment 37.59 type=vpiAssignment
+  get vpiOpType implemented walk
+  get vpiBlocking implemented walk
+  handle vpiLhs implemented walk
+  handle vpiRhs implemented walk
+  handle vpiDelayControl implemented walk
+  handle vpiEventControl implemented walk
+  handle vpiRepeatControl implemented walk
+
+node event_control 37.60 type=vpiEventControl
+  handle vpiCondition implemented walk
+  handle vpiStmt implemented walk
+
+node while 37.61 type=vpiWhile
+  handle vpiCondition implemented walk
+  handle vpiStmt implemented walk
+
+node repeat 37.61 type=vpiRepeat
+  handle vpiCondition implemented walk
+  handle vpiStmt implemented walk
+
+node wait 37.62 type=vpiWait
+  handle vpiStmt implemented walk
+  handle vpiCondition implemented walk
+
+node ordered_wait 37.62 type=vpiOrderedWait default=unsupported wait_order statements are opaque statement objects
+  handle vpiStmt
+  iterate vpiCondition
+  handle vpiElseStmt
+
+node wait_fork 37.62 type=vpiWaitFork
+  handle vpiStmt unsupported this statement does not expose its body
+
+node delay_control 37.63 type=vpiDelayControl
+  func vpi_get_delays unsupported delay controls do not answer vpi_get_delays
+  handle vpiStmt implemented walk
+  handle vpiDelay implemented walk
+
+node repeat_control 37.64 type=vpiRepeatControl default=unsupported intra-assignment repeat controls are not objects
+  handle vpiExpr
+  handle vpiEventControl
+
+node forever 37.65 type=vpiForever
+  handle vpiStmt implemented walk
+
+node if 37.66 type=vpiIf
+  get vpiQualifier implemented walk
+  handle vpiCondition implemented walk
+  handle vpiStmt implemented walk
+
+node if_else 37.66 type=vpiIfElse
+  get vpiQualifier implemented walk
+  handle vpiCondition implemented walk
+  handle vpiStmt implemented walk
+  handle vpiElseStmt implemented walk
+
+node case 37.67 type=vpiCase
+  get vpiCaseType implemented walk
+  get vpiQualifier implemented walk
+  handle vpiCondition implemented walk
+  iterate vpiCaseItem implemented walk
+
+node case_item 37.67 type=vpiCaseItem
+  iterate vpiExpr implemented walk
+  handle vpiStmt implemented walk
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+
+node any_pattern 37.67 type=vpiAnyPattern default=unsupported pattern case items are opaque statement objects
+  str vpiName
+
+node tagged_pattern 37.67 type=vpiTaggedPattern default=unsupported pattern case items are opaque statement objects
+  str vpiName
+  handle vpiPattern
+  handle vpiTypespec
+
+node struct_pattern 37.67 type=vpiStructPattern default=unsupported pattern case items are opaque statement objects
+  str vpiName
+  handle vpiPattern
+
+node expect_stmt 37.68 type=vpiExpectStmt default=unsupported expect statements are opaque statement objects
+  handle vpiPropertySpec
+  handle vpiStmt
+  handle vpiElseStmt
+
+node for 37.69 type=vpiFor
+  get vpiLocalVarDecls implemented walk
+  iterate vpiForInitStmt implemented walk
+  iterate vpiForIncStmt implemented walk
+  handle vpiForInitStmt implemented walk
+  handle vpiForIncStmt implemented walk
+  handle vpiCondition implemented walk
+  handle vpiStmt implemented walk
+  str vpiFullName unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiPropertyDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiSequenceDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiNamedEvent unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiVariables unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiReg unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiRegArray unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiParameter unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiInternalScope unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+
+node do_while 37.70 type=vpiDoWhile
+  handle vpiCondition implemented walk
+  handle vpiStmt implemented walk
+
+node foreach_stmt 37.70 type=vpiForeachStmt
+  handle vpiVariables implemented walk
+  iterate vpiLoopVars implemented walk
+  handle vpiStmt implemented walk
+  str vpiFullName unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiPropertyDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiSequenceDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiNamedEvent unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiVariables unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiReg unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiRegArray unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiParameter unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  iterate vpiInternalScope unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+
+node alias_stmt 37.71 type=vpiAliasStmt default=unsupported alias statements are not objects
+  handle vpiLhs
+  handle vpiRhs
+  handle vpiInstance
+
+node disable 37.72 type=vpiDisable
+  handle vpiExpr implemented walk
+
+node disable_fork 37.72 type=vpiDisableFork
+
+node return_stmt 37.73 type=vpiReturnStmt
+  handle vpiCondition implemented walk
+
+node force 37.74 type=vpiForce
+  handle vpiRhs implemented walk
+  handle vpiLhs implemented walk
+
+node assign_stmt 37.74 type=vpiAssignStmt default=n/a procedural assign and deassign are rejected by llg
+  handle vpiRhs
+  handle vpiLhs
+
+node deassign 37.74 type=vpiDeassign default=n/a procedural assign and deassign are rejected by llg
+  handle vpiLhs
+
+node release 37.74 type=vpiRelease
+  handle vpiLhs implemented walk
+
+node break 37.56 type=vpiBreak
+
+node continue 37.56 type=vpiContinue
+
+node null_stmt 37.56 type=vpiNullStmt
+
+node callback 37.75 type=vpiCallback default=unsupported callback objects answer only vpi_get_cb_info and vpi_remove_cb
+  func vpi_get_cb_info
+
+node callback_owner 37.75 members=prim_term,expr,time_queue,stmt
+  iterate vpiCallback unsupported callback iteration from an object is not implemented
+
+node time_queue 37.76 type=vpiTimeQueue default=unsupported the time queue is not exposed
+  func vpi_get_time
+
+node attribute 37.78 type=vpiAttribute default=unsupported attributes are not captured
+  str vpiName
+  get vpiDefAttribute
+  func vpi_get_value
+  str vpiDefFile
+  get vpiDefLineNo
+  handle vpiParent
+
+node attribute_owner 37.78 members=instance,port,nets,array_net,variables,named_event,prim_term,path_term,mod_path,tchk,param_assign,spec_param,task_func,primitive,table_entry,stmt,process,operation,concurrent_assertion,sequence_decl,property_decl,clocking_block,class_defn,constraint
+  iterate vpiAttribute unsupported attributes are not captured
+
+node iterator 37.79 type=vpiIterator
+  get vpiIteratorType implemented walk
+  handle vpiUse unsupported vpiUse is not exposed
+  get vpiSize extension walk the sign and width of the object's value
+
+node gen_scope_array 37.80 type=vpiGenScopeArray default=unsupported generate scope arrays are not objects
+  get vpiSize
+  str vpiName
+  str vpiFullName
+  func vpi_handle_by_index
+  func vpi_handle_by_multi_index
+  handle vpiModule
+  handle vpiInstance
+  handle vpiGenVar
+  iterate vpiGenScope
+
+node gen_var 37.80 type=vpiGenVar default=unsupported genvars are not objects
+  str vpiName
+  str vpiFullName
+
+node gen_scope 37.80 type=vpiGenScope
+  get vpiArray implemented walk
+  get vpiArrayMember implemented walk
+  get vpiProtected unsupported protected envelopes are unsupported
+  get vpiImplicitDecl unsupported net declaration properties are not captured
+  handle vpiIndex unsupported vpiIndex of this object is not implemented
+  handle vpiGenScopeArray unsupported generate scope arrays are not objects
+  iterate vpiNet implemented walk
+  iterate vpiArrayNet implemented walk
+  iterate vpiProcess implemented walk
+  iterate vpiContAssign implemented walk
+  iterate vpiModule implemented walk
+  iterate vpiModuleArray implemented walk
+  iterate vpiPrimitive implemented walk
+  iterate vpiPrimitiveArray implemented walk
+  iterate vpiDefParam unsupported defparams are not objects
+  iterate vpiGenScopeArray unsupported generate scope arrays are not objects
+  iterate vpiProgram unsupported programs are not objects
+  iterate vpiProgramArray unsupported programs are not objects
+  iterate vpiAssertion unsupported assertions in generate scopes are not iterated
+  iterate vpiInterface implemented walk
+  iterate vpiInterfaceArray implemented walk
+  iterate vpiAliasStmt unsupported alias statements are not objects
+  iterate vpiClockingBlock unsupported clocking blocks are not objects
+  get vpiTimePrecision extension walk the time unit and precision of the enclosing instance
+  get vpiTimeUnit extension walk the time unit and precision of the enclosing instance
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  iterate vpiBitVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiByteVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiEnumVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiFunction extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGate extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGateArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGenScope extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInstanceArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntegerVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiLongIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModPath extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModport extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedBegin extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedFork extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNetArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPackedArrayVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPort extension walk per-type child iteration (IEEE 1364)
+  iterate vpiRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiStructVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitch extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitchArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTask extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTaskFunc extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTchk extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTimeVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdp extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdpArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
+
+node fsm 40.5.3 type=vpiFsm
+  get vpiCovered implemented walk
+  get vpiCoverMax implemented walk
+  get vpiCoveredCount implemented walk
+  handle vpiFsmStateExpression implemented walk
+  iterate vpiFsmStates implemented walk
+  func vpi_control error a17d13 FSM coverage is controlled per instance only (40.5.4)
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  str vpiDefName extension walk the name, definition and FSM of an FSM or state (decision A17-D13)
+  str vpiFullName extension walk the name, definition and FSM of an FSM or state (decision A17-D13)
+  str vpiName extension walk the name, definition and FSM of an FSM or state (decision A17-D13)
+
+node fsm_state 40.5.3 type=vpiFsmHandle
+  get vpiCovered implemented walk
+  get vpiCoverMax implemented walk
+  get vpiCoveredCount implemented walk
+  func vpi_get_value implemented walk
+  func vpi_control error a17d13 FSM coverage is controlled per instance only (40.5.4)
+  get vpiSize extension walk the sign and width of the object's value
+  handle vpiFsm extension walk the name, definition and FSM of an FSM or state (decision A17-D13)
+  str vpiName extension walk the name, definition and FSM of an FSM or state (decision A17-D13)
+
+# 38.34: the event vpi_put_value returns with vpiReturnEvent.
+node sched_event 38.34 type=vpiSchedEvent
+  get vpiScheduled implemented s42values
+  func vpi_put_value implemented s42values

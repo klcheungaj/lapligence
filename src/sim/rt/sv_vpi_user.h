@@ -1,12 +1,10 @@
 /*
- * sv_vpi_user.h — the SystemVerilog VPI extensions a generated Lapligence
- * model supports: the assertion and coverage subset of IEEE 1800-2009
- * Annex M, the typespec, structure-member and enum-constant objects, with
- * the standard constant values, the assertion callback and control
- * constants, the sequence and property objects, and the Annex M routine
- * vpi_register_assertion_cb(). It
- * includes vpi_user.h, which already carries the Annex M object types of
- * the catalog (vpiInterface, the SystemVerilog variable types).
+ * sv_vpi_user.h — the SystemVerilog VPI extensions of IEEE 1800-2009
+ * Annex M: every constant, structure and routine with the standard values,
+ * plus the llg additions marked below. It includes vpi_user.h, which
+ * already carries the Annex M object types the runtime serves (vpiInterface,
+ * the SystemVerilog variable types). Which objects, relations and
+ * properties a generated model serves is recorded in vpi_catalog.txt.
  */
 #ifndef SV_VPI_USER_H
 #define SV_VPI_USER_H
@@ -274,6 +272,151 @@
 #define cbAssertionSysDisableFailAction 654
 #define cbAssertionSysEnableNonvacuousAction 655
 #define cbAssertionSysDisableVacuousAction 656
+
+/* The remaining Annex M constants, grouped and ordered as in Annex M.
+ * They are defined for source compatibility; whether llg serves an object,
+ * relation or property is recorded in vpi_catalog.txt. */
+/* Object types. */
+#define vpiPackage 600
+#define vpiTypeParameter 609
+#define vpiSequenceTypespec 696
+#define vpiPropertyTypespec 697
+#define vpiEventTypespec 698
+#define vpiClockingBlock 650
+#define vpiClockingIODecl 651
+#define vpiConstraint 653
+#define vpiConstraintOrdering 654
+#define vpiDistItem 645
+#define vpiAliasStmt 646
+#define vpiThread 647
+#define vpiRestrict 901
+#define vpiMulticlockSequenceExpr 658
+#define vpiClockedSeq 659
+#define vpiClockedProp 902
+#define vpiCaseProperty 662
+#define vpiCasePropertyItem 905
+#define vpiAnyPattern 667
+#define vpiTaggedPattern 668
+#define vpiStructPattern 669
+#define vpiExpectStmt 674
+#define vpiDistribution 678
+#define vpiArrayNet vpiNetArray
+#define vpiEnumNet 680
+#define vpiIntegerNet 681
+#define vpiLogicNet vpiNet
+#define vpiTimeNet 682
+#define vpiStructNet 683
+#define vpiPackedArrayNet 693
+#define vpiConstraintExpr 747
+#define vpiElseConst 748
+#define vpiImplication 749
+#define vpiConstrIf 738
+#define vpiConstrIfElse 739
+#define vpiLetDecl 903
+#define vpiLetExpr 904
+/* Methods used to traverse 1 to 1 relationships. */
+#define vpiInputSkew 706
+#define vpiOutputSkew 707
+#define vpiGlobalClocking 708
+#define vpiDefaultClocking 709
+#define vpiDefaultDisableIff 710
+#define vpiOrigin 713
+#define vpiPrefix 714
+#define vpiWith 715
+#define vpiValueRange 720
+#define vpiPattern 721
+#define vpiWeight 722
+#define vpiConstraintItem 746
+/* Methods used to traverse 1 to many relationships. */
+#define vpiImport 726
+#define vpiInterfaceDecl 728
+#define vpiSolveBefore 731
+#define vpiSolveAfter 732
+#define vpiMessages 735
+#define vpiConcurrentAssertions 740
+#define vpiMatchItem 741
+/* Generic object properties. */
+#define vpiTop 600
+#define vpiUnit 602
+#define vpiAccessType 604
+#define vpiForkJoinAcc 1
+#define vpiExternAcc 2
+#define vpiDPIExportAcc 3
+#define vpiDPIImportAcc 4
+#define vpiIsRandomized 608
+#define vpiOpStrong 656
+#define vpiRandType 610
+#define vpiNotRand 1
+#define vpiRand 2
+#define vpiRandC 3
+#define vpiConstantVariable 612
+#define vpiProtectedVis 2
+#define vpiLocalVis 3
+#define vpiOneStepConst 9
+#define vpiDistType 625
+#define vpiEqualDist 1
+#define vpiDivDist 2
+#define vpiRef 6
+#define vpiVirtual 635
+#define vpiIsConstraintEnabled 638
+#define vpiTaggedQualifier 4
+#define vpiRandQualifier 8
+#define vpiInputEdge 651
+#define vpiOutputEdge 652
+#define vpiGeneric 653
+#define vpiCompatibilityMode 654
+#define vpiMode1364v1995 1
+#define vpiMode1364v2001 2
+#define vpiMode1364v2005 3
+#define vpiMode1800v2005 4
+#define vpiMode1800v2009 5
+#define vpiPackedArrayMember 655
+#define vpiDPIPure 665
+#define vpiDPIContext 666
+#define vpiDPICStr 667
+#define vpiDPI 1
+#define vpiDPIC 2
+#define vpiDPICIdentifier 668
+/* Operators. */
+#define vpiNonOverlapImplyOp 51
+#define vpiOverlapImplyOp 52
+#define vpiAcceptOnOp 83
+#define vpiRejectOnOp 84
+#define vpiSyncAcceptOnOp 85
+#define vpiSyncRejectOnOp 86
+#define vpiOverlapFollowedByOp 87
+#define vpiNonOverlapFollowedByOp 88
+#define vpiNexttimeOp 89
+#define vpiAlwaysOp 90
+#define vpiEventuallyOp 91
+#define vpiUntilOp 92
+#define vpiUntilWithOp 93
+#define vpiUnaryCycleDelayOp 53
+#define vpiCycleDelayOp 54
+#define vpiIntersectOp 55
+#define vpiFirstMatchOp 56
+#define vpiThroughoutOp 57
+#define vpiWithinOp 58
+#define vpiRepeatOp 59
+#define vpiConsecutiveRepeatOp 60
+#define vpiGotoRepeatOp 61
+#define vpiMatchOp 66
+#define vpiMatchedOp 73
+#define vpiTriggeredOp 74
+#define vpiIfOp 77
+#define vpiIfElseOp 78
+#define vpiCompAndOp 79
+#define vpiCompOrOp 80
+#define vpiImpliesOp 94
+#define vpiTypeOp 81
+/* Value for vpiValid. */
+#define vpiValidUnknown 2
+/* Callback reasons. */
+#define cbStartOfThread 600
+#define cbEndOfThread 601
+#define cbEnterThread 602
+#define cbStartOfFrame 603
+#define cbEndOfFrame 604
 
 typedef struct t_vpi_assertion_step_info {
     PLI_INT32 matched_expression_count;

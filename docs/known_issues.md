@@ -2182,7 +2182,14 @@ None: the decision is to reject. Reproduce with the files in
 
 ## VPI object model limits (SIM-042)
 
-**Status:** open; the supported surface is listed in `docs/sim_features.md`.
+**Status:** open. The object model catalog
+[`src/sim/rt/vpi_catalog.txt`](../src/sim/rt/vpi_catalog.txt) is the single
+source of truth for which object types, properties, one-to-one relations and
+iterations the runtime serves: every row it marks `unsupported` is a gap of
+this section, with its reason, and a query no row lists is an error
+(decision A19-D26). This section lists the limits the catalog does not
+express: objects outside the generated catalog, values, callbacks, routines
+and registrations.
 
 ### Symptom
 
@@ -2213,12 +2220,10 @@ with no error status, as for a name that denotes nothing (S42-D11):
   `cbSizeChange`; `vpi_put_value` with a
   delay, force or release on a string, property or element (decisions
   A19-D21, A19-D23);
-- structure relations that are not exposed (ADV-019 family 2):
-  `vpiDelay`, `vpiStrength0/1` and cont assign
-  bits; `vpiReturn` and `vpiIODecl` of tasks, functions and modports;
-  `vpiPortInst`, `vpiExplicitName` and `vpiConnByName`; elements of
-  multidimensional primitive arrays, and `vpiIndex` of an element of a
-  multidimensional instance array; `vpi_put_value` to a sequential UDP;
+- structure objects (ADV-019 family 2; their relations are in the
+  catalog): elements of multidimensional primitive arrays, and `vpiIndex`
+  of an element of a multidimensional instance array; `vpi_put_value` to a
+  sequential UDP;
   `cbValueChange` on a continuous assignment or primitive; a delayed
   `vpi_put_value` to a named event (only `vpiNoDelay` triggers, decision
   A19-D8). A `cbValueChange` on a named event watches the synchronization
@@ -2229,14 +2234,11 @@ with no error status, as for a name that denotes nothing (S42-D11):
   array, string, handle and dynamic members of an unpacked structure, and
   unpacked structures inside an unpacked union; bit and part selects of a
   member (`tb.s.f[1]`); `vpiElement` of a `vpiPackedArrayVar`;
-- typespec gaps: properties other than `vpiType`, `vpiName`, `vpiPacked`,
-  `vpiTagged`, `vpiVector`, `vpiArrayType` and the unpacked-aggregate
-  `vpiSize` (for example `vpiSigned` or `vpiSize` of a vector typespec), the
-  `vpiTypedef` iteration of a scope, `vpiIndexTypespec`, interface, void
-  and chandle typespecs (class typespecs are reached from class variables
-  and objects, VPI-O4), typespec member `vpiExpr` defaults, the name of
-  a typedef used as an enum's base type (the base typespec is unnamed), and
-  `vpiPacked` of a tagged union;
+- typespecs (the served properties and relations are in the catalog):
+  interface, void and chandle typespecs (class typespecs are reached from
+  class variables and objects, VPI-O4), the name of a typedef used as an
+  enum's base type (the base typespec is unnamed), and `vpiPacked` of a
+  tagged union;
 - subarray handles: `vpi_handle_by_multi_index` with fewer indices than the
   array has unpacked dimensions, and bit handles of a `vpiPackedArrayVar`;
 - expression and statement objects (ADV-019 families 3 and 4, decisions
@@ -2258,8 +2260,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   and `vpiUse` is not exposed. An argument that is not a whole object keeps
   the size and value of the formal it is passed to (a call snapshot) while
   its relations and `vpiDecompile` are those of the expression;
-- `vpi_handle(vpiUse, iterator)` and the relations not listed in
-  `docs/sim_features.md`;
+- every property, relation and iteration the catalog marks `unsupported`;
 - callback reasons other than `cbValueChange`, the seven time reasons,
   `cbEndOfCompile`, `cbStartOfSimulation`, `cbEndOfSimulation`,
   `cbForce`/`cbRelease`, `cbAssign`/`cbDeassign` (accepted; they never run,
@@ -2291,9 +2292,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   primitives with constant delays, and leaves transitions already
   scheduled at their times (decisions A20-D12..D14). The delays of
   delayed timing check signals stay fixed, as for SDF;
-- `vpiModPath` handles carry no name and no `vpiDelay`/`vpiInterModPath`
-  relations; `vpiTchkTerm` and `vpiPathTerm` handles have no own source
-  location;
+- `vpiTchkTerm` and `vpiPathTerm` handles have no own source location;
 - the routines `vpi_handle_multi` (no `vpiPortInst`/`vpiInterModPath`
   objects) and `vpi_get_data`/`vpi_put_data` (no save/restart).
   They are declared and defined so that applications link, and return
@@ -2341,9 +2340,11 @@ objects) or descriptor tables the emitter does not produce yet.
 ### Direction
 
 Extend the catalog per object family with the same generation-checked slots;
-pin collectable targets in the handle slot. Reproduce with
+pin collectable targets in the handle slot, and turn the catalog row from
+`unsupported` to `implemented` with its test. Reproduce with
 [sim_042](../tests/fixtures/sim/feature_completion/sim_042/readme.md) and a
-plugin that asks for one of the objects above.
+plugin that asks for one of the objects above, or with the ADV-019 catalog
+walk (`tests/fixtures/sim/feature_completion/adv_019/catalog.c`).
 
 ## Functional coverage limits (SIM-044, SIM-045)
 

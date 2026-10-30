@@ -8,6 +8,8 @@ mod sim_cli;
 mod sim_harness;
 #[path = "support/vcd.rs"]
 mod vcd;
+#[path = "support/vpi_catalog.rs"]
+mod vpi_catalog;
 
 #[path = "sim_feature_completion/adv_002.rs"]
 mod adv_002;

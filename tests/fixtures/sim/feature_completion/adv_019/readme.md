@@ -552,3 +552,41 @@ reclaimed object would be a fatal error.
   indicates that it is referring to a new dynamic object (including a newly
   constructed one) or no object." `tmp` changes in `make(2)`, `copy()` and
   `tmp = null`: 2 changes at checks 1-3, 3 at check 4.
+
+## catalog (A03; 37.3, 38.6, 38.18, 38.23, 40.5.3)
+
+`catalog.sv` holds an object of most kinds the VPI catalog
+(`src/sim/rt/vpi_catalog.txt`) lists: instances and instance arrays,
+interfaces with a modport, ports, nets and net arrays, every variable kind,
+class, string and container variables, parameters, gates, a UDP and a
+switch, a module path and a timing check, continuous assignments, a generate
+scope, sequences, properties and concurrent assertions, tasks and functions
+with most statement and expression kinds, and an FSM declared with the
+state-vector pragma (decision A17-D11). `catalog.c` has no expected output
+file: starting from a NULL reference, it calls `vpi_get` and `vpi_get_str`
+with every property name and `vpi_handle` and `vpi_iterate` with every
+relation name the catalog or the runtime dispatch knows, on up to 40 objects
+of each type it reaches, and `vpi_get_value` with `vpiObjTypeVal`. It prints
+one `+` line per query that raised no error. The probe tables are generated:
+`tests/runtime_vpi_catalog.rs` checks that they hold exactly the catalog and
+dispatch names.
+
+`adv_019::catalog_walk_matches_the_vpi_catalog` runs it in both optimizer
+modes and checks, per object type reached:
+
+- each answer is a row the catalog marks `implemented` or `extension` for
+  that type (directly or through a class that contains it); vpiType,
+  vpiLineNo and vpiFile apply to every object (37.3.2, 37.3.3);
+- each `implemented` or `extension` row the catalog gives to this test is
+  answered;
+- every other query raised a `vpiError` error and returned `vpiUndefined` or
+  NULL. 38.6 (L62051-L62052): "Should an error occur, vpi_get() shall return
+  vpiUndefined."; one-to-one relations are the single arrows of the
+  diagrams (38.18, L63241-L63242) and iterations the double arrows (38.23,
+  L63447-L63448). A query outside the diagrams is an error (decision
+  A19-D26); a line `!` (an error that still returned a value, handle or
+  iterator) fails the test.
+
+The check is per object type: an object type that answers a row on one
+object and refuses it on another (for example a statement reached through
+different relations) counts as answering it.
