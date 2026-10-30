@@ -2348,6 +2348,15 @@ fn a19_d31_assertion_details() {
 }
 
 #[test]
+fn a19_d32_expression_relations() {
+    run_vpi_decision(
+        "A19-D32_expression_relations",
+        &["task $d32()", "function int $d32f(int)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D32_expression_relations.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

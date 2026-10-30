@@ -88,7 +88,9 @@ fn typespec_var_kind(kind: IrVpiTypespecKind, ranges: usize) -> IrVpiVarKind {
         IrVpiTypespecKind::LongInt => IrVpiVarKind::LongInt,
         IrVpiTypespecKind::Byte => IrVpiVarKind::Byte,
         IrVpiTypespecKind::Time => IrVpiVarKind::Time,
-        IrVpiTypespecKind::Real | IrVpiTypespecKind::String => IrVpiVarKind::Real,
+        IrVpiTypespecKind::Real | IrVpiTypespecKind::String | IrVpiTypespecKind::Chandle => {
+            IrVpiVarKind::Real
+        }
         IrVpiTypespecKind::ShortReal => IrVpiVarKind::ShortReal,
         IrVpiTypespecKind::Enum => IrVpiVarKind::Enum,
         IrVpiTypespecKind::Struct => IrVpiVarKind::Struct,
@@ -1089,6 +1091,16 @@ impl Codegen<'_> {
                 if let Some(row) =
                     self.vpi_dynamic_row(model, &mut dynamic, &mut typespecs, id, storage)
                 {
+                    // 37.17 detail 8: the initialization expression.
+                    if let Some(init) = self.db.var_initializer(id).filter(|_| code) {
+                        owners.push((
+                            row.full_name.clone(),
+                            node.parent
+                                .map(|parent| self.vpi_full_name(parent))
+                                .unwrap_or_default(),
+                            CodeOwner::Initializer(init),
+                        ));
+                    }
                     insert(source(row));
                 }
                 continue;
@@ -1297,6 +1309,19 @@ impl Codegen<'_> {
                         IrType::Real { .. } => (0, false, true, false),
                     };
                     let declared_net = matches!(self.kind(id), NodeKind::Net { .. });
+                    if let Some(init) = self
+                        .db
+                        .var_initializer(id)
+                        .filter(|_| code && !declared_net)
+                    {
+                        owners.push((
+                            self.vpi_full_name(id),
+                            node.parent
+                                .map(|parent| self.vpi_full_name(parent))
+                                .unwrap_or_default(),
+                            CodeOwner::Initializer(init),
+                        ));
+                    }
                     let net =
                         declared_net || signal.net_driver.is_some() || !signal.net_alias.is_empty();
                     let kind = if real {
@@ -1398,6 +1423,21 @@ impl Codegen<'_> {
                         continue;
                     }
                     let net = array.net.is_some();
+                    if let Some(init) = self
+                        .db
+                        .arrays()
+                        .get(&id)
+                        .and_then(|meta| meta.init)
+                        .filter(|_| code && !net)
+                    {
+                        owners.push((
+                            self.vpi_full_name(id),
+                            node.parent
+                                .map(|parent| self.vpi_full_name(parent))
+                                .unwrap_or_default(),
+                            CodeOwner::Initializer(init),
+                        ));
+                    }
                     insert(source(IrVpiObject {
                         full_name: self.vpi_full_name(id),
                         name: node.name.clone(),
@@ -1457,6 +1497,15 @@ impl Codegen<'_> {
                             (IrVpiConstant::Text(text.clone()), width, false, false)
                         }
                     };
+                    if let Some(init) = self.db.param_initializer(id).filter(|_| code) {
+                        owners.push((
+                            self.vpi_full_name(id),
+                            node.parent
+                                .map(|parent| self.vpi_full_name(parent))
+                                .unwrap_or_default(),
+                            CodeOwner::Initializer(init),
+                        ));
+                    }
                     insert(source(IrVpiObject {
                         full_name: self.vpi_full_name(id),
                         name: node.name.clone(),
@@ -1704,6 +1753,12 @@ impl Codegen<'_> {
                             .map(|(_, actual)| actual.clone())
                             .or_else(|| low.map(|low| self.vpi_full_name(low))),
                         detail: interface.as_ref().map(|(port_type, _)| *port_type),
+                        // A port has the type of the declaration it connects
+                        // (37.14); an interface port has no data type.
+                        typespec: match (interface.is_some(), low) {
+                            (false, Some(low)) => self.vpi_declared_typespec(&mut typespecs, *low),
+                            _ => None,
+                        },
                         conns: match (high_expr, high_open, interface.is_some()) {
                             (Some(high), false, false) => {
                                 vec![self.vpi_conn(*high, IrVpiDirection::None)]
@@ -1845,6 +1900,9 @@ impl Codegen<'_> {
                     }
                     CodeOwner::Clocking(block, var) => {
                         statements.push((row, tables.clocking_root(block, var, scope)));
+                    }
+                    CodeOwner::Initializer(expression) => {
+                        statements.push((row, tables.expression_root(expression, scope)));
                     }
                     CodeOwner::Conns(expressions) => {
                         let object = &model.vpi_objects[row];
@@ -2317,6 +2375,9 @@ enum CodeOwner {
     /// The clocking event and skews of clocking block `.0`, or the skews of
     /// its clocking io declaration `.1` (37.44).
     Clocking(NodeId, Option<NodeId>),
+    /// The initialization expression of a variable or the default
+    /// expression of a value parameter (37.17 detail 8, 37.26 detail 3).
+    Initializer(NodeId),
 }
 
 /// The edge of a clocking event: that of a single edge event, else none.

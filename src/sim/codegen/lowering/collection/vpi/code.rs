@@ -490,6 +490,15 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         code
     }
 
+    /// The typespec of the value of expression `id`, or of the declared
+    /// type of declaration `id` named by the typedef it names (37.23,
+    /// 37.55 detail 5).
+    fn value_typespec(&mut self, id: NodeId) -> Option<usize> {
+        let cg = self.cg;
+        let descriptor = cg.db.type_descriptor(id)?;
+        cg.vpi_typespec(self.typespecs, descriptor, cg.db.declared_typedef(id), 0)
+    }
+
     /// An expression llg does not decompose: its type, its size and no
     /// operands or value.
     fn opaque(&mut self, type_code: &'static str, id: NodeId) -> (IrVpiCode, Children<'a>) {
@@ -769,6 +778,8 @@ impl<'c, 'a> CodeTables<'c, 'a> {
             let mut code = self.typed(type_code, id);
             code.flags |= IrVpiCode::OPAQUE;
             code.text = Some(name);
+            // A simple expression always has a typespec (37.55 detail 5).
+            code.typespec = self.value_typespec(target);
             return (code, Vec::new());
         }
         let mut code = self.typed("vpiRefObj", id);
@@ -787,6 +798,9 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         indices: &[NodeId],
     ) -> (IrVpiCode, Children<'a>) {
         let mut code = self.typed(type_code, id);
+        // 37.55 detail 5: a select's typespec is that of its value
+        // (decision A19-D32).
+        code.typespec = self.value_typespec(id);
         let parent_constant = match self.cg.kind(base) {
             NodeKind::Expr(
                 ExprKind::Ref { .. } | ExprKind::HierPath { .. } | ExprKind::ScopeRef { .. },
@@ -926,6 +940,10 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                     self.typed(type_code, id)
                 };
                 code.text = Some(name.clone());
+                if !statement {
+                    // The type of the value (decision A19-D32).
+                    code.typespec = self.value_typespec(id);
+                }
                 let row = callee.and_then(|callee| self.decl_row(callee));
                 code.object = row;
                 let mut children = Vec::new();
@@ -952,17 +970,86 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                 if self.user_calls.contains(name.as_str()) {
                     code.flags |= IrVpiCode::USER;
                 }
+                if !statement {
+                    code.typespec = self.value_typespec(id);
+                }
                 code.text = Some(name.clone());
                 (code, arguments())
             }
-            NodeKind::MethodCall { name, .. } => {
+            NodeKind::MethodCall {
+                name,
+                receiver,
+                callee,
+            } => {
                 let type_code = if statement {
                     "vpiMethodTaskCall"
                 } else {
                     "vpiMethodFuncCall"
                 };
-                let (mut code, children) = self.opaque(type_code, id);
+                let mut code = if statement {
+                    self.located(type_code, id)
+                } else {
+                    self.typed(type_code, id)
+                };
                 code.text = Some(name.clone());
+                if !statement {
+                    code.typespec = self.value_typespec(id);
+                }
+                // 37.38: the method's subroutine (NULL for a built-in
+                // method, detail 11; a class method is no catalog object,
+                // which USER marks), the object it applies to (detail 2),
+                // the `with` expression of an array method (detail 1) and
+                // the arguments (decision A19-D32).
+                let mut children: Children<'a> = Vec::new();
+                match callee.map(|callee| self.decl_row(callee)) {
+                    Some(Some(row)) => children.push((
+                        if statement { "vpiTask" } else { "vpiFunction" },
+                        Item::Alias(row, id),
+                    )),
+                    Some(None) => code.flags |= IrVpiCode::USER,
+                    None => {}
+                }
+                if let Some(receiver) = receiver {
+                    children.push(("vpiPrefix", Item::Expr(*receiver)));
+                }
+                let mut operands: Vec<NodeId> = cg
+                    .node(id)
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|child| Some(*child) != *receiver)
+                    .collect();
+                if cg.db.method_call_has_with_clause(id) {
+                    // A randomize `with` block is a constraint, which is no
+                    // object; an array method's `with` expression is its
+                    // only operand.
+                    operands.retain(|child| !matches!(cg.kind(*child), NodeKind::Constraint(_)));
+                    if let [with] = operands.as_slice() {
+                        children.push(("vpiWith", Item::Expr(*with)));
+                        operands.clear();
+                    }
+                }
+                children.extend(
+                    operands
+                        .into_iter()
+                        .filter(|child| {
+                            matches!(
+                                cg.kind(*child),
+                                NodeKind::Expr(_)
+                                    | NodeKind::FuncCall { .. }
+                                    | NodeKind::SysCall { .. }
+                                    | NodeKind::MethodCall { .. }
+                            )
+                        })
+                        .map(|child| {
+                            let item = if cg.db.semantic_detail(child) == Some("EmptyArgument") {
+                                Item::NullOp(child)
+                            } else {
+                                Item::Expr(child)
+                            };
+                            ("vpiArgument", item)
+                        }),
+                );
                 (code, children)
             }
             _ => self.opaque("vpiOperation", id),

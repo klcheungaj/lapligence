@@ -1,0 +1,34 @@
+tb.r0 type=48 r0 typespec=641 expr=4'h3
+tb.k type=612 k typespec=629 expr=3
+tb.n type=612 n typespec=629 expr=NULL
+tb.s type=616 s typespec=631 expr="hi"
+tb.ch type=622 ch typespec=632 expr=NULL
+tb.p type=615 p typespec=630 expr=NULL
+tb.mem type=116 mem typespec=642 expr=NULL
+tb.W type=41 W typespec=629 expr=4
+tb.D type=41 D typespec=629 expr=W * 2
+tb.r0[1] type=49 typespec=641
+port a typespec=641 bit typespec=641
+port y typespec=641 bit typespec=641
+call type=649 q.push_back(1) typespec=-3 userdefn=0 task=0 prefix=q with=NULL args=[1]
+assign n
+  type=39 r0[1:0] + r0[1] + int'(r0) + 2 + inc(k) + $clog2(W) + $d32f(k) + q.size() typespec=-3
+  type=39 r0[1:0] + r0[1] + int'(r0) + 2 + inc(k) + $clog2(W) + $d32f(k) typespec=-3
+  type=39 r0[1:0] + r0[1] + int'(r0) + 2 + inc(k) + $clog2(W) typespec=-3
+  type=39 r0[1:0] + r0[1] + int'(r0) + 2 + inc(k) typespec=-3
+  type=39 r0[1:0] + r0[1] + int'(r0) + 2 typespec=-3
+  type=39 r0[1:0] + r0[1] + int'(r0) typespec=-3
+  type=39 r0[1:0] + r0[1] typespec=-3
+  type=42 r0[1:0] typespec=641
+  type=106 r0[1] typespec=641
+  type=39 int'(r0) typespec=629
+  type=48 r0 typespec=641
+  type=7 2 typespec=-3
+  type=19 inc(k) typespec=629 userdefn=0 function=20 args=[k]
+  type=56 $clog2(W) typespec=635 userdefn=0 systf=0 args=[W]
+  type=56 $d32f(k) typespec=629 userdefn=1 systf=67 args=[k]
+  type=648 q.size() typespec=629 userdefn=0 function=0 prefix=q with=NULL args=
+assign r
+  type=648 q.find() with (item > 0) typespec=-3 userdefn=0 function=0 prefix=q with=item > 0 args=
+call type=60 tk(n) typespec=-3 userdefn=0 task=59 args=[n]
+call type=57 $finish() typespec=-3 userdefn=0 systf=0 args=

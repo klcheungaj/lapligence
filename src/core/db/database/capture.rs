@@ -396,6 +396,7 @@ impl Db {
         let mut subroutine_arrays = HashMap::new();
         let mut array_select_paths = HashMap::new();
         let mut vars_init = HashMap::new();
+        let mut param_inits = HashMap::new();
         let mut assertion_local_initializers = HashMap::new();
         let mut net_delays = HashMap::new();
         let mut two_state_types = HashSet::new();
@@ -890,6 +891,14 @@ impl Db {
                     .as_ref()
                     .is_some_and(|projection| projection.array.is_some())
                 || semantic.kind == SemanticKind::Array;
+            // The default expression of a value parameter (IEEE 1800-2009
+            // 37.26 detail 3), as the frontend binds it.
+            if semantic.kind == SemanticKind::Parameter {
+                if let Some(initializer) = edge_target(&ids, edges, SemanticEdgeRole::Initializer)?
+                {
+                    param_inits.insert(id, initializer);
+                }
+            }
             if semantic.kind == SemanticKind::Variable
                 && semantic.subkind != SEMANTIC_VARIABLE_CLOCKING
                 && !is_array
@@ -1531,6 +1540,7 @@ impl Db {
             subroutine_arrays,
             array_select_paths,
             vars_init,
+            param_inits,
             net_delays,
             var_lifetimes,
             var_lifetime_qualifiers,

@@ -305,6 +305,8 @@ pub struct Db {
     /// avoids resolving equal display names at lowering time.
     array_select_paths: HashMap<NodeId, (NodeId, Vec<String>)>,
     vars_init: HashMap<NodeId, NodeId>,
+    /// The default expression of each value parameter that has one.
+    param_inits: HashMap<NodeId, NodeId>,
     /// Propagation delays declared on net symbols, kept separate from the
     /// synthetic declaration-assignment driver delay.
     net_delays: HashMap<NodeId, DriverDelay>,
@@ -457,6 +459,7 @@ impl Db {
             subroutine_arrays: HashMap::new(),
             array_select_paths: HashMap::new(),
             vars_init: HashMap::new(),
+            param_inits: HashMap::new(),
             net_delays: HashMap::new(),
             var_lifetimes: HashMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
@@ -551,6 +554,7 @@ impl Db {
             subroutine_arrays: HashMap::new(),
             array_select_paths: HashMap::new(),
             vars_init: HashMap::new(),
+            param_inits: HashMap::new(),
             net_delays: HashMap::new(),
             var_lifetimes: HashMap::new(),
             var_lifetime_qualifiers: HashMap::new(),
@@ -889,6 +893,16 @@ impl Db {
 
     pub fn var_initializer(&self, id: NodeId) -> Option<NodeId> {
         self.vars_init.get(&id).copied()
+    }
+
+    /// The default expression of value parameter `id` (IEEE 1800-2009 37.26
+    /// detail 3): its declared initializer, or the override that replaces it.
+    pub fn param_initializer(&self, id: NodeId) -> Option<NodeId> {
+        self.param_inits.get(&id).copied()
+    }
+
+    pub(crate) fn param_initializers(&self) -> &HashMap<NodeId, NodeId> {
+        &self.param_inits
     }
 
     /// Return owned clocking block metadata, if `id` names a clocking block.

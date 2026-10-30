@@ -34,6 +34,7 @@ test a17d13 sim_lrm_decisions::a17_d13_fsm_objects
 test a19d28 sim_lrm_decisions::a19_d28_index_and_packed_relations
 test a19d30 sim_lrm_decisions::a19_d30_clocking_blocks
 test a19d31 sim_lrm_decisions::a19_d31_assertion_details
+test a19d32 sim_lrm_decisions::a19_d32_expression_relations
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
@@ -306,7 +307,7 @@ node instance_array 37.11 members=primitive_array,interface_array,program_array,
   get vpiSize implemented walk
   func vpi_handle_by_index implemented a19struct
   func vpi_handle_by_multi_index unsupported vpi_handle_by_multi_index of instance arrays is not implemented
-  handle vpiExpr unsupported initialization and default expressions are not exposed
+  handle vpiExpr unsupported the list operation of an instance array's connections (37.11 detail 1) is not built: llg keeps the connections of each element instance
   iterate vpiRange implemented walk
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
@@ -551,7 +552,7 @@ node ports 37.14 members=port,port_bit
   get vpiVector implemented walk
   handle vpiHighConn implemented walk
   handle vpiLowConn implemented walk
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiTypespec implemented walk
   handle vpiInstance implemented walk
   handle vpiModule implemented walk
 
@@ -581,9 +582,9 @@ node ref_obj 37.15 type=vpiRefObj
   handle vpiInstance implemented walk
   handle vpiTaskFunc unsupported reference objects of task arguments are not exposed
   handle vpiParent unsupported the parent of a reference object is not exposed
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiTypespec n/a llg's reference objects stand for interface and modport port connections, which have no data type
   handle vpiActual implemented walk
-  str vpiDecompile unsupported this object does not decompile in llg
+  str vpiDecompile implemented walk
   get vpiSize n/a llg reference objects stand only for interface and modport ports, which have no size
   func vpi_get_value unsupported this object has no value in llg
   get vpiSigned extension walk the sign and width of the object's value
@@ -637,7 +638,7 @@ node net_bit 37.16 type=vpiNetBit
   get vpiArray implemented walk
   get vpiNetType implemented walk
   get vpiStructUnionMember implemented walk
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiTypespec implemented walk
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node array_net 37.16 type=vpiNetArray
@@ -647,7 +648,7 @@ node array_net 37.16 type=vpiNetArray
   get vpiNetType implemented walk
   func vpi_get_value unsupported this object has no value in llg
   get vpiStructUnionMember implemented walk
-  str vpiDecompile unsupported this object does not decompile in llg
+  str vpiDecompile implemented walk
   get vpiArrayType extension walk the array properties of array variables (37.17) applied to net arrays
   get vpiIsMemory extension walk the array properties of array variables (37.17) applied to net arrays
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
@@ -705,7 +706,7 @@ node variables 37.17 members=short_real_var,real_var,byte_var,short_int_var,int_
   get vpiVector implemented walk
   iterate vpiPort unsupported the ports a net or variable connects to are not exposed
   iterate vpiPortInst unsupported the ports a net or variable connects to are not exposed
-  handle vpiExpr unsupported initialization and default expressions are not exposed
+  handle vpiExpr implemented walk
   handle vpiModule implemented walk
   handle vpiInstance implemented walk
   handle vpiScope implemented walk
@@ -785,7 +786,7 @@ node array_var 37.17 type=vpiRegArray
   func vpi_get_value unsupported this object has no value in llg
   handle vpiIndex error a19d28 the text defines no index for a whole variable array (decision A19-D28)
   iterate vpiIndex implemented a19d28
-  str vpiDecompile unsupported this object does not decompile in llg
+  str vpiDecompile implemented walk
   iterate vpiIntVar extension walk a variable array iterates its elements by their own type
 
 node packed_array_var 37.17 type=vpiPackedArrayVar
@@ -852,20 +853,20 @@ node string_var 37.17 type=vpiStringVar
   get vpiStructUnionMember implemented walk
   get vpiScalar implemented walk
   get vpiVector implemented walk
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiTypespec implemented walk
   handle vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
   iterate vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
-  str vpiDecompile unsupported this object does not decompile in llg
+  str vpiDecompile implemented walk
 
 node chandle_var 37.17 type=vpiChandleVar
   get vpiArray implemented walk
   get vpiStructUnionMember implemented walk
   get vpiScalar implemented walk
   get vpiVector implemented walk
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiTypespec implemented walk
   handle vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
   iterate vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
-  str vpiDecompile unsupported this object does not decompile in llg
+  str vpiDecompile implemented walk
 
 node class_var 37.17 type=vpiClassVar
   get vpiObjId implemented walk
@@ -879,7 +880,7 @@ node class_var 37.17 type=vpiClassVar
   get vpiVector implemented walk
   handle vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
   iterate vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
-  str vpiDecompile unsupported this object does not decompile in llg
+  str vpiDecompile implemented walk
 
 node var_bit 37.17 type=vpiRegBit
   get vpiConstantSelect implemented walk
@@ -887,7 +888,8 @@ node var_bit 37.17 type=vpiRegBit
   get vpiAutomatic unsupported the default lifetime of this object is not captured
   get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
   get vpiStructUnionMember implemented walk
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiTypespec implemented walk
+  handle vpiExpr error a19d32 a bit of a variable has no initialization expression of its own (37.17 detail 8 gives one to the variable)
 
 node var_select 37.19 type=vpiVarSelect
   get vpiConstantSelect implemented walk
@@ -899,7 +901,7 @@ node var_select 37.19 type=vpiVarSelect
   handle vpiParent implemented walk
   handle vpiIndex implemented walk
   iterate vpiIndex implemented walk
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiTypespec implemented walk
   get vpiScalar extension walk the sign and width of the object's value
   get vpiSigned extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
@@ -914,7 +916,7 @@ node range 37.22 type=vpiRange
   handle vpiParent extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
-node typespec 37.23 members=short_real_typespec,real_typespec,byte_typespec,short_int_typespec,int_typespec,long_int_typespec,integer_typespec,class_typespec,time_typespec,enum_typespec,string_typespec,struct_typespec,union_typespec,bit_typespec,logic_typespec,packed_array_typespec,array_typespec,void_typespec,sequence_typespec,property_typespec,event_typespec,type_parameter
+node typespec 37.23 members=short_real_typespec,real_typespec,byte_typespec,short_int_typespec,int_typespec,long_int_typespec,integer_typespec,class_typespec,time_typespec,enum_typespec,string_typespec,chandle_typespec,struct_typespec,union_typespec,bit_typespec,logic_typespec,packed_array_typespec,array_typespec,void_typespec,sequence_typespec,property_typespec,event_typespec,type_parameter
   str vpiName implemented walk
   handle vpiTypedefAlias implemented walk
   handle vpiInstance implemented walk
@@ -944,6 +946,8 @@ node enum_typespec 37.23 type=vpiEnumTypespec
   handle vpiScope unsupported this object does not report its scope
 
 node string_typespec 37.23 type=vpiStringTypespec
+
+node chandle_typespec 37.23 type=vpiChandleTypespec
 
 node struct_typespec 37.23 type=vpiStructTypespec
   get vpiPacked implemented walk
@@ -1008,7 +1012,7 @@ node typespec_member 37.23 type=vpiTypespecMember
   str vpiName implemented walk
   get vpiRandType unsupported randomization properties are not captured
   handle vpiTypespec implemented walk
-  handle vpiExpr unsupported initialization and default expressions are not exposed
+  handle vpiExpr unsupported the owned database keeps a structure member default as its folded constant value, not as an expression
 
 node named_event 37.25 type=vpiNamedEvent
   get vpiArray implemented walk
@@ -1051,7 +1055,7 @@ node parameter 37.26 type=vpiParameter
   get vpiSize implemented walk
   func vpi_get_value implemented walk
   handle vpiTypespec implemented walk
-  handle vpiExpr unsupported initialization and default expressions are not exposed
+  handle vpiExpr implemented walk
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
   get vpiScalar extension walk the sign and width of the object's value
@@ -1423,44 +1427,44 @@ node tf_call 37.38 members=task_call,func_call,method_func_call,method_task_call
 
 node task_call 37.38 type=vpiTaskCall
   handle vpiTask implemented walk
-  get vpiUserDefn unsupported vpiUserDefn of task and function calls is not implemented
+  get vpiUserDefn implemented walk
 
 node func_call 37.38 type=vpiFuncCall
   get vpiFuncType implemented walk
   func vpi_get_value unsupported this object has no value in llg
   handle vpiFunction implemented walk
-  get vpiUserDefn unsupported vpiUserDefn of task and function calls is not implemented
-  handle vpiTypespec unsupported this object has no typespec in llg
+  get vpiUserDefn implemented walk
+  handle vpiTypespec implemented walk
   get vpiScalar extension walk the sign and width of the object's value
   get vpiSigned extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
 
 node method_func_call 37.38 type=vpiMethodFuncCall
   func vpi_get_value unsupported this object has no value in llg
-  handle vpiFunction unsupported method calls are opaque expression objects
-  handle vpiPrefix unsupported method calls are opaque expression objects
-  handle vpiWith unsupported method calls are opaque expression objects
-  get vpiUserDefn unsupported vpiUserDefn of task and function calls is not implemented
-  iterate vpiArgument unsupported method calls are opaque expression objects
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiFunction implemented walk
+  handle vpiPrefix implemented walk
+  handle vpiWith implemented walk
+  get vpiUserDefn implemented walk
+  iterate vpiArgument implemented walk
+  handle vpiTypespec implemented walk
   get vpiScalar extension walk the sign and width of the object's value
   get vpiSigned extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
 
 node method_task_call 37.38 type=vpiMethodTaskCall
-  handle vpiTask unsupported method calls are opaque expression objects
-  handle vpiPrefix unsupported method calls are opaque expression objects
-  handle vpiWith unsupported method calls are opaque expression objects
-  get vpiUserDefn unsupported vpiUserDefn of task and function calls is not implemented
-  str vpiDecompile unsupported this object does not decompile in llg
-  iterate vpiArgument unsupported method calls are opaque expression objects
+  handle vpiTask implemented walk
+  handle vpiPrefix implemented walk
+  handle vpiWith implemented walk
+  get vpiUserDefn implemented walk
+  str vpiDecompile implemented walk
+  iterate vpiArgument implemented walk
 
 node sys_func_call 37.38 type=vpiSysFuncCall
   get vpiFuncType implemented walk
   func vpi_get_value unsupported this object has no value in llg
   func vpi_put_value implemented s42systf
-  handle vpiUserSystf unsupported a system function call reached through an expression does not lead to its registration
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiUserSystf implemented walk
+  handle vpiTypespec implemented walk
   get vpiScalar extension walk the sign and width of the object's value
   get vpiSigned extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
@@ -1728,7 +1732,7 @@ node bit_select 37.54 type=vpiBitSelect
   get vpiConstantSelect implemented walk
   handle vpiParent implemented walk
   handle vpiIndex implemented walk
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiTypespec implemented walk
   get vpiScalar extension walk the sign and width of the object's value
   get vpiSigned extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
@@ -1746,7 +1750,7 @@ node indexed_part_select 37.55 type=vpiIndexedPartSelect
   handle vpiBaseExpr implemented walk
   handle vpiWidthExpr implemented walk
   handle vpiParent implemented walk
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiTypespec implemented walk
   get vpiScalar extension walk the sign and width of the object's value
   get vpiSigned extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
@@ -1759,7 +1763,7 @@ node part_select 37.55 type=vpiPartSelect
   handle vpiParent implemented walk
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiTypespec implemented walk
   get vpiArrayMember extension walk 0: a select is not an array element
   get vpiScalar extension walk the sign and width of the object's value
   get vpiSigned extension walk the sign and width of the object's value
@@ -1774,7 +1778,7 @@ node operation 37.55 type=vpiOperation
   get vpiOpType implemented walk
   get vpiOpStrong unsupported vpiOpStrong is not implemented
   iterate vpiOperand implemented walk
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiTypespec implemented a19d32
   get vpiScalar extension walk the sign and width of the object's value
   get vpiSigned extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
@@ -1782,7 +1786,7 @@ node operation 37.55 type=vpiOperation
 
 node constant 37.55 type=vpiConstant
   get vpiConstType implemented walk
-  handle vpiTypespec unsupported this object has no typespec in llg
+  handle vpiTypespec error a19d32 37.55 detail 5 makes a typespec mandatory only for casts, simple expressions and typed assignment patterns and leaves other expressions to the implementation; industry-standard behaviour gives a constant none
   get vpiScalar extension walk the sign and width of the object's value
   get vpiSigned extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value

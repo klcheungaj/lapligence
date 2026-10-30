@@ -4216,6 +4216,10 @@ static int code_relation_applies(int type, int relation) {
         case vpiRelease: case vpiDeassign: return relation == vpiLhs;
         case vpiFuncCall: return relation == vpiFunction;
         case vpiTaskCall: return relation == vpiTask;
+        case vpiMethodFuncCall:
+            return relation == vpiFunction || relation == vpiPrefix || relation == vpiWith;
+        case vpiMethodTaskCall:
+            return relation == vpiTask || relation == vpiPrefix || relation == vpiWith;
         case vpiBitSelect: case vpiVarSelect:
             return relation == vpiParent || relation == vpiIndex;
         case vpiPartSelect:
@@ -4242,6 +4246,7 @@ static int code_iteration_applies(int type, int relation) {
         case vpiCaseItem: return relation == vpiExpr;
         case vpiFor: return relation == vpiForInitStmt || relation == vpiForIncStmt;
         case vpiFuncCall: case vpiTaskCall: case vpiSysFuncCall: case vpiSysTaskCall:
+        case vpiMethodFuncCall: case vpiMethodTaskCall:
             return relation == vpiArgument;
         case vpiVarSelect: return relation == vpiIndex;
         case vpiForeachStmt: return relation == vpiLoopVars;
@@ -4311,10 +4316,21 @@ static vpiHandle code_relation(int type, uint32_t index) {
         return node->typespec ? typespec_handle(typespec_at(node->typespec - 1u)) : NULL;
     }
     if (type == vpiTypespec) {
-        /* 37.55 detail 5: casts; llg gives no other expression a typespec. */
+        /* 37.55 detail 5: casts, simple expressions, selects and calls;
+         * other operations and constants have none (decision A19-D32). */
         if (node->typespec) return typespec_handle(typespec_at(node->typespec - 1u));
-        vpi_error("LLG_VPI_UNSUPPORTED", "llg gives only casts a typespec among expressions");
+        vpi_error("LLG_VPI_RELATION",
+                  "llg gives casts, simple expressions, selects and calls a typespec, not other "
+                  "operations or constants (decision A19-D32)");
         return NULL;
+    }
+    if (type == vpiUserSystf && (node->type == vpiSysFuncCall || node->type == vpiSysTaskCall)) {
+        /* 37.38: the registration of a user-defined system task or function
+         * a call names; NULL for a built-in one (decision A19-D32). */
+        const char* name = code_text(node);
+        llg_vpi_registration_t* registration =
+            (node->flags & LLG_VPI_CODE_USER) && name ? find_registration(name) : NULL;
+        return registration ? encode_handle(registration->slot) : NULL;
     }
     if (node->flags & LLG_VPI_CODE_OPAQUE) {
         code_opaque_error();
@@ -4327,6 +4343,13 @@ static vpiHandle code_relation(int type, uint32_t index) {
         return NULL;
     }
     uint32_t child = code_child(node, type);
+    if (child == LLG_VPI_NONE && (node->flags & LLG_VPI_CODE_USER) &&
+        (type == vpiFunction || type == vpiTask) &&
+        (node->type == vpiMethodFuncCall || node->type == vpiMethodTaskCall)) {
+        /* 37.38 detail 11 gives NULL only for a built-in method. */
+        vpi_error("LLG_VPI_UNSUPPORTED", "class methods are not VPI objects in llg");
+        return NULL;
+    }
     return child != LLG_VPI_NONE ? code_handle(child) : NULL;
 }
 
@@ -5203,6 +5226,26 @@ static void decompile(llg_vpi_text_t* text, uint32_t index, int depth) {
             decompile_list(text, node, vpiArgument, 0, depth);
             text_put(text, ")");
             return;
+        case vpiMethodFuncCall:
+        case vpiMethodTaskCall: {
+            /* `prefix.name(arguments)`, then the `with` expression. */
+            uint32_t prefix = code_child(node, vpiPrefix);
+            if (prefix != LLG_VPI_NONE) {
+                decompile_operand(text, prefix, 15, depth);
+                text_put(text, ".");
+            }
+            if (name) text_put(text, name);
+            text_put(text, "(");
+            decompile_list(text, node, vpiArgument, 0, depth);
+            text_put(text, ")");
+            uint32_t with = code_child(node, vpiWith);
+            if (with != LLG_VPI_NONE) {
+                text_put(text, " with (");
+                decompile(text, with, depth);
+                text_put(text, ")");
+            }
+            return;
+        }
         default:
             if (node->flags & LLG_VPI_CODE_OPAQUE && name && !code_is_statement(node->type)) {
                 /* A reference to an object outside the catalog. */
@@ -5288,6 +5331,11 @@ static PLI_INT32 code_property(uint32_t index, int property) {
             if (type != vpiFor) break;
             return (node->flags & LLG_VPI_CODE_LOCALS) != 0;
         case vpiUserDefn:
+            /* Annex K: a user-defined system task or function; a task,
+             * function or method call is none (decision A19-D32). */
+            if (type == vpiFuncCall || type == vpiTaskCall || type == vpiMethodFuncCall ||
+                type == vpiMethodTaskCall)
+                return 0;
             if (type != vpiSysFuncCall && type != vpiSysTaskCall) break;
             return (node->flags & LLG_VPI_CODE_USER) != 0;
         case vpiDirection:
@@ -5362,7 +5410,8 @@ static PLI_BYTE8* code_string(uint32_t index, int property) {
         case vpiFile:
             return node->file ? (PLI_BYTE8*)g_vpi.code->files[node->file - 1u] : NULL;
         case vpiDecompile:
-            if (code_is_expression(node) || type == vpiSysTaskCall || type == vpiTaskCall)
+            if (code_is_expression(node) || type == vpiSysTaskCall || type == vpiTaskCall ||
+                type == vpiMethodTaskCall)
                 return (PLI_BYTE8*)code_decompile(index);
             break;
         default:
@@ -5500,6 +5549,22 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
             }
             break;
         case vpiTypespec: {
+            if ((slot->kind == SLOT_SELECT && slot->span == 1) || slot->kind == SLOT_PORTBIT) {
+                /* 37.55 detail 5: a bit of a packed value has the scalar
+                 * typespec at the end of the element chain of its vector;
+                 * a port bit (37.14) that of its port. */
+                const llg_vpi_typespec_t* typespec =
+                    slot->kind == SLOT_PORTBIT || slot->element == LLG_VPI_NO_ELEMENT
+                                                          ? typespec_ref(object->typespec)
+                                                          : element_typespec(object);
+                for (uint32_t guard = 0; typespec && typespec->element && guard < 64u; ++guard)
+                    typespec = typespec_ref(typespec->element);
+                if (typespec && typespec->range_count == 0u &&
+                    (typespec->type == vpiLogicTypespec || typespec->type == vpiBitTypespec))
+                    return typespec_handle(typespec);
+                vpi_error("LLG_VPI_UNSUPPORTED", "llg exposes no typespec for the type of this object");
+                return NULL;
+            }
             if (slot->kind != SLOT_OBJECT && slot->kind != SLOT_ELEMENT &&
                 slot->kind != SLOT_MEMBER && slot->kind != SLOT_TSMEMBER)
                 break;
@@ -5671,6 +5736,20 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
         case vpiExpr:
             if (slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_TERM)
                 return conn_handle(slot->object, (uint32_t)slot->aux);
+            /* 37.17 detail 8, 37.26 detail 3: the initialization expression
+             * of a variable, the default expression of a value parameter
+             * (decision A19-D32); NULL without one. */
+            if (slot->kind == SLOT_OBJECT && object &&
+                (is_variable_type(object->type) || object->type == vpiRegArray ||
+                 object->type == vpiParameter || (object->flags & LLG_VPI_OBJ_DYNAMIC))) {
+                if (!g_vpi.code) {
+                    vpi_error("LLG_VPI_UNSUPPORTED",
+                              "expressions are objects only in models generated with --vpi or "
+                              "--dpi-lib");
+                    return NULL;
+                }
+                return object->code ? code_handle(object->code - 1u) : NULL;
+            }
             break;
         case vpiCondition:
             /* 37.35, 37.36: the condition of a state-dependent path or of a
@@ -7091,10 +7170,13 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
                     if (object->file) return (PLI_BYTE8*)object->file;
                     break;
                 case vpiDecompile:
-                    /* 37.55: nets, variables and parameters are simple
-                     * expressions; each decompiles to its name. */
+                    /* 37.55: nets, variables (arrays, strings, chandles and
+                     * class variables included) and parameters are simple
+                     * expressions; each decompiles to its name (decision
+                     * A19-D32). */
                     if (is_variable_type(object->type) || object->type == vpiNet ||
-                        object->type == vpiParameter)
+                        object->type == vpiParameter || is_array_type(object->type) ||
+                        (object->flags & LLG_VPI_OBJ_DYNAMIC))
                         return (PLI_BYTE8*)object->name;
                     break;
                 default:
@@ -7116,7 +7198,10 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
              * names the connected instance or modport. */
             const llg_vpi_model_object_t* actual = object->target;
             if (!actual) break;
-            if (property == vpiName) return (PLI_BYTE8*)(slot->aux ? actual->name : object->name);
+            /* A reference object is a simple expression: it decompiles
+             * to its name (37.55, decision A19-D32). */
+            if (property == vpiName || property == vpiDecompile)
+                return (PLI_BYTE8*)(slot->aux ? actual->name : object->name);
             if (property == vpiFullName)
                 return (PLI_BYTE8*)(slot->aux ? actual->full_name : object->full_name);
             if (property == vpiDefName) {

@@ -39,7 +39,7 @@ vpiInitial - line=25
     stmt vpiAssignment line=44 file=statements.sv blocking=1 op=82 lhs="a" rhs="b" control=vpiRepeatControl count="2" event="posedge clk"
     stmt vpiDoWhile line=45 file=statements.sv cond="k < 3"
       stmt vpiAssignment line=45 file=statements.sv blocking=1 op=24 lhs="k" rhs="1"
-    stmt vpiForeachStmt line=46 file=statements.sv name=unnamed$$_1 array=vpiRegArray:tb.arr loop_var=vpiIntVar:j
+    stmt vpiForeachStmt line=46 file=statements.sv name=unnamed$$_1 array="arr" loop_var=vpiIntVar:j
       stmt vpiAssignment line=46 file=statements.sv blocking=1 op=82 lhs="arr[j]" rhs="j"
     stmt vpiForever line=47 file=statements.sv
       stmt vpiBegin line=47 file=statements.sv

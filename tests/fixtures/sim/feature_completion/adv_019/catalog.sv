@@ -85,6 +85,9 @@ module tb;
     function new(int i);
       id = i;
     endfunction
+    function int get();
+      return id;
+    endfunction
   endclass
 
   parameter int P = 5;
@@ -113,6 +116,7 @@ module tb;
   Packet p;
   int da[];
   int q[$];
+  int qs;
   int aa[int];
   event ev;
   wire [3:0] w;
@@ -231,6 +235,9 @@ module tb;
     p = new(7);
     da = new[2];
     q.push_back(1);
+    // Method calls (37.38): a built-in method with a with clause and a
+    // class method.
+    qs = q.sum() with (item * 2) + p.get();
     aa[3] = 4;
     rec.a = 1;
     mem[1] = 4'h2;

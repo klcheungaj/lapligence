@@ -269,6 +269,17 @@ impl Validator<'_> {
             self.node(*init, &format!("vars_init[{}]", variable.0))?;
         }
 
+        for (parameter, init) in self.db.param_initializers() {
+            let node = self.node(*parameter, &format!("param_inits[{}]", parameter.0))?;
+            if !matches!(node.kind, NodeKind::Param { .. }) {
+                return self.fail(
+                    format!("param_inits[{}]", parameter.0),
+                    "initializer key is not a parameter node",
+                );
+            }
+            self.node(*init, &format!("param_inits[{}]", parameter.0))?;
+        }
+
         for (group, info) in self.db.covergroups() {
             let path = format!("covergroups[{}]", group.0);
             self.node(*group, &path)?;

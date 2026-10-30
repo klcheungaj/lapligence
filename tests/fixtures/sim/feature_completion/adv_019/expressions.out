@@ -64,7 +64,7 @@ assign e_neg line=30
 assign e_mem line=31
   rhs vpiPartSelect name=mem[i][3:0] size=4 constant_select=0 dec="mem[i][3:0]" value=0011
     parent vpiVarSelect name=mem[i] size=8 constant_select=0 dec="mem[i]" value=00110011
-      parent vpiRegArray name=mem size=4 dec="(null)" value=error
+      parent vpiRegArray name=mem size=4 dec="mem" value=error
       index vpiIntVar name=i size=32 dec="i" value=00000000000000000000000000000010
     left vpiConstant const=1 size=32 dec="3" value=00000000000000000000000000000011
     right vpiConstant const=1 size=32 dec="0" value=00000000000000000000000000000000

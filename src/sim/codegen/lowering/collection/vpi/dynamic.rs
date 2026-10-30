@@ -77,6 +77,18 @@ impl Codegen<'_> {
                 self.vpi_container_shape(dynamic, typespecs, descriptor, container, 0)?
             }
         };
+        // A string or chandle variable is a simple expression, which
+        // always has a typespec (37.55 detail 5, decision A19-D32).
+        let typespec = match shape {
+            IrVpiShape::String => {
+                self.vpi_typespec(typespecs, descriptor, self.db.declared_typedef(id), 0)
+            }
+            IrVpiShape::Chandle => Some(typespecs.intern(IrVpiTypespec {
+                kind: IrVpiTypespecKind::Chandle,
+                ..IrVpiTypespec::default()
+            })),
+            _ => None,
+        };
         let shape = dynamic.intern(shape);
         Some(IrVpiObject {
             full_name: self.vpi_full_name(id),
@@ -84,6 +96,7 @@ impl Codegen<'_> {
             kind: IrVpiObjectKind::Dynamic,
             storage: Some(storage),
             shape: Some(shape),
+            typespec,
             ..IrVpiObject::default()
         })
     }
