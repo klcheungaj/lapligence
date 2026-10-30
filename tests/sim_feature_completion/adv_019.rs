@@ -9,7 +9,8 @@
 //! queue and associative arrays, with creation and reclamation callbacks
 //! (37.3.7, 37.17, 37.27-37.29, 38.36.1). All link as static archives with
 //! `--dpi-lib`, so they run on every host. Expected outputs are derived by
-//! hand in the fixture readme.
+//! hand in the fixture readme. The catalog walk (A03) checks every answer of
+//! every object it reaches against `src/sim/rt/vpi_catalog.txt`.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::sim_cli;
@@ -227,7 +228,7 @@ fn parse_walk(stdout: &str, label: &str) -> Walk {
 /// be a row the catalog marks implemented or extension for that object's
 /// type; each such row the catalog gives to this walk must be answered;
 /// every other query is a wrong-object query and must fail with an error
-/// (vpiUndefined or NULL, 38.6; decision A19-D25).
+/// (vpiUndefined or NULL, 38.6; decision A19-D26).
 #[test]
 fn catalog_walk_matches_the_vpi_catalog() {
     let catalog = vpi_catalog::Catalog::load();
@@ -257,7 +258,7 @@ fn catalog_walk_matches_the_vpi_catalog() {
     ];
     for optimized in [true, false] {
         let label = format!("catalog walk, optimized={optimized}");
-        let output = sim_cli::invoke_with_source_prefix(SUITE, "catalog", &[], optimized, &args);
+        let (_run, output) = sim_cli::run_case_keeping_dir(SUITE, "catalog", optimized, &args, &[]);
         assert!(
             output.status.success(),
             "{label}: {}",

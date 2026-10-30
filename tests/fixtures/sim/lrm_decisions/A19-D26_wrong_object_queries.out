@@ -1,0 +1,15 @@
+net vpiSize value=1 level=0
+array vpiArray value=1 level=0
+net vpiValid value=-1 level=3
+module vpiNetType value=-1 level=3
+net vpiDefFile NULL level=3
+module vpiCondition NULL level=3
+net vpiOperand NULL level=3
+net vpiNet iteration NULL level=3
+array vpiNet iteration NULL level=3
+named begin vpiStmt handle NULL level=3
+module vpiTchk iteration NULL level=0
+named begin vpiStmt iteration handle level=0
+immediate assert vpiIsDeferred value=0 level=0
+for vpiForInitStmt handle level=0
+for vpiOperand NULL level=3

@@ -17,8 +17,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#define PER_TYPE 40
-#define QUEUE 4096
+#define PER_TYPE 1000
+#define QUEUE 16384
 #define TYPES 1024
 
 typedef struct {
@@ -198,6 +198,7 @@ static const probe_t relation_probes[] = {
     {"vpiForIncStmt", vpiForIncStmt},
     {"vpiForInitStmt", vpiForInitStmt},
     {"vpiFrame", vpiFrame},
+    {"vpiFsm", vpiFsm},
     {"vpiFsmStateExpression", vpiFsmStateExpression},
     {"vpiFsmStates", vpiFsmStates},
     {"vpiFunction", vpiFunction},

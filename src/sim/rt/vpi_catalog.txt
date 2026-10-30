@@ -26,10 +26,11 @@
 #                                   error (vpiUndefined, NULL)
 #       n/a <reason>                not applicable to what llg supports
 # The walk treats every query that no row of the object's type lists as a
-# wrong-object query, which must fail with a vpiError error (decision A19-D25).
+# wrong-object query, which must fail with a vpiError error (decision A19-D26).
 # vpiType (get, str), vpiLineNo and vpiFile (37.3.2, 37.3.3) apply to every
 # object and are not listed.
 
+test a17d13 sim_lrm_decisions::a17_d13_fsm_objects
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
@@ -232,9 +233,10 @@ node instance 37.10 members=package,interface,program,module
   iterate vpiTypedef unsupported the vpiTypedef iteration is not implemented
   iterate vpiClassDefn unsupported class definitions are reached from class variables and objects only
   get vpiAssertCoverage implemented walk
-  get vpiFsmStateCoverage unsupported adv-017c pending
+  get vpiFsmStateCoverage implemented walk
   get vpiStatementCoverage unsupported statement coverage is unsupported
   get vpiToggleCoverage unsupported toggle coverage is unsupported
+  iterate vpiFsm implemented walk
 
 node instance_item 37.10 members=program,program_array,task_func,nets,array_net,variables,named_event,named_event_array,parameters,spec_param,assertion,typespec,class_defn
   handle vpiInstance implemented walk
@@ -539,8 +541,8 @@ node array_net 37.16 type=vpiNetArray
   func vpi_get_value unsupported this object has no value in llg
   get vpiStructUnionMember unsupported vpiStructUnionMember of this object is not implemented
   str vpiDecompile unsupported this object does not decompile in llg
-  get vpiArrayType extension walk llg extension
-  get vpiIsMemory extension walk llg extension
+  get vpiArrayType extension walk the array properties of array variables (37.17) applied to net arrays
+  get vpiIsMemory extension walk the array properties of array variables (37.17) applied to net arrays
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiScope extension walk the enclosing scope, instance, module or parent
@@ -567,7 +569,7 @@ node integer_net 37.16 type=vpiIntegerNet default=unsupported nets of integer an
 node time_net 37.16 type=vpiTimeNet default=unsupported nets of integer and time type report vpiNet
 
 node logic_net 37.16 type=vpiNet
-  get vpiPacked extension walk llg extension
+  get vpiPacked extension walk whether the net's data type is packed
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node packed_array_net 37.16 type=vpiPackedArrayNet default=unsupported nets of structure, enum and packed array type report vpiNet
@@ -1463,15 +1465,18 @@ node concurrent_assertion 37.46 members=cover,assert,assume,restrict
 node cover 37.46 type=vpiCover
   get vpiIsCoverSequence implemented walk
   handle vpiInstance unsupported this object does not report its instance
+  get vpiIsDeferred extension walk 0 on a concurrent assertion (37.51 gives the property to immediate assertions)
   handle vpiDisableCondition extension walk the relations of the assertion statement (IEEE 1800-2005)
 
 node assert 37.46 type=vpiAssert
   handle vpiElseStmt implemented walk
   handle vpiInstance unsupported this object does not report its instance
+  get vpiIsDeferred extension walk 0 on a concurrent assertion (37.51 gives the property to immediate assertions)
   handle vpiDisableCondition extension walk the relations of the assertion statement (IEEE 1800-2005)
 
 node assume 37.46 type=vpiAssume
   handle vpiInstance unsupported this object does not report its instance
+  get vpiIsDeferred extension walk 0 on a concurrent assertion (37.51 gives the property to immediate assertions)
   handle vpiDisableCondition extension walk the relations of the assertion statement (IEEE 1800-2005)
   handle vpiElseStmt extension walk the relations of the assertion statement (IEEE 1800-2005)
 
@@ -1522,12 +1527,15 @@ node property_inst 37.45 type=vpiPropertyInst
 
 node immediate_assert 37.45 type=vpiImmediateAssert
   handle vpiInstance unsupported this object does not report its instance
+  str vpiFullName extension walk the full name of a labeled immediate assertion (37.46 gives vpiFullName to concurrent assertions)
 
 node immediate_assume 37.45 type=vpiImmediateAssume
   handle vpiInstance unsupported this object does not report its instance
+  str vpiFullName extension walk the full name of a labeled immediate assertion (37.46 gives vpiFullName to concurrent assertions)
 
 node immediate_cover 37.45 type=vpiImmediateCover
   handle vpiInstance unsupported this object does not report its instance
+  str vpiFullName extension walk the full name of a labeled immediate assertion (37.46 gives vpiFullName to concurrent assertions)
 
 node property_decl 37.47 type=vpiPropertyDecl
   str vpiName implemented walk
@@ -1641,7 +1649,7 @@ node part_select 37.55 type=vpiPartSelect
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
   handle vpiTypespec unsupported this object has no typespec in llg
-  get vpiArrayMember extension walk llg extension
+  get vpiArrayMember extension walk 0: a select is not an array element
   get vpiScalar extension walk the sign and width of the object's value
   get vpiSigned extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
@@ -1667,6 +1675,8 @@ node constant 37.55 type=vpiConstant
   get vpiScalar extension walk the sign and width of the object's value
   get vpiSigned extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node atomic_stmt 37.56 members=if,if_else,while,repeat,wait,ordered_wait,wait_fork,case,for,delay_control,event_control,event_stmt,assignment,assign_stmt,deassign,disable,disable_fork,tf_call,forever,force,release,do_while,expect_stmt,foreach_stmt,return_stmt,break,continue,immediate_assert,immediate_assume,immediate_cover,null_stmt
@@ -1951,9 +1961,28 @@ node gen_scope 37.80 type=vpiGenScope
   iterate vpiUdpArray extension walk per-type child iteration (IEEE 1364)
   iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
 
-node fsm 40.5.4 type=vpiFsm default=unsupported adv-017c pending
-  handle vpiFsmStateExpression
-  iterate vpiFsmStates
+node fsm 40.5.3 type=vpiFsm
+  get vpiCovered implemented walk
+  get vpiCoverMax implemented walk
+  get vpiCoveredCount implemented walk
+  handle vpiFsmStateExpression implemented walk
+  iterate vpiFsmStates implemented walk
+  func vpi_control error a17d13 FSM coverage is controlled per instance only (40.5.4)
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  str vpiDefName extension walk the name, definition and FSM of an FSM or state (decision A17-D13)
+  str vpiFullName extension walk the name, definition and FSM of an FSM or state (decision A17-D13)
+  str vpiName extension walk the name, definition and FSM of an FSM or state (decision A17-D13)
+
+node fsm_state 40.5.3 type=vpiFsmHandle
+  get vpiCovered implemented walk
+  get vpiCoverMax implemented walk
+  get vpiCoveredCount implemented walk
+  func vpi_get_value implemented walk
+  func vpi_control error a17d13 FSM coverage is controlled per instance only (40.5.4)
+  get vpiSize extension walk the sign and width of the object's value
+  handle vpiFsm extension walk the name, definition and FSM of an FSM or state (decision A17-D13)
+  str vpiName extension walk the name, definition and FSM of an FSM or state (decision A17-D13)
 
 # 38.34: the event vpi_put_value returns with vpiReturnEvent.
 node sched_event 38.34 type=vpiSchedEvent

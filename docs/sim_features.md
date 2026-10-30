@@ -2546,8 +2546,12 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   without being linked, or a user system task that was never registered (the
   frontend already rejects an unknown `$name`). Use VPI (`vlog_startup_routines`)
   or DPI-C instead. V ch.20–23, Annex E–F.
-- 🟨 **PLI/VPI bridge** — A generated object catalog and the common VPI
-  routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
+- 🟨 **PLI/VPI bridge** — The object types, properties, relations and
+  iterations served per object are listed in
+  [`src/sim/rt/vpi_catalog.txt`](../src/sim/rt/vpi_catalog.txt), the single
+  source of truth for the VPI object model; a query it does not list fails
+  with a `vpi_chk_error` error (ADV-019 A03, decision A19-D26). A generated
+  object catalog and the common VPI routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
   relative to a scope, and constant element/bit/part selects in the name),
   `vpi_handle_by_index`/`_multi_index`, `vpi_handle` (`vpiParent`, `vpiScope`,
   `vpiModule`, `vpiLeftRange`/`vpiRightRange`, `vpiIndex`, `vpiLowConn`,

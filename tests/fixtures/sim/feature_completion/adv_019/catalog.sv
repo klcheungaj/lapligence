@@ -38,6 +38,14 @@ module dut (input a, input clk, input d, output y);
   endspecify
 endmodule
 
+// An FSM (40.5.3) through the state-vector pragma of decision A17-D11.
+module fsm_unit (input logic clk);
+  // tool state_vector st enum ST
+  logic [1:0] st = 2'd0;
+  parameter [1:0] /* tool enum ST */ IDLE = 0, BUSY = 1;
+  always @(posedge clk) st <= st == IDLE ? BUSY : IDLE;
+endmodule
+
 module tb;
   typedef enum bit [1:0] {red, green, blue} color_t;
   typedef struct packed { logic [3:0] hi; bit [3:0] lo; } pk_t;
@@ -92,6 +100,7 @@ module tb;
   leaf single (.a(r0), .y(lw));
   sink sk (.b(bi));
   dut dt (.a(a_in), .clk(clk), .d(d_in), .y(y));
+  fsm_unit fu (.clk(clk));
   and g1 (g_out, r0[0], r0[1]);
   udp_and ud (u_out, r0[2], r0[3]);
   nand ng [1:0] (na, r0[1:0], r0[3:2]);

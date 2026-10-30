@@ -86,6 +86,15 @@ never changes scheduler time. Integer queries use quotient/remainder, halves up;
 realtime is fractional. The runtime consumes integer design-precision ticks;
 codegen owns scaling.
 
+The VPI object model the runtime serves (every object type with its
+properties, relations and iterations, and the status of each) is recorded in
+[vpi_catalog.txt](vpi_catalog.txt), which `tests/runtime_vpi_catalog.rs`
+keeps in step with the dispatch of `llg_vpi.c` and `llg_vpi_dynamic.c` and the
+ADV-019 catalog walk checks against a run. A dispatch case added for a
+property, relation or iteration needs its catalog row; a query outside the
+catalog fails with an error (decision A19-D26). `tests/fixtures/runtime/vpi_annex_kml.tsv`
+holds the Annex K, L and M listings the headers are checked against.
+
 VPI handle encoding and lazy catalog indexing: `llg_vpi.c` header and catalog
 comments; keep model init O(1). Slots made inside a compiletf/calltf (argument handles and
 iterators, element/select arguments) are owned by that invocation and released

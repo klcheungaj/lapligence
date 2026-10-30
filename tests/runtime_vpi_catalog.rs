@@ -470,7 +470,10 @@ enum Match {
 /// The dispatch of each row kind: the functions of `llg_vpi.c` and
 /// `llg_vpi_dynamic.c` that decide which properties, relations and
 /// iterations an object answers, and the variable holding the query.
-const DISPATCH: &[(&str, &[(&str, Match, &str)])] = &[
+/// One dispatch rule: a function, how it names values, and its query variable.
+type Rule = (&'static str, Match, &'static str);
+
+const DISPATCH: &[(&str, &[Rule])] = &[
     (
         "get",
         &[
@@ -483,6 +486,7 @@ const DISPATCH: &[(&str, &[(&str, Match, &str)])] = &[
             ("dyn_get", Match::Switch, "property"),
             ("dyn_get", Match::Compare, "property"),
             ("is_coverage_type_property", Match::Compare, "property"),
+            ("fsm_property", Match::Switch, "property"),
         ],
     ),
     (
@@ -507,6 +511,7 @@ const DISPATCH: &[(&str, &[(&str, Match, &str)])] = &[
             ("code_relation_applies", Match::Compare, "relation"),
             ("code_relation", Match::Compare, "type"),
             ("dyn_handle", Match::Compare, "type"),
+            ("fsm_relation", Match::Compare, "type"),
         ],
     ),
     (
@@ -580,7 +585,16 @@ fn vpi_name_after(text: &str) -> Option<&str> {
     name.starts_with("vpi").then_some(name)
 }
 
-fn dispatch_names(body: &str, how: &Match, var: &str, out: &mut BTreeSet<String>) {
+/// The names `body` compares `var` with or switches on into `out`, and each
+/// `var >= lo ... var <= hi` range into `ranges`.
+fn dispatch_names(
+    body: &str,
+    how: &Match,
+    var: &str,
+    out: &mut BTreeSet<String>,
+    ranges: &mut Vec<(String, String)>,
+) {
+    let mut low: Option<String> = None;
     let mut from = 0;
     while let Some(found) = body[from..].find(var) {
         let at = from + found;
@@ -599,6 +613,15 @@ fn dispatch_names(body: &str, how: &Match, var: &str, out: &mut BTreeSet<String>
                 for op in ["==", "!=", ">=", "<="] {
                     if let Some(name) = rest.strip_prefix(op).and_then(vpi_name_after) {
                         out.insert(name.to_owned());
+                        match op {
+                            ">=" => low = Some(name.to_owned()),
+                            "<=" => {
+                                if let Some(lo) = low.take() {
+                                    ranges.push((lo, name.to_owned()));
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -635,8 +658,10 @@ fn dispatch_names(body: &str, how: &Match, var: &str, out: &mut BTreeSet<String>
     }
 }
 
-/// The names each row kind's dispatch handles.
-fn runtime_dispatch() -> BTreeMap<&'static str, BTreeSet<String>> {
+/// The names each row kind's dispatch handles, and its `>=`/`<=` ranges.
+type Dispatch = BTreeMap<&'static str, (BTreeSet<String>, Vec<(String, String)>)>;
+
+fn runtime_dispatch() -> Dispatch {
     let source = strip_c_comments(&format!(
         "{}\n{}",
         read_source("src/sim/rt/llg_vpi.c"),
@@ -646,10 +671,12 @@ fn runtime_dispatch() -> BTreeMap<&'static str, BTreeSet<String>> {
         .iter()
         .map(|(kind, rules)| {
             let mut names = BTreeSet::new();
+            let mut ranges = Vec::new();
             for (function, how, var) in rules.iter() {
-                dispatch_names(function_body(&source, function), how, var, &mut names);
+                let body = function_body(&source, function);
+                dispatch_names(body, how, var, &mut names, &mut ranges);
             }
-            (*kind, names)
+            (*kind, (names, ranges))
         })
         .collect()
 }
@@ -660,7 +687,7 @@ fn catalog_lists_every_case_of_the_runtime_dispatch() {
     let values = header_values();
     let dispatch = runtime_dispatch();
     let mut errors = Vec::new();
-    for (kind, names) in &dispatch {
+    for (kind, (names, ranges)) in &dispatch {
         assert!(
             names.len() >= 5,
             "{kind}: dispatch extraction found only {names:?}"
@@ -697,6 +724,10 @@ fn catalog_lists_every_case_of_the_runtime_dispatch() {
                     }
                 }
             }
+        }
+        for (lo, hi) in ranges {
+            let (lo, hi) = (values[lo], values[hi]);
+            handled.extend(listed.iter().filter(|v| (lo..=hi).contains(*v)));
         }
         for (value, line) in answered {
             if !handled.contains(&value) {
@@ -745,7 +776,7 @@ fn catalog_walker_probes_every_catalog_and_dispatch_name() {
     ] {
         let mut expected: BTreeSet<String> = BTreeSet::new();
         for kind in kinds {
-            expected.extend(dispatch[kind].iter().cloned());
+            expected.extend(dispatch[kind].0.iter().cloned());
             for node in &catalog.nodes {
                 expected.extend(
                     node.rows

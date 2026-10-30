@@ -3176,10 +3176,6 @@ static int assertion_type(const llg_acov_item_t* item) {
     }
 }
 
-static int is_immediate_assertion(int type) {
-    return type == vpiImmediateAssert || type == vpiImmediateAssume || type == vpiImmediateCover;
-}
-
 static vpiHandle assertion_handle(size_t item) {
     uint32_t index = alloc_slot(SLOT_ASSERTION);
     if (index == LLG_VPI_NONE) return NULL;
@@ -3358,11 +3354,7 @@ static int assertion_property(const llg_vpi_slot_t* slot, int property, uint64_t
     const llg_acov_item_t* item = slot_item(slot);
     if (!item) return 0;
     switch (property) {
-        case vpiIsDeferred:
-            /* 37.51: a property of immediate assertions only. */
-            if (!is_immediate_assertion(assertion_type(item))) return 0;
-            *value = item->form == LLG_ACOV_DEFERRED;
-            return 1;
+        case vpiIsDeferred: *value = item->form == LLG_ACOV_DEFERRED; return 1;
         /* The statement's source position (39.3.2). */
         case vpiLineNo:
         case vpiStartLine:
@@ -6653,8 +6645,7 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
             if (!item) break;
             /* An unnamed assertion has no name (39.3.1). */
             if (property == vpiName) return item->name[0] ? (PLI_BYTE8*)item->name : NULL;
-            /* 37.45, 37.46: only concurrent assertions have a full name. */
-            if (property == vpiFullName && !is_immediate_assertion(assertion_type(item)))
+            if (property == vpiFullName)
                 return item->full_name[0] ? (PLI_BYTE8*)item->full_name : NULL;
             if (property == vpiDefName) {
                 const llg_acov_instance_t* owner = llg_acov_instance_at((size_t)item->instance);

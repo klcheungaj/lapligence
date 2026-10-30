@@ -2294,6 +2294,15 @@ fn a19_d25_string_int_put() {
 }
 
 #[test]
+fn a19_d26_wrong_object_queries() {
+    run_vpi_decision(
+        "A19-D26_wrong_object_queries",
+        &["task $d26()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D26_wrong_object_queries.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

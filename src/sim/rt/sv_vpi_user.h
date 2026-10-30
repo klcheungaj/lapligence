@@ -417,11 +417,6 @@
 #define cbEnterThread 602
 #define cbStartOfFrame 603
 #define cbEndOfFrame 604
-/* FSM relations and object types (Annex M, 40.5) */
-#define vpiFsmStates 775
-#define vpiFsmStateExpression 776
-#define vpiFsm 758
-#define vpiFsmHandle 759
 
 typedef struct t_vpi_assertion_step_info {
     PLI_INT32 matched_expression_count;

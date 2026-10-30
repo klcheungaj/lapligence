@@ -38,3 +38,9 @@ helpers return declarations, alias groups and end-of-step traces.
 
 `c_compiler.rs` identifies real GNU GCC (macOS `gcc` is Apple Clang) so GCC-only
 diagnostics are requested only from GCC.
+
+`vpi_catalog.rs` reads the VPI object model catalog
+(`src/sim/rt/vpi_catalog.txt`), resolves the rows an object type has through
+the classes that contain it, and evaluates the constants of the runtime VPI
+headers. The catalog gate (`runtime_vpi_catalog`) and the ADV-019 catalog
+walk share it.
