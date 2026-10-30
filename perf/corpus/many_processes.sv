@@ -12,8 +12,11 @@ module many_processes_registers #(
 );
     logic clk = 0;
     wire [N-1:0] d;
-    integer ones = 0;
-    integer d_ones = 0;
+    // Each worker records its register and input at the last edge with
+    // nonblocking writes only, so the processes stay lint-clean (no mixed
+    // blocking and nonblocking assignments); the summary counts them.
+    logic [N-1:0] q_seen = '0;
+    logic [N-1:0] d_seen = '0;
     integer edge_index;
 
     genvar i;
@@ -23,8 +26,8 @@ module many_processes_registers #(
             static logic q;
             q <= d[i];
             if (edge_index == EDGES - 1) begin
-                ones = ones + (q === 1'b1);
-                d_ones = d_ones + (d[i] === 1'b1);
+                q_seen[i] <= q === 1'b1;
+                d_seen[i] <= d[i] === 1'b1;
             end
         end
     end
@@ -36,7 +39,7 @@ module many_processes_registers #(
         end
         #1;
         $display("many_processes variant=registers n=%0d edges=%0d ones=%0d d_ones=%0d",
-                 N, EDGES, ones, d_ones);
+                 N, EDGES, $countones(q_seen), $countones(d_seen));
         $finish(0);
     end
 endmodule
