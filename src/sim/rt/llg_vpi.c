@@ -1703,7 +1703,7 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
     }
     /* Row-major element number: the last dimension varies fastest. */
     for (uint32_t d = dims; d-- > 0;) {
-        int64_t left, right;
+        int64_t left = 0, right = 0;
         array_dim(object, d, &left, &right);
         uint64_t extent = (uint64_t)(left >= right ? left - right : right - left) + 1u;
         uint64_t offset = rest % extent;
