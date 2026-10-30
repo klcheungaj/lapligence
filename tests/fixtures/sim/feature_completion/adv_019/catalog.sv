@@ -178,6 +178,14 @@ module tb;
     rec.a = 1;
     mem[1] = 4'h2;
     assert (iv == 1);
+    begin
+      static int ub = 0;
+      ub = ub + iv;
+    end
+    fork
+      static int fb = 0;
+      fb = fb + 1;
+    join
     if (iv > 0) iv = inc(iv);
     #1 $catalog;
     $display("%s %0d %0d %0d %0d %0d %0d", s, ch == null, rec.a, da.size(), q.size(),

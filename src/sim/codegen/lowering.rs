@@ -1676,6 +1676,9 @@ struct Codegen<'a> {
     /// which a model generated for VPI applications builds their expression
     /// objects (IEEE 1800-2009 37.38).
     vpi_call_args: Vec<Vec<NodeId>>,
+    /// The statement blocks that are VPI scopes and the generated names of
+    /// the unnamed ones (IEEE 1800-2009 37.12), built on first use.
+    vpi_scopes: std::cell::OnceCell<collection::VpiScopeIndex>,
     /// Automatic named events declared in subroutine bodies: the binding
     /// name of their activation-owned handle (`IrStmt::EventDeclare`).
     local_event_handles: HashMap<NodeId, String>,
@@ -2135,6 +2138,7 @@ impl<'a> Codegen<'a> {
             events: Vec::new(),
             event_globals: HashMap::new(),
             vpi_call_args: Vec::new(),
+            vpi_scopes: std::cell::OnceCell::new(),
             local_event_handles: HashMap::new(),
             fork_sets: None,
             shared_locals: HashSet::new(),
