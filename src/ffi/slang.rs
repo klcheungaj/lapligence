@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 63;
+const ABI_VERSION: u32 = 64;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -883,6 +883,10 @@ pub(crate) const CONSTRAINT_BLOCK_EXPLICIT_EXTERN: u64 = 1 << 3;
 pub(crate) const CONSTRAINT_BLOCK_INITIAL: u64 = 1 << 4;
 pub(crate) const CONSTRAINT_BLOCK_EXTENDS: u64 = 1 << 5;
 pub(crate) const CONSTRAINT_BLOCK_FINAL: u64 = 1 << 6;
+pub(crate) const NET_VECTORED: u64 = 1 << 0;
+pub(crate) const NET_SCALARED: u64 = 1 << 1;
+pub(crate) const PORT_EXPLICIT_NAME: u64 = 1 << 0;
+pub(crate) const PORT_CONNECTED_BY_NAME: u64 = 1 << 1;
 pub(crate) const SUBROUTINE_STATIC: u64 = 1 << 0;
 /// DPI-C import metadata copied from Slang's method flags and syntax.
 pub(crate) const SUBROUTINE_DPI_IMPORT: u64 = 1 << 8;

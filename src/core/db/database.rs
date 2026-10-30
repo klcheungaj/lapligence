@@ -222,6 +222,21 @@ pub struct InstanceDefinition {
 /// significant one, which belongs to the right-hand indices of the array
 /// range (IEEE 1800-2009 28.3.6). Multidimensional arrays are flattened with
 /// the rightmost dimension varying fastest.
+/// Declaration keywords and port naming the VPI object model reports
+/// (IEEE 1800-2009 37.14 vpiExplicitName and vpiConnByName, 37.16
+/// vpiExplicitVectored and vpiExplicitScalared).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DeclarationQualifiers {
+    /// A net declared `vectored`.
+    pub vectored: bool,
+    /// A net declared `scalared`.
+    pub scalared: bool,
+    /// A port declared as `.name(expression)`.
+    pub explicit_port_name: bool,
+    /// A port the instance connects by name (`.name(...)`, `.name`, `.*`).
+    pub connected_by_name: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PrimitiveArrayPosition {
     pub slice: u32,
@@ -432,6 +447,8 @@ pub struct Db {
     dpi_exports: HashMap<NodeId, String>,
     /// Nets declared implicitly by Slang's semantic analysis.
     implicit_nets: HashSet<NodeId>,
+    /// Nets and ports with a [`DeclarationQualifiers`] fact.
+    declaration_qualifiers: HashMap<NodeId, DeclarationQualifiers>,
     /// Context conversions inserted by Slang rather than written as casts.
     implicit_conversions: HashSet<NodeId>,
     /// Exact admitted source buffers keyed by their frontend file name.
@@ -520,6 +537,7 @@ impl Db {
             dpi_imports: HashMap::new(),
             dpi_exports: HashMap::new(),
             implicit_nets: HashSet::new(),
+            declaration_qualifiers: HashMap::new(),
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
             elaborated_type_ranges: Vec::new(),
@@ -616,6 +634,7 @@ impl Db {
             dpi_imports: HashMap::new(),
             dpi_exports: HashMap::new(),
             implicit_nets: HashSet::new(),
+            declaration_qualifiers: HashMap::new(),
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
             elaborated_type_ranges: Vec::new(),
@@ -1358,6 +1377,14 @@ impl Db {
 
     pub fn is_implicit_net(&self, id: NodeId) -> bool {
         self.implicit_nets.contains(&id)
+    }
+
+    /// The declaration keywords and port naming of a net or port.
+    pub fn declaration_qualifiers(&self, id: NodeId) -> DeclarationQualifiers {
+        self.declaration_qualifiers
+            .get(&id)
+            .copied()
+            .unwrap_or_default()
     }
 
     pub fn is_implicit_conversion(&self, id: NodeId) -> bool {

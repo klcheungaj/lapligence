@@ -437,6 +437,7 @@ impl Db {
             })
             .collect();
         let mut implicit_nets = HashSet::new();
+        let mut declaration_qualifiers = HashMap::new();
         let mut implicit_conversions = HashSet::new();
         let mut var_lifetimes = HashMap::new();
         let mut var_lifetime_qualifiers = HashMap::new();
@@ -678,6 +679,25 @@ impl Db {
             }
             if semantic.kind == SemanticKind::Net && semantic.is_implicit() {
                 implicit_nets.insert(id);
+            }
+            let qualifiers = match semantic.kind {
+                SemanticKind::Net => super::DeclarationQualifiers {
+                    vectored: semantic.auxiliary & crate::ffi::slang::NET_VECTORED != 0,
+                    scalared: semantic.auxiliary & crate::ffi::slang::NET_SCALARED != 0,
+                    ..Default::default()
+                },
+                SemanticKind::Port => super::DeclarationQualifiers {
+                    explicit_port_name: semantic.auxiliary & crate::ffi::slang::PORT_EXPLICIT_NAME
+                        != 0,
+                    connected_by_name: semantic.auxiliary
+                        & crate::ffi::slang::PORT_CONNECTED_BY_NAME
+                        != 0,
+                    ..Default::default()
+                },
+                _ => super::DeclarationQualifiers::default(),
+            };
+            if qualifiers != super::DeclarationQualifiers::default() {
+                declaration_qualifiers.insert(id, qualifiers);
             }
             if semantic.is_implicit_conversion() {
                 implicit_conversions.insert(id);
@@ -1587,6 +1607,7 @@ impl Db {
             dpi_imports,
             dpi_exports,
             implicit_nets,
+            declaration_qualifiers,
             implicit_conversions,
             source_files: snapshot
                 .files

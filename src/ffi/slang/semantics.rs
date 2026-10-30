@@ -531,6 +531,15 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
         (31, super::SEMANTIC_COVERAGE_SELECT, _) => {
             (super::COVER_SELECT_CONDITION..=super::COVER_SELECT_OTHER).contains(&node.auxiliary)
         }
+        // A net's `vectored` or `scalared` keyword (one at most) and a
+        // port's explicit name and by-name connection.
+        (8, _, _) => {
+            node.auxiliary & !(super::NET_VECTORED | super::NET_SCALARED) == 0
+                && node.auxiliary != super::NET_VECTORED | super::NET_SCALARED
+        }
+        (5, _, _) => {
+            node.auxiliary & !(super::PORT_EXPLICIT_NAME | super::PORT_CONNECTED_BY_NAME) == 0
+        }
         // Bit i marks block event i as a `begin` event.
         (26, super::SEMANTIC_TIMING_BLOCK_EVENT_LIST, _) => true,
         // Statement subkind 42 covers both `wait` and `wait_order`; the
