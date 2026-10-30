@@ -134,6 +134,23 @@ typedef struct {
     uint32_t span;            /* location of an assertion object: span index + 1 */
 } llg_vpi_code_t;
 
+/* A UDP definition (IEEE 1800-2009 37.32) of a model generated for VPI
+ * applications. */
+typedef struct {
+    const char* name;
+    const char* file;
+    int line;
+    uint32_t input_count;     /* vpiSize */
+    int sequential;           /* vpiPrimType vpiSeqPrim, else vpiCombPrim */
+    int initial;              /* '0', '1' or 'x' of an initial statement, else 0 */
+    const char* const* ports; /* port names, the output first */
+    const int* directions;    /* vpiDirection of each port */
+    uint32_t port_count;
+    const char* const* entries; /* decompiled table entries (inputs[:state]:output) */
+    const int* entry_lines;
+    uint32_t entry_count;
+} llg_vpi_udp_t;
+
 typedef struct {
     const llg_vpi_code_t* nodes;
     uint32_t node_count;
@@ -145,6 +162,8 @@ typedef struct {
     uint32_t range_count;
     const uint32_t* spans;    /* (column, end line, end column) triples (37.45) */
     uint32_t span_count;
+    const llg_vpi_udp_t* udps; /* the UDP definitions the design instantiates */
+    uint32_t udp_count;
 } llg_vpi_code_tables_t;
 
 /* How a call argument is visible to applications (llg_vpi_compile_arg_t). */

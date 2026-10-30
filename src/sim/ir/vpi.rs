@@ -452,6 +452,24 @@ pub struct IrVpiConn {
     pub(in crate::sim) code: Option<u32>,
 }
 
+/// A UDP definition (IEEE 1800-2009 37.32) of a model generated for VPI
+/// applications: what `vpiUdpDefn` objects report.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrVpiUdp {
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) file: String,
+    pub(in crate::sim) line: u32,
+    pub(in crate::sim) input_count: u32,
+    pub(in crate::sim) sequential: bool,
+    /// The `initial` value character (`0`, `1` or `x`) of a sequential UDP.
+    pub(in crate::sim) initial: Option<u8>,
+    /// Port names, the output first, with `vpiInput`/`vpiOutput` names.
+    pub(in crate::sim) ports: Vec<(String, &'static str)>,
+    /// Table entries: their decompiled text (inputs, then `:state` for a
+    /// sequential UDP, then `:output`) and line.
+    pub(in crate::sim) entries: Vec<(String, u32)>,
+}
+
 /// One expression or statement object (IEEE 1800-2009 37.54-37.74) of a
 /// model generated for VPI applications. The children of an entry are the
 /// contiguous entries `first..first + count`; each child's `role` names the

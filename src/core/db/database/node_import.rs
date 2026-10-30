@@ -300,6 +300,31 @@ pub(super) fn udp_tables_from_slang(
             .map(|(file, line, col, _, _)| UdpLocation { file, line, col }),
         None => Ok(UdpLocation::default()),
     };
+    // The ports of every UDP declaration, collected in one pass: they are
+    // the declaration's primitive-port children.
+    let mut ports: HashMap<u64, Vec<(String, Direction)>> = snapshot
+        .udp_tables
+        .iter()
+        .map(|table| (table.primitive_id, Vec::new()))
+        .collect();
+    for node in &snapshot.semantic_nodes {
+        if !node.is_primitive_port() {
+            continue;
+        }
+        let Some(list) = node.parent_id().and_then(|parent| ports.get_mut(&parent)) else {
+            continue;
+        };
+        let direction = if node.is_inout() {
+            Direction::Inout
+        } else if node.is_output() {
+            Direction::Output
+        } else if node.is_input() {
+            Direction::Input
+        } else {
+            Direction::None
+        };
+        list.push((node.name.to_string(), direction));
+    }
     let mut tables = HashMap::with_capacity(snapshot.udp_tables.len());
     for table in &snapshot.udp_tables {
         let declaration = snapshot
@@ -331,6 +356,7 @@ pub(super) fn udp_tables_from_slang(
                 sequential: table.sequential,
                 initial: table.initial,
                 rows,
+                ports: ports.remove(&table.primitive_id).unwrap_or_default(),
                 location: location(declaration.range)?,
             }),
         );

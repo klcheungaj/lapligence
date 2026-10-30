@@ -1,0 +1,15 @@
+definitions 2
+defn d38_and size=2 protected=0 seq=0
+  io out dir=2 size=1
+  io a dir=1 size=1
+  io b dir=1 size=1
+  entry size=3 0?:0 30003f00/30000000 int-error=1
+  entry size=3 ?0:0 3f003000/30000000 int-error=1
+  entry size=3 11:1 31003100/31000000 int-error=1
+defn d38_ff size=2 protected=0 seq=1
+  io q dir=2 size=1
+  io d dir=1 size=1
+  io clk dir=1 size=1
+  entry size=4 ?(01):?:- 3f003031/3f002d00 int-error=1
+  entry size=4 0(10):?:0 30003130/3f003000 int-error=1
+  entry size=4 1(10):?:1 31003130/3f003100 int-error=1

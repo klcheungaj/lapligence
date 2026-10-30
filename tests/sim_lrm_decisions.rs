@@ -2375,6 +2375,24 @@ fn a19_d37_constraints() {
 }
 
 #[test]
+fn a19_d38_udp_definitions() {
+    run_vpi_decision(
+        "A19-D38_udp_definitions",
+        &["task $d38()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D38_udp_definitions.out"),
+    );
+}
+
+#[test]
+fn a19_d39_time_queue_and_callback_lists() {
+    run_vpi_decision(
+        "A19-D39_time_queue_and_callback_lists",
+        &["task $d39(input int)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D39_time_queue_and_callback_lists.out"),
+    );
+}
+
+#[test]
 fn a19_d40_static_lifetime_and_allocation() {
     run_vpi_decision(
         "A19-D40_static_lifetime_and_allocation",
@@ -2425,6 +2443,15 @@ fn a19_d42_declaration_objects() {
         "A19-D42_declaration_objects",
         &["task $d42()"],
         include_str!("fixtures/sim/lrm_decisions/A19-D42_declaration_objects.out"),
+    );
+}
+
+#[test]
+fn a19_d43_uses() {
+    run_vpi_decision(
+        "A19-D43_uses",
+        &["task $d43()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D43_uses.out"),
     );
 }
 

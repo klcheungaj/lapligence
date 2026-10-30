@@ -25,8 +25,9 @@
 pub mod gmp;
 
 /// The bounded public VPI declarations and generated-model bridge.
-/// The dynamic-object layer (`llg_vpi_dynamic.c`) follows `llg_vpi.c` in
-/// the same translation unit, whose private helpers it uses. The DPI-C bridge and `svdpi.h` routines (`llg_dpi.c`) follow the VPI
+/// The dynamic-object layer (`llg_vpi_dynamic.c`) and the runtime-structure
+/// layer (`llg_vpi_runtime.c`) follow `llg_vpi.c` in the same translation
+/// unit, whose private helpers they use. The DPI-C bridge and `svdpi.h` routines (`llg_dpi.c`) follow the VPI
 /// bridge in the same translation unit, which every model links, so user
 /// libraries always resolve them.
 pub fn vpi_sources() -> (&'static str, &'static str) {
@@ -35,6 +36,7 @@ pub fn vpi_sources() -> (&'static str, &'static str) {
         concat!(
             include_str!("llg_vpi.c"),
             include_str!("llg_vpi_dynamic.c"),
+            include_str!("llg_vpi_runtime.c"),
             include_str!("llg_dpi.c")
         ),
     )
@@ -157,6 +159,7 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
             include_str!("scheduler/free_variables.c"),
             include_str!("scheduler/monitors.c"),
             include_str!("scheduler/scheduler.c"),
+            include_str!("scheduler/vpi_support.c"),
             include_str!("scheduler/output.c"),
             include_str!("scheduler/destinations.c"),
             include_str!("coverage/coverage.c"),

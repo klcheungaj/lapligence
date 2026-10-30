@@ -2226,7 +2226,8 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - structure objects (ADV-019 family 2; their relations are in the
   catalog): elements of multidimensional primitive arrays, and `vpiIndex`
   of an element of a multidimensional instance array; `vpi_put_value` to a
-  sequential UDP;
+  sequential UDP; `vpiInitial` of a UDP definition (the initial value is
+  captured only as a character, so the initial statement has no object);
   `cbValueChange` on a continuous assignment or primitive; a delayed
   `vpi_put_value` to a named event (only `vpiNoDelay` triggers, decision
   A19-D8). A `cbValueChange` on a named event watches the synchronization
@@ -2266,8 +2267,8 @@ with no error status, as for a name that denotes nothing (S42-D11):
   object with its name and type but no value. A labeled statement appears as
   a named block holding the statement (37.56 detail 1 gives the statement
   itself the label as `vpiName`). Among expressions only casts have a
-  `vpiTypespec`, only selects a `vpiParent`; statements have no `vpiParent`
-  and `vpiUse` is not exposed. An argument that is not a whole object keeps
+  `vpiTypespec`, only selects a `vpiParent`; statements have no `vpiParent`.
+  `vpiUse` lists the enclosing statement of a procedural use (A19-D43). An argument that is not a whole object keeps
   the size and value of the formal it is passed to (a call snapshot) while
   its relations and `vpiDecompile` are those of the expression;
 - every property, relation and iteration the catalog marks `unsupported`;

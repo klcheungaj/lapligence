@@ -1,0 +1,22 @@
+step 1 at 2
+  queue type=64 time 4
+  callbacks of the queue:
+  queue type=64 time 7
+  callbacks of the queue: after5(9)
+  queue type=64 time 10
+  callbacks of the queue:
+  callbacks of NULL: end(12)
+  callbacks of tb.a: va(1)
+step 2 at 6
+  queue type=64 time 6
+  callbacks of the queue:
+  queue type=64 time 7
+  callbacks of the queue: after5(9)
+  queue type=64 time 10
+  callbacks of the queue:
+  callbacks of NULL: end(12)
+  callbacks of tb.a: va(1)
+  systf $d39 type=1
+  systf $d39_unused type=1
+  reg iterator use is tb: 1
+  module iterator use: NULL

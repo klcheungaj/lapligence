@@ -862,6 +862,7 @@ fn finish_generation(
         model.vpi_dynamic = Default::default();
         model.vpi_code.clear();
         model.vpi_code_files.clear();
+        model.vpi_udps.clear();
         model.vpi_catalog = false;
     }
     // Assertion coverage tables serve only `$coverage_*` calls and VPI

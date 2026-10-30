@@ -298,6 +298,9 @@ pub struct UdpTable {
     /// statement or an `output reg q = v` declaration.
     pub initial: Option<u8>,
     pub rows: Vec<UdpRow>,
+    /// The ports in declaration order, the output first (IEEE 1364-2001
+    /// 8.1.3): names and directions, which VPI io declarations report.
+    pub ports: Vec<(String, Direction)>,
     /// The `primitive` declaration.
     pub location: UdpLocation,
 }

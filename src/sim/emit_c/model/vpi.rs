@@ -879,12 +879,82 @@ fn render_vpi_code(
         "uint32_t",
         out,
     );
+    let (udps, udp_count) = render_vpi_udps(model, out);
     out.push_str(&format!(
         "static const llg_vpi_code_tables_t llg_vpi_code_value = {{ llg_vpi_code_rows, {}u, \
-{texts}, {text_count}u, {files}, {file_count}u, {ranges}, {range_count}u, {spans}, {span_count}u }};\n\
+{texts}, {text_count}u, {files}, {file_count}u, {ranges}, {range_count}u, {spans}, {span_count}u, \
+{udps}, {udp_count}u }};\n\
 static const llg_vpi_code_tables_t* const llg_vpi_code_tables = &llg_vpi_code_value;\n",
         codes.len()
     ));
+}
+
+/// The UDP definitions (`llg_vpi_udp_t`, 37.32): returns the table name (or
+/// `NULL`) and its length.
+fn render_vpi_udps(model: &IrModel, out: &mut String) -> (String, usize) {
+    use std::fmt::Write as _;
+    let udps = model.vpi_udps();
+    if udps.is_empty() {
+        return ("NULL".to_owned(), 0);
+    }
+    let mut rows = String::new();
+    for (index, udp) in udps.iter().enumerate() {
+        let _ = writeln!(
+            out,
+            "static const char* const llg_vpi_udp_ports_{index}[] = {{ {} }};",
+            udp.ports
+                .iter()
+                .map(|(name, _)| c_string_literal(name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let _ = writeln!(
+            out,
+            "static const int llg_vpi_udp_directions_{index}[] = {{ {} }};",
+            udp.ports
+                .iter()
+                .map(|(_, direction)| *direction)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let _ = writeln!(
+            out,
+            "static const char* const llg_vpi_udp_entries_{index}[] = {{ {} }};",
+            udp.entries
+                .iter()
+                .map(|(text, _)| c_string_literal(text))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let _ = writeln!(
+            out,
+            "static const int llg_vpi_udp_lines_{index}[] = {{ {} }};",
+            udp.entries
+                .iter()
+                .map(|(_, line)| line.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let initial = udp
+            .initial
+            .map_or_else(|| "0".to_owned(), |c| format!("'{}'", char::from(c)));
+        let _ = writeln!(
+            rows,
+            "    {{ {}, {}, {}, {}u, {}, {initial}, llg_vpi_udp_ports_{index}, \
+llg_vpi_udp_directions_{index}, {}u, llg_vpi_udp_entries_{index}, llg_vpi_udp_lines_{index}, {}u }},",
+            c_string_literal(&udp.name),
+            c_string_literal(&udp.file),
+            udp.line,
+            udp.input_count,
+            i32::from(udp.sequential),
+            udp.ports.len(),
+            udp.entries.len(),
+        );
+    }
+    out.push_str("static const llg_vpi_udp_t llg_vpi_udps[] = {\n");
+    out.push_str(&rows);
+    out.push_str("};\n");
+    ("llg_vpi_udps".to_owned(), udps.len())
 }
 
 /// The delay records of the timing rows (`llg_vpi_timing_t`): the model
@@ -1601,7 +1671,7 @@ mod tests {
         );
         assert!(
             out.contains(
-                "{ llg_vpi_code_rows, 4u, llg_vpi_code_texts, 2u, llg_vpi_code_files, 1u, NULL, 0u, NULL, 0u }"
+                "{ llg_vpi_code_rows, 4u, llg_vpi_code_texts, 2u, llg_vpi_code_files, 1u, NULL, 0u, NULL, 0u, NULL, 0u }"
             ),
             "{out}"
         );

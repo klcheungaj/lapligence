@@ -162,7 +162,7 @@ mod vpi;
 pub use vpi::{
     IrVpiArgRef, IrVpiBuiltinCall, IrVpiCode, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn,
     IrVpiConnRole, IrVpiConstant, IrVpiDirection, IrVpiInstance, IrVpiObject, IrVpiObjectKind,
-    IrVpiQualifiers, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember,
+    IrVpiQualifiers, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember, IrVpiUdp,
     IrVpiVarKind,
 };
 mod vpi_dynamic;
@@ -647,6 +647,8 @@ pub struct IrModel {
     pub(in crate::sim) vpi_code: Vec<IrVpiCode>,
     /// Source files the [`IrVpiCode::file`] entries name.
     pub(in crate::sim) vpi_code_files: Vec<String>,
+    /// UDP definitions (37.32), captured with the code tables.
+    pub(in crate::sim) vpi_udps: Vec<IrVpiUdp>,
     /// Type-only VPI call sites run through compiletf/sizetf before the
     /// generated scheduler starts. Empty for hand-built IR fixtures.
     pub(in crate::sim) vpi_compile_calls: Vec<IrVpiCompileCall>,
@@ -839,6 +841,7 @@ impl IrModel {
             vpi_dynamic: IrVpiDynamic::default(),
             vpi_code: Vec::new(),
             vpi_code_files: Vec::new(),
+            vpi_udps: Vec::new(),
             vpi_compile_calls: Vec::new(),
             vpi_builtin_calls: Vec::new(),
             vpi_catalog: true,
@@ -991,6 +994,10 @@ impl IrModel {
 
     pub fn vpi_code_files(&self) -> &[String] {
         &self.vpi_code_files
+    }
+
+    pub fn vpi_udps(&self) -> &[IrVpiUdp] {
+        &self.vpi_udps
     }
 
     pub fn vpi_compile_calls(&self) -> &[IrVpiCompileCall] {

@@ -91,6 +91,11 @@ typedef enum {
     SLOT_FSMSTATE,   /* state `aux` of FSM `left` (40.5.3) */
     SLOT_CABIT,      /* bit `aux` (vpiOffset, from the LSB) of continuous assignment
                       * row `object` (vpiContAssignBit, 37.43) */
+    /* Runtime structures (llg_vpi_runtime.c). */
+    SLOT_TIMEQ,      /* time queue of simulation time `left` (37.76) */
+    SLOT_UDPDEFN,    /* UDP definition `aux` (static slot, 37.32) */
+    SLOT_UDPIO,      /* port `left` of UDP definition `aux` */
+    SLOT_TABLEENTRY, /* table entry `left` of UDP definition `aux` */
 } llg_vpi_slot_kind_t;
 
 enum {
@@ -134,6 +139,7 @@ typedef struct {
     uint32_t position;        /* iterator cursor */
     uintptr_t* items;         /* ITER_LIST handles */
     void* pointer;            /* registration, callsite, event, callback */
+    uintptr_t use;            /* an iterator's reference handle (vpiUse, 37.79) */
 } llg_vpi_slot_t;
 
 typedef struct llg_vpi_registration {
@@ -315,6 +321,8 @@ typedef struct {
     uint32_t* port_links;         /* the high-connection links, by port row */
     size_t port_link_count;
     int links_built;
+    uintptr_t iterate_ref;        /* reference of the running vpi_iterate call */
+    uint32_t* code_parents;       /* parent code row + 1 of each code row, built on demand */
 } llg_vpi_state_t;
 
 static llg_vpi_state_t g_vpi;
@@ -346,6 +354,16 @@ static int dyn_bind_object_cb(struct llg_vpi_cb* cb, const s_cb_data* data);
 static void dyn_object_cb_added(void);
 static void dyn_object_cb_removed(void);
 static void dyn_shutdown(void);
+/* Runtime structures: llg_vpi_runtime.c, appended after the dynamic layer. */
+static int rts_slot(const llg_vpi_slot_t* slot);
+static int rts_type(const llg_vpi_slot_t* slot);
+static int rts_identity(const llg_vpi_slot_t* slot, uint64_t identity[4]);
+static PLI_INT64 rts_get(int property, llg_vpi_slot_t* slot, int* handled);
+static const char* rts_get_str(int property, llg_vpi_slot_t* slot, int* handled);
+static vpiHandle rts_handle(int type, vpiHandle reference, int* handled);
+static vpiHandle rts_iterate(int type, vpiHandle reference, int* handled);
+static void rts_get_value(llg_vpi_slot_t* slot, p_vpi_value output);
+static void rts_shutdown(void);
 static int code_tables_valid(const llg_vpi_code_tables_t* t);
 static PLI_INT32 unsupported_property(void);
 
@@ -385,7 +403,10 @@ static void vpi_error(const char* code, const char* message) {
 
 /* 38.2: the error status is reset by every VPI routine except
  * vpi_chk_error(). Every public entry point calls this first. */
-static void vpi_enter(void) { g_vpi.error_pending = 0; }
+static void vpi_enter(void) {
+    g_vpi.error_pending = 0;
+    g_vpi.iterate_ref = 0;
+}
 
 static void vpi_fail_runtime(const char* message) {
     g_vpi.failed = 1;
@@ -812,6 +833,8 @@ static uint32_t alloc_slot(llg_vpi_slot_kind_t kind) {
     slot->kind = (uint8_t)kind;
     slot->object = LLG_VPI_NONE;
     slot->element = LLG_VPI_NO_ELEMENT;
+    /* 37.79 detail 1: an iterator remembers the reference it was made from. */
+    if (kind == SLOT_ITERATOR) slot->use = g_vpi.iterate_ref;
     ++g_vpi.live_dynamic;
     return index;
 }
@@ -5721,6 +5744,11 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
         }
         return call_handle_for(g_vpi.active_call->site);
     }
+    {
+        int handled;
+        vpiHandle result = rts_handle(type, ref_handle, &handled);
+        if (handled) return result;
+    }
     uint32_t index;
     llg_vpi_slot_t* slot = checked_handle(ref_handle, &index);
     if (!slot) return NULL;
@@ -7313,6 +7341,12 @@ static vpiHandle iterate_typespec(const llg_vpi_slot_t* slot, int type) {
 vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     vpi_enter();
     if (!vpi_ready()) return NULL;
+    g_vpi.iterate_ref = (uintptr_t)ref_handle;
+    {
+        int handled;
+        vpiHandle result = rts_iterate(type, ref_handle, &handled);
+        if (handled) return result;
+    }
     if (type == vpiAssertion) return iterate_assertions(ref_handle);
     if (type == vpiConcurrentAssertions) return iterate_concurrent_assertions(ref_handle);
     if (type == vpiFsm) return iterate_fsms(ref_handle);
@@ -7666,6 +7700,7 @@ static int is_static_variable_part(const llg_vpi_slot_t* slot,
 
 static int handle_type(const llg_vpi_slot_t* slot) {
     if (dyn_slot(slot)) return dyn_type(slot);
+    if (rts_slot(slot)) return rts_type(slot);
     llg_vpi_model_object_t* object = row_object(slot->object);
     switch (slot->kind) {
         case SLOT_OBJECT: return object->type;
@@ -7895,6 +7930,11 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         return value > INT32_MAX ? INT32_MAX : (PLI_INT32)value;
     }
     if (slot->kind == SLOT_STMT) return property == vpiType ? slot->aux : unsupported_property();
+    if (rts_slot(slot)) {
+        int handled;
+        PLI_INT64 value = rts_get(property, slot, &handled);
+        if (handled) return value > INT32_MAX || value < INT32_MIN ? INT32_MAX : (PLI_INT32)value;
+    }
     if (dyn_slot(slot)) {
         int handled;
         PLI_INT64 value = dyn_get(property, slot, &handled);
@@ -8388,6 +8428,11 @@ static const char* type_name(int type) {
         case vpiGenScopeArray: return "vpiGenScopeArray";
         case vpiGenVar: return "vpiGenVar";
         case vpiIODecl: return "vpiIODecl";
+        case vpiTimeQueue: return "vpiTimeQueue";
+        case vpiUdpDefn: return "vpiUdpDefn";
+        case vpiTableEntry: return "vpiTableEntry";
+        case vpiThread: return "vpiThread";
+        case vpiFrame: return "vpiFrame";
         case vpiPort: return "vpiPort";
         case vpiNetBit: return "vpiNetBit";
         case vpiRegBit: return "vpiRegBit";
@@ -8569,6 +8614,11 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
     if (dyn_slot(slot)) {
         int handled;
         const char* text = dyn_get_str(property, slot, &handled);
+        if (handled) return (PLI_BYTE8*)text;
+    }
+    if (rts_slot(slot)) {
+        int handled;
+        const char* text = rts_get_str(property, slot, &handled);
         if (handled) return (PLI_BYTE8*)text;
     }
     llg_vpi_model_object_t* object = row_object(slot->object);
@@ -8760,6 +8810,10 @@ void vpi_get_value(vpiHandle handle, p_vpi_value output) {
     if (!slot) return;
     if (dyn_slot(slot)) {
         dyn_get_value(slot, output);
+        return;
+    }
+    if (rts_slot(slot)) {
+        rts_get_value(slot, output);
         return;
     }
     if (whole_unpacked_aggregate(slot)) {
@@ -9441,9 +9495,16 @@ void vpi_get_time(vpiHandle object, p_vpi_time time) {
     vpi_enter();
     llg_vpi_model_object_t* scope = NULL;
     uint64_t unit = 0;
+    /* A time queue reports its own time (37.76). */
+    int queued = 0;
+    uint64_t queue_time = 0;
     if (object) {
         llg_vpi_slot_t* slot = checked_handle(object, NULL);
         if (!slot) return;
+        if (slot->kind == SLOT_TIMEQ) {
+            queued = 1;
+            queue_time = (uint64_t)slot->left;
+        }
         scope = row_object(slot->object);
         if (slot->kind == SLOT_CALL || slot->kind == SLOT_ARGUMENT) {
             llg_vpi_callsite_t* site = (llg_vpi_callsite_t*)slot->pointer;
@@ -9461,7 +9522,7 @@ void vpi_get_time(vpiHandle object, p_vpi_time time) {
     }
     /* cbEndOfSimulation may run after the scheduler state is released; the
      * current time is then the time the simulation ended. */
-    uint64_t now = llg_rt_end_time();
+    uint64_t now = queued ? queue_time : llg_rt_end_time();
     if (time->type == vpiSimTime) {
         time->high = (PLI_UINT32)(now >> 32);
         time->low = (PLI_UINT32)now;
@@ -9477,6 +9538,7 @@ void vpi_get_time(vpiHandle object, p_vpi_time time) {
 /* Identity of the simulation object a handle refers to (38.3). */
 static int handle_identity(const llg_vpi_slot_t* slot, uint32_t index, uint64_t identity[4]) {
     llg_vpi_target_t target;
+    if (rts_identity(slot, identity)) return 1;
     if (slot->kind == SLOT_CONN || slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_PORTBIT ||
         slot->kind == SLOT_REFOBJ || slot->kind == SLOT_TERM || slot->kind == SLOT_CODE ||
         slot->kind == SLOT_CABIT) {
@@ -11499,6 +11561,8 @@ void llg_vpi_shutdown(void) {
     free(g_vpi.port_links);
     for (int i = 0; i < g_vpi.plugin_count; ++i) llg_dl_close(g_vpi.plugin_handles[i]);
     dyn_shutdown();
+    rts_shutdown();
+    free(g_vpi.code_parents);
     memset(&g_vpi, 0, sizeof(g_vpi));
 }
 

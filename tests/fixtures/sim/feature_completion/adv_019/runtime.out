@@ -1,0 +1,43 @@
+step 1
+  vpiUserSystf $runtime
+  vpiUserSystf $runtime_unused
+  callbacks of NULL (error 0): eos reason=12 type=107
+  callbacks of tb.r (error 0): vc reason=1 type=107 obj=tb.r (registered handle)
+  callbacks of tb (error 0):
+  callbacks of tb.u1 (error 1):
+  time queue (error 0):
+    vpiTimeQueue at 4
+  callbacks of the queue (error 0): ad reason=9 type=107
+    vpiTimeQueue at 5
+  callbacks of the queue (error 0):
+  vpiUdpDefn rt_or inputs=2 prim=28 protected=0 line=5
+    vpiName error 1
+    io out dir=2 scalar=1 same defn=1
+    io a dir=1 scalar=1 same defn=1
+    io b dir=1 scalar=1 same defn=1
+    entry 1?:1 symbols=3 line=9
+    entry ?1:1 symbols=3 line=10
+    entry 00:0 symbols=3 line=11
+    vpiInitial NULL error 1
+  vpiUdpDefn rt_latch inputs=2 prim=27 protected=0 line=15
+    vpiName error 1
+    io q dir=2 scalar=1 same defn=1
+    io d dir=1 scalar=1 same defn=1
+    io en dir=1 scalar=1 same defn=1
+    entry ?0:?:- symbols=4 line=21
+    entry 01:?:0 symbols=4 line=22
+    entry 11:?:1 symbols=4 line=23
+    vpiInitial NULL error 1
+  tb.u1 definition rt_or
+  uses of tb.r: vpiContAssign@34 vpiPrimTerm@31 vpiPrimTerm@31 vpiAssignment@37
+  net iterator vpiUse is tb: 1
+  module iterator vpiUse: NULL error 0
+  first use of tb.r[0]: vpiPrimTerm@31
+  use of the iterator after its reference was released: NULL error 1
+step 2
+  time queue (error 0):
+    vpiTimeQueue at 4
+  callbacks of the queue (error 0): ad reason=9 type=107
+    vpiTimeQueue at 5
+  callbacks of the queue (error 0):
+  callbacks of tb.r (error 0): vc reason=1 type=107 obj=tb.r (registered handle)

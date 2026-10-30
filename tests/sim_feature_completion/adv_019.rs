@@ -252,6 +252,24 @@ fn instance_properties_follow_the_definition_and_its_configuration() {
     );
 }
 
+#[test]
+fn runtime_structures_list_systfs_callbacks_time_queues_uses_and_udps() {
+    let directory = sim_harness::TempDir::new("adv019-runtime").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "runtime", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "runtime",
+        include_str!("../fixtures/sim/feature_completion/adv_019/runtime.out"),
+        &[
+            "--define-system-task",
+            "task $runtime(input int)",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
 /// The answers of one catalog walk: the object types it reached and, per
 /// type, the (kind, name) queries answered without an error.
 struct Walk {

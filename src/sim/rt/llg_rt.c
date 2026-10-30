@@ -50,6 +50,7 @@
 #include "scheduler/free_variables.c"
 #include "scheduler/monitors.c"
 #include "scheduler/scheduler.c"
+#include "scheduler/vpi_support.c"
 #include "scheduler/output.c"
 #include "scheduler/destinations.c"
 #include "coverage/coverage.c"

@@ -43,7 +43,11 @@ test a19classes adv_019::class_definitions_list_methods_parameters_and_property_
 test a19d37 sim_lrm_decisions::a19_d37_constraints
 test a19cons adv_019::constraints_list_their_items_qualifiers_and_object_state
 test a19d42 sim_lrm_decisions::a19_d42_declaration_objects
+test a19d38 sim_lrm_decisions::a19_d38_udp_definitions
+test a19d39 sim_lrm_decisions::a19_d39_time_queue_and_callback_lists
+test a19d43 sim_lrm_decisions::a19_d43_uses
 test a19decl adv_019::instance_properties_follow_the_definition_and_its_configuration
+test a19rts adv_019::runtime_structures_list_systfs_callbacks_time_queues_uses_and_udps
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
@@ -57,14 +61,14 @@ node null 37.5 type=NULL
   iterate vpiProgram implemented walk
   iterate vpiInterface implemented walk
   iterate vpiClassDefn implemented a19d36
-  iterate vpiUdpDefn unsupported UDP definitions are not objects
+  iterate vpiUdpDefn implemented walk
   handle vpiSysTfCall implemented walk
-  iterate vpiUserSystf unsupported vpi_iterate(vpiUserSystf, NULL) is not implemented
+  iterate vpiUserSystf implemented walk
   handle vpiFrame unsupported frames are not objects
   iterate vpiAssertion implemented walk
   iterate vpiThread unsupported threads are not objects
-  iterate vpiCallback unsupported callback iteration from an object is not implemented
-  iterate vpiTimeQueue unsupported the time queue is not exposed
+  iterate vpiCallback implemented a19rts
+  iterate vpiTimeQueue implemented a19rts
   handle vpiActiveTimeFormat unsupported $timeformat calls are not objects
   iterate vpiPackage implemented walk
   get vpiTimeUnit implemented walk
@@ -554,7 +558,7 @@ node io_decl 37.13 type=vpiIODecl
   iterate vpiRange implemented a19d42
   handle vpiTypespec implemented walk
   handle vpiInstance implemented walk
-  handle vpiUdpDefn unsupported UDP definitions are not objects
+  handle vpiUdpDefn implemented walk
   handle vpiTaskFunc implemented walk
   handle vpiModule implemented walk
   handle vpiModport implemented walk
@@ -1253,7 +1257,7 @@ node switch 37.31 type=vpiSwitch
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node udp 37.31 type=vpiUdp
-  handle vpiUdpDefn unsupported UDP definitions are not objects
+  handle vpiUdpDefn implemented walk
   get vpiSigned extension walk the sign and width of the object's value
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
@@ -1274,18 +1278,18 @@ node prim_term 37.31 type=vpiPrimTerm
   handle vpiParent extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
-node udp_defn 37.32 type=vpiUdpDefn default=unsupported UDP definitions are not objects
-  str vpiDefName
-  get vpiSize
-  get vpiProtected
-  get vpiPrimType
-  iterate vpiIODecl
-  iterate vpiTableEntry
-  handle vpiInitial
+node udp_defn 37.32 type=vpiUdpDefn
+  str vpiDefName implemented walk
+  get vpiSize implemented walk
+  get vpiProtected implemented walk
+  get vpiPrimType implemented walk
+  iterate vpiIODecl implemented walk
+  iterate vpiTableEntry implemented walk
+  handle vpiInitial unsupported the initial statement of a sequential UDP is captured only as its value character, so it has no object (its vpiLhs, vpiRhs and value)
 
-node table_entry 37.32 type=vpiTableEntry default=unsupported UDP definitions are not objects
-  get vpiSize
-  func vpi_get_value
+node table_entry 37.32 type=vpiTableEntry
+  get vpiSize implemented walk
+  func vpi_get_value implemented a19d38
 
 node inter_mod_path 37.33 type=vpiInterModPath default=unsupported intermodule paths are not objects
   func vpi_get_delays
@@ -1760,7 +1764,7 @@ node let_decl 37.53 type=vpiLetDecl default=unsupported the bodies of let declar
   iterate vpiSeqFormalDecl
 
 node simple_expr 37.54 members=nets,variables,ref_obj,parameter,spec_param,var_select,bit_select
-  iterate vpiUse unsupported vpiUse is not exposed
+  iterate vpiUse implemented a19d43
 
 node bit_select 37.54 type=vpiBitSelect
   str vpiName implemented walk
@@ -2011,14 +2015,14 @@ node continue 37.56 type=vpiContinue
 
 node null_stmt 37.56 type=vpiNullStmt
 
-node callback 37.75 type=vpiCallback default=unsupported callback objects answer only vpi_get_cb_info and vpi_remove_cb
-  func vpi_get_cb_info
+node callback 37.75 type=vpiCallback
+  func vpi_get_cb_info implemented a19rts
 
 node callback_owner 37.75 members=prim_term,expr,time_queue,stmt
-  iterate vpiCallback unsupported callback iteration from an object is not implemented
+  iterate vpiCallback implemented walk
 
-node time_queue 37.76 type=vpiTimeQueue default=unsupported the time queue is not exposed
-  func vpi_get_time
+node time_queue 37.76 type=vpiTimeQueue
+  func vpi_get_time implemented a19d39
 
 node attribute 37.78 type=vpiAttribute default=unsupported attributes are not captured
   str vpiName
@@ -2033,7 +2037,7 @@ node attribute_owner 37.78 members=instance,port,nets,array_net,variables,named_
 
 node iterator 37.79 type=vpiIterator
   get vpiIteratorType implemented walk
-  handle vpiUse unsupported vpiUse is not exposed
+  handle vpiUse implemented walk
   get vpiSize extension walk the sign and width of the object's value
 
 node gen_scope_array 37.80 type=vpiGenScopeArray

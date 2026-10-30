@@ -2502,6 +2502,12 @@ llg_proc_t* llg_current(void);
 // unwound through the disable protocol, and 0 for one that completed,
 // finished the simulation or is torn down, whose chains never resume.
 void llg_rt_set_process_end_hook(void (*hook)(llg_proc_t* proc, int unwind));
+// VPI time queue (IEEE 1800-2009 37.76): the distinct times after the
+// current time at which events are pending, ascending, as a malloc'd array
+// the caller frees (NULL when there are none or on allocation failure, with
+// `*count` 0). `*current` is set when events of the current time slot
+// precede the read-only synchronization point.
+uint64_t* llg_rt_pending_times(size_t* count, int* current);
 // Return the activation frame retained by a process, or NULL for ordinary
 // static-storage processes. The returned pointer is borrowed from `self`.
 llg_frame_t* llg_proc_frame(llg_proc_t* self);
