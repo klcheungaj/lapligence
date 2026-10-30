@@ -119,6 +119,7 @@ static llg_proc_t* llg_fork_impl(const llg_co_desc_t* desc,
     p->name = name;
     llg_co_start(&p->chain, desc, p);
     p->grp = grp;
+    p->deadlock_counted = grp->parent->deadlock_counted;
     p->frame = frame;
     p->handle = process_handle_new(p);
     p->status = LLG_PROCESS_RUNNING;
@@ -171,6 +172,7 @@ llg_proc_t* llg_spawn_detached_with_frame(const llg_co_desc_t* desc,
 #endif
     p->name = name;
     llg_co_start(&p->chain, desc, p);
+    p->deadlock_counted = parent->deadlock_counted;
     p->frame = frame;
     p->handle = process_handle_new(p);
     p->status = LLG_PROCESS_RUNNING;

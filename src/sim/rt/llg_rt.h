@@ -2461,6 +2461,15 @@ void llg_monitor_set(int on);
 // initialization. Generated sibling overlays are poisoned after lexical owner
 // cleanup; retained heap cells and live parent fields are preserved. Poison is
 // observable stale-byte data, not a read trap, and adds no release operations.
+// `llg_co_desc_t.host_flags` of a process root. LLG_DESC_BLOCKABLE marks a
+// process that can still complete (an `initial` procedure); its waits, and
+// those of the fork branches and detached processes it starts, make a run with
+// no future events a deadlock. Processes without the flag (always*,
+// continuous assignments, gates, links, assertions, runtime-owned waiters) wait
+// forever by design, so a run that ends with only their waits left is a normal
+// end of simulation. The emitter sets it from the owned IR; the scheduler's
+// end check is one counter compare.
+#define LLG_DESC_BLOCKABLE 1u
 llg_proc_t* llg_spawn(const llg_co_desc_t* desc, const char* name);
 // Spawn a non-program process directly into an explicit execution region.
 // Ordinary initial/always, continuous and link processes use this or

@@ -85,7 +85,7 @@ static void llg_kill_proc(llg_proc_t* p, int notify_parent) {
         if (w->kind == W_MAILBOX_GET || w->kind == W_MAILBOX_PUT)
             mailbox_unlink_wait(w);
         wait_payload_release(w);
-        g.wait_count--;
+        g.wait_count -= p->deadlock_counted;
     }
     wait_retained_drop(p);
     remove_region_entry(p);

@@ -16,6 +16,9 @@ static llg_proc_t* spawn_process(const llg_co_desc_t* desc,
 #endif
     p->name = name;
     llg_co_start(&p->chain, desc, p);
+    // Runtime-owned processes (covergroup waiters and the like) are
+    // infrastructure: they never make a run deadlocked.
+    p->deadlock_counted = !runtime_owned && (desc->host_flags & LLG_DESC_BLOCKABLE) != 0;
     p->program = is_initial ? program : NULL;
     p->program_live = program && is_initial;
     if (p->program_live) {
@@ -264,7 +267,7 @@ static void delayed_call_discard(llg_proc_t* carrier) {
         remove_waiters_entry(w);
         remove_timed_entry(w);
         wait_payload_release(w);
-        g.wait_count--;
+        g.wait_count -= carrier->deadlock_counted;
     }
     if (carrier->queued) remove_region_entry(carrier);
     free_proc_record(carrier);

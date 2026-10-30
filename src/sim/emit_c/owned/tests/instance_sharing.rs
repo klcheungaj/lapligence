@@ -297,3 +297,38 @@ fn port_link_bit_selections_are_record_operands_of_one_body() {
     assert_eq!(source.matches("LLG_CO_DISPATCH_BEGIN").count(), 8);
     assert!(!source.contains("llg_shared_body"));
 }
+
+#[test]
+fn only_initial_roots_carry_the_blockable_descriptor_flag() {
+    for kind in [IrProcessKind::Initial, IrProcessKind::Always] {
+        let mut model = instance_model(8);
+        for process in &mut model.processes {
+            process.kind = kind;
+        }
+        let source =
+            render_with_sharing_threshold(&ExecutionModel::lower(model).unwrap(), 4).unwrap();
+        let blockable = source.contains("LLG_DESC_BLOCKABLE };");
+        assert_eq!(
+            blockable,
+            kind == IrProcessKind::Initial,
+            "{kind:?}: {source}"
+        );
+    }
+    // Members that disagree keep their own descriptors, so a shared one can
+    // never hand an always root the initial flag.
+    let mut model = instance_model(8);
+    for process in &mut model.processes[..4] {
+        process.kind = IrProcessKind::Initial;
+    }
+    for process in &mut model.processes[4..] {
+        process.kind = IrProcessKind::Always;
+    }
+    let source = render_with_sharing_threshold(&ExecutionModel::lower(model).unwrap(), 4).unwrap();
+    assert!(!source.contains("llg_shared_body_0_desc"), "{source}");
+    assert_eq!(
+        source.matches("LLG_DESC_BLOCKABLE };").count(),
+        4,
+        "{source}"
+    );
+    assert_eq!(source.matches(", 2, 0 };").count(), 4, "{source}");
+}

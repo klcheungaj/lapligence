@@ -482,6 +482,9 @@ void llg_rt_run(void) {
         if (g.inertial_pending && g.inertial_pending->time < t) t = g.inertial_pending->time;
         if (g.callbacks && g.callbacks->time < t) t = g.callbacks->time;
         if (!have_future_event) {
+            // Only waits of processes that can still finish are counted
+            // (LLG_DESC_BLOCKABLE); parked always/continuous processes are
+            // the normal state at the end of a run, not a deadlock.
             if (g.wait_count == 0) {
                 fprintf(stderr, "llg: simulation ended without $finish "
                                 "(no processes remain) at time %llu\n",

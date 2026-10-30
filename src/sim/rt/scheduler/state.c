@@ -702,7 +702,7 @@ typedef struct {
     llg_wait_t* timed_head;   // sorted ascending by time
     llg_wait_queue_t zero_waits[LLG_REGION_COUNT];
     llg_wait_t* waiters;      // all active waits
-    int wait_count;
+    int wait_count;           // armed waits of processes that can still finish
     llg_wait_source_t** wait_sources;
     size_t wait_sources_capacity;
     size_t n_wait_sources;
