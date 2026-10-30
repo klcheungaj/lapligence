@@ -1265,7 +1265,11 @@ impl<'a> Codegen<'a> {
         // link writes the child storage, an output link writes the parent
         // actual, and an inout link writes both. Treat links as writers here
         // so an always-family process cannot share storage with a port path.
+        // A collapsed input port is no driver: its formal is the actual.
         for id in self.design_nodes() {
+            if self.port_aliases.contains(&id) {
+                continue;
+            }
             let (direction, high, low, high_expr) = match self.kind(id) {
                 NodeKind::Port {
                     direction,

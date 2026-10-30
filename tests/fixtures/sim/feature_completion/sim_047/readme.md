@@ -86,7 +86,11 @@ variable has two ordinary records in one step (S47-D2).
   `tb.g[1].second.s` (27.4; no extra `g` level, S47-D10) and `tb.genblk2.extra`
   (27.6: the `if (1)` construct is the second generate construct of `tb`).
   The inout port nets of both stages collapse into `tb.shared` (23.3.3.7), so
-  those three names share one identifier code; every other path has its own.
+  those three names share one identifier code. The `clk` inputs of both stages
+  and the `d` input of stage 0 are connected to whole variables of their own
+  type, so they share the actual's storage and its code (decision A21-D1):
+  `{tb.clk, both stage clk}` and `{tb.d, stage 0 d}`; every other path has its
+  own.
   `$dumpvars` runs after `d = 0` and before `d = 3` at step 0, so the
   checkpoint shows `d = 0011` (S47-D1).
   - `clk`, `extra`, both stage `clk`: 0@0, 1@1000, 0@2000, 1@3000.

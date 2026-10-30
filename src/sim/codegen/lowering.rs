@@ -52,7 +52,10 @@
 //!   gate terminals remain explicit boundaries;
 //! - every child-instance port pair gets a link process copying the parent
 //!   side to the child side (inputs) or the child side to the parent side
-//!   (outputs) whenever the source changes;
+//!   (outputs) whenever the source changes, except an input variable port
+//!   connected to a whole variable of the same type where sharing is exact:
+//!   its formal aliases the actual's storage (`collection/port_aliases.rs`,
+//!   decision A21-D1);
 //! - every inout port collapses its parent + child nets into ONE resolved
 //!   simulated net (`llg_net_t`, LRM §23.3.3.7): each member net gets a
 //!   driver slot, whole-signal writes lower to `llg_net_write`, and every
@@ -494,6 +497,8 @@ struct LoweredModel {
     sdf_logs: Vec<(String, String)>,
     /// The design calls a `$coverage_*` function (40.3.2).
     coverage_api_used: bool,
+    /// Some input port shares its actual's storage.
+    collapsed_ports: bool,
 }
 
 /// The semantic model of a design that passed the simulation checks.
@@ -584,6 +589,23 @@ pub fn sdf_targets(
 }
 
 fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String> {
+    // A VPI application may write either side of a port, so a model that
+    // keeps the VPI catalog keeps every port link. User system calls are
+    // known only once the bodies are lowered: a design that has them is
+    // lowered again without collapsed ports.
+    let lowered = lower_model_with(db, options, !options.vpi)?;
+    if lowered.collapsed_ports && !lowered.model.vpi_compile_calls.is_empty() {
+        drop(lowered);
+        return lower_model_with(db, options, false);
+    }
+    Ok(lowered)
+}
+
+fn lower_model_with(
+    db: &Db,
+    options: &CodegenOptions,
+    collapse_ports: bool,
+) -> Result<LoweredModel, String> {
     let waveform = options.waveform.as_ref();
     let semantic = checked_semantic(db)?;
     let lowering_stage = crate::profile::Stage::new("lowering");
@@ -609,6 +631,9 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     }
     let compilation_units = cg.compilation_unit_scopes();
     lower_timing_metadata(&mut cg, &tops, options)?;
+    if collapse_ports {
+        cg.collapse_input_ports()?;
+    }
     cg.collect_clocking_storage()?;
     cg.validate_const_method_writes()?;
     cg.validate_process_semantics()?;
@@ -766,6 +791,7 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     let warnings = std::mem::take(&mut cg.warnings);
     let sdf_logs = std::mem::take(&mut cg.sdf_logs);
     let coverage_api_used = cg.coverage_api_used;
+    let collapsed_ports = !cg.port_aliases.is_empty();
     drop(cg);
     drop(semantic);
     drop(lowering_stage);
@@ -775,6 +801,7 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
         warnings,
         sdf_logs,
         coverage_api_used,
+        collapsed_ports,
     })
 }
 
@@ -827,6 +854,7 @@ fn finish_generation(
         warnings,
         sdf_logs,
         coverage_api_used,
+        ..
     } = lowered;
     if !options.vpi && model.vpi_compile_calls.is_empty() {
         model.vpi_objects.clear();
@@ -1371,6 +1399,9 @@ struct Codegen<'a> {
     reference_arrays: HashMap<usize, usize>,
     /// Canonical object storage for module `ref` string/chandle ports.
     reference_objects: HashMap<usize, usize>,
+    /// Input ports whose formal shares the actual's storage
+    /// (`collection/port_aliases.rs`); they have no link process.
+    port_aliases: HashSet<NodeId>,
     object_globals: HashMap<NodeId, usize>,
     scope_object_names: HashMap<String, HashMap<String, usize>>,
     /// Nominal class declaration → execution-IR layout index.
@@ -2013,6 +2044,7 @@ impl<'a> Codegen<'a> {
             clocking_expression_sources: Vec::new(),
             clocking_history_ticks: HashMap::new(),
             reference_signals: HashMap::new(),
+            port_aliases: HashSet::new(),
             reference_arrays: HashMap::new(),
             reference_objects: HashMap::new(),
             object_globals: HashMap::new(),

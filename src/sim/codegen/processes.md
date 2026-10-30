@@ -88,6 +88,14 @@ Input links evaluate in the parent scope; selected outputs preserve untouched
 bits. Constants/omitted defaults run once; explicit opens ignore defaults. Whole
 packed/fixed aggregate refs retain canonical storage and member views without
 copy links. Scalar real links use doubles and notify changed dependencies.
+An input variable port on a whole variable actual of the identical type has no
+link: `collapse_input_ports` makes the formal an alias of the actual's storage
+(`collection/port_aliases.rs`, A21-D1) right after the timing metadata, unless a
+force/release names the formal, either side is a net, the formal has an
+initializer, the instance owns specify paths or timing checks, the design reads
+SDF, the formal is a ref-port target, or an initialized actual has a time-0
+observer of the formal. `lower_model` lowers again without collapse when the
+lowered model keeps the VPI catalog (known only after the bodies).
 Interface/modport bodies use the actual Slang-bound instance; a simple modport
 port resolves to its same-named interface member. Connection indices must be
 elaborated constants (including genvars), except a variable output target: it is

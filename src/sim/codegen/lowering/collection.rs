@@ -61,6 +61,7 @@ pub(super) use record_columns::{
     column_tagged_union, record_cell_leaf, record_column_layout_type, RecordColumn, RecordValue,
 };
 pub(super) use vpi::VpiScopeIndex;
+mod port_aliases;
 mod port_net_types;
 mod ports;
 mod processes;

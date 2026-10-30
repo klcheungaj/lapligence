@@ -93,7 +93,10 @@ then requires exact equality after normalization. Unrepresented
 references remain in the key. Widths, resume numbers, array extents and ordinary
 parameter payloads remain structural; ULL payloads and selected wait-dependency
 `.lsb` values of generate-instance bodies and port links (`IrProcess::port_link`,
-whose selections are the instance's connection) may become record fields. Module
+whose selections are the instance's connection) may become record fields, and
+in generate-instance bodies so may the constant bounds of `sv4_part_select` and
+`sv4_part_select_to` (a genvar-dependent part-select actual folded per
+iteration), as `int64_t` operands. Module
 path sets and sequential UDP state records are pointer operands, so path-stamp
 processes and UDP gates of one definition share a body. A body belongs to a
 generate iteration when its label or diagnostic name spells an indexed scope

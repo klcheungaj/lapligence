@@ -576,6 +576,106 @@ fn identity_shift_by_zero_returns_base() {
     assert_eq!(const_payload(first_assign_rhs(&m)), Some((7, 8)));
 }
 
+/// A signed 32-bit constant, as an integer literal or a genvar expression
+/// lowers.
+fn int_konst(v: i64) -> IrExpr {
+    IrExpr::new(
+        IrExprKind::Const(IrConst {
+            bits: vec![(v as u64) & 0xffff_ffff],
+            x: vec![0],
+            z: vec![0],
+            width: 32,
+            signed: true,
+            real: None,
+            fill: None,
+        }),
+        32,
+        true,
+        None,
+    )
+}
+
+fn idx_part(index: IrExpr, width: u32, neg: bool) -> IrExpr {
+    IrExpr::new(
+        IrExprKind::IdxPartSel {
+            base: Box::new(IrExpr::new(IrExprKind::SigRead(0), 8, false, None)),
+            base_idx: Box::new(index),
+            width_expr: Box::new(konst(u64::from(width), 32)),
+            neg,
+        },
+        width,
+        false,
+        None,
+    )
+}
+
+fn bit_sel(index: IrExpr) -> IrExpr {
+    IrExpr::new(
+        IrExprKind::BitSel {
+            base: Box::new(IrExpr::new(IrExprKind::SigRead(0), 8, false, None)),
+            idx: Box::new(index),
+        },
+        1,
+        false,
+        None,
+    )
+}
+
+fn part_bounds(e: &IrExpr) -> Option<(i64, i64)> {
+    match &e.kind {
+        IrExprKind::PartSel { left, right, .. } => Some((*left, *right)),
+        _ => None,
+    }
+}
+
+#[test]
+fn identity_constant_selects_become_part_selects() {
+    for (select, bounds) in [
+        (idx_part(int_konst(5), 4, false), (8, 5)),
+        (idx_part(konst(2, 3), 4, false), (5, 2)),
+        (idx_part(int_konst(5), 4, true), (5, 2)),
+        // Partly or wholly above the value: the same x bits either way.
+        (idx_part(int_konst(6), 4, false), (9, 6)),
+        (idx_part(int_konst(100), 4, false), (103, 100)),
+    ] {
+        let mut m = model_with(vec![assign(IrLhs::Whole(1), select)], sigs(2));
+        run(&mut m, &idents_only());
+        let rhs = first_assign_rhs(&m);
+        assert_eq!(part_bounds(rhs), Some(bounds), "{rhs:?}");
+    }
+}
+
+#[test]
+fn identity_unknown_or_negative_select_indices_stay_dynamic() {
+    // Bit-selects stay bit-selects even with a constant index.
+    for select in [
+        bit_sel(int_konst(7)),
+        bit_sel(int_konst(9)),
+        idx_part(int_konst(-1), 4, false),
+        idx_part(int_konst(2), 4, true),
+        idx_part(int_konst(-3), 4, true),
+        idx_part(xkonst(32), 4, false),
+        bit_sel(int_konst(-1)),
+        bit_sel(zkonst(4)),
+        idx_part(
+            IrExpr::new(IrExprKind::SigRead(1), 8, false, None),
+            4,
+            false,
+        ),
+    ] {
+        let mut m = model_with(vec![assign(IrLhs::Whole(1), select)], sigs(2));
+        run(&mut m, &idents_only());
+        let rhs = first_assign_rhs(&m);
+        assert!(
+            matches!(
+                rhs.kind,
+                IrExprKind::IdxPartSel { .. } | IrExprKind::BitSel { .. }
+            ),
+            "{rhs:?}"
+        );
+    }
+}
+
 #[test]
 fn identity_single_part_concat() {
     let e = IrExpr::new(

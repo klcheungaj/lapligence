@@ -485,14 +485,14 @@ struct CachedPosition {
     column: u32,
 }
 
-struct SourceLines<'a> {
+pub(super) struct SourceLines<'a> {
     text: &'a str,
     checkpoints: Vec<SourceCheckpoint>,
     positions: Box<[Option<CachedPosition>]>,
 }
 
 impl<'a> SourceLines<'a> {
-    fn new(text: &'a str) -> Self {
+    pub(super) fn new(text: &'a str) -> Self {
         let mut checkpoints = Vec::with_capacity(text.len() / SOURCE_POSITION_CHECKPOINT_BYTES + 1);
         let mut line = 1;
         let mut line_start = 0;
@@ -527,7 +527,7 @@ impl<'a> SourceLines<'a> {
         }
     }
 
-    fn position(&mut self, offset: usize) -> Result<(u32, u32), DbError> {
+    pub(super) fn position(&mut self, offset: usize) -> Result<(u32, u32), DbError> {
         if offset > self.text.len() || !self.text.is_char_boundary(offset) {
             return Err(DbError::InvalidSnapshot(
                 "semantic range is not on a source character boundary".into(),

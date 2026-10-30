@@ -2375,6 +2375,14 @@ fn a20_d15_tchk_violation_callback() {
 }
 
 #[test]
+fn a21_d1_input_port_shares_actual_variable() {
+    run_decision(
+        "A21-D1_input_port_shares_actual_variable",
+        include_str!("fixtures/sim/lrm_decisions/A21-D1_input_port_shares_actual_variable.out"),
+    );
+}
+
+#[test]
 fn a17_d1_attempt_callbacks() {
     run_vpi_decision(
         "A17-D1_attempt_callbacks",

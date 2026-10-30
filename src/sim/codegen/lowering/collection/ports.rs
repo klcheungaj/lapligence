@@ -190,26 +190,7 @@ impl<'a> Codegen<'a> {
             self.reference_objects.insert(child, target);
         }
 
-        let signals = &self.model.signals;
-        let canonicalize = |info: &mut SignalInfo| {
-            if let Some(target) = signals[info.ir].alias {
-                info.ir = target;
-                info.global = signals[target].c_name.clone();
-            }
-        };
-        for info in self.sig_globals.values_mut() {
-            canonicalize(info);
-        }
-        for info in &mut self.signals {
-            canonicalize(info);
-        }
-        for scope in self.scope_sig_names.values_mut() {
-            for info in scope.values_mut() {
-                canonicalize(info);
-            }
-        }
-        // Canonicalization rewrote `ir` in place.
-        self.rebuild_sig_global_index();
+        self.canonicalize_signal_aliases();
         Ok(())
     }
 
@@ -1746,9 +1727,11 @@ impl<'a> Codegen<'a> {
                 }
                 continue;
             }
-            // A multi-port is connected through its component ports.
+            // A multi-port is connected through its component ports; a
+            // collapsed input shares its actual's storage.
             if matches!(direction, DbDirection::Inout | DbDirection::Ref)
                 || !self.db.multi_port_components(port).is_empty()
+                || self.port_aliases.contains(&port)
             {
                 continue;
             }

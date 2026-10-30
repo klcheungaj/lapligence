@@ -178,17 +178,34 @@ fn check_trace_values(label: &str, dir: &sim_harness::TempDir, output: &Output) 
     assert!(vcd.date.is_some() && vcd.version.is_some(), "{label}");
     assert_eq!(vcd.paths(), trace_values_paths(), "{label}");
     // The inout port nets collapse into `shared` (one net), so the three
-    // names share one identifier code; every other path has its own.
-    let bus = sorted(vec![
-        path(&["tb", "g[0]", "first", "s", "bus"]),
-        path(&["tb", "g[1]", "second", "s", "bus"]),
-        path(&["tb", "shared"]),
-    ]);
-    for (code, names) in vcd.alias_groups() {
-        if names.len() > 1 {
-            assert_eq!(names, bus, "{label}: alias group {code}");
-        }
-    }
+    // names share one identifier code. The input ports connected to the
+    // whole `clk` and `d` variables share their actual's storage, so they
+    // share its code too; every other path has its own.
+    let mut groups = vec![
+        sorted(vec![
+            path(&["tb", "g[0]", "first", "s", "bus"]),
+            path(&["tb", "g[1]", "second", "s", "bus"]),
+            path(&["tb", "shared"]),
+        ]),
+        sorted(vec![
+            path(&["tb", "clk"]),
+            path(&["tb", "g[0]", "first", "s", "clk"]),
+            path(&["tb", "g[1]", "second", "s", "clk"]),
+        ]),
+        sorted(vec![
+            path(&["tb", "d"]),
+            path(&["tb", "g[0]", "first", "s", "d"]),
+        ]),
+    ];
+    groups.sort();
+    let mut shared = vcd
+        .alias_groups()
+        .into_iter()
+        .filter(|(_, names)| names.len() > 1)
+        .map(|(_, names)| names)
+        .collect::<Vec<_>>();
+    shared.sort();
+    assert_eq!(shared, groups, "{label}: alias groups");
     assert_eq!(vcd.var(&path(&["tb", "shared"])).width, 1);
     for var in &vcd.vars {
         let expected = if var.path == path(&["tb", "level"]) {

@@ -1024,6 +1024,7 @@ pub(super) fn analyze_inner_slang(
     };
     crate::llg_debug!("event=slang.compile.end outcome={} root={} generation={} diagnostics={} semantic_nodes={} lexical_tokens={} elapsed_us={}", if out.ok() { "ok" } else { "error" }, root, generation, out.diagnostics.len(), out.snapshot.semantic_nodes.len(), out.snapshot.lexical_tokens.len(), started.elapsed().as_micros());
     let mut out = out;
+    let database = (!opts.library_units).then(|| llg::core::db::Db::from_slang(&out.snapshot));
     let protected = ProtectedSource::new(&out.snapshot);
     let protected_view = (!protected.is_empty()).then(|| {
         let texts: HashMap<_, _> = out
@@ -1039,7 +1040,24 @@ pub(super) fn analyze_inner_slang(
         )
     });
     drop(protected);
-    let (dispositions, protected_hints, protected_extents) = protected_view.unwrap_or_default();
+    let (mut dispositions, protected_hints, protected_extents) = protected_view.unwrap_or_default();
+    // The frontend's unused-parameter warning for a parameter an FSM pragma
+    // names as a state is wrong: the pragma uses it (IEEE 1800-2009 40.4.1).
+    let fsm_states = database
+        .as_ref()
+        .and_then(|result| result.as_ref().ok())
+        .map(|db| db.fsm_state_parameter_warnings(&out.snapshot))
+        .unwrap_or_default();
+    if !fsm_states.is_empty() {
+        if dispositions.is_empty() {
+            dispositions = vec![Disposition::Keep; out.snapshot.diagnostics.len()];
+        }
+        for index in fsm_states {
+            if let Some(disposition) = dispositions.get_mut(index) {
+                *disposition = Disposition::Drop;
+            }
+        }
+    }
     let mut hinted_errors = false;
     if !dispositions.is_empty() {
         out.retain_frontend_diagnostics(|index, _, projected| match dispositions[index] {
@@ -1095,7 +1113,6 @@ pub(super) fn analyze_inner_slang(
                     Severity::Fatal | Severity::Syntax | Severity::Error
                 )
             }));
-    let database = (!opts.library_units).then(|| llg::core::db::Db::from_slang(&out.snapshot));
     let module_graph = module_graph_from_slang(
         &out.snapshot,
         &source_texts,
