@@ -361,6 +361,7 @@ static void timing_checks_release(void); // scheduler/timing_checks.c
 static void sdf_release(void); // scheduler/sdf.c
 static void switches_release(void); // scheduler/switches.c
 static void llg_fcov_release(void); // coverage/fsm.c
+static void llg_tcov_finish(void);  // coverage/code.c
 
 void llg_rt_cleanup(void) {
     gc_release_registrations();
@@ -431,6 +432,7 @@ void llg_rt_cleanup(void) {
     free_assertions();
     llg_acov_events_release();
     llg_fcov_release();
+    llg_tcov_finish();
     g.assertions_ended = 0;
     free_sequence_pools();
     free_clocking_edges();

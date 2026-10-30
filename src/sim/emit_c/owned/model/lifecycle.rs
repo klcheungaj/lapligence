@@ -349,6 +349,7 @@ pub(in crate::sim::emit_c) fn main(
     }
     out.push_str("    llg_model_storage_defaults();\n    llg_model_initializers();\n    if (llg_rt_failed()) goto start_failed;\n");
     out.push_str(&crate::sim::emit_c::owned::coverage::fsm_startup(model));
+    out.push_str(&crate::sim::emit_c::owned::coverage::toggle_startup(model));
     out.push_str(&crate::sim::emit_c::owned::native::helpers_used());
     // Mark otherwise unused generated function definitions as intentional.
     for function in &model.funcs {

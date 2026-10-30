@@ -213,7 +213,7 @@ impl Codegen<'_> {
         }
     }
 
-    fn vpi_full_name(&self, id: NodeId) -> String {
+    pub(in crate::sim::codegen::lowering) fn vpi_full_name(&self, id: NodeId) -> String {
         self.vpi_path(id).join(SEPARATOR)
     }
 
@@ -1959,7 +1959,7 @@ impl Codegen<'_> {
             .filter(|(_, object)| object.kind.is_scope())
             .map(|(row, _)| row)
             .collect();
-        let (code, files, named_blocks) = {
+        let (code, files, named_blocks, statement_rows) = {
             let mut tables = code::CodeTables::new(self, model, typespecs);
             // Declarations first, so the instances of assertions link to
             // them (37.12: a scope holds its sequence and property
@@ -2098,6 +2098,15 @@ impl Codegen<'_> {
         if let Some(coverage) = model.assertion_coverage.as_mut() {
             for (index, entry) in assertions {
                 coverage.items[index].code = Some(entry);
+            }
+            // Statement coverage entities reached as statement objects
+            // (40.5.3 vpiCovered of a statement handle).
+            for item in &mut coverage.statements {
+                let node = usize::try_from(item.identity)
+                    .ok()
+                    .filter(|index| *index < self.db.node_count())
+                    .map(NodeId::from_index);
+                item.code = node.and_then(|node| statement_rows.get(&node).copied());
             }
         }
         model.vpi_code = code;

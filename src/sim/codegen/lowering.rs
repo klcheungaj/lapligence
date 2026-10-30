@@ -612,6 +612,7 @@ fn lower_model_with(
     let mut cg = Codegen::new(&semantic);
     cg.check_fsm_pragmas()?;
     let tops = collect_tops(&mut cg)?;
+    cg.plan_code_coverage(options.vpi);
     if !cg.checker_free.is_empty() {
         cg.plan_free_variables()?;
     }
@@ -735,7 +736,9 @@ fn lower_model_with(
     // its expression objects.
     cg.populate_assertion_coverage(&mut model);
     cg.populate_fsm_coverage(&mut model)?;
+    cg.populate_code_coverage(&mut model);
     cg.populate_vpi_metadata(&mut model, &tops, timing, options.vpi)?;
+    cg.link_toggle_objects(&mut model);
     cg.populate_vpi_builtin_calls(&mut model);
     cg.finish_dpi(&mut model)?;
     // Final-block processes render like any other but spawn into the
@@ -864,6 +867,10 @@ fn finish_generation(
         model.vpi_code_files.clear();
         model.vpi_udps.clear();
         model.vpi_catalog = false;
+        if let Some(coverage) = model.assertion_coverage.as_mut() {
+            coverage.statements.iter_mut().for_each(|item| item.code = None);
+            coverage.toggles.iter_mut().for_each(|toggle| toggle.object = None);
+        }
     }
     // Assertion coverage tables serve only `$coverage_*` calls and VPI
     // applications; any other model is generated without them.
@@ -1469,6 +1476,15 @@ struct Codegen<'a> {
     immediate_assertion_items: BTreeMap<u64, coverage::ImmediateAssertionItem>,
     /// The design calls a coverage access function of 40.3.2.
     coverage_api_used: bool,
+    /// The statement and toggle coverage the model carries (40.2.2).
+    code_coverage: coverage::CodeCoveragePlan,
+    /// Statement coverage entity of each statement node, and the nodes in
+    /// entity order.
+    statement_entities: HashMap<NodeId, u32>,
+    statement_entity_order: Vec<NodeId>,
+    /// Nonzero while lowering a statement that must stay one statement (a
+    /// deferred assertion action): it gets no statement coverage hit.
+    statement_hits_suppressed: u32,
     /// The instance hierarchy of `$coverage_*` scopes, built on first use.
     coverage_instances: Option<coverage::CoverageInstances>,
     /// Subroutine → covergroups its block event samples `(group, begin)`.
@@ -2071,6 +2087,10 @@ impl<'a> Codegen<'a> {
             coverage_option_vars: HashMap::new(),
             immediate_assertion_items: BTreeMap::new(),
             coverage_api_used: false,
+            code_coverage: Default::default(),
+            statement_entities: HashMap::new(),
+            statement_entity_order: Vec::new(),
+            statement_hits_suppressed: 0,
             coverage_instances: None,
             coverage_block_events: HashMap::new(),
             coverage_block_events_applied: HashSet::new(),

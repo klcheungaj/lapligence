@@ -175,6 +175,19 @@ fn registry(
             registry.insert(name.clone(), Operand::pointer(&ty, ty.clone(), &name));
         }
     }
+    // Statement coverage counters (40.2.2): each instance's body counts in
+    // its own entities, so the counters are operands.
+    for entity in 0..model
+        .assertion_coverage
+        .as_ref()
+        .map_or(0, |table| table.statements.len())
+    {
+        let name = super::super::owned::coverage::statement_counter(entity as u32);
+        registry.insert(
+            name.clone(),
+            Operand::pointer("uint64_t", "statement counter".to_owned(), &name),
+        );
+    }
     for event in &model.events {
         if !event.is_array() {
             registry.insert(

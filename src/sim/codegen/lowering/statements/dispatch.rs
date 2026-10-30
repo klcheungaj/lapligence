@@ -94,6 +94,10 @@ impl EmitCtx<'_, '_> {
         if !declarations.is_empty() {
             statements.splice(0..0, declarations);
         }
+        // Statement coverage counts the statement as it starts (40.2.2).
+        if let Some(hit) = self.cg.statement_hit(h) {
+            statements.insert(0, hit);
+        }
         locate_suspensions(&mut statements, &self.cg.origin(h));
         Ok(statements)
     }

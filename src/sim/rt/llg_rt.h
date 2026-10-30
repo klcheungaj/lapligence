@@ -3984,6 +3984,58 @@ const llg_fcov_fsm_t* llg_fcov_at(size_t index);
  * semantics, like llg_acov_covered_in). */
 size_t llg_fcov_covered_in(int32_t instance);
 
+/* ── Statement and toggle coverage (IEEE 1800-2009 40.2.2, 40.3.2) ──
+ *
+ * Present only in a model generated with them (decision S46-D13): a
+ * `$coverage_*` call names the kind, or the model keeps the VPI catalog.
+ *
+ * Statement coverage: one generated row per statement entity. Its counter
+ * is model storage that the statement's code increments each time the
+ * statement starts; llg_scov_model binds the table before any process runs
+ * and keeps per-entity offsets, so STOP, START, RESET and merges never
+ * touch the generated code and a stopped entity costs the same increment.
+ *
+ * Toggle coverage: one generated row per packed net or variable of an
+ * instance (decision S46-D14). llg_tcov_model (after the storage
+ * initializers) allocates the per-bit state and, when started, watches the
+ * storage (llg_value_watch_add): a changing publication updates the bits'
+ * 0/1 sightings and their 0->1 / 1->0 counts. A stopped signal drops its
+ * watch, so a model whose toggle coverage never starts pays nothing per
+ * publication. */
+typedef struct llg_scov_item {
+    uint64_t* count;      /* generated counter: executions since model start */
+    const char* file;     /* source file; "" when unknown */
+    uint32_t line;
+    uint32_t column;
+    uint32_t code;        /* VPI statement object (llg_vpi_code_t row + 1), 0: none */
+    int32_t instance;     /* owning instance index, -1 for $root */
+} llg_scov_item_t;
+
+typedef struct llg_tcov_signal {
+    sv4_t* storage;       /* the signal's packed storage */
+    const char* full_name;
+    int32_t instance;     /* owning instance index */
+    uint32_t width;       /* bits, each a coverable entity */
+    int32_t object;       /* VPI catalog row of the net or variable, -1: none */
+} llg_tcov_signal_t;
+
+/* `started` is nonzero when the design requests the kind (40.3.2.1:
+ * coverage starts at the beginning of simulation); otherwise it stays
+ * available but stopped until a START. */
+void llg_scov_model(const llg_scov_item_t* items, size_t n_items, int started);
+void llg_tcov_model(const llg_tcov_signal_t* signals, size_t n_signals, int started);
+/* The VPI bridge (llg_vpi.c, 40.5.3). Statement entities: the entity a VPI
+ * statement object (code row) stands for, or -1; its execution count while
+ * collecting. Toggle signals: the signal of a catalog row, or -1; the
+ * covered bits and the 0/1 changes of bits [lsb, lsb + n). */
+int64_t llg_scov_at_code(uint32_t code_row);
+uint64_t llg_scov_hits(size_t entity);
+size_t llg_scov_covered_in(int32_t instance);
+int64_t llg_tcov_at_object(int32_t row);
+uint32_t llg_tcov_width(size_t signal);
+void llg_tcov_bits(size_t signal, uint32_t lsb, uint32_t n, uint64_t* covered, uint64_t* toggles);
+size_t llg_tcov_covered_in(int32_t instance);
+
 /* ── VPI assertion callbacks and control (IEEE 1800-2009 39.4, 39.5) ──
  *
  * The attempt events of an item with `watches` reach the hook in the order

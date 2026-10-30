@@ -111,7 +111,7 @@ pub(in crate::sim) use coverage::FSM_MAX_STATE_BITS;
 pub use coverage::{
     IrAssertionCoverage, IrAssertionItem, IrAssertionItemForm, IrAssertionItemKind,
     IrCoverageApiCall, IrCoverageApiFunction, IrCoverageInstance, IrCoverageScope, IrFsm,
-    IrFsmExpression, IrFsmPart, IrFsmState,
+    IrFsmExpression, IrFsmPart, IrFsmState, IrStatementItem, IrToggleSignal,
 };
 pub use coverage::{
     IrCoverAutomatic, IrCoverBin, IrCoverBinKind, IrCoverBinShape, IrCoverBound, IrCoverCount,

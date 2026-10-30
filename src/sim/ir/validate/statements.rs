@@ -1862,6 +1862,11 @@ impl Validator<'_> {
                 *coverage_type < self.model.coverage_types.len()
             }
             IrCoverageStmt::LoadDb { site, .. } => !site.contains('\0'),
+            IrCoverageStmt::StatementHit { entity } => {
+                self.model.assertion_coverage.as_ref().is_some_and(|table| {
+                    (*entity as usize) < table.statements.len()
+                })
+            }
             IrCoverageStmt::Ready { .. }
             | IrCoverageStmt::Control { .. }
             | IrCoverageStmt::Text { .. }

@@ -129,9 +129,11 @@ pub(super) type CoverageTypeKey = NodeId;
 
 const COVERAGE_RECORD_FIELD: &str = "llg_cov_record";
 
+mod code;
 mod control;
 mod fsm;
 mod transitions;
+pub(super) use code::CodeCoveragePlan;
 pub(super) use control::{CoverageInstances, ImmediateAssertionItem};
 const COVERAGE_OWNER_FIELD: &str = "llg_cov_owner";
 const COVERAGE_BIND_FIELD: &str = "llg_cov_bind";

@@ -1,8 +1,9 @@
 // ── Coverage database (IEEE 1800-2009 19.9, 40.3.2.4, 40.3.2.5) ─────────────
 //
 // One simulator-owned file format, version 1, holds functional coverage (the
-// covergroup records of a run), assertion coverage (coverage/assertions.c)
-// and FSM coverage (coverage/fsm.c).
+// covergroup records of a run), assertion coverage (coverage/assertions.c),
+// FSM coverage (coverage/fsm.c), and statement and toggle coverage
+// (coverage/code.c).
 // Every integer is written little-endian, field by field, so a database is
 // independent of the host's byte order and structure layout:
 //
@@ -10,10 +11,11 @@
 //   u64 assertion hash | u64 payload bytes | payload | u64 FNV-1a 64 checksum
 //
 // The payload holds each section of `sections`, in bit order (functional,
-// assertion, then FSM), as a u64 byte length and its body, so a reader
-// finds one section without parsing the others. The FSM section carries its
-// schema hash at the start of its body; a reader without that section bit
-// rejects the file as having unknown sections.
+// assertion, FSM, statement, then toggle), as a u64 byte length and its
+// body, so a reader finds one section without parsing the others. The FSM,
+// statement and toggle sections carry their schema hash at the start of
+// their body; a reader without a section bit rejects the file as having
+// unknown sections.
 //
 // The hashes identify the model's coverage schema: every covergroup
 // declaration's static shape (names, widths, bins, transitions, crosses; no
@@ -27,6 +29,11 @@
 #define LLG_COV_DB_FUNCTIONAL 1u
 #define LLG_COV_DB_ASSERTION 2u
 #define LLG_COV_DB_FSM 4u
+#define LLG_COV_DB_STATEMENT 8u
+#define LLG_COV_DB_TOGGLE 16u
+#define LLG_COV_DB_SECTIONS                                                                 \
+    (LLG_COV_DB_FUNCTIONAL | LLG_COV_DB_ASSERTION | LLG_COV_DB_FSM | LLG_COV_DB_STATEMENT | \
+     LLG_COV_DB_TOGGLE)
 #define LLG_COV_DB_HEADER_BYTES 40u
 // The largest database a load reads, and the longest name or comment.
 #ifndef LLG_COV_DB_MAX_BYTES
@@ -44,8 +51,11 @@ static uint64_t* llg_cov_group_hashes;
 // Assertion coverage (coverage/assertions.c) contributes its own section.
 static int llg_acov_available(void);
 static uint64_t llg_acov_schema_hash(void);
-// So does FSM coverage (coverage/fsm.c).
+// So do FSM coverage (coverage/fsm.c) and statement and toggle coverage
+// (coverage/code.c).
 static int llg_fcov_available(void);
+static int llg_scov_available(void);
+static int llg_tcov_available(void);
 
 // ── Hashing ─────────────────────────────────────────────────────────────────
 
@@ -531,6 +541,8 @@ static void llg_cov_put_functional(llg_cov_buf_t* buf) {
 
 static void llg_acov_put_section(llg_cov_buf_t* buf);
 static void llg_fcov_put_section(llg_cov_buf_t* buf);
+static void llg_scov_put_section(llg_cov_buf_t* buf);
+static void llg_tcov_put_section(llg_cov_buf_t* buf);
 
 // The complete file image of the selected sections.
 static void llg_cov_db_image(llg_cov_buf_t* buf, uint32_t sections) {
@@ -557,6 +569,18 @@ static void llg_cov_db_image(llg_cov_buf_t* buf, uint32_t sections) {
         size_t at = buf->len;
         llg_cov_put_u64(buf, 0);
         llg_fcov_put_section(buf);
+        llg_cov_patch_u64(buf, at, (uint64_t)(buf->len - at - 8u));
+    }
+    if (sections & LLG_COV_DB_STATEMENT) {
+        size_t at = buf->len;
+        llg_cov_put_u64(buf, 0);
+        llg_scov_put_section(buf);
+        llg_cov_patch_u64(buf, at, (uint64_t)(buf->len - at - 8u));
+    }
+    if (sections & LLG_COV_DB_TOGGLE) {
+        size_t at = buf->len;
+        llg_cov_put_u64(buf, 0);
+        llg_tcov_put_section(buf);
         llg_cov_patch_u64(buf, at, (uint64_t)(buf->len - at - 8u));
     }
     llg_cov_patch_u64(buf, length_at, (uint64_t)(buf->len - LLG_COV_DB_HEADER_BYTES));
@@ -612,6 +636,8 @@ typedef struct {
     size_t functional_at, functional_end;
     size_t assertion_at, assertion_end;
     size_t fsm_at, fsm_end;
+    size_t statement_at, statement_end;
+    size_t toggle_at, toggle_end;
 } llg_cov_db_file_t;
 
 // Read and check the frame of database `name`: magic, version, lengths and
@@ -660,8 +686,7 @@ static const char* llg_cov_db_read(const char* name, llg_cov_db_file_t* db, int*
         !llg_cov_get_u64(&reader, &db->assertion_hash) || !llg_cov_get_u64(&reader, &length) ||
         length != db->len - LLG_COV_DB_HEADER_BYTES - 8u)
         return "the file length does not match its header";
-    if (db->sections & ~(LLG_COV_DB_FUNCTIONAL | LLG_COV_DB_ASSERTION | LLG_COV_DB_FSM))
-        return "the database has unknown sections";
+    if (db->sections & ~(uint32_t)LLG_COV_DB_SECTIONS) return "the database has unknown sections";
     db->payload = LLG_COV_DB_HEADER_BYTES;
     db->end = db->len - 8u;
     uint64_t checksum = LLG_COV_FNV_OFFSET, stored = 0;
@@ -672,17 +697,21 @@ static const char* llg_cov_db_read(const char* name, llg_cov_db_file_t* db, int*
     // filling the payload.
     reader.pos = db->payload;
     reader.len = db->end;
-    for (uint32_t bit = LLG_COV_DB_FUNCTIONAL; bit <= LLG_COV_DB_FSM; bit <<= 1) {
+    for (uint32_t bit = LLG_COV_DB_FUNCTIONAL; bit <= LLG_COV_DB_TOGGLE; bit <<= 1) {
         if (!(db->sections & bit)) continue;
         uint64_t bytes;
         if (!llg_cov_get_u64(&reader, &bytes) || bytes > reader.len - reader.pos)
             return "the database sections are malformed";
-        size_t* at = bit == LLG_COV_DB_FUNCTIONAL ? &db->functional_at
+        size_t* at = bit == LLG_COV_DB_FUNCTIONAL  ? &db->functional_at
                      : bit == LLG_COV_DB_ASSERTION ? &db->assertion_at
-                                                   : &db->fsm_at;
-        size_t* end = bit == LLG_COV_DB_FUNCTIONAL ? &db->functional_end
+                     : bit == LLG_COV_DB_FSM       ? &db->fsm_at
+                     : bit == LLG_COV_DB_STATEMENT ? &db->statement_at
+                                                   : &db->toggle_at;
+        size_t* end = bit == LLG_COV_DB_FUNCTIONAL  ? &db->functional_end
                       : bit == LLG_COV_DB_ASSERTION ? &db->assertion_end
-                                                    : &db->fsm_end;
+                      : bit == LLG_COV_DB_FSM       ? &db->fsm_end
+                      : bit == LLG_COV_DB_STATEMENT ? &db->statement_end
+                                                    : &db->toggle_end;
         *at = reader.pos;
         *end = reader.pos + (size_t)bytes;
         reader.pos = *end;
@@ -989,6 +1018,8 @@ void llg_cov_end_of_run(void) {
     uint32_t sections = LLG_COV_DB_FUNCTIONAL;
     if (llg_acov_available()) sections |= LLG_COV_DB_ASSERTION;
     if (llg_fcov_available()) sections |= LLG_COV_DB_FSM;
+    if (llg_scov_available()) sections |= LLG_COV_DB_STATEMENT;
+    if (llg_tcov_available()) sections |= LLG_COV_DB_TOGGLE;
     (void)llg_cov_db_save(llg_cov_db_name, sections, NULL);
     free(llg_cov_db_name);
     llg_cov_db_name = NULL;

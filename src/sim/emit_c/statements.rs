@@ -308,9 +308,15 @@ fn render_stmt_scoped(
         IrStmt::Randomize(_) => {
             return Err("randomize requires the ownership-aware emitter".to_owned())
         }
-        IrStmt::Coverage(_) => {
-            return Err("functional coverage requires the ownership-aware emitter".to_owned())
-        }
+        IrStmt::Coverage(operation) => match operation.as_ref() {
+            crate::sim::ir::IrCoverageStmt::StatementHit { entity } => format!(
+                "    ++{};\n",
+                super::owned::coverage::statement_counter(*entity)
+            ),
+            _ => {
+                return Err("functional coverage requires the ownership-aware emitter".to_owned())
+            }
+        },
         IrStmt::Memory { text: Some(_), .. } => {
             return Err("string-sourced memory loads require the owned emitter".to_owned())
         }

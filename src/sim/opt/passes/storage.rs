@@ -221,6 +221,10 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
             rw.read(part.signal);
         }
     }
+    // So does the toggle coverage monitor with each toggle signal.
+    for toggle in assertion_coverage.iter().flat_map(|table| &table.toggles) {
+        rw.read(toggle.signal);
+    }
     // The runtime reads direct switch controls through their storage address.
     for control in &switch_network.controls {
         rw.read(control.signal);

@@ -107,6 +107,9 @@ pub(super) struct CodeTables<'c, 'a> {
     declarations: HashMap<NodeId, u32>,
     /// The byte offset of each line of a source file, by file.
     line_starts: HashMap<String, Vec<usize>>,
+    /// The entry of each statement node built (statement coverage links
+    /// its entities to them, 40.5.3).
+    statement_rows: HashMap<NodeId, u32>,
 }
 
 impl<'c, 'a> CodeTables<'c, 'a> {
@@ -137,13 +140,21 @@ impl<'c, 'a> CodeTables<'c, 'a> {
             pending_block: None,
             declarations: HashMap::new(),
             line_starts: HashMap::new(),
+            statement_rows: HashMap::new(),
         }
     }
 
-    /// The finished tables: entries, files and the statement entry of each
-    /// named block's catalog row.
-    pub(super) fn finish(self) -> (Vec<IrVpiCode>, Vec<String>, Vec<(usize, u32)>) {
-        (self.code, self.files, self.named_blocks)
+    /// The finished tables: entries, files, the statement entry of each
+    /// named block's catalog row and the entry of each statement node.
+    pub(super) fn finish(
+        self,
+    ) -> (
+        Vec<IrVpiCode>,
+        Vec<String>,
+        Vec<(usize, u32)>,
+        HashMap<NodeId, u32>,
+    ) {
+        (self.code, self.files, self.named_blocks, self.statement_rows)
     }
 
     /// The catalog row a full name keys, if any.
@@ -207,6 +218,30 @@ impl<'c, 'a> CodeTables<'c, 'a> {
     /// Build `item` into entry `slot`, reserving its children's entries
     /// contiguously before building them.
     fn place(&mut self, slot: usize, role: &'static str, item: Item<'a>, scope: Option<usize>) {
+        let entry = u32::try_from(slot).unwrap_or(u32::MAX);
+        match &item {
+            Item::Stmt(id) => {
+                self.statement_rows.entry(*id).or_insert(entry);
+                // An unnamed block the entry folds into the for or foreach
+                // statement it holds.
+                if matches!(self.cg.kind(*id), NodeKind::Stmt(StmtKind::Begin))
+                    && self.cg.node(*id).name.is_empty()
+                {
+                    let found = self
+                        .cg
+                        .vpi_for_declarations(*id)
+                        .map(|(found, _)| found)
+                        .or_else(|| self.cg.vpi_foreach_block(*id));
+                    if let Some(found) = found {
+                        self.statement_rows.entry(found).or_insert(entry);
+                    }
+                }
+            }
+            Item::ExprStmt(id) | Item::ForWithLocals(id, _) => {
+                self.statement_rows.entry(*id).or_insert(entry);
+            }
+            _ => {}
+        }
         let (mut code, children, inner) = self.build(item, scope);
         if let Some(row) = self.pending_block.take() {
             self.named_blocks

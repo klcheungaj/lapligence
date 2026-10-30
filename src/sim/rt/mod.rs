@@ -166,6 +166,7 @@ pub fn runtime_sources() -> (&'static str, &'static str) {
             include_str!("coverage/database.c"),
             include_str!("coverage/assertions.c"),
             include_str!("coverage/fsm.c"),
+            include_str!("coverage/code.c"),
         ),
     )
 }

@@ -132,11 +132,15 @@ void llg_value_watch_hook(llg_value_watch_fn hook) { value_watch_hook = hook; }
 // rows; the flag is set while a model has FSMs.
 static int value_watch_fsm;
 static void llg_fcov_changed(const void* key);
+// So does toggle coverage (coverage/code.c) with its started signals.
+static int value_watch_toggle;
+static void llg_tcov_changed(const void* key);
 
-// A watched publication: the FSM monitors first, so a VPI value-change
-// callback already reads the FSM's coverage of the new value.
+// A watched publication: the coverage monitors first, so a VPI value-change
+// callback already reads the coverage of the new value.
 static void value_watch_notify(const void* key) {
     if (value_watch_fsm) llg_fcov_changed(key);
+    if (value_watch_toggle) llg_tcov_changed(key);
     if (value_watch_hook) value_watch_hook(key);
 }
 

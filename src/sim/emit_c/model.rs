@@ -1278,6 +1278,7 @@ fn render_model(
     super::owned::randomize::tables(model, &mut out);
     super::owned::coverage::tables(model, &mut out);
     super::owned::coverage::assertion_tables(model, &mut out);
+    super::owned::coverage::statement_tables(model, &mut out);
     render_signal_decls(model, &mut out);
     render_static_local_decls(model, &mut out);
     super::owned::model::persistent_returns(model, &mut out);
@@ -1395,6 +1396,7 @@ fn render_model(
     render_vpi_builtin_calls(model, &mut out);
     // After the signal storage the FSM parts point at.
     super::owned::coverage::fsm_tables(model, &mut out);
+    super::owned::coverage::toggle_tables(model, &mut out);
     out.push_str(&sharing.declarations);
     out.push_str(&sharing.prototypes);
     out.push_str(&coroutine_metadata);

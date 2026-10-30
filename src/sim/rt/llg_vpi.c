@@ -3824,23 +3824,117 @@ static int is_coverage_type_property(int property) {
 }
 
 /* vpi_get(<coverage type>, instance): the covered items of that type owned
- * by the instance (40.5.3, S46-D10). */
+ * by the instance (40.5.3, S46-D10): assertions, reached FSM states,
+ * executed statements or signal bits seen at both 0 and 1 (A19-D45). A
+ * model without the kind has none. */
 static PLI_INT32 instance_coverage(const llg_vpi_slot_t* slot, int property) {
-    if (property != vpiAssertCoverage && property != vpiFsmStateCoverage) {
-        vpi_error("LLG_VPI_UNSUPPORTED",
-                  "statement and toggle coverage are not implemented (S46-D5)");
-        return vpiUndefined;
-    }
     if (is_package_slot(slot)) return 0;
     int32_t instance = slot_instance(slot);
     if (instance < 0) {
         vpi_error("LLG_VPI_RELATION", "coverage properties need an instance");
         return vpiUndefined;
     }
-    /* FSM state coverage counts the reached states of the instance's FSMs. */
-    size_t covered = property == vpiFsmStateCoverage ? llg_fcov_covered_in(instance)
-                                                     : llg_acov_covered_in(instance);
+    size_t covered = property == vpiFsmStateCoverage    ? llg_fcov_covered_in(instance)
+                     : property == vpiStatementCoverage ? llg_scov_covered_in(instance)
+                     : property == vpiToggleCoverage    ? llg_tcov_covered_in(instance)
+                                                        : llg_acov_covered_in(instance);
     return covered > INT32_MAX ? INT32_MAX : (PLI_INT32)covered;
+}
+
+static int code_is_statement(int type);
+static int code_type(const llg_vpi_code_t* node);
+static uint32_t statement_scope_code(const llg_vpi_model_object_t* object);
+
+static int is_coverage_status_property(int property) {
+    return property == vpiCovered || property == vpiCoverMax || property == vpiCoveredCount;
+}
+
+/* The coverable statements of statement object `index` and everything it
+ * contains (40.5.3: "the entities are statements"); `depth` bounds the
+ * nesting walked. */
+static void code_statement_tally(uint32_t index, uint64_t tally[3], unsigned depth) {
+    const llg_vpi_code_t* node = code_at(index);
+    if (!node || depth > 4096u) return;
+    int64_t entity = llg_scov_at_code(index);
+    if (entity >= 0) {
+        uint64_t hits = llg_scov_hits((size_t)entity);
+        tally[0] += hits != 0;
+        tally[1] += 1u;
+        tally[2] = hits > UINT64_MAX - tally[2] ? UINT64_MAX : tally[2] + hits;
+    }
+    /* A link names another root (no children of its own). */
+    if (node->flags & LLG_VPI_CODE_LINK) return;
+    for (uint32_t i = 0; i < node->count; ++i) code_statement_tally(node->first + i, tally, depth + 1u);
+}
+
+/* vpiCovered, vpiCoverMax and vpiCoveredCount of a statement object
+ * (40.5.3, A19-D45): its executed statements, its statements and the sum
+ * of their execution counts. Concurrent assertions reached as statements
+ * keep the assertion-handle answers of their assertion object. */
+static int code_coverage_property(uint32_t index, int property, uint64_t* value) {
+    const llg_vpi_code_t* node = code_at(index);
+    int type = node ? code_type(node) : 0;
+    if (!node || type == vpiAssert || type == vpiAssume || type == vpiCover ||
+        !(code_is_statement(type) || type == vpiFuncCall || type == vpiMethodFuncCall ||
+          type == vpiSysFuncCall))
+        return 0;
+    uint64_t tally[3] = {0, 0, 0};
+    code_statement_tally(index, tally, 0u);
+    *value = property == vpiCovered ? tally[0] : property == vpiCoverMax ? tally[1] : tally[2];
+    return 1;
+}
+
+static int is_signal_type(int type) {
+    switch (type) {
+        case vpiNet: case vpiNetBit: case vpiNetArray: case vpiStructNet: case vpiEnumNet:
+        case vpiIntegerNet: case vpiTimeNet: case vpiPackedArrayNet:
+        case vpiShortRealVar: case vpiRealVar: case vpiByteVar: case vpiShortIntVar:
+        case vpiIntVar: case vpiLongIntVar: case vpiIntegerVar: case vpiTimeVar:
+        case vpiRegArray: case vpiPackedArrayVar: case vpiBitVar: case vpiReg:
+        case vpiStructVar: case vpiUnionVar: case vpiEnumVar: case vpiStringVar:
+        case vpiChandleVar: case vpiClassVar: case vpiRegBit:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/* vpiCovered, vpiCoverMax and vpiCoveredCount of a net, variable or bit
+ * (40.5.3, A19-D45): its bits seen at both 0 and 1, its bits, and their
+ * changes between 0 and 1. A net or variable without toggle coverage (an
+ * array, a real, string or handle, a member or a model without it) has no
+ * coverable bits. */
+static int signal_coverage_property(const llg_vpi_slot_t* slot, int property, uint64_t* value) {
+    if (!is_signal_type(handle_type(slot))) return 0;
+    uint64_t covered = 0, toggles = 0, bits = 0;
+    if ((slot->kind == SLOT_OBJECT || slot->kind == SLOT_SELECT) &&
+        slot->element == LLG_VPI_NO_ELEMENT) {
+        int64_t signal = llg_tcov_at_object((int32_t)slot->object);
+        if (signal >= 0) {
+            uint32_t width = llg_tcov_width((size_t)signal);
+            uint32_t lsb = slot->kind == SLOT_SELECT ? slot->lsb : 0u;
+            uint32_t n = slot->kind == SLOT_SELECT && slot->span ? slot->span : width;
+            if (lsb < width) {
+                bits = n < width - lsb ? n : width - lsb;
+                llg_tcov_bits((size_t)signal, lsb, (uint32_t)bits, &covered, &toggles);
+            }
+        }
+    }
+    *value = property == vpiCovered ? covered : property == vpiCoverMax ? bits : toggles;
+    return 1;
+}
+
+/* The 40.5.3 coverage status of a statement, net, variable or bit handle;
+ * 0 when `slot` is none of those. */
+static int code_signal_coverage(const llg_vpi_slot_t* slot, int property, uint64_t* value) {
+    if (!is_coverage_status_property(property)) return 0;
+    if (slot->kind == SLOT_CODE) return code_coverage_property((uint32_t)slot->aux, property, value);
+    llg_vpi_model_object_t* object = row_object(slot->object);
+    if (slot->kind == SLOT_OBJECT && object && is_statement_scope_type(object->type)) {
+        uint32_t code = statement_scope_code(object);
+        return code != LLG_VPI_NONE && code_coverage_property(code, property, value);
+    }
+    return signal_coverage_property(slot, property, value);
 }
 
 /* The 40.3.1 coverage type of a VPI coverage type property, or -1. */
@@ -3867,6 +3961,15 @@ static PLI_INT32 coverage_control(int operation, int type, vpiHandle object) {
         vpi_error("LLG_VPI_RELATION",
                   "FSM coverage is controlled only per instance (40.5.4, decision A17-D13)");
         return SV_COV_ERROR;
+    }
+    {
+        uint64_t ignored;
+        if (code_signal_coverage(slot, vpiCoverMax, &ignored)) {
+            vpi_error("LLG_VPI_RELATION",
+                      "statement and toggle coverage are controlled only per instance (40.5.4, "
+                      "decision A19-D45)");
+            return SV_COV_ERROR;
+        }
     }
     int32_t instance = slot_instance(slot);
     if (instance < 0) {
@@ -7954,6 +8057,11 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             return (PLI_INT32)value;
         }
     }
+    {
+        uint64_t coverage;
+        if (code_signal_coverage(slot, property, &coverage))
+            return coverage > INT32_MAX ? INT32_MAX : (PLI_INT32)coverage;
+    }
     if (slot->kind == SLOT_CODE) return code_property((uint32_t)slot->aux, property);
     if (slot->kind == SLOT_OBJECT && row_object(slot->object) &&
         is_statement_scope_type(row_object(slot->object)->type)) {
@@ -8401,6 +8509,11 @@ PLI_INT64 vpi_get64(PLI_INT32 property, vpiHandle handle) {
         int handled;
         PLI_INT64 result = dyn_get(property, slot, &handled);
         if (handled) return result;
+    }
+    /* Statement and toggle counts keep their full 64-bit value too. */
+    if (slot && slot->kind != SLOT_ASSERTION && code_signal_coverage(slot, property, &value)) {
+        vpi_enter();
+        return value > INT64_MAX ? INT64_MAX : (PLI_INT64)value;
     }
     return (PLI_INT64)vpi_get(property, handle);
 }

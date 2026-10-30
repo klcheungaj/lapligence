@@ -88,7 +88,11 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
     ) -> Result<IrDeferredAction, String> {
         self.validate_deferred_action_refs(statement)?;
         let pre_fn_start = self.pre_fns.len();
-        let body = match self.lower_stmt(statement) {
+        // The action must stay one call: it gets no statement coverage hit.
+        self.cg.statement_hits_suppressed += 1;
+        let body = self.lower_stmt(statement);
+        self.cg.statement_hits_suppressed -= 1;
+        let body = match body {
             Ok(body) => body,
             Err(error) => {
                 self.pre_fns.truncate(pre_fn_start);

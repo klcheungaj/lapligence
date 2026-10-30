@@ -558,6 +558,81 @@ pub(in crate::sim::emit_c) fn fsm_tables(model: &IrModel, out: &mut String) {
     ));
 }
 
+/// The statement coverage counters and entity table (IEEE 1800-2009
+/// 40.2.2): one `uint64_t` per statement entity, which the statement's
+/// generated code increments, and a row per entity naming its counter.
+/// Emitted before the bodies that count; empty without statement coverage.
+pub(in crate::sim::emit_c) fn statement_tables(model: &IrModel, out: &mut String) {
+    let Some(table) = &model.assertion_coverage else {
+        return;
+    };
+    if table.statements.is_empty() {
+        return;
+    }
+    let index = |instance: Option<u32>| instance.map_or(-1, i64::from);
+    let mut rows = Vec::with_capacity(table.statements.len());
+    for (entity, item) in table.statements.iter().enumerate() {
+        let counter = statement_counter(entity as u32);
+        out.push_str(&format!("static uint64_t {counter};\n"));
+        rows.push(format!(
+            "{{ &{counter}, {}, {}u, {}u, {}u, {} }}",
+            c_string_literal(&item.file),
+            item.line,
+            item.column,
+            item.code.map_or(0, |code| u64::from(code) + 1),
+            index(item.instance)
+        ));
+    }
+    out.push_str(&format!(
+        "static const llg_scov_item_t llg_model_scov_items[] = {{\n    {}\n}};\n",
+        rows.join(",\n    ")
+    ));
+}
+
+/// The toggle coverage signal table (IEEE 1800-2009 40.2.2): per packed
+/// net or variable its storage, name, instance, width and catalog row.
+/// Emitted after the signal storage; empty without toggle coverage.
+pub(in crate::sim::emit_c) fn toggle_tables(model: &IrModel, out: &mut String) {
+    let Some(table) = &model.assertion_coverage else {
+        return;
+    };
+    if table.toggles.is_empty() {
+        return;
+    }
+    let rows = table
+        .toggles
+        .iter()
+        .map(|toggle| {
+            format!(
+                "{{ {}, {}, {}, {}u, {} }}",
+                fsm_storage(model, toggle.signal),
+                c_string_literal(&toggle.full_name),
+                toggle.instance,
+                toggle.width,
+                toggle.object.map_or(-1, |row| row as i64)
+            )
+        })
+        .collect::<Vec<_>>();
+    out.push_str(&format!(
+        "static const llg_tcov_signal_t llg_model_tcov_signals[] = {{\n    {}\n}};\n",
+        rows.join(",\n    ")
+    ));
+}
+
+/// The startup call that binds the toggle table and, when the design
+/// requests toggle coverage, starts it from the values after the storage
+/// initializers; empty without toggle coverage.
+pub(in crate::sim::emit_c) fn toggle_startup(model: &IrModel) -> String {
+    match &model.assertion_coverage {
+        Some(table) if !table.toggles.is_empty() => format!(
+            "    llg_tcov_model(llg_model_tcov_signals, {}u, {});\n",
+            table.toggles.len(),
+            u8::from(table.toggle_started)
+        ),
+        _ => String::new(),
+    }
+}
+
 /// The packed storage a state part reads: an optimizer alias shares its
 /// target's storage, which is where the writes publish.
 fn fsm_storage(model: &IrModel, signal: usize) -> String {
@@ -619,8 +694,21 @@ pub(in crate::sim::emit_c) fn startup(model: &IrModel) -> String {
             },
             table.instances.len()
         ));
+        // Before any process runs: every statement counts from here.
+        if !table.statements.is_empty() {
+            out.push_str(&format!(
+                "    llg_scov_model(llg_model_scov_items, {}u, {});\n",
+                table.statements.len(),
+                u8::from(table.statement_started)
+            ));
+        }
     }
     out
+}
+
+/// The model storage that counts statement entity `entity`.
+pub(in crate::sim::emit_c) fn statement_counter(entity: u32) -> String {
+    format!("llg_scov_{entity}")
 }
 
 fn point_index(point: Option<u32>) -> String {
@@ -630,6 +718,11 @@ fn point_index(point: Option<u32>) -> String {
 impl Frame<'_, '_> {
     pub(super) fn coverage_statement(&mut self, operation: &IrCoverageStmt) -> Result<(), String> {
         match operation {
+            // One counter per statement entity, model storage that body
+            // sharing passes as an operand (coverage/statements.c).
+            IrCoverageStmt::StatementHit { entity } => {
+                self.line(format!("++{};", statement_counter(*entity)));
+            }
             IrCoverageStmt::Create { group, target } => {
                 let address = self.native_lookup(target, NativeKind::Chandle)?.address;
                 self.line(format!(

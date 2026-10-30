@@ -198,7 +198,7 @@ impl Codegen<'_> {
         model.assertion_coverage = Some(IrAssertionCoverage {
             items,
             instances,
-            fsms: Vec::new(),
+            ..Default::default()
         });
     }
 

@@ -973,6 +973,12 @@ fn collect_effects(
                 effects.push(ExecutionEffect::RuntimeService)
             }
             IrStmt::Randomize(_) => effects.push(ExecutionEffect::RuntimeService),
+            // A statement coverage hit only counts in model storage.
+            IrStmt::Coverage(operation)
+                if matches!(
+                    operation.as_ref(),
+                    crate::sim::ir::IrCoverageStmt::StatementHit { .. }
+                ) => {}
             IrStmt::Coverage(operation) => {
                 effects.push(ExecutionEffect::RuntimeService);
                 if operation.written_access().is_some() {

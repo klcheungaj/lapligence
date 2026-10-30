@@ -514,6 +514,10 @@ pub enum IrCoverageStmt {
         depth: IrDepth,
         strobe: bool,
     },
+    /// Statement coverage (IEEE 1800-2009 40.2.2): the source statement
+    /// [`IrAssertionCoverage::statements`]`[entity]` starts executing. It
+    /// only counts: it reads and writes no design state.
+    StatementHit { entity: u32 },
 }
 
 impl IrCovergroup {
@@ -727,7 +731,8 @@ impl IrCoverageStmt {
             | Self::Text { .. }
             | Self::TypeText { .. }
             | Self::SetDbName { .. }
-            | Self::LoadDb { .. } => Vec::new(),
+            | Self::LoadDb { .. }
+            | Self::StatementHit { .. } => Vec::new(),
         }
     }
 
@@ -761,7 +766,8 @@ impl IrCoverageStmt {
             | Self::Text { .. }
             | Self::TypeText { .. }
             | Self::SetDbName { .. }
-            | Self::LoadDb { .. } => Vec::new(),
+            | Self::LoadDb { .. }
+            | Self::StatementHit { .. } => Vec::new(),
         }
     }
 
@@ -780,7 +786,8 @@ impl IrCoverageStmt {
             | Self::TypeOption { .. }
             | Self::TypeText { .. }
             | Self::SetDbName { .. }
-            | Self::LoadDb { .. } => Vec::new(),
+            | Self::LoadDb { .. }
+            | Self::StatementHit { .. } => Vec::new(),
         }
     }
 
@@ -799,7 +806,8 @@ impl IrCoverageStmt {
             | Self::TypeOption { .. }
             | Self::TypeText { .. }
             | Self::SetDbName { .. }
-            | Self::LoadDb { .. } => Vec::new(),
+            | Self::LoadDb { .. }
+            | Self::StatementHit { .. } => Vec::new(),
         }
     }
 
@@ -999,6 +1007,49 @@ pub struct IrAssertionCoverage {
     pub(in crate::sim) instances: Vec<IrCoverageInstance>,
     /// The FSMs of the IEEE 1800-2009 40.4 pragmas, in instance order.
     pub(in crate::sim) fsms: Vec<IrFsm>,
+    /// Statement coverage entities (40.2.2), indexed by
+    /// [`IrCoverageStmt::StatementHit`]; empty when the model has no
+    /// statement coverage.
+    pub(in crate::sim) statements: Vec<IrStatementItem>,
+    /// Toggle coverage signals (40.2.2); empty when the model has no toggle
+    /// coverage.
+    pub(in crate::sim) toggles: Vec<IrToggleSignal>,
+    /// Statement and toggle coverage collect from time 0 (a `$coverage_*`
+    /// call names the kind) rather than only after a start request.
+    pub(in crate::sim) statement_started: bool,
+    pub(in crate::sim) toggle_started: bool,
+}
+
+/// One statement coverage entity: a source statement of an elaborated
+/// instance (or of `$root` for code outside every instance).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrStatementItem {
+    /// The owned semantic node of the statement.
+    pub(in crate::sim) identity: u64,
+    /// Owning instance as an index of [`IrAssertionCoverage::instances`];
+    /// `None` for `$root`.
+    pub(in crate::sim) instance: Option<u32>,
+    /// Source file, line and column; empty and 0 when unknown.
+    pub(in crate::sim) file: String,
+    pub(in crate::sim) line: u32,
+    pub(in crate::sim) column: u32,
+    /// The statement's entry in [`super::IrModel::vpi_code`]; `None`
+    /// without expression objects.
+    pub(in crate::sim) code: Option<u32>,
+}
+
+/// One toggle coverage signal: a packed net or variable of an instance
+/// whose every bit is a coverable entity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrToggleSignal {
+    /// The signal storage (an index of [`super::IrModel::signals`]).
+    pub(in crate::sim) signal: usize,
+    pub(in crate::sim) full_name: String,
+    pub(in crate::sim) instance: u32,
+    pub(in crate::sim) width: u32,
+    /// The VPI catalog row of the net or variable; `None` without a
+    /// catalog.
+    pub(in crate::sim) object: Option<usize>,
 }
 
 /// The widest FSM state expression: the runtime monitor keeps a state value
@@ -1089,8 +1140,20 @@ impl IrAssertionCoverage {
                 return Err("coverage instance parent does not precede it".to_owned());
             }
         }
-        if self.fsms.len() > i32::MAX as usize {
+        if self.fsms.len() > i32::MAX as usize
+            || self.statements.len() > i32::MAX as usize
+            || self.toggles.len() > i32::MAX as usize
+        {
             return Err("FSM coverage table is too large".to_owned());
+        }
+        let instance_known =
+            |instance: Option<u32>| instance.is_none_or(|index| (index as usize) < self.instances.len());
+        if self.statements.iter().any(|item| !instance_known(item.instance))
+            || self.toggles.iter().any(|toggle| {
+                !instance_known(Some(toggle.instance)) || toggle.width == 0
+            })
+        {
+            return Err("a statement or toggle entity names an unknown instance".to_owned());
         }
         for fsm in &self.fsms {
             if fsm.instance as usize >= self.instances.len() {
