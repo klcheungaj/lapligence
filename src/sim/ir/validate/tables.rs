@@ -132,7 +132,10 @@ impl Validator<'_> {
                 | IrVpiObjectKind::Modport
                 | IrVpiObjectKind::ModPath
                 | IrVpiObjectKind::Tchk
-                | IrVpiObjectKind::ClockingIoDecl => {
+                | IrVpiObjectKind::ClockingIoDecl
+                | IrVpiObjectKind::GenScopeArray
+                | IrVpiObjectKind::GenVar
+                | IrVpiObjectKind::IoDecl => {
                     if object.signal.is_some() || object.array.is_some() {
                         return self.fail(path, "VPI structure object has no own storage");
                     }

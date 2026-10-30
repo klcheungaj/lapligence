@@ -11,6 +11,17 @@ use crate::sim::ir::{
 /// Marker suffix that keeps a port apart from the declaration it connects,
 /// which has the same hierarchical name (see `collection/vpi.rs`).
 const PORT_MARKER: &str = "\u{1f}\u{1e}port";
+/// The hidden key part of an io declaration, which shares its name with
+/// the port or declaration it declares.
+const IO_MARKER: &str = "\u{1f}\u{1e}io";
+
+/// The displayed path of a catalog key: ports and io declarations live in
+/// their own namespaces under the name they share.
+fn strip_marker(path: &str) -> &str {
+    path.strip_suffix(PORT_MARKER)
+        .or_else(|| path.strip_suffix(IO_MARKER))
+        .unwrap_or(path)
+}
 
 /// One emitted catalog row.
 struct Entry {
@@ -245,7 +256,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             IrVpiObjectKind::RegArray | IrVpiObjectKind::NetArray => {
                 (object.kind.c_type(), element_type)
             }
-            IrVpiObjectKind::Port | IrVpiObjectKind::ClockingIoDecl => {
+            IrVpiObjectKind::Port | IrVpiObjectKind::ClockingIoDecl | IrVpiObjectKind::IoDecl => {
                 (object.kind.c_type(), object.direction.c_code())
             }
             IrVpiObjectKind::Record => (object.var_kind.c_type(), "0"),
@@ -301,7 +312,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
     // definition empty rather than inventing frontend provenance.
     let paths = entries.keys().cloned().collect::<Vec<_>>();
     for path in paths {
-        let path = path.strip_suffix(PORT_MARKER).unwrap_or(&path);
+        let path = strip_marker(&path);
         let parts = split_name(path);
         for depth in 1..parts.len() {
             let prefix = parts[..depth].join("\u{1f}");
@@ -528,7 +539,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
     }
     out.push_str("static llg_vpi_model_object_t llg_vpi_objects[] = {\n");
     for (index, entry) in entries.iter().enumerate() {
-        let path = entry.full.strip_suffix(PORT_MARKER).unwrap_or(&entry.full);
+        let path = strip_marker(&entry.full);
         let parts = split_name(path);
         let parent_path = (parts.len() > 1).then(|| parts[..parts.len() - 1].join("\u{1f}"));
         // An unnamed object's key ends in a hidden part; its displayed

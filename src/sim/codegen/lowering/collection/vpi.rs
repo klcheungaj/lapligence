@@ -15,6 +15,7 @@ use crate::sim::ir::{
 };
 
 mod code;
+mod declarations;
 mod dynamic;
 mod scopes;
 mod timing;
@@ -1263,8 +1264,19 @@ impl Codegen<'_> {
                         full_name: path.join(SEPARATOR),
                         name: path.last().cloned().unwrap_or_default(),
                         kind: IrVpiObjectKind::GenScope,
+                        port_target: self.vpi_gen_scope_array_of(id),
                         ..IrVpiObject::default()
                     }));
+                }
+                NodeKind::GenScopeArray => {
+                    if let Some(row) = self.vpi_gen_scope_array_row(id) {
+                        insert(source(row));
+                    }
+                }
+                NodeKind::Genvar { .. } => {
+                    if let Some(row) = self.vpi_genvar_row(id) {
+                        insert(source(row));
+                    }
                 }
                 // An unnamed block that declares items, a `for` that
                 // declares its loop variables, a `foreach` (37.12 details
@@ -1510,6 +1522,8 @@ impl Codegen<'_> {
                             .then(|| self.vpi_packed_range(id, width))
                             .flatten(),
                         local_param: *local,
+                        // 37.26: a specparam is its own object type.
+                        type_code: self.db.specparam(id).map(|_| "vpiSpecParam"),
                         constant: Some(constant),
                         typespec: self.vpi_declared_typespec(&mut typespecs, id),
                         ..IrVpiObject::default()
@@ -1611,6 +1625,9 @@ impl Codegen<'_> {
                         activation: self.vpi_activation(id),
                         ..IrVpiObject::default()
                     }));
+                    for row in self.vpi_argument_io_decls(&mut typespecs, id) {
+                        insert(row);
+                    }
                 }
                 NodeKind::Gate { .. } => {
                     if let Some(row) = self.vpi_primitive_row(
@@ -1667,6 +1684,9 @@ impl Codegen<'_> {
                         kind: IrVpiObjectKind::Modport,
                         ..IrVpiObject::default()
                     }));
+                    for row in self.vpi_modport_io_decls(&mut typespecs, id, parent) {
+                        insert(row);
+                    }
                 }
                 NodeKind::Port {
                     direction,
@@ -1750,6 +1770,36 @@ impl Codegen<'_> {
                         },
                         ..IrVpiObject::default()
                     }));
+                    // 37.13: a module port's io declaration; interface and
+                    // modport ports declare an interface, not a value.
+                    if interface.is_none()
+                        && matches!(
+                            self.kind(parent),
+                            NodeKind::ModuleInst {
+                                is_interface: false,
+                                ..
+                            }
+                        )
+                    {
+                        let declaration = low
+                            .filter(|low| {
+                                matches!(
+                                    self.kind(*low),
+                                    NodeKind::Var { .. } | NodeKind::Net { .. }
+                                )
+                            })
+                            .unwrap_or(id);
+                        insert(self.vpi_io_decl_row(
+                            &mut typespecs,
+                            id,
+                            &self.vpi_full_name(parent),
+                            &node.name,
+                            declarations::vpi_direction(*direction),
+                            port_index,
+                            Some(declaration),
+                            low.map(|low| self.vpi_full_name(low)),
+                        ));
+                    }
                 }
                 _ => {}
             }

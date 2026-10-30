@@ -73,6 +73,15 @@ pub enum IrVpiObjectKind {
     /// associative array (37.17, 37.29): [`IrVpiObject::storage`] names its
     /// storage and [`IrVpiObject::shape`] its value shape.
     Dynamic,
+    /// A generate-loop scope array (37.80): its generate scopes name it as
+    /// their `port_target`, its own `port_target` names its genvar.
+    GenScopeArray,
+    /// A genvar (37.80); it has no value of its own.
+    GenVar,
+    /// An io declaration (37.13) of a module port, a task or function
+    /// argument or a modport port, keyed under its scope with a hidden
+    /// `io` part; [`IrVpiObject::port_index`] is its declaration order.
+    IoDecl,
 }
 
 impl IrVpiObjectKind {
@@ -106,6 +115,9 @@ impl IrVpiObjectKind {
             Self::ModPath => "vpiModPath",
             Self::Tchk => "vpiTchk",
             Self::Dynamic => "vpiUndefined",
+            Self::GenScopeArray => "vpiGenScopeArray",
+            Self::GenVar => "vpiGenVar",
+            Self::IoDecl => "vpiIODecl",
         }
     }
 
@@ -197,6 +209,8 @@ pub enum IrVpiDirection {
     Input,
     Output,
     Inout,
+    /// A `ref` task or function argument (`vpiRef`).
+    Ref,
     #[default]
     None,
 }
@@ -207,6 +221,7 @@ impl IrVpiDirection {
             Self::Input => "vpiInput",
             Self::Output => "vpiOutput",
             Self::Inout => "vpiInout",
+            Self::Ref => "vpiRef",
             Self::None => "vpiNoDirection",
         }
     }

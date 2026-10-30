@@ -33,6 +33,7 @@
 test a17d13 sim_lrm_decisions::a17_d13_fsm_objects
 test a19d28 sim_lrm_decisions::a19_d28_index_and_packed_relations
 test a19d30 sim_lrm_decisions::a19_d30_clocking_blocks
+test a19d42 sim_lrm_decisions::a19_d42_declaration_objects
 test a19decl adv_019::instance_properties_follow_the_definition_and_its_configuration
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
@@ -83,11 +84,11 @@ node module 37.5 type=vpiModule
   iterate vpiPrimitiveArray implemented walk
   iterate vpiModPath implemented walk
   iterate vpiTchk implemented walk
-  iterate vpiDefParam unsupported defparams are not objects
-  iterate vpiIODecl unsupported io declarations are not objects
+  iterate vpiDefParam unsupported the targets and values of defparam statements are not captured from the frontend
+  iterate vpiIODecl implemented walk
   iterate vpiAliasStmt unsupported alias statements are not objects
   iterate vpiClockingBlock implemented walk
-  iterate vpiGenScopeArray unsupported generate scope arrays are not objects
+  iterate vpiGenScopeArray implemented walk
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiModule extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
@@ -125,7 +126,7 @@ node interface 37.6 type=vpiInterface
   handle vpiDefaultClocking implemented walk
   handle vpiDefaultDisableIff implemented walk
   handle vpiInstanceArray implemented walk
-  iterate vpiInterfaceTfDecl unsupported interface tf declarations are not objects
+  iterate vpiInterfaceTfDecl n/a extern, forkjoin and export interface tasks and functions (25.7) are rejected by llg
   iterate vpiModport implemented walk
   iterate vpiModPath implemented walk
   iterate vpiContAssign implemented walk
@@ -171,7 +172,7 @@ node interface 37.6 type=vpiInterface
 node modport 37.7 type=vpiModport
   get vpiName unsupported a modport reports its name through vpi_get_str
   handle vpiInterface unsupported a modport does not lead back to its interface
-  iterate vpiIODecl unsupported io declarations are not objects
+  iterate vpiIODecl implemented walk
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiModule extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
@@ -179,7 +180,7 @@ node modport 37.7 type=vpiModport
   str vpiFullName extension walk the name of the object
   str vpiName extension walk the name of the object
 
-node interface_tf_decl 37.8 type=vpiInterfaceTfDecl default=unsupported interface tf declarations are not objects
+node interface_tf_decl 37.8 type=vpiInterfaceTfDecl default=n/a extern, forkjoin and export interface tasks and functions (25.7) are rejected by llg
   get vpiAccessType
   iterate vpiTask
   iterate vpiFunction
@@ -296,9 +297,9 @@ node instance 37.10 members=package,interface,program,module
   iterate vpiRegArray implemented walk
   iterate vpiMemory unsupported the vpiMemory iteration is not implemented (vpiRegArray is)
   iterate vpiNamedEvent implemented walk
-  iterate vpiNamedEventArray unsupported named event arrays are not objects
+  iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
   iterate vpiParameter implemented walk
-  iterate vpiSpecParam unsupported specparams are not objects
+  iterate vpiSpecParam implemented walk
   iterate vpiAssertion implemented walk
   iterate vpiTypedef unsupported the vpiTypedef iteration is not implemented
   iterate vpiClassDefn unsupported class definitions are reached from class variables and objects only
@@ -325,7 +326,7 @@ node instance_array 37.11 members=primitive_array,interface_array,program_array,
   iterate vpiInstance implemented walk
 
 node interface_array 37.11 type=vpiInterfaceArray
-  iterate vpiParamAssign unsupported parameter assignments are not objects
+  iterate vpiParamAssign unsupported the parameter overrides of instance arrays are not captured
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiModule extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
@@ -333,13 +334,13 @@ node interface_array 37.11 type=vpiInterfaceArray
   iterate vpiInterface extension walk per-type child iteration (IEEE 1364)
 
 node program_array 37.11 type=vpiProgramArray
-  iterate vpiParamAssign unsupported parameter assignments are not objects
+  iterate vpiParamAssign unsupported the parameter overrides of instance arrays are not captured
   handle vpiParent extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
   iterate vpiProgram extension walk per-type child iteration (IEEE 1364)
 
 node module_array 37.11 type=vpiModuleArray
-  iterate vpiParamAssign unsupported parameter assignments are not objects
+  iterate vpiParamAssign unsupported the parameter overrides of instance arrays are not captured
   iterate vpiModule implemented walk
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiModule extension walk the enclosing scope, instance, module or parent
@@ -368,7 +369,7 @@ node scope 37.12 members=instance,task_func,named_begin,begin,named_fork,fork,cl
   iterate vpiSequenceDecl implemented walk
   iterate vpiConcurrentAssertions unsupported the vpiConcurrentAssertions iteration is not implemented (vpiAssertion is)
   iterate vpiNamedEvent implemented walk
-  iterate vpiNamedEventArray unsupported named event arrays are not objects
+  iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
   iterate vpiVariables implemented walk
   iterate vpiReg implemented walk
   iterate vpiRegArray implemented walk
@@ -377,7 +378,7 @@ node scope 37.12 members=instance,task_func,named_begin,begin,named_fork,fork,cl
   iterate vpiInternalScope implemented walk
   iterate vpiImport unsupported imports are not exposed
   iterate vpiTypedef unsupported the vpiTypedef iteration is not implemented
-  iterate vpiLetDecl unsupported let declarations are not objects
+  iterate vpiLetDecl unsupported the bodies of let declarations are not captured
 
 node task_func 37.12 members=task,function
   handle vpiStmt implemented walk
@@ -386,7 +387,7 @@ node task_func 37.12 members=task,function
   handle vpiReturn unsupported the return variable of a function is not an object
   handle vpiClassDefn unsupported methods of classes are not objects
   handle vpiParent implemented walk
-  iterate vpiIODecl unsupported io declarations are not objects
+  iterate vpiIODecl implemented walk
   get vpiMethod implemented walk
   get vpiAccessType unsupported DPI and interface access properties of tasks and functions are not captured
   get vpiVisibility implemented walk
@@ -531,23 +532,25 @@ node fork 37.12 type=vpiFork
 node scope_item 37.12 members=property_decl,sequence_decl,concurrent_assertion,named_event,named_event_array,variables,parameters,scope,typespec,let_decl,stmt
   handle vpiScope implemented walk
 
-node io_decl 37.13 type=vpiIODecl default=unsupported io declarations are not objects
-  get vpiDirection
-  str vpiName
-  get vpiScalar
-  get vpiSigned
-  get vpiSize
-  get vpiVector
-  handle vpiExpr
-  handle vpiLeftRange
-  handle vpiRightRange
-  iterate vpiRange
-  handle vpiTypespec
-  handle vpiInstance
-  handle vpiUdpDefn
-  handle vpiTaskFunc
-  handle vpiModule
-  handle vpiModport
+node io_decl 37.13 type=vpiIODecl
+  get vpiDirection implemented walk
+  str vpiName implemented walk
+  get vpiScalar implemented walk
+  get vpiSigned implemented walk
+  get vpiSize implemented walk
+  get vpiVector implemented walk
+  handle vpiExpr implemented walk
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
+  iterate vpiRange implemented a19d42
+  handle vpiTypespec implemented walk
+  handle vpiInstance implemented walk
+  handle vpiUdpDefn unsupported UDP definitions are not objects
+  handle vpiTaskFunc implemented walk
+  handle vpiModule implemented walk
+  handle vpiModport implemented walk
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node ports 37.14 members=port,port_bit
   func vpi_handle_by_index unsupported ports are not indexed
@@ -1038,7 +1041,7 @@ node named_event 37.25 type=vpiNamedEvent
   handle vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
   iterate vpiIndex implemented walk
 
-node named_event_array 37.25 type=vpiNamedEventArray default=unsupported named event arrays are not objects
+node named_event_array 37.25 type=vpiNamedEventArray default=unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
   str vpiName
   str vpiFullName
   func vpi_handle_by_index
@@ -1070,18 +1073,29 @@ node parameter 37.26 type=vpiParameter
   get vpiVector extension walk the sign and width of the object's value
   handle vpiParent extension walk the enclosing scope, instance, module or parent
 
-node type_parameter 37.26 type=vpiTypeParameter default=unsupported type parameters are not objects
+node type_parameter 37.26 type=vpiTypeParameter default=unsupported type parameters have no value and no captured default type expression; the typespecs of the declarations that use one give the type
   handle vpiTypespec
   handle vpiExpr
 
-node spec_param 37.26 type=vpiSpecParam default=unsupported specparams are not objects
+node spec_param 37.26 type=vpiSpecParam
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  get vpiConstType implemented walk
+  get vpiSigned implemented walk
+  handle vpiExpr unsupported initialization and default expressions are not exposed
+  get vpiScalar extension walk the sign and width of the object's value
+  get vpiVector extension walk the sign and width of the object's value
+  handle vpiLeftRange extension walk the packed range of the object's value, as of a parameter
+  handle vpiRightRange extension walk the packed range of the object's value, as of a parameter
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
 
-node def_param 37.26 type=vpiDefParam default=unsupported defparams are not objects
+node def_param 37.26 type=vpiDefParam default=unsupported the targets and values of defparam statements are not captured from the frontend
   handle vpiModule
   handle vpiLhs
   handle vpiRhs
 
-node param_assign 37.26 type=vpiParamAssign default=unsupported parameter assignments are not objects
+node param_assign 37.26 type=vpiParamAssign default=unsupported the parameter overrides of instance arrays are not captured
   get vpiConnByName
   handle vpiModule
   handle vpiScope
@@ -1102,7 +1116,7 @@ node class_defn 37.27 type=vpiClassDefn
   iterate vpiParameter unsupported class parameters are not objects
   iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
   iterate vpiNamedEvent unsupported class events are not objects
-  iterate vpiNamedEventArray unsupported named event arrays are not objects
+  iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
   iterate vpiTypedef unsupported the vpiTypedef iteration is not implemented
   iterate vpiInternalScope unsupported class scopes are not objects
   handle vpiModule unsupported this object does not report its module
@@ -1123,7 +1137,7 @@ node class_typespec 37.28 type=vpiClassTypespec
   str vpiName implemented walk
   get vpiClassType implemented walk
   get vpiAutomatic implemented walk
-  iterate vpiParamAssign unsupported parameter assignments are not objects
+  iterate vpiParamAssign unsupported the parameter overrides of instance arrays are not captured
   handle vpiExtends implemented walk
   handle vpiClassDefn implemented walk
   iterate vpiVariables implemented walk
@@ -1132,7 +1146,7 @@ node class_typespec 37.28 type=vpiClassTypespec
   iterate vpiParameter unsupported class parameters are not objects
   iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
   iterate vpiNamedEvent unsupported class events are not objects
-  iterate vpiNamedEventArray unsupported named event arrays are not objects
+  iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
   iterate vpiInternalScope unsupported class scopes are not objects
   handle vpiInstance unsupported this object does not report its instance
   handle vpiModule unsupported this object does not report its module
@@ -1155,7 +1169,7 @@ node class_obj 37.29 type=vpiClassObj
   iterate vpiParameter unsupported class parameters are not objects
   iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
   iterate vpiNamedEvent unsupported class events are not objects
-  iterate vpiNamedEventArray unsupported named event arrays are not objects
+  iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
   iterate vpiInternalScope unsupported class scopes are not objects
   get vpiAutomatic implemented walk
   get vpiAllocScheme implemented walk
@@ -1730,7 +1744,7 @@ node let_expr 37.53 type=vpiLetExpr default=unsupported let expressions are opaq
   iterate vpiArgument
   handle vpiLetDecl
 
-node let_decl 37.53 type=vpiLetDecl default=unsupported let declarations are not objects
+node let_decl 37.53 type=vpiLetDecl default=unsupported the bodies of let declarations are not captured
   str vpiName
   handle vpiExpr
   iterate vpiSeqFormalDecl
@@ -2012,28 +2026,34 @@ node iterator 37.79 type=vpiIterator
   handle vpiUse unsupported vpiUse is not exposed
   get vpiSize extension walk the sign and width of the object's value
 
-node gen_scope_array 37.80 type=vpiGenScopeArray default=unsupported generate scope arrays are not objects
-  get vpiSize
-  str vpiName
-  str vpiFullName
-  func vpi_handle_by_index
-  func vpi_handle_by_multi_index
-  handle vpiModule
-  handle vpiInstance
-  handle vpiGenVar
-  iterate vpiGenScope
+node gen_scope_array 37.80 type=vpiGenScopeArray
+  get vpiSize implemented walk
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  func vpi_handle_by_index implemented a19d42
+  func vpi_handle_by_multi_index implemented a19d42
+  handle vpiModule implemented walk
+  handle vpiInstance implemented walk
+  handle vpiGenVar implemented walk
+  iterate vpiGenScope implemented walk
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
 
-node gen_var 37.80 type=vpiGenVar default=unsupported genvars are not objects
-  str vpiName
-  str vpiFullName
+node gen_var 37.80 type=vpiGenVar
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node gen_scope 37.80 type=vpiGenScope
   get vpiArray implemented walk
   get vpiArrayMember implemented walk
   get vpiProtected implemented walk
   get vpiImplicitDecl unsupported net declaration properties are not captured
-  handle vpiIndex unsupported generate scope arrays are not objects and the index of a generated scope is not captured
-  handle vpiGenScopeArray unsupported generate scope arrays are not objects
+  handle vpiIndex unsupported the genvar value of a generated scope is not captured as an expression
+  handle vpiGenScopeArray implemented walk
   iterate vpiNet implemented walk
   iterate vpiArrayNet implemented walk
   iterate vpiProcess implemented walk
@@ -2042,8 +2062,8 @@ node gen_scope 37.80 type=vpiGenScope
   iterate vpiModuleArray implemented walk
   iterate vpiPrimitive implemented walk
   iterate vpiPrimitiveArray implemented walk
-  iterate vpiDefParam unsupported defparams are not objects
-  iterate vpiGenScopeArray unsupported generate scope arrays are not objects
+  iterate vpiDefParam unsupported the targets and values of defparam statements are not captured from the frontend
+  iterate vpiGenScopeArray implemented walk
   iterate vpiProgram implemented walk
   iterate vpiProgramArray implemented walk
   iterate vpiAssertion unsupported assertions in generate scopes are not iterated

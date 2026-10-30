@@ -436,6 +436,16 @@ static int is_scope_iteration(int type) {
     }
 }
 
+/* A parameter or specparam: a named constant (37.26). */
+static int is_parameter_type(int type) {
+    return type == vpiParameter || type == vpiSpecParam;
+}
+
+/* Declaration objects without a value (37.13, 37.80, decision A19-D42). */
+static int is_declaration_type(int type) {
+    return type == vpiGenScopeArray || type == vpiGenVar || type == vpiIODecl;
+}
+
 static int is_process_type(int type) {
     return type == vpiInitial || type == vpiAlways || type == vpiFinal;
 }
@@ -542,9 +552,10 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
     }
     if (is_scope_type(object->type))
         return !object->packed && !object->real;
-    if (object->type == vpiParameter)
+    if (is_parameter_type(object->type))
         return object->is_real || object->constant;
     if (object->type == vpiPort) return 1;
+    if (is_declaration_type(object->type)) return !object->packed && !object->real;
     if (is_array_type(object->type))
         return object->dim_count > 0 &&
                (object->is_real ? object->real != NULL && object->width == 0
@@ -714,7 +725,8 @@ static int vpi_ready(void) {
     }
     /* Ports live in their own namespace and unnamed objects have no name. */
     for (size_t i = 0; i < count; ++i)
-        if (g_vpi.objects[i].type != vpiPort && !(g_vpi.objects[i].flags & LLG_VPI_OBJ_UNNAMED))
+        if (g_vpi.objects[i].type != vpiPort && g_vpi.objects[i].type != vpiIODecl &&
+            !(g_vpi.objects[i].flags & LLG_VPI_OBJ_UNNAMED))
             g_vpi.sorted[g_vpi.sorted_count++] = (uint32_t)i;
     qsort(g_vpi.sorted, g_vpi.sorted_count, sizeof(*g_vpi.sorted), compare_rows);
     g_vpi.indexed = 1;
@@ -1132,7 +1144,7 @@ static int read_target(const llg_vpi_target_t* target, llg_vpi_datum_t* out) {
     memset(out, 0, sizeof(*out));
     out->packed = VPI_EMPTY;
     if (!object) return 0;
-    if (object->type == vpiParameter) {
+    if (is_parameter_type(object->type)) {
         if (object->is_real) {
             out->is_real = 1;
             out->real = object->real_constant;
@@ -1240,7 +1252,7 @@ static int handle_target(const llg_vpi_slot_t* slot, llg_vpi_target_t* target) {
     target->two_state = 0;
     switch (slot->kind) {
         case SLOT_OBJECT:
-            if (!object || !(has_storage(object) || object->type == vpiParameter) ||
+            if (!object || !(has_storage(object) || is_parameter_type(object->type)) ||
                 is_array_type(object->type))
                 return 0;
             /* An unpacked union member is the low bits of the shared extent. */
@@ -3223,6 +3235,102 @@ static vpiHandle bit_by_index(uint32_t row, uint64_t element, int64_t index, int
     return make_select(row, element, offset, 1, index, index, NULL);
 }
 
+/* ── declaration objects (37.13, 37.80, decision A19-D42) ──────────────── */
+
+/* The generate scopes of a generate scope array: the siblings that name it. */
+static uint32_t gen_scope_count(uint32_t array) {
+    const llg_vpi_model_object_t* object = &g_vpi.objects[array];
+    uint32_t parent = object->parent ? row_of(object->parent) : LLG_VPI_NONE, count = 0;
+    if (parent == LLG_VPI_NONE) return 0;
+    for (uint32_t child = g_vpi.first_child[parent]; child; child = g_vpi.next_sibling[child - 1u])
+        count += g_vpi.objects[child - 1u].type == vpiGenScope &&
+                 g_vpi.objects[child - 1u].target == object;
+    return count;
+}
+
+static vpiHandle iterate_gen_scopes(uint32_t array) {
+    const llg_vpi_model_object_t* object = &g_vpi.objects[array];
+    uint32_t parent = object->parent ? row_of(object->parent) : LLG_VPI_NONE;
+    uint32_t count = gen_scope_count(array), used = 0;
+    if (count == 0 || parent == LLG_VPI_NONE) return NULL;
+    uintptr_t* items = (uintptr_t*)malloc(count * sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    for (uint32_t child = g_vpi.first_child[parent]; child && used < count;
+         child = g_vpi.next_sibling[child - 1u])
+        if (g_vpi.objects[child - 1u].type == vpiGenScope &&
+            g_vpi.objects[child - 1u].target == object)
+            items[used++] = (uintptr_t)object_handle(child - 1u);
+    return make_list_iterator(vpiGenScope, items, used);
+}
+
+/* 37.80: the generate scope `array[index]`; NULL when the loop generated
+ * none for that index. */
+static vpiHandle gen_scope_by_index(uint32_t array, int64_t index) {
+    char name[1024];
+    int length = snprintf(name, sizeof(name), "%s[%lld]", g_vpi.objects[array].full_name,
+                          (long long)index);
+    if (length < 0 || (size_t)length >= sizeof(name)) return NULL;
+    uint32_t row = find_row(name);
+    if (row == LLG_VPI_NONE || g_vpi.objects[row].target != &g_vpi.objects[array]) return NULL;
+    return object_handle(row);
+}
+
+/* The one-to-one relations of a generate scope array, genvar, io
+ * declaration or generate scope that the generic relations do not give;
+ * *handled is 0 for the others. */
+static vpiHandle declaration_relation(int type, uint32_t row, int* handled) {
+    const llg_vpi_model_object_t* object = &g_vpi.objects[row];
+    const llg_vpi_model_object_t* parent = object->parent;
+    *handled = 1;
+    switch (object->type) {
+        case vpiGenScope:
+            if (type == vpiGenScopeArray)
+                return object->target && object->target->type == vpiGenScopeArray
+                           ? object_handle(row_of(object->target))
+                           : NULL;
+            break;
+        case vpiGenScopeArray:
+            if (type == vpiGenVar)
+                return object->target ? object_handle(row_of(object->target)) : NULL;
+            break;
+        case vpiIODecl:
+            switch (type) {
+                case vpiExpr: {
+                    /* The port's declaration, the task or function
+                     * argument, or the interface member of a modport port. */
+                    uint32_t target =
+                        object->target ? row_of(object->target) : find_row(object->full_name);
+                    return target == LLG_VPI_NONE ? NULL : object_handle(target);
+                }
+                case vpiTaskFunc:
+                    return parent && (parent->type == vpiTask || parent->type == vpiFunction)
+                               ? object_handle(row_of(parent))
+                               : NULL;
+                case vpiModport:
+                    return parent && parent->type == vpiModport ? object_handle(row_of(parent))
+                                                                : NULL;
+                case vpiUdpDefn:
+                    vpi_error("LLG_VPI_UNSUPPORTED", "UDP definitions are not objects");
+                    return NULL;
+                case vpiLeftRange:
+                case vpiRightRange:
+                    /* A scalar or a value without a packed range has none. */
+                    if (!(object->flags & LLG_VPI_OBJ_RANGE)) return NULL;
+                    break;
+                default:
+                    break;
+            }
+            break;
+        default:
+            break;
+    }
+    *handled = 0;
+    return NULL;
+}
+
 vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
     vpi_enter();
     llg_vpi_slot_t* slot = checked_handle(object, NULL);
@@ -3231,6 +3339,7 @@ vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
     int64_t value = index;
     if (slot->kind == SLOT_OBJECT) {
         llg_vpi_model_object_t* base = row_object(slot->object);
+        if (base->type == vpiGenScopeArray) return gen_scope_by_index(slot->object, value);
         if (is_instance_array_type(base->type)) {
             /* 37.11: an instance of the array; NULL outside its range. */
             if (base->dim_count != 1) {
@@ -3248,7 +3357,7 @@ vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
             }
             return element_by_indices(slot->object, &value, 1, 0);
         }
-        if (base->type == vpiParameter || !has_storage(base)) {
+        if (is_parameter_type(base->type) || !has_storage(base)) {
             vpi_error("LLG_VPI_INDEX", "object has no access by index");
             return NULL;
         }
@@ -3280,6 +3389,11 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
     }
     uint32_t row = slot->object;
     llg_vpi_model_object_t* base = row_object(row);
+    if (base->type == vpiGenScopeArray) {
+        if (count == 1) return gen_scope_by_index(row, values[0]);
+        vpi_error("LLG_VPI_INDEX", "a generate scope array has one dimension");
+        return NULL;
+    }
     if (is_instance_array_type(base->type))
         return object_handle(instance_element(row, values, (uint32_t)count));
     if (!is_array_type(base->type)) {
@@ -5385,6 +5499,11 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
         vpiHandle result = clocking_relation(type, slot->object, &handled);
         if (handled) return result;
     }
+    if (slot->kind == SLOT_OBJECT && object) {
+        int handled;
+        vpiHandle result = declaration_relation(type, slot->object, &handled);
+        if (handled) return result;
+    }
     switch (type) {
         case vpiStmt:
             /* 37.37, 37.58: the statement of a process, task or function
@@ -5761,7 +5880,7 @@ static vpiHandle iterate_children(int type, uint32_t parent) {
             items[count++] = (uintptr_t)object_handle(child - 1u);
         }
     }
-    if ((type == vpiPort || type == vpiClockingIODecl) && count > 1)
+    if ((type == vpiPort || type == vpiClockingIODecl || type == vpiIODecl) && count > 1)
         qsort(items, count, sizeof(*items), compare_ports);
     return make_list_iterator(type, items, (uint32_t)count);
 }
@@ -6006,6 +6125,29 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
                   "a module path iterates vpiModPathIn, vpiModPathOut and vpiModDataPathIn");
         return NULL;
     }
+    if (type == vpiIODecl || type == vpiGenScopeArray || type == vpiSpecParam ||
+        (slot->kind == SLOT_OBJECT && object && object->type == vpiGenScopeArray)) {
+        /* 37.13: the io declarations of a module, task, function or
+         * modport in declaration order; 37.80: the generate scope arrays of
+         * a module or generate scope, the scopes of an array; 37.10: the
+         * specparams of an instance. */
+        int allowed = slot->kind == SLOT_OBJECT && object &&
+                      (object->type == vpiGenScopeArray
+                           ? type == vpiGenScope
+                       : type == vpiIODecl
+                           ? object->type == vpiModule || object->type == vpiTask ||
+                                 object->type == vpiFunction || object->type == vpiModport
+                       : type == vpiSpecParam
+                           ? object->type == vpiModule || object->type == vpiInterface ||
+                                 object->type == vpiProgram || object->type == vpiPackage
+                           : object->type == vpiModule || object->type == vpiGenScope);
+        if (!allowed) {
+            vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-many relation for this object");
+            return NULL;
+        }
+        if (object->type == vpiGenScopeArray) return iterate_gen_scopes(slot->object);
+        return iterate_children(type, slot->object);
+    }
     if (slot->kind == SLOT_OBJECT && object && object->type == vpiTchk) {
         /* 37.36 detail 2: the arguments in order, the events as tchk terms. */
         if (type == vpiExpr)
@@ -6034,7 +6176,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
          * bit vector or a packed array. */
         int value_type = handle_type(slot);
         if (value_type == vpiNet || value_type == vpiReg || value_type == vpiBitVar ||
-            value_type == vpiPackedArrayVar)
+            value_type == vpiPackedArrayVar || value_type == vpiIODecl)
             return iterate_packed_ranges(slot);
     }
     if (type == vpiBit && (slot->kind == SLOT_OBJECT || slot->kind == SLOT_ELEMENT) && object &&
@@ -6462,6 +6604,22 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
     uint32_t width = 0;
     int is_signed = 0, real = 0;
     int has_value = handle_width(slot, &width, &is_signed, &real);
+    if (slot->kind == SLOT_OBJECT && object && is_declaration_type(object->type) &&
+        property != vpiType && property != vpiLineNo) {
+        /* 37.13, 37.80: an io declaration's direction and value shape, a
+         * generate scope array's number of scopes; a genvar has none. */
+        if (object->type == vpiGenScopeArray && property == vpiSize)
+            return (PLI_INT32)gen_scope_count(slot->object);
+        if (object->type != vpiIODecl) return unsupported_property();
+        switch (property) {
+            case vpiDirection: return object->subtype ? object->subtype : vpiNoDirection;
+            case vpiSize: return (PLI_INT32)object->width;
+            case vpiSigned: return object->is_signed != 0;
+            case vpiScalar: return object->width == 1;
+            case vpiVector: return object->width > 1;
+            default: return unsupported_property();
+        }
+    }
     switch (property) {
         case vpiType:
             return type;
@@ -6690,7 +6848,7 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 const llg_vpi_conn_t* conn = row_conn(slot->object, (uint32_t)slot->aux);
                 return conn->ref.const_type ? conn->ref.const_type : vpiBinaryConst;
             }
-            if (slot->kind == SLOT_OBJECT && object && object->type == vpiParameter)
+            if (slot->kind == SLOT_OBJECT && object && is_parameter_type(object->type))
                 return object->is_real ? vpiRealConst
                        : (object->flags & LLG_VPI_OBJ_TEXT) ? vpiStringConst : vpiBinaryConst;
             return unsupported_property();
@@ -6824,6 +6982,10 @@ static const char* type_name(int type) {
         case vpiRegArray: return "vpiRegArray";
         case vpiNetArray: return "vpiNetArray";
         case vpiParameter: return "vpiParameter";
+        case vpiSpecParam: return "vpiSpecParam";
+        case vpiGenScopeArray: return "vpiGenScopeArray";
+        case vpiGenVar: return "vpiGenVar";
+        case vpiIODecl: return "vpiIODecl";
         case vpiPort: return "vpiPort";
         case vpiNetBit: return "vpiNetBit";
         case vpiRegBit: return "vpiRegBit";
@@ -7020,6 +7182,13 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
              (property == vpiFullName && code_is_named_select(code_type(code_at(argument))))))
             return code_string(argument, property);
     }
+    if (slot->kind == SLOT_OBJECT && object && is_declaration_type(object->type) &&
+        property != vpiName && property != vpiFile &&
+        (property != vpiFullName || object->type == vpiIODecl)) {
+        /* 37.13, 37.80: names only; an io declaration has no full name. */
+        unsupported_property();
+        return NULL;
+    }
     switch (slot->kind) {
         case SLOT_OBJECT:
             /* Processes and continuous assignments have no name (37.43,
@@ -7066,7 +7235,7 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
                     /* 37.55: nets, variables and parameters are simple
                      * expressions; each decompiles to its name. */
                     if (is_variable_type(object->type) || object->type == vpiNet ||
-                        object->type == vpiParameter)
+                        is_parameter_type(object->type))
                         return (PLI_BYTE8*)object->name;
                     break;
                 default:
@@ -7410,7 +7579,7 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
     }
     llg_vpi_model_object_t* object = row_object(target.object);
     const char* reason = NULL;
-    if (object->type == vpiParameter) {
+    if (is_parameter_type(object->type)) {
         vpi_error("LLG_VPI_VALUE", "a parameter is a constant and cannot receive a value");
         return NULL;
     }
@@ -8712,7 +8881,7 @@ static int bind_force_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
     llg_vpi_target_t target;
     if (handle_target(slot, &target)) {
         llg_vpi_model_object_t* object = row_object(target.object);
-        if (object->type == vpiParameter || !has_storage(object)) {
+        if (is_parameter_type(object->type) || !has_storage(object)) {
             vpi_error("LLG_VPI_CALLBACK", "a parameter or constant is never forced");
             return 0;
         }
@@ -9149,7 +9318,7 @@ static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
         whole_array = 1;
     }
     llg_vpi_model_object_t* object = row_object(target.object);
-    if (object->type == vpiParameter) {
+    if (is_parameter_type(object->type)) {
         vpi_error("LLG_VPI_CALLBACK", "a parameter never changes value");
         return 0;
     }
