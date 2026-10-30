@@ -2321,6 +2321,15 @@ fn a19_d28_index_and_packed_relations() {
 }
 
 #[test]
+fn a19_d40_static_lifetime_and_allocation() {
+    run_vpi_decision(
+        "A19-D40_static_lifetime_and_allocation",
+        &["task $d40()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D40_static_lifetime_and_allocation.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

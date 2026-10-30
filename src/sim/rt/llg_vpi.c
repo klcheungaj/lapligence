@@ -6197,6 +6197,26 @@ static PLI_INT32 unsupported_property(void) {
     return vpiUndefined;
 }
 
+/* A static catalog variable, variable array, element, bit or member of one,
+ * or a named event: the objects whose vpiAutomatic is FALSE and whose
+ * vpiAllocScheme is vpiOtherScheme (37.3.7). Nets have neither property. */
+static int static_variable_slot(const llg_vpi_slot_t* slot,
+                                const llg_vpi_model_object_t* object) {
+    if (!object) return 0;
+    switch (slot->kind) {
+        case SLOT_OBJECT:
+            return is_variable_type(object->type) || object->type == vpiRegArray ||
+                   object->type == vpiNamedEvent;
+        case SLOT_ELEMENT:
+        case SLOT_MEMBER:
+            return !object->is_net;
+        case SLOT_SELECT:
+            return slot->span == 1 && !object->is_net;
+        default:
+            return 0;
+    }
+}
+
 /* vpiPacked of a struct/union typespec; unknown for a tagged union. */
 static PLI_INT32 packed_property(const llg_vpi_typespec_t* typespec) {
     if (!is_aggregate_typespec(typespec) ||
@@ -6514,9 +6534,13 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 (object->type == vpiTask || object->type == vpiFunction))
                 return (object->flags & LLG_VPI_OBJ_QUALIFIER) != 0;
             /* Automatic variables and events are not catalog objects. */
-            if (slot->kind == SLOT_OBJECT && object &&
-                (is_variable_type(object->type) || object->type == vpiNamedEvent))
-                return 0;
+            if (static_variable_slot(slot, object)) return 0;
+            return unsupported_property();
+        case vpiAllocScheme:
+            /* 37.3.7: an object allocated neither in a frame or thread nor in
+             * dynamic memory reports vpiOtherScheme; every catalog variable,
+             * part of one and named event is static (decision A19-D40). */
+            if (static_variable_slot(slot, object)) return vpiOtherScheme;
             return unsupported_property();
         case vpiScheduled:
             if (slot->kind == SLOT_EVENT) {

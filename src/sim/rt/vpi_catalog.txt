@@ -661,26 +661,26 @@ node variables 37.17 members=short_real_var,real_var,byte_var,short_int_var,int_
   iterate vpiIndex implemented a19d28
 
 node short_real_var 37.17 type=vpiShortRealVar
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
   get vpiScalar implemented walk
   get vpiVector implemented walk
   handle vpiIndex implemented a19d28
 
 node real_var 37.17 type=vpiRealVar
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
   get vpiScalar implemented walk
   get vpiVector implemented walk
   handle vpiIndex implemented a19d28
 
 node byte_var 37.17 type=vpiByteVar
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
   handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
 node short_int_var 37.17 type=vpiShortIntVar
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
   handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
@@ -692,21 +692,21 @@ node int_var 37.17 type=vpiIntVar
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
 node long_int_var 37.17 type=vpiLongIntVar
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
   handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
 node integer_var 37.17 type=vpiIntegerVar
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
   handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   iterate vpiBit extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
 
 node time_var 37.17 type=vpiTimeVar
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
   handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
@@ -738,7 +738,7 @@ node packed_array_var 37.17 type=vpiPackedArrayVar
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
   iterate vpiRange implemented walk
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
   handle vpiIndex implemented a19d28
 
 node bit_var 37.17 type=vpiBitVar
@@ -746,7 +746,7 @@ node bit_var 37.17 type=vpiBitVar
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
   iterate vpiRange implemented walk
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
   handle vpiIndex implemented a19d28
 
 node logic_var 37.17 type=vpiReg
@@ -754,7 +754,7 @@ node logic_var 37.17 type=vpiReg
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
   iterate vpiRange implemented walk
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
 
 node struct_var 37.17 type=vpiStructVar
   get vpiPacked implemented walk
@@ -762,7 +762,7 @@ node struct_var 37.17 type=vpiStructVar
   iterate vpiBit implemented walk
   get vpiPackedArrayMember implemented walk
   get vpiConstantSelect implemented walk
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
   handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
@@ -773,7 +773,7 @@ node union_var 37.17 type=vpiUnionVar
   iterate vpiBit implemented walk
   get vpiPackedArrayMember implemented walk
   get vpiConstantSelect implemented walk
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
   handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
@@ -781,7 +781,7 @@ node union_var 37.17 type=vpiUnionVar
 node enum_var 37.17 type=vpiEnumVar
   get vpiPackedArrayMember implemented walk
   get vpiConstantSelect implemented walk
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
   handle vpiIndex implemented a19d28
   handle vpiLeftRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
   handle vpiRightRange extension walk the packed range and bits of an integer, enum or packed structure variable (37.17 detail 12)
@@ -824,8 +824,8 @@ node class_var 37.17 type=vpiClassVar
 node var_bit 37.17 type=vpiRegBit
   get vpiConstantSelect implemented walk
   get vpiArray implemented walk
-  get vpiAutomatic unsupported the default lifetime of this object is not captured
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAutomatic implemented walk
+  get vpiAllocScheme implemented walk
   get vpiStructUnionMember implemented walk
   handle vpiTypespec unsupported this object has no typespec in llg
 
@@ -957,7 +957,7 @@ node named_event 37.25 type=vpiNamedEvent
   str vpiFullName implemented walk
   func vpi_put_value implemented a19struct
   get vpiAutomatic implemented walk
-  get vpiAllocScheme unsupported vpiAllocScheme of static objects is not implemented
+  get vpiAllocScheme implemented walk
   iterate vpiWaitingProcesses unsupported threads are not objects
   handle vpiInstance implemented walk
   handle vpiScope implemented walk

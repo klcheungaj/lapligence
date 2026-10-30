@@ -1,0 +1,20 @@
+tb.v vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.b vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.i vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.ig vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.si vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.li vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.by vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.t vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.r vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.sr vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.pa vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.ps vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.mem vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.mem[1] vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.ev vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.v bit vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.mem[1] bit vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.ps member vpiAutomatic 0 level=0 vpiAllocScheme 3 level=0
+tb.w vpiAutomatic -1 level=3 vpiAllocScheme -1 level=3
+3 0 3 4 5 6 7 8 1 2 1 5 1 1 1
