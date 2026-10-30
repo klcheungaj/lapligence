@@ -73,9 +73,17 @@ static const llg_co_site_t p_top_initial_sites[] = {
 };
 static const llg_co_desc_t p_top_initial_desc = {
     p_top_initial, "top.initial", sizeof(p_top_initial_frame_t),
-    p_top_initial_sites, 2, 0
+    p_top_initial_sites, 2, LLG_DESC_BLOCKABLE
 };
 ```
+
+The last member, `host_flags`, is read by the scheduler only (`llg_co` ignores
+it). `LLG_DESC_BLOCKABLE` marks the root of an `initial` procedure; every other
+root (`always*`, continuous assignments, gates, links, assertions) emits `0`.
+A fork branch or detached process takes its parent's setting at spawn, so a
+task called from an `initial` procedure and the branches it forks count with
+it, and the branches of an `always` do not. See
+[end-of-run report](scheduler/readme.md#activations-waits-and-limits).
 
 ## Generated-runtime mapping
 

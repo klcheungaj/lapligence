@@ -278,6 +278,17 @@ delays, so the new delays leave the pulse limits as they were (38.32);
 
 ## Activations, waits and limits
 
+End-of-run report: when no future event remains, the scheduler prints a
+deadlock line if `g.wait_count` is nonzero and the plain end line otherwise.
+Only waits of processes that can still finish count (`proc->deadlock_counted`,
+set from `LLG_DESC_BLOCKABLE` in the root descriptor; see
+[process ABI](../process_abi.md)). Permanent waiters (`always*`, continuous
+assignments, gates, links, assertions) and runtime-owned processes such as
+covergroup waiters stay out, since they are parked at the end of every run.
+The counter is adjusted by the same add or subtract at each wait registration
+and release, so the end check costs one compare and the hot path no branch.
+Both lines go to stderr; the exit status and the final blocks are unchanged.
+
 Opaque activation slots may hold event object identities, valid until model
 teardown, or a parent coroutine's event handle address for a synchronous join.
 Cancel joined children before releasing that parent frame. Detached event

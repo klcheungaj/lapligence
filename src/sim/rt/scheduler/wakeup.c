@@ -33,7 +33,7 @@ static void wake_proc(llg_proc_t* p) {
     if (w->kind == W_MAILBOX_GET || w->kind == W_MAILBOX_PUT)
         mailbox_unlink_wait(w);
     wait_payload_release(w);
-    g.wait_count--;
+    g.wait_count -= p->deadlock_counted;
     if (p->suspended) {
         // A suspended waiter keeps its condition registered until it fires;
         // once it fires, retain only a pending wake so resume cannot enqueue
@@ -100,6 +100,6 @@ static void register_wait(void) {
     if (w->next) w->next->prev_link = &w->next;
     g.waiters = w;
     wait_subscriptions_register(w);
-    g.wait_count++;
+    g.wait_count += p->deadlock_counted;
     if (!p->suspended) process_status_set(p, LLG_PROCESS_WAITING);
 }

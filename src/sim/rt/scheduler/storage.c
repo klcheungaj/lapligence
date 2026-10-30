@@ -528,6 +528,9 @@ struct llg_proc {
     // Woken from an event control or wait statement while it had pending
     // deferred assertion reports: flush them when it resumes (SV 16.4.2).
     uint8_t deferred_flush;
+    // Its waits count toward the end-of-simulation deadlock report
+    // (LLG_DESC_BLOCKABLE); fits the flag padding above.
+    uint8_t deadlock_counted;
     llg_process_handle_t* handle;
     llg_process_local_ref_t* process_locals;
     llg_proc_t* next_retired;

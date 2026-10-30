@@ -215,6 +215,20 @@ struct CoroutineArtifact {
     /// Resume points of a recursive subprogram's coroutine, numbered during
     /// emission; other coroutines take their sites from the analysis.
     recursive_sites: Option<usize>,
+    /// A root whose waits make a run without future events a deadlock
+    /// (`LLG_DESC_BLOCKABLE`): an `initial` procedure. Branches and
+    /// subprograms take the flag of the process that starts them at run time.
+    blockable: bool,
+}
+
+impl CoroutineArtifact {
+    fn host_flags(&self) -> &'static str {
+        if self.blockable {
+            "LLG_DESC_BLOCKABLE"
+        } else {
+            "0"
+        }
+    }
 }
 
 type CoroutineArtifacts = BTreeMap<usize, CoroutineArtifact>;
@@ -277,6 +291,7 @@ fn render_coroutine_functions(
                 shared_entry: None,
                 net_batches: Default::default(),
                 recursive_sites: None,
+                blockable: false,
             },
         );
     }
@@ -326,6 +341,7 @@ fn render_recursive_functions(
                 shared_entry: None,
                 net_batches: Default::default(),
                 recursive_sites: Some(sites),
+                blockable: false,
             },
         );
     }
@@ -437,6 +453,7 @@ fn render_coroutine_process(
         shared_entry: None,
         net_batches,
         recursive_sites: None,
+        blockable: process.kind() == IrProcessKind::Initial,
     }))
 }
 
@@ -498,6 +515,7 @@ fn render_coroutine_branches(
                     shared_entry: None,
                     net_batches: Default::default(),
                     recursive_sites: None,
+                    blockable: false,
                 },
             );
         }
@@ -531,6 +549,7 @@ fn render_coroutine_branches(
                     shared_entry: None,
                     net_batches: Default::default(),
                     recursive_sites: None,
+                    blockable: false,
                 },
             );
         }
@@ -600,13 +619,14 @@ fn render_coroutine_metadata(
         .strip_suffix("_desc")
         .ok_or_else(|| format!("invalid coroutine descriptor name {}", artifact.desc_name))?;
     out.push_str(&format!(
-        "static const llg_co_desc_t {}{} = {{ {}, {}, sizeof({}), {}_sites, {count}, 0 }};\n",
+        "static const llg_co_desc_t {}{} = {{ {}, {}, sizeof({}), {}_sites, {count}, {} }};\n",
         artifact.desc_name,
         desc_attributes(host_descs, &artifact.desc_name),
         artifact.shared_entry.as_deref().unwrap_or(entry),
         c_string_literal(&artifact.display_name),
         artifact.frame_type,
         artifact.desc_name,
+        artifact.host_flags(),
     ));
     Ok(out)
 }
@@ -662,8 +682,8 @@ fn render_site_rows(
 /// record and spawn label, so per-member descriptors would repeat the same
 /// entry, frame size and sites. Its name is NULL; backtraces label the root
 /// frame with the process name instead. Returns the class's metadata, or
-/// nothing when some member's sites differ (those keep their own
-/// descriptors).
+/// nothing when some member's sites or host flags differ (those keep their
+/// own descriptors).
 fn render_class_descriptor(
     class: &mut super::owned::model::SpawnClass,
     processes: &[Option<CoroutineArtifact>],
@@ -683,7 +703,8 @@ fn render_class_descriptor(
         let rows = render_site_rows(artifact, analysis, model)?;
         match &shared {
             None => shared = Some((artifact, rows)),
-            Some((_, first)) if *first == rows => {}
+            Some((first_artifact, first))
+                if *first == rows && first_artifact.blockable == artifact.blockable => {}
             Some(_) => return Ok(String::new()),
         }
     }
@@ -694,8 +715,10 @@ fn render_class_descriptor(
     let mut out = frame_size_assertion(artifact, assertions)?;
     out.push_str(&format!(
         "static const llg_co_site_t {desc}_sites[{count}] = {{\n{rows}}};\n\
-         static const llg_co_desc_t {desc} = {{ {}, NULL, sizeof({}), {desc}_sites, {count}, 0 }};\n",
-        class.body, class.frame,
+         static const llg_co_desc_t {desc} = {{ {}, NULL, sizeof({}), {desc}_sites, {count}, {} }};\n",
+        class.body,
+        class.frame,
+        artifact.host_flags(),
     ));
     class.desc = Some(desc);
     Ok(out)

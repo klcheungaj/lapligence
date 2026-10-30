@@ -42,6 +42,7 @@ mod sim_dpi;
 mod sim_dynamic_ownership;
 mod sim_edition;
 mod sim_emit_value_traffic;
+mod sim_end_of_run;
 mod sim_events;
 mod sim_expression_mutations;
 mod sim_feature_completion_g1;

@@ -170,7 +170,7 @@ struct llg_co_desc {
     size_t frame_size;          /* sizeof the typed frame (arena calls) */
     const llg_co_site_t* sites; /* sites[state]; may be NULL */
     uint32_t n_sites;           /* number of entries in sites */
-    uint32_t reserved;
+    uint32_t host_flags;        /* defined by the embedding runtime; llg_co ignores it */
 };
 
 /* Debug liveness tag. A frame is LIVE from entry until it returns DONE. The
