@@ -308,6 +308,8 @@ pub struct IrVpiObject {
     /// `vpiNetDeclAssign` of a continuous assignment, `vpiAutomatic` of a
     /// task or function, `vpiUnit` of a package, a global clocking block.
     pub(in crate::sim) qualifier: bool,
+    /// `vpiConstantVariable` of a variable declared `const` (37.17).
+    pub(in crate::sim) constant_variable: bool,
     /// Runtime activation identity `(declaration, instance)` of a named
     /// block, task or function: what `disable` names (cbDisable).
     pub(in crate::sim) activation: Option<(u32, u32)>,

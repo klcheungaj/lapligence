@@ -2200,18 +2200,19 @@ with no error status, as for a name that denotes nothing (S42-D11):
 
 - objects outside the generated catalog: sparse fixed arrays (stored in a keyed
   container), automatic variables, frames (`vpiFrame`) and threads
-  (`vpiThread`), named event arrays, tasks and functions of classes and
-  packages, programs, and checker objects (a checker instance is a module
+  (`vpiThread`), named event arrays, tasks and functions of packages, the
+  statements of class methods and class methods by name, programs, and checker objects (a checker instance is a module
   scope with its variables; VPI-C1);
 - dynamic objects (VPI-O4) other than instance-scope string, chandle and class
   variables and dynamic, queue and associative arrays: those of packages,
   blocks, tasks and functions, fixed-size arrays
   of class handles, static class properties, events and virtual interfaces;
   mailbox and semaphore objects (`vpiClassType`, `vpiMessages`,
-  `vpiWaitingProcesses`; their typespecs are NULL); a class object's
-  `vpiMethods`, `vpiParameter`, `vpiConstraint`, `vpiNamedEvent`,
-  `vpiInterfaceDecl` and `vpiInternalScope`, `vpiArgument` of `vpiExtends`,
-  `vpiVisibility`, `vpiRandType` and specialized parameterized class names;
+  `vpiWaitingProcesses`; their typespecs are NULL); `vpiConstraint`,
+  `vpiInterfaceDecl` and `vpiTypedef` of class definitions and objects,
+  `vpiArgument` of `vpiExtends` and `vpiParamAssign` of class typespecs; a
+  parameterized class lists one class defn per specialization, each under
+  the class's own name (decision A19-D36);
   elements of nested containers and of arrays of records or fixed arrays
   (listed as `vpiUndefined` objects without a value), associative arrays
   with a wildcard index or keys of more than 64 bits; `vpiFullName` of a dynamic array element

@@ -4,7 +4,7 @@
 //! catalog row names. Emitted only with the catalog.
 
 use super::*;
-use crate::sim::ir::{IrVpiKey, IrVpiShape, IrVpiStorage};
+use crate::sim::ir::{IrVpiClassItem, IrVpiClassItemKind, IrVpiKey, IrVpiShape, IrVpiStorage};
 
 /// `(storage, dependency, shape index)` initializers of a dynamic row.
 pub(super) fn row_storage(
@@ -113,27 +113,64 @@ pub(super) fn render_vpi_dynamic(model: &IrModel, out: &mut String) {
         ));
         "llg_vpi_shapes"
     };
+    let rows: std::collections::HashMap<&str, usize> = model
+        .vpi_objects
+        .iter()
+        .enumerate()
+        .map(|(index, object)| (object.full_name.as_str(), index))
+        .collect();
     let mut fields = Vec::new();
     let mut classes = Vec::new();
+    let mut items = Vec::new();
     for class in &dynamic.classes {
+        let scope = class
+            .scope
+            .as_deref()
+            .and_then(|key| rows.get(key))
+            .map_or(0, |row| row + 1);
         classes.push(format!(
-            "    {{ {}, {}u, {}u, {}u }}",
+            "    {{ {}, {}u, {}u, {}u, {}, {scope}u, {}, {}u, {}u }}",
             c_string_literal(&class.name),
             class.base.map_or(0, |base| base + 1),
             fields.len(),
-            class.fields.len()
+            class.fields.len(),
+            c_string_literal(&class.full_name),
+            match (class.is_virtual, class.is_generic) {
+                (false, false) => "0",
+                (true, false) => "LLG_VPI_CLASS_VIRTUAL",
+                (false, true) => "LLG_VPI_CLASS_GENERIC",
+                (true, true) => "LLG_VPI_CLASS_VIRTUAL | LLG_VPI_CLASS_GENERIC",
+            },
+            items.len(),
+            class.items.len()
         ));
         for field in &class.fields {
             fields.push(match field {
                 Some(field) => format!(
-                    "    {{ {}, {}u }}",
+                    "    {{ {}, {}u, {}, {}, {}u, {}u }}",
                     c_string_literal(&field.name),
-                    field.shape
+                    field.shape,
+                    field.rand.c_code(),
+                    field.visibility.c_code(),
+                    field.mode.map_or(0, |mode| mode + 1),
+                    u8::from(field.is_const)
                 ),
-                None => "    { NULL, 0u }".to_owned(),
+                None => "    { NULL, 0u, vpiNotRand, vpiPublicVis, 0u, 0u }".to_owned(),
             });
         }
+        for item in &class.items {
+            items.push(render_class_item(item));
+        }
     }
+    let item_table = if items.is_empty() {
+        "NULL".to_owned()
+    } else {
+        out.push_str(&format!(
+            "static const llg_vpi_class_item_t llg_vpi_class_items[] = {{\n{}\n}};\n",
+            items.join(",\n")
+        ));
+        "llg_vpi_class_items".to_owned()
+    };
     let (class_table, field_table) = (
         if classes.is_empty() {
             "NULL".to_owned()
@@ -177,12 +214,63 @@ static void* llg_class_vpi_field(void* handle, uint32_t index, unsigned* kind) {
         "llg_class_vpi_object, llg_class_vpi_field"
     };
     out.push_str(&format!(
-        "static const llg_vpi_dynamic_tables_t llg_vpi_dynamic_tables_value = {{ {shape_table}, {}u, {class_table}, {}u, {field_table}, {}u, {accessors} }};\n\
+        "static const llg_vpi_dynamic_tables_t llg_vpi_dynamic_tables_value = {{ {shape_table}, {}u, {class_table}, {}u, {field_table}, {}u, {item_table}, {}u, {accessors} }};\n\
          static const llg_vpi_dynamic_tables_t* const llg_vpi_dynamic_tables = &llg_vpi_dynamic_tables_value;\n",
         shapes.len(),
         classes.len(),
-        fields.len()
+        fields.len(),
+        items.len()
     ));
+}
+
+/// One `llg_vpi_class_item_t` initializer.
+fn render_class_item(item: &IrVpiClassItem) -> String {
+    let mut flags = Vec::new();
+    if item.is_virtual {
+        flags.push("LLG_VPI_ITEM_VIRTUAL");
+    }
+    if item.is_static {
+        flags.push("LLG_VPI_ITEM_STATIC");
+    }
+    if item.local_param {
+        flags.push("LLG_VPI_ITEM_LOCAL_PARAM");
+    }
+    if item.signed {
+        flags.push("LLG_VPI_ITEM_SIGNED");
+    }
+    let flags = if flags.is_empty() {
+        "0u".to_owned()
+    } else {
+        flags.join(" | ")
+    };
+    let detail = match item.kind {
+        IrVpiClassItemKind::IoDecl => item.direction.c_code(),
+        _ => item.detail.unwrap_or("0"),
+    };
+    let (value, real) = match &item.value {
+        Some(IrVpiConstant::Bits(digits)) => (c_string_literal(digits), "0.0".to_owned()),
+        Some(IrVpiConstant::Text(text)) => (c_string_literal(text), "0.0".to_owned()),
+        // `{:e}` prints the shortest round-trip form, a valid C literal.
+        Some(IrVpiConstant::Real(value)) if value.is_finite() => {
+            ("NULL".to_owned(), format!("{value:e}"))
+        }
+        _ => ("NULL".to_owned(), "0.0".to_owned()),
+    };
+    format!(
+        "    {{ {}, {}, {}, {detail}, {}, {flags}, {}u, {}u, {}u, {}u, {}u, {}u, {value}, {real} }}",
+        c_string_literal(&item.name),
+        item.file
+            .as_deref()
+            .map_or_else(|| "NULL".to_owned(), c_string_literal),
+        item.kind.c_type(),
+        item.visibility.c_code(),
+        item.line,
+        item.width,
+        item.typespec.map_or(0, |typespec| typespec + 1),
+        item.owner.map_or(0, |owner| owner + 1),
+        item.code.map_or(0, |code| code + 1),
+        item.mode.map_or(0, |mode| mode + 1),
+    )
 }
 
 #[cfg(test)]
@@ -228,7 +316,7 @@ mod tests {
             "{out}"
         );
         assert!(
-            out.contains("{ llg_vpi_shapes, 2u, NULL, 0u, NULL, 0u, NULL, NULL }"),
+            out.contains("{ llg_vpi_shapes, 2u, NULL, 0u, NULL, 0u, NULL, 0u, NULL, NULL }"),
             "{out}"
         );
     }

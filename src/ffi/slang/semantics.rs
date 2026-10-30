@@ -411,14 +411,19 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
                 & !(CLOCKING_EDGE_MASK | (CLOCKING_EDGE_MASK << CLOCKING_VAR_OUTPUT_EDGE_SHIFT))
                 == 0
         }
-        // The low byte is the lifetime; `const` and one of `rand`/`randc`
-        // are the qualifiers above it.
+        // The low byte is the lifetime; `const`, one of `rand`/`randc` and
+        // one of `local`/`protected` are the qualifiers above it.
         (9 | 11, _, _) => {
-            let qualifiers = super::VARIABLE_CONST | super::VARIABLE_RAND | super::VARIABLE_RANDC;
+            let qualifiers = super::VARIABLE_CONST
+                | super::VARIABLE_RAND
+                | super::VARIABLE_RANDC
+                | super::VARIABLE_LOCAL
+                | super::VARIABLE_PROTECTED;
+            let exclusive = |pair: u64| node.auxiliary & pair != pair;
             matches!(node.auxiliary & super::VARIABLE_LIFETIME_MASK, 0..=2)
                 && node.auxiliary & !(super::VARIABLE_LIFETIME_MASK | qualifiers) == 0
-                && node.auxiliary & (super::VARIABLE_RAND | super::VARIABLE_RANDC)
-                    != super::VARIABLE_RAND | super::VARIABLE_RANDC
+                && exclusive(super::VARIABLE_RAND | super::VARIABLE_RANDC)
+                && exclusive(super::VARIABLE_LOCAL | super::VARIABLE_PROTECTED)
         }
         (29, _, _) => {
             let allowed = super::CONSTRAINT_BLOCK_STATIC
@@ -451,11 +456,16 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
                 | SUBROUTINE_PURE
                 | SUBROUTINE_FINAL
                 | SUBROUTINE_CONSTRUCTOR
+                | SUBROUTINE_LOCAL
+                | SUBROUTINE_PROTECTED
+                | SUBROUTINE_PROTOTYPE_VIRTUAL
                 | SUBROUTINE_DPI_IMPORT
                 | SUBROUTINE_DPI_CONTEXT
                 | SUBROUTINE_DPI_PURE
                 | SUBROUTINE_DPI_EXPORT;
             node.auxiliary & !allowed == 0
+                && node.auxiliary & (SUBROUTINE_LOCAL | SUBROUTINE_PROTECTED)
+                    != SUBROUTINE_LOCAL | SUBROUTINE_PROTECTED
                 && (node.auxiliary & (SUBROUTINE_DPI_CONTEXT | SUBROUTINE_DPI_PURE) == 0
                     || node.auxiliary & SUBROUTINE_DPI_IMPORT != 0)
         }

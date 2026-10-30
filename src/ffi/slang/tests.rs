@@ -1776,8 +1776,17 @@ fn variable_auxiliary_carries_the_lifetime_byte_and_const_rand_qualifiers() {
         variable(1 | VARIABLE_RAND | VARIABLE_RANDC).is_err(),
         "rand and randc are exclusive"
     );
+    assert!(variable(1 | VARIABLE_LOCAL).is_ok(), "local property");
     assert!(
-        variable(VARIABLE_RANDC << 1).is_err(),
+        variable(1 | VARIABLE_RAND | VARIABLE_PROTECTED).is_ok(),
+        "protected rand property"
+    );
+    assert!(
+        variable(1 | VARIABLE_LOCAL | VARIABLE_PROTECTED).is_err(),
+        "local and protected are exclusive"
+    );
+    assert!(
+        variable(VARIABLE_PROTECTED << 1).is_err(),
         "unknown qualifier bit"
     );
     assert!(

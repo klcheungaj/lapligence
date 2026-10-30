@@ -43,9 +43,9 @@ use types::TypedefNames;
 pub use types::{
     AggregateKind, AggregateLayout, AggregateMember, ArrayKind, ArrayMeta,
     AssignmentPatternKeyType, AssociativeIndex, ClassMetadata, DpiImportInfo, DpiOpenType,
-    ElaboratedTypeRanges, EnumMember, EnumTypeMetadata, PackedMember, PackedRange, TypeDescriptor,
-    TypeId, TypeShape, TypedefRef, ValueCopySemantics, ValueDefaultSemantics,
-    ValueDestroySemantics, ValueEqualitySemantics,
+    ElaboratedTypeRanges, EnumMember, EnumTypeMetadata, MemberVisibility, PackedMember,
+    PackedRange, TypeDescriptor, TypeId, TypeShape, TypedefRef, ValueCopySemantics,
+    ValueDefaultSemantics, ValueDestroySemantics, ValueEqualitySemantics,
 };
 mod constraints;
 use constraints::{constraint_block_from_slang, constraint_from_slang, ordered_targets};
@@ -337,6 +337,10 @@ pub struct Db {
     const_variables: HashSet<NodeId>,
     /// Class properties declared `rand` or `randc` (IEEE 1800-2009 18.4).
     rand_qualifiers: HashMap<NodeId, RandQualifier>,
+    /// Class properties and methods declared `local` or `protected` (8.18).
+    member_visibilities: HashMap<NodeId, MemberVisibility>,
+    /// Virtual class method prototypes (`extern virtual`, `pure virtual`).
+    virtual_prototypes: HashSet<NodeId>,
     /// Randomize calls (18.6.1, 18.12) and their inline constraint blocks.
     randomize_calls: HashMap<NodeId, RandomizeCall>,
     method_calls_with_clause: HashSet<NodeId>,
@@ -487,6 +491,8 @@ impl Db {
             var_lifetime_qualifiers: HashMap::new(),
             const_variables: HashSet::new(),
             rand_qualifiers: HashMap::new(),
+            member_visibilities: HashMap::new(),
+            virtual_prototypes: HashSet::new(),
             randomize_calls: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
             const_casts: HashSet::new(),
@@ -583,6 +589,8 @@ impl Db {
             var_lifetime_qualifiers: HashMap::new(),
             const_variables: HashSet::new(),
             rand_qualifiers: HashMap::new(),
+            member_visibilities: HashMap::new(),
+            virtual_prototypes: HashSet::new(),
             randomize_calls: HashMap::new(),
             method_calls_with_clause: HashSet::new(),
             const_casts: HashSet::new(),
@@ -1189,6 +1197,22 @@ impl Db {
             .get(&id)
             .copied()
             .unwrap_or(RandQualifier::None)
+    }
+
+    /// Visibility of a class property or method (IEEE 1800-2009 8.18);
+    /// public for every other node.
+    pub fn member_visibility(&self, id: NodeId) -> MemberVisibility {
+        self.member_visibilities
+            .get(&id)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Whether `id` is a virtual class method prototype (`extern virtual`
+    /// or `pure virtual`, IEEE 1800-2009 8.20, 8.21, 8.24). Its body, when
+    /// it has one, is a separate node that virtual dispatch uses.
+    pub fn is_virtual_prototype(&self, id: NodeId) -> bool {
+        self.virtual_prototypes.contains(&id)
     }
 
     pub(crate) fn randomize_call_entries(&self) -> impl Iterator<Item = (&NodeId, &RandomizeCall)> {

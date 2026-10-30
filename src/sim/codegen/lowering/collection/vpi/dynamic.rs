@@ -4,11 +4,14 @@
 //! the class layouts a class object exposes. Storage stays where the model
 //! keeps it; the rows only name it.
 
+use super::super::super::randomization::ModeBit;
 use super::*;
 use crate::core::db::{ArrayKind, AssociativeIndex};
+use crate::core::db::{MemberVisibility, RandQualifier};
 use crate::sim::ir::{
     IrClassFieldType, IrContainerElement, IrContainerKind, IrObjectType, IrVpiArrayType,
-    IrVpiClass, IrVpiDynamic, IrVpiField, IrVpiKey, IrVpiShape, IrVpiStorage,
+    IrVpiClass, IrVpiClassItem, IrVpiClassItemKind, IrVpiDynamic, IrVpiField, IrVpiKey, IrVpiRand,
+    IrVpiShape, IrVpiStorage, IrVpiVisibility,
 };
 
 /// Nesting of container element types the capture follows; deeper element
@@ -288,6 +291,19 @@ impl Codegen<'_> {
                     IrVpiField {
                         name: self.node(*child).name.clone(),
                         shape: dynamic.intern(shape),
+                        rand: match self.db.rand_qualifier(*child) {
+                            RandQualifier::None => IrVpiRand::NotRand,
+                            RandQualifier::Rand => IrVpiRand::Rand,
+                            RandQualifier::RandC => IrVpiRand::RandC,
+                        },
+                        visibility: vpi_visibility(self.db.member_visibility(*child)),
+                        mode: match self.rand_mode_bits.get(child) {
+                            Some(ModeBit::Field(owner, index)) if *owner == class_index => {
+                                Some(*index)
+                            }
+                            _ => None,
+                        },
+                        is_const: self.db.is_const_variable(*child),
                     },
                 ));
             }
@@ -304,9 +320,141 @@ impl Codegen<'_> {
                     name: names[index].clone(),
                     base: model.classes[index].base,
                     fields: vec![None; model.classes[index].fields.len()],
+                    ..IrVpiClass::default()
                 })
             })
             .collect();
+        for (class, class_index) in &self.class_nodes {
+            let Some(entry) = dynamic.classes.get_mut(*class_index) else {
+                continue;
+            };
+            entry.full_name = self.vpi_class_full_name(*class, 0);
+            entry.scope = self.vpi_class_scope(*class);
+            entry.is_virtual = self
+                .db
+                .class_metadata(*class)
+                .is_some_and(|metadata| metadata.is_abstract);
+            entry.items = self.vpi_class_items(typespecs, *class);
+            // A generic class definition is only the source of its
+            // specializations, which are the class types objects have.
+            entry.is_generic = self.db.semantic_detail(*class) == Some("GenericClassDef");
+        }
+    }
+
+    /// The scope that declares `class` when it is a catalog scope (an
+    /// instance, generate scope, package or `$unit`), by catalog key.
+    fn vpi_class_scope(&self, class: NodeId) -> Option<String> {
+        let scope = self.db.class_declaring_scope(class)?;
+        (matches!(
+            self.kind(scope),
+            NodeKind::ModuleInst { .. } | NodeKind::GenScope | NodeKind::Package
+        ) || self.is_compilation_unit(scope))
+        .then(|| self.vpi_full_name(scope))
+    }
+
+    /// `vpiFullName` of a class definition: its declaring scope's full
+    /// name, then `.` (`::` after a package, `$unit` or class, 37.10
+    /// detail 5) and the class name.
+    fn vpi_class_full_name(&self, class: NodeId, depth: u32) -> String {
+        let name = &self.node(class).name;
+        let Some(scope) = self.db.class_declaring_scope(class) else {
+            return name.clone();
+        };
+        if matches!(self.kind(scope), NodeKind::ClassDef) && depth < MAX_SHAPE_DEPTH {
+            return format!("{}::{name}", self.vpi_class_full_name(scope, depth + 1));
+        }
+        match self.vpi_class_scope(class) {
+            Some(key) if !key.is_empty() => format!("{key}{SEPARATOR}{name}")
+                .replace(&format!("::{SEPARATOR}"), "::")
+                .replace(SEPARATOR, "."),
+            _ => name.clone(),
+        }
+    }
+
+    /// The methods (each followed by its arguments) and parameters `class`
+    /// declares, in declaration order (37.27).
+    fn vpi_class_items(&self, typespecs: &mut TypespecTable, class: NodeId) -> Vec<IrVpiClassItem> {
+        let mut items = Vec::new();
+        for child in &self.node(class).children {
+            let node = self.node(*child);
+            // 37.27 detail 1: built-in methods without an explicit
+            // declaration (randomize, rand_mode, ...) have no source.
+            if node.name.is_empty() || node.file().is_none() {
+                continue;
+            }
+            let located = |kind| IrVpiClassItem {
+                kind,
+                name: node.name.clone(),
+                file: node.file().map(str::to_owned),
+                line: node.line,
+                visibility: vpi_visibility(self.db.member_visibility(*child)),
+                ..IrVpiClassItem::default()
+            };
+            match self.kind(*child) {
+                NodeKind::FuncTask {
+                    is_task,
+                    is_static,
+                    is_virtual,
+                    is_pure,
+                    ret,
+                    ..
+                } => {
+                    let method = items.len();
+                    items.push(IrVpiClassItem {
+                        // 8.21: a pure method is virtual.
+                        is_virtual: *is_virtual || *is_pure || self.db.is_virtual_prototype(*child),
+                        is_static: *is_static,
+                        detail: super::vpi_func_type(*is_task, ret.as_ref()),
+                        width: ret.as_ref().and_then(|ret| ret.width).unwrap_or(0),
+                        signed: ret.as_ref().is_some_and(|ret| ret.signed),
+                        ..located(if *is_task {
+                            IrVpiClassItemKind::Task
+                        } else {
+                            IrVpiClassItemKind::Function
+                        })
+                    });
+                    for row in self.vpi_argument_io_decls(typespecs, *child) {
+                        items.push(IrVpiClassItem {
+                            kind: IrVpiClassItemKind::IoDecl,
+                            name: row.name,
+                            file: row.file,
+                            line: row.line,
+                            width: row.width,
+                            signed: row.signed,
+                            typespec: row.typespec,
+                            direction: row.direction,
+                            owner: Some(method),
+                            ..IrVpiClassItem::default()
+                        });
+                    }
+                }
+                NodeKind::Param { value, local, .. } => {
+                    let Some((constant, width, signed, real)) =
+                        value.as_ref().and_then(super::vpi_parameter_constant)
+                    else {
+                        continue;
+                    };
+                    let detail = if real {
+                        "vpiRealConst"
+                    } else if matches!(constant, crate::sim::ir::IrVpiConstant::Text(_)) {
+                        "vpiStringConst"
+                    } else {
+                        "vpiBinaryConst"
+                    };
+                    items.push(IrVpiClassItem {
+                        local_param: *local,
+                        detail: Some(detail),
+                        width,
+                        signed,
+                        typespec: self.vpi_declared_typespec(typespecs, *child),
+                        value: Some(constant),
+                        ..located(IrVpiClassItemKind::Parameter)
+                    });
+                }
+                _ => {}
+            }
+        }
+        items
     }
 
     fn vpi_class_layout(
@@ -341,6 +489,7 @@ impl Codegen<'_> {
             name: names[index].clone(),
             base,
             fields,
+            ..IrVpiClass::default()
         });
     }
 
@@ -354,5 +503,13 @@ impl Codegen<'_> {
         }
         let info = self.container_globals.get(&child)?;
         model.containers.get(info.ir)?.class_field
+    }
+}
+
+fn vpi_visibility(visibility: MemberVisibility) -> IrVpiVisibility {
+    match visibility {
+        MemberVisibility::Public => IrVpiVisibility::Public,
+        MemberVisibility::Protected => IrVpiVisibility::Protected,
+        MemberVisibility::Local => IrVpiVisibility::Local,
     }
 }

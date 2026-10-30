@@ -224,7 +224,13 @@ global and whose `shape` indexes `llg_vpi_dynamic_tables`. Class objects,
 properties and elements are dynamic slots (`SLOT_CLASSOBJ`, `SLOT_PROPERTY`,
 `SLOT_DYNELEM`) that keep the object's address, never a reference the
 collector sees; an element keeps (row or property, index or key) and
-re-resolves at each access. A live table assigns `vpiObjId`s and marks
+re-resolves at each access. Class definitions, typespecs and extends
+objects are static slots after the catalog rows, followed by one
+`SLOT_CLASSITEM` slot per `llg_vpi_class_item_t` (methods, their io
+declarations, parameters); a class's items are contiguous, a method's io
+declarations follow it and name it through `owner`. Field records carry the
+rand qualifier, visibility, const flag and the index of the hidden
+`rand_mode` off bit that `vpiIsRandomized` reads. A live table assigns `vpiObjId`s and marks
 objects some handle names. The collector's reclaim hook marks the dying
 objects, runs `cbReclaimObj`/`cbEndOfObject` (navigation and puts refused),
 releases every slot and iterator into them and forgets their ids; with no

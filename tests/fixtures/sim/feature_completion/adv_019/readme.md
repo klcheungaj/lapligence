@@ -1,4 +1,4 @@
-# ADV-019 fixtures: VPI typespecs, structure and union members, structure, expression, statement and dynamic objects
+# ADV-019 fixtures: VPI typespecs, structure and union members, structure, expression, statement, dynamic and class objects
 
 Each `<name>.sv` has a C application `<name>.c` that registers the system task
 the design calls. `tests/sim_feature_completion/adv_019.rs` links it as a
@@ -506,6 +506,76 @@ the element handles it held.
   `q.delete(0)` the handle held for `tb.q[1]` reports `level=3` and the one
   held for `tb.q[0]` reads the element now at index 0 (`2`): element handles
   select by index or key at each access (decision A19-D23).
+
+## classes (37.10, 37.13, 37.17, 37.26, 37.27, 37.37)
+
+`classes.c` lists the class definitions of the design (`vpi_iterate(vpiClassDefn,
+NULL)`), of `tb`, and of each package, and then prints for every definition its
+full name, qualifiers and scopes, its extends object, derived classes,
+methods with their arguments, parameters with their values, properties, and
+the counts of its internal scopes, named events and property declarations. It
+then prints the properties, method and parameter counts of the object `obj`
+refers to and the qualifiers of three module variables. A refused integer
+query prints `-99`; `level=` is the status of the call before it.
+
+- Listing. The text does not say what `vpi_iterate(vpiClassDefn, NULL)` lists;
+  llg lists every class definition of the design, like another simulator
+  (decision A19-D36): the package class, the `$unit` class and the two
+  module classes; `tb`, `$unit` and `cls_pkg` list their own. A variable
+  has no class definitions (`level=3`). `Base #(W = 4)` is specialized once
+  (`Base #(8)`) and is listed once as `Base`, with that specialization's
+  parameter values (37.28 detail 4, L59545: the name of a specialization is
+  "valid, though tool-dependent").
+- Full names. 37.10 detail 5 (L57952-L57954): "vpiFullName for objects that
+  exist in a package shall begin with the name of the package followed by
+  "::". ... The . separator shall be used in all cases except package and
+  class defn." Hence `cls_pkg::PkgItem`, `$unit::UnitItem`, `tb.Base`.
+  37.37 detail 5 (L60004-L60005): a method's full name is the class defn's
+  full name, `::` and the method name (`tb.Base::vf`); parameters follow
+  the same form (`tb.Base::W`); io declarations have no full name.
+- Scopes. 37.10 details 2 and 3 (L57934-L57936): `vpiModule` is the module
+  the object is inside, otherwise NULL (`module=null` for the package and
+  `$unit` classes); `vpiInstance` is the immediate instance (`cls_pkg`,
+  `$unit`, `tb`). A method's and a parameter's `vpiScope` is its class defn,
+  which iterates its methods as `vpiInternalScope` (37.27 diagram,
+  L59513-L59514): 1, 0, 5 and 2 scopes (decision A19-D36). Classes declare
+  no named events (llg rejects event properties) and no property
+  declarations (A.1.9 `class_item` has none): both iterations are NULL
+  without an error.
+- Qualifiers. 8.20 makes `Base` virtual (`virtual=1`); classes and their
+  methods have automatic lifetime (8.6), so `vpiAutomatic` is 1. 37.37
+  detail 4 (L60001-L60003): `vpiVisibility` is `vpiPublicVis` (1),
+  `vpiProtectedVis` (2) or `vpiLocalVis` (3): `lf` is local, `pt`
+  protected. `vf` is virtual in `Base` (pure virtual) and in `Derived`
+  (8.20: a method that overrides a virtual method is virtual). Built-in
+  methods are not listed (37.27 detail 1, L59458-L59460), so `Base` lists
+  `vf`, `new`, `lf`, `pt` and `sf` in declaration order.
+- Function types. Annex M: `vpiSizedSignedFunc` 5 for `int` results; `new`
+  and the void function `lf` have no function type (refused) and size 0
+  (37.37 detail 12, L60024-L60026: "For a void function, vpiSize shall
+  return 0"). A method's statements are not VPI objects in llg
+  (`stmt level=3`).
+- Arguments. A method iterates its declared arguments (`vpiIODecl`, without
+  the implicit `this`): `vpiDirection` `vpiInput` 1, `vpiOutput` 2 and
+  `vpiRef` 6 (decision A19-D42), with `vpiTypespec`, `vpiTaskFunc` the
+  method and no `vpiExpr` (decision A19-D42).
+- Extends. 37.27 detail 6 (L59478-L59479): "The relation from extends to
+  class typespec provides the base class": `Derived` has an extends object
+  whose class typespec belongs to `tb.Base`; `Base` lists `tb.Derived` as
+  derived (detail 5).
+- Parameters. 37.27 detail 8 (L59482-L59484): `vpiParameter` returns the
+  parameter port list and the body parameters; `vpiLocalParam` is TRUE for
+  `LP`. `W` is 8 in the only specialization and `LP` is `W * 2` = 16;
+  both are `vpiBinaryConst` (3) and 32 bits wide. The object's class `Derived`
+  declares no parameters (`object parameters=0`) and two methods.
+- Properties. 37.17 details 15, 16 and 24 (L58775-L58777, L58822-L58824):
+  `vpiRandType` is `vpiNotRand` 1, `vpiRand` 2 or `vpiRandC` 3; `cv` is
+  `const` (`vpiConstantVariable` 1). A property obtained from a class defn
+  belongs to no object and is not randomized (decision A19-D36); in `obj`,
+  `a` and `d` are active and `b` is off after `obj.b.rand_mode(0)` (18.8).
+  Module variables are not class members: `vpiNotRand`, not randomized,
+  `vpiPublicVis`; `limit` is const.
+- `plain=8` is `vf(3)` (3 + `d` 0) + `getx()` 5 + `u` 0.
 
 ## gc (37.3.7, 37.29, 38.36.1)
 

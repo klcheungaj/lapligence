@@ -82,6 +82,8 @@ typedef enum {
     SLOT_CLASSDEFN, /* class definition `aux` (static slot) */
     SLOT_CLASSTS,   /* class typespec `aux` (static slot) */
     SLOT_EXTENDS,   /* extends object of class `aux` (static slot) */
+    SLOT_CLASSITEM, /* declared item `aux` of class `right` (static slot): a method, an
+                     * argument, a parameter or a constraint */
     SLOT_CODE,      /* expression or statement object: code row `aux` */
     SLOT_COLLECTION, /* vpiCollection: `count` members in `items`, each a
                       * catalog row << 1 or an assertion item << 1 | 1 */
@@ -317,6 +319,8 @@ static size_t dyn_static_slot_count(void);
 static void dyn_static_slots(uint32_t base);
 static int dyn_row_valid(const llg_vpi_model_object_t* object);
 static int dyn_slot(const llg_vpi_slot_t* slot);
+static vpiHandle dyn_iterate_class_defns(uint32_t scope);
+static int dyn_is_class_scope(const llg_vpi_slot_t* slot);
 static int dyn_type(const llg_vpi_slot_t* slot);
 static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled);
 static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled);
@@ -3476,6 +3480,7 @@ static vpiHandle iterate_declarations(int type, vpiHandle reference) {
     }
     const llg_vpi_model_object_t* scope = slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
     if (slot->kind == SLOT_CODE && code_is_unscoped_block((uint32_t)slot->aux)) return NULL;
+    if (dyn_is_class_scope(slot)) return NULL;
     if (!scope || !is_scope_type(scope->type)) {
         vpi_error("LLG_VPI_RELATION", "sequence and property declarations iterate from a scope");
         return NULL;
@@ -3560,6 +3565,7 @@ static vpiHandle iterate_concurrent_assertions(vpiHandle reference) {
     }
     /* A block that is not a scope declares nothing (decision A19-D27). */
     if (slot->kind == SLOT_CODE && code_is_unscoped_block((uint32_t)slot->aux)) return NULL;
+    if (dyn_is_class_scope(slot)) return NULL;
     const llg_vpi_model_object_t* scope = slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
     if (!scope || !is_scope_type(scope->type)) {
         vpi_error("LLG_VPI_RELATION", "vpiConcurrentAssertions iterates from a scope");
@@ -3567,6 +3573,21 @@ static vpiHandle iterate_concurrent_assertions(vpiHandle reference) {
     }
     if (is_package_slot(slot)) return NULL;
     return iterate_scope_assertions(slot->object, 1);
+}
+
+/* vpi_iterate(vpiClassDefn, NULL | instance) (37.10): the class
+ * definitions declared in an instance; from NULL, all of them (decision
+ * A19-D36). */
+static vpiHandle iterate_class_defns(vpiHandle reference) {
+    if (!reference) return dyn_iterate_class_defns(LLG_VPI_NONE);
+    llg_vpi_slot_t* slot = checked_handle(reference, NULL);
+    if (!slot) return NULL;
+    const llg_vpi_model_object_t* object = slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
+    if (!object || !is_instance_type(object->type)) {
+        vpi_error("LLG_VPI_RELATION", "class definitions iterate from an instance or NULL");
+        return NULL;
+    }
+    return dyn_iterate_class_defns(slot->object);
 }
 
 /* vpi_iterate(vpiAssertion, NULL | instance | generate scope): every item,
@@ -5640,6 +5661,11 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     uint32_t argument = argument_code(slot);
     if (argument != LLG_VPI_NONE) return code_relation(type, argument);
     llg_vpi_model_object_t* object = row_object(slot->object);
+    /* 37.37: a task or function that is not a class method has no class
+     * defn. */
+    if (type == vpiClassDefn && slot->kind == SLOT_OBJECT && object &&
+        (object->type == vpiTask || object->type == vpiFunction))
+        return NULL;
     if (slot->kind == SLOT_OBJECT && object && is_statement_scope_type(object->type)) {
         /* A statement scope's relations are its statement's (37.12, 37.69,
          * 37.70); vpiScope is the enclosing scope. */
@@ -6199,6 +6225,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     if (type == vpiFsm) return iterate_fsms(ref_handle);
     if (type == vpiFsmStates) return iterate_fsm_states(ref_handle);
     if (type == vpiSequenceDecl || type == vpiPropertyDecl) return iterate_declarations(type, ref_handle);
+    if (type == vpiClassDefn) return iterate_class_defns(ref_handle);
     if (!ref_handle) {
         /* 37.5 detail 1, 37.10: the top-level instances, packages and
          * `$unit` included. */
@@ -6517,6 +6544,20 @@ static uint64_t time_unit_of(const llg_vpi_model_object_t* object) {
 static int argument_type(const llg_vpi_slot_t* slot) {
     if (slot->count) return vpiConstant;
     return vpiOperation;
+}
+
+/* A catalog variable, or an element or bit of one: a bit or element shares
+ * the declaration qualifiers of its variable (37.17 groups var bits with
+ * the variables). */
+static int is_static_variable_part(const llg_vpi_slot_t* slot,
+                                   const llg_vpi_model_object_t* object) {
+    if (!object || object->is_net) return 0;
+    if (!is_variable_type(object->type) && object->type != vpiRegArray &&
+        object->type != vpiStringVar && object->type != vpiChandleVar &&
+        object->type != vpiArrayVar)
+        return 0;
+    return slot->kind == SLOT_OBJECT || slot->kind == SLOT_ELEMENT ||
+           (slot->kind == SLOT_SELECT && slot->span == 1);
 }
 
 static int handle_type(const llg_vpi_slot_t* slot) {
@@ -6965,6 +7006,15 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiContAssign)
                 return (object->flags & LLG_VPI_OBJ_QUALIFIER) != 0;
             return unsupported_property();
+        case vpiVirtual:
+            /* 37.37: only class methods are virtual (decision A19-D36);
+             * 37.15 detail 5: a ref obj of an interface port is not a
+             * virtual interface. */
+            if (slot->kind == SLOT_OBJECT && object &&
+                (object->type == vpiTask || object->type == vpiFunction))
+                return 0;
+            if (slot->kind == SLOT_REFOBJ) return 0;
+            return unsupported_property();
         case vpiMethod:
             /* Class methods are not catalog objects (37.37). */
             if (slot->kind == SLOT_OBJECT && object &&
@@ -6975,6 +7025,21 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if (slot->kind == SLOT_OBJECT && object &&
                 (object->type == vpiTask || object->type == vpiFunction))
                 return vpiPublicVis; /* 37.37 detail 4 */
+            /* 37.17 detail 24: a variable that is not a class member. */
+            if (is_static_variable_part(slot, object)) return vpiPublicVis;
+            return unsupported_property();
+        case vpiConstantVariable:
+            /* 37.17: a variable declared const (6.20.6). */
+            if (is_static_variable_part(slot, object))
+                return (object->flags & LLG_VPI_OBJ_CONST) != 0;
+            return unsupported_property();
+        case vpiRandType:
+        case vpiIsRandomized:
+            /* 37.17 details 15 and 16: only class properties are declared
+             * rand or randc; std::randomize() leaves a variable's type
+             * vpiNotRand (decision A19-D36). */
+            if (is_static_variable_part(slot, object))
+                return property == vpiRandType ? vpiNotRand : 0;
             return unsupported_property();
         case vpiPortIndex:
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiPort)

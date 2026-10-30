@@ -442,6 +442,8 @@ impl Db {
         let mut var_lifetime_qualifiers = HashMap::new();
         let mut const_variables = HashSet::new();
         let mut rand_qualifiers = HashMap::new();
+        let mut member_visibilities = HashMap::new();
+        let mut virtual_prototypes = HashSet::new();
         let mut randomize_calls = HashMap::new();
         let mut method_calls_with_clause = HashSet::new();
         let mut const_casts = HashSet::new();
@@ -852,6 +854,16 @@ impl Db {
                     },
                 );
             }
+            if semantic.kind == SemanticKind::Subroutine {
+                if semantic.auxiliary & crate::ffi::slang::SUBROUTINE_PROTOTYPE_VIRTUAL != 0 {
+                    virtual_prototypes.insert(id);
+                }
+                if semantic.auxiliary & crate::ffi::slang::SUBROUTINE_LOCAL != 0 {
+                    member_visibilities.insert(id, MemberVisibility::Local);
+                } else if semantic.auxiliary & crate::ffi::slang::SUBROUTINE_PROTECTED != 0 {
+                    member_visibilities.insert(id, MemberVisibility::Protected);
+                }
+            }
             if matches!(
                 semantic.kind,
                 SemanticKind::Variable | SemanticKind::NamedEvent
@@ -860,6 +872,11 @@ impl Db {
             {
                 if semantic.auxiliary & crate::ffi::slang::VARIABLE_CONST != 0 {
                     const_variables.insert(id);
+                }
+                if semantic.auxiliary & crate::ffi::slang::VARIABLE_LOCAL != 0 {
+                    member_visibilities.insert(id, MemberVisibility::Local);
+                } else if semantic.auxiliary & crate::ffi::slang::VARIABLE_PROTECTED != 0 {
+                    member_visibilities.insert(id, MemberVisibility::Protected);
                 }
                 if semantic.auxiliary & crate::ffi::slang::VARIABLE_RAND != 0 {
                     rand_qualifiers.insert(id, RandQualifier::Rand);
@@ -1554,6 +1571,8 @@ impl Db {
             var_lifetime_qualifiers,
             const_variables,
             rand_qualifiers,
+            member_visibilities,
+            virtual_prototypes,
             randomize_calls,
             method_calls_with_clause,
             const_casts,
@@ -2169,6 +2188,45 @@ mod tests {
             db.variable_lifetime(named("local_c")),
             VariableLifetime::Automatic
         );
+    }
+
+    #[test]
+    fn class_member_visibility_is_captured() {
+        let source = "module top; class C; local int l; protected rand int p; int q; \
+            local function void lf(); endfunction protected task pt(); endtask \
+            function void f(); endfunction endclass endmodule";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "visibility.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let node = |name: &str| {
+            db.node_ids()
+                .find(|id| {
+                    matches!(
+                        db.node_kind(*id),
+                        NodeKind::Var { .. } | NodeKind::FuncTask { .. }
+                    ) && db.node(*id).name == name
+                })
+                .unwrap_or_else(|| panic!("member `{name}`"))
+        };
+        assert_eq!(db.member_visibility(node("l")), MemberVisibility::Local);
+        assert_eq!(db.member_visibility(node("p")), MemberVisibility::Protected);
+        assert_eq!(db.rand_qualifier(node("p")), RandQualifier::Rand);
+        assert_eq!(db.member_visibility(node("q")), MemberVisibility::Public);
+        assert_eq!(db.member_visibility(node("lf")), MemberVisibility::Local);
+        assert_eq!(
+            db.member_visibility(node("pt")),
+            MemberVisibility::Protected
+        );
+        assert_eq!(db.member_visibility(node("f")), MemberVisibility::Public);
     }
 
     #[test]

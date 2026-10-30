@@ -35,6 +35,8 @@ test a19d28 sim_lrm_decisions::a19_d28_index_and_packed_relations
 test a19d30 sim_lrm_decisions::a19_d30_clocking_blocks
 test a19d31 sim_lrm_decisions::a19_d31_assertion_details
 test a19d32 sim_lrm_decisions::a19_d32_expression_relations
+test a19d36 sim_lrm_decisions::a19_d36_class_definitions
+test a19classes adv_019::class_definitions_list_methods_parameters_and_property_qualifiers
 test a19d42 sim_lrm_decisions::a19_d42_declaration_objects
 test a19decl adv_019::instance_properties_follow_the_definition_and_its_configuration
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
@@ -49,7 +51,7 @@ node null 37.5 type=NULL
   iterate vpiInstance implemented walk
   iterate vpiProgram implemented walk
   iterate vpiInterface implemented walk
-  iterate vpiClassDefn unsupported class definitions are reached from class variables and objects only
+  iterate vpiClassDefn implemented a19d36
   iterate vpiUdpDefn unsupported UDP definitions are not objects
   handle vpiSysTfCall implemented walk
   iterate vpiUserSystf unsupported vpi_iterate(vpiUserSystf, NULL) is not implemented
@@ -304,7 +306,7 @@ node instance 37.10 members=package,interface,program,module
   iterate vpiSpecParam implemented walk
   iterate vpiAssertion implemented walk
   iterate vpiTypedef unsupported the vpiTypedef iteration is not implemented
-  iterate vpiClassDefn unsupported class definitions are reached from class variables and objects only
+  iterate vpiClassDefn implemented walk
   get vpiAssertCoverage implemented walk
   get vpiFsmStateCoverage implemented walk
   get vpiStatementCoverage unsupported statement coverage is unsupported
@@ -387,13 +389,13 @@ node task_func 37.12 members=task,function
   handle vpiLeftRange unsupported the return range of a function is not exposed
   handle vpiRightRange unsupported the return range of a function is not exposed
   handle vpiReturn unsupported the return variable of a function is not an object
-  handle vpiClassDefn unsupported methods of classes are not objects
+  handle vpiClassDefn implemented walk
   handle vpiParent implemented walk
   iterate vpiIODecl implemented walk
   get vpiMethod implemented walk
   get vpiAccessType unsupported DPI and interface access properties of tasks and functions are not captured
   get vpiVisibility implemented walk
-  get vpiVirtual unsupported virtual and pure qualifiers are not captured
+  get vpiVirtual implemented a19classes
   get vpiAutomatic implemented walk
   get vpiDPIPure unsupported DPI and interface access properties of tasks and functions are not captured
   get vpiDPIContext unsupported DPI and interface access properties of tasks and functions are not captured
@@ -590,7 +592,7 @@ node port_bit 37.14 type=vpiPortBit
 node ref_obj 37.15 type=vpiRefObj
   str vpiName implemented walk
   str vpiFullName implemented walk
-  get vpiVirtual unsupported virtual and pure qualifiers are not captured
+  get vpiVirtual implemented walk
   get vpiGeneric unsupported generic interfaces are unsupported
   str vpiDefName implemented walk
   iterate vpiPort unsupported the ports a net or variable connects to are not exposed
@@ -711,14 +713,14 @@ node variables 37.17 members=short_real_var,real_var,byte_var,short_int_var,int_
   get vpiSize implemented walk
   get vpiAutomatic implemented walk
   get vpiAllocScheme implemented walk
-  get vpiConstantVariable unsupported randomization and constant properties of variables are not implemented
-  get vpiIsRandomized unsupported randomization and constant properties of variables are not implemented
-  get vpiRandType unsupported randomization properties are not captured
+  get vpiConstantVariable implemented walk
+  get vpiIsRandomized implemented a19d36
+  get vpiRandType implemented a19classes
   get vpiStructUnionMember implemented walk
   func vpi_get_value implemented walk
   func vpi_put_value implemented s42obj
   get vpiScalar implemented walk
-  get vpiVisibility unsupported vpiVisibility of variables is not implemented
+  get vpiVisibility implemented walk
   get vpiVector implemented walk
   iterate vpiPort unsupported the ports a net or variable connects to are not exposed
   iterate vpiPortInst unsupported the ports a net or variable connects to are not exposed
@@ -1109,60 +1111,60 @@ node param_assign 37.26 type=vpiParamAssign default=unsupported the parameter ov
 
 node class_defn 37.27 type=vpiClassDefn
   str vpiName implemented walk
-  get vpiVirtual unsupported virtual and pure qualifiers are not captured
+  get vpiVirtual implemented a19classes
   get vpiAutomatic implemented walk
-  handle vpiExtends unsupported class extension objects are not exposed
+  handle vpiExtends implemented walk
   iterate vpiDerivedClasses implemented walk
-  handle vpiInstance unsupported this object does not report its instance
-  handle vpiScope unsupported this object does not report its scope
+  handle vpiInstance implemented walk
+  handle vpiScope implemented walk
   iterate vpiVariables implemented walk
-  iterate vpiMethods unsupported class methods are not objects
+  iterate vpiMethods implemented walk
   iterate vpiConstraint unsupported constraints are not objects
-  iterate vpiParameter unsupported class parameters are not objects
+  iterate vpiParameter implemented a19classes
   iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
-  iterate vpiNamedEvent unsupported class events are not objects
+  iterate vpiNamedEvent implemented walk
   iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
   iterate vpiTypedef unsupported the vpiTypedef iteration is not implemented
-  iterate vpiInternalScope unsupported class scopes are not objects
-  handle vpiModule unsupported this object does not report its module
-  str vpiFullName unsupported this object has no full name in llg
-  iterate vpiPropertyDecl unsupported class scopes are not objects
-  iterate vpiConcurrentAssertions unsupported class scopes are not objects
-  iterate vpiSequenceDecl unsupported class scopes are not objects
-  iterate vpiReg unsupported class scopes are not objects
-  iterate vpiRegArray unsupported class scopes are not objects
+  iterate vpiInternalScope implemented a19d36
+  handle vpiModule implemented a19d36
+  str vpiFullName implemented a19d36
+  iterate vpiPropertyDecl implemented walk
+  iterate vpiConcurrentAssertions implemented walk
+  iterate vpiSequenceDecl implemented walk
+  iterate vpiReg implemented walk
+  iterate vpiRegArray implemented walk
   get vpiClassType extension walk the class typespec of a definition (VPI-O4)
   handle vpiClassTypespec extension walk the class typespec of a definition (VPI-O4)
   handle vpiTypespec extension walk the class typespec of a definition (VPI-O4)
 
-node extends 37.27 type=vpiExtends default=unsupported class extension objects are not exposed
-  handle vpiClassTypespec
-  iterate vpiArgument
+node extends 37.27 type=vpiExtends
+  handle vpiClassTypespec implemented walk
+  iterate vpiArgument unsupported the base-class constructor arguments of an extends clause are not exposed
 
 node class_typespec 37.28 type=vpiClassTypespec
   str vpiName implemented walk
   get vpiClassType implemented walk
   get vpiAutomatic implemented walk
-  iterate vpiParamAssign unsupported the parameter overrides of instance arrays are not captured
+  iterate vpiParamAssign unsupported the parameter values of a class specialization are not captured
   handle vpiExtends implemented walk
   handle vpiClassDefn implemented walk
   iterate vpiVariables implemented walk
-  iterate vpiMethods unsupported class methods are not objects
+  iterate vpiMethods implemented walk
   iterate vpiConstraint unsupported constraints are not objects
-  iterate vpiParameter unsupported class parameters are not objects
+  iterate vpiParameter implemented walk
   iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
-  iterate vpiNamedEvent unsupported class events are not objects
+  iterate vpiNamedEvent implemented walk
   iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
-  iterate vpiInternalScope unsupported class scopes are not objects
-  handle vpiInstance unsupported this object does not report its instance
-  handle vpiModule unsupported this object does not report its module
-  str vpiFullName unsupported this object has no full name in llg
-  iterate vpiPropertyDecl unsupported class scopes are not objects
-  iterate vpiConcurrentAssertions unsupported class scopes are not objects
-  iterate vpiSequenceDecl unsupported class scopes are not objects
-  iterate vpiReg unsupported class scopes are not objects
-  iterate vpiRegArray unsupported class scopes are not objects
-  handle vpiScope unsupported this object does not report its scope
+  iterate vpiInternalScope implemented walk
+  handle vpiInstance implemented walk
+  handle vpiModule implemented walk
+  str vpiFullName implemented walk
+  iterate vpiPropertyDecl implemented walk
+  iterate vpiConcurrentAssertions implemented walk
+  iterate vpiSequenceDecl implemented walk
+  iterate vpiReg implemented walk
+  iterate vpiRegArray implemented walk
+  handle vpiScope implemented walk
   handle vpiTypedefAlias unsupported class typedef aliases are not exposed
 
 node class_obj 37.29 type=vpiClassObj
@@ -1171,22 +1173,22 @@ node class_obj 37.29 type=vpiClassObj
   handle vpiClassTypespec implemented walk
   iterate vpiWaitingProcesses unsupported threads are not objects
   iterate vpiMessages unsupported mailbox and semaphore objects are not exposed
-  iterate vpiMethods unsupported class methods are not objects
+  iterate vpiMethods implemented walk
   iterate vpiConstraint unsupported constraints are not objects
-  iterate vpiParameter unsupported class parameters are not objects
+  iterate vpiParameter implemented walk
   iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
-  iterate vpiNamedEvent unsupported class events are not objects
+  iterate vpiNamedEvent implemented walk
   iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
-  iterate vpiInternalScope unsupported class scopes are not objects
+  iterate vpiInternalScope implemented walk
   get vpiAutomatic implemented walk
   get vpiAllocScheme implemented walk
   str vpiName unsupported this object has no name in llg
   str vpiFullName unsupported this object has no full name in llg
-  iterate vpiPropertyDecl unsupported class scopes are not objects
-  iterate vpiConcurrentAssertions unsupported class scopes are not objects
-  iterate vpiSequenceDecl unsupported class scopes are not objects
-  iterate vpiReg unsupported class scopes are not objects
-  iterate vpiRegArray unsupported class scopes are not objects
+  iterate vpiPropertyDecl implemented walk
+  iterate vpiConcurrentAssertions implemented walk
+  iterate vpiSequenceDecl implemented walk
+  iterate vpiReg implemented walk
+  iterate vpiRegArray implemented walk
   handle vpiScope unsupported this object does not report its scope
 
 node constraint 37.30 type=vpiConstraint default=unsupported constraints are not objects

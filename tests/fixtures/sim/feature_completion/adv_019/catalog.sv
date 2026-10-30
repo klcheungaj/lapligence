@@ -90,6 +90,23 @@ module tb;
       return id;
     endfunction
   endclass
+  // A class hierarchy (37.27-37.29, 37.37, 37.26): a virtual base class
+  // with parameters, a rand property, local and protected members and a
+  // pure method, and a derived class that extends it.
+  virtual class Shape #(parameter int N = 2);
+    localparam int M = N + 1;
+    rand bit [3:0] r;
+    local int hidden;
+    pure virtual function int area(input int scale);
+    protected task tick(output int o);
+      o = N + hidden;
+    endtask
+  endclass
+  class Square extends Shape #(3);
+    virtual function int area(input int scale);
+      return scale * M;
+    endfunction
+  endclass
 
   parameter int P = 5;
   localparam logic [3:0] LP = 4'h9;
@@ -115,6 +132,7 @@ module tb;
   string s = "hi";
   chandle ch = null;
   Packet p;
+  Square sq;
   int da[];
   int q[$];
   int qs;
@@ -234,11 +252,12 @@ module tb;
 
   initial begin : main
     p = new(7);
+    sq = new;
     da = new[2];
     q.push_back(1);
     // Method calls (37.38): a built-in method with a with clause and a
     // class method.
-    qs = q.sum() with (item * 2) + p.get();
+    qs = q.sum() with (item * 2) + p.get() + sq.area(0);
     aa[3] = 4;
     rec.a = 1;
     mem[1] = 4'h2;

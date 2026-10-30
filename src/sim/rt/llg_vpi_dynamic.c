@@ -18,9 +18,14 @@
 
 /* Sub-kinds of an ITER_DYN iterator (slot->span). */
 enum {
-    DYN_ITER_FIELDS = 1,   /* properties: pointer object (NULL: declaration), right class */
+    DYN_ITER_FIELDS = 1,   /* properties: pointer object (NULL: declaration), right class,
+                            * aux the vpiType they must have (0: any variable) */
     DYN_ITER_ELEMENTS = 2, /* container elements: base row/object, lsb field */
     DYN_ITER_DERIVED = 3,  /* class defns whose base is class `right` */
+    DYN_ITER_ITEMS = 4,    /* items of class `right` the relation `aux` selects
+                            * (arguments: of method item `element`) */
+    DYN_ITER_CLASSES = 5,  /* class defns declared in catalog scope row `right`
+                            * (LLG_VPI_NONE: all) */
 };
 
 /* How a SLOT_DYNELEM names its element (slot->lsb). */
@@ -52,6 +57,8 @@ static struct {
 } g_dyn;
 
 static void dyn_reclaimed(void* const* objects, size_t count);
+static vpiHandle dyn_iterator(unsigned sub_kind, uint32_t count);
+static char* dyn_text(const char* format, ...);
 
 /* ── tables ─────────────────────────────────────────────────────────────── */
 
@@ -113,9 +120,43 @@ static int dyn_tables_valid(void) {
             layout->field_count > t->field_count - layout->first_field)
             return 0;
     }
-    for (uint32_t i = 0; i < t->field_count; ++i)
-        if (t->fields[i].name && t->fields[i].shape >= t->shape_count) return 0;
-    return 1;
+    for (uint32_t i = 0; i < t->field_count; ++i) {
+        const llg_vpi_class_field_t* field = &t->fields[i];
+        if (!field->name) continue;
+        if (field->shape >= t->shape_count || field->rand < vpiNotRand ||
+            field->rand > vpiRandC || field->visibility < vpiPublicVis ||
+            field->visibility > vpiLocalVis)
+            return 0;
+    }
+    if (t->item_count && !t->items) return 0;
+    uint32_t items = 0;
+    for (uint32_t i = 0; i < t->class_count; ++i) {
+        const llg_vpi_class_t* layout = &t->classes[i];
+        if (!layout->full_name || layout->scope > g_vpi.object_count ||
+            layout->first_item != items || layout->item_count > t->item_count - items)
+            return 0;
+        for (uint32_t f = 0; f < layout->field_count; ++f)
+            if (t->fields[layout->first_field + f].mode > layout->field_count) return 0;
+        for (uint32_t k = 0; k < layout->item_count; ++k) {
+            const llg_vpi_class_item_t* item = &t->items[items + k];
+            int method = item->type == vpiTask || item->type == vpiFunction;
+            if (!item->name || item->typespec > typespecs || item->mode > layout->field_count ||
+                (item->code && (!g_vpi.code || item->code > g_vpi.code->node_count)))
+                return 0;
+            if (!method && item->type != vpiParameter && item->type != vpiConstraint &&
+                item->type != vpiIODecl)
+                return 0;
+            /* An argument follows its method. */
+            if ((item->type == vpiIODecl) !=
+                    (item->owner != 0) ||
+                (item->owner && (item->owner > k ||
+                                 (t->items[items + item->owner - 1u].type != vpiTask &&
+                                  t->items[items + item->owner - 1u].type != vpiFunction))))
+                return 0;
+        }
+        items += layout->item_count;
+    }
+    return items == t->item_count;
 }
 
 /* A catalog row with LLG_VPI_OBJ_DYNAMIC: storage, a variable shape, and a
@@ -131,8 +172,24 @@ static int dyn_row_valid(const llg_vpi_model_object_t* object) {
     return object->type == shape->type;
 }
 
-/* Three static slots per class: its defn, its typespec, its extends. */
-static size_t dyn_static_slot_count(void) { return (size_t)dyn_class_count() * 3u; }
+static uint32_t dyn_item_count(void) { return g_dyn.tables ? g_dyn.tables->item_count : 0u; }
+
+/* Item `item` (in the class's own numbering) of class `class_index`. */
+static const llg_vpi_class_item_t* dyn_item(uint32_t class_index, uint32_t item) {
+    const llg_vpi_class_t* layout = dyn_class(class_index);
+    if (!layout || item >= layout->item_count) return NULL;
+    return &g_dyn.tables->items[layout->first_item + item];
+}
+
+static int dyn_item_is_method(const llg_vpi_class_item_t* item) {
+    return item->type == vpiTask || item->type == vpiFunction;
+}
+
+/* Three static slots per class (its defn, its typespec, its extends), then
+ * one per declared item. */
+static size_t dyn_static_slot_count(void) {
+    return (size_t)dyn_class_count() * 3u + dyn_item_count();
+}
 
 static void dyn_static_slots(uint32_t base) {
     g_dyn.class_base = base;
@@ -142,6 +199,15 @@ static void dyn_static_slots(uint32_t base) {
         slot->kind = i < classes ? SLOT_CLASSDEFN : i < 2u * classes ? SLOT_CLASSTS : SLOT_EXTENDS;
         slot->aux = (int32_t)(i % classes);
     }
+    for (uint32_t c = 0; c < classes; ++c) {
+        const llg_vpi_class_t* layout = dyn_class(c);
+        for (uint32_t k = 0; k < layout->item_count; ++k) {
+            llg_vpi_slot_t* slot = &g_vpi.slots[base + classes * 3u + layout->first_item + k];
+            slot->kind = SLOT_CLASSITEM;
+            slot->aux = (int32_t)k;
+            slot->right = c;
+        }
+    }
 }
 
 static vpiHandle dyn_class_handle(uint32_t class_index, unsigned which) {
@@ -150,6 +216,13 @@ static vpiHandle dyn_class_handle(uint32_t class_index, unsigned which) {
 }
 
 static vpiHandle defn_handle(uint32_t class_index) { return dyn_class_handle(class_index, 0); }
+
+/* The static handle of item `item` of class `class_index`. */
+static vpiHandle item_handle(uint32_t class_index, uint32_t item) {
+    const llg_vpi_class_t* layout = dyn_class(class_index);
+    if (!layout || item >= layout->item_count) return NULL;
+    return encode_handle(g_dyn.class_base + dyn_class_count() * 3u + layout->first_item + item);
+}
 static vpiHandle class_typespec_handle(uint32_t class_index) {
     return dyn_class_handle(class_index, 1);
 }
@@ -839,6 +912,7 @@ static int dyn_slot(const llg_vpi_slot_t* slot) {
         case SLOT_CLASSDEFN:
         case SLOT_CLASSTS:
         case SLOT_EXTENDS:
+        case SLOT_CLASSITEM:
             return 1;
         case SLOT_OBJECT: {
             const llg_vpi_model_object_t* object = row_object(slot->object);
@@ -855,6 +929,10 @@ static int dyn_type(const llg_vpi_slot_t* slot) {
         case SLOT_CLASSDEFN: return vpiClassDefn;
         case SLOT_CLASSTS: return vpiClassTypespec;
         case SLOT_EXTENDS: return vpiExtends;
+        case SLOT_CLASSITEM: {
+            const llg_vpi_class_item_t* item = dyn_item((uint32_t)slot->right, (uint32_t)slot->aux);
+            return item ? item->type : vpiUndefined;
+        }
         case SLOT_DYNELEM: {
             const llg_vpi_shape_t* shape = dyn_element_shape(slot);
             return shape ? shape->type : vpiUndefined;
@@ -876,6 +954,7 @@ static const char* dyn_type_name(int type) {
         case vpiStringVar: return "vpiStringVar";
         case vpiChandleVar: return "vpiChandleVar";
         case vpiArrayVar: return "vpiArrayVar";
+        case vpiConstraint: return "vpiConstraint";
         default: return type_name(type);
     }
 }
@@ -890,6 +969,272 @@ static int dyn_refuse_dying(const void* owner, const char* what) {
     return 1;
 }
 
+/* ── class definitions and their items (37.27, 37.37, 37.26, 37.13) ───── */
+
+/* The one-to-many relations from a class defn, typespec or object to the
+ * items its class declares (37.27-37.29). */
+static int dyn_class_iteration(int type) {
+    return type == vpiMethods || type == vpiParameter || type == vpiInternalScope;
+}
+
+/* A class defn, typespec or object, or a method: scopes whose items A.1.9
+ * (class_item) and 13 (tf_item_declaration) give no sequence, property or
+ * assertion declarations. */
+static int dyn_is_class_scope(const llg_vpi_slot_t* slot) {
+    switch (slot->kind) {
+        case SLOT_CLASSDEFN:
+        case SLOT_CLASSTS:
+        case SLOT_CLASSOBJ:
+            return 1;
+        case SLOT_CLASSITEM: {
+            const llg_vpi_class_item_t* item =
+                dyn_item((uint32_t)slot->right, (uint32_t)slot->aux);
+            return item && dyn_item_is_method(item);
+        }
+        default:
+            return 0;
+    }
+}
+
+/* The class an item handle belongs to and the item. */
+static const llg_vpi_class_item_t* class_item_of(const llg_vpi_slot_t* slot) {
+    return slot->kind == SLOT_CLASSITEM ? dyn_item((uint32_t)slot->right, (uint32_t)slot->aux)
+                                        : NULL;
+}
+
+/* The catalog scope that declares class `class_index`, or LLG_VPI_NONE. */
+static uint32_t dyn_class_scope(uint32_t class_index) {
+    const llg_vpi_class_t* layout = dyn_class(class_index);
+    return layout && layout->scope ? layout->scope - 1u : LLG_VPI_NONE;
+}
+
+/* vpiInstance or vpiModule (37.10 details 2 and 3) of an object declared
+ * in class `class_index`: NULL outside instances and modules. */
+static vpiHandle dyn_class_container(uint32_t class_index, int type) {
+    uint32_t scope = dyn_class_scope(class_index);
+    if (scope == LLG_VPI_NONE) return NULL;
+    uint32_t row = type == vpiInstance ? enclosing_instance(scope) : enclosing_module(scope);
+    return row == LLG_VPI_NONE ? NULL : object_handle(row);
+}
+
+/* Whether item `item` belongs to the one-to-many relation `relation`;
+ * `owner` + 1 names the method whose arguments vpiIODecl selects. */
+static int dyn_item_selected(const llg_vpi_class_item_t* item, int relation, uint64_t owner) {
+    switch (relation) {
+        /* 37.27: the methods; they are the internal scopes of the class
+         * (37.12, decision A19-D36). */
+        case vpiMethods:
+        case vpiInternalScope: return dyn_item_is_method(item);
+        case vpiParameter: return item->type == vpiParameter;
+        case vpiConstraint: return item->type == vpiConstraint;
+        case vpiIODecl: return item->type == vpiIODecl && item->owner == owner;
+        default: return 0;
+    }
+}
+
+static vpiHandle dyn_iterate_items(uint32_t class_index, int relation, uint64_t owner,
+                                   void* object) {
+    const llg_vpi_class_t* layout = dyn_class(class_index);
+    uint32_t count = 0;
+    for (uint32_t k = 0; layout && k < layout->item_count; ++k)
+        if (dyn_item_selected(dyn_item(class_index, k), relation, owner)) ++count;
+    vpiHandle iterator = dyn_iterator(DYN_ITER_ITEMS, count);
+    llg_vpi_slot_t* state = iterator ? decode_handle(iterator, NULL) : NULL;
+    if (!state) return NULL;
+    if (object) {
+        llg_vpi_live_t* entry = live_get(object);
+        if (!entry) {
+            vpi_release_handle(iterator);
+            return NULL;
+        }
+        entry->named = 1;
+    }
+    state->right = class_index;
+    state->aux = relation;
+    state->element = owner;
+    state->pointer = object;
+    return iterator;
+}
+
+/* Whether class `class_index` is listed by vpiClassDefn from catalog
+ * scope `scope` (LLG_VPI_NONE: a NULL reference, every class). */
+static int dyn_class_in_scope(uint32_t class_index, uint32_t scope) {
+    const llg_vpi_class_t* layout = dyn_class(class_index);
+    if (layout->flags & LLG_VPI_CLASS_GENERIC) return 0;
+    return scope == LLG_VPI_NONE || layout->scope == scope + 1u;
+}
+
+/* vpiClassDefn from a NULL reference or an instance (37.10): the classes
+ * declared directly in that instance; from NULL, every class definition
+ * (decision A19-D36). */
+static vpiHandle dyn_iterate_class_defns(uint32_t scope) {
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < dyn_class_count(); ++i)
+        if (dyn_class_in_scope(i, scope)) ++count;
+    vpiHandle iterator = dyn_iterator(DYN_ITER_CLASSES, count);
+    llg_vpi_slot_t* state = iterator ? decode_handle(iterator, NULL) : NULL;
+    if (state) state->right = scope;
+    return iterator;
+}
+
+/* `<class full name>::<name>` of a method or parameter (37.10 detail 5,
+ * 37.37 detail 5). */
+static const char* dyn_item_full_name(uint32_t class_index, const llg_vpi_class_item_t* item) {
+    return dyn_text("%s::%s", dyn_class(class_index)->full_name, item->name);
+}
+
+static PLI_INT64 dyn_item_get(int property, const llg_vpi_slot_t* slot, int* ok) {
+    const llg_vpi_class_item_t* item = class_item_of(slot);
+    *ok = 1;
+    if (property == vpiLineNo) return item->line;
+    switch (item->type) {
+        case vpiTask:
+        case vpiFunction:
+            switch (property) {
+                case vpiMethod: return 1;
+                case vpiVirtual: return (item->flags & LLG_VPI_ITEM_VIRTUAL) != 0;
+                case vpiVisibility: return item->visibility;
+                /* 8.6: class methods have automatic lifetime. */
+                case vpiAutomatic: return 1;
+                case vpiFuncType:
+                    if (item->type == vpiFunction && item->detail) return item->detail;
+                    break;
+                case vpiSize:
+                    /* 37.37 detail 12: 0 for a void function. */
+                    if (item->type == vpiFunction) return item->width;
+                    break;
+                case vpiSigned:
+                    if (item->type == vpiFunction) return (item->flags & LLG_VPI_ITEM_SIGNED) != 0;
+                    break;
+                default:
+                    break;
+            }
+            break;
+        case vpiIODecl:
+            switch (property) {
+                case vpiDirection: return item->detail;
+                case vpiSize: return item->width;
+                case vpiSigned: return (item->flags & LLG_VPI_ITEM_SIGNED) != 0;
+                default:
+                    break;
+            }
+            break;
+        case vpiParameter:
+            switch (property) {
+                case vpiLocalParam: return (item->flags & LLG_VPI_ITEM_LOCAL_PARAM) != 0;
+                case vpiConstType: return item->detail;
+                case vpiSize:
+                    if (item->value) return item->width;
+                    break;
+                case vpiSigned: return (item->flags & LLG_VPI_ITEM_SIGNED) != 0;
+                default:
+                    break;
+            }
+            break;
+        default:
+            break;
+    }
+    *ok = 0;
+    return 0;
+}
+
+static const char* dyn_item_get_str(int property, const llg_vpi_slot_t* slot) {
+    const llg_vpi_class_item_t* item = class_item_of(slot);
+    if (property == vpiName) return item->name;
+    if (property == vpiFile && item->file) return item->file;
+    if (property == vpiFullName && item->type != vpiIODecl)
+        return dyn_item_full_name((uint32_t)slot->right, item);
+    vpi_error("LLG_VPI_PROPERTY", "unsupported VPI string property for this class item");
+    return NULL;
+}
+
+static vpiHandle dyn_item_handle(int type, const llg_vpi_slot_t* slot) {
+    const llg_vpi_class_item_t* item = class_item_of(slot);
+    uint32_t class_index = (uint32_t)slot->right;
+    if (dyn_item_is_method(item)) {
+        switch (type) {
+            case vpiClassDefn:
+            /* 37.12: a method is declared in its class defn, which is a scope
+             * (decision A19-D36). */
+            case vpiScope:
+            case vpiParent:
+                return defn_handle(class_index);
+            case vpiInstance:
+            case vpiModule:
+                return dyn_class_container(class_index, type);
+            case vpiStmt:
+                vpi_error("LLG_VPI_UNSUPPORTED",
+                          "the statements of class methods are not VPI objects in llg");
+                return NULL;
+            default:
+                break;
+        }
+    } else if (item->type == vpiIODecl) {
+        switch (type) {
+            case vpiTaskFunc: return item_handle(class_index, item->owner - 1u);
+            case vpiInstance:
+            case vpiModule:
+                return dyn_class_container(class_index, type);
+            /* An automatic argument is not an object (decision A19-D42). */
+            case vpiExpr: return NULL;
+            case vpiTypespec:
+                return item->typespec ? typespec_handle(typespec_at(item->typespec - 1u)) : NULL;
+            default:
+                break;
+        }
+    } else if (item->type == vpiParameter) {
+        switch (type) {
+            case vpiTypespec:
+                return item->typespec ? typespec_handle(typespec_at(item->typespec - 1u)) : NULL;
+            case vpiScope:
+            case vpiParent:
+                return defn_handle(class_index);
+            case vpiInstance:
+            case vpiModule:
+                return dyn_class_container(class_index, type);
+            default:
+                break;
+        }
+    }
+    vpi_error("LLG_VPI_RELATION", "unsupported VPI relation for this class item");
+    return NULL;
+}
+
+static vpiHandle dyn_item_iterate(int type, const llg_vpi_slot_t* slot) {
+    const llg_vpi_class_item_t* item = class_item_of(slot);
+    if (dyn_item_is_method(item)) {
+        if (type == vpiIODecl)
+            return dyn_iterate_items((uint32_t)slot->right, vpiIODecl, (uint64_t)slot->aux + 1u,
+                                     NULL);
+        /* 37.12: a method declares only automatic variables, which llg keeps
+         * no objects for (decision A19-D42). */
+        if (is_scope_iteration(type)) return NULL;
+    }
+    vpi_error("LLG_VPI_RELATION", "unsupported VPI iteration for this class item");
+    return NULL;
+}
+
+static void dyn_item_value(const llg_vpi_slot_t* slot, p_vpi_value output) {
+    const llg_vpi_class_item_t* item = class_item_of(slot);
+    if (item->type != vpiParameter) {
+        vpi_error("LLG_VPI_VALUE", "this VPI object has no value");
+        return;
+    }
+    llg_vpi_datum_t datum;
+    memset(&datum, 0, sizeof(datum));
+    if (!item->value) {
+        datum.is_real = 1;
+        datum.real = item->real;
+        datum.packed = VPI_EMPTY;
+        fill_value(&datum, 0, vpiParameter, output);
+        return;
+    }
+    datum.packed = digits_value(item->value, item->width, (item->flags & LLG_VPI_ITEM_SIGNED) != 0,
+                                item->detail == vpiStringConst);
+    fill_value(&datum, (item->flags & LLG_VPI_ITEM_SIGNED) != 0, vpiParameter, output);
+    datum_destroy(&datum);
+}
+
 /* ── one-to-one relations ───────────────────────────────────────────────── */
 
 static vpiHandle dyn_constant(int64_t value) { return make_constant(value, vpiDecConst); }
@@ -898,13 +1243,36 @@ static vpiHandle dyn_constant(int64_t value) { return make_constant(value, vpiDe
 static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
     *handled = 1;
     switch (slot->kind) {
-        case SLOT_CLASSDEFN:
+        case SLOT_CLASSDEFN: {
+            uint32_t class_index = (uint32_t)slot->aux;
             if (type == vpiClassTypespec || type == vpiTypespec)
-                return class_typespec_handle((uint32_t)slot->aux);
+                return class_typespec_handle(class_index);
+            if (type == vpiExtends) {
+                /* 37.27 detail 6: the extends object of a derived class. */
+                const llg_vpi_class_t* layout = dyn_class(class_index);
+                return layout && layout->base ? dyn_class_handle(class_index, 2) : NULL;
+            }
+            if (type == vpiScope) {
+                uint32_t scope = dyn_class_scope(class_index);
+                return scope == LLG_VPI_NONE ? NULL : object_handle(scope);
+            }
+            if (type == vpiInstance || type == vpiModule)
+                return dyn_class_container(class_index, type);
             break;
+        }
+        case SLOT_CLASSITEM:
+            return dyn_item_handle(type, slot);
         case SLOT_CLASSTS: {
             uint32_t class_index = (uint32_t)slot->aux;
             if (type == vpiClassDefn) return defn_handle(class_index);
+            /* A class typespec stands for its class's one specialization: it
+             * is declared where its definition is (37.12). */
+            if (type == vpiScope) {
+                uint32_t scope = dyn_class_scope(class_index);
+                return scope == LLG_VPI_NONE ? NULL : object_handle(scope);
+            }
+            if (type == vpiInstance || type == vpiModule)
+                return dyn_class_container(class_index, type);
             if (type == vpiExtends) {
                 /* 37.28 detail 9: the base class typespec, through the
                  * extends object; NULL without a base. */
@@ -1026,11 +1394,22 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
 
 /* ── iteration ──────────────────────────────────────────────────────────── */
 
-static uint32_t dyn_visible_fields(uint32_t class_index, uint32_t first) {
+/* Whether property `field` is listed by an iteration for objects of
+ * `type` (0: vpiVariables, every variable). A property without a variable
+ * form (a virtual interface) is not a variable. */
+static int dyn_field_listed(uint32_t class_index, uint32_t field, int type) {
+    const llg_vpi_class_field_t* entry = dyn_field(class_index, field);
+    if (!entry || !entry->name) return 0;
+    const llg_vpi_shape_t* shape = dyn_shape(entry->shape);
+    if (!shape || shape->shape == LLG_VPI_SHAPE_OTHER) return 0;
+    return !type || shape->type == type;
+}
+
+static uint32_t dyn_visible_fields(uint32_t class_index, uint32_t first, int type) {
     const llg_vpi_class_t* layout = dyn_class(class_index);
     uint32_t count = 0;
     for (uint32_t i = first; layout && i < layout->field_count; ++i)
-        if (dyn_field(class_index, i)->name) ++count;
+        if (dyn_field_listed(class_index, i, type)) ++count;
     return count;
 }
 
@@ -1045,8 +1424,10 @@ static vpiHandle dyn_iterator(unsigned sub_kind, uint32_t count) {
     return encode_handle(index);
 }
 
-static vpiHandle dyn_iterate_fields(void* object, uint32_t class_index, uint32_t first) {
-    vpiHandle iterator = dyn_iterator(DYN_ITER_FIELDS, dyn_visible_fields(class_index, first));
+static vpiHandle dyn_iterate_fields(void* object, uint32_t class_index, uint32_t first,
+                                    int type) {
+    vpiHandle iterator =
+        dyn_iterator(DYN_ITER_FIELDS, dyn_visible_fields(class_index, first, type));
     llg_vpi_slot_t* slot = iterator ? decode_handle(iterator, NULL) : NULL;
     if (!slot) return NULL;
     if (object) {
@@ -1060,6 +1441,7 @@ static vpiHandle dyn_iterate_fields(void* object, uint32_t class_index, uint32_t
     slot->pointer = object;
     slot->right = class_index;
     slot->left = first;
+    slot->aux = type;
     return iterator;
 }
 
@@ -1071,19 +1453,34 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
     *handled = 1;
     switch (slot->kind) {
         case SLOT_CLASSOBJ: {
-            if (type != vpiVariables) break;
             uint32_t class_index;
             if (!dyn_object_class(slot->pointer, &class_index)) break;
-            /* 37.29 detail 6: every property, inherited ones first. */
-            return dyn_iterate_fields(slot->pointer, class_index, 0);
+            if (type == vpiVariables || type == vpiReg || type == vpiRegArray)
+                /* 37.29 detail 6: every property, inherited ones first. */
+                return dyn_iterate_fields(slot->pointer, class_index, 0,
+                                          type == vpiVariables ? 0 : type);
+            if (dyn_class_iteration(type)) {
+                if (dyn_refuse_dying(slot->pointer, "vpi_iterate")) return NULL;
+                /* 37.29 details 6 and 8: the items of the object's class. */
+                return dyn_iterate_items(class_index, type, 0, NULL);
+            }
+            if (type == vpiNamedEvent) return NULL;
+            break;
         }
+        case SLOT_CLASSITEM:
+            return dyn_item_iterate(type, slot);
         case SLOT_CLASSDEFN:
         case SLOT_CLASSTS: {
             uint32_t class_index = (uint32_t)slot->aux;
-            if (type == vpiVariables)
+            if (type == vpiVariables || type == vpiReg || type == vpiRegArray)
                 /* The properties the class declares (37.27 detail 4: base
                  * classes through vpiExtends); they have no value. */
-                return dyn_iterate_fields(NULL, class_index, dyn_inherited_fields(class_index));
+                return dyn_iterate_fields(NULL, class_index, dyn_inherited_fields(class_index),
+                                          type == vpiVariables ? 0 : type);
+            /* 37.27, 37.28 detail 5: the items the class declares. */
+            if (dyn_class_iteration(type)) return dyn_iterate_items(class_index, type, 0, NULL);
+            /* llg rejects event properties, so a class declares none. */
+            if (type == vpiNamedEvent) return NULL;
             if (type == vpiDerivedClasses && slot->kind == SLOT_CLASSDEFN) {
                 uint32_t count = 0;
                 for (uint32_t i = 0; i < dyn_class_count(); ++i)
@@ -1159,8 +1556,26 @@ static vpiHandle dyn_scan(llg_vpi_slot_t* slot, uint32_t position) {
             const llg_vpi_class_t* layout = dyn_class(class_index);
             while (layout && slot->left < (int64_t)layout->field_count) {
                 uint32_t field = (uint32_t)slot->left++;
-                if (dyn_field(class_index, field)->name)
+                if (dyn_field_listed(class_index, field, slot->aux))
                     return make_property(slot->pointer, class_index, field);
+            }
+            return NULL;
+        }
+        case DYN_ITER_ITEMS: {
+            uint32_t class_index = (uint32_t)slot->right;
+            const llg_vpi_class_t* layout = dyn_class(class_index);
+            while (layout && slot->left < (int64_t)layout->item_count) {
+                uint32_t item = (uint32_t)slot->left++;
+                if (dyn_item_selected(dyn_item(class_index, item), slot->aux, slot->element))
+                    return item_handle(class_index, item);
+            }
+            return NULL;
+        }
+        case DYN_ITER_CLASSES: {
+            while (slot->left < (int64_t)dyn_class_count()) {
+                uint32_t candidate = (uint32_t)slot->left++;
+                if (dyn_class_in_scope(candidate, (uint32_t)slot->right))
+                    return defn_handle(candidate);
             }
             return NULL;
         }
@@ -1205,6 +1620,28 @@ static PLI_INT64 dyn_size(const dyn_place_t* place, int* ok) {
     return 0;
 }
 
+/* vpiRandType, vpiVisibility and vpiIsRandomized (37.17 details 15, 16
+ * and 24) of a dynamic variable or a class property. A variable that is
+ * not a class member is public and not random; a property of a class
+ * definition belongs to no object, so it is not active for randomization
+ * (decision A19-D36). */
+static PLI_INT64 dyn_random_property(int property, const llg_vpi_slot_t* slot) {
+    const llg_vpi_class_field_t* field =
+        slot->kind == SLOT_PROPERTY ? dyn_field((uint32_t)slot->right, (uint32_t)slot->aux) : NULL;
+    if (property == vpiRandType) return field ? field->rand : vpiNotRand;
+    if (property == vpiVisibility) return field ? field->visibility : vpiPublicVis;
+    if (!field || field->rand == vpiNotRand || !slot->pointer) return 0;
+    if (!field->mode) return 1;
+    unsigned kind = 0;
+    const sv4_t* off = (const sv4_t*)g_dyn.tables->field(slot->pointer, field->mode - 1u, &kind);
+    if (!off || kind != LLG_VPI_FIELD_PACKED) {
+        vpi_error("LLG_VPI_MODEL", "the rand_mode state disagrees with the class layout");
+        return vpiUndefined;
+    }
+    /* 18.8: the hidden off bit is 0 while the variable is active. */
+    return sv4_to_u64(*off) == 0;
+}
+
 /* vpi_get64(property, slot); `*handled` 0 when llg_vpi.c should answer. */
 static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
     *handled = 1;
@@ -1215,7 +1652,15 @@ static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
             if (property == vpiClassType) return vpiUserDefinedClass;
             /* 37.3.7: class methods are automatic by default. */
             if (property == vpiAutomatic) return 1;
+            if (property == vpiVirtual && slot->kind == SLOT_CLASSDEFN)
+                return (dyn_class((uint32_t)slot->aux)->flags & LLG_VPI_CLASS_VIRTUAL) != 0;
             break;
+        case SLOT_CLASSITEM: {
+            int ok;
+            PLI_INT64 value = dyn_item_get(property, slot, &ok);
+            if (ok) return value;
+            break;
+        }
         case SLOT_EXTENDS:
             break;
         case SLOT_CLASSOBJ: {
@@ -1301,6 +1746,15 @@ static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
                 case vpiLineNo:
                     if (slot->kind == SLOT_OBJECT) return g_vpi.objects[slot->object].line;
                     break;
+                case vpiRandType:
+                case vpiVisibility:
+                case vpiIsRandomized:
+                    return dyn_random_property(property, slot);
+                case vpiConstantVariable:
+                    /* 37.17: declared const (6.20.6, 8.5). */
+                    if (slot->kind == SLOT_OBJECT)
+                        return (g_vpi.objects[slot->object].flags & LLG_VPI_OBJ_CONST) != 0;
+                    return dyn_field((uint32_t)slot->right, (uint32_t)slot->aux)->is_const != 0;
                 default:
                     break;
             }
@@ -1365,7 +1819,11 @@ static const char* dyn_get_str(int property, llg_vpi_slot_t* slot, int* handled)
         case SLOT_CLASSDEFN:
         case SLOT_CLASSTS:
             if (property == vpiName) return dyn_class((uint32_t)slot->aux)->name;
+            /* 37.10 detail 5, 37.12. */
+            if (property == vpiFullName) return dyn_class((uint32_t)slot->aux)->full_name;
             break;
+        case SLOT_CLASSITEM:
+            return dyn_item_get_str(property, slot);
         case SLOT_PROPERTY:
             if (property == vpiName) return dyn_field((uint32_t)slot->right, (uint32_t)slot->aux)->name;
             if (property == vpiFullName) {
@@ -1392,6 +1850,9 @@ static const char* dyn_get_str(int property, llg_vpi_slot_t* slot, int* handled)
 
 static void dyn_get_value(llg_vpi_slot_t* slot, p_vpi_value output) {
     switch (slot->kind) {
+        case SLOT_CLASSITEM:
+            dyn_item_value(slot, output);
+            return;
         case SLOT_DYNELEM:
             dyn_element_get(slot, output);
             return;

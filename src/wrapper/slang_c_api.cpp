@@ -2922,6 +2922,10 @@ public:
             result.auxiliary |= LLG_SLANG_VARIABLE_RAND;
           else if (symbol.randMode == RandMode::RandC)
             result.auxiliary |= LLG_SLANG_VARIABLE_RANDC;
+          if (symbol.visibility == Visibility::Local)
+            result.auxiliary |= LLG_SLANG_VARIABLE_LOCAL;
+          else if (symbol.visibility == Visibility::Protected)
+            result.auxiliary |= LLG_SLANG_VARIABLE_PROTECTED;
         }
       }
     }
@@ -2954,6 +2958,10 @@ public:
         result.auxiliary |= LLG_SLANG_SUBROUTINE_FINAL;
       if (symbol.flags.has(MethodFlags::Constructor))
         result.auxiliary |= LLG_SLANG_SUBROUTINE_CONSTRUCTOR;
+      if (symbol.visibility == Visibility::Local)
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_LOCAL;
+      else if (symbol.visibility == Visibility::Protected)
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_PROTECTED;
       if (symbol.flags.has(MethodFlags::DPIImport)) {
         result.auxiliary |= LLG_SLANG_SUBROUTINE_DPI_IMPORT;
         if (symbol.flags.has(MethodFlags::DPIContext))
@@ -3012,6 +3020,23 @@ public:
     if constexpr (std::same_as<T, SubroutineSymbol>) {
       if (symbol.subroutineKind == SubroutineKind::Task)
         result.flags |= LLG_SLANG_SEMANTIC_TASK;
+    }
+    if constexpr (std::same_as<T, MethodPrototypeSymbol>) {
+      // A class method prototype (`pure virtual` or `extern`, IEEE 1800-2009
+      // 8.21, 8.24): the declaration the class holds for the method.
+      if (symbol.subroutineKind == SubroutineKind::Task)
+        result.flags |= LLG_SLANG_SEMANTIC_TASK;
+      result.type_id = capture.type(symbol.getReturnType());
+      if (symbol.flags.has(MethodFlags::Pure))
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_PURE;
+      if (symbol.flags.has(MethodFlags::Static))
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_STATIC;
+      if (symbol.isVirtual())
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_PROTOTYPE_VIRTUAL;
+      if (symbol.visibility == Visibility::Local)
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_LOCAL;
+      else if (symbol.visibility == Visibility::Protected)
+        result.auxiliary |= LLG_SLANG_SUBROUTINE_PROTECTED;
     }
     if constexpr (std::same_as<T, InstanceSymbol>) {
       const uint64_t definitionId =

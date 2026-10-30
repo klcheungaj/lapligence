@@ -60,6 +60,57 @@ fn inner_typedef(naming: Option<TypedefRef>) -> Option<TypedefRef> {
     })
 }
 
+/// `vpiFuncType` of a function returning `ret` (37.37); `None` for a task
+/// or a void function.
+fn vpi_func_type(
+    is_task: bool,
+    ret: Option<&crate::core::model::TypeInfo>,
+) -> Option<&'static str> {
+    let ret = ret.filter(|_| !is_task)?;
+    Some(match ret.kind.as_str() {
+        "integer" => "vpiIntFunc",
+        "real" | "shortreal" | "realtime" => "vpiRealFunc",
+        "time" => "vpiTimeFunc",
+        _ if ret.width.is_none() => "vpiOtherFunc",
+        _ if ret.signed => "vpiSizedSignedFunc",
+        _ => "vpiSizedFunc",
+    })
+}
+
+/// The VPI value of an elaborated parameter: `(constant, width, signed,
+/// real)`, or `None` for a value the catalog cannot hold.
+fn vpi_parameter_constant(value: &Val) -> Option<(IrVpiConstant, u32, bool, bool)> {
+    match value {
+        Val::Bits(bits) => {
+            let digits = bits
+                .bits
+                .iter()
+                .map(|bit| match bit {
+                    Bit::Zero => '0',
+                    Bit::One => '1',
+                    Bit::X => 'x',
+                    Bit::Z => 'z',
+                })
+                .collect::<String>();
+            let width = u32::try_from(digits.len()).unwrap_or(u32::MAX);
+            if width == 0 || width > LLG_MAX_WIDTH {
+                return None;
+            }
+            Some((IrVpiConstant::Bits(digits), width, bits.signed, false))
+        }
+        Val::Real(real) => Some((IrVpiConstant::Real(*real), 0, false, true)),
+        Val::Str(text) => {
+            if text.contains('\0') {
+                return None;
+            }
+            let width = u32::try_from(text.len().saturating_mul(8))
+                .unwrap_or(u32::MAX)
+                .min(LLG_MAX_WIDTH);
+            Some((IrVpiConstant::Text(text.clone()), width, false, false))
+        }
+    }
+}
+
 /// The built-in integral typespec kind of a packed value without explicit
 /// ranges, from its width and state domain (6.11: the integer types are the
 /// only packed types without a declared range wider than one bit).
@@ -1122,6 +1173,7 @@ impl Codegen<'_> {
                 file: node.file().map(str::to_owned),
                 line: node.line,
                 time_unit_fs: self.timescale_of_node(id).unit_fs,
+                constant_variable: self.db.is_const_variable(id),
                 ..object
             };
             // Strings, handles and containers (37.17, 37.29).
@@ -1518,34 +1570,9 @@ impl Codegen<'_> {
                     let Some(value) = value else {
                         continue;
                     };
-                    let (constant, width, signed, real) = match value {
-                        Val::Bits(bits) => {
-                            let digits = bits
-                                .bits
-                                .iter()
-                                .map(|bit| match bit {
-                                    Bit::Zero => '0',
-                                    Bit::One => '1',
-                                    Bit::X => 'x',
-                                    Bit::Z => 'z',
-                                })
-                                .collect::<String>();
-                            let width = u32::try_from(digits.len()).unwrap_or(u32::MAX);
-                            if width == 0 || width > LLG_MAX_WIDTH {
-                                continue;
-                            }
-                            (IrVpiConstant::Bits(digits), width, bits.signed, false)
-                        }
-                        Val::Real(real) => (IrVpiConstant::Real(*real), 0, false, true),
-                        Val::Str(text) => {
-                            if text.contains('\0') {
-                                continue;
-                            }
-                            let width = u32::try_from(text.len().saturating_mul(8))
-                                .unwrap_or(u32::MAX)
-                                .min(LLG_MAX_WIDTH);
-                            (IrVpiConstant::Text(text.clone()), width, false, false)
-                        }
+                    let Some((constant, width, signed, real)) = vpi_parameter_constant(value)
+                    else {
+                        continue;
                     };
                     if let Some(init) = self.db.param_initializer(id).filter(|_| code) {
                         owners.push((
@@ -1647,17 +1674,7 @@ impl Codegen<'_> {
                     ret,
                     ..
                 } if !node.name.is_empty() && self.vpi_declared_in_instance(id) => {
-                    let detail = match (is_task, ret) {
-                        (true, _) | (false, None) => None,
-                        (false, Some(ret)) => Some(match ret.kind.as_str() {
-                            "integer" => "vpiIntFunc",
-                            "real" | "shortreal" | "realtime" => "vpiRealFunc",
-                            "time" => "vpiTimeFunc",
-                            _ if ret.width.is_none() => "vpiOtherFunc",
-                            _ if ret.signed => "vpiSizedSignedFunc",
-                            _ => "vpiSizedFunc",
-                        }),
-                    };
+                    let detail = vpi_func_type(*is_task, ret.as_ref());
                     let key = self.vpi_full_name(id);
                     if let Some(body) = self.db.subroutine_body(id).filter(|_| code) {
                         owners.push((key.clone(), key.clone(), CodeOwner::Statement(body)));

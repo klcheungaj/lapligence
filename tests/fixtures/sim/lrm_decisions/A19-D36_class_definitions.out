@@ -1,0 +1,26 @@
+class d36_pkg::PkgClass name=PkgClass scope=d36_pkg module=null
+class $unit::UnitClass name=UnitClass scope=$unit module=null
+class tb.Base name=Base scope=tb module=tb
+class tb.Child name=Child scope=tb module=tb
+classes=4
+method f full=tb.Base::f scope=tb.Base parent=tb.Base functype=5
+  io k direction=1 taskfunc=tb.Base::f
+  io r direction=6 taskfunc=tb.Base::f
+method g full=tb.Base::g scope=tb.Base parent=tb.Base functype=2
+method h full=tb.Base::h scope=tb.Base parent=tb.Base functype=4
+internal scope tb.Base::f
+internal scope tb.Base::g
+internal scope tb.Base::h
+internal scopes=3
+extends type=vpiExtends base=tb.Base
+base extends=null
+defn a randtype=2 randomized=0 visibility=1 const=0
+defn b randtype=2 randomized=0 visibility=1 const=0
+defn hidden randtype=1 randomized=0 visibility=3 const=0
+object a randtype=2 randomized=1 visibility=1 const=0
+object b randtype=2 randomized=0 visibility=1 const=0
+object hidden randtype=1 randomized=0 visibility=3 const=0
+variable tb.limit randtype=1 randomized=0 visibility=1 const=1
+variable tb.plain randtype=1 randomized=0 visibility=1 const=0
+variable tb.obj randtype=1 randomized=0 visibility=1 const=0
+done 4

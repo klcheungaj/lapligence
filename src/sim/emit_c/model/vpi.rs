@@ -58,6 +58,7 @@ struct Entry {
     conns: Vec<IrVpiConn>,
     unnamed: bool,
     qualifier: bool,
+    constant_variable: bool,
     activation: Option<(u32, u32)>,
     timing: Option<IrVpiTiming>,
     /// `(storage, dependency, shape)` of a dynamic object.
@@ -102,6 +103,7 @@ impl Entry {
             conns: Vec::new(),
             unnamed: false,
             qualifier: false,
+            constant_variable: false,
             activation: None,
             timing: None,
             dynamic: None,
@@ -298,6 +300,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 conns: object.conns.clone(),
                 unnamed: object.unnamed,
                 qualifier: object.qualifier,
+                constant_variable: object.constant_variable,
                 activation: object.activation,
                 timing: object.timing.clone(),
                 dynamic,
@@ -615,6 +618,9 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         }
         if entry.dynamic.is_some() {
             flags.push("LLG_VPI_OBJ_DYNAMIC");
+        }
+        if entry.constant_variable {
+            flags.push("LLG_VPI_OBJ_CONST");
         }
         let dynamic =
             entry

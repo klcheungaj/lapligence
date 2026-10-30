@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 63;
+const ABI_VERSION: u32 = 64;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -864,6 +864,9 @@ pub(crate) const VARIABLE_CONST: u64 = 1 << 8;
 /// A class property declared `rand` or `randc` (IEEE 1800-2009 18.4).
 pub(crate) const VARIABLE_RAND: u64 = 1 << 9;
 pub(crate) const VARIABLE_RANDC: u64 = 1 << 10;
+/// A class property declared `local` or `protected` (IEEE 1800-2009 8.18).
+pub(crate) const VARIABLE_LOCAL: u64 = 1 << 11;
+pub(crate) const VARIABLE_PROTECTED: u64 = 1 << 12;
 /// Constraint item subkinds (IEEE 1800-2009 18.5).
 pub(crate) const SEMANTIC_CONSTRAINT_LIST: u32 = 1;
 pub(crate) const SEMANTIC_CONSTRAINT_EXPRESSION: u32 = 2;
@@ -895,6 +898,12 @@ pub(crate) const SUBROUTINE_VIRTUAL: u64 = 1 << 1;
 pub(crate) const SUBROUTINE_PURE: u64 = 1 << 2;
 pub(crate) const SUBROUTINE_FINAL: u64 = 1 << 3;
 pub(crate) const SUBROUTINE_CONSTRUCTOR: u64 = 1 << 4;
+/// A class method declared `local` or `protected` (IEEE 1800-2009 8.18).
+pub(crate) const SUBROUTINE_LOCAL: u64 = 1 << 5;
+pub(crate) const SUBROUTINE_PROTECTED: u64 = 1 << 6;
+/// A virtual class method prototype (`extern virtual`, `pure virtual`); kept
+/// apart from [`SUBROUTINE_VIRTUAL`], which marks dispatched bodies.
+pub(crate) const SUBROUTINE_PROTOTYPE_VIRTUAL: u64 = 1 << 7;
 pub(crate) const CLASS_ABSTRACT: u64 = 1 << 0;
 pub(crate) const CLASS_FINAL: u64 = 1 << 1;
 pub(crate) const CLASS_INTERFACE: u64 = 1 << 2;

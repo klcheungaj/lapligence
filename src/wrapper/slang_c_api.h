@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 63u
+#define LLG_SLANG_ABI_VERSION 64u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -710,6 +710,13 @@ enum {
   LLG_SLANG_SUBROUTINE_PURE = 1ull << 2,
   LLG_SLANG_SUBROUTINE_FINAL = 1ull << 3,
   LLG_SLANG_SUBROUTINE_CONSTRUCTOR = 1ull << 4,
+  /* Class method declared `local` or `protected` (IEEE 1800-2009 8.18). */
+  LLG_SLANG_SUBROUTINE_LOCAL = 1ull << 5,
+  LLG_SLANG_SUBROUTINE_PROTECTED = 1ull << 6,
+  /* A virtual class method prototype (`extern virtual`, `pure virtual`).
+   * Kept apart from SUBROUTINE_VIRTUAL, which marks the bodies that take
+   * part in virtual dispatch. */
+  LLG_SLANG_SUBROUTINE_PROTOTYPE_VIRTUAL = 1ull << 7,
   /* The remaining bits preserve the DPI-C import contract after native Slang
    * memory has been released.  They are meaningful only on subroutine nodes;
    * definition_name carries the optional C linkage identifier. */
@@ -1204,7 +1211,11 @@ enum {
   /* Class property declared `rand` or `randc` (IEEE 1800-2009 18.4); RAND
    * also marks a free checker variable (`rand`, IEEE 1800-2009 17.7). */
   LLG_SLANG_VARIABLE_RAND = 1ull << 9,
-  LLG_SLANG_VARIABLE_RANDC = 1ull << 10
+  LLG_SLANG_VARIABLE_RANDC = 1ull << 10,
+  /* Class property declared `local` or `protected` (IEEE 1800-2009 8.18);
+   * neither bit for a public member. */
+  LLG_SLANG_VARIABLE_LOCAL = 1ull << 11,
+  LLG_SLANG_VARIABLE_PROTECTED = 1ull << 12
 };
 
 enum {

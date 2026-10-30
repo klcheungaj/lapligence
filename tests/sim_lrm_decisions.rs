@@ -2357,6 +2357,15 @@ fn a19_d32_expression_relations() {
 }
 
 #[test]
+fn a19_d36_class_definitions() {
+    run_vpi_decision(
+        "A19-D36_class_definitions",
+        &["task $d36()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D36_class_definitions.out"),
+    );
+}
+
+#[test]
 fn a19_d40_static_lifetime_and_allocation() {
     run_vpi_decision(
         "A19-D40_static_lifetime_and_allocation",

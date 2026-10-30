@@ -110,26 +110,145 @@ impl IrVpiShape {
     }
 }
 
+/// `vpiRandType` of a class property (37.17 details 15 and 22).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IrVpiRand {
+    #[default]
+    NotRand,
+    Rand,
+    RandC,
+}
+
+impl IrVpiRand {
+    pub const fn c_code(self) -> &'static str {
+        match self {
+            Self::NotRand => "vpiNotRand",
+            Self::Rand => "vpiRand",
+            Self::RandC => "vpiRandC",
+        }
+    }
+}
+
+/// `vpiVisibility` of a class member (37.17 detail 24, 37.37 detail 4).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IrVpiVisibility {
+    #[default]
+    Public,
+    Protected,
+    Local,
+}
+
+impl IrVpiVisibility {
+    pub const fn c_code(self) -> &'static str {
+        match self {
+            Self::Public => "vpiPublicVis",
+            Self::Protected => "vpiProtectedVis",
+            Self::Local => "vpiLocalVis",
+        }
+    }
+}
+
 /// One property of a class layout, in object field order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrVpiField {
     pub(in crate::sim) name: String,
     /// Index into [`IrVpiDynamic::shapes`].
     pub(in crate::sim) shape: usize,
+    pub(in crate::sim) rand: IrVpiRand,
+    pub(in crate::sim) visibility: IrVpiVisibility,
+    /// The object field holding the property's hidden `rand_mode` off bit
+    /// (18.8), which `vpiIsRandomized` reads.
+    pub(in crate::sim) mode: Option<usize>,
+    /// `vpiConstantVariable`: declared `const` (8.5).
+    pub(in crate::sim) is_const: bool,
+}
+
+/// What a declared class item is (37.27, 37.13, 37.26, 37.30).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum IrVpiClassItemKind {
+    #[default]
+    Task,
+    Function,
+    Parameter,
+    Constraint,
+    /// An argument of the method item [`IrVpiClassItem::owner`].
+    IoDecl,
+}
+
+impl IrVpiClassItemKind {
+    pub const fn c_type(self) -> &'static str {
+        match self {
+            Self::Task => "vpiTask",
+            Self::Function => "vpiFunction",
+            Self::Parameter => "vpiParameter",
+            Self::Constraint => "vpiConstraint",
+            Self::IoDecl => "vpiIODecl",
+        }
+    }
+}
+
+/// One declared item of a class: a method, a parameter, a constraint or an
+/// argument of a method. Items have no storage: class methods and
+/// parameters are the same for every object of the class.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct IrVpiClassItem {
+    pub(in crate::sim) kind: IrVpiClassItemKind,
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) file: Option<String>,
+    pub(in crate::sim) line: u32,
+    pub(in crate::sim) visibility: IrVpiVisibility,
+    /// `vpiVirtual` of a method (37.37).
+    pub(in crate::sim) is_virtual: bool,
+    /// A `static` method or constraint (`vpiAutomatic` of a constraint
+    /// reflects its keyword, 37.30 detail 1).
+    pub(in crate::sim) is_static: bool,
+    /// `vpiLocalParam` of a parameter declared in the class body (37.27
+    /// detail 8).
+    pub(in crate::sim) local_param: bool,
+    pub(in crate::sim) signed: bool,
+    /// `vpiFuncType` of a function, `vpiConstType` of a parameter.
+    pub(in crate::sim) detail: Option<&'static str>,
+    /// `vpiSize` of a function or parameter, of an argument.
+    pub(in crate::sim) width: u32,
+    /// Index into [`IrModel::vpi_typespecs`].
+    pub(in crate::sim) typespec: Option<usize>,
+    /// `vpiDirection` of an argument.
+    pub(in crate::sim) direction: super::IrVpiDirection,
+    /// The value of a parameter.
+    pub(in crate::sim) value: Option<super::IrVpiConstant>,
+    /// The method item (index in its class's items) an argument belongs to.
+    pub(in crate::sim) owner: Option<usize>,
+    /// Root entry in [`IrModel::vpi_code`] of a constraint.
+    pub(in crate::sim) code: Option<u32>,
+    /// The object field holding a constraint's hidden `constraint_mode`
+    /// off bit (18.9).
+    pub(in crate::sim) mode: Option<usize>,
 }
 
 /// One class layout (index-aligned with [`IrModel::classes`]): every object
 /// field, base class fields first; `None` marks a hidden runtime field
 /// (randomization mode bits) that is not a property.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct IrVpiClass {
     pub(in crate::sim) name: String,
     pub(in crate::sim) base: Option<usize>,
     pub(in crate::sim) fields: Vec<Option<IrVpiField>>,
+    /// `vpiFullName`: the declaring scope's full name, then the class name
+    /// (37.10 detail 5).
+    pub(in crate::sim) full_name: String,
+    /// Catalog key of the scope that declares the class (`vpiScope`).
+    pub(in crate::sim) scope: Option<String>,
+    /// A `virtual` (abstract) class (`vpiVirtual`, 37.27).
+    pub(in crate::sim) is_virtual: bool,
+    /// A generic class definition, which only its specializations stand
+    /// for: no iteration lists it.
+    pub(in crate::sim) is_generic: bool,
+    /// The items the class itself declares, in declaration order.
+    pub(in crate::sim) items: Vec<IrVpiClassItem>,
 }
 
 /// Shapes and class layouts of the dynamic catalog objects.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct IrVpiDynamic {
     pub(in crate::sim) shapes: Vec<IrVpiShape>,
     pub(in crate::sim) classes: Vec<IrVpiClass>,
@@ -179,11 +298,29 @@ impl IrVpiDynamic {
             if class.fields.len() != layout.fields.len()
                 || class.base.is_some_and(|base| base >= self.classes.len())
                 || class.name.contains('\0')
-                || class
-                    .fields
-                    .iter()
-                    .flatten()
-                    .any(|field| field.shape >= self.shapes.len() || field.name.contains('\0'))
+                || class.full_name.contains('\0')
+                || class.fields.iter().flatten().any(|field| {
+                    field.shape >= self.shapes.len()
+                        || field.name.contains('\0')
+                        || field.mode.is_some_and(|mode| mode >= layout.fields.len())
+                })
+                || class.items.iter().any(|item| {
+                    item.name.contains('\0')
+                        || item
+                            .typespec
+                            .is_some_and(|ts| ts >= model.vpi_typespecs.len())
+                        || item.mode.is_some_and(|mode| mode >= layout.fields.len())
+                        || item
+                            .code
+                            .is_some_and(|code| code as usize >= model.vpi_code.len())
+                        || item.owner.is_some_and(|owner| {
+                            (item.kind != IrVpiClassItemKind::IoDecl)
+                                || !matches!(
+                                    class.items.get(owner).map(|method| method.kind),
+                                    Some(IrVpiClassItemKind::Task | IrVpiClassItemKind::Function)
+                                )
+                        })
+                })
             {
                 return Err(IrValidationError::new(&path, "invalid VPI class layout"));
             }

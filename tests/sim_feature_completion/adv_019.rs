@@ -152,6 +152,24 @@ fn dynamic_objects_walk_class_objects_definitions_and_container_elements() {
 }
 
 #[test]
+fn class_definitions_list_methods_parameters_and_property_qualifiers() {
+    let directory = sim_harness::TempDir::new("adv019-classes").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "classes", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "classes",
+        include_str!("../fixtures/sim/feature_completion/adv_019/classes.out"),
+        &[
+            "--define-system-task",
+            "task $classes()",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
+#[test]
 fn class_object_callbacks_follow_creation_and_reclamation_under_collection_stress() {
     let directory = sim_harness::TempDir::new("adv019-gc").expect("temporary directory");
     let archive = super::sim_041::static_archive(SUITE, &directory, "gc", &[]);

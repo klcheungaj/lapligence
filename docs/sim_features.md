@@ -2640,7 +2640,11 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   writes, nested class handles and arrays), `vpi_handle_by_name` paths
   (`tb.p.next.id`, `tb.q[0]`, `tb.aa[5]`); class typespecs and definitions
   give `vpiClassDefn`, `vpiExtends`, `vpiDerivedClasses`, `vpiClassType`
-  and the declared properties; array elements iterate with names, values,
+  and the declared properties; `vpi_iterate(vpiClassDefn)` lists the class
+  definitions of the design or of a scope, with full names, scopes,
+  `vpiVirtual`, methods (qualifiers, visibility, arguments), parameters,
+  and the `vpiRandType`, `vpiIsRandomized`, `vpiVisibility` and
+  `vpiConstantVariable` of properties and variables (decision A19-D36); array elements iterate with names, values,
   writes and `vpiIndex` (a string key: a `vpiStringConst` constant),
   selected by index or key at each access; string variables take
   `vpiStringVal` and `vpiIntVal` writes (A19-D25) and chandle variables read

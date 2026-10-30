@@ -1,0 +1,67 @@
+classes of NULL: cls_pkg::PkgItem $unit::UnitItem tb.Base tb.Derived
+classes of tb: tb.Base tb.Derived
+classes of $unit: $unit::UnitItem
+classes of cls_pkg: cls_pkg::PkgItem
+classes of a variable level=3
+defn PkgItem full=cls_pkg::PkgItem virtual=0 automatic=1 scope=cls_pkg instance=cls_pkg module=null
+  vpiFunction getx full=cls_pkg::PkgItem::getx method=1 virtual=0 visibility=1 automatic=1 functype=5 size=32 signed=1 classdefn=cls_pkg::PkgItem scope=cls_pkg::PkgItem instance=cls_pkg line=10
+    stmt level=3
+  property x randtype=1 randomized=0 visibility=1 const=0
+  internal scopes=1
+  events none level=0
+  property decls none level=0
+defn UnitItem full=$unit::UnitItem virtual=0 automatic=1 scope=$unit instance=$unit module=null
+  property u randtype=1 randomized=0 visibility=1 const=0
+  internal scopes=0
+  events none level=0
+  property decls none level=0
+defn Base full=tb.Base virtual=1 automatic=1 scope=tb instance=tb module=tb
+  derived tb.Derived
+  vpiFunction vf full=tb.Base::vf method=1 virtual=1 visibility=1 automatic=1 functype=5 size=32 signed=1 classdefn=tb.Base scope=tb.Base instance=tb line=28
+    stmt level=3
+    io k dir=1 size=32 signed=1 typespec=vpiIntTypespec taskfunc=tb.Base::vf expr=null
+  vpiFunction new full=tb.Base::new method=1 virtual=0 visibility=1 automatic=1 functype=-99 size=0 signed=0 classdefn=tb.Base scope=tb.Base instance=tb line=29
+    stmt level=3
+    io i dir=1 size=32 signed=1 typespec=vpiIntTypespec taskfunc=tb.Base::new expr=null
+  vpiFunction lf full=tb.Base::lf method=1 virtual=0 visibility=3 automatic=1 functype=-99 size=0 signed=0 classdefn=tb.Base scope=tb.Base instance=tb line=33
+    stmt level=3
+  vpiTask pt full=tb.Base::pt method=1 virtual=0 visibility=2 automatic=1 classdefn=tb.Base scope=tb.Base instance=tb line=35
+    stmt level=3
+    io o dir=2 size=4 signed=0 typespec=vpiBitTypespec taskfunc=tb.Base::pt expr=null
+    io r dir=6 size=32 signed=1 typespec=vpiIntTypespec taskfunc=tb.Base::pt expr=null
+  vpiFunction sf full=tb.Base::sf method=1 virtual=0 visibility=1 automatic=1 functype=5 size=32 signed=1 classdefn=tb.Base scope=tb.Base instance=tb line=38
+    stmt level=3
+  parameter W full=tb.Base::W local=0 consttype=3 size=32 value=8 scope=tb.Base
+  parameter LP full=tb.Base::LP local=1 consttype=3 size=32 value=16 scope=tb.Base
+  property a randtype=2 randomized=0 visibility=1 const=0
+  property b randtype=3 randomized=0 visibility=1 const=0
+  property lv randtype=1 randomized=0 visibility=3 const=0
+  property pv randtype=1 randomized=0 visibility=2 const=0
+  property cv randtype=1 randomized=0 visibility=1 const=1
+  internal scopes=5
+  events none level=0
+  property decls none level=0
+defn Derived full=tb.Derived virtual=0 automatic=1 scope=tb instance=tb module=tb
+  extends vpiExtends -> tb.Base
+  vpiFunction new full=tb.Derived::new method=1 virtual=0 visibility=1 automatic=1 functype=-99 size=0 signed=0 classdefn=tb.Derived scope=tb.Derived instance=tb line=45
+    stmt level=3
+  vpiFunction vf full=tb.Derived::vf method=1 virtual=1 visibility=1 automatic=1 functype=5 size=32 signed=1 classdefn=tb.Derived scope=tb.Derived instance=tb line=48
+    stmt level=3
+    io k dir=1 size=32 signed=1 typespec=vpiIntTypespec taskfunc=tb.Derived::vf expr=null
+  property d randtype=2 randomized=0 visibility=1 const=0
+  internal scopes=2
+  events none level=0
+  property decls none level=0
+object properties:
+  property a randtype=2 randomized=1 visibility=1 const=0
+  property b randtype=3 randomized=0 visibility=1 const=0
+  property lv randtype=1 randomized=0 visibility=3 const=0
+  property pv randtype=1 randomized=0 visibility=2 const=0
+  property cv randtype=1 randomized=0 visibility=1 const=1
+  property d randtype=2 randomized=1 visibility=1 const=0
+object methods=2
+object parameters=0
+variable tb.limit randtype=1 randomized=0 visibility=1 const=1
+variable tb.plain randtype=1 randomized=0 visibility=1 const=0
+variable tb.obj randtype=1 randomized=0 visibility=1 const=0
+plain=8

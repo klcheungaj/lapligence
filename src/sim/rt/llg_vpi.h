@@ -23,6 +23,7 @@ extern "C" {
 #define LLG_VPI_OBJ_QUALIFIER 0x400u  /* vpiNetDeclAssign / vpiAutomatic / vpiUnit; a global clocking */
 #define LLG_VPI_OBJ_ACTIVATION 0x800u /* activation_* name what `disable` targets */
 #define LLG_VPI_OBJ_DYNAMIC 0x1000u   /* string, handle or container: `storage`, `shape` */
+#define LLG_VPI_OBJ_CONST 0x2000u     /* vpiConstantVariable: a variable declared const */
 
 /* Typespecs (IEEE 1800-2009 37.23). The generated model emits interned
  * tables; fields naming an optional entry hold its index + 1 (0: none),
@@ -314,13 +315,53 @@ typedef struct {
 typedef struct {
     const char* name;         /* NULL: a hidden runtime field, not a property */
     uint32_t shape;
+    int16_t rand;             /* vpiRandType: vpiNotRand, vpiRand or vpiRandC (37.17) */
+    int16_t visibility;       /* vpiVisibility: vpiPublicVis, vpiProtectedVis, vpiLocalVis */
+    uint32_t mode;            /* object field + 1 holding the rand_mode off bit (18.8); 0: none */
+    uint32_t is_const;        /* vpiConstantVariable: declared const */
 } llg_vpi_class_field_t;
+
+/* Qualifiers of a class (llg_vpi_class_t::flags). */
+#define LLG_VPI_CLASS_VIRTUAL 0x01u /* vpiVirtual: a virtual (abstract) class */
+#define LLG_VPI_CLASS_GENERIC 0x02u /* a generic class definition: never listed */
+
+/* Qualifiers of a declared class item (llg_vpi_class_item_t::flags). */
+#define LLG_VPI_ITEM_VIRTUAL 0x01u     /* vpiVirtual of a method */
+#define LLG_VPI_ITEM_STATIC 0x02u      /* a static method or constraint */
+#define LLG_VPI_ITEM_LOCAL_PARAM 0x04u /* vpiLocalParam of a parameter */
+#define LLG_VPI_ITEM_SIGNED 0x08u      /* vpiSigned */
+
+/* One item a class declares (37.27): a method (vpiTask, vpiFunction), one
+ * of its arguments (vpiIODecl), a parameter or a constraint. Items are the
+ * same for every object of the class and have no storage. */
+typedef struct {
+    const char* name;
+    const char* file;
+    int32_t type;             /* vpiTask, vpiFunction, vpiIODecl, vpiParameter, vpiConstraint */
+    int32_t detail;           /* vpiFuncType of a function, vpiDirection of an argument,
+                               * vpiConstType of a parameter */
+    int16_t visibility;       /* vpiVisibility of a method */
+    uint16_t flags;           /* LLG_VPI_ITEM_* */
+    uint32_t line;
+    uint32_t width;           /* vpiSize of a function, argument or parameter */
+    uint32_t typespec;        /* typespec index + 1; 0: none */
+    uint32_t owner;           /* an argument's method: item index (in its class) + 1 */
+    uint32_t code;            /* a constraint's root code row + 1 */
+    uint32_t mode;            /* object field + 1 holding a constraint's off bit (18.9) */
+    const char* value;        /* a parameter's digits (MSB first) or text; NULL for a real */
+    double real;              /* a real parameter's value */
+} llg_vpi_class_item_t;
 
 typedef struct {
     const char* name;
     uint32_t base;            /* base class layout + 1; 0: none */
     uint32_t first_field;     /* field_count fields, base fields first */
     uint32_t field_count;
+    const char* full_name;    /* vpiFullName (37.10 detail 5) */
+    uint32_t scope;           /* the declaring catalog scope row + 1; 0: none */
+    uint32_t flags;           /* LLG_VPI_CLASS_* */
+    uint32_t first_item;      /* item_count items the class declares */
+    uint32_t item_count;
 } llg_vpi_class_t;
 
 /* Field kinds the generated object accessor reports, matching the model's
@@ -340,6 +381,8 @@ typedef struct {
     uint32_t class_count;
     const llg_vpi_class_field_t* fields;
     uint32_t field_count;
+    const llg_vpi_class_item_t* items;
+    uint32_t item_count;
     /* The class layout of a live object (0 when it was reclaimed). */
     int (*object)(void* handle, uint32_t* class_id);
     /* The storage of field `index` of a live object and its kind. */

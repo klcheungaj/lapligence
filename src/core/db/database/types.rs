@@ -20,6 +20,15 @@ pub struct PackedRange {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeId(pub u64);
 
+/// Visibility of a class property or method (IEEE 1800-2009 8.18).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MemberVisibility {
+    #[default]
+    Public,
+    Protected,
+    Local,
+}
+
 /// Owned nominal metadata for one class declaration or concrete generic
 /// specialization.  The frontend identity is reduced to arena/type ids so
 /// inheritance and construction never require retaining a Slang pointer.
