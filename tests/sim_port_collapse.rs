@@ -321,7 +321,6 @@ endmodule
 ",
     );
     assert!(!model.contains("sv4_idx_part_select_value_to"), "{model}");
-    assert!(!model.contains("sv4_bit_select_to"), "{model}");
     assert!(
         model.contains("sv4_part_select_to(&_llg_t[0], &G_tb_lfsr, I->v"),
         "{model}"

@@ -465,28 +465,16 @@ fn try_identity(e: &mut IrExpr) -> bool {
                 None => false,
             }
         }
-        // A bit-select or indexed part-select whose index is a known
-        // constant (a generate loop's `v[i % 28 +: 4]`, a signed literal
-        // `v[31]`) reads the same window as a constant part-select: both
-        // copy `width` bits from the lowest selected position and give x for
-        // positions outside the value. The constant form builds no index
-        // value at run time, and a shared instance body keeps the bounds as
-        // per-instance integers. Only selections starting at bit 0 or above
-        // fold; an x/z index, or `-:` below zero, stays dynamic (all x).
-        IrExprKind::BitSel { base, idx } if e.width == 1 => {
-            match known_select_index(idx).filter(|index| *index >= 0) {
-                Some(index) => {
-                    let base = base.clone();
-                    e.kind = IrExprKind::PartSel {
-                        base,
-                        left: index,
-                        right: index,
-                    };
-                    true
-                }
-                None => false,
-            }
-        }
+        // An indexed part-select whose index is a known constant (a
+        // generate iteration's `v[i % 28 +: 4]`) reads the same window as a
+        // constant part-select: both copy `width` bits from the lowest
+        // selected position and give x for positions outside the value. The
+        // constant form builds no index value at run time, and a shared
+        // instance body keeps the bounds as per-instance integers. Only
+        // windows starting at bit 0 or above fold; an x/z index, or `-:`
+        // below zero, stays dynamic (all x). A bit-select stays one: the
+        // runtime reads a single bit of any width directly, while a
+        // part-select of a value wider than 64 bits copies a window.
         IrExprKind::IdxPartSel {
             base,
             base_idx,

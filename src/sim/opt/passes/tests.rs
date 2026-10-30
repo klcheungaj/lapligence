@@ -637,8 +637,6 @@ fn identity_constant_selects_become_part_selects() {
         // Partly or wholly above the value: the same x bits either way.
         (idx_part(int_konst(6), 4, false), (9, 6)),
         (idx_part(int_konst(100), 4, false), (103, 100)),
-        (bit_sel(int_konst(7)), (7, 7)),
-        (bit_sel(int_konst(9)), (9, 9)),
     ] {
         let mut m = model_with(vec![assign(IrLhs::Whole(1), select)], sigs(2));
         run(&mut m, &idents_only());
@@ -649,7 +647,10 @@ fn identity_constant_selects_become_part_selects() {
 
 #[test]
 fn identity_unknown_or_negative_select_indices_stay_dynamic() {
+    // Bit-selects stay bit-selects even with a constant index.
     for select in [
+        bit_sel(int_konst(7)),
+        bit_sel(int_konst(9)),
         idx_part(int_konst(-1), 4, false),
         idx_part(int_konst(2), 4, true),
         idx_part(int_konst(-3), 4, true),
