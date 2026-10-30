@@ -232,14 +232,18 @@ impl Codegen<'_> {
 
     /// The layout of every class: its name, base and properties in object
     /// field order (base fields first; hidden runtime fields stay `None`).
+    /// Build the class layouts and items of `dynamic`; returns the body of
+    /// each constraint item as `(class, item, body)`, whose constraint
+    /// items the code tables build.
     pub(super) fn vpi_dynamic_classes(
         &self,
         model: &IrModel,
         dynamic: &mut IrVpiDynamic,
         typespecs: &mut TypespecTable,
-    ) {
+    ) -> Vec<(usize, usize, NodeId)> {
+        let mut constraints = Vec::new();
         if model.classes.is_empty() {
-            return;
+            return constraints;
         }
         let mut names = vec![String::new(); model.classes.len()];
         let mut own: Vec<Vec<(usize, IrVpiField)>> = vec![Vec::new(); model.classes.len()];
@@ -334,11 +338,12 @@ impl Codegen<'_> {
                 .db
                 .class_metadata(*class)
                 .is_some_and(|metadata| metadata.is_abstract);
-            entry.items = self.vpi_class_items(typespecs, *class);
+            entry.items = self.vpi_class_items(typespecs, *class, *class_index, &mut constraints);
             // A generic class definition is only the source of its
             // specializations, which are the class types objects have.
             entry.is_generic = self.db.semantic_detail(*class) == Some("GenericClassDef");
         }
+        constraints
     }
 
     /// The scope that declares `class` when it is a catalog scope (an
@@ -373,7 +378,13 @@ impl Codegen<'_> {
 
     /// The methods (each followed by its arguments) and parameters `class`
     /// declares, in declaration order (37.27).
-    fn vpi_class_items(&self, typespecs: &mut TypespecTable, class: NodeId) -> Vec<IrVpiClassItem> {
+    fn vpi_class_items(
+        &self,
+        typespecs: &mut TypespecTable,
+        class: NodeId,
+        class_index: usize,
+        constraints: &mut Vec<(usize, usize, NodeId)>,
+    ) -> Vec<IrVpiClassItem> {
         let mut items = Vec::new();
         for child in &self.node(class).children {
             let node = self.node(*child);
@@ -449,6 +460,29 @@ impl Codegen<'_> {
                         typespec: self.vpi_declared_typespec(typespecs, *child),
                         value: Some(constant),
                         ..located(IrVpiClassItemKind::Parameter)
+                    });
+                }
+                NodeKind::ConstraintBlock(info) => {
+                    if let Some(body) = info.body {
+                        constraints.push((class_index, items.len(), body));
+                    }
+                    let bit = self.constraint_mode_bits.get(child);
+                    items.push(IrVpiClassItem {
+                        is_static: info.is_static,
+                        // 2009 has no virtual constraints; a later-edition
+                        // pure constraint is the only one.
+                        is_virtual: info.is_pure,
+                        mode: match bit {
+                            Some(ModeBit::Field(owner, index)) if *owner == class_index => {
+                                Some(*index)
+                            }
+                            _ => None,
+                        },
+                        mode_signal: match bit {
+                            Some(ModeBit::Signal(info)) => Some(info.ir),
+                            _ => None,
+                        },
+                        ..located(IrVpiClassItemKind::Constraint)
                     });
                 }
                 _ => {}

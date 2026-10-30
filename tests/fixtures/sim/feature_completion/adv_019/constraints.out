@@ -1,0 +1,64 @@
+defn constraint c_small full=tb.Packet::c_small automatic=1 virtual=0 alloc=3 enabled=0 parent=vpiClassDefn line=10
+  item: vpiOperation line=10 name=- decompile=a > 2
+    operand: vpiBitVar line=10 name=a decompile=a
+    operand: vpiConstant line=10 name=- decompile=2
+defn constraint c_shared full=tb.Packet::c_shared automatic=0 virtual=0 alloc=3 enabled=1 parent=vpiClassDefn line=11
+  item: vpiOperation line=11 name=- decompile=len != 0
+    operand: vpiBitVar line=11 name=len decompile=len
+    operand: vpiConstant line=11 name=- decompile=0
+defn constraint c_mix full=tb.Packet::c_mix automatic=1 virtual=0 alloc=3 enabled=0 parent=vpiClassDefn line=12
+  item: vpiDistribution line=13
+    expr: vpiIntVar line=13 name=d decompile=d
+    item: vpiDistItem line=13 disttype=1
+      range: vpiConstant line=13 name=- decompile=0
+      weight: vpiConstant line=13 name=- decompile=1
+    item: vpiDistItem line=13 disttype=2
+      range: vpiRange line=13
+        left: vpiConstant line=13 name=- decompile=1
+        right: vpiConstant line=13 name=- decompile=3
+      weight: vpiConstant line=13 name=- decompile=2
+    item: vpiDistItem line=13 disttype=1
+      range: vpiConstant line=13 name=- decompile=7
+  item: vpiConstraintOrdering line=14
+    before: vpiBitVar line=14 name=a decompile=a
+    after: vpiIntVar line=14 name=d decompile=d
+  item: vpiImplication line=15
+    condition: vpiOperation line=15 name=- decompile=d < 10
+      operand: vpiIntVar line=15 name=d decompile=d
+      operand: vpiConstant line=15 name=- decompile=10
+    then: vpiOperation line=15 name=- decompile=a == 3
+      operand: vpiBitVar line=15 name=a decompile=a
+      operand: vpiConstant line=15 name=- decompile=3
+    then: vpiOperation line=15 name=- decompile=len < 8
+      operand: vpiBitVar line=15 name=len decompile=len
+      operand: vpiConstant line=15 name=- decompile=8
+  item: vpiConstrIfElse line=16
+    condition: vpiOperation line=16 name=- decompile=d > 2
+      operand: vpiIntVar line=16 name=d decompile=d
+      operand: vpiConstant line=16 name=- decompile=2
+    then: vpiOperation line=16 name=- decompile=a < 5
+      operand: vpiBitVar line=16 name=a decompile=a
+      operand: vpiConstant line=16 name=- decompile=5
+    else: vpiOperation line=16 name=- decompile=a > 1
+      operand: vpiBitVar line=16 name=a decompile=a
+      operand: vpiConstant line=16 name=- decompile=1
+  item: vpiConstrIf line=17
+    condition: vpiOperation line=17 name=- decompile=len > 4
+      operand: vpiBitVar line=17 name=len decompile=len
+      operand: vpiConstant line=17 name=- decompile=4
+    then: vpiOperation line=17 name=- decompile=d inside {[0:20], 30}
+      operand: vpiIntVar line=17 name=d decompile=d
+      operand: vpiRange line=17
+        left: vpiConstant line=17 name=- decompile=0
+        right: vpiConstant line=17 name=- decompile=20
+      operand: vpiConstant line=17 name=- decompile=30
+object constraint c_small full=tb.Packet::c_small automatic=1 virtual=0 alloc=2 enabled=0 parent=vpiClassObj line=10
+object constraint c_shared full=tb.Packet::c_shared automatic=0 virtual=0 alloc=3 enabled=1 parent=vpiClassObj line=11
+object constraint c_mix full=tb.Packet::c_mix automatic=1 virtual=0 alloc=2 enabled=1 parent=vpiClassObj line=12
+defn constraint c_small full=tb.Packet::c_small automatic=1 virtual=0 alloc=3 enabled=0 parent=vpiClassDefn line=10
+defn constraint c_shared full=tb.Packet::c_shared automatic=0 virtual=0 alloc=3 enabled=0 parent=vpiClassDefn line=11
+defn constraint c_mix full=tb.Packet::c_mix automatic=1 virtual=0 alloc=3 enabled=0 parent=vpiClassDefn line=12
+object constraint c_small full=tb.Packet::c_small automatic=1 virtual=0 alloc=2 enabled=1 parent=vpiClassObj line=10
+object constraint c_shared full=tb.Packet::c_shared automatic=0 virtual=0 alloc=3 enabled=0 parent=vpiClassObj line=11
+object constraint c_mix full=tb.Packet::c_mix automatic=1 virtual=0 alloc=2 enabled=1 parent=vpiClassObj line=12
+ok=1

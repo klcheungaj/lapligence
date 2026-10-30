@@ -96,7 +96,17 @@ module tb;
   virtual class Shape #(parameter int N = 2);
     localparam int M = N + 1;
     rand bit [3:0] r;
+    rand int w;
     local int hidden;
+    // Every constraint item and constraint expression kind (37.30, 37.34).
+    constraint c_shape {
+      w dist { 0 := 1, [1:3] :/ 2 };
+      solve r before w;
+      (w > 1) -> r < 8;
+      if (w == 0) r > 1;
+      if (r == 2) w < 3; else w > 0;
+      w inside {[0:4], 9};
+    }
     pure virtual function int area(input int scale);
     protected task tick(output int o);
       o = N + hidden;

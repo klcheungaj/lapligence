@@ -340,6 +340,22 @@ static vpiHandle make_property(void* object, uint32_t class_index, uint32_t fiel
     return encode_handle(index);
 }
 
+/* Item `item` of class `class_index` reached from class object `object`: a
+ * constraint, whose vpiIsConstraintEnabled and vpiParent are the object's
+ * (37.30). The handle tracks the object like a property handle. */
+static vpiHandle object_item_handle(void* object, uint32_t class_index, uint32_t item) {
+    llg_vpi_live_t* entry = live_get(object);
+    if (!entry) return NULL;
+    uint32_t index = alloc_slot(SLOT_CLASSITEM);
+    if (index == LLG_VPI_NONE) return NULL;
+    entry->named = 1;
+    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    slot->pointer = object;
+    slot->aux = (int32_t)item;
+    slot->right = class_index;
+    return encode_handle(index);
+}
+
 /* ── places: the storage a handle names ─────────────────────────────────── */
 
 typedef struct {
@@ -974,7 +990,8 @@ static int dyn_refuse_dying(const void* owner, const char* what) {
 /* The one-to-many relations from a class defn, typespec or object to the
  * items its class declares (37.27-37.29). */
 static int dyn_class_iteration(int type) {
-    return type == vpiMethods || type == vpiParameter || type == vpiInternalScope;
+    return type == vpiMethods || type == vpiParameter || type == vpiInternalScope ||
+           type == vpiConstraint;
 }
 
 /* A class defn, typespec or object, or a method: scopes whose items A.1.9
@@ -1083,6 +1100,26 @@ static const char* dyn_item_full_name(uint32_t class_index, const llg_vpi_class_
     return dyn_text("%s::%s", dyn_class(class_index)->full_name, item->name);
 }
 
+/* vpiIsConstraintEnabled (37.30, 18.9): a non-static constraint is active
+ * per object while its hidden off bit is 0; one obtained from a class defn
+ * belongs to no object and is not active (decision A19-D37). */
+static PLI_INT64 dyn_constraint_enabled(const llg_vpi_slot_t* slot,
+                                        const llg_vpi_class_item_t* item) {
+    /* A static constraint shares one bit across the class; without one the
+     * design never changes its mode. */
+    if (item->mode_signal) return sv4_to_u64(*item->mode_signal) == 0;
+    if (item->flags & LLG_VPI_ITEM_STATIC) return 1;
+    if (!slot->pointer) return 0;
+    if (!item->mode) return 1;
+    unsigned kind = 0;
+    const sv4_t* off = (const sv4_t*)g_dyn.tables->field(slot->pointer, item->mode - 1u, &kind);
+    if (!off || kind != LLG_VPI_FIELD_PACKED) {
+        vpi_error("LLG_VPI_MODEL", "the constraint_mode state disagrees with the class layout");
+        return vpiUndefined;
+    }
+    return sv4_to_u64(*off) == 0;
+}
+
 static PLI_INT64 dyn_item_get(int property, const llg_vpi_slot_t* slot, int* ok) {
     const llg_vpi_class_item_t* item = class_item_of(slot);
     *ok = 1;
@@ -1127,6 +1164,22 @@ static PLI_INT64 dyn_item_get(int property, const llg_vpi_slot_t* slot, int* ok)
                     if (item->value) return item->width;
                     break;
                 case vpiSigned: return (item->flags & LLG_VPI_ITEM_SIGNED) != 0;
+                default:
+                    break;
+            }
+            break;
+        case vpiConstraint:
+            switch (property) {
+                /* 37.30 detail 1: the keyword, not a lifetime. */
+                case vpiAutomatic: return (item->flags & LLG_VPI_ITEM_STATIC) == 0;
+                case vpiVirtual: return (item->flags & LLG_VPI_ITEM_VIRTUAL) != 0;
+                /* 37.3.7: a non-static constraint of an object is part of
+                 * it; a static one and one from a class defn are not. */
+                case vpiAllocScheme:
+                    return slot->pointer && !(item->flags & LLG_VPI_ITEM_STATIC)
+                               ? vpiDynamicScheme
+                               : vpiOtherScheme;
+                case vpiIsConstraintEnabled: return dyn_constraint_enabled(slot, item);
                 default:
                     break;
             }
@@ -1182,6 +1235,9 @@ static vpiHandle dyn_item_handle(int type, const llg_vpi_slot_t* slot) {
             default:
                 break;
         }
+    } else if (item->type == vpiConstraint) {
+        /* 37.30: the class object or, from a class defn, the defn. */
+        if (type == vpiParent) return slot->pointer ? make_object(slot->pointer) : defn_handle(class_index);
     } else if (item->type == vpiParameter) {
         switch (type) {
             case vpiTypespec:
@@ -1210,6 +1266,9 @@ static vpiHandle dyn_item_iterate(int type, const llg_vpi_slot_t* slot) {
          * no objects for (decision A19-D42). */
         if (is_scope_iteration(type)) return NULL;
     }
+    if (item->type == vpiConstraint && type == vpiConstraintItem)
+        /* 37.30; an empty constraint has no items. */
+        return item->code ? iterate_code(item->code - 1u, vpiConstraintItem) : NULL;
     vpi_error("LLG_VPI_RELATION", "unsupported VPI iteration for this class item");
     return NULL;
 }
@@ -1261,6 +1320,7 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
             break;
         }
         case SLOT_CLASSITEM:
+            if (slot->pointer && dyn_refuse_dying(slot->pointer, "vpi_handle")) return NULL;
             return dyn_item_handle(type, slot);
         case SLOT_CLASSTS: {
             uint32_t class_index = (uint32_t)slot->aux;
@@ -1461,13 +1521,16 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
                                           type == vpiVariables ? 0 : type);
             if (dyn_class_iteration(type)) {
                 if (dyn_refuse_dying(slot->pointer, "vpi_iterate")) return NULL;
-                /* 37.29 details 6 and 8: the items of the object's class. */
-                return dyn_iterate_items(class_index, type, 0, NULL);
+                /* 37.29 details 6 and 8: the items of the object's class; its
+                 * constraints are the object's (37.30). */
+                return dyn_iterate_items(class_index, type, 0,
+                                         type == vpiConstraint ? slot->pointer : NULL);
             }
             if (type == vpiNamedEvent) return NULL;
             break;
         }
         case SLOT_CLASSITEM:
+            if (slot->pointer && dyn_refuse_dying(slot->pointer, "vpi_iterate")) return NULL;
             return dyn_item_iterate(type, slot);
         case SLOT_CLASSDEFN:
         case SLOT_CLASSTS: {
@@ -1566,8 +1629,11 @@ static vpiHandle dyn_scan(llg_vpi_slot_t* slot, uint32_t position) {
             const llg_vpi_class_t* layout = dyn_class(class_index);
             while (layout && slot->left < (int64_t)layout->item_count) {
                 uint32_t item = (uint32_t)slot->left++;
-                if (dyn_item_selected(dyn_item(class_index, item), slot->aux, slot->element))
-                    return item_handle(class_index, item);
+                const llg_vpi_class_item_t* found = dyn_item(class_index, item);
+                if (!dyn_item_selected(found, slot->aux, slot->element)) continue;
+                if (slot->pointer && found->type == vpiConstraint)
+                    return object_item_handle(slot->pointer, class_index, item);
+                return item_handle(class_index, item);
             }
             return NULL;
         }
@@ -1657,6 +1723,9 @@ static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
             break;
         case SLOT_CLASSITEM: {
             int ok;
+            if (slot->pointer && property == vpiIsConstraintEnabled &&
+                dyn_refuse_dying(slot->pointer, "vpi_get"))
+                return vpiUndefined;
             PLI_INT64 value = dyn_item_get(property, slot, &ok);
             if (ok) return value;
             break;
@@ -2187,7 +2256,7 @@ static void dyn_reclaimed(void* const* objects, size_t count) {
         for (size_t i = g_vpi.static_count; i < g_vpi.slot_count; ++i) {
             llg_vpi_slot_t* slot = &g_vpi.slots[i];
             int bound = slot->kind == SLOT_CLASSOBJ || slot->kind == SLOT_PROPERTY ||
-                        slot->kind == SLOT_DYNELEM ||
+                        slot->kind == SLOT_DYNELEM || slot->kind == SLOT_CLASSITEM ||
                         (slot->kind == SLOT_ITERATOR && slot->iter_kind == ITER_DYN);
             if (bound && slot->pointer && dyn_is_dying(slot->pointer)) release_slot((uint32_t)i);
         }

@@ -135,7 +135,7 @@ fn split_name(name: &str) -> Vec<&str> {
 }
 
 /// Storage of one signal after alias resolution: `(packed, real, net)`.
-fn signal_storage(model: &IrModel, index: usize) -> Option<(String, String, String)> {
+pub(super) fn signal_storage(model: &IrModel, index: usize) -> Option<(String, String, String)> {
     let mut current = index;
     let mut visited = std::collections::HashSet::new();
     loop {

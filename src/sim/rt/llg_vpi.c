@@ -4258,9 +4258,23 @@ static int code_is_unscoped_block(uint32_t index) {
     return type == vpiBegin || type == vpiFork;
 }
 
+/* The objects of a constraint (37.30, 37.34) other than expressions. */
+static int code_is_constraint_object(int type) {
+    switch (type) {
+        case vpiConstraint: case vpiConstraintOrdering: case vpiDistribution: case vpiDistItem:
+        case vpiImplication: case vpiConstrIf: case vpiConstrIfElse:
+        /* A value range `[low:high]` (37.30 vpiValueRange, 11.4.13). */
+        case vpiRange:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 static int code_is_expression(const llg_vpi_code_t* node) {
     int type = code_type(node);
-    return !code_is_statement(type) && type != vpiCaseItem && !code_is_assertion_object(type);
+    return !code_is_statement(type) && type != vpiCaseItem && !code_is_assertion_object(type) &&
+           !code_is_constraint_object(type);
 }
 
 static const char* code_text(const llg_vpi_code_t* node) {
@@ -4392,6 +4406,12 @@ static int code_relation_applies(int type, int relation) {
                    relation == vpiPropertyExpr;
         case vpiSequenceInst: return relation == vpiSequenceDecl;
         case vpiPropertyInst: return relation == vpiPropertyDecl || relation == vpiDisableCondition;
+        /* 37.30, 37.34. */
+        case vpiDistribution: return relation == vpiExpr;
+        case vpiDistItem: return relation == vpiValueRange || relation == vpiWeight;
+        case vpiImplication: case vpiConstrIf: case vpiConstrIfElse:
+            return relation == vpiCondition;
+        case vpiRange: return relation == vpiLeftRange || relation == vpiRightRange;
         default:
             return 0;
     }
@@ -4415,6 +4435,12 @@ static int code_iteration_applies(int type, int relation) {
         case vpiSequenceInst: case vpiPropertyInst: return relation == vpiArgument;
         case vpiSequenceDecl: return relation == vpiSeqFormalDecl;
         case vpiPropertyDecl: return relation == vpiPropFormalDecl;
+        /* 37.30, 37.34. */
+        case vpiConstraint: return relation == vpiConstraintItem;
+        case vpiDistribution: return relation == vpiDistItem;
+        case vpiConstraintOrdering: return relation == vpiSolveBefore || relation == vpiSolveAfter;
+        case vpiImplication: case vpiConstrIf: return relation == vpiConstraintExpr;
+        case vpiConstrIfElse: return relation == vpiConstraintExpr || relation == vpiElseConst;
         default:
             return 0;
     }
@@ -4456,6 +4482,11 @@ static int code_is_assertion(int type) {
 static vpiHandle code_relation(int type, uint32_t index) {
     const llg_vpi_code_t* node = code_at(index);
     if (!node) return NULL;
+    if (type == vpiScope && code_is_constraint_object(node->type)) {
+        /* 37.30 and 37.34 give constraint objects no scope. */
+        vpi_error("LLG_VPI_RELATION", "constraint objects and value ranges have no vpiScope (37.30, 37.34)");
+        return NULL;
+    }
     if (type == vpiScope) return node->scope ? object_handle(node->scope - 1u) : NULL;
     if ((type == vpiInstance || type == vpiModule) && code_is_assertion(node->type)) {
         /* 37.10 details 2 and 3, 37.45: the instance and the module that
@@ -5284,6 +5315,14 @@ static void decompile_operation(llg_vpi_text_t* text, const llg_vpi_code_t* node
         case vpiListOp:
             decompile_list(text, node, vpiOperand, 0, depth);
             return;
+        case vpiInsideOp:
+            /* 11.4.13: `expression inside { open_range_list }`. */
+            if (!node->count) return;
+            decompile_operand(text, first, 9, depth);
+            text_put(text, " inside {");
+            decompile_list(text, node, vpiOperand, 1, depth);
+            text_put(text, "}");
+            return;
         case vpiConditionOp:
             if (node->count != 3) return;
             /* Right associative: only the condition needs a tighter binding. */
@@ -5378,6 +5417,14 @@ static void decompile(llg_vpi_text_t* text, uint32_t index, int depth) {
             text_put(text, "]");
             return;
         }
+        case vpiRange:
+            /* A value range of a dist item or an inside operator. */
+            text_put(text, "[");
+            decompile(text, code_child(node, vpiLeftRange), depth);
+            text_put(text, ":");
+            decompile(text, code_child(node, vpiRightRange), depth);
+            text_put(text, "]");
+            return;
         case vpiFuncCall:
         case vpiTaskCall:
         case vpiSysFuncCall:
@@ -5501,6 +5548,10 @@ static PLI_INT32 code_property(uint32_t index, int property) {
             return (node->flags & LLG_VPI_CODE_USER) != 0;
         case vpiDirection:
             if (type != vpiPropFormalDecl && type != vpiSeqFormalDecl) break;
+            return node->subtype;
+        case vpiDistType:
+            /* 37.30: vpiEqualDist for `:=`, vpiDivDist for `:/`. */
+            if (type != vpiDistItem) break;
             return node->subtype;
         case vpiFuncType: {
             if (type == vpiFuncCall && node->object >= 0) {
@@ -8408,6 +8459,12 @@ static const char* type_name(int type) {
         case vpiBegin: return "vpiBegin";
         case vpiCase: return "vpiCase";
         case vpiCaseItem: return "vpiCaseItem";
+        case vpiConstraintOrdering: return "vpiConstraintOrdering";
+        case vpiDistribution: return "vpiDistribution";
+        case vpiDistItem: return "vpiDistItem";
+        case vpiImplication: return "vpiImplication";
+        case vpiConstrIf: return "vpiConstrIf";
+        case vpiConstrIfElse: return "vpiConstrIfElse";
         case vpiDelayControl: return "vpiDelayControl";
         case vpiDisable: return "vpiDisable";
         case vpiEventControl: return "vpiEventControl";

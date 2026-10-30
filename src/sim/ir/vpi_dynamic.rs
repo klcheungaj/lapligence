@@ -223,6 +223,9 @@ pub struct IrVpiClassItem {
     /// The object field holding a constraint's hidden `constraint_mode`
     /// off bit (18.9).
     pub(in crate::sim) mode: Option<usize>,
+    /// The signal (index into [`IrModel::signals`]) holding a static
+    /// constraint's class-wide `constraint_mode` off bit (18.9).
+    pub(in crate::sim) mode_signal: Option<usize>,
 }
 
 /// One class layout (index-aligned with [`IrModel::classes`]): every object
@@ -310,6 +313,9 @@ impl IrVpiDynamic {
                             .typespec
                             .is_some_and(|ts| ts >= model.vpi_typespecs.len())
                         || item.mode.is_some_and(|mode| mode >= layout.fields.len())
+                        || item
+                            .mode_signal
+                            .is_some_and(|signal| signal >= model.signals.len())
                         || item
                             .code
                             .is_some_and(|code| code as usize >= model.vpi_code.len())

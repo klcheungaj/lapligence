@@ -2208,8 +2208,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   blocks, tasks and functions, fixed-size arrays
   of class handles, static class properties, events and virtual interfaces;
   mailbox and semaphore objects (`vpiClassType`, `vpiMessages`,
-  `vpiWaitingProcesses`; their typespecs are NULL); `vpiConstraint`,
-  `vpiInterfaceDecl` and `vpiTypedef` of class definitions and objects,
+  `vpiWaitingProcesses`; their typespecs are NULL); `foreach` constraints
+  (no 2009 object, decision A19-D37); `vpiInterfaceDecl` and `vpiTypedef`
+  of class definitions and objects,
   `vpiArgument` of `vpiExtends` and `vpiParamAssign` of class typespecs; a
   parameterized class lists one class defn per specialization, each under
   the class's own name (decision A19-D36);

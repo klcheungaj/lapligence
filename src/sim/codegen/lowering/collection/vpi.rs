@@ -1905,10 +1905,10 @@ impl Codegen<'_> {
         for row in timing.rows {
             insert(row);
         }
-        self.vpi_dynamic_classes(model, &mut dynamic, &mut typespecs);
+        let constraints = self.vpi_dynamic_classes(model, &mut dynamic, &mut typespecs);
         model.vpi_objects = objects.into_values().collect();
         if code {
-            self.populate_vpi_code(model, &mut typespecs, owners);
+            self.populate_vpi_code(model, &mut typespecs, owners, &mut dynamic, constraints);
         }
         model.vpi_typespecs = typespecs.entries;
         model.vpi_dynamic = dynamic;
@@ -1922,6 +1922,8 @@ impl Codegen<'_> {
         model: &mut IrModel,
         typespecs: &mut TypespecTable,
         owners: Vec<(String, String, CodeOwner)>,
+        dynamic: &mut crate::sim::ir::IrVpiDynamic,
+        constraints: Vec<(usize, usize, NodeId)>,
     ) {
         let mut statements = Vec::new();
         let mut conns = Vec::new();
@@ -2050,6 +2052,19 @@ impl Codegen<'_> {
                             }
                         }
                     }
+                }
+            }
+            // The constraint items of class constraints (37.30). They live
+            // in a class, which is not a catalog scope: their expressions
+            // report no vpiScope.
+            for (class, item, body) in constraints {
+                let root = tables.constraint_root(body, None);
+                if let Some(target) = dynamic
+                    .classes
+                    .get_mut(class)
+                    .and_then(|entry| entry.items.get_mut(item))
+                {
+                    target.code = Some(root);
                 }
             }
             for (site, call) in model.vpi_compile_calls.iter().enumerate() {

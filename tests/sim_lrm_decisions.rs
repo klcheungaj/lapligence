@@ -2366,6 +2366,15 @@ fn a19_d36_class_definitions() {
 }
 
 #[test]
+fn a19_d37_constraints() {
+    run_vpi_decision(
+        "A19-D37_constraints",
+        &["task $d37()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D37_constraints.out"),
+    );
+}
+
+#[test]
 fn a19_d40_static_lifetime_and_allocation() {
     run_vpi_decision(
         "A19-D40_static_lifetime_and_allocation",

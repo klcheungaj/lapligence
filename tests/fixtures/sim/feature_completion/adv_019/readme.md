@@ -1,4 +1,4 @@
-# ADV-019 fixtures: VPI typespecs, structure and union members, structure, expression, statement, dynamic and class objects
+# ADV-019 fixtures: VPI typespecs, structure and union members, structure, expression, statement, dynamic, class and constraint objects
 
 Each `<name>.sv` has a C application `<name>.c` that registers the system task
 the design calls. `tests/sim_feature_completion/adv_019.rs` links it as a
@@ -577,12 +577,55 @@ query prints `-99`; `level=` is the status of the call before it.
   `vpiPublicVis`; `limit` is const.
 - `plain=8` is `vf(3)` (3 + `d` 0) + `getx()` 5 + `u` 0.
 
+## constraints (37.30, 37.34, 18.5, 18.9)
+
+`constraints.c` prints, for the constraints of class `Packet` obtained from
+its class defn, their name, full name, `vpiAutomatic`, `vpiVirtual`,
+`vpiAllocScheme`, `vpiIsConstraintEnabled`, `vpiParent` type and line, and
+the tree of their constraint items: each object's type and line, the
+relations of 37.30 and 37.34 and, for an expression, its name, decompiled
+text and operands. It then prints the constraints obtained from the object
+`p` refers to. `$modes` prints both lists again after the design switches
+the static constraint off and `c_small` back on. `-99` marks a refused
+integer query.
+
+- Constraints. 37.30 (L59681-L59723): a constraint has the properties above
+  and a class obj as `vpiParent`; from a class defn its parent is the defn
+  (decision A19-D37). Detail 1 (L59722-L59723): "vpiAutomatic == 0 implies
+  the constraint was declared static" (`c_shared`). 37.10 detail 5
+  (L57952-L57954): the full name is the class defn's, `::` and the name.
+  2009 declares no virtual constraints: `vpiVirtual` 0.
+- Allocation. 37.3.7 (L57548-L57564): `vpiDynamicScheme` (2) for an object
+  "allocated in dynamic memory ... or part thereof", `vpiOtherScheme` (3)
+  otherwise: the object's non-static constraints are 2, the static one and
+  every constraint from the class defn 3.
+- State. 18.9: `constraint_mode(0)` turns a constraint off in one object, and
+  for a static constraint in every object. After `randomize()` and
+  `p.c_small.constraint_mode(0)`, the object reports `c_small` 0 and the
+  others 1; a non-static constraint from the class defn belongs to no object
+  and reports 0, the static one its class-wide state (decision A19-D37).
+  `$modes` sees `c_shared` 0 from both and `c_small` 1 in the object.
+- Items. 37.30: a constraint item is a constraint ordering, a distribution or
+  a constraint expression; 37.34 (L59855-L59872): a constraint expression is
+  an implication, a constr if, a constr if else or an expression. A braced
+  set lists its items in place. `c_mix` holds one of each: the distribution
+  `d dist {...}` with `vpiExpr` `d` and three `vpiDistItem`s (`vpiDistType`
+  `vpiEqualDist` 1 for `:=` and for `7`, whose weight 18.5.4 defaults to
+  `:= 1` and which has no `vpiWeight`; `vpiDivDist` 2 for `:/`; the range
+  `[1:3]` a `vpiRange` with its bounds), the ordering `solve a before d`
+  (`vpiSolveBefore` `a`, `vpiSolveAfter` `d`), the implication with its
+  `vpiCondition` and two `vpiConstraintExpr`s, the `if`-`else` with
+  `vpiElseConst` and the `if` whose expression `d inside {[0:20], 30}` has a
+  `vpiRange` operand. Class properties in constraints are references that
+  name the property (`a`, `len`, `d`).
+- `ok=1`: the randomization succeeds.
+
 ## gc (37.3.7, 37.29, 38.36.1)
 
 `gc.c` registers `cbCreateObj` and `cbReclaimObj` on the `Node` and `Leaf`
 class typespecs, `cbValueChange` on `tb.tmp`, takes handles to the object
-`tb.tmp` refers to after `make(2)` (the object, `tb.tmp.v` and
-`tb.tmp.items[0]`) with `cbReclaimObj` and `cbEndOfObject` on that object,
+`tb.tmp` refers to after `make(2)` (the object, `tb.tmp.v`,
+`tb.tmp.items[0]` and the object's constraint `c_r`) with `cbReclaimObj` and `cbEndOfObject` on that object,
 and prints at each `$check` the sorted values of the objects reclaimed since
 the last one. The test runs with `LLG_GC_STRESS=1 LLG_GC_VERIFY=1`: a
 collection runs at every safe point after an allocation, so an object is
@@ -610,14 +653,14 @@ reclaimed object would be a fatal error.
   All VPI properties of the class obj are accessible. Using this handle as a
   reference for purposes of navigation or registering callbacks is
   undefined." In the held object's callback its properties read (`v=2`),
-  navigation through `link` and a write to `v` are refused (`level=3`,
-  decision A19-D22). The `cbEndOfObject` callback (L64672-L64676) runs for
+  while its constraint's state, navigation through `link` and a write to
+  `v` are refused (`level=3`, decision A19-D22). The `cbEndOfObject` callback (L64672-L64676) runs for
   the same object with a NULL time. Object 2 dies when `copy()` replaces
   it (check 1), the cycle 10-11 when `cycle()` returns (check 2), the leaf
   when `leaf()` returns (check 3) and the copy when `tmp` becomes null
   (check 4); `keep` stays.
-- Stale handles. After check 1's collection the held object, property and
-  element handles report `level=3` and `vpiObjId` reads `vpiUndefined` (-1);
+- Stale handles. After check 1's collection the held object, property,
+  element and constraint handles report `level=3` and `vpiObjId` reads `vpiUndefined` (-1);
   `tb.tmp.v` resolves again to the property of the object `tmp` now refers
   to.
 - Class var changes. 38.36.1 (L64766-L64767): "The cbValueChange callback may

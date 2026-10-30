@@ -8,6 +8,8 @@ module tb;
     int v;
     Node link;
     int items[$];
+    rand int r;
+    constraint c_r { r < 5; }
     function new(int x);
       v = x;
       items.push_back(x);

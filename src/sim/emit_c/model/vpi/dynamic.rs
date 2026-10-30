@@ -159,7 +159,7 @@ pub(super) fn render_vpi_dynamic(model: &IrModel, out: &mut String) {
             });
         }
         for item in &class.items {
-            items.push(render_class_item(item));
+            items.push(render_class_item(model, item));
         }
     }
     let item_table = if items.is_empty() {
@@ -224,7 +224,11 @@ static void* llg_class_vpi_field(void* handle, uint32_t index, unsigned* kind) {
 }
 
 /// One `llg_vpi_class_item_t` initializer.
-fn render_class_item(item: &IrVpiClassItem) -> String {
+fn render_class_item(model: &IrModel, item: &IrVpiClassItem) -> String {
+    let mode_signal = item
+        .mode_signal
+        .and_then(|signal| super::signal_storage(model, signal))
+        .map_or_else(|| "NULL".to_owned(), |(packed, _, _)| packed);
     let mut flags = Vec::new();
     if item.is_virtual {
         flags.push("LLG_VPI_ITEM_VIRTUAL");
@@ -257,7 +261,7 @@ fn render_class_item(item: &IrVpiClassItem) -> String {
         _ => ("NULL".to_owned(), "0.0".to_owned()),
     };
     format!(
-        "    {{ {}, {}, {}, {detail}, {}, {flags}, {}u, {}u, {}u, {}u, {}u, {}u, {value}, {real} }}",
+        "    {{ {}, {}, {}, {detail}, {}, {flags}, {}u, {}u, {}u, {}u, {}u, {}u, {value}, {real}, {mode_signal} }}",
         c_string_literal(&item.name),
         item.file
             .as_deref()

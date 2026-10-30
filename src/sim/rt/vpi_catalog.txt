@@ -40,6 +40,8 @@ test a19d34 sim_lrm_decisions::a19_d34_net_fanout_and_assignment_bits
 test a19d35 sim_lrm_decisions::a19_d35_strengths_and_declaration_properties
 test a19d36 sim_lrm_decisions::a19_d36_class_definitions
 test a19classes adv_019::class_definitions_list_methods_parameters_and_property_qualifiers
+test a19d37 sim_lrm_decisions::a19_d37_constraints
+test a19cons adv_019::constraints_list_their_items_qualifiers_and_object_state
 test a19d42 sim_lrm_decisions::a19_d42_declaration_objects
 test a19decl adv_019::instance_properties_follow_the_definition_and_its_configuration
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
@@ -1122,7 +1124,7 @@ node class_defn 37.27 type=vpiClassDefn
   handle vpiScope implemented walk
   iterate vpiVariables implemented walk
   iterate vpiMethods implemented walk
-  iterate vpiConstraint unsupported constraints are not objects
+  iterate vpiConstraint implemented walk
   iterate vpiParameter implemented a19classes
   iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
   iterate vpiNamedEvent implemented walk
@@ -1153,7 +1155,7 @@ node class_typespec 37.28 type=vpiClassTypespec
   handle vpiClassDefn implemented walk
   iterate vpiVariables implemented walk
   iterate vpiMethods implemented walk
-  iterate vpiConstraint unsupported constraints are not objects
+  iterate vpiConstraint implemented walk
   iterate vpiParameter implemented walk
   iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
   iterate vpiNamedEvent implemented walk
@@ -1177,7 +1179,7 @@ node class_obj 37.29 type=vpiClassObj
   iterate vpiWaitingProcesses unsupported threads are not objects
   iterate vpiMessages unsupported mailbox and semaphore objects are not exposed
   iterate vpiMethods implemented walk
-  iterate vpiConstraint unsupported constraints are not objects
+  iterate vpiConstraint implemented a19cons
   iterate vpiParameter implemented walk
   iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
   iterate vpiNamedEvent implemented walk
@@ -1194,29 +1196,29 @@ node class_obj 37.29 type=vpiClassObj
   iterate vpiRegArray implemented walk
   handle vpiScope unsupported this object does not report its scope
 
-node constraint 37.30 type=vpiConstraint default=unsupported constraints are not objects
-  get vpiVirtual
-  get vpiAutomatic
-  get vpiAllocScheme
+node constraint 37.30 type=vpiConstraint
+  get vpiVirtual implemented walk
+  get vpiAutomatic implemented walk
+  get vpiAllocScheme implemented a19cons
   get vpiExtern n/a the 37.30 diagram names vpiExtern but Annex M defines no constant for it
-  str vpiName
-  str vpiFullName
-  get vpiIsConstraintEnabled
-  handle vpiParent
-  iterate vpiConstraintItem
+  str vpiName implemented walk
+  str vpiFullName implemented a19d37
+  get vpiIsConstraintEnabled implemented a19d37
+  handle vpiParent implemented walk
+  iterate vpiConstraintItem implemented walk
 
-node constraint_ordering 37.30 type=vpiConstraintOrdering default=unsupported constraints are not objects
-  iterate vpiSolveBefore
-  iterate vpiSolveAfter
+node constraint_ordering 37.30 type=vpiConstraintOrdering
+  iterate vpiSolveBefore implemented walk
+  iterate vpiSolveAfter implemented walk
 
-node distribution 37.30 type=vpiDistribution default=unsupported constraints and distributions are not objects
-  iterate vpiDistItem
-  handle vpiExpr
+node distribution 37.30 type=vpiDistribution
+  iterate vpiDistItem implemented walk
+  handle vpiExpr implemented walk
 
-node dist_item 37.30 type=vpiDistItem default=unsupported constraints and distributions are not objects
-  get vpiDistType
-  handle vpiValueRange
-  handle vpiWeight
+node dist_item 37.30 type=vpiDistItem
+  get vpiDistType implemented a19cons
+  handle vpiValueRange implemented walk
+  handle vpiWeight implemented walk
 
 node primitive 37.31 members=gate,switch,udp
   get vpiArray implemented walk
@@ -1290,18 +1292,18 @@ node inter_mod_path 37.33 type=vpiInterModPath default=unsupported intermodule p
   func vpi_put_delays
   iterate vpiPort
 
-node implication 37.34 type=vpiImplication default=unsupported constraints are not objects
-  handle vpiCondition
-  iterate vpiConstraintExpr
+node implication 37.34 type=vpiImplication
+  handle vpiCondition implemented walk
+  iterate vpiConstraintExpr implemented walk
 
-node constr_if 37.34 type=vpiConstrIf default=unsupported constraints are not objects
-  handle vpiCondition
-  iterate vpiConstraintExpr
+node constr_if 37.34 type=vpiConstrIf
+  handle vpiCondition implemented walk
+  iterate vpiConstraintExpr implemented walk
 
-node constr_if_else 37.34 type=vpiConstrIfElse default=unsupported constraints are not objects
-  handle vpiCondition
-  iterate vpiConstraintExpr
-  iterate vpiElseConst
+node constr_if_else 37.34 type=vpiConstrIfElse
+  handle vpiCondition implemented walk
+  iterate vpiConstraintExpr implemented walk
+  iterate vpiElseConst implemented walk
 
 node mod_path 37.35 type=vpiModPath
   func vpi_get_delays implemented a20delays

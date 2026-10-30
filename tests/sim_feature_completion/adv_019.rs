@@ -170,6 +170,26 @@ fn class_definitions_list_methods_parameters_and_property_qualifiers() {
 }
 
 #[test]
+fn constraints_list_their_items_qualifiers_and_object_state() {
+    let directory = sim_harness::TempDir::new("adv019-constraints").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "constraints", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "constraints",
+        include_str!("../fixtures/sim/feature_completion/adv_019/constraints.out"),
+        &[
+            "--define-system-task",
+            "task $constraints()",
+            "--define-system-task",
+            "task $modes()",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
+#[test]
 fn class_object_callbacks_follow_creation_and_reclamation_under_collection_stress() {
     let directory = sim_harness::TempDir::new("adv019-gc").expect("temporary directory");
     let archive = super::sim_041::static_archive(SUITE, &directory, "gc", &[]);

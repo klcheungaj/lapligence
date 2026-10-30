@@ -357,6 +357,7 @@ typedef struct {
     uint32_t mode;            /* object field + 1 holding a constraint's off bit (18.9) */
     const char* value;        /* a parameter's digits (MSB first) or text; NULL for a real */
     double real;              /* a real parameter's value */
+    const sv4_t* mode_signal; /* a static constraint's class-wide off bit (18.9), or NULL */
 } llg_vpi_class_item_t;
 
 typedef struct {

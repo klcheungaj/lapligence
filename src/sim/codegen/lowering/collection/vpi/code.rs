@@ -10,7 +10,7 @@
 //! follow the frontend's typed tree exactly.
 
 use super::*;
-use crate::core::db::{CaseItem, CaseKind, UniquePriorityCheck};
+use crate::core::db::{CaseItem, CaseKind, ConstraintKind, DistItem, UniquePriorityCheck};
 use crate::sim::ir::IrVpiCode;
 
 mod assertions;
@@ -73,6 +73,13 @@ enum Item<'a> {
     ClockingEvent(NodeId),
     /// A clocking skew as a delay control, at `.1` when it is implicit.
     Skew(&'a ClockingSkew, NodeId),
+    /// The hidden root of a constraint declaration (37.30) whose children
+    /// are the constraint items of body `.0`.
+    Constraint(NodeId),
+    /// One constraint item or constraint expression (37.30, 37.34).
+    ConstraintPart(NodeId),
+    /// One item of the `dist` expression `.1` (37.30).
+    Weighted(DistItem, NodeId),
 }
 
 type Children<'a> = Vec<(&'static str, Item<'a>)>;
@@ -168,6 +175,12 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         scope: Option<usize>,
     ) -> u32 {
         self.root(Item::Clocking(block, var), scope)
+    }
+
+    /// Add the constraint items of constraint body `body` under a hidden
+    /// root and return the root's entry.
+    pub(super) fn constraint_root(&mut self, body: NodeId, scope: Option<usize>) -> u32 {
+        self.root(Item::Constraint(body), scope)
     }
 
     /// Add the expression `id` as a root and return its entry.
@@ -338,6 +351,34 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                     .collect();
                 (code, children, scope)
             }
+            Item::Constraint(body) => {
+                let code = self.located("vpiConstraint", body);
+                let mut children = Vec::new();
+                self.constraint_set(body, "vpiConstraintItem", &mut children);
+                (code, children, scope)
+            }
+            Item::ConstraintPart(id) => {
+                let (code, children) = self.constraint_item(id);
+                (code, children, scope)
+            }
+            // 37.30: a value or value range with its weight; `:/` divides the
+            // weight over the range.
+            Item::Weighted(item, dist) => {
+                let mut code = self.located("vpiDistItem", item.value);
+                if code.line == 0 {
+                    code.line = self.cg.node(dist).line;
+                }
+                code.subtype = if item.per_range {
+                    "vpiDivDist"
+                } else {
+                    "vpiEqualDist"
+                };
+                let mut children = vec![("vpiValueRange", Item::Expr(item.value))];
+                if let Some(weight) = item.weight {
+                    children.push(("vpiWeight", Item::Expr(weight)));
+                }
+                (code, children, scope)
+            }
             Item::Skew(skew, at) => {
                 let code = self.located("vpiDelayControl", skew.delay.unwrap_or(at));
                 let children = skew
@@ -501,6 +542,100 @@ impl<'c, 'a> CodeTables<'c, 'a> {
 
     /// An expression llg does not decompose: its type, its size and no
     /// operands or value.
+    /// The items of constraint set `id` as children reached by `role`: a
+    /// braced set contributes its items. A `foreach` constraint and the
+    /// later-edition `unique` and `disable soft` items have no 37.30 or
+    /// 37.34 object (decision A19-D37).
+    fn constraint_set(&self, id: NodeId, role: &'static str, children: &mut Children<'a>) {
+        match self.cg.kind(id) {
+            NodeKind::Constraint(ConstraintKind::List { items }) => {
+                for item in items {
+                    self.constraint_set(*item, role, children);
+                }
+            }
+            NodeKind::Constraint(
+                ConstraintKind::Foreach { .. }
+                | ConstraintKind::Uniqueness { .. }
+                | ConstraintKind::DisableSoft { .. },
+            ) => {}
+            _ => children.push((role, Item::ConstraintPart(id))),
+        }
+    }
+
+    /// One constraint item (37.30) or constraint expression (37.34): an
+    /// expression, a distribution, an implication, a constraint `if` or
+    /// `if`-`else`, or a `solve ... before` ordering.
+    fn constraint_item(&mut self, id: NodeId) -> (IrVpiCode, Children<'a>) {
+        let (mut code, children) = self.constraint_object(id);
+        // A constraint item without a position of its own starts at its
+        // first expression.
+        if code.line == 0 {
+            if let Some(Item::Expr(first)) = children.first().map(|(_, item)| item) {
+                let at = self.located("0", *first);
+                code.line = at.line;
+                code.file = at.file;
+            }
+        }
+        (code, children)
+    }
+
+    fn constraint_object(&mut self, id: NodeId) -> (IrVpiCode, Children<'a>) {
+        let cg = self.cg;
+        let kind = match cg.kind(id) {
+            NodeKind::Constraint(kind) => kind,
+            _ => return self.expression(id),
+        };
+        let mut children = Vec::new();
+        match kind {
+            ConstraintKind::Expr { expr, .. } => {
+                let expr = *expr;
+                if let NodeKind::Expr(ExprKind::Dist { left, items, .. }) = cg.kind(expr) {
+                    let code = self.located("vpiDistribution", expr);
+                    children.push(("vpiExpr", Item::Expr(*left)));
+                    for item in items {
+                        children.push(("vpiDistItem", Item::Weighted(*item, expr)));
+                    }
+                    return (code, children);
+                }
+                self.expression(expr)
+            }
+            ConstraintKind::Implication { predicate, body } => {
+                let code = self.located("vpiImplication", id);
+                children.push(("vpiCondition", Item::Expr(*predicate)));
+                self.constraint_set(*body, "vpiConstraintExpr", &mut children);
+                (code, children)
+            }
+            ConstraintKind::Conditional {
+                predicate,
+                then_body,
+                else_body,
+            } => {
+                let code = self.located(
+                    if else_body.is_some() {
+                        "vpiConstrIfElse"
+                    } else {
+                        "vpiConstrIf"
+                    },
+                    id,
+                );
+                children.push(("vpiCondition", Item::Expr(*predicate)));
+                self.constraint_set(*then_body, "vpiConstraintExpr", &mut children);
+                if let Some(otherwise) = else_body {
+                    self.constraint_set(*otherwise, "vpiElseConst", &mut children);
+                }
+                (code, children)
+            }
+            // 18.5.9: `solve solve_list before before_list`.
+            ConstraintKind::SolveBefore { solve, before } => {
+                let code = self.located("vpiConstraintOrdering", id);
+                children.extend(solve.iter().map(|id| ("vpiSolveBefore", Item::Expr(*id))));
+                children.extend(before.iter().map(|id| ("vpiSolveAfter", Item::Expr(*id))));
+                (code, children)
+            }
+            _ => self.opaque("vpiOperation", id),
+        }
+    }
+
     fn opaque(&mut self, type_code: &'static str, id: NodeId) -> (IrVpiCode, Children<'a>) {
         let mut code = self.typed(type_code, id);
         code.flags |= IrVpiCode::OPAQUE;
@@ -569,6 +704,22 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                     }
                 }
                 (code, vec![("vpiOperand", Item::Expr(*operand))])
+            }
+            // A value range `[low:high]` of a dist item or an inside
+            // operator (11.4.13, 18.5.4) is a range (37.30 vpiValueRange).
+            ExprKind::Operation {
+                op: Operation::List,
+                operands,
+                ..
+            } if operands.len() == 2 && cg.db.semantic_detail(id) == Some("ValueRange") => {
+                let code = self.located("vpiRange", id);
+                (
+                    code,
+                    vec![
+                        ("vpiLeftRange", Item::Expr(operands[0])),
+                        ("vpiRightRange", Item::Expr(operands[1])),
+                    ],
+                )
             }
             ExprKind::Operation {
                 op,
@@ -749,16 +900,23 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                 );
                 return (code, Vec::new());
             }
-            let catalog = matches!(
-                cg.kind(target),
-                NodeKind::Net { .. }
-                    | NodeKind::Var { .. }
-                    | NodeKind::Array { .. }
-                    | NodeKind::Param { .. }
-                    | NodeKind::NamedEvent
-                    | NodeKind::ModuleInst { .. }
-                    | NodeKind::GenScope
-            );
+            // A class member names no catalog row: its path starts at the
+            // class, not at a scope (37.17 detail 25).
+            let class_member = cg
+                .node(target)
+                .parent
+                .is_some_and(|parent| matches!(cg.kind(parent), NodeKind::ClassDef));
+            let catalog = !class_member
+                && matches!(
+                    cg.kind(target),
+                    NodeKind::Net { .. }
+                        | NodeKind::Var { .. }
+                        | NodeKind::Array { .. }
+                        | NodeKind::Param { .. }
+                        | NodeKind::NamedEvent
+                        | NodeKind::ModuleInst { .. }
+                        | NodeKind::GenScope
+                );
             if let Some(row) = catalog.then(|| self.decl_row(target)).flatten() {
                 let mut code = self.typed("0", id);
                 code.flags |= IrVpiCode::ALIAS;

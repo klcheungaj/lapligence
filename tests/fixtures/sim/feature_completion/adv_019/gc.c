@@ -6,7 +6,7 @@
 #include "sv_vpi_user.h"
 #include <string.h>
 
-static vpiHandle held, held_value, held_item;
+static vpiHandle held, held_value, held_item, held_constraint;
 static int reclaimed[64];
 static int reclaimed_count, changes;
 
@@ -35,6 +35,8 @@ static PLI_INT32 on_reclaim(p_cb_data data) {
 
 static PLI_INT32 on_reclaim_held(p_cb_data data) {
     vpi_printf("reclaim held v=%d", first_int(data->obj));
+    vpi_get(vpiIsConstraintEnabled, held_constraint);
+    vpi_printf(" constraint level=%d", vpi_chk_error(NULL));
     vpiHandle it = vpi_iterate(vpiVariables, data->obj), p;
     while ((p = vpi_scan(it))) {
         if (strcmp(vpi_get_str(vpiName, p), "link") == 0) {
@@ -98,6 +100,10 @@ static PLI_INT32 grab(PLI_BYTE8* data) {
     held = vpi_handle(vpiClassObj, vpi_handle_by_name("tb.tmp", NULL));
     held_value = vpi_handle_by_name("tb.tmp.v", NULL);
     held_item = vpi_handle_by_name("tb.tmp.items[0]", NULL);
+    /* A constraint obtained from the object follows the object (37.30). */
+    vpiHandle constraints = vpi_iterate(vpiConstraint, held);
+    held_constraint = vpi_scan(constraints);
+    vpi_release_handle(constraints);
     vpi_printf("grab id=%lld v=%d\n", (long long)vpi_get64(vpiObjId, held), first_int(held));
     watch(cbReclaimObj, held, on_reclaim_held, "held");
     watch(cbEndOfObject, held, on_end, "held");
@@ -134,6 +140,8 @@ static PLI_INT32 check(PLI_BYTE8* data) {
         vpi_printf("  held property level=%d\n", vpi_chk_error(NULL));
         vpi_get_value(held_item, &v);
         vpi_printf("  held element level=%d\n", vpi_chk_error(NULL));
+        vpi_iterate(vpiConstraintItem, held_constraint);
+        vpi_printf("  held constraint level=%d\n", vpi_chk_error(NULL));
         PLI_INT64 id = vpi_get64(vpiObjId, held);
         vpi_printf("  held object id=%lld level=%d\n", (long long)id, vpi_chk_error(NULL));
         vpi_printf("  tb.tmp.v now=%s\n", vpi_handle_by_name("tb.tmp.v", NULL) ? "set" : "null");
