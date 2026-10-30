@@ -1,0 +1,5 @@
+same step: u.a=1 u.v=9
+formal forced: z=1 u.f=0
+formal released: z=1 u.f=1
+actual forced: x=0 u.a=0
+time-0 change of an initialized actual: 1

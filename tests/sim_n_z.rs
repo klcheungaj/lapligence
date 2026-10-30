@@ -31,6 +31,7 @@ mod sim_param_override;
 mod sim_partial_features;
 mod sim_physical_time;
 mod sim_plusargs;
+mod sim_port_collapse;
 mod sim_port_expressions;
 mod sim_port_net_types;
 mod sim_procedural_control;
