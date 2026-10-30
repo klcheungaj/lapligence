@@ -86,9 +86,9 @@ static PLI_INT32 probe_call(PLI_BYTE8* user_data) {
     s_vpi_error_info error = {0};
     if (vpi_chk_error(&error))
         vpi_printf("negative=%s\n", error.code);
-    vpiHandle call = vpi_handle(vpiSysTfCall, NULL);
-    vpi_release_handle(call);
-    (void)vpi_get(vpiType, call);
+    vpiHandle released = vpi_iterate(vpiVariables, parent);
+    vpi_release_handle(released);
+    (void)vpi_get(vpiType, released);
     if (vpi_chk_error(&error))
         vpi_printf("stale=%s\n", error.code);
     (void)user_data;

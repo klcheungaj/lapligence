@@ -49,7 +49,7 @@ test a19d43 sim_lrm_decisions::a19_d43_uses
 test a19decl adv_019::instance_properties_follow_the_definition_and_its_configuration
 test a19rts adv_019::runtime_structures_list_systfs_callbacks_time_queues_uses_and_udps
 test a19d44 sim_lrm_decisions::a19_d44_frames_and_threads
-test a19d45 sim_lrm_decisions::a19_d45_statement_toggle_objects
+test a19d46 sim_lrm_decisions::a19_d46_statement_toggle_objects
 test a19thr adv_019::threads_and_frames_follow_processes_and_subprogram_calls
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
@@ -422,7 +422,7 @@ node named_begin 37.12 type=vpiNamedBegin
   get vpiCovered implemented walk
   get vpiCoverMax implemented walk
   get vpiCoveredCount implemented walk
-  func vpi_control error a19d45 statement and toggle coverage are controlled per instance only (40.5.4)
+  func vpi_control error a19d46 statement and toggle coverage are controlled per instance only (40.5.4)
   iterate vpiStmt implemented walk
   get vpiTimePrecision extension walk the time unit and precision of the enclosing instance
   get vpiTimeUnit extension walk the time unit and precision of the enclosing instance
@@ -475,7 +475,7 @@ node begin 37.12 type=vpiBegin
   get vpiCovered implemented walk
   get vpiCoverMax implemented walk
   get vpiCoveredCount implemented walk
-  func vpi_control error a19d45 statement and toggle coverage are controlled per instance only (40.5.4)
+  func vpi_control error a19d46 statement and toggle coverage are controlled per instance only (40.5.4)
   iterate vpiStmt implemented walk
   str vpiFullName implemented walk
   iterate vpiPropertyDecl implemented walk
@@ -491,7 +491,7 @@ node named_fork 37.12 type=vpiNamedFork
   get vpiCovered implemented walk
   get vpiCoverMax implemented walk
   get vpiCoveredCount implemented walk
-  func vpi_control error a19d45 statement and toggle coverage are controlled per instance only (40.5.4)
+  func vpi_control error a19d46 statement and toggle coverage are controlled per instance only (40.5.4)
   iterate vpiStmt implemented walk
   str vpiFullName implemented walk
   iterate vpiPropertyDecl implemented walk
@@ -553,7 +553,7 @@ node fork 37.12 type=vpiFork
   get vpiCovered implemented walk
   get vpiCoverMax implemented walk
   get vpiCoveredCount implemented walk
-  func vpi_control error a19d45 statement and toggle coverage are controlled per instance only (40.5.4)
+  func vpi_control error a19d46 statement and toggle coverage are controlled per instance only (40.5.4)
   iterate vpiStmt implemented walk
   str vpiFullName implemented walk
   iterate vpiPropertyDecl implemented walk
@@ -645,7 +645,7 @@ node nets 37.16 members=net,net_bit,array_net
   get vpiCovered implemented walk
   get vpiCoverMax implemented walk
   get vpiCoveredCount implemented walk
-  func vpi_control error a19d45 statement and toggle coverage are controlled per instance only (40.5.4)
+  func vpi_control error a19d46 statement and toggle coverage are controlled per instance only (40.5.4)
   func vpi_handle_by_index implemented s42obj
   func vpi_handle_by_multi_index implemented s42obj
   get vpiArray implemented walk
@@ -743,7 +743,7 @@ node variables 37.17 members=short_real_var,real_var,byte_var,short_int_var,int_
   get vpiCovered implemented walk
   get vpiCoverMax implemented walk
   get vpiCoveredCount implemented walk
-  func vpi_control error a19d45 statement and toggle coverage are controlled per instance only (40.5.4)
+  func vpi_control error a19d46 statement and toggle coverage are controlled per instance only (40.5.4)
   func vpi_handle_by_index implemented s42obj
   func vpi_handle_by_multi_index implemented s42obj
   get vpiArray implemented walk
@@ -1212,8 +1212,8 @@ node class_obj 37.29 type=vpiClassObj
   get vpiObjId implemented walk
   iterate vpiVariables implemented walk
   handle vpiClassTypespec implemented walk
-  iterate vpiWaitingProcesses unsupported mailbox and semaphore waiters are held in runtime queues the VPI tables do not reach
-  iterate vpiMessages unsupported llg keeps the messages of a mailbox in runtime scheduler queues that the VPI tables do not reach
+  iterate vpiWaitingProcesses unsupported a mailbox or semaphore object has no class layout in llg (its vpiClassType is refused and a semaphore variable is no catalog object), so its waiters in the runtime queues are not reached
+  iterate vpiMessages unsupported 37.29 detail 4 names the iteration but the standard defines no object type for a message (no diagram, no Annex M constant), and llg keeps mailbox messages in runtime scheduler queues the VPI tables do not reach
   iterate vpiMethods implemented walk
   iterate vpiConstraint implemented a19cons
   iterate vpiParameter implemented walk

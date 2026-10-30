@@ -45,7 +45,10 @@ fn helper_names(source: &IrWaitSrc) -> Vec<&str> {
 impl Frame<'_, '_> {
     fn wait_event_address(&mut self, event: &IrEventRef) -> Result<String, String> {
         let address = self.event_address(event)?;
-        if matches!(event, IrEventRef::Static(_)) {
+        // A handle read (container element, class event property) is the
+        // address of a statement handle naming the object, never NULL; a
+        // null object in it is already the inert form.
+        if matches!(event, IrEventRef::Static(_) | IrEventRef::Handle(_)) {
             return Ok(address);
         }
         // A null handle (also an invalid/X array index) is an inert source,

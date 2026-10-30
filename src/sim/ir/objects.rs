@@ -40,6 +40,11 @@ pub struct IrClassField {
     /// [`super::IrModel::native_values`], SIM-011); `ty` is then the opaque
     /// [`IrClassFieldType::Chandle`] slot owning the value.
     pub(in crate::sim) native_value: Option<usize>,
+    /// An `event` instance property (SV 15.5): `ty` is the opaque
+    /// [`IrClassFieldType::Chandle`] slot holding the synchronization object
+    /// the property refers to. Construction stores a fresh object, owned by
+    /// the scheduler like an automatic event's, so copied handles stay valid.
+    pub(in crate::sim) event: bool,
 }
 
 /// One packed or real member exposed by a virtual-interface view. The member

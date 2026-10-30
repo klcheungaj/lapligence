@@ -141,6 +141,7 @@ typedef struct {
     int32_t aux;              /* iterator type, constant type, argument index */
     uint32_t count;           /* iterator length */
     uint32_t position;        /* iterator cursor */
+    uint32_t prev_owned;      /* call-owned list back link: slot index + 1 */
     uintptr_t* items;         /* ITER_LIST handles */
     void* pointer;            /* registration, callsite, event, callback */
     uintptr_t use;            /* an iterator's reference handle (vpiUse, 37.79) */
@@ -848,9 +849,14 @@ static uint32_t alloc_slot(llg_vpi_slot_kind_t kind) {
     return index;
 }
 
+static void unlink_owned(uint32_t index);
+
 static void release_slot(uint32_t index) {
     llg_vpi_slot_t* slot = &g_vpi.slots[index];
     if (slot->kind == SLOT_FREE || index < g_vpi.static_count) return;
+    /* A call-owned slot released early leaves its call's list first, since
+     * the free list reuses next_owned. */
+    if (slot->owned) unlink_owned(index);
     free(slot->items);
     uint32_t generation = slot->generation;
     memset(slot, 0, sizeof(*slot));
@@ -867,7 +873,31 @@ static void own_by_call(uint32_t index, llg_vpi_call_t* call) {
     if (!call) return;
     g_vpi.slots[index].owned = 1;
     g_vpi.slots[index].next_owned = call->owned;
+    g_vpi.slots[index].prev_owned = 0;
+    if (call->owned) g_vpi.slots[call->owned - 1u].prev_owned = index + 1u;
     call->owned = index + 1u;
+}
+
+/* Remove a slot from its call's owned list. The owner of a list head is
+ * found on the active call stack (owners are the invocations still running;
+ * the stack is at most LLG_VPI_MAX_CALL_DEPTH deep). */
+static void unlink_owned(uint32_t index) {
+    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    uint32_t next = slot->next_owned, previous = slot->prev_owned;
+    if (previous) {
+        g_vpi.slots[previous - 1u].next_owned = next;
+    } else {
+        for (llg_vpi_call_t* call = g_vpi.active_call; call; call = call->previous) {
+            if (call->owned == index + 1u) {
+                call->owned = next;
+                break;
+            }
+        }
+    }
+    if (next) g_vpi.slots[next - 1u].prev_owned = previous;
+    slot->owned = 0;
+    slot->next_owned = 0;
+    slot->prev_owned = 0;
 }
 
 static void release_call_slots(llg_vpi_call_t* call) {
@@ -875,8 +905,9 @@ static void release_call_slots(llg_vpi_call_t* call) {
     while (cursor) {
         uint32_t index = cursor - 1u;
         cursor = g_vpi.slots[index].next_owned;
-        if (g_vpi.slots[index].kind != SLOT_FREE && g_vpi.slots[index].owned)
-            release_slot(index);
+        /* The whole list goes, so no unlinking. */
+        g_vpi.slots[index].owned = 0;
+        release_slot(index);
     }
     call->owned = 0;
 }
@@ -4190,7 +4221,7 @@ static int is_coverage_type_property(int property) {
 
 /* vpi_get(<coverage type>, instance): the covered items of that type owned
  * by the instance (40.5.3, S46-D10): assertions, reached FSM states,
- * executed statements or signal bits seen at both 0 and 1 (A19-D45). A
+ * executed statements or signal bits seen at both 0 and 1 (A19-D46). A
  * model without the kind has none. */
 static PLI_INT32 instance_coverage(const llg_vpi_slot_t* slot, int property) {
     if (is_package_slot(slot)) return 0;
@@ -4234,7 +4265,7 @@ static void code_statement_tally(uint32_t index, uint64_t tally[3], unsigned dep
 }
 
 /* vpiCovered, vpiCoverMax and vpiCoveredCount of a statement object
- * (40.5.3, A19-D45): its executed statements, its statements and the sum
+ * (40.5.3, A19-D46): its executed statements, its statements and the sum
  * of their execution counts. An assertion statement keeps the answers of
  * its assertion object (37.45); a block that contains one counts it as a
  * statement. */
@@ -4267,7 +4298,7 @@ static int is_signal_type(int type) {
 }
 
 /* vpiCovered, vpiCoverMax and vpiCoveredCount of a net, variable or bit
- * (40.5.3, A19-D45): its bits seen at both 0 and 1, its bits, and their
+ * (40.5.3, A19-D46): its bits seen at both 0 and 1, its bits, and their
  * changes between 0 and 1. A net or variable without toggle coverage (an
  * array, a real, string or handle, a member or a model without it) has no
  * coverable bits. */
@@ -4336,7 +4367,7 @@ static PLI_INT32 coverage_control(int operation, int type, vpiHandle object) {
         if (code_signal_coverage(slot, vpiCoverMax, &ignored)) {
             vpi_error("LLG_VPI_RELATION",
                       "statement and toggle coverage are controlled only per instance (40.5.4, "
-                      "decision A19-D45)");
+                      "decision A19-D46)");
             return SV_COV_ERROR;
         }
     }
@@ -8454,7 +8485,7 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
     }
     {
         /* 40.5.3 statement and signal coverage, class properties included
-         * (A19-D45). */
+         * (A19-D46). */
         uint64_t coverage;
         if (code_signal_coverage(slot, property, &coverage))
             return coverage > INT32_MAX ? INT32_MAX : (PLI_INT32)coverage;
@@ -10186,9 +10217,12 @@ static PLI_INT32 release_handle(vpiHandle handle) {
             fired_free(index);
             return 1;
         case SLOT_CALL: {
+            /* Every vpiSysTfCall request of a site shares one persistent
+             * handle, so releasing one copy must not invalidate the others
+             * (37.2.2); it lives as long as its call site. Other call
+             * handles (a frame's vpiStmt) are the requester's own. */
             llg_vpi_callsite_t* site = (llg_vpi_callsite_t*)slot->pointer;
-            if (site->call_slot == index + 1u) site->call_slot = 0;
-            release_slot(index);
+            if (site->call_slot != index + 1u) release_slot(index);
             return 1;
         }
         case SLOT_EVENT: {

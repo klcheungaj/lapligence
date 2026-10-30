@@ -1,5 +1,5 @@
-/* Decision A19-D45: statement and toggle coverage through the VPI.
- * Companion of A19-D45_statement_toggle_objects.sv. */
+/* Decision A19-D46: statement and toggle coverage through the VPI.
+ * Companion of A19-D46_statement_toggle_objects.sv. */
 #include "sv_vpi_user.h"
 #include <stdio.h>
 #include <string.h>
@@ -17,7 +17,7 @@ static void counts(const char* what, vpiHandle object) {
                (int)vpi_get(vpiCoverMax, object), (int)vpi_get(vpiCoveredCount, object));
 }
 
-static PLI_INT32 d45(PLI_BYTE8* data) {
+static PLI_INT32 d46(PLI_BYTE8* data) {
     (void)data;
     vpiHandle call = vpi_handle(vpiSysTfCall, NULL);
     vpiHandle args = vpi_iterate(vpiArgument, call);
@@ -65,8 +65,8 @@ static void startup(void) {
     s_vpi_systf_data task;
     memset(&task, 0, sizeof(task));
     task.type = vpiSysTask;
-    task.tfname = "$d45";
-    task.calltf = d45;
+    task.tfname = "$d46";
+    task.calltf = d46;
     vpi_register_systf(&task);
 }
 

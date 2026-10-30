@@ -109,12 +109,24 @@ impl<'a> Codegen<'a> {
             return Some(EventTarget {
                 declaration: block,
                 indices: Vec::new(),
+                access: None,
+            });
+        }
+        if let Some(field) = self
+            .class_field_target(node)
+            .filter(|field| self.is_class_event_field(*field))
+        {
+            return Some(EventTarget {
+                declaration: field,
+                indices: Vec::new(),
+                access: Some(node),
             });
         }
         match self.kind(node) {
             NodeKind::NamedEvent => Some(EventTarget {
                 declaration: node,
                 indices: Vec::new(),
+                access: None,
             }),
             NodeKind::Var { .. }
                 if self.event_globals.contains_key(&node)
@@ -124,6 +136,7 @@ impl<'a> Codegen<'a> {
                 Some(EventTarget {
                     declaration: node,
                     indices: Vec::new(),
+                    access: None,
                 })
             }
             // A sequence instance whose endpoint exists names its event
@@ -134,16 +147,19 @@ impl<'a> Codegen<'a> {
                 Some(EventTarget {
                     declaration: node,
                     indices: Vec::new(),
+                    access: None,
                 })
             }
             NodeKind::FuncArg { ty, .. } if ty.kind == "event" => Some(EventTarget {
                 declaration: node,
                 indices: Vec::new(),
+                access: None,
             }),
             NodeKind::FuncArg { .. } | NodeKind::Array { .. } if self.is_event_container(node) => {
                 Some(EventTarget {
                     declaration: node,
                     indices: Vec::new(),
+                    access: None,
                 })
             }
             NodeKind::Expr(ExprKind::Ref {
@@ -159,6 +175,7 @@ impl<'a> Codegen<'a> {
                 Some(EventTarget {
                     declaration: *target,
                     indices: Vec::new(),
+                    access: None,
                 })
             }
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
@@ -183,9 +200,43 @@ impl<'a> Codegen<'a> {
                 .map(|declaration| EventTarget {
                     declaration,
                     indices: Vec::new(),
+                    access: None,
                 }),
             _ => None,
         }
+    }
+
+    /// Whether `field` is an instance `event` property of a class.
+    pub(in super::super) fn is_class_event_field(&self, field: NodeId) -> bool {
+        self.class_fields
+            .get(&field)
+            .and_then(|(class, index)| self.model.classes.get(*class)?.fields.get(*index))
+            .is_some_and(|layout| layout.event)
+    }
+
+    /// The object storage of the instance `event` property `access` selects:
+    /// a native access symbol naming the handle slot of the receiver's
+    /// field, readable as a chandle and writable by a chandle store.
+    pub(in super::super) fn class_event_slot(
+        &mut self,
+        path: &str,
+        access: NodeId,
+        field: NodeId,
+    ) -> Result<String, String> {
+        let (class, index) = self.class_fields.get(&field).copied().ok_or_else(|| {
+            format!(
+                "event property `{}` in `{path}` has no class layout",
+                self.node(field).name
+            )
+        })?;
+        let receiver = self.class_receiver_for(path, access, field)?;
+        Ok(self.native_access_symbol(
+            receiver,
+            crate::sim::ir::IrNativeAccessKind::ClassField {
+                class,
+                field: index,
+            },
+        ))
     }
 
     /// Whether `node` declares resizable container storage of events (at any
@@ -302,6 +353,16 @@ impl<'a> Codegen<'a> {
         target: &EventTarget,
         scope_path: &str,
     ) -> Result<IrEventRef, String> {
+        if let Some(access) = target.access {
+            if !target.indices.is_empty() {
+                return Err(format!(
+                    "event property `{}` cannot be indexed in `{scope_path}`",
+                    self.node(target.declaration).name
+                ));
+            }
+            let slot = self.class_event_slot(scope_path, access, target.declaration)?;
+            return Ok(IrEventRef::Handle(Box::new(IrChandleExpr::LocalRead(slot))));
+        }
         if let Some(binding) = self.capture_binding(target.declaration) {
             if binding.storage.kind() == StorageKind::Event && target.indices.is_empty() {
                 return Ok(IrEventRef::Captured(Self::capture_local_name(

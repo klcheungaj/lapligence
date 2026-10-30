@@ -1,4 +1,4 @@
-// Decision A19-D45: statement and toggle coverage through the VPI. Without
+// Decision A19-D46: statement and toggle coverage through the VPI. Without
 // a $coverage_* call naming them, a model built for VPI applications has
 // statement and toggle coverage available but not collecting until
 // vpi_control(vpiCoverageStart, ...) for an instance. vpi_get(
@@ -44,13 +44,13 @@ module tb;
   leaf u(go);
   initial begin
     // After every process has reached its first wait (4.4.2.3).
-    #0 $d45(0);
+    #0 $d46(0);
     repeat (3) begin
       #1 go = 1'b1;
       #1 go = 1'b0;
     end
     // After the last port update has reached tb.u.go.
-    #1 $d45(1);
+    #1 $d46(1);
     $finish;
   end
 endmodule

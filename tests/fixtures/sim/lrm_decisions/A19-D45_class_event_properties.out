@@ -1,0 +1,8 @@
+variables: n(612)
+events: e(34) f(34)
+defn events: f(34)
+e type=34 array=0 member=0 automatic=1
+e waiting=1
+put error=0
+f triggered=1
+f triggered=0 e woke at 1

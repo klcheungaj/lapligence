@@ -2,7 +2,7 @@
 // unavailable. FSM state coverage (A17-D12) in a design without FSM
 // pragmas, as here, is such a kind; statement and toggle coverage are
 // available in every model whose $coverage_* calls can name them and in
-// every model built for VPI applications (S46-D13, A19-D45), so they are
+// every model built for VPI applications (S46-D13, A19-D46), so they are
 // never unavailable to a query. For an unavailable kind $coverage_control
 // CHECK and START return SV_COV_NOCOV, STOP and RESET return SV_COV_OK
 // without effect, $coverage_get and $coverage_get_max return 0

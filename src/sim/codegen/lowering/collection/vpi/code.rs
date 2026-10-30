@@ -96,7 +96,7 @@ pub(super) struct FinishedCode {
     pub(super) files: Vec<String>,
     /// The statement entry of each named block's catalog row.
     pub(super) named_blocks: Vec<(usize, u32)>,
-    /// The entry of each statement node (statement coverage, A19-D45).
+    /// The entry of each statement node (statement coverage, A19-D46).
     pub(super) statement_rows: HashMap<NodeId, u32>,
 }
 

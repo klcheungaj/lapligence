@@ -100,7 +100,7 @@ VPI handle encoding and lazy catalog indexing: `llg_vpi.c` header and catalog
 comments; keep model init O(1). Slots made inside a compiletf/calltf (argument handles and
 iterators, element/select arguments) are owned by that invocation and released
 when it returns; the call handle itself persists per call site with its user
-data. sizetf runs once per registration after the first site's compiletf with no
+data (every request shares it; releasing it is a no-op, 37.2.2). sizetf runs once per registration after the first site's compiletf with no
 active call. Retain error records, real catalog width 0 and simulator-owned value
 buffers valid until the next query/shutdown. Puts go through `llg_ba`/`llg_ba_d`
 (no delay), delayed calls (`llg_schedule_delayed_call`: delayed modes, one
@@ -156,7 +156,7 @@ bound after the runtime cleanup so `cbEndOfSimulation` reads final counters
 coverage table of `coverage/fsm.c` (A17-D13); that table's visits stay
 bound after cleanup too. FSM coverage shares the value-watch rows of
 `cbValueChange` (`value_watch_notify`), so a removed callback leaves the
-FSM's watch in place. Statement and toggle coverage (A19-D45): a statement handle
+FSM's watch in place. Statement and toggle coverage (A19-D46): a statement handle
 (`SLOT_CODE`, or the object of a block or loop scope) tallies the
 `coverage/code.c` entities of its code entry and every entry below it
 (`llg_scov_at_code`); a net, variable or bit handle (`SLOT_OBJECT`,
@@ -248,7 +248,10 @@ objects are static slots after the catalog rows, followed by one
 declarations, parameters); a class's items are contiguous, a method's io
 declarations follow it and name it through `owner`. Field records carry the
 rand qualifier, visibility, const flag and the index of the hidden
-`rand_mode` off bit that `vpiIsRandomized` reads. A constraint item names
+`rand_mode` off bit that `vpiIsRandomized` reads. An `event` property has
+shape `LLG_VPI_SHAPE_EVENT`: its storage is the handle slot naming the
+synchronization object, it is listed by `vpiNamedEvent` and not by
+`vpiVariables`, and a put triggers it (decision A19-D45). A constraint item names
 the hidden root code entry of its constraint items (37.30, 37.34) and its
 `constraint_mode` off bit (an object field, or the static signal of a
 static constraint); a constraint obtained from an object is a dynamic

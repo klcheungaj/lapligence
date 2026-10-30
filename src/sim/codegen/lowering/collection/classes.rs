@@ -223,6 +223,36 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    /// An `event` property (SV 8.9, 15.5): a static one is one model event,
+    /// like a module-level declaration; an instance one is a per-object
+    /// handle slot that construction points at a fresh synchronization
+    /// object.
+    fn collect_class_event(
+        &mut self,
+        class_index: usize,
+        child: NodeId,
+        fields: &mut Vec<IrClassField>,
+    ) {
+        if self.db.variable_lifetime(child) == VariableLifetime::Static {
+            let global = format!("E_class_{class_index}_{}", ident(&self.node(child).name));
+            let info = self.new_event_info(global);
+            self.event_globals.insert(child, info);
+            return;
+        }
+        let field_index = fields.len();
+        fields.push(IrClassField {
+            c_name: format!(
+                "f_{class_index}_{field_index}_{}",
+                ident(&self.node(child).name)
+            ),
+            ty: IrClassFieldType::Chandle,
+            container: None,
+            native_value: None,
+            event: true,
+        });
+        self.class_fields.insert(child, (class_index, field_index));
+    }
+
     pub(super) fn collect_classes(&mut self) -> Result<(), String> {
         let classes = self.db.classes().to_vec();
         // Allocate every nominal index before resolving bases.  Generic
@@ -249,6 +279,10 @@ impl<'a> Codegen<'a> {
                 // value per object (SIM-011).
                 if self.native_value_type(child).is_some() {
                     self.collect_class_native(class_index, child, &mut fields)?;
+                    continue;
+                }
+                if ty.kind == "event" {
+                    self.collect_class_event(class_index, child, &mut fields);
                     continue;
                 }
                 let field_ty = self.class_field_type(child, ty)?;
@@ -381,6 +415,7 @@ impl<'a> Codegen<'a> {
                     ty: field_ty,
                     container: None,
                     native_value: None,
+                    event: false,
                 });
                 self.class_fields.insert(child, (class_index, field_index));
             }
@@ -510,6 +545,7 @@ impl<'a> Codegen<'a> {
             ty: IrClassFieldType::Chandle,
             container: None,
             native_value: Some(value),
+            event: false,
         });
         Ok(())
     }
@@ -581,6 +617,7 @@ impl<'a> Codegen<'a> {
                 ty: IrClassFieldType::Chandle,
                 container: Some(info.ir),
                 native_value: None,
+                event: false,
             });
         }
         self.container_globals.insert(child, info);

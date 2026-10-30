@@ -1038,8 +1038,9 @@ raised to 20,000 and `LLG_SEQUENCE_THREAD_LIMIT` unset.
 ### Symptom
 
 Class objects are reclaimed when unreachable, but mailboxes, semaphores,
-named events and pinned process handle records stay allocated until the
-model closes, even when no handle names them. A process that allocates many
+named events (including the synchronization object of every `event` class
+property, created with its object) and pinned process handle records stay
+allocated until the model closes, even when no handle names them. A process that allocates many
 objects without suspending (one long zero-time loop) is not interrupted:
 collection waits for its turn to end, so its live peak is everything it
 allocated in that turn.
@@ -2206,8 +2207,10 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - dynamic objects (VPI-O4) other than static string, chandle and class
   variables and dynamic, queue and associative arrays (of instances,
   packages, `$unit`, named blocks and tasks and functions): automatic ones,
-  fixed-size arrays of class handles, static class properties, events and
-  virtual interfaces (variables and class properties);
+  fixed-size arrays of class handles, static class properties (static
+  event properties included), events other than instance event properties
+  of class objects (decision A19-D45), and virtual interfaces (variables and
+  class properties);
   mailbox and semaphore objects (`vpiClassType`, `vpiMessages`,
   `vpiWaitingProcesses`; their typespecs are NULL); `foreach` constraints
   (no 2009 object, decision A19-D37); `vpiInterfaceDecl` and `vpiTypedef`
@@ -2435,7 +2438,7 @@ services of SIM-046 have their own limits below.
 services for covergroups and the 40.3.2 coverage API, with its VPI
 counterpart, for assertion coverage; ADV-017 adds FSM state coverage from
 the 40.4 pragmas, and statement and toggle coverage follow S46-D13,
-S46-D14 and A19-D45.
+S46-D14 and A19-D46.
 
 ### Symptom
 

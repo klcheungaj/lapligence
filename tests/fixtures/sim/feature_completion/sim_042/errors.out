@@ -39,8 +39,14 @@ release catalog object: ok level=0 again=0 code=-
 catalog object stays valid: ok level=0 again=0 code=-
 kept argument type=39 value=91
 put to expression argument: refused level=3 again=3 code=LLG_VPI_VALUE
+second call request: ok level=0 again=0 code=-
+release one call copy: ok level=0 again=0 code=-
+other call copy stays valid: ok level=0 again=0 code=-
+arguments of the other copy: ok level=0 again=0 code=-
+release a partly scanned iterator: ok level=0 again=0 code=-
 argument after its call: refused level=3 again=3 code=LLG_VPI_HANDLE
 iterator after its call: refused level=3 again=3 code=LLG_VPI_HANDLE
 call handle persists: ok level=0 again=0 code=-
+call line after a released copy: ok level=0 again=0 code=-
 arguments of an inactive call: refused level=3 again=3 code=LLG_VPI_RELATION
 stress live=20000 stale=40000

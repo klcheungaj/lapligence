@@ -81,7 +81,7 @@ hash, the visits and the transitions. `llg_vpi.c` reads the table through
 `llg_fcov_count`/`llg_fcov_at`/`llg_fcov_covered_in`.
 
 `code.c` keeps statement and toggle coverage (40.2.2, 40.3, 40.5.3;
-S46-D13, S46-D14, A19-D45). Codegen emits the tables only when a
+S46-D13, S46-D14, A19-D46). Codegen emits the tables only when a
 `$coverage_*` call can name the kind (it then starts at time 0) or the VPI
 catalog exists (stopped until START), so other models are unchanged.
 Statements: each entity is a static `uint64_t` the generated code

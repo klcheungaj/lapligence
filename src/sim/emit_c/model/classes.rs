@@ -283,6 +283,10 @@ static void llg_class_handle_store(void* handle, uint32_t expected, size_t index
                 IrClassFieldType::Packed { width, signed, two_state } => out.push_str(&format!("    object->fields[{field_index}].kind = 0; object->fields[{field_index}].value.packed = {};\n", packed_default(width, signed, two_state))),
                 IrClassFieldType::Real { .. } => out.push_str(&format!("    object->fields[{field_index}].kind = 1;\n")),
                 IrClassFieldType::String => out.push_str(&format!("    object->fields[{field_index}].kind = 2;\n")),
+                // An event property starts as a fresh synchronization object
+                // (SV 15.5); the scheduler owns it, so copies of the handle
+                // outlive the object.
+                IrClassFieldType::Chandle if field.event => out.push_str(&format!("    object->fields[{field_index}].kind = 3; object->fields[{field_index}].value.handle = llg_event_object_new();\n")),
                 IrClassFieldType::Chandle => out.push_str(&format!("    object->fields[{field_index}].kind = 3;\n")),
             }
         }
@@ -312,8 +316,9 @@ static void llg_class_handle_store(void* handle, uint32_t expected, size_t index
 /// constructors or initializers and copy each field from `source`, whose
 /// object is of this class or a derived one (derived layouts start with the
 /// base fields). Packed, real and string values and nested containers and
-/// records are copied; handle fields copy the handle, not the object. A null
-/// source has already been reported by `llg_class_require`.
+/// records are copied; handle fields (event properties included) copy the
+/// handle, not the object. A null source has already been reported by
+/// `llg_class_require`.
 fn render_class_copy(
     model: &IrModel,
     index: usize,

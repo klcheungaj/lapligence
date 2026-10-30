@@ -434,7 +434,7 @@ L66756-66771.
   vpiCoveredCount 2; `im` (1, 1, 0, 0, 0, 0), covered; `d` (1, 0, 0, 1, 0,
   0). `vpi_get(vpiAssertCoverage, ...)`: u1 0, u2 1 (`p` succeeded,
   S46-D10), tb 1 (`im`). Toggle coverage, not available in this model, is
-  0 with no error (A19-D45). vpiCoverageSave and vpiCoverageMerge of the same
+  0 with no error (A19-D46). vpiCoverageSave and vpiCoverageMerge of the same
   file return 1, after which `u2.p` reads (6, 4, 0, 2, 0, 0).
 
 ## Negative cases

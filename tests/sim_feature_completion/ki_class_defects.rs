@@ -1,8 +1,8 @@
 //! class-defects: class-method forms that gate-fixes-2 found rejected at
 //! compile time. Named blocks inside class methods (declarations, `disable`
-//! from inside the method and from another process, `%m`), and class
+//! from inside the method and from another process, `%m`), class
 //! parameters read in method bodies, each specialization with its own
-//! values. Every expected line is derived in the fixture readme from IEEE
+//! values, and `event` class properties. Every expected line is derived in the fixture readme from IEEE
 //! 1800-2009. Positive cases run in both optimizer modes on the legacy,
 //! compact/portable and compact/GMP value backends.
 use super::sim_cli;
@@ -77,5 +77,19 @@ fn class_type_parameter_value_is_rejected() {
         SUITE,
         "neg_type_parameter_value",
         "neg_type_parameter_value.sv:4:12 'T' cannot be used in an expression",
+    );
+}
+
+/// Item 3: instance and static `event` class properties: triggers, waits,
+/// `.triggered`, merging by assignment, null, comparison, shallow copy,
+/// inherited events and event formals.
+#[test]
+fn class_event_properties() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "class_events",
+        include_str!("../fixtures/sim/feature_completion/ki_class_defects/class_events.out"),
+        &[],
+        &[],
     );
 }

@@ -318,6 +318,7 @@ enum {
     LLG_VPI_SHAPE_CHANDLE = 4,   /* void*: a foreign pointer */
     LLG_VPI_SHAPE_CONTAINER = 5, /* dynamic array, queue or associative array */
     LLG_VPI_SHAPE_OTHER = 6,     /* listed without a value */
+    LLG_VPI_SHAPE_EVENT = 7,     /* void*: an event property's synchronization object */
 };
 /* Associative array index kinds. */
 enum {

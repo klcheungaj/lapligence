@@ -77,6 +77,9 @@ pub enum IrVpiShape {
         /// Index of the element shape.
         element: usize,
     },
+    /// An `event` class property (37.25): a named event object whose
+    /// storage is the handle slot naming its synchronization object.
+    Event,
     /// Events, records, nested fixed arrays: listed, without a value.
     Other,
 }
@@ -92,6 +95,7 @@ impl IrVpiShape {
             Self::Class { .. } => "vpiClassVar",
             Self::Chandle => "vpiChandleVar",
             Self::Container { .. } => "vpiArrayVar",
+            Self::Event => "vpiNamedEvent",
             Self::Other => "vpiUndefined",
         }
     }
@@ -105,6 +109,7 @@ impl IrVpiShape {
             Self::Class { .. } => "LLG_VPI_SHAPE_CLASS",
             Self::Chandle => "LLG_VPI_SHAPE_CHANDLE",
             Self::Container { .. } => "LLG_VPI_SHAPE_CONTAINER",
+            Self::Event => "LLG_VPI_SHAPE_EVENT",
             Self::Other => "LLG_VPI_SHAPE_OTHER",
         }
     }

@@ -1010,9 +1010,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (S14-D6)
   ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md)).
   Mixed event lists and event formals of tasks, functions (including
-  function-expression calls) and class methods execute. Event handles other
-  than declared named events in process-evaluated lists and output/ref event
-  formals of function-expression calls reject. V §9.7.3; SV §15.5
+  function-expression calls) and class methods execute. Instance and static
+  `event` class properties execute: each object gets its own synchronization
+  object at construction and a shallow copy shares the original's
+  ([class-defects](../tests/fixtures/sim/feature_completion/ki_class_defects/readme.md)).
+  Event handles other than declared named events in process-evaluated lists
+  and output/ref event formals (class event properties included) and output/ref
+  event formals of function-expression calls reject. V §9.7.3; SV §15.5
   **[1995/SV-2005]**.
 - 🟨 **Cycle delays** — Procedural `##N` repeats the resolved default clocking
   event, including irregular periods; `##0` continues in a step where the
@@ -2842,7 +2846,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpi_get(vpiFsmStateCoverage, instance)` (A17-D11 to A17-D13). Malformed
   or unresolved pragmas are errors. A model without FSM pragmas, or without
   a `$coverage_*` call or VPI catalog, is generated unchanged and pays
-  nothing. **Statement and toggle coverage** (S46-D13, S46-D14, A19-D45):
+  nothing. **Statement and toggle coverage** (S46-D13, S46-D14, A19-D46):
   every statement of an instance's procedural code and every bit of its
   packed nets and variables (generate scopes and ports included) are items,
   with `SV_COV_STATEMENT` and `SV_COV_TOGGLE` in every `$coverage_*`

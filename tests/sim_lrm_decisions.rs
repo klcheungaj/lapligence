@@ -2465,11 +2465,20 @@ fn a19_d44_frames_and_threads() {
 }
 
 #[test]
-fn a19_d45_statement_toggle_objects() {
+fn a19_d45_class_event_properties() {
     run_vpi_decision(
-        "A19-D45_statement_toggle_objects",
-        &["task $d45(input integer phase)"],
-        include_str!("fixtures/sim/lrm_decisions/A19-D45_statement_toggle_objects.out"),
+        "A19-D45_class_event_properties",
+        &["task $d45()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D45_class_event_properties.out"),
+    );
+}
+
+#[test]
+fn a19_d46_statement_toggle_objects() {
+    run_vpi_decision(
+        "A19-D46_statement_toggle_objects",
+        &["task $d46(input integer phase)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D46_statement_toggle_objects.out"),
     );
 }
 

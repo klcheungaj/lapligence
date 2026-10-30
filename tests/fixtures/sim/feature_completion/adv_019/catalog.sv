@@ -83,6 +83,8 @@ module tb;
   typedef pk_t [1:0] pka_t;
   class Packet;
     int id;
+    // An event property: a named event of each object (37.25, 37.29).
+    event done;
     function new(int i);
       id = i;
     endfunction
