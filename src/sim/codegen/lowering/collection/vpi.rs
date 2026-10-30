@@ -1743,7 +1743,7 @@ impl Codegen<'_> {
         let mut assertions = Vec::new();
         // Each assertion item's statement and the catalog row of its
         // instance.
-        let items: Vec<(Option<NodeId>, Option<String>)> = model
+        let items: Vec<(Option<NodeId>, Option<String>, String)> = model
             .assertion_coverage
             .as_ref()
             .map(|coverage| {
@@ -1759,11 +1759,18 @@ impl Codegen<'_> {
                             .instance
                             .and_then(|index| coverage.instances.get(index as usize))
                             .map(|instance| instance.path.clone());
-                        (statement, scope)
+                        (statement, scope, item.name.clone())
                     })
                     .collect()
             })
             .unwrap_or_default();
+        let scope_rows: HashSet<usize> = model
+            .vpi_objects
+            .iter()
+            .enumerate()
+            .filter(|(_, object)| object.kind.is_scope())
+            .map(|(row, _)| row)
+            .collect();
         let (code, files, named_blocks) = {
             let mut tables = code::CodeTables::new(self, model, typespecs);
             // Declarations first, so the instances of assertions link to
@@ -1784,7 +1791,7 @@ impl Codegen<'_> {
                 };
                 tables.declaration_root(node, Some(scope));
             }
-            for (index, (statement, scope)) in items.iter().enumerate() {
+            for (index, (statement, scope, label)) in items.iter().enumerate() {
                 let Some(statement) = *statement else {
                     continue;
                 };
@@ -1796,7 +1803,33 @@ impl Codegen<'_> {
                 ) {
                     continue;
                 }
-                let scope = scope.as_deref().and_then(|scope| tables.row(scope));
+                // The scope that declares the statement (a generate scope or
+                // named block included), which the vpiConcurrentAssertions
+                // and generate-scope vpiAssertion iterations select by
+                // (37.12, 37.80); the owning instance when none is a row.
+                let mut declaring = None;
+                let mut current = self.node(statement).parent;
+                // A label is the assertion's name, not a scope of its own: the
+                // frontend's named block around a labeled statement is skipped.
+                if let Some(parent) = current.filter(|parent| {
+                    matches!(self.kind(*parent), NodeKind::Stmt(StmtKind::Begin))
+                        && self.node(*parent).name == *label
+                        && self.node(*parent).children.first() == Some(&statement)
+                }) {
+                    current = self.node(parent).parent;
+                }
+                while let Some(node) = current {
+                    if let Some(row) = tables
+                        .row(&self.vpi_full_name(node))
+                        .filter(|row| scope_rows.contains(row))
+                    {
+                        declaring = Some(row);
+                        break;
+                    }
+                    current = self.node(node).parent;
+                }
+                let scope =
+                    declaring.or_else(|| scope.as_deref().and_then(|scope| tables.row(scope)));
                 assertions.push((index, tables.assertion_root(statement, scope)));
             }
             for (key, scope, owner) in owners {

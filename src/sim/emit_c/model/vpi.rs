@@ -694,8 +694,13 @@ fn render_vpi_code(
     let mut text_index = HashMap::<&str, usize>::new();
     let mut ranges = Vec::<(i64, i64)>::new();
     let mut range_index = HashMap::<(i64, i64), usize>::new();
+    let mut spans = Vec::<(u32, u32, u32)>::new();
     let mut rows = String::with_capacity(codes.len() * 72);
     for code in codes {
+        let span = code.span.map_or(0, |span| {
+            spans.push(span);
+            spans.len()
+        });
         let data = match (&code.text, code.range) {
             (Some(text), _) => {
                 let next = texts.len();
@@ -734,7 +739,7 @@ fn render_vpi_code(
         let scope = row(code.scope);
         let _ = writeln!(
             rows,
-            "    {{ {}, {}, {}, {}, {flags}, {}u, {}u, {}u, {object}, {}u, {}u, {}u, {data}u, {}u }},",
+            "    {{ {}, {}, {}, {}, {flags}, {}u, {}u, {}u, {object}, {}u, {}u, {}u, {data}u, {}u, {span}u }},",
             code.type_code,
             code.subtype,
             code.role,
@@ -790,9 +795,19 @@ fn render_vpi_code(
         "int64_t",
         out,
     );
+    let span_count = spans.len();
+    let spans = list(
+        "llg_vpi_code_spans",
+        spans
+            .into_iter()
+            .map(|(column, end_line, end_column)| format!("{column}u, {end_line}u, {end_column}u"))
+            .collect(),
+        "uint32_t",
+        out,
+    );
     out.push_str(&format!(
         "static const llg_vpi_code_tables_t llg_vpi_code_value = {{ llg_vpi_code_rows, {}u, \
-{texts}, {text_count}u, {files}, {file_count}u, {ranges}, {range_count}u }};\n\
+{texts}, {text_count}u, {files}, {file_count}u, {ranges}, {range_count}u, {spans}, {span_count}u }};\n\
 static const llg_vpi_code_tables_t* const llg_vpi_code_tables = &llg_vpi_code_value;\n",
         codes.len()
     ));
@@ -1490,27 +1505,29 @@ mod tests {
         render_vpi_metadata(&model, &mut out);
         assert!(
             out.contains(
-                "{ vpiOperation, vpiAddOp, 0, 0, 0u, 32u, 1u, 4u, -1, 1u, 1u, 2u, 0u, 0u },"
+                "{ vpiOperation, vpiAddOp, 0, 0, 0u, 32u, 1u, 4u, -1, 1u, 1u, 2u, 0u, 0u, 0u },"
             ),
             "{out}"
         );
         assert!(
             out.contains(
-                "{ 0, 0, vpiOperand, 0, LLG_VPI_CODE_ALIAS, 0u, 0u, 0u, 1, 0u, 0u, 0u, 1u, 0u },"
+                "{ 0, 0, vpiOperand, 0, LLG_VPI_CODE_ALIAS, 0u, 0u, 0u, 1, 0u, 0u, 0u, 1u, 0u, 0u },"
             ),
             "{out}"
         );
         assert!(
-            out.contains("{ vpiConstant, vpiDecConst, vpiOperand, 0, LLG_VPI_CODE_SIGNED, 32u, 0u, 0u, -1, 0u, 0u, 0u, 2u, 0u },"),
-            "{out}"
-        );
-        assert!(
-            out.contains("{ 0, 0, 0, 0, LLG_VPI_CODE_ALIAS, 0u, 0u, 0u, 1, 0u, 0u, 0u, 1u, 0u },"),
+            out.contains("{ vpiConstant, vpiDecConst, vpiOperand, 0, LLG_VPI_CODE_SIGNED, 32u, 0u, 0u, -1, 0u, 0u, 0u, 2u, 0u, 0u },"),
             "{out}"
         );
         assert!(
             out.contains(
-                "{ llg_vpi_code_rows, 4u, llg_vpi_code_texts, 2u, llg_vpi_code_files, 1u, NULL, 0u }"
+                "{ 0, 0, 0, 0, LLG_VPI_CODE_ALIAS, 0u, 0u, 0u, 1, 0u, 0u, 0u, 1u, 0u, 0u },"
+            ),
+            "{out}"
+        );
+        assert!(
+            out.contains(
+                "{ llg_vpi_code_rows, 4u, llg_vpi_code_texts, 2u, llg_vpi_code_files, 1u, NULL, 0u, NULL, 0u }"
             ),
             "{out}"
         );

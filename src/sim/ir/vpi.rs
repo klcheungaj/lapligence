@@ -426,8 +426,13 @@ pub struct IrVpiCode {
     pub(in crate::sim) text: Option<String>,
     /// Declared `(left, right)` of the dimension a select indexes.
     pub(in crate::sim) range: Option<(i64, i64)>,
-    /// Index into [`super::IrModel::vpi_typespecs`] of a cast's type.
+    /// Index into [`super::IrModel::vpi_typespecs`] of a cast's type, of
+    /// the value of a select or call, or of a formal's declared type.
     pub(in crate::sim) typespec: Option<usize>,
+    /// The `(column, end line, end column)` of an assertion object (37.45
+    /// location): where its source starts on `line` and where it ends, the
+    /// end column being that of its last character.
+    pub(in crate::sim) span: Option<(u32, u32, u32)>,
 }
 
 impl IrVpiCode {
@@ -491,6 +496,7 @@ impl IrVpiCode {
             text: None,
             range: None,
             typespec: None,
+            span: None,
         }
     }
 }

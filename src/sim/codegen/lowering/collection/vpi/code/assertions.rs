@@ -299,6 +299,7 @@ impl<'c, 'a> CodeTables<'c, 'a> {
             _ => return self.opaque("vpiOperation", id),
         };
         let mut code = self.located(type_code, id);
+        code.span = self.instance_span(id);
         code.text = Some(cg.node(declaration).name.clone());
         let formals = &cg.node(declaration).children;
         let mut actuals: Vec<_> = bindings.iter().collect();
@@ -310,7 +311,79 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         if let Some(entry) = self.declarations.get(&declaration) {
             children.push((relation, Item::Link(*entry)));
         }
+        // 37.52: a property instance has the disable condition its
+        // declaration writes under the clocking event (decision A19-D31).
+        if kind == "Property" {
+            if let NodeKind::Expr(ExprKind::AssertionInstance { body, .. }) = cg.kind(id) {
+                if let Some(condition) = self.statement_disable(*body) {
+                    children.push(("vpiDisableCondition", Item::Expr(condition)));
+                }
+            }
+        }
         (code, children)
+    }
+
+    /// The 37.45 location of instance `id`: the frontend spans only its
+    /// name, so the end is the parenthesis that closes its argument list in
+    /// the source, when there is one.
+    fn instance_span(&mut self, id: NodeId) -> Option<(u32, u32, u32)> {
+        let (column, end_line, last) = self.span(id)?;
+        let end = self
+            .argument_list_end(id, end_line, last + 1)
+            .unwrap_or((end_line, last));
+        Some((column, end.0, end.1))
+    }
+
+    /// The `(line, column)` of the `)` closing the argument list that
+    /// follows `(line, column)` (1-based, the column of the character after
+    /// a name) in the source of `id`, skipping white space, nested
+    /// parentheses and string literals; `None` without an argument list.
+    fn argument_list_end(&mut self, id: NodeId, line: u32, column: u32) -> Option<(u32, u32)> {
+        let file = self.cg.node(id).file()?;
+        let source = self.cg.db.source_text(file)?;
+        let starts = self.line_starts.entry(file.to_owned()).or_insert_with(|| {
+            std::iter::once(0)
+                .chain(source.match_indices('\n').map(|(at, _)| at + 1))
+                .collect()
+        });
+        let start = *starts.get(usize::try_from(line).ok()?.checked_sub(1)?)?
+            + usize::try_from(column).ok()?.checked_sub(1)?;
+        let bytes = source.as_bytes();
+        let mut at = start;
+        while bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+            at += 1;
+        }
+        if bytes.get(at) != Some(&b'(') {
+            return None;
+        }
+        let (mut depth, mut quoted) = (0u32, false);
+        while let Some(byte) = bytes.get(at) {
+            match (quoted, byte) {
+                (true, b'\\') => at += 1,
+                (true, b'"') | (false, b'"') => quoted = !quoted,
+                (false, b'(') => depth += 1,
+                (false, b')') => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let row = starts.partition_point(|line_start| *line_start <= at);
+                        let column = at - starts[row - 1] + 1;
+                        return Some((u32::try_from(row).ok()?, u32::try_from(column).ok()?));
+                    }
+                }
+                _ => {}
+            }
+            at += 1;
+        }
+        None
+    }
+
+    /// The 37.45 location of `id` after its start line: its start column
+    /// and where it ends. The frontend's end column is the one after the
+    /// last character; 37.45 reports the last character's (A17-D4).
+    pub(super) fn span(&self, id: NodeId) -> Option<(u32, u32, u32)> {
+        let node = self.cg.node(id);
+        (node.line != 0 && node.end_line != 0)
+            .then(|| (node.col, node.end_line, node.end_col.saturating_sub(1)))
     }
 
     /// Add the sequence or property declaration `id` declared in catalog

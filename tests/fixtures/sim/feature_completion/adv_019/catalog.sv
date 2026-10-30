@@ -161,8 +161,10 @@ module tb;
   default clocking cb;
   global clocking gcb @(posedge clk); endclocking
 
+  // A generate scope iterates its assertions (37.80).
   for (genvar gi = 0; gi < 2; gi++) begin : gen
     logic [1:0] gl;
+    g_ok: cover property (@(posedge clk) r0 != 4'hf);
   end
 
   sequence s_ok;
@@ -177,6 +179,12 @@ module tb;
   endproperty
   a_ok: assert property (p_ok);
   c_ok: cover property (@(posedge clk) r0 == 4'h4);
+  // A property with formals and a disable condition of its own (37.47,
+  // 37.52).
+  property p_fd(x, y = 1'b1);
+    @(posedge clk) disable iff (rst) x |-> y;
+  endproperty
+  f_ok: assert property (p_fd(sc));
   m_ok: assume property (@(posedge clk) r0 != 4'he);
 
   function automatic int inc(input int v);

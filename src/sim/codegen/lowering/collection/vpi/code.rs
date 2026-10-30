@@ -98,6 +98,8 @@ pub(super) struct CodeTables<'c, 'a> {
     pending_block: Option<usize>,
     /// The root entry of each sequence and property declaration.
     declarations: HashMap<NodeId, u32>,
+    /// The byte offset of each line of a source file, by file.
+    line_starts: HashMap<String, Vec<usize>>,
 }
 
 impl<'c, 'a> CodeTables<'c, 'a> {
@@ -127,6 +129,7 @@ impl<'c, 'a> CodeTables<'c, 'a> {
             named_blocks: Vec::new(),
             pending_block: None,
             declarations: HashMap::new(),
+            line_starts: HashMap::new(),
         }
     }
 
@@ -1368,11 +1371,13 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                 };
                 let mut code = self.located(type_code, id);
                 code.flags |= IrVpiCode::OPAQUE;
+                code.span = self.span(id);
                 (code, Vec::new())
             }
             StmtKind::ConcurrentAssertion { .. } => {
                 let mut code = self.located("vpiAssert", id);
                 code.flags |= IrVpiCode::OPAQUE;
+                code.span = self.span(id);
                 (code, Vec::new())
             }
             StmtKind::PatternCase { .. } | StmtKind::RandCase { .. } => {

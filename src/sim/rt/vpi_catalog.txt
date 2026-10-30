@@ -33,6 +33,7 @@
 test a17d13 sim_lrm_decisions::a17_d13_fsm_objects
 test a19d28 sim_lrm_decisions::a19_d28_index_and_packed_relations
 test a19d30 sim_lrm_decisions::a19_d30_clocking_blocks
+test a19d31 sim_lrm_decisions::a19_d31_assertion_details
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
@@ -353,7 +354,7 @@ node scope 37.12 members=instance,task_func,named_begin,begin,named_fork,fork,cl
   str vpiFullName implemented walk
   iterate vpiPropertyDecl implemented walk
   iterate vpiSequenceDecl implemented walk
-  iterate vpiConcurrentAssertions unsupported the vpiConcurrentAssertions iteration is not implemented (vpiAssertion is)
+  iterate vpiConcurrentAssertions implemented walk
   iterate vpiNamedEvent implemented walk
   iterate vpiNamedEventArray unsupported named event arrays are not objects
   iterate vpiVariables implemented walk
@@ -1095,6 +1096,7 @@ node class_defn 37.27 type=vpiClassDefn
   handle vpiModule unsupported this object does not report its module
   str vpiFullName unsupported this object has no full name in llg
   iterate vpiPropertyDecl unsupported class scopes are not objects
+  iterate vpiConcurrentAssertions unsupported class scopes are not objects
   iterate vpiSequenceDecl unsupported class scopes are not objects
   iterate vpiReg unsupported class scopes are not objects
   iterate vpiRegArray unsupported class scopes are not objects
@@ -1125,6 +1127,7 @@ node class_typespec 37.28 type=vpiClassTypespec
   handle vpiModule unsupported this object does not report its module
   str vpiFullName unsupported this object has no full name in llg
   iterate vpiPropertyDecl unsupported class scopes are not objects
+  iterate vpiConcurrentAssertions unsupported class scopes are not objects
   iterate vpiSequenceDecl unsupported class scopes are not objects
   iterate vpiReg unsupported class scopes are not objects
   iterate vpiRegArray unsupported class scopes are not objects
@@ -1149,6 +1152,7 @@ node class_obj 37.29 type=vpiClassObj
   str vpiName unsupported this object has no name in llg
   str vpiFullName unsupported this object has no full name in llg
   iterate vpiPropertyDecl unsupported class scopes are not objects
+  iterate vpiConcurrentAssertions unsupported class scopes are not objects
   iterate vpiSequenceDecl unsupported class scopes are not objects
   iterate vpiReg unsupported class scopes are not objects
   iterate vpiRegArray unsupported class scopes are not objects
@@ -1556,7 +1560,7 @@ node assertion 37.45 members=sequence_inst,assert,assume,cover,property_inst,imm
   get vpiEndLine implemented walk
   get vpiEndColumn implemented walk
   str vpiName implemented walk
-  handle vpiInstance unsupported this object does not report its instance
+  handle vpiInstance implemented walk
   handle vpiClockingBlock error a19d30 the text does not say which clocking block an assertion has; industry-standard behaviour refuses the relation
   str vpiDefName implemented walk
   get vpiCovered implemented walk
@@ -1578,18 +1582,15 @@ node concurrent_assertion 37.46 members=cover,assert,assume,restrict
 
 node cover 37.46 type=vpiCover
   get vpiIsCoverSequence implemented walk
-  handle vpiInstance unsupported this object does not report its instance
   get vpiIsDeferred extension walk 0 on a concurrent assertion (37.51 gives the property to immediate assertions)
   handle vpiDisableCondition extension walk the relations of the assertion statement (IEEE 1800-2005)
 
 node assert 37.46 type=vpiAssert
   handle vpiElseStmt implemented walk
-  handle vpiInstance unsupported this object does not report its instance
   get vpiIsDeferred extension walk 0 on a concurrent assertion (37.51 gives the property to immediate assertions)
   handle vpiDisableCondition extension walk the relations of the assertion statement (IEEE 1800-2005)
 
 node assume 37.46 type=vpiAssume
-  handle vpiInstance unsupported this object does not report its instance
   get vpiIsDeferred extension walk 0 on a concurrent assertion (37.51 gives the property to immediate assertions)
   handle vpiDisableCondition extension walk the relations of the assertion statement (IEEE 1800-2005)
   handle vpiElseStmt extension walk the relations of the assertion statement (IEEE 1800-2005)
@@ -1599,70 +1600,66 @@ node restrict 37.46 type=vpiRestrict default=n/a restrict property is not simula
 node sequence_inst 37.45 type=vpiSequenceInst
   iterate vpiArgument implemented walk
   handle vpiSequenceDecl implemented walk
-  handle vpiInstance unsupported this object does not report its instance
-  handle vpiModule unsupported this object does not report its module
-  get vpiStartLine unsupported the source span of a property instance is not recorded
-  get vpiColumn unsupported the source span of a property instance is not recorded
-  get vpiEndLine unsupported the source span of a property instance is not recorded
-  get vpiEndColumn unsupported the source span of a property instance is not recorded
-  str vpiDefName unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiCoverMax unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiCoveredCount unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiAssertAttemptCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiAssertSuccessCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiAssertFailureCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiAssertVacuousSuccessCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiAssertDisableCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiAssertKillCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  handle vpiModule implemented walk
+  get vpiStartLine implemented walk
+  get vpiColumn implemented walk
+  get vpiEndLine implemented walk
+  get vpiEndColumn implemented walk
+  str vpiDefName error a19d31 the text names the definition of an assertion statement (39.3.2) only; industry-standard behaviour refuses vpiDefName on a sequence or property instance
+  get vpiCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiCoverMax error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiCoveredCount error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiAssertAttemptCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiAssertSuccessCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiAssertFailureCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiAssertVacuousSuccessCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiAssertDisableCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiAssertKillCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node property_inst 37.45 type=vpiPropertyInst
   iterate vpiArgument implemented walk
   handle vpiPropertyDecl implemented walk
-  handle vpiDisableCondition unsupported the disable condition of a property instance is not exposed
-  handle vpiInstance unsupported this object does not report its instance
-  handle vpiModule unsupported this object does not report its module
-  get vpiStartLine unsupported the source span of a property instance is not recorded
-  get vpiColumn unsupported the source span of a property instance is not recorded
-  get vpiEndLine unsupported the source span of a property instance is not recorded
-  get vpiEndColumn unsupported the source span of a property instance is not recorded
-  str vpiDefName unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiCoverMax unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiCoveredCount unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiAssertAttemptCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiAssertSuccessCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiAssertFailureCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiAssertVacuousSuccessCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiAssertDisableCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
-  get vpiAssertKillCovered unsupported the definition name and coverage are reported by the assertion statement, not by its sequence or property instance
+  handle vpiDisableCondition implemented walk
+  handle vpiModule implemented walk
+  get vpiStartLine implemented walk
+  get vpiColumn implemented walk
+  get vpiEndLine implemented walk
+  get vpiEndColumn implemented walk
+  str vpiDefName error a19d31 the text names the definition of an assertion statement (39.3.2) only; industry-standard behaviour refuses vpiDefName on a sequence or property instance
+  get vpiCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiCoverMax error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiCoveredCount error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiAssertAttemptCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiAssertSuccessCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiAssertFailureCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiAssertVacuousSuccessCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiAssertDisableCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
+  get vpiAssertKillCovered error a19d31 the text gives coverage counters to assertion statements; a sequence or property instance inside one has no attempts of its own (40.5.3 is silent) and industry-standard behaviour refuses them
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node immediate_assert 37.45 type=vpiImmediateAssert
-  handle vpiInstance unsupported this object does not report its instance
   str vpiFullName extension walk the full name of a labeled immediate assertion (37.46 gives vpiFullName to concurrent assertions)
 
 node immediate_assume 37.45 type=vpiImmediateAssume
-  handle vpiInstance unsupported this object does not report its instance
   str vpiFullName extension walk the full name of a labeled immediate assertion (37.46 gives vpiFullName to concurrent assertions)
 
 node immediate_cover 37.45 type=vpiImmediateCover
-  handle vpiInstance unsupported this object does not report its instance
   str vpiFullName extension walk the full name of a labeled immediate assertion (37.46 gives vpiFullName to concurrent assertions)
 
 node property_decl 37.47 type=vpiPropertyDecl
   str vpiName implemented walk
   str vpiFullName implemented walk
-  iterate vpiVariables unsupported the variables of sequence and property declarations are not objects
-  handle vpiPropertySpec unsupported property declarations do not expose their specification
+  iterate vpiVariables unsupported the owned database keeps no declaration body: the frontend binds a sequence or property body, its local variables and its formal defaults per instance, and each instance holds its expanded body and actual arguments
+  handle vpiPropertySpec unsupported the owned database keeps no declaration body: the frontend binds a sequence or property body, its local variables and its formal defaults per instance, and each instance holds its expanded body and actual arguments
   iterate vpiPropFormalDecl implemented walk
 
-node prop_formal_decl 37.47 type=vpiPropFormalDecl default=unsupported formal arguments of properties are not reached by the walk
-  str vpiName
-  get vpiDirection
-  handle vpiExpr
-  handle vpiTypespec
+node prop_formal_decl 37.47 type=vpiPropFormalDecl
+  str vpiName implemented walk
+  get vpiDirection implemented walk
+  handle vpiExpr unsupported the owned database keeps no declaration body: the frontend binds a sequence or property body, its local variables and its formal defaults per instance, and each instance holds its expanded body and actual arguments
+  handle vpiTypespec implemented walk
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node property_spec 37.48 type=vpiPropertySpec
   handle vpiClockingEvent implemented walk
@@ -1685,14 +1682,14 @@ node case_property_item 37.48 type=vpiCasePropertyItem default=unsupported case 
 node sequence_decl 37.49 type=vpiSequenceDecl
   str vpiName implemented walk
   str vpiFullName implemented walk
-  iterate vpiVariables unsupported the variables of sequence and property declarations are not objects
-  handle vpiExpr unsupported initialization and default expressions are not exposed
+  iterate vpiVariables unsupported the owned database keeps no declaration body: the frontend binds a sequence or property body, its local variables and its formal defaults per instance, and each instance holds its expanded body and actual arguments
+  handle vpiExpr unsupported the owned database keeps no declaration body: the frontend binds a sequence or property body, its local variables and its formal defaults per instance, and each instance holds its expanded body and actual arguments
   iterate vpiSeqFormalDecl implemented walk
 
 node seq_formal_decl 37.49 type=vpiSeqFormalDecl
   str vpiName implemented walk
   get vpiDirection implemented walk
-  handle vpiExpr unsupported initialization and default expressions are not exposed
+  handle vpiExpr unsupported the owned database keeps no declaration body: the frontend binds a sequence or property body, its local variables and its formal defaults per instance, and each instance holds its expanded body and actual arguments
   handle vpiTypespec implemented walk
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
@@ -2033,7 +2030,7 @@ node gen_scope 37.80 type=vpiGenScope
   iterate vpiGenScopeArray unsupported generate scope arrays are not objects
   iterate vpiProgram implemented walk
   iterate vpiProgramArray implemented walk
-  iterate vpiAssertion unsupported assertions in generate scopes are not iterated
+  iterate vpiAssertion implemented walk
   iterate vpiInterface implemented walk
   iterate vpiInterfaceArray implemented walk
   iterate vpiAliasStmt unsupported alias statements are not objects

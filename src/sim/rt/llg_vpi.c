@@ -3384,14 +3384,82 @@ static vpiHandle iterate_declarations(int type, vpiHandle reference) {
     return make_list_iterator(type, items, count);
 }
 
-/* vpi_iterate(vpiAssertion, NULL | instance): every item, or the items of
- * one instance (39.3.1). */
+/* The catalog row + 1 of the scope that declares item `item` (a module,
+ * generate scope or named block: the scope of its statement's entry), or 0
+ * in a model without expression objects. */
+static uint32_t item_scope(const llg_acov_item_t* item) {
+    const llg_vpi_code_t* node = item->code ? code_at(item->code - 1u) : NULL;
+    return node ? node->scope : 0u;
+}
+
+/* The items declared in scope row `row`: every item at any depth below a
+ * generate scope (37.80 vpiAssertion), or the concurrent assertions
+ * declared directly in a scope (37.12 vpiConcurrentAssertions); decision
+ * A19-D31. */
+static vpiHandle iterate_scope_assertions(uint32_t row, int concurrent) {
+    if (!g_vpi.code) {
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "assertions iterate from a scope only in models generated with --vpi or "
+                  "--dpi-lib");
+        return NULL;
+    }
+    size_t total = llg_acov_item_count(), count = 0;
+    uintptr_t* items = (uintptr_t*)calloc(total ? total : 1u, sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    const llg_vpi_model_object_t* scope = row_object(row);
+    for (size_t i = 0; i < total; ++i) {
+        const llg_acov_item_t* item = llg_acov_item_at(i);
+        uint32_t declared = item_scope(item);
+        if (!declared) continue;
+        if (concurrent) {
+            if (declared - 1u != row ||
+                (item->form != LLG_ACOV_CONCURRENT && item->form != LLG_ACOV_COVER_SEQUENCE))
+                continue;
+        } else {
+            const llg_vpi_model_object_t* object = row_object(declared - 1u);
+            while (object && object != scope) object = object->parent;
+            if (!object) continue;
+        }
+        vpiHandle handle = assertion_handle(i);
+        if (!handle) break;
+        items[count++] = (uintptr_t)handle;
+    }
+    return make_list_iterator(concurrent ? vpiConcurrentAssertions : vpiAssertion, items,
+                              (uint32_t)count);
+}
+
+/* vpi_iterate(vpiConcurrentAssertions, scope) (37.12). */
+static vpiHandle iterate_concurrent_assertions(vpiHandle reference) {
+    llg_vpi_slot_t* slot = reference ? checked_handle(reference, NULL) : NULL;
+    if (!slot) {
+        if (!reference)
+            vpi_error("LLG_VPI_RELATION", "vpiConcurrentAssertions iterates from a scope");
+        return NULL;
+    }
+    /* A block that is not a scope declares nothing (decision A19-D27). */
+    if (slot->kind == SLOT_CODE && code_is_unscoped_block((uint32_t)slot->aux)) return NULL;
+    const llg_vpi_model_object_t* scope = slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
+    if (!scope || !is_scope_type(scope->type)) {
+        vpi_error("LLG_VPI_RELATION", "vpiConcurrentAssertions iterates from a scope");
+        return NULL;
+    }
+    if (is_package_slot(slot)) return NULL;
+    return iterate_scope_assertions(slot->object, 1);
+}
+
+/* vpi_iterate(vpiAssertion, NULL | instance | generate scope): every item,
+ * the items of one instance (39.3.1) or of a generate scope (37.80). */
 static vpiHandle iterate_assertions(vpiHandle reference) {
     int32_t instance = -1;
     if (reference) {
         llg_vpi_slot_t* slot = checked_handle(reference, NULL);
         if (!slot) return NULL;
         llg_vpi_model_object_t* object = row_object(slot->object);
+        if (slot->kind == SLOT_OBJECT && object && object->type == vpiGenScope)
+            return iterate_scope_assertions(slot->object, 0);
         if (slot->kind != SLOT_OBJECT || !object ||
             (object->type != vpiModule && object->type != vpiInterface &&
              object->type != vpiProgram && object->type != vpiPackage)) {
@@ -3462,8 +3530,9 @@ static int assertion_relation_applies(int type, int relation) {
 
 static vpiHandle assertion_relation(int type, const llg_vpi_slot_t* slot) {
     const llg_acov_item_t* item = slot_item(slot);
-    if (item && (type == vpiScope || type == vpiModule)) {
-        /* The owning instance; NULL for an assertion owned by $root. */
+    if (item && (type == vpiScope || type == vpiModule || type == vpiInstance)) {
+        /* The owning instance (37.45 vpiInstance); NULL for an assertion
+         * owned by $root. */
         const llg_acov_instance_t* owner =
             item->instance >= 0 ? llg_acov_instance_at((size_t)item->instance) : NULL;
         if (!owner) return NULL;
@@ -4058,6 +4127,7 @@ static int code_tables_valid(const llg_vpi_code_tables_t* t) {
     if (!t) return 1;
     if ((t->node_count && !t->nodes) || (t->text_count && !t->texts) ||
         (t->file_count && !t->files) || (t->range_count && !t->ranges) ||
+        (t->span_count && !t->spans) ||
         t->node_count >= (uint32_t)INT32_MAX)
         return 0;
     uint32_t typespecs = g_vpi.types ? g_vpi.types->typespec_count : 0u;
@@ -4069,7 +4139,7 @@ static int code_tables_valid(const llg_vpi_code_tables_t* t) {
             return 0;
         if (node->object >= 0 && (size_t)node->object >= g_vpi.object_count) return 0;
         if (node->scope > g_vpi.object_count || node->file > t->file_count ||
-            node->typespec > typespecs)
+            node->typespec > typespecs || node->span > t->span_count)
             return 0;
         if (node->data > (code_is_select(node->type) ? t->range_count : t->text_count)) return 0;
         if (node->data && !code_is_select(node->type) && !t->texts[node->data - 1u]) return 0;
@@ -4156,7 +4226,7 @@ static int code_relation_applies(int type, int relation) {
             return relation == vpiClockingEvent || relation == vpiDisableCondition ||
                    relation == vpiPropertyExpr;
         case vpiSequenceInst: return relation == vpiSequenceDecl;
-        case vpiPropertyInst: return relation == vpiPropertyDecl;
+        case vpiPropertyInst: return relation == vpiPropertyDecl || relation == vpiDisableCondition;
         default:
             return 0;
     }
@@ -4205,10 +4275,30 @@ static int code_assertion_unkept(int type, int relation) {
     }
 }
 
+/* The objects of the 37.45 assertion class among expression and statement
+ * objects: sequence and property instances and assertion statements. */
+static int code_is_assertion(int type) {
+    switch (type) {
+        case vpiSequenceInst: case vpiPropertyInst: case vpiAssert: case vpiAssume:
+        case vpiCover: case vpiImmediateAssert: case vpiImmediateAssume: case vpiImmediateCover:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 static vpiHandle code_relation(int type, uint32_t index) {
     const llg_vpi_code_t* node = code_at(index);
     if (!node) return NULL;
     if (type == vpiScope) return node->scope ? object_handle(node->scope - 1u) : NULL;
+    if ((type == vpiInstance || type == vpiModule) && code_is_assertion(node->type)) {
+        /* 37.10 details 2 and 3, 37.45: the instance and the module that
+         * hold the assertion (decision A19-D31). */
+        uint32_t row = node->scope ? (type == vpiInstance ? enclosing_instance(node->scope - 1u)
+                                                          : enclosing_module(node->scope - 1u))
+                                   : LLG_VPI_NONE;
+        return row == LLG_VPI_NONE ? NULL : object_handle(row);
+    }
     if (code_assertion_unkept(node->type, type)) {
         vpi_error("LLG_VPI_UNSUPPORTED",
                   "llg keeps no declaration body, variables or formal default of a sequence or "
@@ -5146,6 +5236,19 @@ static PLI_INT32 code_property(uint32_t index, int property) {
     switch (property) {
         case vpiType: return type;
         case vpiLineNo: return (PLI_INT32)node->line;
+        case vpiStartLine:
+        case vpiColumn:
+        case vpiEndLine:
+        case vpiEndColumn: {
+            /* 37.45: the location of an assertion object (A19-D31). */
+            if (!node->span) break;
+            const uint32_t* span = &g_vpi.code->spans[3u * (node->span - 1u)];
+            uint32_t value = property == vpiStartLine ? node->line
+                             : property == vpiColumn  ? span[0]
+                             : property == vpiEndLine ? span[1]
+                                                      : span[2];
+            return (PLI_INT32)value;
+        }
         case vpiSize:
             if (!expression) break;
             /* A real expression reports its IEEE 754 storage (S42-D8). */
@@ -5889,6 +5992,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     vpi_enter();
     if (!vpi_ready()) return NULL;
     if (type == vpiAssertion) return iterate_assertions(ref_handle);
+    if (type == vpiConcurrentAssertions) return iterate_concurrent_assertions(ref_handle);
     if (type == vpiFsm) return iterate_fsms(ref_handle);
     if (type == vpiFsmStates) return iterate_fsm_states(ref_handle);
     if (type == vpiSequenceDecl || type == vpiPropertyDecl) return iterate_declarations(type, ref_handle);

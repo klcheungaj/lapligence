@@ -2339,6 +2339,15 @@ fn a19_d30_clocking_blocks() {
 }
 
 #[test]
+fn a19_d31_assertion_details() {
+    run_vpi_decision(
+        "A19-D31_assertion_details",
+        &["task $d31()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D31_assertion_details.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

@@ -123,7 +123,9 @@ typedef struct {
     uint32_t count;           /* children */
     uint32_t data;            /* text index + 1 (constant digits or text, a call, object or
                                * label name); range index + 1 of a select */
-    uint32_t typespec;        /* vpiTypespec of a cast: typespec index + 1 */
+    uint32_t typespec;        /* vpiTypespec (a cast, select, call or typed formal):
+                               * typespec index + 1 */
+    uint32_t span;            /* location of an assertion object: span index + 1 */
 } llg_vpi_code_t;
 
 typedef struct {
@@ -135,6 +137,8 @@ typedef struct {
     uint32_t file_count;
     const int64_t* ranges;    /* (left, right) of the dimension a select indexes */
     uint32_t range_count;
+    const uint32_t* spans;    /* (column, end line, end column) triples (37.45) */
+    uint32_t span_count;
 } llg_vpi_code_tables_t;
 
 /* How a call argument is visible to applications (llg_vpi_compile_arg_t). */

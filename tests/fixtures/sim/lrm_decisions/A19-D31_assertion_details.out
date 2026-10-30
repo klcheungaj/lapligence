@@ -1,0 +1,27 @@
+tb.ap1 type=686
+  instance type=32 tb
+  module type=32 tb
+  inst type=660 name=p1 start=42 column=25 end=42 endcolumn=29 covered=error3 attempts=error3 def=-
+  instance type=32 tb
+  module type=32 tb
+  disable type=48 tb.rst
+tb.ap2 type=686
+  instance type=32 tb
+  module type=32 tb
+  inst type=660 name=p2 start=43 column=25 end=43 endcolumn=26 covered=error3 attempts=error3 def=-
+  instance type=32 tb
+  module type=32 tb
+  disable NULL level=0
+tb.cs1 type=688
+  instance type=32 tb
+  module type=32 tb
+  inst type=664 name=s1 start=44 column=39 end=44 endcolumn=43 covered=error3 attempts=error3 def=-
+  instance type=32 tb
+  module type=32 tb
+tb.g.ga type=686
+  instance type=32 tb
+  module type=32 tb
+tb concurrent: tb.ap1 tb.ap2 tb.cs1
+g concurrent: tb.g.ga
+blk concurrent: NULL level=0
+g assertions: tb.g.ga
