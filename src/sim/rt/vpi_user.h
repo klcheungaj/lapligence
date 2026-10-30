@@ -1,9 +1,9 @@
 /*
  * vpi_user.h — the VPI surface exported by a generated Lapligence model.
  *
- * It declares every routine of the IEEE 1800-2009 Annex K listing and a
- * source-compatible subset of its types and constants, with the standard
- * values.  Unsupported routines, objects and properties fail through
+ * It declares every routine, structure and constant of the IEEE 1800-2009
+ * Annex K listing with the standard values (the Annex L compatibility-mode
+ * renames are not provided).  Unsupported routines, objects and properties fail through
  * vpi_chk_error(); they do not return guessed values.  The header is emitted
  * beside every generated model so an application can build against the same
  * ABI without depending on the vendored frontend headers.
@@ -565,11 +565,93 @@ typedef struct t_vpi_error_info {
 #define vpiReset 68
 #define vpiSetInteractiveScope 69
 
-/* The 41 routines of Annex K, in its order. Those llg does not provide yet
- * (vpi_handle_multi, vpi_get_delays/vpi_put_delays,
- * vpi_get_value_array/vpi_put_value_array, vpi_get_data/vpi_put_data) are
- * defined so that applications link, and fail through vpi_chk_error()
- * (LLG_VPI_UNSUPPORTED) without touching their arguments. */
+/* The remaining Annex K constants, grouped and ordered as in Annex K.
+ * They are defined for source compatibility; whether llg serves an object,
+ * relation or property is recorded in vpi_catalog.txt. */
+/* Object types. */
+#define vpiDefParam 10
+#define vpiMemory 29
+#define vpiParamAssign 40
+#define vpiSpecParam 54
+#define vpiTableEntry 58
+#define vpiTimeQueue 64
+/* Object types added with 1364-2001. */
+#define vpiAttribute 105
+#define vpiDelayTerm 108
+#define vpiDelayDevice 109
+#define vpiFrame 110
+#define vpiContAssignBit 128
+/* Object types added with 1364-2005. */
+#define vpiGenScopeArray 133
+#define vpiGenVar 135
+/* Methods used to traverse 1 to many relationships. */
+#define vpiDriver 91
+#define vpiLoad 93
+#define vpiPortInst 98
+#define vpiUse 101
+/* Methods added with 1364-2001. */
+#define vpiActiveTimeFormat 119
+#define vpiInTerm 120
+#define vpiLocalDriver 122
+#define vpiLocalLoad 123
+#define vpiOutTerm 124
+#define vpiSimNet 126
+/* Methods added with 1800-2009. */
+#define vpiAutomatics 136
+/* Module properties. */
+#define vpiCellInstance 8
+#define vpiDefNetType 13
+#define vpiUnconnDrive 14
+#define vpiHighZ 1
+#define vpiPull1 2
+#define vpiPull0 3
+#define vpiDefFile 15
+#define vpiDefLineNo 16
+#define vpiDefDelayMode 47
+#define vpiDelayModeNone 1
+#define vpiDelayModePath 2
+#define vpiDelayModeDistrib 3
+#define vpiDelayModeUnit 4
+#define vpiDelayModeZero 5
+#define vpiDelayModeMTM 6
+#define vpiDefDecayTime 48
+/* Port and net properties. */
+#define vpiExplicitScalared 23
+#define vpiExplicitVectored 24
+#define vpiExpanded 25
+#define vpiImplicitDecl 26
+#define vpiChargeStrength 27
+#define vpiLargeCharge 0x10
+#define vpiMediumCharge 0x04
+#define vpiSmallCharge 0x02
+/* Task/function properties. */
+#define vpiSysFuncInt vpiIntFunc
+#define vpiSysFuncReal vpiRealFunc
+#define vpiSysFuncTime vpiTimeFunc
+#define vpiSysFuncSized vpiSizedFunc
+/* Properties added with 1364-2001. */
+#define vpiActive 49
+#define vpiCell 51
+#define vpiConfig 52
+#define vpiDefAttribute 55
+#define vpiDelayType 56
+#define vpiModPathDelay 1
+#define vpiInterModPathDelay 2
+#define vpiMIPDelay 3
+#define vpiLibrary 58
+#define vpiResolvedNetType 61
+#define vpiSaveRestartID 62
+#define vpiSaveRestartLocation 63
+/* Properties added with 1364-2005. */
+#define vpiIsProtected 74
+/* I/O related defines. */
+#define VPI_MCD_STDOUT 0x00000001
+
+/* The 41 routines of Annex K, in its order. Those llg does not provide
+ * (vpi_handle_multi, vpi_get_data/vpi_put_data) are defined so that
+ * applications link, and fail through vpi_chk_error() (LLG_VPI_UNSUPPORTED)
+ * without touching their arguments; the objects each routine serves are
+ * recorded in vpi_catalog.txt. */
 vpiHandle vpi_register_cb(p_cb_data cb_data_p);
 PLI_INT32 vpi_remove_cb(vpiHandle cb_obj);
 void vpi_get_cb_info(vpiHandle object, p_cb_data cb_data_p);

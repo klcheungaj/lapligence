@@ -10,8 +10,11 @@
 //! (37.3.7, 37.17, 37.27-37.29, 38.36.1). All link as static archives with
 //! `--dpi-lib`, so they run on every host. Expected outputs are derived by
 //! hand in the fixture readme.
+use std::collections::{BTreeMap, BTreeSet};
+
 use super::sim_cli;
 use super::sim_harness;
+use super::vpi_catalog;
 
 const SUITE: &str = "feature_completion/adv_019";
 
@@ -170,4 +173,144 @@ fn class_object_callbacks_follow_creation_and_reclamation_under_collection_stres
         ],
         &[("LLG_GC_STRESS", "1"), ("LLG_GC_VERIFY", "1")],
     );
+}
+
+/// The answers of one catalog walk: the object types it reached and, per
+/// type, the (kind, name) queries answered without an error.
+struct Walk {
+    types: BTreeSet<i64>,
+    answers: BTreeMap<i64, BTreeSet<(String, String)>>,
+}
+
+fn parse_walk(stdout: &str, label: &str) -> Walk {
+    let mut walk = Walk {
+        types: BTreeSet::new(),
+        answers: BTreeMap::new(),
+    };
+    let mut done = false;
+    for line in stdout.lines() {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let number = |i: usize| -> i64 {
+            words
+                .get(i)
+                .and_then(|w| w.parse().ok())
+                .unwrap_or_else(|| panic!("{label}: malformed line `{line}`"))
+        };
+        match words.first().copied() {
+            Some("obj") => {
+                walk.types.insert(number(1));
+            }
+            Some("+") => {
+                let kind = if words[1] == "value" {
+                    "func"
+                } else {
+                    words[1]
+                };
+                walk.answers
+                    .entry(number(2))
+                    .or_default()
+                    .insert((kind.to_owned(), words[3].to_owned()));
+            }
+            // 38.6: a routine that raised an error returned a value anyway.
+            Some("!") => panic!("{label}: error with a value: `{line}`"),
+            Some("done") => done = true,
+            _ => {}
+        }
+    }
+    assert!(done, "{label}: the walk did not finish");
+    walk
+}
+
+/// ADV-019 A03 and ADV-020 A01: `catalog.c` walks every object it reaches
+/// from the top of `catalog.sv` and queries each one with every property
+/// and relation the catalog or the runtime dispatch names. Each answer must
+/// be a row the catalog marks implemented or extension for that object's
+/// type; each such row the catalog gives to this walk must be answered;
+/// every other query is a wrong-object query and must fail with an error
+/// (vpiUndefined or NULL, 38.6; decision A19-D25).
+#[test]
+fn catalog_walk_matches_the_vpi_catalog() {
+    let catalog = vpi_catalog::Catalog::load();
+    let values = vpi_catalog::header_values();
+    let mut by_type = BTreeMap::new();
+    for node in &catalog.nodes {
+        if let Some(name) = &node.type_name {
+            let value = if name == "NULL" { 0 } else { values[name] };
+            by_type.insert(value, node.id.clone());
+        }
+    }
+    let walk_alias = catalog
+        .tests
+        .iter()
+        .find(|(_, test)| *test == "adv_019::catalog_walk_matches_the_vpi_catalog")
+        .map(|(alias, _)| alias.clone())
+        .expect("the catalog names this test");
+    let directory = sim_harness::TempDir::new("adv019-catalog").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "catalog", &[]);
+    let args = [
+        "--define-system-task",
+        "task $catalog()",
+        "--define-system-task",
+        "function int $catalog_value()",
+        "--dpi-lib",
+        archive.as_str(),
+    ];
+    for optimized in [true, false] {
+        let label = format!("catalog walk, optimized={optimized}");
+        let output = sim_cli::invoke_with_source_prefix(SUITE, "catalog", &[], optimized, &args);
+        assert!(
+            output.status.success(),
+            "{label}: {}",
+            sim_cli::observed_output(&output)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("hi 1 1 2 1 4 7\n"),
+            "{label}: the design did not finish: {}",
+            sim_cli::observed_output(&output)
+        );
+        let walk = parse_walk(&stdout, &label);
+        assert!(
+            walk.types.len() > 100,
+            "{label}: reached only {:?}",
+            walk.types
+        );
+        let mut errors = Vec::new();
+        let empty = BTreeSet::new();
+        for t in &walk.types {
+            let Some(id) = by_type.get(t) else {
+                errors.push(format!("object type {t} is not in the catalog"));
+                continue;
+            };
+            let rows = catalog
+                .effective_rows(id)
+                .unwrap_or_else(|error| panic!("{error}"));
+            let answers = walk.answers.get(t).unwrap_or(&empty);
+            for (kind, name) in answers {
+                if vpi_catalog::IMPLICIT.contains(&(kind.as_str(), name.as_str())) {
+                    continue;
+                }
+                match rows.get(&(kind.clone(), name.clone())) {
+                    Some(status) if status.answers() => {}
+                    Some(status) => errors.push(format!(
+                        "{id}: {kind} {name} answered, but the catalog says {}",
+                        status.word
+                    )),
+                    None => errors.push(format!(
+                        "{id}: {kind} {name} answered, but the catalog does not list it \
+                         (a wrong-object query must fail)"
+                    )),
+                }
+            }
+            for ((kind, name), status) in &rows {
+                if status.answers()
+                    && status.test() == Some(walk_alias.as_str())
+                    && !answers.contains(&(kind.clone(), name.clone()))
+                {
+                    errors.push(format!("{id}: {kind} {name} is {} but failed", status.word));
+                }
+            }
+        }
+        assert!(errors.is_empty(), "{label}:\n{}", errors.join("\n"));
+    }
 }

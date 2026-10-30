@@ -9,6 +9,8 @@
 mod c_compiler;
 #[path = "support/sim.rs"]
 mod sim_harness;
+#[path = "support/vpi_catalog.rs"]
+mod vpi_catalog;
 
 mod runtime_boundaries;
 mod runtime_constraints;
@@ -26,3 +28,4 @@ mod runtime_strict_sources;
 mod runtime_value_facade;
 mod runtime_value_storage;
 mod runtime_values;
+mod runtime_vpi_catalog;
