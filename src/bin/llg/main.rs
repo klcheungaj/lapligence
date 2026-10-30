@@ -228,6 +228,18 @@ fn run(options: DriverOptions) -> i32 {
         }
     };
     drop(frontend_stage);
+    let db_stage = llg::profile::Stage::new("db.import");
+    let codegen_db = llg::core::db::Db::from_slang(&out.snapshot);
+    drop(db_stage);
+    let mut out = out;
+    // The frontend's unused-parameter warning for a parameter an FSM pragma
+    // names as a state is wrong: the pragma uses it (IEEE 1800-2009 40.4.1).
+    if let Ok(db) = &codegen_db {
+        let quiet = db.fsm_state_parameter_warnings(&out.snapshot);
+        if !quiet.is_empty() {
+            out.retain_frontend_diagnostics(|index, _, _| quiet.binary_search(&index).is_err());
+        }
+    }
     for d in &out.diagnostics {
         eprintln!(
             "{:?}: {} {}",
@@ -239,15 +251,13 @@ fn run(options: DriverOptions) -> i32 {
 
     // 2. Lint gate: every run lints the owned db before codegen. Errors
     //    (and warnings under -Werror) stop the run.
-    let db_stage = llg::profile::Stage::new("db.import");
-    let codegen_db = match llg::core::db::Db::from_slang(&out.snapshot) {
+    let codegen_db = match codegen_db {
         Ok(db) => db,
         Err(e) => {
             eprintln!("llg: db build failed: {e}");
             return 1;
         }
     };
-    drop(db_stage);
     drop(out);
     let lint_stage = llg::profile::Stage::new("lint");
     let model = llg::core::model::DesignModel::from_db(&codegen_db);

@@ -647,3 +647,33 @@ endmodule
     assert!(err.contains("[ERROR] mixed-assignments"), "{err}");
     assert!(out.stdout.is_empty(), "the model must not run");
 }
+
+/// The frontend's own unused-parameter warning skips the parameters an FSM
+/// pragma names as states (IEEE 1800-2009 40.4.1) and keeps the others.
+#[test]
+fn fsm_state_parameters_have_no_frontend_unused_warning() {
+    let dir = TempDir::new("fsm_states");
+    dir.write("design.sv", FSM_STATES_SV);
+    let out = run_llg(
+        &dir.path,
+        &["--lint-only", "--top", "fsm_states", "design.sv"],
+    );
+    let err = stderr(&out);
+    assert!(out.status.success(), "stderr: {err}");
+    assert!(err.contains("unused parameter 'UNREAD'"), "{err}");
+    for state in ["IDLE", "RUN", "DONE"] {
+        assert!(
+            !err.contains(&format!("unused parameter '{state}'")),
+            "{state}: {err}"
+        );
+    }
+}
+
+const FSM_STATES_SV: &str = "module fsm_states(input logic clk);
+  /* tool state_vector cs enum E */
+  logic [1:0] cs = 0;
+  parameter [1:0] /* tool enum E */ IDLE = 0, RUN = 1, DONE = 2;
+  parameter UNREAD = 5;
+  always_ff @(posedge clk) cs <= cs + 2'd1;
+endmodule
+";

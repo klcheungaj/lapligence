@@ -770,6 +770,58 @@ fn bind(
     fsms
 }
 
+impl Db {
+    /// Indices in `snapshot.diagnostics` of the frontend's own
+    /// unused-parameter warnings for parameters that a `tool enum` pragma
+    /// names as FSM states (IEEE 1800-2009 40.4.1): the pragma uses them, so
+    /// both binaries drop these warnings from their projections. Matches the
+    /// warning's position with the parameter declaration's (byte columns),
+    /// using owned data only; empty, without any scan, for a design without
+    /// FSMs. `snapshot` must be the one this database was built from.
+    pub fn fsm_state_parameter_warnings(&self, snapshot: &SlangSnapshot) -> Vec<usize> {
+        if self.fsms.is_empty() {
+            return Vec::new();
+        }
+        let states = self
+            .fsms
+            .iter()
+            .flat_map(|fsm| fsm.states.iter())
+            .filter_map(|state| {
+                let node = self.node(*state);
+                Some((node.file.as_deref()?, node.line, node.col))
+            })
+            .collect::<HashSet<_>>();
+        let files = snapshot
+            .files
+            .iter()
+            .map(|file| (file.id, file))
+            .collect::<HashMap<_, _>>();
+        let mut lines = HashMap::new();
+        snapshot
+            .diagnostics
+            .iter()
+            .enumerate()
+            .filter_map(|(index, diagnostic)| {
+                if diagnostic.provider != crate::ffi::slang::DiagnosticProvider::Analysis
+                    || diagnostic.name != "UnusedParameter"
+                {
+                    return None;
+                }
+                let range = diagnostic.primary?;
+                let file = files.get(&range.file_id)?;
+                let (line, column) = lines
+                    .entry(range.file_id)
+                    .or_insert_with(|| super::expression_import::SourceLines::new(&file.text))
+                    .position(usize::try_from(range.start).ok()?)
+                    .ok()?;
+                states
+                    .contains(&(file.name.as_str(), line, column))
+                    .then_some(index)
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -990,5 +1042,71 @@ mod import_tests {
             );
         }
         assert!(db.fsms().is_empty());
+    }
+
+    #[test]
+    fn frontend_unused_warnings_of_state_parameters_are_found() {
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "fsm.sv",
+                "module fsm(input logic clk);\n\
+                 /* tool state_vector cs enum E */\n\
+                 logic [1:0] cs = 0;\n\
+                 parameter [1:0] /* tool enum E */ IDLE = 0, RUN = 1, DONE = 2;\n\
+                 parameter UNREAD = 5;\n\
+                 always_ff @(posedge clk) cs <= cs + 2'd1;\n\
+                 endmodule\n\
+                 module top; logic clk; fsm u1(clk); fsm u2(clk); endmodule\n",
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let unused = |index: usize| {
+            let diagnostic = &output.snapshot.diagnostics[index];
+            (diagnostic.name == "UnusedParameter").then(|| diagnostic.message.clone())
+        };
+        let all = (0..output.snapshot.diagnostics.len())
+            .filter_map(unused)
+            .collect::<Vec<_>>();
+        assert!(
+            ["IDLE", "RUN", "DONE", "UNREAD"]
+                .iter()
+                .all(|name| all.iter().any(|message| message.contains(name))),
+            "the frontend reports every unread parameter: {all:?}"
+        );
+        let mut quiet = db
+            .fsm_state_parameter_warnings(&output.snapshot)
+            .into_iter()
+            .map(|index| unused(index).expect("an unused-parameter warning"))
+            .collect::<Vec<_>>();
+        quiet.sort();
+        quiet.dedup();
+        assert_eq!(quiet.len(), 3, "{quiet:?}");
+        for name in ["IDLE", "RUN", "DONE"] {
+            assert!(
+                quiet.iter().any(|message| message.contains(name)),
+                "{quiet:?}"
+            );
+        }
+        assert!(!quiet.iter().any(|message| message.contains("UNREAD")));
+        let plain = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "plain.sv",
+                "module top; parameter P = 1; endmodule\n",
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let plain_db = Db::from_slang(&plain.snapshot).unwrap();
+        assert!(plain_db
+            .fsm_state_parameter_warnings(&plain.snapshot)
+            .is_empty());
     }
 }
