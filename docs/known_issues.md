@@ -2481,7 +2481,9 @@ the 40.4 pragmas.
   - a concatenation's signals are watched one by one, so a time step that
     writes them in turn visits the intermediate values too (A17-D12);
   - the state parameters, which only the pragmas name, are still reported
-    by the unused-parameter lint;
+    by the frontend's own unused-parameter warning (in `llg` and as
+    `slang.analysis.UnusedParameter` in `llg_ls`); the `unused-parameter`
+    lint counts the pragma references;
   - pragma errors are reported when a model is built, not by `llg_ls`.
 
 ### Cause
