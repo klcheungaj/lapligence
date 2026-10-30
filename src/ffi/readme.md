@@ -84,6 +84,14 @@ invocation locations in configuration diagnostics.
   the one it declares itself (ABI 62); the DB keeps that as instance metadata
   (`Db::instance_default_disable`), not as a member. `restrict property` is kept as
   `ConcurrentAssertionKind::Restrict`, which the simulator does not verify.
+- A net's `auxiliary` holds its `vectored` or `scalared` keyword (at most
+  one) and a port's whether it is declared `.name(expression)` and whether
+  its instance connects it by name (ABI 64); the DB keeps them as
+  `Db::declaration_qualifiers` for the VPI object model.
+- A class property's and a method's `auxiliary` hold its `local` or
+  `protected` visibility, and a method prototype (pure virtual or `extern`)
+  its `virtual` qualifier and return type (ABI 65); the DB keeps them as
+  `Db::member_visibility` and `Db::is_virtual_prototype`.
 - Lexical directive flags mark directive text, including unexpanded macro
   bodies, independently of expanded/skipped state; disabled conditional-branch
   tokens also carry the skipped flag. Edition checks never treat inactive

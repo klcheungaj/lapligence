@@ -2738,6 +2738,10 @@ public:
       result.subkind = semanticNetKind(symbol.netType.netKind);
       if (symbol.isImplicit)
         result.flags |= LLG_SLANG_SEMANTIC_IMPLICIT;
+      if (symbol.expansionHint == NetSymbol::Vectored)
+        result.auxiliary |= LLG_SLANG_NET_VECTORED;
+      else if (symbol.expansionHint == NetSymbol::Scalared)
+        result.auxiliary |= LLG_SLANG_NET_SCALARED;
       addDriveStrength(result, symbol.getDriveStrength());
     }
     if constexpr (std::same_as<T, PrimitiveSymbol>) {
@@ -2802,6 +2806,19 @@ public:
       addDirection(result, symbol.direction);
     if constexpr (std::same_as<T, MultiPortSymbol>)
       addDirection(result, symbol.direction);
+    if constexpr (std::same_as<T, PortSymbol> ||
+                  std::same_as<T, MultiPortSymbol>) {
+      // A `.name(expression)` port keeps the expression's syntax (whose
+      // parent is the explicit port) or, without an expression, its own.
+      const syntax::SyntaxNode* portSyntax = symbol.getSyntax();
+      auto explicitPort = [](const syntax::SyntaxNode* node) {
+        return node && (node->kind == syntax::SyntaxKind::ExplicitAnsiPort ||
+                        node->kind == syntax::SyntaxKind::ExplicitNonAnsiPort);
+      };
+      if (portSyntax &&
+          (explicitPort(portSyntax) || explicitPort(portSyntax->parent)))
+        result.auxiliary |= LLG_SLANG_PORT_EXPLICIT_NAME;
+    }
     if constexpr (std::same_as<T, ModportPortSymbol>)
       addDirection(result, symbol.direction);
     if constexpr (std::same_as<T, FormalArgumentSymbol>) {
@@ -6460,12 +6477,28 @@ private:
         node.flags |= LLG_SLANG_SEMANTIC_PORT_CONNECTION_OPEN;
       return portId;
     };
+    // Marks the ports of a group as connected by name.
+    auto markByName = [&](const ConnectionGroup& group) {
+      for (size_t index = group.first;
+           index < group.first + group.count && index < semanticConnections.size();
+           index++)
+        capture.output.semantic_nodes[static_cast<size_t>(capture.ensureSemantic(
+            &semanticConnections[index]->port))].auxiliary |=
+            LLG_SLANG_PORT_CONNECTED_BY_NAME;
+      capture.output.semantic_nodes[static_cast<size_t>(
+          capture.ensureSemantic(group.port))].auxiliary |=
+          LLG_SLANG_PORT_CONNECTED_BY_NAME;
+    };
+    std::vector<bool> namedGroups(groups.size(), false);
+    bool wildcard = false;
     uint32_t orderedIndex = 0;
     for (const syntax::PortConnectionSyntax* syntaxConnection :
          instanceSyntax.connections) {
       if (syntaxConnection->kind != syntax::SyntaxKind::NamedPortConnection) {
-        if (syntaxConnection->kind == syntax::SyntaxKind::WildcardPortConnection)
+        if (syntaxConnection->kind == syntax::SyntaxKind::WildcardPortConnection) {
+          wildcard = true;
           continue;
+        }
         if (syntaxConnection->kind == syntax::SyntaxKind::OrderedPortConnection) {
           const auto& ordered =
               syntaxConnection->as<syntax::OrderedPortConnectionSyntax>();
@@ -6484,13 +6517,23 @@ private:
       const auto& named = syntaxConnection->as<syntax::NamedPortConnectionSyntax>();
       if (named.expr)
         capture.connectionActual(named.expr->sourceRange());
-      for (const ConnectionGroup& group : groups) {
+      for (size_t index = 0; index < groups.size(); index++) {
+        const ConnectionGroup& group = groups[index];
         if (group.port->name == named.name.valueText()) {
           capture.lexicalBinding(named.name, markGroup(group, true),
                                  LLG_SLANG_LEXICAL_ROLE_CONNECTION_LABEL);
+          if (!capture.declarationOnly)
+            markByName(group);
+          namedGroups[index] = true;
           break;
         }
       }
+    }
+    // `.*` connects every port not named explicitly by name (23.3.2.4).
+    if (wildcard && !capture.declarationOnly) {
+      for (size_t index = 0; index < groups.size(); index++)
+        if (!namedGroups[index])
+          markByName(groups[index]);
     }
 
     const syntax::SyntaxNode* parent = instanceSyntax.parent;

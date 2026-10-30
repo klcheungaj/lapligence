@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 64u
+#define LLG_SLANG_ABI_VERSION 65u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -701,6 +701,22 @@ enum {
   LLG_SLANG_COVERAGE_BIN_WITH = 1ull << 7,
   LLG_SLANG_COVERAGE_BIN_SET = 1ull << 8,
   LLG_SLANG_COVERAGE_BIN_SELECT = 1ull << 9
+};
+
+/* Net declaration qualifiers carried in LlgSlangSemanticNode::auxiliary of
+ * a net: the `vectored` or `scalared` keyword (IEEE 1800-2009 6.9.2). */
+enum {
+  LLG_SLANG_NET_VECTORED = 1ull << 0,
+  LLG_SLANG_NET_SCALARED = 1ull << 1
+};
+
+/* Port facts carried in LlgSlangSemanticNode::auxiliary of a port:
+ * EXPLICIT_NAME a port declared as `.name(expression)` (23.2.2.1,
+ * 23.2.2.2); CONNECTED_BY_NAME a port of an instance whose connection list
+ * connects it by name (`.name(...)`, `.name` or `.*`, 23.3.2.2-23.3.2.4). */
+enum {
+  LLG_SLANG_PORT_EXPLICIT_NAME = 1ull << 0,
+  LLG_SLANG_PORT_CONNECTED_BY_NAME = 1ull << 1
 };
 
 /* Subroutine qualifiers carried in LlgSlangSemanticNode::auxiliary. */

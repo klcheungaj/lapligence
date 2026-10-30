@@ -23,7 +23,12 @@ extern "C" {
 #define LLG_VPI_OBJ_QUALIFIER 0x400u  /* vpiNetDeclAssign / vpiAutomatic / vpiUnit; a global clocking */
 #define LLG_VPI_OBJ_ACTIVATION 0x800u /* activation_* name what `disable` targets */
 #define LLG_VPI_OBJ_DYNAMIC 0x1000u   /* string, handle or container: `storage`, `shape` */
-#define LLG_VPI_OBJ_CONST 0x2000u     /* vpiConstantVariable: a variable declared const */
+#define LLG_VPI_OBJ_IMPLICIT 0x2000u  /* vpiImplicitDecl: an implicitly declared net */
+#define LLG_VPI_OBJ_SCALARED 0x4000u  /* vpiExplicitScalared of a net */
+#define LLG_VPI_OBJ_VECTORED 0x8000u  /* vpiExplicitVectored of a net */
+#define LLG_VPI_OBJ_BY_NAME 0x10000u  /* vpiConnByName: a port connected by name */
+#define LLG_VPI_OBJ_EXPLICIT 0x20000u /* vpiExplicitName: a port named in the module header */
+#define LLG_VPI_OBJ_CONST 0x40000u    /* vpiConstantVariable: a variable declared const */
 
 /* Typespecs (IEEE 1800-2009 37.23). The generated model emits interned
  * tables; fields naming an optional entry hold its index + 1 (0: none),
@@ -274,6 +279,8 @@ typedef struct llg_vpi_model_object {
     uint32_t code;            /* vpiStmt of a process, task or function, the
                                * statement of a named block: code row + 1 */
     const llg_vpi_instance_t* instance; /* instance properties, or NULL */
+    int strength;             /* vpiStrength0 | vpiStrength1 << 8 of a primitive or
+                               * continuous assignment */
 } llg_vpi_model_object_t;
 
 /* Dynamic objects (IEEE 1800-2009 37.17, 37.27-37.29, 37.3.7): the value

@@ -258,6 +258,24 @@ static void force_evaluate_entry(llg_force_entry_t* entry) {
     entry->evaluating = 0;
 }
 
+int llg_force_entry_view(int index, const llg_force_part_t** parts, int* n_parts,
+                         double** real) {
+    *parts = NULL;
+    *n_parts = 0;
+    *real = NULL;
+    if (index < 0 || index >= g.force_count) return 0;
+    const llg_force_entry_t* entry = &g.force_table[index];
+    // vpi_put_value forces (no evaluator) are not force statements.
+    if (!entry->active || (!entry->eval && !entry->real_eval)) return 1;
+    if (entry->is_real) {
+        *real = entry->real_target;
+    } else {
+        *parts = entry->parts;
+        *n_parts = entry->n_parts;
+    }
+    return 1;
+}
+
 int llg_force_source_active(const sv4_t* sig, const double* real) {
     int is_real = real != NULL;
     for (int i = 0; i < g.force_count; i++) {

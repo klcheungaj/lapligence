@@ -531,6 +531,7 @@ const DISPATCH: &[(&str, &[Rule])] = &[
             ("code_iteration_applies", Match::Compare, "relation"),
             ("iterate_code", Match::Compare, "relation"),
             ("iterate_typespec", Match::Compare, "type"),
+            ("is_connectivity_iteration", Match::Compare, "type"),
             ("dyn_iterate", Match::Compare, "type"),
             ("dyn_class_iteration", Match::Compare, "type"),
             ("dyn_item_iterate", Match::Compare, "type"),

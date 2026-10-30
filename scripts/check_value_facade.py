@@ -16,11 +16,12 @@ METADATA = {
     'rt/llg_dpi.c': ('element', 'type', 'type->element', 'type->members[m].type'),
     'rt/llg_rt_selftest.c': ('net', ''),
     # VPI catalog rows, argument shapes, structure-object connections,
-    # force-part and net-alias descriptors carry metadata widths, not value
-    # payloads.
-    'rt/llg_vpi.c': ('alias', 'args[i]', 'argument', 'call->args[i]', 'conn->ref', 'g_vpi.objects[row]',
-                     'node', 'object', 'object->conns[i].ref', 'owner', 'part', 'port->target',
-                     'ref', 'site->args[i]', 'target'),
+    # force-part and net-alias descriptors, and the connectivity index's bit
+    # spans and links carry metadata widths, not value payloads.
+    'rt/llg_vpi.c': ('a[i]', 'alias', 'args[i]', 'argument', 'b[i]', 'b[k]', 'call->args[i]',
+                     'conn->ref', 'g_vpi.objects[row]', 'link', 'node', 'object',
+                     'object->conns[i].ref', 'operand', 'outer', 'owner', 'part', 'port->target',
+                     'query', 'ref', 'site->args[i]', 'source', 'span', 'start', 'target'),
     # Class item rows (method results, arguments, parameters) carry declared widths.
     'rt/llg_vpi_dynamic.c': ('item', 'shape'),
     'rt/llg_wave.c': ('g_wave.regs[alias]', 'g_wave.regs[i]', 'reg'),

@@ -35,6 +35,9 @@ test a19d28 sim_lrm_decisions::a19_d28_index_and_packed_relations
 test a19d30 sim_lrm_decisions::a19_d30_clocking_blocks
 test a19d31 sim_lrm_decisions::a19_d31_assertion_details
 test a19d32 sim_lrm_decisions::a19_d32_expression_relations
+test a19d33 sim_lrm_decisions::a19_d33_drivers_and_loads
+test a19d34 sim_lrm_decisions::a19_d34_net_fanout_and_assignment_bits
+test a19d35 sim_lrm_decisions::a19_d35_strengths_and_declaration_properties
 test a19d36 sim_lrm_decisions::a19_d36_class_definitions
 test a19classes adv_019::class_definitions_list_methods_parameters_and_property_qualifiers
 test a19d42 sim_lrm_decisions::a19_d42_declaration_objects
@@ -559,11 +562,11 @@ node io_decl 37.13 type=vpiIODecl
 node ports 37.14 members=port,port_bit
   func vpi_handle_by_index unsupported ports are not indexed
   func vpi_handle_by_multi_index unsupported ports are not indexed
-  get vpiConnByName unsupported port connection style is not captured
+  get vpiConnByName implemented a19d35
   func vpi_get_delays unsupported port (MIPD) delays are not modelled
   func vpi_put_delays unsupported port (MIPD) delays are not modelled
   get vpiDirection implemented walk
-  get vpiExplicitName unsupported port connection style is not captured
+  get vpiExplicitName implemented a19d35
   get vpiPortType implemented walk
   get vpiScalar implemented walk
   get vpiSize implemented walk
@@ -595,8 +598,8 @@ node ref_obj 37.15 type=vpiRefObj
   get vpiVirtual implemented walk
   get vpiGeneric unsupported generic interfaces are unsupported
   str vpiDefName implemented walk
-  iterate vpiPort unsupported the ports a net or variable connects to are not exposed
-  iterate vpiPortInst unsupported the ports a net or variable connects to are not exposed
+  iterate vpiPort unsupported the ports an interface or modport port reference connects are not indexed (only nets and variables are)
+  iterate vpiPortInst unsupported the ports an interface or modport port reference connects are not indexed (only nets and variables are)
   handle vpiInstance implemented walk
   handle vpiTaskFunc unsupported reference objects of task arguments are not exposed
   handle vpiParent unsupported the parent of a reference object is not exposed
@@ -616,36 +619,36 @@ node nets 37.16 members=net,net_bit,array_net
   get vpiArrayMember implemented walk
   get vpiConstantSelect implemented walk
   func vpi_get_delays unsupported net delays are not modelled
-  get vpiExpanded unsupported net declaration properties are not captured
-  get vpiImplicitDecl unsupported net declaration properties are not captured
+  get vpiExpanded implemented a19d35
+  get vpiImplicitDecl implemented a19d35
   str vpiName implemented walk
   str vpiFullName implemented walk
-  get vpiNetDeclAssign unsupported net declaration properties are not captured
+  get vpiNetDeclAssign implemented a19d35
   get vpiNetType implemented walk
-  get vpiResolvedNetType unsupported net declaration properties are not captured
+  get vpiResolvedNetType implemented a19d35
   get vpiScalar implemented walk
-  get vpiExplicitScalared unsupported net declaration properties are not captured
+  get vpiExplicitScalared implemented a19d35
   get vpiSigned implemented walk
   get vpiSize implemented walk
-  get vpiStrength0 unsupported drive strengths are not exposed
-  get vpiStrength1 unsupported drive strengths are not exposed
+  get vpiStrength0 implemented a19d35
+  get vpiStrength1 implemented a19d35
   get vpiChargeStrength unsupported trireg nets are unsupported (ADV-006)
   func vpi_get_value implemented walk
   func vpi_put_value implemented s42obj
   get vpiVector implemented walk
-  get vpiExplicitVectored unsupported net declaration properties are not captured
+  get vpiExplicitVectored implemented a19d35
   get vpiStructUnionMember implemented walk
-  iterate vpiPortInst unsupported the ports a net or variable connects to are not exposed
-  iterate vpiPort unsupported the ports a net or variable connects to are not exposed
-  iterate vpiDriver unsupported drivers and loads are not exposed
-  iterate vpiLoad unsupported drivers and loads are not exposed
-  iterate vpiLocalDriver unsupported drivers and loads are not exposed
-  iterate vpiLocalLoad unsupported drivers and loads are not exposed
-  iterate vpiPrimTerm unsupported the terminals, assignments and paths a net or variable feeds are not exposed
-  iterate vpiContAssign unsupported the terminals, assignments and paths a net or variable feeds are not exposed
-  iterate vpiPathTerm unsupported the terminals, assignments and paths a net or variable feeds are not exposed
-  iterate vpiTchkTerm unsupported the terminals, assignments and paths a net or variable feeds are not exposed
-  handle vpiSimNet unsupported nets are not collapsed across hierarchy objects
+  iterate vpiPortInst implemented a19d33
+  iterate vpiPort implemented a19d33
+  iterate vpiDriver implemented a19d33
+  iterate vpiLoad implemented a19d33
+  iterate vpiLocalDriver implemented a19d33
+  iterate vpiLocalLoad implemented a19d33
+  iterate vpiPrimTerm implemented a19d34
+  iterate vpiContAssign implemented a19d34
+  iterate vpiPathTerm implemented a19d34
+  iterate vpiTchkTerm implemented a19d34
+  handle vpiSimNet implemented a19d34
   handle vpiTypespec implemented walk
   handle vpiParent implemented walk
 
@@ -722,18 +725,18 @@ node variables 37.17 members=short_real_var,real_var,byte_var,short_int_var,int_
   get vpiScalar implemented walk
   get vpiVisibility implemented walk
   get vpiVector implemented walk
-  iterate vpiPort unsupported the ports a net or variable connects to are not exposed
-  iterate vpiPortInst unsupported the ports a net or variable connects to are not exposed
+  iterate vpiPort implemented a19d33
+  iterate vpiPortInst implemented a19d33
   handle vpiExpr implemented walk
   handle vpiModule implemented walk
   handle vpiInstance implemented walk
   handle vpiScope implemented walk
-  iterate vpiDriver unsupported drivers and loads are not exposed
-  iterate vpiLoad unsupported drivers and loads are not exposed
-  iterate vpiPrimTerm unsupported the terminals, assignments and paths a net or variable feeds are not exposed
-  iterate vpiContAssign unsupported the terminals, assignments and paths a net or variable feeds are not exposed
-  iterate vpiPathTerm unsupported the terminals, assignments and paths a net or variable feeds are not exposed
-  iterate vpiTchkTerm unsupported the terminals, assignments and paths a net or variable feeds are not exposed
+  iterate vpiDriver implemented a19d33
+  iterate vpiLoad implemented a19d33
+  iterate vpiPrimTerm implemented a19d34
+  iterate vpiContAssign implemented a19d34
+  iterate vpiPathTerm implemented a19d34
+  iterate vpiTchkTerm implemented a19d34
   handle vpiTypespec implemented walk
   handle vpiParent implemented walk
   handle vpiIndex implemented walk
@@ -1225,8 +1228,8 @@ node primitive 37.31 members=gate,switch,udp
   str vpiFullName implemented walk
   get vpiPrimType implemented walk
   get vpiSize implemented walk
-  get vpiStrength0 unsupported drive strengths are not exposed
-  get vpiStrength1 unsupported drive strengths are not exposed
+  get vpiStrength0 implemented a19d35
+  get vpiStrength1 implemented a19d35
   func vpi_get_value implemented walk
   func vpi_put_value unsupported vpi_put_value to a sequential UDP is not implemented
   handle vpiPrimitiveArray implemented a19d28
@@ -1259,7 +1262,7 @@ node prim_term 37.31 type=vpiPrimTerm
   get vpiTermIndex implemented walk
   func vpi_get_value implemented walk
   handle vpiExpr implemented walk
-  handle vpiPrimitive unsupported a terminal does not lead back to its primitive (vpiParent does)
+  handle vpiPrimitive implemented a19d34
   get vpiScalar extension walk the sign and width of the object's value
   get vpiSigned extension walk the sign and width of the object's value
   get vpiSize extension walk the sign and width of the object's value
@@ -1324,7 +1327,7 @@ node path_term 37.35 type=vpiPathTerm
   get vpiDirection implemented walk
   get vpiEdge implemented walk
   handle vpiExpr implemented walk
-  handle vpiModPath unsupported a path terminal does not lead back to its path (vpiParent does)
+  handle vpiModPath implemented a19d34
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiModule extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
@@ -1348,7 +1351,7 @@ node tchk_term 37.36 type=vpiTchkTerm
   get vpiEdge implemented walk
   handle vpiExpr implemented walk
   handle vpiCondition implemented walk
-  handle vpiTchk unsupported a timing check terminal does not lead back to its check (vpiParent does)
+  handle vpiTchk implemented a19d34
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiModule extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
@@ -1540,8 +1543,8 @@ node delay_term 37.41 type=vpiDelayTerm default=unsupported delay devices are no
 node cont_assign_class 37.43 members=cont_assign,cont_assign_bit
   func vpi_get_delays implemented a20delays
   get vpiNetDeclAssign implemented walk
-  get vpiStrength0 unsupported drive strengths are not exposed
-  get vpiStrength1 unsupported drive strengths are not exposed
+  get vpiStrength0 implemented a19d35
+  get vpiStrength1 implemented a19d35
   func vpi_get_value implemented walk
   handle vpiDelay unsupported delay expressions are not exposed (vpi_get_delays reads the values)
   handle vpiRhs implemented walk
@@ -1549,16 +1552,18 @@ node cont_assign_class 37.43 members=cont_assign,cont_assign_bit
   handle vpiModule implemented walk
 
 node cont_assign 37.43 type=vpiContAssign
-  iterate vpiBit unsupported vpiBit of this object is not implemented
+  iterate vpiBit implemented a19d34
   get vpiSigned extension walk the sign and width of the object's value
   get vpiSize extension walk the sign and width of the object's value
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
-node cont_assign_bit 37.43 type=vpiContAssignBit default=unsupported continuous assignment bits are not objects
-  get vpiOffset
-  handle vpiParent
+node cont_assign_bit 37.43 type=vpiContAssignBit
+  get vpiOffset implemented a19d34
+  handle vpiParent implemented a19d34
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node clocking_block 37.44 type=vpiClockingBlock
   str vpiName implemented walk
@@ -2054,7 +2059,7 @@ node gen_scope 37.80 type=vpiGenScope
   get vpiArray implemented walk
   get vpiArrayMember implemented walk
   get vpiProtected implemented walk
-  get vpiImplicitDecl unsupported net declaration properties are not captured
+  get vpiImplicitDecl unsupported the implicit declaration of a generate scope is not captured
   handle vpiIndex unsupported the genvar value of a generated scope is not captured as an expression
   handle vpiGenScopeArray implemented walk
   iterate vpiNet implemented walk
