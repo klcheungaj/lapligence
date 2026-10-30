@@ -2477,11 +2477,52 @@ public:
     }
   }
 
+  // Slang elaborates and looks up one definition per name in a scope; a
+  // same-named definition in another file is elaborated only when an
+  // explicit top selection makes it an unreferenced definition. Capture
+  // every such body no instance reached as Slang captures an unreferenced
+  // one (a nameless uninstantiated instance parented to the root, never a
+  // top), so its names bind within the body that declares them. Called
+  // after the root traversal, once diagnostics are taken: the shadowed
+  // body adds none.
+  void captureShadowedDefinitions(Compilation& compilation, const RootSymbol& root) {
+    // Only compilation-unit definitions share the root namespace; Slang
+    // rejects a nested duplicate before it becomes a definition.
+    const auto rootDefinition = [](const Symbol& definition) {
+      const Scope* scope = definition.getParentScope();
+      return definition.kind == SymbolKind::Definition && scope &&
+             (scope->asSymbol().kind == SymbolKind::CompilationUnit ||
+              scope->asSymbol().kind == SymbolKind::Root);
+    };
+    const std::vector<const Symbol*> definitions = compilation.getDefinitions();
+    std::unordered_map<std::string_view, size_t> namesakes;
+    for (const Symbol* definition : definitions) {
+      if (rootDefinition(*definition))
+        ++namesakes[definition->name];
+    }
+    const uint64_t rootId = capture.ensureSemantic(&root);
+    for (const Symbol* definition : definitions) {
+      if (!rootDefinition(*definition) || namesakes[definition->name] < 2 ||
+          sourceBodies.contains(definition->getSyntax()))
+        continue;
+      auto& instance = InstanceSymbol::createInvalid(
+          compilation, definition->as<DefinitionSymbol>());
+      instance.setParent(root);
+      parents.push_back(rootId);
+      instance.visit(*this);
+      parents.pop_back();
+    }
+  }
+
   template<std::derived_from<Symbol> T>
   void handle(const T& symbol) {
     if constexpr (std::same_as<T, InstanceBodySymbol>) {
-      if (capture.declarationOnly &&
-          !sourceBodies.insert(symbol.getDefinition().getSyntax()).second)
+      // Every mode records the reached definition bodies so shadowed
+      // duplicates are found (captureShadowedDefinitions); library-unit
+      // capture keeps one body per definition.
+      const bool firstBody =
+          sourceBodies.insert(symbol.getDefinition().getSyntax()).second;
+      if (capture.declarationOnly && !firstBody)
         return;
     }
     if constexpr (std::same_as<T, GenerateBlockSymbol>) {
@@ -9947,6 +9988,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     root.visit(semanticCapture);
     for (const Symbol* definition : compilation.getDefinitions())
       definition->visit(semanticCapture);
+    semanticCapture.captureShadowedDefinitions(compilation, root);
   }
   semanticStage.finish();
   ProfileStage finalizeStage("wrapper.finalize");

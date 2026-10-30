@@ -880,6 +880,12 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   token. Import item names are references (`namespace`, the imported kind),
   never document symbols; unsaved edits resolve through the committed
   package units.
+- `lsp_stdio/duplicate_definitions.rs`: two files that define the same module
+  each navigate within their own body (definition, hover, references, rename,
+  document symbols, also for uses before the declaration) in both serving
+  paths with one or both files open, the token streams agree and one
+  `DuplicateDefinition` warning names the other definition;
+  `slang_semantics/duplicate_definitions.rs` checks the capture in both modes.
 - `lsp_stdio/black_box.rs`: an unknown module yields one Slang `UnknownModule`
   error on its name, fresh analysis is committed, siblings/parents stay
   elaborated and navigable, black-box actuals bind to the parent scope and the

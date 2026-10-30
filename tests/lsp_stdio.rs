@@ -32,6 +32,8 @@ mod definitions;
 mod dependencies;
 #[path = "lsp_stdio/diagnostics.rs"]
 mod diagnostics;
+#[path = "lsp_stdio/duplicate_definitions.rs"]
+mod duplicate_definitions;
 #[path = "lsp_stdio/hover_completion.rs"]
 mod hover_completion;
 #[path = "lsp_stdio/legacy_constructs.rs"]

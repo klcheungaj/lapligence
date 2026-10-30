@@ -2701,3 +2701,41 @@ buffer's context.
 Open a file with `` module top; `MK_INST endmodule `` where a `[compile]
 defines` entry `MK_INST=ifc_x bus();` names an interface declared in another
 project file and request `textDocument/semanticTokens/full`.
+
+## Same-named definitions check one body (llg_ls)
+
+**Status:** navigation fixed by LS-DEF-1: each body of a module, interface or
+program that several files define navigates within itself
+([behavior](config.md#lsp-duplicate-definitions)). Checks remain per
+elaborated body.
+
+### Symptom
+
+- Without `[compile] top`, the body the frontend does not elaborate gets no
+  semantic diagnostics (an undeclared name, a use before its declaration);
+  only the `DuplicateDefinition` warning on the other definition's name
+  points at it. Lint never reports findings in it.
+- A named port or parameter label of an instantiation inside that body (as
+  inside any uninstantiated body) has no definition target.
+
+### Cause
+
+Slang keeps one definition per name and elaborates only that one; with an
+explicit top it also checks the others as unreferenced definitions, without
+one it skips them. Capture adds the skipped bodies as uninstantiated
+instances after the diagnostics are taken (`captureShadowedDefinitions` in
+`src/wrapper/slang_c_api.cpp`), so they add no diagnostics, and Slang creates
+only placeholders for instantiations inside an uninstantiated body.
+
+### Intended direction
+
+Check every same-named body as an unreferenced definition before the
+diagnostics are taken, in the LSP only, so `llg` keeps compiling the selected
+body alone, and bind placeholder labels to the ports of the selected child
+definition.
+
+### Reproduce
+
+Two files that both define `module dup_top;` with
+`assign done = undeclared_x;` in the first one: `llg_ls` reports only the
+`DuplicateDefinition` warning in the second file.

@@ -69,6 +69,14 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   the enclosing module/generate scope even when isolated analysis lacks the
   child; labels bind to child ports. Recovery is navigation-only under unchanged
   limits.
+- Slang elaborates one module, interface or program definition per name and
+  warns on another one with the same name (`DuplicateDefinition`). Full
+  capture adds each same-named definition body that no instance reached as
+  an uninstantiated instance (nameless, never a top, like Slang's own
+  unreferenced definitions) after the diagnostics are taken, so its names
+  bind within that body and it adds no diagnostics
+  (`captureShadowedDefinitions`). Instantiations inside any uninstantiated
+  body stay Slang placeholders, whose labels full capture leaves unbound.
 - Type records are canonical. The typedef a declared type names is exported
   separately: an `LLG_SLANG_EDGE_TYPEDEF` edge from each value declaration,
   typedef and explicit cast to the typedef declaration (index: dimensions
