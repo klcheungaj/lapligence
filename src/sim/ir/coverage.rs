@@ -1146,12 +1146,17 @@ impl IrAssertionCoverage {
         {
             return Err("FSM coverage table is too large".to_owned());
         }
-        let instance_known =
-            |instance: Option<u32>| instance.is_none_or(|index| (index as usize) < self.instances.len());
-        if self.statements.iter().any(|item| !instance_known(item.instance))
-            || self.toggles.iter().any(|toggle| {
-                !instance_known(Some(toggle.instance)) || toggle.width == 0
-            })
+        let instance_known = |instance: Option<u32>| {
+            instance.is_none_or(|index| (index as usize) < self.instances.len())
+        };
+        if self
+            .statements
+            .iter()
+            .any(|item| !instance_known(item.instance))
+            || self
+                .toggles
+                .iter()
+                .any(|toggle| !instance_known(Some(toggle.instance)) || toggle.width == 0)
         {
             return Err("a statement or toggle entity names an unknown instance".to_owned());
         }

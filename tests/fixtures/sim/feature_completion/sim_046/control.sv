@@ -51,17 +51,22 @@ module tb;
              $coverage_get_max(unknown, `SV_COV_HIER, tb),
              $coverage_save(19, "never.db"),
              $coverage_control(`SV_COV_STOP, `SV_COV_TOGGLE, 9, tb));
-    // No statement or toggle coverage, and no FSM in this design (S46-D5).
-    for (int kind = `SV_COV_FSM_STATE; kind <= `SV_COV_TOGGLE; kind++)
-      $display("kind %0d: check %0d start %0d stop %0d reset %0d get %0d max %0d save %0d",
-               kind,
-               $coverage_control(`SV_COV_CHECK, kind, `SV_COV_HIER, $root),
-               $coverage_control(`SV_COV_START, kind, `SV_COV_HIER, $root),
-               $coverage_control(`SV_COV_STOP, kind, `SV_COV_HIER, $root),
-               $coverage_control(`SV_COV_RESET, kind, `SV_COV_HIER, $root),
-               $coverage_get(kind, `SV_COV_HIER, $root),
-               $coverage_get_max(kind, `SV_COV_HIER, $root),
-               $coverage_save(kind, "never.db"));
+    // No FSM in this design (S46-D5).
+    $display("kind %0d: check %0d start %0d stop %0d reset %0d get %0d max %0d save %0d",
+             `SV_COV_FSM_STATE,
+             $coverage_control(`SV_COV_CHECK, `SV_COV_FSM_STATE, `SV_COV_HIER, $root),
+             $coverage_control(`SV_COV_START, `SV_COV_FSM_STATE, `SV_COV_HIER, $root),
+             $coverage_control(`SV_COV_STOP, `SV_COV_FSM_STATE, `SV_COV_HIER, $root),
+             $coverage_control(`SV_COV_RESET, `SV_COV_FSM_STATE, `SV_COV_HIER, $root),
+             $coverage_get(`SV_COV_FSM_STATE, `SV_COV_HIER, $root),
+             $coverage_get_max(`SV_COV_FSM_STATE, `SV_COV_HIER, $root),
+             $coverage_save(`SV_COV_FSM_STATE, "never.db"));
+    // An instance without statements or signals (S46-D12).
+    $display("empty statements: check %0d max %0d, toggles: check %0d max %0d",
+             $coverage_control(`SV_COV_CHECK, `SV_COV_STATEMENT, `SV_COV_HIER, e),
+             $coverage_get_max(`SV_COV_STATEMENT, `SV_COV_HIER, e),
+             $coverage_control(`SV_COV_CHECK, `SV_COV_TOGGLE, `SV_COV_HIER, e),
+             $coverage_get_max(`SV_COV_TOGGLE, `SV_COV_HIER, e));
     #10;
     $display("covered %0d/%0d",
              $coverage_get(`SV_COV_ASSERTION, `SV_COV_HIER, $root),
@@ -73,6 +78,13 @@ module tb;
     $display("merge toggle %0d assertion %0d", $coverage_merge(`SV_COV_TOGGLE, "c.db"),
              $coverage_merge(`SV_COV_ASSERTION, "c.db"));
     $display("after merge %0d", $coverage_get(`SV_COV_ASSERTION, `SV_COV_HIER, $root));
+    // Statement and toggle coverage collect from time 0: this design names
+    // them (S46-D13, S46-D14).
+    $display("statements %0d/%0d toggles %0d/%0d",
+             $coverage_get(`SV_COV_STATEMENT, `SV_COV_HIER, $root),
+             $coverage_get_max(`SV_COV_STATEMENT, `SV_COV_HIER, $root),
+             $coverage_get(`SV_COV_TOGGLE, `SV_COV_HIER, $root),
+             $coverage_get_max(`SV_COV_TOGGLE, `SV_COV_HIER, $root));
     $finish;
   end
 endmodule

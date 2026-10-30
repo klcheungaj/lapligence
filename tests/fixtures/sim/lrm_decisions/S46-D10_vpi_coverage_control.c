@@ -20,6 +20,8 @@ static PLI_INT32 d10_calltf(PLI_BYTE8* data) {
         /* Stop tb's own assertion `top`; tb.s.ok keeps collecting. */
         int stop = vpi_control(vpiCoverageStop, vpiAssertCoverage, tb);
         int check = vpi_control(vpiCoverageCheck, vpiAssertCoverage, s);
+        /* The action of tb.s.ok is a statement; a model built for VPI has
+         * statement coverage available (A19-D45). */
         int statement = vpi_control(vpiCoverageCheck, vpiStatementCoverage, s);
         vpi_printf((PLI_BYTE8*)"stop tb %d check s %d statement %d\n", stop, check, statement);
     } else {

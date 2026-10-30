@@ -49,6 +49,7 @@ test a19d43 sim_lrm_decisions::a19_d43_uses
 test a19decl adv_019::instance_properties_follow_the_definition_and_its_configuration
 test a19rts adv_019::runtime_structures_list_systfs_callbacks_time_queues_uses_and_udps
 test a19d44 sim_lrm_decisions::a19_d44_frames_and_threads
+test a19d45 sim_lrm_decisions::a19_d45_statement_toggle_objects
 test a19thr adv_019::threads_and_frames_follow_processes_and_subprogram_calls
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
@@ -324,8 +325,8 @@ node instance 37.10 members=package,interface,program,module
   iterate vpiClassDefn implemented walk
   get vpiAssertCoverage implemented walk
   get vpiFsmStateCoverage implemented walk
-  get vpiStatementCoverage unsupported statement coverage is unsupported
-  get vpiToggleCoverage unsupported toggle coverage is unsupported
+  get vpiStatementCoverage implemented walk
+  get vpiToggleCoverage implemented walk
   iterate vpiFsm implemented walk
 
 node instance_item 37.10 members=program,program_array,task_func,nets,array_net,variables,named_event,named_event_array,parameters,spec_param,assertion,typespec,class_defn
@@ -418,6 +419,10 @@ node task_func 37.12 members=task,function
   str vpiDPICIdentifier unsupported DPI and interface access properties of tasks and functions are not captured
 
 node named_begin 37.12 type=vpiNamedBegin
+  get vpiCovered implemented walk
+  get vpiCoverMax implemented walk
+  get vpiCoveredCount implemented walk
+  func vpi_control error a19d45 statement and toggle coverage are controlled per instance only (40.5.4)
   iterate vpiStmt implemented walk
   get vpiTimePrecision extension walk the time unit and precision of the enclosing instance
   get vpiTimeUnit extension walk the time unit and precision of the enclosing instance
@@ -467,6 +472,10 @@ node named_begin 37.12 type=vpiNamedBegin
   iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
 
 node begin 37.12 type=vpiBegin
+  get vpiCovered implemented walk
+  get vpiCoverMax implemented walk
+  get vpiCoveredCount implemented walk
+  func vpi_control error a19d45 statement and toggle coverage are controlled per instance only (40.5.4)
   iterate vpiStmt implemented walk
   str vpiFullName implemented walk
   iterate vpiPropertyDecl implemented walk
@@ -479,6 +488,10 @@ node begin 37.12 type=vpiBegin
   iterate vpiInternalScope implemented walk
 
 node named_fork 37.12 type=vpiNamedFork
+  get vpiCovered implemented walk
+  get vpiCoverMax implemented walk
+  get vpiCoveredCount implemented walk
+  func vpi_control error a19d45 statement and toggle coverage are controlled per instance only (40.5.4)
   iterate vpiStmt implemented walk
   str vpiFullName implemented walk
   iterate vpiPropertyDecl implemented walk
@@ -537,6 +550,10 @@ node named_fork 37.12 type=vpiNamedFork
   iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
 
 node fork 37.12 type=vpiFork
+  get vpiCovered implemented walk
+  get vpiCoverMax implemented walk
+  get vpiCoveredCount implemented walk
+  func vpi_control error a19d45 statement and toggle coverage are controlled per instance only (40.5.4)
   iterate vpiStmt implemented walk
   str vpiFullName implemented walk
   iterate vpiPropertyDecl implemented walk
@@ -625,6 +642,10 @@ node ref_obj 37.15 type=vpiRefObj
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node nets 37.16 members=net,net_bit,array_net
+  get vpiCovered implemented walk
+  get vpiCoverMax implemented walk
+  get vpiCoveredCount implemented walk
+  func vpi_control error a19d45 statement and toggle coverage are controlled per instance only (40.5.4)
   func vpi_handle_by_index implemented s42obj
   func vpi_handle_by_multi_index implemented s42obj
   get vpiArray implemented walk
@@ -719,6 +740,10 @@ node packed_array_net 37.16 type=vpiPackedArrayNet default=unsupported nets of s
   iterate vpiElement
 
 node variables 37.17 members=short_real_var,real_var,byte_var,short_int_var,int_var,long_int_var,integer_var,time_var,array_var,packed_array_var,bit_var,logic_var,struct_var,union_var,enum_var,string_var,chandle_var,class_var,var_bit
+  get vpiCovered implemented walk
+  get vpiCoverMax implemented walk
+  get vpiCoveredCount implemented walk
+  func vpi_control error a19d45 statement and toggle coverage are controlled per instance only (40.5.4)
   func vpi_handle_by_index implemented s42obj
   func vpi_handle_by_multi_index implemented s42obj
   get vpiArray implemented walk
@@ -1843,6 +1868,9 @@ node constant 37.55 type=vpiConstant
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node atomic_stmt 37.56 members=if,if_else,while,repeat,wait,ordered_wait,wait_fork,case,for,delay_control,event_control,event_stmt,assignment,assign_stmt,deassign,disable,disable_fork,tf_call,forever,force,release,do_while,expect_stmt,foreach_stmt,return_stmt,break,continue,immediate_assert,immediate_assume,immediate_cover,null_stmt
+  get vpiCovered implemented walk
+  get vpiCoverMax implemented walk
+  get vpiCoveredCount implemented walk
   str vpiName implemented walk
   handle vpiProcess unsupported statements have no vpiProcess relation in llg
 

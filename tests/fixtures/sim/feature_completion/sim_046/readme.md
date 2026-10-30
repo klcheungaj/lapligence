@@ -300,12 +300,86 @@ assertion).
 - Errors (-1): control 4, type 19, type 24, scope_def 12, the unknown
   definition `"nosuch"`, the instance name `"m1"` as a string (S46-D6), an
   all-x type, a save of type 19, a STOP with scope_def 9.
-- Kinds 21-23 (S46-D5): CHECK 0, START 0, STOP 1, RESET 1, get 0, max 0,
-  save 0; `never.db` is not written.
+- FSM state coverage, kind 21 (no FSM, S46-D5): CHECK 0, START 0, STOP 1,
+  RESET 1, get 0, max 0, save 0; `never.db` is not written.
+- `e` has no statement and no signal: statement and toggle CHECK 0 (NOCOV),
+  max 0.
 - After tick 1: covered 2/2. A RESET of `m1` HIER written as a statement
   zeroes `m1.l.lp`: 1. `c.db` saved (OK); merging it as toggle coverage
   returns 0 (found, no toggle data), as assertion coverage 1: m2's success
   is added again, m1 still has none: 1.
+- Statement and toggle coverage collect from time 0: the design names
+  toggle coverage and passes an all-x type (S46-D13, S46-D14). Statements:
+  `tb`'s `always` holds the delay control and its assignment (2); the
+  `initial` block is 1 more, with 19 statements in it (six CHECK displays,
+  the `e`, errors, kind 21 and empty displays, `#10;`, the discarded RESET,
+  five displays and `$finish`): 22. All but `$finish` have started when the
+  last display runs: 21/22. Toggles: `tb.clk` (1), `tb.unknown` (32) and
+  the `clk` ports of `m1`, `m2`, `m1.l` and `m2.l` (4): 37 bits; the clocks
+  went from 0 to 1 at time 5 and `unknown` stays x: 5/37.
+
+## statement_shapes.sv
+
+Statement coverage (S46-D13) is collected: the design names
+`SV_COV_STATEMENT`.
+
+- `unique if`: both conditions are 1, so the first branch runs (`first 20`)
+  and the run reports one `unique violation ... multiple matching items` at
+  25:5 (12.4.2). The `else if` is part of that conditional statement (A.6.6).
+- `whole_blk` is the whole branch of the `join_none`; `disable whole_blk` at
+  time 1 ends the branch KILLED (9.6.2, 9.7).
+- `x = 8'b1011_0001` at time 1: `$strobe` prints `ones(x)` = 4 at the end of
+  time 1; `count`, driven through `ones`, is 4 at time 2. The second
+  `initial` prints `right 22` at time 1, before the strobe.
+- Statements of `tb` (24): `ones` holds `for`, `if`, `n++` and `return`
+  (4; the declaration is none). The first `initial` holds its block, the
+  `unique if`, two displays, `fork`, `whole_blk`, the assignment to `whole`,
+  `#10` and its display, `#1` and the `disable`, the assignment to `x`, the
+  `$strobe`, `#1` and its display, the last display and `$finish` (17). The
+  second holds its block, `#1` and its display (3). Not started when the
+  last display runs: `$display("second")`, `$display("unexpected")` and
+  `$finish`: 21/24.
+- The generated C counts statements, and `right` stays a registered frame
+  cell (`llg_value_scope_register` on `&F->`), in both optimizer modes.
+
+## code_database.sv
+
+Three runs in one directory; statement and toggle coverage collect from time
+0 (S46-D13, S46-D14). `tb` has 12 statements: the `initial` block, the
+`void'` call, the `if` and the merge display, the start display, the `if`
+and `v = '1`, `#1` and `v = '0`, the end and save displays and `$finish`.
+`v` has W bits.
+
+- Run 1 (`+up`): at the start display the block, the `void'` call, the first
+  `if` and the display itself have started: 4/12; `v` is 00 when collection
+  starts (both bits seen at 0): 0/2. `v` goes to 11 and back to 00: 9/12
+  (not the merge display, not the save display yet, not `$finish`), 2/2.
+  `a.s.db` holds 10 counts of 1 (the save display has started when it
+  saves); `a.t.db` holds, per bit, both sightings (3), one 0->1 and one
+  1->0 change.
+- Run 2 (`+merge`): both merges return 1. Run 1's ten statements plus this
+  run's merge display: 11/12 at the start and the end (`v = '1` and
+  `$finish` stay at run 1's count and 0); toggles 2/2 from run 1. `b.s.db`
+  holds 11 started statements whose counts add to 20 (10 from run 1, 10
+  started in this run); `b.t.db` equals `a.t.db` (this run changes nothing).
+- Run 3 (`-G W=3`, `+merge`): the statements are the same, so their merge
+  returns 1 (11/12); `v` is 3 bits wide, so the toggle merge is -1 with a
+  run-time error and the run exits with status 1 (S46-D11): 0/3, and
+  `c.t.db` holds three bits seen only at 0.
+
+## toggle_scopes.sv
+
+Toggle coverage collects from time 0 (S46-D14). Counted bits of `tb`: `a`
+(2), `u` (32), the packed struct `st` (3), `gen[0].w` (1), `gen[1].w` (2)
+and `cond.c` (1): 41. `leaf l`: `q` (3) and the port `i` (2): 5; HIER `tb`
+46. Not counted: the unpacked array `arr`, `r`, `s`, the event `e`, the
+block variable `local_v` and the package variable `pkg::pv`.
+
+- At time 0 every counted bit is 0 (or x for `cond.c` until its assignment
+  runs), so none has both values.
+- At time 1 `a` becomes 11 (and with it `cond.c` and `l.i`), `u` 15 (its low
+  four bits), `st` all ones, both `w` all ones and `l.q` 111: `tb` covers 2
+  + 4 + 3 + 1 + 2 + 1 = 13, `l` 5, HIER 18.
 
 ## merge_errors.sv
 
@@ -349,7 +423,9 @@ L66756-66771.
   S42-D11). Stopping `u1`
   (an instance handle) and `tb.u2.c` (an assertion handle) return SV_COV_OK
   (1); CHECK of `u1` is 1. Statement coverage: CHECK 0 (NOCOV), STOP 1
-  (S46-D5). An unknown coverage type is -1 with `LLG_VPI_ARGUMENT`.
+  (S46-D5): the model is built for a run-time plugin, not with `--vpi`, and
+  its source names no statement coverage (S46-D13). An unknown coverage
+  type is -1 with `LLG_VPI_ARGUMENT`.
 - Ticks at 5 and 15 sample a = b = 1; the tick at 25 samples b = 0: both
   `p` fail (u1 still checks while its coverage is stopped). At time 30 `im`
   passes and `d` fails when its report matures.
@@ -357,8 +433,8 @@ L66756-66771.
   `u2.p` (3, 2, 0, 1, 0, 0) with vpiCovered 0 (it failed) and
   vpiCoveredCount 2; `im` (1, 1, 0, 0, 0, 0), covered; `d` (1, 0, 0, 1, 0,
   0). `vpi_get(vpiAssertCoverage, ...)`: u1 0, u2 1 (`p` succeeded,
-  S46-D10), tb 1 (`im`). Toggle coverage is `vpiUndefined` with
-  `LLG_VPI_UNSUPPORTED`. vpiCoverageSave and vpiCoverageMerge of the same
+  S46-D10), tb 1 (`im`). Toggle coverage, not available in this model, is
+  0 with no error (A19-D45). vpiCoverageSave and vpiCoverageMerge of the same
   file return 1, after which `u2.p` reads (6, 4, 0, 2, 0, 0).
 
 ## Negative cases

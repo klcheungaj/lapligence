@@ -1,0 +1,17 @@
+phase 0: tb statements 0 toggles 0, u statements 0 toggles 0
+check statements u -> 1
+start statements u -> 1
+start toggles u -> 1
+phase 1: tb statements 0 toggles 0, u statements 5 toggles 3
+event control vpiEventControl covered=5 max=5 count=13
+ block vpiBegin covered=4 max=4 count=10
+  statement vpiAssignment covered=1 max=1 count=3
+  statement vpiIf covered=2 max=2 count=4
+   then vpiAssignment covered=1 max=1 count=1
+start statements on a statement -> -1 (error)
+n vpiReg covered=2 max=2 count=5
+n[1] vpiRegBit covered=1 max=1 count=2
+go vpiReg covered=1 max=1 count=6
+r vpiRealVar covered=0 max=0 count=0
+n count64 5
+reset toggles on a signal -> -1 (error)

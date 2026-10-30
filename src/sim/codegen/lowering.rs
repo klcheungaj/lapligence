@@ -868,8 +868,14 @@ fn finish_generation(
         model.vpi_udps.clear();
         model.vpi_catalog = false;
         if let Some(coverage) = model.assertion_coverage.as_mut() {
-            coverage.statements.iter_mut().for_each(|item| item.code = None);
-            coverage.toggles.iter_mut().for_each(|toggle| toggle.object = None);
+            coverage
+                .statements
+                .iter_mut()
+                .for_each(|item| item.code = None);
+            coverage
+                .toggles
+                .iter_mut()
+                .for_each(|toggle| toggle.object = None);
         }
     }
     // Assertion coverage tables serve only `$coverage_*` calls and VPI

@@ -1,0 +1,10 @@
+t0 0/8
+a 6/8
+stop 1
+stopped 6
+start 1
+started 8
+reset 1
+after reset 0
+one change 0
+back 2 check 1

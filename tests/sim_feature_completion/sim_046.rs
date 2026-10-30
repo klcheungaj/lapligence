@@ -226,8 +226,9 @@ fn corrupt_and_foreign_databases_change_nothing() {
         let mut future = good.clone();
         future[8..12].copy_from_slice(&2u32.to_le_bytes());
         let mut unknown_section = good.clone();
-        // Bits 1, 2 and 4 are the functional, assertion and FSM sections.
-        unknown_section[12] |= 8;
+        // Bits 1, 2, 4, 8 and 16 are the functional, assertion, FSM,
+        // statement and toggle sections.
+        unknown_section[12] |= 32;
         let mut overlong = functional_payload(&[&record]);
         let frame = u64_at(&overlong, 0) + 1;
         overlong[..8].copy_from_slice(&frame.to_le_bytes());
@@ -665,4 +666,151 @@ fn vpi_reads_and_controls_assertion_coverage() {
         &["--define-system-task", "task $vpi_cov(input int phase)"],
         &[("LLG_VPI_PLUGIN", &library)],
     );
+}
+
+/// S46-D13: the statement counters leave the code they count unchanged: a
+/// unique-if ladder reports both true conditions, a disabled named block
+/// forming a whole fork branch ends it KILLED, the helper that a continuous
+/// assignment and a `$strobe` call keeps its loops and locals, and the
+/// automatic variable of a process without other effects stays a
+/// registered frame cell.
+#[test]
+fn statement_counters_keep_the_shape_of_the_counted_code() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_046/statement_shapes.out");
+    sim_cli::run_case_checked_matrix(SUITE, "statement_shapes", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        let messages = llg_messages(output);
+        assert_eq!(messages.len(), 1, "{label}: {messages:?}");
+        assert!(
+            messages[0].starts_with("llg: warning: unique violation at ")
+                && messages[0].ends_with("statement_shapes.sv:25:5: multiple matching items"),
+            "{label}: {messages:?}"
+        );
+    });
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/feature_completion/sim_046/statement_shapes.sv");
+    let compiled = llg::core::compile::compile_checked(&llg::core::compile::CompileOpts {
+        files: vec![path.to_string_lossy().into_owned()],
+        top: Some("tb".to_owned()),
+        ..Default::default()
+    })
+    .expect("statement_shapes compiles");
+    let db = llg::core::db::Db::from_slang(&compiled.snapshot).expect("owned database");
+    for options in [
+        llg::sim::opt::OptConfig::default(),
+        llg::sim::opt::OptConfig::none(),
+    ] {
+        let c = llg::sim::codegen::generate_from_db_with_opts(&db, &options)
+            .expect("statement_shapes emits")
+            .model_c;
+        assert!(c.contains("++llg_scov_"), "the model counts statements");
+        assert!(
+            c.lines()
+                .any(|line| line.contains("llg_value_scope_register(") && line.contains("&F->")),
+            "`right` is a registered frame cell"
+        );
+    }
+}
+
+/// The body of database section `bit` (8 statement, 16 toggle) after its
+/// schema hash, in a file that holds only that section.
+fn code_section(bytes: &[u8], bit: usize) -> &[u8] {
+    assert_eq!(&bytes[..8], b"LLGCOVDB");
+    assert_eq!(u32_at(bytes, 12), bit, "only that section");
+    let length = u64_at(bytes, 40) as usize;
+    &bytes[56..48 + length]
+}
+
+/// Statement counts of a statement section, in entity order.
+fn statement_counts(bytes: &[u8]) -> Vec<u64> {
+    let body = code_section(bytes, 8);
+    let entities = u32_at(body, 0);
+    assert_eq!(body.len(), 4 + entities * 8, "section length");
+    (0..entities).map(|i| u64_at(body, 4 + i * 8)).collect()
+}
+
+/// Per bit of every signal of a toggle section: (sightings, 0->1, 1->0).
+fn toggle_bits(bytes: &[u8]) -> Vec<(u8, u64, u64)> {
+    let body = code_section(bytes, 16);
+    let mut bits = Vec::new();
+    let mut at = 4;
+    for _ in 0..u32_at(body, 0) {
+        let width = u32_at(body, at);
+        at += 4;
+        for _ in 0..width {
+            bits.push((body[at], u64_at(body, at + 1), u64_at(body, at + 9)));
+            at += 17;
+        }
+    }
+    assert_eq!(at, body.len(), "section length");
+    bits
+}
+
+/// S46-D13, S46-D14: statement and toggle sections save and merge across
+/// runs; a toggle section of a model with other signals is refused while
+/// the statement section still merges (readme.md).
+#[test]
+fn statement_and_toggle_sections_save_and_merge_across_runs() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_046/code_database.out");
+    for optimized in [false, true] {
+        let label = format!("{SUITE}/code_database, optimized={optimized}");
+        let (directory, outputs) = sim_cli::run_case_sequence(
+            SUITE,
+            "code_database",
+            optimized,
+            &[],
+            &[],
+            &[
+                (&[], &["+up"]),
+                (&[], &["+tag=b", "+merge"]),
+                (&["-G", "W=3"], &["+tag=c", "+merge"]),
+            ],
+        );
+        let stdout: String = outputs
+            .iter()
+            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+            .collect();
+        assert_eq!(stdout, expected, "{label}");
+        for output in &outputs[..2] {
+            assert!(output.status.success(), "{label}");
+            assert!(llg_messages(output).is_empty(), "{label}");
+        }
+        assert_eq!(outputs[2].status.code(), Some(1), "{label}");
+        assert_eq!(
+            llg_messages(&outputs[2]),
+            ["llg: runtime error: $coverage_merge at tb:17:16: coverage database `a.t.db` was not merged: it was saved by a model with different signals; no coverage changed"],
+            "{label}"
+        );
+        let read = |name: &str| std::fs::read(directory.path().join(name)).expect(name);
+        let first = statement_counts(&read("a.s.db"));
+        assert_eq!(first.len(), 12, "{label}");
+        assert_eq!(
+            first.iter().filter(|count| **count == 1).count(),
+            10,
+            "{label}"
+        );
+        assert_eq!(first.iter().sum::<u64>(), 10, "{label}");
+        let second = statement_counts(&read("b.s.db"));
+        assert_eq!(
+            second.iter().filter(|count| **count != 0).count(),
+            11,
+            "{label}"
+        );
+        assert_eq!(second.iter().sum::<u64>(), 20, "{label}");
+        assert_eq!(toggle_bits(&read("a.t.db")), [(3, 1, 1); 2], "{label}");
+        assert_eq!(toggle_bits(&read("b.t.db")), [(3, 1, 1); 2], "{label}");
+        assert_eq!(toggle_bits(&read("c.t.db")), [(1, 0, 0); 3], "{label}");
+    }
+}
+
+/// S46-D14: toggle coverage counts the packed nets and variables of an
+/// instance, its loop and conditional generate scopes and its ports, and no
+/// array, real, string, event, block or package variable (readme.md).
+#[test]
+fn toggle_coverage_counts_instance_and_generate_scope_signals() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_046/toggle_scopes.out");
+    sim_cli::run_case_checked_matrix(SUITE, "toggle_scopes", &[], &|label, output| {
+        assert_stdout(label, output, expected);
+        assert!(llg_messages(output).is_empty(), "{label}");
+    });
 }

@@ -355,6 +355,8 @@ impl CellEligibility {
             | IrStmt::MonitorEnable(_)
             | IrStmt::PrintTimescale { .. }
             | IrStmt::SdfAnnotate { .. } => {}
+            // A statement coverage hit counts in a model global only.
+            statement if statement.is_statement_hit() => {}
             IrStmt::DeclLocal { init, .. } | IrStmt::SharedLocal { init, .. } => {
                 if let Some(init) = init {
                     self.expression(ctx, init);

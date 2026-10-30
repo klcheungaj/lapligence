@@ -2465,6 +2465,15 @@ fn a19_d44_frames_and_threads() {
 }
 
 #[test]
+fn a19_d45_statement_toggle_objects() {
+    run_vpi_decision(
+        "A19-D45_statement_toggle_objects",
+        &["task $d45(input integer phase)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D45_statement_toggle_objects.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",
@@ -3235,6 +3244,22 @@ fn s46_d12_check_full_or_none() {
     run_decision(
         "S46-D12_check_full_or_none",
         include_str!("fixtures/sim/lrm_decisions/S46-D12_check_full_or_none.out"),
+    );
+}
+
+#[test]
+fn s46_d13_statement_coverage() {
+    run_decision(
+        "S46-D13_statement_coverage",
+        include_str!("fixtures/sim/lrm_decisions/S46-D13_statement_coverage.out"),
+    );
+}
+
+#[test]
+fn s46_d14_toggle_coverage() {
+    run_decision(
+        "S46-D14_toggle_coverage",
+        include_str!("fixtures/sim/lrm_decisions/S46-D14_toggle_coverage.out"),
     );
 }
 

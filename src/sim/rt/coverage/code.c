@@ -12,7 +12,8 @@
 // records whether it was seen at 0 and at 1 while collecting, and counts
 // its changes from a known 0 to a known 1 and back (X and Z are neither
 // value: 0, X, 1 counts one 0->1 change). The value a started signal holds
-// counts as seen; changes are watched like FSM state signals
+// counts as seen, later a bit's value counts when it changes; changes are
+// watched like FSM state signals
 // (llg_value_watch_add), so only started signals pay, one binary search per
 // changing publication of their storage. START samples the current value
 // without counting a change; RESET clears the sightings and counts and
@@ -237,8 +238,9 @@ static unsigned llg_tcov_lowest_bit(uint64_t value) {
 #endif
 }
 
-// Take the storage's value: record the bits seen at 0 and 1 and count the
-// changes from the last known value (with `count_changes`).
+// Take the storage's value. Without `count_changes` (a start) every known
+// bit counts as seen at its value; otherwise only a bit whose known value
+// changed (or that has none yet) does, and a change between 0 and 1 counts.
 static void llg_tcov_sample(size_t index, int count_changes) {
     const llg_tcov_signal_t* signal = &llg_tcov_signals[index];
     uint64_t* data = llg_tcov_states[index].data;
@@ -258,8 +260,9 @@ static void llg_tcov_sample(size_t index, int count_changes) {
         uint64_t known = ~unknown & mask;
         uint64_t bits = llg_sv4_word(value, w, LLG_SV4_BITS);
         uint64_t one = bits & known, zero = ~bits & known;
-        seen0[w] |= zero;
-        seen1[w] |= one;
+        uint64_t observed = count_changes ? known & ~(valid[w] & ~(last[w] ^ bits)) : known;
+        seen0[w] |= zero & observed;
+        seen1[w] |= one & observed;
         if (count_changes) {
             uint64_t rise = valid[w] & ~last[w] & one;
             uint64_t fall = valid[w] & last[w] & zero;

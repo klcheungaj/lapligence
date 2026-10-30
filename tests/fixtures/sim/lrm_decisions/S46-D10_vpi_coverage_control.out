@@ -1,4 +1,4 @@
-stop tb 1 check s 1 statement 0
+stop tb 1 check s 1 statement 1
 ok failed
 s 1 tb 0 ok covered 0
 reset ok 1 s 0

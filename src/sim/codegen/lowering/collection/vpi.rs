@@ -2022,7 +2022,12 @@ impl Codegen<'_> {
             .filter(|(_, object)| object.kind.is_scope())
             .map(|(row, _)| row)
             .collect();
-        let (code, files, named_blocks, statement_rows) = {
+        let code::FinishedCode {
+            code,
+            files,
+            named_blocks,
+            statement_rows,
+        } = {
             let mut tables = code::CodeTables::new(self, model, typespecs);
             // Declarations first, so the instances of assertions link to
             // them (37.12: a scope holds its sequence and property

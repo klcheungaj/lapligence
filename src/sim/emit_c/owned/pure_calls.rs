@@ -20,6 +20,8 @@ fn callback_safe_statements(body: &[IrStmt]) -> Result<(), String> {
     for statement in body {
         match statement.unlocated() {
             IrStmt::Nop | IrStmt::Label(_) | IrStmt::Goto(_) => {}
+            // A statement coverage hit only counts in model storage.
+            statement if statement.is_statement_hit() => {}
             IrStmt::Block(body) => callback_safe_statements(body)?,
             IrStmt::DeclLocal { init, .. } | IrStmt::SharedLocal { init, .. } => {
                 if let Some(init) = init {

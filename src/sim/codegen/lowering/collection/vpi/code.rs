@@ -88,6 +88,18 @@ enum Item<'a> {
 type Children<'a> = Vec<(&'static str, Item<'a>)>;
 
 /// Expression and statement tables under construction.
+/// The tables [`CodeTables::finish`] hands back.
+pub(super) struct FinishedCode {
+    /// The expression and statement entries.
+    pub(super) code: Vec<IrVpiCode>,
+    /// The source files the entries name.
+    pub(super) files: Vec<String>,
+    /// The statement entry of each named block's catalog row.
+    pub(super) named_blocks: Vec<(usize, u32)>,
+    /// The entry of each statement node (statement coverage, A19-D45).
+    pub(super) statement_rows: HashMap<NodeId, u32>,
+}
+
 pub(super) struct CodeTables<'c, 'a> {
     cg: &'c Codegen<'a>,
     /// The catalog's typespecs, which cast target types join.
@@ -147,17 +159,14 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         }
     }
 
-    /// The finished tables: entries, files, the statement entry of each
-    /// named block's catalog row and the entry of each statement node.
-    pub(super) fn finish(
-        self,
-    ) -> (
-        Vec<IrVpiCode>,
-        Vec<String>,
-        Vec<(usize, u32)>,
-        HashMap<NodeId, u32>,
-    ) {
-        (self.code, self.files, self.named_blocks, self.statement_rows)
+    /// The finished tables.
+    pub(super) fn finish(self) -> FinishedCode {
+        FinishedCode {
+            code: self.code,
+            files: self.files,
+            named_blocks: self.named_blocks,
+            statement_rows: self.statement_rows,
+        }
     }
 
     /// The catalog row a full name keys, if any.

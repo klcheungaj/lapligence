@@ -11,6 +11,9 @@ METADATA = {
     # Coverpoint tables: `width` and `is_signed` describe the bin key.
     'rt/coverage/coverage.c': ('point',),
     'rt/coverage/database.c': ('point',),
+    # Toggle coverage signal rows: `width` is the watched storage's bit count.
+    'rt/coverage/code.c': ('llg_tcov_signals[i]', 'llg_tcov_signals[signal]', 'row', 'signal',
+                           'signals[i]'),
     'rt/llg_container_prelude.c': ('record',),
     # llg_dpi_type_t layout tables: `width` is a DPI payload bit count.
     'rt/llg_dpi.c': ('element', 'type', 'type->element', 'type->members[m].type'),

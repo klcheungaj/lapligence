@@ -181,7 +181,10 @@ impl Codegen<'_> {
     /// The foreach statement an implicit block holds only to declare its
     /// loop variables (37.12 detail 3 makes the foreach their scope), or
     /// `None` for any other block.
-    pub(super) fn vpi_foreach_block(&self, id: NodeId) -> Option<NodeId> {
+    pub(in crate::sim::codegen::lowering) fn vpi_foreach_block(
+        &self,
+        id: NodeId,
+    ) -> Option<NodeId> {
         let mut statements = Vec::new();
         self.vpi_flatten(id, &mut statements);
         let [found] = statements.as_slice() else {
@@ -204,7 +207,10 @@ impl Codegen<'_> {
 
     /// The variables an implicit block declares for the one `for` loop it
     /// holds (`for (int i = 0; ...)`), or `None` for any other block.
-    pub(super) fn vpi_for_declarations(&self, id: NodeId) -> Option<(NodeId, Vec<NodeId>)> {
+    pub(in crate::sim::codegen::lowering) fn vpi_for_declarations(
+        &self,
+        id: NodeId,
+    ) -> Option<(NodeId, Vec<NodeId>)> {
         let mut children = Vec::new();
         for child in &self.node(id).children {
             if self.db.semantic_detail(*child) == Some("List") {

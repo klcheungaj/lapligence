@@ -1,0 +1,8 @@
+t0 u 1/5
+one u 4/5
+stop 1
+stopped u 4/5
+start 1 reset 1
+reset u 0/5
+two u 5/5
+tb 18/20 check 1

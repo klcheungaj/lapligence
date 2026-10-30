@@ -1137,6 +1137,16 @@ impl IrStmt {
         }
     }
 
+    /// Whether this is a statement coverage hit: it only counts in model
+    /// storage, so code shapes that look for one statement skip it.
+    pub fn is_statement_hit(&self) -> bool {
+        matches!(
+            self.unlocated(),
+            Self::Coverage(operation)
+                if matches!(operation.as_ref(), super::IrCoverageStmt::StatementHit { .. })
+        )
+    }
+
     /// Return the executable operation through any provenance wrappers.
     pub fn unlocated(&self) -> &Self {
         match self {

@@ -20,6 +20,6 @@ tb.u2.c attempts=0 success=0 vacuous=0 failure=0 disable=0 kill=0 covered=0 max=
 tb.im attempts=1 success=1 vacuous=0 failure=0 disable=0 kill=0 covered=1 max=1 count=1
 tb.d attempts=1 success=0 vacuous=0 failure=1 disable=0 kill=0 covered=0 max=1 count=0
 assert coverage u1=0 u2=1 tb=1
-toggle coverage -1 LLG_VPI_UNSUPPORTED
+toggle coverage 0 none
 save 1 merge 1
 tb.u2.p attempts=6 success=4 vacuous=0 failure=2 disable=0 kill=0 covered=0 max=1 count=4

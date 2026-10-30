@@ -102,18 +102,25 @@ impl Codegen<'_> {
         }
     }
 
-    /// Whether statement `h` is a statement coverage entity: every
-    /// statement except blocks (which group their statements), null
-    /// statements and declarations; expression statements (calls,
-    /// increments) count.
+    /// Whether statement `h` is a statement coverage entity (A.6.4
+    /// `statement_item`): every statement, a written `begin` or `fork`
+    /// block included; not a null statement, a declaration, nor the
+    /// blocks the frontend adds (a statement list, an expression
+    /// statement's wrapper, the scope of a `for` or `foreach` loop's
+    /// variables). Expression statements (calls, increments) count. The
+    /// `else if` of a conditional statement is part of it (A.6.6
+    /// `conditional_statement`), not a statement of its own.
     fn statement_coverable(&self, h: NodeId) -> bool {
         match self.kind(h) {
+            NodeKind::Stmt(StmtKind::IfElse { .. }) => !self.else_if_continuation(h),
+            NodeKind::Stmt(StmtKind::Begin) => {
+                self.db.semantic_detail(h) == Some("Block")
+                    && self.vpi_for_declarations(h).is_none()
+                    && self.vpi_foreach_block(h).is_none()
+            }
+            NodeKind::Stmt(StmtKind::Fork { .. }) => true,
             NodeKind::Stmt(
-                StmtKind::Begin
-                | StmtKind::Fork { .. }
-                | StmtKind::Empty
-                | StmtKind::VariableDecl { .. }
-                | StmtKind::Unsupported { .. },
+                StmtKind::Empty | StmtKind::VariableDecl { .. } | StmtKind::Unsupported { .. },
             ) => false,
             NodeKind::Stmt(_)
             | NodeKind::SysCall { .. }
@@ -122,6 +129,24 @@ impl Codegen<'_> {
             | NodeKind::Expr(_) => true,
             _ => false,
         }
+    }
+
+    /// Whether `h` is the unqualified `if` written as the `else if` of
+    /// another `if` (A.6.6). Qualified branch chains are emitted only when
+    /// their `else if` links stay single `if` statements, so these must
+    /// carry no hit of their own; an `else unique if` or `else priority if`
+    /// starts a conditional statement of its own.
+    fn else_if_continuation(&self, h: NodeId) -> bool {
+        let NodeKind::Stmt(StmtKind::IfElse { check, .. }) = self.kind(h) else {
+            return false;
+        };
+        *check == crate::core::db::UniquePriorityCheck::None
+            && self.node(h).parent().is_some_and(|parent| {
+                matches!(
+                    self.kind(parent),
+                    NodeKind::Stmt(StmtKind::IfElse { if_false: Some(branch), .. }) if *branch == h
+                )
+            })
     }
 
     /// The hit that counts statement `h`, or `None` when `h` is no entity
@@ -189,24 +214,29 @@ impl Codegen<'_> {
             if !matches!(self.kind(node), NodeKind::Var { .. } | NodeKind::Net { .. }) {
                 continue;
             }
-            // Declared in an instance or a generate scope of one; not in a
-            // subroutine, block, class or package.
+            // Declared in an instance or a generate scope of one (a loop
+            // generate's scopes sit in a scope array); not in a subroutine,
+            // block, class or package.
             let mut owner = self.node(node).parent;
             while let Some(parent) = owner {
-                if !matches!(self.kind(parent), NodeKind::GenScope) {
+                if !matches!(
+                    self.kind(parent),
+                    NodeKind::GenScope | NodeKind::GenScopeArray
+                ) {
                     break;
                 }
                 owner = self.node(parent).parent;
             }
-            let Some(owner) = owner.filter(|owner| {
-                matches!(self.kind(*owner), NodeKind::ModuleInst { .. })
-            }) else {
+            let Some(owner) =
+                owner.filter(|owner| matches!(self.kind(*owner), NodeKind::ModuleInst { .. }))
+            else {
                 continue;
             };
             let Some(ir) = model.signals.get(signal) else {
                 continue;
             };
-            if !ir.net_alias.is_empty() || !matches!(ir.ty, IrType::Packed { width: w, .. } if w == width)
+            if !ir.net_alias.is_empty()
+                || !matches!(ir.ty, IrType::Packed { width: w, .. } if w == width)
             {
                 continue;
             }
@@ -225,7 +255,10 @@ impl Codegen<'_> {
     }
 
     /// Put the statement and toggle entities into the coverage tables.
-    pub(in crate::sim::codegen::lowering) fn populate_code_coverage(&mut self, model: &mut IrModel) {
+    pub(in crate::sim::codegen::lowering) fn populate_code_coverage(
+        &mut self,
+        model: &mut IrModel,
+    ) {
         if model.assertion_coverage.is_none() {
             return;
         }

@@ -4207,6 +4207,7 @@ static PLI_INT32 instance_coverage(const llg_vpi_slot_t* slot, int property) {
 }
 
 static int code_is_statement(int type);
+static int code_is_assertion(int type);
 static int code_type(const llg_vpi_code_t* node);
 static uint32_t statement_scope_code(const llg_vpi_model_object_t* object);
 
@@ -4234,12 +4235,13 @@ static void code_statement_tally(uint32_t index, uint64_t tally[3], unsigned dep
 
 /* vpiCovered, vpiCoverMax and vpiCoveredCount of a statement object
  * (40.5.3, A19-D45): its executed statements, its statements and the sum
- * of their execution counts. Concurrent assertions reached as statements
- * keep the assertion-handle answers of their assertion object. */
+ * of their execution counts. An assertion statement keeps the answers of
+ * its assertion object (37.45); a block that contains one counts it as a
+ * statement. */
 static int code_coverage_property(uint32_t index, int property, uint64_t* value) {
     const llg_vpi_code_t* node = code_at(index);
     int type = node ? code_type(node) : 0;
-    if (!node || type == vpiAssert || type == vpiAssume || type == vpiCover ||
+    if (!node || code_is_assertion(type) ||
         !(code_is_statement(type) || type == vpiFuncCall || type == vpiMethodFuncCall ||
           type == vpiSysFuncCall))
         return 0;
@@ -4295,7 +4297,9 @@ static int code_signal_coverage(const llg_vpi_slot_t* slot, int property, uint64
     if (!is_coverage_status_property(property)) return 0;
     if (slot->kind == SLOT_CODE) return code_coverage_property((uint32_t)slot->aux, property, value);
     llg_vpi_model_object_t* object = row_object(slot->object);
-    if (slot->kind == SLOT_OBJECT && object && is_statement_scope_type(object->type)) {
+    if (slot->kind == SLOT_OBJECT && object &&
+        (is_statement_scope_type(object->type) || object->type == vpiNamedBegin ||
+         object->type == vpiNamedFork)) {
         uint32_t code = statement_scope_code(object);
         return code != LLG_VPI_NONE && code_coverage_property(code, property, value);
     }
@@ -8448,6 +8452,13 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         if (property == vpiType) return vpiInterModPath;
         return property == vpiLineNo ? 0 : unsupported_property();
     }
+    {
+        /* 40.5.3 statement and signal coverage, class properties included
+         * (A19-D45). */
+        uint64_t coverage;
+        if (code_signal_coverage(slot, property, &coverage))
+            return coverage > INT32_MAX ? INT32_MAX : (PLI_INT32)coverage;
+    }
     if (rts_slot(slot)) {
         int handled;
         PLI_INT64 value = rts_get(property, slot, &handled);
@@ -8463,11 +8474,6 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             }
             return (PLI_INT32)value;
         }
-    }
-    {
-        uint64_t coverage;
-        if (code_signal_coverage(slot, property, &coverage))
-            return coverage > INT32_MAX ? INT32_MAX : (PLI_INT32)coverage;
     }
     if (slot->kind == SLOT_CODE) return code_property((uint32_t)slot->aux, property);
     if (slot->kind == SLOT_OBJECT && row_object(slot->object) &&
@@ -8910,17 +8916,18 @@ PLI_INT64 vpi_get64(PLI_INT32 property, vpiHandle handle) {
         if (!fsm_property(slot, property, &value)) return unsupported_property();
         return value > INT64_MAX ? INT64_MAX : (PLI_INT64)value;
     }
+    /* Statement and toggle counts keep their full 64-bit value too. */
+    if (slot && is_coverage_status_property(property)) {
+        vpi_enter();
+        if (code_signal_coverage(slot, property, &value))
+            return value > INT64_MAX ? INT64_MAX : (PLI_INT64)value;
+    }
     /* vpiObjId is an int64 property (37.29). */
     if (slot && dyn_slot(slot)) {
         vpi_enter();
         int handled;
         PLI_INT64 result = dyn_get(property, slot, &handled);
         if (handled) return result;
-    }
-    /* Statement and toggle counts keep their full 64-bit value too. */
-    if (slot && slot->kind != SLOT_ASSERTION && code_signal_coverage(slot, property, &value)) {
-        vpi_enter();
-        return value > INT64_MAX ? INT64_MAX : (PLI_INT64)value;
     }
     return (PLI_INT64)vpi_get(property, handle);
 }
