@@ -125,6 +125,9 @@ static PLI_INT32 keep(PLI_BYTE8* data) {
     report("other call copy stays valid", vpi_get(vpiType, kept_call) == vpiSysTaskCall);
     vpiHandle arguments = vpi_iterate(vpiArgument, kept_call);
     report("arguments of the other copy", arguments != NULL && vpi_scan(arguments) != NULL);
+    /* Releasing a call-owned iterator early must leave the call's other
+     * handles (kept_argument, kept_iterator) to expire with the call. */
+    report("release a partly scanned iterator", vpi_release_handle(arguments) == 1);
     return 0;
 }
 

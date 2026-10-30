@@ -141,6 +141,7 @@ typedef struct {
     int32_t aux;              /* iterator type, constant type, argument index */
     uint32_t count;           /* iterator length */
     uint32_t position;        /* iterator cursor */
+    uint32_t prev_owned;      /* call-owned list back link: slot index + 1 */
     uintptr_t* items;         /* ITER_LIST handles */
     void* pointer;            /* registration, callsite, event, callback */
     uintptr_t use;            /* an iterator's reference handle (vpiUse, 37.79) */
@@ -848,9 +849,14 @@ static uint32_t alloc_slot(llg_vpi_slot_kind_t kind) {
     return index;
 }
 
+static void unlink_owned(uint32_t index);
+
 static void release_slot(uint32_t index) {
     llg_vpi_slot_t* slot = &g_vpi.slots[index];
     if (slot->kind == SLOT_FREE || index < g_vpi.static_count) return;
+    /* A call-owned slot released early leaves its call's list first, since
+     * the free list reuses next_owned. */
+    if (slot->owned) unlink_owned(index);
     free(slot->items);
     uint32_t generation = slot->generation;
     memset(slot, 0, sizeof(*slot));
@@ -867,7 +873,31 @@ static void own_by_call(uint32_t index, llg_vpi_call_t* call) {
     if (!call) return;
     g_vpi.slots[index].owned = 1;
     g_vpi.slots[index].next_owned = call->owned;
+    g_vpi.slots[index].prev_owned = 0;
+    if (call->owned) g_vpi.slots[call->owned - 1u].prev_owned = index + 1u;
     call->owned = index + 1u;
+}
+
+/* Remove a slot from its call's owned list. The owner of a list head is
+ * found on the active call stack (owners are the invocations still running;
+ * the stack is at most LLG_VPI_MAX_CALL_DEPTH deep). */
+static void unlink_owned(uint32_t index) {
+    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    uint32_t next = slot->next_owned, previous = slot->prev_owned;
+    if (previous) {
+        g_vpi.slots[previous - 1u].next_owned = next;
+    } else {
+        for (llg_vpi_call_t* call = g_vpi.active_call; call; call = call->previous) {
+            if (call->owned == index + 1u) {
+                call->owned = next;
+                break;
+            }
+        }
+    }
+    if (next) g_vpi.slots[next - 1u].prev_owned = previous;
+    slot->owned = 0;
+    slot->next_owned = 0;
+    slot->prev_owned = 0;
 }
 
 static void release_call_slots(llg_vpi_call_t* call) {
@@ -875,8 +905,9 @@ static void release_call_slots(llg_vpi_call_t* call) {
     while (cursor) {
         uint32_t index = cursor - 1u;
         cursor = g_vpi.slots[index].next_owned;
-        if (g_vpi.slots[index].kind != SLOT_FREE && g_vpi.slots[index].owned)
-            release_slot(index);
+        /* The whole list goes, so no unlinking. */
+        g_vpi.slots[index].owned = 0;
+        release_slot(index);
     }
     call->owned = 0;
 }

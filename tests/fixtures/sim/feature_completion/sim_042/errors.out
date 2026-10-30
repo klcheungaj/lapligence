@@ -43,6 +43,7 @@ second call request: ok level=0 again=0 code=-
 release one call copy: ok level=0 again=0 code=-
 other call copy stays valid: ok level=0 again=0 code=-
 arguments of the other copy: ok level=0 again=0 code=-
+release a partly scanned iterator: ok level=0 again=0 code=-
 argument after its call: refused level=3 again=3 code=LLG_VPI_HANDLE
 iterator after its call: refused level=3 again=3 code=LLG_VPI_HANDLE
 call handle persists: ok level=0 again=0 code=-

@@ -201,7 +201,11 @@ handle (37.2.1, L57171-57172: "the tool may create two distinct handles or
 may provide the same handle in both cases") and releasing one must not
 invalidate the others (37.2.2, L57179-57190: "other VPI programs shall be
 able to continue to refer to objects using handles that they have not
-released"). `$stress` makes
+released"). `$keep` then releases a partly scanned argument iterator
+(38.38, L65333-65337: "If neither of these conditions occurs ...,
+vpi_release_handle() should be called to free any memory allocated for the
+iterator"); the call's other argument and iterator handles still expire when
+the call returns. `$stress` makes
 20000 rounds of element, bit and iterator handles and probes each released
 handle afterwards (the sanitizer lane runs it under ASan/UBSan).
 
