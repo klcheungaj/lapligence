@@ -31,6 +31,24 @@ pub(in super::super::super) struct VpiTimingMetadata {
     pub(super) rows: Vec<IrVpiObject>,
     /// The delays of each primitive and continuous assignment.
     pub(super) delays: HashMap<NodeId, IrVpiTiming>,
+    /// The delay expressions of each primitive, continuous assignment and
+    /// net that declares delays (`vpiDelay`, 37.3.4).
+    pub(super) delay_nodes: HashMap<NodeId, Vec<NodeId>>,
+    /// The key, scope and delay expressions of each module path and timing
+    /// check row.
+    pub(super) row_delays: Vec<(String, String, Vec<NodeId>)>,
+    /// The SDF interconnect loads of each port: its bits with a load and
+    /// the load (module input port delays, 37.14).
+    pub(super) port_loads: HashMap<NodeId, Vec<(u32, u32)>>,
+}
+
+/// The expressions of a driver delay, in rise, fall, turn-off order.
+fn driver_delay_nodes(delay: DriverDelay) -> Vec<NodeId> {
+    match delay {
+        DriverDelay::Single(value) => vec![value],
+        DriverDelay::RiseFall(rise, fall) => vec![rise, fall],
+        DriverDelay::RiseFallTurnOff(rise, fall, turn_off) => vec![rise, fall, turn_off],
+    }
 }
 
 /// The `vpiEdge` bits of the transitions of a timing check event (z counts
@@ -146,6 +164,11 @@ impl Codegen<'_> {
             };
             let rows = path_rows.remove(&path.node).unwrap_or_default();
             let row = self.vpi_path_row(path, instance, &rows);
+            metadata.row_delays.push((
+                row.full_name.clone(),
+                self.vpi_full_name(instance),
+                path.delays.clone(),
+            ));
             metadata.rows.push(row);
         }
         for check in db.timing_checks() {
@@ -157,6 +180,20 @@ impl Codegen<'_> {
             };
             let rows = check_rows.remove(&check.node).unwrap_or_default();
             if let Some(row) = self.vpi_tchk_row(check, instance, &rows) {
+                // The limits are the check's delays (37.36, 37.3.4); a
+                // `$width` threshold is not one.
+                let limits = row.timing.as_ref().map_or(0, |timing| timing.count) as usize;
+                metadata.row_delays.push((
+                    row.full_name.clone(),
+                    self.vpi_full_name(instance),
+                    check
+                        .limits
+                        .iter()
+                        .take(limits)
+                        .flatten()
+                        .copied()
+                        .collect(),
+                ));
                 metadata.rows.push(row);
             }
         }
@@ -170,10 +207,30 @@ impl Codegen<'_> {
                 continue;
             }
             let mut timing = self.vpi_driver_delays(id, delay);
-            if let Some(slot) = self.sdf_gate_slot(id) {
+            if let Some(slot) = self
+                .sdf_gate_slot(id)
+                .or_else(|| self.vpi_runtime_gate_slot(id))
+            {
                 timing.targets.push((0, IrSdfTarget::Gate { slot }));
             }
+            if let Some(delay) = delay {
+                metadata.delay_nodes.insert(id, driver_delay_nodes(delay));
+            }
             metadata.delays.insert(id, timing);
+        }
+        for (port, bit, load) in self.sdf_port_loads() {
+            metadata
+                .port_loads
+                .entry(port)
+                .or_default()
+                .push((bit, load));
+        }
+        for (net, delay) in db.net_delays() {
+            if reachable(self, *net) {
+                metadata
+                    .delay_nodes
+                    .insert(*net, driver_delay_nodes(*delay));
+            }
         }
         metadata
     }
@@ -338,6 +395,7 @@ impl Codegen<'_> {
                     polarity_code(path.polarity)
                 },
                 has_ifnone: path.condition == PathCondition::IfNone,
+                delay: None,
             }),
             ..IrVpiObject::default()
         }
@@ -425,6 +483,7 @@ impl Codegen<'_> {
                 polarity: "vpiUnknown",
                 data_polarity: "vpiUnknown",
                 has_ifnone: false,
+                delay: None,
             }),
             ..IrVpiObject::default()
         })

@@ -1,0 +1,13 @@
+gate: 2 2
+put gate 7 8: ok
+gate: 7 8
+assign #3: 3 3 3
+put assign: error level=3
+net #4: 4 4 4
+put net: error level=3
+delay control #1: 1
+18 wr=1
+29 wr=0
+gate: 7 8
+36 wr=1
+gate: 5 5

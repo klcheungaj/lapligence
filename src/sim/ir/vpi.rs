@@ -389,6 +389,9 @@ pub struct IrVpiTiming {
     pub(in crate::sim) data_polarity: &'static str,
     /// `vpiModPathHasIfNone`: the path is an `ifnone` path.
     pub(in crate::sim) has_ifnone: bool,
+    /// Index into [`super::IrModel::vpi_code`] of the `vpiDelay` expression
+    /// (37.3.4): the delay, or a `vpiListOp` of several.
+    pub(in crate::sim) delay: Option<u32>,
 }
 
 /// What a connection of a module path or timing check stands for

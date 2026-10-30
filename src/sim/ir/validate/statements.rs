@@ -920,6 +920,18 @@ impl Validator<'_> {
                         return self.fail(path, "annotated gate delay slot out of range");
                     }
                 }
+                if let IrStmt::InertialAssign {
+                    delay: crate::sim::ir::IrInertialDelay::Runtime(delay),
+                    ..
+                } = stmt
+                {
+                    // The delays in use and the last evaluated values.
+                    if delay.writable.is_some_and(|slot| {
+                        slot as usize + 1 >= self.model.sdf_gate_delays.len()
+                    }) {
+                        return self.fail(path, "writable gate delay slots out of range");
+                    }
+                }
                 if matches!(stmt, IrStmt::InertialAssign { .. }) {
                     let packed_driver = match lhs {
                         IrLhs::Whole(index)

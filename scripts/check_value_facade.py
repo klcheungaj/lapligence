@@ -16,12 +16,14 @@ METADATA = {
     'rt/llg_dpi.c': ('element', 'type', 'type->element', 'type->members[m].type'),
     'rt/llg_rt_selftest.c': ('net', ''),
     # VPI catalog rows, argument shapes, structure-object connections,
-    # force-part and net-alias descriptors, and the connectivity index's bit
-    # spans and links carry metadata widths, not value payloads.
+    # force-part and net-alias descriptors, the connectivity index's bit
+    # spans and links, and the port rows and nets of delay records carry
+    # metadata widths, not value payloads.
     'rt/llg_vpi.c': ('a[i]', 'alias', 'args[i]', 'argument', 'b[i]', 'b[k]', 'call->args[i]',
-                     'conn->ref', 'g_vpi.objects[row]', 'link', 'node', 'object',
-                     'object->conns[i].ref', 'operand', 'outer', 'owner', 'part', 'port->target',
-                     'query', 'ref', 'site->args[i]', 'source', 'span', 'start', 'target'),
+                     'conn->ref', 'from', 'g_vpi.objects[row]', 'link', 'net->net', 'node',
+                     'object', 'object->conns[i].ref', 'operand', 'out->row', 'outer', 'owner',
+                     'part', 'port', 'port->target', 'query', 'ref', 'site->args[i]', 'source',
+                     'span', 'start', 'target', 'to'),
     # Class item rows (method results, arguments, parameters) carry declared widths.
     'rt/llg_vpi_dynamic.c': ('item', 'shape'),
     'rt/llg_wave.c': ('g_wave.regs[alias]', 'g_wave.regs[i]', 'reg'),
@@ -38,6 +40,8 @@ METADATA = {
     # Switch-network startup checks node bits against the net width.
     'rt/scheduler/switches.c': ('net',),
     'rt/scheduler/reference_writes.c': ('part', 'ref'),
+    # Run-time interconnect stages size their tables by the net's width.
+    'rt/scheduler/sdf.c': ('net',),
     'rt/scheduler/scanning.c': ('spec', 'target', 'target->packed'),
     'rt/scheduler/sequences.c': ('from', 'local'),
     'rt/scheduler/stochastic.c': ('target',),

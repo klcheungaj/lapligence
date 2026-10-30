@@ -126,6 +126,7 @@ fn runtime_driver_and_net_delays_expose_their_delay_expressions() {
             rise: ticks(rise),
             fall: Some(ticks(fall)),
             turn_off: Some(IrDelay::Constant(4)),
+            writable: None,
         })
     };
     let body = vec![

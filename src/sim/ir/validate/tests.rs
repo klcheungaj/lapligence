@@ -2381,6 +2381,7 @@ fn runtime_delays_need_valid_scaling_and_net_groups() {
         },
         fall: None,
         turn_off: None,
+        writable: None,
     };
     let inertial = |unit_ticks| IrStmt::InertialAssign {
         lhs: IrLhs::Whole(0),

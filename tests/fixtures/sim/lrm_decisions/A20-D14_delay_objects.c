@@ -81,7 +81,7 @@ static PLI_INT32 d14(PLI_BYTE8* data) {
         get("module", by_name("tb.u"), 2, 0, 0);
         get("net", by_name("tb.y"), 2, 0, 0);
         get("port", nth(vpiPort, "tb.u", 0), 2, 0, 0);
-        put("put port", nth(vpiPort, "tb.u", 0), one, 2, 0, 0, 0);
+        put("put output port", nth(vpiPort, "tb.u", 1), one, 2, 0, 0, 0);
     } else {
         put("put path 1", path, one, 1, 0, 0, 0);
         get("path 1", path, 1, 0, 0);

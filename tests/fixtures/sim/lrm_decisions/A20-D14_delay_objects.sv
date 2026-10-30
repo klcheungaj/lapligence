@@ -3,10 +3,11 @@
 // writable delays; a continuous assignment has readable delays (rise, fall,
 // turn-off; two declared delays give turn-off as the smaller) and a write to
 // it is a vpiError. A primitive declared without a delay reads 0 and a
-// write to it is a vpiError. A module has no delays, and llg exposes no net
-// or port (MIPD) delays: vpi_get_delays and vpi_put_delays on them are a
-// vpiError. A write changes the transitions scheduled after it; a
-// transition already scheduled keeps its time.
+// write to it is a vpiError. A module has no delays (a vpiError). A net
+// without a delay and an input port without module input port delays read
+// 0; an output port has no delays (decisions A20-D17 and A20-D19). A write
+// changes the transitions scheduled after it; a transition already
+// scheduled keeps its time.
 //
 // IEEE 1800-2009 37.43 (SystemVerilog-1800-2009.txt L60294-L60295): the cont
 // assign diagram lists "-> delay vpi_get_delays()" only; 37.31 (L59762-
@@ -14,10 +15,9 @@
 // 37.3.4 L57418-L57425: "Nets, primitives, module paths, timing checks, and
 // continuous assignments can have delays specified within the SystemVerilog
 // source code. [...] To access the actual delays being used by the tool,
-// use the routine vpi_get_delays() on any of these objects." The refusal for
-// nets and ports (37.14 L58166 "-> delay (mipd)") is an llg limitation; the
-// delays of undelayed primitives and the time a write takes effect are llg
-// choices.
+// use the routine vpi_get_delays() on any of these objects."; 37.14 L58165
+// "-> delay (mipd)" for ports. The delays of undelayed primitives and the
+// time a write takes effect are llg choices.
 //
 // Build A20-D14_delay_objects.c as a VPI application (llg: static archive
 // given to --dpi-lib; `task $d14(input integer stage)` declared as a system

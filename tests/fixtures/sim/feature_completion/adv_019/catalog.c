@@ -1,6 +1,6 @@
 /* ADV-019 A03 catalog walker (IEEE 1800-2009 37.3, 38.6, 38.11, 38.18,
- * 38.23). From a NULL reference it walks every object reachable through
- * the probed relations and iterations, probing at most PER_TYPE objects of
+ * 38.23). From a NULL reference (and an intermodule path, 38.22) it walks
+ * every object reachable through the probed relations and iterations, probing at most PER_TYPE objects of
  * each type. On each probed object it calls vpi_get and vpi_get_str with
  * every property probe, vpi_handle and vpi_iterate with every relation
  * probe (so a one-to-one relation is also tried as an iteration and the
@@ -435,9 +435,20 @@ static void probe(vpiHandle h, int t) {
     }
 }
 
+/* An intermodule path (37.33) is reached only through vpi_handle_multi
+ * (38.22): the one from output port y to input port a of tb.single. */
+static void admit_intermodule_path(void) {
+    vpiHandle ports = vpi_iterate(vpiPort, vpi_handle_by_name((PLI_BYTE8*)"tb.single", NULL));
+    vpiHandle a = ports ? vpi_scan(ports) : NULL, y = a ? vpi_scan(ports) : NULL;
+    if (y) vpi_release_handle(ports);
+    vpiHandle path = y ? vpi_handle_multi(vpiInterModPath, y, a) : NULL;
+    if (path) admit(path);
+}
+
 static PLI_INT32 walk(PLI_BYTE8* data) {
     (void)data;
     probe(NULL, 0);
+    admit_intermodule_path();
     while (head < tail) {
         vpiHandle h = queue[head];
         int t = queue_type[head++];

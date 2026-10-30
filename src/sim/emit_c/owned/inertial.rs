@@ -75,7 +75,22 @@ impl Frame<'_, '_> {
                     (None, Some(_)) => format!("({rise} < {fall} ? {rise} : {fall})"),
                     (None, None) => rise.clone(),
                 };
-                format!("{rise}, {fall}, {turn_off}")
+                match delay.writable {
+                    // A VPI application may have written the delays in use.
+                    Some(slot) => {
+                        let delays = self.declare(
+                            "const uint64_t*",
+                            "gate_delays",
+                            format!(
+                                "llg_gate_delays_refresh(&llg_sdf_gate_delays[{}], {rise}, \
+                                 {fall}, {turn_off})",
+                                3 * slot
+                            ),
+                        );
+                        format!("{delays}[0], {delays}[1], {delays}[2]")
+                    }
+                    None => format!("{rise}, {fall}, {turn_off}"),
+                }
             }
         };
         self.line(format!("if ({}) {{", target.valid));

@@ -30,11 +30,12 @@ when the model defines every routine.
 The routines llg does not provide yet return their failure value and leave
 level 3 with code `LLG_VPI_UNSUPPORTED` and a message naming the routine:
 
-- `vpi_handle_multi` returns NULL (38.22: "Returns: vpiHandle Handle to an
-  object.", L63405; llg has no `vpiPortInst`/`vpiInterModPath` objects).
+- `vpi_handle_multi(vpiPort, ...)` returns NULL with `LLG_VPI_RELATION`
+  (38.22, L63418-L63419: it returns "a handle to an object of type
+  vpiInterModPath"; llg has no `vpiPortInst` objects, decision A20-D18).
 - `vpi_get_delays`/`vpi_put_delays` on a module return nothing, with
   `LLG_VPI_UNSUPPORTED` and a message naming the objects that have delays
-  (a module has none; llg has no port or intermodule path delays). The
+  (a module has none; 37.3.4, L57417-L57419). The
   application's delay record and its `da` array are left as they were
   (`da=same no_of_delays=1 time_type=2 low=77`, where 2 is `vpiSimTime`).
   `delays.c` covers the objects that have delays.
@@ -291,9 +292,9 @@ the declared or written delays.
   the order of Table 30-2 (`path 12 ps` reads them as `vpiSimTime` ticks of
   1 ps), the primitive `gb` with 2 and 3, the
   undelayed `nb` as 0, the continuous assignment, and `$setup` and
-  `$setuphold` with their limit counts; other counts, a net, a suppressed
-  time type and a missing array are `vpiError` (decisions A20-D12,
-  A20-D14).
+  `$setuphold` with their limit counts; the undelayed net `y` reads 0;
+  other counts, a suppressed time type and a missing array are `vpiError`
+  (decisions A20-D12, A20-D14, A20-D19).
 - Flags. `pulsere_flag` reads path reject and error limits (`3 3 3 4 4 4`:
   the default limits equal the delays) and primitive limits equal to the
   delays; `mtm_flag` repeats each value as min, typ and max (decision
@@ -336,4 +337,7 @@ object matching and VPI forces; `cbAssign`/`cbDeassign` never run) and A20-D10
 (`cbDisable` timing, inactive and enclosing blocks); A20-D11 covers
 `vpi_control(vpiReset)` and `vpiSetInteractiveScope`. The delay choices are A20-D12 (counts and order),
 A20-D13 (`mtm_flag`, `append_flag`, `pulsere_flag`), A20-D14 (objects with
-delays) and A20-D15 (`cbTchkViolation`).
+delays) and A20-D15 (`cbTchkViolation`); the delay objects of VPI-F8 are
+A20-D16 (`vpiDelay` expressions), A20-D17 (module input port delays),
+A20-D18 (intermodule paths) and A20-D19 (runtime-valued and read-only
+delays).

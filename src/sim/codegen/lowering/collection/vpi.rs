@@ -11,9 +11,9 @@ use crate::core::db::{
     ConstantSource, ConstantType, Direction, NetType, Strength, TypeId, TypedefRef,
 };
 use crate::sim::ir::{
-    IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn, IrVpiConstant,
-    IrVpiDirection, IrVpiInstance, IrVpiObject, IrVpiObjectKind, IrVpiQualifiers, IrVpiTypespec,
-    IrVpiTypespecKind, IrVpiTypespecMember, IrVpiUdp, IrVpiVarKind,
+    IrSdfTarget, IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn,
+    IrVpiConstant, IrVpiDirection, IrVpiInstance, IrVpiObject, IrVpiObjectKind, IrVpiQualifiers,
+    IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember, IrVpiUdp, IrVpiVarKind,
 };
 
 mod code;
@@ -1440,6 +1440,15 @@ impl Codegen<'_> {
                             CodeOwner::Initializer(init),
                         ));
                     }
+                    if let Some(delays) = timing.delay_nodes.get(&id).filter(|_| code) {
+                        owners.push((
+                            self.vpi_full_name(id),
+                            node.parent
+                                .map(|parent| self.vpi_full_name(parent))
+                                .unwrap_or_default(),
+                            CodeOwner::Delay(delays.clone()),
+                        ));
+                    }
                     let net =
                         declared_net || signal.net_driver.is_some() || !signal.net_alias.is_empty();
                     let kind = if real {
@@ -1543,6 +1552,15 @@ impl Codegen<'_> {
                         continue;
                     }
                     let net = array.net.is_some();
+                    if let Some(delays) = timing.delay_nodes.get(&id).filter(|_| code && net) {
+                        owners.push((
+                            self.vpi_full_name(id),
+                            node.parent
+                                .map(|parent| self.vpi_full_name(parent))
+                                .unwrap_or_default(),
+                            CodeOwner::Delay(delays.clone()),
+                        ));
+                    }
                     if let Some(init) = self
                         .db
                         .arrays()
@@ -1679,6 +1697,13 @@ impl Codegen<'_> {
                             scope.clone(),
                             CodeOwner::Conns(vec![node.children[0], node.children[1]]),
                         ));
+                        if let Some(delays) = timing.delay_nodes.get(&id) {
+                            owners.push((
+                                key.clone(),
+                                scope.clone(),
+                                CodeOwner::Delay(delays.clone()),
+                            ));
+                        }
                     }
                     insert(source(IrVpiObject {
                         full_name: key,
@@ -1737,6 +1762,13 @@ impl Codegen<'_> {
                                 .full_name
                                 .rsplit_once(SEPARATOR)
                                 .map_or_else(String::new, |(scope, _)| scope.to_owned());
+                            if let Some(delays) = timing.delay_nodes.get(&id) {
+                                owners.push((
+                                    row.full_name.clone(),
+                                    scope.clone(),
+                                    CodeOwner::Delay(delays.clone()),
+                                ));
+                            }
                             owners.push((
                                 row.full_name.clone(),
                                 scope,
@@ -1753,6 +1785,22 @@ impl Codegen<'_> {
                         }) =>
                 {
                     if let Some(row) = self.vpi_instance_array_row(id) {
+                        // A primitive array declares the delay of its
+                        // elements (28.3, 37.31).
+                        let delays = node
+                            .children
+                            .first()
+                            .filter(|_| code && row.detail != Some("vpiModule"))
+                            .and_then(|element| timing.delay_nodes.get(element));
+                        if let Some(delays) = delays {
+                            owners.push((
+                                row.full_name.clone(),
+                                row.full_name
+                                    .rsplit_once(SEPARATOR)
+                                    .map_or_else(String::new, |(scope, _)| scope.to_owned()),
+                                CodeOwner::Delay(delays.clone()),
+                            ));
+                        }
                         insert(source(row));
                     }
                 }
@@ -1848,6 +1896,15 @@ impl Codegen<'_> {
                             _ => IrVpiDirection::None,
                         },
                         port_index: u32::try_from(port_index).unwrap_or(u32::MAX),
+                        // The SDF interconnect loads of its bits carry its
+                        // module input port delays (37.14).
+                        timing: timing.port_loads.remove(&id).map(|loads| IrVpiTiming {
+                            targets: loads
+                                .into_iter()
+                                .map(|(bit, load)| (bit, IrSdfTarget::Load { load, entry: 0 }))
+                                .collect(),
+                            ..IrVpiTiming::default()
+                        }),
                         port_target: interface
                             .as_ref()
                             .map(|(_, actual)| actual.clone())
@@ -1905,6 +1962,11 @@ impl Codegen<'_> {
         for row in timing.rows {
             insert(row);
         }
+        if code {
+            for (key, scope, delays) in timing.row_delays {
+                owners.push((key, scope, CodeOwner::Delay(delays)));
+            }
+        }
         let constraints = self.vpi_dynamic_classes(model, &mut dynamic, &mut typespecs);
         model.vpi_objects = objects.into_values().collect();
         if code {
@@ -1928,6 +1990,7 @@ impl Codegen<'_> {
         let mut statements = Vec::new();
         let mut conns = Vec::new();
         let mut arguments = Vec::new();
+        let mut delays = Vec::new();
         let mut assertions = Vec::new();
         // Each assertion item's statement and the catalog row of its
         // instance.
@@ -2037,6 +2100,11 @@ impl Codegen<'_> {
                     CodeOwner::Initializer(expression) => {
                         statements.push((row, tables.expression_root(expression, scope)));
                     }
+                    CodeOwner::Delay(expressions) => {
+                        if let Some(entry) = tables.delay_root(&expressions, scope) {
+                            delays.push((row, entry));
+                        }
+                    }
                     CodeOwner::Conns(expressions) => {
                         let object = &model.vpi_objects[row];
                         if object.conns.len() != expressions.len() {
@@ -2088,6 +2156,12 @@ impl Codegen<'_> {
         }
         for (row, entry) in named_blocks {
             model.vpi_objects[row].code.get_or_insert(entry);
+        }
+        for (row, entry) in delays {
+            model.vpi_objects[row]
+                .timing
+                .get_or_insert_with(IrVpiTiming::default)
+                .delay = Some(entry);
         }
         for (row, index, entry) in conns {
             model.vpi_objects[row].conns[index].code = Some(entry);
@@ -2595,6 +2669,9 @@ enum CodeOwner {
     /// The initialization expression of a variable or the default
     /// expression of a value parameter (37.17 detail 8, 37.26 detail 3).
     Initializer(NodeId),
+    /// The delay expressions of a primitive, net, continuous assignment,
+    /// module path or timing check (`vpiDelay`, 37.3.4).
+    Delay(Vec<NodeId>),
 }
 
 /// The edge of a clocking event: that of a single edge event, else none.

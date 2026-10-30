@@ -134,6 +134,9 @@ pub(in super::super) struct SdfState {
     /// Gates given a writable delay slot for VPI applications only (no
     /// annotation targets them).
     vpi_gates: HashSet<NodeId>,
+    /// Runtime-valued gates of a VPI model: the first of their two slots
+    /// (delays in use, last evaluated values; `llg_gate_delays_refresh`).
+    runtime_gates: HashMap<NodeId, u32>,
     /// Interconnect loads: each annotated load port bit (instance, port
     /// index, bit offset in the port), its distinct sources (entries from 1)
     /// and, once lowered, its interconnect path.
@@ -801,6 +804,50 @@ impl Codegen<'_> {
         }
         state.gates.remove(&gate);
         true
+    }
+
+    /// Give runtime-valued gate `gate`, whose VPI-only slot cannot hold its
+    /// delays, two new slots at the end of the gate delay table instead: the
+    /// delays in use and the values its expressions had when last
+    /// evaluated, both unset (`u64::MAX`) until the first evaluation, so a
+    /// VPI application can write them (IEEE 1800-2009 38.32). Returns the
+    /// first slot, or `None` when the gate had no VPI-only slot.
+    pub(in super::super) fn vpi_runtime_gate_slots(&mut self, gate: NodeId) -> Option<u32> {
+        if !self.release_vpi_gate_slot(gate) {
+            return None;
+        }
+        let slot = u32::try_from(self.model.sdf_gate_delays.len()).ok()?;
+        let unset = crate::sim::ir::IrTransitionDelay::uniform(u64::MAX);
+        self.model.sdf_gate_delays.extend([unset, unset]);
+        self.sdf.as_mut()?.runtime_gates.insert(gate, slot);
+        Some(slot)
+    }
+
+    /// Each SDF interconnect load port bit that has a load: its port node,
+    /// its bit in the port and its `IrModel::sdf_loads` index.
+    pub(in super::super) fn sdf_port_loads(&self) -> Vec<(NodeId, u32, u32)> {
+        let Some(state) = self.sdf.as_ref() else {
+            return Vec::new();
+        };
+        state
+            .load_order
+            .iter()
+            .filter_map(|load| {
+                let port = self
+                    .node(load.instance)
+                    .children
+                    .iter()
+                    .copied()
+                    .filter(|child| matches!(self.kind(*child), NodeKind::Port { .. }))
+                    .nth(load.port as usize)?;
+                Some((port, load.bit, load.load?))
+            })
+            .collect()
+    }
+
+    /// The writable slots of runtime-valued gate `gate` of a VPI model.
+    pub(in super::super) fn vpi_runtime_gate_slot(&self, gate: NodeId) -> Option<u32> {
+        self.sdf.as_ref()?.runtime_gates.get(&gate).copied()
     }
 
     /// Whether an annotation rewrites a timing check limit of `instance`.

@@ -1,0 +1,19 @@
+undelayed buf: NULL level=0
+buf #3: vpiConstant=3
+bufif1 #(1, 2, 3): op 37 ( vpiConstant=1 vpiConstant=2 vpiConstant=3 )
+buf #(1:2:3): vpiConstant=2
+buf #(d): vpiReg=2
+gate array #2: vpiConstant=2
+assign #(1 + 1): op 24 ( vpiConstant=1 vpiConstant=1 )
+assign #(1, 2): op 37 ( vpiConstant=1 vpiConstant=2 )
+net #5: vpiConstant=5
+undelayed net: NULL level=0
+path: op 37 ( vpiConstant=1 vpiConstant=2 )
+$width: vpiConstant=4
+$setuphold: op 37 ( vpiConstant=2 vpiConstant=1 )
+port: NULL level=3
+delay control #4: vpiConstant=4
+buf #(1:2:3) delays: 2 2 2
+buf #(d) delays: 2 2 2
+net #5 delays: 5 5 5
+undelayed net delays: 0 0 0

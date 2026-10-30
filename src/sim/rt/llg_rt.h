@@ -1256,6 +1256,23 @@ typedef struct llg_sdf_annotation {
  * exceed its delay. Pending events keep their scheduled times; later events
  * use the new values. */
 void llg_sdf_apply(const llg_sdf_annotation_t* annotation);
+/* The delays a runtime-valued gate of a model generated for VPI
+ * applications uses: `slot` (six entries of the gate delay table) holds the
+ * rise, fall and turn-off delays in use, then the values its delay
+ * expressions had when last evaluated, all UINT64_MAX at start. When the
+ * expressions' new values differ from those, they become the delays in use;
+ * otherwise a value vpi_put_delays wrote stays (38.32). Returns `slot`. */
+const uint64_t* llg_gate_delays_refresh(uint64_t* slot, uint64_t rise, uint64_t fall,
+                                        uint64_t turn_off);
+/* The interconnect load of bit `bit` of `net`, an input or inout port's own
+ * net that no SDF entry annotated: on first use the runtime gives the net an
+ * interconnect stage (a path set with one interconnect path and load per
+ * bit, all delays 0) and binds it, as model generation does for an SDF
+ * interconnect load (VPI module input port delays, IEEE 1800-2009 37.14).
+ * NULL for a net that cannot take one: a module path destination, a switch
+ * network node or a net other names view. The runtime owns the stage until
+ * cleanup. */
+llg_sdf_load_t* llg_sdf_port_load(llg_net_t* net, uint32_t bit);
 /* The reject and error limits of transition `t` of `path` as the path
  * stage applies them: its limit table, else the global percentages of its
  * delay, never above the delay. */
