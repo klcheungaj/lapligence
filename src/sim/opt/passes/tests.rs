@@ -225,6 +225,8 @@ fn model_with(body: Vec<IrStmt>, signals: Vec<IrSignal>) -> IrModel {
         vpi_delays_writable: false,
         vpi_delay_select: 1,
         random: Default::default(),
+        // Bodies may hold any statement, clocking-history readers included.
+        clocking_history: true,
         dpi_scopes: Vec::new(),
         dpi_sites: Vec::new(),
     }

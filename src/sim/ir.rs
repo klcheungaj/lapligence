@@ -665,6 +665,13 @@ pub struct IrModel {
     pub(in crate::sim) vpi_delay_select: u8,
     /// Random streams the model observes; set by lowering.
     pub(in crate::sim) random: IrRandomUse,
+    /// Whether some statement reads the runtime's current-slot edge history:
+    /// a clocking drive or clocking cycle wait (`##N`, IEEE 1800-2009 14.11,
+    /// 14.16) or an assertion clock pulse. Only then must the runtime record
+    /// every published signal change; other models skip that per-change
+    /// bookkeeping. Set by lowering; validation rejects those statements
+    /// without it.
+    pub(in crate::sim) clocking_history: bool,
     /// Constraint problems of randomize calls (IEEE 1800-2009 18), one per
     /// call site and dynamic class; each owns one runtime solver session.
     pub(in crate::sim) rand_problems: Vec<IrRandProblem>,
@@ -764,6 +771,8 @@ pub struct IrModelParts {
     pub init_steps: Vec<IrInitStep>,
     pub spawns: Vec<String>,
     pub final_spawns: Vec<String>,
+    /// See [`IrModel`]'s `clocking_history`.
+    pub clocking_history: bool,
 }
 
 impl IrModel {
@@ -834,6 +843,7 @@ impl IrModel {
             vpi_delays_writable: false,
             vpi_delay_select: 1,
             random: IrRandomUse::default(),
+            clocking_history: parts.clocking_history,
             rand_problems: Vec::new(),
             free_variables: Vec::new(),
             free_sets: Vec::new(),

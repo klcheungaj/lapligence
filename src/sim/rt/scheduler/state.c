@@ -726,6 +726,9 @@ typedef struct {
     size_t clocking_capacity;
     size_t clocking_count;
     size_t clocking_used;
+    // Set by llg_rt_skip_clocking_history: only registered sequence clocks
+    // keep edge history.
+    int clocking_history_skipped;
     llg_clocking_drive_t* clocking_drives;
     llg_clocking_drive_t* clocking_drives_tail;
     // Distinct clock signals named by pending drives, with reference counts,

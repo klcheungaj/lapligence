@@ -849,6 +849,9 @@ impl Validator<'_> {
                 cycles,
                 ..
             } => {
+                if !self.model.clocking_history {
+                    return self.fail(path, "clocking drive requires the model's clocking history");
+                }
                 if let Some(cycles) = cycles {
                     if cycles.is_real() {
                         return self.fail(path, "clocking drive cycle count must be integral");
@@ -1095,6 +1098,12 @@ impl Validator<'_> {
                 }
             }
             IrStmt::ClockingCycleWait { count, specs } => {
+                if !self.model.clocking_history {
+                    return self.fail(
+                        path,
+                        "clocking cycle wait requires the model's clocking history",
+                    );
+                }
                 if specs.is_empty() {
                     return self.fail(path, "clocking cycle wait requires at least one event");
                 }
@@ -1141,6 +1150,12 @@ impl Validator<'_> {
                 }
             }
             IrStmt::AssertionClockPulse { signal } => {
+                if !self.model.clocking_history {
+                    return self.fail(
+                        path,
+                        "assertion clock pulse requires the model's clocking history",
+                    );
+                }
                 if !matches!(
                     self.model.signals.get(*signal),
                     Some(crate::sim::ir::IrSignal {

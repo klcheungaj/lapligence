@@ -330,6 +330,12 @@ pub(in crate::sim::emit_c) fn main(
         out.push_str("static int llg_model_wave_live;\n");
     }
     out.push_str(&format!("int llg_model_start(int argc, char** argv) {{\n    llg_value_require_abi();\n    if (llg_model_live) return 1;\n    llg_model_live = 1;\n    llg_model_done = llg_model_status = 0;\n    llg_rt_init_with_args_and_precision(argc, argv, {}ULL);\n    if (llg_rt_failed()) goto start_failed;\n", model.precision_fs));
+    // Without a clocking drive, `##` wait or assertion clock pulse nothing
+    // reads the runtime's current-slot edge history, so signal publication
+    // skips recording it.
+    if !model.clocking_history {
+        out.push_str("    llg_rt_skip_clocking_history();\n");
+    }
     out.push_str(&crate::sim::emit_c::owned::coverage::startup(model));
     if !model.classes.is_empty() {
         // Collector roots precede storage initializers, which may allocate.

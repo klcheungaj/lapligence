@@ -35,6 +35,9 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             .get(&block)
             .ok_or_else(|| "default clocking block has no published event".to_owned())?;
         let specs = vec![(IrWaitSrc::Event(IrEventRef::Static(event.ir)), IrEdge::Any)];
+        // `##N` with N == 0 asks whether the clocking event occurred earlier
+        // in this time slot, which the runtime's edge history answers.
+        self.cg.model.clocking_history = true;
         Ok(IrStmt::ClockingCycleWait { count, specs })
     }
 
@@ -242,6 +245,8 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
                     ));
                 }
             }
+            // A drive asks whether its clocking event occurred in this slot.
+            self.cg.model.clocking_history = true;
             return Ok(vec![IrStmt::ClockingDrive {
                 lhs: lh,
                 rhs: rhs_ir,
@@ -351,6 +356,7 @@ impl<'c, 'a> EmitCtx<'c, 'a> {
             };
             let specs = self.lower_clocking_drive_specs(clockvar)?;
             let ticks = self.cg.clocking_output_delay(clockvar, &self.path)?;
+            self.cg.model.clocking_history = true;
             items.push(IrCaseItem::new(
                 vec![lhs_integer_expr(instance as i128)],
                 vec![IrStmt::ClockingDrive {
