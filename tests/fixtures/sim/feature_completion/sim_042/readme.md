@@ -194,7 +194,14 @@ error (S42-D9); a part-select written in reverse
 order inside a name is still an error. Released handles, handles of a
 finished iterator (38.40), a reused slot's old handle and argument handles of
 a returned call are stale; releasing a catalog object is accepted and leaves
-it valid. The call handle persists between calls (38.14). `$stress` makes
+it valid. The call handle persists between calls (38.14). `$keep` asks for
+the call handle twice and releases one copy; the other copy, its arguments
+and, in `$use_kept`, its line stay valid, because every request may share one
+handle (37.2.1, L57171-57172: "the tool may create two distinct handles or
+may provide the same handle in both cases") and releasing one must not
+invalidate the others (37.2.2, L57179-57190: "other VPI programs shall be
+able to continue to refer to objects using handles that they have not
+released"). `$stress` makes
 20000 rounds of element, bit and iterator handles and probes each released
 handle afterwards (the sanitizer lane runs it under ASan/UBSan).
 

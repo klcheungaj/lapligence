@@ -100,7 +100,7 @@ VPI handle encoding and lazy catalog indexing: `llg_vpi.c` header and catalog
 comments; keep model init O(1). Slots made inside a compiletf/calltf (argument handles and
 iterators, element/select arguments) are owned by that invocation and released
 when it returns; the call handle itself persists per call site with its user
-data. sizetf runs once per registration after the first site's compiletf with no
+data (every request shares it; releasing it is a no-op, 37.2.2). sizetf runs once per registration after the first site's compiletf with no
 active call. Retain error records, real catalog width 0 and simulator-owned value
 buffers valid until the next query/shutdown. Puts go through `llg_ba`/`llg_ba_d`
 (no delay), delayed calls (`llg_schedule_delayed_call`: delayed modes, one

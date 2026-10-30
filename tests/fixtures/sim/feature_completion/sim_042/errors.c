@@ -117,6 +117,14 @@ static PLI_INT32 keep(PLI_BYTE8* data) {
     value.value.integer = 3;
     report("put to expression argument",
            vpi_put_value(kept_argument, &value, NULL, vpiNoDelay) != NULL);
+    /* Every request may share one handle (37.2.1); releasing one copy must
+     * leave the other copies usable (37.2.2). */
+    vpiHandle copy = vpi_handle(vpiSysTfCall, NULL);
+    report("second call request", vpi_compare_objects(copy, kept_call) == 1);
+    report("release one call copy", vpi_release_handle(copy) == 1);
+    report("other call copy stays valid", vpi_get(vpiType, kept_call) == vpiSysTaskCall);
+    vpiHandle arguments = vpi_iterate(vpiArgument, kept_call);
+    report("arguments of the other copy", arguments != NULL && vpi_scan(arguments) != NULL);
     return 0;
 }
 
@@ -129,6 +137,7 @@ static PLI_INT32 use_kept(PLI_BYTE8* data) {
     report("argument after its call", 0);
     report("iterator after its call", vpi_scan(kept_iterator) != NULL);
     report("call handle persists", vpi_get(vpiType, kept_call) == vpiSysTaskCall);
+    report("call line after a released copy", vpi_get(vpiLineNo, kept_call) == 15);
     report("arguments of an inactive call", vpi_iterate(vpiArgument, kept_call) != NULL);
     return 0;
 }

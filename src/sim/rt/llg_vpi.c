@@ -10066,9 +10066,12 @@ static PLI_INT32 release_handle(vpiHandle handle) {
             fired_free(index);
             return 1;
         case SLOT_CALL: {
+            /* Every vpiSysTfCall request of a site shares one persistent
+             * handle, so releasing one copy must not invalidate the others
+             * (37.2.2); it lives as long as its call site. Other call
+             * handles (a frame's vpiStmt) are the requester's own. */
             llg_vpi_callsite_t* site = (llg_vpi_callsite_t*)slot->pointer;
-            if (site->call_slot == index + 1u) site->call_slot = 0;
-            release_slot(index);
+            if (site->call_slot != index + 1u) release_slot(index);
             return 1;
         }
         case SLOT_EVENT: {
