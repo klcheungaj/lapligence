@@ -7054,7 +7054,11 @@ static vpiHandle cont_assign_bit_lhs(uint32_t row, uint32_t bit) {
 static int child_matches(const llg_vpi_model_object_t* child, int type) {
     switch (type) {
         case vpiVariables:
-            return is_variable_type(child->type) || child->type == vpiRegArray;
+            /* 37.12: every variable, string, chandle, class and container
+             * variables included (37.17). */
+            return is_variable_type(child->type) || child->type == vpiRegArray ||
+                   child->type == vpiStringVar || child->type == vpiChandleVar ||
+                   child->type == vpiClassVar || child->type == vpiArrayVar;
         case vpiInternalScope:
             /* 37.12: the instances and clocking blocks below are scopes too
              * (decision A19-D30). */

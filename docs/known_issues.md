@@ -2203,10 +2203,11 @@ with no error status, as for a name that denotes nothing (S42-D11):
   (`vpiThread`), named event arrays, tasks and functions of packages, the
   statements of class methods and class methods by name, programs, and checker objects (a checker instance is a module
   scope with its variables; VPI-C1);
-- dynamic objects (VPI-O4) other than instance-scope string, chandle and class
-  variables and dynamic, queue and associative arrays: those of packages,
-  blocks, tasks and functions, fixed-size arrays
-  of class handles, static class properties, events and virtual interfaces;
+- dynamic objects (VPI-O4) other than static string, chandle and class
+  variables and dynamic, queue and associative arrays (of instances,
+  packages, `$unit`, named blocks and tasks and functions): automatic ones,
+  fixed-size arrays of class handles, static class properties, events and
+  virtual interfaces (variables and class properties);
   mailbox and semaphore objects (`vpiClassType`, `vpiMessages`,
   `vpiWaitingProcesses`; their typespecs are NULL); `foreach` constraints
   (no 2009 object, decision A19-D37); `vpiInterfaceDecl` and `vpiTypedef`

@@ -620,6 +620,26 @@ integer query.
   name the property (`a`, `len`, `d`).
 - `ok=1`: the randomization succeeds.
 
+## scopes (37.10, 37.12, 37.17, 37.29)
+
+`scopes.c` finds by name the class variable, string and queue that package
+`dp` declares, an element of the queue, the static string of the named
+block `blk` and the static class variable of the static task `remember`,
+printing each object's type, full name and value, object id or size; it
+then lists the variables of `dp` and of `tb.blk`.
+
+- Static dynamic objects. 37.17 does not restrict string, class and
+  container variables to instances: a package, a named block and a static
+  task declare them too, and they are found by name and listed by
+  `vpiVariables` like the other variables of their scope (37.12; name order,
+  S42-D12). 37.10 detail 5 (L57952-L57954): package members are named
+  `dp::...`. Object ids follow the order VPI first sees the objects
+  (decision A19-D22): the package's object is 1, the object `held` and
+  `keep` refer to is 2.
+- Virtual interfaces. `tb.keep.vif` is a virtual interface property, which
+  llg does not expose (docs/known_issues.md): it is not found (`null`).
+- The design prints `blk 5 pk 2`.
+
 ## gc (37.3.7, 37.29, 38.36.1)
 
 `gc.c` registers `cbCreateObj` and `cbReclaimObj` on the `Node` and `Leaf`

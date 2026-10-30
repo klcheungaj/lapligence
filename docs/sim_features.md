@@ -2631,9 +2631,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   task and system task calls, `disable`, `return`, `break`, `continue`,
   force and release, each with `vpiLineNo` and `vpiFile`. Built from
   compact static tables only for VPI models; decisions A19-D11..D13.
-  Dynamic objects (VPI-O4; 37.17, 37.27-37.29, 38.36.1): instance-scope
-  string, chandle and class variables and dynamic, queue and associative
-  arrays are catalog objects (`vpiStringVar`, `vpiChandleVar`,
+  Dynamic objects (VPI-O4; 37.17, 37.27-37.29, 38.36.1): static string,
+  chandle and class variables and dynamic, queue and associative arrays of
+  instances, packages, named blocks and tasks are catalog objects (`vpiStringVar`, `vpiChandleVar`,
   `vpiClassVar`, `vpiArrayVar` with `vpiArrayType`); `vpiClassObj` reaches
   the class object with `vpiObjId`, `vpiClassTypespec` (declared and created
   class), `vpiAllocScheme` and its properties in `vpiVariables` (values,

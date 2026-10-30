@@ -190,6 +190,24 @@ fn constraints_list_their_items_qualifiers_and_object_state() {
 }
 
 #[test]
+fn dynamic_objects_of_packages_blocks_and_tasks_are_found_by_name_and_scope() {
+    let directory = sim_harness::TempDir::new("adv019-scopes").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "scopes", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "scopes",
+        include_str!("../fixtures/sim/feature_completion/adv_019/scopes.out"),
+        &[
+            "--define-system-task",
+            "task $scopes()",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
+#[test]
 fn class_object_callbacks_follow_creation_and_reclamation_under_collection_stress() {
     let directory = sim_harness::TempDir::new("adv019-gc").expect("temporary directory");
     let archive = super::sim_041::static_archive(SUITE, &directory, "gc", &[]);

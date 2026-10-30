@@ -1126,7 +1126,7 @@ node class_defn 37.27 type=vpiClassDefn
   iterate vpiMethods implemented walk
   iterate vpiConstraint implemented walk
   iterate vpiParameter implemented a19classes
-  iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
+  iterate vpiInterfaceDecl unsupported a virtual interface property holds a runtime interface reference that llg does not map back to the interface instance it names, so it is not an object
   iterate vpiNamedEvent implemented walk
   iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
   iterate vpiTypedef unsupported the vpiTypedef iteration is not implemented
@@ -1157,7 +1157,7 @@ node class_typespec 37.28 type=vpiClassTypespec
   iterate vpiMethods implemented walk
   iterate vpiConstraint implemented walk
   iterate vpiParameter implemented walk
-  iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
+  iterate vpiInterfaceDecl unsupported a virtual interface property holds a runtime interface reference that llg does not map back to the interface instance it names, so it is not an object
   iterate vpiNamedEvent implemented walk
   iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
   iterate vpiInternalScope implemented walk
@@ -1177,11 +1177,11 @@ node class_obj 37.29 type=vpiClassObj
   iterate vpiVariables implemented walk
   handle vpiClassTypespec implemented walk
   iterate vpiWaitingProcesses unsupported threads are not objects
-  iterate vpiMessages unsupported mailbox and semaphore objects are not exposed
+  iterate vpiMessages unsupported llg keeps the messages of a mailbox in runtime scheduler queues that the VPI tables do not reach
   iterate vpiMethods implemented walk
   iterate vpiConstraint implemented a19cons
   iterate vpiParameter implemented walk
-  iterate vpiInterfaceDecl unsupported virtual interfaces are not objects
+  iterate vpiInterfaceDecl unsupported a virtual interface property holds a runtime interface reference that llg does not map back to the interface instance it names, so it is not an object
   iterate vpiNamedEvent implemented walk
   iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
   iterate vpiInternalScope implemented walk

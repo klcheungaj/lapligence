@@ -19,16 +19,14 @@ use crate::sim::ir::{
 const MAX_SHAPE_DEPTH: u32 = 64;
 
 impl Codegen<'_> {
-    /// The storage of `id` when it is a string, chandle or class variable
-    /// or a dynamic array, queue or associative array declared directly in
-    /// an instance or generate scope (not a class property, subroutine or
-    /// block local).
+    /// The storage of `id` when it is a static string, chandle or class
+    /// variable or a dynamic array, queue or associative array: one an
+    /// instance, generate scope, package, `$unit`, named block or task or
+    /// function declares with static lifetime (not a class property; an
+    /// automatic variable has no global storage).
     pub(super) fn vpi_dynamic_storage(&self, model: &IrModel, id: NodeId) -> Option<IrVpiStorage> {
         let parent = self.node(id).parent?;
-        if !matches!(
-            self.kind(parent),
-            NodeKind::ModuleInst { .. } | NodeKind::GenScope
-        ) {
+        if matches!(self.kind(parent), NodeKind::ClassDef) {
             return None;
         }
         match self.kind(id) {

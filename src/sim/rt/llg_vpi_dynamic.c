@@ -2012,7 +2012,10 @@ static vpiHandle dyn_property_by_name(void* object, const char* name, size_t len
     for (uint32_t i = layout->field_count; i-- > 0;) {
         const char* candidate = dyn_field(class_index, i)->name;
         if (candidate && strlen(candidate) == length && memcmp(candidate, name, length) == 0)
-            return make_property(object, class_index, i);
+            /* A property with no VPI form (a virtual interface) names no
+             * object, as in vpiVariables. */
+            return dyn_field_listed(class_index, i, 0) ? make_property(object, class_index, i)
+                                                       : NULL;
     }
     return NULL;
 }
