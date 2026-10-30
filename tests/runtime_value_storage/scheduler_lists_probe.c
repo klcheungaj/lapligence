@@ -9,6 +9,7 @@ static llg_proc_t* test_proc(void) {
     register_proc(proc);
     proc->handle = process_handle_new(proc);
     proc->region = LLG_REGION_ACTIVE;
+    proc->deadlock_counted = 1;
     return proc;
 }
 
@@ -16,6 +17,27 @@ static void arm_signals(llg_proc_t* proc, sv4_t** signals, int count) {
     g.current = proc;
     CHECK(llg_arm_any(proc, signals, count) == LLG_CO_ARM_SUSPEND);
     g.current = NULL;
+}
+
+// Waits of a process that cannot finish are armed and released without
+// touching the deadlock counter.
+static void permanent_waiter_not_counted(void) {
+    sv4_t signal = sv4_zero(1, 0);
+    sv4_t* keys[] = {&signal};
+    llg_rt_init();
+    llg_proc_t* counted = test_proc();
+    llg_proc_t* permanent = test_proc();
+    permanent->deadlock_counted = 0;
+    arm_signals(counted, keys, 1);
+    arm_signals(permanent, keys, 1);
+    CHECK(g.wait_count == 1);
+    wake_proc(permanent);
+    CHECK(g.wait_count == 1);
+    wake_proc(counted);
+    CHECK(g.wait_count == 0);
+    llg_rt_cleanup();
+    sv4_destroy(&signal);
+    CHECK(value_test_live() == 0);
 }
 
 static void registry_and_handles(void) {
@@ -260,6 +282,7 @@ static void process_await_order(void) {
 int main(void) {
     for (int cycle = 0; cycle < 3; cycle++) {
         registry_and_handles();
+        permanent_waiter_not_counted();
         waiter_order_and_cursors();
         many_dependencies();
         many_waiters();
