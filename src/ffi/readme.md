@@ -80,7 +80,9 @@ invocation locations in configuration diagnostics.
   delimiters; instance records must name distinct instance nodes of a
   reported scope. Parsing and binding happen in the owned DB.
 - A `default disable iff` expression (`LLG_SLANG_EDGE_DEFAULT_DISABLE`) is owned
-  by the first assertion statement that uses it. `restrict property` is kept as
+  by the first assertion statement that uses it. An instance body also names
+  the one it declares itself (ABI 62); the DB keeps that as instance metadata
+  (`Db::instance_default_disable`), not as a member. `restrict property` is kept as
   `ConcurrentAssertionKind::Restrict`, which the simulator does not verify.
 - Lexical directive flags mark directive text, including unexpanded macro
   bodies, independently of expanded/skipped state; disabled conditional-branch

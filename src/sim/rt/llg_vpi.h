@@ -20,7 +20,7 @@ extern "C" {
 #define LLG_VPI_OBJ_SLICE 0x80u       /* value: low `width` bits of `packed` */
 #define LLG_VPI_OBJ_RECORD 0x100u     /* unpacked struct/union: members hold the value */
 #define LLG_VPI_OBJ_UNNAMED 0x200u    /* no vpiName/vpiFullName; never found by name */
-#define LLG_VPI_OBJ_QUALIFIER 0x400u  /* vpiNetDeclAssign / vpiAutomatic */
+#define LLG_VPI_OBJ_QUALIFIER 0x400u  /* vpiNetDeclAssign / vpiAutomatic / vpiUnit; a global clocking */
 #define LLG_VPI_OBJ_ACTIVATION 0x800u /* activation_* name what `disable` targets */
 #define LLG_VPI_OBJ_DYNAMIC 0x1000u   /* string, handle or container: `storage`, `shape` */
 
@@ -240,15 +240,18 @@ typedef struct llg_vpi_model_object {
     int64_t right;
     const int64_t* dims;      /* unpacked (left, right) pairs, outermost first */
     uint32_t dim_count;
-    uint32_t port_index;
+    uint32_t port_index;      /* port order; clocking io declaration order */
     struct llg_vpi_model_object* target; /* a port's low connection; the interface or
-                                          * modport of an interface port */
+                                          * modport of an interface port; an
+                                          * instance's default clocking block */
     llg_net_t* net;           /* resolved net behind `packed`, for force/release */
     const char* constant;     /* parameter: 0/1/x/z digits MSB first, or text */
     double real_constant;     /* real parameter value */
     uint32_t typespec;        /* vpiTypespec: typespec index + 1, 0: none */
     int detail;               /* vpiAlwaysType, vpiPrimType, vpiFuncType, vpiPortType,
-                               * or the element vpiType of an instance array */
+                               * the element vpiType of an instance array, or the
+                               * vpiInputEdge | vpiOutputEdge << 8 of a clocking
+                               * block or clocking io declaration */
     llg_event_t* event;       /* named event */
     const llg_vpi_conn_t* conns;
     uint32_t conn_count;

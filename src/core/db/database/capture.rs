@@ -466,6 +466,7 @@ impl Db {
         let mut coverage = CoverageImport::default();
         let mut clocking_vars = HashMap::new();
         let mut default_clockings = HashMap::new();
+        let mut instance_default_disables = HashMap::new();
         let dpi_imports = snapshot
             .semantic_nodes
             .iter()
@@ -619,9 +620,11 @@ impl Db {
                                     } else {
                                         // The default clocking edge names a
                                         // block owned elsewhere or already a
-                                        // child.
+                                        // child; the default disable
+                                        // expression is instance metadata.
                                         edge.role != SemanticEdgeRole::Reference
                                             && edge.role != SemanticEdgeRole::Clocking
+                                            && edge.role != SemanticEdgeRole::DefaultDisable
                                     }
                                 })
                                 .filter(|edge| {
@@ -769,6 +772,13 @@ impl Db {
                         })?;
                     if body.kind != SemanticKind::Scope || body.subkind != 194 {
                         continue;
+                    }
+                    if let Some(disable) = edge_target(
+                        &ids,
+                        semantic_edges(snapshot, body)?,
+                        SemanticEdgeRole::DefaultDisable,
+                    )? {
+                        instance_default_disables.insert(id, disable);
                     }
                     let Some(block) = edge_target(
                         &ids,
@@ -1558,6 +1568,7 @@ impl Db {
             coverage,
             clocking_vars,
             default_clockings,
+            instance_default_disables,
             modport_directions,
             modport_expressions,
             port_expressions,
@@ -2364,6 +2375,43 @@ mod tests {
             assert_eq!(db.port_internal_expression(simple), None);
         }
         assert_eq!(db.port_internal_expression(p), None);
+    }
+
+    #[test]
+    fn instances_keep_the_default_disable_they_declare() {
+        let source = "module leaf(input logic c); endmodule \
+            module top; logic clk, rst, q; default disable iff rst; \
+            leaf l(clk); a1: assert property (@(posedge clk) q); endmodule";
+        let output = crate::core::compile::compile_sources_checked(
+            &[crate::core::compile::OwnedSource::compilation_unit(
+                "disable.sv",
+                source,
+            )],
+            &crate::core::compile::CompileOpts {
+                top: Some("top".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let db = Db::from_slang(&output.snapshot).unwrap();
+        let instance = |name: &str| {
+            db.node_ids()
+                .find(|id| {
+                    matches!(db.node_kind(*id), NodeKind::ModuleInst { .. })
+                        && db.node(*id).name == name
+                })
+                .unwrap_or_else(|| panic!("instance `{name}`"))
+        };
+        let top = instance("top");
+        let disable = db.instance_default_disable(top).expect("default disable");
+        assert!(matches!(
+            db.node_kind(disable),
+            NodeKind::Expr(ExprKind::Ref { target: Some(t) }) if db.node(*t).name == "rst"
+        ));
+        // The expression is metadata, not a member of the instance.
+        assert!(!db.node(top).children.contains(&disable));
+        // An enclosing scope's default disable is not the child's own.
+        assert_eq!(db.instance_default_disable(instance("l")), None);
     }
 
     #[test]

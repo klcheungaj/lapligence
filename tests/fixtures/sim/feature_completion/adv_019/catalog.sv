@@ -4,6 +4,31 @@
 // it reaches; the Rust test compares the answers with
 // src/sim/rt/vpi_catalog.txt.
 `timescale 1ns/1ps
+// Packages and `$unit` are top-level instances (37.10).
+package cat_pkg;
+  int pkv = 1;
+  parameter int PKP = 2;
+  event pke;
+  function automatic int pkf(int a);
+    return a + PKP;
+  endfunction
+  task pkt;
+    -> pke;
+  endtask
+endpackage
+
+int unit_v = 3;
+
+// A program instance and a program array (37.9, 37.11). The initial
+// procedure outlives the walk, so the programs do not end the run.
+program prog_unit (input logic clk);
+  int pgv = 0;
+  default clocking pcb @(negedge clk);
+    input #1 pgv;
+  endclocking
+  initial #1000 pgv = cat_pkg::pkv + unit_v;
+endprogram
+
 primitive udp_and (out, a, b);
   output out;
   input a, b;
@@ -17,6 +42,9 @@ endprimitive
 interface bus_if (input logic clk);
   logic [7:0] data;
   modport src (output data, input clk);
+  clocking icb @(posedge clk);
+    input data;
+  endclocking
   task automatic ping;
   endtask
 endinterface
@@ -101,6 +129,8 @@ module tb;
   sink sk (.b(bi));
   dut dt (.a(a_in), .clk(clk), .d(d_in), .y(y));
   fsm_unit fu (.clk(clk));
+  prog_unit pg (.clk(clk));
+  prog_unit pga [1:0] (.clk(clk));
   and g1 (g_out, r0[0], r0[1]);
   udp_and ud (u_out, r0[2], r0[3]);
   nand ng [1:0] (na, r0[1:0], r0[3:2]);
@@ -111,6 +141,25 @@ module tb;
   assign d_in = sc;
   assign wa[0] = r0[1:0];
   assign sn = pk;
+
+  // Clocking blocks (37.44): io declarations with own and default skews,
+  // an expression clockvar, declarations, the default and global clocking
+  // and the default disable condition (37.5).
+  logic rst = 1'b0;
+  logic co;
+  default disable iff (rst);
+  clocking cb @(posedge clk);
+    default input #1step output #2;
+    input r0;
+    output negedge #3 co;
+    inout sc;
+    input #1 rlo = r0[1:0];
+    property cbp;
+      r0 != 4'hf;
+    endproperty
+  endclocking
+  default clocking cb;
+  global clocking gcb @(posedge clk); endclocking
 
   for (genvar gi = 0; gi < 2; gi++) begin : gen
     logic [1:0] gl;

@@ -422,6 +422,12 @@ impl Validator<'_> {
             }
         }
 
+        for (instance, disable) in self.db.instance_default_disables() {
+            let path = format!("instance_default_disables[{}]", instance.0);
+            self.node(*instance, &path)?;
+            self.node(*disable, &format!("{path}.expression"))?;
+        }
+
         for (port, expression) in self.db.modport_expression_entries() {
             let path = format!("modport_expressions[{}]", port.0);
             let node = self.node(*port, &path)?;

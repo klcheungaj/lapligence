@@ -1,0 +1,60 @@
+tb vpiDefaultClocking type=650 tb.cb level=0
+tb vpiGlobalClocking type=650 tb.gcb level=0
+tb vpiDefaultDisableIff rst level=0
+tb clocking blocks 650:cb 650:gcb level=0
+tb internal scopes 650:cb 650:gcb 602:p level=0
+tb.cb type=650 tb.cb level=0
+cb vpiInputEdge 13
+cb vpiOutputEdge 13
+cb input skew type=11 delay=-1 level=0
+cb output skew type=11 delay=2 level=0
+cb clocking event type=13 level=0
+cb vpiInstance type=32 tb level=0
+cb vpiModule NULL level=3
+cb vpiTimeUnit error=3
+cb io decls 651:r 651:s 651:t 651:rv level=0
+cb property decls 655:cp level=0
+cb variables NULL level=0
+io r direction=1 input edge=13 output edge=0
+  input skew type=11 delay=-1 level=0
+  output skew NULL level=0
+  expr type=48 r level=0
+  vpiClockingBlock type=650 tb.cb level=0
+  vpiScope type=650 tb.cb level=0
+  vpiInstance NULL level=3
+  vpiParent NULL level=3
+  vpiSize error=3
+io s direction=2 input edge=0 output edge=50
+  input skew NULL level=0
+  output skew type=11 delay=3 level=0
+  expr type=48 s level=0
+  vpiClockingBlock type=650 tb.cb level=0
+  vpiScope type=650 tb.cb level=0
+  vpiInstance NULL level=3
+  vpiParent NULL level=3
+  vpiSize error=3
+io t direction=3 input edge=13 output edge=13
+  input skew type=11 delay=-1 level=0
+  output skew type=11 delay=2 level=0
+  expr type=48 t level=0
+  vpiClockingBlock type=650 tb.cb level=0
+  vpiScope type=650 tb.cb level=0
+  vpiInstance NULL level=3
+  vpiParent NULL level=3
+  vpiSize error=3
+io rv direction=1 input edge=13 output edge=0
+  input skew type=11 delay=2 level=0
+  output skew NULL level=0
+  expr type=42 v[1:0] level=0
+  vpiClockingBlock type=650 tb.cb level=0
+  vpiScope type=650 tb.cb level=0
+  vpiInstance NULL level=3
+  vpiParent NULL level=3
+  vpiSize error=3
+tb.cb.r by name type=651 tb.cb.r level=0
+tb.p vpiDefaultClocking type=650 tb.p.pcb level=0
+tb.p vpiDefaultDisableIff NULL level=0
+pcb vpiInputEdge 50
+pcb vpiOutputEdge 50
+pcb vpiInstance type=602 tb.p level=0
+assertion vpiClockingBlock NULL level=3

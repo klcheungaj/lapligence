@@ -100,6 +100,17 @@ impl Entry {
     }
 }
 
+/// The `vpiFullName` of a catalog key: `.` between name components, `::`
+/// after a package or `$unit`, whose own full name is its name (37.10
+/// detail 5; the package's own name omits the `::`, decision A19-D29).
+fn display_name(key: &str) -> String {
+    let name = key.replace("::\u{1f}", "::").replace('\u{1f}', ".");
+    match name.strip_suffix("::") {
+        Some(package) if !package.contains("::") => package.to_owned(),
+        _ => name,
+    }
+}
+
 fn split_name(name: &str) -> Vec<&str> {
     name.split('\u{1f}').collect()
 }
@@ -234,7 +245,9 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             IrVpiObjectKind::RegArray | IrVpiObjectKind::NetArray => {
                 (object.kind.c_type(), element_type)
             }
-            IrVpiObjectKind::Port => (object.kind.c_type(), object.direction.c_code()),
+            IrVpiObjectKind::Port | IrVpiObjectKind::ClockingIoDecl => {
+                (object.kind.c_type(), object.direction.c_code())
+            }
             IrVpiObjectKind::Record => (object.var_kind.c_type(), "0"),
             kind => (object.type_code.unwrap_or(kind.c_type()), "0"),
         };
@@ -647,7 +660,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
 .activation_instance = {instance}u, .timing = {}{}{dynamic}{definition} }},\n",
             entry.type_code,
             c_string_literal(&entry.name),
-            c_string_literal(&path.replace('\u{1f}', ".")),
+            c_string_literal(&display_name(&path)),
             optional(&entry.definition_name),
             optional(&entry.file),
             entry.line,

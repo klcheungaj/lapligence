@@ -2321,6 +2321,24 @@ fn a19_d28_index_and_packed_relations() {
 }
 
 #[test]
+fn a19_d29_programs_and_packages() {
+    run_vpi_decision(
+        "A19-D29_programs_and_packages",
+        &["task $d29()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D29_programs_and_packages.out"),
+    );
+}
+
+#[test]
+fn a19_d30_clocking_blocks() {
+    run_vpi_decision(
+        "A19-D30_clocking_blocks",
+        &["task $d30()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D30_clocking_blocks.out"),
+    );
+}
+
+#[test]
 fn a19_d40_static_lifetime_and_allocation() {
     run_vpi_decision(
         "A19-D40_static_lifetime_and_allocation",

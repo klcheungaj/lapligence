@@ -32,6 +32,7 @@
 
 test a17d13 sim_lrm_decisions::a17_d13_fsm_objects
 test a19d28 sim_lrm_decisions::a19_d28_index_and_packed_relations
+test a19d30 sim_lrm_decisions::a19_d30_clocking_blocks
 test a19decl adv_019::instance_properties_follow_the_definition_and_its_configuration
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
@@ -42,7 +43,8 @@ test walk adv_019::catalog_walk_matches_the_vpi_catalog
 
 node null 37.5 type=NULL
   iterate vpiModule implemented walk
-  iterate vpiInstance unsupported vpi_iterate(vpiInstance, NULL) is not implemented (vpiModule is)
+  iterate vpiInstance implemented walk
+  iterate vpiProgram implemented walk
   iterate vpiInterface implemented walk
   iterate vpiClassDefn unsupported class definitions are reached from class variables and objects only
   iterate vpiUdpDefn unsupported UDP definitions are not objects
@@ -54,7 +56,7 @@ node null 37.5 type=NULL
   iterate vpiCallback unsupported callback iteration from an object is not implemented
   iterate vpiTimeQueue unsupported the time queue is not exposed
   handle vpiActiveTimeFormat unsupported $timeformat calls are not objects
-  iterate vpiPackage unsupported packages are not objects
+  iterate vpiPackage implemented walk
   get vpiTimeUnit implemented walk
   get vpiTimePrecision implemented walk
   handle vpiSysFuncCall extension walk vpiSysTfCall under its call-type names
@@ -64,9 +66,9 @@ node module 37.5 type=vpiModule
   get vpiTopModule implemented walk
   get vpiDefDecayTime unsupported trireg nets and the `default_decay_time directive are unsupported (ADV-006)
   handle vpiIndex implemented walk
-  handle vpiGlobalClocking unsupported clocking blocks are not objects
-  handle vpiDefaultClocking unsupported clocking blocks are not objects
-  handle vpiDefaultDisableIff unsupported default disable iff is not exposed
+  handle vpiGlobalClocking implemented walk
+  handle vpiDefaultClocking implemented walk
+  handle vpiDefaultDisableIff implemented walk
   handle vpiInstanceArray implemented walk
   handle vpiModuleArray implemented walk
   iterate vpiInternalScope implemented walk
@@ -84,7 +86,7 @@ node module 37.5 type=vpiModule
   iterate vpiDefParam unsupported defparams are not objects
   iterate vpiIODecl unsupported io declarations are not objects
   iterate vpiAliasStmt unsupported alias statements are not objects
-  iterate vpiClockingBlock unsupported clocking blocks are not objects
+  iterate vpiClockingBlock implemented walk
   iterate vpiGenScopeArray unsupported generate scope arrays are not objects
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiModule extension walk the enclosing scope, instance, module or parent
@@ -119,15 +121,15 @@ node module 37.5 type=vpiModule
 
 node interface 37.6 type=vpiInterface
   handle vpiIndex implemented walk
-  handle vpiGlobalClocking unsupported clocking blocks are not objects
-  handle vpiDefaultClocking unsupported clocking blocks are not objects
-  handle vpiDefaultDisableIff unsupported default disable iff is not exposed
+  handle vpiGlobalClocking implemented walk
+  handle vpiDefaultClocking implemented walk
+  handle vpiDefaultDisableIff implemented walk
   handle vpiInstanceArray implemented walk
   iterate vpiInterfaceTfDecl unsupported interface tf declarations are not objects
   iterate vpiModport implemented walk
   iterate vpiModPath implemented walk
   iterate vpiContAssign implemented walk
-  iterate vpiClockingBlock unsupported clocking blocks are not objects
+  iterate vpiClockingBlock implemented walk
   iterate vpiInterface implemented walk
   iterate vpiInterfaceArray implemented walk
   iterate vpiProcess implemented walk
@@ -182,19 +184,85 @@ node interface_tf_decl 37.8 type=vpiInterfaceTfDecl default=unsupported interfac
   iterate vpiTask
   iterate vpiFunction
 
-node program 37.9 type=vpiProgram default=unsupported programs are not objects
-  handle vpiIndex
-  handle vpiDefaultClocking
-  handle vpiDefaultDisableIff
-  handle vpiInstanceArray
-  iterate vpiContAssign
-  iterate vpiClockingBlock
-  iterate vpiInterface
-  iterate vpiInterfaceArray
-  iterate vpiProcess
+node program 37.9 type=vpiProgram
+  handle vpiIndex implemented walk
+  handle vpiDefaultClocking implemented walk
+  handle vpiDefaultDisableIff implemented walk
+  handle vpiInstanceArray implemented walk
+  iterate vpiContAssign implemented walk
+  iterate vpiClockingBlock implemented walk
+  iterate vpiInterface implemented walk
+  iterate vpiInterfaceArray implemented walk
+  iterate vpiProcess implemented walk
+  iterate vpiBitVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiByteVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiEnumVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiFunction extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGate extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGateArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGenScope extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInstanceArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntegerVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiLongIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModPath extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModport extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModule extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModuleArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedBegin extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedFork extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNetArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPackedArrayVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPrimitive extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPrimitiveArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiStructVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitch extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitchArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTask extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTchk extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTimeVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdp extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdpArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
 
-node package 37.10 type=vpiPackage default=unsupported packages are not objects
-  get vpiUnit
+node package 37.10 type=vpiPackage
+  get vpiUnit implemented walk
+  get vpiCellInstance unsupported the definition and compiler-directive properties of packages are not captured
+  get vpiDefNetType unsupported the definition and compiler-directive properties of packages are not captured
+  get vpiDefLineNo unsupported the definition and compiler-directive properties of packages are not captured
+  str vpiDefFile unsupported the definition and compiler-directive properties of packages are not captured
+  get vpiDefDelayMode unsupported the definition and compiler-directive properties of packages are not captured
+  get vpiUnconnDrive unsupported the definition and compiler-directive properties of packages are not captured
+  str vpiLibrary unsupported the definition and compiler-directive properties of packages are not captured
+  str vpiCell unsupported the definition and compiler-directive properties of packages are not captured
+  str vpiConfig unsupported the definition and compiler-directive properties of packages are not captured
+  get vpiAutomatic unsupported the definition and compiler-directive properties of packages are not captured
+  get vpiTop unsupported the definition and compiler-directive properties of packages are not captured
+  get vpiProtected unsupported protected envelopes are rejected; the property is not answered for packages
+  handle vpiInstanceArray n/a a package is not instantiated, so it is never an element of an instance array
+  iterate vpiPort n/a a package has no ports (37.10 lists none among its instance items)
+  handle vpiInstance extension walk NULL: a package is instantiated in no instance
+  iterate vpiBitVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiByteVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiEnumVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiFunction extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntegerVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiLongIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedBegin extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedFork extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNetArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPackedArrayVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiStructVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTask extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTimeVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
 
 node instance 37.10 members=package,interface,program,module
   get vpiArray implemented walk
@@ -216,10 +284,10 @@ node instance 37.10 members=package,interface,program,module
   str vpiConfig implemented a19decl
   get vpiAutomatic implemented walk
   get vpiTop implemented walk
-  handle vpiInstanceArray unsupported programs and packages are not objects (modules and interfaces answer)
+  handle vpiInstanceArray implemented walk
   iterate vpiPort implemented walk
-  iterate vpiProgram unsupported programs are not objects
-  iterate vpiProgramArray unsupported programs are not objects
+  iterate vpiProgram implemented walk
+  iterate vpiProgramArray implemented walk
   iterate vpiTaskFunc implemented walk
   iterate vpiNet implemented walk
   iterate vpiArrayNet implemented walk
@@ -264,8 +332,11 @@ node interface_array 37.11 type=vpiInterfaceArray
   handle vpiScope extension walk the enclosing scope, instance, module or parent
   iterate vpiInterface extension walk per-type child iteration (IEEE 1364)
 
-node program_array 37.11 type=vpiProgramArray default=unsupported programs are not objects
-  iterate vpiParamAssign
+node program_array 37.11 type=vpiProgramArray
+  iterate vpiParamAssign unsupported parameter assignments are not objects
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  iterate vpiProgram extension walk per-type child iteration (IEEE 1364)
 
 node module_array 37.11 type=vpiModuleArray
   iterate vpiParamAssign unsupported parameter assignments are not objects
@@ -1465,27 +1536,31 @@ node cont_assign_bit 37.43 type=vpiContAssignBit default=unsupported continuous 
   get vpiOffset
   handle vpiParent
 
-node clocking_block 37.44 type=vpiClockingBlock default=unsupported clocking blocks are not objects
-  str vpiName
-  str vpiFullName
-  get vpiInputEdge
-  get vpiOutputEdge
-  handle vpiInputSkew
-  handle vpiOutputSkew
-  handle vpiClockingEvent
-  handle vpiInstance
-  iterate vpiClockingIODecl
-  iterate vpiPropertyDecl
-  iterate vpiSequenceDecl
+node clocking_block 37.44 type=vpiClockingBlock
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  get vpiInputEdge implemented walk
+  get vpiOutputEdge implemented walk
+  handle vpiInputSkew implemented walk
+  handle vpiOutputSkew implemented walk
+  handle vpiClockingEvent implemented walk
+  handle vpiInstance implemented walk
+  iterate vpiClockingIODecl implemented walk
+  iterate vpiPropertyDecl implemented walk
+  iterate vpiSequenceDecl implemented walk
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
 
-node clocking_io_decl 37.44 type=vpiClockingIODecl default=unsupported clocking blocks are not objects
-  get vpiDirection
-  str vpiName
-  get vpiInputEdge
-  get vpiOutputEdge
-  handle vpiInputSkew
-  handle vpiOutputSkew
-  handle vpiExpr
+node clocking_io_decl 37.44 type=vpiClockingIODecl
+  get vpiDirection implemented walk
+  str vpiName implemented walk
+  get vpiInputEdge implemented walk
+  get vpiOutputEdge implemented walk
+  handle vpiInputSkew implemented walk
+  handle vpiOutputSkew implemented walk
+  handle vpiExpr implemented walk
+  handle vpiClockingBlock extension walk the clocking block that declares it
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
+  str vpiFullName extension walk the name of the object
 
 node assertion 37.45 members=sequence_inst,assert,assume,cover,property_inst,immediate_assert,immediate_assume,immediate_cover
   str vpiFile implemented walk
@@ -1495,7 +1570,7 @@ node assertion 37.45 members=sequence_inst,assert,assume,cover,property_inst,imm
   get vpiEndColumn implemented walk
   str vpiName implemented walk
   handle vpiInstance unsupported this object does not report its instance
-  handle vpiClockingBlock unsupported clocking blocks are not objects
+  handle vpiClockingBlock error a19d30 the text does not say which clocking block an assertion has; industry-standard behaviour refuses the relation
   str vpiDefName implemented walk
   get vpiCovered implemented walk
   get vpiCoverMax implemented walk
@@ -1969,13 +2044,13 @@ node gen_scope 37.80 type=vpiGenScope
   iterate vpiPrimitiveArray implemented walk
   iterate vpiDefParam unsupported defparams are not objects
   iterate vpiGenScopeArray unsupported generate scope arrays are not objects
-  iterate vpiProgram unsupported programs are not objects
-  iterate vpiProgramArray unsupported programs are not objects
+  iterate vpiProgram implemented walk
+  iterate vpiProgramArray implemented walk
   iterate vpiAssertion unsupported assertions in generate scopes are not iterated
   iterate vpiInterface implemented walk
   iterate vpiInterfaceArray implemented walk
   iterate vpiAliasStmt unsupported alias statements are not objects
-  iterate vpiClockingBlock unsupported clocking blocks are not objects
+  iterate vpiClockingBlock implemented walk
   get vpiTimePrecision extension walk the time unit and precision of the enclosing instance
   get vpiTimeUnit extension walk the time unit and precision of the enclosing instance
   handle vpiInstance extension walk the enclosing scope, instance, module or parent

@@ -65,6 +65,14 @@ enum Item<'a> {
     AssertionFormal(NodeId, &'static str),
     /// A relation to the root entry it names (an instance's declaration).
     Link(u32),
+    /// The hidden entry whose children are the clocking event and default
+    /// skews of clocking block `.0`, or the skews of its io declaration
+    /// `.1` (37.44).
+    Clocking(NodeId, Option<NodeId>),
+    /// The clocking event of clocking block `.0`.
+    ClockingEvent(NodeId),
+    /// A clocking skew as a delay control, at `.1` when it is implicit.
+    Skew(&'a ClockingSkew, NodeId),
 }
 
 type Children<'a> = Vec<(&'static str, Item<'a>)>;
@@ -146,6 +154,17 @@ impl<'c, 'a> CodeTables<'c, 'a> {
     /// Add assertion statement `id` as a root and return its entry.
     pub(super) fn assertion_root(&mut self, id: NodeId, scope: Option<usize>) -> u32 {
         self.root(Item::Assertion(id), scope)
+    }
+
+    /// Add the clocking entry of block `block` (or of its io declaration
+    /// `var`) as a root and return it.
+    pub(super) fn clocking_root(
+        &mut self,
+        block: NodeId,
+        var: Option<NodeId>,
+        scope: Option<usize>,
+    ) -> u32 {
+        self.root(Item::Clocking(block, var), scope)
     }
 
     /// Add the expression `id` as a root and return its entry.
@@ -279,6 +298,52 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                 (code, children, scope)
             }
             Item::AssertionFormal(id, type_code) => (self.formal(id, type_code), Vec::new(), scope),
+            Item::Clocking(block, var) => {
+                let cg = self.cg;
+                let code = self.located("vpiClockingBlock", var.unwrap_or(block));
+                let Some(info) = cg.db.clocking_block(block) else {
+                    return (code, Vec::new(), scope);
+                };
+                let mut children = Vec::new();
+                let (input, output) = match var.and_then(|var| cg.db.clocking_var(var)) {
+                    Some(decl) => super::clocking_var_skews(decl, info),
+                    None => {
+                        children.push(("vpiClockingEvent", Item::ClockingEvent(block)));
+                        (Some(&info.default_input), Some(&info.default_output))
+                    }
+                };
+                let at = var.unwrap_or(block);
+                if let Some(skew) = input {
+                    children.push(("vpiInputSkew", Item::Skew(skew, at)));
+                }
+                if let Some(skew) = output {
+                    children.push(("vpiOutputSkew", Item::Skew(skew, at)));
+                }
+                (code, children, scope)
+            }
+            // The clocking event: an event control without a statement
+            // (37.44, 37.60).
+            Item::ClockingEvent(block) => {
+                let cg = self.cg;
+                let Some(info) = cg.db.clocking_block(block) else {
+                    return (self.located("vpiEventControl", block), Vec::new(), scope);
+                };
+                let code = self.located("vpiEventControl", info.event);
+                let children = (!info.event_specs.is_empty())
+                    .then(|| ("vpiCondition", Item::Events(&info.event_specs, info.event)))
+                    .into_iter()
+                    .collect();
+                (code, children, scope)
+            }
+            Item::Skew(skew, at) => {
+                let code = self.located("vpiDelayControl", skew.delay.unwrap_or(at));
+                let children = skew
+                    .delay_expression
+                    .map(|delay| ("vpiDelay", Item::Expr(delay)))
+                    .into_iter()
+                    .collect();
+                (code, children, scope)
+            }
             Item::Link(entry) => {
                 let mut code = IrVpiCode::new("0");
                 code.flags |= IrVpiCode::LINK;
