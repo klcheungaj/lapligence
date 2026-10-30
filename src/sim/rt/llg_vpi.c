@@ -87,6 +87,8 @@ typedef enum {
                       * catalog row << 1 or an assertion item << 1 | 1 */
     SLOT_FSM,        /* FSM `left` of the FSM coverage table (40.5.3) */
     SLOT_FSMSTATE,   /* state `aux` of FSM `left` (40.5.3) */
+    SLOT_CABIT,      /* bit `aux` (vpiOffset, from the LSB) of continuous assignment
+                      * row `object` (vpiContAssignBit, 37.43) */
 } llg_vpi_slot_kind_t;
 
 enum {
@@ -305,6 +307,12 @@ typedef struct {
     int quiet_force;              /* vpi_put_value force/release: not a statement */
     llg_vpi_storage_t* storage;   /* rows with storage by address, built on demand */
     size_t storage_count;
+    struct llg_vpi_link* links;   /* connectivity links by referenced row, built on demand */
+    size_t link_count;
+    size_t link_capacity;
+    uint32_t* port_links;         /* the high-connection links, by port row */
+    size_t port_link_count;
+    int links_built;
 } llg_vpi_state_t;
 
 static llg_vpi_state_t g_vpi;
@@ -1338,6 +1346,16 @@ static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is
         case SLOT_CONN:
         case SLOT_PRIMTERM:
             return read_conn(slot->object, (uint32_t)slot->aux, out, is_signed);
+        case SLOT_CABIT: {
+            /* 37.43: bit `vpiOffset` of the value the assignment drives. */
+            llg_vpi_slot_t whole = *slot;
+            whole.kind = SLOT_OBJECT;
+            if (!read_handle(&whole, out, is_signed)) return 0;
+            if (out->is_real || (uint32_t)slot->aux >= llg_sv4_width(out->packed)) return 0;
+            sv4_replace(&out->packed, sv4_bit_select(out->packed, (uint64_t)slot->aux));
+            *is_signed = 0;
+            return 1;
+        }
         case SLOT_CODE:
             return code_value((uint32_t)slot->aux, out, is_signed);
         case SLOT_FSMSTATE: {
@@ -1919,7 +1937,10 @@ static int delay_record(vpiHandle handle, p_vpi_delay delay_p, const char* routi
                        "%s needs a delay record with an s_vpi_time array", routine);
         return DELAYS_NONE;
     }
-    llg_vpi_model_object_t* object = slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
+    /* A continuous assignment bit reads its assignment's delays (37.43). */
+    int bit_read = slot->kind == SLOT_CABIT && strcmp(routine, "vpi_get_delays") == 0;
+    llg_vpi_model_object_t* object =
+        slot->kind == SLOT_OBJECT || bit_read ? row_object(slot->object) : NULL;
     int kind = delay_kind(object);
     if (kind == DELAYS_NONE) {
         vpi_set_errorf(vpi_state(), vpiError, "LLG_VPI_UNSUPPORTED",
@@ -5612,6 +5633,9 @@ static vpiHandle statement_relation(int type, const llg_vpi_slot_t* slot) {
     return NULL;
 }
 
+static vpiHandle cont_assign_bit_lhs(uint32_t row, uint32_t bit);
+static int net_handle(const llg_vpi_slot_t* slot);
+
 vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     vpi_enter();
     if (type == vpiSysTfCall || type == vpiSysFuncCall || type == vpiSysTaskCall) {
@@ -5729,7 +5753,8 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
             return declared_typespec_handle(typespec_ref(reference), slot->object, slot->left);
         }
         case vpiParent:
-            if (slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_PORTBIT || slot->kind == SLOT_TERM)
+            if (slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_PORTBIT ||
+                slot->kind == SLOT_TERM || slot->kind == SLOT_CABIT)
                 return object_handle(slot->object);
             if (slot->kind == SLOT_MEMBER) {
                 /* 37.17 detail 26: the enclosing member, else the struct or
@@ -5856,6 +5881,33 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
         case vpiRhs:
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiContAssign)
                 return conn_handle(slot->object, type == vpiLhs ? 0u : 1u);
+            /* 37.43: a bit's target is that bit of the assignment's target;
+             * its right-hand side is the assignment's (decision A19-D34). */
+            if (slot->kind == SLOT_CABIT)
+                return type == vpiLhs ? cont_assign_bit_lhs(slot->object, (uint32_t)slot->aux)
+                                      : conn_handle(slot->object, 1u);
+            break;
+        case vpiSimNet:
+            /* 37.16 detail 17: models generated for VPI applications keep
+             * every net of its own (no collapsing), so the simulated net of
+             * a net is itself (decision A19-D34). */
+            if (net_handle(slot)) {
+                if (slot->kind == SLOT_OBJECT) return object_handle(slot->object);
+                if (slot->kind == SLOT_ELEMENT) return make_element(slot->object, slot->element, NULL);
+                return make_select(slot->object, slot->element, slot->lsb, slot->span, slot->left,
+                                   slot->right, NULL);
+            }
+            break;
+        case vpiPrimitive:
+            /* 37.31: a terminal's primitive. */
+            if (slot->kind == SLOT_PRIMTERM) return object_handle(slot->object);
+            break;
+        case vpiModPath:
+        case vpiTchk:
+            /* 37.35, 37.36: the path or timing check of a terminal. */
+            if (slot->kind == SLOT_TERM && handle_type(slot) == (type == vpiModPath ? vpiPathTerm
+                                                                                    : vpiTchkTerm))
+                return object_handle(slot->object);
             break;
         case vpiExpr:
             if (slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_TERM)
@@ -5932,6 +5984,992 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     }
     vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-one relation for this object");
     return NULL;
+}
+
+/* ── connectivity (37.16, 37.17, 37.21, 37.42, 37.43) ───────────────────── */
+
+/* What references a net or variable: built on the first connectivity query
+ * from the connections of the catalog rows and the force statements of the
+ * code tables, so a model whose applications never ask pays nothing. */
+enum {
+    LINK_CONT_ASSIGN = 0, /* lhs (driver) or rhs (load) of a continuous assignment */
+    LINK_PRIM_TERM,       /* a primitive terminal: `aux` is its index */
+    LINK_PORT_HIGH,       /* the high connection of a port */
+    LINK_PORT_LOW,        /* the low connection of a port */
+    LINK_FORCE,           /* lhs (driver) or rhs (load) of the force statement `source` (code row) */
+    LINK_TERM,            /* a module path or timing check terminal: connection `aux` */
+};
+#define LINK_DRIVER 0x1u
+#define LINK_LOAD 0x2u
+#define LINK_MAPPED 0x4u  /* bit `lsb` is bit `offset` of the lhs or port value */
+
+typedef struct llg_vpi_link {
+    uint32_t row;         /* the net or variable referenced */
+    uint64_t element;     /* its element, or LLG_VPI_NO_ELEMENT: the whole row */
+    uint32_t lsb;         /* the referenced bits, as storage offsets */
+    uint32_t width;
+    uint32_t offset;      /* LINK_MAPPED: the bit of the source value of bit `lsb` */
+    uint32_t source;      /* catalog row; the code row of a force */
+    uint32_t aux;
+    uint8_t kind;
+    uint8_t flags;        /* LINK_DRIVER, LINK_LOAD, LINK_MAPPED */
+} llg_vpi_link_t;
+
+/* Bits of a net or variable a connection references (a span of a link). */
+typedef struct {
+    uint32_t row;
+    uint64_t element;
+    uint32_t lsb;
+    uint32_t width;
+    uint32_t offset;
+    int mapped;
+} llg_vpi_span_t;
+
+typedef struct {
+    llg_vpi_span_t* items;
+    size_t count;
+    size_t capacity;
+    int failed;
+} llg_vpi_spans_t;
+
+/* Tunable: the bit spans one query may visit through port connections. */
+#define LLG_VPI_MAX_GROUP_SPANS (1u << 16)
+#define LLG_VPI_MAX_SPAN_DEPTH 64
+
+static void spans_push(llg_vpi_spans_t* list, uint32_t row, uint64_t element, uint32_t lsb,
+                       uint32_t width, uint32_t offset, int mapped) {
+    if (list->failed || !width) return;
+    if (list->count == list->capacity) {
+        size_t capacity = list->capacity ? list->capacity * 2u : 8u;
+        llg_vpi_span_t* grown =
+            (llg_vpi_span_t*)realloc(list->items, capacity * sizeof(*grown));
+        if (!grown) {
+            list->failed = 1;
+            return;
+        }
+        list->items = grown;
+        list->capacity = capacity;
+    }
+    llg_vpi_span_t* span = &list->items[list->count++];
+    span->row = row;
+    span->element = element;
+    span->lsb = lsb;
+    span->width = width;
+    span->offset = offset;
+    span->mapped = mapped;
+}
+
+/* A net or variable row whose bits connections can reference. */
+static int is_connectable(const llg_vpi_model_object_t* object) {
+    return object && (object->type == vpiNet || is_variable_type(object->type) ||
+                      is_array_type(object->type));
+}
+
+/* Bits of a value of `row` (one element of an array); a real is one unit. */
+static uint32_t value_bits(const llg_vpi_model_object_t* object) {
+    return object->is_real || !object->width ? 1u : object->width;
+}
+
+/* The one span an lvalue-shaped expression object references: a whole net
+ * or variable, an element of an array, or a select of either; a select with
+ * a variable index references its whole prefix. 0 for anything else. */
+static int code_span(uint32_t index, llg_vpi_span_t* span, int depth) {
+    if (depth > LLG_VPI_MAX_SPAN_DEPTH) return 0;
+    const llg_vpi_code_t* node = code_at(code_visible(index));
+    if (!node || (node->flags & LLG_VPI_CODE_OPAQUE)) return 0;
+    if (node->flags & LLG_VPI_CODE_ALIAS) {
+        llg_vpi_model_object_t* object = row_object((uint32_t)node->object);
+        if (node->object < 0 || !is_connectable(object)) return 0;
+        span->row = (uint32_t)node->object;
+        span->element = LLG_VPI_NO_ELEMENT;
+        span->lsb = 0;
+        span->width = value_bits(object);
+        return 1;
+    }
+    if (node->type == vpiVarSelect) {
+        uint32_t parent = code_child(node, vpiParent);
+        const llg_vpi_code_t* array = parent == LLG_VPI_NONE ? NULL : code_at(parent);
+        if (!array || !(array->flags & LLG_VPI_CODE_ALIAS) || array->object < 0) return 0;
+        llg_vpi_model_object_t* object = row_object((uint32_t)array->object);
+        if (!object || !is_array_type(object->type)) return 0;
+        span->row = (uint32_t)array->object;
+        span->element = LLG_VPI_NO_ELEMENT;
+        span->lsb = 0;
+        span->width = value_bits(object);
+        if (!(node->flags & LLG_VPI_CODE_CONSTANT)) return 1;
+        uint64_t element = 0;
+        uint32_t dim = 0;
+        for (uint32_t i = 0; i < node->count; ++i) {
+            uint32_t child = node->first + i;
+            if (g_vpi.code->nodes[child].role != vpiIndex) continue;
+            int64_t left, right, value;
+            uint64_t offset = 0;
+            if (!array_dim(object, dim++, &left, &right)) return 1;
+            uint64_t extent = (uint64_t)(left >= right ? left - right : right - left) + 1u;
+            if (!code_index(child, &value, depth + 1) || !index_offset(left, right, value, &offset))
+                return 1;
+            element = element * extent + offset;
+        }
+        if (dim == object->dim_count && element < g_vpi.element_counts[span->row])
+            span->element = element;
+        return 1;
+    }
+    if (!code_is_select(node->type)) return 0;
+    uint32_t parent = code_child(node, vpiParent);
+    int64_t left, right;
+    if (parent == LLG_VPI_NONE || !code_span(parent, span, depth + 1)) return 0;
+    if (!(node->flags & LLG_VPI_CODE_CONSTANT) || !code_range(node, &left, &right)) return 1;
+    uint64_t extent = (uint64_t)(left >= right ? left - right : right - left) + 1u;
+    uint64_t stride = span->width / extent;
+    if (!stride) stride = 1;
+    int64_t low = 0, high = 0;
+    int known;
+    if (node->type == vpiBitSelect) {
+        known = code_index(code_child(node, vpiIndex), &low, depth + 1);
+        high = low;
+    } else if (node->type == vpiPartSelect) {
+        known = code_index(code_child(node, vpiLeftRange), &high, depth + 1) &&
+                code_index(code_child(node, vpiRightRange), &low, depth + 1);
+    } else {
+        int64_t start = 0, count = 0;
+        known = code_index(code_child(node, vpiBaseExpr), &start, depth + 1) &&
+                code_index(code_child(node, vpiWidthExpr), &count, depth + 1) && count > 0;
+        low = start;
+        high = node->subtype == vpiNegIndexed ? start - count + 1 : start + count - 1;
+    }
+    int64_t from_low = left >= right ? low - right : right - low;
+    int64_t from_high = left >= right ? high - right : right - high;
+    int64_t from = from_low < from_high ? from_low : from_high;
+    int64_t to = from_low < from_high ? from_high : from_low;
+    if (!known || from < 0 || (uint64_t)to >= extent) return 1;
+    uint64_t lsb = (uint64_t)from * stride, width = (uint64_t)(to - from + 1) * stride;
+    if (lsb + width > span->width) return 1;
+    span->lsb += (uint32_t)lsb;
+    span->width = (uint32_t)width;
+    return 1;
+}
+
+/* The spans the expression object `index` references. With `lhs`, it is an
+ * assignment target or port value: each span records the bit of that value
+ * its first bit is (`offset`, a concatenation's last operand at 0);
+ * otherwise every net or variable it reads, index expressions included. */
+static void code_spans(uint32_t index, int lhs, uint32_t offset, llg_vpi_spans_t* out,
+                       int depth) {
+    if (depth > LLG_VPI_MAX_SPAN_DEPTH) return;
+    index = code_visible(index);
+    const llg_vpi_code_t* node = code_at(index);
+    if (!node || (node->flags & (LLG_VPI_CODE_OPAQUE | LLG_VPI_CODE_LINK))) return;
+    llg_vpi_span_t span;
+    if (code_span(index, &span, depth)) {
+        spans_push(out, span.row, span.element, span.lsb, span.width, offset, lhs);
+        if (lhs) return;
+        /* A select reads its index expressions as well. */
+        for (uint32_t i = 0; i < node->count; ++i) {
+            uint32_t child = node->first + i;
+            int role = g_vpi.code->nodes[child].role;
+            if (role != vpiParent) code_spans(child, 0, 0, out, depth + 1);
+            else if (code_is_select(node->type)) code_spans(child, 0, 0, out, depth + 1);
+        }
+        return;
+    }
+    if (node->flags & LLG_VPI_CODE_ALIAS) return;
+    if (lhs && node->type == vpiOperation && node->subtype == vpiConcatOp) {
+        /* Operands most significant first: the last one starts at `offset`. */
+        uint32_t at = offset;
+        for (uint32_t i = node->count; i-- > 0;) {
+            uint32_t child = node->first + i;
+            const llg_vpi_code_t* operand = code_at(code_visible(child));
+            code_spans(child, 1, at, out, depth + 1);
+            at += operand && operand->width ? operand->width : 1u;
+        }
+        return;
+    }
+    /* Any other expression (a port connected to `!x`) only reads its
+     * operands: they are unmapped load spans even on the target side. */
+    for (uint32_t i = 0; i < node->count; ++i) code_spans(node->first + i, 0, 0, out, depth + 1);
+}
+
+/* The spans connection `index` of `row` references (see code_spans). */
+static void conn_spans(uint32_t row, uint32_t index, int lhs, llg_vpi_spans_t* out) {
+    const llg_vpi_conn_t* conn = row_conn(row, index);
+    if (!conn) return;
+    const llg_vpi_compile_arg_t* ref = &conn->ref;
+    llg_vpi_model_object_t* object =
+        ref->object >= 0 ? row_object((uint32_t)ref->object) : NULL;
+    switch (ref->ref_kind) {
+        case LLG_VPI_ARG_OBJECT:
+            if (is_connectable(object))
+                spans_push(out, (uint32_t)ref->object, LLG_VPI_NO_ELEMENT, 0, value_bits(object),
+                           0, lhs);
+            return;
+        case LLG_VPI_ARG_SELECT:
+            if (is_connectable(object))
+                spans_push(out, (uint32_t)ref->object, LLG_VPI_NO_ELEMENT, (uint32_t)ref->offset,
+                           ref->select_width, 0, lhs);
+            return;
+        case LLG_VPI_ARG_ELEMENT:
+            if (is_connectable(object) && ref->offset < g_vpi.element_counts[ref->object])
+                spans_push(out, (uint32_t)ref->object, ref->offset, 0, value_bits(object), 0, lhs);
+            return;
+        default:
+            if (ref->code && g_vpi.code) code_spans(ref->code - 1u, lhs, 0, out, 0);
+            return;
+    }
+}
+
+static int compare_links(const void* left, const void* right) {
+    const llg_vpi_link_t *a = (const llg_vpi_link_t*)left, *b = (const llg_vpi_link_t*)right;
+    if (a->row != b->row) return a->row < b->row ? -1 : 1;
+    if (a->element != b->element) return a->element < b->element ? -1 : 1;
+    if (a->lsb != b->lsb) return a->lsb < b->lsb ? -1 : 1;
+    if (a->source != b->source) return a->source < b->source ? -1 : 1;
+    return a->aux < b->aux ? -1 : a->aux > b->aux;
+}
+
+/* Append one link per span of `spans`, then empty it. */
+static int links_add(llg_vpi_spans_t* spans, uint8_t kind, uint8_t roles, uint32_t source,
+                     uint32_t aux) {
+    if (spans->failed) return 0;
+    if (g_vpi.link_count + spans->count > g_vpi.link_capacity) {
+        size_t capacity = g_vpi.link_capacity ? g_vpi.link_capacity : 64u;
+        while (capacity < g_vpi.link_count + spans->count) capacity *= 2u;
+        llg_vpi_link_t* grown =
+            (llg_vpi_link_t*)realloc(g_vpi.links, capacity * sizeof(*grown));
+        if (!grown) return 0;
+        g_vpi.links = grown;
+        g_vpi.link_capacity = capacity;
+    }
+    for (size_t i = 0; i < spans->count; ++i) {
+        const llg_vpi_span_t* span = &spans->items[i];
+        llg_vpi_link_t* link = &g_vpi.links[g_vpi.link_count++];
+        link->row = span->row;
+        link->element = span->element;
+        link->lsb = span->lsb;
+        link->width = span->width;
+        link->offset = span->offset;
+        link->source = source;
+        link->aux = aux;
+        link->kind = kind;
+        /* An unmapped span of a port's high connection is read by the port
+         * expression whatever the port direction. */
+        uint8_t span_roles = kind == LINK_PORT_HIGH && !span->mapped ? (uint8_t)LINK_LOAD : roles;
+        link->flags = (uint8_t)(span_roles | (span->mapped ? LINK_MAPPED : 0u));
+    }
+    spans->count = 0;
+    return 1;
+}
+
+static uint8_t direction_roles(int direction, int high) {
+    if (direction == vpiInout) return LINK_DRIVER | LINK_LOAD;
+    if (direction == vpiInput) return high ? LINK_LOAD : LINK_DRIVER;
+    if (direction == vpiOutput) return high ? LINK_DRIVER : LINK_LOAD;
+    return 0;
+}
+
+static int compare_port_links(const void* left, const void* right) {
+    const llg_vpi_link_t* a = &g_vpi.links[*(const uint32_t*)left];
+    const llg_vpi_link_t* b = &g_vpi.links[*(const uint32_t*)right];
+    return a->source < b->source ? -1 : a->source > b->source;
+}
+
+/* Build the link table once. */
+static int links_ready(void) {
+    if (g_vpi.links_built) return 1;
+    llg_vpi_spans_t spans;
+    memset(&spans, 0, sizeof(spans));
+    int ok = 1;
+    for (uint32_t row = 0; ok && row < g_vpi.object_count; ++row) {
+        const llg_vpi_model_object_t* object = &g_vpi.objects[row];
+        if (object->type == vpiContAssign && object->conn_count >= 2) {
+            conn_spans(row, 0u, 1, &spans);
+            ok = links_add(&spans, LINK_CONT_ASSIGN, LINK_DRIVER, row, 0u);
+            conn_spans(row, 1u, 0, &spans);
+            ok = ok && links_add(&spans, LINK_CONT_ASSIGN, LINK_LOAD, row, 1u);
+        } else if (is_primitive_type(object->type)) {
+            for (uint32_t i = 0; ok && i < object->conn_count; ++i) {
+                conn_spans(row, i, 0, &spans);
+                int direction = object->conns[i].direction;
+                uint8_t roles = direction == vpiInout    ? (uint8_t)(LINK_DRIVER | LINK_LOAD)
+                                : direction == vpiOutput ? (uint8_t)LINK_DRIVER
+                                                         : (uint8_t)LINK_LOAD;
+                ok = links_add(&spans, LINK_PRIM_TERM, roles, row, i);
+            }
+        } else if (object->type == vpiPort && !object->detail) {
+            if (object->conn_count) {
+                conn_spans(row, 0u, 1, &spans);
+                ok = links_add(&spans, LINK_PORT_HIGH, direction_roles(object->subtype, 1), row, 0u);
+            }
+            const llg_vpi_model_object_t* low = object->target;
+            if (ok && is_connectable(low))
+                spans_push(&spans, row_of(low), LLG_VPI_NO_ELEMENT, 0, value_bits(low), 0, 1);
+            ok = ok && links_add(&spans, LINK_PORT_LOW, direction_roles(object->subtype, 0), row, 0u);
+        } else if (object->type == vpiModPath || object->type == vpiTchk) {
+            for (uint32_t i = 0; ok && i < object->conn_count; ++i) {
+                if (!is_term_role(object->conns[i].role)) continue;
+                conn_spans(row, i, 0, &spans);
+                ok = links_add(&spans, LINK_TERM, 0u, row, i);
+            }
+        }
+    }
+    for (uint32_t index = 0; ok && g_vpi.code && index < g_vpi.code->node_count; ++index) {
+        const llg_vpi_code_t* node = &g_vpi.code->nodes[index];
+        if (node->type != vpiForce) continue;
+        uint32_t lhs = code_child(node, vpiLhs), rhs = code_child(node, vpiRhs);
+        if (lhs != LLG_VPI_NONE) code_spans(lhs, 1, 0, &spans, 0);
+        ok = links_add(&spans, LINK_FORCE, LINK_DRIVER, index, 0u);
+        if (ok && rhs != LLG_VPI_NONE) code_spans(rhs, 0, 0, &spans, 0);
+        ok = ok && links_add(&spans, LINK_FORCE, LINK_LOAD, index, 1u);
+    }
+    free(spans.items);
+    if (ok && g_vpi.link_count)
+        qsort(g_vpi.links, g_vpi.link_count, sizeof(*g_vpi.links), compare_links);
+    /* The high-connection links of each port, by port row. */
+    size_t ports = 0;
+    for (size_t i = 0; ok && i < g_vpi.link_count; ++i)
+        ports += g_vpi.links[i].kind == LINK_PORT_HIGH;
+    if (ok && ports) {
+        g_vpi.port_links = (uint32_t*)malloc(ports * sizeof(*g_vpi.port_links));
+        if (!g_vpi.port_links) ok = 0;
+        for (size_t i = 0; ok && i < g_vpi.link_count; ++i)
+            if (g_vpi.links[i].kind == LINK_PORT_HIGH)
+                g_vpi.port_links[g_vpi.port_link_count++] = (uint32_t)i;
+        if (ok)
+            qsort(g_vpi.port_links, g_vpi.port_link_count, sizeof(*g_vpi.port_links),
+                  compare_port_links);
+    }
+    if (!ok) {
+        free(g_vpi.links);
+        free(g_vpi.port_links);
+        g_vpi.links = NULL;
+        g_vpi.port_links = NULL;
+        g_vpi.link_count = g_vpi.link_capacity = g_vpi.port_link_count = 0;
+        vpi_error("LLG_VPI_NOMEM", "VPI connectivity index allocation failed");
+        return 0;
+    }
+    g_vpi.links_built = 1;
+    return 1;
+}
+
+/* The first link on `row`, or link_count. */
+static size_t links_of(uint32_t row) {
+    size_t low = 0, high = g_vpi.link_count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (g_vpi.links[middle].row < row) low = middle + 1u;
+        else high = middle;
+    }
+    return low;
+}
+
+/* The bits a link and a span both cover, as [*from, *to). */
+static int link_overlap(const llg_vpi_link_t* link, const llg_vpi_span_t* span, uint32_t* from,
+                        uint32_t* to) {
+    if (link->row != span->row) return 0;
+    if (link->element != span->element && link->element != LLG_VPI_NO_ELEMENT &&
+        span->element != LLG_VPI_NO_ELEMENT)
+        return 0;
+    uint32_t a = link->lsb > span->lsb ? link->lsb : span->lsb;
+    uint64_t link_end = (uint64_t)link->lsb + link->width;
+    uint64_t span_end = (uint64_t)span->lsb + span->width;
+    uint64_t b = link_end < span_end ? link_end : span_end;
+    if (a >= b) return 0;
+    *from = a;
+    *to = (uint32_t)b;
+    return 1;
+}
+
+static int is_net_row(uint32_t row) {
+    const llg_vpi_model_object_t* object = row_object(row);
+    return object && object->is_net;
+}
+
+/* Whether a port connects a net on both sides bit for bit, so a driver
+ * or load on one side drives or loads the other (23.3.3.7). */
+static int port_link_transparent(const llg_vpi_link_t* link) {
+    const llg_vpi_model_object_t* port = row_object(link->source);
+    if (!port || !port->target || !port->target->is_net) return 0;
+    if (link->kind == LINK_PORT_HIGH) return (link->flags & LINK_MAPPED) && is_net_row(link->row);
+    /* A low connection is transparent when every high connection is. */
+    size_t low = 0, high = g_vpi.port_link_count, found = 0;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (g_vpi.links[g_vpi.port_links[middle]].source < link->source) low = middle + 1u;
+        else high = middle;
+    }
+    for (size_t i = low; i < g_vpi.port_link_count; ++i) {
+        const llg_vpi_link_t* other = &g_vpi.links[g_vpi.port_links[i]];
+        if (other->source != link->source) break;
+        if (!(other->flags & LINK_MAPPED) || !is_net_row(other->row)) return 0;
+        ++found;
+    }
+    return found != 0;
+}
+
+/* Append a span unless one already listed covers it. */
+static void group_push(llg_vpi_spans_t* group, uint32_t row, uint64_t element, uint32_t lsb,
+                       uint32_t width) {
+    for (size_t i = 0; i < group->count; ++i) {
+        const llg_vpi_span_t* span = &group->items[i];
+        if (span->row == row && span->element == element && span->lsb <= lsb &&
+            (uint64_t)span->lsb + span->width >= (uint64_t)lsb + width)
+            return;
+    }
+    if (group->count >= LLG_VPI_MAX_GROUP_SPANS) return;
+    spans_push(group, row, element, lsb, width, 0, 0);
+}
+
+/* The bits of the nets a query span is connected to through ports whose
+ * both sides are nets (the simulated net of 23.3.3.7), the span first. */
+static void net_group(const llg_vpi_span_t* start, llg_vpi_spans_t* group) {
+    spans_push(group, start->row, start->element, start->lsb, start->width, 0, 0);
+    if (!is_net_row(start->row)) return;
+    for (size_t g = 0; g < group->count && !group->failed; ++g) {
+        llg_vpi_span_t span = group->items[g];
+        for (size_t i = links_of(span.row); i < g_vpi.link_count; ++i) {
+            const llg_vpi_link_t* link = &g_vpi.links[i];
+            uint32_t from, to;
+            if (link->row != span.row) break;
+            if ((link->kind != LINK_PORT_HIGH && link->kind != LINK_PORT_LOW) ||
+                !link_overlap(link, &span, &from, &to) || !port_link_transparent(link))
+                continue;
+            const llg_vpi_model_object_t* port = row_object(link->source);
+            /* Port value bits [first, last). */
+            uint32_t first = link->offset + (from - link->lsb), last = first + (to - from);
+            if (link->kind == LINK_PORT_HIGH) {
+                group_push(group, row_of(port->target), LLG_VPI_NO_ELEMENT, first, last - first);
+                continue;
+            }
+            size_t low = 0, high = g_vpi.port_link_count;
+            while (low < high) {
+                size_t middle = low + (high - low) / 2u;
+                if (g_vpi.links[g_vpi.port_links[middle]].source < link->source) low = middle + 1u;
+                else high = middle;
+            }
+            for (size_t k = low; k < g_vpi.port_link_count; ++k) {
+                const llg_vpi_link_t* outer = &g_vpi.links[g_vpi.port_links[k]];
+                if (outer->source != link->source) break;
+                uint32_t a = first > outer->offset ? first : outer->offset;
+                uint64_t outer_end = (uint64_t)outer->offset + outer->width;
+                uint32_t b = (uint64_t)last < outer_end ? last : (uint32_t)outer_end;
+                if (a < b)
+                    group_push(group, outer->row, outer->element,
+                               outer->lsb + (a - outer->offset), b - a);
+            }
+        }
+    }
+}
+
+/* The live force bindings installed by force statements, as spans: one list
+ * per binding, `starts[i]` its first span. */
+typedef struct {
+    llg_vpi_spans_t spans;
+    size_t* starts;
+    size_t count;
+} llg_vpi_forces_t;
+
+static void forces_collect(llg_vpi_forces_t* forces) {
+    memset(forces, 0, sizeof(*forces));
+    if (!storage_index()) return;
+    size_t capacity = 0;
+    const llg_force_part_t* parts;
+    int n_parts;
+    double* real;
+    for (int index = 0; llg_force_entry_view(index, &parts, &n_parts, &real); ++index) {
+        if (!parts && !real) continue;
+        if (forces->count == capacity) {
+            capacity = capacity ? capacity * 2u : 4u;
+            size_t* grown = (size_t*)realloc(forces->starts, (capacity + 1u) * sizeof(*grown));
+            if (!grown) {
+                forces->spans.failed = 1;
+                return;
+            }
+            forces->starts = grown;
+        }
+        forces->starts[forces->count++] = forces->spans.count;
+        uint32_t row;
+        uint64_t element;
+        if (real) {
+            if (storage_row(real, &row, &element)) spans_push(&forces->spans, row, element, 0, 1, 0, 0);
+            continue;
+        }
+        for (int i = 0; i < n_parts; ++i) {
+            const llg_force_part_t* part = &parts[i];
+            if (!part_location(part, &row, &element)) continue;
+            int64_t low = part->right < part->left ? part->right : part->left;
+            if (low < 0) continue;
+            spans_push(&forces->spans, row, element, (uint32_t)low, part->width, 0, 0);
+        }
+    }
+    if (forces->starts) forces->starts[forces->count] = forces->spans.count;
+}
+
+/* Whether two span lists cover the same bits (each a set of disjoint spans). */
+static int same_bits(const llg_vpi_span_t* a, size_t a_count, const llg_vpi_span_t* b,
+                     size_t b_count) {
+    uint64_t a_bits = 0, b_bits = 0;
+    for (size_t i = 0; i < a_count; ++i) a_bits += a[i].width;
+    for (size_t i = 0; i < b_count; ++i) b_bits += b[i].width;
+    if (a_bits != b_bits || !a_count) return 0;
+    for (size_t i = 0; i < a_count; ++i) {
+        uint64_t covered = 0;
+        for (size_t k = 0; k < b_count; ++k) {
+            if (a[i].row != b[k].row || a[i].element != b[k].element) continue;
+            uint32_t from = a[i].lsb > b[k].lsb ? a[i].lsb : b[k].lsb;
+            uint64_t a_end = (uint64_t)a[i].lsb + a[i].width, b_end = (uint64_t)b[k].lsb + b[k].width;
+            uint64_t to = a_end < b_end ? a_end : b_end;
+            if (from < to) covered += to - from;
+        }
+        if (covered != a[i].width) return 0;
+    }
+    return 1;
+}
+
+/* 37.16 details 11-12: a force statement counts while a binding it
+ * installed is in effect, which is a live binding of exactly its target. */
+static int force_active(uint32_t code, const llg_vpi_forces_t* forces) {
+    const llg_vpi_code_t* node = code_at(code);
+    uint32_t lhs = node ? code_child(node, vpiLhs) : LLG_VPI_NONE;
+    if (lhs == LLG_VPI_NONE || !forces->count) return 0;
+    llg_vpi_spans_t target;
+    memset(&target, 0, sizeof(target));
+    code_spans(lhs, 1, 0, &target, 0);
+    int active = 0;
+    for (size_t i = 0; !target.failed && !active && i < forces->count; ++i)
+        active = same_bits(&forces->spans.items[forces->starts[i]],
+                           forces->starts[i + 1] - forces->starts[i], target.items, target.count);
+    free(target.items);
+    return active;
+}
+
+/* The objects a connectivity iteration returns, deduplicated. */
+typedef struct {
+    uint8_t kind;      /* llg_vpi_slot_kind_t of the handle, SLOT_CODE for a force */
+    uint32_t row;
+    uint32_t aux;
+} llg_vpi_link_item_t;
+
+typedef struct {
+    llg_vpi_link_item_t* items;
+    size_t count;
+    size_t capacity;
+    int failed;
+} llg_vpi_link_items_t;
+
+static void items_add(llg_vpi_link_items_t* list, uint8_t kind, uint32_t row, uint32_t aux) {
+    for (size_t i = 0; i < list->count; ++i)
+        if (list->items[i].kind == kind && list->items[i].row == row && list->items[i].aux == aux)
+            return;
+    if (list->failed) return;
+    if (list->count == list->capacity) {
+        size_t capacity = list->capacity ? list->capacity * 2u : 8u;
+        llg_vpi_link_item_t* grown =
+            (llg_vpi_link_item_t*)realloc(list->items, capacity * sizeof(*grown));
+        if (!grown) {
+            list->failed = 1;
+            return;
+        }
+        list->items = grown;
+        list->capacity = capacity;
+    }
+    list->items[list->count].kind = kind;
+    list->items[list->count].row = row;
+    list->items[list->count].aux = aux;
+    ++list->count;
+}
+
+/* The span of a net or variable handle and whether it is one bit (a
+ * scalar or a bit select); 0 for another handle. */
+static int slot_span(const llg_vpi_slot_t* slot, llg_vpi_span_t* span, int* bit) {
+    const llg_vpi_model_object_t* object = row_object(slot->object);
+    if (!is_connectable(object) || (object->flags & LLG_VPI_OBJ_DYNAMIC)) return 0;
+    span->row = slot->object;
+    span->element = LLG_VPI_NO_ELEMENT;
+    span->lsb = 0;
+    span->width = value_bits(object);
+    span->offset = 0;
+    span->mapped = 0;
+    switch (slot->kind) {
+        case SLOT_OBJECT:
+            *bit = !is_array_type(object->type) && !object->is_real && object->width == 1;
+            return 1;
+        case SLOT_ELEMENT:
+            span->element = slot->element;
+            *bit = !object->is_real && object->width == 1;
+            return 1;
+        case SLOT_SELECT:
+            /* A bit select is a net or variable bit; a part select is an
+             * expression without connectivity relations. */
+            if (slot->span != 1) return 0;
+            span->element = slot->element;
+            span->lsb = slot->lsb;
+            span->width = 1;
+            *bit = 1;
+            return 1;
+        case SLOT_MEMBER:
+            if (!slot->span) return 0;
+            span->element = slot->element;
+            span->lsb = slot->lsb;
+            span->width = slot->span;
+            *bit = slot->span == 1;
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/* The instance a link's source sits in: a port's high connection is made in
+ * the instance that instantiates the port's module. */
+static uint32_t link_instance(const llg_vpi_link_t* link) {
+    if (link->kind == LINK_FORCE) {
+        const llg_vpi_code_t* node = code_at(link->source);
+        return node && node->scope ? enclosing_instance(node->scope - 1u) : LLG_VPI_NONE;
+    }
+    if (link->kind == LINK_PORT_HIGH) {
+        const llg_vpi_model_object_t* port = row_object(link->source);
+        const llg_vpi_model_object_t* owner = port ? port->parent : NULL;
+        return owner && owner->parent ? enclosing_instance(row_of(owner->parent)) : LLG_VPI_NONE;
+    }
+    return enclosing_instance(link->source);
+}
+
+/* Whether the target of continuous assignment `row` is a concatenation. */
+static int lhs_is_concat(uint32_t row) {
+    const llg_vpi_conn_t* conn = row_conn(row, 0u);
+    if (!conn || conn->ref.ref_kind == LLG_VPI_ARG_OBJECT ||
+        conn->ref.ref_kind == LLG_VPI_ARG_SELECT || conn->ref.ref_kind == LLG_VPI_ARG_ELEMENT ||
+        !conn->ref.code || !g_vpi.code)
+        return 0;
+    const llg_vpi_code_t* node = code_at(code_visible(conn->ref.code - 1u));
+    return node && node->type == vpiOperation && node->subtype == vpiConcatOp;
+}
+
+/* The handle item of a link reached through bit `bit` of a one-bit query
+ * (`one_bit`; `select_bit` when it is a bit of a vector): a continuous
+ * assignment to a vector or a part of one drives such a bit through one
+ * of its bits (37.43), a vector port connects a one-bit query through a
+ * port bit (37.16 detail 7). */
+static int link_item(const llg_vpi_link_t* link, int one_bit, int select_bit, uint32_t bit,
+                     llg_vpi_link_items_t* items) {
+    const llg_vpi_model_object_t* source = row_object(link->source);
+    uint32_t value_bit = link->offset + (bit - link->lsb);
+    switch (link->kind) {
+        case LINK_CONT_ASSIGN:
+            if (select_bit && (link->flags & LINK_DRIVER) && (link->flags & LINK_MAPPED) &&
+                !source->is_real && value_bit < source->width && !lhs_is_concat(link->source))
+                items_add(items, SLOT_CABIT, link->source, value_bit);
+            else
+                items_add(items, SLOT_OBJECT, link->source, 0u);
+            return 1;
+        case LINK_PRIM_TERM:
+            items_add(items, SLOT_PRIMTERM, link->source, link->aux);
+            return 1;
+        case LINK_PORT_HIGH:
+        case LINK_PORT_LOW:
+            if (link->flags & LINK_MAPPED) {
+                /* 37.16 detail 8: bits beyond the port connect nothing. */
+                if (value_bit >= source->width) return 0;
+                if (one_bit && source->width > 1) {
+                    items_add(items, SLOT_PORTBIT, link->source, value_bit);
+                    return 1;
+                }
+            }
+            items_add(items, SLOT_OBJECT, link->source, 0u);
+            return 1;
+        case LINK_FORCE:
+            items_add(items, SLOT_CODE, link->source, 0u);
+            return 1;
+        default:
+            items_add(items, SLOT_TERM, link->source, link->aux);
+            return 1;
+    }
+}
+
+static int compare_link_items(const void* left, const void* right) {
+    const llg_vpi_link_item_t *a = (const llg_vpi_link_item_t*)left,
+                              *b = (const llg_vpi_link_item_t*)right;
+    int a_code = a->kind == SLOT_CODE, b_code = b->kind == SLOT_CODE;
+    if (a_code != b_code) return a_code - b_code;
+    if (a->row != b->row) return a->row < b->row ? -1 : 1;
+    if (a->kind != b->kind) return a->kind < b->kind ? -1 : 1;
+    return a->aux < b->aux ? -1 : a->aux > b->aux;
+}
+
+static vpiHandle link_items_iterator(int type, llg_vpi_link_items_t* items) {
+    if (items->failed) {
+        free(items->items);
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    if (!items->count) {
+        free(items->items);
+        return NULL;
+    }
+    /* Catalog order (declaration order), force statements last. */
+    qsort(items->items, items->count, sizeof(*items->items), compare_link_items);
+    uintptr_t* handles = (uintptr_t*)calloc(items->count, sizeof(*handles));
+    if (!handles) {
+        free(items->items);
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    uint32_t made = 0;
+    for (size_t i = 0; i < items->count; ++i) {
+        const llg_vpi_link_item_t* item = &items->items[i];
+        vpiHandle handle = item->kind == SLOT_OBJECT ? object_handle(item->row)
+                           : item->kind == SLOT_CODE ? code_handle(item->row)
+                                                     : make_aux_slot((llg_vpi_slot_kind_t)item->kind,
+                                                                     item->row, item->aux);
+        if (handle) handles[made++] = (uintptr_t)handle;
+    }
+    free(items->items);
+    return make_list_iterator(type, handles, made);
+}
+
+/* A net, net bit, net array or element of one (the nets of 37.16). */
+static int net_handle(const llg_vpi_slot_t* slot) {
+    const llg_vpi_model_object_t* object = row_object(slot->object);
+    if (!object || !object->is_net || (object->type != vpiNet && object->type != vpiNetArray))
+        return 0;
+    return slot->kind == SLOT_OBJECT || slot->kind == SLOT_ELEMENT ||
+           (slot->kind == SLOT_SELECT && slot->span == 1);
+}
+
+/* Whether an iteration is one of the connectivity relations of a net or
+ * variable (37.16, 37.17). */
+static int is_connectivity_iteration(int type) {
+    return type == vpiDriver || type == vpiLoad || type == vpiLocalDriver ||
+           type == vpiLocalLoad || type == vpiPortInst || type == vpiPort ||
+           type == vpiPrimTerm || type == vpiContAssign || type == vpiPathTerm ||
+           type == vpiTchkTerm;
+}
+
+/* vpiDriver, vpiLoad, vpiLocalDriver, vpiLocalLoad, vpiPortInst, vpiPort,
+ * vpiPrimTerm, vpiContAssign, vpiPathTerm and vpiTchkTerm of a net, net
+ * bit, net array, variable, variable bit, element or member (decisions
+ * A19-D33, A19-D34). *handled is 0 for another handle. */
+static vpiHandle iterate_connectivity(int type, const llg_vpi_slot_t* slot, int* handled) {
+    llg_vpi_span_t query;
+    int one_bit = 0;
+    *handled = slot_span(slot, &query, &one_bit);
+    const llg_vpi_model_object_t* object = row_object(slot->object);
+    if (!*handled && slot->kind == SLOT_OBJECT && object && (object->flags & LLG_VPI_OBJ_DYNAMIC) &&
+        type != vpiLocalDriver && type != vpiLocalLoad) {
+        /* The index covers packed and real values: a string, handle or
+         * container variable reports no connection. */
+        *handled = 1;
+        return NULL;
+    }
+    if (!*handled) return NULL;
+    int select_bit = one_bit && (slot->kind == SLOT_SELECT || slot->kind == SLOT_MEMBER);
+    /* 37.16 gives local drivers and loads to nets only. */
+    if ((type == vpiLocalDriver || type == vpiLocalLoad) && !object->is_net) {
+        vpi_error("LLG_VPI_RELATION", "local drivers and loads are relations of nets (37.16)");
+        return NULL;
+    }
+    /* 37.16 detail 5: assignments and terminals only from scalars and bits. */
+    if ((type == vpiContAssign || type == vpiPrimTerm) && !one_bit) return NULL;
+    if (!links_ready()) return NULL;
+    int local = type == vpiLocalDriver || type == vpiLocalLoad;
+    uint8_t want = type == vpiDriver || type == vpiLocalDriver ? (uint8_t)LINK_DRIVER
+                   : type == vpiLoad || type == vpiLocalLoad   ? (uint8_t)LINK_LOAD
+                                                               : (uint8_t)0;
+    llg_vpi_spans_t scope;
+    memset(&scope, 0, sizeof(scope));
+    /* 37.16 detail 4 and detail 19: assignments, terminals and the drivers
+     * and loads of a net reach across the ports that join it to other nets. */
+    if (!local && (want || type == vpiContAssign || type == vpiPrimTerm))
+        net_group(&query, &scope);
+    else
+        spans_push(&scope, query.row, query.element, query.lsb, query.width, 0, 0);
+    llg_vpi_forces_t forces;
+    memset(&forces, 0, sizeof(forces));
+    int forces_known = 0;
+    uint32_t instance = local ? enclosing_instance(query.row) : LLG_VPI_NONE;
+    llg_vpi_link_items_t items;
+    memset(&items, 0, sizeof(items));
+    for (size_t s = 0; s < scope.count && !scope.failed; ++s) {
+        llg_vpi_span_t span = scope.items[s];
+        for (size_t i = links_of(span.row); i < g_vpi.link_count; ++i) {
+            const llg_vpi_link_t* link = &g_vpi.links[i];
+            uint32_t from, to;
+            if (link->row != span.row) break;
+            if (!link_overlap(link, &span, &from, &to)) continue;
+            int port = link->kind == LINK_PORT_HIGH || link->kind == LINK_PORT_LOW;
+            switch (type) {
+                case vpiPortInst:
+                    if (link->kind != LINK_PORT_HIGH) continue;
+                    break;
+                case vpiPort:
+                    if (link->kind != LINK_PORT_LOW) continue;
+                    break;
+                case vpiPrimTerm:
+                    if (link->kind != LINK_PRIM_TERM) continue;
+                    break;
+                case vpiContAssign:
+                    if (link->kind != LINK_CONT_ASSIGN) continue;
+                    break;
+                case vpiPathTerm:
+                case vpiTchkTerm: {
+                    if (link->kind != LINK_TERM) continue;
+                    const llg_vpi_conn_t* conn = row_conn(link->source, link->aux);
+                    int tchk = conn->role == LLG_VPI_ROLE_TCHK_REF ||
+                               conn->role == LLG_VPI_ROLE_TCHK_DATA;
+                    if (tchk != (type == vpiTchkTerm)) continue;
+                    break;
+                }
+                default:
+                    if (!(link->flags & want) || link->kind == LINK_TERM) continue;
+                    /* 37.21: a variable's drivers are ports, forces and
+                     * continuous assignments; its loads have no ports. */
+                    if (!object->is_net &&
+                        (link->kind == LINK_PRIM_TERM || (port && want == LINK_LOAD)))
+                        continue;
+                    /* A port joining two nets is not a driver or load of
+                     * their simulated net (37.16 detail 13). */
+                    if (!local && port && port_link_transparent(link)) continue;
+                    if (local && link_instance(link) != instance) continue;
+                    if (link->kind == LINK_FORCE) {
+                        if (!forces_known) {
+                            forces_collect(&forces);
+                            forces_known = 1;
+                        }
+                        if (!force_active(link->source, &forces)) continue;
+                    }
+                    break;
+            }
+            link_item(link, one_bit, select_bit, from, &items);
+        }
+    }
+    int failed = scope.failed || forces.spans.failed;
+    free(scope.items);
+    free(forces.spans.items);
+    free(forces.starts);
+    if (failed) items.failed = 1;
+    return link_items_iterator(type, &items);
+}
+
+/* Whether a net or net bit is the target of a net declaration assignment
+ * (37.16 vpiNetDeclAssign). */
+static int net_decl_assigned(const llg_vpi_slot_t* slot) {
+    llg_vpi_span_t query;
+    int one_bit;
+    if (!slot_span(slot, &query, &one_bit) || !links_ready()) return 0;
+    for (size_t i = links_of(query.row); i < g_vpi.link_count; ++i) {
+        const llg_vpi_link_t* link = &g_vpi.links[i];
+        uint32_t from, to;
+        if (link->row != query.row) break;
+        if (link->kind == LINK_CONT_ASSIGN && (link->flags & LINK_DRIVER) &&
+            (g_vpi.objects[link->source].flags & LLG_VPI_OBJ_QUALIFIER) &&
+            link_overlap(link, &query, &from, &to))
+            return 1;
+    }
+    return 0;
+}
+
+static int net_type_of(uint32_t row) {
+    const llg_vpi_model_object_t* object = row_object(row);
+    return object && object->type == vpiNet && object->subtype ? object->subtype : vpiWire;
+}
+
+/* Whether the internal net type dominates the external one across a port
+ * (Table 23-1). */
+static int internal_dominates(int internal, int external) {
+    int w = external == vpiWire || external == vpiTri;
+    int pulled = external == vpiWand || external == vpiTriAnd || external == vpiWor ||
+                 external == vpiTriOr || external == vpiTriReg || external == vpiTri0 ||
+                 external == vpiTri1;
+    switch (internal) {
+        case vpiWand: case vpiTriAnd: case vpiWor: case vpiTriOr: case vpiTriReg:
+            return w;
+        case vpiTri0: case vpiTri1:
+            return w || external == vpiTriReg;
+        case vpiUwire:
+            return w || pulled;
+        case vpiSupply0: case vpiSupply1:
+            return w || pulled || external == vpiUwire;
+        default:
+            return 0;
+    }
+}
+
+/* vpiResolvedNetType (37.16): the type of the simulated net a net belongs
+ * to, each port joining two nets giving both the type Table 23-1 selects
+ * (23.3.3.7, decision A19-D35). */
+static int resolved_net_type(const llg_vpi_slot_t* slot) {
+    llg_vpi_span_t query;
+    int one_bit;
+    int own = net_type_of(slot->object);
+    if (!slot_span(slot, &query, &one_bit) || !links_ready()) return own;
+    llg_vpi_spans_t group;
+    memset(&group, 0, sizeof(group));
+    net_group(&query, &group);
+    size_t count = 0;
+    uint32_t* rows = group.failed ? NULL : (uint32_t*)malloc((group.count + 1u) * sizeof(*rows));
+    int* types = rows ? (int*)malloc((group.count + 1u) * sizeof(*types)) : NULL;
+    if (!rows || !types) {
+        free(group.items);
+        free(rows);
+        free(types);
+        return own;
+    }
+    for (size_t g = 0; g < group.count; ++g) {
+        size_t k = 0;
+        while (k < count && rows[k] != group.items[g].row) ++k;
+        if (k == count) {
+            rows[count] = group.items[g].row;
+            types[count++] = net_type_of(group.items[g].row);
+        }
+    }
+    free(group.items);
+    for (size_t pass = 0, changed = 1; changed && pass <= count; ++pass) {
+        changed = 0;
+        for (size_t r = 0; r < count; ++r) {
+            for (size_t i = links_of(rows[r]); i < g_vpi.link_count; ++i) {
+                const llg_vpi_link_t* link = &g_vpi.links[i];
+                if (link->row != rows[r]) break;
+                if (link->kind != LINK_PORT_LOW || !port_link_transparent(link)) continue;
+                for (size_t k = 0; k < g_vpi.port_link_count; ++k) {
+                    const llg_vpi_link_t* outer = &g_vpi.links[g_vpi.port_links[k]];
+                    if (outer->source != link->source) continue;
+                    size_t h = 0;
+                    while (h < count && rows[h] != outer->row) ++h;
+                    if (h == count || types[h] == types[r]) continue;
+                    int type = internal_dominates(types[r], types[h]) ? types[r] : types[h];
+                    types[r] = types[h] = type;
+                    changed = 1;
+                }
+            }
+        }
+    }
+    int resolved = own;
+    for (size_t r = 0; r < count; ++r)
+        if (rows[r] == slot->object) resolved = types[r];
+    free(rows);
+    free(types);
+    return resolved;
+}
+
+/* vpiLhs of a continuous assignment bit (37.43): bit `bit` of the
+ * assignment's target, or the whole target when it has no such bit. */
+static vpiHandle cont_assign_bit_lhs(uint32_t row, uint32_t bit) {
+    if (links_ready()) {
+        for (size_t i = 0; i < g_vpi.link_count; ++i) {
+            const llg_vpi_link_t* link = &g_vpi.links[i];
+            if (link->kind != LINK_CONT_ASSIGN || link->source != row ||
+                !(link->flags & LINK_DRIVER) || !(link->flags & LINK_MAPPED) ||
+                bit < link->offset || bit - link->offset >= link->width)
+                continue;
+            llg_vpi_model_object_t* target = row_object(link->row);
+            uint32_t offset = link->lsb + (bit - link->offset);
+            if (target->is_real || value_bits(target) == 1u)
+                return link->element == LLG_VPI_NO_ELEMENT
+                           ? object_handle(link->row)
+                           : make_element(link->row, link->element, NULL);
+            int64_t index = declared_index(target, offset);
+            return make_select(link->row, link->element, offset, 1, index, index, NULL);
+        }
+    }
+    return conn_handle(row, 0u);
 }
 
 /* ── iteration ──────────────────────────────────────────────────────────── */
@@ -6248,6 +7286,17 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     uint32_t argument = argument_code(slot);
     if (argument != LLG_VPI_NONE) return iterate_code(argument, type);
     llg_vpi_model_object_t* object = row_object(slot->object);
+    if (is_connectivity_iteration(type)) {
+        int handled;
+        vpiHandle result = iterate_connectivity(type, slot, &handled);
+        if (handled) return result;
+    }
+    if (type == vpiBit && slot->kind == SLOT_OBJECT && object && object->type == vpiContAssign)
+        /* 37.43: the bits of an assignment to a vector, from vpiOffset 0
+         * (decision A19-D34). */
+        return object->width && !object->is_real
+                   ? iterate_aux(SLOT_CABIT, slot->object, object->width, type, 0)
+                   : NULL;
     if (slot->kind == SLOT_OBJECT && object && is_statement_scope_type(object->type)) {
         /* 37.12: a statement scope iterates its declarations; the other
          * iterations are its statement's (37.69, 37.70). */
@@ -6568,6 +7617,7 @@ static int handle_type(const llg_vpi_slot_t* slot) {
                        ? vpiTchkTerm : vpiPathTerm;
         }
         case SLOT_PORTBIT: return vpiPortBit;
+        case SLOT_CABIT: return vpiContAssignBit;
         case SLOT_REFOBJ: return vpiRefObj;
         case SLOT_STMT: return slot->aux;
         default: return vpiUndefined;
@@ -6962,8 +8012,50 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 return object->detail;
             return unsupported_property();
         case vpiNetDeclAssign:
-            if (slot->kind == SLOT_OBJECT && object && object->type == vpiContAssign)
+            if ((slot->kind == SLOT_OBJECT || slot->kind == SLOT_CABIT) && object &&
+                object->type == vpiContAssign)
                 return (object->flags & LLG_VPI_OBJ_QUALIFIER) != 0;
+            /* 37.16: a net assigned in its declaration (decision A19-D35). */
+            if (net_handle(slot)) return net_decl_assigned(slot);
+            return unsupported_property();
+        case vpiOffset:
+            /* 37.43 detail 3: 0 for the least significant bit. */
+            if (slot->kind == SLOT_CABIT) return slot->aux;
+            return unsupported_property();
+        case vpiStrength0:
+        case vpiStrength1:
+            /* 37.31, 37.43: the drive strengths a primitive or continuous
+             * assignment drives with; a net drives nothing of its own
+             * (decision A19-D35). */
+            if ((slot->kind == SLOT_OBJECT || slot->kind == SLOT_CABIT) && object &&
+                (is_primitive_type(object->type) || object->type == vpiContAssign))
+                return (object->strength >> (property == vpiStrength0 ? 0 : 8)) & 0xff;
+            if (net_handle(slot)) return 0;
+            return unsupported_property();
+        case vpiExpanded:
+            /* 6.9.2: "If the keyword scalared is used, ... the PLI shall
+             * consider the net expanded"; llg keeps every other vector whole.
+             * A net bit reports its parent's (37.16 detail 18). */
+            if (net_handle(slot)) return (object->flags & LLG_VPI_OBJ_SCALARED) != 0;
+            return unsupported_property();
+        case vpiImplicitDecl:
+            if (net_handle(slot)) return (object->flags & LLG_VPI_OBJ_IMPLICIT) != 0;
+            return unsupported_property();
+        case vpiExplicitScalared:
+        case vpiExplicitVectored:
+            /* 37.16: the `scalared` or `vectored` keyword of the declaration. */
+            if (net_handle(slot))
+                return (object->flags & (property == vpiExplicitScalared ? LLG_VPI_OBJ_SCALARED
+                                                                         : LLG_VPI_OBJ_VECTORED)) != 0;
+            return unsupported_property();
+        case vpiConnByName:
+        case vpiExplicitName:
+            /* 37.14 detail 8: a port named in the module header, connected
+             * by name in the instantiation. */
+            if ((slot->kind == SLOT_OBJECT || slot->kind == SLOT_PORTBIT) && object &&
+                object->type == vpiPort)
+                return (object->flags & (property == vpiConnByName ? LLG_VPI_OBJ_BY_NAME
+                                                                   : LLG_VPI_OBJ_EXPLICIT)) != 0;
             return unsupported_property();
         case vpiMethod:
             /* Class methods are not catalog objects (37.37). */
@@ -6979,6 +8071,9 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         case vpiPortIndex:
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiPort)
                 return (PLI_INT32)object->port_index;
+            return unsupported_property();
+        case vpiResolvedNetType:
+            if (net_handle(slot)) return resolved_net_type(slot);
             return unsupported_property();
         case vpiNetType:
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiNet)
@@ -7036,7 +8131,11 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                        : (object->flags & LLG_VPI_OBJ_TEXT) ? vpiStringConst : vpiBinaryConst;
             return unsupported_property();
         case vpiLineNo:
-            if (slot->kind == SLOT_OBJECT && object) return object->line;
+            /* A terminal, port bit or assignment bit is on its owner's line. */
+            if ((slot->kind == SLOT_OBJECT || slot->kind == SLOT_CABIT ||
+                 slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_PORTBIT ||
+                 slot->kind == SLOT_TERM) && object)
+                return object->line;
             if (slot->kind == SLOT_CALL) return ((llg_vpi_callsite_t*)slot->pointer)->line;
             return unsupported_property();
         case vpiTimeUnit:
@@ -7221,6 +8320,7 @@ static const char* type_name(int type) {
         case vpiAlways: return "vpiAlways";
         case vpiFinal: return "vpiFinal";
         case vpiContAssign: return "vpiContAssign";
+        case vpiContAssignBit: return "vpiContAssignBit";
         case vpiTask: return "vpiTask";
         case vpiFunction: return "vpiFunction";
         case vpiGate: return "vpiGate";
@@ -7436,6 +8536,9 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
                 char* name = composed_name(slot, property == vpiFullName);
                 if (name) return (PLI_BYTE8*)name;
             }
+            if (property == vpiFile && object->file) return (PLI_BYTE8*)object->file;
+            break;
+        case SLOT_CABIT:
             if (property == vpiFile && object->file) return (PLI_BYTE8*)object->file;
             break;
         case SLOT_REFOBJ: {
@@ -8249,7 +9352,8 @@ void vpi_get_time(vpiHandle object, p_vpi_time time) {
 static int handle_identity(const llg_vpi_slot_t* slot, uint32_t index, uint64_t identity[4]) {
     llg_vpi_target_t target;
     if (slot->kind == SLOT_CONN || slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_PORTBIT ||
-        slot->kind == SLOT_REFOBJ || slot->kind == SLOT_TERM || slot->kind == SLOT_CODE) {
+        slot->kind == SLOT_REFOBJ || slot->kind == SLOT_TERM || slot->kind == SLOT_CODE ||
+        slot->kind == SLOT_CABIT) {
         identity[0] = 2u + slot->kind;
         identity[1] = slot->object;
         identity[2] = 0;
@@ -10265,6 +11369,8 @@ void llg_vpi_shutdown(void) {
     free(g_vpi.array_values);
     free(g_vpi.decompiled);
     free(g_vpi.storage);
+    free(g_vpi.links);
+    free(g_vpi.port_links);
     for (int i = 0; i < g_vpi.plugin_count; ++i) llg_dl_close(g_vpi.plugin_handles[i]);
     dyn_shutdown();
     memset(&g_vpi, 0, sizeof(g_vpi));

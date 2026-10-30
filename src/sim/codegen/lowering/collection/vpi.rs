@@ -7,7 +7,9 @@
 //! and parameter values are copied into [`IrVpiObject`].
 
 use super::*;
-use crate::core::db::{ConstantSource, ConstantType, Direction, NetType, TypeId, TypedefRef};
+use crate::core::db::{
+    ConstantSource, ConstantType, Direction, NetType, Strength, TypeId, TypedefRef,
+};
 use crate::sim::ir::{
     IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn, IrVpiConstant,
     IrVpiDirection, IrVpiInstance, IrVpiObject, IrVpiObjectKind, IrVpiTypespec, IrVpiTypespecKind,
@@ -817,6 +819,8 @@ impl Codegen<'_> {
             prim_type,
             terms,
             udp,
+            strength0,
+            strength1,
             ..
         } = self.kind(id)
         else {
@@ -904,6 +908,18 @@ impl Codegen<'_> {
             detail: Some(detail),
             conns,
             unnamed,
+            // 28.10: a pullup or pulldown source drives pull strength
+            // without a specification; other primitives default to strong
+            // (28.3.2, decision A19-D35).
+            strength: Some(vpi_strengths(
+                *strength0,
+                *strength1,
+                if matches!(prim_type, PrimitiveType::Pullup | PrimitiveType::Pulldown) {
+                    "vpiPullDrive"
+                } else {
+                    "vpiStrongDrive"
+                },
+            )),
             ..template
         })
     }
@@ -1422,6 +1438,8 @@ impl Codegen<'_> {
                         net_type: net.then(|| net_type.unwrap_or("vpiWire")),
                         two_state,
                         typespec,
+                        implicit: declared_net && self.db.is_implicit_net(id),
+                        qualifiers: self.db.declaration_qualifiers(id),
                         ..IrVpiObject::default()
                     }));
                 }
@@ -1618,7 +1636,12 @@ impl Codegen<'_> {
                         ..IrVpiObject::default()
                     }));
                 }
-                NodeKind::ContAssign { net_decl, .. } if node.children.len() >= 2 => {
+                NodeKind::ContAssign {
+                    net_decl,
+                    strength0,
+                    strength1,
+                    ..
+                } if node.children.len() >= 2 => {
                     let lhs = self.vpi_conn(node.children[0], IrVpiDirection::None);
                     let rhs = self.vpi_conn(node.children[1], IrVpiDirection::None);
                     let scope = self.vpi_full_name(id);
@@ -1638,6 +1661,8 @@ impl Codegen<'_> {
                         unnamed: true,
                         qualifier: *net_decl,
                         timing: timing.delays.remove(&id),
+                        // 10.3.4: (strong1, strong0) without a specification.
+                        strength: Some(vpi_strengths(*strength0, *strength1, "vpiStrongDrive")),
                         ..IrVpiObject::default()
                     }));
                 }
@@ -1823,6 +1848,7 @@ impl Codegen<'_> {
                             }
                             _ => Vec::new(),
                         },
+                        qualifiers: self.db.declaration_qualifiers(id),
                         ..IrVpiObject::default()
                     }));
                     // 37.13: a module port's io declaration; interface and
@@ -2585,6 +2611,28 @@ fn packed_offset(left: i64, right: i64, index: i64) -> Option<u32> {
         right - index
     };
     u32::try_from(offset).ok()
+}
+
+/// The `vpiStrength0` and `vpiStrength1` code names of a driver: its
+/// specified strengths, `default` for an unspecified one (Annex K drive
+/// strength constants).
+fn vpi_strengths(
+    strength0: Strength,
+    strength1: Strength,
+    default: &'static str,
+) -> (&'static str, &'static str) {
+    let code = |strength| match strength {
+        Strength::Supply => "vpiSupplyDrive",
+        Strength::Strong => "vpiStrongDrive",
+        Strength::Pull => "vpiPullDrive",
+        Strength::Weak => "vpiWeakDrive",
+        Strength::HighZ => "vpiHiZ",
+        Strength::Large => "vpiLargeCharge",
+        Strength::Medium => "vpiMediumCharge",
+        Strength::Small => "vpiSmallCharge",
+        Strength::Unspecified | Strength::Unsupported => default,
+    };
+    (code(strength0), code(strength1))
 }
 
 fn vpi_net_type(net_type: NetType) -> &'static str {

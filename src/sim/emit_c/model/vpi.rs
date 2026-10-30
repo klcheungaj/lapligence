@@ -64,6 +64,9 @@ struct Entry {
     dynamic: Option<(String, String, usize)>,
     code: Option<u32>,
     instance: Option<IrVpiInstance>,
+    strength: Option<(&'static str, &'static str)>,
+    implicit: bool,
+    qualifiers: crate::core::db::DeclarationQualifiers,
 }
 
 impl Entry {
@@ -107,6 +110,9 @@ impl Entry {
             dynamic: None,
             code: None,
             instance: None,
+            strength: None,
+            implicit: false,
+            qualifiers: Default::default(),
         }
     }
 }
@@ -303,6 +309,9 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 dynamic,
                 code: object.code,
                 instance: object.instance.as_deref().cloned(),
+                strength: object.strength,
+                implicit: object.implicit,
+                qualifiers: object.qualifiers,
             },
         );
     }
@@ -616,6 +625,19 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         if entry.dynamic.is_some() {
             flags.push("LLG_VPI_OBJ_DYNAMIC");
         }
+        if entry.implicit {
+            flags.push("LLG_VPI_OBJ_IMPLICIT");
+        }
+        for (set, flag) in [
+            (entry.qualifiers.scalared, "LLG_VPI_OBJ_SCALARED"),
+            (entry.qualifiers.vectored, "LLG_VPI_OBJ_VECTORED"),
+            (entry.qualifiers.connected_by_name, "LLG_VPI_OBJ_BY_NAME"),
+            (entry.qualifiers.explicit_port_name, "LLG_VPI_OBJ_EXPLICIT"),
+        ] {
+            if set {
+                flags.push(flag);
+            }
+        }
         let dynamic =
             entry
                 .dynamic
@@ -627,11 +649,14 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
                     )
                 });
         let (declaration, instance) = entry.activation.unwrap_or((0, 0));
-        let definition = if entry.instance.is_some() {
+        let mut definition = if entry.instance.is_some() {
             format!(", .instance = &llg_vpi_instance_{index}")
         } else {
             String::new()
         };
+        if let Some((strength0, strength1)) = entry.strength {
+            definition.push_str(&format!(", .strength = {strength0} | {strength1} << 8"));
+        }
         let (constant, real_constant) = match &entry.constant {
             Some(IrVpiConstant::Bits(digits)) => (c_string_literal(digits), "0.0".to_owned()),
             Some(IrVpiConstant::Text(text)) => {

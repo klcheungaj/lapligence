@@ -2375,6 +2375,33 @@ fn a19_d41_instance_definition_properties() {
 }
 
 #[test]
+fn a19_d33_drivers_and_loads() {
+    run_vpi_decision(
+        "A19-D33_drivers_and_loads",
+        &["task $d33(input integer pass)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D33_drivers_and_loads.out"),
+    );
+}
+
+#[test]
+fn a19_d34_net_fanout_and_assignment_bits() {
+    run_vpi_decision(
+        "A19-D34_net_fanout_and_assignment_bits",
+        &["task $d34()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D34_net_fanout_and_assignment_bits.out"),
+    );
+}
+
+#[test]
+fn a19_d35_strengths_and_declaration_properties() {
+    run_vpi_decision(
+        "A19-D35_strengths_and_declaration_properties",
+        &["task $d35()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D35_strengths_and_declaration_properties.out"),
+    );
+}
+
+#[test]
 fn a19_d42_declaration_objects() {
     run_vpi_decision(
         "A19-D42_declaration_objects",

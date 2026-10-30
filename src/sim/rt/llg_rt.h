@@ -3391,6 +3391,14 @@ void llg_force_real(double* target, llg_force_real_eval_fn eval,
 // hidden source in its guard process only while this holds, so the helper's
 // effects never run after release or replacement. Read-only.
 int llg_force_source_active(const sv4_t* sig, const double* real);
+// Live force bindings, for VPI driver and load queries (IEEE 1800-2009 37.16
+// details 11-12): entry `index` of the live-entry table. Returns 0 past the
+// last entry, else 1 with the borrowed parts of a live packed entry, the
+// target of a live real one, or neither for an unused entry or one that
+// vpi_put_value installed (not a force statement). Read-only; the
+// borrowed parts stay valid until the next force or release statement.
+int llg_force_entry_view(int index, const llg_force_part_t** parts, int* n_parts,
+                         double** real);
 void llg_release_real(double* target);
 
 // Legacy constant-value entry points retained for runtime self-tests and

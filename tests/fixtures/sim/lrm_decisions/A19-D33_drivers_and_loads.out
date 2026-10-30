@@ -1,0 +1,319 @@
+pass 0
+tb.a
+  tb.a vpiDriver level=0 n=1: assign@31
+  tb.a vpiLoad level=0 n=4: assign@32 term1:tb.g assign@20 port:tb.u2.ci
+  tb.a vpiLocalDriver level=0 n=1: assign@31
+  tb.a vpiLocalLoad level=0 n=4: assign@32 term1:tb.g port:tb.u1.ci port:tb.u2.ci
+  tb.a vpiPortInst level=0 n=2: port:tb.u1.ci port:tb.u2.ci
+  tb.a vpiPort level=0 n=0:
+tb.b
+  tb.b vpiDriver level=0 n=1: assign@20
+  tb.b vpiLoad level=0 n=1: term2:tb.g
+  tb.b vpiLocalDriver level=0 n=1: port:tb.u1.co
+  tb.b vpiLocalLoad level=0 n=1: term2:tb.g
+  tb.b vpiPortInst level=0 n=1: port:tb.u1.co
+  tb.b vpiPort level=0 n=0:
+tb.c
+  tb.c vpiDriver level=0 n=1: term0:tb.g
+  tb.c vpiLoad level=0 n=0:
+  tb.c vpiLocalDriver level=0 n=1: term0:tb.g
+  tb.c vpiLocalLoad level=0 n=0:
+  tb.c vpiPortInst level=0 n=0:
+  tb.c vpiPort level=0 n=0:
+tb.v
+  tb.v vpiDriver level=0 n=1: assign@32
+  tb.v vpiLoad level=0 n=1: assign@21
+  tb.v vpiLocalDriver level=0 n=1: assign@32
+  tb.v vpiLocalLoad level=0 n=1: port:tb.u1.cv
+  tb.v vpiPortInst level=0 n=1: port:tb.u1.cv
+  tb.v vpiPort level=0 n=0:
+tb.u1.ci
+  tb.u1.ci vpiDriver level=0 n=1: assign@31
+  tb.u1.ci vpiLoad level=0 n=4: assign@32 term1:tb.g assign@20 port:tb.u2.ci
+  tb.u1.ci vpiLocalDriver level=0 n=1: port:tb.u1.ci
+  tb.u1.ci vpiLocalLoad level=0 n=1: assign@20
+  tb.u1.ci vpiPortInst level=0 n=0:
+  tb.u1.ci vpiPort level=0 n=1: port:tb.u1.ci
+tb.u1.co
+  tb.u1.co vpiDriver level=0 n=1: assign@20
+  tb.u1.co vpiLoad level=0 n=1: term2:tb.g
+  tb.u1.co vpiLocalDriver level=0 n=1: assign@20
+  tb.u1.co vpiLocalLoad level=0 n=1: port:tb.u1.co
+  tb.u1.co vpiPortInst level=0 n=0:
+  tb.u1.co vpiPort level=0 n=1: port:tb.u1.co
+tb.u2.ci
+  tb.u2.ci vpiDriver level=0 n=1: port:tb.u2.ci
+  tb.u2.ci vpiLoad level=0 n=1: assign@20
+  tb.u2.ci vpiLocalDriver level=0 n=1: port:tb.u2.ci
+  tb.u2.ci vpiLocalLoad level=0 n=1: assign@20
+  tb.u2.ci vpiPortInst level=0 n=0:
+  tb.u2.ci vpiPort level=0 n=1: port:tb.u2.ci
+tb.u2.cv
+  tb.u2.cv vpiDriver level=0 n=1: port:tb.u2.cv
+  tb.u2.cv vpiLoad level=0 n=1: assign@21
+  tb.u2.cv vpiLocalDriver level=0 n=1: port:tb.u2.cv
+  tb.u2.cv vpiLocalLoad level=0 n=1: assign@21
+  tb.u2.cv vpiPortInst level=0 n=0:
+  tb.u2.cv vpiPort level=0 n=1: port:tb.u2.cv
+tb.v[3]
+  tb.v[3] vpiDriver level=0 n=0:
+  tb.v[3] vpiLoad level=0 n=0:
+  tb.v[3] vpiLocalDriver level=0 n=0:
+  tb.v[3] vpiLocalLoad level=0 n=1: port:tb.u1.cv.bit0
+  tb.v[3] vpiPortInst level=0 n=1: port:tb.u1.cv.bit0
+  tb.v[3] vpiPort level=0 n=0:
+tb.v[2]
+  tb.v[2] vpiDriver level=0 n=0:
+  tb.v[2] vpiLoad level=0 n=1: assign@21
+  tb.v[2] vpiLocalDriver level=0 n=0:
+  tb.v[2] vpiLocalLoad level=0 n=1: port:tb.u1.cv.bit1
+  tb.v[2] vpiPortInst level=0 n=1: port:tb.u1.cv.bit1
+  tb.v[2] vpiPort level=0 n=0:
+tb.v[1]
+  tb.v[1] vpiDriver level=0 n=1: assign@32.bit1
+  tb.v[1] vpiLoad level=0 n=0:
+  tb.v[1] vpiLocalDriver level=0 n=1: assign@32.bit1
+  tb.v[1] vpiLocalLoad level=0 n=0:
+  tb.v[1] vpiPortInst level=0 n=0:
+  tb.v[1] vpiPort level=0 n=0:
+tb.v[0]
+  tb.v[0] vpiDriver level=0 n=1: assign@32.bit0
+  tb.v[0] vpiLoad level=0 n=0:
+  tb.v[0] vpiLocalDriver level=0 n=1: assign@32.bit0
+  tb.v[0] vpiLocalLoad level=0 n=0:
+  tb.v[0] vpiPortInst level=0 n=0:
+  tb.v[0] vpiPort level=0 n=0:
+tb.r
+  tb.r vpiDriver level=0 n=1: port:tb.u1.cr
+  tb.r vpiLoad level=0 n=0:
+  tb.r vpiPortInst level=0 n=1: port:tb.u1.cr
+  tb.r vpiPort level=0 n=0:
+  tb.r vpiLocalDriver level=3 n=0:
+  tb.r vpiLocalLoad level=3 n=0:
+tb.lv
+  tb.lv vpiDriver level=0 n=0:
+  tb.lv vpiLoad level=0 n=0:
+  tb.lv vpiPortInst level=0 n=1: port:tb.u2.cv
+  tb.lv vpiPort level=0 n=0:
+  tb.lv vpiLocalDriver level=3 n=0:
+  tb.lv vpiLocalLoad level=3 n=0:
+tb.u1.cr
+  tb.u1.cr vpiDriver level=0 n=1: assign@21
+  tb.u1.cr vpiLoad level=0 n=0:
+  tb.u1.cr vpiPortInst level=0 n=0:
+  tb.u1.cr vpiPort level=0 n=1: port:tb.u1.cr
+  tb.u1.cr vpiLocalDriver level=3 n=0:
+  tb.u1.cr vpiLocalLoad level=3 n=0:
+pass 1
+tb.a
+  tb.a vpiDriver level=0 n=1: assign@31
+  tb.a vpiLoad level=0 n=4: assign@32 term1:tb.g assign@20 port:tb.u2.ci
+  tb.a vpiLocalDriver level=0 n=1: assign@31
+  tb.a vpiLocalLoad level=0 n=4: assign@32 term1:tb.g port:tb.u1.ci port:tb.u2.ci
+  tb.a vpiPortInst level=0 n=2: port:tb.u1.ci port:tb.u2.ci
+  tb.a vpiPort level=0 n=0:
+tb.b
+  tb.b vpiDriver level=0 n=1: assign@20
+  tb.b vpiLoad level=0 n=2: term2:tb.g force@39
+  tb.b vpiLocalDriver level=0 n=1: port:tb.u1.co
+  tb.b vpiLocalLoad level=0 n=2: term2:tb.g force@39
+  tb.b vpiPortInst level=0 n=1: port:tb.u1.co
+  tb.b vpiPort level=0 n=0:
+tb.c
+  tb.c vpiDriver level=0 n=1: term0:tb.g
+  tb.c vpiLoad level=0 n=0:
+  tb.c vpiLocalDriver level=0 n=1: term0:tb.g
+  tb.c vpiLocalLoad level=0 n=0:
+  tb.c vpiPortInst level=0 n=0:
+  tb.c vpiPort level=0 n=0:
+tb.v
+  tb.v vpiDriver level=0 n=2: assign@32 force@38
+  tb.v vpiLoad level=0 n=1: assign@21
+  tb.v vpiLocalDriver level=0 n=2: assign@32 force@38
+  tb.v vpiLocalLoad level=0 n=1: port:tb.u1.cv
+  tb.v vpiPortInst level=0 n=1: port:tb.u1.cv
+  tb.v vpiPort level=0 n=0:
+tb.u1.ci
+  tb.u1.ci vpiDriver level=0 n=1: assign@31
+  tb.u1.ci vpiLoad level=0 n=4: assign@32 term1:tb.g assign@20 port:tb.u2.ci
+  tb.u1.ci vpiLocalDriver level=0 n=1: port:tb.u1.ci
+  tb.u1.ci vpiLocalLoad level=0 n=1: assign@20
+  tb.u1.ci vpiPortInst level=0 n=0:
+  tb.u1.ci vpiPort level=0 n=1: port:tb.u1.ci
+tb.u1.co
+  tb.u1.co vpiDriver level=0 n=1: assign@20
+  tb.u1.co vpiLoad level=0 n=2: term2:tb.g force@39
+  tb.u1.co vpiLocalDriver level=0 n=1: assign@20
+  tb.u1.co vpiLocalLoad level=0 n=1: port:tb.u1.co
+  tb.u1.co vpiPortInst level=0 n=0:
+  tb.u1.co vpiPort level=0 n=1: port:tb.u1.co
+tb.u2.ci
+  tb.u2.ci vpiDriver level=0 n=1: port:tb.u2.ci
+  tb.u2.ci vpiLoad level=0 n=1: assign@20
+  tb.u2.ci vpiLocalDriver level=0 n=1: port:tb.u2.ci
+  tb.u2.ci vpiLocalLoad level=0 n=1: assign@20
+  tb.u2.ci vpiPortInst level=0 n=0:
+  tb.u2.ci vpiPort level=0 n=1: port:tb.u2.ci
+tb.u2.cv
+  tb.u2.cv vpiDriver level=0 n=1: port:tb.u2.cv
+  tb.u2.cv vpiLoad level=0 n=1: assign@21
+  tb.u2.cv vpiLocalDriver level=0 n=1: port:tb.u2.cv
+  tb.u2.cv vpiLocalLoad level=0 n=1: assign@21
+  tb.u2.cv vpiPortInst level=0 n=0:
+  tb.u2.cv vpiPort level=0 n=1: port:tb.u2.cv
+tb.v[3]
+  tb.v[3] vpiDriver level=0 n=1: force@38
+  tb.v[3] vpiLoad level=0 n=0:
+  tb.v[3] vpiLocalDriver level=0 n=1: force@38
+  tb.v[3] vpiLocalLoad level=0 n=1: port:tb.u1.cv.bit0
+  tb.v[3] vpiPortInst level=0 n=1: port:tb.u1.cv.bit0
+  tb.v[3] vpiPort level=0 n=0:
+tb.v[2]
+  tb.v[2] vpiDriver level=0 n=1: force@38
+  tb.v[2] vpiLoad level=0 n=1: assign@21
+  tb.v[2] vpiLocalDriver level=0 n=1: force@38
+  tb.v[2] vpiLocalLoad level=0 n=1: port:tb.u1.cv.bit1
+  tb.v[2] vpiPortInst level=0 n=1: port:tb.u1.cv.bit1
+  tb.v[2] vpiPort level=0 n=0:
+tb.v[1]
+  tb.v[1] vpiDriver level=0 n=2: assign@32.bit1 force@38
+  tb.v[1] vpiLoad level=0 n=0:
+  tb.v[1] vpiLocalDriver level=0 n=2: assign@32.bit1 force@38
+  tb.v[1] vpiLocalLoad level=0 n=0:
+  tb.v[1] vpiPortInst level=0 n=0:
+  tb.v[1] vpiPort level=0 n=0:
+tb.v[0]
+  tb.v[0] vpiDriver level=0 n=2: assign@32.bit0 force@38
+  tb.v[0] vpiLoad level=0 n=0:
+  tb.v[0] vpiLocalDriver level=0 n=2: assign@32.bit0 force@38
+  tb.v[0] vpiLocalLoad level=0 n=0:
+  tb.v[0] vpiPortInst level=0 n=0:
+  tb.v[0] vpiPort level=0 n=0:
+tb.r
+  tb.r vpiDriver level=0 n=2: port:tb.u1.cr force@39
+  tb.r vpiLoad level=0 n=0:
+  tb.r vpiPortInst level=0 n=1: port:tb.u1.cr
+  tb.r vpiPort level=0 n=0:
+  tb.r vpiLocalDriver level=3 n=0:
+  tb.r vpiLocalLoad level=3 n=0:
+tb.lv
+  tb.lv vpiDriver level=0 n=0:
+  tb.lv vpiLoad level=0 n=0:
+  tb.lv vpiPortInst level=0 n=1: port:tb.u2.cv
+  tb.lv vpiPort level=0 n=0:
+  tb.lv vpiLocalDriver level=3 n=0:
+  tb.lv vpiLocalLoad level=3 n=0:
+tb.u1.cr
+  tb.u1.cr vpiDriver level=0 n=1: assign@21
+  tb.u1.cr vpiLoad level=0 n=0:
+  tb.u1.cr vpiPortInst level=0 n=0:
+  tb.u1.cr vpiPort level=0 n=1: port:tb.u1.cr
+  tb.u1.cr vpiLocalDriver level=3 n=0:
+  tb.u1.cr vpiLocalLoad level=3 n=0:
+pass 2
+tb.a
+  tb.a vpiDriver level=0 n=1: assign@31
+  tb.a vpiLoad level=0 n=4: assign@32 term1:tb.g assign@20 port:tb.u2.ci
+  tb.a vpiLocalDriver level=0 n=1: assign@31
+  tb.a vpiLocalLoad level=0 n=4: assign@32 term1:tb.g port:tb.u1.ci port:tb.u2.ci
+  tb.a vpiPortInst level=0 n=2: port:tb.u1.ci port:tb.u2.ci
+  tb.a vpiPort level=0 n=0:
+tb.b
+  tb.b vpiDriver level=0 n=1: assign@20
+  tb.b vpiLoad level=0 n=1: term2:tb.g
+  tb.b vpiLocalDriver level=0 n=1: port:tb.u1.co
+  tb.b vpiLocalLoad level=0 n=1: term2:tb.g
+  tb.b vpiPortInst level=0 n=1: port:tb.u1.co
+  tb.b vpiPort level=0 n=0:
+tb.c
+  tb.c vpiDriver level=0 n=1: term0:tb.g
+  tb.c vpiLoad level=0 n=0:
+  tb.c vpiLocalDriver level=0 n=1: term0:tb.g
+  tb.c vpiLocalLoad level=0 n=0:
+  tb.c vpiPortInst level=0 n=0:
+  tb.c vpiPort level=0 n=0:
+tb.v
+  tb.v vpiDriver level=0 n=1: assign@32
+  tb.v vpiLoad level=0 n=1: assign@21
+  tb.v vpiLocalDriver level=0 n=1: assign@32
+  tb.v vpiLocalLoad level=0 n=1: port:tb.u1.cv
+  tb.v vpiPortInst level=0 n=1: port:tb.u1.cv
+  tb.v vpiPort level=0 n=0:
+tb.u1.ci
+  tb.u1.ci vpiDriver level=0 n=1: assign@31
+  tb.u1.ci vpiLoad level=0 n=4: assign@32 term1:tb.g assign@20 port:tb.u2.ci
+  tb.u1.ci vpiLocalDriver level=0 n=1: port:tb.u1.ci
+  tb.u1.ci vpiLocalLoad level=0 n=1: assign@20
+  tb.u1.ci vpiPortInst level=0 n=0:
+  tb.u1.ci vpiPort level=0 n=1: port:tb.u1.ci
+tb.u1.co
+  tb.u1.co vpiDriver level=0 n=1: assign@20
+  tb.u1.co vpiLoad level=0 n=1: term2:tb.g
+  tb.u1.co vpiLocalDriver level=0 n=1: assign@20
+  tb.u1.co vpiLocalLoad level=0 n=1: port:tb.u1.co
+  tb.u1.co vpiPortInst level=0 n=0:
+  tb.u1.co vpiPort level=0 n=1: port:tb.u1.co
+tb.u2.ci
+  tb.u2.ci vpiDriver level=0 n=1: port:tb.u2.ci
+  tb.u2.ci vpiLoad level=0 n=1: assign@20
+  tb.u2.ci vpiLocalDriver level=0 n=1: port:tb.u2.ci
+  tb.u2.ci vpiLocalLoad level=0 n=1: assign@20
+  tb.u2.ci vpiPortInst level=0 n=0:
+  tb.u2.ci vpiPort level=0 n=1: port:tb.u2.ci
+tb.u2.cv
+  tb.u2.cv vpiDriver level=0 n=1: port:tb.u2.cv
+  tb.u2.cv vpiLoad level=0 n=1: assign@21
+  tb.u2.cv vpiLocalDriver level=0 n=1: port:tb.u2.cv
+  tb.u2.cv vpiLocalLoad level=0 n=1: assign@21
+  tb.u2.cv vpiPortInst level=0 n=0:
+  tb.u2.cv vpiPort level=0 n=1: port:tb.u2.cv
+tb.v[3]
+  tb.v[3] vpiDriver level=0 n=0:
+  tb.v[3] vpiLoad level=0 n=0:
+  tb.v[3] vpiLocalDriver level=0 n=0:
+  tb.v[3] vpiLocalLoad level=0 n=1: port:tb.u1.cv.bit0
+  tb.v[3] vpiPortInst level=0 n=1: port:tb.u1.cv.bit0
+  tb.v[3] vpiPort level=0 n=0:
+tb.v[2]
+  tb.v[2] vpiDriver level=0 n=0:
+  tb.v[2] vpiLoad level=0 n=1: assign@21
+  tb.v[2] vpiLocalDriver level=0 n=0:
+  tb.v[2] vpiLocalLoad level=0 n=1: port:tb.u1.cv.bit1
+  tb.v[2] vpiPortInst level=0 n=1: port:tb.u1.cv.bit1
+  tb.v[2] vpiPort level=0 n=0:
+tb.v[1]
+  tb.v[1] vpiDriver level=0 n=1: assign@32.bit1
+  tb.v[1] vpiLoad level=0 n=0:
+  tb.v[1] vpiLocalDriver level=0 n=1: assign@32.bit1
+  tb.v[1] vpiLocalLoad level=0 n=0:
+  tb.v[1] vpiPortInst level=0 n=0:
+  tb.v[1] vpiPort level=0 n=0:
+tb.v[0]
+  tb.v[0] vpiDriver level=0 n=1: assign@32.bit0
+  tb.v[0] vpiLoad level=0 n=0:
+  tb.v[0] vpiLocalDriver level=0 n=1: assign@32.bit0
+  tb.v[0] vpiLocalLoad level=0 n=0:
+  tb.v[0] vpiPortInst level=0 n=0:
+  tb.v[0] vpiPort level=0 n=0:
+tb.r
+  tb.r vpiDriver level=0 n=1: port:tb.u1.cr
+  tb.r vpiLoad level=0 n=0:
+  tb.r vpiPortInst level=0 n=1: port:tb.u1.cr
+  tb.r vpiPort level=0 n=0:
+  tb.r vpiLocalDriver level=3 n=0:
+  tb.r vpiLocalLoad level=3 n=0:
+tb.lv
+  tb.lv vpiDriver level=0 n=0:
+  tb.lv vpiLoad level=0 n=0:
+  tb.lv vpiPortInst level=0 n=1: port:tb.u2.cv
+  tb.lv vpiPort level=0 n=0:
+  tb.lv vpiLocalDriver level=3 n=0:
+  tb.lv vpiLocalLoad level=3 n=0:
+tb.u1.cr
+  tb.u1.cr vpiDriver level=0 n=1: assign@21
+  tb.u1.cr vpiLoad level=0 n=0:
+  tb.u1.cr vpiPortInst level=0 n=0:
+  tb.u1.cr vpiPort level=0 n=1: port:tb.u1.cr
+  tb.u1.cr vpiLocalDriver level=3 n=0:
+  tb.u1.cr vpiLocalLoad level=3 n=0:
+c=1 r=z

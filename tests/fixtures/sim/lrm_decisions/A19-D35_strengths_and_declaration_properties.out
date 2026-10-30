@@ -1,0 +1,228 @@
+tb.a
+  tb.a vpiStrength0 0 level=0
+  tb.a vpiStrength1 0 level=0
+  tb.a vpiNetDeclAssign 1 level=0
+  tb.a vpiExplicitScalared 0 level=0
+  tb.a vpiExplicitVectored 0 level=0
+  tb.a vpiExpanded 0 level=0
+  tb.a vpiImplicitDecl 0 level=0
+  tb.a vpiNetType 1 level=0
+  tb.a vpiResolvedNetType 1 level=0
+tb.b
+  tb.b vpiStrength0 0 level=0
+  tb.b vpiStrength1 0 level=0
+  tb.b vpiNetDeclAssign 1 level=0
+  tb.b vpiExplicitScalared 0 level=0
+  tb.b vpiExplicitVectored 0 level=0
+  tb.b vpiExpanded 0 level=0
+  tb.b vpiImplicitDecl 0 level=0
+  tb.b vpiNetType 1 level=0
+  tb.b vpiResolvedNetType 1 level=0
+tb.c
+  tb.c vpiStrength0 0 level=0
+  tb.c vpiStrength1 0 level=0
+  tb.c vpiNetDeclAssign 0 level=0
+  tb.c vpiExplicitScalared 0 level=0
+  tb.c vpiExplicitVectored 0 level=0
+  tb.c vpiExpanded 0 level=0
+  tb.c vpiImplicitDecl 0 level=0
+  tb.c vpiNetType 1 level=0
+  tb.c vpiResolvedNetType 1 level=0
+tb.f
+  tb.f vpiStrength0 0 level=0
+  tb.f vpiStrength1 0 level=0
+  tb.f vpiNetDeclAssign 0 level=0
+  tb.f vpiExplicitScalared 0 level=0
+  tb.f vpiExplicitVectored 0 level=0
+  tb.f vpiExpanded 0 level=0
+  tb.f vpiImplicitDecl 0 level=0
+  tb.f vpiNetType 1 level=0
+  tb.f vpiResolvedNetType 1 level=0
+tb.sc
+  tb.sc vpiStrength0 0 level=0
+  tb.sc vpiStrength1 0 level=0
+  tb.sc vpiNetDeclAssign 0 level=0
+  tb.sc vpiExplicitScalared 1 level=0
+  tb.sc vpiExplicitVectored 0 level=0
+  tb.sc vpiExpanded 1 level=0
+  tb.sc vpiImplicitDecl 0 level=0
+  tb.sc vpiNetType 1 level=0
+  tb.sc vpiResolvedNetType 1 level=0
+tb.vc
+  tb.vc vpiStrength0 0 level=0
+  tb.vc vpiStrength1 0 level=0
+  tb.vc vpiNetDeclAssign 0 level=0
+  tb.vc vpiExplicitScalared 0 level=0
+  tb.vc vpiExplicitVectored 1 level=0
+  tb.vc vpiExpanded 0 level=0
+  tb.vc vpiImplicitDecl 0 level=0
+  tb.vc vpiNetType 1 level=0
+  tb.vc vpiResolvedNetType 1 level=0
+tb.s0
+  tb.s0 vpiStrength0 0 level=0
+  tb.s0 vpiStrength1 0 level=0
+  tb.s0 vpiNetDeclAssign 0 level=0
+  tb.s0 vpiExplicitScalared 0 level=0
+  tb.s0 vpiExplicitVectored 0 level=0
+  tb.s0 vpiExpanded 0 level=0
+  tb.s0 vpiImplicitDecl 0 level=0
+  tb.s0 vpiNetType 11 level=0
+  tb.s0 vpiResolvedNetType 11 level=0
+tb.ta
+  tb.ta vpiStrength0 0 level=0
+  tb.ta vpiStrength1 0 level=0
+  tb.ta vpiNetDeclAssign 0 level=0
+  tb.ta vpiExplicitScalared 0 level=0
+  tb.ta vpiExplicitVectored 0 level=0
+  tb.ta vpiExpanded 0 level=0
+  tb.ta vpiImplicitDecl 0 level=0
+  tb.ta vpiNetType 8 level=0
+  tb.ta vpiResolvedNetType 8 level=0
+tb.tt
+  tb.tt vpiStrength0 0 level=0
+  tb.tt vpiStrength1 0 level=0
+  tb.tt vpiNetDeclAssign 0 level=0
+  tb.tt vpiExplicitScalared 0 level=0
+  tb.tt vpiExplicitVectored 0 level=0
+  tb.tt vpiExpanded 0 level=0
+  tb.tt vpiImplicitDecl 0 level=0
+  tb.tt vpiNetType 4 level=0
+  tb.tt vpiResolvedNetType 4 level=0
+tb.ext
+  tb.ext vpiStrength0 0 level=0
+  tb.ext vpiStrength1 0 level=0
+  tb.ext vpiNetDeclAssign 0 level=0
+  tb.ext vpiExplicitScalared 0 level=0
+  tb.ext vpiExplicitVectored 0 level=0
+  tb.ext vpiExpanded 0 level=0
+  tb.ext vpiImplicitDecl 0 level=0
+  tb.ext vpiNetType 1 level=0
+  tb.ext vpiResolvedNetType 5 level=0
+tb.p1.ti
+  tb.p1.ti vpiStrength0 0 level=0
+  tb.p1.ti vpiStrength1 0 level=0
+  tb.p1.ti vpiNetDeclAssign 0 level=0
+  tb.p1.ti vpiExplicitScalared 0 level=0
+  tb.p1.ti vpiExplicitVectored 0 level=0
+  tb.p1.ti vpiExpanded 0 level=0
+  tb.p1.ti vpiImplicitDecl 0 level=0
+  tb.p1.ti vpiNetType 5 level=0
+  tb.p1.ti vpiResolvedNetType 5 level=0
+tb.imp
+  tb.imp vpiStrength0 0 level=0
+  tb.imp vpiStrength1 0 level=0
+  tb.imp vpiNetDeclAssign 0 level=0
+  tb.imp vpiExplicitScalared 0 level=0
+  tb.imp vpiExplicitVectored 0 level=0
+  tb.imp vpiExpanded 0 level=0
+  tb.imp vpiImplicitDecl 1 level=0
+  tb.imp vpiNetType 1 level=0
+  tb.imp vpiResolvedNetType 1 level=0
+tb.wi
+  tb.wi vpiStrength0 0 level=0
+  tb.wi vpiStrength1 0 level=0
+  tb.wi vpiNetDeclAssign 1 level=0
+  tb.wi vpiExplicitScalared 0 level=0
+  tb.wi vpiExplicitVectored 0 level=0
+  tb.wi vpiExpanded 0 level=0
+  tb.wi vpiImplicitDecl 0 level=0
+  tb.wi vpiNetType 1 level=0
+  tb.wi vpiResolvedNetType 1 level=0
+tb.i1.wi
+  tb.i1.wi vpiStrength0 0 level=0
+  tb.i1.wi vpiStrength1 0 level=0
+  tb.i1.wi vpiNetDeclAssign 0 level=0
+  tb.i1.wi vpiExplicitScalared 0 level=0
+  tb.i1.wi vpiExplicitVectored 0 level=0
+  tb.i1.wi vpiExpanded 0 level=0
+  tb.i1.wi vpiImplicitDecl 0 level=0
+  tb.i1.wi vpiNetType 1 level=0
+  tb.i1.wi vpiResolvedNetType 1 level=0
+tb.sc bit
+  tb.sc bit vpiStrength0 0 level=0
+  tb.sc bit vpiStrength1 0 level=0
+  tb.sc bit vpiNetDeclAssign 0 level=0
+  tb.sc bit vpiExplicitScalared 1 level=0
+  tb.sc bit vpiExplicitVectored 0 level=0
+  tb.sc bit vpiExpanded 1 level=0
+  tb.sc bit vpiImplicitDecl 0 level=0
+  tb.sc bit vpiNetType 1 level=0
+  tb.sc bit vpiResolvedNetType 1 level=0
+primitive type25@48
+  primitive type25@48 vpiStrength0 32 level=0
+  primitive type25@48 vpiStrength1 32 level=0
+primitive type1@46
+  primitive type1@46 vpiStrength0 8 level=0
+  primitive type1@46 vpiStrength1 8 level=0
+primitive type1@47
+  primitive type1@47 vpiStrength0 64 level=0
+  primitive type1@47 vpiStrength1 64 level=0
+primitive type7@51
+  primitive type7@51 vpiStrength0 64 level=0
+  primitive type7@51 vpiStrength1 64 level=0
+primitive type26@49
+  primitive type26@49 vpiStrength0 64 level=0
+  primitive type26@49 vpiStrength1 32 level=0
+primitive type22@50
+  primitive type22@50 vpiStrength0 64 level=0
+  primitive type22@50 vpiStrength1 64 level=0
+assign@31
+  assign@31 vpiStrength0 64 level=0
+  assign@31 vpiStrength1 64 level=0
+  assign@31 vpiNetDeclAssign 1 level=0
+assign@32
+  assign@32 vpiStrength0 32 level=0
+  assign@32 vpiStrength1 8 level=0
+  assign@32 vpiNetDeclAssign 1 level=0
+assign@39
+  assign@39 vpiStrength0 64 level=0
+  assign@39 vpiStrength1 64 level=0
+  assign@39 vpiNetDeclAssign 1 level=0
+assign@41
+  assign@41 vpiStrength0 64 level=0
+  assign@41 vpiStrength1 64 level=0
+  assign@41 vpiNetDeclAssign 0 level=0
+assign@42
+  assign@42 vpiStrength0 64 level=0
+  assign@42 vpiStrength1 64 level=0
+  assign@42 vpiNetDeclAssign 0 level=0
+assign@43
+  assign@43 vpiStrength0 8 level=0
+  assign@43 vpiStrength1 64 level=0
+  assign@43 vpiNetDeclAssign 0 level=0
+assign@44
+  assign@44 vpiStrength0 64 level=0
+  assign@44 vpiStrength1 64 level=0
+  assign@44 vpiNetDeclAssign 0 level=0
+assign@45
+  assign@45 vpiStrength0 64 level=0
+  assign@45 vpiStrength1 64 level=0
+  assign@45 vpiNetDeclAssign 0 level=0
+tb.p1 port ti
+  tb.p1 port ti vpiExplicitName 0 level=0
+  tb.p1 port ti vpiConnByName 0 level=0
+tb.n1 port p
+  tb.n1 port p vpiExplicitName 1 level=0
+  tb.n1 port p vpiConnByName 1 level=0
+tb.n1 port z
+  tb.n1 port z vpiExplicitName 0 level=0
+  tb.n1 port z vpiConnByName 1 level=0
+tb.n2 port p
+  tb.n2 port p vpiExplicitName 1 level=0
+  tb.n2 port p vpiConnByName 0 level=0
+tb.n2 port z
+  tb.n2 port z vpiExplicitName 0 level=0
+  tb.n2 port z vpiConnByName 0 level=0
+tb.i1 port wi
+  tb.i1 port wi vpiExplicitName 0 level=0
+  tb.i1 port wi vpiConnByName 1 level=0
+tb.i1 port wo
+  tb.i1 port wo vpiExplicitName 0 level=0
+  tb.i1 port wo vpiConnByName 1 level=0
+tb.i2 port wi
+  tb.i2 port wi vpiExplicitName 0 level=0
+  tb.i2 port wi vpiConnByName 1 level=0
+tb.i2 port wo
+  tb.i2 port wo vpiExplicitName 0 level=0
+  tb.i2 port wo vpiConnByName 1 level=0
+c=1 d=1 f=1 imp=1

@@ -2228,6 +2228,13 @@ with no error status, as for a name that denotes nothing (S42-D11):
   `vpi_put_value` to a named event (only `vpiNoDelay` triggers, decision
   A19-D8). A `cbValueChange` on a named event watches the synchronization
   object the event names at registration;
+- connectivity (decisions A19-D33 to A19-D35): a force statement counts as
+  active while a live binding covers exactly its target bits, so two force
+  statements with the same target are reported together while either is in
+  effect; the connections of string, chandle, class and container
+  variables, of interface and modport port references and of a port whose
+  module-side expression is a concatenation (a multi-port has no low
+  connection) are not indexed;
 - structure and union members that are not exposed: members of structure or
   union nets, members of a record kept in columns (an unpacked structure
   whose instances the optimizer split into per-field arrays), unpacked

@@ -324,6 +324,14 @@ pub struct IrVpiObject {
     /// Definition and configuration properties of a module or interface
     /// instance (37.10).
     pub(in crate::sim) instance: Option<Box<IrVpiInstance>>,
+    /// `vpiStrength0` and `vpiStrength1` code names of a primitive or
+    /// continuous assignment (37.31, 37.43).
+    pub(in crate::sim) strength: Option<(&'static str, &'static str)>,
+    /// `vpiImplicitDecl` of a net (37.16).
+    pub(in crate::sim) implicit: bool,
+    /// `vpiExplicitScalared`/`vpiExplicitVectored` of a net (37.16),
+    /// `vpiExplicitName`/`vpiConnByName` of a port (37.14).
+    pub(in crate::sim) qualifiers: crate::core::db::DeclarationQualifiers,
 }
 
 /// The definition and configuration properties of an instance (IEEE

@@ -204,6 +204,17 @@ port reference objects are dynamic slots on their row (`SLOT_PORTBIT`,
 `SLOT_PRIMTERM`, `SLOT_REFOBJ`). Unnamed rows (`LLG_VPI_OBJ_UNNAMED`) are left
 out of the name index; instance array elements are found by composing the
 array's full name with the indices.
+Net and variable connectivity (vpiDriver, vpiLoad, their local forms,
+vpiPortInst, vpiPort, vpiPrimTerm, vpiContAssign, vpiPathTerm, vpiTchkTerm,
+vpiResolvedNetType; decisions A19-D33 to A19-D35) is derived at runtime: the
+first such query builds a link table from the rows' `conns`, port targets
+and the force statements of the code tables (one link per referenced bit
+span, sorted by net), so a model whose applications never ask pays nothing
+and lowering emits no extra tables. Forces are matched to the live entries
+of the scheduler's force table (`llg_force_entry_view`) by their target
+bits. VPI models never collapse ports, so the simulated net of 23.3.3.7 is
+recomputed from the net-to-net port links. Continuous assignment bits are
+`SLOT_CABIT` slots on the assignment's row.
 Expression and statement objects (ADV-019 families 3 and 4) live in
 `llg_vpi_code_tables_t` (registered by `llg_vpi_model_code`, NULL without a
 catalog): one 48-byte `llg_vpi_code_t` per expression or statement, its

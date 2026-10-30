@@ -1,0 +1,223 @@
+tb.x
+  tb.x vpiPrimTerm level=0: type46@25.term1
+  tb.x vpiContAssign level=0: type8@33 type8@36
+  tb.x vpiPathTerm level=0:
+  tb.x vpiTchkTerm level=0:
+  tb.x vpiSimNet type36:tb.x level=0
+tb.y
+  tb.y vpiPrimTerm level=0:
+  tb.y vpiContAssign level=0: type8@33 type8@34 type8@36
+  tb.y vpiPathTerm level=0:
+  tb.y vpiTchkTerm level=0:
+  tb.y vpiSimNet type36:tb.y level=0
+tb.w
+  tb.w vpiPrimTerm level=0:
+  tb.w vpiContAssign level=0:
+  tb.w vpiPathTerm level=0:
+  tb.w vpiTchkTerm level=0:
+  tb.w vpiSimNet type36:tb.w level=0
+tb.q
+  tb.q vpiPrimTerm level=0:
+  tb.q vpiContAssign level=0:
+  tb.q vpiPathTerm level=0:
+  tb.q vpiTchkTerm level=0:
+  tb.q vpiSimNet type36:tb.q level=0
+tb.r
+  tb.r vpiPrimTerm level=0: type46@39.term2
+  tb.r vpiContAssign level=0:
+  tb.r vpiPathTerm level=0:
+  tb.r vpiTchkTerm level=0:
+  tb.r vpiSimNet NULL level=3
+tb.rv
+  tb.rv vpiPrimTerm level=0:
+  tb.rv vpiContAssign level=0:
+  tb.rv vpiPathTerm level=0:
+  tb.rv vpiTchkTerm level=0:
+  tb.rv vpiSimNet NULL level=3
+tb.l1.i
+  tb.l1.i vpiPrimTerm level=0: type46@25.term1
+  tb.l1.i vpiContAssign level=0: type8@33 type8@36
+  tb.l1.i vpiPathTerm level=0: type43@22
+  tb.l1.i vpiTchkTerm level=0: type62@23
+  tb.l1.i vpiSimNet type36:tb.l1.i level=0
+tb.l1.o
+  tb.l1.o vpiPrimTerm level=0: type46@25.term0
+  tb.l1.o vpiContAssign level=0:
+  tb.l1.o vpiPathTerm level=0: type43@22
+  tb.l1.o vpiTchkTerm level=0: type62@23
+  tb.l1.o vpiSimNet type36:tb.l1.o level=0
+tb.w[3]
+  tb.w[3] vpiPrimTerm level=0:
+  tb.w[3] vpiContAssign level=0: type128@35.bit1 type8@37
+  tb.w[3] vpiPathTerm level=0:
+  tb.w[3] vpiTchkTerm level=0:
+  tb.w[3] vpiSimNet type37:tb.w[3] level=0
+tb.w[2]
+  tb.w[2] vpiPrimTerm level=0:
+  tb.w[2] vpiContAssign level=0: type128@35.bit0 type8@37
+  tb.w[2] vpiPathTerm level=0:
+  tb.w[2] vpiTchkTerm level=0:
+  tb.w[2] vpiSimNet type37:tb.w[2] level=0
+tb.w[1]
+  tb.w[1] vpiPrimTerm level=0:
+  tb.w[1] vpiContAssign level=0: type8@33 type8@37
+  tb.w[1] vpiPathTerm level=0:
+  tb.w[1] vpiTchkTerm level=0:
+  tb.w[1] vpiSimNet type37:tb.w[1] level=0
+tb.w[0]
+  tb.w[0] vpiPrimTerm level=0: type46@39.term1
+  tb.w[0] vpiContAssign level=0: type128@36.bit0 type8@37
+  tb.w[0] vpiPathTerm level=0:
+  tb.w[0] vpiTchkTerm level=0:
+  tb.w[0] vpiSimNet type37:tb.w[0] level=0
+tb.q[1]
+  tb.q[1] vpiPrimTerm level=0: type46@39.term0
+  tb.q[1] vpiContAssign level=0:
+  tb.q[1] vpiPathTerm level=0:
+  tb.q[1] vpiTchkTerm level=0:
+  tb.q[1] vpiSimNet type37:tb.q[1] level=0
+tb.q[0]
+  tb.q[0] vpiPrimTerm level=0: type46@25.term0
+  tb.q[0] vpiContAssign level=0:
+  tb.q[0] vpiPathTerm level=0:
+  tb.q[0] vpiTchkTerm level=0:
+  tb.q[0] vpiSimNet type37:tb.q[0] level=0
+tb.rv[3]
+  tb.rv[3] vpiPrimTerm level=0:
+  tb.rv[3] vpiContAssign level=0: type128@37.bit3
+  tb.rv[3] vpiPathTerm level=0:
+  tb.rv[3] vpiTchkTerm level=0:
+  tb.rv[3] vpiSimNet NULL level=3
+tb.rv[2]
+  tb.rv[2] vpiPrimTerm level=0:
+  tb.rv[2] vpiContAssign level=0: type128@37.bit2
+  tb.rv[2] vpiPathTerm level=0:
+  tb.rv[2] vpiTchkTerm level=0:
+  tb.rv[2] vpiSimNet NULL level=3
+tb.rv[1]
+  tb.rv[1] vpiPrimTerm level=0:
+  tb.rv[1] vpiContAssign level=0: type128@37.bit1
+  tb.rv[1] vpiPathTerm level=0:
+  tb.rv[1] vpiTchkTerm level=0:
+  tb.rv[1] vpiSimNet NULL level=3
+tb.rv[0]
+  tb.rv[0] vpiPrimTerm level=0:
+  tb.rv[0] vpiContAssign level=0: type128@37.bit0
+  tb.rv[0] vpiPathTerm level=0:
+  tb.rv[0] vpiTchkTerm level=0:
+  tb.rv[0] vpiSimNet NULL level=3
+assign@33
+  assign@33 vpiBit level=0
+  assign@33.bit0 vpiParent type8@33 level=0
+  assign@33.bit0 vpiLhs type36:tb.x level=0
+  assign@33.bit0 vpiRhs type39@33 level=0
+  assign@33.bit0 vpiLineNo 33 level=0
+  assign@33.bit0 vpiNetDeclAssign 0 level=0
+  assign@33.bit0 vpiStrength0 64 level=0
+  assign@33.bit0 vpiStrength1 64 level=0
+  assign@33.bit0 vpiSize -1 level=3
+  assign@33.bit0 delays 0 0 level=0
+  assign@33.bit0 value 0 level=0
+  assign@33.bit1 vpiParent type8@33 level=0
+  assign@33.bit1 vpiLhs type37:tb.w[1] level=0
+  assign@33.bit1 vpiRhs type39@33 level=0
+  assign@33.bit1 vpiLineNo 33 level=0
+  assign@33.bit1 vpiNetDeclAssign 0 level=0
+  assign@33.bit1 vpiStrength0 64 level=0
+  assign@33.bit1 vpiStrength1 64 level=0
+  assign@33.bit1 vpiSize -1 level=3
+  assign@33.bit1 delays 0 0 level=0
+  assign@33.bit1 value 1 level=0
+assign@34
+  assign@34 vpiBit level=0
+  assign@34.bit0 vpiParent type8@34 level=0
+  assign@34.bit0 vpiLhs type36:tb.y level=0
+  assign@34.bit0 vpiRhs type7@34 level=0
+  assign@34.bit0 vpiLineNo 34 level=0
+  assign@34.bit0 vpiNetDeclAssign 0 level=0
+  assign@34.bit0 vpiStrength0 64 level=0
+  assign@34.bit0 vpiStrength1 64 level=0
+  assign@34.bit0 vpiSize -1 level=3
+  assign@34.bit0 delays 0 0 level=0
+  assign@34.bit0 value 1 level=0
+assign@35
+  assign@35 vpiBit level=0
+  assign@35.bit0 vpiParent type8@35 level=0
+  assign@35.bit0 vpiLhs type37:tb.w[2] level=0
+  assign@35.bit0 vpiRhs type7@35 level=0
+  assign@35.bit0 vpiLineNo 35 level=0
+  assign@35.bit0 vpiNetDeclAssign 0 level=0
+  assign@35.bit0 vpiStrength0 64 level=0
+  assign@35.bit0 vpiStrength1 64 level=0
+  assign@35.bit0 vpiSize -1 level=3
+  assign@35.bit0 delays 2000 2000 level=0
+  assign@35.bit0 value 0 level=0
+  assign@35.bit1 vpiParent type8@35 level=0
+  assign@35.bit1 vpiLhs type37:tb.w[3] level=0
+  assign@35.bit1 vpiRhs type7@35 level=0
+  assign@35.bit1 vpiLineNo 35 level=0
+  assign@35.bit1 vpiNetDeclAssign 0 level=0
+  assign@35.bit1 vpiStrength0 64 level=0
+  assign@35.bit1 vpiStrength1 64 level=0
+  assign@35.bit1 vpiSize -1 level=3
+  assign@35.bit1 delays 2000 2000 level=0
+  assign@35.bit1 value 1 level=0
+assign@36
+  assign@36 vpiBit level=0
+  assign@36.bit0 vpiParent type8@36 level=0
+  assign@36.bit0 vpiLhs type37:tb.w[0] level=0
+  assign@36.bit0 vpiRhs type39@36 level=0
+  assign@36.bit0 vpiLineNo 36 level=0
+  assign@36.bit0 vpiNetDeclAssign 0 level=0
+  assign@36.bit0 vpiStrength0 64 level=0
+  assign@36.bit0 vpiStrength1 64 level=0
+  assign@36.bit0 vpiSize -1 level=3
+  assign@36.bit0 delays 0 0 level=0
+  assign@36.bit0 value 1 level=0
+assign@37
+  assign@37 vpiBit level=0
+  assign@37.bit0 vpiParent type8@37 level=0
+  assign@37.bit0 vpiLhs type49:tb.rv[0] level=0
+  assign@37.bit0 vpiRhs type36:tb.w level=0
+  assign@37.bit0 vpiLineNo 37 level=0
+  assign@37.bit0 vpiNetDeclAssign 0 level=0
+  assign@37.bit0 vpiStrength0 64 level=0
+  assign@37.bit0 vpiStrength1 64 level=0
+  assign@37.bit0 vpiSize -1 level=3
+  assign@37.bit0 delays 0 0 level=0
+  assign@37.bit0 value 1 level=0
+  assign@37.bit1 vpiParent type8@37 level=0
+  assign@37.bit1 vpiLhs type49:tb.rv[1] level=0
+  assign@37.bit1 vpiRhs type36:tb.w level=0
+  assign@37.bit1 vpiLineNo 37 level=0
+  assign@37.bit1 vpiNetDeclAssign 0 level=0
+  assign@37.bit1 vpiStrength0 64 level=0
+  assign@37.bit1 vpiStrength1 64 level=0
+  assign@37.bit1 vpiSize -1 level=3
+  assign@37.bit1 delays 0 0 level=0
+  assign@37.bit1 value 1 level=0
+  assign@37.bit2 vpiParent type8@37 level=0
+  assign@37.bit2 vpiLhs type49:tb.rv[2] level=0
+  assign@37.bit2 vpiRhs type36:tb.w level=0
+  assign@37.bit2 vpiLineNo 37 level=0
+  assign@37.bit2 vpiNetDeclAssign 0 level=0
+  assign@37.bit2 vpiStrength0 64 level=0
+  assign@37.bit2 vpiStrength1 64 level=0
+  assign@37.bit2 vpiSize -1 level=3
+  assign@37.bit2 delays 0 0 level=0
+  assign@37.bit2 value 0 level=0
+  assign@37.bit3 vpiParent type8@37 level=0
+  assign@37.bit3 vpiLhs type49:tb.rv[3] level=0
+  assign@37.bit3 vpiRhs type36:tb.w level=0
+  assign@37.bit3 vpiLineNo 37 level=0
+  assign@37.bit3 vpiNetDeclAssign 0 level=0
+  assign@37.bit3 vpiStrength0 64 level=0
+  assign@37.bit3 vpiStrength1 64 level=0
+  assign@37.bit3 vpiSize -1 level=3
+  assign@37.bit3 delays 0 0 level=0
+  assign@37.bit3 value 1 level=0
+  tb.l1.b0 term vpiPrimitive type21:tb.l1.b0 level=0
+  tb.l1.b0 term vpiPrimitive type21:tb.l1.b0 level=0
+  path in vpiModPath type31:tb.l1.i$o level=0
+  tchk ref vpiTchk type61@23 level=0
+rv=1011
