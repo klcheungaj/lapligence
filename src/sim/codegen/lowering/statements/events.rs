@@ -294,6 +294,16 @@ impl EmitCtx<'_, '_> {
                     || self.expression_needs_process(*condition)
             }
             EventSpec::Named(_) => false,
+            // An event property of a class object is a named event whose
+            // handle the wait resolves when it arms (SV 9.4.2).
+            EventSpec::AnyChange { sig }
+                if self
+                    .cg
+                    .event_target_of(*sig)
+                    .is_some_and(|target| target.access.is_some()) =>
+            {
+                false
+            }
             EventSpec::AnyChange { sig } | EventSpec::Edge { sig, .. } => {
                 self.cg.reads_dynamic_storage(*sig) || self.expression_needs_process(*sig)
             }

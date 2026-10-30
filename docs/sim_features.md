@@ -1010,9 +1010,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (S14-D6)
   ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md)).
   Mixed event lists and event formals of tasks, functions (including
-  function-expression calls) and class methods execute. Event handles other
-  than declared named events in process-evaluated lists and output/ref event
-  formals of function-expression calls reject. V §9.7.3; SV §15.5
+  function-expression calls) and class methods execute. Instance and static
+  `event` class properties execute: each object gets its own synchronization
+  object at construction and a shallow copy shares the original's
+  ([class-defects](../tests/fixtures/sim/feature_completion/ki_class_defects/readme.md)).
+  Event handles other than declared named events in process-evaluated lists
+  and output/ref event formals (class event properties included) and output/ref
+  event formals of function-expression calls reject. V §9.7.3; SV §15.5
   **[1995/SV-2005]**.
 - 🟨 **Cycle delays** — Procedural `##N` repeats the resolved default clocking
   event, including irregular periods; `##0` continues in a step where the

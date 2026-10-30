@@ -810,6 +810,7 @@ impl<'a> Codegen<'a> {
             ty: IrClassFieldType::Chandle,
             container: None,
             native_value: None,
+            event: false,
         }];
         let owner_field = embedded_owner.map(|_| {
             fields.push(IrClassField {
@@ -817,6 +818,7 @@ impl<'a> Codegen<'a> {
                 ty: IrClassFieldType::Chandle,
                 container: None,
                 native_value: None,
+                event: false,
             });
             fields.len() - 1
         });
@@ -831,6 +833,7 @@ impl<'a> Codegen<'a> {
                 },
                 container: None,
                 native_value: None,
+                event: false,
             });
             fields.len() - 1
         });
@@ -859,6 +862,7 @@ impl<'a> Codegen<'a> {
                 ty: field_ty,
                 container: None,
                 native_value: None,
+                event: false,
             });
             self.class_fields.insert(*formal, (class, index));
         }

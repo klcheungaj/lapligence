@@ -1,0 +1,18 @@
+distinct=1 same=1
+c woke n=1 t=1
+t=2 triggered=0 other=0 wait woke at 1
+same-step triggered=1
+c2 woke n=1 t=3
+d.f t=4
+C::se t=5
+formal t=6
+merged eq=1
+merged woke n=2 t=8
+module m t=10
+copy eq=1
+copy woke n=2 t=12
+or t=13
+order t=14
+iff t=15
+null=1 bool=0
+n=1 2 2

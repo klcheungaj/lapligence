@@ -70,6 +70,7 @@ impl Codegen<'_> {
             },
             container: None,
             native_value: None,
+            event: false,
         });
         ModeBit::Field(class_index, field_index)
     }

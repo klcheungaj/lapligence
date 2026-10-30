@@ -1210,6 +1210,10 @@ struct EventInfo {
 pub(super) struct EventTarget {
     pub(super) declaration: NodeId,
     pub(super) indices: Vec<NodeId>,
+    /// The expression selecting an instance `event` property of a class
+    /// object (`h.e`, or `e` inside a method); the handle is read from the
+    /// object when the operation is issued.
+    pub(super) access: Option<NodeId>,
 }
 
 /// An element-level select applied after the array index of a

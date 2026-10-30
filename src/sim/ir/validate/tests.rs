@@ -649,6 +649,7 @@ fn native_access_dependencies_name_rearmed_class_or_interface_storage() {
             },
             container: None,
             native_value: None,
+            event: false,
         }],
     });
     model.native_accesses.push(IrNativeAccess {

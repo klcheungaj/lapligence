@@ -118,6 +118,68 @@ Clauses used:
 | `randomized 1 1 module W=99` | `x < W` is satisfiable for `W` 3 and 7; the module parameter `W` is a different parameter. |
 | `tb.R.show W=3 below=1`, `tb.R.show W=7 below=1` | Each specialization reads its own `W` in the task and in its constraint. |
 
+## Class events (`class_events.sv`, item 3)
+
+Clauses used:
+
+- SV 8.5 L9724: "There are no restrictions on the data type of a class
+  property." SV 8.8 L9869-9871: "Each instance of the class ... has its own
+  copy of each of its six variables. Sometimes only one version of a variable
+  is required to be shared by all instances. These class properties are
+  created using the keyword static."
+- SV 15.5 L20673-20674: "A named event provides a handle to an underlying
+  synchronization object. When a process waits for an event to be triggered,
+  the process is put on a queue maintained within the synchronization object."
+- SV 15.5.1 L20703: "Named events triggered via the -> operator unblock all
+  processes currently waiting on that event." L20708-20711: the `->>`
+  operator "executes without blocking" and triggers "the referenced event in
+  the nonblocking assignment region".
+- SV 15.5.3 L20735-20737: "The triggered event property evaluates to true if
+  the given event has been triggered in the current time step and false
+  otherwise. If event_identifier is null, then the triggered event property
+  evaluates to false."
+- SV 15.5.4 L20794-20796: `wait_order` "suspends the calling process until
+  all of the specified events are triggered in the given order (left to
+  right)".
+- SV 9.4.2.1 L11870-11871: "The logical or of any number of events can be
+  expressed so that the occurrence of any one of the events triggers the
+  execution of the procedural statement that follows it." SV 9.4.2.3 L11969:
+  "The @ event control can have an iff qualifier."
+- SV 15.5.5 L20856-20857: "When one event is assigned to another, the
+  synchronization queue of the source event is shared by both the source and
+  the destination event."
+- SV 15.5.5.2 L20912: "Triggering a null event shall have no effect."
+  SV 15.5.5.3 L20926-20930: events compare with `==`/`!=` "with another event
+  or with null", and a Boolean test "shall be 0 if the event is null and 1
+  otherwise".
+- SV 8.11 L9986-9988: a shallow copy is made where "All of the variables are
+  copied across integers, strings, instance handles, etc."; a copied event
+  variable is an assignment of the handle, so the copy shares the original's
+  synchronization object (15.5.5).
+
+| Line | Why |
+| --- | --- |
+| `distinct=1 same=1` | Each object has its own instance event (8.8), so `c.e` and `c2.e` name different synchronization objects (15.5.5.3). |
+| `c woke n=1 t=1` | `c.waiter` waits on `this.e` (`@e`); `->c.e` at 1 wakes it (15.5.1). |
+| `t=2 triggered=0 other=0 wait woke at 1` | `.triggered` holds only in the time step of the trigger (15.5.3); the `wait (c.e.triggered)` that starts at 1 sees the trigger of time 1. |
+| `same-step triggered=1` | `c2.fire()` triggers `this.e` of `c2` at 3; read in the same step. |
+| `c2 woke n=1 t=3` | `c2.waiter` started at 3 before `fire`, so it wakes (15.5.2). |
+| `d.f t=4` | `->>d.f` triggers the inherited class's own event `f` in the NBA region of time 4. |
+| `C::se t=5` | The static event is shared by every instance (8.8): `->c2.se` wakes the waiter on `C::se`. |
+| `formal t=6` | `watch(d.e, ...)` copies the handle into the `event` formal; `->d.e` at 6 wakes it. |
+| `merged eq=1`, `merged woke n=2 t=8` | `c2.e = c.e` merges (15.5.5): a waiter on `c2.e` started after the assignment wakes on `->c.e`. |
+| `module m t=10` | A module event assigned from `d.f` shares its queue. |
+| `copy eq=1`, `copy woke n=2 t=12` | `new c` copies `e` as a handle (8.11), so `cc.e == c.e` and `->c.e` wakes `cc.waiter`; `n` was copied as 1. |
+| `or t=13` | `@(d.e or d.f)` wakes on `->d.e` (9.4.2.1). |
+| `order t=14` | `wait_order(d.e, d.f)` sees `d.e` at 13 and `d.f` at 14. |
+| `iff t=15` | `@(d.f iff x == 1)` ignores the trigger at 14 (`x` 0) and wakes at 15. |
+| `null=1 bool=0` | `c.e = null` breaks the association (15.5.5.2); the Boolean test is 0 (15.5.5.3); `->c.e` then has no effect. |
+| `n=1 2 2` | `c.n` counted one wake, `c2.n` two (`c2` and `merged`), `cc.n` 1 copied plus one. |
+
+`.triggered` of a null class event is false by 15.5.3 (as for any null event,
+S14); some simulators instead report a null object access for it, so the
+fixture does not read it.
+
 ## Negatives
 
 - `neg_disable_function.sv`: SV 9.6.2 L12399-12400: "The disable statement can be

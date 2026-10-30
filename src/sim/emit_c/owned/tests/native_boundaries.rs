@@ -16,12 +16,14 @@ fn class_model() -> IrModel {
                 },
                 container: None,
                 native_value: None,
+                event: false,
             },
             IrClassField {
                 c_name: "text".to_owned(),
                 ty: IrClassFieldType::String,
                 container: None,
                 native_value: None,
+                event: false,
             },
         ],
     });

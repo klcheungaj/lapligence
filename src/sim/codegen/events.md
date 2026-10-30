@@ -37,7 +37,11 @@ An element of an unpacked array member through a virtual interface
 `IrObjectQuery::VirtualInterfaceInstance`, one arm per bound instance's array,
 like the SIM-034 drives; other uses are located rejections. Copy supported automatic evaluator captures and
 transitively reject disallowed callback effects/captures. Named/mixed events retain
-identity and atomic registration. `->>` captures delay at issue and queues NBA;
+identity and atomic registration. An instance `event` class property
+(`IrClassField::event`) is a handle slot of its object: `EventTarget::access`
+keeps the selecting expression, operations read the slot as an
+`IrEventRef::Handle` when issued, and assignment stores the source's object
+identity into the slot; a static one is an ordinary model event. `->>` captures delay at issue and queues NBA;
 event/repeat timing uses an independent detached waiter, whose final trigger is
 still NBA. Every repeat count (loop, intra-assignment, `->>`) goes through
 `lower_repeat_count`: real counts convert by rounding (SV 6.12.2) and the

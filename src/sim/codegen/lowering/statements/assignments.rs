@@ -195,7 +195,21 @@ impl EmitCtx<'_, '_> {
                     self.path
                 ));
             }
-            let target = self.cg.event_ref_of(&target, &self.path)?;
+            // An event property of a class object is a handle slot of the
+            // object: the assignment stores the source's synchronization
+            // object identity there (SV 15.5.5).
+            let class_slot = match target.access {
+                Some(access) => Some(self.cg.class_event_slot(
+                    &self.path,
+                    access,
+                    target.declaration,
+                )?),
+                None => None,
+            };
+            let target = match class_slot {
+                Some(_) => IrEventRef::Null,
+                None => self.cg.event_ref_of(&target, &self.path)?,
+            };
             let source = if let Some(source) = self.cg.event_target_of(rhs) {
                 Some(self.cg.event_ref_of(&source, &self.path)?)
             } else if let Some((container, back)) = self
@@ -215,6 +229,14 @@ impl EmitCtx<'_, '_> {
                     self.path
                 ));
             };
+            if let Some(slot) = class_slot {
+                let value = source.map_or(IrChandleExpr::Null, |source| {
+                    IrChandleExpr::EventObject(Box::new(source))
+                });
+                return Ok(IrStmt::Object(Box::new(IrObjectStmt::ChandleAssignLocal(
+                    slot, value,
+                ))));
+            }
             return Ok(IrStmt::EventAssign { target, source });
         }
         if let Some(statement) = self

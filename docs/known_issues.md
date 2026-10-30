@@ -1038,8 +1038,9 @@ raised to 20,000 and `LLG_SEQUENCE_THREAD_LIMIT` unset.
 ### Symptom
 
 Class objects are reclaimed when unreachable, but mailboxes, semaphores,
-named events and pinned process handle records stay allocated until the
-model closes, even when no handle names them. A process that allocates many
+named events (including the synchronization object of every `event` class
+property, created with its object) and pinned process handle records stay
+allocated until the model closes, even when no handle names them. A process that allocates many
 objects without suspending (one long zero-time loop) is not interrupted:
 collection waits for its turn to end, so its live peak is everything it
 allocated in that turn.
