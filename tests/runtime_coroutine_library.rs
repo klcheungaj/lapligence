@@ -111,12 +111,18 @@ fn coroutine_library_is_strict_c11_on_gcc_and_clang() {
             );
         }
 
+        // `-O0`: this checks that the runtime builds with the library, and
+        // the optimizer is most of the cost (Clang 19: 6.6 s at `-O2`, 0.65 s
+        // at `-O0`; it timed out at 60 s on a 4-CPU CI runner beside three
+        // whole-machine CMake probe builds). Optimized builds with their
+        // flow warnings are `runtime_value_storage::release_runtime_units_*`
+        // and the `-O2` compile in `scripts/llg-co-compile-gate.sh`.
         let mut runtime = Command::new(compiler);
         runtime
             .current_dir(root)
             .args([
                 "-std=c11",
-                "-O2",
+                "-O0",
                 "-Wall",
                 "-Wno-unused-function",
                 "-Isrc/sim/rt",

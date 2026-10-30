@@ -4043,7 +4043,9 @@ static int eval_var_select(const llg_vpi_code_t* node, llg_vpi_datum_t* out, int
         uint32_t child = node->first + i;
         if (g_vpi.code->nodes[child].role != vpiIndex) continue;
         int64_t left, right, value;
-        uint64_t offset;
+        /* Set even when `code_index` fails and `index_offset` is skipped:
+         * MSVC (C4701) and Clang cannot see that `in_range` then guards it. */
+        uint64_t offset = 0;
         if (!array_dim(object, dim++, &left, &right)) return 0;
         uint64_t extent = (uint64_t)(left >= right ? left - right : right - left) + 1u;
         if (!code_index(child, &value, depth) || !index_offset(left, right, value, &offset))

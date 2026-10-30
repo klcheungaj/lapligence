@@ -22,7 +22,12 @@ the rules a change must keep. Platform pitfalls are in
 - Reusable workflows do not inherit the caller's top-level `env`; each sets
   `NEXTEST_PROFILE`. Artifact names are unique per platform
   (`nextest-archive-<target>`, `lapligence-<os>-<arch>`); archives are kept one day.
-- CI selects the `ci` nextest profile (one test per logical CPU).
+- CI selects the `ci` nextest profile (one test per logical CPU). Tests that
+  build C with CMake also use every CPU each, so on a 4-CPU runner one compiler
+  process can get a small CPU share: a per-command timeout needs headroom over
+  the locally measured cost (run 110830171169: a 6.6 s Clang `-O2` compile of
+  `llg_rt.c` exceeded 60 s beside three CMake probe builds; the test now compiles
+  at `-O0`).
 - Linux builds only in the static-musl Alpine container; its `test` jobs run the
   archive on Ubuntu 24.04 and Rocky Linux 9. Windows/macOS `test` jobs run on the
   build job's runner kind with the checkout at the same path, so compile-time
