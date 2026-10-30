@@ -106,7 +106,9 @@ MSVC compiler:
   helper (C4702; declare it `_Noreturn`; `llg_co.h` documents its
   `LLG_CO_BAD_STATE_NORETURN` case), `memset` on an array of pointers to const
   (C4090; assign elements) and a completed tentative definition
-  `static const T x;` (C4132; define the object first). Clang
+  `static const T x;` (C4132; define the object first). A local set only by an
+  out-parameter call that a short-circuit can skip is C4701 even when a flag
+  guards its use; initialize it. Clang
   `-Wconditional-uninitialized`/`-Wunreachable-code` approximate C4701/C4702.
   A cast that truncates a constant is C4310 (GCC and Clang never warn on an
   explicit cast): a complemented constant, `(uint8_t)~FLAG` (mask first,
@@ -116,7 +118,8 @@ MSVC compiler:
 - Implicit narrowing is C4244 (`int` to `int8_t`, `double` to `float` or an
   integer) and C4267 (`size_t` to a 32-bit type), errors under `/WX`; convert
   explicitly after checking the range, e.g. a 0/1 flag as `(int8_t)(flag != 0)`
-  (`runtime_strict_sources::runtime_and_companion_c_has_no_implicit_narrowing`).
+  (`runtime_strict_sources::runtime_and_companion_c_has_no_narrowing_or_uninitialized_use`,
+  which also checks C4701).
 - The UCRT deprecates portable C11 routines (`sprintf`, `fopen`, `getenv`,
   `strcpy`, ...) in favour of `_s` variants (C4996). Every strict harness build
   (`tests/support/c_compiler.rs`, `runtime_value_storage` CMake) defines
@@ -185,6 +188,10 @@ DPI-C and VPI DLLs:
   each include directory (`slang_include_dirs`); with the resolved one alone,
   every `` `include`` under a `/var/...` or Windows `RUNNER~1` short-name root
   failed to open in `llg_ls`.
+- `/bin/bash` is 3.2: under `set -u`, `"${empty[@]}"` is an unbound-variable
+  error (bash 4.4+ accepts it), so a CI script tested only on Linux can stop
+  on macOS; expand optional arrays as `${a[@]+"${a[@]}"}`
+  (`scripts/llg-co-compile-gate.sh`).
 - `/dev/fd/N` entries are fdesc device nodes, not symlinks; `secure_fs.rs`
   documents the `F_GETPATH`/`fdopendir` handling. Linux `/proc/self/fd/N` is a
   real link whose reopen creates a new description.
@@ -201,6 +208,10 @@ DPI-C and VPI DLLs:
 - Linux CI builds only in static-musl Alpine; glibc Ubuntu/Rocky containers run
   those binaries. Minimal images lack clang, which `generated_c_frame_lint`
   needs beside gcc; install test tools explicitly.
+- The Ubuntu/Rocky test containers are minimal: no zlib or other `-dev`
+  headers. A test that compiles C including `fstapi.h` passes `vendor/zlib`
+  and `-DZ_PREFIX` as model builds do; a host with `/usr/include/zlib.h`
+  hides the omission.
 - zlib is bundled, never a system package. Without its configure step
   `Z_HAVE_UNISTD_H` is unset and GCC 14/Clang reject its `gz*` code; the bundled
   build defines it outside Windows.

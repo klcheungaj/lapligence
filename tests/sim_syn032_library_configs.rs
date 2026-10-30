@@ -5,6 +5,7 @@ use std::path::Path;
 use llg::core::{compile, db, model};
 
 use crate::sim_cli;
+#[cfg(unix)]
 use crate::sim_harness;
 
 const SUITE: &str = "syn032_library_configs";

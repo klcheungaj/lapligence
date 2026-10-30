@@ -12,8 +12,9 @@
 //!   `-Wunreachable-code-aggressive` then names a statement after a call to
 //!   it, which together approximate C4702 (Clang does not report dead code
 //!   that comes from a macro expansion, such as `return NULL;`).
-//! - Implicit narrowing (C4244, C4267): Clang's conversion warnings, see
-//!   [`IMPLICIT_NARROWING_ERRORS`].
+//! - Implicit narrowing (C4244, C4267) and possibly uninitialized locals
+//!   (C4701, C4703): Clang's conversion and uninitialized-use warnings, see
+//!   [`MSVC_W4_FLOW_ERRORS`].
 //! - Truncating constant casts (C4310): a source scan, since no GCC or Clang
 //!   warning covers explicit casts.
 //!
@@ -104,26 +105,51 @@ fn probe_built_runtime_sources_have_no_code_after_fatal_helpers() {
     }
 }
 
-/// Clang errors that approximate MSVC's implicit-conversion warnings at
-/// `/W4`: C4244 "conversion from 'int' to 'int8_t', possible loss of data"
-/// (`implicit-int-conversion`, `implicit-float-conversion` for double to
-/// float, `float-conversion` for floating to integer) and C4267 for `size_t`
-/// to a 32-bit type (`shorten-64-to-32`). GCC and Clang accept all of them at
-/// `-Wall -Wextra`. Everything else is off (`-Wno-everything` first), so the
-/// check names only this class.
-const IMPLICIT_NARROWING_ERRORS: &[&str] = &[
+/// Clang errors that approximate MSVC's implicit-conversion and
+/// uninitialized-use warnings at `/W4`: C4244 "conversion from 'int' to
+/// 'int8_t', possible loss of data" (`implicit-int-conversion`,
+/// `implicit-float-conversion` for double to float, `float-conversion` for
+/// floating to integer), C4267 for `size_t` to a 32-bit type
+/// (`shorten-64-to-32`), and C4701/C4703 "potentially uninitialized local
+/// variable used" (`uninitialized`, `sometimes-uninitialized`, and
+/// `conditional-uninitialized` for a local set only on some paths; CI:
+/// `llg_vpi.c(4051)`). GCC and Clang accept all of them at `-Wall -Wextra`
+/// without optimization. Everything else is off (`-Wno-everything` first), so
+/// the check names only these classes. The uninitialized-use set reported
+/// nothing else on the runtime, probes and fixtures when it was added.
+const MSVC_W4_FLOW_ERRORS: &[&str] = &[
     "-Wno-everything",
     "-Werror=implicit-int-conversion",
     "-Werror=shorten-64-to-32",
     "-Werror=implicit-float-conversion",
     "-Werror=float-conversion",
+    "-Werror=uninitialized",
+    "-Werror=sometimes-uninitialized",
+    "-Werror=conditional-uninitialized",
 ];
 
-/// One `clang -fsyntax-only` run of the narrowing check.
+/// One `clang -fsyntax-only` run of the narrowing and uninitialized-use check.
 struct NarrowingUnit {
     source: PathBuf,
     includes: Vec<PathBuf>,
     defines: &'static [&'static str],
+    /// Whether `includes` names `vendor/zlib`, which then needs the
+    /// definitions in [`BUNDLED_ZLIB_DEFINES`].
+    bundled_zlib: bool,
+}
+
+/// The definitions model builds compile the bundled zlib with
+/// (`zlib_cmake!` in `src/sim/build.rs`): prefixed symbols, and the POSIX
+/// I/O its configure step would enable (this check never runs on Windows).
+const BUNDLED_ZLIB_DEFINES: &[&str] = &["-DZ_PREFIX", "-DZ_HAVE_UNISTD_H"];
+
+/// The include directories of the runtime and probe units: the runtime, libfst
+/// and the bundled zlib that `fstapi.h` includes.
+fn runtime_include_dirs(root: &Path) -> Vec<PathBuf> {
+    ["src/sim/rt", "vendor/libfst", "vendor/zlib"]
+        .iter()
+        .map(|directory| root.join(directory))
+        .collect()
 }
 
 /// Runtime translation units (relative to `src/sim/rt`) in every value
@@ -173,20 +199,25 @@ fn c_sources_under(directory: &Path) -> Vec<PathBuf> {
 }
 
 /// Every C file a Windows `/W4 /WX` build compiles, under Clang errors for
-/// MSVC's implicit narrowing (CI: `llg_vpi.c(1271)` C4244 broke four
-/// runtime probe builds): the runtime units in each backend, the standalone
-/// probes and every C fixture (DPI-C and VPI companions). The compact
-/// probes (`compact_*.c`) build only inside their CMake oracle projects and
-/// are left to those builds. Skipped without a Clang driver and on Windows.
+/// MSVC's implicit narrowing and possibly uninitialized locals (CI:
+/// `llg_vpi.c(1271)` C4244 and `llg_vpi.c(4051)` C4701 each broke runtime
+/// probe builds): the runtime units in each backend, the standalone probes
+/// and every C fixture (DPI-C and VPI companions). The compact probes
+/// (`compact_*.c`) build only inside their CMake oracle projects and are left
+/// to those builds. Skipped without a Clang driver and on Windows.
+///
+/// Sources that include `fstapi.h` get the bundled zlib (`vendor/zlib`,
+/// prefixed as model builds use it): the Linux CI test containers have no
+/// system zlib headers.
 #[test]
-fn runtime_and_companion_c_has_no_implicit_narrowing() {
+fn runtime_and_companion_c_has_no_narrowing_or_uninitialized_use() {
     let Some(clang) = clang_driver() else {
-        eprintln!("SKIP: no Clang driver to approximate MSVC C4244/C4267");
+        eprintln!("SKIP: no Clang driver to approximate MSVC C4244/C4267/C4701");
         return;
     };
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let rt = root.join("src/sim/rt");
-    let fst = root.join("vendor/libfst");
+    let runtime_includes = runtime_include_dirs(root);
     let dir = sim_harness::TempDir::new("runtime-narrowing").expect("create temp directory");
     let vpi_unit = dir.path().join("llg_vpi_unit.c");
     std::fs::write(
@@ -198,8 +229,9 @@ fn runtime_and_companion_c_has_no_implicit_narrowing() {
     let mut units = Vec::new();
     let runtime = |source: PathBuf, defines| NarrowingUnit {
         source,
-        includes: vec![rt.clone(), fst.clone()],
+        includes: runtime_includes.clone(),
         defines,
+        bundled_zlib: true,
     };
     for &defines in RUNTIME_CONFIGURATIONS {
         let compact = defines.contains(&"-DLLG_SV4_USE_GMP=1");
@@ -223,8 +255,11 @@ fn runtime_and_companion_c_has_no_implicit_narrowing() {
         }
         units.push(NarrowingUnit {
             source,
-            includes: vec![probes.clone(), rt.clone(), fst.clone()],
+            includes: std::iter::once(probes.clone())
+                .chain(runtime_includes.iter().cloned())
+                .collect(),
             defines: &[],
+            bundled_zlib: true,
         });
     }
     for source in c_sources_under(&root.join("tests/fixtures")) {
@@ -233,6 +268,7 @@ fn runtime_and_companion_c_has_no_implicit_narrowing() {
             source,
             includes: vec![own, rt.clone()],
             defines: &[],
+            bundled_zlib: false,
         });
     }
 
@@ -251,8 +287,11 @@ fn runtime_and_companion_c_has_no_implicit_narrowing() {
                 let mut command = Command::new(&clang);
                 command
                     .args(["-std=c11", "-fsyntax-only"])
-                    .args(IMPLICIT_NARROWING_ERRORS)
+                    .args(MSVC_W4_FLOW_ERRORS)
                     .args(unit.defines);
+                if unit.bundled_zlib {
+                    command.args(BUNDLED_ZLIB_DEFINES);
+                }
                 for include in &unit.includes {
                     command.arg("-I").arg(include);
                 }
@@ -276,8 +315,9 @@ fn runtime_and_companion_c_has_no_implicit_narrowing() {
     let findings = findings.into_inner().expect("findings lock");
     assert!(
         findings.is_empty(),
-        "make each narrowing conversion explicit, after checking the value fits \
-         (MSVC C4244/C4267 under /W4 /WX; see docs/cross_platform.md):\n{}",
+        "make each narrowing conversion explicit, after checking the value fits, \
+         and initialize each local on every path before its use \
+         (MSVC C4244/C4267/C4701 under /W4 /WX; see docs/cross_platform.md):\n{}",
         findings.join("\n")
     );
 }
@@ -502,5 +542,75 @@ fn runtime_sources_have_no_truncating_constant_casts() {
          `x = (uint8_t)(x & ~FLAG)`, and write constants the target type holds \
          (MSVC C4310 under /WX):\n{}",
         findings.join("\n")
+    );
+}
+
+/// The narrowing check's runtime units resolve `<zlib.h>` to the bundled
+/// header even where the host has a system copy, as the Linux CI test
+/// containers do not (CI: `fstapi.h:36: 'zlib.h' file not found`).
+#[test]
+fn strict_source_units_include_the_bundled_zlib() {
+    let Some(clang) = clang_driver() else {
+        eprintln!("SKIP: no Clang driver");
+        return;
+    };
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut command = Command::new(&clang);
+    command.args(["-std=c11", "-M"]).args(BUNDLED_ZLIB_DEFINES);
+    for include in runtime_include_dirs(root) {
+        command.arg("-I").arg(include);
+    }
+    command.arg(root.join("src/sim/rt/llg_wave.c"));
+    let output = sim_harness::run_command(&mut command, Duration::from_secs(120))
+        .unwrap_or_else(|error| panic!("run `{clang}`: {error}"));
+    assert!(
+        output.status.success(),
+        "{}",
+        c_compiler::compiler_diagnostics(&output)
+    );
+    let dependencies = String::from_utf8_lossy(&output.stdout);
+    let bundled = root.join("vendor/zlib/zlib.h");
+    assert!(
+        dependencies.contains(&*bundled.to_string_lossy()),
+        "llg_wave.c must include {}:\n{dependencies}",
+        bundled.display()
+    );
+}
+
+/// The flags name the `llg_vpi.c(4051)` C4701 shape: a local set only by an
+/// out-parameter call that a short-circuit can skip, used under a flag.
+#[test]
+fn msvc_w4_flow_errors_reject_a_local_a_short_circuit_can_leave_unset() {
+    let Some(clang) = clang_driver() else {
+        eprintln!("SKIP: no Clang driver");
+        return;
+    };
+    let dir = sim_harness::TempDir::new("runtime-uninitialized").expect("create temp directory");
+    let source = dir.path().join("maybe_unset.c");
+    std::fs::write(
+        &source,
+        "int get(int *out);\n\
+         int sum(int n) {\n\
+         \x20   int total = 0, ok = 1;\n\
+         \x20   for (int i = 0; i < n; ++i) {\n\
+         \x20       int value;\n\
+         \x20       if (!ok || !get(&value)) ok = 0;\n\
+         \x20       total += ok ? value : 0;\n\
+         \x20   }\n\
+         \x20   return total;\n\
+         }\n",
+    )
+    .expect("write the probe");
+    let mut command = Command::new(&clang);
+    command
+        .args(["-std=c11", "-fsyntax-only"])
+        .args(MSVC_W4_FLOW_ERRORS)
+        .arg(&source);
+    let output = sim_harness::run_command(&mut command, Duration::from_secs(120))
+        .unwrap_or_else(|error| panic!("run `{clang}`: {error}"));
+    let diagnostics = c_compiler::compiler_diagnostics(&output);
+    assert!(
+        !output.status.success() && diagnostics.contains("conditional-uninitialized"),
+        "{diagnostics}"
     );
 }

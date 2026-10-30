@@ -1548,10 +1548,11 @@ only in Windows CI; the rules they enforce are in
 [cross-platform handling](../docs/cross_platform.md#windows-msvc). Each takes
 seconds; the Clang checks skip without a Clang driver and on Windows.
 
-- `runtime_strict_sources::runtime_and_companion_c_has_no_implicit_narrowing`:
+- `runtime_strict_sources::runtime_and_companion_c_has_no_narrowing_or_uninitialized_use`:
   Clang `-Werror=implicit-int-conversion,shorten-64-to-32,…` (MSVC C4244/C4267)
-  over the runtime units in the legacy and compact backends, the non-`compact_*`
-  probes and every C file under `tests/fixtures/`.
+  and `-Werror=conditional-uninitialized,…` (C4701/C4703) over the runtime
+  units in the legacy and compact backends, the non-`compact_*` probes and
+  every C file under `tests/fixtures/`, with the bundled zlib headers.
 - `runtime_strict_sources::runtime_sources_have_no_truncating_constant_casts`:
   a scan for constant casts MSVC truncates (C4310) in the same files.
 - `runtime_strict_sources::probe_built_runtime_sources_have_no_code_after_fatal_helpers`:

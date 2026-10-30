@@ -86,8 +86,9 @@ fn dpi_scalar_imports_roundtrip_in_both_optimizer_modes() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    #[cfg(not(unix))]
-    {
+    // `cfg!` keeps the rest of the test compiled, and free of unreachable-code
+    // warnings, on Windows.
+    if cfg!(not(unix)) {
         eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
         return;
     }
@@ -255,8 +256,7 @@ fn dpi_missing_symbol_fails_during_model_link() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    #[cfg(not(unix))]
-    {
+    if cfg!(not(unix)) {
         eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
         return;
     }
@@ -293,8 +293,7 @@ fn model_ended_by_a_signal_is_named_on_stderr() {
         eprintln!("SKIP: cmake not available");
         return;
     }
-    #[cfg(not(unix))]
-    {
+    if cfg!(not(unix)) {
         eprintln!("SKIP: shared DPI fixture build is only enabled on Unix hosts");
         return;
     }

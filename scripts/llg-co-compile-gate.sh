@@ -11,8 +11,11 @@ if [[ $# -eq 0 ]]; then
 fi
 
 gate_dir=$(mktemp -d)
-trap 'rm -rf "$gate_dir"' EXIT
+# Keep the failing status: macOS CI continued after an unbound-variable error.
+trap 'status=$?; rm -rf "$gate_dir"; exit "$status"' EXIT
 
+# macOS runs bash 3.2, where `set -u` rejects "${empty[@]}"; the
+# ${a[@]+"${a[@]}"} form expands an empty array to nothing there too.
 for compiler in "$@"; do
   command -v "$compiler"
   jump_flag=()
@@ -27,14 +30,15 @@ for compiler in "$@"; do
       debug-host) definitions=(-DLLG_CO_DEBUG -DLLG_CO_HOST_ALLOC) ;;
     esac
     "$compiler" -std=c11 -Wall -Wextra -Wpedantic -Werror -Wunused-function \
-      "${jump_flag[@]}" "${definitions[@]}" -Isrc/sim/rt -c \
-      src/sim/rt/llg_co.c -o "$gate_dir/$compiler-$variant-library.o"
+      ${jump_flag[@]+"${jump_flag[@]}"} ${definitions[@]+"${definitions[@]}"} \
+      -Isrc/sim/rt -c src/sim/rt/llg_co.c -o "$gate_dir/$compiler-$variant-library.o"
     "$compiler" -std=c11 -Wall -Wextra -Wpedantic -Werror -Wunused-function \
-      "${jump_flag[@]}" "${definitions[@]}" -Isrc/sim/rt -c \
-      tests/runtime_value_storage/llg_co_include_only.c \
+      ${jump_flag[@]+"${jump_flag[@]}"} ${definitions[@]+"${definitions[@]}"} \
+      -Isrc/sim/rt -c tests/runtime_value_storage/llg_co_include_only.c \
       -o "$gate_dir/$compiler-$variant-include.o"
   done
   "$compiler" -std=c11 -O2 -Wall -Wno-unused-function \
     -Isrc/sim/rt -c src/sim/rt/llg_rt.c \
     -o "$gate_dir/$compiler-runtime.o"
+  echo "$compiler: llg_co and runtime compile gate passed"
 done
