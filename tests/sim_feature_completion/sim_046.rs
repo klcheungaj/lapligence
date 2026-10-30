@@ -226,7 +226,8 @@ fn corrupt_and_foreign_databases_change_nothing() {
         let mut future = good.clone();
         future[8..12].copy_from_slice(&2u32.to_le_bytes());
         let mut unknown_section = good.clone();
-        unknown_section[12] |= 4;
+        // Bits 1, 2 and 4 are the functional, assertion and FSM sections.
+        unknown_section[12] |= 8;
         let mut overlong = functional_payload(&[&record]);
         let frame = u64_at(&overlong, 0) + 1;
         overlong[..8].copy_from_slice(&frame.to_le_bytes());

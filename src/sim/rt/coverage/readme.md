@@ -64,5 +64,19 @@ hook is one NULL test. Concurrent assertions bind their item at registration
 `llg_coverage_call` implements the five 40.3.2 functions with Table 40-1
 statuses; the VPI accessors (`llg_acov_item_at`, `llg_coverage_control_vpi`,
 `llg_coverage_file_vpi`) are the only way `llg_vpi.c` reaches the items.
-Statement, toggle and FSM coverage (S46-D5, `assertions.c`) must never return
+Statement and toggle coverage (S46-D5, `assertions.c`) must never return
 `SV_COV_OK` from CHECK.
+
+`fsm.c` keeps FSM state coverage (40.4, 40.5.3; A17-D11 to A17-D13). The
+generated `llg_fcov_fsm_t` table (state parts as storage bit ranges, states,
+a static visit array per FSM) exists only when the model has FSM pragmas
+and keeps the coverage tables; `llg_fcov_model` binds it after the storage
+initializers, samples each FSM's initial state and adds a value watch
+(`llg_value_watch_add`) on every part's storage, so a changing publication
+of a state signal resamples its FSMs (`llg_fcov_changed`, a binary search
+over the sorted watch keys) and nothing else pays. Visits are static model
+storage; transitions are a sorted per-FSM array grown on first sight and
+freed at cleanup. `assertions.c` dispatches `SV_COV_FSM_STATE` to
+`llg_fcov_scope`; the database's FSM section (bit 4) holds its own schema
+hash, the visits and the transitions. `llg_vpi.c` reads the table through
+`llg_fcov_count`/`llg_fcov_at`/`llg_fcov_covered_in`.

@@ -13,10 +13,12 @@
 // disabled (disable iff) or killed ($assertkill). A stopped item counts
 // nothing; RESET zeroes the counters but leaves running attempts running.
 //
-// $coverage_* status values (40.3.1). Statement, toggle and FSM coverage
-// are not implemented: CHECK and START report SV_COV_NOCOV, STOP and RESET
-// succeed without effect (S46-D5), get and get_max return 0 (NOCOV) and
-// save reports SV_COV_NOCOV.
+// $coverage_* status values (40.3.1). FSM state coverage (SV_COV_FSM_STATE)
+// is kept by coverage/fsm.c: get_max counts the states of the FSMs in scope
+// and get the states reached. Statement and toggle coverage are not
+// implemented: CHECK and START report SV_COV_NOCOV, STOP and RESET succeed
+// without effect (S46-D5), get and get_max return 0 (NOCOV) and save
+// reports SV_COV_NOCOV.
 
 #define LLG_SV_COV_OVERFLOW (-2)
 #define LLG_SV_COV_ERROR (-1)
@@ -30,6 +32,7 @@
 #define LLG_SV_COV_MODULE 10u
 #define LLG_SV_COV_HIER 11u
 #define LLG_SV_COV_ASSERTION 20u
+#define LLG_SV_COV_FSM_STATE 21u
 #define LLG_SV_COV_TOGGLE 23u
 
 #define LLG_ACOV_COUNTERS 6u
@@ -508,6 +511,16 @@ typedef struct {
     size_t covered;  // of those, items with a nonvacuous success (S46-D4)
 } llg_acov_tally_t;
 
+// FSM coverage (coverage/fsm.c, included after this file).
+typedef struct {
+    size_t fsms;     // FSMs in scope
+    size_t states;   // their states
+    size_t reached;  // of those, states reached
+} llg_fcov_tally_t;
+static llg_fcov_tally_t llg_fcov_scope(int hier, int32_t scope, const char* definition,
+                                       uint32_t operation);
+static const char* llg_fcov_merge_section(const llg_cov_db_file_t* db);
+
 // Visit the items in scope; `operation` is START, STOP or RESET, or
 // UINT32_MAX to only tally them.
 static llg_acov_tally_t llg_acov_scope(int hier, int32_t scope, const char* definition,
@@ -538,6 +551,10 @@ static int32_t llg_coverage_merge(uint64_t type, const char* name, const char* w
     if (!error && type == LLG_SV_COV_ASSERTION && llg_acov_present &&
         (db.sections & LLG_COV_DB_ASSERTION)) {
         error = llg_acov_merge_section(&db);
+        if (!error) status = LLG_SV_COV_OK;
+    } else if (!error && type == LLG_SV_COV_FSM_STATE && llg_fcov_available() &&
+               (db.sections & LLG_COV_DB_FSM)) {
+        error = llg_fcov_merge_section(&db);
         if (!error) status = LLG_SV_COV_OK;
     }
     if (error) {
@@ -578,9 +595,11 @@ static int32_t llg_coverage_dispatch(int function, const uint64_t* v, int32_t sc
     if (type < LLG_SV_COV_ASSERTION || type > LLG_SV_COV_TOGGLE) return LLG_SV_COV_ERROR;
     if (function == LLG_COVERAGE_MERGE) return llg_coverage_merge(type, text, what);
     if (function == LLG_COVERAGE_SAVE) {
-        if (type != LLG_SV_COV_ASSERTION || !llg_acov_available()) return LLG_SV_COV_NOCOV;
-        return llg_cov_db_save(text, LLG_COV_DB_ASSERTION, what) ? LLG_SV_COV_OK
-                                                                 : LLG_SV_COV_ERROR;
+        uint32_t section = type == LLG_SV_COV_ASSERTION && llg_acov_available() ? LLG_COV_DB_ASSERTION
+                           : type == LLG_SV_COV_FSM_STATE && llg_fcov_available() ? LLG_COV_DB_FSM
+                                                                                  : 0u;
+        if (!section) return LLG_SV_COV_NOCOV;
+        return llg_cov_db_save(text, section, what) ? LLG_SV_COV_OK : LLG_SV_COV_ERROR;
     }
     // A bad scope is an error for every kind (Table 40-1 "Bad args").
     if (scope_def != LLG_SV_COV_MODULE && scope_def != LLG_SV_COV_HIER) return LLG_SV_COV_ERROR;
@@ -588,8 +607,21 @@ static int32_t llg_coverage_dispatch(int function, const uint64_t* v, int32_t sc
                     : scope < -1 || (scope >= 0 && (size_t)scope >= llg_acov_n_instances))
         return LLG_SV_COV_ERROR;
     int hier = scope_def == LLG_SV_COV_HIER;
+    if (type == LLG_SV_COV_FSM_STATE && llg_acov_present) {
+        llg_fcov_tally_t tally = llg_fcov_scope(
+            hier, scope, text, function == LLG_COVERAGE_CONTROL ? (uint32_t)control : UINT32_MAX);
+        switch (function) {
+        case LLG_COVERAGE_GET_MAX:
+            return llg_acov_count(tally.states);
+        case LLG_COVERAGE_GET:
+            return llg_acov_count(tally.reached);
+        default:
+            if (control == LLG_SV_COV_STOP || control == LLG_SV_COV_RESET) return LLG_SV_COV_OK;
+            return tally.fsms ? LLG_SV_COV_OK : LLG_SV_COV_NOCOV;
+        }
+    }
     if (type != LLG_SV_COV_ASSERTION || !llg_acov_present) {
-        // Statement, toggle and FSM coverage are not available (S46-D5).
+        // Statement and toggle coverage are not available (S46-D5).
         if (function == LLG_COVERAGE_CONTROL &&
             (control == LLG_SV_COV_STOP || control == LLG_SV_COV_RESET))
             return LLG_SV_COV_OK;

@@ -32,6 +32,15 @@ line and column. Slang consumes them without effect, and an inactive
 conditional branch contributes nothing, so this table is the only owned record
 that lets the simulator reject them instead of accepting and ignoring them.
 
+`Db::fsms` lists the FSMs that IEEE 1800-2009 40.4 pragmas declare, one per
+`tool state_vector` pragma and elaborated instance (`fsm.rs`): the state
+signal, part-select or concatenation, the optional next-state signal and the
+`tool enum` parameters naming the states, all resolved to the instance's own
+module-level nodes. `Db::fsm_pragma_errors` holds every malformed, misplaced
+or unresolved pragma once per definition; comments whose second word is not
+`state_vector` or `enum` are ignored. The simulator rejects a design with
+pragma errors; lint and the language server ignore both lists.
+
 Projection normalizes implicit instance bodies and expands concrete instance-array
 entries without losing source indices or explicit statement scopes. Packed ranges
 use declaration IDs rather than names. Assignment-pattern nodes also retain their immediate packed element descriptor,

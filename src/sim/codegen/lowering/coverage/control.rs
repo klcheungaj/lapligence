@@ -27,7 +27,7 @@ pub(in crate::sim::codegen::lowering) struct ImmediateAssertionItem {
 /// index of each instance node.
 pub(in crate::sim::codegen::lowering) struct CoverageInstances {
     table: Vec<IrCoverageInstance>,
-    index: HashMap<NodeId, u32>,
+    pub(in crate::sim::codegen::lowering) index: HashMap<NodeId, u32>,
 }
 
 /// The hierarchical name of a labelled assertion. The display scope of a
@@ -77,7 +77,7 @@ impl Codegen<'_> {
 
     /// The instance hierarchy: every module, interface and program
     /// instance below the top instances, parents first.
-    fn coverage_instances(&mut self) -> &CoverageInstances {
+    pub(in crate::sim::codegen::lowering) fn coverage_instances(&mut self) -> &CoverageInstances {
         if self.coverage_instances.is_none() {
             let mut instances = CoverageInstances {
                 table: Vec::new(),
@@ -195,7 +195,11 @@ impl Codegen<'_> {
             }
         }
         let instances = self.coverage_instances().table.clone();
-        model.assertion_coverage = Some(IrAssertionCoverage { items, instances });
+        model.assertion_coverage = Some(IrAssertionCoverage {
+            items,
+            instances,
+            fsms: Vec::new(),
+        });
     }
 
     /// `$coverage_control`, `$coverage_get_max`, `$coverage_get`,

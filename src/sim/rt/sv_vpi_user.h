@@ -202,12 +202,16 @@
 #define vpiCoverageMerge 754
 #define vpiCoverageSave 755
 
-/* Coverage type properties. Statement, toggle and FSM coverage are not
+/* Coverage type properties. Statement and toggle coverage are not
  * implemented: they fail through vpi_chk_error(). */
 #define vpiAssertCoverage 760
 #define vpiFsmStateCoverage 761
 #define vpiStatementCoverage 762
 #define vpiToggleCoverage 763
+
+/* FSM objects (40.5.2): an FSM and one of its states. */
+#define vpiFsm 758
+#define vpiFsmHandle 759
 
 /* Coverage status properties. */
 #define vpiCovered 765
@@ -221,6 +225,10 @@
 #define vpiAssertVacuousSuccessCovered 773
 #define vpiAssertDisableCovered 774
 #define vpiAssertKillCovered 777
+
+/* FSM relations (40.5.2). */
+#define vpiFsmStates 775
+#define vpiFsmStateExpression 776
 
 /* The $coverage_control status values of 40.3.1, which vpi_control returns
  * for the coverage operations (an llg addition: Annex M defines them only

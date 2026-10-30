@@ -2407,6 +2407,31 @@ fn a17_d10_system_start() {
 }
 
 #[test]
+fn a17_d11_fsm_pragmas() {
+    run_decision(
+        "A17-D11_fsm_pragmas",
+        include_str!("fixtures/sim/lrm_decisions/A17-D11_fsm_pragmas.out"),
+    );
+}
+
+#[test]
+fn a17_d12_fsm_state_visits() {
+    run_decision(
+        "A17-D12_fsm_state_visits",
+        include_str!("fixtures/sim/lrm_decisions/A17-D12_fsm_state_visits.out"),
+    );
+}
+
+#[test]
+fn a17_d13_fsm_objects() {
+    run_vpi_decision(
+        "A17-D13_fsm_objects",
+        &["task $d13()"],
+        include_str!("fixtures/sim/lrm_decisions/A17-D13_fsm_objects.out"),
+    );
+}
+
+#[test]
 fn a17_d2_control_callbacks() {
     run_vpi_decision(
         "A17-D2_control_callbacks",

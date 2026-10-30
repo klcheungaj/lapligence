@@ -25,6 +25,7 @@ struct Tables {
     line_directives: Vec<RawLineDirective>,
     edition_findings: Vec<RawEditionFinding>,
     protected_envelopes: Vec<RawProtectedEnvelope>,
+    fsm_pragmas: Vec<RawFsmPragma>,
 }
 
 impl Tables {
@@ -51,6 +52,7 @@ impl Tables {
             line_directive_count: self.line_directives.len() as u64,
             edition_finding_count: self.edition_findings.len() as u64,
             protected_envelope_count: self.protected_envelopes.len() as u64,
+            fsm_pragma_count: self.fsm_pragmas.len() as u64,
         }
     }
 }
@@ -106,7 +108,8 @@ fn drive(sink: &RawSink, header: &RawStreamHeader, tables: &Tables, batch: usize
         source_libraries: source_libraries,
         line_directives: line_directives,
         edition_findings: edition_findings,
-        protected_envelopes: protected_envelopes
+        protected_envelopes: protected_envelopes,
+        fsm_pragmas: fsm_pragmas
     );
     // SAFETY: `context` is the sink's builder.
     unsafe { (sink.end)(context) }
@@ -1893,4 +1896,215 @@ fn specify_nodes_validate_subkind_and_auxiliary_fields() {
     specparam.subkind = 1;
     let error = stream(&nodes(vec![specparam])).expect_err("unknown parameter subkind");
     assert_eq!(error.kind(), SlangErrorKind::InvalidNativeData);
+}
+
+#[test]
+fn fsm_pragma_records_decode_bindings_instances_and_order() {
+    let name = b"a.sv";
+    let files = vec![RawFile {
+        id: 0,
+        name: RawString {
+            data: name.as_ptr(),
+            len: name.len() as u64,
+        },
+        byte_len: 200,
+    }];
+    let mut instance = raw_semantic_node(0);
+    instance.kind = 1;
+    let mut variable = raw_semantic_node(0);
+    variable.id = 1;
+    let none = RawRange {
+        file_id: INVALID_ID,
+        start: 0,
+        end: 0,
+    };
+    let at = |start, end| RawRange {
+        file_id: 0,
+        start,
+        end,
+    };
+    let state = b" tool state_vector cs ";
+    let enumeration = b" tool enum E ";
+    let text = |bytes: &'static [u8]| RawString {
+        data: bytes.as_ptr(),
+        len: bytes.len() as u64,
+    };
+    let scope = at(7, 10);
+    let pragma = |range, flags, declarator, ordinal, body| RawFsmPragma {
+        range,
+        scope,
+        declarator,
+        instance_id: INVALID_ID,
+        kind: 1,
+        flags,
+        ordinal,
+        reserved: 0,
+        text: body,
+    };
+    let instance_record = |id| RawFsmPragma {
+        range: none,
+        scope,
+        declarator: none,
+        instance_id: id,
+        kind: 2,
+        flags: 0,
+        ordinal: 0,
+        reserved: 0,
+        text: empty_raw_string(),
+    };
+    // `// tool state_vector cs ` at 20 (line comment), then a block comment
+    // `/* tool enum E */` at 60 bound to two signal declarators.
+    let line = pragma(at(20, 44), 1, none, 0, text(state));
+    let first = pragma(at(60, 77), 2, at(80, 82), 0, text(enumeration));
+    let second = pragma(at(60, 77), 2, at(84, 86), 1, text(enumeration));
+    let tables = |fsm_pragmas: Vec<RawFsmPragma>| Tables {
+        files: files.clone(),
+        semantic_nodes: vec![instance, variable],
+        fsm_pragmas,
+        ..Tables::default()
+    };
+    let snapshot =
+        stream(&tables(vec![line, first, second, instance_record(0)])).expect("valid records");
+    let range = |start, end| SourceRange {
+        file_id: 0,
+        start,
+        end,
+    };
+    assert_eq!(
+        snapshot.fsm_pragmas,
+        vec![
+            FsmPragma {
+                range: range(20, 44),
+                scope: Some(range(7, 10)),
+                line_comment: true,
+                declarator: None,
+                text: " tool state_vector cs ".to_owned(),
+            },
+            FsmPragma {
+                range: range(60, 77),
+                scope: Some(range(7, 10)),
+                line_comment: false,
+                declarator: Some(FsmPragmaDeclarator {
+                    kind: FsmDeclaratorKind::Signal,
+                    name: range(80, 82),
+                    ordinal: 0,
+                }),
+                text: " tool enum E ".to_owned(),
+            },
+            FsmPragma {
+                range: range(60, 77),
+                scope: Some(range(7, 10)),
+                line_comment: false,
+                declarator: Some(FsmPragmaDeclarator {
+                    kind: FsmDeclaratorKind::Signal,
+                    name: range(84, 86),
+                    ordinal: 1,
+                }),
+                text: " tool enum E ".to_owned(),
+            },
+        ]
+    );
+    assert_eq!(
+        snapshot.fsm_instances,
+        vec![FsmPragmaInstance {
+            scope: range(7, 10),
+            instance: 0,
+        }]
+    );
+    let not_tool = b" toolbox enum E ";
+    for (records, message) in [
+        (
+            vec![RawFsmPragma {
+                reserved: 1,
+                ..line
+            }],
+            "reserved",
+        ),
+        (vec![RawFsmPragma { kind: 3, ..line }], "unknown kind"),
+        (
+            vec![RawFsmPragma {
+                flags: 8 | 1,
+                ..line
+            }],
+            "unknown flags",
+        ),
+        (
+            vec![RawFsmPragma { flags: 6, ..first }],
+            "two declaration kinds",
+        ),
+        (
+            vec![RawFsmPragma {
+                declarator: none,
+                ..first
+            }],
+            "disagree with its flags",
+        ),
+        (
+            vec![RawFsmPragma { ordinal: 1, ..line }],
+            "disagree with its flags",
+        ),
+        (
+            vec![RawFsmPragma {
+                range: at(20, 43),
+                ..line
+            }],
+            "does not match",
+        ),
+        (
+            vec![RawFsmPragma {
+                range: at(20, 36),
+                text: text(not_tool),
+                ..line
+            }],
+            "does not match",
+        ),
+        (
+            vec![RawFsmPragma {
+                range: none,
+                ..line
+            }],
+            "no source range",
+        ),
+        (
+            vec![RawFsmPragma {
+                instance_id: 0,
+                ..line
+            }],
+            "names an instance",
+        ),
+        (vec![second], "ordinal 0"),
+        (
+            vec![
+                first,
+                RawFsmPragma {
+                    ordinal: 2,
+                    ..second
+                },
+            ],
+            "disagree",
+        ),
+        (vec![first, RawFsmPragma { flags: 4, ..second }], "disagree"),
+        (vec![first, line], "not sorted"),
+        (vec![line, instance_record(0), line], "follows an instance"),
+        (vec![line, instance_record(1)], "not an instance"),
+        (vec![line, instance_record(2)], "unknown node"),
+        (
+            vec![line, instance_record(0), instance_record(0)],
+            "repeated",
+        ),
+        (vec![instance_record(0)], "scope without pragmas"),
+        (
+            vec![
+                line,
+                RawFsmPragma {
+                    text: text(state),
+                    ..instance_record(0)
+                },
+            ],
+            "carries pragma fields",
+        ),
+    ] {
+        let error = invalid_native_message(stream(&tables(records)));
+        assert!(error.contains(message), "{message}: {error}");
+    }
 }

@@ -1488,6 +1488,7 @@ impl Db {
             .map(|id| nodes[id.index()].name.clone())
             .unwrap_or_else(|| "design".to_owned());
         let coverage = coverage.finish(&nodes)?;
+        let fsm_tables = fsm::FsmTables::from_slang(snapshot, &nodes, &mut source_positions)?;
         let db = Self {
             nodes,
             edition: snapshot.edition(),
@@ -1565,6 +1566,8 @@ impl Db {
                 .collect(),
             elaborated_type_ranges,
             specify,
+            fsms: fsm_tables.fsms,
+            fsm_pragma_errors: fsm_tables.errors,
         };
         db.validate().map_err(DbError::InvalidDatabase)?;
         Ok(db)

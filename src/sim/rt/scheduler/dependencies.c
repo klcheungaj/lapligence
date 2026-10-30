@@ -778,7 +778,7 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
     // solved like any other switch change (scheduler/switches.c).
     if (LLG_CO_UNLIKELY(switches != NULL)) switch_controls_changed(switches);
     // Watches run last, after every runtime consumer saw the new value.
-    if (LLG_CO_UNLIKELY(watched) && value_watch_hook) value_watch_hook(target);
+    if (LLG_CO_UNLIKELY(watched)) value_watch_notify(target);
 }
 
 // Set while a clocking block publishes its own sampled clockvars. #0 inputs
@@ -917,7 +917,7 @@ static void real_write(double* target, double value) {
             llg_dependency_changed(binding->dependency);
     }
     force_dependency_changed(NULL, target, 1);
-    if (LLG_CO_UNLIKELY(watched) && value_watch_hook) value_watch_hook(target);
+    if (LLG_CO_UNLIKELY(watched)) value_watch_notify(target);
     if (target_pin) llg_value_scope_end(target_pin);
 }
 

@@ -313,6 +313,7 @@ struct CaptureOutput {
   std::vector<LlgSlangLineDirective> line_directives;
   std::vector<LlgSlangEditionFinding> edition_findings;
   std::vector<LlgSlangProtectedEnvelope> protected_envelopes;
+  std::vector<LlgSlangFsmPragma> fsm_pragmas;
 };
 
 namespace {
@@ -7387,17 +7388,94 @@ public:
                     envelopes.end());
   }
 
+  // Orders the FSM pragma records (an include file parsed into several trees
+  // reports each comment once) and appends one instance record per
+  // elaborated instance of every declaration that holds a pragma. Designs
+  // without pragmas pay nothing here.
+  void finishFsmPragmas(const RootSymbol& root) {
+    auto& records = capture.output.fsm_pragmas;
+    std::sort(records.begin(), records.end(), [](const auto& left, const auto& right) {
+      return std::tie(left.range.file_id, left.range.start, left.ordinal) <
+             std::tie(right.range.file_id, right.range.start, right.ordinal);
+    });
+    records.erase(std::unique(records.begin(), records.end(),
+                              [](const auto& left, const auto& right) {
+                                return left.range.file_id == right.range.file_id &&
+                                       left.range.start == right.range.start &&
+                                       left.ordinal == right.ordinal;
+                              }),
+                  records.end());
+    if (fsmPragmaScopes.empty())
+      return;
+    struct Instances : public ASTVisitor<Instances, VisitFlags::Symbols> {
+      Instances(LexicalCapture& owner) : owner(owner) {}
+      void handle(const InstanceSymbol& instance) {
+        const syntax::SyntaxNode* syntax = instance.getDefinition().getSyntax();
+        if (auto scope = owner.fsmPragmaScopes.find(syntax);
+            syntax && scope != owner.fsmPragmaScopes.end()) {
+          if (auto id = owner.capture.semanticIds.find(&instance);
+              id != owner.capture.semanticIds.end()) {
+            chargeRecord(owner.capture.output, sizeof(LlgSlangFsmPragma));
+            owner.capture.output.fsm_pragmas.push_back(
+                {{LLG_SLANG_INVALID_ID, 0, 0}, scope->second, {LLG_SLANG_INVALID_ID, 0, 0},
+                 id->second, LLG_SLANG_FSM_INSTANCE, 0, 0, 0, {nullptr, 0}});
+          }
+        }
+        visitDefault(instance);
+      }
+      LexicalCapture& owner;
+    };
+    Instances instances(*this);
+    root.visit(instances);
+  }
+
   // Declarations that can hold protected text (IEEE 1800-2009 34.3: an
   // envelope may replace any part of the source). Their names identify the
   // enclosing definition of an envelope.
   void handle(const syntax::ModuleDeclarationSyntax& syntax) {
     designScopes.push_back({syntax.getFirstToken().location(), syntax.header->name});
+    // FSM pragmas belong to module, interface and program definitions
+    // (IEEE 1800-2009 40.4.1), never to packages.
+    const bool fsmScope = syntax.kind != syntax::SyntaxKind::PackageDeclaration;
+    if (fsmScope)
+      fsmScopes.push_back(&syntax);
     visitDefault(syntax);
+    if (fsmScope)
+      fsmScopes.pop_back();
     designScopes.pop_back();
     // The frontend fabricates a missing end keyword at the end of the file;
     // protected text directly after the declaration holds it.
     if (syntax.endmodule.isMissing() && !missingEndScope)
       missingEndScope = syntax.header->name;
+  }
+
+  // Declarations whose first declarator can carry an FSM `tool enum` pragma
+  // (IEEE 1800-2009 40.4.1, 40.4.4-40.4.6): the comment follows the type and
+  // its packed dimensions, so it is trivia of the first declarator name.
+  void handle(const syntax::DataDeclarationSyntax& syntax) {
+    fsmDeclaration(syntax, syntax.declarators, LLG_SLANG_FSM_SIGNAL_DECLARATOR);
+  }
+
+  void handle(const syntax::NetDeclarationSyntax& syntax) {
+    fsmDeclaration(syntax, syntax.declarators, LLG_SLANG_FSM_SIGNAL_DECLARATOR);
+  }
+
+  void handle(const syntax::PortDeclarationSyntax& syntax) {
+    fsmDeclaration(syntax, syntax.declarators, LLG_SLANG_FSM_SIGNAL_DECLARATOR);
+  }
+
+  void handle(const syntax::ParameterDeclarationSyntax& syntax) {
+    fsmDeclaration(syntax, syntax.declarators, LLG_SLANG_FSM_PARAMETER_DECLARATOR);
+  }
+
+  void handle(const syntax::ImplicitAnsiPortSyntax& syntax) {
+    const FsmDeclarators previous = fsmDeclarators;
+    fsmDeclarators = {};
+    if (!syntax.declarator->name.isMissing())
+      fsmDeclarators = {syntax.declarator->name.location(), LLG_SLANG_FSM_SIGNAL_DECLARATOR,
+                        nullptr, syntax.declarator->name};
+    visitDefault(syntax);
+    fsmDeclarators = previous;
   }
 
   void visitToken(parsing::Token token) {
@@ -7408,6 +7486,8 @@ public:
         depth--;
       triviaScope = depth != 0 ? std::optional(designScopes[depth - 1].second)
                                : std::nullopt;
+      if (skippedDepth == 0)
+        fsmComments(token);
     }
     for (const parsing::Trivia& trivia : token.trivia()) {
       for (parsing::Token skipped : trivia.getSkippedTokens())
@@ -7852,6 +7932,124 @@ private:
     capture.output.protected_envelopes.push_back(envelope);
   }
 
+  // The FSM pragma comments in the leading trivia of `token` (IEEE 1800-2009
+  // 40.4.7: block and one-line comments). Trivia carry no position of their
+  // own; walking back from the token, each one ends where the next starts,
+  // and a directive gives its own start. Tokens copied from a macro body
+  // have no source trivia.
+  void fsmComments(parsing::Token token) {
+    const auto trivia = token.trivia();
+    bool comment = false;
+    for (const parsing::Trivia& item : trivia) {
+      comment |= item.kind == parsing::TriviaKind::LineComment ||
+                 item.kind == parsing::TriviaKind::BlockComment;
+      // A comment before a directive is trivia of the directive's first
+      // token.
+      if (const syntax::SyntaxNode* directive = item.syntax();
+          directive && item.kind == parsing::TriviaKind::Directive)
+        fsmComments(directive->getFirstToken());
+    }
+    SourceLocation cursor = token.location();
+    if (!comment || !cursor.valid() || !capture.sourceManager.isFileLoc(cursor))
+      return;
+    // Trivia before a declaration's first token lies outside it.
+    size_t depth = fsmScopes.size();
+    if (depth != 0 && cursor == fsmScopes.back()->getFirstToken().location())
+      depth--;
+    const syntax::ModuleDeclarationSyntax* scope =
+        depth != 0 ? fsmScopes[depth - 1] : nullptr;
+    const bool declarator = fsmDeclarators.flag != 0 && cursor == fsmDeclarators.first;
+    for (size_t i = trivia.size(); i-- > 0;) {
+      const parsing::Trivia& item = trivia[i];
+      if (auto location = item.getExplicitLocation()) {
+        cursor = *location;
+      }
+      else {
+        const size_t length = item.getRawText().size();
+        if (cursor.offset() < length)
+          return;
+        cursor = cursor - length;
+      }
+      if (item.kind == parsing::TriviaKind::LineComment ||
+          item.kind == parsing::TriviaKind::BlockComment)
+        fsmComment(item, cursor, scope, declarator);
+    }
+  }
+
+  void fsmComment(const parsing::Trivia& item, SourceLocation start,
+                  const syntax::ModuleDeclarationSyntax* scopeSyntax, bool declarator) {
+    const std::string_view raw = item.getRawText();
+    const bool line = item.kind == parsing::TriviaKind::LineComment;
+    std::string_view text;
+    if (line) {
+      if (!raw.starts_with("//"))
+        return;
+      text = raw.substr(2);
+    }
+    else {
+      // An unterminated block comment is a frontend error, not a pragma.
+      if (raw.size() < 4 || !raw.starts_with("/*") || !raw.ends_with("*/"))
+        return;
+      text = raw.substr(2, raw.size() - 4);
+    }
+    // The pragma keyword `tool` comes first (40.4.1); any other comment is
+    // ordinary text.
+    const auto blank = [](char c) {
+      return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v';
+    };
+    size_t at = 0;
+    while (at < text.size() && blank(text[at]))
+      at++;
+    if (text.substr(at, 4) != "tool" || at + 4 >= text.size() || !blank(text[at + 4]))
+      return;
+    const LlgSlangSourceRange range = capture.span(start, raw.size());
+    if (range.file_id == LLG_SLANG_INVALID_ID)
+      return;
+    LlgSlangSourceRange scope{LLG_SLANG_INVALID_ID, 0, 0};
+    if (scopeSyntax) {
+      const parsing::Token name = scopeSyntax->header->name;
+      scope = capture.span(name.location(), name.valueText().size());
+      fsmPragmaScopes.emplace(scopeSyntax, scope);
+    }
+    const uint32_t flags = line ? LLG_SLANG_FSM_LINE_COMMENT : 0u;
+    const LlgSlangString stored = storeString(capture.output, text);
+    const auto push = [&](uint32_t flag, LlgSlangSourceRange name, uint32_t ordinal) {
+      chargeRecord(capture.output, sizeof(LlgSlangFsmPragma));
+      capture.output.fsm_pragmas.push_back({range, scope, name, LLG_SLANG_INVALID_ID,
+                                            LLG_SLANG_FSM_PRAGMA, flags | flag, ordinal, 0,
+                                            stored});
+    };
+    if (!declarator) {
+      push(0, {LLG_SLANG_INVALID_ID, 0, 0}, 0);
+      return;
+    }
+    const auto bind = [&](parsing::Token name, uint32_t ordinal) {
+      // The declarator's semantic nodes span its name's value text.
+      push(fsmDeclarators.flag, capture.span(name.location(), name.valueText().size()),
+           ordinal);
+    };
+    if (fsmDeclarators.list) {
+      uint32_t ordinal = 0;
+      for (const syntax::DeclaratorSyntax* item : *fsmDeclarators.list)
+        bind(item->name, ordinal++);
+    }
+    else {
+      bind(fsmDeclarators.single, 0);
+    }
+  }
+
+  template<typename Syntax>
+  void fsmDeclaration(const Syntax& syntax,
+                      const syntax::SeparatedSyntaxList<syntax::DeclaratorSyntax>& list,
+                      uint32_t flag) {
+    const FsmDeclarators previous = fsmDeclarators;
+    fsmDeclarators = {};
+    if (!list.empty() && !list[0]->name.isMissing())
+      fsmDeclarators = {list[0]->name.location(), flag, &list, {}};
+    visitDefault(syntax);
+    fsmDeclarators = previous;
+  }
+
   void lineDirective(SourceLocation location) {
     const SourceLocation physical = capture.physicalLocation(location);
     if (!physical.valid())
@@ -7890,6 +8088,19 @@ private:
   // The innermost declaration whose end keyword is missing, until the next
   // real token.
   std::optional<parsing::Token> missingEndScope;
+  // Enclosing module, interface and program declarations, innermost last.
+  std::vector<const syntax::ModuleDeclarationSyntax*> fsmScopes;
+  // The declaration being visited whose first declarator name can carry an
+  // FSM `tool enum` pragma: that name's location and the declarators.
+  struct FsmDeclarators {
+    SourceLocation first;
+    uint32_t flag = 0;
+    const syntax::SeparatedSyntaxList<syntax::DeclaratorSyntax>* list = nullptr;
+    parsing::Token single;
+  };
+  FsmDeclarators fsmDeclarators;
+  // The declarations that hold FSM pragmas, with their scope ranges.
+  std::unordered_map<const syntax::SyntaxNode*, LlgSlangSourceRange> fsmPragmaScopes;
   uint32_t directiveDepth = 0;
   uint32_t skippedDepth = 0;
   // Nesting depth inside the written actual arguments of a macro usage.
@@ -9581,6 +9792,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     tree->root().visit(lexicalCapture);
   lexicalCapture.bindSemanticTokens();
   lexicalCapture.finishProtectedEnvelopes();
+  lexicalCapture.finishFsmPragmas(root);
   if (edition.snapshotFlag == LLG_SLANG_SNAPSHOT_EDITION_VERILOG_2001) {
     Verilog2001SyntaxProfile profile(capture);
     for (const auto& tree : compilation.getSyntaxTrees())
@@ -9612,7 +9824,7 @@ bool sinkComplete(const LlgSlangSink& sink) {
          sink.semantic_nodes && sink.udp_rows && sink.udp_tables &&
          sink.lexical_tokens && sink.source_libraries &&
          sink.line_directives && sink.edition_findings &&
-         sink.protected_envelopes && sink.end;
+         sink.protected_envelopes && sink.fsm_pragmas && sink.end;
 }
 
 void checkSink(uint32_t status) {
@@ -9656,6 +9868,7 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
       output.line_directives.size(),
       output.edition_findings.size(),
       output.protected_envelopes.size(),
+      output.fsm_pragmas.size(),
   };
   checkSink(sink.begin(sink.context, &header));
   streamTable(sink, sink.files, output.files);
@@ -9681,6 +9894,7 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
   streamTable(sink, sink.line_directives, output.line_directives);
   streamTable(sink, sink.edition_findings, output.edition_findings);
   streamTable(sink, sink.protected_envelopes, output.protected_envelopes);
+  streamTable(sink, sink.fsm_pragmas, output.fsm_pragmas);
   checkSink(sink.end(sink.context));
 }
 

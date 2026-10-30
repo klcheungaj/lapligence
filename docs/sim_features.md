@@ -2812,10 +2812,21 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpi_iterate(vpiAssertion, ...)` and `vpi_handle_by_name`, their 40.5.3
   counter properties, `vpi_get(vpiAssertCoverage, instance)` and
   `vpi_control(vpiCoverageStart/Stop/Reset/Check/Merge/Save)` (S46-D10), with
-  the constants in the shipped `sv_vpi_user.h`. **Statement, toggle and FSM
-  state coverage are not implemented**: nothing is instrumented, CHECK and
-  START report `SV_COV_NOCOV`, queries return 0, `$coverage_save` writes
-  nothing and VPI reports `LLG_VPI_UNSUPPORTED` (S46-D5). Covergroups are not
+  the constants in the shipped `sv_vpi_user.h`. **FSM state coverage**
+  (ADV-017): FSMs declared with the 40.4 pragmas (block or one-line
+  comments; a signal, part-select or concatenation state vector of up to 64
+  bits; next-state signals; `parameter`/`localparam` states) count state
+  visits and transitions from the state vector's writes, with
+  `SV_COV_FSM_STATE` in every `$coverage_*` function and the database, and
+  the 40.5.3 objects `vpiFsm`, `vpiFsmStates`, `vpiFsmStateExpression` with
+  `vpiCovered`/`vpiCoverMax`/`vpiCoveredCount` and
+  `vpi_get(vpiFsmStateCoverage, instance)` (A17-D11 to A17-D13). Malformed
+  or unresolved pragmas are errors. A model without FSM pragmas, or without
+  a `$coverage_*` call or VPI catalog, is generated unchanged and pays
+  nothing. **Statement and toggle coverage are not implemented**: nothing
+  is instrumented, CHECK and START report `SV_COV_NOCOV`, queries return 0,
+  `$coverage_save` writes nothing and VPI reports `LLG_VPI_UNSUPPORTED`
+  (S46-D5). Covergroups are not
   a 40.3.1 coverage type and are reached only through the 19.8 and 19.9
   methods and tasks. SV 40 **[SV-2005]**.
 - 🟨 **Constrained randomization** — `rand` and `randc` packed integral and

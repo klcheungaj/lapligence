@@ -16,7 +16,7 @@ use std::{fmt, ptr, slice, str};
 mod sources;
 use sources::{
     decode_edition_finding, decode_line_directive, decode_protected_envelope,
-    decode_source_library, finish_line_directives,
+    decode_source_library, finish_line_directives, DecodedFsmPragma,
 };
 mod node_flags;
 pub use node_flags::SemanticFlags;
@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 60;
+const ABI_VERSION: u32 = 61;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1706,6 +1706,53 @@ pub struct ProtectedEnvelope {
     pub unterminated: bool,
 }
 
+/// The kind of declaration an FSM pragma comment is bound to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FsmDeclaratorKind {
+    /// A data, net or port declaration (`LLG_SLANG_FSM_SIGNAL_DECLARATOR`).
+    Signal,
+    /// A parameter or localparam declaration
+    /// (`LLG_SLANG_FSM_PARAMETER_DECLARATOR`).
+    Parameter,
+}
+
+/// The declarator an FSM pragma comment is bound to: the comment is trivia
+/// of the first declarator name of its declaration, and the declaration
+/// yields one record per declarator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FsmPragmaDeclarator {
+    pub kind: FsmDeclaratorKind,
+    /// The declarator's name range (the range of its semantic nodes).
+    pub name: SourceRange,
+    /// The declarator's position in its declaration, from 0.
+    pub ordinal: u32,
+}
+
+/// One FSM recognition pragma comment (IEEE 1800-2009 40.4;
+/// `LlgSlangFsmPragma` of kind `LLG_SLANG_FSM_PRAGMA`): a comment whose text
+/// starts with the word `tool`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FsmPragma {
+    /// The whole comment.
+    pub range: SourceRange,
+    /// Declared-name range of the innermost module, interface or program
+    /// declaration holding the comment; `None` outside every one.
+    pub scope: Option<SourceRange>,
+    pub line_comment: bool,
+    pub declarator: Option<FsmPragmaDeclarator>,
+    /// The comment text between its delimiters, as written.
+    pub text: String,
+}
+
+/// One elaborated instance (`instance` is its semantic node ID) of the
+/// declaration whose declared-name range is `scope`, which holds FSM
+/// pragmas (`LLG_SLANG_FSM_INSTANCE`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FsmPragmaInstance {
+    pub scope: SourceRange,
+    pub instance: u64,
+}
+
 /// Fully owned observations from one Slang compilation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Snapshot {
@@ -1739,6 +1786,12 @@ pub struct Snapshot {
     /// Protected envelopes sorted by file and start offset, one per opening
     /// directive.
     pub protected_envelopes: Vec<ProtectedEnvelope>,
+    /// FSM pragma comments sorted by file, comment start and declarator
+    /// ordinal (IEEE 1800-2009 40.4).
+    pub fsm_pragmas: Vec<FsmPragma>,
+    /// The elaborated instances of every declaration that holds an FSM
+    /// pragma, in capture order.
+    pub fsm_instances: Vec<FsmPragmaInstance>,
 }
 
 impl Snapshot {
@@ -1980,6 +2033,20 @@ struct RawProtectedEnvelope {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+struct RawFsmPragma {
+    range: RawRange,
+    scope: RawRange,
+    declarator: RawRange,
+    instance_id: u64,
+    kind: u32,
+    flags: u32,
+    ordinal: u32,
+    reserved: u32,
+    text: RawString,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 struct RawUdpRow {
     inputs: RawString,
     state: u32,
@@ -2091,6 +2158,7 @@ struct RawStreamHeader {
     line_directive_count: u64,
     edition_finding_count: u64,
     protected_envelope_count: u64,
+    fsm_pragma_count: u64,
 }
 
 type RawBatch<T> = unsafe extern "C" fn(*mut std::ffi::c_void, *const T, u64) -> u32;
@@ -2119,6 +2187,7 @@ struct RawSink {
     line_directives: RawBatch<RawLineDirective>,
     edition_findings: RawBatch<RawEditionFinding>,
     protected_envelopes: RawBatch<RawProtectedEnvelope>,
+    fsm_pragmas: RawBatch<RawFsmPragma>,
     end: unsafe extern "C" fn(*mut std::ffi::c_void) -> u32,
 }
 

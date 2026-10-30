@@ -1344,6 +1344,8 @@ fn render_model(
     render_vpi_metadata(model, &mut out);
     render_vpi_compile_calls(model, &mut out);
     render_vpi_builtin_calls(model, &mut out);
+    // After the signal storage the FSM parts point at.
+    super::owned::coverage::fsm_tables(model, &mut out);
     out.push_str(&sharing.declarations);
     out.push_str(&sharing.prototypes);
     out.push_str(&coroutine_metadata);

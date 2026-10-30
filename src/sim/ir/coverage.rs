@@ -997,6 +997,58 @@ pub struct IrCoverageInstance {
 pub struct IrAssertionCoverage {
     pub(in crate::sim) items: Vec<IrAssertionItem>,
     pub(in crate::sim) instances: Vec<IrCoverageInstance>,
+    /// The FSMs of the IEEE 1800-2009 40.4 pragmas, in instance order.
+    pub(in crate::sim) fsms: Vec<IrFsm>,
+}
+
+/// The widest FSM state expression: the runtime monitor keeps a state value
+/// in one 64-bit word.
+pub(in crate::sim) const FSM_MAX_STATE_BITS: u32 = 64;
+
+/// One part of an FSM state expression: `width` bits of signal storage
+/// starting at bit `lsb`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrFsmPart {
+    pub(in crate::sim) signal: usize,
+    pub(in crate::sim) lsb: u32,
+    pub(in crate::sim) width: u32,
+}
+
+/// One state of an FSM: the parameter that names it and its value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrFsmState {
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) value: u64,
+}
+
+/// The object a VPI application reaches through vpiFsmStateExpression
+/// (40.5.3).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IrFsmExpression {
+    /// A whole signal, by its hierarchical name.
+    Signal(String),
+    /// A part-select `[left:right]` of a signal, as the pragma writes it.
+    Select(String, i64, i64),
+    /// A concatenation of signals, which has no VPI object in llg.
+    Concatenation,
+}
+
+/// One FSM of one instance (IEEE 1800-2009 40.4, 40.5.3): the state
+/// expression as signal parts (most significant first, `width` bits in all)
+/// and the states in declaration order with distinct values below
+/// `2^width`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct IrFsm {
+    pub(in crate::sim) name: String,
+    pub(in crate::sim) full_name: String,
+    pub(in crate::sim) instance: u32,
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) parts: Vec<IrFsmPart>,
+    pub(in crate::sim) states: Vec<IrFsmState>,
+    pub(in crate::sim) expression: IrFsmExpression,
+    pub(in crate::sim) file: String,
+    pub(in crate::sim) line: u32,
+    pub(in crate::sim) column: u32,
 }
 
 impl IrAssertionCoverage {
@@ -1037,6 +1089,41 @@ impl IrAssertionCoverage {
                 return Err("coverage instance parent does not precede it".to_owned());
             }
         }
+        if self.fsms.len() > i32::MAX as usize {
+            return Err("FSM coverage table is too large".to_owned());
+        }
+        for fsm in &self.fsms {
+            if fsm.instance as usize >= self.instances.len() {
+                return Err(format!("FSM `{}` names an unknown instance", fsm.full_name));
+            }
+            let total = fsm
+                .parts
+                .iter()
+                .try_fold(0u32, |total, part| total.checked_add(part.width));
+            if fsm.width == 0
+                || fsm.width > FSM_MAX_STATE_BITS
+                || total != Some(fsm.width)
+                || fsm.parts.iter().any(|part| part.width == 0)
+            {
+                return Err(format!(
+                    "FSM `{}` state parts do not make up its {}-bit state",
+                    fsm.full_name, fsm.width
+                ));
+            }
+            if fsm.states.is_empty() || fsm.states.len() > i32::MAX as usize {
+                return Err(format!("FSM `{}` has no states", fsm.full_name));
+            }
+            let mut values = std::collections::HashSet::new();
+            for state in &fsm.states {
+                if (fsm.width < 64 && state.value >> fsm.width != 0) || !values.insert(state.value)
+                {
+                    return Err(format!(
+                        "FSM `{}` state `{}` is out of range or repeated",
+                        fsm.full_name, state.name
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1046,6 +1133,10 @@ impl IrAssertionCoverage {
 
     pub fn instances(&self) -> &[IrCoverageInstance] {
         &self.instances
+    }
+
+    pub fn fsms(&self) -> &[IrFsm] {
+        &self.fsms
     }
 }
 

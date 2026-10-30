@@ -2411,11 +2411,12 @@ services of SIM-046 have their own limits below.
 
 **Status:** open. SIM-046 provides the 19.8-19.9 query and database
 services for covergroups and the 40.3.2 coverage API, with its VPI
-counterpart, for assertion coverage.
+counterpart, for assertion coverage; ADV-017 adds FSM state coverage from
+the 40.4 pragmas.
 
 ### Symptom
 
-- **Statement, toggle and FSM state coverage are not implemented.**
+- **Statement and toggle coverage are not implemented.**
   `$coverage_control` CHECK and START report `SV_COV_NOCOV`, STOP and RESET
   report `SV_COV_OK` and do nothing, `$coverage_get` and
   `$coverage_get_max` return 0, `$coverage_save` returns `SV_COV_NOCOV` and
@@ -2461,19 +2462,32 @@ counterpart, for assertion coverage.
     a step callback could only be a stub. Providing them needs a state
     numbering shared by all engines and a per-thread hook behind the item's
     `watches` gate (no cost without a registration);
-  - FSM coverage objects (40.5.3 `vpiFsm`, `vpiFsmStates`) and the 40.4 FSM
-    pragmas are not recognized.
   An assertion label that is also
   listed by the object catalog as a named block is found as the assertion
   by `vpi_handle_by_name`.
 - `vpi_get(vpiAssertCoverage, instance)` and `vpi_control` with an
   instance handle select that instance's own assertions only, as
   `SV_COV_MODULE` (S46-D10).
+- FSM state coverage (ADV-017, A17-D11 to A17-D13) has these limits:
+  - FSMs come only from the 40.4 pragmas, and each needs a `tool enum`
+    parameter or localparam declaration listing its states; llg extracts
+    neither FSMs nor states automatically (a state vector without states
+    is an error);
+  - a state vector is 1 to 64 bits;
+  - the state expression of a concatenation has no VPI object
+    (`vpiFsmStateExpression` is NULL with `LLG_VPI_UNSUPPORTED`);
+  - transitions between states are counted and saved in the coverage
+    database, but no 1800-2009 query reports them;
+  - a concatenation's signals are watched one by one, so a time step that
+    writes them in turn visits the intermediate values too (A17-D12);
+  - the state parameters, which only the pragmas name, are still reported
+    by the unused-parameter lint;
+  - pragma errors are reported when a model is built, not by `llg_ls`.
 
 ### Cause
 
-Statement, toggle and FSM coverage need per-statement, per-bit or
-per-state instrumentation of every process; the orchestrator's condition
+Statement and toggle coverage need per-statement or per-bit
+instrumentation of every process; the orchestrator's condition
 (no cost when disabled, an opt-in flag) was not met within SIM-046. The
 database stores counters by compile-time index under an identity hash of
 the model's coverage metadata, which keeps loads exact and atomic.

@@ -107,9 +107,11 @@ mod calls;
 pub(in crate::sim) use calls::call_argument_name;
 pub use calls::{IrCall, IrCallArg, IrCallExpr, IrDepth, IrVirtualCall};
 mod coverage;
+pub(in crate::sim) use coverage::FSM_MAX_STATE_BITS;
 pub use coverage::{
     IrAssertionCoverage, IrAssertionItem, IrAssertionItemForm, IrAssertionItemKind,
-    IrCoverageApiCall, IrCoverageApiFunction, IrCoverageInstance, IrCoverageScope,
+    IrCoverageApiCall, IrCoverageApiFunction, IrCoverageInstance, IrCoverageScope, IrFsm,
+    IrFsmExpression, IrFsmPart, IrFsmState,
 };
 pub use coverage::{
     IrCoverAutomatic, IrCoverBin, IrCoverBinKind, IrCoverBinShape, IrCoverBound, IrCoverCount,

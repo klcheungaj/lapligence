@@ -1,5 +1,7 @@
-// Decision S46-D5: llg implements no statement, toggle or FSM coverage.
-// For those kinds $coverage_control CHECK and START return SV_COV_NOCOV,
+// Decision S46-D5: llg implements no statement or toggle coverage, and
+// FSM state coverage (A17-D12) answers the same in a design without FSM
+// pragmas, as here. For those kinds $coverage_control CHECK and START
+// return SV_COV_NOCOV,
 // STOP and RESET return SV_COV_OK without effect, $coverage_get and
 // $coverage_get_max return 0 (SV_COV_NOCOV) and $coverage_save returns
 // SV_COV_NOCOV and writes nothing.
