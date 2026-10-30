@@ -588,6 +588,7 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     let semantic = checked_semantic(db)?;
     let lowering_stage = crate::profile::Stage::new("lowering");
     let mut cg = Codegen::new(&semantic);
+    cg.check_fsm_pragmas()?;
     let tops = collect_tops(&mut cg)?;
     if !cg.checker_free.is_empty() {
         cg.plan_free_variables()?;
@@ -708,6 +709,7 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     // The assertion items exist before the catalog, which links each to
     // its expression objects.
     cg.populate_assertion_coverage(&mut model);
+    cg.populate_fsm_coverage(&mut model)?;
     cg.populate_vpi_metadata(&mut model, &tops, timing, options.vpi)?;
     cg.populate_vpi_builtin_calls(&mut model);
     cg.finish_dpi(&mut model)?;

@@ -1,0 +1,15 @@
+vpi_iterate(vpiFsm, tb) found -> 0
+vpi_iterate(vpiFsm, NULL) found -> 0 (error)
+tb.f state coverage 4
+vpiFsm tb.f.s covered=3 max=3 count=3
+  expression tb.f.s
+  vpiFsmHandle S0 value=0000 covered=1 max=1 count=1
+  vpiFsmHandle S1 value=0001 covered=1 max=1 count=1
+  vpiFsmHandle S2 value=0010 covered=1 max=1 count=1
+  vpi_control(vpiCoverageReset, vpiFsmStateCoverage, fsm) -> -1 (error)
+vpiFsm tb.f.pair covered=1 max=2 count=1
+  vpiFsmStateExpression found -> 0 (error)
+  vpiFsmHandle P1 value=01 covered=1 max=1 count=1
+  vpiFsmHandle P2 value=10 covered=0 max=1 count=0
+  vpi_control(vpiCoverageReset, vpiFsmStateCoverage, fsm) -> -1 (error)
+vpi_control(vpiCoverageCheck, vpiFsmStateCoverage, tb.f) -> 1

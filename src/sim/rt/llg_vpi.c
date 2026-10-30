@@ -85,6 +85,8 @@ typedef enum {
     SLOT_CODE,      /* expression or statement object: code row `aux` */
     SLOT_COLLECTION, /* vpiCollection: `count` members in `items`, each a
                       * catalog row << 1 or an assertion item << 1 | 1 */
+    SLOT_FSM,        /* FSM `left` of the FSM coverage table (40.5.3) */
+    SLOT_FSMSTATE,   /* state `aux` of FSM `left` (40.5.3) */
 } llg_vpi_slot_kind_t;
 
 enum {
@@ -1241,6 +1243,7 @@ static vpiHandle code_handle(uint32_t index);
 static const llg_vpi_code_t* code_at(uint32_t index);
 static uint32_t code_visible(uint32_t index);
 static uint32_t code_child(const llg_vpi_code_t* node, int relation);
+static const llg_fcov_fsm_t* slot_fsm(const llg_vpi_slot_t* slot);
 
 /* The width and sign of the value a handle reads, or 0 when it has none. */
 static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is_signed) {
@@ -1283,6 +1286,14 @@ static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is
             return read_conn(slot->object, (uint32_t)slot->aux, out, is_signed);
         case SLOT_CODE:
             return code_value((uint32_t)slot->aux, out, is_signed);
+        case SLOT_FSMSTATE: {
+            /* The value of the state's parameter, as wide as the state
+             * expression (40.5.3). */
+            const llg_fcov_fsm_t* fsm = slot_fsm(slot);
+            if (!fsm) return 0;
+            out->packed = sv4_from_i64((int64_t)fsm->states[slot->aux].value, fsm->size);
+            return 1;
+        }
         case SLOT_CONSTANT:
             if (is_string_constant(slot)) {
                 /* 8 bits per character, the first most significant. */
@@ -3386,9 +3397,9 @@ static int is_coverage_type_property(int property) {
 /* vpi_get(<coverage type>, instance): the covered items of that type owned
  * by the instance (40.5.3, S46-D10). */
 static PLI_INT32 instance_coverage(const llg_vpi_slot_t* slot, int property) {
-    if (property != vpiAssertCoverage) {
+    if (property != vpiAssertCoverage && property != vpiFsmStateCoverage) {
         vpi_error("LLG_VPI_UNSUPPORTED",
-                  "statement, toggle and FSM coverage are not implemented (S46-D5)");
+                  "statement and toggle coverage are not implemented (S46-D5)");
         return vpiUndefined;
     }
     int32_t instance = slot_instance(slot);
@@ -3396,7 +3407,9 @@ static PLI_INT32 instance_coverage(const llg_vpi_slot_t* slot, int property) {
         vpi_error("LLG_VPI_RELATION", "coverage properties need a module or interface instance");
         return vpiUndefined;
     }
-    size_t covered = llg_acov_covered_in(instance);
+    /* FSM state coverage counts the reached states of the instance's FSMs. */
+    size_t covered = property == vpiFsmStateCoverage ? llg_fcov_covered_in(instance)
+                                                     : llg_acov_covered_in(instance);
     return covered > INT32_MAX ? INT32_MAX : (PLI_INT32)covered;
 }
 
@@ -3420,6 +3433,11 @@ static PLI_INT32 coverage_control(int operation, int type, vpiHandle object) {
     }
     if (slot->kind == SLOT_ASSERTION)
         return llg_coverage_control_vpi(control, sv_type, -1, slot->left);
+    if (slot->kind == SLOT_FSM || slot->kind == SLOT_FSMSTATE) {
+        vpi_error("LLG_VPI_RELATION",
+                  "FSM coverage is controlled only per instance (40.5.4, decision A17-D13)");
+        return SV_COV_ERROR;
+    }
     int32_t instance = slot_instance(slot);
     if (instance < 0) {
         vpi_error("LLG_VPI_RELATION", "coverage control needs an instance or an assertion");
@@ -3436,6 +3454,148 @@ static PLI_INT32 coverage_file_control(int operation, int type, const char* name
         return SV_COV_ERROR;
     }
     return llg_coverage_file_vpi(operation == vpiCoverageMerge, sv_type, name);
+}
+
+/* ── FSM objects (40.5.3, decision A17-D13) ──────────────────────────────────
+ *
+ * An FSM handle (vpiFsm) names one row of the FSM coverage table, a state
+ * handle (vpiFsmHandle) one state of it. Both read the live counters of
+ * coverage/fsm.c. */
+
+static const llg_fcov_fsm_t* slot_fsm(const llg_vpi_slot_t* slot) {
+    if (!slot || (slot->kind != SLOT_FSM && slot->kind != SLOT_FSMSTATE) || slot->left < 0)
+        return NULL;
+    const llg_fcov_fsm_t* fsm = llg_fcov_at((size_t)slot->left);
+    if (fsm && slot->kind == SLOT_FSMSTATE && (slot->aux < 0 || (uint32_t)slot->aux >= fsm->n_states))
+        return NULL;
+    return fsm;
+}
+
+static vpiHandle fsm_handle(llg_vpi_slot_kind_t kind, size_t fsm, uint32_t state) {
+    uint32_t index = alloc_slot(kind);
+    if (index == LLG_VPI_NONE) return NULL;
+    g_vpi.slots[index].left = (int64_t)fsm;
+    g_vpi.slots[index].aux = (int32_t)state;
+    return encode_handle(index);
+}
+
+/* vpi_iterate(vpiFsm, instance): the FSMs the instance itself declares. */
+static vpiHandle iterate_fsms(vpiHandle reference) {
+    llg_vpi_slot_t* slot = reference ? checked_handle(reference, NULL) : NULL;
+    if (reference && !slot) return NULL;
+    int32_t instance = slot ? slot_instance(slot) : -1;
+    if (instance < 0) {
+        vpi_error("LLG_VPI_RELATION", "vpiFsm iterates from a module or interface instance");
+        return NULL;
+    }
+    size_t total = llg_fcov_count(), count = 0;
+    uintptr_t* items = (uintptr_t*)calloc(total ? total : 1u, sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    for (size_t i = 0; i < total; ++i) {
+        if (llg_fcov_at(i)->instance != instance) continue;
+        vpiHandle handle = fsm_handle(SLOT_FSM, i, 0);
+        if (!handle) break;
+        items[count++] = (uintptr_t)handle;
+    }
+    return make_list_iterator(vpiFsm, items, (uint32_t)count);
+}
+
+/* vpi_iterate(vpiFsmStates, fsm): its states in declaration order. */
+static vpiHandle iterate_fsm_states(vpiHandle reference) {
+    llg_vpi_slot_t* slot = checked_handle(reference, NULL);
+    if (!slot) return NULL;
+    const llg_fcov_fsm_t* fsm = slot->kind == SLOT_FSM ? slot_fsm(slot) : NULL;
+    if (!fsm) {
+        vpi_error("LLG_VPI_RELATION", "vpiFsmStates iterates from an FSM handle");
+        return NULL;
+    }
+    uintptr_t* items = (uintptr_t*)calloc(fsm->n_states ? fsm->n_states : 1u, sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < fsm->n_states; ++i) {
+        vpiHandle handle = fsm_handle(SLOT_FSMSTATE, (size_t)slot->left, i);
+        if (!handle) break;
+        items[count++] = (uintptr_t)handle;
+    }
+    return make_list_iterator(vpiFsmHandle, items, count);
+}
+
+/* vpi_handle(vpiFsmStateExpression | vpiScope | vpiModule, fsm) and
+ * vpi_handle(vpiFsm, state). */
+static vpiHandle fsm_relation(int type, const llg_vpi_slot_t* slot) {
+    const llg_fcov_fsm_t* fsm = slot_fsm(slot);
+    if (!fsm) {
+        vpi_error("LLG_VPI_HANDLE", "the FSM handle is no longer valid");
+        return NULL;
+    }
+    if (slot->kind == SLOT_FSMSTATE) {
+        if (type == vpiFsm) return fsm_handle(SLOT_FSM, (size_t)slot->left, 0);
+    } else if (type == vpiScope || type == vpiModule) {
+        const llg_acov_instance_t* owner = llg_acov_instance_at((size_t)fsm->instance);
+        uint32_t row = owner ? find_row(owner->path) : LLG_VPI_NONE;
+        if (row != LLG_VPI_NONE) return object_handle(row);
+        vpi_error("LLG_VPI_NOT_FOUND", "the FSM's instance is not in the VPI catalog");
+        return NULL;
+    } else if (type == vpiFsmStateExpression) {
+        if (!fsm->expression) {
+            /* A concatenation of state signals is no VPI object of llg. */
+            vpi_error("LLG_VPI_UNSUPPORTED",
+                      "the state expression of this FSM is a concatenation, which has no VPI "
+                      "object (decision A17-D13)");
+            return NULL;
+        }
+        uint32_t row = find_row(fsm->expression);
+        if (row == LLG_VPI_NONE) {
+            vpi_error("LLG_VPI_NOT_FOUND", "the FSM's state signal is not in the VPI catalog");
+            return NULL;
+        }
+        if (!fsm->select) return object_handle(row);
+        char suffix[64];
+        snprintf(suffix, sizeof suffix, "[%lld:%lld]", (long long)fsm->select_left,
+                 (long long)fsm->select_right);
+        vpiHandle select = select_from_suffix(row, suffix);
+        if (!select)
+            vpi_error("LLG_VPI_NOT_FOUND", "the FSM's state part-select has no VPI object");
+        return select;
+    }
+    vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-one relation for this object");
+    return NULL;
+}
+
+/* The integer properties of an FSM or state handle (40.5.3): vpiCovered is
+ * the number of reached states (0 or 1 for a state), vpiCoverMax the number
+ * of states (1 for a state) and vpiCoveredCount the visits. */
+static int fsm_property(const llg_vpi_slot_t* slot, int property, uint64_t* value) {
+    const llg_fcov_fsm_t* fsm = slot_fsm(slot);
+    if (!fsm) return 0;
+    if (slot->kind == SLOT_FSMSTATE) {
+        uint64_t visits = fsm->visits[slot->aux];
+        switch (property) {
+            case vpiCovered: *value = visits != 0; return 1;
+            case vpiCoverMax: *value = 1; return 1;
+            case vpiCoveredCount: *value = visits; return 1;
+            case vpiSize: *value = fsm->size; return 1;
+            default: return 0;
+        }
+    }
+    uint64_t reached = 0, visits = 0;
+    for (uint32_t i = 0; i < fsm->n_states; ++i) {
+        reached += fsm->visits[i] != 0;
+        visits = fsm->visits[i] > UINT64_MAX - visits ? UINT64_MAX : visits + fsm->visits[i];
+    }
+    switch (property) {
+        case vpiCovered: *value = reached; return 1;
+        case vpiCoverMax: *value = fsm->n_states; return 1;
+        case vpiCoveredCount: *value = visits; return 1;
+        case vpiLineNo: *value = fsm->line; return 1;
+        default: return 0;
+    }
 }
 
 static vpiHandle call_handle_for(llg_vpi_callsite_t* site) {
@@ -4944,6 +5104,7 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     llg_vpi_slot_t* slot = checked_handle(ref_handle, &index);
     if (!slot) return NULL;
     if (slot->kind == SLOT_ASSERTION) return assertion_relation(type, slot);
+    if (slot->kind == SLOT_FSM || slot->kind == SLOT_FSMSTATE) return fsm_relation(type, slot);
     if (slot->kind == SLOT_STMT) return statement_relation(type, slot);
     if (dyn_slot(slot)) {
         int handled;
@@ -5394,6 +5555,8 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     vpi_enter();
     if (!vpi_ready()) return NULL;
     if (type == vpiAssertion) return iterate_assertions(ref_handle);
+    if (type == vpiFsm) return iterate_fsms(ref_handle);
+    if (type == vpiFsmStates) return iterate_fsm_states(ref_handle);
     if (type == vpiSequenceDecl || type == vpiPropertyDecl) return iterate_declarations(type, ref_handle);
     if (!ref_handle) {
         if (type != vpiModule && type != vpiInterface) {
@@ -5671,6 +5834,8 @@ static int handle_type(const llg_vpi_slot_t* slot) {
         case SLOT_FIRED_CB: return vpiCallback;
         case SLOT_EVENT: return vpiSchedEvent;
         case SLOT_ASSERTION: return assertion_type(slot_item(slot));
+        case SLOT_FSM: return vpiFsm;
+        case SLOT_FSMSTATE: return vpiFsmHandle;
         case SLOT_MEMBER: {
             const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
             return node ? node->type : vpiUndefined;
@@ -5843,6 +6008,11 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
     if (slot->kind == SLOT_ASSERTION && property != vpiType) {
         uint64_t value;
         if (!assertion_property(slot, property, &value)) return unsupported_property();
+        return value > INT32_MAX ? INT32_MAX : (PLI_INT32)value;
+    }
+    if ((slot->kind == SLOT_FSM || slot->kind == SLOT_FSMSTATE) && property != vpiType) {
+        uint64_t value;
+        if (!fsm_property(slot, property, &value)) return unsupported_property();
         return value > INT32_MAX ? INT32_MAX : (PLI_INT32)value;
     }
     if (slot->kind == SLOT_STMT) return property == vpiType ? slot->aux : unsupported_property();
@@ -6114,6 +6284,11 @@ PLI_INT64 vpi_get64(PLI_INT32 property, vpiHandle handle) {
         if (!assertion_property(slot, property, &value)) return unsupported_property();
         return value > INT64_MAX ? INT64_MAX : (PLI_INT64)value;
     }
+    if (slot && (slot->kind == SLOT_FSM || slot->kind == SLOT_FSMSTATE) && property != vpiType) {
+        vpi_enter();
+        if (!fsm_property(slot, property, &value)) return unsupported_property();
+        return value > INT64_MAX ? INT64_MAX : (PLI_INT64)value;
+    }
     /* vpiObjId is an int64 property (37.29). */
     if (slot && dyn_slot(slot)) {
         vpi_enter();
@@ -6171,6 +6346,8 @@ static const char* type_name(int type) {
         case vpiImmediateAssume: return "vpiImmediateAssume";
         case vpiImmediateCover: return "vpiImmediateCover";
         case vpiCollection: return "vpiCollection";
+        case vpiFsm: return "vpiFsm";
+        case vpiFsmHandle: return "vpiFsmHandle";
         case vpiPropertySpec: return "vpiPropertySpec";
         case vpiPropertyInst: return "vpiPropertyInst";
         case vpiSequenceInst: return "vpiSequenceInst";
@@ -6436,6 +6613,24 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
                 if (item->instance >= 0 && owner) return (PLI_BYTE8*)owner->definition;
             }
             if (property == vpiFile && item->file) return (PLI_BYTE8*)item->file;
+            break;
+        }
+        case SLOT_FSM: {
+            const llg_fcov_fsm_t* fsm = slot_fsm(slot);
+            if (!fsm) break;
+            if (property == vpiName) return (PLI_BYTE8*)fsm->name;
+            if (property == vpiFullName) return (PLI_BYTE8*)fsm->full_name;
+            if (property == vpiFile) return (PLI_BYTE8*)fsm->file;
+            if (property == vpiDefName) {
+                const llg_acov_instance_t* owner = llg_acov_instance_at((size_t)fsm->instance);
+                if (owner) return (PLI_BYTE8*)owner->definition;
+            }
+            break;
+        }
+        case SLOT_FSMSTATE: {
+            /* A state is named by its parameter (40.4.6). */
+            const llg_fcov_fsm_t* fsm = slot_fsm(slot);
+            if (fsm && property == vpiName) return (PLI_BYTE8*)fsm->states[slot->aux].name;
             break;
         }
         default:
@@ -7208,8 +7403,10 @@ static int handle_identity(const llg_vpi_slot_t* slot, uint32_t index, uint64_t 
     identity[0] = 2u + slot->kind;
     identity[1] = slot->kind == SLOT_CALL || slot->kind == SLOT_SYSTF ||
                   slot->kind == SLOT_EVENT ? (uint64_t)(uintptr_t)slot->pointer
-                  : slot->kind == SLOT_ASSERTION ? (uint64_t)slot->left : index;
-    identity[2] = slot->kind == SLOT_CONSTANT ? (uint64_t)slot->left : 0;
+                  : slot->kind == SLOT_ASSERTION || slot->kind == SLOT_FSM ||
+                    slot->kind == SLOT_FSMSTATE ? (uint64_t)slot->left : index;
+    identity[2] = slot->kind == SLOT_CONSTANT ? (uint64_t)slot->left
+                  : slot->kind == SLOT_FSMSTATE ? (uint64_t)(uint32_t)slot->aux : 0;
     identity[3] = 0;
     return 1;
 }

@@ -5,7 +5,7 @@ use super::*;
 use crate::sim::ir::{
     IrCoverAutomatic, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverCross,
     IrCoverTransitions, IrCoverageApiCall, IrCoverageQuery, IrCoverageScope, IrCoverageStmt,
-    IrCoverageTextQuery, IrPlusArgTarget,
+    IrCoverageTextQuery, IrFsmExpression, IrPlusArgTarget,
 };
 
 fn group_name(group: usize) -> String {
@@ -485,6 +485,105 @@ pub(in crate::sim::emit_c) fn assertion_tables(model: &IrModel, out: &mut String
         })
         .collect::<Vec<_>>();
     static_array(out, "llg_acov_instance_t", "llg_model_acov_instances", rows);
+}
+
+/// The FSM coverage table (IEEE 1800-2009 40.4, 40.5.3): per FSM its state
+/// parts, states and visit counters. Only a model with FSMs has one, so
+/// every other model is generated unchanged.
+pub(in crate::sim::emit_c) fn fsm_tables(model: &IrModel, out: &mut String) {
+    let Some(table) = &model.assertion_coverage else {
+        return;
+    };
+    if table.fsms.is_empty() {
+        return;
+    }
+    let mut rows = Vec::with_capacity(table.fsms.len());
+    for (index, fsm) in table.fsms.iter().enumerate() {
+        let parts = fsm
+            .parts
+            .iter()
+            .map(|part| {
+                format!(
+                    "{{ {}, {}u, {}u }}",
+                    fsm_storage(model, part.signal),
+                    part.lsb,
+                    part.width
+                )
+            })
+            .collect::<Vec<_>>();
+        out.push_str(&format!(
+            "static const llg_fcov_part_t llg_model_fcov_parts_{index}[] = {{ {} }};\n",
+            parts.join(", ")
+        ));
+        let states = fsm
+            .states
+            .iter()
+            .map(|state| {
+                format!(
+                    "{{ {}, UINT64_C({}) }}",
+                    c_string_literal(&state.name),
+                    state.value
+                )
+            })
+            .collect::<Vec<_>>();
+        out.push_str(&format!(
+            "static const llg_fcov_state_t llg_model_fcov_states_{index}[] = {{ {} }};\n\
+             static uint64_t llg_model_fcov_visits_{index}[{}];\n",
+            states.join(", "),
+            fsm.states.len()
+        ));
+        let (expression, select, left, right) = match &fsm.expression {
+            IrFsmExpression::Signal(name) => (c_string_literal(name), 0, 0, 0),
+            IrFsmExpression::Select(name, left, right) => {
+                (c_string_literal(name), 1, *left, *right)
+            }
+            IrFsmExpression::Concatenation => ("NULL".to_owned(), 0, 0, 0),
+        };
+        rows.push(format!(
+            "{{ .name = {}, .full_name = {}, .expression = {expression}, .select_left = INT64_C({left}), .select_right = INT64_C({right}), .select = {select}u, .file = {}, .line = {}u, .column = {}u, .instance = {}, .size = {}u, .n_parts = {}u, .n_states = {}u, .parts = llg_model_fcov_parts_{index}, .states = llg_model_fcov_states_{index}, .visits = llg_model_fcov_visits_{index}, .current = -1 }}",
+            c_string_literal(&fsm.name),
+            c_string_literal(&fsm.full_name),
+            c_string_literal(&fsm.file),
+            fsm.line,
+            fsm.column,
+            fsm.instance,
+            fsm.width,
+            fsm.parts.len(),
+            fsm.states.len()
+        ));
+    }
+    out.push_str(&format!(
+        "static llg_fcov_fsm_t llg_model_fcov_fsms[] = {{\n    {}\n}};\n",
+        rows.join(",\n    ")
+    ));
+}
+
+/// The packed storage a state part reads: an optimizer alias shares its
+/// target's storage, which is where the writes publish.
+fn fsm_storage(model: &IrModel, signal: usize) -> String {
+    let mut current = signal;
+    for _ in 0..=model.signals.len() {
+        match model.signals.get(current).and_then(|signal| signal.alias) {
+            Some(alias) => current = alias,
+            None => break,
+        }
+    }
+    model
+        .signals
+        .get(current)
+        .map_or_else(|| "NULL".to_owned(), |signal| format!("&{}", signal.c_name))
+}
+
+/// The startup call that binds the FSM table and takes each FSM's initial
+/// state, after the storage initializers; empty for a model without FSMs.
+pub(in crate::sim::emit_c) fn fsm_startup(model: &IrModel) -> String {
+    match &model.assertion_coverage {
+        Some(table) if !table.fsms.is_empty() => format!(
+            "    llg_fcov_model(llg_model_fcov_fsms, {}u);\n",
+            table.fsms.len()
+        ),
+        _ => String::new(),
+    }
 }
 
 /// The startup calls that register the model's coverage declarations and

@@ -180,7 +180,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         // Coverage metadata names no storage; samples read through statements.
         covergroups: _,
         coverage_types: _,
-        assertion_coverage: _,
+        assertion_coverage,
         dpi_scopes: _,
         dpi_sites: _,
     } = &*model;
@@ -210,6 +210,13 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         }
         for condition in &set.conditions {
             collect_expr_reads(condition, model, &mut rw);
+        }
+    }
+    // The FSM coverage monitor reads each state signal through its storage
+    // address.
+    for fsm in assertion_coverage.iter().flat_map(|table| &table.fsms) {
+        for part in &fsm.parts {
+            rw.read(part.signal);
         }
     }
     // The runtime reads direct switch controls through their storage address.

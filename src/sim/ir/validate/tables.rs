@@ -54,6 +54,23 @@ impl Validator<'_> {
                     "an assertion item names an unknown expression object",
                 );
             }
+            for fsm in &table.fsms {
+                for part in &fsm.parts {
+                    let fits = self.model.signals.get(part.signal).is_some_and(|signal| {
+                        matches!(signal.ty, IrType::Packed { width, .. }
+                            if part.lsb.checked_add(part.width).is_some_and(|end| end <= width))
+                    });
+                    if !fits {
+                        return self.fail(
+                            "assertion_coverage",
+                            format!(
+                                "FSM `{}` reads outside the packed storage of signal {}",
+                                fsm.full_name, part.signal
+                            ),
+                        );
+                    }
+                }
+            }
         }
 
         for (idx, object) in self.model.vpi_objects.iter().enumerate() {

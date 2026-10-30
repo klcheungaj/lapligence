@@ -3857,6 +3857,69 @@ int32_t llg_coverage_control_vpi(int control, int type, int32_t instance, int64_
 /* vpiCoverageSave (`merge` 0) and vpiCoverageMerge (`merge` 1). */
 int32_t llg_coverage_file_vpi(int merge, int type, const char* name);
 
+/* ── FSM coverage (IEEE 1800-2009 40.4, 40.5.3) ──
+ *
+ * One generated row per FSM that 40.4 pragmas declare, in a model that keeps
+ * the coverage tables. llg_fcov_model (after the storage initializers) zeroes
+ * the counters, takes the state expression's current value as the first
+ * reached state, and watches the storage of every part (llg_value_watch_add),
+ * so only the FSMs' own signals pay, one lookup per changing publication. A
+ * change of the state expression to a state counts one visit of that state;
+ * any other value (unknown bits, or no state) leaves the FSM in no state. A
+ * direct change from one state to another also counts that transition, in a
+ * table the runtime grows per FSM (40.2.1 b) 3) ii)). A stopped FSM drops
+ * its watches. */
+typedef struct {
+    sv4_t* storage;    /* the part's packed signal storage */
+    uint32_t lsb;      /* its first bit in that storage */
+    uint32_t size;     /* its bits */
+} llg_fcov_part_t;
+
+typedef struct {
+    const char* name;  /* the parameter that names the state */
+    uint64_t value;
+} llg_fcov_state_t;
+
+typedef struct llg_fcov_fsm {
+    const char* name;      /* FSM name (40.4.2) */
+    const char* full_name;
+    /* vpiFsmStateExpression (40.5.3): the hierarchical name of the state
+     * signal, with `select` set for the part-select [left:right]; NULL for
+     * a concatenation. */
+    const char* expression;
+    int64_t select_left;
+    int64_t select_right;
+    uint8_t select;
+    uint8_t stopped;       /* run-time: collection stopped (40.3.2.1) */
+    uint8_t known;         /* run-time: `value` holds the state expression */
+    uint8_t pad;
+    const char* file;      /* the `tool state_vector` pragma */
+    uint32_t line;
+    uint32_t column;
+    int32_t instance;      /* coverage instance (llg_acov_instance_t) */
+    uint32_t size;         /* state expression bits, 1 to 64 */
+    uint32_t n_parts;      /* most significant part first */
+    uint32_t n_states;
+    const llg_fcov_part_t* parts;
+    const llg_fcov_state_t* states;
+    uint64_t* visits;      /* n_states counters, generated storage */
+    uint64_t value;        /* run-time: the last state expression value */
+    int32_t current;       /* run-time: the state index of `value`, or -1 */
+    uint32_t n_transitions; /* run-time: observed transitions */
+    uint32_t transition_capacity;
+    /* run-time: n_transitions rows sorted by (from, to), owned by
+     * coverage/fsm.c */
+    struct llg_fcov_transition* transitions;
+} llg_fcov_fsm_t;
+
+void llg_fcov_model(llg_fcov_fsm_t* fsms, size_t n_fsms);
+/* The FSM table for the VPI bridge (llg_vpi.c): NULL beyond the table. */
+size_t llg_fcov_count(void);
+const llg_fcov_fsm_t* llg_fcov_at(size_t index);
+/* The reached states of the FSMs owned directly by `instance` (MODULE
+ * semantics, like llg_acov_covered_in). */
+size_t llg_fcov_covered_in(int32_t instance);
+
 /* ── VPI assertion callbacks and control (IEEE 1800-2009 39.4, 39.5) ──
  *
  * The attempt events of an item with `watches` reach the hook in the order

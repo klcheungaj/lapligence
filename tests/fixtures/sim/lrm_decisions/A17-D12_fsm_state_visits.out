@@ -1,0 +1,10 @@
+initial: 1 of 4
+one step: 3
+unknown: 3
+stop 1
+stopped: 3
+start 1
+started: 4
+reset 1
+after reset: 0
+changed: 1

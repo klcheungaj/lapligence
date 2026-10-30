@@ -51,7 +51,7 @@ module tb;
              $coverage_get_max(unknown, `SV_COV_HIER, tb),
              $coverage_save(19, "never.db"),
              $coverage_control(`SV_COV_STOP, `SV_COV_TOGGLE, 9, tb));
-    // Statement, toggle and FSM coverage are not implemented (S46-D5).
+    // No statement or toggle coverage, and no FSM in this design (S46-D5).
     for (int kind = `SV_COV_FSM_STATE; kind <= `SV_COV_TOGGLE; kind++)
       $display("kind %0d: check %0d start %0d stop %0d reset %0d get %0d max %0d save %0d",
                kind,

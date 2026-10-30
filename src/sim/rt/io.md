@@ -142,7 +142,11 @@ the run's scheduler passes are unchanged. `vpi_control` assertion operations go 
 immediate and deferred ones the item's `control` bits, which the generated
 code of a model with a VPI catalog reads per check. The item table stays
 bound after the runtime cleanup so `cbEndOfSimulation` reads final counters
-(A17-D1..D3). An item's `code` names its entry in the expression object
+(A17-D1..D3). FSM handles (`SLOT_FSM`, `SLOT_FSMSTATE`) index the FSM
+coverage table of `coverage/fsm.c` (A17-D13); that table's visits stay
+bound after cleanup too. FSM coverage shares the value-watch rows of
+`cbValueChange` (`value_watch_notify`), so a removed callback leaves the
+FSM's watch in place. An item's `code` names its entry in the expression object
 table (models generated with `--vpi`): the entry is not a handle; its
 children are the 37.46/37.51 relations (`vpiClockingEvent`,
 `vpiDisableCondition`, `vpiProperty`, `vpiExpr`, `vpiStmt`, `vpiElseStmt`).

@@ -271,3 +271,77 @@ instances, statements without a decompiled form, opaque operators).
   `a == b`; `a_spec` attempt 5 fails at 15 (`b` 0 at 15) with the opaque
   `a |=> b`. The run ends at 32, so `a_inst` attempt 15, whose `s1(a)`
   needs `b` at 35, is still in progress.
+
+## fsm_coverage (40.2.2, 40.3.2, 40.4; A17-D11, A17-D12)
+
+Rules: 40.2.2 L66038 "finite state machine (FSM) coverage: The number of
+states in an FSM that this simulation reached."; 40.3.2.2/40.3.2.3: get_max
+is "the sum of all coverable items of that type over the given
+hierarchy(ies)" and get "the number of the coverable items that have been
+covered"; 40.3.2.1 L66123-L66128 for START (counts again, here the current
+state, A17-D12), STOP and RESET. The pragma forms: `ctrl` uses 40.4.1 with a
+separate `tool enum` pragma and 40.4.5 (`cs, ns, other`); `m3` is the 40.4.8
+example (one-line comments, enum named in the state_vector pragma); `misc`
+has an ANSI output port (`q`, one-hot `Q0..Q2` localparams), a part-select
+`r[5:4]` named `part` (40.4.2), a concatenation `{a, b}` named `pair`
+(40.4.3) and a continuously assigned net `w = {a, b}`.
+
+States: ctrl 4 (two instances: 8), m3 3, misc 3+2+2+2 = 9; tb total 20.
+`check`: tb holds FSMs below it (HIER 1), none itself (MODULE 0); `e` has
+none (0); `$root` HIER 1. On `e`: START 0 (no coverage), STOP and RESET 1,
+get and get_max 0. A scope type 12 and an unknown definition are -1.
+
+Time 0: the port `rst` of c1 and c2 goes from X to 1, so both `cs` become
+IDLE (1 each); `m3.cs = 10 + 0` is p1; misc's initial block makes q Q0 and
+r[5:4] X0 (pair 00 and w 00 are no state). t1: tb 5 (c1 1, c2 1, ctrl 2,
+u3 1, u4 2). sel 1, 3, 2 at 2-4 ns: p2, no state, p3; t6: u3 3, tb 7. At 7
+c2 stops (1). From 8 rst is 0 and both `go` are 1; at the 15 ns edge c1
+goes RUN (2) and c2 RUN uncounted. misc: r[4]=1 gives r[5:4] 01 (no
+state), r[5]=1 X1; {a,b}=01 is Y0 and w W0; {a,b}=10 writes a (11, no
+state) then b (10, Y1), w goes 01 to 10 (W1); force q=100 is Q2, and the
+release leaves it. t16: u4 8 of 9, tb 2+1+3+8 = 14. START on c2 at 17
+counts its current RUN (2). Edge 25: both DONE (3 each); t26: ctrl 6, tb
+17. RESET c1 at 27: 0, current DONE uncounted; t27 tb 14. Edge 35: both
+IDLE: c1 1, c2 unchanged 3; t36: ctrl 4, tb 15. Save 1; RESET tb zeroes all
+(0); merge FSM 1 restores the reached states (15); merge of assertion
+coverage finds no assertion section: 0.
+
+The saved database (`fsm_coverage_database_holds_visits_and_transitions`)
+holds, per FSM, the visits and transitions (A17-D12): c1 IDLE 1 with DONE to
+IDLE (reset at 27 cleared the rest); c2 IDLE 2 (0 ns, 35 ns), RUN 1 (the
+START), DONE 1, transitions RUN to DONE and DONE to IDLE (none at START);
+m3 p1, p2, p3 once each and p1 to p2 (p2 to p3 passed through 13); q Q0 and
+Q2, Q0 to Q2; part X0 and X1 with no transition (01 between them); pair Y0
+and Y1, none (11 between); w W0 and W1, W0 to W1.
+
+## fsm_vpi (40.5.2-40.5.4; A17-D13)
+
+Rules: 40.5.3 L66738 "returns an iterator to all FSMs in an instance";
+L66742 "returns the handle to the signal or expression encoding the FSM
+state"; L66746 "returns an iterator to all states of an FSM"; L66750
+"returns the value of an FSM state"; L66604 "For FSM handle, the entities
+are FSM states"; L66733 vpiCoverMax "shall always be 1 when applied to an
+assertion or FSM state handle"; 40.5.4 L66769-L66770 FSM coverage is
+"controllable only at the instance level".
+
+`c.cs` starts at IDLE (initializer, 1 visit). `go` is 1 from 2 to 12 ns:
+edges 5 RUN, 15 DONE, 25 IDLE (the callback reports each change, 3). `p.r`
+starts 0 (field F0); at 12 r = 0110 gives r[6:5] = 11 (F3) and {a,b} = 01
+(P1). counts 1 at 32: cs IDLE 2, RUN 1, DONE 1 (covered 3, count 4); field
+2 of 2; pair 1. The callback is removed and the FSM keeps counting. Control
+at 32: CHECK on c 1, on tb 0 (no FSM of its own), STOP c, RESET p. Then go
+is 1: edges 35 RUN, 45 DONE are not counted (counts 2 unchanged for c, p
+all 0). Files at 52: save, START c counts the current DONE (2), merge adds
+the saved IDLE 2, RUN 1, DONE 1: IDLE 4, RUN 2, DONE 3 (count 9). The
+errors: `vpiFsm` from NULL or a signal, `vpiFsmStates` from a signal,
+`vpiFsmStateCoverage` of an FSM handle, `vpi_control` with an FSM handle
+and `vpi_put_value` to a state all fail; `pair`'s state expression is a
+concatenation, which has no object.
+
+## neg_fsm_* (A17-D11)
+
+Each is rejected before simulation: a state_vector naming no signal of its
+module (`neg_fsm_signal`), a state vector without states
+(`neg_fsm_states`), `enum` without a name (`neg_fsm_malformed`), a
+part-select outside the declared range (`neg_fsm_select`) and a state value
+that does not fit the state vector (`neg_fsm_value`).

@@ -55,3 +55,4 @@
 #include "coverage/coverage.c"
 #include "coverage/database.c"
 #include "coverage/assertions.c"
+#include "coverage/fsm.c"
