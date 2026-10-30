@@ -1,0 +1,17 @@
+uses of tb.v:
+  vpiAssignment line 32
+  vpiAssignment line 34
+  vpiAssignment line 35
+  vpiContAssign line 29
+  vpiEventControl line 32
+  vpiPort line 22
+  vpiPrimTerm line 30
+  vpiPrimTerm line 30
+uses of tb.v[0]:
+  vpiAssignment line 32
+  vpiAssignment line 34
+  vpiAssignment line 35
+  vpiEventControl line 32
+  vpiPort line 22
+uses of tb.x:
+  vpiAssignment line 32

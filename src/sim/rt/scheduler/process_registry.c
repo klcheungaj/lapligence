@@ -130,6 +130,10 @@ static void register_proc(llg_proc_t* p) {
     g.all_procs[slot] = p;
     if (slot == g.n_procs) g.n_procs++;
     else proc_free_set(slot, 0);
+    // Final procedures register without a coroutine root.
+    if (LLG_CO_UNLIKELY(thread_hook != NULL) && p->chain.root &&
+        (p->chain.root->host_flags & LLG_DESC_PROCEDURAL))
+        thread_event(p, LLG_RT_THREAD_START);
 }
 
 static void unregister_proc(llg_proc_t* p) {

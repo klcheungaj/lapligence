@@ -1,0 +1,49 @@
+step 0 t=0
+  frames (error 0):
+  threads: [active 1 parent NULL origin NULL/0 frame - children 0] [active 1 parent NULL origin NULL/0 frame - children 0]
+  place sof-null: NULL (error 1)
+  place sof-t1: ok (error 0)
+  place eof-null: NULL (error 1)
+  place sot: ok (error 0)
+  place eot-null: NULL (error 1)
+  place eot-var: NULL (error 1)
+  cb sof-t1 t=0 obj=vpiTask frame=tb.t1
+step 1 t=0
+  frames (error 0): tb.t1(active 1, stmt vpiSysTaskCall)
+  threads: [active 1 parent NULL origin NULL/0 frame - children 0] [active 1 parent NULL origin NULL/0 frame tb.t1 children 0]
+  place eof-t1: ok (error 0)
+  place sot-obj: NULL (error 1)
+  place enter-main: ok (error 0)
+  cb enter-main t=1000 obj=vpiThread
+step 2 t=1000
+  frames (error 0): tb.t1(active 1, stmt vpiSysTaskCall)
+  threads: [active 1 parent NULL origin NULL/0 frame - children 0] [active 1 parent NULL origin NULL/0 frame tb.t1 children 0]
+  held frame: active 1 error 0
+  waiting on ev: 1
+  cb eof-t1 t=1000 obj=vpiFrame
+step 3 t=1000
+  frames (error 0): tb.fact(active 1, stmt vpiSysTaskCall) tb.fact(active 0, stmt NULL) tb.fact(active 0, stmt NULL)
+  threads: [active 1 parent NULL origin NULL/0 frame - children 0] [active 1 parent NULL origin NULL/0 frame tb.fact children 0]
+  held frame: active -1 error 1
+  cb sot t=1000 obj=NULL
+  cb sot t=1000 obj=NULL
+step 4 t=2000
+  frames (error 0):
+  threads: [active 1 parent NULL origin NULL/0 frame - children 0] [active 1 parent NULL origin NULL/0 frame - children 2] [active 1 parent thread origin NULL/0 frame - children 0] [active 1 parent thread origin NULL/0 frame - children 0]
+  held frame: active -1 error 1
+  place eot-branch: ok (error 0)
+  place enter-branch: ok (error 0)
+  thread assertions: NULL (error 1)
+  cb enter-branch t=3000 obj=vpiThread
+step 5 t=3000
+  frames (error 0):
+  threads: [active 1 parent NULL origin NULL/0 frame - children 0] [active 1 parent NULL origin NULL/0 frame - children 1] [active 1 parent thread origin NULL/0 frame - children 0]
+  held frame: active -1 error 1
+  held thread: parent thread error 0
+  cb eot-branch t=3000 obj=vpiThread
+step 6 t=4000
+  frames (error 0):
+  threads: [active 1 parent NULL origin NULL/0 frame - children 0] [active 1 parent NULL origin NULL/0 frame - children 0]
+  held frame: active -1 error 1
+  held thread: parent NULL error 1
+r=6 hits=1

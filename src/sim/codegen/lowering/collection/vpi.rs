@@ -13,7 +13,7 @@ use crate::core::db::{
 use crate::sim::ir::{
     IrSdfTarget, IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn,
     IrVpiConstant, IrVpiDirection, IrVpiInstance, IrVpiObject, IrVpiObjectKind, IrVpiQualifiers,
-    IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember, IrVpiVarKind,
+    IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember, IrVpiUdp, IrVpiVarKind,
 };
 
 mod code;
@@ -2176,6 +2176,68 @@ impl Codegen<'_> {
         }
         model.vpi_code = code;
         model.vpi_code_files = files;
+        model.vpi_udps = self.vpi_udp_definitions();
+    }
+
+    /// The UDP definitions the design instantiates (37.32), once each, in
+    /// the order their first instance appears.
+    fn vpi_udp_definitions(&self) -> Vec<IrVpiUdp> {
+        let mut seen = HashSet::new();
+        let mut udps = Vec::new();
+        for node in self.design_nodes() {
+            let NodeKind::Gate {
+                udp: Some(table), ..
+            } = self.kind(node)
+            else {
+                continue;
+            };
+            if !seen.insert(table.name.clone()) {
+                continue;
+            }
+            let field = |c: u8| char::from(c).to_string();
+            let entries = table
+                .rows
+                .iter()
+                .map(|row| {
+                    let mut text = row.inputs.clone();
+                    if let Some(state) = row.state {
+                        text.push(':');
+                        text.push_str(&field(state));
+                    }
+                    text.push(':');
+                    text.push_str(&field(row.output));
+                    (text, row.location.line)
+                })
+                .collect();
+            let ports = table
+                .ports
+                .iter()
+                .map(|(name, direction)| {
+                    let direction = match direction {
+                        Direction::Output => "vpiOutput",
+                        Direction::Inout => "vpiInout",
+                        _ => "vpiInput",
+                    };
+                    (name.clone(), direction)
+                })
+                .collect();
+            udps.push(IrVpiUdp {
+                name: table.name.clone(),
+                file: table
+                    .location
+                    .file
+                    .as_deref()
+                    .map(str::to_owned)
+                    .unwrap_or_default(),
+                line: table.location.line,
+                input_count: table.input_count,
+                sequential: table.sequential,
+                initial: table.initial,
+                ports,
+                entries,
+            });
+        }
+        udps
     }
 
     /// Record every built-in system subroutine the design calls and llg runs

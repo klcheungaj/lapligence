@@ -256,6 +256,11 @@ module tb;
     else k = -k;
   endtask
 
+  // The walk runs inside a task so that it reaches a frame (37.39).
+  task automatic catalog_walk;
+    $catalog;
+  endtask
+
   always @(posedge clk) r0 <= r0 + 4'd1;
   always #5 clk = ~clk;
   initial forever @(posedge clk) iv = iv + $catalog_value();
@@ -281,7 +286,7 @@ module tb;
       fb = fb + 1;
     join
     if (iv > 0) iv = inc(iv);
-    #1 $catalog;
+    #1 catalog_walk;
     $display("%s %0d %0d %0d %0d %0d %0d", s, ch == null, rec.a, da.size(), q.size(),
              aa[3], p.id);
     work(2);

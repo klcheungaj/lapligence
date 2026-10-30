@@ -89,7 +89,8 @@ codegen owns scaling.
 The VPI object model the runtime serves (every object type with its
 properties, relations and iterations, and the status of each) is recorded in
 [vpi_catalog.txt](vpi_catalog.txt), which `tests/runtime_vpi_catalog.rs`
-keeps in step with the dispatch of `llg_vpi.c` and `llg_vpi_dynamic.c` and the
+keeps in step with the dispatch of `llg_vpi.c`, `llg_vpi_dynamic.c` and
+`llg_vpi_runtime.c` and the
 ADV-019 catalog walk checks against a run. A dispatch case added for a
 property, relation or iteration needs its catalog row; a query outside the
 catalog fails with an error (decision A19-D26). `tests/fixtures/runtime/vpi_annex_kml.tsv`
@@ -252,6 +253,27 @@ releases every slot and iterator into them and forgets their ids; with no
 named object and no object callback it returns at once. A class variable's
 `cbValueChange` watches the variable's `_llg_dep` change marker
 (`LLG_VPI_WATCH_OPAQUE`, NULL value).
+Runtime structures (`llg_vpi_runtime.c`, after `llg_vpi_dynamic.c` in the
+same translation unit) answer before the shared dispatch: user systf and
+callback lists from NULL, the time queue (`SLOT_TIMEQ`, one per distinct
+future time from `llg_rt_pending_times`, which reads the scheduler queues
+only when asked), UDP definitions from the code tables' `llg_vpi_udps`
+(`SLOT_UDPDEFN`, `SLOT_UDPIO`, `SLOT_TABLEENTRY`), `vpiUse` from the
+connectivity links and the code rows flagged as aliases, mapped to their
+enclosing statement (A19-D43), and an iterator's `vpiUse` (its reference
+object, recorded at `vpi_iterate`).
+Threads and frames (A19-D44) are named, never pinned: a `SLOT_THREAD`
+handle holds a process's registry slot and per-run identity, checked
+against the scheduler at each use (`llg_rt_thread_live`); a `SLOT_FRAME`
+handle adds the serial of one activation on the frame stack the bridge
+keeps per process. A catalog model brackets each task and function body
+with `llg_vpi_frame_enter`/`llg_vpi_frame_exit`, which run only while
+`llg_vpi_frames_on` is set (an application's startup routines ran); a
+model without an application pays one load and branch per call, measured
+within noise on a call-heavy design, and tracking costs about 5% there.
+The scheduler reports thread creation (roots with `LLG_DESC_PROCEDURAL`),
+ends and watched turns through `llg_rt_set_thread_hook`, which the bridge
+installs with frame tracking and removes at shutdown.
 Module paths and timing checks (VPI-T1) are unnamed `vpiModPath`/`vpiTchk`
 rows whose conns carry a role (`LLG_VPI_ROLE_*`: path input, output, data,
 condition, check reference/data term, argument, notifier, term condition),

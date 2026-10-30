@@ -1,0 +1,36 @@
+step 0: frame - (error 0)
+  thread 0: active 1 origin NULL/0 parent NULL
+  thread 1: active 1 origin NULL/0 parent NULL
+  place start-of-thread: ok (error 0)
+  place start-of-frame-null: NULL (error 1)
+  place start-of-frame-t2: ok (error 0)
+  place end-of-thread-null: NULL (error 1)
+step 1: frame tb.t1 (error 0) [tb.t1 active 1/0 stmt vpiSysTaskCall]
+  thread 0: active 1 origin NULL/0 parent NULL
+  thread 1: active 1 origin NULL/0 parent NULL
+  place end-of-frame-t1: ok (error 0)
+  cb end-of-frame-t1 obj=vpiFrame
+  cb start-of-frame-t2 obj=vpiTask
+step 2: frame tb.t2 (error 0) [tb.t2 active 1/0 stmt vpiSysTaskCall]
+  thread 0: active 1 origin NULL/0 parent NULL
+  thread 1: active 1 origin NULL/0 parent NULL
+  ended frame: active -1 (error 1)
+step 3: frame tb.fact (error 0) [tb.fact active 1/0 stmt vpiSysTaskCall] [tb.fact active 0/0 stmt NULL]
+  thread 0: active 1 origin NULL/0 parent NULL
+  thread 1: active 1 origin NULL/0 parent NULL
+  ended frame: active -1 (error 1)
+  cb start-of-thread obj=NULL
+step 4: frame - (error 0)
+  thread 0: active 1 origin NULL/0 parent NULL
+  thread 1: active 1 origin NULL/0 parent NULL
+  thread 2: active 1 origin NULL/0 parent thread
+  ended frame: active -1 (error 1)
+  threads waiting on tb.ev: 1
+  place end-of-thread-branch: ok (error 0)
+  cb end-of-thread-branch obj=vpiThread
+step 5: frame - (error 0)
+  thread 0: active 1 origin NULL/0 parent NULL
+  thread 1: active 1 origin NULL/0 parent NULL
+  ended frame: active -1 (error 1)
+  ended thread: active -1 (error 1)
+r=2 hits=1

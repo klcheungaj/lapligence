@@ -219,14 +219,19 @@ struct CoroutineArtifact {
     /// (`LLG_DESC_BLOCKABLE`): an `initial` procedure. Branches and
     /// subprograms take the flag of the process that starts them at run time.
     blockable: bool,
+    /// A VPI thread root (`LLG_DESC_PROCEDURAL`, 37.40): an initial or
+    /// always procedure or a fork branch of a model built with the VPI
+    /// catalog. Other models never set it, so their descriptors are unchanged.
+    procedural: bool,
 }
 
 impl CoroutineArtifact {
     fn host_flags(&self) -> &'static str {
-        if self.blockable {
-            "LLG_DESC_BLOCKABLE"
-        } else {
-            "0"
+        match (self.blockable, self.procedural) {
+            (true, true) => "LLG_DESC_BLOCKABLE | LLG_DESC_PROCEDURAL",
+            (true, false) => "LLG_DESC_BLOCKABLE",
+            (false, true) => "LLG_DESC_PROCEDURAL",
+            (false, false) => "0",
         }
     }
 }
@@ -292,6 +297,7 @@ fn render_coroutine_functions(
                 net_batches: Default::default(),
                 recursive_sites: None,
                 blockable: false,
+                procedural: false,
             },
         );
     }
@@ -342,6 +348,7 @@ fn render_recursive_functions(
                 net_batches: Default::default(),
                 recursive_sites: Some(sites),
                 blockable: false,
+                procedural: false,
             },
         );
     }
@@ -454,6 +461,15 @@ fn render_coroutine_process(
         net_batches,
         recursive_sites: None,
         blockable: process.kind() == IrProcessKind::Initial,
+        procedural: model.vpi_catalog
+            && matches!(
+                process.kind(),
+                IrProcessKind::Initial
+                    | IrProcessKind::Always
+                    | IrProcessKind::Comb
+                    | IrProcessKind::Latch
+                    | IrProcessKind::FlipFlop
+            ),
     }))
 }
 
@@ -474,6 +490,12 @@ fn render_coroutine_branches(
             | crate::sim::ir::IrPreFn::DeferredAssertion { c_name, .. }
             | crate::sim::ir::IrPreFn::ForceEval { c_name, .. } => c_name,
         }
+    }
+    fn fork_branch(pre: &crate::sim::ir::IrPreFn) -> bool {
+        matches!(
+            pre,
+            crate::sim::ir::IrPreFn::Branch { .. } | crate::sim::ir::IrPreFn::CapturedBranch { .. }
+        )
     }
     let model = execution.ir();
     let ctx = RCtx {
@@ -516,6 +538,7 @@ fn render_coroutine_branches(
                     net_batches: Default::default(),
                     recursive_sites: None,
                     blockable: false,
+                    procedural: model.vpi_catalog && fork_branch(pre),
                 },
             );
         }
@@ -550,6 +573,7 @@ fn render_coroutine_branches(
                     net_batches: Default::default(),
                     recursive_sites: None,
                     blockable: false,
+                    procedural: model.vpi_catalog && fork_branch(pre),
                 },
             );
         }
@@ -704,7 +728,9 @@ fn render_class_descriptor(
         match &shared {
             None => shared = Some((artifact, rows)),
             Some((first_artifact, first))
-                if *first == rows && first_artifact.blockable == artifact.blockable => {}
+                if *first == rows
+                    && first_artifact.blockable == artifact.blockable
+                    && first_artifact.procedural == artifact.procedural => {}
             Some(_) => return Ok(String::new()),
         }
     }

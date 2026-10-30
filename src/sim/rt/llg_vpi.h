@@ -134,6 +134,23 @@ typedef struct {
     uint32_t span;            /* location of an assertion object: span index + 1 */
 } llg_vpi_code_t;
 
+/* A UDP definition (IEEE 1800-2009 37.32) of a model generated for VPI
+ * applications. */
+typedef struct {
+    const char* name;
+    const char* file;
+    int line;
+    uint32_t input_count;     /* vpiSize */
+    int sequential;           /* vpiPrimType vpiSeqPrim, else vpiCombPrim */
+    int initial;              /* '0', '1' or 'x' of an initial statement, else 0 */
+    const char* const* ports; /* port names, the output first */
+    const int* directions;    /* vpiDirection of each port */
+    uint32_t port_count;
+    const char* const* entries; /* decompiled table entries (inputs[:state]:output) */
+    const int* entry_lines;
+    uint32_t entry_count;
+} llg_vpi_udp_t;
+
 typedef struct {
     const llg_vpi_code_t* nodes;
     uint32_t node_count;
@@ -145,6 +162,8 @@ typedef struct {
     uint32_t range_count;
     const uint32_t* spans;    /* (column, end line, end column) triples (37.45) */
     uint32_t span_count;
+    const llg_vpi_udp_t* udps; /* the UDP definitions the design instantiates */
+    uint32_t udp_count;
 } llg_vpi_code_tables_t;
 
 /* How a call argument is visible to applications (llg_vpi_compile_arg_t). */
@@ -443,6 +462,16 @@ int llg_vpi_model_code(const llg_vpi_code_tables_t* tables);
  * min, 1 typ, 2 max), which a put with mtm values takes. */
 void llg_vpi_model_delays(int writable, int delay_select);
 int llg_vpi_startup(void);
+/* Frames (IEEE 1800-2009 37.39). A model built with the catalog brackets
+ * every task and function body with llg_vpi_frame_enter (after its inputs
+ * are copied in, naming the subprogram's full name) and, when that returned
+ * nonzero, llg_vpi_frame_exit at its return. Both run only while
+ * llg_vpi_frames_on is set, which the bridge sets once it runs an
+ * application's startup routines in a catalog model; a model without an
+ * application pays one load and branch per call. */
+extern int llg_vpi_frames_on;
+uint64_t llg_vpi_frame_enter(const char* full_name);
+void llg_vpi_frame_exit(uint64_t frame);
 /* Run a statically linked application's startup table (the model links the
  * archive that defines it) before LLG_VPI_PLUGIN libraries are loaded. */
 int llg_vpi_startup_static(void (*const* routines)(void));

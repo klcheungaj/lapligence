@@ -490,6 +490,8 @@ const DISPATCH: &[(&str, &[Rule])] = &[
             ("dyn_random_property", Match::Compare, "property"),
             ("is_coverage_type_property", Match::Compare, "property"),
             ("fsm_property", Match::Switch, "property"),
+            ("rts_get", Match::Switch, "property"),
+            ("rts_runtime_get", Match::Compare, "property"),
         ],
     ),
     (
@@ -520,6 +522,9 @@ const DISPATCH: &[(&str, &[Rule])] = &[
             ("dyn_handle", Match::Compare, "type"),
             ("dyn_item_handle", Match::Switch, "type"),
             ("fsm_relation", Match::Compare, "type"),
+            ("rts_handle", Match::Compare, "type"),
+            ("rts_handle", Match::Switch, "type"),
+            ("rts_runtime_handle", Match::Compare, "type"),
         ],
     ),
     (
@@ -535,6 +540,7 @@ const DISPATCH: &[(&str, &[Rule])] = &[
             ("dyn_iterate", Match::Compare, "type"),
             ("dyn_class_iteration", Match::Compare, "type"),
             ("dyn_item_iterate", Match::Compare, "type"),
+            ("rts_iterate", Match::Compare, "type"),
         ],
     ),
 ];
@@ -674,9 +680,10 @@ type Dispatch = BTreeMap<&'static str, (BTreeSet<String>, Vec<(String, String)>)
 
 fn runtime_dispatch() -> Dispatch {
     let source = strip_c_comments(&format!(
-        "{}\n{}",
+        "{}\n{}\n{}",
         read_source("src/sim/rt/llg_vpi.c"),
-        read_source("src/sim/rt/llg_vpi_dynamic.c")
+        read_source("src/sim/rt/llg_vpi_dynamic.c"),
+        read_source("src/sim/rt/llg_vpi_runtime.c")
     ));
     DISPATCH
         .iter()

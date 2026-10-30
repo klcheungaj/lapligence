@@ -84,6 +84,10 @@ A fork branch or detached process takes its parent's setting at spawn, so a
 task called from an `initial` procedure and the branches it forks count with
 it, and the branches of an `always` do not. See
 [end-of-run report](scheduler/readme.md#activations-waits-and-limits).
+`LLG_DESC_PROCEDURAL` (models built with the VPI catalog only) marks a VPI
+thread root (IEEE 1800-2009 37.40): an `initial` or `always*` procedure or a
+fork branch; it is combined with `LLG_DESC_BLOCKABLE` by `|`. Other models
+emit exactly the flags above.
 
 ## Generated-runtime mapping
 

@@ -720,6 +720,90 @@ names print without their directory; a refused query prints `error=<level>`.
   decision A19-D41).
 - `y=1` is `~a` with `a` 0.
 
+## runtime (37.32, 37.38, 37.54, 37.75, 37.76, 37.79)
+
+`runtime.sv` instantiates a combinational and a sequential UDP, drives a
+vector `r` through a continuous assignment and a UDP, and calls
+`$runtime(1)` at 1 ns and `$runtime(2)` at 3 ns (`timescale 1ns/1ns`);
+`en` changes at 5 ns. `runtime.c` registers `$runtime` and the unused
+function `$runtime_unused`. `adv_019::runtime_structures_list_systfs_callbacks_time_queues_uses_and_udps`
+runs it in both optimizer modes with both value backends. Every line of
+`runtime.out` follows from these clauses (SystemVerilog-1800-2009.txt):
+
+- `vpiUserSystf $runtime`, `vpiUserSystf $runtime_unused`: 37.38 detail 6
+  (L60096-L60097) "All user-defined system tasks or functions shall be
+  retrieved using vpi_iterate(), with vpiUserSystf as the type argument,
+  and a NULL reference argument." (registration order, decision A19-D39).
+- The callbacks of NULL list only `eos`: 37.75 detail 2 (L61475) "To get
+  callback objects not related to the above objects, the second argument to
+  vpi_iterate() shall be NULL." The value change callback belongs to `tb.r`
+  (an expression), the delay callbacks to their time queue, `removed` was
+  removed and `eot` (cbAtEndOfSimTime) is a time callback of the current
+  slot. The callbacks of `tb.r` list `vc`, whose iterated handle compares
+  equal to the registered one and whose vpi_get_cb_info (37.75 detail 1,
+  L61474) reports its reason 1 (cbValueChange) and object. `tb` (a scope,
+  hence a stmt) has none; `tb.u1` (a primitive) is no callback owner, so the
+  query fails (decision A19-D26).
+- Time queue at 1 ns: 37.76 detail 1 (L61491) increasing order; detail 3
+  (L61493) "The current time queue shall only be returned as part of the
+  iteration if there are events that precede read only sync": at 1 ns only
+  the end-of-time callback remains, so the queues are 4 ns (`ad`, cbAfterDelay
+  3 from 1 ns, listed under it) and 5 ns (`en`). The `#2` of the calling
+  process is not armed yet. At 3 ns the same two queues remain.
+- UDP definitions: 37.32 (L59798-L59825): `vpiSize` the number of inputs,
+  `vpiPrimType` 28 (vpiCombPrim) and 27 (vpiSeqPrim, detail 2 L59825),
+  `vpiProtected` 0, the line of each `primitive`; vpiName is not a udp defn
+  property (error); io declarations in port order with vpiDirection 2
+  (output) and 1 (input), scalar, their vpiUdpDefn the same definition; the
+  table entries decompiled as in decision A19-D38 with vpiSize 3 (two inputs
+  and the output) or 4 (with the state); vpiInitial fails (llg keeps the
+  initial value only). `tb.u1` reaches `rt_or`.
+- Uses of `tb.r` (37.54, L60774-L60812, decision A19-D43): the continuous
+  assignment, the two UDP terminals, and the assignment `r = 1`; the first
+  use of `tb.r[0]` is its UDP terminal (the continuous assignment reads bit
+  1 only). 37.79 details 1 and 2 (L61647-L61649): the net iterator of `tb`
+  reports `tb`, the module iterator from NULL reports NULL without an error,
+  and once the bit-select reference is released vpiUse fails.
+
+## threads (37.25, 37.39, 37.40, 38.36.1)
+
+`threads.sv` runs an initial procedure that calls the automatic task `t1`
+(which waits `#1`), the recursive function `fact`, a `fork`/`join` of two
+branches and a trigger of `ev`, and an always procedure waiting on `ev`.
+`threads.c` prints, at each `$threads(n)`, the frame chain from
+`vpi_handle(vpiFrame, NULL)` and every thread of `vpi_iterate(vpiThread,
+NULL)`, places the frame and thread callbacks and queries a frame and a
+thread it held after they ended.
+`adv_019::threads_and_frames_follow_processes_and_subprogram_calls` runs it
+in both optimizer modes with both value backends. Every line of
+`threads.out` follows from these clauses (SystemVerilog-1800-2009.txt) and
+decision A19-D44:
+
+- Two threads (the procedures) at step 0 and no frame: 37.40 detail 1
+  (L60195-L60197) "A thread is a SystemVerilog process such as an always
+  procedure or a branch of a fork construct. ... a new frame is activated as
+  each new task or function is entered." Threads are listed in creation
+  order, active, with no parent or origin.
+- Placements: cbStartOfFrame needs a task or function, cbEndOfFrame a
+  frame, cbEndOfThread and cbEnterThread a thread, and cbStartOfThread no
+  object; the others fail (38.36.1, L64658-L64671, A19-D44).
+- `tb.t1` at steps 1 and 2 is the active frame (37.39 detail 4,
+  L60163-L60165) of the main thread (`vpiThread`, compared equal), and its
+  statement is the running system task call. cbStartOfFrame ran when `t1`
+  was entered (`frame=tb.t1`), cbEnterThread when the main thread resumed
+  after `#1`, cbEndOfFrame when `t1` returned.
+- Step 2: the always procedure is the one thread waiting on `ev` (37.25
+  detail 1, L59303-L59304).
+- Step 3: three `tb.fact` frames, only the innermost active, each the
+  vpiParent of the one it called; the frame held from `t1` has ended, so
+  querying it fails (37.3.8, L57568).
+- Step 4: cbStartOfThread ran for both fork branches; the main thread has
+  two children whose vpiParent is that thread. A thread has no assertion
+  iteration (the 37.40 diagram lists none).
+- Step 5: the second branch resumed (cbEnterThread) and its handle is still
+  valid; cbEndOfThread ran when it ended. Step 6: the held branch thread has
+  ended, so querying it fails (38.36.1 cbEndOfThread, L64666-L64670).
+
 ## catalog (A03; 37.3, 38.6, 38.18, 38.23, 40.5.3)
 
 `catalog.sv` holds an object of most kinds the VPI catalog
@@ -733,7 +817,8 @@ state-vector pragma (decision A17-D11), a package and a `$unit` variable,
 a program and a program array (decision A19-D29), and clocking blocks in
 the top module, an interface and a program with io declarations, a
 default and a global clocking and a `default disable iff` (decision
-A19-D30). `catalog.c` has no expected output
+A19-D30). The walk runs inside the task `catalog_walk`, so it also
+reaches a frame, the threads and the system task call through the frame. `catalog.c` has no expected output
 file: starting from a NULL reference, it calls `vpi_get` and `vpi_get_str`
 with every property name and `vpi_handle` and `vpi_iterate` with every
 relation name the catalog or the runtime dispatch knows, on up to 40 objects

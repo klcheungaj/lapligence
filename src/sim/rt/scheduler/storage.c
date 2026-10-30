@@ -531,6 +531,8 @@ struct llg_proc {
     // Its waits count toward the end-of-simulation deadlock report
     // (LLG_DESC_BLOCKABLE); fits the flag padding above.
     uint8_t deadlock_counted;
+    // A VPI cbEnterThread record watches this process (llg_rt_thread_watch_enter).
+    uint8_t vpi_enter;
     llg_process_handle_t* handle;
     llg_process_local_ref_t* process_locals;
     llg_proc_t* next_retired;
@@ -575,6 +577,18 @@ static void (*process_end_hook)(llg_proc_t* proc, int unwind) = NULL;
 
 void llg_rt_set_process_end_hook(void (*hook)(llg_proc_t* proc, int unwind)) {
     process_end_hook = hook;
+}
+
+/* Set only while a VPI application needs thread events (llg_rt.h). */
+static void (*thread_hook)(int slot, uint64_t identity, int event) = NULL;
+
+void llg_rt_set_thread_hook(void (*hook)(int slot, uint64_t identity, int event)) {
+    thread_hook = hook;
+}
+
+static void thread_event(const llg_proc_t* proc, int event) {
+    if (thread_hook && proc->registry_slot >= 0)
+        thread_hook(proc->registry_slot, proc->assertion_owner, event);
 }
 
 static void free_proc_record(llg_proc_t* proc) {

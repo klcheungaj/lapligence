@@ -222,7 +222,7 @@ fn runtime_and_companion_c_has_no_narrowing_or_uninitialized_use() {
     let vpi_unit = dir.path().join("llg_vpi_unit.c");
     std::fs::write(
         &vpi_unit,
-        "#include \"llg_vpi.c\"\n#include \"llg_vpi_dynamic.c\"\n#include \"llg_dpi.c\"\n",
+        "#include \"llg_vpi.c\"\n#include \"llg_vpi_dynamic.c\"\n#include \"llg_vpi_runtime.c\"\n#include \"llg_dpi.c\"\n",
     )
     .expect("write the VPI unit");
 
