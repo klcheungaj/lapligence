@@ -2456,6 +2456,15 @@ fn a19_d43_uses() {
 }
 
 #[test]
+fn a19_d44_frames_and_threads() {
+    run_vpi_decision(
+        "A19-D44_frames_and_threads",
+        &["task $d44(input int)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D44_frames_and_threads.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

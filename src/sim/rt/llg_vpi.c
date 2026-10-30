@@ -96,6 +96,8 @@ typedef enum {
     SLOT_UDPDEFN,    /* UDP definition `aux` (static slot, 37.32) */
     SLOT_UDPIO,      /* port `left` of UDP definition `aux` */
     SLOT_TABLEENTRY, /* table entry `left` of UDP definition `aux` */
+    SLOT_THREAD,     /* thread: registry slot `aux`, process identity `left` (37.40) */
+    SLOT_FRAME,      /* frame `element` of the frame stack of (`aux`, `left`) (37.39) */
 } llg_vpi_slot_kind_t;
 
 enum {
@@ -364,6 +366,11 @@ static vpiHandle rts_handle(int type, vpiHandle reference, int* handled);
 static vpiHandle rts_iterate(int type, vpiHandle reference, int* handled);
 static void rts_get_value(llg_vpi_slot_t* slot, p_vpi_value output);
 static void rts_shutdown(void);
+static int rts_cb_reason(int reason);
+static int rts_bind_cb(struct llg_vpi_cb* cb, const s_cb_data* data);
+static void rts_cb_added(const struct llg_vpi_cb* cb);
+static void rts_cb_removed(const struct llg_vpi_cb* cb);
+static void rts_enable(void);
 static int code_tables_valid(const llg_vpi_code_tables_t* t);
 static PLI_INT32 unsupported_property(void);
 
@@ -2840,6 +2847,7 @@ int llg_vpi_model_types(const llg_vpi_type_tables_t* tables) {
 }
 
 static int run_startup_table(void (*const* startup)(void), const char* origin) {
+    rts_enable();
     for (int i = 0; i < LLG_VPI_MAX_STARTUP_ROUTINES; ++i) {
         if (!startup[i]) return 1;
         startup[i]();
@@ -9714,6 +9722,7 @@ typedef enum {
     CB_ASSERT_SYS, /* cbAssertionSys* (39.4.1) */
     CB_TCHK,       /* cbTchkViolation */
     CB_OBJECT,     /* cbCreateObj, cbReclaimObj, cbEndOfObject (llg_vpi_dynamic.c) */
+    CB_RUNTIME,    /* frame and thread reasons (llg_vpi_runtime.c) */
 } llg_vpi_cb_kind_t;
 
 typedef struct llg_vpi_cb {
@@ -9748,6 +9757,11 @@ typedef struct llg_vpi_cb {
      * record watches the scopes that enclose it), else NULL and the record
      * watches the row `target.object`. */
     llg_vpi_callsite_t* site;
+    /* CB_RUNTIME on a thread or frame: the thread (registry slot, process
+     * identity) and, for cbEndOfFrame, the frame's serial. */
+    int thread_slot;
+    uint64_t thread_identity;
+    uint64_t frame_serial;
     /* CB_ASSERTION: the routine, its assertion item and whether the reason
      * is an attempt event (the item is then watched). data.obj is the
      * record's own assertion handle, data.cb_rtn NULL. */
@@ -9918,6 +9932,7 @@ static void vpi_cb_detach(llg_vpi_cb_t* cb, llg_vpi_cb_done_t* done) {
     if (cb->kind == CB_ASSERTION) assertion_cb_release(cb);
     if (cb->kind == CB_TCHK) --g_vpi.tchk_cbs;
     if (cb->kind == CB_OBJECT) dyn_object_cb_removed();
+    if (cb->kind == CB_RUNTIME) rts_cb_removed(cb);
     if (cb->waiting) {
         cb->waiting = 0;
         --g_vpi.next_time_pending;
@@ -10920,6 +10935,8 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         kind = CB_TCHK;
     } else if (reason == cbCreateObj || reason == cbReclaimObj || reason == cbEndOfObject) {
         kind = CB_OBJECT;
+    } else if (rts_cb_reason(reason)) {
+        kind = CB_RUNTIME;
     } else if (reason == cbNextSimTime || time_reason(reason)) {
         kind = reason == cbNextSimTime ? CB_NEXT_TIME : CB_TIME;
         if (g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
@@ -10932,7 +10949,7 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         return NULL;
     }
     if ((kind == CB_VALUE || kind == CB_FORCE || kind == CB_DISABLE || kind == CB_TCHK ||
-         kind == CB_OBJECT) &&
+         kind == CB_OBJECT || kind == CB_RUNTIME) &&
         g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
         vpi_error("LLG_VPI_CALLBACK", "the simulation has ended; no value can change");
         return NULL;
@@ -10990,6 +11007,10 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         vpi_cb_free(cb);
         return NULL;
     }
+    if (kind == CB_RUNTIME && !rts_bind_cb(cb, data)) {
+        vpi_cb_free(cb);
+        return NULL;
+    }
     cb->data.time = data->time ? &cb->time : NULL;
     cb->data.value = data->value ? &cb->value : NULL;
     uint32_t index = alloc_slot(SLOT_CALLBACK);
@@ -11025,6 +11046,7 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         llg_timing_violation_hook(vpi_tchk_violation);
     }
     if (kind == CB_OBJECT) dyn_object_cb_added();
+    if (kind == CB_RUNTIME) rts_cb_added(cb);
     if (kind == CB_NEXT_TIME) {
         cb->waiting = 1;
         ++g_vpi.next_time_pending;

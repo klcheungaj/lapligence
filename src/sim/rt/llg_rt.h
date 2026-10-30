@@ -2470,6 +2470,11 @@ void llg_monitor_set(int on);
 // end of simulation. The emitter sets it from the owned IR; the scheduler's
 // end check is one counter compare.
 #define LLG_DESC_BLOCKABLE 1u
+// LLG_DESC_PROCEDURAL marks the root of a VPI thread (IEEE 1800-2009 37.40):
+// an initial or always procedure, or a fork branch. Only models built with
+// a VPI catalog set it; the scheduler reads it only while a VPI application
+// watches thread creation.
+#define LLG_DESC_PROCEDURAL 2u
 llg_proc_t* llg_spawn(const llg_co_desc_t* desc, const char* name);
 // Spawn a non-program process directly into an explicit execution region.
 // Ordinary initial/always, continuous and link processes use this or
@@ -2508,6 +2513,31 @@ void llg_rt_set_process_end_hook(void (*hook)(llg_proc_t* proc, int unwind));
 // `*count` 0). `*current` is set when events of the current time slot
 // precede the read-only synchronization point.
 uint64_t* llg_rt_pending_times(size_t* count, int* current);
+// VPI threads (IEEE 1800-2009 37.40, 38.36.1). A thread is named by its
+// registry slot and its per-run process identity, so a stale name never
+// reaches a reused slot; nothing pins the process. The hook, set by the VPI
+// bridge only while an application needs thread events, receives
+// LLG_RT_THREAD_START after a process is registered (procedural roots only),
+// LLG_RT_THREAD_END before any registered process's storage is released,
+// and LLG_RT_THREAD_ENTER before a turn of a process marked with
+// llg_rt_thread_watch_enter.
+enum { LLG_RT_THREAD_START = 0, LLG_RT_THREAD_END = 1, LLG_RT_THREAD_ENTER = 2 };
+void llg_rt_set_thread_hook(void (*hook)(int slot, uint64_t identity, int event));
+// The running process (-1 outside a process turn) and its identity.
+int llg_rt_current_thread(uint64_t* identity);
+// 1 when (slot, identity) names a live process (registered, neither
+// completed nor killed), 2 when that process is also a procedural root.
+int llg_rt_thread_live(int slot, uint64_t identity);
+// The live fork parent of a live thread; 0 when it has none.
+int llg_rt_thread_parent(int slot, uint64_t identity, int* parent_slot,
+                         uint64_t* parent_identity);
+// The live procedural threads (children of (parent_slot, parent_identity)
+// when parent_slot >= 0) in creation order, as malloc'd slot and identity
+// arrays the caller frees; returns the count, 0 with NULL arrays when none.
+size_t llg_rt_threads(int parent_slot, uint64_t parent_identity, int** slots,
+                      uint64_t** identities);
+// Mark or clear LLG_RT_THREAD_ENTER delivery for a live thread.
+void llg_rt_thread_watch_enter(int slot, uint64_t identity, int on);
 // Return the activation frame retained by a process, or NULL for ordinary
 // static-storage processes. The returned pointer is borrowed from `self`.
 llg_frame_t* llg_proc_frame(llg_proc_t* self);
@@ -2885,6 +2915,10 @@ llg_event_object_t* llg_event_object_new(void);
 typedef struct {
     llg_event_object_t* object;
 } llg_event_t;
+
+// The live procedural threads suspended on the object named event `event`
+// currently refers to, as llg_rt_threads lists them (37.25 detail 1).
+size_t llg_rt_event_waiters(const llg_event_t* event, int** slots, uint64_t** identities);
 
 // Resolve a fixed unpacked event-array select using declaration-order
 // flattening. Unknown/out-of-range indices resolve to a null handle, which

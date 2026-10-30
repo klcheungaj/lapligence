@@ -165,6 +165,32 @@ pub(in crate::sim::emit_c) fn coroutine_function<'a, 'm>(
     ))
 }
 
+/// The full name a VPI frame of `function` reports, for models built with the
+/// VPI catalog; `None` elsewhere, which keeps their bodies unchanged.
+/// A class method is named as its class item is (`tb.C::m`, decision
+/// A19-D36) when one class definition has the method's class name.
+fn vpi_frame_name(ctx: &RCtx<'_>, function: &IrFunc) -> Option<String> {
+    if !ctx.model.vpi_catalog || function.inline_expanded {
+        return None;
+    }
+    let name = function.diagnostic_name.as_deref()?;
+    let method = name
+        .rsplit_once("::")
+        .filter(|_| function.receiver_class.is_some());
+    if let Some((class, method)) = method {
+        let mut defns = ctx
+            .model
+            .vpi_dynamic()
+            .classes
+            .iter()
+            .filter(|defn| defn.name == class);
+        if let (Some(defn), None) = (defns.next(), defns.next()) {
+            return Some(format!("{}::{method}", defn.full_name));
+        }
+    }
+    Some(name.to_owned())
+}
+
 fn render_function(
     ctx: &RCtx<'_>,
     function: &IrFunc,
@@ -511,6 +537,18 @@ fn render_function(
             shared_outputs.insert(index, address);
         }
     }
+    // VPI frames (37.39): a catalog model brackets the body once the inputs
+    // are in place; the runtime flag keeps a model without an application
+    // at one load and branch per call.
+    let vpi_frame = vpi_frame_name(ctx, function).map(|name| {
+        frame.scalar(
+            "uint64_t",
+            format!(
+                "llg_vpi_frames_on ? llg_vpi_frame_enter({}) : 0u",
+                c_string_literal(&name)
+            ),
+        )
+    });
     if function.receiver_class.is_some() {
         // A method entered with a null receiver (reported above) returns at
         // once, like a `return`, rather than run on a null object.
@@ -519,6 +557,9 @@ fn render_function(
     frame.block(&function.body)?;
     frame.line("goto _llg_return;");
     frame.line("_llg_return: ;");
+    if let Some(serial) = vpi_frame {
+        frame.line(format!("if ({serial}) llg_vpi_frame_exit({serial});"));
+    }
     for (index, formal) in function.formals.iter().enumerate() {
         if let Some(container) = formal
             .container

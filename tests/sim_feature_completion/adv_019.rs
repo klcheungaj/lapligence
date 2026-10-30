@@ -270,6 +270,27 @@ fn runtime_structures_list_systfs_callbacks_time_queues_uses_and_udps() {
     );
 }
 
+/// Threads follow the initial and always procedures and fork branches, and
+/// frames the task and function calls of each; frame and thread callbacks
+/// run, and handles to ended frames and threads fail (ADV-019-A02).
+#[test]
+fn threads_and_frames_follow_processes_and_subprogram_calls() {
+    let directory = sim_harness::TempDir::new("adv019-threads").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "threads", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "threads",
+        include_str!("../fixtures/sim/feature_completion/adv_019/threads.out"),
+        &[
+            "--define-system-task",
+            "task $threads(input int)",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
 /// The answers of one catalog walk: the object types it reached and, per
 /// type, the (kind, name) queries answered without an error.
 struct Walk {

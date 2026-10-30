@@ -491,6 +491,7 @@ const DISPATCH: &[(&str, &[Rule])] = &[
             ("is_coverage_type_property", Match::Compare, "property"),
             ("fsm_property", Match::Switch, "property"),
             ("rts_get", Match::Switch, "property"),
+            ("rts_runtime_get", Match::Compare, "property"),
         ],
     ),
     (
@@ -522,6 +523,8 @@ const DISPATCH: &[(&str, &[Rule])] = &[
             ("dyn_item_handle", Match::Switch, "type"),
             ("fsm_relation", Match::Compare, "type"),
             ("rts_handle", Match::Compare, "type"),
+            ("rts_handle", Match::Switch, "type"),
+            ("rts_runtime_handle", Match::Compare, "type"),
         ],
     ),
     (

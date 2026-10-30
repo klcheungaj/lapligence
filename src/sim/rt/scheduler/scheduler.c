@@ -59,8 +59,10 @@ static int run_region_queue(llg_region_t region) {
             if (LLG_CO_UNLIKELY(llg_gc_pending)) gc_safe_point();
         } else {
             g.last_process_name = process->name;
-            if (LLG_CO_UNLIKELY(process->deferred_flush))
-                deferred_resume_flush(process);
+            if (LLG_CO_UNLIKELY(process->deferred_flush | process->vpi_enter)) {
+                if (process->deferred_flush) deferred_resume_flush(process);
+                if (process->vpi_enter) thread_event(process, LLG_RT_THREAD_ENTER);
+            }
             process->region = region;
             g.current = process;
             g.process_turn_active = 1;

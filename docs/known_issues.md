@@ -2199,8 +2199,8 @@ of a handle or value; `vpi_handle_by_name` of such an object returns NULL
 with no error status, as for a name that denotes nothing (S42-D11):
 
 - objects outside the generated catalog: sparse fixed arrays (stored in a keyed
-  container), automatic variables, frames (`vpiFrame`) and threads
-  (`vpiThread`), named event arrays, tasks and functions of packages, the
+  container), automatic variables (a frame's `vpiAutomatics` fails: the
+  lowered model keeps no source names for them), named event arrays, tasks and functions of packages, the
   statements of class methods and class methods by name, programs, and checker objects (a checker instance is a module
   scope with its variables; VPI-C1);
 - dynamic objects (VPI-O4) other than static string, chandle and class
@@ -2226,7 +2226,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - structure objects (ADV-019 family 2; their relations are in the
   catalog): elements of multidimensional primitive arrays, and `vpiIndex`
   of an element of a multidimensional instance array; `vpi_put_value` to a
-  sequential UDP; `vpiInitial` of a UDP definition (the initial value is
+  sequential UDP; `vpiOrigin` of a frame (the activating call is not
+  recorded); a fork branch started inside a task has no frame of that task
+  (its frame stack starts empty); `vpiInitial` of a UDP definition (the initial value is
   captured only as a character, so the initial statement has no object);
   `cbValueChange` on a continuous assignment or primitive; a delayed
   `vpi_put_value` to a named event (only `vpiNoDelay` triggers, decision
@@ -2275,10 +2277,11 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - callback reasons other than `cbValueChange`, the seven time reasons,
   `cbEndOfCompile`, `cbStartOfSimulation`, `cbEndOfSimulation`,
   `cbForce`/`cbRelease`, `cbAssign`/`cbDeassign` (accepted; they never run,
-  since procedural `assign`/`deassign` is rejected), `cbDisable` and the
-  class object reasons `cbCreateObj`, `cbReclaimObj` and `cbEndOfObject`:
+  since procedural `assign`/`deassign` is rejected), `cbDisable`, the
+  class object reasons `cbCreateObj`, `cbReclaimObj` and `cbEndOfObject` and
+  the frame and thread reasons (A19-D44):
   `cbStmt` (a statement has no execution hook; adding one would cost every
-  model statement a check), `cbSizeChange`, the frame and thread reasons, `cbError`/`cbPLIError`/
+  model statement a check), `cbSizeChange`, `cbError`/`cbPLIError`/
   `cbSignal` and the save, restart, reset and interactive
   features;
 - the `vpiForce`/`vpiRelease` handle of a `cbForce`/`cbRelease` callback has

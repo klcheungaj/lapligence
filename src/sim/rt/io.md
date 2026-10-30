@@ -262,6 +262,18 @@ only when asked), UDP definitions from the code tables' `llg_vpi_udps`
 connectivity links and the code rows flagged as aliases, mapped to their
 enclosing statement (A19-D43), and an iterator's `vpiUse` (its reference
 object, recorded at `vpi_iterate`).
+Threads and frames (A19-D44) are named, never pinned: a `SLOT_THREAD`
+handle holds a process's registry slot and per-run identity, checked
+against the scheduler at each use (`llg_rt_thread_live`); a `SLOT_FRAME`
+handle adds the serial of one activation on the frame stack the bridge
+keeps per process. A catalog model brackets each task and function body
+with `llg_vpi_frame_enter`/`llg_vpi_frame_exit`, which run only while
+`llg_vpi_frames_on` is set (an application's startup routines ran); a
+model without an application pays one load and branch per call, measured
+within noise on a call-heavy design, and tracking costs about 5% there.
+The scheduler reports thread creation (roots with `LLG_DESC_PROCEDURAL`),
+ends and watched turns through `llg_rt_set_thread_hook`, which the bridge
+installs with frame tracking and removes at shutdown.
 Module paths and timing checks (VPI-T1) are unnamed `vpiModPath`/`vpiTchk`
 rows whose conns carry a role (`LLG_VPI_ROLE_*`: path input, output, data,
 condition, check reference/data term, argument, notifier, term condition),

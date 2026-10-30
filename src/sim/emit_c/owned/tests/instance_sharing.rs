@@ -302,6 +302,7 @@ fn port_link_bit_selections_are_record_operands_of_one_body() {
 fn only_initial_roots_carry_the_blockable_descriptor_flag() {
     for kind in [IrProcessKind::Initial, IrProcessKind::Always] {
         let mut model = instance_model(8);
+        model.vpi_catalog = false;
         for process in &mut model.processes {
             process.kind = kind;
         }
@@ -317,6 +318,7 @@ fn only_initial_roots_carry_the_blockable_descriptor_flag() {
     // Members that disagree keep their own descriptors, so a shared one can
     // never hand an always root the initial flag.
     let mut model = instance_model(8);
+    model.vpi_catalog = false;
     for process in &mut model.processes[..4] {
         process.kind = IrProcessKind::Initial;
     }
@@ -331,4 +333,31 @@ fn only_initial_roots_carry_the_blockable_descriptor_flag() {
         "{source}"
     );
     assert_eq!(source.matches(", 2, 0 };").count(), 4, "{source}");
+}
+
+#[test]
+fn catalog_models_mark_procedure_roots_as_vpi_threads() {
+    // A model built with the VPI catalog marks initial and always roots as
+    // threads (37.40) and keeps the blockable flag of the initial ones.
+    let mut model = instance_model(8);
+    model.vpi_catalog = true;
+    for process in &mut model.processes[..4] {
+        process.kind = IrProcessKind::Initial;
+    }
+    for process in &mut model.processes[4..] {
+        process.kind = IrProcessKind::Always;
+    }
+    let source = render_with_sharing_threshold(&ExecutionModel::lower(model).unwrap(), 4).unwrap();
+    assert_eq!(
+        source
+            .matches("LLG_DESC_BLOCKABLE | LLG_DESC_PROCEDURAL };")
+            .count(),
+        4,
+        "{source}"
+    );
+    assert_eq!(
+        source.matches(", 2, LLG_DESC_PROCEDURAL };").count(),
+        4,
+        "{source}"
+    );
 }

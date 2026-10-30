@@ -458,6 +458,16 @@ int llg_vpi_model_code(const llg_vpi_code_tables_t* tables);
  * min, 1 typ, 2 max), which a put with mtm values takes. */
 void llg_vpi_model_delays(int writable, int delay_select);
 int llg_vpi_startup(void);
+/* Frames (IEEE 1800-2009 37.39). A model built with the catalog brackets
+ * every task and function body with llg_vpi_frame_enter (after its inputs
+ * are copied in, naming the subprogram's full name) and, when that returned
+ * nonzero, llg_vpi_frame_exit at its return. Both run only while
+ * llg_vpi_frames_on is set, which the bridge sets once it runs an
+ * application's startup routines in a catalog model; a model without an
+ * application pays one load and branch per call. */
+extern int llg_vpi_frames_on;
+uint64_t llg_vpi_frame_enter(const char* full_name);
+void llg_vpi_frame_exit(uint64_t frame);
 /* Run a statically linked application's startup table (the model links the
  * archive that defines it) before LLG_VPI_PLUGIN libraries are loaded. */
 int llg_vpi_startup_static(void (*const* routines)(void));

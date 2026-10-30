@@ -48,6 +48,8 @@ test a19d39 sim_lrm_decisions::a19_d39_time_queue_and_callback_lists
 test a19d43 sim_lrm_decisions::a19_d43_uses
 test a19decl adv_019::instance_properties_follow_the_definition_and_its_configuration
 test a19rts adv_019::runtime_structures_list_systfs_callbacks_time_queues_uses_and_udps
+test a19d44 sim_lrm_decisions::a19_d44_frames_and_threads
+test a19thr adv_019::threads_and_frames_follow_processes_and_subprogram_calls
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
@@ -64,9 +66,9 @@ node null 37.5 type=NULL
   iterate vpiUdpDefn implemented walk
   handle vpiSysTfCall implemented walk
   iterate vpiUserSystf implemented walk
-  handle vpiFrame unsupported frames are not objects
+  handle vpiFrame implemented a19thr
   iterate vpiAssertion implemented walk
-  iterate vpiThread unsupported threads are not objects
+  iterate vpiThread implemented a19thr
   iterate vpiCallback implemented a19rts
   iterate vpiTimeQueue implemented a19rts
   handle vpiActiveTimeFormat unsupported $timeformat calls are not objects
@@ -1049,7 +1051,7 @@ node named_event 37.25 type=vpiNamedEvent
   func vpi_put_value implemented a19struct
   get vpiAutomatic implemented walk
   get vpiAllocScheme implemented walk
-  iterate vpiWaitingProcesses unsupported threads are not objects
+  iterate vpiWaitingProcesses implemented a19thr
   handle vpiInstance implemented walk
   handle vpiScope implemented walk
   handle vpiModule implemented walk
@@ -1180,7 +1182,7 @@ node class_obj 37.29 type=vpiClassObj
   get vpiObjId implemented walk
   iterate vpiVariables implemented walk
   handle vpiClassTypespec implemented walk
-  iterate vpiWaitingProcesses unsupported threads are not objects
+  iterate vpiWaitingProcesses unsupported mailbox and semaphore waiters are held in runtime queues the VPI tables do not reach
   iterate vpiMessages unsupported llg keeps the messages of a mailbox in runtime scheduler queues that the VPI tables do not reach
   iterate vpiMethods implemented walk
   iterate vpiConstraint implemented a19cons
@@ -1517,21 +1519,22 @@ node user_systf 37.38 type=vpiUserSystf
   get vpiUserDefn extension walk the registration data of vpi_get_systf_info as properties (S99)
   str vpiName extension walk the registration data of vpi_get_systf_info as properties (S99)
 
-node frame 37.39 type=vpiFrame default=unsupported frames are not objects
-  get vpiActive
-  handle vpiOrigin
-  handle vpiParent
-  handle vpiStmt
-  handle vpiThread
-  iterate vpiAutomatics
+node frame 37.39 type=vpiFrame
+  get vpiActive implemented a19d44
+  handle vpiOrigin unsupported the call that activated a frame is not recorded at run time
+  handle vpiParent implemented a19thr
+  handle vpiStmt implemented a19d44
+  handle vpiThread implemented a19thr
+  iterate vpiAutomatics unsupported automatic variables have no objects: the lowered model keeps no source names for them
+  str vpiFullName extension a19thr the full name of the task or function the frame activates, as other tools report it
 
-node thread 37.40 type=vpiThread default=unsupported threads are not objects
-  get vpiActive
-  handle vpiParent
-  handle vpiOrigin
-  iterate vpiThread
-  handle vpiFrame
-  iterate vpiAssertion
+node thread 37.40 type=vpiThread
+  get vpiActive implemented a19d44
+  handle vpiParent implemented a19thr
+  handle vpiOrigin implemented a19d44
+  iterate vpiThread implemented a19thr
+  handle vpiFrame implemented a19thr
+  iterate vpiAssertion error a19thr the 37.40 diagram has no assertion relation; its circle is the NULL reference of vpi_iterate(vpiThread, NULL)
 
 node delay_device 37.41 type=vpiDelayDevice default=unsupported delay devices are not modelled (no MIPD or net delay objects)
   get vpiDelayType
