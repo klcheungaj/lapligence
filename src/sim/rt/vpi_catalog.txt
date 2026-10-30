@@ -375,39 +375,85 @@ node named_begin 37.12 type=vpiNamedBegin
 
 node begin 37.12 type=vpiBegin
   iterate vpiStmt implemented walk
-  str vpiFullName unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiPropertyDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiSequenceDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiNamedEvent unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiVariables unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiReg unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiRegArray unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiParameter unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiInternalScope unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  str vpiFullName implemented walk
+  iterate vpiPropertyDecl implemented walk
+  iterate vpiSequenceDecl implemented walk
+  iterate vpiNamedEvent implemented walk
+  iterate vpiVariables implemented walk
+  iterate vpiReg implemented walk
+  iterate vpiRegArray implemented walk
+  iterate vpiParameter implemented walk
+  iterate vpiInternalScope implemented walk
 
 node named_fork 37.12 type=vpiNamedFork
   iterate vpiStmt implemented walk
-  str vpiFullName unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiPropertyDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiSequenceDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiNamedEvent unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiVariables unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiReg unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiRegArray unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiParameter unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiInternalScope unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  str vpiFullName implemented walk
+  iterate vpiPropertyDecl implemented walk
+  iterate vpiSequenceDecl implemented walk
+  iterate vpiNamedEvent implemented walk
+  iterate vpiVariables implemented walk
+  iterate vpiReg implemented walk
+  iterate vpiRegArray implemented walk
+  iterate vpiParameter implemented walk
+  iterate vpiInternalScope implemented walk
+  get vpiTimePrecision extension walk the time unit and precision of the enclosing instance
+  get vpiTimeUnit extension walk the time unit and precision of the enclosing instance
+  handle vpiInstance extension walk the enclosing scope, instance, module or parent
+  handle vpiModule extension walk the enclosing scope, instance, module or parent
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
+  iterate vpiArrayNet extension walk per-type child iteration (IEEE 1364)
+  iterate vpiBitVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiByteVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiContAssign extension walk per-type child iteration (IEEE 1364)
+  iterate vpiEnumVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiFunction extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGate extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGateArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiGenScope extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInstanceArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiIntegerVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInterface extension walk per-type child iteration (IEEE 1364)
+  iterate vpiInterfaceArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiLongIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModPath extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModport extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModule extension walk per-type child iteration (IEEE 1364)
+  iterate vpiModuleArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedBegin extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNamedFork extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNet extension walk per-type child iteration (IEEE 1364)
+  iterate vpiNetArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPackedArrayVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPort extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPrimitive extension walk per-type child iteration (IEEE 1364)
+  iterate vpiPrimitiveArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiProcess extension walk per-type child iteration (IEEE 1364)
+  iterate vpiRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortIntVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiShortRealVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiStructVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitch extension walk per-type child iteration (IEEE 1364)
+  iterate vpiSwitchArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTask extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTaskFunc extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTchk extension walk per-type child iteration (IEEE 1364)
+  iterate vpiTimeVar extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdp extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUdpArray extension walk per-type child iteration (IEEE 1364)
+  iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
 
 node fork 37.12 type=vpiFork
   iterate vpiStmt implemented walk
-  str vpiFullName unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiPropertyDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiSequenceDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiNamedEvent unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiVariables unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiReg unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiRegArray unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiParameter unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiInternalScope unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  str vpiFullName implemented walk
+  iterate vpiPropertyDecl implemented walk
+  iterate vpiSequenceDecl implemented walk
+  iterate vpiNamedEvent implemented walk
+  iterate vpiVariables implemented walk
+  iterate vpiReg implemented walk
+  iterate vpiRegArray implemented walk
+  iterate vpiParameter implemented walk
+  iterate vpiInternalScope implemented walk
 
 node scope_item 37.12 members=property_decl,sequence_decl,concurrent_assertion,named_event,named_event_array,variables,parameters,scope,typespec,let_decl,stmt
   handle vpiScope implemented walk
@@ -1799,15 +1845,15 @@ node for 37.69 type=vpiFor
   handle vpiForIncStmt implemented walk
   handle vpiCondition implemented walk
   handle vpiStmt implemented walk
-  str vpiFullName unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiPropertyDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiSequenceDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiNamedEvent unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiVariables unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiReg unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiRegArray unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiParameter unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiInternalScope unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  str vpiFullName implemented walk
+  iterate vpiPropertyDecl implemented walk
+  iterate vpiSequenceDecl implemented walk
+  iterate vpiNamedEvent implemented walk
+  iterate vpiVariables implemented walk
+  iterate vpiReg implemented walk
+  iterate vpiRegArray implemented walk
+  iterate vpiParameter implemented walk
+  iterate vpiInternalScope implemented walk
 
 node do_while 37.70 type=vpiDoWhile
   handle vpiCondition implemented walk
@@ -1817,15 +1863,15 @@ node foreach_stmt 37.70 type=vpiForeachStmt
   handle vpiVariables implemented walk
   iterate vpiLoopVars implemented walk
   handle vpiStmt implemented walk
-  str vpiFullName unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiPropertyDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiSequenceDecl unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiNamedEvent unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiVariables unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiReg unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiRegArray unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiParameter unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
-  iterate vpiInternalScope unsupported unnamed blocks, for and foreach statements are statement objects, not scopes, in llg
+  str vpiFullName implemented walk
+  iterate vpiPropertyDecl implemented walk
+  iterate vpiSequenceDecl implemented walk
+  iterate vpiNamedEvent implemented walk
+  iterate vpiVariables implemented walk
+  iterate vpiReg implemented walk
+  iterate vpiRegArray implemented walk
+  iterate vpiParameter implemented walk
+  iterate vpiInternalScope implemented walk
 
 node alias_stmt 37.71 type=vpiAliasStmt default=unsupported alias statements are not objects
   handle vpiLhs

@@ -406,10 +406,29 @@ static int model_pointer_index(const llg_vpi_model_object_t* pointer,
     return 1;
 }
 
+/* A catalog row of type vpiBegin, vpiFork, vpiFor or vpiForeachStmt is an
+ * unnamed block, for or foreach that is a scope (37.12 details 1-3,
+ * decision A19-D27); other such statements are code objects only. */
+static int is_statement_scope_type(int type) {
+    return type == vpiBegin || type == vpiFork || type == vpiFor || type == vpiForeachStmt;
+}
+
 static int is_scope_type(int type) {
     return type == vpiModule || type == vpiInterface || type == vpiGenScope ||
            type == vpiNamedBegin || type == vpiNamedFork || type == vpiTask ||
-           type == vpiFunction;
+           type == vpiFunction || is_statement_scope_type(type);
+}
+
+/* The iterations 37.12 gives every scope that llg answers; a begin or fork
+ * that is not a scope answers them with no objects (decision A19-D27). */
+static int is_scope_iteration(int type) {
+    switch (type) {
+        case vpiPropertyDecl: case vpiSequenceDecl: case vpiNamedEvent: case vpiVariables:
+        case vpiReg: case vpiRegArray: case vpiParameter: case vpiInternalScope:
+            return 1;
+        default:
+            return 0;
+    }
 }
 
 static int is_process_type(int type) {
@@ -1252,6 +1271,7 @@ static int read_conn(uint32_t row, uint32_t index, llg_vpi_datum_t* out, int* is
 static int code_value(uint32_t index, llg_vpi_datum_t* out, int* is_signed);
 static int handle_type(const llg_vpi_slot_t* slot);
 static vpiHandle code_handle(uint32_t index);
+static int code_is_unscoped_block(uint32_t index);
 static const llg_vpi_code_t* code_at(uint32_t index);
 static uint32_t code_visible(uint32_t index);
 static uint32_t code_child(const llg_vpi_code_t* node, int relation);
@@ -3203,6 +3223,7 @@ static vpiHandle iterate_declarations(int type, vpiHandle reference) {
         return NULL;
     }
     const llg_vpi_model_object_t* scope = slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
+    if (slot->kind == SLOT_CODE && code_is_unscoped_block((uint32_t)slot->aux)) return NULL;
     if (!scope || !is_scope_type(scope->type)) {
         vpi_error("LLG_VPI_RELATION", "sequence and property declarations iterate from a scope");
         return NULL;
@@ -3854,6 +3875,15 @@ static int code_type(const llg_vpi_code_t* node) {
     return node->object >= 0 ? g_vpi.objects[node->object].type : vpiRefObj;
 }
 
+/* A begin or fork code object: one without declarations, which is not a
+ * scope (37.12 detail 1); a scope is its catalog row. */
+static int code_is_unscoped_block(uint32_t index) {
+    const llg_vpi_code_t* node = code_at(index);
+    if (!node) return 0;
+    int type = code_type(node);
+    return type == vpiBegin || type == vpiFork;
+}
+
 static int code_is_expression(const llg_vpi_code_t* node) {
     int type = code_type(node);
     return !code_is_statement(type) && type != vpiCaseItem && !code_is_assertion_object(type);
@@ -4080,6 +4110,10 @@ static vpiHandle iterate_code(uint32_t index, int relation) {
         return NULL;
     }
     if (!code_iteration_applies(code_type(node), relation)) {
+        /* A block that is not a scope declares nothing (decision A19-D27). */
+        if (!(node->flags & LLG_VPI_CODE_ALIAS) && code_is_unscoped_block(index) &&
+            is_scope_iteration(relation))
+            return NULL;
         vpi_error("LLG_VPI_RELATION", "unsupported VPI one-to-many relation for this object");
         return NULL;
     }
@@ -5091,6 +5125,17 @@ static PLI_BYTE8* code_string(uint32_t index, int property) {
     return NULL;
 }
 
+/* The statement object row `object` (an unnamed block, for or foreach that
+ * is a scope) stands for: its code row, or LLG_VPI_NONE after an error. */
+static uint32_t statement_scope_code(const llg_vpi_model_object_t* object) {
+    if (!g_vpi.code || !object->code) {
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "statements are objects only in models generated with --vpi or --dpi-lib");
+        return LLG_VPI_NONE;
+    }
+    return object->code - 1u;
+}
+
 static vpiHandle statement_relation(int type, const llg_vpi_slot_t* slot) {
     const llg_vpi_stmt_t* stmt = (const llg_vpi_stmt_t*)slot->pointer;
     if (type == vpiLhs) {
@@ -5134,6 +5179,12 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     uint32_t argument = argument_code(slot);
     if (argument != LLG_VPI_NONE) return code_relation(type, argument);
     llg_vpi_model_object_t* object = row_object(slot->object);
+    if (slot->kind == SLOT_OBJECT && object && is_statement_scope_type(object->type)) {
+        /* A statement scope's relations are its statement's (37.12, 37.69,
+         * 37.70); vpiScope is the enclosing scope. */
+        uint32_t code = statement_scope_code(object);
+        return code == LLG_VPI_NONE ? NULL : code_relation(type, code);
+    }
     switch (type) {
         case vpiStmt:
             /* 37.37, 37.58: the statement of a process, task or function
@@ -5356,7 +5407,7 @@ static int child_matches(const llg_vpi_model_object_t* child, int type) {
         case vpiInternalScope:
             return child->type == vpiGenScope || child->type == vpiNamedBegin ||
                    child->type == vpiNamedFork || child->type == vpiTask ||
-                   child->type == vpiFunction;
+                   child->type == vpiFunction || is_statement_scope_type(child->type);
         case vpiModule:
             return child->type == vpiModule;
         case vpiProcess:
@@ -5631,6 +5682,13 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     uint32_t argument = argument_code(slot);
     if (argument != LLG_VPI_NONE) return iterate_code(argument, type);
     llg_vpi_model_object_t* object = row_object(slot->object);
+    if (slot->kind == SLOT_OBJECT && object && is_statement_scope_type(object->type)) {
+        /* 37.12: a statement scope iterates its declarations; the other
+         * iterations are its statement's (37.69, 37.70). */
+        if (is_scope_iteration(type)) return iterate_children(type, slot->object);
+        uint32_t code = statement_scope_code(object);
+        return code == LLG_VPI_NONE ? NULL : iterate_code(code, type);
+    }
     if (type == vpiStmt && slot->kind == SLOT_OBJECT && object &&
         (object->type == vpiNamedBegin || object->type == vpiNamedFork)) {
         /* 37.12: the statements of a named block. */
@@ -6064,6 +6122,12 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         }
     }
     if (slot->kind == SLOT_CODE) return code_property((uint32_t)slot->aux, property);
+    if (slot->kind == SLOT_OBJECT && row_object(slot->object) &&
+        is_statement_scope_type(row_object(slot->object)->type)) {
+        /* A statement scope's properties are its statement's. */
+        uint32_t code = statement_scope_code(row_object(slot->object));
+        return code == LLG_VPI_NONE ? vpiUndefined : code_property(code, property);
+    }
     {
         /* An argument's expression object answers its own properties; its
          * value, size and sign are the call's snapshot. */
@@ -6547,6 +6611,13 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
         if (name) return (PLI_BYTE8*)name;
     }
     if (slot->kind == SLOT_CODE) return code_string((uint32_t)slot->aux, property);
+    if (slot->kind == SLOT_OBJECT && object && is_statement_scope_type(object->type) &&
+        property != vpiName && property != vpiFullName) {
+        /* A statement scope has its scope's names (37.12) and its
+         * statement's other strings. */
+        uint32_t code = statement_scope_code(object);
+        return code == LLG_VPI_NONE ? NULL : code_string(code, property);
+    }
     {
         uint32_t argument = argument_code(slot);
         if (argument != LLG_VPI_NONE &&

@@ -909,7 +909,7 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         match (cg.kind(id), cg.db.semantic_detail(id)) {
             (NodeKind::Stmt(StmtKind::Begin), Some("List")) => {
                 let mut statements = Vec::new();
-                self.flatten(id, &mut statements);
+                self.cg.vpi_flatten(id, &mut statements);
                 match statements.as_slice() {
                     [] => None,
                     [single] => self.statement_item(*single),
@@ -932,82 +932,21 @@ impl<'c, 'a> CodeTables<'c, 'a> {
         }
     }
 
-    /// The statements of a block or list, lists folded in, declarations
-    /// and the block's declaration scope left out.
-    fn flatten(&self, id: NodeId, out: &mut Vec<NodeId>) {
-        let cg = self.cg;
-        for child in &cg.node(id).children {
-            match (cg.kind(*child), cg.db.semantic_detail(*child)) {
-                (NodeKind::Stmt(StmtKind::Begin), Some("List")) => self.flatten(*child, out),
-                (NodeKind::Stmt(StmtKind::Begin), Some("StatementBlock"))
-                | (NodeKind::Stmt(StmtKind::VariableDecl { .. }), _) => {}
-                (
-                    NodeKind::Stmt(_)
-                    | NodeKind::FuncCall { .. }
-                    | NodeKind::SysCall { .. }
-                    | NodeKind::MethodCall { .. },
-                    _,
-                ) => out.push(*child),
-                _ => {}
-            }
-        }
-    }
-
-    /// The foreach statement an implicit block holds only to declare its
-    /// loop variables (37.12 detail 3 makes the foreach their scope), or
-    /// `None` for any other block.
-    fn foreach_block(&self, id: NodeId) -> Option<NodeId> {
-        let cg = self.cg;
-        let mut statements = Vec::new();
-        self.flatten(id, &mut statements);
-        let [found] = statements.as_slice() else {
-            return None;
+    /// A built statement that is the unnamed scope `row` (37.12 details
+    /// 1-3): the entry stands for the row, and its children live in it.
+    fn scoped(
+        &mut self,
+        built: (IrVpiCode, Children<'a>, Option<usize>),
+        row: Option<usize>,
+    ) -> (IrVpiCode, Children<'a>, Option<usize>) {
+        let (mut code, children, inner) = built;
+        let Some(row) = row else {
+            return (code, children, inner);
         };
-        let NodeKind::Stmt(StmtKind::Foreach { vars, .. }) = cg.kind(*found) else {
-            return None;
-        };
-        // The loop variables live in the block's declaration scope.
-        let declared_here = |var: NodeId| {
-            cg.node(var)
-                .parent
-                .is_some_and(|parent| parent == id || cg.node(id).children.contains(&parent))
-        };
-        vars.iter()
-            .flatten()
-            .any(|var| declared_here(*var))
-            .then_some(*found)
-    }
-
-    /// The variables an implicit block declares for the one `for` loop it
-    /// holds (`for (int i = 0; ...)`), or `None` for any other block.
-    fn for_declarations(&self, id: NodeId) -> Option<(NodeId, Vec<NodeId>)> {
-        let cg = self.cg;
-        let mut children = Vec::new();
-        for child in &cg.node(id).children {
-            if cg.db.semantic_detail(*child) == Some("List") {
-                children.extend(cg.node(*child).children.iter().copied());
-            } else {
-                children.push(*child);
-            }
-        }
-        let mut declarations = Vec::new();
-        let mut found = None;
-        for child in children {
-            match (cg.kind(child), cg.db.semantic_detail(child)) {
-                (NodeKind::Stmt(StmtKind::VariableDecl { declaration }), _) => {
-                    declarations.push(*declaration);
-                }
-                (NodeKind::Stmt(StmtKind::For { init, vars, .. }), _)
-                    if found.is_none() && init.is_empty() && vars.is_empty() =>
-                {
-                    found = Some(child);
-                }
-                (NodeKind::Stmt(StmtKind::Begin), Some("StatementBlock")) => {}
-                _ => return None,
-            }
-        }
-        let found = found?;
-        (!declarations.is_empty()).then_some((found, declarations))
+        code.flags |= IrVpiCode::ALIAS;
+        code.object = Some(row);
+        self.pending_block = Some(row);
+        (code, children, Some(row))
     }
 
     fn statement(
@@ -1027,19 +966,30 @@ impl<'c, 'a> CodeTables<'c, 'a> {
             StmtKind::Begin | StmtKind::Fork { .. } => {
                 let fork = matches!(kind, StmtKind::Fork { .. });
                 let name = &cg.node(id).name;
+                // An unnamed block that is a scope: its catalog row
+                // (decision A19-D27).
+                let scope_row = if name.is_empty() {
+                    cg.vpi_block_scope(id)
+                        .filter(|declared| cg.vpi_unnamed_scope_name(*declared).is_some())
+                        .and_then(|declared| self.decl_row(declared))
+                } else {
+                    None
+                };
                 if !fork && name.is_empty() {
-                    if let Some((found, declarations)) = self.for_declarations(id) {
-                        return self.build(Item::ForWithLocals(found, declarations), scope);
+                    if let Some((found, declarations)) = self.cg.vpi_for_declarations(id) {
+                        let built = self.build(Item::ForWithLocals(found, declarations), scope);
+                        return self.scoped(built, scope_row);
                     }
-                    if let Some(found) = self.foreach_block(id) {
-                        return self.statement(found, scope);
+                    if let Some(found) = self.cg.vpi_foreach_block(id) {
+                        let built = self.statement(found, scope);
+                        return self.scoped(built, scope_row);
                     }
                 }
                 let statements = match kind {
                     StmtKind::Fork { branches, .. } => branches.clone(),
                     _ => {
                         let mut statements = Vec::new();
-                        self.flatten(id, &mut statements);
+                        self.cg.vpi_flatten(id, &mut statements);
                         statements
                     }
                 };
@@ -1049,7 +999,7 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                     .collect();
                 if name.is_empty() {
                     let code = self.located(if fork { "vpiFork" } else { "vpiBegin" }, id);
-                    (code, children)
+                    return self.scoped((code, children, scope), scope_row);
                 } else if let Some(row) = self.decl_row(id) {
                     // A named block is a catalog scope: the entry stands for
                     // it and its statements live in it.

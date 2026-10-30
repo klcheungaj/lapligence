@@ -16,7 +16,10 @@ use crate::sim::ir::{
 
 mod code;
 mod dynamic;
+mod scopes;
 mod timing;
+use scopes::ScopeStatement;
+pub(in super::super) use scopes::VpiScopeIndex;
 pub(in super::super) use timing::VpiTimingMetadata;
 
 const SEPARATOR: &str = "\u{1f}";
@@ -106,10 +109,19 @@ impl Codegen<'_> {
                 .map(str::to_owned)
                 .collect(),
             _ => {
+                // A block statement is named by its declaration scope, which
+                // holds what the block declares (decision A19-D27).
+                if let Some(scope) = self.vpi_block_scope(id) {
+                    return self.vpi_path(scope);
+                }
                 let node = self.node(id);
                 let mut path = node
                     .parent
                     .map_or_else(Vec::new, |parent| self.vpi_path(parent));
+                if let Some(name) = self.vpi_unnamed_scope_name(id) {
+                    path.push(name.to_owned());
+                    return path;
+                }
                 let named = matches!(
                     self.kind(id),
                     NodeKind::Stmt(StmtKind::Begin | StmtKind::Fork { .. })
@@ -982,15 +994,20 @@ impl Codegen<'_> {
             false
         }
 
-        /// Whether `id` is a named statement block of a process (not the
-        /// frontend's declaration scope of the same name, nor an instance
-        /// body), so every named block is captured exactly once.
-        fn statement_block(db: &Db, id: NodeId) -> bool {
-            let mut current = db.node(id).parent;
+        /// Whether `id` is a named statement block of a process, or of a
+        /// task or function of an instance (not the frontend's declaration
+        /// scope of the same name, nor an instance body), so every named
+        /// block is captured exactly once.
+        fn statement_block(cg: &Codegen<'_>, id: NodeId) -> bool {
+            if cg.db.semantic_detail(id) == Some("StatementBlock") {
+                return false;
+            }
+            let mut current = cg.node(id).parent;
             while let Some(parent) = current {
-                match db.node(parent).kind {
+                match cg.kind(parent) {
                     NodeKind::Process { .. } => return true,
-                    NodeKind::Stmt(_) => current = db.node(parent).parent,
+                    NodeKind::FuncTask { .. } => return cg.vpi_declared_in_instance(parent),
+                    NodeKind::Stmt(_) => current = cg.node(parent).parent,
                     _ => return false,
                 }
             }
@@ -1076,8 +1093,34 @@ impl Codegen<'_> {
                         ..IrVpiObject::default()
                     }));
                 }
+                // An unnamed block that declares items, a `for` that
+                // declares its loop variables, a `foreach` (37.12 details
+                // 1-3, decision A19-D27).
+                NodeKind::Stmt(StmtKind::Begin) if self.vpi_unnamed_scope_name(id).is_some() => {
+                    let Some((block, statement)) = self.vpi_scope_statement(id) else {
+                        continue;
+                    };
+                    let line = match statement {
+                        ScopeStatement::For(at) | ScopeStatement::Foreach(at) => self.node(at).line,
+                        _ => self
+                            .db
+                            .block_keyword_line(block)
+                            .unwrap_or(self.node(block).line),
+                    };
+                    let path = self.vpi_path(id);
+                    insert(IrVpiObject {
+                        line,
+                        ..source(IrVpiObject {
+                            full_name: path.join(SEPARATOR),
+                            name: path.last().cloned().unwrap_or_default(),
+                            kind: IrVpiObjectKind::StatementScope,
+                            type_code: Some(statement.type_code()),
+                            ..IrVpiObject::default()
+                        })
+                    });
+                }
                 NodeKind::Stmt(kind @ (StmtKind::Begin | StmtKind::Fork { .. }))
-                    if !node.name.is_empty() && statement_block(self.db, id) =>
+                    if !node.name.is_empty() && statement_block(self, id) =>
                 {
                     let row = source(IrVpiObject {
                         full_name: self.vpi_full_name(id),
@@ -1752,7 +1795,14 @@ impl Codegen<'_> {
             let is_scope = match self.kind(id) {
                 NodeKind::ModuleInst { .. } => true,
                 NodeKind::GenScope => !node.name.is_empty(),
-                NodeKind::Stmt(StmtKind::Begin | StmtKind::Fork { .. }) => !node.name.is_empty(),
+                // A named block, or an unnamed one that is a scope
+                // (decision A19-D27).
+                NodeKind::Stmt(StmtKind::Begin | StmtKind::Fork { .. }) => {
+                    !node.name.is_empty()
+                        || self
+                            .vpi_block_scope(id)
+                            .is_some_and(|declared| self.vpi_unnamed_scope_name(declared).is_some())
+                }
                 _ => false,
             };
             if is_scope {

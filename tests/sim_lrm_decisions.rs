@@ -2303,6 +2303,15 @@ fn a19_d26_wrong_object_queries() {
 }
 
 #[test]
+fn a19_d27_statement_scopes() {
+    run_vpi_decision(
+        "A19-D27_statement_scopes",
+        &["task $d27()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D27_statement_scopes.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

@@ -14,6 +14,11 @@ pub enum IrVpiObjectKind {
     NamedBegin,
     /// A named `fork ... join` block (`vpiNamedFork`).
     NamedFork,
+    /// An unnamed begin or fork that declares items, a `for` that declares
+    /// its loop variables or a `foreach` (37.12 details 1-3): a scope named
+    /// `unnamed$$_<n>` whose [`IrVpiObject::type_code`] is its statement's
+    /// type (decision A19-D27).
+    StatementScope,
     Net,
     /// A packed variable; [`IrVpiVarKind`] selects its exact object type.
     Reg,
@@ -64,6 +69,7 @@ impl IrVpiObjectKind {
             Self::GenScope => "vpiGenScope",
             Self::NamedBegin => "vpiNamedBegin",
             Self::NamedFork => "vpiNamedFork",
+            Self::StatementScope => "vpiBegin",
             Self::Net => "vpiNet",
             Self::Reg => "vpiReg",
             Self::RealVar => "vpiRealVar",
@@ -94,6 +100,7 @@ impl IrVpiObjectKind {
                 | Self::GenScope
                 | Self::NamedBegin
                 | Self::NamedFork
+                | Self::StatementScope
                 | Self::TaskFunc
         )
     }

@@ -360,7 +360,10 @@ init and increment statements). It ends with `tb.main` found by name, a
   `for (int i = 0; ...)` declares its variable (37.12 detail 2, L58081:
   "A for statement shall be a scope if and only if the vpiLocalVarDecls
   property returns TRUE"), so it prints `local_vars=1` and an init
-  assignment to `i`; `repeat`, `while` and `do ... while` print their
+  assignment to `i`, and as a scope it is named `unnamed$$_0` (decision
+  A19-D27; the `foreach`, detail 3 L58083: "The scope of each loop control
+  variable in a foreach stmt shall be the foreach stmt.", is `unnamed$$_1`
+  of the block `main`); `repeat`, `while` and `do ... while` print their
   conditions, `foreach (arr[j])` its array and loop variable `j` (37.70
   details 1-2, L61358-L61361), `forever` its begin, and `break`/`continue`
   are `vpiBreak`/`vpiContinue`.
