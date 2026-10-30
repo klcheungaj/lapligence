@@ -28,6 +28,11 @@ locals without an existing waiter; subscriber absence does not prove an entry
 unusable. Generated clocking-source emission currently rejects automatic bindings,
 but native runtime callers can pass any live packed owner to the borrowed-source
 APIs. Globally filtering that storage class would change accepted runtime behavior.
+Recording is the default. A generated model whose IR has no clocking drive, `##`
+cycle wait or assertion clock pulse (`IrModel::clocking_history`, set by lowering
+and checked by validation) calls `llg_rt_skip_clocking_history`; publication then
+updates only the registered sequence clocks' tick entries, so ordinary designs
+pay no per-change entry allocation or time-advance free.
 Wait/sampling split and clockvar publication: `dependencies.c` and
 `sampling.c` comments. A real or shortreal input bound to an expression samples its 64-bit
 `$realtobits` image signal; the `_real` variants decode it into the `double`

@@ -160,6 +160,9 @@ static int ev_matches_changed(sv4_t old, sv4_t new, int kind) {
  * an NBA may still retain them). External owners must forget before freeing or
  * reusing a descriptor. Equality is exact pointer identity, never payload or
  * ordering of unrelated pointers. The list owns entries; the index borrows them.
+ * Occurrence readers are clocking drives, ##0 cycle waits and assertion clock
+ * pulses; a model without them calls llg_rt_skip_clocking_history and then only
+ * the registered sequence clocks are recorded, for their tick counts.
  */
 enum {
     CLOCKING_ANY = 1u,
@@ -275,9 +278,18 @@ static void clocking_advance_time(void) {
     }
 }
 
+void llg_rt_skip_clocking_history(void) {
+    g.clocking_history_skipped = 1;
+}
+
+/* Without history consumers this is one empty-table test per publication
+ * instead of an entry allocation, index growth and a time-advance free. */
 static void clocking_record_edge(sv4_t* signal, sv4_t old, sv4_t value) {
     if (!signal) return;
-    llg_clocking_edge_t* edge = clocking_edge_get(signal);
+    llg_clocking_edge_t* edge = g.clocking_history_skipped
+        ? find_clocking_edge(signal)
+        : clocking_edge_get(signal);
+    if (!edge) return;
     if (edge->time != g.now) edge->occurred = 0;
     edge->time = g.now;
     edge->occurred |= CLOCKING_ANY;

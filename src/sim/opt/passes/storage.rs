@@ -172,6 +172,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         vpi_delays_writable: _,
         vpi_delay_select: _,
         random: _,
+        clocking_history: _,
         rand_problems: _,
         // Free variables are signals the solve callbacks write and the
         // assertions read; both are walked with their owners.

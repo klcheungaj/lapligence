@@ -2100,7 +2100,8 @@ fn sequence_joins_need_one_fork_an_exit_and_one_action_per_edge() {
 
 #[test]
 fn clocking_drive_cycle_counts_and_instance_dispatch_are_checked() {
-    let model = valid_model();
+    let mut model = valid_model();
+    model.clocking_history = true;
     let drive = |cycles: IrExpr| IrStmt::ClockingDrive {
         lhs: IrLhs::Whole(0),
         rhs: packed_const(1, 1),
@@ -2134,6 +2135,38 @@ fn clocking_drive_cycle_counts_and_instance_dispatch_are_checked() {
             .contains("unknown virtual interface descriptor"),
         "{error:?}"
     );
+}
+
+/// The runtime records current-slot edge history only for models that
+/// declare a reader, so every reader requires the declaration.
+#[test]
+fn clocking_history_readers_require_the_model_flag() {
+    let mut model = valid_model();
+    let drive = IrStmt::ClockingDrive {
+        lhs: IrLhs::Whole(0),
+        rhs: packed_const(1, 1),
+        ticks: IrDelay::Constant(0),
+        specs: vec![(IrWaitSrc::Sig("sig".into()), IrEdge::Posedge)],
+        cycles: None,
+    };
+    let wait = IrStmt::ClockingCycleWait {
+        count: packed_const(0, 32),
+        specs: vec![(IrWaitSrc::Sig("sig".into()), IrEdge::Posedge)],
+    };
+    let pulse = IrStmt::AssertionClockPulse { signal: 0 };
+    for statement in [&drive, &wait, &pulse] {
+        let error = model.validate_stmt(statement, None).unwrap_err();
+        assert!(
+            error
+                .detail()
+                .contains("requires the model's clocking history"),
+            "{error:?}"
+        );
+    }
+    model.clocking_history = true;
+    for statement in [&drive, &wait, &pulse] {
+        model.validate_stmt(statement, None).unwrap();
+    }
 }
 
 #[test]

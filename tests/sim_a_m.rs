@@ -20,6 +20,7 @@ mod sim_bit_queries;
 mod sim_capacity;
 mod sim_casez;
 mod sim_classes;
+mod sim_clocking_history;
 mod sim_compact_names;
 mod sim_concurrent_assertions;
 mod sim_conditional_policy;

@@ -3219,6 +3219,13 @@ int llg_clocking_sample_history_real(sv4_t* source, double* sample,
 // not unregister waits, sampling or assertions: their borrowed sources must
 // still outlive their consumers. NULL and already-forgotten signals are harmless.
 void llg_clocking_forget_signal(sv4_t* signal);
+// A model with no clocking drive, `##` cycle wait or assertion clock pulse
+// calls this after init: nothing then asks whether a signal changed earlier in
+// the current slot, so publication stops recording edge history except for
+// the sequence clocks that assertions register. Recording is the default, so
+// a model that never calls this keeps every history query exact. Reset by
+// llg_rt_cleanup.
+void llg_rt_skip_clocking_history(void);
 
 // Assignments.  llg_nba records on the current process's list and commits in
 // the NBA region; llg_ba writes immediately and notifies waiters.

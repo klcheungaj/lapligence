@@ -14,6 +14,10 @@
 //! reads that survive elaboration as expression refs (process bodies,
 //! non-constant continuous assigns) are detected.
 //!
+//! A parameter that an FSM pragma (IEEE 1800-2009 40.4.3) lists as a state of
+//! an FSM of its instance is read by the coverage tool, so it counts as used
+//! ([`crate::core::db::Db::fsms`]).
+//!
 //! Type parameters (`parameter type T = …`) are captured as ordinary `Param`
 //! nodes with the default type's `TypeInfo` and cannot be distinguished, so
 //! they are checked like any other parameter.  Flat (never-instantiated)
@@ -47,6 +51,7 @@ impl LintRule for UnusedParameterRule {
                 _ => None,
             })
             .filter(|t| matches!(db.node_kind(*t), NodeKind::Param { .. }))
+            .chain(db.fsms().iter().flat_map(|fsm| fsm.states.iter().copied()))
             .collect();
         let mut out = Vec::new();
         for (inst, path) in iter_instances(db) {
@@ -171,6 +176,24 @@ mod tests {
         );
         let got = rule_diags(&diags, "unused-parameter");
         assert!(got.is_empty(), "P is read in the gen scope: {:?}", diags);
+    }
+
+    #[test]
+    fn fsm_state_parameters_named_only_by_pragmas_are_quiet() {
+        let source = "module up8(input logic clk);\n\
+             \x20 /* tool state_vector cs enum E */\n\
+             \x20 logic [1:0] cs = 0;\n\
+             \x20 parameter [1:0] /* tool enum E */ IDLE = 0, RUN = 1, DONE = 2;\n\
+             \x20 parameter UNREAD = 5;\n\
+             \x20 always_ff @(posedge clk) cs <= cs + 2'd1;\n\
+             endmodule\n";
+        let (db, _) = crate::core::lint::rules::tests::build_design(source, "up8");
+        assert_eq!(db.fsms().len(), 1, "the pragmas declare one FSM");
+        assert_eq!(db.fsms()[0].states.len(), 3, "IDLE, RUN and DONE");
+        let diags = lint_design(source, "up8");
+        let got = rule_diags(&diags, "unused-parameter");
+        assert_eq!(got.len(), 1, "only UNREAD: {diags:?}");
+        assert!(got[0].message.contains("`UNREAD`"), "{}", got[0].message);
     }
 
     #[test]
