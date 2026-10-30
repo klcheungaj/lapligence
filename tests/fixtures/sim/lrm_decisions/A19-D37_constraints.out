@@ -1,9 +1,9 @@
-defn c_inst full=tb.Item::c_inst automatic=1 alloc=3 enabled=0 parent=vpiClassDefn
+defn c_inst full=tb.Item::c_inst automatic=1 alloc=3 enabled=-1 parent=vpiClassDefn
   item vpiDistribution scope level=3 [vpiConstant disttype=1 weight=3] [vpiRange disttype=2 weight=2] [vpiConstant disttype=1 weight=null]
   item vpiOperation scope level=0 a != 5
 defn c_stat full=tb.Item::c_stat automatic=0 alloc=3 enabled=0 parent=vpiClassDefn
   item vpiOperation scope level=0 a < 12
-defn c_each full=tb.Item::c_each automatic=1 alloc=3 enabled=0 parent=vpiClassDefn
+defn c_each full=tb.Item::c_each automatic=1 alloc=3 enabled=-1 parent=vpiClassDefn
   item vpiOperation scope level=0 a > 0
 object c_inst full=tb.Item::c_inst automatic=1 alloc=2 enabled=0 parent=vpiClassObj
   item vpiDistribution scope level=3 [vpiConstant disttype=1 weight=3] [vpiRange disttype=2 weight=2] [vpiConstant disttype=1 weight=null]

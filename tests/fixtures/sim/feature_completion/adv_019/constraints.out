@@ -1,4 +1,4 @@
-defn constraint c_small full=tb.Packet::c_small automatic=1 virtual=0 alloc=3 enabled=0 parent=vpiClassDefn line=10
+defn constraint c_small full=tb.Packet::c_small automatic=1 virtual=0 alloc=3 enabled=-1 parent=vpiClassDefn line=10
   item: vpiOperation line=10 name=- decompile=a > 2
     operand: vpiBitVar line=10 name=a decompile=a
     operand: vpiConstant line=10 name=- decompile=2
@@ -6,7 +6,7 @@ defn constraint c_shared full=tb.Packet::c_shared automatic=0 virtual=0 alloc=3 
   item: vpiOperation line=11 name=- decompile=len != 0
     operand: vpiBitVar line=11 name=len decompile=len
     operand: vpiConstant line=11 name=- decompile=0
-defn constraint c_mix full=tb.Packet::c_mix automatic=1 virtual=0 alloc=3 enabled=0 parent=vpiClassDefn line=12
+defn constraint c_mix full=tb.Packet::c_mix automatic=1 virtual=0 alloc=3 enabled=-1 parent=vpiClassDefn line=12
   item: vpiDistribution line=13
     expr: vpiIntVar line=13 name=d decompile=d
     item: vpiDistItem line=13 disttype=1
@@ -55,9 +55,9 @@ defn constraint c_mix full=tb.Packet::c_mix automatic=1 virtual=0 alloc=3 enable
 object constraint c_small full=tb.Packet::c_small automatic=1 virtual=0 alloc=2 enabled=0 parent=vpiClassObj line=10
 object constraint c_shared full=tb.Packet::c_shared automatic=0 virtual=0 alloc=3 enabled=1 parent=vpiClassObj line=11
 object constraint c_mix full=tb.Packet::c_mix automatic=1 virtual=0 alloc=2 enabled=1 parent=vpiClassObj line=12
-defn constraint c_small full=tb.Packet::c_small automatic=1 virtual=0 alloc=3 enabled=0 parent=vpiClassDefn line=10
+defn constraint c_small full=tb.Packet::c_small automatic=1 virtual=0 alloc=3 enabled=-1 parent=vpiClassDefn line=10
 defn constraint c_shared full=tb.Packet::c_shared automatic=0 virtual=0 alloc=3 enabled=0 parent=vpiClassDefn line=11
-defn constraint c_mix full=tb.Packet::c_mix automatic=1 virtual=0 alloc=3 enabled=0 parent=vpiClassDefn line=12
+defn constraint c_mix full=tb.Packet::c_mix automatic=1 virtual=0 alloc=3 enabled=-1 parent=vpiClassDefn line=12
 object constraint c_small full=tb.Packet::c_small automatic=1 virtual=0 alloc=2 enabled=1 parent=vpiClassObj line=10
 object constraint c_shared full=tb.Packet::c_shared automatic=0 virtual=0 alloc=3 enabled=0 parent=vpiClassObj line=11
 object constraint c_mix full=tb.Packet::c_mix automatic=1 virtual=0 alloc=2 enabled=1 parent=vpiClassObj line=12

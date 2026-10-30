@@ -14,9 +14,10 @@
 // other objects. 18.9: constraint_mode of a static constraint affects every
 // instance.
 //
-// Text silent, llg's choice: a constraint obtained from a class defn
-// belongs to no object and is not enabled unless it is static; a foreach
-// constraint has no object in the 2009 diagrams and is not listed.
+// Text silent, another simulator followed: a non-static constraint obtained
+// from a class defn belongs to no object, and vpiIsConstraintEnabled is
+// vpiUndefined (-1) without an error. Text decides: a foreach constraint
+// has no object in the 2009 diagrams and is not listed.
 module tb;
   class Item;
     rand bit [3:0] a;

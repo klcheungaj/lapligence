@@ -603,7 +603,9 @@ integer query.
   for a static constraint in every object. After `randomize()` and
   `p.c_small.constraint_mode(0)`, the object reports `c_small` 0 and the
   others 1; a non-static constraint from the class defn belongs to no object
-  and reports 0, the static one its class-wide state (decision A19-D37).
+  and reports `vpiUndefined` (-1) without an error, as another simulator
+  does where the text is silent; the static one reports its class-wide
+  state (decision A19-D37).
   `$modes` sees `c_shared` 0 from both and `c_small` 1 in the object.
 - Items. 37.30: a constraint item is a constraint ordering, a distribution or
   a constraint expression; 37.34 (L59855-L59872): a constraint expression is

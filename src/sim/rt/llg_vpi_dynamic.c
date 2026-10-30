@@ -1102,14 +1102,15 @@ static const char* dyn_item_full_name(uint32_t class_index, const llg_vpi_class_
 
 /* vpiIsConstraintEnabled (37.30, 18.9): a non-static constraint is active
  * per object while its hidden off bit is 0; one obtained from a class defn
- * belongs to no object and is not active (decision A19-D37). */
+ * belongs to no object and has no state: vpiUndefined without an error, as
+ * another simulator answers (decision A19-D37). */
 static PLI_INT64 dyn_constraint_enabled(const llg_vpi_slot_t* slot,
                                         const llg_vpi_class_item_t* item) {
     /* A static constraint shares one bit across the class; without one the
      * design never changes its mode. */
     if (item->mode_signal) return sv4_to_u64(*item->mode_signal) == 0;
     if (item->flags & LLG_VPI_ITEM_STATIC) return 1;
-    if (!slot->pointer) return 0;
+    if (!slot->pointer) return vpiUndefined;
     if (!item->mode) return 1;
     unsigned kind = 0;
     const sv4_t* off = (const sv4_t*)g_dyn.tables->field(slot->pointer, item->mode - 1u, &kind);
