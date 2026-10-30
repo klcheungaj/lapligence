@@ -1187,8 +1187,8 @@ node class_obj 37.29 type=vpiClassObj
   get vpiObjId implemented walk
   iterate vpiVariables implemented walk
   handle vpiClassTypespec implemented walk
-  iterate vpiWaitingProcesses unsupported mailbox and semaphore waiters are held in runtime queues the VPI tables do not reach
-  iterate vpiMessages unsupported llg keeps the messages of a mailbox in runtime scheduler queues that the VPI tables do not reach
+  iterate vpiWaitingProcesses unsupported a mailbox or semaphore object has no class layout in llg (its vpiClassType is refused and a semaphore variable is no catalog object), so its waiters in the runtime queues are not reached
+  iterate vpiMessages unsupported 37.29 detail 4 names the iteration but the standard defines no object type for a message (no diagram, no Annex M constant), and llg keeps mailbox messages in runtime scheduler queues the VPI tables do not reach
   iterate vpiMethods implemented walk
   iterate vpiConstraint implemented a19cons
   iterate vpiParameter implemented walk
