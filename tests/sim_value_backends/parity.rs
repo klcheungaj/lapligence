@@ -1,4 +1,6 @@
-use super::{sim_cli, sim_harness};
+use super::sim_cli;
+#[cfg(unix)]
+use super::sim_harness;
 
 #[test]
 fn compact_parity_arithmetic_width() {
