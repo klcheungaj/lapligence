@@ -93,6 +93,28 @@ those scripts. Differences within the observed spread are reported as noise.
   to 1.60 s, because the smaller code fits caches better. (That A/B also
   includes compact identifiers, which do not affect run time.)
 
+### Input ports sharing their actual
+
+- **Trade-off:** a port is a continuous assignment, so a copy process per
+  input keeps both sides independent objects, but every change of a clock or
+  other widely connected signal wakes one copy process per instance before
+  any reader. Sharing storage removes those processes; the formal then shows
+  the actual's new value in the same evaluation (decision A21-D1).
+- **Decision:** an input variable port on a whole variable of the identical
+  type aliases the actual's storage; every case where sharing would be
+  observable keeps the copy (force/release on the formal, nets, conversions,
+  formal initializers, specify paths and timing checks, SDF, VPI models, an
+  initialized actual with a time-0 observer), in
+  [`collection/port_aliases.rs`](../src/sim/codegen/lowering/collection/port_aliases.rs).
+  An indexed part-select port actual whose index is a constant per generate
+  iteration becomes a constant part-select whose bounds are record operands
+  of the shared body.
+- **Evidence:** on 64-instance port-select workloads the simulation is 38%
+  (`lfsr[i % 28 +: 4]` actuals) and 43% (constant inputs) faster, with half
+  the link processes; the small designs lose 40-60% of their links with
+  times within noise, and the corpus workloads, which have no instance ports,
+  generate identical C.
+
 ### Loops and tables instead of unrolled statements
 
 Each item replaces per-element C with a table and a loop, sometimes calling a
