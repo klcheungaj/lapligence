@@ -1395,7 +1395,7 @@ static const char* const llg_cov_option_names[] = {
 void llg_cov_option(void* record, int32_t point, uint32_t option, sv4_t value, const char* site) {
     llg_cov_inst_t* inst = (llg_cov_inst_t*)record;
     if (!inst || option > LLG_COV_OPTION_CROSS_NUM_PRINT_MISSING) return;
-    int64_t number;
+    int64_t number = 0;
     if (!llg_cov_option_value(value, &number, llg_cov_option_names[option], site)) return;
     // Table 19-1: weight is non-negative; a bin count needs at least one bin.
     if ((option == LLG_COV_OPTION_WEIGHT && number < 0) ||
@@ -1569,7 +1569,7 @@ void llg_cov_type_option(llg_cov_type_t* type, int32_t point, uint32_t option, s
                          const char* site) {
     static const char* const names[] = {"weight", "goal", "strobe", "merge_instances"};
     if (!type || option > LLG_COV_TYPE_OPTION_MERGE_INSTANCES) return;
-    int64_t number;
+    int64_t number = 0;
     if (!llg_cov_option_value(value, &number, names[option], site)) return;
     if (option == LLG_COV_TYPE_OPTION_WEIGHT && number < 0) {
         fprintf(stderr,

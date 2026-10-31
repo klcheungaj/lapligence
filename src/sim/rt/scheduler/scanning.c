@@ -812,7 +812,7 @@ static int fixed_file_read_array(uint32_t descriptor, sv4_t* values, llg_fixed_a
     uint64_t available = reverse_storage ? offset + 1u : total - offset;
     uint64_t requested = available;
     if (has_count) {
-        int64_t value;
+        int64_t value = 0;
         if (!sv4_to_index_i64(count, &value) || value < 0) {
             llg_file_slot_failure(slot, "file read count is out of bounds");
             return 0;

@@ -54,7 +54,7 @@ sv4_select_plan_t sv4_select_plan_part(uint32_t storage_width,
 sv4_select_plan_t sv4_select_plan_indexed(uint32_t storage_width, sv4_t base,
                                           uint32_t width, int negative) {
     sv4_require_width(width, "indexed part-select");
-    int64_t index;
+    int64_t index = 0;
     if (!sv4_to_index_i64(base, &index))
         return sv4_select_plan_window(storage_width, width, -(int64_t)width);
     if (negative) {

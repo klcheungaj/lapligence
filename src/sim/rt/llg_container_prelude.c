@@ -217,7 +217,7 @@ static void llg_stream_bounds(int selector_kind, sv4_t first, sv4_t second,
         *left = base;
     } else if (selector_kind == LLG_STREAM_SELECTOR_INDEXED_PLUS
                || selector_kind == LLG_STREAM_SELECTOR_INDEXED_MINUS) {
-        int64_t width;
+        int64_t width = 0;
         if (!sv4_to_index_i64(second, &width) || width <= 0) {
             llg_container_fatal("streaming indexed selector width is invalid");
         }

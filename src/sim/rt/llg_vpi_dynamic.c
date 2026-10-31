@@ -2153,7 +2153,7 @@ static vpiHandle dyn_by_suffix(uint32_t row, const char* suffix) {
         vpiHandle next = NULL;
         if (*p == '[') {
             ++p;
-            int64_t index;
+            int64_t index = 0;
             dyn_place_t place;
             if (parse_index(&p, &index) && *p == ']' && slot->kind != SLOT_DYNELEM &&
                 dyn_place(slot, &place) && place.shape->shape == LLG_VPI_SHAPE_CONTAINER)

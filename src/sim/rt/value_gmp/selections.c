@@ -92,7 +92,7 @@ void llg_gmp_sv4_idx_part_select_set_wide(g4_t* tgt, uint64_t base, uint32_t wid
 
 g4_t llg_gmp_sv4_idx_part_select_value_wide(g4_t v, g4_t base, uint32_t width, int neg) {
     g4_selection_width(width);
-    int64_t signed_base, low;
+    int64_t signed_base = 0, low = 0;
     g4_t result = llg_gmp_sv4_zero(width, 0);
     if (g4_selection_index(base, &signed_base) &&
         llg_gmp_sv4_indexed_low(signed_base, width, neg, &low))
@@ -165,7 +165,7 @@ llg_gmp_sv4_select_plan_t llg_gmp_sv4_select_plan_indexed(uint32_t storage_width
     if (!width)
         llg_gmp_sv4_fail("packed selection width must be positive");
     g4_selection_width(width);
-    int64_t index;
+    int64_t index = 0;
     if (!g4_selection_index(base, &index))
         return llg_gmp_sv4_select_plan_window(storage_width, width, -(int64_t)width);
     if (negative) {

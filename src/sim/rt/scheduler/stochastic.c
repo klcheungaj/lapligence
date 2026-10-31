@@ -103,7 +103,7 @@ void llg_q_initialize(sv4_t q_id_value, sv4_t q_type_value,
                       sv4_t max_length_value, sv4_t* status) {
     int64_t q_id;
     int64_t q_type;
-    int64_t max_length;
+    int64_t max_length = 0;
     llg_q_set_status(status, LLG_Q_OK);
     if (!llg_q_read_integer(q_id_value, &q_id, "$q_initialize", "q_id")) {
         llg_q_set_status(status, LLG_Q_UNKNOWN_ID);
@@ -275,7 +275,7 @@ sv4_t llg_q_full(sv4_t q_id_value, sv4_t* status) {
 void llg_q_exam(sv4_t q_id_value, sv4_t stat_code_value,
                 sv4_t* stat_value, sv4_t* status) {
     int64_t q_id;
-    int64_t stat_code;
+    int64_t stat_code = 0;
     llg_q_set_status(status, LLG_Q_OK);
     if (!llg_q_read_integer(q_id_value, &q_id, "$q_exam", "q_id")) {
         llg_q_set_status(status, LLG_Q_UNKNOWN_ID);

@@ -82,7 +82,7 @@ llg_string_t llg_string_concat(llg_string_t a, llg_string_t b) {
 }
 
 llg_string_t llg_string_repeat(llg_string_t value, sv4_t count) {
-    int64_t n;
+    int64_t n = 0;
     if (!sv4_to_index_i64(count, &n) || n < 0)
         string_fail("replication count is negative, unknown, or unrepresentable");
     if (value.len && (uint64_t)n > (SIZE_MAX - 1) / value.len)
@@ -112,7 +112,7 @@ llg_string_t llg_string_case(llg_string_t value, int upper) {
 }
 
 llg_string_t llg_string_substr(llg_string_t value, sv4_t first, sv4_t last) {
-    int64_t i, j;
+    int64_t i = 0, j = 0;
     llg_string_t result = {0};
     if (sv4_to_index_i64(first, &i) && sv4_to_index_i64(last, &j) &&
         i >= 0 && j >= i && (uint64_t)j < value.len)
@@ -163,7 +163,7 @@ sv4_t llg_string_len(llg_string_t value) {
 }
 
 sv4_t llg_string_getc(llg_string_t value, sv4_t index) {
-    int64_t i;
+    int64_t i = 0;
     unsigned char c = 0;
     if (sv4_to_index_i64(index, &i) && i >= 0 && (uint64_t)i < value.len)
         c = (unsigned char)value.data[(size_t)i];
@@ -172,7 +172,7 @@ sv4_t llg_string_getc(llg_string_t value, sv4_t index) {
 }
 
 void llg_string_putc(llg_string_t *value, sv4_t index, sv4_t character) {
-    int64_t i;
+    int64_t i = 0;
     unsigned char c = llg_sv4_width(character)
         ? (unsigned char)(llg_sv4_word(character, 0, LLG_SV4_BITS) & ~(llg_sv4_word(character, 0, LLG_SV4_X) | llg_sv4_word(character, 0, LLG_SV4_Z))) : 0;
     if (c != 0 && sv4_to_index_i64(index, &i) && i >= 0 &&

@@ -231,10 +231,14 @@ DPI-C and VPI DLLs:
   reads it only after success; GCC 13+ jump threading removes that path and
   stays silent (CI: `llg_vpi_dynamic.c:2061 'ai'`). Initialize such locals at
   their declaration, and let helpers write their out-parameter on every path
-  (`decode_handle`). GCC 14 with `-O3 -fno-thread-jumps` reproduces GCC 11
+  (`decode_handle`). `-O3 -fno-thread-jumps`
   (`c_compiler::GCC11_MAYBE_UNINITIALIZED_FLAGS`, used by
   `runtime_strict_sources::runtime_units_have_no_gcc11_maybe_uninitialized_use`
-  and `runtime_value_storage::release_runtime_units_build_under_strict_warnings`).
+  and `runtime_value_storage::release_runtime_units_build_under_strict_warnings`)
+  brings those findings back on newer GCC, but not equally: under it GCC 13
+  (Ubuntu 24.04 CI) reported two dozen sites that GCC 14 accepts. A GCC 14
+  host does not reproduce CI; check runtime C that adds such locals with
+  GCC 13 (`LLG_CC=gcc-13`) when available.
 
 ## arm64
 

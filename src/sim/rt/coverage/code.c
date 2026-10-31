@@ -515,11 +515,11 @@ static const char* llg_tcov_merge_section(const llg_cov_db_file_t* db) {
             size_t words = llg_tcov_words(signal);
             uint64_t* data = llg_tcov_states[i].data;
             uint64_t* rises = LLG_TCOV_RISES(data, words);
-            uint32_t width;
+            uint32_t width = 0;
             if (!llg_cov_get_u32(&reader, &width) || width != signal->width)
                 return "the toggle section does not match its signal table";
             for (uint32_t bit = 0; bit < width; ++bit) {
-                unsigned char seen;
+                unsigned char seen = 0;
                 uint64_t up, down;
                 if (!llg_cov_get(&reader, &seen, 1) || seen > 3u || !llg_cov_get_u64(&reader, &up) ||
                     !llg_cov_get_u64(&reader, &down))

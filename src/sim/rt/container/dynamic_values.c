@@ -119,9 +119,9 @@ void llg_dyn_value_copy_range(llg_dyn_value_array_t* dst, sv4_t dst_start,
                               sv4_t src_start, uint64_t count) {
     if (!llg_value_desc_compatible(dst->element, src->element))
         llg_container_fatal("incompatible recursive container element types");
-    int64_t to;
+    int64_t to = 0;
     if (!sv4_to_index_i64(dst_start, &to)) return;
-    int64_t from;
+    int64_t from = 0;
     int from_known = sv4_to_index_i64(src_start, &from);
     size_t n = llg_checked_count(count, sizeof(llg_value_t));
     /* Snapshot every selected source element (the default outside the

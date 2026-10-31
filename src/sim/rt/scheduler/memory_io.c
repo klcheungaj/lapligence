@@ -230,7 +230,7 @@ static int llg_memory_parse_digits(llg_memory_stream_t* stream, int radix, int f
     int saw_digit = 0;
     int malformed = 0;
     while (c != EOF) {
-        int state;
+        int state = 0;
         unsigned numeric;
         if (llg_memory_digit(c, radix, &state, &numeric)) {
             llg_memory_append_digit(value, bits, state, numeric);
@@ -288,7 +288,7 @@ static int llg_memory_next_token(llg_memory_stream_t* stream, int radix, int wid
             c = llg_memory_getc(stream);
         }
         int state;
-        unsigned numeric;
+        unsigned numeric = 0;
         while (c != EOF) {
             if (llg_memory_digit(c, 16, &state, &numeric) && state == 0) {
                 saw_digit = 1;
@@ -1180,7 +1180,7 @@ static void llg_rows_memory_view(int write, llg_string_t path, llg_value_t* data
         free(filename);
         return;
     }
-    int64_t index;
+    int64_t index = 0;
     if (!sv4_to_index_i64(row, &index) || index < 0 || (uint64_t)index >= (uint64_t)size) {
         char* filename = llg_memory_path_copy(path);
         llg_memory_error(filename, "selected index or slice is outside the memory");

@@ -56,8 +56,9 @@ fn dynamic_storage_and_waveform_snapshots_compact_gmp() {
 /// maybe-uninitialized reads that the Debug build above cannot see. Building
 /// only these targets keeps the check far cheaper than a second full build.
 ///
-/// Under GNU GCC the build adds [`GCC11_MAYBE_UNINITIALIZED_FLAGS`], so a
-/// GCC 13+ host reports what GCC 11 (Rocky 9, Ubuntu 22.04) does.
+/// Under GNU GCC the build adds [`GCC11_MAYBE_UNINITIALIZED_FLAGS`]; GCC 13
+/// then reports what CI's GCC 11 and 13 do, GCC 14 less (docs/cross_platform.md,
+/// Compiler versions).
 #[test]
 fn release_runtime_units_build_under_strict_warnings() {
     let gcc = c_compiler::is_gnu_gcc(&c_compiler::host_c_compiler());

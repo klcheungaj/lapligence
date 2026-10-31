@@ -321,7 +321,7 @@ static const char* llg_fcov_merge_section(const llg_cov_db_file_t* db) {
         reader.pos = start;
         for (size_t i = 0; i < llg_fcov_n_fsms; ++i) {
             llg_fcov_fsm_t* fsm = &llg_fcov_fsms[i];
-            uint32_t states;
+            uint32_t states = 0;
             if (!llg_cov_get_u32(&reader, &states) || states != fsm->n_states)
                 return "the FSM section does not match its FSM table";
             for (uint32_t s = 0; s < states; ++s) {

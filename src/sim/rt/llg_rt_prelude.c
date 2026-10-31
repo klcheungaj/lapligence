@@ -28,7 +28,7 @@
 #define LLG_TIMEFORMAT_MAX_PRECISION (2u * LLG_SUPPORTED_WIDTH_LIMIT + 128u)
 
 static void llg_warn_host_stack_limit(void) {
-    uint64_t limit;
+    uint64_t limit = 0;
     const uint64_t estimate = (uint64_t)LLG_HOST_STACK_ESTIMATE_BYTES;
     if (llg_host_stack_limit(&limit) && limit < estimate) {
         fprintf(stderr,

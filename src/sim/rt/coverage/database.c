@@ -800,7 +800,7 @@ static int llg_cov_db_record(llg_cov_reader_t* reader, const char* type_name,
         llg_cov_reader_t ahead = *reader;
         for (uint32_t i = 0; i < items; ++i) {
             llg_cov_point_state_t* state = &inst->points[i];
-            int64_t value;
+            int64_t value = 0;
             uint8_t has_at_least;
             const char* text;
             uint32_t text_len;
@@ -922,7 +922,7 @@ static int llg_cov_db_record(llg_cov_reader_t* reader, const char* type_name,
 // of record r to `targets[r]`.
 static int llg_cov_db_functional(llg_cov_reader_t* reader, llg_cov_inst_t*** staged,
                                  size_t* n_staged, size_t* staged_cap, llg_cov_inst_t** targets) {
-    uint32_t types;
+    uint32_t types = 0;
     if (!llg_cov_get_u32(reader, &types)) return 0;
     size_t record = 0;
     for (uint32_t t = 0; t < types; ++t) {

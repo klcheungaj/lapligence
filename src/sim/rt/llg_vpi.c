@@ -1753,7 +1753,8 @@ static int code_bit_object(uint32_t index, uint32_t bit, uint32_t* row, uint32_t
  * concatenation that holds it; a scalar is its own bit. */
 static vpiHandle port_bit_conn(const llg_vpi_slot_t* slot, int high) {
     llg_vpi_model_object_t* port = row_object(slot->object);
-    uint32_t bit = (uint32_t)slot->aux, base = 0, width, row;
+    uint32_t bit = (uint32_t)slot->aux, base = 0, width = 0,
+             row = LLG_VPI_NONE;
     if (!high && port->target) {
         row = row_of(port->target);
         width = port->target->width;
