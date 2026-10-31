@@ -198,6 +198,11 @@ DPI-C and VPI DLLs:
 - The Annex I sample `svdpi.h` falls back to `<sys/types.h>`, which lacks the
   fixed-width types on macOS; llg writes its own `rt/svdpi.h` with
   `<inttypes.h>`. `-U__linux` on Linux reproduces the failure.
+- Apple Clang builds the C fixtures (DPI-C/VPI companions) at `-Wall -Wextra
+  -Werror`, and Clang's `-Wall` has warnings GCC's lacks, such as
+  `-Wunused-but-set-variable` for a counter that is only incremented
+  (`adv_019/threads.c`); `runtime_strict_sources::companion_c_builds_under_clang_wall_wextra`
+  runs Linux Clang over every fixture with those flags.
 - Apple ld64 does not check a dylib's undefined symbols; llg reads Mach-O symbol
   tables before the build (`src/sim/build/dpi_link.rs` module docs).
   `clang --target=arm64-apple-macos11 -c` makes Mach-O objects on Linux for
@@ -220,6 +225,16 @@ DPI-C and VPI DLLs:
   user before the cache save.
 - On musl, root `build.rs` and `mimalloc_shim.c` wrap C `malloc`/`free` for every
   binary ([executables](../src/bin/readme.md)).
+- Compiler versions: GCC 11 (Rocky Linux 9, Ubuntu 22.04 lint job) reports
+  `-Wmaybe-uninitialized` at `-O2`/`-O3` for a local filled through an inlined
+  out-parameter that the callee writes only on success, even when the caller
+  reads it only after success; GCC 13+ jump threading removes that path and
+  stays silent (CI: `llg_vpi_dynamic.c:2061 'ai'`). Initialize such locals at
+  their declaration, and let helpers write their out-parameter on every path
+  (`decode_handle`). GCC 14 with `-O3 -fno-thread-jumps` reproduces GCC 11
+  (`c_compiler::GCC11_MAYBE_UNINITIALIZED_FLAGS`, used by
+  `runtime_strict_sources::runtime_units_have_no_gcc11_maybe_uninitialized_use`
+  and `runtime_value_storage::release_runtime_units_build_under_strict_warnings`).
 
 ## arm64
 

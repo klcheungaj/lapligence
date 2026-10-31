@@ -2272,7 +2272,7 @@ static void dyn_run_object_cbs(int reason, void* object, uint32_t class_index) {
     llg_vpi_cb_t** items = collect_cbs(g_vpi.cbs, matches_object_cb, &match, buffer, &count);
     if (count) {
         vpiHandle handle = make_object(object);
-        uint32_t index;
+        uint32_t index = LLG_VPI_NONE;
         if (handle && decode_handle(handle, &index)) {
             for (size_t i = 0; i < count; ++i) {
                 llg_vpi_cb_t* cb = items[i];

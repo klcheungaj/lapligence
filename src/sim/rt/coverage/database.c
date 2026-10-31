@@ -754,11 +754,11 @@ static int llg_cov_db_record(llg_cov_reader_t* reader, const char* type_name,
     if (!group) return llg_cov_fail(reader, "a record names a covergroup this model does not have");
     if (strcmp(group->type->name, type_name) != 0)
         return llg_cov_fail(reader, "a record is filed under another covergroup type");
-    const char* name;
-    const char* comment;
-    uint32_t name_len, comment_len, slots, items;
-    int64_t weight, goal, at_least, auto_bin_max, missing;
-    uint8_t get_inst, per_instance;
+    const char* name = NULL;
+    const char* comment = NULL;
+    uint32_t name_len = 0, comment_len = 0, slots = 0, items;
+    int64_t weight = 0, goal = 0, at_least = 0, auto_bin_max = 0, missing = 0;
+    uint8_t get_inst = 0, per_instance = 0;
     if (!llg_cov_get_text(reader, &name, &name_len) ||
         !llg_cov_get_text(reader, &comment, &comment_len) || !llg_cov_get_i64(reader, &weight) ||
         !llg_cov_get_i64(reader, &goal) || !llg_cov_get_i64(reader, &at_least) ||
@@ -926,8 +926,8 @@ static int llg_cov_db_functional(llg_cov_reader_t* reader, llg_cov_inst_t*** sta
     if (!llg_cov_get_u32(reader, &types)) return 0;
     size_t record = 0;
     for (uint32_t t = 0; t < types; ++t) {
-        const char* name;
-        uint32_t name_len, records;
+        const char* name = NULL;
+        uint32_t name_len = 0, records = 0;
         if (!llg_cov_get_text(reader, &name, &name_len) || !llg_cov_get_u32(reader, &records))
             return 0;
         char* type_name = llg_cov_strdup_bytes(name, name_len);

@@ -55,8 +55,8 @@ static int run_probe(void) {
     registration.sizetf = size_call;
     registration.calltf = run_call;
     if (!vpi_register_systf(&registration)) return fail("registration");
-    const llg_vpi_compile_arg_t shape8[] = {{8, 0, 0}};
-    const llg_vpi_compile_arg_t shape16[] = {{16, 0, 0}};
+    const llg_vpi_compile_arg_t shape8[] = {{.width = 8}};
+    const llg_vpi_compile_arg_t shape16[] = {{.width = 16}};
     if (!llg_vpi_compile_call_site(4, "$varying_size", shape8, 1, 1000000u) ||
         !llg_vpi_compile_call_site(9, "$varying_size", shape16, 1, 1000u))
         return fail("compilation");

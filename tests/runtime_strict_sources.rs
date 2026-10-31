@@ -219,31 +219,7 @@ fn runtime_and_companion_c_has_no_narrowing_or_uninitialized_use() {
     let rt = root.join("src/sim/rt");
     let runtime_includes = runtime_include_dirs(root);
     let dir = sim_harness::TempDir::new("runtime-narrowing").expect("create temp directory");
-    let vpi_unit = dir.path().join("llg_vpi_unit.c");
-    std::fs::write(
-        &vpi_unit,
-        "#include \"llg_vpi.c\"\n#include \"llg_vpi_dynamic.c\"\n#include \"llg_vpi_runtime.c\"\n#include \"llg_dpi.c\"\n",
-    )
-    .expect("write the VPI unit");
-
-    let mut units = Vec::new();
-    let runtime = |source: PathBuf, defines| NarrowingUnit {
-        source,
-        includes: runtime_includes.clone(),
-        defines,
-        bundled_zlib: true,
-    };
-    for &defines in RUNTIME_CONFIGURATIONS {
-        let compact = defines.contains(&"-DLLG_SV4_USE_GMP=1");
-        let mut sources: Vec<PathBuf> = RUNTIME_UNITS.iter().map(|unit| rt.join(unit)).collect();
-        sources.push(vpi_unit.clone());
-        if compact {
-            sources.extend(c_sources_under(&rt.join("value_gmp")));
-        } else {
-            sources.push(rt.join("llg_value.c"));
-        }
-        units.extend(sources.into_iter().map(|source| runtime(source, defines)));
-    }
+    let mut units = runtime_units(root, dir.path());
     let probes = root.join("tests/runtime_value_storage");
     for source in c_sources_under(&probes) {
         if source
@@ -272,6 +248,58 @@ fn runtime_and_companion_c_has_no_narrowing_or_uninitialized_use() {
         });
     }
 
+    let mut arguments = vec!["-std=c11", "-fsyntax-only"];
+    arguments.extend_from_slice(MSVC_W4_FLOW_ERRORS);
+    let findings = check_units(&clang, root, &units, &arguments);
+    assert!(
+        findings.is_empty(),
+        "make each narrowing conversion explicit, after checking the value fits, \
+         and initialize each local on every path before its use \
+         (MSVC C4244/C4267/C4701 under /W4 /WX; see docs/cross_platform.md):\n{}",
+        findings.join("\n")
+    );
+}
+
+/// The runtime translation units in each of [`RUNTIME_CONFIGURATIONS`], with
+/// the VPI unit written to `scratch`.
+fn runtime_units(root: &Path, scratch: &Path) -> Vec<NarrowingUnit> {
+    let rt = root.join("src/sim/rt");
+    let runtime_includes = runtime_include_dirs(root);
+    let vpi_unit = scratch.join("llg_vpi_unit.c");
+    std::fs::write(
+        &vpi_unit,
+        "#include \"llg_vpi.c\"\n#include \"llg_vpi_dynamic.c\"\n#include \"llg_vpi_runtime.c\"\n#include \"llg_dpi.c\"\n",
+    )
+    .expect("write the VPI unit");
+    let mut units = Vec::new();
+    for &defines in RUNTIME_CONFIGURATIONS {
+        let compact = defines.contains(&"-DLLG_SV4_USE_GMP=1");
+        let mut sources: Vec<PathBuf> = RUNTIME_UNITS.iter().map(|unit| rt.join(unit)).collect();
+        sources.push(vpi_unit.clone());
+        if compact {
+            sources.extend(c_sources_under(&rt.join("value_gmp")));
+        } else {
+            sources.push(rt.join("llg_value.c"));
+        }
+        units.extend(sources.into_iter().map(|source| NarrowingUnit {
+            source,
+            includes: runtime_includes.clone(),
+            defines,
+            bundled_zlib: true,
+        }));
+    }
+    units
+}
+
+/// Compiles each unit with `compiler` and `arguments` (plus the unit's
+/// definitions and include directories) on up to eight threads, and returns
+/// one finding per failing unit.
+fn check_units(
+    compiler: &str,
+    root: &Path,
+    units: &[NarrowingUnit],
+    arguments: &[&str],
+) -> Vec<String> {
     let workers = std::thread::available_parallelism()
         .map_or(4, |n| n.get())
         .min(8);
@@ -284,11 +312,8 @@ fn runtime_and_companion_c_has_no_narrowing_or_uninitialized_use() {
                 let Some(unit) = units.get(index) else {
                     break;
                 };
-                let mut command = Command::new(&clang);
-                command
-                    .args(["-std=c11", "-fsyntax-only"])
-                    .args(MSVC_W4_FLOW_ERRORS)
-                    .args(unit.defines);
+                let mut command = Command::new(compiler);
+                command.args(arguments).args(unit.defines);
                 if unit.bundled_zlib {
                     command.args(BUNDLED_ZLIB_DEFINES);
                 }
@@ -296,8 +321,8 @@ fn runtime_and_companion_c_has_no_narrowing_or_uninitialized_use() {
                     command.arg("-I").arg(include);
                 }
                 command.arg(&unit.source);
-                let output = sim_harness::run_command(&mut command, Duration::from_secs(120))
-                    .unwrap_or_else(|error| panic!("run `{clang}`: {error}"));
+                let output = sim_harness::run_command(&mut command, Duration::from_secs(300))
+                    .unwrap_or_else(|error| panic!("run `{compiler}`: {error}"));
                 if !output.status.success() {
                     findings.lock().expect("findings lock").push(format!(
                         "{} {}:\n{}",
@@ -312,12 +337,100 @@ fn runtime_and_companion_c_has_no_narrowing_or_uninitialized_use() {
             });
         }
     });
-    let findings = findings.into_inner().expect("findings lock");
+    findings.into_inner().expect("findings lock")
+}
+
+/// A GNU GCC driver: the host compiler when it is GCC, else `gcc` on PATH
+/// when that is GCC (macOS `gcc` is Apple Clang).
+fn gcc_driver() -> Option<String> {
+    if cfg!(windows) {
+        return None;
+    }
+    let host = c_compiler::host_c_compiler();
+    if c_compiler::is_gnu_gcc(&host) {
+        return Some(host);
+    }
+    (c_compiler::c_compiler_available("gcc") && c_compiler::is_gnu_gcc("gcc"))
+        .then(|| "gcc".to_owned())
+}
+
+/// The runtime units in each backend under GCC's flow-sensitive
+/// uninitialized-use errors at `-O3` (CMake Release), with the jump threading
+/// that hides GCC 11's findings from GCC 13+ turned off
+/// ([`c_compiler::GCC11_MAYBE_UNINITIALIZED_FLAGS`]). CI: GCC 11.5 on Rocky 9
+/// and GCC 11 on Ubuntu 22.04 rejected `llg_vpi_dynamic.c:2061: 'ai' may be
+/// used uninitialized` (a local filled through `decode_handle`'s inlined
+/// out-parameter) while GCC 13 and 14 accepted it. Initialize such locals at
+/// their declaration. Compiling to an object is needed: `-fsyntax-only` runs
+/// no flow analysis. Skipped without GCC and on Windows.
+#[test]
+fn runtime_units_have_no_gcc11_maybe_uninitialized_use() {
+    let Some(gcc) = gcc_driver() else {
+        eprintln!("SKIP: no GNU GCC driver for the GCC 11 maybe-uninitialized check");
+        return;
+    };
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let dir = sim_harness::TempDir::new("runtime-gcc11-uninit").expect("create temp directory");
+    let units = runtime_units(root, dir.path());
+    let mut arguments = vec![
+        "-std=c11",
+        "-O3",
+        "-Wuninitialized",
+        "-Wmaybe-uninitialized",
+        "-Werror=uninitialized",
+        "-Werror=maybe-uninitialized",
+    ];
+    arguments.extend_from_slice(c_compiler::GCC11_MAYBE_UNINITIALIZED_FLAGS);
+    // Only the diagnostics count (this check never runs on Windows).
+    arguments.extend(["-c", "-o", "/dev/null"]);
+    let findings = check_units(&gcc, root, &units, &arguments);
     assert!(
         findings.is_empty(),
-        "make each narrowing conversion explicit, after checking the value fits, \
-         and initialize each local on every path before its use \
-         (MSVC C4244/C4267/C4701 under /W4 /WX; see docs/cross_platform.md):\n{}",
+        "initialize each local at its declaration when an out-parameter call \
+         fills it only on success (GCC 11 -Wmaybe-uninitialized; see \
+         docs/cross_platform.md, Compiler versions):\n{}",
+        findings.join("\n")
+    );
+}
+
+/// Every C fixture (DPI-C and VPI companions) under Clang at the warning
+/// level `tests/support/c_compiler.rs` builds them with on GNU-like hosts,
+/// `-Wall -Wextra -Werror`. Apple Clang is the host compiler on macOS, and
+/// Clang's `-Wall` holds warnings GCC's lacks (CI: macOS arm64 rejected
+/// `adv_019/threads.c:52: variable 'depth' set but not used
+/// [-Wunused-but-set-variable]`, a loop counter only incremented, which GCC
+/// accepts). Skipped without a Clang driver and on Windows.
+#[test]
+fn companion_c_builds_under_clang_wall_wextra() {
+    let Some(clang) = clang_driver() else {
+        eprintln!("SKIP: no Clang driver to approximate Apple Clang -Wall -Wextra");
+        return;
+    };
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let rt = root.join("src/sim/rt");
+    let units: Vec<NarrowingUnit> = c_sources_under(&root.join("tests/fixtures"))
+        .into_iter()
+        .map(|source| NarrowingUnit {
+            includes: vec![
+                source.parent().expect("fixture directory").to_path_buf(),
+                rt.clone(),
+            ],
+            source,
+            defines: &[],
+            bundled_zlib: false,
+        })
+        .collect();
+    assert!(!units.is_empty(), "no C fixtures found");
+    let findings = check_units(
+        &clang,
+        root,
+        &units,
+        &["-std=c11", "-fsyntax-only", "-Wall", "-Wextra", "-Werror"],
+    );
+    assert!(
+        findings.is_empty(),
+        "C fixtures must build under Clang -Wall -Wextra -Werror (Apple Clang on macOS; \
+         see docs/cross_platform.md, macOS):\n{}",
         findings.join("\n")
     );
 }

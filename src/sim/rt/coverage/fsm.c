@@ -330,7 +330,7 @@ static const char* llg_fcov_merge_section(const llg_cov_db_file_t* db) {
                     return "the FSM section does not match its FSM table";
                 if (pass) llg_acov_add(&fsm->visits[s], visits);
             }
-            uint32_t transitions;
+            uint32_t transitions = 0;
             if (!llg_cov_get_u32(&reader, &transitions))
                 return "the FSM section does not match its FSM table";
             uint64_t last = 0;

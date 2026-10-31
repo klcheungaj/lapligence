@@ -784,8 +784,12 @@ static vpiHandle encode_handle(uint32_t index) {
     return (vpiHandle)value;
 }
 
-/* Decode without dereferencing the application's pointer value. */
+/* Decode without dereferencing the application's pointer value. `index_out`
+ * is written on every path (LLG_VPI_NONE on failure): GCC 11 at -O2 and above
+ * otherwise reports the caller's index as maybe-uninitialized once both are
+ * inlined, even though callers read it only after a non-NULL result. */
 static llg_vpi_slot_t* decode_handle(vpiHandle handle, uint32_t* index_out) {
+    if (index_out) *index_out = LLG_VPI_NONE;
     if (!handle || !g_vpi.indexed) return NULL;
     uintptr_t value = (uintptr_t)handle;
     uintptr_t index = value & LLG_VPI_INDEX_MASK;
@@ -3485,11 +3489,11 @@ static vpiHandle select_from_suffix(uint32_t row, const char* suffix) {
     const char* p = suffix;
     while (*p == '[' && count < 16) {
         ++p;
-        int64_t left;
+        int64_t left = 0;
         if (!parse_index(&p, &left)) return NULL;
         if (*p == ':') {
             ++p;
-            int64_t right;
+            int64_t right = 0;
             if (!parse_index(&p, &right) || *p != ']' || p[1] != '\0') return NULL;
             /* A part-select of a whole vector or element. */
             llg_vpi_model_object_t* object = row_object(row);
@@ -3555,7 +3559,7 @@ static vpiHandle member_from_suffix(uint32_t row, const char* suffix) {
         }
         if (*p != '.' || !is_array_type(object->type)) return NULL;
         vpiHandle base = element_by_indices(row, indices, count, 1);
-        uint32_t base_index;
+        uint32_t base_index = LLG_VPI_NONE;
         llg_vpi_slot_t* slot = decode_handle(base, &base_index);
         if (!slot) return NULL;
         element = slot->element;
@@ -3856,7 +3860,7 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
     if ((uint32_t)count == base->dim_count) return element_by_indices(row, values, count, 0);
     if ((uint32_t)count == base->dim_count + 1u) {
         vpiHandle element = element_by_indices(row, values, count - 1, 0);
-        uint32_t element_index;
+        uint32_t element_index = LLG_VPI_NONE;
         llg_vpi_slot_t* element_slot = decode_handle(element, &element_index);
         if (!element_slot) return NULL;
         uint64_t flat = element_slot->element;
@@ -6260,7 +6264,7 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
         vpiHandle result = rts_handle(type, ref_handle, &handled);
         if (handled) return result;
     }
-    uint32_t index;
+    uint32_t index = LLG_VPI_NONE;
     llg_vpi_slot_t* slot = checked_handle(ref_handle, &index);
     if (!slot) return NULL;
     if (slot->kind == SLOT_ASSERTION) return assertion_relation(type, slot);
@@ -7906,7 +7910,7 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         }
         return iterate_children(type, LLG_VPI_NONE);
     }
-    uint32_t ref_index;
+    uint32_t ref_index = LLG_VPI_NONE;
     llg_vpi_slot_t* slot = checked_handle(ref_handle, &ref_index);
     if (!slot) return NULL;
     if (slot->kind == SLOT_IMP) {
@@ -8162,7 +8166,7 @@ static vpiHandle argument_handle(llg_vpi_callsite_t* site, llg_vpi_call_t* call,
 
 vpiHandle vpi_scan(vpiHandle iterator_handle) {
     vpi_enter();
-    uint32_t index;
+    uint32_t index = LLG_VPI_NONE;
     llg_vpi_slot_t* slot = checked_handle(iterator_handle, &index);
     if (!slot) return NULL;
     if (slot->kind != SLOT_ITERATOR) {
@@ -8464,7 +8468,7 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         uint64_t precision = llg_time_precision_fs();
         return log10_unit(precision ? precision : 1u);
     }
-    uint32_t index;
+    uint32_t index = LLG_VPI_NONE;
     llg_vpi_slot_t* slot = checked_handle(handle, &index);
     if (!slot) return vpiUndefined;
     if (slot->kind == SLOT_ASSERTION && property != vpiType) {
@@ -9529,7 +9533,7 @@ static vpiHandle schedule_put(const llg_vpi_target_t* target, llg_vpi_datum_t* d
 vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
                         PLI_INT32 flags) {
     vpi_enter();
-    uint32_t index;
+    uint32_t index = LLG_VPI_NONE;
     llg_vpi_slot_t* slot = checked_handle(handle, &index);
     if (!slot) return NULL;
     int mode = flags & ~(vpiReturnEvent | vpiUserAllocFlag | vpiOneValue | vpiPropagateOff);
@@ -10162,7 +10166,7 @@ static int handle_identity(const llg_vpi_slot_t* slot, uint32_t index, uint64_t 
 
 PLI_INT32 vpi_compare_objects(vpiHandle object1, vpiHandle object2) {
     vpi_enter();
-    uint32_t first_index, second_index;
+    uint32_t first_index = LLG_VPI_NONE, second_index = LLG_VPI_NONE;
     llg_vpi_slot_t* first = checked_handle(object1, &first_index);
     if (!first) return 0;
     llg_vpi_slot_t* second = checked_handle(object2, &second_index);
@@ -10199,7 +10203,7 @@ static void vpi_cb_handle_released(struct llg_vpi_cb* cb);
 static void fired_free(uint32_t index);
 
 static PLI_INT32 release_handle(vpiHandle handle) {
-    uint32_t index;
+    uint32_t index = LLG_VPI_NONE;
     llg_vpi_slot_t* slot = checked_handle(handle, &index);
     if (!slot) return 0;
     switch (slot->kind) {
@@ -11160,7 +11164,7 @@ static vpiHandle assertion_cb_fail_expr(llg_vpi_cb_t* cb) {
 static void assertion_cb_release(llg_vpi_cb_t* cb) {
     --g_vpi.assertion_cbs;
     if (cb->assertion_attempt) llg_acov_watch(cb->assertion_item, -1);
-    uint32_t index;
+    uint32_t index = LLG_VPI_NONE;
     llg_vpi_slot_t* slot = decode_handle(cb->data.obj, &index);
     if (slot && ((slot->kind == SLOT_ASSERTION && slot->left == (int64_t)cb->assertion_item) ||
                  (cb->instance_code && slot->kind == SLOT_CODE &&
@@ -11645,7 +11649,7 @@ static llg_vpi_cb_t* callback_record(vpiHandle handle, const char* routine) {
 
 PLI_INT32 vpi_remove_cb(vpiHandle handle) {
     vpi_enter();
-    uint32_t index;
+    uint32_t index = LLG_VPI_NONE;
     llg_vpi_slot_t* slot = checked_handle(handle, &index);
     if (!slot) return 0;
     if (slot->kind == SLOT_FIRED_CB) {
@@ -12516,7 +12520,7 @@ vpiHandle vpi_create(PLI_INT32 type, vpiHandle collection, vpiHandle object) {
             return NULL;
         }
     }
-    uint32_t index;
+    uint32_t index = LLG_VPI_NONE;
     if (collection) {
         llg_vpi_slot_t* slot = checked_handle(collection, &index);
         if (!slot) return NULL;

@@ -760,7 +760,7 @@ static int llg_file_read_byte(llg_file_slot_t* slot, unsigned char* output) {
 }
 
 int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target) {
-    llg_file_slot_t* slot;
+    llg_file_slot_t* slot = NULL;
     if (!llg_file_read_source(descriptor, &slot) || !target || target->width == 0)
         return 0;
     // The bytes fill the variable from its most significant byte down; the
@@ -770,7 +770,7 @@ int llg_file_read_packed(uint32_t descriptor, llg_ref_t* target) {
     size_t bytes = ((size_t)target->width + 7u) / 8u;
     int read = 0;
     for (size_t index = 0; index < bytes; index++) {
-        unsigned char byte;
+        unsigned char byte = 0;
         if (!llg_file_read_byte(slot, &byte)) break;
         size_t bit_base = (bytes - 1u - index) * 8u;
         for (unsigned bit = 0; bit < 8u; bit++)
@@ -785,7 +785,7 @@ static int fixed_file_read_array(uint32_t descriptor, sv4_t* values, llg_fixed_a
                         int elem_signed, int elem_two_state, uint64_t total,
                         const int32_t* dimensions, int dimension_count,
                         int has_start, sv4_t start, int has_count, sv4_t count) {
-    llg_file_slot_t* slot;
+    llg_file_slot_t* slot = NULL;
     if (!llg_file_read_source(descriptor, &slot) || (!values && !fixed) || total == 0 ||
         elem_width == 0 || !dimensions || dimension_count <= 0) return 0;
     /* IEEE 1364-2001 17.2.4.4 / 1800-2009 21.3.4.4: a memory
@@ -827,7 +827,7 @@ static int fixed_file_read_array(uint32_t descriptor, sv4_t* values, llg_fixed_a
         sv4_t value = sv4_clone(fixed ? llg_fixed_array_peek(fixed, position) : &values[position]);
         int read = 0;
         for (size_t index = 0; index < bytes_per_element; index++) {
-            unsigned char byte;
+            unsigned char byte = 0;
             if (!llg_file_read_byte(slot, &byte)) break;
             size_t bit_base = (bytes_per_element - 1u - index) * 8u;
             for (unsigned bit = 0; bit < 8u; bit++)

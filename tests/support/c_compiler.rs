@@ -112,6 +112,15 @@ pub(crate) fn compiler_diagnostics(output: &Output) -> String {
     )
 }
 
+/// GNU GCC options that make GCC 13 and newer report the
+/// `-Wmaybe-uninitialized` findings GCC 11 (Rocky Linux 9, Ubuntu 22.04)
+/// reports at `-O2`/`-O3`. Newer jump threading removes the path on which a
+/// local filled through an inlined out-parameter looks unset; without it GCC
+/// 14 reproduced CI's `llg_vpi_dynamic.c:2061: 'ai' may be used
+/// uninitialized` (measured: only together with `-O3`). See
+/// `docs/cross_platform.md` (Compiler versions).
+pub(crate) const GCC11_MAYBE_UNINITIALIZED_FLAGS: &[&str] = &["-fno-thread-jumps"];
+
 /// True when `compiler` is GNU GCC rather than a Clang driver installed under
 /// the same name (macOS `gcc` is Apple Clang). GCC-only diagnostics such as
 /// `-Werror=jump-misses-init` must be requested only from real GCC: Clang

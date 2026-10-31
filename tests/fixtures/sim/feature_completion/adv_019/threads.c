@@ -49,7 +49,7 @@ static void frames(void) {
     vpiHandle frame = vpi_handle(vpiFrame, NULL);
     int error = failed();
     vpi_printf("  frames (error %d):", error);
-    for (int depth = 0; frame; ++depth) {
+    while (frame) {
         int active = (int)vpi_get(vpiActive, frame);
         vpiHandle stmt = vpi_handle(vpiStmt, frame);
         vpi_printf(" %s(active %d, stmt %s)", name_of(frame), active,

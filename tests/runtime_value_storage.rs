@@ -1,6 +1,6 @@
 //! Native storage/ownership checks without compiling a generated HDL model.
 
-use crate::sim_harness;
+use crate::{c_compiler, sim_harness};
 
 use std::path::Path;
 use std::process::Command;
@@ -55,13 +55,22 @@ fn dynamic_storage_and_waveform_snapshots_compact_gmp() {
 /// warning set, at Release optimization: GCC's `-O3` flow analysis reports
 /// maybe-uninitialized reads that the Debug build above cannot see. Building
 /// only these targets keeps the check far cheaper than a second full build.
+///
+/// Under GNU GCC the build adds [`GCC11_MAYBE_UNINITIALIZED_FLAGS`], so a
+/// GCC 13+ host reports what GCC 11 (Rocky 9, Ubuntu 22.04) does.
 #[test]
 fn release_runtime_units_build_under_strict_warnings() {
-    run_storage_stages(
+    let gcc = c_compiler::is_gnu_gcc(&c_compiler::host_c_compiler());
+    run_storage_stages_with_flags(
         "runtime-value-storage-release",
         &[],
         "Release",
         &["owner_probe_debug_rt", "vpi_ownership_probe"],
+        if gcc {
+            c_compiler::GCC11_MAYBE_UNINITIALIZED_FLAGS
+        } else {
+            &[]
+        },
     );
 }
 
@@ -72,6 +81,18 @@ fn run_storage_tests(label: &str, options: &[String]) {
 /// Configures, builds and (when `targets` is empty, so every probe is built)
 /// runs the probes in build configuration `config`.
 fn run_storage_stages(label: &str, options: &[String], config: &str, targets: &[&str]) {
+    run_storage_stages_with_flags(label, options, config, targets, &[]);
+}
+
+/// [`run_storage_stages`] with `extra_c_flags` appended to `$LLG_CFLAGS` in
+/// `CMAKE_C_FLAGS`.
+fn run_storage_stages_with_flags(
+    label: &str,
+    options: &[String],
+    config: &str,
+    targets: &[&str],
+    extra_c_flags: &[&str],
+) {
     let cmake = std::env::var("LLG_CMAKE").unwrap_or_else(|_| "cmake".to_owned());
     if Command::new(&cmake).arg("--version").output().is_err() {
         eprintln!("SKIP: CMake `{cmake}` not available");
@@ -100,8 +121,13 @@ fn run_storage_stages(label: &str, options: &[String], config: &str, targets: &[
     if let Ok(compiler) = std::env::var("LLG_CC").or_else(|_| std::env::var("CC")) {
         configure.arg(format!("-DCMAKE_C_COMPILER={compiler}"));
     }
-    if let Ok(flags) = std::env::var("LLG_CFLAGS") {
-        configure.arg(format!("-DCMAKE_C_FLAGS:STRING={flags}"));
+    let flags: Vec<String> = std::env::var("LLG_CFLAGS")
+        .ok()
+        .into_iter()
+        .chain(extra_c_flags.iter().map(|flag| (*flag).to_owned()))
+        .collect();
+    if !flags.is_empty() {
+        configure.arg(format!("-DCMAKE_C_FLAGS:STRING={}", flags.join(" ")));
     }
     // Same launcher variable as generated models (`sim::build`), so a compiler
     // cache serves these probe builds too.

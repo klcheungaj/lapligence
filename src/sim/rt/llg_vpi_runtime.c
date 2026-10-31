@@ -230,7 +230,7 @@ static int rts_callback_owner(int object_type) {
 
 /* Whether two handles name the same object, without raising errors. */
 static int rts_same_object(vpiHandle a, vpiHandle b) {
-    uint32_t ai, bi;
+    uint32_t ai = LLG_VPI_NONE, bi = LLG_VPI_NONE;
     llg_vpi_slot_t* first = decode_handle(a, &ai);
     llg_vpi_slot_t* second = decode_handle(b, &bi);
     if (!first || !second) return 0;
