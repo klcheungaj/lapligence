@@ -314,6 +314,7 @@ struct CaptureOutput {
   std::vector<LlgSlangEditionFinding> edition_findings;
   std::vector<LlgSlangProtectedEnvelope> protected_envelopes;
   std::vector<LlgSlangFsmPragma> fsm_pragmas;
+  std::vector<LlgSlangAttribute> attributes;
 };
 
 namespace {
@@ -2534,6 +2535,17 @@ public:
     attach(id);
     if (!markVisited(id))
       return;
+    // The attribute instances of the VPI attribute owners (37.78) that are
+    // symbols; simulation captures only, the language server has no use.
+    if constexpr (std::same_as<T, InstanceSymbol> || std::same_as<T, DefinitionSymbol> ||
+                  std::same_as<T, NetSymbol> || std::same_as<T, VariableSymbol> ||
+                  std::same_as<T, PortSymbol> || std::same_as<T, SubroutineSymbol> ||
+                  std::same_as<T, PrimitiveInstanceSymbol> ||
+                  std::same_as<T, ProceduralBlockSymbol> ||
+                  std::same_as<T, ContinuousAssignSymbol>) {
+      if (!capture.declarationOnly)
+        captureAttributes(id, symbol);
+    }
     if constexpr (std::same_as<T, UninstantiatedDefSymbol>) {
       if (capture.declarationOnly)
         sourceConnections.push_back(&symbol);
@@ -5369,6 +5381,28 @@ private:
   // layout of an instance's (IEEE 1800-2009 37.10). `celldefine tags only
   // modules (22.10) and `unconnected_drive pulls only module, program and
   // interface ports (22.9), so a package is never a cell and never pulled.
+  // Records the attribute instances of `symbol` (IEEE 1800-2009 5.12) for
+  // owner `id`, in source order; Slang keeps the last of a repeated name.
+  void captureAttributes(uint64_t id, const Symbol& symbol) {
+    const Scope* scope = symbol.getParentScope();
+    if (!scope)
+      return;
+    for (const AttributeSymbol* attribute : scope->getCompilation().getAttributes(symbol)) {
+      uint32_t flags = 0;
+      const syntax::SyntaxNode* spec = attribute->getSyntax();
+      if (spec && spec->kind == syntax::SyntaxKind::AttributeSpec) {
+        const auto& value = spec->as<syntax::AttributeSpecSyntax>().value;
+        if (value && value->expr->kind == syntax::SyntaxKind::StringLiteralExpression)
+          flags |= LLG_SLANG_ATTRIBUTE_STRING;
+      }
+      chargeRecord(capture.output, sizeof(LlgSlangAttribute));
+      capture.output.attributes.push_back(
+          {id, capture.constant(attribute->getValue()),
+           capture.span(attribute->location, attribute->name.size()), flags, 0,
+           storeString(capture.output, attribute->name)});
+    }
+  }
+
   static void addPackageDefinition(LlgSlangSemanticNode& result, const PackageSymbol& symbol) {
     if (symbol.defaultLifetime == VariableLifetime::Automatic)
       result.auxiliary |= LLG_SLANG_INSTANCE_AUTOMATIC;
@@ -10065,7 +10099,7 @@ bool sinkComplete(const LlgSlangSink& sink) {
          sink.semantic_nodes && sink.udp_rows && sink.udp_tables &&
          sink.lexical_tokens && sink.source_libraries &&
          sink.line_directives && sink.edition_findings &&
-         sink.protected_envelopes && sink.fsm_pragmas && sink.end;
+         sink.protected_envelopes && sink.fsm_pragmas && sink.attributes && sink.end;
 }
 
 void checkSink(uint32_t status) {
@@ -10110,6 +10144,7 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
       output.edition_findings.size(),
       output.protected_envelopes.size(),
       output.fsm_pragmas.size(),
+      output.attributes.size(),
   };
   checkSink(sink.begin(sink.context, &header));
   streamTable(sink, sink.files, output.files);
@@ -10136,6 +10171,7 @@ void streamCapture(CaptureOutput& output, const LlgSlangSink& sink) {
   streamTable(sink, sink.edition_findings, output.edition_findings);
   streamTable(sink, sink.protected_envelopes, output.protected_envelopes);
   streamTable(sink, sink.fsm_pragmas, output.fsm_pragmas);
+  streamTable(sink, sink.attributes, output.attributes);
   checkSink(sink.end(sink.context));
 }
 

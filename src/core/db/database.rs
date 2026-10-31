@@ -217,6 +217,21 @@ pub struct InstanceDefinition {
     pub config: Option<String>,
 }
 
+/// One attribute instance `(* name = value *)` (IEEE 1800-2009 5.12).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AttributeInstance {
+    pub name: String,
+    /// The constant value; an attribute written without one is the `bit`
+    /// value 1, and one written as a string literal is a [`Val::Str`].
+    pub value: Val,
+    /// Attached to the instantiated definition, not to the instance
+    /// (IEEE 1800-2009 37.78 vpiDefAttribute).
+    pub definition: bool,
+    /// Source location of the attribute's name.
+    pub file: Option<std::sync::Arc<str>>,
+    pub line: u32,
+}
+
 /// One element of a primitive instance array: of a connection as wide as
 /// `count` elements, the element owns slice `slice`, counted from the least
 /// significant one, which belongs to the right-hand indices of the array
@@ -283,6 +298,10 @@ pub struct Db {
     /// Definition facts of each module, interface and program instance (the
     /// VPI instance properties of IEEE 1800-2009 37.10).
     instance_definitions: HashMap<NodeId, InstanceDefinition>,
+    /// Attribute instances of each VPI attribute owner (IEEE 1800-2009 5.12,
+    /// 37.78), in source order; an instance lists its own, then those of
+    /// its definition.
+    attributes: HashMap<NodeId, Vec<AttributeInstance>>,
     /// Position of each element of a primitive instance array (IEEE
     /// 1800-2009 28.3.5-28.3.6): the frontend binds every element to the
     /// whole connection expressions, so consumers that need the element's
@@ -484,6 +503,7 @@ impl Db {
             checker_actuals: HashMap::new(),
             unconnected_drives: HashMap::new(),
             instance_definitions: HashMap::new(),
+            attributes: HashMap::new(),
             primitive_array_positions: HashMap::new(),
             instance_array_ranges: HashMap::new(),
             keyword_lines: HashMap::new(),
@@ -583,6 +603,7 @@ impl Db {
             checker_actuals: HashMap::new(),
             unconnected_drives: HashMap::new(),
             instance_definitions: HashMap::new(),
+            attributes: HashMap::new(),
             primitive_array_positions: HashMap::new(),
             instance_array_ranges: HashMap::new(),
             keyword_lines: HashMap::new(),
@@ -853,6 +874,14 @@ impl Db {
     /// a package (its own declaration).
     pub fn instance_definition(&self, id: NodeId) -> Option<&InstanceDefinition> {
         self.instance_definitions.get(&id)
+    }
+
+    /// Attribute instances of a declaration, instance, subroutine,
+    /// primitive, process or continuous assignment (IEEE 1800-2009 5.12,
+    /// 37.78), in source order; an instance lists its own before those of
+    /// its definition.
+    pub fn attributes(&self, id: NodeId) -> &[AttributeInstance] {
+        self.attributes.get(&id).map_or(&[], Vec::as_slice)
     }
 
     pub fn unconnected_drive(&self, id: NodeId) -> UnconnectedDrive {

@@ -79,6 +79,10 @@ invocation locations in configuration diagnostics.
   byte budget. The text must span exactly the comment range minus its
   delimiters; instance records must name distinct instance nodes of a
   reported scope. Parsing and binding happen in the owned DB.
+- `attributes` (ABI 69) are the attribute instances of simulation captures
+  (none in declaration-only captures): owner node, value constant, name range
+  and whether the value is a string literal, in source order per owner. The DB
+  keeps them as `Db::attributes`, an instance's own before its definition's.
 - A `default disable iff` expression (`LLG_SLANG_EDGE_DEFAULT_DISABLE`) is owned
   by the first assertion statement that uses it. An instance body also names
   the one it declares itself (ABI 62); the DB keeps that as instance metadata

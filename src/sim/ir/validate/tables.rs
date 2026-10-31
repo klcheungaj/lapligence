@@ -140,12 +140,13 @@ impl Validator<'_> {
                         return self.fail(path, "VPI structure object has no own storage");
                     }
                 }
-                IrVpiObjectKind::Parameter | IrVpiObjectKind::Port => {
+                IrVpiObjectKind::Parameter | IrVpiObjectKind::Port | IrVpiObjectKind::Attribute => {
                     if object.signal.is_some() || object.array.is_some() {
-                        return self.fail(path, "VPI parameter or port has no own storage");
+                        return self
+                            .fail(path, "VPI parameter, port or attribute has no own storage");
                     }
-                    if object.kind == IrVpiObjectKind::Parameter && object.constant.is_none() {
-                        return self.fail(path, "VPI parameter is missing its value");
+                    if object.kind != IrVpiObjectKind::Port && object.constant.is_none() {
+                        return self.fail(path, "VPI parameter or attribute is missing its value");
                     }
                 }
                 IrVpiObjectKind::Dynamic => {

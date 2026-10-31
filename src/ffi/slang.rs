@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 68;
+const ABI_VERSION: u32 = 69;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1665,6 +1665,18 @@ pub struct UdpTable {
     pub rows: Vec<UdpRow>,
 }
 
+/// One attribute instance of a captured owner (`LlgSlangAttribute`): the
+/// owner's semantic node, the value's constant and the attribute's name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attribute {
+    pub owner_id: u64,
+    pub constant_id: u64,
+    pub range: Option<SourceRange>,
+    pub name: String,
+    /// The value was written as a string literal.
+    pub string: bool,
+}
+
 /// Source library recorded for one elaborated instance, package or
 /// compilation-unit semantic node.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1819,6 +1831,9 @@ pub struct Snapshot {
     /// The elaborated instances of every declaration that holds an FSM
     /// pragma, in capture order.
     pub fsm_instances: Vec<FsmPragmaInstance>,
+    /// Attribute instances (IEEE 1800-2009 5.12) by owner, each owner's in
+    /// source order.
+    pub attributes: Vec<Attribute>,
 }
 
 impl Snapshot {
@@ -2061,6 +2076,17 @@ struct RawProtectedEnvelope {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+struct RawAttribute {
+    owner_id: u64,
+    constant_id: u64,
+    range: RawRange,
+    flags: u32,
+    reserved: u32,
+    name: RawString,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 struct RawFsmPragma {
     range: RawRange,
     scope: RawRange,
@@ -2187,6 +2213,7 @@ struct RawStreamHeader {
     edition_finding_count: u64,
     protected_envelope_count: u64,
     fsm_pragma_count: u64,
+    attribute_count: u64,
 }
 
 type RawBatch<T> = unsafe extern "C" fn(*mut std::ffi::c_void, *const T, u64) -> u32;
@@ -2216,6 +2243,7 @@ struct RawSink {
     edition_findings: RawBatch<RawEditionFinding>,
     protected_envelopes: RawBatch<RawProtectedEnvelope>,
     fsm_pragmas: RawBatch<RawFsmPragma>,
+    attributes: RawBatch<RawAttribute>,
     end: unsafe extern "C" fn(*mut std::ffi::c_void) -> u32,
 }
 

@@ -1,0 +1,31 @@
+tb.s:
+  inst_attr vpiAttribute value=int:5 bits=00000000000000000000000000000101 def=0 at=A19-D55_attributes.sv:19 parent=vpiModule full=NULL size=-1(error)
+  keep vpiAttribute value=scalar:1 bits=1 def=1 at=A19-D55_attributes.sv:4 parent=vpiModule full=NULL size=-1(error)
+  weight vpiAttribute value=int:3 bits=00000000000000000000000000000011 def=1 at=A19-D55_attributes.sv:4 parent=vpiModule full=NULL size=-1(error)
+  tag vpiAttribute value=string:def bits=011001000110010101100110 def=1 at=A19-D55_attributes.sv:4 parent=vpiModule full=NULL size=-1(error)
+tb.t:
+  keep vpiAttribute value=scalar:1 bits=1 def=1 at=A19-D55_attributes.sv:4 parent=vpiModule full=NULL size=-1(error)
+  weight vpiAttribute value=int:3 bits=00000000000000000000000000000011 def=1 at=A19-D55_attributes.sv:4 parent=vpiModule full=NULL size=-1(error)
+  tag vpiAttribute value=string:def bits=011001000110010101100110 def=1 at=A19-D55_attributes.sv:4 parent=vpiModule full=NULL size=-1(error)
+tb.s.w:
+  mark vpiAttribute value=string:net bits=011011100110010101110100 def=0 at=A19-D55_attributes.sv:9 parent=vpiNet full=NULL size=-1(error)
+tb.s.v:
+  r_attr vpiAttribute value=format:9 bits=10 def=0 at=A19-D55_attributes.sv:10 parent=vpiReg full=NULL size=-1(error)
+tb.s.e:
+  ev_attr vpiAttribute value=scalar:1 bits=1 def=0 at=A19-D55_attributes.sv:11 parent=vpiNamedEvent full=NULL size=-1(error)
+tb.s.f:
+  fn_attr vpiAttribute value=int:7 bits=00000000000000000000000000000111 def=0 at=A19-D55_attributes.sv:12 parent=vpiFunction full=NULL size=-1(error)
+tb.s.b1:
+  prim_attr vpiAttribute value=scalar:1 bits=1 def=0 at=A19-D55_attributes.sv:13 parent=vpiGate full=NULL size=-1(error)
+tb.r:
+  real_attr vpiAttribute value=real:1.5 bits=0000000000000000000000000000000000000000000000000000000000000001 def=0 at=A19-D55_attributes.sv:21 parent=vpiReg full=NULL size=-1(error)
+  keep vpiAttribute value=int:0 bits=00000000000000000000000000000000 def=0 at=A19-D55_attributes.sv:21 parent=vpiReg full=NULL size=-1(error)
+tb.x:
+tb.s.i:
+  pin vpiAttribute value=int:1 bits=00000000000000000000000000000001 def=0 at=A19-D55_attributes.sv:6 parent=vpiPort full=NULL size=-1(error)
+tb.s.o:
+process:
+  proc_attr vpiAttribute value=scalar:1 bits=1 def=0 at=A19-D55_attributes.sv:14 parent=vpiAlways full=NULL size=-1(error)
+contassign:
+  ca_attr vpiAttribute value=scalar:1 bits=1 def=0 at=A19-D55_attributes.sv:15 parent=vpiContAssign full=NULL size=-1(error)
+by name tb.s.keep: NULL

@@ -246,7 +246,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   digits, underscores, real/scientific and string literals. Signed literals and
   signed declarations retain their resolved meaning. V §§2.1–2.7 **[1995/2001]**.
 - 🟦 **Attributes** — Parsed without simulator-specific effects, including
-  `(* full_case *)`. V §2.8 **[2001]**.
+  `(* full_case *)`; VPI lists them as `vpiAttribute` objects of their owners
+  (decision A19-D55). V §2.8 **[2001]**.
 - 🟦 **Fill literals** — `'0`, `'1`, `'x`, `'z` follow context sizing in admitted
   expressions, assignments, calls and case operands. Self-determined
   concatenation/replication operands remain one bit. SV §5.7.1 **[SV-2005]**.

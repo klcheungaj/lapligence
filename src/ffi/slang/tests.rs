@@ -26,6 +26,7 @@ struct Tables {
     edition_findings: Vec<RawEditionFinding>,
     protected_envelopes: Vec<RawProtectedEnvelope>,
     fsm_pragmas: Vec<RawFsmPragma>,
+    attributes: Vec<RawAttribute>,
 }
 
 impl Tables {
@@ -53,6 +54,7 @@ impl Tables {
             edition_finding_count: self.edition_findings.len() as u64,
             protected_envelope_count: self.protected_envelopes.len() as u64,
             fsm_pragma_count: self.fsm_pragmas.len() as u64,
+            attribute_count: self.attributes.len() as u64,
         }
     }
 }
@@ -109,7 +111,8 @@ fn drive(sink: &RawSink, header: &RawStreamHeader, tables: &Tables, batch: usize
         line_directives: line_directives,
         edition_findings: edition_findings,
         protected_envelopes: protected_envelopes,
-        fsm_pragmas: fsm_pragmas
+        fsm_pragmas: fsm_pragmas,
+        attributes: attributes
     );
     // SAFETY: `context` is the sink's builder.
     unsafe { (sink.end)(context) }
@@ -2127,5 +2130,82 @@ fn fsm_pragma_records_decode_bindings_instances_and_order() {
     ] {
         let error = invalid_native_message(stream(&tables(records)));
         assert!(error.contains(message), "{message}: {error}");
+    }
+}
+
+#[test]
+fn attribute_records_decode_owner_value_and_string_flag() {
+    let name = b"a.sv";
+    let files = vec![RawFile {
+        id: 0,
+        name: RawString {
+            data: name.as_ptr(),
+            len: name.len() as u64,
+        },
+        byte_len: 100,
+    }];
+    let full = b"full_case";
+    let attribute = RawAttribute {
+        owner_id: 0,
+        constant_id: 0,
+        range: RawRange {
+            file_id: 0,
+            start: 3,
+            end: 12,
+        },
+        flags: 1,
+        reserved: 0,
+        name: RawString {
+            data: full.as_ptr(),
+            len: full.len() as u64,
+        },
+    };
+    let tables = |attributes: Vec<RawAttribute>| Tables {
+        files: files.clone(),
+        value_words: vec![1, 0],
+        constants: vec![raw_integer(0, 1)],
+        semantic_nodes: vec![raw_semantic_node(0)],
+        attributes,
+        ..Tables::default()
+    };
+    let snapshot = stream(&tables(vec![attribute])).expect("valid attribute");
+    assert_eq!(
+        snapshot.attributes,
+        vec![Attribute {
+            owner_id: 0,
+            constant_id: 0,
+            range: Some(SourceRange {
+                file_id: 0,
+                start: 3,
+                end: 12,
+            }),
+            name: "full_case".to_owned(),
+            string: true,
+        }]
+    );
+    let empty = RawAttribute {
+        name: empty_raw_string(),
+        ..attribute
+    };
+    for record in [
+        RawAttribute {
+            owner_id: 1,
+            ..attribute
+        },
+        RawAttribute {
+            constant_id: 1,
+            ..attribute
+        },
+        RawAttribute {
+            flags: 2,
+            ..attribute
+        },
+        RawAttribute {
+            reserved: 1,
+            ..attribute
+        },
+        empty,
+    ] {
+        invalid_native_message(stream(&tables(vec![record])));
     }
 }

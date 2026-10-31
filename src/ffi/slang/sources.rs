@@ -31,6 +31,42 @@ pub(super) fn decode_source_library(
     })
 }
 
+const ATTRIBUTE_STRING: u32 = 1 << 0;
+
+/// Copy one attribute instance, rejecting an unknown owner or value and an
+/// empty name.
+pub(super) fn decode_attribute(
+    item: &RawAttribute,
+    files: &[File],
+    semantic_node_count: usize,
+    constant_count: usize,
+) -> Result<Attribute, SlangError> {
+    let known = |id: u64, count: usize| usize::try_from(id).is_ok_and(|index| index < count);
+    if !known(item.owner_id, semantic_node_count)
+        || !known(item.constant_id, constant_count)
+        || item.flags & !ATTRIBUTE_STRING != 0
+        || item.reserved != 0
+    {
+        return Err(invalid_native(
+            "attribute record names an invalid owner or value",
+        ));
+    }
+    let range = decode_range(item.range, files)?;
+    // SAFETY: stream records and their strings are valid for the callback
+    // that delivered them.
+    let name = unsafe { copy_string(item.name, "attribute name")? };
+    if name.is_empty() {
+        return Err(invalid_native("attribute record has an empty name"));
+    }
+    Ok(Attribute {
+        owner_id: item.owner_id,
+        constant_id: item.constant_id,
+        range,
+        name,
+        string: item.flags & ATTRIBUTE_STRING != 0,
+    })
+}
+
 /// Copy one `` `line`` mapping, rejecting unknown files and offsets outside
 /// the file.
 pub(super) fn decode_line_directive(

@@ -57,6 +57,7 @@ test a20d16 sim_lrm_decisions::a20_d16_delay_expressions
 test a20d17 sim_lrm_decisions::a20_d17_port_delays
 test a20d18 sim_lrm_decisions::a20_d18_intermodule_paths
 test a20d19 sim_lrm_decisions::a20_d19_runtime_delays
+test a19d55 sim_lrm_decisions::a19_d55_attributes
 test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
 test s42systf sim_042::system_functions_follow_the_return_conventions
 test s42values sim_042::values_cover_every_format_and_put_mode
@@ -1600,6 +1601,7 @@ node cont_assign_class 37.43 members=cont_assign,cont_assign_bit
 
 node cont_assign 37.43 type=vpiContAssign
   iterate vpiBit implemented a19d34
+  iterate vpiAttribute extension a19d55 the attributes 5.12 allows on a continuous assignment
   get vpiSigned extension walk the sign and width of the object's value
   get vpiSize extension walk the sign and width of the object's value
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
@@ -2068,16 +2070,16 @@ node callback_owner 37.75 members=prim_term,expr,time_queue,stmt
 node time_queue 37.76 type=vpiTimeQueue
   func vpi_get_time implemented a19d39
 
-node attribute 37.78 type=vpiAttribute default=unsupported attributes are not captured
-  str vpiName
-  get vpiDefAttribute
-  func vpi_get_value
-  str vpiDefFile
-  get vpiDefLineNo
-  handle vpiParent
+node attribute 37.78 type=vpiAttribute
+  str vpiName implemented a19d55
+  get vpiDefAttribute implemented a19d55
+  func vpi_get_value implemented a19d55
+  str vpiDefFile implemented a19d55
+  get vpiDefLineNo implemented a19d55
+  handle vpiParent implemented a19d55
 
 node attribute_owner 37.78 members=instance,port,nets,array_net,variables,named_event,prim_term,path_term,mod_path,tchk,param_assign,spec_param,task_func,primitive,table_entry,stmt,process,operation,concurrent_assertion,sequence_decl,property_decl,clocking_block,class_defn,constraint
-  iterate vpiAttribute unsupported attributes are not captured
+  iterate vpiAttribute implemented a19d55
 
 node iterator 37.79 type=vpiIterator
   get vpiIteratorType implemented walk

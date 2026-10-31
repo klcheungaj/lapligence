@@ -484,6 +484,12 @@ static int is_parameter_type(int type) {
     return type == vpiParameter || type == vpiSpecParam;
 }
 
+/* An object whose value is a constant of the catalog: a parameter or an
+ * attribute instance (37.26, 37.78). */
+static int is_constant_type(int type) {
+    return is_parameter_type(type) || type == vpiAttribute;
+}
+
 /* Declaration objects without a value (37.13, 37.80, decision A19-D42). */
 static int is_declaration_type(int type) {
     return type == vpiGenScopeArray || type == vpiGenVar || type == vpiIODecl;
@@ -608,7 +614,7 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
     }
     if (is_scope_type(object->type))
         return !object->packed && !object->real;
-    if (is_parameter_type(object->type))
+    if (is_constant_type(object->type))
         return object->is_real || object->constant;
     if (object->type == vpiPort) return 1;
     if (is_declaration_type(object->type)) return !object->packed && !object->real;
@@ -779,9 +785,11 @@ static int vpi_ready(void) {
         if (is_array_type(object->type) || is_instance_array_type(object->type))
             g_vpi.element_counts[i] = dims_element_count(object);
     }
-    /* Ports live in their own namespace and unnamed objects have no name. */
+    /* Ports live in their own namespace, attributes are found only from
+     * their owner (37.78) and unnamed objects have no name. */
     for (size_t i = 0; i < count; ++i)
         if (g_vpi.objects[i].type != vpiPort && g_vpi.objects[i].type != vpiIODecl &&
+            g_vpi.objects[i].type != vpiAttribute &&
             !(g_vpi.objects[i].flags & LLG_VPI_OBJ_UNNAMED))
             g_vpi.sorted[g_vpi.sorted_count++] = (uint32_t)i;
     qsort(g_vpi.sorted, g_vpi.sorted_count, sizeof(*g_vpi.sorted), compare_rows);
@@ -1236,7 +1244,7 @@ static int read_target(const llg_vpi_target_t* target, llg_vpi_datum_t* out) {
     memset(out, 0, sizeof(*out));
     out->packed = VPI_EMPTY;
     if (!object) return 0;
-    if (is_parameter_type(object->type)) {
+    if (is_constant_type(object->type)) {
         if (object->is_real) {
             out->is_real = 1;
             out->real = object->real_constant;
@@ -1344,7 +1352,7 @@ static int handle_target(const llg_vpi_slot_t* slot, llg_vpi_target_t* target) {
     target->two_state = 0;
     switch (slot->kind) {
         case SLOT_OBJECT:
-            if (!object || !(has_storage(object) || is_parameter_type(object->type)) ||
+            if (!object || !(has_storage(object) || is_constant_type(object->type)) ||
                 is_array_type(object->type))
                 return 0;
             /* An unpacked union member is the low bits of the shared extent. */
@@ -3836,7 +3844,7 @@ vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
             }
             return element_by_indices(slot->object, &value, 1, 0);
         }
-        if (is_parameter_type(base->type) || !has_storage(base)) {
+        if (is_constant_type(base->type) || !has_storage(base)) {
             vpi_error("LLG_VPI_INDEX", "object has no access by index");
             return NULL;
         }
@@ -6306,6 +6314,12 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     uint32_t argument = argument_code(slot);
     if (argument != LLG_VPI_NONE) return code_relation(type, argument);
     llg_vpi_model_object_t* object = row_object(slot->object);
+    if (slot->kind == SLOT_OBJECT && object && object->type == vpiAttribute &&
+        type != vpiParent) {
+        /* 37.78: an attribute leads only to its owner. */
+        vpi_error("LLG_VPI_RELATION", "an attribute has only its parent (37.78)");
+        return NULL;
+    }
     /* 37.37: a task or function that is not a class method has no class
      * defn. */
     if (type == vpiClassDefn && slot->kind == SLOT_OBJECT && object &&
@@ -7799,6 +7813,28 @@ static int compare_ports(const void* left, const void* right) {
     return pa < pb ? -1 : pa > pb;
 }
 
+/* The object types of 37.78 that own attribute instances, and the
+ * continuous assignment, which 5.12 lets carry them too. */
+static int attribute_owner_type(int type) {
+    if (is_instance_type(type) || is_net_type(type) || is_variable_type(type) ||
+        is_primitive_type(type) || is_process_type(type) || code_is_statement(type))
+        return 1;
+    switch (type) {
+        case vpiPort: case vpiNetBit: case vpiNetArray: case vpiRegBit: case vpiRegArray:
+        case vpiStringVar: case vpiChandleVar: case vpiClassVar:
+        case vpiNamedEvent: case vpiPrimTerm: case vpiPathTerm: case vpiModPath: case vpiTchk:
+        case vpiParamAssign: case vpiSpecParam: case vpiTask: case vpiFunction:
+        case vpiTableEntry: case vpiOperation: case vpiRestrict: case vpiSequenceDecl:
+        case vpiPropertyDecl: case vpiClockingBlock: case vpiClassDefn: case vpiClassTypespec:
+        case vpiClassObj: case vpiConstraint: case vpiGenScope: case vpiFor:
+        case vpiForeachStmt: case vpiFuncCall: case vpiSysFuncCall: case vpiMethodFuncCall:
+        case vpiExpectStmt: case vpiContAssign:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 static vpiHandle iterate_children(int type, uint32_t parent) {
     size_t capacity = 16, count = 0;
     uintptr_t* items = (uintptr_t*)malloc(capacity * sizeof(*items));
@@ -8047,6 +8083,17 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     }
     if (type == vpiMember && slot->kind == SLOT_COLLECTION) return iterate_collection(slot);
     if (type == vpiIndex && has_index_relation(slot)) return iterate_indices(slot);
+    if (type == vpiAttribute) {
+        /* 37.78: the attribute instances of a declaration, instance,
+         * subroutine, primitive, process or continuous assignment, in
+         * source order; an instance lists its own, then those of its
+         * definition. The other owners carry none. */
+        if (!attribute_owner_type(handle_type(slot))) {
+            vpi_error("LLG_VPI_RELATION", "this object carries no attributes (37.78)");
+            return NULL;
+        }
+        return slot->kind == SLOT_OBJECT ? iterate_children(type, slot->object) : NULL;
+    }
     if (dyn_slot(slot)) {
         int handled;
         vpiHandle result = dyn_iterate(type, slot, &handled);
@@ -8658,6 +8705,11 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
     uint32_t width = 0;
     int is_signed = 0, real = 0;
     int has_value = handle_width(slot, &width, &is_signed, &real);
+    /* 37.78: an attribute has a name, a value and a definition location. */
+    if (slot->kind == SLOT_OBJECT && object && object->type == vpiAttribute &&
+        property != vpiType && property != vpiLineNo && property != vpiDefAttribute &&
+        property != vpiDefLineNo)
+        return unsupported_property();
     if (slot->kind == SLOT_OBJECT && object && is_declaration_type(object->type) &&
         property != vpiType && property != vpiLineNo) {
         /* 37.13, 37.80: an io declaration's direction and value shape, a
@@ -9001,11 +9053,22 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 return log10_unit(unit);
             }
             return unsupported_property();
+        case vpiDefAttribute:
+            /* 37.78: the attribute is attached to the instantiated
+             * definition. */
+            if (slot->kind != SLOT_OBJECT || !object || object->type != vpiAttribute)
+                return unsupported_property();
+            return (object->flags & LLG_VPI_OBJ_QUALIFIER) != 0;
         case vpiCellInstance:
         case vpiDefNetType:
         case vpiDefLineNo:
         case vpiDefDelayMode:
         case vpiUnconnDrive:
+            /* 37.78: an attribute's definition location is where it is
+             * written. */
+            if (property == vpiDefLineNo && slot->kind == SLOT_OBJECT && object &&
+                object->type == vpiAttribute)
+                return object->line;
             /* 37.10: the definition properties of an instance. */
             if (slot->kind != SLOT_OBJECT || !object || !object->instance)
                 return unsupported_property();
@@ -9155,6 +9218,7 @@ static const char* type_name(int type) {
         case vpiGenScopeArray: return "vpiGenScopeArray";
         case vpiGenVar: return "vpiGenVar";
         case vpiIODecl: return "vpiIODecl";
+        case vpiAttribute: return "vpiAttribute";
         case vpiTimeQueue: return "vpiTimeQueue";
         case vpiUdpDefn: return "vpiUdpDefn";
         case vpiTableEntry: return "vpiTableEntry";
@@ -9373,6 +9437,13 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
              (property == vpiFullName && code_is_named_select(code_type(code_at(argument))))))
             return code_string(argument, property);
     }
+    if (slot->kind == SLOT_OBJECT && object && object->type == vpiAttribute &&
+        property != vpiType && property != vpiName && property != vpiFile &&
+        property != vpiDefFile) {
+        /* 37.78: an attribute has a name and a definition location. */
+        unsupported_property();
+        return NULL;
+    }
     if (slot->kind == SLOT_OBJECT && object && is_declaration_type(object->type) &&
         property != vpiName && property != vpiFile &&
         (property != vpiFullName || object->type == vpiIODecl)) {
@@ -9417,6 +9488,13 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
                 case vpiLibrary:
                 case vpiCell:
                 case vpiConfig: {
+                    /* 37.78: an attribute's definition location is where
+                     * it is written. */
+                    if (object->type == vpiAttribute) {
+                        if (property == vpiDefFile && object->file)
+                            return (PLI_BYTE8*)object->file;
+                        break;
+                    }
                     /* 37.10, 33.7: the definition and its binding. No
                      * configuration controls an unconfigured design's binding
                      * (decision A19-D41). */
@@ -9572,6 +9650,15 @@ void vpi_get_value(vpiHandle handle, p_vpi_value output) {
         else
             vpi_error("LLG_VPI_VALUE", "this VPI object has no value");
         return;
+    }
+    if (type == vpiAttribute && output->format == vpiObjTypeVal) {
+        /* 5.12: an attribute takes the type of its expression: a string
+         * literal reads as a string, a 32-bit signed integral as an int. */
+        const llg_vpi_model_object_t* object = row_object(slot->object);
+        if (object->flags & LLG_VPI_OBJ_TEXT)
+            output->format = vpiStringVal;
+        else if (!datum.is_real && is_signed && llg_sv4_width(datum.packed) == 32u)
+            output->format = vpiIntVal;
     }
     fill_value(&datum, is_signed, type, output);
     datum_destroy(&datum);
@@ -9790,8 +9877,9 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
     }
     llg_vpi_model_object_t* object = row_object(target.object);
     const char* reason = NULL;
-    if (is_parameter_type(object->type)) {
-        vpi_error("LLG_VPI_VALUE", "a parameter is a constant and cannot receive a value");
+    if (is_constant_type(object->type)) {
+        vpi_error("LLG_VPI_VALUE",
+                  "a parameter or attribute is a constant and cannot receive a value");
         return NULL;
     }
     if (!target_writable(&target, &reason)) {
@@ -11118,7 +11206,7 @@ static int bind_force_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
     llg_vpi_target_t target;
     if (handle_target(slot, &target)) {
         llg_vpi_model_object_t* object = row_object(target.object);
-        if (is_parameter_type(object->type) || !has_storage(object)) {
+        if (is_constant_type(object->type) || !has_storage(object)) {
             vpi_error("LLG_VPI_CALLBACK", "a parameter or constant is never forced");
             return 0;
         }
@@ -11555,8 +11643,8 @@ static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
         whole_array = 1;
     }
     llg_vpi_model_object_t* object = row_object(target.object);
-    if (is_parameter_type(object->type)) {
-        vpi_error("LLG_VPI_CALLBACK", "a parameter never changes value");
+    if (is_constant_type(object->type)) {
+        vpi_error("LLG_VPI_CALLBACK", "a parameter or attribute never changes value");
         return 0;
     }
     if (data->value && data->value->format != vpiSuppressVal &&

@@ -82,6 +82,11 @@ pub enum IrVpiObjectKind {
     /// argument or a modport port, keyed under its scope with a hidden
     /// `io` part; [`IrVpiObject::port_index`] is its declaration order.
     IoDecl,
+    /// An attribute instance (`vpiAttribute`, 37.78) keyed under its owner
+    /// with a hidden part, so name lookup never finds it:
+    /// [`IrVpiObject::constant`] holds its value, [`IrVpiObject::qualifier`]
+    /// marks one of the instantiated definition (`vpiDefAttribute`).
+    Attribute,
 }
 
 impl IrVpiObjectKind {
@@ -118,6 +123,7 @@ impl IrVpiObjectKind {
             Self::GenScopeArray => "vpiGenScopeArray",
             Self::GenVar => "vpiGenVar",
             Self::IoDecl => "vpiIODecl",
+            Self::Attribute => "vpiAttribute",
         }
     }
 
@@ -321,7 +327,8 @@ pub struct IrVpiObject {
     /// Declared ranges of an instance array, outermost first.
     pub(in crate::sim) dims: Vec<(i64, i64)>,
     /// `vpiNetDeclAssign` of a continuous assignment, `vpiAutomatic` of a
-    /// task or function, `vpiUnit` of a package, a global clocking block.
+    /// task or function, `vpiUnit` of a package, a global clocking block,
+    /// `vpiDefAttribute` of an attribute.
     pub(in crate::sim) qualifier: bool,
     /// `vpiConstantVariable` of a variable declared `const` (37.17).
     pub(in crate::sim) constant_variable: bool,

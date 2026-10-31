@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 68u
+#define LLG_SLANG_ABI_VERSION 69u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1632,6 +1632,24 @@ typedef struct {
   LlgSlangString text;
 } LlgSlangFsmPragma;
 
+/* One attribute instance (IEEE 1800-2009 5.12) attached to a captured
+ * declaration, instance, definition, subroutine, primitive, process or
+ * continuous assignment (ABI v69): owner_id names the owner's semantic node,
+ * constant_id the attribute's value in the constant table (a value-less
+ * attribute has the `bit` value 1 of 5.12), range the attribute's name.
+ * STRING marks a value written as a string literal, whose constant holds its
+ * characters as packed bits. Records of one owner are in source order. */
+enum { LLG_SLANG_ATTRIBUTE_STRING = 1u << 0 };
+
+typedef struct {
+  uint64_t owner_id;
+  uint64_t constant_id;
+  LlgSlangSourceRange range;
+  uint32_t flags;
+  uint32_t reserved;
+  LlgSlangString name;
+} LlgSlangAttribute;
+
 /* Capture stream (ABI v15).
  *
  * llg_slang_compile() does not return a snapshot owner. After Slang has
@@ -1683,6 +1701,7 @@ typedef struct {
   uint64_t edition_finding_count;
   uint64_t protected_envelope_count;
   uint64_t fsm_pragma_count;
+  uint64_t attribute_count;
 } LlgSlangStreamHeader;
 
 typedef struct {
@@ -1730,6 +1749,8 @@ typedef struct {
                                   uint64_t count);
   uint32_t (*fsm_pragmas)(void* context, const LlgSlangFsmPragma* records,
                           uint64_t count);
+  uint32_t (*attributes)(void* context, const LlgSlangAttribute* records,
+                         uint64_t count);
   uint32_t (*end)(void* context);
 } LlgSlangSink;
 

@@ -83,9 +83,10 @@ pub(super) enum Table {
     EditionFindings,
     ProtectedEnvelopes,
     FsmPragmas,
+    Attributes,
 }
 
-const TABLE_COUNT: usize = Table::FsmPragmas as usize + 1;
+const TABLE_COUNT: usize = Table::Attributes as usize + 1;
 const TABLES: [Table; TABLE_COUNT] = [
     Table::Files,
     Table::RelatedDiagnostics,
@@ -107,6 +108,7 @@ const TABLES: [Table; TABLE_COUNT] = [
     Table::EditionFindings,
     Table::ProtectedEnvelopes,
     Table::FsmPragmas,
+    Table::Attributes,
 ];
 
 impl Table {
@@ -132,6 +134,7 @@ impl Table {
             Self::EditionFindings => "edition finding records",
             Self::ProtectedEnvelopes => "protected envelope records",
             Self::FsmPragmas => "FSM pragma records",
+            Self::Attributes => "attribute records",
         }
     }
 
@@ -157,6 +160,7 @@ impl Table {
             Self::EditionFindings => std::mem::size_of::<RawEditionFinding>(),
             Self::ProtectedEnvelopes => std::mem::size_of::<RawProtectedEnvelope>(),
             Self::FsmPragmas => std::mem::size_of::<RawFsmPragma>(),
+            Self::Attributes => std::mem::size_of::<RawAttribute>(),
         }
     }
 }
@@ -222,6 +226,7 @@ pub(super) struct StreamBuilder {
     fsm_instances: Vec<FsmPragmaInstance>,
     fsm_scopes: HashSet<sources::FsmScopeKey>,
     fsm_instance_keys: HashSet<(sources::FsmScopeKey, u64)>,
+    attributes: Vec<Attribute>,
 }
 
 impl StreamBuilder {
@@ -270,6 +275,7 @@ impl StreamBuilder {
             fsm_instances: Vec::new(),
             fsm_scopes: HashSet::new(),
             fsm_instance_keys: HashSet::new(),
+            attributes: Vec::new(),
         }
     }
 
@@ -312,6 +318,7 @@ impl StreamBuilder {
             protected_envelopes: self.protected_envelopes,
             fsm_pragmas: self.fsm_pragmas,
             fsm_instances: self.fsm_instances,
+            attributes: self.attributes,
         };
         Ok((snapshot, self.profile))
     }
@@ -356,6 +363,7 @@ impl StreamBuilder {
             raw.edition_finding_count,
             raw.protected_envelope_count,
             raw.fsm_pragma_count,
+            raw.attribute_count,
         ];
         let header = Header {
             flags: raw.flags,
@@ -506,6 +514,7 @@ impl StreamBuilder {
         // yields one record per declarator. The record byte check above
         // bounds them like every other table.
         self.fsm_pragmas.reserve_exact(capacity(Table::FsmPragmas));
+        self.attributes.reserve_exact(capacity(Table::Attributes));
         self.header = Some(header);
         // Native capture is complete once the header arrives; the stream
         // phase covers delivery and decoding.
@@ -912,6 +921,21 @@ impl StreamBuilder {
         }
         Ok(())
     }
+
+    pub(super) fn attributes(&mut self, raw: &[RawAttribute]) -> Result<(), SlangError> {
+        self.enter(Table::Attributes, raw.len())?;
+        for item in raw {
+            self.charge(item.name)?;
+            let attribute = sources::decode_attribute(
+                item,
+                &self.files,
+                self.semantic_nodes.len(),
+                self.constants.len(),
+            )?;
+            self.attributes.push(attribute);
+        }
+        Ok(())
+    }
 }
 
 /// Run one receiver for a sink callback, recording its first error.
@@ -1030,6 +1054,7 @@ batch_receivers! {
     sink_edition_findings: RawEditionFinding => EditionFindings, edition_findings;
     sink_protected_envelopes: RawProtectedEnvelope => ProtectedEnvelopes, protected_envelopes;
     sink_fsm_pragmas: RawFsmPragma => FsmPragmas, fsm_pragmas;
+    sink_attributes: RawAttribute => Attributes, attributes;
 }
 
 /// The callback table whose context is `builder`. The returned value borrows
@@ -1059,6 +1084,7 @@ pub(super) fn sink_for(builder: &mut StreamBuilder) -> RawSink {
         edition_findings: sink_edition_findings,
         protected_envelopes: sink_protected_envelopes,
         fsm_pragmas: sink_fsm_pragmas,
+        attributes: sink_attributes,
         end: sink_end,
     }
 }

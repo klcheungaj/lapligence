@@ -395,6 +395,7 @@ impl Db {
             .collect();
         let instance_definitions =
             instance_definitions(snapshot, &ids, &mut source_positions, &instance_configs)?;
+        let attributes = attribute_instances(snapshot, &ids, &mut source_positions)?;
         let primitive_array_positions = primitive_array_positions(snapshot);
         let instance_array_ranges = instance_array_ranges(snapshot);
         let mut keyword_lines = statement_keyword_lines(snapshot, &mut source_positions)?;
@@ -1571,6 +1572,7 @@ impl Db {
             checker_actuals,
             unconnected_drives,
             instance_definitions,
+            attributes,
             primitive_array_positions,
             instance_array_ranges,
             keyword_lines,
@@ -1745,6 +1747,100 @@ fn instance_definitions(
         );
     }
     Ok(definitions)
+}
+
+/// The attribute instances of every owner. A single instance lists its own
+/// attributes, then those of the definition it instantiates.
+fn attribute_instances(
+    snapshot: &SlangSnapshot,
+    ids: &SemanticIds,
+    positions: &mut SourcePositions<'_>,
+) -> Result<HashMap<NodeId, Vec<super::AttributeInstance>>, DbError> {
+    if snapshot.attributes.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut own: HashMap<u64, Vec<super::AttributeInstance>> = HashMap::new();
+    for attribute in &snapshot.attributes {
+        let constant = snapshot
+            .constants
+            .get(attribute.constant_id as usize)
+            .ok_or_else(|| DbError::InvalidSnapshot("attribute value is missing".into()))?;
+        let value = match (&constant.value, attribute.string) {
+            (
+                crate::ffi::slang::ConstantValue::Integer {
+                    bit_width,
+                    value_words,
+                    ..
+                },
+                true,
+            ) => string_literal_val(*bit_width, value_words),
+            (value, _) => val_from_slang(value),
+        }
+        .ok_or_else(|| DbError::InvalidSnapshot("attribute value is not a constant".into()))?;
+        let (file, line) = match attribute.range {
+            Some(range) => {
+                let (file, line, _, _, _) = positions.range_position(range)?;
+                (file, line)
+            }
+            None => (None, 0),
+        };
+        own.entry(attribute.owner_id)
+            .or_default()
+            .push(super::AttributeInstance {
+                name: attribute.name.clone(),
+                value,
+                definition: false,
+                file,
+                line,
+            });
+    }
+    let mut attributes = HashMap::new();
+    for (&owner, list) in &own {
+        let node = snapshot
+            .semantic_nodes
+            .get(owner as usize)
+            .ok_or_else(|| DbError::InvalidSnapshot("attribute owner is missing".into()))?;
+        if node.kind == SemanticKind::Definition {
+            continue;
+        }
+        attributes.insert(semantic_id(ids, owner)?, list.clone());
+    }
+    for semantic in &snapshot.semantic_nodes {
+        if semantic.kind != SemanticKind::Instance
+            || semantic.subkind != crate::ffi::slang::SEMANTIC_INSTANCE_SINGLE
+        {
+            continue;
+        }
+        let Some(definition) = semantic.target_id().and_then(|target| own.get(&target)) else {
+            continue;
+        };
+        attributes
+            .entry(semantic_id(ids, semantic.id)?)
+            .or_insert_with(Vec::new)
+            .extend(definition.iter().map(|attribute| super::AttributeInstance {
+                definition: true,
+                ..attribute.clone()
+            }));
+    }
+    Ok(attributes)
+}
+
+/// The text of a string literal held as packed bits, eight per character
+/// with the first character most significant (IEEE 1800-2009 5.9); the
+/// zero bytes of padding are dropped.
+fn string_literal_val(bit_width: u64, words: &[u64]) -> Option<Val> {
+    let bytes = (0..bit_width.div_ceil(8))
+        .rev()
+        .map(|byte| {
+            let word = words
+                .get(usize::try_from(byte / 8).ok()?)
+                .copied()
+                .unwrap_or(0);
+            u8::try_from((word >> ((byte % 8) * 8)) & 0xff).ok()
+        })
+        .collect::<Option<Vec<u8>>>()?;
+    let text: Vec<u8> = bytes.into_iter().filter(|byte| *byte != 0).collect();
+    Val::from_string_bytes(&text)
 }
 
 fn legacy_directives(

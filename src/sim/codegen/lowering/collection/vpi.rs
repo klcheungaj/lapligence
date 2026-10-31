@@ -1197,7 +1197,16 @@ impl Codegen<'_> {
         // in: the design walk visits declarations in source order, and
         // relations iterate a scope's rows in that order (decision A19-D47).
         let mut objects = BTreeMap::<String, (usize, IrVpiObject)>::new();
+        // A node with attribute instances (37.78) owns them through the
+        // first row it inserts; the attribute rows follow the design walk.
+        let attribute_owner = std::cell::Cell::new(None::<NodeId>);
+        let attribute_owners = std::cell::RefCell::new(Vec::<(NodeId, String)>::new());
         let mut insert = |object: IrVpiObject| {
+            if let Some(owner) = attribute_owner.take() {
+                attribute_owners
+                    .borrow_mut()
+                    .push((owner, object.full_name.clone()));
+            }
             let next = objects.len();
             objects
                 .entry(object.full_name.clone())
@@ -1241,6 +1250,7 @@ impl Codegen<'_> {
             if !reachable(self.db, id, &roots) {
                 continue;
             }
+            attribute_owner.set((!self.db.attributes(id).is_empty()).then_some(id));
             let node = self.node(id);
             let source = |object: IrVpiObject| IrVpiObject {
                 file: node.file().map(str::to_owned),
@@ -2103,8 +2113,31 @@ impl Codegen<'_> {
                 _ => {}
             }
         }
+        attribute_owner.set(None);
         for row in timing.rows {
             insert(row);
+        }
+        for (owner, key) in attribute_owners.take() {
+            for (index, attribute) in self.db.attributes(owner).iter().enumerate() {
+                let Some((constant, width, signed, real)) =
+                    vpi_parameter_constant(&attribute.value)
+                else {
+                    continue;
+                };
+                insert(IrVpiObject {
+                    full_name: format!("{key}{SEPARATOR}\u{1e}@{index:06}"),
+                    name: attribute.name.clone(),
+                    file: attribute.file.as_deref().map(str::to_owned),
+                    line: attribute.line,
+                    kind: IrVpiObjectKind::Attribute,
+                    width,
+                    signed,
+                    real,
+                    constant: Some(constant),
+                    qualifier: attribute.definition,
+                    ..IrVpiObject::default()
+                });
+            }
         }
         if code {
             for (key, scope, delays) in timing.row_delays {

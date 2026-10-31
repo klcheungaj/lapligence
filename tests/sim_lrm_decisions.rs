@@ -2555,6 +2555,15 @@ fn a19_d54_generate_scope_index_and_implicit() {
 }
 
 #[test]
+fn a19_d55_attributes() {
+    run_vpi_decision(
+        "A19-D55_attributes",
+        &["task $d55()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D55_attributes.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",
