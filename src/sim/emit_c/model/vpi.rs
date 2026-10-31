@@ -492,10 +492,17 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         dynamic::render_vpi_dynamic(model, out);
         return;
     }
-    render_vpi_typespecs(model.vpi_typespecs(), out);
-    dynamic::render_vpi_dynamic(model, out);
     let entries = catalog_for(model);
     let indices = catalog_indices(&entries);
+    // A typedef of a scope without a catalog row (a class) is not listed.
+    let mut scope_typedefs = model
+        .vpi_scope_typedefs
+        .iter()
+        .filter_map(|(scope, typespec)| Some((*indices.get(scope.as_str())?, *typespec)))
+        .collect::<Vec<_>>();
+    scope_typedefs.sort_by_key(|(row, _)| *row);
+    render_vpi_typespecs(model.vpi_typespecs(), &scope_typedefs, out);
+    dynamic::render_vpi_dynamic(model, out);
     for (index, entry) in entries.iter().enumerate() {
         if entry.dims.is_empty() {
             continue;
@@ -1164,7 +1171,14 @@ fn member_tree(
 /// Emit the interned typespec tables (IEEE 1800-2009 37.23) and the member
 /// trees of packed structure and union values. Indices are table positions;
 /// fields that name an optional entry hold index + 1, 0 for none.
-fn render_vpi_typespecs(typespecs: &[IrVpiTypespec], out: &mut String) {
+/// The interned typespecs, their ranges, members, enum constants and member
+/// nodes, and the typedefs of each catalog scope as (row, typespec) pairs in
+/// row order (declaration order within a row).
+fn render_vpi_typespecs(
+    typespecs: &[IrVpiTypespec],
+    scope_typedefs: &[(usize, usize)],
+    out: &mut String,
+) {
     let mut ranges = Vec::new();
     let mut members = Vec::new();
     let mut consts = Vec::new();
@@ -1213,7 +1227,7 @@ fn render_vpi_typespecs(typespecs: &[IrVpiTypespec], out: &mut String) {
         };
         let optional = |entry: Option<usize>| entry.map_or(0, |entry| entry + 1);
         rows.push(format!(
-            "    {{ {}, {}, {}u, {}u, {}u, {}u, {flags}, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u }},\n",
+            "    {{ {}, {}, {}u, {}u, {}u, {}u, {flags}, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u }},\n",
             typespec.kind.c_type(),
             typespec
                 .name
@@ -1231,6 +1245,7 @@ fn render_vpi_typespecs(typespecs: &[IrVpiTypespec], out: &mut String) {
             constant.1,
             tree.0,
             tree.1,
+            typespec.line,
         ));
     }
     let table = |out: &mut String, ty: &str, name: &str, items: Vec<String>| {
@@ -1318,10 +1333,20 @@ fn render_vpi_typespecs(typespecs: &[IrVpiTypespec], out: &mut String) {
     );
     let typespec_count = rows.len();
     table(out, "llg_vpi_typespec_t", "llg_vpi_ts_types", rows);
+    let typedef_count = scope_typedefs.len();
+    table(
+        out,
+        "uint32_t",
+        "llg_vpi_ts_scope_typedefs",
+        scope_typedefs
+            .iter()
+            .map(|(row, typespec)| format!("    {row}u, {typespec}u,\n"))
+            .collect(),
+    );
     out.push_str(&format!(
         "static const llg_vpi_type_tables_t llg_vpi_type_tables_value = {{ llg_vpi_ts_types, {typespec_count}u, \
 llg_vpi_ts_ranges, {range_count}u, llg_vpi_ts_members, {member_count}u, llg_vpi_ts_consts, {const_count}u, \
-llg_vpi_ts_nodes, {node_count}u }};\n\
+llg_vpi_ts_nodes, {node_count}u, llg_vpi_ts_scope_typedefs, {typedef_count}u }};\n\
 static const llg_vpi_type_tables_t* const llg_vpi_type_tables = &llg_vpi_type_tables_value;\n"
     ));
 }
@@ -1623,8 +1648,8 @@ mod tests {
         typespecs[0].element = Some(2);
         typespecs[0].name = Some("nib_t".to_owned());
         let mut out = String::new();
-        render_vpi_typespecs(&typespecs, &mut out);
-        assert!(out.contains("{ vpiLogicTypespec, \"nib_t\", 0u, 3u, 0u, 4u, 0u, 0u, 1u, 0u, 0u, 0u, 0u, 0u, 0u },"), "{out}");
+        render_vpi_typespecs(&typespecs, &[], &mut out);
+        assert!(out.contains("{ vpiLogicTypespec, \"nib_t\", 0u, 3u, 0u, 4u, 0u, 0u, 1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u },"), "{out}");
         assert!(out.contains("#define llg_vpi_ts_consts NULL"), "{out}");
         assert!(out.contains("llg_vpi_ts_nodes, 6u"), "{out}");
     }

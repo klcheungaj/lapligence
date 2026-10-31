@@ -2501,6 +2501,15 @@ fn a19_d48_typed_nets() {
 }
 
 #[test]
+fn a19_d49_scope_typedefs_and_memories() {
+    run_vpi_decision(
+        "A19-D49_scope_typedefs_and_memories",
+        &["task $d49()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D49_scope_typedefs_and_memories.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

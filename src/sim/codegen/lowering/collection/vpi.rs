@@ -297,6 +297,7 @@ impl Codegen<'_> {
             None => self.vpi_typespec_level(table, descriptor, renamed, depth)?,
         };
         typespec.name = Some(self.node(typedef.typedef).name.clone());
+        typespec.line = self.node(typedef.typedef).line;
         typespec.alias = alias;
         Some(table.intern(typespec))
     }
@@ -1184,6 +1185,7 @@ impl Codegen<'_> {
         // objects, by catalog key, with the scope key of their objects.
         let mut owners: Vec<(String, String, CodeOwner)> = Vec::new();
         let mut typespecs = TypespecTable::default();
+        let mut scope_typedefs = Vec::new();
         let mut dynamic = crate::sim::ir::IrVpiDynamic::default();
         let static_locals = self
             .proc_local_instances
@@ -2008,6 +2010,25 @@ impl Codegen<'_> {
                         ));
                     }
                 }
+                // 37.10 detail 1: the typedefs a scope declares, with the
+                // typespec their declarations share. A typedef inside a
+                // class has no catalog scope and is dropped when emitted.
+                NodeKind::Other if self.db.semantic_detail(id) == Some("TypeAlias") => {
+                    let (Some(parent), Some(descriptor)) =
+                        (node.parent, self.db.type_descriptor(id))
+                    else {
+                        continue;
+                    };
+                    let naming = TypedefRef {
+                        typedef: id,
+                        depth: 0,
+                    };
+                    if let Some(typespec) =
+                        self.vpi_typespec(&mut typespecs, descriptor, Some(naming), 0)
+                    {
+                        scope_typedefs.push((self.vpi_full_name(parent), typespec));
+                    }
+                }
                 _ => {}
             }
         }
@@ -2027,6 +2048,7 @@ impl Codegen<'_> {
             self.populate_vpi_code(model, &mut typespecs, owners, &mut dynamic, constraints);
         }
         model.vpi_typespecs = typespecs.entries;
+        model.vpi_scope_typedefs = scope_typedefs;
         model.vpi_dynamic = dynamic;
         Ok(())
     }

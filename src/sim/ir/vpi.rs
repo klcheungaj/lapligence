@@ -699,6 +699,9 @@ pub struct IrVpiTypespec {
     pub(in crate::sim) members: Vec<IrVpiTypespecMember>,
     /// Enum constants: name and value digits, most significant first.
     pub(in crate::sim) enum_consts: Vec<(String, String)>,
+    /// `vpiLineNo`: the line of the typedef declaration that names this
+    /// type; 0 for a type without one.
+    pub(in crate::sim) line: u32,
 }
 
 /// One `vpiTypespecMember` of a structure or union typespec.

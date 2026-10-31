@@ -315,13 +315,13 @@ node instance 37.10 members=package,interface,program,module
   iterate vpiVariables implemented walk
   iterate vpiReg implemented walk
   iterate vpiRegArray implemented walk
-  iterate vpiMemory unsupported the vpiMemory iteration is not implemented (vpiRegArray is)
+  iterate vpiMemory implemented walk
   iterate vpiNamedEvent implemented walk
   iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
   iterate vpiParameter implemented walk
   iterate vpiSpecParam implemented walk
   iterate vpiAssertion implemented walk
-  iterate vpiTypedef unsupported the vpiTypedef iteration is not implemented
+  iterate vpiTypedef implemented walk
   iterate vpiClassDefn implemented walk
   get vpiAssertCoverage implemented walk
   get vpiFsmStateCoverage implemented walk
@@ -393,11 +393,11 @@ node scope 37.12 members=instance,task_func,named_begin,begin,named_fork,fork,cl
   iterate vpiVariables implemented walk
   iterate vpiReg implemented walk
   iterate vpiRegArray implemented walk
-  iterate vpiMemory unsupported the vpiMemory iteration is not implemented (vpiRegArray is)
+  iterate vpiMemory implemented walk
   iterate vpiParameter implemented walk
   iterate vpiInternalScope implemented walk
   iterate vpiImport unsupported imports are not exposed
-  iterate vpiTypedef unsupported the vpiTypedef iteration is not implemented
+  iterate vpiTypedef implemented walk
   iterate vpiLetDecl unsupported the bodies of let declarations are not captured
 
 node task_func 37.12 members=task,function
@@ -1153,6 +1153,7 @@ node param_assign 37.26 type=vpiParamAssign default=unsupported the parameter ov
   handle vpiRhs
 
 node class_defn 37.27 type=vpiClassDefn
+  iterate vpiMemory unsupported class properties are listed by vpiVariables, vpiReg and vpiRegArray; vpiMemory does not select them
   str vpiName implemented walk
   get vpiVirtual implemented a19classes
   get vpiAutomatic implemented walk
@@ -1167,7 +1168,7 @@ node class_defn 37.27 type=vpiClassDefn
   iterate vpiInterfaceDecl unsupported a virtual interface property holds a runtime interface reference that llg does not map back to the interface instance it names, so it is not an object
   iterate vpiNamedEvent implemented walk
   iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
-  iterate vpiTypedef unsupported the vpiTypedef iteration is not implemented
+  iterate vpiTypedef unsupported typedefs declared in a class are not captured as class members
   iterate vpiInternalScope implemented a19d36
   handle vpiModule implemented a19d36
   str vpiFullName implemented a19d36
@@ -1185,6 +1186,8 @@ node extends 37.27 type=vpiExtends
   iterate vpiArgument unsupported the base-class constructor arguments of an extends clause are not exposed
 
 node class_typespec 37.28 type=vpiClassTypespec
+  iterate vpiMemory unsupported class properties are listed by vpiVariables, vpiReg and vpiRegArray; vpiMemory does not select them
+  iterate vpiTypedef unsupported typedefs declared in a class are not captured as class members
   str vpiName implemented walk
   get vpiClassType implemented walk
   get vpiAutomatic implemented walk
@@ -1211,6 +1214,8 @@ node class_typespec 37.28 type=vpiClassTypespec
   handle vpiTypedefAlias unsupported class typedef aliases are not exposed
 
 node class_obj 37.29 type=vpiClassObj
+  iterate vpiMemory unsupported class properties are listed by vpiVariables, vpiReg and vpiRegArray; vpiMemory does not select them
+  iterate vpiTypedef unsupported typedefs declared in a class are not captured as class members
   get vpiObjId implemented walk
   iterate vpiVariables implemented walk
   handle vpiClassTypespec implemented walk

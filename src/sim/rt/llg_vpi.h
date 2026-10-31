@@ -55,6 +55,7 @@ typedef struct {
     uint32_t const_count;
     uint32_t first_node;      /* top-level member nodes of a value of this type */
     uint32_t node_count;
+    uint32_t line;            /* vpiLineNo of the naming typedef, 0: none */
 } llg_vpi_typespec_t;
 
 typedef struct {
@@ -92,6 +93,10 @@ typedef struct {
     uint32_t const_count;
     const llg_vpi_member_node_t* nodes;
     uint32_t node_count;
+    /* typedef_count (catalog row, typespec index) pairs: the typedefs each
+     * scope declares (37.10 detail 1), in row order. */
+    const uint32_t* scope_typedefs;
+    uint32_t typedef_count;
 } llg_vpi_type_tables_t;
 
 /* Expression and statement objects (IEEE 1800-2009 37.54-37.74) of a

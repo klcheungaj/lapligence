@@ -472,7 +472,7 @@ static int is_scope_type(int type) {
 static int is_scope_iteration(int type) {
     switch (type) {
         case vpiPropertyDecl: case vpiSequenceDecl: case vpiNamedEvent: case vpiVariables:
-        case vpiReg: case vpiRegArray: case vpiParameter: case vpiInternalScope:
+        case vpiReg: case vpiRegArray: case vpiMemory: case vpiParameter: case vpiInternalScope:
             return 1;
         default:
             return 0;
@@ -512,6 +512,12 @@ static int is_structure_type(int type) {
 
 static int is_array_type(int type) {
     return type == vpiRegArray || type == vpiNetArray;
+}
+
+/* An unpacked one-dimensional array of reg (logic) variables: a memory
+ * (37.17 vpiIsMemory, 37.20). */
+static int is_memory(const llg_vpi_model_object_t* object) {
+    return object->type == vpiRegArray && object->dim_count == 1 && object->subtype == vpiReg;
 }
 
 /* The net object types of 37.16: a logic net and the nets of a declared
@@ -7653,6 +7659,10 @@ static int child_matches(const llg_vpi_model_object_t* child, int type) {
         case vpiNet:
             /* 37.10, 37.16: the nets of a scope, of every net type. */
             return is_net_type(child->type);
+        case vpiMemory:
+            /* 37.10 detail 4, 37.20 detail 1: the array variables that are
+             * memories (vpiIsMemory). */
+            return is_memory(child);
         case vpiInstance:
             return is_instance_type(child->type);
         case vpiProcess:
@@ -7677,7 +7687,7 @@ static int iteration_type_supported(int type) {
         case vpiRealVar: case vpiIntegerVar: case vpiTimeVar: case vpiLongIntVar:
         case vpiShortIntVar: case vpiIntVar: case vpiShortRealVar: case vpiByteVar:
         case vpiEnumVar: case vpiStructVar: case vpiUnionVar: case vpiBitVar:
-        case vpiPackedArrayVar: case vpiRegArray: case vpiNetArray:
+        case vpiPackedArrayVar: case vpiRegArray: case vpiNetArray: case vpiMemory:
         case vpiVariables: case vpiInternalScope: case vpiParameter: case vpiPort:
         case vpiGenScope: case vpiNamedBegin: case vpiNamedFork:
         case vpiNamedEvent: case vpiProcess: case vpiContAssign: case vpiTaskFunc:
@@ -7768,6 +7778,35 @@ static vpiHandle iterate_children(int type, uint32_t parent) {
     if ((type == vpiPort || type == vpiClockingIODecl || type == vpiIODecl) && count > 1)
         qsort(items, count, sizeof(*items), compare_ports);
     return make_list_iterator(type, items, (uint32_t)count);
+}
+
+/* vpiTypedef (37.10 detail 1, 37.12): the typedefs scope `row` declares,
+ * in declaration order, as their typespecs; NULL when it declares none. */
+static vpiHandle iterate_scope_typedefs(uint32_t row) {
+    const llg_vpi_type_tables_t* types = g_vpi.types;
+    if (!types || !types->typedef_count) return NULL;
+    /* The pairs are in row order: find the first of this row. */
+    uint32_t low = 0, high = types->typedef_count;
+    while (low < high) {
+        uint32_t mid = low + (high - low) / 2u;
+        if (types->scope_typedefs[2u * mid] < row) low = mid + 1u;
+        else high = mid;
+    }
+    uint32_t end = low;
+    while (end < types->typedef_count && types->scope_typedefs[2u * end] == row) ++end;
+    if (end == low) return NULL;
+    uintptr_t* items = (uintptr_t*)calloc(end - low, sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    uint32_t count = 0;
+    for (uint32_t i = low; i < end; ++i) {
+        uint32_t typespec = types->scope_typedefs[2u * i + 1u];
+        if (typespec < types->typespec_count)
+            items[count++] = (uintptr_t)typespec_handle(&types->typespecs[typespec]);
+    }
+    return make_list_iterator(vpiTypedef, items, count);
 }
 
 /* vpiMember (37.24): the member rows of an unpacked structure or union kept
@@ -7974,6 +8013,9 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         return object->width && !object->is_real
                    ? iterate_aux(SLOT_CABIT, slot->object, object->width, type, 0)
                    : NULL;
+    if (type == vpiTypedef && slot->kind == SLOT_OBJECT && object &&
+        (is_scope_type(object->type) || is_statement_scope_type(object->type)))
+        return iterate_scope_typedefs(slot->object);
     if (slot->kind == SLOT_OBJECT && object && is_statement_scope_type(object->type)) {
         /* 37.12: a statement scope iterates its declarations; the other
          * iterations are its statement's (37.69, 37.70). */
@@ -8461,6 +8503,10 @@ static PLI_INT32 typespec_property(const llg_vpi_slot_t* slot, int property) {
     if (slot->kind != SLOT_TYPESPEC) return unsupported_property();
     const llg_vpi_typespec_t* typespec = typespec_at((uint32_t)slot->aux);
     switch (property) {
+        case vpiLineNo:
+            /* 37.3.3: a typedef's typespec is on its declaration's line. */
+            if (typespec->line) return (PLI_INT32)typespec->line;
+            return unsupported_property();
         case vpiPacked:
             return packed_property(typespec);
         case vpiTagged:
@@ -8680,8 +8726,7 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         case vpiIsMemory:
             if (slot->kind != SLOT_OBJECT || !object || !is_array_type(object->type))
                 return unsupported_property();
-            return object->type == vpiRegArray && object->dim_count == 1 &&
-                   object->subtype == vpiReg;
+            return is_memory(object);
         case vpiDirection:
             if ((slot->kind == SLOT_OBJECT || slot->kind == SLOT_PORTBIT) && object &&
                 (object->type == vpiPort || object->type == vpiClockingIODecl))

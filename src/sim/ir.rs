@@ -638,6 +638,9 @@ pub struct IrModel {
     pub(in crate::sim) vpi_objects: Vec<IrVpiObject>,
     /// Interned typespecs the catalog objects name (IEEE 1800-2009 37.23).
     pub(in crate::sim) vpi_typespecs: Vec<IrVpiTypespec>,
+    /// The typedefs each scope declares, in declaration order: the scope's
+    /// catalog key and the typespec of the typedef (37.10 detail 1).
+    pub(in crate::sim) vpi_scope_typedefs: Vec<(String, usize)>,
     /// Value shapes and class layouts of the dynamic catalog objects
     /// (strings, handles, containers, class objects; 37.17, 37.29).
     pub(in crate::sim) vpi_dynamic: IrVpiDynamic,
@@ -838,6 +841,7 @@ impl IrModel {
             final_spawns: parts.final_spawns,
             vpi_objects: Vec::new(),
             vpi_typespecs: Vec::new(),
+            vpi_scope_typedefs: Vec::new(),
             vpi_dynamic: IrVpiDynamic::default(),
             vpi_code: Vec::new(),
             vpi_code_files: Vec::new(),
