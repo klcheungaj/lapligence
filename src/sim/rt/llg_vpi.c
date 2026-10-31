@@ -514,6 +514,13 @@ static int is_array_type(int type) {
     return type == vpiRegArray || type == vpiNetArray;
 }
 
+/* The net object types of 37.16: a logic net and the nets of a declared
+ * structure, enum, integer, time or packed array data type. */
+static int is_net_type(int type) {
+    return type == vpiNet || type == vpiStructNet || type == vpiEnumNet ||
+           type == vpiIntegerNet || type == vpiTimeNet || type == vpiPackedArrayNet;
+}
+
 static int is_variable_type(int type) {
     switch (type) {
         case vpiReg: case vpiIntegerVar: case vpiTimeVar: case vpiRealVar:
@@ -534,7 +541,7 @@ static int is_variable_type(int type) {
 static int has_array_properties(const llg_vpi_model_object_t* object) {
     if (!object) return 0;
     int type = object->type;
-    return is_instance_type(type) || type == vpiNet || type == vpiNamedEvent ||
+    return is_instance_type(type) || is_net_type(type) || type == vpiNamedEvent ||
            type == vpiGenScope || is_primitive_type(type) || is_array_type(type) ||
            is_variable_type(type);
 }
@@ -603,7 +610,7 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
         return object->dim_count > 0 &&
                (object->is_real ? object->real != NULL && object->width == 0
                                 : object->packed != NULL && object->width != 0);
-    if (object->type == vpiNet || is_variable_type(object->type))
+    if (is_net_type(object->type) || is_variable_type(object->type))
         return object->is_real ? object->real != NULL && object->width == 0
                                : object->packed != NULL && object->width != 0;
     return 0;
@@ -1741,7 +1748,7 @@ static int has_index_relation(const llg_vpi_slot_t* slot) {
         !(slot->kind == SLOT_SELECT && slot->span == 1))
         return 0;
     int type = handle_type(slot);
-    return is_variable_type(type) || type == vpiRegArray || type == vpiNet ||
+    return is_variable_type(type) || type == vpiRegArray || is_net_type(type) ||
            type == vpiNetBit || type == vpiRegBit || type == vpiNamedEvent ||
            type == vpiStringVar || type == vpiChandleVar || type == vpiClassVar;
 }
@@ -1804,7 +1811,7 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
     uint32_t count = dims + (bit ? 1u : 0u);
     if (!dims) {
         int type = bit ? 0 : handle_type(slot);
-        if (type == vpiNet || type == vpiNamedEvent || type == vpiPackedArrayVar ||
+        if (is_net_type(type) || type == vpiNamedEvent || type == vpiPackedArrayVar ||
             type == vpiRegArray)
             return NULL;
         vpi_error("LLG_VPI_RELATION", bit ? "vpiIndex iteration of a bit outside an array"
@@ -4627,7 +4634,7 @@ static int storage_index(void) {
     for (uint32_t row = 0; row < g_vpi.object_count; ++row) {
         const llg_vpi_model_object_t* object = &g_vpi.objects[row];
         if (!has_storage(object) || (object->flags & LLG_VPI_OBJ_SLICE) ||
-            !(object->type == vpiNet || is_variable_type(object->type) ||
+            !(is_net_type(object->type) || is_variable_type(object->type) ||
               is_array_type(object->type)))
             continue;
         llg_vpi_storage_t* entry = &entries[count++];
@@ -6712,7 +6719,7 @@ static void spans_push(llg_vpi_spans_t* list, uint32_t row, uint64_t element, ui
 
 /* A net or variable row whose bits connections can reference. */
 static int is_connectable(const llg_vpi_model_object_t* object) {
-    return object && (object->type == vpiNet || is_variable_type(object->type) ||
+    return object && (is_net_type(object->type) || is_variable_type(object->type) ||
                       is_array_type(object->type));
 }
 
@@ -7379,7 +7386,7 @@ static vpiHandle link_items_iterator(int type, llg_vpi_link_items_t* items) {
 /* A net, net bit, net array or element of one (the nets of 37.16). */
 static int net_handle(const llg_vpi_slot_t* slot) {
     const llg_vpi_model_object_t* object = row_object(slot->object);
-    if (!object || !object->is_net || (object->type != vpiNet && object->type != vpiNetArray))
+    if (!object || !object->is_net || (!is_net_type(object->type) && object->type != vpiNetArray))
         return 0;
     return slot->kind == SLOT_OBJECT || slot->kind == SLOT_ELEMENT ||
            (slot->kind == SLOT_SELECT && slot->span == 1);
@@ -7519,7 +7526,7 @@ static int net_decl_assigned(const llg_vpi_slot_t* slot) {
 
 static int net_type_of(uint32_t row) {
     const llg_vpi_model_object_t* object = row_object(row);
-    return object && object->type == vpiNet && object->subtype ? object->subtype : vpiWire;
+    return object && is_net_type(object->type) && object->subtype ? object->subtype : vpiWire;
 }
 
 /* Whether the internal net type dominates the external one across a port
@@ -7643,6 +7650,9 @@ static int child_matches(const llg_vpi_model_object_t* child, int type) {
                    child->type == vpiFunction || is_statement_scope_type(child->type);
         case vpiModule:
             return child->type == vpiModule;
+        case vpiNet:
+            /* 37.10, 37.16: the nets of a scope, of every net type. */
+            return is_net_type(child->type);
         case vpiInstance:
             return is_instance_type(child->type);
         case vpiProcess:
@@ -8076,8 +8086,12 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         /* 37.16 detail 23, 37.17 detail 4: the packed ranges of a logic or
          * bit vector or a packed array. */
         int value_type = handle_type(slot);
-        if (value_type == vpiNet || value_type == vpiReg || value_type == vpiBitVar ||
-            value_type == vpiPackedArrayVar || value_type == vpiIODecl)
+        /* A union net is a vpiNet without packed ranges of its own. */
+        if ((value_type == vpiNet && !is_aggregate_typespec(value_typespec(slot))) ||
+            value_type == vpiReg || value_type == vpiBitVar ||
+            value_type == vpiPackedArrayVar || value_type == vpiIODecl ||
+            value_type == vpiIntegerNet || value_type == vpiTimeNet ||
+            value_type == vpiPackedArrayNet)
             return iterate_packed_ranges(slot);
     }
     if (type == vpiBit && (slot->kind == SLOT_OBJECT || slot->kind == SLOT_ELEMENT) && object &&
@@ -8637,7 +8651,8 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             /* 37.16 detail 30, 37.17 detail 17: a bit is never a member. */
             if (slot->kind == SLOT_SELECT && slot->span == 1) return 0;
             if ((slot->kind == SLOT_OBJECT && object &&
-                 (is_variable_type(object->type) || is_array_type(object->type))) ||
+                 (is_variable_type(object->type) || is_net_type(object->type) ||
+                  is_array_type(object->type))) ||
                 slot->kind == SLOT_ELEMENT)
                 return slot->kind == SLOT_OBJECT && (object->flags & LLG_VPI_OBJ_MEMBER) != 0;
             return unsupported_property();
@@ -8649,14 +8664,15 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             /* 37.18 detail 4: TRUE only for a sub-element of a packed array,
              * which llg does not expose (decision A19-D28). */
             if (type == vpiPackedArrayVar || type == vpiStructVar || type == vpiUnionVar ||
-                type == vpiEnumVar)
+                type == vpiEnumVar || type == vpiPackedArrayNet || type == vpiStructNet ||
+                type == vpiEnumNet)
                 return 0;
             return unsupported_property();
         case vpiConstantSelect:
             /* 37.16 detail 20, 37.17 detail 27: TRUE for a static object
              * without a parent or selected by constant indices, which every
              * catalog net, bit and element is (decision A19-D28). */
-            if (type == vpiNet || type == vpiNetBit || type == vpiNetArray ||
+            if (is_net_type(type) || type == vpiNetBit || type == vpiNetArray ||
                 type == vpiRegBit || type == vpiPackedArrayVar || type == vpiStructVar ||
                 type == vpiUnionVar || type == vpiEnumVar)
                 return 1;
@@ -8805,14 +8821,14 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if (net_handle(slot)) return resolved_net_type(slot);
             return unsupported_property();
         case vpiNetType:
-            if (slot->kind == SLOT_OBJECT && object && object->type == vpiNet)
+            if (slot->kind == SLOT_OBJECT && object && is_net_type(object->type))
                 return object->subtype ? object->subtype : vpiWire;
             if (slot->kind == SLOT_ELEMENT && object && object->type == vpiNetArray)
                 return vpiWire;
             /* A net array and a net bit have their nets' type (37.16). */
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiNetArray) return vpiWire;
             if (slot->kind == SLOT_SELECT && slot->span == 1 && object && object->is_net)
-                return object->type == vpiNet && object->subtype ? object->subtype : vpiWire;
+                return is_net_type(object->type) && object->subtype ? object->subtype : vpiWire;
             return unsupported_property();
         case vpiInputEdge:
         case vpiOutputEdge:
@@ -8985,6 +9001,11 @@ static const char* type_name(int type) {
         case vpiRelease: return "vpiRelease";
         case vpiNamedFork: return "vpiNamedFork";
         case vpiNet: return "vpiNet";
+        case vpiStructNet: return "vpiStructNet";
+        case vpiEnumNet: return "vpiEnumNet";
+        case vpiIntegerNet: return "vpiIntegerNet";
+        case vpiTimeNet: return "vpiTimeNet";
+        case vpiPackedArrayNet: return "vpiPackedArrayNet";
         case vpiReg: return "vpiReg";
         case vpiIntegerVar: return "vpiIntegerVar";
         case vpiTimeVar: return "vpiTimeVar";
@@ -9278,7 +9299,7 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
                      * class variables included) and parameters are simple
                      * expressions; each decompiles to its name (decision
                      * A19-D32). */
-                    if (is_variable_type(object->type) || object->type == vpiNet ||
+                    if (is_variable_type(object->type) || is_net_type(object->type) ||
                         is_parameter_type(object->type) || is_array_type(object->type) ||
                         (object->flags & LLG_VPI_OBJ_DYNAMIC))
                         return (PLI_BYTE8*)object->name;

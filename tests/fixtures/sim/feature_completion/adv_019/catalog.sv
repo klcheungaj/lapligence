@@ -81,6 +81,7 @@ module tb;
   typedef union packed { logic [7:0] w; pk_t p; } pu_t;
   typedef struct { int a; real r; } rec_t;
   typedef pk_t [1:0] pka_t;
+  typedef enum logic [1:0] {lo_e, mid_e, hi_e} level_t;
   class Packet;
     int id;
     // An event property: a named event of each object (37.25, 37.29).
@@ -157,6 +158,17 @@ module tb;
   wire sw_a, sw_b;
   wire [1:0] wa [0:1];
   wire pk_t sn;
+  // Nets of a declared data type: enum, integer, time and packed array of
+  // structures (37.16).
+  wire level_t en;
+  wire integer inn;
+  wire time tn;
+  wire pka_t pan;
+  wire level_t ena [0:1];
+  wire integer ina [0:1];
+  wire time tna [0:1];
+  wire pk_t sna [0:1];
+  wire pka_t pana [0:1];
   bus_if bi (clk);
   bus_if bia [1:0] (clk);
   leaf u [1:0] (.a(r0), .y());
@@ -176,6 +188,10 @@ module tb;
   assign d_in = sc;
   assign wa[0] = r0[1:0];
   assign sn = pk;
+  assign en = mid_e;
+  assign inn = -5;
+  assign tn = 64'd7;
+  assign pan = {pk, pk};
 
   // Clocking blocks (37.44): io declarations with own and default skews,
   // an expression clockvar, declarations, the default and global clocking

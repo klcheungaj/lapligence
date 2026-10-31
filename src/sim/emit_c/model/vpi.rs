@@ -224,7 +224,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 "vpiRealVar"
             }
         } else if object.net {
-            "vpiNet"
+            object.var_kind.net_c_type()
         } else {
             object.var_kind.c_type()
         };
@@ -263,7 +263,10 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             IrVpiObjectKind::Dynamic => (dynamic::row_type(model, object), "0"),
             IrVpiObjectKind::Reg => (object.var_kind.c_type(), "0"),
             IrVpiObjectKind::RealVar => (element_type, "0"),
-            IrVpiObjectKind::Net => ("vpiNet", object.net_type.unwrap_or("vpiWire")),
+            IrVpiObjectKind::Net => (
+                object.var_kind.net_c_type(),
+                object.net_type.unwrap_or("vpiWire"),
+            ),
             IrVpiObjectKind::RegArray | IrVpiObjectKind::NetArray => {
                 (object.kind.c_type(), element_type)
             }

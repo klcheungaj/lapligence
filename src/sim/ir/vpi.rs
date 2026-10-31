@@ -182,6 +182,21 @@ impl IrVpiVarKind {
         }
     }
 
+    /// The `vpiType` of a declared net of this data type (37.16): a logic
+    /// net, multi-dimensional ones included, is a `vpiNet`; a packed array
+    /// net is a packed array of structures or enums (detail 1). 1800-2009
+    /// has no union net type, so a union net is a `vpiNet`.
+    pub const fn net_c_type(self) -> &'static str {
+        match self {
+            Self::Struct => "vpiStructNet",
+            Self::Enum => "vpiEnumNet",
+            Self::Integer => "vpiIntegerNet",
+            Self::Time => "vpiTimeNet",
+            Self::PackedArray => "vpiPackedArrayNet",
+            _ => "vpiNet",
+        }
+    }
+
     /// The `vpiType` of a variable of this kind.
     pub const fn c_type(self) -> &'static str {
         match self {

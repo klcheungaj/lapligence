@@ -712,6 +712,7 @@ node array_net 37.16 type=vpiNetArray
   iterate vpiMemoryWord extension walk per-type child iteration (IEEE 1364)
 
 node net 37.16 members=struct_net,enum_net,integer_net,time_net,logic_net,packed_array_net
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
   handle vpiParent implemented walk
   handle vpiIndex implemented walk
   iterate vpiIndex implemented walk
@@ -720,24 +721,25 @@ node net 37.16 members=struct_net,enum_net,integer_net,time_net,logic_net,packed
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
 
-node struct_net 37.16 type=vpiStructNet default=unsupported nets of structure, enum and packed array type report vpiNet
-  get vpiPackedArrayMember
-  iterate vpiMember
+node struct_net 37.16 type=vpiStructNet
+  get vpiPackedArrayMember implemented walk
+  get vpiPacked extension walk whether the net's data type is packed
+  iterate vpiMember unsupported members of structure or union nets are not objects in llg
+  iterate vpiRange error walk 37.16 detail 1: a structure net without explicit packed ranges allows no range iteration
 
-node enum_net 37.16 type=vpiEnumNet default=unsupported nets of structure, enum and packed array type report vpiNet
-  get vpiPackedArrayMember
+node enum_net 37.16 type=vpiEnumNet
+  get vpiPackedArrayMember implemented walk
+  iterate vpiRange error walk 37.16 detail 1: the range of an enum net's base type is not returned
 
-node integer_net 37.16 type=vpiIntegerNet default=unsupported nets of integer and time type report vpiNet
+node integer_net 37.16 type=vpiIntegerNet
 
-node time_net 37.16 type=vpiTimeNet default=unsupported nets of integer and time type report vpiNet
+node time_net 37.16 type=vpiTimeNet
 
 node logic_net 37.16 type=vpiNet
-  get vpiPacked extension walk whether the net's data type is packed
-  handle vpiScope extension walk the enclosing scope, instance, module or parent
 
-node packed_array_net 37.16 type=vpiPackedArrayNet default=unsupported nets of structure, enum and packed array type report vpiNet
-  get vpiPackedArrayMember
-  iterate vpiElement
+node packed_array_net 37.16 type=vpiPackedArrayNet
+  get vpiPackedArrayMember implemented walk
+  iterate vpiElement unsupported the sub-elements of a packed array are not objects in llg (vpiBit, vpiRange and part selects reach them; decision A19-D28)
 
 node variables 37.17 members=short_real_var,real_var,byte_var,short_int_var,int_var,long_int_var,integer_var,time_var,array_var,packed_array_var,bit_var,logic_var,struct_var,union_var,enum_var,string_var,chandle_var,class_var,var_bit
   get vpiCovered implemented walk

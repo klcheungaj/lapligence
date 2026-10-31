@@ -2492,6 +2492,15 @@ fn a19_d47_bits_switches_and_port_lines() {
 }
 
 #[test]
+fn a19_d48_typed_nets() {
+    run_vpi_decision(
+        "A19-D48_typed_nets",
+        &["task $d48()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D48_typed_nets.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

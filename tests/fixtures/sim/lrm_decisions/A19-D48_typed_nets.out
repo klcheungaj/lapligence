@@ -1,0 +1,46 @@
+sn type=683 nettype=1/0 size=3 signed=0 pam=0/0 vec=1/0 ts=638/0 val=101/0
+  iter 742: n=0 level=3 first=
+  iter 743: n=0 level=3 first=
+  iter 90: n=3 level=0 first=sn[2]:37
+  iter 115: n=0 level=3 first=
+en type=680 nettype=1/0 size=2 signed=0 pam=0/0 vec=1/0 ts=633/0 val=01/0
+  iter 742: n=0 level=3 first=
+  iter 743: n=0 level=3 first=
+  iter 90: n=2 level=0 first=en[1]:37
+  iter 115: n=0 level=3 first=
+inn type=681 nettype=1/0 size=32 signed=1 pam=-1/3 vec=1/0 ts=635/0 val=11111111111111111111111111111011/0
+  iter 742: n=0 level=3 first=
+  iter 743: n=0 level=3 first=
+  iter 90: n=32 level=0 first=inn[31]:37
+  iter 115: n=1 level=0 first=?:115
+tn type=682 nettype=1/0 size=64 signed=0 pam=-1/3 vec=1/0 ts=636/0 val=0000000000000000000000000000000000000000000000000000000000000111/0
+  iter 742: n=0 level=3 first=
+  iter 743: n=0 level=3 first=
+  iter 90: n=64 level=0 first=tn[63]:37
+  iter 115: n=1 level=0 first=?:115
+pn type=36 nettype=1/0 size=8 signed=0 pam=-1/3 vec=1/0 ts=641/0 val=00111100/0
+  iter 742: n=0 level=3 first=
+  iter 743: n=0 level=3 first=
+  iter 90: n=8 level=0 first=pn[7]:37
+  iter 115: n=2 level=0 first=?:115
+ln type=36 nettype=1/0 size=4 signed=0 pam=-1/3 vec=1/0 ts=641/0 val=1001/0
+  iter 742: n=0 level=3 first=
+  iter 743: n=0 level=3 first=
+  iter 90: n=4 level=0 first=ln[3]:37
+  iter 115: n=1 level=0 first=?:115
+an type=683 nettype=1/0 size=4 signed=0 pam=0/0 vec=1/0 ts=638/0 val=zzzz/0
+  iter 742: n=0 level=3 first=
+  iter 743: n=0 level=3 first=
+  iter 90: n=4 level=0 first=an[3]:37
+  iter 115: n=0 level=3 first=
+un type=36 nettype=1/0 size=4 signed=0 pam=-1/3 vec=1/0 ts=639/0 val=zzzz/0
+  iter 742: n=0 level=3 first=
+  iter 743: n=0 level=3 first=
+  iter 90: n=4 level=0 first=un[3]:37
+  iter 115: n=0 level=3 first=
+array sarr type=114
+sarr[1] type=683 nettype=1/0 size=3 signed=0 pam=0/0 vec=1/0 ts=638/0 val=zzz/0
+  iter 742: n=0 level=3 first=
+  iter 743: n=0 level=3 first=
+  iter 90: n=3 level=0 first=sarr[1][2]:37
+  iter 115: n=0 level=3 first=

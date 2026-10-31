@@ -153,6 +153,28 @@ fn typespec_var_kind(kind: IrVpiTypespecKind, ranges: usize) -> IrVpiVarKind {
     }
 }
 
+/// The data type kind of a declared net or net array element whose declared
+/// typespec is `typespec`, for its net object type (37.16): the element
+/// type of an unpacked array, else the type itself. A logic net with several
+/// packed dimensions stays a logic net.
+fn vpi_net_kind(table: &TypespecTable, typespec: Option<usize>) -> IrVpiVarKind {
+    let mut current = typespec;
+    while let Some(index) = current {
+        let entry = &table.entries[index];
+        match entry.kind {
+            IrVpiTypespecKind::Array => current = entry.element,
+            IrVpiTypespecKind::Struct => return IrVpiVarKind::Struct,
+            IrVpiTypespecKind::Union => return IrVpiVarKind::Union,
+            IrVpiTypespecKind::Enum => return IrVpiVarKind::Enum,
+            IrVpiTypespecKind::Integer => return IrVpiVarKind::Integer,
+            IrVpiTypespecKind::Time => return IrVpiVarKind::Time,
+            IrVpiTypespecKind::PackedArray => return IrVpiVarKind::PackedArray,
+            _ => return IrVpiVarKind::Logic,
+        }
+    }
+    IrVpiVarKind::Logic
+}
+
 impl Codegen<'_> {
     /// The unit-separated hierarchical path of a scope or declaration, with
     /// generate blocks named per SV 27.4 and named statement blocks included.
@@ -1500,12 +1522,20 @@ impl Codegen<'_> {
                         real,
                         net,
                         signal: Some(ir),
-                        var_kind: typed_kind.unwrap_or_else(|| {
-                            IrVpiVarKind::from_type_kind(
-                                &ty.kind,
-                                self.vpi_packed_dimension_count(id),
-                            )
-                        }),
+                        // A variable reported as a net (a continuous
+                        // assignment drives it) stays a `vpiNet`.
+                        var_kind: if declared_net {
+                            vpi_net_kind(&typespecs, typespec)
+                        } else if net {
+                            IrVpiVarKind::Logic
+                        } else {
+                            typed_kind.unwrap_or_else(|| {
+                                IrVpiVarKind::from_type_kind(
+                                    &ty.kind,
+                                    self.vpi_packed_dimension_count(id),
+                                )
+                            })
+                        },
                         packed_range: (!real).then(|| self.vpi_packed_range(id, width)).flatten(),
                         net_type: net.then(|| net_type.unwrap_or("vpiWire")),
                         two_state,
@@ -1587,6 +1617,7 @@ impl Codegen<'_> {
                             CodeOwner::Initializer(init),
                         ));
                     }
+                    let typespec = self.vpi_declared_typespec(&mut typespecs, id);
                     insert(source(IrVpiObject {
                         full_name: self.vpi_full_name(id),
                         name: node.name.clone(),
@@ -1600,16 +1631,20 @@ impl Codegen<'_> {
                         real: array.real,
                         net,
                         array: Some(info.ir),
-                        var_kind: IrVpiVarKind::from_type_kind(
-                            &ty.kind,
-                            self.vpi_packed_dimension_count(id),
-                        ),
+                        var_kind: if net {
+                            vpi_net_kind(&typespecs, typespec)
+                        } else {
+                            IrVpiVarKind::from_type_kind(
+                                &ty.kind,
+                                self.vpi_packed_dimension_count(id),
+                            )
+                        },
                         packed_range: (!array.real)
                             .then(|| self.vpi_packed_range(id, array.elem_width))
                             .flatten(),
                         net_type: net.then_some("vpiWire"),
                         two_state: array.two_state,
-                        typespec: self.vpi_declared_typespec(&mut typespecs, id),
+                        typespec,
                         ..IrVpiObject::default()
                     }));
                 }
