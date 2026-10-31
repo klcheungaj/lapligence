@@ -1,0 +1,167 @@
+p01
+  property vpiOperation op=51 line=11 : a |=> ##[1:3] b
+    operand vpiReg line=6 : a
+    operand vpiOperation op=53 strong=0 line=11 : ##[1:3] b
+      operand vpiReg line=6 : b
+      operand vpiConstant const=1 line=11 : 1
+      operand vpiConstant const=1 line=11 : 3
+p02
+  property vpiOperation op=54 strong=0 line=12 : a ##2 b ##[1:$] c
+    operand vpiOperation op=54 strong=0 line=12 : a ##2 b
+      operand vpiReg line=6 : a
+      operand vpiReg line=6 : b
+      operand vpiConstant const=1 line=12 : 2
+    operand vpiReg line=6 : c
+    operand vpiConstant const=1 line=12 : 1
+    operand vpiConstant const=10 line=12 : $
+p03
+  property vpiOperation op=54 strong=0 line=13 : a[*2] ##1 b[=1:3] ##1 c[->2]
+    operand vpiOperation op=54 strong=0 line=13 : a[*2] ##1 b[=1:3]
+      operand vpiOperation op=60 strong=0 line=13 : a[*2]
+        operand vpiReg line=6 : a
+        operand vpiConstant const=1 line=13 : 2
+      operand vpiOperation op=59 strong=0 line=13 : b[=1:3]
+        operand vpiReg line=6 : b
+        operand vpiConstant const=1 line=13 : 1
+        operand vpiConstant const=1 line=13 : 3
+      operand vpiConstant const=1 line=13 : 1
+    operand vpiOperation op=61 strong=0 line=13 : c[->2]
+      operand vpiReg line=6 : c
+      operand vpiConstant const=1 line=13 : 2
+    operand vpiConstant const=1 line=13 : 1
+p04
+  property vpiOperation op=79 strong=0 line=14 : a ##1 b and c ##1 d
+    operand vpiOperation op=54 strong=0 line=14 : a ##1 b
+      operand vpiReg line=6 : a
+      operand vpiReg line=6 : b
+      operand vpiConstant const=1 line=14 : 1
+    operand vpiOperation op=54 strong=0 line=14 : c ##1 d
+      operand vpiReg line=6 : c
+      operand vpiReg line=6 : d
+      operand vpiConstant const=1 line=14 : 1
+p05
+  property vpiOperation op=80 line=15 : a ##1 b or (c |=> d)
+    operand vpiOperation op=54 strong=0 line=15 : a ##1 b
+      operand vpiReg line=6 : a
+      operand vpiReg line=6 : b
+      operand vpiConstant const=1 line=15 : 1
+    operand vpiOperation op=51 line=15 : c |=> d
+      operand vpiReg line=6 : c
+      operand vpiReg line=6 : d
+p06
+  property vpiOperation op=55 strong=0 line=16 : a throughout b[*2] within c ##[1:4] d intersect s1
+    operand vpiOperation op=58 strong=0 line=16 : a throughout b[*2] within c ##[1:4] d
+      operand vpiOperation op=57 strong=0 line=16 : a throughout b[*2]
+        operand vpiReg line=6 : a
+        operand vpiOperation op=60 strong=0 line=16 : b[*2]
+          operand vpiReg line=6 : b
+          operand vpiConstant const=1 line=16 : 2
+      operand vpiOperation op=54 strong=0 line=16 : c ##[1:4] d
+        operand vpiReg line=6 : c
+        operand vpiReg line=6 : d
+        operand vpiConstant const=1 line=16 : 1
+        operand vpiConstant const=1 line=16 : 4
+    operand vpiSequenceInst s1 line=16
+p07
+  property vpiOperation op=52 line=17 : first_match(a ##[1:2] b, $display("m")) |-> c
+    operand vpiOperation op=56 strong=0 line=17 : first_match(a ##[1:2] b, $display("m"))
+      operand vpiOperation op=54 strong=0 line=17 : (a ##[1:2] b, $display("m"))
+        operand vpiReg line=6 : a
+        operand vpiReg line=6 : b
+        operand vpiConstant const=1 line=17 : 1
+        operand vpiConstant const=1 line=17 : 2
+        match vpiSysTaskCall line=17 : $display("m")
+    operand vpiReg line=6 : c
+p08
+  property vpiOperation op=3 line=18 : not a ##1 b
+    operand vpiOperation op=54 strong=0 line=18 : a ##1 b
+      operand vpiReg line=6 : a
+      operand vpiReg line=6 : b
+      operand vpiConstant const=1 line=18 : 1
+p09
+  property vpiOperation op=78 line=19 : if (a) b |=> c else d
+    operand vpiReg line=6 : a
+    operand vpiOperation op=51 line=19 : b |=> c
+      operand vpiReg line=6 : b
+      operand vpiReg line=6 : c
+    operand vpiReg line=6 : d
+p10
+  property vpiOperation op=79 line=20 : nexttime a and s_nexttime [2] b
+    operand vpiOperation op=89 strong=0 line=20 : nexttime a
+      operand vpiReg line=6 : a
+    operand vpiOperation op=89 strong=1 line=20 : s_nexttime [2] b
+      operand vpiReg line=6 : b
+      operand vpiConstant const=1 line=20 : 2
+p11
+  property vpiOperation op=80 line=21 : (always [1:3] a) or (s_eventually [2:$] b)
+    operand vpiOperation op=90 strong=0 line=21 : always [1:3] a
+      operand vpiReg line=6 : a
+      operand vpiConstant const=1 line=21 : 1
+      operand vpiConstant const=1 line=21 : 3
+    operand vpiOperation op=91 strong=1 line=21 : s_eventually [2:$] b
+      operand vpiReg line=6 : b
+      operand vpiConstant const=1 line=21 : 2
+      operand vpiConstant const=10 line=21 : $
+p12
+  property vpiOperation op=92 strong=0 line=22 : a until b implies c s_until_with d
+    operand vpiReg line=6 : a
+    operand vpiOperation op=94 line=22 : b implies c s_until_with d
+      operand vpiReg line=6 : b
+      operand vpiOperation op=93 strong=1 line=22 : c s_until_with d
+        operand vpiReg line=6 : c
+        operand vpiReg line=6 : d
+p13
+  property vpiOperation op=68 line=23 : a iff (b #-# c)
+    operand vpiReg line=6 : a
+    operand vpiOperation op=87 line=23 : b #-# c
+      operand vpiReg line=6 : b
+      operand vpiReg line=6 : c
+p14
+  property vpiOperation op=83 line=24 : accept_on (c) sync_reject_on (d) a |=> b
+    operand vpiReg line=6 : c
+    operand vpiOperation op=86 line=24 : sync_reject_on (d) a |=> b
+      operand vpiReg line=6 : d
+      operand vpiOperation op=51 line=24 : a |=> b
+        operand vpiReg line=6 : a
+        operand vpiReg line=6 : b
+p15
+  property vpiOperation op=79 line=25 : a ##1 b and c ##1 d
+    operand vpiOperation op=54 strong=1 line=25 : a ##1 b
+      operand vpiReg line=6 : a
+      operand vpiReg line=6 : b
+      operand vpiConstant const=1 line=25 : 1
+    operand vpiOperation op=54 strong=0 line=25 : c ##1 d
+      operand vpiReg line=6 : c
+      operand vpiReg line=6 : d
+      operand vpiConstant const=1 line=25 : 1
+p16
+  property vpiCaseProperty line=26
+    condition vpiIntVar line=7 : x
+    item vpiCasePropertyItem line=26
+      expr vpiConstant const=1 line=26 : 0
+      expr vpiConstant const=1 line=26 : 1
+      property vpiReg line=6 : a
+    item vpiCasePropertyItem line=26
+      property vpiOperation op=51 line=26 : b |=> c
+        operand vpiReg line=6 : b
+        operand vpiReg line=6 : c
+p17
+  property vpiOperation op=51 line=27 : a |=> (@(negedge clk) b |-> c)
+    operand vpiReg line=6 : a
+    operand vpiClockedProp line=27
+      clock vpiOperation op=40 line=27 : negedge clk
+        operand vpiReg line=6 : clk
+      body vpiOperation op=52 line=27 : b |-> c
+        operand vpiReg line=6 : b
+        operand vpiReg line=6 : c
+p18
+  property vpiOperation op=54 strong=0 line=28 : ##1 a ##1 (@(negedge clk) b)
+    operand vpiOperation op=53 strong=0 line=28 : ##1 a
+      operand vpiReg line=6 : a
+      operand vpiConstant const=1 line=28 : 1
+    operand vpiClockedSeq line=28
+      clock vpiOperation op=40 line=28 : negedge clk
+        operand vpiReg line=6 : clk
+      body vpiReg line=6 : b
+    operand vpiConstant const=1 line=28 : 1
+value error=1 size=-1 size error=1

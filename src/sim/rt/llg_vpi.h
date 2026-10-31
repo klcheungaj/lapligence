@@ -124,6 +124,9 @@ typedef struct {
 #define LLG_VPI_CODE_INFERRED 0x800u  /* an assertion whose clocking event is inferred */
 #define LLG_VPI_CODE_LINK 0x1000u     /* stands for root row `first` (no children) */
 #define LLG_VPI_CODE_FILL 0x2000u     /* an unbased unsized literal ('0, '1, 'x, 'z) */
+#define LLG_VPI_CODE_TEMPORAL 0x4000u /* a sequence or property operation: operands, no value */
+#define LLG_VPI_CODE_STRENGTH 0x8000u /* an operation vpiOpStrong applies to (37.48 detail 3) */
+#define LLG_VPI_CODE_STRONG 0x10000u  /* the strong form of such an operation */
 
 typedef struct {
     int16_t type;             /* vpiType */

@@ -2723,8 +2723,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpiArgument` and their declaration, which a scope iterates with its
   formals; an instance that is an assertion's whole property takes start,
   success and failure callbacks (A17-D5). Step callbacks are not
-  implemented and fail with a `vpi_chk_error` error; property operators are
-  opaque.
+  implemented and fail with a `vpi_chk_error` error. Sequence and property
+  operators are operations with their operands, clocked sequences and
+  properties, case properties and match items (A19-D59).
   A system function in a void cast (SV §13.4.1) is called as a function: a
   built-in runs its own lowering (a `$random(seed)` still updates `seed`) and
   a registered VPI function its calltf; only a discarded `string` result of a

@@ -203,7 +203,7 @@ and `vpiEndColumn`, `vpiIsClockInferred` and `vpiIsCoverSequence` (-1 where
 the property does not apply: immediate assertions have no clock, only a
 cover is a cover sequence), then each one-to-one relation of 37.46/37.51.
 `decompile=NULL` marks an object without `vpiDecompile` (specifications,
-instances, statements without a decompiled form, opaque operators).
+instances, statements without a decompiled form).
 
 - **End position.** 37.45 lists `vpiEndLine` and `vpiEndColumn` under
   "location" without defining them; llg gives the statement's last
@@ -228,8 +228,8 @@ instances, statements without a decompiled form, opaque operators).
   `vpiPropertySpec` (37.48) with the clocking event and disable condition
   written in the statement and its `vpiPropertyExpr`: the Boolean `b` and
   `a` are the variables themselves, `s1(a, 1)` is a `vpiSequenceInst`, and
-  the operators `a |=> b`, `a ##1 b` are opaque `vpiOperation` objects with
-  no decompile and no line (A17-D4).
+  the operators `a |=> b`, `a ##1 b` are `vpiOperation` objects that
+  decompile as written, at the line of their first operand (A19-D59).
 - **Statements.** 37.46 and 37.51 give `vpiStmt` and `vpiElseStmt`. An
   empty action `;` and a missing else action are NULL (A17-D4); `a_spec`
   has both `$display` actions, `i1` only its else `$display`, `i2` its pass
@@ -268,7 +268,7 @@ instances, statements without a decompiled form, opaque operators).
 - **failExpr.** 39.4.2 L65739: "On a cbAssertionFailure callback, the
   attemptStartTime and detail.failExpr fields are valid." llg passes the
   property expression (A17-D4): `i1` fails at 15 (`a` 1, `b` 0) with
-  `a == b`; `a_spec` attempt 5 fails at 15 (`b` 0 at 15) with the opaque
+  `a == b`; `a_spec` attempt 5 fails at 15 (`b` 0 at 15) with the operation
   `a |=> b`. The run ends at 32, so `a_inst` attempt 15, whose `s1(a)`
   needs `b` at 35, is still in progress.
 

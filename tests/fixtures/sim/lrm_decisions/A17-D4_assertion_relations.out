@@ -9,7 +9,7 @@ tb.q2 end=40:85 inferred=0
   vpiDisableCondition: NULL
   vpiProperty: vpiPropertySpec (not decompiled)
   spec vpiClockingEvent: vpiOperation posedge clk
-  spec vpiPropertyExpr: vpiOperation (not decompiled)
+  spec vpiPropertyExpr: vpiOperation a |-> b
   vpiStmt: NULL
   vpiElseStmt: vpiSysTaskCall $display("%0t q2 else", $time())
 tb.q3 end=41:34 inferred=1
@@ -17,7 +17,7 @@ tb.q3 end=41:34 inferred=1
   vpiDisableCondition: NULL
   vpiProperty: vpiPropertySpec (not decompiled)
   spec vpiClockingEvent: NULL
-  spec vpiPropertyExpr: vpiOperation (not decompiled)
+  spec vpiPropertyExpr: vpiOperation a ##1 b
   vpiStmt: NULL
   vpiElseStmt: NULL
 tb.q4 end=42:50 inferred=1
@@ -37,9 +37,9 @@ tb.q5 end=43:41
 15 tb.q1 failure
   failExpr: vpiPropertyInst (not decompiled)
 15 tb.q2 failure
-  failExpr: vpiOperation (not decompiled)
+  failExpr: vpiOperation a |-> b
 15 tb.q4 failure
   failExpr: vpiReg b
 15 q2 else
 20 tb.q3 failure
-  failExpr: vpiOperation (not decompiled)
+  failExpr: vpiOperation a ##1 b

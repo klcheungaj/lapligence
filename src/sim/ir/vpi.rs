@@ -579,8 +579,15 @@ impl IrVpiCode {
     /// An unbased unsized literal (`'0`, `'1`, `'x`, `'z`): decompiles as
     /// written.
     pub const FILL: u32 = 0x2000;
+    /// A sequence or property operation (37.48, 37.50): it has operands
+    /// but no value, and decompiles with the operators of Clause 16.
+    pub const TEMPORAL: u32 = 0x4000;
+    /// An operation `vpiOpStrong` applies to (37.48 detail 3).
+    pub const STRENGTH: u32 = 0x8000;
+    /// The strong form of such an operation.
+    pub const STRONG: u32 = 0x1_0000;
     /// The `LLG_VPI_CODE_*` names of `flags`, lowest bit first.
-    pub const FLAG_NAMES: [&'static str; 14] = [
+    pub const FLAG_NAMES: [&'static str; 17] = [
         "LLG_VPI_CODE_SIGNED",
         "LLG_VPI_CODE_REAL",
         "LLG_VPI_CODE_HIDDEN",
@@ -595,6 +602,9 @@ impl IrVpiCode {
         "LLG_VPI_CODE_INFERRED",
         "LLG_VPI_CODE_LINK",
         "LLG_VPI_CODE_FILL",
+        "LLG_VPI_CODE_TEMPORAL",
+        "LLG_VPI_CODE_STRENGTH",
+        "LLG_VPI_CODE_STRONG",
     ];
 
     pub fn new(type_code: &'static str) -> Self {

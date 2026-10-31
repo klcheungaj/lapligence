@@ -4859,17 +4859,25 @@ static int code_is_statement(int type) {
     }
 }
 
-/* The sequence and property objects of 37.47-37.50 that are neither
+/* The sequence and property objects of 37.47-37.52 that are neither
  * statements nor expressions with a value. */
 static int code_is_assertion_object(int type) {
     switch (type) {
         case vpiPropertySpec: case vpiPropertyInst: case vpiSequenceInst:
         case vpiPropertyDecl: case vpiSequenceDecl: case vpiPropFormalDecl:
-        case vpiSeqFormalDecl:
+        case vpiSeqFormalDecl: case vpiClockedProp: case vpiClockedSeq:
+        case vpiCaseProperty: case vpiCasePropertyItem:
             return 1;
         default:
             return 0;
     }
+}
+
+/* The assertion objects with a vpiName: instances, declarations and
+ * formals. */
+static int code_is_named_assertion_object(int type) {
+    return code_is_assertion_object(type) && type != vpiPropertySpec && type != vpiClockedProp &&
+           type != vpiClockedSeq && type != vpiCaseProperty && type != vpiCasePropertyItem;
 }
 
 /* The vpiType of an entry: an alias has its catalog object's type. */
@@ -5035,6 +5043,11 @@ static int code_relation_applies(int type, int relation) {
                    relation == vpiPropertyExpr;
         case vpiSequenceInst: return relation == vpiSequenceDecl;
         case vpiPropertyInst: return relation == vpiPropertyDecl || relation == vpiDisableCondition;
+        /* 37.48, 37.52. */
+        case vpiClockedProp: return relation == vpiClockingEvent || relation == vpiPropertyExpr;
+        case vpiClockedSeq: return relation == vpiClockingEvent || relation == vpiExpr;
+        case vpiCaseProperty: return relation == vpiCondition;
+        case vpiCasePropertyItem: return relation == vpiPropertyExpr;
         /* 37.30, 37.34. */
         case vpiDistribution: return relation == vpiExpr;
         case vpiDistItem: return relation == vpiValueRange || relation == vpiWeight;
@@ -5049,7 +5062,8 @@ static int code_relation_applies(int type, int relation) {
 /* Whether objects of `type` iterate `relation`. */
 static int code_iteration_applies(int type, int relation) {
     switch (type) {
-        case vpiOperation: return relation == vpiOperand;
+        /* 37.50: an operation of a sequence holds its match items. */
+        case vpiOperation: return relation == vpiOperand || relation == vpiMatchItem;
         case vpiBegin: case vpiFork: case vpiNamedBegin: case vpiNamedFork:
             return relation == vpiStmt;
         case vpiCase: return relation == vpiCaseItem;
@@ -5061,7 +5075,11 @@ static int code_iteration_applies(int type, int relation) {
         case vpiVarSelect: return relation == vpiIndex;
         case vpiForeachStmt: return relation == vpiLoopVars;
         case vpiOrderedWait: return relation == vpiCondition;
-        case vpiSequenceInst: case vpiPropertyInst: return relation == vpiArgument;
+        case vpiSequenceInst: return relation == vpiArgument || relation == vpiMatchItem;
+        case vpiPropertyInst: return relation == vpiArgument;
+        case vpiCaseProperty: return relation == vpiCasePropertyItem;
+        /* 37.48 detail 5: the default item iterates no expression. */
+        case vpiCasePropertyItem: return relation == vpiExpr;
         case vpiSequenceDecl: return relation == vpiSeqFormalDecl;
         case vpiPropertyDecl: return relation == vpiPropFormalDecl;
         /* 37.30, 37.34. */
@@ -5560,7 +5578,10 @@ static int eval_conversion(const llg_vpi_code_t* node, llg_vpi_datum_t* out, int
  * value as the frontend typed it. Returns 0 when it has none. */
 static int code_eval(uint32_t index, llg_vpi_datum_t* out, int depth) {
     const llg_vpi_code_t* node = code_at(index);
-    if (!node || depth > LLG_VPI_MAX_EVAL_DEPTH || (node->flags & LLG_VPI_CODE_OPAQUE)) return 0;
+    /* A sequence or property operation has no value. */
+    if (!node || depth > LLG_VPI_MAX_EVAL_DEPTH ||
+        (node->flags & (LLG_VPI_CODE_OPAQUE | LLG_VPI_CODE_TEMPORAL)))
+        return 0;
     ++depth;
     int ok;
     if (node->flags & LLG_VPI_CODE_ALIAS) {
@@ -5987,6 +6008,252 @@ static void decompile_operation(llg_vpi_text_t* text, const llg_vpi_code_t* node
     }
 }
 
+/* The precedence a sequence or property object binds with in a sequence
+ * or property (Table 16-3): 12 for the repetitions down to 1 for the
+ * operators that take a whole property; 15 for a primary (a Boolean
+ * expression, an instance, a sequence with match items). */
+static int temporal_precedence(uint32_t index) {
+    const llg_vpi_code_t* node = code_at(code_visible(index));
+    if (!node) return 15;
+    if (node->type == vpiClockedProp || node->type == vpiClockedSeq || node->type == vpiCaseProperty)
+        return 1;
+    if (node->type != vpiOperation || !(node->flags & LLG_VPI_CODE_TEMPORAL) ||
+        code_child(node, vpiMatchItem) != LLG_VPI_NONE)
+        return 15;
+    switch (node->subtype) {
+        case vpiConsecutiveRepeatOp: case vpiRepeatOp: case vpiGotoRepeatOp: return 12;
+        case vpiCycleDelayOp: case vpiUnaryCycleDelayOp: return 11;
+        case vpiThroughoutOp: return 10;
+        case vpiWithinOp: return 9;
+        case vpiIntersectOp: return 8;
+        case vpiNotOp: case vpiNexttimeOp: return 7;
+        case vpiCompAndOp: return 6;
+        case vpiCompOrOp: return 5;
+        case vpiIffOp: return 4;
+        case vpiUntilOp: case vpiUntilWithOp: case vpiImpliesOp: return 3;
+        case vpiOverlapImplyOp: case vpiNonOverlapImplyOp: case vpiOverlapFollowedByOp:
+        case vpiNonOverlapFollowedByOp:
+            return 2;
+        case vpiFirstMatchOp: return 15;
+        default: return 1;
+    }
+}
+
+static void decompile_temporal_operand(llg_vpi_text_t* text, uint32_t index, int minimum,
+                                       int depth) {
+    int parenthesize = temporal_precedence(index) < minimum;
+    if (parenthesize) text_put(text, "(");
+    decompile(text, index, depth);
+    if (parenthesize) text_put(text, ")");
+}
+
+/* A range of the bound operands from `operands[from]` on: `N` or `L:R`. */
+static void decompile_bounds(llg_vpi_text_t* text, const uint32_t* operands, uint32_t count,
+                             uint32_t from, int depth) {
+    for (uint32_t i = from; i < count; ++i) {
+        if (i > from) text_put(text, ":");
+        decompile(text, operands[i], depth);
+    }
+}
+
+/* A sequence or property operation (16.7-16.12) with the operands of 37.48
+ * and 37.50. */
+static void decompile_temporal(llg_vpi_text_t* text, const llg_vpi_code_t* node, int depth) {
+    uint32_t operands[4], count = 0;
+    for (uint32_t i = 0; i < node->count && count < 4u; ++i)
+        if (g_vpi.code->nodes[node->first + i].role == vpiOperand) operands[count++] = node->first + i;
+    int strong = (node->flags & LLG_VPI_CODE_STRONG) != 0;
+    const char* keyword = NULL;
+    int precedence = 1, right = 0;
+    switch (node->subtype) {
+        case vpiUnaryCycleDelayOp:
+        case vpiCycleDelayOp: {
+            uint32_t sequences = node->subtype == vpiCycleDelayOp ? 2u : 1u;
+            if (count < sequences + 1u) break;
+            if (sequences == 2u) {
+                decompile_temporal_operand(text, operands[0], 11, depth);
+                text_put(text, " ");
+            }
+            text_put(text, count - sequences == 1u ? "##" : "##[");
+            decompile_bounds(text, operands, count, sequences, depth);
+            text_put(text, count - sequences == 1u ? " " : "] ");
+            decompile_temporal_operand(text, operands[sequences - 1u], 12, depth);
+            return;
+        }
+        case vpiConsecutiveRepeatOp:
+        case vpiRepeatOp:
+        case vpiGotoRepeatOp:
+            if (count < 2u) break;
+            decompile_temporal_operand(text, operands[0], 13, depth);
+            text_put(text, node->subtype == vpiConsecutiveRepeatOp ? "[*"
+                           : node->subtype == vpiRepeatOp         ? "[="
+                                                                  : "[->");
+            decompile_bounds(text, operands, count, 1u, depth);
+            text_put(text, "]");
+            return;
+        case vpiFirstMatchOp: {
+            if (count != 1u) break;
+            /* `first_match(s, items)`: a sequence with match items is
+             * already parenthesized. */
+            const llg_vpi_code_t* operand = code_at(code_visible(operands[0]));
+            int items = operand && code_child(operand, vpiMatchItem) != LLG_VPI_NONE;
+            text_put(text, items ? "first_match" : "first_match(");
+            decompile(text, operands[0], depth);
+            if (!items) text_put(text, ")");
+            return;
+        }
+        case vpiNotOp:
+        case vpiNexttimeOp:
+            if (count < 1u) break;
+            text_put(text, node->subtype == vpiNotOp ? "not " : strong ? "s_nexttime " : "nexttime ");
+            if (count == 2u) {
+                text_put(text, "[");
+                decompile(text, operands[1], depth);
+                text_put(text, "] ");
+            }
+            decompile_temporal_operand(text, operands[0], 7, depth);
+            return;
+        case vpiAlwaysOp:
+        case vpiEventuallyOp:
+            if (count < 1u) break;
+            text_put(text, node->subtype == vpiAlwaysOp ? (strong ? "s_always " : "always ")
+                                                        : (strong ? "s_eventually " : "eventually "));
+            if (count > 1u) {
+                text_put(text, "[");
+                decompile_bounds(text, operands, count, 1u, depth);
+                text_put(text, "] ");
+            }
+            decompile_temporal_operand(text, operands[0], 1, depth);
+            return;
+        case vpiIfOp:
+        case vpiIfElseOp:
+            if (count < 2u) break;
+            text_put(text, "if (");
+            decompile(text, operands[0], depth);
+            text_put(text, ") ");
+            /* A nested if without else would take this else. */
+            decompile_temporal_operand(text, operands[1], count == 3u ? 2 : 1, depth);
+            if (count == 3u) {
+                text_put(text, " else ");
+                decompile_temporal_operand(text, operands[2], 1, depth);
+            }
+            return;
+        case vpiAcceptOnOp:
+        case vpiRejectOnOp:
+        case vpiSyncAcceptOnOp:
+        case vpiSyncRejectOnOp:
+            if (count != 2u) break;
+            text_put(text, node->subtype == vpiAcceptOnOp       ? "accept_on ("
+                           : node->subtype == vpiRejectOnOp     ? "reject_on ("
+                           : node->subtype == vpiSyncAcceptOnOp ? "sync_accept_on ("
+                                                                : "sync_reject_on (");
+            decompile(text, operands[0], depth);
+            text_put(text, ") ");
+            decompile_temporal_operand(text, operands[1], 1, depth);
+            return;
+        case vpiThroughoutOp: keyword = "throughout"; precedence = 10; right = 1; break;
+        case vpiWithinOp: keyword = "within"; precedence = 9; break;
+        case vpiIntersectOp: keyword = "intersect"; precedence = 8; break;
+        case vpiCompAndOp: keyword = "and"; precedence = 6; break;
+        case vpiCompOrOp: keyword = "or"; precedence = 5; break;
+        case vpiIffOp: keyword = "iff"; precedence = 4; right = 1; break;
+        case vpiUntilOp: keyword = strong ? "s_until" : "until"; precedence = 3; right = 1; break;
+        case vpiUntilWithOp:
+            keyword = strong ? "s_until_with" : "until_with";
+            precedence = 3;
+            right = 1;
+            break;
+        case vpiImpliesOp: keyword = "implies"; precedence = 3; right = 1; break;
+        case vpiOverlapImplyOp: keyword = "|->"; precedence = 2; right = 1; break;
+        case vpiNonOverlapImplyOp: keyword = "|=>"; precedence = 2; right = 1; break;
+        case vpiOverlapFollowedByOp: keyword = "#-#"; precedence = 2; right = 1; break;
+        case vpiNonOverlapFollowedByOp: keyword = "#=#"; precedence = 2; right = 1; break;
+        default: break;
+    }
+    if (!keyword || count != 2u) {
+        text->failed = 1;
+        return;
+    }
+    decompile_temporal_operand(text, operands[0], precedence + right, depth);
+    text_put(text, " ");
+    text_put(text, keyword);
+    text_put(text, " ");
+    decompile_temporal_operand(text, operands[1], precedence + !right, depth);
+}
+
+/* A clocked sequence or property, a case property, or a sequence or
+ * property instance as it appears in a sequence or property. */
+static void decompile_assertion_object(llg_vpi_text_t* text, const llg_vpi_code_t* node,
+                                       int depth) {
+    switch (node->type) {
+        case vpiClockedProp:
+        case vpiClockedSeq: {
+            uint32_t event = code_child(node, vpiClockingEvent);
+            uint32_t body = code_child(node, node->type == vpiClockedSeq ? vpiExpr : vpiPropertyExpr);
+            if (event == LLG_VPI_NONE || body == LLG_VPI_NONE) break;
+            text_put(text, "@(");
+            decompile(text, event, depth);
+            text_put(text, ") ");
+            decompile_temporal_operand(text, body, 1, depth);
+            return;
+        }
+        case vpiCaseProperty: {
+            uint32_t condition = code_child(node, vpiCondition);
+            if (condition == LLG_VPI_NONE) break;
+            text_put(text, "case (");
+            decompile(text, condition, depth);
+            text_put(text, ")");
+            for (uint32_t i = 0; i < node->count; ++i) {
+                const llg_vpi_code_t* item = &g_vpi.code->nodes[node->first + i];
+                if (item->role != vpiCasePropertyItem) continue;
+                uint32_t property = code_child(item, vpiPropertyExpr);
+                if (property == LLG_VPI_NONE) break;
+                text_put(text, " ");
+                if (code_child(item, vpiExpr) == LLG_VPI_NONE) {
+                    text_put(text, "default");
+                } else {
+                    decompile_list(text, item, vpiExpr, 0, depth);
+                }
+                text_put(text, ": ");
+                decompile(text, property, depth);
+                text_put(text, ";");
+            }
+            text_put(text, " endcase");
+            return;
+        }
+        case vpiSequenceInst:
+        case vpiPropertyInst: {
+            const char* name = code_text(node);
+            if (!name) break;
+            text_put(text, name);
+            if (code_child(node, vpiArgument) != LLG_VPI_NONE) {
+                text_put(text, "(");
+                decompile_list(text, node, vpiArgument, 0, depth);
+                text_put(text, ")");
+            }
+            return;
+        }
+        default:
+            break;
+    }
+    text->failed = 1;
+}
+
+/* An operation or sequence instance with its match items (16.10):
+ * `(s, item, ...)`. */
+static void decompile_matched(llg_vpi_text_t* text, const llg_vpi_code_t* node, int depth) {
+    text_put(text, "(");
+    if (node->type == vpiOperation && (node->flags & LLG_VPI_CODE_TEMPORAL))
+        decompile_temporal(text, node, depth);
+    else if (node->type == vpiOperation)
+        decompile_operation(text, node, depth);
+    else
+        decompile_assertion_object(text, node, depth);
+    text_put(text, ", ");
+    decompile_list(text, node, vpiMatchItem, 0, depth);
+    text_put(text, ")");
+}
+
 static void decompile(llg_vpi_text_t* text, uint32_t index, int depth) {
     index = code_visible(index);
     const llg_vpi_code_t* node = code_at(index);
@@ -6013,7 +6280,26 @@ static void decompile(llg_vpi_text_t* text, uint32_t index, int depth) {
                 text->failed = 1;
                 return;
             }
-            decompile_operation(text, node, depth);
+            if (code_child(node, vpiMatchItem) != LLG_VPI_NONE) {
+                decompile_matched(text, node, depth);
+            } else if (node->flags & LLG_VPI_CODE_TEMPORAL) {
+                decompile_temporal(text, node, depth);
+            } else {
+                decompile_operation(text, node, depth);
+            }
+            return;
+        case vpiSequenceInst:
+            if (code_child(node, vpiMatchItem) != LLG_VPI_NONE) {
+                decompile_matched(text, node, depth);
+                return;
+            }
+            decompile_assertion_object(text, node, depth);
+            return;
+        case vpiPropertyInst:
+        case vpiClockedProp:
+        case vpiClockedSeq:
+        case vpiCaseProperty:
+            decompile_assertion_object(text, node, depth);
             return;
         case vpiBitSelect:
         case vpiPartSelect:
@@ -6133,7 +6419,8 @@ static PLI_INT32 code_property(uint32_t index, int property) {
             if (!expression) break;
             /* A real expression reports its IEEE 754 storage (S42-D8). */
             if (node->flags & LLG_VPI_CODE_REAL) return 64;
-            if (!node->width && (node->flags & LLG_VPI_CODE_OPAQUE)) break;
+            if (!node->width && (node->flags & (LLG_VPI_CODE_OPAQUE | LLG_VPI_CODE_TEMPORAL)))
+                break;
             return (PLI_INT32)node->width;
         case vpiSigned:
             if (!expression) break;
@@ -6146,6 +6433,11 @@ static PLI_INT32 code_property(uint32_t index, int property) {
             if (type == vpiAssignment && node->subtype) return node->subtype;
             if (type != vpiOperation || (node->flags & LLG_VPI_CODE_OPAQUE)) break;
             return node->subtype;
+        case vpiOpStrong:
+            /* 37.48 detail 3: the temporal operators and sequence
+             * operations (decision A19-D59). */
+            if (type != vpiOperation || !(node->flags & LLG_VPI_CODE_STRENGTH)) break;
+            return (node->flags & LLG_VPI_CODE_STRONG) != 0;
         case vpiConstType:
             if (type != vpiConstant) break;
             return node->subtype;
@@ -6208,8 +6500,7 @@ static PLI_BYTE8* code_string(uint32_t index, int property) {
         case vpiName: {
             /* Calls, references outside the catalog and named blocks
              * outside a process have names; statements carry no label. */
-            if (code_is_assertion_object(type) && type != vpiPropertySpec)
-                return (PLI_BYTE8*)code_text(node);
+            if (code_is_named_assertion_object(type)) return (PLI_BYTE8*)code_text(node);
             if (type == vpiFuncCall || type == vpiTaskCall || type == vpiSysFuncCall ||
                 type == vpiSysTaskCall || type == vpiMethodFuncCall ||
                 type == vpiMethodTaskCall || type == vpiNamedBegin || type == vpiNamedFork ||
@@ -9331,6 +9622,10 @@ static const char* type_name(int type) {
         case vpiSequenceDecl: return "vpiSequenceDecl";
         case vpiPropFormalDecl: return "vpiPropFormalDecl";
         case vpiSeqFormalDecl: return "vpiSeqFormalDecl";
+        case vpiClockedProp: return "vpiClockedProp";
+        case vpiClockedSeq: return "vpiClockedSeq";
+        case vpiCaseProperty: return "vpiCaseProperty";
+        case vpiCasePropertyItem: return "vpiCasePropertyItem";
         case vpiLongIntTypespec: return "vpiLongIntTypespec";
         case vpiShortRealTypespec: return "vpiShortRealTypespec";
         case vpiByteTypespec: return "vpiByteTypespec";

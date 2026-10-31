@@ -4,7 +4,7 @@ vpiAssert tb.a_spec end=32:43 inferred=0 cover_sequence=-1
     vpiProperty: vpiPropertySpec line=29 decompile=NULL
       spec vpiClockingEvent: vpiOperation line=29 decompile=posedge clk
       spec vpiDisableCondition: vpiReg line=16 decompile=rst
-      spec vpiPropertyExpr: vpiOperation line=0 decompile=NULL
+      spec vpiPropertyExpr: vpiOperation line=29 decompile=a |=> b
     vpiExpr: NULL
     vpiStmt: vpiSysTaskCall line=30 decompile=$display("%0t a_spec pass", $time())
     vpiElseStmt: vpiSysTaskCall line=32 decompile=$display("%0t a_spec fail", $time())
@@ -76,7 +76,7 @@ vpiAssert tb.a_proc end=38:42 inferred=1 cover_sequence=-1
     vpiProperty: vpiPropertySpec line=38 decompile=NULL
       spec vpiClockingEvent: NULL
       spec vpiDisableCondition: NULL
-      spec vpiPropertyExpr: vpiOperation line=0 decompile=NULL
+      spec vpiPropertyExpr: vpiOperation line=38 decompile=a ##1 b
     vpiExpr: NULL
     vpiStmt: NULL
     vpiElseStmt: NULL
@@ -130,7 +130,7 @@ nested callback -> NULL
 15 a_inst.p1 start vpiPropertyInst attempt=15
 15 c_seq.s1 start vpiSequenceInst attempt=15
 15 a_spec failure attempt=5
-    failExpr: vpiOperation line=0 decompile=NULL
+    failExpr: vpiOperation line=29 decompile=a |=> b
 15 a_spec fail
 25 i2 covered
 25 a_inst.p1 start vpiPropertyInst attempt=25

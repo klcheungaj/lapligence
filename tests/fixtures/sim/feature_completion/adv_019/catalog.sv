@@ -237,6 +237,12 @@ module tb;
   endproperty
   f_ok: assert property (p_fd(sc));
   m_ok: assume property (@(posedge clk) r0 != 4'he);
+  // Sequence and property operators: a clocked sequence and property, a
+  // case property and match items (37.48, 37.50, 37.52).
+  o_cs: cover property (@(posedge clk) r0 == 4'h1 ##1 @(negedge clk) sc);
+  o_cp: cover property (@(posedge clk) r0 == 4'h1 |=> @(negedge clk) (sc |-> co));
+  o_ca: cover property (@(posedge clk) case (r0) 4'h1, 4'h2: sc; default: nexttime co; endcase);
+  o_mi: cover property (@(posedge clk) first_match(r0 == 4'h2 ##[1:$] sc, $display("m")));
 
   function automatic int inc(input int v);
     return v + 1;

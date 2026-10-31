@@ -2591,6 +2591,15 @@ fn a19_d58_concatenation_ports() {
 }
 
 #[test]
+fn a19_d59_sequence_and_property_operators() {
+    run_vpi_decision(
+        "A19-D59_sequence_and_property_operators",
+        &["task $d59()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D59_sequence_and_property_operators.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

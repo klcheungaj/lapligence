@@ -232,10 +232,13 @@ arguments point at their root with `code` (index + 1). Entries flagged
 `LLG_VPI_CODE_ALIAS` stand for a catalog row and hand out that row's
 handle; `LLG_VPI_CODE_HIDDEN` entries are implicit conversions, skipped for
 handles and applied when evaluating; `LLG_VPI_CODE_OPAQUE` entries answer
-type, size and line only. Other entries become `SLOT_CODE` handles on
-demand. `code_eval` evaluates a tree through the value facade with the
-frontend's widths; `decompile` rebuilds the source spelling with Table 11-2
-precedence into one buffer that each `vpiDecompile` overwrites.
+type, size and line only; `LLG_VPI_CODE_TEMPORAL` entries are sequence and
+property operations, with operands and no value, and `LLG_VPI_CODE_STRENGTH`
+marks those that answer `vpiOpStrong`. Other entries become `SLOT_CODE`
+handles on demand. `code_eval` evaluates a tree through the value facade
+with the frontend's widths; `decompile` rebuilds the source spelling with
+Table 11-2 precedence, and Table 16-3 precedence for sequences and
+properties, into one buffer that each `vpiDecompile` overwrites.
 Dynamic objects (VPI-O4, `llg_vpi_dynamic.c`) are catalog rows flagged
 `LLG_VPI_OBJ_DYNAMIC` whose `storage` is the string, handle or container
 global and whose `shape` indexes `llg_vpi_dynamic_tables`. Class objects,

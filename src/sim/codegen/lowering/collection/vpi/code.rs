@@ -54,6 +54,17 @@ enum Item<'a> {
     Property(NodeId, NodeId),
     /// A sequence or property expression.
     AssertionExpr(NodeId),
+    /// The sequence expression of `.0` (a sequence with match items or a
+    /// `first_match`) with its match items (37.50).
+    Matched(NodeId),
+    /// The first `.1` elements of sequence concatenation `.0`.
+    Concat(NodeId, usize),
+    /// A bound of the range of a sequence or property operator at `.1`: a
+    /// count, or `$` (`None`).
+    Bound(Option<u32>, NodeId),
+    /// An item of a case property (37.48): its expressions (none for the
+    /// default item) and its property.
+    CaseBranch(&'a [NodeId], NodeId),
     /// The actual clocking event of an assertion.
     Clock(ClockSource<'a>),
     /// An event the frontend does not hold as written (a procedure's
@@ -387,6 +398,19 @@ impl<'c, 'a> CodeTables<'c, 'a> {
             }
             Item::AssertionExpr(id) => {
                 let (code, children) = self.assertion_expression(id);
+                (code, children, scope)
+            }
+            Item::Matched(id) => {
+                let (code, children) = self.matched(id);
+                (code, children, scope)
+            }
+            Item::Concat(id, count) => {
+                let (code, children) = self.concat(id, count);
+                (code, children, scope)
+            }
+            Item::Bound(bound, at) => (self.bound(bound, at), Vec::new(), scope),
+            Item::CaseBranch(expressions, body) => {
+                let (code, children) = self.case_property_item(expressions, body);
                 (code, children, scope)
             }
             Item::Clock(clock) => self.clock(clock, scope),

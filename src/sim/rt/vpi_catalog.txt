@@ -59,6 +59,7 @@ test a20d18 sim_lrm_decisions::a20_d18_intermodule_paths
 test a20d19 sim_lrm_decisions::a20_d19_runtime_delays
 test a19d55 sim_lrm_decisions::a19_d55_attributes
 test a19d56 sim_lrm_decisions::a19_d56_defparams
+test a19d59 sim_lrm_decisions::a19_d59_sequence_and_property_operators
 test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
 test s42systf sim_042::system_functions_follow_the_return_conventions
 test s42values sim_042::values_cover_every_format_and_put_mode
@@ -1755,17 +1756,20 @@ node property_spec 37.48 type=vpiPropertySpec
   handle vpiPropertyExpr implemented walk
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
-node clocked_property 37.48 type=vpiClockedProp default=unsupported sequence and property operators are not decomposed: an operator expression in an assertion is one opaque vpiOperation without operands, so no handle reaches this object (the owned database keeps the operator tree; decomposing it is the open property-operator work)
-  handle vpiClockingEvent
-  handle vpiPropertyExpr
+node clocked_property 37.48 type=vpiClockedProp
+  handle vpiClockingEvent implemented walk
+  handle vpiPropertyExpr implemented walk
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
 
-node case_property 37.48 type=vpiCaseProperty default=unsupported sequence and property operators are not decomposed: an operator expression in an assertion is one opaque vpiOperation without operands, so no handle reaches this object (the owned database keeps the operator tree; decomposing it is the open property-operator work)
-  handle vpiCondition
-  iterate vpiCasePropertyItem
+node case_property 37.48 type=vpiCaseProperty
+  handle vpiCondition implemented walk
+  iterate vpiCasePropertyItem implemented walk
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
 
-node case_property_item 37.48 type=vpiCasePropertyItem default=unsupported sequence and property operators are not decomposed: an operator expression in an assertion is one opaque vpiOperation without operands, so no handle reaches this object (the owned database keeps the operator tree; decomposing it is the open property-operator work)
-  iterate vpiExpr
-  handle vpiPropertyExpr
+node case_property_item 37.48 type=vpiCasePropertyItem
+  iterate vpiExpr implemented walk
+  handle vpiPropertyExpr implemented walk
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node sequence_decl 37.49 type=vpiSequenceDecl
   str vpiName implemented walk
@@ -1782,7 +1786,7 @@ node seq_formal_decl 37.49 type=vpiSeqFormalDecl
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node sequence_expr 37.50 members=operation,sequence_inst,distribution,expr
-  iterate vpiMatchItem unsupported sequence and property operators are not decomposed: an operator expression in an assertion is one opaque vpiOperation without operands, so no handle reaches this object (the owned database keeps the operator tree; decomposing it is the open property-operator work)
+  iterate vpiMatchItem implemented a19d59
 
 node immediate_assert_x 37.51 members=immediate_assert,immediate_assume
   handle vpiElseStmt implemented walk
@@ -1792,11 +1796,13 @@ node immediate_assertion 37.51 members=immediate_assert,immediate_assume,immedia
   handle vpiExpr implemented walk
   handle vpiStmt implemented walk
 
-node multiclock_sequence_expr 37.52 type=vpiMulticlockSequenceExpr default=unsupported sequence and property operators are not decomposed: an operator expression in an assertion is one opaque vpiOperation without operands, so no handle reaches this object (the owned database keeps the operator tree; decomposing it is the open property-operator work)
+node multiclock_sequence_expr 37.52 type=vpiMulticlockSequenceExpr default=n/a a multiclocked sequence is the cycle delay operations that join its clocked sequences, each clocked sequence an operand (decision A19-D59)
   iterate vpiClockedSeq
 
-node clocked_seq 37.52 type=vpiClockedSeq default=unsupported sequence and property operators are not decomposed: an operator expression in an assertion is one opaque vpiOperation without operands, so no handle reaches this object (the owned database keeps the operator tree; decomposing it is the open property-operator work)
-  handle vpiClockingEvent
+node clocked_seq 37.52 type=vpiClockedSeq
+  handle vpiClockingEvent implemented walk
+  handle vpiExpr implemented walk
+  handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node let_expr 37.53 type=vpiLetExpr default=unsupported a let invocation is captured only as the body the frontend binds for it: it is an opaque vpiOperation, and the owned database keeps no let declaration to relate it to
   iterate vpiArgument
@@ -1860,7 +1866,7 @@ node part_select 37.55 type=vpiPartSelect
 
 node operation 37.55 type=vpiOperation
   get vpiOpType implemented walk
-  get vpiOpStrong unsupported 37.48 detail 3 makes vpiOpStrong valid only for the temporal operators and sequence expressions, which are opaque operations in llg (sequence and property operators are not decomposed)
+  get vpiOpStrong implemented a19d59
   iterate vpiOperand implemented walk
   handle vpiTypespec implemented a19d32
   get vpiScalar extension walk the sign and width of the object's value

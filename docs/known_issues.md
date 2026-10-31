@@ -2507,9 +2507,12 @@ S46-D14 and A19-D46.
   - the relations of an assertion (`vpiClockingEvent`,
     `vpiDisableCondition`, `vpiProperty`, `vpiExpr`, `vpiStmt`,
     `vpiElseStmt`) and `failExpr` exist only in models generated with
-    `--vpi` (or `--dpi-lib`); property and sequence operators are opaque
-    `vpiOperation` objects without operands, value, decompile or line
-    (A17-D4);
+    `--vpi` (or `--dpi-lib`); sequence and property operators are
+    operations with operands but no value (A19-D59). `strong(...)` and
+    `weak(...)` around a Boolean expression or a sequence instance leave no
+    trace, match items after a Boolean expression that is a variable are
+    not kept, and `.triggered`/`.matched` are method calls that do not
+    decompile;
   - a sequence or property declaration keeps no body, variables or formal
     defaults (`vpiPropertySpec`/`vpiExpr`/`vpiVariables` of a declaration,
     `vpiExpr` of a formal fail with `LLG_VPI_UNSUPPORTED`: each instance
