@@ -1822,6 +1822,18 @@ impl Codegen<'_> {
                         .then(|| self.vpi_return_range(id, width))
                         .flatten(),
                         constant: c_name.map(|name| IrVpiConstant::Text(name.to_owned())),
+                        // 37.37 details 1-3: the variable that holds the
+                        // result, a signal of every static function of a
+                        // VPI model.
+                        port_target: node
+                            .children
+                            .iter()
+                            .find(|child| {
+                                matches!(self.kind(**child), NodeKind::Var { .. })
+                                    && self.node(**child).name == node.name
+                                    && self.sig_globals.contains_key(*child)
+                            })
+                            .map(|child| self.vpi_full_name(*child)),
                         qualifiers: IrVpiQualifiers {
                             dpi_import: import.is_some(),
                             dpi_export: export.is_some(),

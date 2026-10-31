@@ -404,7 +404,6 @@ node task_func 37.12 members=task,function
   handle vpiStmt implemented walk
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
-  handle vpiReturn unsupported the return variable of a function is not an object
   handle vpiClassDefn implemented walk
   handle vpiParent implemented walk
   iterate vpiIODecl implemented walk
@@ -1403,6 +1402,7 @@ node tchk_term 37.36 type=vpiTchkTerm
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node function 37.37 type=vpiFunction
+  handle vpiReturn implemented walk
   get vpiSigned implemented walk
   get vpiSize implemented walk
   get vpiFuncType implemented walk
@@ -1451,6 +1451,7 @@ node function 37.37 type=vpiFunction
   iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
 
 node task 37.37 type=vpiTask
+  handle vpiReturn n/a a task returns no value; vpiReturn leads from a function (37.37 diagram)
   get vpiTimePrecision extension walk the time unit and precision of the enclosing instance
   get vpiTimeUnit extension walk the time unit and precision of the enclosing instance
   iterate vpiArrayNet extension walk per-type child iteration (IEEE 1364)

@@ -376,7 +376,8 @@ impl<'a> Codegen<'a> {
                 .find(|child| matches!(self.kind(*child), NodeKind::Var { .. }))
                 .filter(|variable| {
                     self.db.variable_lifetime(*variable) == VariableLifetime::Static
-                        && self.static_return_requires_signal(*variable)
+                        && (self.vpi_return_signals
+                            || self.static_return_requires_signal(*variable))
                 });
             match (return_variable, ret) {
                 (Some(return_variable), Some((width, signed, two_state, shortreal))) => {

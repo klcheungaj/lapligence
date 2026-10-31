@@ -610,6 +610,7 @@ fn lower_model_with(
     let semantic = checked_semantic(db)?;
     let lowering_stage = crate::profile::Stage::new("lowering");
     let mut cg = Codegen::new(&semantic);
+    cg.vpi_return_signals = options.vpi;
     cg.check_fsm_pragmas()?;
     let tops = collect_tops(&mut cg)?;
     cg.plan_code_coverage(options.vpi);
@@ -1322,6 +1323,10 @@ struct Codegen<'a> {
     /// Ordinary values use 2009 time-literal rounding. Delay expressions
     /// temporarily disable it so their complete expression rounds once.
     round_time_literals: bool,
+    /// The model serves VPI applications: every static function result is
+    /// a signal, so its return variable is a catalog object (IEEE
+    /// 1800-2009 37.37 details 1-3).
+    vpi_return_signals: bool,
     /// Set while collecting an always_comb/always_latch sensitivity list:
     /// SV 9.2.2.2.1 "References to class objects and method calls of class
     /// objects do not add anything", so the read walk skips class property
@@ -2040,6 +2045,7 @@ impl<'a> Codegen<'a> {
             origins: semantic.origins().to_vec(),
             db: semantic.db(),
             round_time_literals: db.edition() == LanguageEdition::SystemVerilog2009,
+            vpi_return_signals: false,
             comb_excludes_class_references: std::cell::Cell::new(false),
             warnings: Vec::new(),
             model: IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)

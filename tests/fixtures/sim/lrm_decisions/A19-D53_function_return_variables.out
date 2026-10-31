@@ -1,0 +1,13 @@
+sv_f return vpiIntVar tb.sv_f.sv_f size=32 automatic=0 value=00000000000000000000000000000101
+  by name same=1 scope=tb.sv_f
+af return NULL(error)
+rng return vpiReg tb.rng.rng size=6 automatic=0 value=001001
+  by name same=1 scope=tb.rng
+sf return vpiStructVar tb.sf.sf size=5 automatic=0 value=01011
+  by name same=1 scope=tb.sf
+rf return vpiRealVar tb.rf.rf size=64 automatic=0 value=0000000000000000000000000000000000000000000000000000000000000000
+  by name same=1 scope=tb.rf
+vf return NULL
+bit1 return vpiReg tb.bit1.bit1 size=1 automatic=0 value=x
+  by name same=1 scope=tb.bit1
+tk return NULL(error)

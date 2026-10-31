@@ -2537,6 +2537,15 @@ fn a19_d52_dpi_and_return_properties() {
 }
 
 #[test]
+fn a19_d53_function_return_variables() {
+    run_vpi_decision(
+        "A19-D53_function_return_variables",
+        &["task $d53()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D53_function_return_variables.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

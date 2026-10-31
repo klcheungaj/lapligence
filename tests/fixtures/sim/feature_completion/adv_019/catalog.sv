@@ -241,6 +241,10 @@ module tb;
   function automatic int inc(input int v);
     return v + 1;
   endfunction
+  // A static function: its result variable is a catalog object (37.37).
+  function int twice(input int v);
+    return 2 * v;
+  endfunction
   // DPI-C subroutines for the DPI properties of 37.37.
   import "DPI-C" pure function int catalog_add(input int a, input int b);
   export "DPI-C" cat_exported = function inc;

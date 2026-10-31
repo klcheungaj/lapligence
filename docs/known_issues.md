@@ -2263,7 +2263,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   catalog): elements of multidimensional primitive arrays, and `vpiIndex`
   of an element of a multidimensional instance array; `vpi_put_value` to a
   sequential UDP; `vpiOrigin` of a frame (the activating call is not
-  recorded); a fork branch started inside a task has no frame of that task
+  recorded); `vpiReturn` of an automatic function and the argument
+  variables of a static task or function (only the result and the locals
+  of a static subroutine are objects, decision A19-D53); a fork branch started inside a task has no frame of that task
   (its frame stack starts empty); `vpiInitial` of a UDP definition (the initial value is
   captured only as a character, so the initial statement has no object);
   `cbValueChange` on a continuous assignment or primitive; a delayed

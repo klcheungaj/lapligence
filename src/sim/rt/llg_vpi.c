@@ -6656,6 +6656,15 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 return instance == LLG_VPI_NONE ? NULL : object_handle(instance);
             }
             break;
+        case vpiReturn:
+            /* 37.37 details 1-3: the variable holding a function's result.
+             * A void function has none; the result of an automatic function
+             * is not an object (llg keeps no automatic variables). */
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiFunction) {
+                if (object->target) return object_handle(row_of(object->target));
+                if (!object->detail) return NULL;
+            }
+            break;
         case vpiInterface:
             /* 37.7: the interface instance a modport belongs to. */
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiModport &&
