@@ -44,6 +44,10 @@ extern "C" {
 #define LLG_VPI_TS_PACKED 0x04u       /* vpiPacked struct/union */
 #define LLG_VPI_TS_UNPACKED 0x08u     /* struct/union known not to be packed */
 #define LLG_VPI_TS_TAGGED 0x10u
+/* vpiArrayType of an array typespec whose leftmost dimension has no range */
+#define LLG_VPI_TS_DYNAMIC 0x20u
+#define LLG_VPI_TS_QUEUE 0x40u
+#define LLG_VPI_TS_ASSOC 0x80u
 
 typedef struct {
     int type;                 /* vpiXxxTypespec */
@@ -62,6 +66,7 @@ typedef struct {
     uint32_t first_node;      /* top-level member nodes of a value of this type */
     uint32_t node_count;
     uint32_t line;            /* vpiLineNo of the naming typedef, 0: none */
+    uint32_t index;           /* vpiIndexTypespec of an associative array: index + 1 */
 } llg_vpi_typespec_t;
 
 typedef struct {

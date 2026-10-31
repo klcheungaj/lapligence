@@ -161,9 +161,9 @@ pub use storage::{
 mod vpi;
 pub use vpi::{
     IrVpiArgRef, IrVpiBuiltinCall, IrVpiCode, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn,
-    IrVpiConnRole, IrVpiConstant, IrVpiDirection, IrVpiInstance, IrVpiObject, IrVpiObjectKind,
-    IrVpiQualifiers, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember, IrVpiUdp,
-    IrVpiVarKind,
+    IrVpiConnRole, IrVpiConstant, IrVpiContainer, IrVpiDirection, IrVpiInstance, IrVpiObject,
+    IrVpiObjectKind, IrVpiQualifiers, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind,
+    IrVpiTypespecMember, IrVpiUdp, IrVpiVarKind,
 };
 mod vpi_dynamic;
 pub use vpi_dynamic::{

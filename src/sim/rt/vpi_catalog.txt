@@ -60,6 +60,7 @@ test a20d19 sim_lrm_decisions::a20_d19_runtime_delays
 test a19d55 sim_lrm_decisions::a19_d55_attributes
 test a19d56 sim_lrm_decisions::a19_d56_defparams
 test a19d59 sim_lrm_decisions::a19_d59_sequence_and_property_operators
+test a19d60 sim_lrm_decisions::a19_d60_container_typespecs
 test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
 test s42systf sim_042::system_functions_follow_the_return_conventions
 test s42values sim_042::values_cover_every_format_and_put_mode
@@ -1052,7 +1053,7 @@ node packed_array_typespec 37.23 type=vpiPackedArrayTypespec
 
 node array_typespec 37.23 type=vpiArrayTypespec
   get vpiArrayType implemented walk
-  handle vpiIndexTypespec unsupported associative array typespecs are not exposed
+  handle vpiIndexTypespec implemented a19d60
   handle vpiElemTypespec implemented walk
   iterate vpiRange implemented walk
   handle vpiLeftRange implemented walk

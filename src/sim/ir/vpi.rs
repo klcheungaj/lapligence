@@ -701,6 +701,15 @@ impl IrVpiTypespecKind {
     }
 }
 
+/// The `vpiArrayType` of an array typespec whose leftmost dimension is not
+/// fixed (37.23).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum IrVpiContainer {
+    Dynamic,
+    Queue,
+    Associative,
+}
+
 /// One typespec of the VPI catalog. Typespecs are interned: equal entries
 /// share one index, so `vpi_compare_objects` sees one object per type.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -733,6 +742,12 @@ pub struct IrVpiTypespec {
     /// `vpiLineNo`: the line of the typedef declaration that names this
     /// type; 0 for a type without one.
     pub(in crate::sim) line: u32,
+    /// The kind of an array typespec whose leftmost dimension is not fixed;
+    /// `None` for a fixed one. Such a dimension has no range.
+    pub(in crate::sim) container: Option<IrVpiContainer>,
+    /// `vpiIndexTypespec` of an associative array typespec: the key type,
+    /// `None` for the wildcard index (37.23 detail 2).
+    pub(in crate::sim) index: Option<usize>,
 }
 
 /// One `vpiTypespecMember` of a structure or union typespec.

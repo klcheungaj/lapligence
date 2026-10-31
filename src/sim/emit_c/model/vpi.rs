@@ -4,8 +4,9 @@ use super::*;
 
 mod dynamic;
 use crate::sim::ir::{
-    IrSdfTarget, IrVpiArgRef, IrVpiCode, IrVpiCompileCall, IrVpiConn, IrVpiConstant, IrVpiInstance,
-    IrVpiObject, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiVarKind,
+    IrSdfTarget, IrVpiArgRef, IrVpiCode, IrVpiCompileCall, IrVpiConn, IrVpiConstant,
+    IrVpiContainer, IrVpiInstance, IrVpiObject, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind,
+    IrVpiVarKind,
 };
 
 /// Marker suffix that keeps a port apart from the declaration it connects,
@@ -1224,6 +1225,12 @@ fn render_vpi_typespecs(
         if typespec.tagged {
             flags.push("LLG_VPI_TS_TAGGED");
         }
+        match typespec.container {
+            Some(IrVpiContainer::Dynamic) => flags.push("LLG_VPI_TS_DYNAMIC"),
+            Some(IrVpiContainer::Queue) => flags.push("LLG_VPI_TS_QUEUE"),
+            Some(IrVpiContainer::Associative) => flags.push("LLG_VPI_TS_ASSOC"),
+            None => {}
+        }
         let flags = if flags.is_empty() {
             "0u".to_owned()
         } else {
@@ -1231,7 +1238,7 @@ fn render_vpi_typespecs(
         };
         let optional = |entry: Option<usize>| entry.map_or(0, |entry| entry + 1);
         rows.push(format!(
-            "    {{ {}, {}, {}u, {}u, {}u, {}u, {flags}, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u }},\n",
+            "    {{ {}, {}, {}u, {}u, {}u, {}u, {flags}, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u }},\n",
             typespec.kind.c_type(),
             typespec
                 .name
@@ -1250,6 +1257,7 @@ fn render_vpi_typespecs(
             tree.0,
             tree.1,
             typespec.line,
+            optional(typespec.index),
         ));
     }
     let table = |out: &mut String, ty: &str, name: &str, items: Vec<String>| {
@@ -1653,9 +1661,38 @@ mod tests {
         typespecs[0].name = Some("nib_t".to_owned());
         let mut out = String::new();
         render_vpi_typespecs(&typespecs, &[], &mut out);
-        assert!(out.contains("{ vpiLogicTypespec, \"nib_t\", 0u, 3u, 0u, 4u, 0u, 0u, 1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u },"), "{out}");
+        assert!(out.contains("{ vpiLogicTypespec, \"nib_t\", 0u, 3u, 0u, 4u, 0u, 0u, 1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u },"), "{out}");
         assert!(out.contains("#define llg_vpi_ts_consts NULL"), "{out}");
         assert!(out.contains("llg_vpi_ts_nodes, 6u"), "{out}");
+    }
+
+    /// An associative array typespec carries its array kind as a flag and
+    /// its key typespec as index + 1 in the last field (A19-D60).
+    #[test]
+    fn container_typespecs_emit_their_kind_and_key() {
+        let typespecs = vec![
+            IrVpiTypespec {
+                kind: IrVpiTypespecKind::String,
+                ..IrVpiTypespec::default()
+            },
+            IrVpiTypespec {
+                kind: IrVpiTypespecKind::Array,
+                element: Some(0),
+                container: Some(crate::sim::ir::IrVpiContainer::Associative),
+                index: Some(0),
+                ..IrVpiTypespec::default()
+            },
+            IrVpiTypespec {
+                kind: IrVpiTypespecKind::Array,
+                element: Some(0),
+                container: Some(crate::sim::ir::IrVpiContainer::Queue),
+                ..IrVpiTypespec::default()
+            },
+        ];
+        let mut out = String::new();
+        render_vpi_typespecs(&typespecs, &[], &mut out);
+        assert!(out.contains("{ vpiArrayTypespec, NULL, 0u, 1u, 0u, 0u, LLG_VPI_TS_ASSOC, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 1u },"), "{out}");
+        assert!(out.contains("{ vpiArrayTypespec, NULL, 0u, 1u, 0u, 0u, LLG_VPI_TS_QUEUE, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u },"), "{out}");
     }
 
     /// `assign y = a + 2` with `a` a catalog variable: children follow

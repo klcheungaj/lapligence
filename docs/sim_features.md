@@ -2607,7 +2607,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   elements, bit-selects and part-selects. Typespecs (ADV-019, 37.23):
   `vpiTypespec` of variables, nets, parameters and members gives logic, bit,
   integer-atom, time, real, string, enum, struct, union, packed array and
-  array typespecs with `vpiName` (the typedef name), `vpiTypedefAlias`,
+  array typespecs (fixed, dynamic, queue and associative, with
+  `vpiArrayType` and `vpiIndexTypespec`, A19-D60) with `vpiName` (the
+  typedef name), `vpiTypedefAlias`,
   `vpiElemTypespec` (one dimension at a time), `vpiBaseTypespec`, `vpiRange`
   with `vpiLeftRange`/`vpiRightRange`, `vpiTypespecMember`, `vpiEnumConst`
   (name and value), `vpiPacked`, `vpiTagged` and `vpiVector`; structure and

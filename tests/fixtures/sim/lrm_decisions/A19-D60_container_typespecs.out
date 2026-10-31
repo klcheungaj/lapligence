@@ -1,0 +1,70 @@
+tb.q vpiArrayVar
+  typespec vpiArrayTypespec name=- arraytype=4 left=NULL right=NULL
+    index NULL
+    element vpiIntTypespec name=-
+tb.qb vpiArrayVar
+  typespec vpiArrayTypespec name=- arraytype=4 left=NULL right=NULL
+    index NULL
+    element vpiIntTypespec name=-
+tb.d vpiArrayVar
+  typespec vpiArrayTypespec name=- arraytype=2 left=NULL right=NULL
+    index NULL
+    element vpiLogicTypespec name=-
+      range left=7 right=0
+tb.as vpiArrayVar
+  typespec vpiArrayTypespec name=- arraytype=3 left=NULL right=NULL
+    index vpiStringTypespec name=-
+    element vpiIntTypespec name=-
+tb.ai vpiArrayVar
+  typespec vpiArrayTypespec name=- arraytype=3 left=NULL right=NULL
+    index vpiIntTypespec name=-
+    element vpiIntTypespec name=-
+tb.al vpiArrayVar
+  typespec vpiArrayTypespec name=- arraytype=3 left=NULL right=NULL
+    index vpiLogicTypespec name=-
+      range left=3 right=0
+    element vpiBitTypespec name=-
+      range left=2 right=0
+tb.aw vpiArrayVar
+  typespec vpiArrayTypespec name=- arraytype=3 left=NULL right=NULL
+    index NULL
+    element vpiByteTypespec name=-
+tb.tq vpiArrayVar
+  typespec vpiArrayTypespec name=iq_t arraytype=4 left=NULL right=NULL
+    index NULL
+    element vpiIntTypespec name=-
+tb.ta vpiArrayVar
+  typespec vpiArrayTypespec name=la_t arraytype=3 left=NULL right=NULL
+    index vpiStringTypespec name=-
+    element vpiLogicTypespec name=-
+      range left=3 right=0
+tb.mixed vpiArrayVar
+  typespec vpiArrayTypespec name=- arraytype=4 left=NULL right=NULL
+    index NULL
+    element vpiArrayTypespec name=- arraytype=1 left=0 right=1
+      range left=0 right=1
+      index NULL
+      element vpiIntTypespec name=-
+tb.dd vpiArrayVar
+  typespec vpiArrayTypespec name=- arraytype=2 left=NULL right=NULL
+    index NULL
+    element vpiArrayTypespec name=- arraytype=2 left=NULL right=NULL
+      index NULL
+      element vpiIntTypespec name=-
+tb.sv vpiStructVar
+  typespec vpiStructTypespec name=s_t
+    member m
+      typespec vpiArrayTypespec name=- arraytype=4 left=NULL right=NULL
+        index NULL
+        element vpiIntTypespec name=-
+    member n
+      typespec vpiArrayTypespec name=- arraytype=2 left=NULL right=NULL
+        index NULL
+        element vpiByteTypespec name=-
+tb.fx vpiRegArray
+  typespec vpiArrayTypespec name=- arraytype=1 left=0 right=3
+    range left=0 right=3
+    index NULL
+    element vpiIntTypespec name=-
+tb.q[0] vpiIntVar
+  typespec vpiIntTypespec name=-

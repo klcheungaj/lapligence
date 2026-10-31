@@ -29,6 +29,6 @@ assign n
   type=56 $d32f(k) typespec=629 userdefn=1 systf=67 args=[k]
   type=648 q.size() typespec=629 userdefn=0 function=0 prefix=q with=NULL args=
 assign r
-  type=648 q.find() with (item > 0) typespec=-3 userdefn=0 function=0 prefix=q with=item > 0 args=
+  type=648 q.find() with (item > 0) typespec=642 userdefn=0 function=0 prefix=q with=item > 0 args=
 call type=60 tk(n) typespec=-3 userdefn=0 task=59 args=[n]
 call type=57 $finish() typespec=-3 userdefn=0 systf=0 args=

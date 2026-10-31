@@ -640,7 +640,7 @@ static int types_valid(const llg_vpi_type_tables_t* t) {
     for (uint32_t i = 0; i < t->typespec_count; ++i) {
         const llg_vpi_typespec_t* ts = &t->typespecs[i];
         if (ts->alias > t->typespec_count || ts->element > t->typespec_count ||
-            ts->base > t->typespec_count ||
+            ts->base > t->typespec_count || ts->index > t->typespec_count ||
             ts->first_range > t->range_count || ts->range_count > t->range_count - ts->first_range ||
             ts->first_member > t->member_count ||
             ts->member_count > t->member_count - ts->first_member ||
@@ -6749,6 +6749,14 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
             vpi_error("LLG_VPI_UNSUPPORTED", "llg exposes no typespec for the type of this object");
             return NULL;
         }
+        case vpiIndexTypespec: {
+            if (slot->kind != SLOT_TYPESPEC) break;
+            const llg_vpi_typespec_t* typespec = typespec_at((uint32_t)slot->aux);
+            if (typespec->type != vpiArrayTypespec) break;
+            /* 37.23 detail 2: the key type of an associative array; NULL
+             * for the wildcard index and for other array typespecs. */
+            return typespec->index ? typespec_handle(typespec_ref(typespec->index)) : NULL;
+        }
         case vpiTypedefAlias:
         case vpiElemTypespec:
         case vpiBaseTypespec: {
@@ -6833,6 +6841,12 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                  * range, has no range. */
                 if (slot->kind == SLOT_OBJECT && object &&
                     (object->type == vpiTask || object->type == vpiFunction))
+                    return NULL;
+                /* The leftmost dimension of a dynamic array, queue or
+                 * associative array typespec has no range (A19-D60). */
+                if (slot->kind == SLOT_TYPESPEC &&
+                    (typespec_at((uint32_t)slot->aux)->flags &
+                     (LLG_VPI_TS_DYNAMIC | LLG_VPI_TS_QUEUE | LLG_VPI_TS_ASSOC)))
                     return NULL;
                 break;
             }
@@ -8991,6 +9005,9 @@ static PLI_INT32 typespec_property(const llg_vpi_slot_t* slot, int property) {
             return typespec->range_count > 0;
         case vpiArrayType:
             if (typespec->type != vpiArrayTypespec) return unsupported_property();
+            if (typespec->flags & LLG_VPI_TS_DYNAMIC) return vpiDynamicArray;
+            if (typespec->flags & LLG_VPI_TS_QUEUE) return vpiQueueArray;
+            if (typespec->flags & LLG_VPI_TS_ASSOC) return vpiAssocArray;
             return vpiStaticArray;
         default:
             return unsupported_property();
@@ -9926,10 +9943,12 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
             break;
         }
         case SLOT_CONSTANT:
-            /* A string key decompiles as its characters. */
-            if (is_string_constant(slot) && property == vpiDecompile)
-                return (PLI_BYTE8*)slot->items;
-            break;
+            if (property != vpiDecompile) break;
+            /* A string key decompiles as its characters, an integer (a
+             * range bound, an index) as its decimal value (A19-D60). */
+            if (is_string_constant(slot)) return (PLI_BYTE8*)slot->items;
+            snprintf(g_vpi.str_buffer, sizeof(g_vpi.str_buffer), "%lld", (long long)slot->left);
+            return (PLI_BYTE8*)g_vpi.str_buffer;
         case SLOT_TYPESPEC:
             /* 37.23 detail 1: a type without a typedef has no name. */
             if (property == vpiName) return (PLI_BYTE8*)typespec_at((uint32_t)slot->aux)->name;

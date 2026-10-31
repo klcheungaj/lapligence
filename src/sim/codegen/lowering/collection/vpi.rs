@@ -8,13 +8,14 @@
 
 use super::*;
 use crate::core::db::{
-    ConstantSource, ConstantType, Direction, NetType, Strength, TypeId, TypedefRef,
+    ArrayKind, AssociativeIndex, ConstantSource, ConstantType, Direction, NetType, Strength,
+    TypeId, TypedefRef,
 };
 use crate::sim::ir::{
     IrSdfTarget, IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn,
-    IrVpiConnRole, IrVpiConstant, IrVpiDirection, IrVpiInstance, IrVpiObject, IrVpiObjectKind,
-    IrVpiQualifiers, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember, IrVpiUdp,
-    IrVpiVarKind,
+    IrVpiConnRole, IrVpiConstant, IrVpiContainer, IrVpiDirection, IrVpiInstance, IrVpiObject,
+    IrVpiObjectKind, IrVpiQualifiers, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind,
+    IrVpiTypespecMember, IrVpiUdp, IrVpiVarKind,
 };
 
 mod code;
@@ -462,8 +463,70 @@ impl Codegen<'_> {
                     ..IrVpiTypespec::default()
                 })
             }
-            TypeShape::Container { .. } | TypeShape::Opaque { .. } => None,
+            TypeShape::Container { element, array, .. } => {
+                // 37.23: the leftmost dimension of a dynamic array, queue or
+                // associative array has no range; detail 2 gives an
+                // associative array the typespec of its key.
+                let (container, index) = match array {
+                    ArrayKind::Dynamic => (IrVpiContainer::Dynamic, None),
+                    ArrayKind::Queue { .. } => (IrVpiContainer::Queue, None),
+                    ArrayKind::Associative(index) => (
+                        IrVpiContainer::Associative,
+                        self.vpi_index_typespec(table, index)?,
+                    ),
+                    ArrayKind::Static => return None,
+                };
+                let element =
+                    self.vpi_typespec(table, element, inner_typedef(naming), depth + 1)?;
+                Some(IrVpiTypespec {
+                    kind: IrVpiTypespecKind::Array,
+                    element: Some(element),
+                    container: Some(container),
+                    index,
+                    ..IrVpiTypespec::default()
+                })
+            }
+            TypeShape::Opaque { .. } => None,
         }
+    }
+
+    /// The `vpiIndexTypespec` of an associative array with key `index`:
+    /// `Some(None)` for the wildcard (37.23 detail 2), `None` for a key type
+    /// llg does not describe. An integral key of a built-in width and
+    /// signedness is that built-in type, any other a vector `[width-1:0]`.
+    fn vpi_index_typespec(
+        &self,
+        table: &mut TypespecTable,
+        index: &AssociativeIndex,
+    ) -> Option<Option<usize>> {
+        let typespec = match index {
+            AssociativeIndex::Wildcard => return Some(None),
+            AssociativeIndex::String => IrVpiTypespec {
+                kind: IrVpiTypespecKind::String,
+                ..IrVpiTypespec::default()
+            },
+            AssociativeIndex::Integral {
+                width,
+                signed,
+                two_state,
+            } => {
+                // The built-in integer types are signed except `time`
+                // (6.11).
+                let builtin = match builtin_integral(*width, *two_state) {
+                    IrVpiTypespecKind::Time => !*signed,
+                    IrVpiTypespecKind::Bit | IrVpiTypespecKind::Logic => *width == 1,
+                    _ => *signed,
+                };
+                let ranges = if builtin {
+                    Vec::new()
+                } else {
+                    vec![(i64::from(*width) - 1, 0)]
+                };
+                self.vpi_integral_typespec(table, &ranges, *width, *signed, *two_state, None, 0)?
+            }
+            AssociativeIndex::Unsupported(_) => return None,
+        };
+        Some(Some(table.intern(typespec)))
     }
 
     /// A logic, bit or built-in integer typespec with packed `ranges`; its

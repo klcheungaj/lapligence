@@ -79,9 +79,14 @@ impl Codegen<'_> {
             }
         };
         // A string or chandle variable is a simple expression, which
-        // always has a typespec (37.55 detail 5, decision A19-D32).
+        // always has a typespec (37.55 detail 5, decision A19-D32); a
+        // dynamic array, queue or associative array has its array typespec
+        // (decision A19-D60).
         let typespec = match shape {
             IrVpiShape::String => {
+                self.vpi_typespec(typespecs, descriptor, self.db.declared_typedef(id), 0)
+            }
+            _ if matches!(descriptor.shape, TypeShape::Container { .. }) => {
                 self.vpi_typespec(typespecs, descriptor, self.db.declared_typedef(id), 0)
             }
             IrVpiShape::Chandle => Some(typespecs.intern(IrVpiTypespec {

@@ -2600,6 +2600,15 @@ fn a19_d59_sequence_and_property_operators() {
 }
 
 #[test]
+fn a19_d60_container_typespecs() {
+    run_vpi_decision(
+        "A19-D60_container_typespecs",
+        &["task $d60()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D60_container_typespecs.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",
