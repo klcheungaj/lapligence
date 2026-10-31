@@ -2654,6 +2654,40 @@ symbol index and dump kind names unchanged.
 `llg_ls --dump-tokens` on a module with an output port, a class with a
 method, and a named sequence referenced by an assertion.
 
+## Unbound connection actuals count as unused (llg_ls, lint)
+
+**Status:** found by LS-TOKENS-14, open. Their names have tokens and
+navigation since LS-TOKENS-14 (ST-76).
+
+### Symptom
+
+A signal read only in the actual of a named connection to a port the
+definition does not declare (`.bw_2(bw[2])` on a probe stub without `bw_2`,
+Slang `PortDoesNotExist`) or of a repeated connection
+(`DuplicatePortConnection`) is reported as unused (Slang `UnusedVariable`,
+lint `unused-signal`), and an out-of-range constant select in such an actual
+gets no `IndexOOB` or `out-of-range-select` diagnostic. The instance already
+carries the port error.
+
+### Cause
+
+Slang never binds these actuals, so neither its analysis nor the owned DB
+sees the reads. The capture binds their names for tokens and navigation
+only (`bindUnboundConnectionNames` in `src/wrapper/slang_c_api.cpp`), after
+the diagnostics are taken, and adds no semantic node.
+
+### Intended direction
+
+Leave the reads out while the port error stands (fixing the port removes
+both findings), or capture the actual as a read-only use that the analysis
+and lint count without lowering it.
+
+### Reproduce
+
+`module s(input logic a); endmodule module t; logic [7:0] b [2]; s u(.a(1'b0),
+.x(b[5])); endmodule` in `llg_ls`: `b` is reported unused and `b[5]` is not
+reported.
+
 ## Open-buffer token parse sees other files through packages and definitions only (llg_ls)
 
 **Status:** partially fixed by LS-PKG, LS-PKG-2 and LS-TOKENS-13. Package items
@@ -2700,3 +2734,41 @@ buffer's context.
 Open a file with `` module top; `MK_INST endmodule `` where a `[compile]
 defines` entry `MK_INST=ifc_x bus();` names an interface declared in another
 project file and request `textDocument/semanticTokens/full`.
+
+## Same-named definitions check one body (llg_ls)
+
+**Status:** navigation fixed by LS-DEF-1: each body of a module, interface or
+program that several files define navigates within itself
+([behavior](config.md#lsp-duplicate-definitions)). Checks remain per
+elaborated body.
+
+### Symptom
+
+- Without `[compile] top`, the body the frontend does not elaborate gets no
+  semantic diagnostics (an undeclared name, a use before its declaration);
+  only the `DuplicateDefinition` warning on the other definition's name
+  points at it. Lint never reports findings in it.
+- A named port or parameter label of an instantiation inside that body (as
+  inside any uninstantiated body) has no definition target.
+
+### Cause
+
+Slang keeps one definition per name and elaborates only that one; with an
+explicit top it also checks the others as unreferenced definitions, without
+one it skips them. Capture adds the skipped bodies as uninstantiated
+instances after the diagnostics are taken (`captureShadowedDefinitions` in
+`src/wrapper/slang_c_api.cpp`), so they add no diagnostics, and Slang creates
+only placeholders for instantiations inside an uninstantiated body.
+
+### Intended direction
+
+Check every same-named body as an unreferenced definition before the
+diagnostics are taken, in the LSP only, so `llg` keeps compiling the selected
+body alone, and bind placeholder labels to the ports of the selected child
+definition.
+
+### Reproduce
+
+Two files that both define `module dup_top;` with
+`assign done = undeclared_x;` in the first one: `llg_ls` reports only the
+`DuplicateDefinition` warning in the second file.

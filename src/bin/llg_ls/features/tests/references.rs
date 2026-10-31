@@ -81,3 +81,58 @@ fn references_options_filter_explicit_slang_declaration() {
     assert_eq!(without_declaration.len(), 1);
     assert_eq!(without_declaration[0].range.start, Position::new(1, 0));
 }
+
+/// Same-named definitions in two files give their declarations the same
+/// scope name: an unbound use resolves to the declaration in its own file,
+/// and a declaration only another file holds (an included one) stays a
+/// candidate.
+#[test]
+fn scoped_fallback_prefers_the_reference_file_among_same_named_definitions() {
+    let entry = |name: &str, file: &'static str, line: u32, is_decl: bool| SymEntry {
+        name: name.to_owned(),
+        kind: SymKind::Var,
+        file: hp(file).to_owned(),
+        line,
+        col: 6,
+        end_line: line,
+        end_col: 6 + name.len() as u32,
+        is_decl,
+        scope: Some("dup_top".to_owned()),
+        detail: None,
+    };
+    let mut index = SymbolIndex::default();
+    index.decls.push(entry("done_0", "/x/second.sv", 8, true));
+    index.decls.push(entry("done_0", "/x/first.sv", 9, true));
+    index.decls.push(entry("inc_sig", "/x/defs.svh", 0, true));
+    index.refs.push(entry("done_0", "/x/first.sv", 5, false));
+    index.refs.push(entry("inc_sig", "/x/first.sv", 6, false));
+    index.rebuild_lookup_maps();
+
+    let positions = |reference: &SymEntry| -> Vec<(String, u32)> {
+        index
+            .resolve(reference)
+            .into_iter()
+            .map(|declaration| (declaration.file.clone(), declaration.line))
+            .collect()
+    };
+    assert_eq!(
+        positions(&index.refs[0]),
+        [(hp("/x/first.sv").to_owned(), 9)]
+    );
+    assert_eq!(
+        positions(&index.refs[1]),
+        [(hp("/x/defs.svh").to_owned(), 0)]
+    );
+    let references: Vec<(String, u32)> = index
+        .all_references(&index.decls[1])
+        .into_iter()
+        .map(|entry| (entry.file, entry.line))
+        .collect();
+    assert_eq!(
+        references,
+        [
+            (hp("/x/first.sv").to_owned(), 9),
+            (hp("/x/first.sv").to_owned(), 5)
+        ]
+    );
+}

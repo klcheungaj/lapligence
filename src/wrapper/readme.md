@@ -69,6 +69,14 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   the enclosing module/generate scope even when isolated analysis lacks the
   child; labels bind to child ports. Recovery is navigation-only under unchanged
   limits.
+- Slang elaborates one module, interface or program definition per name and
+  warns on another one with the same name (`DuplicateDefinition`). Full
+  capture adds each same-named definition body that no instance reached as
+  an uninstantiated instance (nameless, never a top, like Slang's own
+  unreferenced definitions) after the diagnostics are taken, so its names
+  bind within that body and it adds no diagnostics
+  (`captureShadowedDefinitions`). Instantiations inside any uninstantiated
+  body stay Slang placeholders, whose labels full capture leaves unbound.
 - Type records are canonical. The typedef a declared type names is exported
   separately: an `LLG_SLANG_EDGE_TYPEDEF` edge from each value declaration,
   typedef and explicit cast to the typedef declaration (index: dimensions
@@ -108,7 +116,11 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   unbound identifiers. The width of a size cast (`(W-1)'(x)`, IEEE 1800-2009
   6.24.1) is evaluated and discarded by Slang, so capture looks its names up
   again in the scope of the symbol or statement block being visited and binds
-  them as references (`bindSizeCastNames`).
+  them as references (`bindSizeCastNames`). Slang never binds the actual of a
+  named connection to a port the definition lacks (PortDoesNotExist) or of a
+  repeated one (DuplicatePortConnection); capture binds it in the instance's
+  connection context after the diagnostics are taken and walks it the same
+  way, lexical bindings only (`bindUnboundConnectionNames`).
 - Named statement blocks, labeled statements (Slang makes each one a named
   block) and generate block names get `LLG_SLANG_LEXICAL_BLOCK` from the
   syntax, so declaration-only capture classifies them too: the opening name is

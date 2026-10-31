@@ -519,6 +519,23 @@ instance-specific parameter values, widths, and elaborated hierarchy are not
 available in that snapshot. A previous full snapshot remains preferred after
 a failing edit. Simulator compilation retains its independent capture limits.
 
+## LSP duplicate definitions
+
+When several project files define a module, interface or program with the
+same name (variants of one design), the frontend elaborates one of them and
+publishes a `DuplicateDefinition` warning on the name of the other one, with
+the earlier definition as related information. Every body still navigates
+within itself: a name it declares resolves, for definition, hover,
+references, rename, document symbols and semantic tokens, to the declaration
+in the file that holds the use, in the project stream and in an open buffer
+alike. Names of other definitions (an instantiated module type, its port and
+parameter labels, `pkg::item`) refer to the definition the frontend selects.
+Lint and, without `[compile] top`, the frontend's semantic checks cover the
+elaborated body only
+([known issues](known_issues.md#same-named-definitions-check-one-body-llg_ls)).
+Duplicate packages are separate bodies already; each one navigates within
+itself and `pkg::item` refers to the first one.
+
 ## LSP protected source
 
 `llg_ls` indexes files with protected (encrypted) envelopes (IEEE 1800-2009

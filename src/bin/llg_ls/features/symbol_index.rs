@@ -1095,8 +1095,10 @@ impl SymbolIndex {
     ///    Parse-backed enum bindings take precedence at the exact member
     ///    coordinate, including class scopes and imported bare members.
     /// 4. A reference resolves to: the same-named declaration in the same
-    ///    scope, else the same-named declaration in the same file nearest by
-    ///    line, else any same-named declaration in the workspace.  Module-type
+    ///    scope (only those in the reference's file when it has any, so
+    ///    same-named definitions in several files stay apart), else the
+    ///    same-named declaration in the same file nearest by line, else any
+    ///    same-named declaration in the workspace.  Module-type
     ///    references apply that order only to module declarations, so an
     ///    instance with the same name cannot capture the type reference.
     ///    Scanned parameter-override labels that failed rule 1 are excluded:
@@ -1201,7 +1203,7 @@ impl SymbolIndex {
         // behavior.
         let module_type_reference = e.kind == SymKind::Module;
         if let Some(indices) = self.decls_by_name.get(&e.name) {
-            let in_scope: Vec<&SymEntry> = indices
+            let mut in_scope: Vec<&SymEntry> = indices
                 .iter()
                 .filter(|&&i| {
                     self.decls[i].scope == e.scope
@@ -1209,6 +1211,13 @@ impl SymbolIndex {
                 })
                 .map(|&i| &self.decls[i])
                 .collect();
+            // Same-named definitions in several files share the scope name
+            // and the reference's own file holds its body; another file
+            // stays a candidate only without one there (an included
+            // declaration).
+            if in_scope.iter().any(|d| d.file == e.file) {
+                in_scope.retain(|d| d.file == e.file);
+            }
             if !in_scope.is_empty() {
                 return in_scope;
             }

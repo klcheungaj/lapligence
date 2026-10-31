@@ -880,6 +880,12 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   token. Import item names are references (`namespace`, the imported kind),
   never document symbols; unsaved edits resolve through the committed
   package units.
+- `lsp_stdio/duplicate_definitions.rs`: two files that define the same module
+  each navigate within their own body (definition, hover, references, rename,
+  document symbols, also for uses before the declaration) in both serving
+  paths with one or both files open, the token streams agree and one
+  `DuplicateDefinition` warning names the other definition;
+  `slang_semantics/duplicate_definitions.rs` checks the capture in both modes.
 - `lsp_stdio/black_box.rs`: an unknown module yields one Slang `UnknownModule`
   error on its name, fresh analysis is committed, siblings/parents stay
   elaborated and navigable, black-box actuals bind to the parent scope and the
@@ -903,7 +909,8 @@ so no-default builds cannot launch stale binaries. Wire contracts to keep:
   file is `requirements_pkg.sv`, built-ins are in `builtin_functions.sv`,
   macros, directive operands, class-scope names and delays, with the empty
   `textDocument/documentColor` answer, are in `macros_and_class_scope.sv`),
-  `size_casts.sv` (ST-52) and the no-config package example
+  `size_casts.sv` (ST-52), `port_connections.sv` with its definition in
+  `port_connections_probe.sv` (ST-76, ST-77) and the no-config package example
   `pkg_example_top.sv` / `pkg_example_pkg.sv` (ST-50, ST-51, started through
   `LspProcess::initialize_with_token_refresh`, which advertises
   `refreshSupport` and does not wait for the first analysis); the unit tests in

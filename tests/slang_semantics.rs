@@ -16,6 +16,12 @@ mod foreach;
 #[path = "slang_semantics/assertion_names.rs"]
 mod assertion_names;
 
+#[path = "slang_semantics/unbound_connections.rs"]
+mod unbound_connections;
+
+#[path = "slang_semantics/duplicate_definitions.rs"]
+mod duplicate_definitions;
+
 use llg::core::db::{EventTriggerTiming, NodeKind, StmtKind};
 use llg::ffi::slang::{
     self, CompileOptions, CompileRequest, ConstantValue, SemanticEdge, SemanticEdgeRole,
