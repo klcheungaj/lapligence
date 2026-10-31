@@ -1405,6 +1405,7 @@ impl Codegen<'_> {
                         name: path.last().cloned().unwrap_or_default(),
                         kind: IrVpiObjectKind::GenScope,
                         port_target: self.vpi_gen_scope_array_of(id),
+                        implicit: self.db.is_implicit_generate_scope(id),
                         ..IrVpiObject::default()
                     }));
                 }

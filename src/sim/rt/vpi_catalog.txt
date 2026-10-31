@@ -2109,8 +2109,8 @@ node gen_scope 37.80 type=vpiGenScope
   get vpiArray implemented walk
   get vpiArrayMember implemented walk
   get vpiProtected implemented walk
-  get vpiImplicitDecl unsupported the implicit declaration of a generate scope is not captured
-  handle vpiIndex unsupported the genvar value of a generated scope is not captured as an expression
+  get vpiImplicitDecl implemented walk
+  handle vpiIndex implemented walk
   handle vpiGenScopeArray implemented walk
   iterate vpiNet implemented walk
   iterate vpiArrayNet implemented walk

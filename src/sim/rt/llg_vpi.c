@@ -6468,6 +6468,18 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
             return make_constant(value, vpiDecConst);
         }
         case vpiIndex:
+            /* 37.80: the index of a generate scope array element (the
+             * genvar value that created it, the `[index]` of its name);
+             * NULL for a scope outside an array. */
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiGenScope) {
+                const char* open = object->target && object->target->type == vpiGenScopeArray
+                                       ? strrchr(object->name, '[')
+                                       : NULL;
+                char* end = NULL;
+                long long value = open ? strtoll(open + 1, &end, 10) : 0;
+                if (!open || !end || *end != ']') return NULL;
+                return make_constant((int64_t)value, vpiDecConst);
+            }
             if (slot->kind == SLOT_OBJECT && object &&
                 (object->type == vpiModule || object->type == vpiInterface ||
                  object->type == vpiProgram || is_primitive_type(object->type))) {
@@ -8850,6 +8862,9 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             return unsupported_property();
         case vpiImplicitDecl:
             if (net_handle(slot)) return (object->flags & LLG_VPI_OBJ_IMPLICIT) != 0;
+            /* 37.80 detail 2: the implicit scope of an unnamed generate. */
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiGenScope)
+                return (object->flags & LLG_VPI_OBJ_IMPLICIT) != 0;
             return unsupported_property();
         case vpiExplicitScalared:
         case vpiExplicitVectored:

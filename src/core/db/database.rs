@@ -449,8 +449,9 @@ pub struct Db {
     /// context import reach, so only then can it write SystemVerilog storage
     /// (SV 35.5.3).
     dpi_exports: HashMap<NodeId, String>,
-    /// Nets declared implicitly by Slang's semantic analysis.
-    implicit_nets: HashSet<NodeId>,
+    /// Nets declared implicitly by Slang's semantic analysis, and the
+    /// implicit scopes of unnamed generate blocks.
+    implicit_declarations: HashSet<NodeId>,
     /// Nets and ports with a [`DeclarationQualifiers`] fact.
     declaration_qualifiers: HashMap<NodeId, DeclarationQualifiers>,
     /// Context conversions inserted by Slang rather than written as casts.
@@ -542,7 +543,7 @@ impl Db {
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
             dpi_exports: HashMap::new(),
-            implicit_nets: HashSet::new(),
+            implicit_declarations: HashSet::new(),
             declaration_qualifiers: HashMap::new(),
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
@@ -641,7 +642,7 @@ impl Db {
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
             dpi_exports: HashMap::new(),
-            implicit_nets: HashSet::new(),
+            implicit_declarations: HashSet::new(),
             declaration_qualifiers: HashMap::new(),
             implicit_conversions: HashSet::new(),
             source_files: HashMap::new(),
@@ -1412,7 +1413,15 @@ impl Db {
     }
 
     pub fn is_implicit_net(&self, id: NodeId) -> bool {
-        self.implicit_nets.contains(&id)
+        matches!(self.node(id).kind, NodeKind::Net { .. })
+            && self.implicit_declarations.contains(&id)
+    }
+
+    /// Whether generate scope `id` is the implicit scope of an unnamed
+    /// generate block or of an element of an unnamed loop (IEEE 1800-2009
+    /// 37.80 detail 2).
+    pub fn is_implicit_generate_scope(&self, id: NodeId) -> bool {
+        matches!(self.node(id).kind, NodeKind::GenScope) && self.implicit_declarations.contains(&id)
     }
 
     /// The declaration keywords and port naming of a net or port.

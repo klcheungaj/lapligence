@@ -2546,6 +2546,15 @@ fn a19_d53_function_return_variables() {
 }
 
 #[test]
+fn a19_d54_generate_scope_index_and_implicit() {
+    run_vpi_decision(
+        "A19-D54_generate_scope_index_and_implicit",
+        &["task $d54()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D54_generate_scope_index_and_implicit.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

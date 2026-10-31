@@ -2696,18 +2696,24 @@ public:
       std::string externalName = symbol.getExternalName();
       if (symbol.isUninstantiated)
         result.flags |= LLG_SLANG_SEMANTIC_UNINSTANTIATED;
+      // An unnamed generate block, or an element of an unnamed loop, is an
+      // implicitly declared scope (IEEE 1800-2009 37.80 detail 2, 27.6).
+      bool unnamed = symbol.isUnnamed;
       if (const SVInt* arrayIndex = symbol.getArrayIndex()) {
         const Scope* parentScope = symbol.getParentScope();
         if (!parentScope ||
             parentScope->asSymbol().kind != SymbolKind::GenerateBlockArray)
           throw BridgeFailure(LLG_SLANG_STATUS_INTERNAL_ERROR,
                               "loop generate block has no array parent");
+        unnamed = parentScope->asSymbol().as<GenerateBlockArraySymbol>().isUnnamed;
         externalName = parentScope->asSymbol()
                            .as<GenerateBlockArraySymbol>()
                            .getExternalName();
         externalName += '[' + arrayIndex->toString() + ']';
         result.constant_id = capture.constant(ConstantValue(*arrayIndex));
       }
+      if (unnamed)
+        result.flags |= LLG_SLANG_SEMANTIC_IMPLICIT;
       result.name = storeString(capture.output, externalName);
     }
     if constexpr (std::same_as<T, GenerateBlockArraySymbol>) {

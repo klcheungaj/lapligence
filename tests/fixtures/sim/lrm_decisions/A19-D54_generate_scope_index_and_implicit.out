@@ -1,0 +1,7 @@
+tb.blk[2] implicit=0 index=vpiConstant=2
+tb.blk[3] implicit=0 index=vpiConstant=3
+tb.genblk2[-1] implicit=1 index=vpiConstant=-1
+tb.genblk2[0] implicit=1 index=vpiConstant=0
+tb.genblk3 implicit=1 index=NULL
+tb.named implicit=0 index=NULL
+  tb.named.genblk1[0] implicit=1 index=vpiConstant=0

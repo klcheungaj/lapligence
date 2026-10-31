@@ -437,7 +437,7 @@ impl Db {
                 )
             })
             .collect();
-        let mut implicit_nets = HashSet::new();
+        let mut implicit_declarations = HashSet::new();
         let mut declaration_qualifiers = HashMap::new();
         let mut implicit_conversions = HashSet::new();
         let mut var_lifetimes = HashMap::new();
@@ -680,8 +680,12 @@ impl Db {
             if semantic.kind == SemanticKind::Coverage {
                 coverage.import(snapshot, &ids, id, semantic, edges, &type_info)?;
             }
-            if semantic.kind == SemanticKind::Net && semantic.is_implicit() {
-                implicit_nets.insert(id);
+            if matches!(
+                semantic.kind,
+                SemanticKind::Net | SemanticKind::GenerateScope
+            ) && semantic.is_implicit()
+            {
+                implicit_declarations.insert(id);
             }
             let qualifiers = match semantic.kind {
                 SemanticKind::Net => super::DeclarationQualifiers {
@@ -1626,7 +1630,7 @@ impl Db {
             virtual_interface_targets,
             dpi_imports,
             dpi_exports,
-            implicit_nets,
+            implicit_declarations,
             declaration_qualifiers,
             implicit_conversions,
             source_files: snapshot
