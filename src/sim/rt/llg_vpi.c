@@ -1708,8 +1708,49 @@ static uint32_t port_conn(uint32_t row, int high) {
     return role_conn(row, high ? LLG_VPI_ROLE_CONNECTION : LLG_VPI_ROLE_PORT_LOW);
 }
 
+/* The catalog object, and the bit of it counted from its LSB, that bit
+ * `bit` (from the LSB) of expression object `index` reads through
+ * concatenations and implicit conversions; 0 when that bit is not one bit
+ * of a named object (decision A19-D58). */
+static int code_bit_object(uint32_t index, uint32_t bit, uint32_t* row, uint32_t* offset) {
+    for (unsigned depth = 0; depth < 64u; ++depth) {
+        const llg_vpi_code_t* node = code_at(index);
+        if (!node) return 0;
+        if ((node->flags & LLG_VPI_CODE_HIDDEN) && node->count == 1u) {
+            index = node->first;
+            continue;
+        }
+        if (node->type == vpiOperation && node->subtype == vpiConcatOp) {
+            /* The operands are most significant first. */
+            uint32_t low = 0, found = LLG_VPI_NONE;
+            for (uint32_t i = node->count; i-- > 0;) {
+                const llg_vpi_code_t* part = code_at(node->first + i);
+                if (!part) return 0;
+                if (bit - low < part->width) {
+                    found = node->first + i;
+                    break;
+                }
+                low += part->width;
+            }
+            if (found == LLG_VPI_NONE) return 0;
+            index = found;
+            bit -= low;
+            continue;
+        }
+        if ((node->flags & LLG_VPI_CODE_ALIAS) && node->object >= 0 &&
+            (uint64_t)node->object < g_vpi.object_count) {
+            *row = (uint32_t)node->object;
+            *offset = bit;
+            return 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+
 /* vpiLowConn/vpiHighConn of a port bit (37.14): the same bit of the
- * connected object or constant select. */
+ * connected object or constant select, or of the operand of a connected
+ * concatenation that holds it; a scalar is its own bit. */
 static vpiHandle port_bit_conn(const llg_vpi_slot_t* slot, int high) {
     llg_vpi_model_object_t* port = row_object(slot->object);
     uint32_t bit = (uint32_t)slot->aux, base = 0, width, row;
@@ -1720,18 +1761,31 @@ static vpiHandle port_bit_conn(const llg_vpi_slot_t* slot, int high) {
         uint32_t index = port_conn(slot->object, high);
         const llg_vpi_conn_t* conn = index == LLG_VPI_NONE ? NULL : row_conn(slot->object, index);
         if (!conn) return NULL;
-        if (conn->ref.object < 0 || (conn->ref.ref_kind != LLG_VPI_ARG_OBJECT &&
-                                     conn->ref.ref_kind != LLG_VPI_ARG_SELECT)) {
+        if (conn->ref.ref_kind == LLG_VPI_ARG_EXPRESSION && conn->ref.code && g_vpi.code) {
+            if (!code_bit_object(conn->ref.code - 1u, bit, &row, &base)) {
+                vpi_error("LLG_VPI_UNSUPPORTED",
+                          "the connection of this port bit is not a bit of a named object");
+                return NULL;
+            }
+            bit = 0;
+            width = g_vpi.objects[row].width;
+            const llg_vpi_model_object_t* scalar = &g_vpi.objects[row];
+            if (base == 0 && scalar->width == 1 && !(scalar->flags & LLG_VPI_OBJ_RANGE) &&
+                !is_array_type(scalar->type))
+                return object_handle(row);
+        } else if (conn->ref.object < 0 || (conn->ref.ref_kind != LLG_VPI_ARG_OBJECT &&
+                                            conn->ref.ref_kind != LLG_VPI_ARG_SELECT)) {
             vpi_error("LLG_VPI_UNSUPPORTED",
                       "the high connection of this port is an expression without bits");
             return NULL;
-        }
-        row = (uint32_t)conn->ref.object;
-        if (conn->ref.ref_kind == LLG_VPI_ARG_SELECT) {
-            base = (uint32_t)conn->ref.offset;
-            width = conn->ref.select_width;
         } else {
-            width = g_vpi.objects[row].width;
+            row = (uint32_t)conn->ref.object;
+            if (conn->ref.ref_kind == LLG_VPI_ARG_SELECT) {
+                base = (uint32_t)conn->ref.offset;
+                width = conn->ref.select_width;
+            } else {
+                width = g_vpi.objects[row].width;
+            }
         }
     }
     llg_vpi_model_object_t* target = row_object(row);

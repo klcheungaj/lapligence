@@ -456,6 +456,13 @@ pub struct Db {
     /// `.p({a, b})`, SV 23.2.2.1), most significant first. Each component
     /// is an ordinary port with its own direction and connections.
     multi_ports: HashMap<NodeId, Vec<NodeId>>,
+    /// The actual of each connected multi-port as written, for the VPI
+    /// object model only (IEEE 1800-2009 37.14 vpiHighConn): the simulation
+    /// connects the component ports.
+    multi_port_actuals: HashMap<NodeId, NodeId>,
+    /// The concatenation of each multi-port's component internal
+    /// connections, for the VPI object model only (37.14 vpiLowConn).
+    multi_port_internals: HashMap<NodeId, NodeId>,
     /// Statically initialized virtual-interface variables and their concrete
     /// interface instances. Runtime reassignment remains outside this map.
     virtual_interface_targets: HashMap<NodeId, NodeId>,
@@ -560,6 +567,8 @@ impl Db {
             modport_expressions: HashMap::new(),
             port_expressions: HashMap::new(),
             multi_ports: HashMap::new(),
+            multi_port_actuals: HashMap::new(),
+            multi_port_internals: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
             dpi_exports: HashMap::new(),
@@ -660,6 +669,8 @@ impl Db {
             modport_expressions: HashMap::new(),
             port_expressions: HashMap::new(),
             multi_ports: HashMap::new(),
+            multi_port_actuals: HashMap::new(),
+            multi_port_internals: HashMap::new(),
             virtual_interface_targets: HashMap::new(),
             dpi_imports: HashMap::new(),
             dpi_exports: HashMap::new(),
@@ -1115,6 +1126,19 @@ impl Db {
 
     pub(crate) fn port_expression_entries(&self) -> &HashMap<NodeId, NodeId> {
         &self.port_expressions
+    }
+
+    /// The actual of a connected multi-port as written (`.q(w)`,
+    /// `({hi, lo})`): VPI metadata; the simulation connects the component
+    /// ports through their own actuals.
+    pub fn multi_port_actual(&self, port: NodeId) -> Option<NodeId> {
+        self.multi_port_actuals.get(&port).copied()
+    }
+
+    /// The concatenation of a multi-port's component internal connections
+    /// (`{y1, y0}`), most significant first: VPI metadata only.
+    pub fn multi_port_internal(&self, port: NodeId) -> Option<NodeId> {
+        self.multi_port_internals.get(&port).copied()
     }
 
     /// Return the component ports of a multi-port (a concatenated port

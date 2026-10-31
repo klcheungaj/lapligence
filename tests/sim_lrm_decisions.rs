@@ -2582,6 +2582,15 @@ fn a19_d57_static_subroutine_arguments() {
 }
 
 #[test]
+fn a19_d58_concatenation_ports() {
+    run_vpi_decision(
+        "A19-D58_concatenation_ports",
+        &["task $d58()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D58_concatenation_ports.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

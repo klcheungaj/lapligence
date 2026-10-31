@@ -1,0 +1,67 @@
+tb.s:
+  port tb.s.q dir=2 size=3 index=0 explicit=1
+    low vpiOperation decompile={y1, y0} size=3 value=100
+      op=33
+      operand vpiNet tb.s.y1
+      operand vpiNet tb.s.y0
+    high vpiNet decompile=w size=3 value=100
+    bit (null)
+     blow vpiNetBit decompile=y1[1] size=1 value=1
+     bhigh vpiNetBit decompile=w[2] size=1 value=1
+    bit (null)
+     blow vpiNetBit decompile=y1[0] size=1 value=0
+     bhigh vpiNetBit decompile=w[1] size=1 value=0
+    bit (null)
+     blow vpiNet decompile=y0 size=1 value=0
+     bhigh vpiNetBit decompile=w[0] size=1 value=0
+  port tb.s.d dir=1 size=3 index=1 explicit=1
+    low vpiNet decompile=a size=3 value=101
+    high vpiReg decompile=da size=3 value=101
+    bit (null)
+     blow vpiNetBit decompile=a[2] size=1 value=1
+     bhigh vpiRegBit decompile=da[2] size=1 value=1
+    bit (null)
+     blow vpiNetBit decompile=a[1] size=1 value=0
+     bhigh vpiRegBit decompile=da[1] size=1 value=0
+    bit (null)
+     blow vpiNetBit decompile=a[0] size=1 value=1
+     bhigh vpiRegBit decompile=da[0] size=1 value=1
+  port tb.s.e dir=1 size=1 index=2 explicit=0
+    low vpiNet decompile=e size=1 value=1
+    high vpiReg decompile=de size=1 value=1
+tb.t:
+  port tb.t.q dir=2 size=3 index=0 explicit=1
+    low vpiOperation decompile={y1, y0} size=3 value=100
+      op=33
+      operand vpiNet tb.t.y1
+      operand vpiNet tb.t.y0
+    high vpiOperation decompile={hi, lo} size=3 value=100
+      op=33
+      operand vpiNet tb.hi
+      operand vpiNet tb.lo
+    bit (null)
+     blow vpiNetBit decompile=y1[1] size=1 value=1
+     bhigh vpiNetBit decompile=hi[1] size=1 value=1
+    bit (null)
+     blow vpiNetBit decompile=y1[0] size=1 value=0
+     bhigh vpiNetBit decompile=hi[0] size=1 value=0
+    bit (null)
+     blow vpiNet decompile=y0 size=1 value=0
+     bhigh vpiNet decompile=lo size=1 value=0
+  port tb.t.d dir=1 size=3 index=1 explicit=1
+    low vpiNet decompile=a size=3 value=101
+    high vpiReg decompile=da size=3 value=101
+    bit (null)
+     blow vpiNetBit decompile=a[2] size=1 value=1
+     bhigh vpiRegBit decompile=da[2] size=1 value=1
+    bit (null)
+     blow vpiNetBit decompile=a[1] size=1 value=0
+     bhigh vpiRegBit decompile=da[1] size=1 value=0
+    bit (null)
+     blow vpiNetBit decompile=a[0] size=1 value=1
+     bhigh vpiRegBit decompile=da[0] size=1 value=1
+  port tb.t.e dir=1 size=1 index=2 explicit=0
+    low vpiNet decompile=e size=1 value=1
+    high vpiReg decompile=de size=1 value=1
+  driver of tb.w: vpiContAssign
+  driver of tb.w: vpiContAssign

@@ -32,13 +32,21 @@ pub(super) fn node_kind_from_slang(
         SemanticKind::GenerateScope => NodeKind::GenScope,
         SemanticKind::Port => {
             let direction = direction_from_slang(node);
+            // A multi-port is connected through its component ports; its
+            // whole actual is VPI metadata (`Db::multi_port_actual`), never a
+            // connection of its own.
+            let multi_port = node.detail == "MultiPort";
             let high_expr = first(SemanticEdgeRole::HighConnection)?
+                .filter(|_| !multi_port)
                 .map(|expression| {
                     connection_source_expression(snapshot, ids, expression, direction)
                 })
                 .transpose()?;
-            let high =
-                resolved_edge_target(snapshot, ids, edges, SemanticEdgeRole::HighConnection)?;
+            let high = if multi_port {
+                None
+            } else {
+                resolved_edge_target(snapshot, ids, edges, SemanticEdgeRole::HighConnection)?
+            };
             NodeKind::Port {
                 direction,
                 ty,

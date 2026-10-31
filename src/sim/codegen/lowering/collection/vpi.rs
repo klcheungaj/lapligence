@@ -2019,15 +2019,39 @@ impl Codegen<'_> {
                         })
                     });
                     let key = format!("{}{SEPARATOR}\u{1e}port", self.vpi_full_name(id));
-                    if let (true, Some(high), false, None) =
-                        (code, high_expr, *high_open, interface.as_ref())
-                    {
-                        // The high connection lives in the instantiating scope.
-                        let scope = self
-                            .node(parent)
-                            .parent
-                            .map_or_else(String::new, |outer| self.vpi_full_name(outer));
-                        owners.push((key.clone(), scope, CodeOwner::Conns(vec![*high])));
+                    // A multi-port's actual as written is VPI metadata only
+                    // (decision A19-D58).
+                    let high_conn = match (
+                        high_expr.or(self.db.multi_port_actual(id)),
+                        high_open,
+                        interface.is_some(),
+                    ) {
+                        (Some(high), false, false) => Some(high),
+                        _ => None,
+                    };
+                    let low_conn = self
+                        .db
+                        .port_internal_expression(id)
+                        .or_else(|| self.db.multi_port_internal(id))
+                        .filter(|_| interface.is_none());
+                    if code {
+                        // The high connection lives in the instantiating
+                        // scope, the low one (a select or concatenation port
+                        // expression) in the instance.
+                        if let Some(high) = high_conn {
+                            let scope = self
+                                .node(parent)
+                                .parent
+                                .map_or_else(String::new, |outer| self.vpi_full_name(outer));
+                            owners.push((key.clone(), scope, CodeOwner::Conn(0, high)));
+                        }
+                        if let Some(low) = low_conn {
+                            owners.push((
+                                key.clone(),
+                                self.vpi_full_name(parent),
+                                CodeOwner::Conn(usize::from(high_conn.is_some()), low),
+                            ));
+                        }
                     }
                     let port = source(IrVpiObject {
                         // A port and the declaration it connects share one
@@ -2067,23 +2091,14 @@ impl Codegen<'_> {
                         // The high connection first; a port declared with a
                         // module-side select keeps that select as its low
                         // connection (decision A19-D50).
-                        conns: match (high_expr, high_open, interface.is_some()) {
-                            (Some(high), false, false) => {
-                                vec![self.vpi_conn(*high, IrVpiDirection::None)]
-                            }
-                            _ => Vec::new(),
-                        }
-                        .into_iter()
-                        .chain(
-                            self.db
-                                .port_internal_expression(id)
-                                .filter(|_| interface.is_none())
-                                .map(|low| IrVpiConn {
-                                    role: IrVpiConnRole::PortLow,
-                                    ..self.vpi_conn(low, IrVpiDirection::None)
-                                }),
-                        )
-                        .collect(),
+                        conns: high_conn
+                            .map(|high| self.vpi_conn(high, IrVpiDirection::None))
+                            .into_iter()
+                            .chain(low_conn.map(|low| IrVpiConn {
+                                role: IrVpiConnRole::PortLow,
+                                ..self.vpi_conn(low, IrVpiDirection::None)
+                            }))
+                            .collect(),
                         qualifiers: vpi_qualifiers(self.db.declaration_qualifiers(id)),
                         ..IrVpiObject::default()
                     });
@@ -2321,6 +2336,18 @@ impl Codegen<'_> {
                     CodeOwner::Delay(expressions) => {
                         if let Some(entry) = tables.delay_root(&expressions, scope) {
                             delays.push((row, entry));
+                        }
+                    }
+                    CodeOwner::Conn(index, expression) => {
+                        let object = &model.vpi_objects[row];
+                        if object.conns.get(index).is_some_and(|conn| {
+                            matches!(
+                                conn.reference,
+                                IrVpiArgRef::Expression | IrVpiArgRef::Constant(_)
+                            )
+                        }) {
+                            let entry = tables.expression_root(expression, scope);
+                            conns.push((row, index, entry));
                         }
                     }
                     CodeOwner::Conns(expressions) => {
@@ -2881,6 +2908,9 @@ enum CodeOwner {
     Statement(NodeId),
     /// The source expression of each connection, in connection order.
     Conns(Vec<NodeId>),
+    /// The source expression of connection `.0` alone, for a row whose
+    /// connections live in different scopes (a port's high and low ones).
+    Conn(usize, NodeId),
     /// The clocking event and skews of clocking block `.0`, or the skews of
     /// its clocking io declaration `.1` (37.44).
     Clocking(NodeId, Option<NodeId>),

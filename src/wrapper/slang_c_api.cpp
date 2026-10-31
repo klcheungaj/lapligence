@@ -6366,10 +6366,16 @@ private:
     }
     // A multi-port connects internally through its component ports, most
     // significant first; it has no internal symbol or connection of its own.
+    // After them comes the concatenation of their internal connections, the
+    // multi-port's own low connection (IEEE 1800-2009 37.14 vpiLowConn).
     if constexpr (std::same_as<T, MultiPortSymbol>) {
       uint32_t index = 0;
       for (const PortSymbol* component : symbol.ports)
         capture.semanticRole(id, component, LLG_SLANG_EDGE_LOW_CONNECTION, index++);
+      if (const Expression* internal = multiPortInternalConcat(symbol)) {
+        capture.semanticRole(id, internal, LLG_SLANG_EDGE_LOW_CONNECTION, index);
+        internal->visit(*this);
+      }
     }
     if constexpr (std::same_as<T, SubroutineSymbol>) {
       const Statement& body = symbol.getBody();
@@ -6553,6 +6559,59 @@ private:
     }
   }
 
+  // The concatenation of a multi-port's component internal connections,
+  // most significant first, or nullptr when a component has none.
+  const Expression* multiPortInternalConcat(const MultiPortSymbol& port) {
+    const Scope* scope = port.getParentScope();
+    if (!scope || port.ports.empty() || port.getType().isError())
+      return nullptr;
+    Compilation& compilation = scope->getCompilation();
+    SmallVector<Expression*> operands;
+    for (const PortSymbol* component : port.ports) {
+      const Expression* internal = component->getInternalExpr();
+      if (!internal) {
+        const Symbol* value = component->internalSymbol;
+        if (!value || !value->isValue())
+          return nullptr;
+        internal = compilation.emplace<NamedValueExpression>(
+            value->as<ValueSymbol>(),
+            SourceRange(component->location, component->location + component->name.size()));
+      }
+      operands.push_back(const_cast<Expression*>(internal));
+    }
+    const syntax::SyntaxNode* syntax = port.getSyntax();
+    const SourceRange range = syntax ? syntax->sourceRange()
+                                     : SourceRange(port.location, port.location);
+    return compilation.emplace<ConcatenationExpression>(port.getType(), operands.copy(compilation),
+                                                       range);
+  }
+
+  // A multi-port's actual as written (IEEE 1800-2009 37.14 vpiHighConn).
+  // Slang splits it into the connections of the component ports, so it is
+  // bound again here, as an rvalue that drives nothing, for the multi-port's
+  // own high connection. An element of an instance array connects only its
+  // slice of the actual and keeps none.
+  void captureMultiPortActual(const InstanceSymbol& instance, const Symbol& port,
+                              const syntax::PropertyExprSyntax& syntax) {
+    if (capture.declarationOnly || port.kind != SymbolKind::MultiPort ||
+        !instance.arrayPath.empty())
+      return;
+    const LookupLocation location = LookupLocation::after(instance);
+    const Scope* scope = location.getScope();
+    if (!scope)
+      return;
+    ASTContext context(*scope, location, ASTFlags::NonProcedural);
+    const syntax::ExpressionSyntax* expression = context.requireSimpleExpr(syntax);
+    if (!expression)
+      return;
+    const Expression& actual = Expression::bind(*expression, context);
+    if (actual.bad())
+      return;
+    const uint64_t portId = capture.ensureSemantic(&port);
+    capture.semanticRole(portId, &actual, LLG_SLANG_EDGE_HIGH_CONNECTION);
+    actual.visit(*this);
+  }
+
   void addConnectionLabelBindings(const InstanceSymbol& symbol) {
     const syntax::SyntaxNode* syntaxNode = symbol.getSyntax();
     if (!syntaxNode || syntaxNode->kind != syntax::SyntaxKind::HierarchicalInstance)
@@ -6634,6 +6693,8 @@ private:
           const auto& ordered =
               syntaxConnection->as<syntax::OrderedPortConnectionSyntax>();
           capture.connectionActual(ordered.expr->sourceRange());
+          if (orderedIndex < groups.size())
+            captureMultiPortActual(symbol, *groups[orderedIndex].port, *ordered.expr);
         }
         else if (syntaxConnection->kind !=
                  syntax::SyntaxKind::EmptyPortConnection) {
@@ -6657,6 +6718,8 @@ private:
                                  LLG_SLANG_LEXICAL_ROLE_CONNECTION_LABEL);
           if (!capture.declarationOnly)
             markByName(group);
+          if (named.expr && namedSeen.find(name) == namedSeen.end())
+            captureMultiPortActual(symbol, *group.port, *named.expr);
           namedGroups[index] = true;
           connected = true;
           break;

@@ -575,7 +575,7 @@ impl Db {
                     children.push(semantic_id(&ids, edge.target_id)?);
                 }
             }
-            if semantic.kind == SemanticKind::Port {
+            if semantic.kind == SemanticKind::Port && semantic.detail != "MultiPort" {
                 if let Some(high_expression) =
                     edge_target(&ids, edges, SemanticEdgeRole::HighConnection)?
                 {
@@ -1427,6 +1427,8 @@ impl Db {
         // child, so record them beside the port.
         let mut port_expressions = HashMap::new();
         let mut multi_ports = HashMap::new();
+        let mut multi_port_actuals = HashMap::new();
+        let mut multi_port_internals = HashMap::new();
         for semantic in &snapshot.semantic_nodes {
             if semantic.kind != SemanticKind::Port {
                 continue;
@@ -1434,9 +1436,26 @@ impl Db {
             let port = NodeId::from_index(semantic.id as usize);
             let edges = semantic_edges(snapshot, semantic)?;
             if semantic.detail == "MultiPort" {
-                let mut components = edges
+                // The component ports, then the concatenation of their
+                // internal connections, the multi-port's own internal
+                // expression.
+                let is_port = |edge: &&crate::ffi::slang::SemanticEdge| {
+                    snapshot
+                        .semantic_nodes
+                        .get(edge.target_id as usize)
+                        .is_some_and(|target| target.kind == SemanticKind::Port)
+                };
+                let low = edges
                     .iter()
-                    .filter(|edge| edge.role == SemanticEdgeRole::LowConnection)
+                    .filter(|edge| edge.role == SemanticEdgeRole::LowConnection);
+                if let Some(internal) = low.clone().find(|edge| !is_port(edge)) {
+                    multi_port_internals.insert(port, semantic_id(&ids, internal.target_id)?);
+                }
+                if let Some(actual) = edge_target(&ids, edges, SemanticEdgeRole::HighConnection)? {
+                    multi_port_actuals.insert(port, actual);
+                }
+                let mut components = low
+                    .filter(is_port)
                     .map(|edge| Ok((edge.index, semantic_id(&ids, edge.target_id)?)))
                     .collect::<Result<Vec<_>, DbError>>()?;
                 components.sort_by_key(|(index, _)| *index);
@@ -1628,6 +1647,8 @@ impl Db {
             modport_directions,
             modport_expressions,
             port_expressions,
+            multi_port_actuals,
+            multi_port_internals,
             multi_ports,
             virtual_interface_targets,
             dpi_imports,
@@ -2592,7 +2613,12 @@ mod tests {
             assert!(low.is_some(), "{}", db.node(simple).name);
             assert_eq!(db.port_internal_expression(simple), None);
         }
+        // A multi-port's internal expression is VPI metadata only: the
+        // concatenation of its components' internal connections (decision
+        // A19-D58).
         assert_eq!(db.port_internal_expression(p), None);
+        let concatenation = db.multi_port_internal(p).expect("multi-port concatenation");
+        assert_eq!(db.semantic_detail(concatenation), Some("Concatenation"));
     }
 
     #[test]
