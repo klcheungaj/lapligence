@@ -1770,7 +1770,7 @@ static vpiHandle port_bit_conn(const llg_vpi_slot_t* slot, int high) {
             bit = 0;
             width = g_vpi.objects[row].width;
             const llg_vpi_model_object_t* scalar = &g_vpi.objects[row];
-            if (base == 0 && scalar->width == 1 && !(scalar->flags & LLG_VPI_OBJ_RANGE) &&
+            if (base == 0 && width == 1 && !(scalar->flags & LLG_VPI_OBJ_RANGE) &&
                 !is_array_type(scalar->type))
                 return object_handle(row);
         } else if (conn->ref.object < 0 || (conn->ref.ref_kind != LLG_VPI_ARG_OBJECT &&
