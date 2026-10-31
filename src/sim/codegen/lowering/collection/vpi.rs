@@ -1014,7 +1014,7 @@ impl Codegen<'_> {
             .map(|target| (target.declaration(), target.instance()))
     }
 
-    /// The definition and configuration properties of instance `id` (IEEE
+    /// The definition and configuration properties of instance or package `id` (IEEE
     /// 1800-2009 37.10, 33.7). Unmapped sources are compiled into library
     /// `work` (33.3.1); llg rejects the delay-mode directives, so every
     /// definition has `vpiDelayModeNone`, which the runtime reports itself.
@@ -1035,6 +1035,8 @@ impl Codegen<'_> {
                     .split_once('@')
                     .map_or(def_name.as_str(), |(_, cell)| cell)
                     .to_owned(),
+                // A package is bound to the cell of its own name.
+                _ if self.vpi_package_name(id).is_some() => self.node(id).name.clone(),
                 _ => String::new(),
             },
             cell_define: definition.cell_define,
@@ -1254,6 +1256,9 @@ impl Codegen<'_> {
                     definition_name: Some(name),
                     kind: IrVpiObjectKind::Package,
                     qualifier: self.is_compilation_unit(id),
+                    // 37.10: a package has the definition properties of a
+                    // module; `$unit` has no declaration to report.
+                    instance: self.vpi_instance_properties(id).map(Box::new),
                     ..IrVpiObject::default()
                 }));
                 continue;

@@ -2767,8 +2767,10 @@ public:
            LLG_SLANG_INSTANCE_NET_TYPE_MASK)
           << LLG_SLANG_INSTANCE_NET_TYPE_SHIFT;
     }
-    if constexpr (std::same_as<T, PackageSymbol>)
+    if constexpr (std::same_as<T, PackageSymbol>) {
       addTimeScale(result, symbol.timeScale);
+      addPackageDefinition(result, symbol);
+    }
     // An undeclared `$unit` scale is left unset rather than reporting the
     // compilation default as if it were declared.
     if constexpr (std::same_as<T, CompilationUnitSymbol>) {
@@ -5356,6 +5358,18 @@ private:
   }
 
   std::unordered_map<const RandSeqProductionSymbol*, const VariableSymbol*> productionResults;
+
+  // The definition facts of a package in its node's auxiliary, in the
+  // layout of an instance's (IEEE 1800-2009 37.10). `celldefine tags only
+  // modules (22.10) and `unconnected_drive pulls only module, program and
+  // interface ports (22.9), so a package is never a cell and never pulled.
+  static void addPackageDefinition(LlgSlangSemanticNode& result, const PackageSymbol& symbol) {
+    if (symbol.defaultLifetime == VariableLifetime::Automatic)
+      result.auxiliary |= LLG_SLANG_INSTANCE_AUTOMATIC;
+    result.auxiliary |= (uint64_t(semanticNetKind(symbol.defaultNetType.netKind)) &
+                         LLG_SLANG_INSTANCE_NET_TYPE_MASK)
+                        << LLG_SLANG_INSTANCE_NET_TYPE_SHIFT;
+  }
 
   Capture& capture;
   std::vector<uint64_t> parents;

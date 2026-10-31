@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 67u
+#define LLG_SLANG_ABI_VERSION 68u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -771,7 +771,9 @@ enum {
  * lifetime is automatic, and bits 20-27 hold the LLG_SLANG_NET_* code of its
  * `default_nettype (22.8; LLG_SLANG_SUBKIND_NONE for `default_nettype none).
  * The definition's location is the range of the node the instance's
- * target_id names. */
+ * target_id names. A package node carries its own default lifetime and
+ * `default_nettype in the same bits (ABI v68); it is never a cell (22.10)
+ * and has no ports to pull (22.9). */
 enum {
   LLG_SLANG_INSTANCE_CELL_DEFINE = 1ull << 18,
   LLG_SLANG_INSTANCE_AUTOMATIC = 1ull << 19

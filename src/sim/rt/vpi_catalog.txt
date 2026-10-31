@@ -251,18 +251,18 @@ node program 37.9 type=vpiProgram
 
 node package 37.10 type=vpiPackage
   get vpiUnit implemented walk
-  get vpiCellInstance unsupported the definition and compiler-directive properties of packages are not captured
-  get vpiDefNetType unsupported the definition and compiler-directive properties of packages are not captured
-  get vpiDefLineNo unsupported the definition and compiler-directive properties of packages are not captured
-  str vpiDefFile unsupported the definition and compiler-directive properties of packages are not captured
-  get vpiDefDelayMode unsupported the definition and compiler-directive properties of packages are not captured
-  get vpiUnconnDrive unsupported the definition and compiler-directive properties of packages are not captured
-  str vpiLibrary unsupported the definition and compiler-directive properties of packages are not captured
-  str vpiCell unsupported the definition and compiler-directive properties of packages are not captured
-  str vpiConfig unsupported the definition and compiler-directive properties of packages are not captured
-  get vpiAutomatic unsupported the definition and compiler-directive properties of packages are not captured
-  get vpiTop unsupported the definition and compiler-directive properties of packages are not captured
-  get vpiProtected unsupported protected envelopes are rejected; the property is not answered for packages
+  get vpiCellInstance implemented walk
+  get vpiDefNetType implemented walk
+  get vpiDefLineNo implemented walk
+  str vpiDefFile implemented walk
+  get vpiDefDelayMode implemented walk
+  get vpiUnconnDrive implemented walk
+  str vpiLibrary implemented walk
+  str vpiCell implemented walk
+  str vpiConfig n/a a configuration binds the cells of instances (33.4), never a package, so a package has no controlling configuration
+  get vpiAutomatic implemented walk
+  get vpiTop implemented walk
+  get vpiProtected implemented walk
   handle vpiInstanceArray n/a a package is not instantiated, so it is never an element of an instance array
   iterate vpiPort n/a a package has no ports (37.10 lists none among its instance items)
   handle vpiInstance extension walk NULL: a package is instantiated in no instance

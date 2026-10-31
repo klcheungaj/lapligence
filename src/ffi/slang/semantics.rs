@@ -400,6 +400,14 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
                 | super::INSTANCE_NET_TYPE_MASK << super::INSTANCE_NET_TYPE_SHIFT;
             node.auxiliary & !allowed == 0 && (node.auxiliary & drive).count_ones() <= 1
         }
+        // A package carries its default lifetime and net type in the
+        // instance layout (ABI v68).
+        (2, _, _) => {
+            node.auxiliary
+                & !(super::INSTANCE_AUTOMATIC
+                    | super::INSTANCE_NET_TYPE_MASK << super::INSTANCE_NET_TYPE_SHIFT)
+                == 0
+        }
         (1 | 24, _, _) => {
             let allowed = UNCONNECTED_PULL0 | UNCONNECTED_PULL1;
             node.auxiliary & !allowed == 0 && node.auxiliary.count_ones() <= 1

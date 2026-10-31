@@ -577,7 +577,7 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
     if (object->instance &&
         (!object->instance->library || !object->instance->cell ||
          (object->type != vpiModule && object->type != vpiInterface &&
-          object->type != vpiProgram)))
+          object->type != vpiProgram && object->type != vpiPackage)))
         return 0;
     if (object->conn_count && !object->conns) return 0;
     for (uint32_t i = 0; i < object->conn_count; ++i) {

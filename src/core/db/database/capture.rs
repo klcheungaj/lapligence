@@ -1705,15 +1705,19 @@ fn instance_definitions(
     };
     let mut definitions = HashMap::new();
     for semantic in snapshot.semantic_nodes.iter() {
-        if semantic.kind != SemanticKind::Instance
-            || semantic.subkind != crate::ffi::slang::SEMANTIC_INSTANCE_SINGLE
-        {
-            continue;
-        }
-        let Some(definition) = semantic
-            .target_id()
-            .and_then(|target| snapshot.semantic_nodes.get(target as usize))
-        else {
+        // A package is its own definition (IEEE 1800-2009 37.10).
+        let definition = match semantic.kind {
+            SemanticKind::Package => Some(semantic),
+            SemanticKind::Instance
+                if semantic.subkind == crate::ffi::slang::SEMANTIC_INSTANCE_SINGLE =>
+            {
+                semantic
+                    .target_id()
+                    .and_then(|target| snapshot.semantic_nodes.get(target as usize))
+            }
+            _ => None,
+        };
+        let Some(definition) = definition else {
             continue;
         };
         let (file, line, _, _, _) = positions.position(definition)?;

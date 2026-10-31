@@ -848,7 +848,8 @@ impl Db {
         })
     }
 
-    /// Definition facts of a module, interface or program instance.
+    /// Definition facts of a module, interface or program instance, or of
+    /// a package (its own declaration).
     pub fn instance_definition(&self, id: NodeId) -> Option<&InstanceDefinition> {
         self.instance_definitions.get(&id)
     }
