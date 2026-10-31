@@ -32,6 +32,11 @@ the rules a change must keep. Platform pitfalls are in
   the locally measured cost (run 110830171169: a 6.6 s Clang `-O2` compile of
   `llg_rt.c` exceeded 60 s beside three CMake probe builds; the test now compiles
   at `-O0`).
+- A fixture's process body becomes one C function, and GCC `-O3` time grows
+  superlinearly with its size: keep each long straight-line fixture body under
+  about 10,000 generated lines, split by case (run 111325565657:
+  `rtl_006/arith_constants` timed out at 180 s on Windows x86_64; see
+  [known issues](../docs/known_issues.md#long-process-bodies-compile-superlinearly-in-the-c-compiler)).
 - Linux builds only in the static-musl Alpine container; its `test` jobs run the
   archive on Ubuntu 24.04 and Rocky Linux 9. Windows/macOS `test` jobs run on the
   build job's runner kind with the checkout at the same path, so compile-time

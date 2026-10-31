@@ -331,6 +331,39 @@ the baseline, including both optimizer modes for the representative fixtures.
 Use the command in the frontend memory entry with `LLG_CORPUS_N` set to
 5,000, 10,000, 20,000 and 40,000, and compare wall times.
 
+## Long process bodies compile superlinearly in the C compiler
+
+**Status:** open; the affected test fixture was split (ci-fix-4, 2026-10-30).
+
+### Symptom
+
+Each process becomes one C function, so the C compile time of a model with
+one long straight-line `initial` block grows faster than its statement count.
+Measured on Linux with GCC 14 at the model default `-O3` (`--no-opt`
+`rtl_006` constant-operand corpus, one `$display` of 14 or 4 operations per
+statement): 91 statements, 9,000 lines, 5.0 s; 182 statements, 17,800 lines,
+11.7 s; 364 statements, 32,900 lines, 29.3 s. GCC `-ftime-report` puts most
+of it in function expansion and dominator optimization; the generated C itself
+grows linearly (about 90 lines per statement).
+
+### Cause
+
+GCC's per-function optimization passes are superlinear in function size;
+llg emits no split point inside a process body.
+
+### Intended direction
+
+Outline straight-line runs of a long process body into separate C functions
+at points where no coroutine state crosses (between statements outside
+suspension points), with the run length a named tunable, keeping generated C
+of short processes unchanged.
+
+### Reproduce
+
+Concatenate the four `tests/fixtures/sim/feature_completion/rtl_006/arith_constants_w*.sv`
+bodies into one `initial` block, run `llg --no-opt` with `LLG_BUILD_TIMINGS`
+set, and compare `build_ms` with one width alone (27.0 s against 5.1 s).
+
 ## Gate-level netlist generation memory
 
 **Status:** open for generation memory; the per-instance C data and the
