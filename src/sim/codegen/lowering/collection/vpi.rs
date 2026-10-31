@@ -924,9 +924,14 @@ impl Codegen<'_> {
                 | PrimitiveType::Tranif0
                 | PrimitiveType::Tranif1
         );
+        // A pull source is a gate in the grammar (28.10) and a switch
+        // object in VPI (decision A19-D47).
+        let pull = matches!(prim_type, PrimitiveType::Pullup | PrimitiveType::Pulldown);
+        let switch = switch || pull;
         let type_code = match class {
             PrimClass::Udp => "vpiUdp",
             PrimClass::Switch => "vpiSwitch",
+            PrimClass::Gate if pull => "vpiSwitch",
             PrimClass::Gate => "vpiGate",
             PrimClass::Array if udp_type => "vpiUdp",
             PrimClass::Array if switch => "vpiSwitch",
@@ -1143,9 +1148,15 @@ impl Codegen<'_> {
             false
         }
 
-        let mut objects = BTreeMap::<String, IrVpiObject>::new();
+        // Rows keyed by full name, each with the order it was first seen
+        // in: the design walk visits declarations in source order, and
+        // relations iterate a scope's rows in that order (decision A19-D47).
+        let mut objects = BTreeMap::<String, (usize, IrVpiObject)>::new();
         let mut insert = |object: IrVpiObject| {
-            objects.entry(object.full_name.clone()).or_insert(object);
+            let next = objects.len();
+            objects
+                .entry(object.full_name.clone())
+                .or_insert((next, object));
         };
         // The rows whose statements or connection expressions become code
         // objects, by catalog key, with the scope key of their objects.
@@ -1881,7 +1892,7 @@ impl Codegen<'_> {
                             .map_or_else(String::new, |outer| self.vpi_full_name(outer));
                         owners.push((key.clone(), scope, CodeOwner::Conns(vec![*high])));
                     }
-                    insert(source(IrVpiObject {
+                    let port = source(IrVpiObject {
                         // A port and the declaration it connects share one
                         // name; the port lives in its own namespace.
                         full_name: key,
@@ -1924,7 +1935,13 @@ impl Codegen<'_> {
                         },
                         qualifiers: vpi_qualifiers(self.db.declaration_qualifiers(id)),
                         ..IrVpiObject::default()
-                    }));
+                    });
+                    // A non-ANSI port is on its module header line (decision
+                    // A19-D47); its io declaration keeps its own line.
+                    insert(IrVpiObject {
+                        line: self.db.port_header_line(id).unwrap_or(port.line),
+                        ..port
+                    });
                     // 37.13: a module port's io declaration; interface and
                     // modport ports declare an interface, not a value.
                     if interface.is_none()
@@ -1968,7 +1985,9 @@ impl Codegen<'_> {
             }
         }
         let constraints = self.vpi_dynamic_classes(model, &mut dynamic, &mut typespecs);
-        model.vpi_objects = objects.into_values().collect();
+        let mut rows = objects.into_values().collect::<Vec<_>>();
+        rows.sort_unstable_by_key(|(order, _)| *order);
+        model.vpi_objects = rows.into_iter().map(|(_, object)| object).collect();
         if code {
             self.populate_vpi_code(model, &mut typespecs, owners, &mut dynamic, constraints);
         }

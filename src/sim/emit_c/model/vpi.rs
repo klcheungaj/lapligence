@@ -172,7 +172,10 @@ pub(super) fn signal_storage(model: &IrModel, index: usize) -> Option<(String, S
 fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
     use std::collections::BTreeMap;
 
-    let mut entries = BTreeMap::<String, Entry>::new();
+    // Entries keyed by full name, each with its first position in
+    // `objects`: rows keep the collector's declaration order, which the
+    // runtime's relation iterations follow (decision A19-D47).
+    let mut entries = BTreeMap::<String, (usize, Entry)>::new();
     for object in objects {
         let (packed, real_value, net_pointer, dims) = if let Some(signal) = object.signal {
             let Some((packed, real_value, net)) = signal_storage(model, signal) else {
@@ -270,60 +273,65 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             IrVpiObjectKind::Record => (object.var_kind.c_type(), "0"),
             kind => (object.type_code.unwrap_or(kind.c_type()), "0"),
         };
-        entries.insert(
-            object.full_name.clone(),
-            Entry {
-                full: object.full_name.clone(),
-                name: object.name.clone(),
-                definition_name: object.definition_name.clone(),
-                file: object.file.clone(),
-                line: object.line,
-                type_code,
-                subtype,
-                width: object.width,
-                signed: object.signed,
-                real: object.real,
-                net: object.net,
-                two_state: object.two_state,
-                shortreal: object.var_kind == IrVpiVarKind::ShortReal,
-                top: object.top,
-                local_param: object.local_param,
-                range: object.packed_range,
-                dims,
-                port_index: object.port_index,
-                port_target: object.port_target.clone(),
-                packed,
-                real_value,
-                net_pointer,
-                constant: object.constant.clone(),
-                time_unit_fs: object.time_unit_fs,
-                typespec: object.typespec,
-                member: object.member,
-                slice: object.slice,
-                record: object.kind == IrVpiObjectKind::Record,
-                detail: object.detail.unwrap_or("0"),
-                event,
-                conns: object.conns.clone(),
-                unnamed: object.unnamed,
-                qualifier: object.qualifier,
-                constant_variable: object.constant_variable,
-                activation: object.activation,
-                timing: object.timing.clone(),
-                dynamic,
-                code: object.code,
-                instance: object.instance.as_deref().cloned(),
-                strength: object.strength,
-                implicit: object.implicit,
-                qualifiers: object.qualifiers,
-            },
-        );
+        let order = entries
+            .get(&object.full_name)
+            .map_or(entries.len(), |(order, _)| *order);
+        let entry = Entry {
+            full: object.full_name.clone(),
+            name: object.name.clone(),
+            definition_name: object.definition_name.clone(),
+            file: object.file.clone(),
+            line: object.line,
+            type_code,
+            subtype,
+            width: object.width,
+            signed: object.signed,
+            real: object.real,
+            net: object.net,
+            two_state: object.two_state,
+            shortreal: object.var_kind == IrVpiVarKind::ShortReal,
+            top: object.top,
+            local_param: object.local_param,
+            range: object.packed_range,
+            dims,
+            port_index: object.port_index,
+            port_target: object.port_target.clone(),
+            packed,
+            real_value,
+            net_pointer,
+            constant: object.constant.clone(),
+            time_unit_fs: object.time_unit_fs,
+            typespec: object.typespec,
+            member: object.member,
+            slice: object.slice,
+            record: object.kind == IrVpiObjectKind::Record,
+            detail: object.detail.unwrap_or("0"),
+            event,
+            conns: object.conns.clone(),
+            unnamed: object.unnamed,
+            qualifier: object.qualifier,
+            constant_variable: object.constant_variable,
+            activation: object.activation,
+            timing: object.timing.clone(),
+            dynamic,
+            code: object.code,
+            instance: object.instance.as_deref().cloned(),
+            strength: object.strength,
+            implicit: object.implicit,
+            qualifiers: object.qualifiers,
+        };
+        entries.insert(object.full_name.clone(), (order, entry));
     }
 
     // A declaration may be retained under a scope that has no captured
     // node. Add only missing prefixes and leave their source location and
     // definition empty rather than inventing frontend provenance.
-    let paths = entries.keys().cloned().collect::<Vec<_>>();
-    for path in paths {
+    let paths = entries
+        .iter()
+        .map(|(path, (order, _))| (path.clone(), *order))
+        .collect::<Vec<_>>();
+    let mut synthesized = std::collections::HashSet::new();
+    for (path, order) in paths {
         let path = strip_marker(&path);
         let parts = split_name(path);
         for depth in 1..parts.len() {
@@ -333,11 +341,21 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
             } else {
                 "vpiGenScope"
             };
-            entries.entry(prefix.clone()).or_insert_with(|| {
-                let mut scope = Entry::scope(prefix, parts[depth - 1].to_owned(), kind);
-                scope.top = depth == 1;
-                scope
-            });
+            // A synthesized scope sits where its first descendant does.
+            match entries.entry(prefix.clone()) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    let mut scope = Entry::scope(prefix.clone(), parts[depth - 1].to_owned(), kind);
+                    scope.top = depth == 1;
+                    slot.insert((order, scope));
+                    synthesized.insert(prefix);
+                }
+                std::collections::btree_map::Entry::Occupied(mut slot) => {
+                    if synthesized.contains(&prefix) {
+                        let first = &mut slot.get_mut().0;
+                        *first = (*first).min(order);
+                    }
+                }
+            }
         }
     }
 
@@ -349,9 +367,11 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
         };
         let mut root = Entry::scope(design_name.clone(), design_name, "vpiModule");
         root.top = true;
-        entries.insert(root.full.clone(), root);
+        entries.insert(root.full.clone(), (0, root));
     }
-    entries.into_values().collect()
+    let mut rows = entries.into_values().collect::<Vec<_>>();
+    rows.sort_by_key(|(order, _)| *order);
+    rows.into_iter().map(|(_, entry)| entry).collect()
 }
 
 /// Catalog row of every full name, for parent links and call references.

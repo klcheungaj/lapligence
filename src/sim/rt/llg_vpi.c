@@ -8067,6 +8067,8 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
             vpi_error("LLG_VPI_RELATION", "an interface or modport port has no bits");
             return NULL;
         }
+        /* A scalar port has no bits (decision A19-D47). */
+        if (object->width == 1) return NULL;
         return iterate_aux(SLOT_PORTBIT, slot->object, object->width, type, 1);
     }
     if (type == vpiRange && (slot->kind == SLOT_OBJECT || slot->kind == SLOT_ELEMENT) &&
@@ -8081,6 +8083,9 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     if (type == vpiBit && (slot->kind == SLOT_OBJECT || slot->kind == SLOT_ELEMENT) && object &&
         !object->is_real && object->packed &&
         !(slot->kind == SLOT_OBJECT && is_array_type(object->type))) {
+        /* A scalar, one bit without a packed dimension (37.16 detail 25),
+         * has no bits (decision A19-D47). */
+        if (object->width == 1 && !(object->flags & LLG_VPI_OBJ_RANGE)) return NULL;
         uint64_t element = slot->element;
         uint32_t row = slot->object;
         uint32_t index = alloc_slot(SLOT_ITERATOR);
@@ -8855,10 +8860,13 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                        : (object->flags & LLG_VPI_OBJ_TEXT) ? vpiStringConst : vpiBinaryConst;
             return unsupported_property();
         case vpiLineNo:
-            /* A terminal, port bit or assignment bit is on its owner's line. */
+            /* A terminal, port bit or assignment bit is on its owner's line;
+             * a bit, select, element or member of a declared object is on
+             * its declaration's line (decision A19-D47). */
             if ((slot->kind == SLOT_OBJECT || slot->kind == SLOT_CABIT ||
                  slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_PORTBIT ||
-                 slot->kind == SLOT_TERM) && object)
+                 slot->kind == SLOT_TERM || slot->kind == SLOT_ELEMENT ||
+                 slot->kind == SLOT_SELECT || slot->kind == SLOT_MEMBER) && object)
                 return object->line;
             if (slot->kind == SLOT_CALL) return ((llg_vpi_callsite_t*)slot->pointer)->line;
             return unsupported_property();

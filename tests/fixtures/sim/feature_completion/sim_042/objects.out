@@ -2,15 +2,15 @@ scope=tb.main type=vpiNamedBegin
 module=tb
 top=tb def=tb top_module=1
 modules: u1:vpiModule
-internal: gen[0]:vpiGenScope gen[1]:vpiGenScope main:vpiNamedBegin u1:vpiModule
-variables: b:vpiByteVar:8 bv:vpiBitVar:4 grid:vpiRegArray:6 i:vpiIntVar:32 ii:vpiIntegerVar:32 mem:vpiRegArray:4 r:vpiRealVar:64 t:vpiTimeVar:64 up:vpiReg:4 v:vpiReg:8
+internal: u1:vpiModule gen[0]:vpiGenScope gen[1]:vpiGenScope main:vpiNamedBegin
+variables: v:vpiReg:8 up:vpiReg:4 mem:vpiRegArray:4 grid:vpiRegArray:6 r:vpiRealVar:64 i:vpiIntVar:32 bv:vpiBitVar:4 b:vpiByteVar:8 ii:vpiIntegerVar:32 t:vpiTimeVar:64
 nets: w:vpiNet:4
 reals: r:vpiRealVar:64
 u1 def=leaf parent=tb top_module=0
-u1.parameters: L:vpiParameter:32 P:vpiParameter:8 W:vpiParameter:32
-param L local=1 bin=00000000000000000000000000001000 dec=          8
-param P local=0 bin=1010x1z0 dec=  0
+u1.parameters: W:vpiParameter:32 P:vpiParameter:8 L:vpiParameter:32
 param W local=0 bin=00000000000000000000000000000100 dec=          4
+param P local=0 bin=1010x1z0 dec=  0
+param L local=1 bin=00000000000000000000000000001000 dec=          8
 port a index=0 direction=1 size=4 low=tb.u1.a
 port y index=1 direction=2 size=4 low=tb.u1.y
 gen1 type=vpiGenScope name=gen[1] full=tb.gen[1]

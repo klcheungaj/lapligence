@@ -9,7 +9,7 @@ tb.W type=41 W typespec=629 expr=4
 tb.D type=41 D typespec=629 expr=W * 2
 tb.r0[1] type=49 typespec=641
 port a typespec=641 bit typespec=641
-port y typespec=641 bit typespec=641
+port y typespec=641
 call type=649 q.push_back(1) typespec=-3 userdefn=0 task=0 prefix=q with=NULL args=[1]
 assign n
   type=39 r0[1:0] + r0[1] + int'(r0) + 2 + inc(k) + $clog2(W) + $d32f(k) + q.size() typespec=-3

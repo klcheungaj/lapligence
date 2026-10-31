@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 66u
+#define LLG_SLANG_ABI_VERSION 67u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -713,7 +713,10 @@ enum {
 /* Port facts carried in LlgSlangSemanticNode::auxiliary of a port:
  * EXPLICIT_NAME a port declared as `.name(expression)` (23.2.2.1,
  * 23.2.2.2); CONNECTED_BY_NAME a port of an instance whose connection list
- * connects it by name (`.name(...)`, `.name` or `.*`, 23.3.2.2-23.3.2.4). */
+ * connects it by name (`.name(...)`, `.name` or `.*`, 23.3.2.2-23.3.2.4).
+ * Bits 32-63 hold the file offset + 1 of a non-ANSI port's name or
+ * expression in the module header when that differs from the node range,
+ * which is its io declaration (0: none). */
 enum {
   LLG_SLANG_PORT_EXPLICIT_NAME = 1ull << 0,
   LLG_SLANG_PORT_CONNECTED_BY_NAME = 1ull << 1

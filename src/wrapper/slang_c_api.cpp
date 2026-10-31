@@ -2860,6 +2860,16 @@ public:
           (explicitPort(portSyntax) || explicitPort(portSyntax->parent)))
         result.auxiliary |= LLG_SLANG_PORT_EXPLICIT_NAME;
     }
+    if constexpr (std::same_as<T, PortSymbol>) {
+      // A non-ANSI port is located at its io declaration; its place in the
+      // module header is the external location.
+      const SourceLocation header = symbol.externalLoc;
+      if (!symbol.isAnsiPort && header.valid() && symbol.location.valid() &&
+          header.buffer() == symbol.location.buffer() &&
+          header.offset() != symbol.location.offset() &&
+          header.offset() < UINT32_MAX)
+        result.auxiliary |= (uint64_t(header.offset()) + 1u) << 32;
+    }
     if constexpr (std::same_as<T, ModportPortSymbol>)
       addDirection(result, symbol.direction);
     if constexpr (std::same_as<T, FormalArgumentSymbol>) {

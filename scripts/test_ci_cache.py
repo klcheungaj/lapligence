@@ -261,6 +261,7 @@ class CcacheTests(unittest.TestCase):
         ci_ccache.ccache_environment = lambda cache_dir, base_dir, max_size: {
             "CCACHE_DIR": str(cache_dir),
             "CCACHE_MAXSIZE": max_size,
+            "CCACHE_BASEDIR": "",
         }
         try:
             failure = ci_ccache.self_check(shutil.which("ccache"), base, "cc")

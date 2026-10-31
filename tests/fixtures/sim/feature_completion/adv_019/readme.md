@@ -152,7 +152,7 @@ array elements, both `vpiActual` of an interface port); an exhausted port
 iterator must be released. A failed check prints `CHECK FAILED` and
 `failures=0` closes the walk. A connection prints as
 `type:full name=binary value`, or without the value when `vpi_get_value`
-fails; `NULL` is a NULL handle. Children come in catalog order (by name;
+fails; `NULL` is a NULL handle. Children come in declaration order (S42-D12;
 unnamed processes and assignments in source order, decision A19-D7).
 
 - Top modules. 37.5 detail 1 (L57768): "Top-level modules shall be accessed
@@ -633,8 +633,8 @@ then lists the variables of `dp` and of `tb.blk`.
 - Static dynamic objects. 37.17 does not restrict string, class and
   container variables to instances: a package, a named block and a static
   task declare them too, and they are found by name and listed by
-  `vpiVariables` like the other variables of their scope (37.12; name order,
-  S42-D12). 37.10 detail 5 (L57952-L57954): package members are named
+  `vpiVariables` like the other variables of their scope (37.12; declaration
+  order, S42-D12). 37.10 detail 5 (L57952-L57954): package members are named
   `dp::...`. Object ids follow the order VPI first sees the objects
   (decision A19-D22): the package's object is 1, the object `held` and
   `keep` refer to is 2.

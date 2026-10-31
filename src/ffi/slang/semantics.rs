@@ -548,7 +548,11 @@ fn validate_semantic_auxiliary(node: &RawSemanticNode) -> Result<(), SlangError>
                 && node.auxiliary != super::NET_VECTORED | super::NET_SCALARED
         }
         (5, _, _) => {
-            node.auxiliary & !(super::PORT_EXPLICIT_NAME | super::PORT_CONNECTED_BY_NAME) == 0
+            node.auxiliary
+                & !(super::PORT_EXPLICIT_NAME
+                    | super::PORT_CONNECTED_BY_NAME
+                    | (u64::from(u32::MAX) << super::PORT_HEADER_OFFSET_SHIFT))
+                == 0
         }
         // Bit i marks block event i as a `begin` event.
         (26, super::SEMANTIC_TIMING_BLOCK_EVENT_LIST, _) => true,

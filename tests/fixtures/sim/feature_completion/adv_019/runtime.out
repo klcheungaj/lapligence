@@ -29,7 +29,7 @@ step 1
     entry 11:?:1 symbols=4 line=23
     vpiInitial NULL error 1
   tb.u1 definition rt_or
-  uses of tb.r: vpiContAssign@34 vpiPrimTerm@31 vpiPrimTerm@31 vpiAssignment@37
+  uses of tb.r: vpiPrimTerm@31 vpiPrimTerm@31 vpiContAssign@34 vpiAssignment@37
   net iterator vpiUse is tb: 1
   module iterator vpiUse: NULL error 0
   first use of tb.r[0]: vpiPrimTerm@31

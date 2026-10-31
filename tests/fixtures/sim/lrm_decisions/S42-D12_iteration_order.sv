@@ -1,11 +1,12 @@
-// Decision S42-D12: iteration order. Objects of a scope are returned in the
-// order of their names; ports in port order (vpiPortIndex); bits from the
-// left index to the right; array elements in row-major order from the left
-// bound of each dimension.
+// Decision S42-D12: iteration order. Objects of a scope are returned in
+// declaration order; ports in port order (vpiPortIndex); bits from the left
+// index to the right; array elements in row-major order from the left bound
+// of each dimension.
 //
 // IEEE 1800-2009 38.23 (SystemVerilog-1800-2009.txt L63447-63450) and 38.40
-// (L65398-65401) define iteration without an order; the text is silent. The
-// orders are llg choices; only the port order follows the declaration.
+// (L65398-65401) define iteration without an order; the text is silent.
+// Declaration order is industry-standard behaviour; the bit and element
+// orders are llg choices.
 //
 // Build S42-D12_iteration_order.c as a VPI application (llg: static archive
 // given to --dpi-lib; `task $d12()` declared as a system task).

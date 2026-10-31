@@ -2483,6 +2483,15 @@ fn a19_d46_statement_toggle_objects() {
 }
 
 #[test]
+fn a19_d47_bits_switches_and_port_lines() {
+    run_vpi_decision(
+        "A19-D47_bits_switches_and_port_lines",
+        &["task $d47()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D47_bits_switches_and_port_lines.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

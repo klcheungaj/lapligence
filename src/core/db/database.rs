@@ -294,7 +294,7 @@ pub struct Db {
     /// Keyword lines of statements whose range does not start at them: a
     /// written block whose `begin`/`fork` keyword is on another line than
     /// its range's start, and a task or function body list (no range) where
-    /// it opens.
+    /// it opens; and the module header line of a non-ANSI port.
     keyword_lines: HashMap<NodeId, u32>,
     /// Source library of each elaborated instance (its selected definition's
     /// library), package and compilation unit, copied from the frontend's
@@ -835,6 +835,17 @@ impl Db {
             .get(&id)
             .copied()
             .filter(|_| self.semantic_detail(id) == Some("List"))
+    }
+
+    /// The line where non-ANSI port `id` appears in its module header, when
+    /// its io declaration (the node's own line) is on another line.
+    pub fn port_header_line(&self, id: NodeId) -> Option<u32> {
+        self.keyword_lines.get(&id).copied().filter(|_| {
+            matches!(
+                self.nodes.get(id.index()).map(Node::kind),
+                Some(NodeKind::Port { .. })
+            )
+        })
     }
 
     /// Definition facts of a module, interface or program instance.

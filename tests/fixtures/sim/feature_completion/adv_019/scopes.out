@@ -12,8 +12,8 @@ tb.remember.held:
   vpiClassVar tb.remember.held object id=2
 tb.keep.vif: null level=0
 variables of dp:
-  vpiStringVar dp::pname value=pk
   vpiClassVar dp::pobj object id=1
+  vpiStringVar dp::pname value=pk
   vpiArrayVar dp::pq size=2
 variables of tb.blk:
   vpiStringVar tb.blk.label value=blk

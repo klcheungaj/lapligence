@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 66;
+const ABI_VERSION: u32 = 67;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -890,6 +890,8 @@ pub(crate) const NET_VECTORED: u64 = 1 << 0;
 pub(crate) const NET_SCALARED: u64 = 1 << 1;
 pub(crate) const PORT_EXPLICIT_NAME: u64 = 1 << 0;
 pub(crate) const PORT_CONNECTED_BY_NAME: u64 = 1 << 1;
+/// Bits holding the header offset + 1 of a non-ANSI port (0: none).
+pub(crate) const PORT_HEADER_OFFSET_SHIFT: u32 = 32;
 pub(crate) const SUBROUTINE_STATIC: u64 = 1 << 0;
 /// DPI-C import metadata copied from Slang's method flags and syntax.
 pub(crate) const SUBROUTINE_DPI_IMPORT: u64 = 1 << 8;

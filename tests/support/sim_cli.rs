@@ -572,9 +572,10 @@ pub(crate) fn run_case_backend_parity_with_files(
             "{suite}/{fixture}, legacy: {}",
             String::from_utf8_lossy(&stderr)
         );
+        // Compared as text so a mismatch prints readable lines.
         assert_eq!(
-            stdout,
-            expected.as_bytes(),
+            String::from_utf8_lossy(&stdout),
+            expected,
             "{suite}/{fixture}, legacy, optimized={optimized}: independent output mismatch"
         );
         for kernel in ["portable", "gmp"] {

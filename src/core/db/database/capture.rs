@@ -397,7 +397,8 @@ impl Db {
             instance_definitions(snapshot, &ids, &mut source_positions, &instance_configs)?;
         let primitive_array_positions = primitive_array_positions(snapshot);
         let instance_array_ranges = instance_array_ranges(snapshot);
-        let keyword_lines = statement_keyword_lines(snapshot, &mut source_positions)?;
+        let mut keyword_lines = statement_keyword_lines(snapshot, &mut source_positions)?;
+        keyword_lines.extend(port_header_lines(snapshot, &mut source_positions)?);
         let mut arrays = HashMap::new();
         let mut event_arrays = HashMap::new();
         let mut subroutine_arrays = HashMap::new();
@@ -1849,6 +1850,30 @@ fn statement_keyword_lines(
             }
             _ => {}
         }
+    }
+    Ok(lines)
+}
+
+/// The module header line of each non-ANSI port whose io declaration, its
+/// node range, is elsewhere (IEEE 1800-2009 23.2.2.1).
+fn port_header_lines(
+    snapshot: &SlangSnapshot,
+    positions: &mut SourcePositions<'_>,
+) -> Result<HashMap<NodeId, u32>, DbError> {
+    let mut lines = HashMap::new();
+    for (index, node) in snapshot.semantic_nodes.iter().enumerate() {
+        let offset = node.auxiliary >> crate::ffi::slang::PORT_HEADER_OFFSET_SHIFT;
+        if node.kind != SemanticKind::Port || offset == 0 {
+            continue;
+        }
+        let Some(range) = node.range else { continue };
+        let at = crate::ffi::slang::SourceRange {
+            file_id: range.file_id,
+            start: offset - 1,
+            end: offset - 1,
+        };
+        let (_, line, _, _, _) = positions.range_position(at)?;
+        lines.insert(NodeId::from_index(index), line);
     }
     Ok(lines)
 }

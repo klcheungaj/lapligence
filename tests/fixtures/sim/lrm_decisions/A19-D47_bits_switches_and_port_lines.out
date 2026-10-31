@@ -1,0 +1,18 @@
+primitive vpiGate:tb.g1@34 prim_type=1
+primitive vpiSwitch:tb.pullup$1@35 prim_type=25
+primitive vpiGate:tb.bz@36 prim_type=10
+primitive vpiSwitch:tb.pd@37 prim_type=26
+primitive vpiSwitch:tb.t2@38 prim_type=22
+primitive vpiSwitch:tb.pu2@39 prim_type=25
+scalar net a bits: NULL
+scalar reg rs bits: NULL
+vector net nv bits: vpiNetBit:tb.nv[3]@28 vpiNetBit:tb.nv[2]@28 vpiNetBit:tb.nv[1]@28 vpiNetBit:tb.nv[0]@28
+vector reg rv bits: vpiRegBit:tb.rv[3]@29 vpiRegBit:tb.rv[2]@29 vpiRegBit:tb.rv[1]@29 vpiRegBit:tb.rv[0]@29
+word vpiNet:tb.na[1]@31
+word na[1] bits: vpiNetBit:tb.na[1][3]@31 vpiNetBit:tb.na[1][2]@31 vpiNetBit:tb.na[1][1]@31 vpiNetBit:tb.na[1][0]@31
+by name vpiRegBit:tb.rv[2]@29
+by index vpiNetBit:tb.nv[1]@28
+port vpiPort:tb.k.p@21 low=vpiNet:tb.k.p@23
+  port bits: NULL
+port vpiPort:tb.k.z@22 low=vpiNet:tb.k.z@24
+  port bits: vpiPortBit:@22 vpiPortBit:@22

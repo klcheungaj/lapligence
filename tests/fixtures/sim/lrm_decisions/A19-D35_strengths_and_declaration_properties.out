@@ -148,24 +148,24 @@ tb.sc bit
   tb.sc bit vpiImplicitDecl 0 level=0
   tb.sc bit vpiNetType 1 level=0
   tb.sc bit vpiResolvedNetType 1 level=0
-primitive type25@48
-  primitive type25@48 vpiStrength0 32 level=0
-  primitive type25@48 vpiStrength1 32 level=0
 primitive type1@46
   primitive type1@46 vpiStrength0 8 level=0
   primitive type1@46 vpiStrength1 8 level=0
 primitive type1@47
   primitive type1@47 vpiStrength0 64 level=0
   primitive type1@47 vpiStrength1 64 level=0
-primitive type7@51
-  primitive type7@51 vpiStrength0 64 level=0
-  primitive type7@51 vpiStrength1 64 level=0
+primitive type25@48
+  primitive type25@48 vpiStrength0 32 level=0
+  primitive type25@48 vpiStrength1 32 level=0
 primitive type26@49
   primitive type26@49 vpiStrength0 64 level=0
   primitive type26@49 vpiStrength1 32 level=0
 primitive type22@50
   primitive type22@50 vpiStrength0 64 level=0
   primitive type22@50 vpiStrength1 64 level=0
+primitive type7@51
+  primitive type7@51 vpiStrength0 64 level=0
+  primitive type7@51 vpiStrength1 64 level=0
 assign@31
   assign@31 vpiStrength0 64 level=0
   assign@31 vpiStrength1 64 level=0
