@@ -428,6 +428,9 @@ pub enum IrVpiConnRole {
     Notifier,
     /// The `&&&` condition of a timing check terminal.
     TermCondition,
+    /// The low connection of a port declared with a module-side select
+    /// expression (`.r(w[2:1])`, 23.2.2.1-23.2.2.2).
+    PortLow,
 }
 
 impl IrVpiConnRole {
@@ -443,6 +446,7 @@ impl IrVpiConnRole {
             Self::Argument => "LLG_VPI_ROLE_ARGUMENT",
             Self::Notifier => "LLG_VPI_ROLE_NOTIFIER",
             Self::TermCondition => "LLG_VPI_ROLE_TERM_COND",
+            Self::PortLow => "LLG_VPI_ROLE_PORT_LOW",
         }
     }
 }

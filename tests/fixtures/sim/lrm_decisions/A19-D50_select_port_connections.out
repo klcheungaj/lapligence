@@ -1,0 +1,17 @@
+port vpiPort:tb.u.r low=vpiPartSelect:tb.u.w[2:1] value=10 high=vpiPartSelect:tb.nv[1:0]
+  bit low=vpiNetBit:tb.u.w[2] high=vpiNetBit:tb.nv[1]
+  bit low=vpiNetBit:tb.u.w[1] high=vpiNetBit:tb.nv[0]
+port vpiPort:tb.u.s low=vpiNetBit:tb.u.w[0] value=1 high=vpiNet:tb.a
+port vpiPort:tb.u.t low=vpiNet:tb.u.v value=1 high=vpiNet:tb.a
+w drivers: vpiContAssign:tb.a vpiContAssign:tb.nv
+w local drivers: vpiPort:tb.u.r vpiPort:tb.u.s
+w ports: vpiPort:tb.u.r vpiPort:tb.u.s
+nv loads: vpiContAssign:tb.u.seen
+nv portinst: vpiPort:tb.k.b vpiPort:tb.u.r
+w[3] ports: NULL
+w[2] ports: vpiPortBit:tb.u.r
+w[0] ports: vpiPort:tb.u.s
+nv[1] portinst: vpiPortBit:tb.k.b vpiPortBit:tb.u.r
+nv[3] portinst: NULL
+b drivers: vpiContAssign:tb.nv
+b ports: vpiPort:tb.k.b

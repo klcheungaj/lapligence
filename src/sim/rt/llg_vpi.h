@@ -218,6 +218,7 @@ typedef struct {
 #define LLG_VPI_ROLE_ARGUMENT 7   /* another timing check argument (vpiExpr) */
 #define LLG_VPI_ROLE_NOTIFIER 8   /* vpiTchkNotifier (also a vpiExpr argument) */
 #define LLG_VPI_ROLE_TERM_COND 9  /* a terminal condition, not an argument */
+#define LLG_VPI_ROLE_PORT_LOW 10  /* the module-side select expression of a port */
 
 /* Delays of a module path, timing check, primitive, continuous assignment,
  * net or port (vpi_get_delays/vpi_put_delays, 38.10, 38.32). `ops` are the

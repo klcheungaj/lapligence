@@ -2277,8 +2277,8 @@ with no error status, as for a name that denotes nothing (S42-D11):
   variables, of interface and modport port references and of a port whose
   module-side expression is a concatenation (a multi-port has no low
   connection) are not indexed; a port declared with a module-side
-  expression (`.q({y1, y0})`, `.r(w[2:1])`, `.s(w[0])`) has no `vpiLowConn`
-  and neither have its bits, and a concatenation port has no `vpiHighConn`;
+  concatenation (`.q({y1, y0})`) has neither `vpiLowConn` nor
+  `vpiHighConn`, and neither have its bits;
 - structure and union members that are not exposed: members of structure or
   union nets, members of a record kept in columns (an unpacked structure
   whose instances the optimizer split into per-field arrays), unpacked

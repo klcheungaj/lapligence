@@ -2510,6 +2510,15 @@ fn a19_d49_scope_typedefs_and_memories() {
 }
 
 #[test]
+fn a19_d50_select_port_connections() {
+    run_vpi_decision(
+        "A19-D50_select_port_connections",
+        &["task $d50()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D50_select_port_connections.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

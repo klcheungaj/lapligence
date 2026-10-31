@@ -12,8 +12,9 @@ use crate::core::db::{
 };
 use crate::sim::ir::{
     IrSdfTarget, IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn,
-    IrVpiConstant, IrVpiDirection, IrVpiInstance, IrVpiObject, IrVpiObjectKind, IrVpiQualifiers,
-    IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember, IrVpiUdp, IrVpiVarKind,
+    IrVpiConnRole, IrVpiConstant, IrVpiDirection, IrVpiInstance, IrVpiObject, IrVpiObjectKind,
+    IrVpiQualifiers, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind, IrVpiTypespecMember, IrVpiUdp,
+    IrVpiVarKind,
 };
 
 mod code;
@@ -1964,12 +1965,26 @@ impl Codegen<'_> {
                             (false, Some(low)) => self.vpi_declared_typespec(&mut typespecs, *low),
                             _ => None,
                         },
+                        // The high connection first; a port declared with a
+                        // module-side select keeps that select as its low
+                        // connection (decision A19-D50).
                         conns: match (high_expr, high_open, interface.is_some()) {
                             (Some(high), false, false) => {
                                 vec![self.vpi_conn(*high, IrVpiDirection::None)]
                             }
                             _ => Vec::new(),
-                        },
+                        }
+                        .into_iter()
+                        .chain(
+                            self.db
+                                .port_internal_expression(id)
+                                .filter(|_| interface.is_none())
+                                .map(|low| IrVpiConn {
+                                    role: IrVpiConnRole::PortLow,
+                                    ..self.vpi_conn(low, IrVpiDirection::None)
+                                }),
+                        )
+                        .collect(),
                         qualifiers: vpi_qualifiers(self.db.declaration_qualifiers(id)),
                         ..IrVpiObject::default()
                     });

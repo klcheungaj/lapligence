@@ -323,7 +323,7 @@ typedef struct {
     struct llg_vpi_link* links;   /* connectivity links by referenced row, built on demand */
     size_t link_count;
     size_t link_capacity;
-    uint32_t* port_links;         /* the high-connection links, by port row */
+    uint32_t* port_links;         /* the high- and low-connection links, by port row */
     size_t port_link_count;
     int links_built;
     uintptr_t iterate_ref;        /* reference of the running vpi_iterate call */
@@ -1689,17 +1689,27 @@ static vpiHandle iterate_instance_elements(uint32_t row, int type) {
     return make_list_iterator(type, items, count);
 }
 
+static uint32_t role_conn(uint32_t row, int role);
+
+/* The connection entry of port `row` on its instantiating (`high`) or its
+ * module side: a port's high connection is its connection entry, the
+ * module-side select of a port declared with one its PORT_LOW entry
+ * (decision A19-D50). LLG_VPI_NONE without one. */
+static uint32_t port_conn(uint32_t row, int high) {
+    return role_conn(row, high ? LLG_VPI_ROLE_CONNECTION : LLG_VPI_ROLE_PORT_LOW);
+}
+
 /* vpiLowConn/vpiHighConn of a port bit (37.14): the same bit of the
  * connected object or constant select. */
 static vpiHandle port_bit_conn(const llg_vpi_slot_t* slot, int high) {
     llg_vpi_model_object_t* port = row_object(slot->object);
     uint32_t bit = (uint32_t)slot->aux, base = 0, width, row;
-    if (!high) {
-        if (!port->target) return NULL;
+    if (!high && port->target) {
         row = row_of(port->target);
         width = port->target->width;
     } else {
-        const llg_vpi_conn_t* conn = row_conn(slot->object, 0u);
+        uint32_t index = port_conn(slot->object, high);
+        const llg_vpi_conn_t* conn = index == LLG_VPI_NONE ? NULL : row_conn(slot->object, index);
         if (!conn) return NULL;
         if (conn->ref.object < 0 || (conn->ref.ref_kind != LLG_VPI_ARG_OBJECT &&
                                      conn->ref.ref_kind != LLG_VPI_ARG_SELECT)) {
@@ -6507,8 +6517,10 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                  * or modport port are reference objects. */
                 if (object->detail) return make_aux_slot(SLOT_REFOBJ, slot->object, (uint32_t)high);
                 /* Detail 10: an unconnected or null port gives NULL. */
-                if (high) return object->conn_count ? conn_handle(slot->object, 0u) : NULL;
-                if (!object->target) return NULL;
+                if (high || !object->target) {
+                    uint32_t side = port_conn(slot->object, high);
+                    return side == LLG_VPI_NONE ? NULL : conn_handle(slot->object, side);
+                }
                 return object_handle(row_of(object->target));
             }
             if (slot->kind == SLOT_PORTBIT) return port_bit_conn(slot, high);
@@ -6959,13 +6971,17 @@ static int links_ready(void) {
                 ok = links_add(&spans, LINK_PRIM_TERM, roles, row, i);
             }
         } else if (object->type == vpiPort && !object->detail) {
-            if (object->conn_count) {
-                conn_spans(row, 0u, 1, &spans);
-                ok = links_add(&spans, LINK_PORT_HIGH, direction_roles(object->subtype, 1), row, 0u);
+            uint32_t high = port_conn(row, 1);
+            if (high != LLG_VPI_NONE) {
+                conn_spans(row, high, 1, &spans);
+                ok = links_add(&spans, LINK_PORT_HIGH, direction_roles(object->subtype, 1), row, high);
             }
             const llg_vpi_model_object_t* low = object->target;
+            uint32_t select = low ? LLG_VPI_NONE : port_conn(row, 0);
             if (ok && is_connectable(low))
                 spans_push(&spans, row_of(low), LLG_VPI_NO_ELEMENT, 0, value_bits(low), 0, 1);
+            else if (ok && select != LLG_VPI_NONE)
+                conn_spans(row, select, 1, &spans);
             ok = ok && links_add(&spans, LINK_PORT_LOW, direction_roles(object->subtype, 0), row, 0u);
         } else if (object->type == vpiModPath || object->type == vpiTchk) {
             for (uint32_t i = 0; ok && i < object->conn_count; ++i) {
@@ -6987,15 +7003,15 @@ static int links_ready(void) {
     free(spans.items);
     if (ok && g_vpi.link_count)
         qsort(g_vpi.links, g_vpi.link_count, sizeof(*g_vpi.links), compare_links);
-    /* The high-connection links of each port, by port row. */
+    /* The connection links of each port, by port row. */
     size_t ports = 0;
     for (size_t i = 0; ok && i < g_vpi.link_count; ++i)
-        ports += g_vpi.links[i].kind == LINK_PORT_HIGH;
+        ports += g_vpi.links[i].kind == LINK_PORT_HIGH || g_vpi.links[i].kind == LINK_PORT_LOW;
     if (ok && ports) {
         g_vpi.port_links = (uint32_t*)malloc(ports * sizeof(*g_vpi.port_links));
         if (!g_vpi.port_links) ok = 0;
         for (size_t i = 0; ok && i < g_vpi.link_count; ++i)
-            if (g_vpi.links[i].kind == LINK_PORT_HIGH)
+            if (g_vpi.links[i].kind == LINK_PORT_HIGH || g_vpi.links[i].kind == LINK_PORT_LOW)
                 g_vpi.port_links[g_vpi.port_link_count++] = (uint32_t)i;
         if (ok)
             qsort(g_vpi.port_links, g_vpi.port_link_count, sizeof(*g_vpi.port_links),
@@ -7047,26 +7063,40 @@ static int is_net_row(uint32_t row) {
     return object && object->is_net;
 }
 
-/* Whether a port connects a net on both sides bit for bit, so a driver
- * or load on one side drives or loads the other (23.3.3.7). */
-static int port_link_transparent(const llg_vpi_link_t* link) {
-    const llg_vpi_model_object_t* port = row_object(link->source);
-    if (!port || !port->target || !port->target->is_net) return 0;
-    if (link->kind == LINK_PORT_HIGH) return (link->flags & LINK_MAPPED) && is_net_row(link->row);
-    /* A low connection is transparent when every high connection is. */
-    size_t low = 0, high = g_vpi.port_link_count, found = 0;
+/* The first entry of port row `source` in the port link index. */
+static size_t port_links_of(uint32_t source) {
+    size_t low = 0, high = g_vpi.port_link_count;
     while (low < high) {
         size_t middle = low + (high - low) / 2u;
-        if (g_vpi.links[g_vpi.port_links[middle]].source < link->source) low = middle + 1u;
+        if (g_vpi.links[g_vpi.port_links[middle]].source < source) low = middle + 1u;
         else high = middle;
     }
-    for (size_t i = low; i < g_vpi.port_link_count; ++i) {
+    return low;
+}
+
+/* Whether every `kind` link of port row `source` covers net bits that map
+ * bit for bit onto the port, and there is one. */
+static int port_side_nets(uint32_t source, int kind) {
+    size_t found = 0;
+    for (size_t i = port_links_of(source); i < g_vpi.port_link_count; ++i) {
         const llg_vpi_link_t* other = &g_vpi.links[g_vpi.port_links[i]];
-        if (other->source != link->source) break;
+        if (other->source != source) break;
+        if (other->kind != kind) continue;
         if (!(other->flags & LINK_MAPPED) || !is_net_row(other->row)) return 0;
         ++found;
     }
     return found != 0;
+}
+
+/* Whether a port connects a net on both sides bit for bit, so a driver
+ * or load on one side drives or loads the other (23.3.3.7). A high
+ * connection link joins its own bits when the module side is all nets
+ * (a whole net or a select of one, decision A19-D50); a low connection
+ * link joins when every high connection is a net. */
+static int port_link_transparent(const llg_vpi_link_t* link) {
+    if (!(link->flags & LINK_MAPPED) || !is_net_row(link->row)) return 0;
+    return port_side_nets(link->source,
+                          link->kind == LINK_PORT_HIGH ? LINK_PORT_LOW : LINK_PORT_HIGH);
 }
 
 /* Append a span unless one already listed covers it. */
@@ -7096,22 +7126,13 @@ static void net_group(const llg_vpi_span_t* start, llg_vpi_spans_t* group) {
             if ((link->kind != LINK_PORT_HIGH && link->kind != LINK_PORT_LOW) ||
                 !link_overlap(link, &span, &from, &to) || !port_link_transparent(link))
                 continue;
-            const llg_vpi_model_object_t* port = row_object(link->source);
-            /* Port value bits [first, last). */
+            /* Port value bits [first, last), found on the other side. */
             uint32_t first = link->offset + (from - link->lsb), last = first + (to - from);
-            if (link->kind == LINK_PORT_HIGH) {
-                group_push(group, row_of(port->target), LLG_VPI_NO_ELEMENT, first, last - first);
-                continue;
-            }
-            size_t low = 0, high = g_vpi.port_link_count;
-            while (low < high) {
-                size_t middle = low + (high - low) / 2u;
-                if (g_vpi.links[g_vpi.port_links[middle]].source < link->source) low = middle + 1u;
-                else high = middle;
-            }
-            for (size_t k = low; k < g_vpi.port_link_count; ++k) {
+            int other = link->kind == LINK_PORT_HIGH ? LINK_PORT_LOW : LINK_PORT_HIGH;
+            for (size_t k = port_links_of(link->source); k < g_vpi.port_link_count; ++k) {
                 const llg_vpi_link_t* outer = &g_vpi.links[g_vpi.port_links[k]];
                 if (outer->source != link->source) break;
+                if (outer->kind != other) continue;
                 uint32_t a = first > outer->offset ? first : outer->offset;
                 uint64_t outer_end = (uint64_t)outer->offset + outer->width;
                 uint32_t b = (uint64_t)last < outer_end ? last : (uint32_t)outer_end;
@@ -7592,9 +7613,10 @@ static int resolved_net_type(const llg_vpi_slot_t* slot) {
                 const llg_vpi_link_t* link = &g_vpi.links[i];
                 if (link->row != rows[r]) break;
                 if (link->kind != LINK_PORT_LOW || !port_link_transparent(link)) continue;
-                for (size_t k = 0; k < g_vpi.port_link_count; ++k) {
+                for (size_t k = port_links_of(link->source); k < g_vpi.port_link_count; ++k) {
                     const llg_vpi_link_t* outer = &g_vpi.links[g_vpi.port_links[k]];
-                    if (outer->source != link->source) continue;
+                    if (outer->source != link->source) break;
+                    if (outer->kind != LINK_PORT_HIGH) continue;
                     size_t h = 0;
                     while (h < count && rows[h] != outer->row) ++h;
                     if (h == count || types[h] == types[r]) continue;
