@@ -2631,7 +2631,11 @@ mod tests {
 
     #[test]
     fn runtime_cache_key_varies_with_toolchain_and_waveforms_not_model_width() {
-        let defaults = CmakeBuildOpts::default();
+        // An empty launcher selects none whatever `$LLG_C_LAUNCHER` holds.
+        let defaults = CmakeBuildOpts {
+            launcher: Some(String::new()),
+            ..Default::default()
+        };
         let base = runtime_cache_key(false, "cc", "-O2", "cmake", &defaults);
         assert_eq!(
             base,
