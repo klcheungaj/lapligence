@@ -2573,6 +2573,15 @@ fn a19_d56_defparams() {
 }
 
 #[test]
+fn a19_d57_static_subroutine_arguments() {
+    run_vpi_decision(
+        "A19-D57_static_subroutine_arguments",
+        &["task $d57()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D57_static_subroutine_arguments.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

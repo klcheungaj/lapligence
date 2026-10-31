@@ -216,6 +216,7 @@ impl Codegen<'_> {
                         | NodeKind::Param { .. }
                         | NodeKind::Port { .. }
                         | NodeKind::FuncTask { .. }
+                        | NodeKind::FuncArg { .. }
                         | NodeKind::NamedEvent
                 ) && !node.name.is_empty();
                 if named {
@@ -1218,10 +1219,18 @@ impl Codegen<'_> {
         let mut typespecs = TypespecTable::default();
         let mut scope_typedefs = Vec::new();
         let mut dynamic = crate::sim::ir::IrVpiDynamic::default();
+        // Static locals of procedures and the persistent formals of static
+        // tasks and functions (37.17: an argument is a variable of its
+        // subroutine).
         let static_locals = self
             .proc_local_instances
             .iter()
             .filter_map(|((_, node), info)| info.static_signal.as_ref().map(|s| (*node, s.ir)))
+            .chain(
+                self.static_formals
+                    .iter()
+                    .map(|((_, formal), info)| (*formal, info.ir)),
+            )
             .collect::<HashMap<_, _>>();
 
         // Elements of primitive arrays are unnamed; their array names them.
@@ -1476,7 +1485,7 @@ impl Codegen<'_> {
                         ..row
                     });
                 }
-                NodeKind::Net { ty, .. } | NodeKind::Var { ty }
+                NodeKind::Net { ty, .. } | NodeKind::Var { ty } | NodeKind::FuncArg { ty, .. }
                     if self.sig_globals.contains_key(&id) || static_locals.contains_key(&id) =>
                 {
                     let ir = match self.sig_globals.get(&id) {
@@ -1498,10 +1507,13 @@ impl Codegen<'_> {
                         IrType::Real { .. } => (0, false, true, false),
                     };
                     let declared_net = matches!(self.kind(id), NodeKind::Net { .. });
+                    // A formal's default is an argument value, not an
+                    // initialization of the variable.
+                    let formal = matches!(self.kind(id), NodeKind::FuncArg { .. });
                     if let Some(init) = self
                         .db
                         .var_initializer(id)
-                        .filter(|_| code && !declared_net)
+                        .filter(|_| code && !declared_net && !formal)
                     {
                         owners.push((
                             self.vpi_full_name(id),

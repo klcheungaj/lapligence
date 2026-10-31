@@ -1,0 +1,30 @@
+tb.st:
+  var vpiIntVar tb.st.a size=32 auto=0 value=          5
+  var vpiReg tb.st.b size=4 auto=0 value= 5
+  var vpiIntVar tb.st.c size=32 auto=0 value=         15
+  var vpiIntVar tb.st.loc size=32 auto=0 value=          6
+  io a dir=1
+    expr vpiIntVar tb.st.a size=32 auto=0 value=          5
+  io b dir=2
+    expr vpiReg tb.st.b size=4 auto=0 value= 5
+  io c dir=3
+    expr vpiIntVar tb.st.c size=32 auto=0 value=         15
+  tb.st.a vpiIntVar tb.st.a size=32 auto=0 value=          5
+  tb.st.b vpiReg tb.st.b size=4 auto=0 value= 5
+  tb.st.c vpiIntVar tb.st.c size=32 auto=0 value=         15
+  tb.st.loc vpiIntVar tb.st.loc size=32 auto=0 value=          6
+tb.sf:
+  var vpiIntVar tb.sf.x size=32 auto=0 value=          3
+  var vpiByteVar tb.sf.y size=8 auto=0 value=          4
+  var vpiIntVar tb.sf.sf size=32 auto=0 value=          7
+  io x dir=1
+    expr vpiIntVar tb.sf.x size=32 auto=0 value=          3
+  io y dir=1
+    expr vpiByteVar tb.sf.y size=8 auto=0 value=          4
+  tb.sf.x vpiIntVar tb.sf.x size=32 auto=0 value=          3
+  tb.sf.y vpiByteVar tb.sf.y size=8 auto=0 value=          4
+  tb.sf.sf vpiIntVar tb.sf.sf size=32 auto=0 value=          7
+tb.at:
+  io q dir=1
+    expr NULL
+  after put vpiIntVar tb.st.a size=32 auto=0 value=         42
