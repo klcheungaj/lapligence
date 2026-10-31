@@ -6,7 +6,7 @@ tb.x
   tb.x vpiSimNet type36:tb.x level=0
 tb.y
   tb.y vpiPrimTerm level=0:
-  tb.y vpiContAssign level=0: type8@33 type8@34 type8@36
+  tb.y vpiContAssign level=0: type8@34 type8@33 type8@36
   tb.y vpiPathTerm level=0:
   tb.y vpiTchkTerm level=0:
   tb.y vpiSimNet type36:tb.y level=0

@@ -2609,6 +2609,15 @@ fn a19_d60_container_typespecs() {
 }
 
 #[test]
+fn a19_d61_connectivity_order() {
+    run_vpi_decision(
+        "A19-D61_connectivity_order",
+        &["task $d61()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D61_connectivity_order.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

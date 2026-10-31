@@ -1,7 +1,7 @@
 pass 0
 tb.a
   tb.a vpiDriver level=0 n=1: assign@31
-  tb.a vpiLoad level=0 n=4: assign@32 term1:tb.g assign@20 port:tb.u2.ci
+  tb.a vpiLoad level=0 n=4: assign@32 term1:tb.g port:tb.u2.ci assign@20
   tb.a vpiLocalDriver level=0 n=1: assign@31
   tb.a vpiLocalLoad level=0 n=4: assign@32 term1:tb.g port:tb.u1.ci port:tb.u2.ci
   tb.a vpiPortInst level=0 n=2: port:tb.u1.ci port:tb.u2.ci
@@ -29,7 +29,7 @@ tb.v
   tb.v vpiPort level=0 n=0:
 tb.u1.ci
   tb.u1.ci vpiDriver level=0 n=1: assign@31
-  tb.u1.ci vpiLoad level=0 n=4: assign@32 term1:tb.g assign@20 port:tb.u2.ci
+  tb.u1.ci vpiLoad level=0 n=4: assign@20 assign@32 term1:tb.g port:tb.u2.ci
   tb.u1.ci vpiLocalDriver level=0 n=1: port:tb.u1.ci
   tb.u1.ci vpiLocalLoad level=0 n=1: assign@20
   tb.u1.ci vpiPortInst level=0 n=0:
@@ -107,7 +107,7 @@ tb.u1.cr
 pass 1
 tb.a
   tb.a vpiDriver level=0 n=1: assign@31
-  tb.a vpiLoad level=0 n=4: assign@32 term1:tb.g assign@20 port:tb.u2.ci
+  tb.a vpiLoad level=0 n=4: assign@32 term1:tb.g port:tb.u2.ci assign@20
   tb.a vpiLocalDriver level=0 n=1: assign@31
   tb.a vpiLocalLoad level=0 n=4: assign@32 term1:tb.g port:tb.u1.ci port:tb.u2.ci
   tb.a vpiPortInst level=0 n=2: port:tb.u1.ci port:tb.u2.ci
@@ -135,7 +135,7 @@ tb.v
   tb.v vpiPort level=0 n=0:
 tb.u1.ci
   tb.u1.ci vpiDriver level=0 n=1: assign@31
-  tb.u1.ci vpiLoad level=0 n=4: assign@32 term1:tb.g assign@20 port:tb.u2.ci
+  tb.u1.ci vpiLoad level=0 n=4: assign@20 assign@32 term1:tb.g port:tb.u2.ci
   tb.u1.ci vpiLocalDriver level=0 n=1: port:tb.u1.ci
   tb.u1.ci vpiLocalLoad level=0 n=1: assign@20
   tb.u1.ci vpiPortInst level=0 n=0:
@@ -213,7 +213,7 @@ tb.u1.cr
 pass 2
 tb.a
   tb.a vpiDriver level=0 n=1: assign@31
-  tb.a vpiLoad level=0 n=4: assign@32 term1:tb.g assign@20 port:tb.u2.ci
+  tb.a vpiLoad level=0 n=4: assign@32 term1:tb.g port:tb.u2.ci assign@20
   tb.a vpiLocalDriver level=0 n=1: assign@31
   tb.a vpiLocalLoad level=0 n=4: assign@32 term1:tb.g port:tb.u1.ci port:tb.u2.ci
   tb.a vpiPortInst level=0 n=2: port:tb.u1.ci port:tb.u2.ci
@@ -241,7 +241,7 @@ tb.v
   tb.v vpiPort level=0 n=0:
 tb.u1.ci
   tb.u1.ci vpiDriver level=0 n=1: assign@31
-  tb.u1.ci vpiLoad level=0 n=4: assign@32 term1:tb.g assign@20 port:tb.u2.ci
+  tb.u1.ci vpiLoad level=0 n=4: assign@20 assign@32 term1:tb.g port:tb.u2.ci
   tb.u1.ci vpiLocalDriver level=0 n=1: port:tb.u1.ci
   tb.u1.ci vpiLocalLoad level=0 n=1: assign@20
   tb.u1.ci vpiPortInst level=0 n=0:

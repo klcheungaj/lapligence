@@ -1,0 +1,24 @@
+tb.n
+  vpiDriver: assign:n=x0@tb assign:n=x2@tb term0:tb.b1 assign:o=i@tb.k1 assign:o=i@tb.gg.cc
+  vpiLoad: assign:m1=n@tb assign:z1=n@tb assign:m2=n@tb term1:tb.b2 assign:o=i@tb.k2
+  vpiLocalDriver: assign:n=x0@tb assign:n=x2@tb term0:tb.b1 vpiPort:tb.k1.o vpiPort:tb.gg.o
+  vpiLocalLoad: assign:m1=n@tb assign:z1=n@tb assign:m2=n@tb term1:tb.b2 vpiPort:tb.k2.i
+  vpiContAssign: assign:n=x0@tb assign:n=x2@tb assign:o=i@tb.k1 assign:o=i@tb.gg.cc assign:m1=n@tb assign:z1=n@tb assign:m2=n@tb assign:o=i@tb.k2
+  vpiPrimTerm: term0:tb.b1 term1:tb.b2
+  vpiPortInst: vpiPort:tb.k1.o vpiPort:tb.gg.o vpiPort:tb.k2.i
+tb.k2.i
+  vpiDriver: assign:n=x0@tb assign:n=x2@tb term0:tb.b1 assign:o=i@tb.k1 assign:o=i@tb.gg.cc
+  vpiLoad: assign:o=i@tb.k2 assign:m1=n@tb assign:z1=n@tb assign:m2=n@tb term1:tb.b2
+  vpiLocalDriver: vpiPort:tb.k2.i
+  vpiLocalLoad: assign:o=i@tb.k2
+  vpiContAssign: assign:n=x0@tb assign:n=x2@tb assign:o=i@tb.k1 assign:o=i@tb.gg.cc assign:o=i@tb.k2 assign:m1=n@tb assign:z1=n@tb assign:m2=n@tb
+  vpiPrimTerm: term0:tb.b1 term1:tb.b2
+  vpiPortInst:
+tb.gg.cc.o
+  vpiDriver: assign:o=i@tb.gg.cc assign:n=x0@tb assign:n=x2@tb term0:tb.b1 assign:o=i@tb.k1
+  vpiLoad: assign:m1=n@tb assign:z1=n@tb assign:m2=n@tb term1:tb.b2 assign:o=i@tb.k2
+  vpiLocalDriver: assign:o=i@tb.gg.cc
+  vpiLocalLoad: vpiPort:tb.gg.cc.o
+  vpiContAssign: assign:o=i@tb.gg.cc assign:n=x0@tb assign:n=x2@tb assign:o=i@tb.k1 assign:m1=n@tb assign:z1=n@tb assign:m2=n@tb assign:o=i@tb.k2
+  vpiPrimTerm: term0:tb.b1 term1:tb.b2
+  vpiPortInst:

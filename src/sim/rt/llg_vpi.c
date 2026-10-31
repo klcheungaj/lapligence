@@ -7652,6 +7652,7 @@ static int force_active(uint32_t code, const llg_vpi_forces_t* forces) {
 /* The objects a connectivity iteration returns, deduplicated. */
 typedef struct {
     uint8_t kind;      /* llg_vpi_slot_kind_t of the handle, SLOT_CODE for a force */
+    uint32_t order;    /* the key it sorts by before its row (link_order) */
     uint32_t row;
     uint32_t aux;
 } llg_vpi_link_item_t;
@@ -7661,6 +7662,7 @@ typedef struct {
     size_t count;
     size_t capacity;
     int failed;
+    uint32_t order;    /* the sort key of the items added next */
 } llg_vpi_link_items_t;
 
 static void items_add(llg_vpi_link_items_t* list, uint8_t kind, uint32_t row, uint32_t aux) {
@@ -7680,6 +7682,7 @@ static void items_add(llg_vpi_link_items_t* list, uint8_t kind, uint32_t row, ui
         list->capacity = capacity;
     }
     list->items[list->count].kind = kind;
+    list->items[list->count].order = list->order;
     list->items[list->count].row = row;
     list->items[list->count].aux = aux;
     ++list->count;
@@ -7792,11 +7795,39 @@ static int link_item(const llg_vpi_link_t* link, int one_bit, int select_bit, ui
     }
 }
 
+/* The key a connectivity item of iteration `type` sorts by before its
+ * catalog row, for a link found on the `net`-th net of the simulated net
+ * (net_group order: the queried net, then the nets ports join to it,
+ * breadth first; decision A19-D61). Drivers and loads: by net, and on each
+ * net its continuous assignments, primitive terminals, then ports. A net's
+ * continuous assignments: those that drive it before those that load it,
+ * each by net. Primitive terminals: by net. Other iterations: row order. */
+static uint32_t link_order(int type, const llg_vpi_link_t* link, size_t net) {
+    uint32_t at = net < 0xFFFFFFu ? (uint32_t)net : 0xFFFFFFu;
+    switch (type) {
+        case vpiContAssign:
+            return ((link->flags & LINK_DRIVER) ? 0u : 0x1000000u) + at;
+        case vpiPrimTerm:
+            return at;
+        case vpiDriver:
+        case vpiLoad:
+        case vpiLocalDriver:
+        case vpiLocalLoad:
+            return at * 4u + (link->kind == LINK_CONT_ASSIGN  ? 0u
+                              : link->kind == LINK_PRIM_TERM ? 1u
+                              : link->kind == LINK_PORT_HIGH || link->kind == LINK_PORT_LOW ? 2u
+                                                                                            : 3u);
+        default:
+            return 0;
+    }
+}
+
 static int compare_link_items(const void* left, const void* right) {
     const llg_vpi_link_item_t *a = (const llg_vpi_link_item_t*)left,
                               *b = (const llg_vpi_link_item_t*)right;
     int a_code = a->kind == SLOT_CODE, b_code = b->kind == SLOT_CODE;
     if (a_code != b_code) return a_code - b_code;
+    if (a->order != b->order) return a->order < b->order ? -1 : 1;
     if (a->row != b->row) return a->row < b->row ? -1 : 1;
     if (a->kind != b->kind) return a->kind < b->kind ? -1 : 1;
     return a->aux < b->aux ? -1 : a->aux > b->aux;
@@ -7812,7 +7843,8 @@ static vpiHandle link_items_iterator(int type, llg_vpi_link_items_t* items) {
         free(items->items);
         return NULL;
     }
-    /* Catalog order (declaration order), force statements last. */
+    /* By link_order, then catalog (declaration) order; force statements
+     * last. */
     qsort(items->items, items->count, sizeof(*items->items), compare_link_items);
     uintptr_t* handles = (uintptr_t*)calloc(items->count, sizeof(*handles));
     if (!handles) {
@@ -7945,6 +7977,7 @@ static vpiHandle iterate_connectivity(int type, const llg_vpi_slot_t* slot, int*
                     }
                     break;
             }
+            items.order = link_order(type, link, s);
             link_item(link, one_bit, select_bit, from, &items);
         }
     }
