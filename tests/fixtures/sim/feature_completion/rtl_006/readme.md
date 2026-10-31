@@ -28,8 +28,11 @@ complement, -3, all X, and the pattern with Z in bit 0.
   wider targets. It covers context extension that is signed only when both
   operands are signed, base-only sizing for `**` and shifts, and
   self-determined exponents and counts.
-- `arith_constants.sv` uses literal operands. The default optimizer folds what
-  it can, while `--no-opt` evaluates at run time; both must match the oracle.
+- `arith_constants_w{1,32,64,65}.sv` use literal operands, one width per
+  file. The default optimizer folds what it can, while `--no-opt` evaluates at
+  run time; both must match the oracle. One file held all four widths until its
+  single 33,000-line C process function made GCC `-O3` take 29 s and CI time
+  out; split files keep each generated function small.
 - `mutation_contexts.sv` checks one evaluation of call-valued indices,
   receivers (unpacked record elements, interface and hierarchical arrays) and
   right-hand sides. It also checks prefix/postfix and assignment-expression

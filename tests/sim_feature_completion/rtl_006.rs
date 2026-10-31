@@ -210,40 +210,38 @@ fn mixed_expected() -> String {
     out
 }
 
-fn constants_expected() -> String {
+fn constants_expected(w: usize) -> String {
     let mut out = String::new();
     let indices = [0, 1, 4, 5, 6, 10, 11];
-    for w in [1, 32, 64, 65] {
-        for i in indices {
-            let a = operand(w, i);
-            for j in indices {
-                let b = operand(w, j);
-                let k = [
-                    negate(&a),
-                    arith(Op::Add, &a, &b, true),
-                    arith(Op::Sub, &a, &b, true),
-                    arith(Op::Mul, &a, &b, true),
-                    arith(Op::Div, &a, &b, true),
-                    arith(Op::Mod, &a, &b, true),
-                    power(&a, true, &b, true),
-                    arith(Op::Mul, &a, &b, false),
-                    arith(Op::Div, &a, &b, false),
-                    arith(Op::Mod, &a, &b, false),
-                    power(&a, false, &b, false),
-                    arith(Op::Div, &a, &b, false),
-                    power(&a, true, &b, false),
-                    power(&a, false, &b, true),
+    for i in indices {
+        let a = operand(w, i);
+        for j in indices {
+            let b = operand(w, j);
+            let k = [
+                negate(&a),
+                arith(Op::Add, &a, &b, true),
+                arith(Op::Sub, &a, &b, true),
+                arith(Op::Mul, &a, &b, true),
+                arith(Op::Div, &a, &b, true),
+                arith(Op::Mod, &a, &b, true),
+                power(&a, true, &b, true),
+                arith(Op::Mul, &a, &b, false),
+                arith(Op::Div, &a, &b, false),
+                arith(Op::Mod, &a, &b, false),
+                power(&a, false, &b, false),
+                arith(Op::Div, &a, &b, false),
+                power(&a, true, &b, false),
+                power(&a, false, &b, true),
+            ];
+            writeln!(out, "{w} {i} {j} k {}", hex_list(&k)).unwrap();
+            if i != 11 {
+                let ks = [
+                    shift(&a, &b, true, false),
+                    shift(&a, &b, false, false),
+                    shift(&a, &b, false, true),
+                    shift(&a, &b, false, true),
                 ];
-                writeln!(out, "{w} {i} {j} k {}", hex_list(&k)).unwrap();
-                if i != 11 {
-                    let ks = [
-                        shift(&a, &b, true, false),
-                        shift(&a, &b, false, false),
-                        shift(&a, &b, false, true),
-                        shift(&a, &b, false, true),
-                    ];
-                    writeln!(out, "{w} {i} {j} ks {}", hex_list(&ks)).unwrap();
-                }
+                writeln!(out, "{w} {i} {j} ks {}", hex_list(&ks)).unwrap();
             }
         }
     }
@@ -291,13 +289,38 @@ fn mixed_width_contexts_match_independent_oracle() {
     sim_cli::run_case_backend_parity(SUITE, "arith_mixed", &expected, &[], &[]);
 }
 
+// The default optimizer folds literal operands it can evaluate; --no-opt
+// computes every one at run time. Both must match the same oracle. One fixture
+// per width: all four widths in one `initial` block made a single 33,000-line
+// C function whose GCC `-O3` compile alone took 29 s locally (superlinear in
+// function size; 9,000 lines took 5 s) and exceeded the 180 s per-run limit
+// on loaded CI runners.
 #[test]
-fn constant_operands_fold_like_runtime_operations() {
-    // The default optimizer folds literal operands it can evaluate; --no-opt
-    // computes every one at run time. Both must match the same oracle.
-    let expected = constants_expected();
-    sim_cli::run_case(SUITE, "arith_constants", &expected, "", &[]);
-    sim_cli::run_case_backend_parity(SUITE, "arith_constants", &expected, &[], &[]);
+fn constant_operands_fold_like_runtime_operations_w1() {
+    let expected = constants_expected(1);
+    sim_cli::run_case(SUITE, "arith_constants_w1", &expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "arith_constants_w1", &expected, &[], &[]);
+}
+
+#[test]
+fn constant_operands_fold_like_runtime_operations_w32() {
+    let expected = constants_expected(32);
+    sim_cli::run_case(SUITE, "arith_constants_w32", &expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "arith_constants_w32", &expected, &[], &[]);
+}
+
+#[test]
+fn constant_operands_fold_like_runtime_operations_w64() {
+    let expected = constants_expected(64);
+    sim_cli::run_case(SUITE, "arith_constants_w64", &expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "arith_constants_w64", &expected, &[], &[]);
+}
+
+#[test]
+fn constant_operands_fold_like_runtime_operations_w65() {
+    let expected = constants_expected(65);
+    sim_cli::run_case(SUITE, "arith_constants_w65", &expected, "", &[]);
+    sim_cli::run_case_backend_parity(SUITE, "arith_constants_w65", &expected, &[], &[]);
 }
 
 #[test]
