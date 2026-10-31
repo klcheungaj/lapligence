@@ -19,6 +19,10 @@ the rules a change must keep. Platform pitfalls are in
   only that `build`, downloads the archive and runs the full suite
   (`--no-fail-fast`). `release` needs all five callers plus lint, sanitizers and
   audit.
+- Every `cargo nextest`/`cargo test` step passes `--no-fail-fast`, and a later
+  test step of the same job runs under `if: ${{ !cancelled() }}`, so one failure
+  hides no other (run 111325565657 cancelled 4117 of 5951 lint-job tests); a
+  failed step still fails the job.
 - Reusable workflows do not inherit the caller's top-level `env`; each sets
   `NEXTEST_PROFILE`. Artifact names are unique per platform
   (`nextest-archive-<target>`, `lapligence-<os>-<arch>`); archives are kept one day.

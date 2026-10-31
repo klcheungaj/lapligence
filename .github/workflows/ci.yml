@@ -122,19 +122,25 @@ jobs:
         with:
           key: lint-ubuntu-22.04
 
+      # Each test step runs every test (--no-fail-fast) and the later ones
+      # run even when an earlier step failed, so one failure hides no other;
+      # any failed step still fails the job.
       - name: Generated C coroutine-frame and jump-initialization gate
-        run: cargo nextest run --locked --all-features -E 'test(/^generated_c_frame_lint::/)'
+        run: cargo nextest run --locked --all-features --no-fail-fast -E 'test(/^generated_c_frame_lint::/)'
 
       - name: cargo nextest
+        if: ${{ !cancelled() }}
         run: >-
-          cargo nextest run --locked --all-features
+          cargo nextest run --locked --all-features --no-fail-fast
           -E 'not test(/^generated_c_frame_lint::/)'
 
       - name: cargo test (doc tests)
-        run: cargo test --locked --doc --all-features
+        if: ${{ !cancelled() }}
+        run: cargo test --locked --doc --all-features --no-fail-fast
 
       - name: Owned renderer generated-model and host-lifecycle acceptance
-        run: cargo test --locked --lib --no-default-features structured_owned_model_
+        if: ${{ !cancelled() }}
+        run: cargo test --locked --lib --no-default-features --no-fail-fast structured_owned_model_
 
       - name: Report runner resources
         if: always()
@@ -206,14 +212,17 @@ jobs:
         with:
           key: sanitizers-ubuntu-22.04
 
+      # As in the lint job: every test runs and the second step runs after a
+      # failure of the first; either failure fails the job.
       - name: Run generated runtime and model probes under sanitizers
         run: >-
-          cargo nextest run --locked --all-features
+          cargo nextest run --locked --all-features --no-fail-fast
           -E 'test(/^(runtime_values|runtime_random|runtime_boundaries|sim_counter|sim_data_types|sim_data_types_next|sim_data_types_completion|sim_type_conformance|sim_partial_features|sim_net_resolution|sim_net_defaults|sim_function|sim_loops|sim_tagged_union_access|sim_review_next4|sim_review_tasks08_11|sim_fixed_ordering_review|sim_casez|sim_007|sim_023|sim_099|adv_026)::/)'
 
       - name: Run generated tagged guard library models under sanitizers
+        if: ${{ !cancelled() }}
         run: >-
-          cargo nextest run --locked --all-features --lib
+          cargo nextest run --locked --all-features --no-fail-fast --lib
           -E 'test(sim::emit_c::owned::tests::tagged_guards)'
 
       - name: Report runner resources
