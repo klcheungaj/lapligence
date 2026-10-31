@@ -669,6 +669,10 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
             (entry.qualifiers.vectored, "LLG_VPI_OBJ_VECTORED"),
             (entry.qualifiers.by_name, "LLG_VPI_OBJ_BY_NAME"),
             (entry.qualifiers.explicit_name, "LLG_VPI_OBJ_EXPLICIT"),
+            (entry.qualifiers.dpi_import, "LLG_VPI_OBJ_DPI_IMPORT"),
+            (entry.qualifiers.dpi_export, "LLG_VPI_OBJ_DPI_EXPORT"),
+            (entry.qualifiers.dpi_pure, "LLG_VPI_OBJ_DPI_PURE"),
+            (entry.qualifiers.dpi_context, "LLG_VPI_OBJ_DPI_CONTEXT"),
         ] {
             if set {
                 flags.push(flag);

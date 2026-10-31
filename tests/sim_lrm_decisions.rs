@@ -2528,6 +2528,15 @@ fn a19_d51_package_definition_properties() {
 }
 
 #[test]
+fn a19_d52_dpi_and_return_properties() {
+    run_vpi_decision(
+        "A19-D52_dpi_and_return_properties",
+        &["task $d52()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D52_dpi_and_return_properties.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

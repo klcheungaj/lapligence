@@ -254,6 +254,25 @@ impl Codegen<'_> {
         declared.or_else(|| (width > 1).then(|| (i64::from(width) - 1, 0)))
     }
 
+    /// The outermost packed range of the return type of function `id`, or
+    /// `[width-1:0]` of a wider value without one (IEEE 1800-2009 37.37).
+    fn vpi_return_range(&self, id: NodeId, width: u32) -> Option<(i64, i64)> {
+        let declared = match self
+            .db
+            .type_descriptor(id)
+            .map(|descriptor| &descriptor.shape)
+        {
+            Some(TypeShape::PackedAtom { ranges }) => ranges.first().and_then(|range| {
+                Some((
+                    i64::try_from(range.left).ok()?,
+                    i64::try_from(range.right).ok()?,
+                ))
+            }),
+            _ => None,
+        };
+        declared.or_else(|| (width > 1).then(|| (i64::from(width) - 1, 0)))
+    }
+
     fn vpi_packed_dimension_count(&self, id: NodeId) -> usize {
         self.db.packed_dimensions(id).map_or(0, <[_]>::len)
     }
@@ -1780,6 +1799,12 @@ impl Codegen<'_> {
                 } if !node.name.is_empty() && self.vpi_declared_in_instance(id) => {
                     let detail = vpi_func_type(*is_task, ret.as_ref());
                     let key = self.vpi_full_name(id);
+                    let width = ret.as_ref().and_then(|ret| ret.width).unwrap_or(0);
+                    // 37.37 details 6-10: the DPI qualifiers and C linkage
+                    // name of an imported or exported subroutine.
+                    let import = self.db.dpi_import(id);
+                    let export = self.db.dpi_export(id);
+                    let c_name = import.map(|info| info.c_name.as_str()).or(export);
                     if let Some(body) = self.db.subroutine_body(id).filter(|_| code) {
                         owners.push((key.clone(), key.clone(), CodeOwner::Statement(body)));
                     }
@@ -1789,8 +1814,21 @@ impl Codegen<'_> {
                         kind: IrVpiObjectKind::TaskFunc,
                         type_code: Some(if *is_task { "vpiTask" } else { "vpiFunction" }),
                         detail,
-                        width: ret.as_ref().and_then(|ret| ret.width).unwrap_or(0),
+                        width,
                         signed: ret.as_ref().is_some_and(|ret| ret.signed),
+                        // 37.37: the packed range of the return type.
+                        packed_range: (!*is_task
+                            && detail.is_some_and(|code| code != "vpiRealFunc"))
+                        .then(|| self.vpi_return_range(id, width))
+                        .flatten(),
+                        constant: c_name.map(|name| IrVpiConstant::Text(name.to_owned())),
+                        qualifiers: IrVpiQualifiers {
+                            dpi_import: import.is_some(),
+                            dpi_export: export.is_some(),
+                            dpi_pure: import.is_some_and(|info| info.pure),
+                            dpi_context: import.is_some_and(|info| info.context),
+                            ..IrVpiQualifiers::default()
+                        },
                         qualifier: *automatic,
                         activation: self.vpi_activation(id),
                         ..IrVpiObject::default()
@@ -2923,6 +2961,7 @@ fn vpi_qualifiers(qualifiers: crate::core::db::DeclarationQualifiers) -> IrVpiQu
         vectored: qualifiers.vectored,
         explicit_name: qualifiers.explicit_port_name,
         by_name: qualifiers.connected_by_name,
+        ..IrVpiQualifiers::default()
     }
 }
 

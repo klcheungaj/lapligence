@@ -6457,7 +6457,14 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
         case vpiLeftRange:
         case vpiRightRange: {
             int64_t value;
-            if (!handle_bound(slot, type == vpiLeftRange, &value)) break;
+            if (!handle_bound(slot, type == vpiLeftRange, &value)) {
+                /* 37.37: a task, or a function whose value has no packed
+                 * range, has no range. */
+                if (slot->kind == SLOT_OBJECT && object &&
+                    (object->type == vpiTask || object->type == vpiFunction))
+                    return NULL;
+                break;
+            }
             return make_constant(value, vpiDecConst);
         }
         case vpiIndex:
@@ -6648,6 +6655,12 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 uint32_t instance = enclosing_instance(start);
                 return instance == LLG_VPI_NONE ? NULL : object_handle(instance);
             }
+            break;
+        case vpiInterface:
+            /* 37.7: the interface instance a modport belongs to. */
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiModport &&
+                object->parent && object->parent->type == vpiInterface)
+                return object_handle(row_of(object->parent));
             break;
         case vpiUserSystf:
             if (slot->kind == SLOT_CALL) {
@@ -8980,6 +8993,30 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 case vpiDefDelayMode: return vpiDelayModeNone;
                 default: return object->instance->unconnected_drive;
             }
+        case vpiAccessType:
+        case vpiDPIPure:
+        case vpiDPIContext:
+        case vpiDPICStr:
+            /* 37.37 details 6-9: the DPI qualifiers of a task or function.
+             * llg accepts only "DPI-C" declarations; another subroutine has
+             * no access type and no DPI qualifier string. */
+            if (slot->kind == SLOT_OBJECT && object &&
+                (object->type == vpiTask || object->type == vpiFunction)) {
+                uint32_t flags = object->flags;
+                switch (property) {
+                    case vpiAccessType:
+                        return (flags & LLG_VPI_OBJ_DPI_IMPORT)   ? vpiDPIImportAcc
+                               : (flags & LLG_VPI_OBJ_DPI_EXPORT) ? vpiDPIExportAcc
+                                                                  : 0;
+                    case vpiDPIPure: return (flags & LLG_VPI_OBJ_DPI_PURE) != 0;
+                    case vpiDPIContext: return (flags & LLG_VPI_OBJ_DPI_CONTEXT) != 0;
+                    default:
+                        if (flags & (LLG_VPI_OBJ_DPI_IMPORT | LLG_VPI_OBJ_DPI_EXPORT))
+                            return vpiDPIC;
+                        break;
+                }
+            }
+            return unsupported_property();
         case vpiAutomatic:
             if (slot->kind == SLOT_OBJECT && object &&
                 (object->type == vpiTask || object->type == vpiFunction))
@@ -9332,6 +9369,13 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
             }
             switch (property) {
                 case vpiName: return (PLI_BYTE8*)object->name;
+                case vpiDPICIdentifier:
+                    /* 37.37 detail 10: the C linkage name of a DPI task or
+                     * function. */
+                    if ((object->type == vpiTask || object->type == vpiFunction) &&
+                        (object->flags & (LLG_VPI_OBJ_DPI_IMPORT | LLG_VPI_OBJ_DPI_EXPORT)))
+                        return (PLI_BYTE8*)object->constant;
+                    break;
                 case vpiFullName:
                     if (object->type == vpiPort) {
                         snprintf(g_vpi.str_buffer, sizeof(g_vpi.str_buffer), "%s",

@@ -468,6 +468,10 @@ static PLI_INT32 zero(PLI_BYTE8* data) {
     return 0;
 }
 
+/* The pure DPI-C import of catalog.sv; the walk only queries it. */
+int catalog_add(int a, int b);
+int catalog_add(int a, int b) { return a + b; }
+
 static void registration(void) {
     s_vpi_systf_data task;
     memset(&task, 0, sizeof task);

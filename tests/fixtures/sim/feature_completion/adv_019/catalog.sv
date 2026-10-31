@@ -241,6 +241,10 @@ module tb;
   function automatic int inc(input int v);
     return v + 1;
   endfunction
+  // DPI-C subroutines for the DPI properties of 37.37.
+  import "DPI-C" pure function int catalog_add(input int a, input int b);
+  export "DPI-C" cat_exported = function inc;
+  export "DPI-C" task fire;
   task fire;
     -> ev;
   endtask

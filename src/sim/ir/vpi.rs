@@ -352,13 +352,18 @@ pub struct IrVpiObject {
 }
 
 /// Declaration keywords and port naming of a net or port row (IEEE
-/// 1800-2009 37.14, 37.16).
+/// 1800-2009 37.14, 37.16), and the DPI qualifiers of a task or function
+/// row (37.37 details 6-8).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct IrVpiQualifiers {
     pub(in crate::sim) scalared: bool,
     pub(in crate::sim) vectored: bool,
     pub(in crate::sim) explicit_name: bool,
     pub(in crate::sim) by_name: bool,
+    pub(in crate::sim) dpi_import: bool,
+    pub(in crate::sim) dpi_export: bool,
+    pub(in crate::sim) dpi_pure: bool,
+    pub(in crate::sim) dpi_context: bool,
 }
 
 /// The definition and configuration properties of an instance (IEEE

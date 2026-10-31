@@ -191,7 +191,7 @@ node interface 37.6 type=vpiInterface
 
 node modport 37.7 type=vpiModport
   get vpiName unsupported a modport reports its name through vpi_get_str
-  handle vpiInterface unsupported a modport does not lead back to its interface
+  handle vpiInterface implemented walk
   iterate vpiIODecl implemented walk
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiModule extension walk the enclosing scope, instance, module or parent
@@ -402,21 +402,21 @@ node scope 37.12 members=instance,task_func,named_begin,begin,named_fork,fork,cl
 
 node task_func 37.12 members=task,function
   handle vpiStmt implemented walk
-  handle vpiLeftRange unsupported the return range of a function is not exposed
-  handle vpiRightRange unsupported the return range of a function is not exposed
+  handle vpiLeftRange implemented walk
+  handle vpiRightRange implemented walk
   handle vpiReturn unsupported the return variable of a function is not an object
   handle vpiClassDefn implemented walk
   handle vpiParent implemented walk
   iterate vpiIODecl implemented walk
   get vpiMethod implemented walk
-  get vpiAccessType unsupported DPI and interface access properties of tasks and functions are not captured
+  get vpiAccessType implemented walk
   get vpiVisibility implemented walk
   get vpiVirtual implemented a19classes
   get vpiAutomatic implemented walk
-  get vpiDPIPure unsupported DPI and interface access properties of tasks and functions are not captured
-  get vpiDPIContext unsupported DPI and interface access properties of tasks and functions are not captured
-  get vpiDPICStr unsupported DPI and interface access properties of tasks and functions are not captured
-  str vpiDPICIdentifier unsupported DPI and interface access properties of tasks and functions are not captured
+  get vpiDPIPure implemented walk
+  get vpiDPIContext implemented walk
+  get vpiDPICStr implemented walk
+  str vpiDPICIdentifier implemented walk
 
 node named_begin 37.12 type=vpiNamedBegin
   get vpiCovered implemented walk

@@ -29,6 +29,12 @@ extern "C" {
 #define LLG_VPI_OBJ_BY_NAME 0x10000u  /* vpiConnByName: a port connected by name */
 #define LLG_VPI_OBJ_EXPLICIT 0x20000u /* vpiExplicitName: a port named in the module header */
 #define LLG_VPI_OBJ_CONST 0x40000u    /* vpiConstantVariable: a variable declared const */
+/* A DPI task or function (37.37 details 6-10): imported or exported, a pure
+ * or context import; `constant` holds its C linkage name. */
+#define LLG_VPI_OBJ_DPI_IMPORT 0x80000u
+#define LLG_VPI_OBJ_DPI_EXPORT 0x100000u
+#define LLG_VPI_OBJ_DPI_PURE 0x200000u
+#define LLG_VPI_OBJ_DPI_CONTEXT 0x400000u
 
 /* Typespecs (IEEE 1800-2009 37.23). The generated model emits interned
  * tables; fields naming an optional entry hold its index + 1 (0: none),

@@ -1,0 +1,19 @@
+modport tb.i0.mp interface tb.i0
+cadd vpiFunction access=4 pure=1 context=0 cstr=2 identifier=cadd
+  left=vpiConstant=31 right=vpiConstant=0
+ctask vpiTask access=4 pure=0 context=1 cstr=2 identifier=ctask
+  left=NULL right=NULL
+other vpiFunction access=4 pure=0 context=0 cstr=2 identifier=d52_other
+  left=vpiConstant=31 right=vpiConstant=0
+sv_f vpiFunction access=3 pure=0 context=0 cstr=2 identifier=sv_f
+  left=vpiConstant=31 right=vpiConstant=0
+sv_t vpiTask access=3 pure=0 context=0 cstr=2 identifier=d52_task
+  left=NULL right=NULL
+rng vpiFunction access=0 pure=0 context=0 cstr=-1(error) identifier=NULL(error)
+  left=vpiConstant=7 right=vpiConstant=2
+bit1 vpiFunction access=0 pure=0 context=0 cstr=-1(error) identifier=NULL(error)
+  left=NULL right=NULL
+rf vpiFunction access=0 pure=0 context=0 cstr=-1(error) identifier=NULL(error)
+  left=NULL right=NULL
+vf vpiFunction access=0 pure=0 context=0 cstr=-1(error) identifier=NULL(error)
+  left=NULL right=NULL
