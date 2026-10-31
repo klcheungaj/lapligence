@@ -2564,6 +2564,15 @@ fn a19_d55_attributes() {
 }
 
 #[test]
+fn a19_d56_defparams() {
+    run_vpi_decision(
+        "A19-D56_defparams",
+        &["task $d56()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D56_defparams.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

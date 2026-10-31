@@ -1802,6 +1802,27 @@ impl Codegen<'_> {
                         ..IrVpiObject::default()
                     }));
                 }
+                // 37.26: a defparam, with the parameter it overrides and its
+                // value expression.
+                NodeKind::ParamAssign {
+                    target: Some(target),
+                    ..
+                } if node.children.len() == 1 => {
+                    let rhs = node.children[0];
+                    let scope = self.vpi_full_name(id);
+                    let key = self.vpi_unnamed_key(&scope, 'd', id);
+                    if code {
+                        owners.push((key.clone(), scope.clone(), CodeOwner::Conns(vec![rhs])));
+                    }
+                    insert(source(IrVpiObject {
+                        full_name: key,
+                        kind: IrVpiObjectKind::DefParam,
+                        port_target: Some(self.vpi_full_name(*target)),
+                        conns: vec![self.vpi_conn(rhs, IrVpiDirection::None)],
+                        unnamed: true,
+                        ..IrVpiObject::default()
+                    }));
+                }
                 NodeKind::FuncTask {
                     is_task,
                     automatic,

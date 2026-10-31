@@ -87,6 +87,10 @@ pub enum IrVpiObjectKind {
     /// [`IrVpiObject::constant`] holds its value, [`IrVpiObject::qualifier`]
     /// marks one of the instantiated definition (`vpiDefAttribute`).
     Attribute,
+    /// A `defparam` (`vpiDefParam`, 37.26), unnamed under its module or
+    /// generate scope: [`IrVpiObject::port_target`] names the parameter it
+    /// overrides (`vpiLhs`), `conns[0]` its value expression (`vpiRhs`).
+    DefParam,
 }
 
 impl IrVpiObjectKind {
@@ -124,6 +128,7 @@ impl IrVpiObjectKind {
             Self::GenVar => "vpiGenVar",
             Self::IoDecl => "vpiIODecl",
             Self::Attribute => "vpiAttribute",
+            Self::DefParam => "vpiDefParam",
         }
     }
 

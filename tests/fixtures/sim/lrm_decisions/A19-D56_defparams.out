@@ -1,0 +1,33 @@
+tb defparams:
+  vpiDefParam line=16 name=NULL(err) full=NULL(err) module=tb parent=NULL(err) scope=NULL(err)
+    lhs vpiParameter tb.t.P value=          5
+    rhs vpiConstant decompile=5 value=         5 size=32 line=16
+  vpiDefParam line=17 name=NULL(err) full=NULL(err) module=tb parent=NULL(err) scope=NULL(err)
+    lhs vpiParameter tb.t.u.Q value=          3
+    rhs vpiOperation decompile=2 + 1 value=          3 size=32 line=17
+      operand vpiConstant 2
+      operand vpiConstant 1
+  vpiDefParam line=17 name=NULL(err) full=NULL(err) module=tb parent=NULL(err) scope=NULL(err)
+    lhs vpiParameter tb.m.P value=         -4
+    rhs vpiOperation decompile=- 4 value=         -4 size=32 line=17
+      operand vpiConstant 4
+tb.t defparams:
+  vpiDefParam line=11 name=NULL(err) full=NULL(err) module=tb.t parent=NULL(err) scope=NULL(err)
+    lhs vpiParameter tb.t.u.R value= 51
+    rhs vpiConstant decompile=8'h33 value= 51 size=8 line=11
+tb.m defparams:
+  vpiDefParam line=11 name=NULL(err) full=NULL(err) module=tb.m parent=NULL(err) scope=NULL(err)
+    lhs vpiParameter tb.m.u.R value= 51
+    rhs vpiConstant decompile=8'h33 value= 51 size=8 line=11
+tb.g defparams:
+  vpiDefParam line=20 name=NULL(err) full=NULL(err) module=tb parent=NULL(err) scope=NULL(err)
+    lhs vpiParameter tb.g.v.Q value=          7
+    rhs vpiConstant decompile=7 value=         7 size=32 line=20
+tb.t.u defparams:
+tb.t.P =           5
+tb.m.P =          -4
+tb.t.u.Q =           3
+tb.m.u.Q =           1
+tb.t.u.R =  51
+tb.m.u.R =  51
+tb.g.v.Q =           7

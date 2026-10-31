@@ -6294,6 +6294,18 @@ private:
       if (const Expression* initializer = symbol.getInitializer())
         capture.semanticRole(id, initializer, LLG_SLANG_EDGE_INITIALIZER);
     }
+    if constexpr (std::same_as<T, DefParamSymbol>) {
+      // IEEE 1800-2009 37.26: the parameter a defparam overrides and its
+      // value expression, which the visitor does not reach on its own. One
+      // that resolves to no parameter (an error) keeps neither.
+      const Expression& value = symbol.getInitializer();
+      if (const Symbol* target = symbol.getTarget();
+          target && value.kind != ExpressionKind::Invalid) {
+        capture.semanticRole(id, target, LLG_SLANG_EDGE_REFERENCE);
+        capture.semanticRole(id, &value, LLG_SLANG_EDGE_RHS);
+        value.visit(*this);
+      }
+    }
     if constexpr (std::same_as<T, InstanceBodySymbol> ||
                   std::same_as<T, CheckerInstanceBodySymbol>) {
       // The default clocking in effect for this instance, including one named

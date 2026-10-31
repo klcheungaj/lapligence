@@ -131,8 +131,12 @@ pub enum NodeKind {
         value: Option<Val>,
         local: bool,
     },
+    /// A parameter override; a `defparam` (IEEE 1800-2009 23.10.1) names
+    /// the parameter it overrides and has its value expression as its only
+    /// child.
     ParamAssign {
         overridden: bool,
+        target: Option<NodeId>,
     },
     /// Slang's container for an array of elaborated instances. Concrete
     /// instance entries are normalized into the enclosing instance hierarchy.

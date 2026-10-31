@@ -509,11 +509,12 @@ static int is_instance_array_type(int type) {
 }
 
 /* Structure objects without a value of their own (37.7, 37.11, 37.25,
- * 37.31, 37.43, 37.58). */
+ * 37.26, 37.31, 37.43, 37.58). */
 static int is_structure_type(int type) {
     return is_process_type(type) || is_primitive_type(type) || is_instance_array_type(type) ||
            type == vpiContAssign || type == vpiNamedEvent || type == vpiModport ||
-           type == vpiModPath || type == vpiTchk || type == vpiClockingIODecl;
+           type == vpiModPath || type == vpiTchk || type == vpiClockingIODecl ||
+           type == vpiDefParam;
 }
 
 static int is_array_type(int type) {
@@ -3320,6 +3321,11 @@ static int load_one_plugin(const char* path) {
 int llg_vpi_startup_static(void (*const* routines)(void)) {
     if (!g_vpi.initialized) {
         vpi_set_error(vpiCompile, vpiError, "LLG_VPI_MODEL", "VPI startup ran without model metadata");
+        return 0;
+    }
+    if (g_vpi.failed) {
+        /* The model metadata was rejected before any application ran. */
+        fprintf(stderr, "llg: VPI startup failed: %s\n", g_vpi.error_message);
         return 0;
     }
     if (!routines) return 1;
@@ -6314,6 +6320,12 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
     uint32_t argument = argument_code(slot);
     if (argument != LLG_VPI_NONE) return code_relation(type, argument);
     llg_vpi_model_object_t* object = row_object(slot->object);
+    if (slot->kind == SLOT_OBJECT && object && object->type == vpiDefParam &&
+        type != vpiModule && type != vpiLhs && type != vpiRhs) {
+        /* 37.26: a defparam leads to its module, parameter and value. */
+        vpi_error("LLG_VPI_RELATION", "a defparam has only vpiModule, vpiLhs and vpiRhs (37.26)");
+        return NULL;
+    }
     if (slot->kind == SLOT_OBJECT && object && object->type == vpiAttribute &&
         type != vpiParent) {
         /* 37.78: an attribute leads only to its owner. */
@@ -6563,6 +6575,10 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
         case vpiRhs:
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiContAssign)
                 return conn_handle(slot->object, type == vpiLhs ? 0u : 1u);
+            /* 37.26: the parameter a defparam overrides and its value. */
+            if (slot->kind == SLOT_OBJECT && object && object->type == vpiDefParam)
+                return type == vpiLhs ? (object->target ? object_handle(row_of(object->target)) : NULL)
+                                      : conn_handle(slot->object, 0u);
             /* 37.43: a bit's target is that bit of the assignment's target;
              * its right-hand side is the assignment's (decision A19-D34). */
             if (slot->kind == SLOT_CABIT)
@@ -7765,7 +7781,7 @@ static int iteration_type_supported(int type) {
         case vpiUdp: case vpiModuleArray: case vpiInterfaceArray: case vpiPrimitiveArray:
         case vpiGateArray: case vpiSwitchArray: case vpiUdpArray: case vpiInstanceArray:
         case vpiModport: case vpiModPath: case vpiTchk: case vpiProgram: case vpiProgramArray:
-        case vpiClockingBlock: case vpiClockingIODecl:
+        case vpiClockingBlock: case vpiClockingIODecl: case vpiDefParam:
             return 1;
         default:
             return 0;
@@ -8177,6 +8193,13 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
         if (role >= 0) return iterate_roles(slot->object, type, 1u << role);
         vpi_error("LLG_VPI_RELATION",
                   "a module path iterates vpiModPathIn, vpiModPathOut and vpiModDataPathIn");
+        return NULL;
+    }
+    if (type == vpiDefParam &&
+        !(slot->kind == SLOT_OBJECT && object &&
+          (object->type == vpiModule || object->type == vpiGenScope))) {
+        /* 37.5, 37.80: the defparams of a module or generate scope. */
+        vpi_error("LLG_VPI_RELATION", "only modules and generate scopes hold defparams");
         return NULL;
     }
     if (type == vpiIODecl || type == vpiGenScopeArray || type == vpiSpecParam ||
@@ -9219,6 +9242,7 @@ static const char* type_name(int type) {
         case vpiGenVar: return "vpiGenVar";
         case vpiIODecl: return "vpiIODecl";
         case vpiAttribute: return "vpiAttribute";
+        case vpiDefParam: return "vpiDefParam";
         case vpiTimeQueue: return "vpiTimeQueue";
         case vpiUdpDefn: return "vpiUdpDefn";
         case vpiTableEntry: return "vpiTableEntry";

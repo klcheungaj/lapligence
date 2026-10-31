@@ -58,6 +58,7 @@ test a20d17 sim_lrm_decisions::a20_d17_port_delays
 test a20d18 sim_lrm_decisions::a20_d18_intermodule_paths
 test a20d19 sim_lrm_decisions::a20_d19_runtime_delays
 test a19d55 sim_lrm_decisions::a19_d55_attributes
+test a19d56 sim_lrm_decisions::a19_d56_defparams
 test s42obj sim_042::objects_traverse_hierarchy_and_write_selected_destinations
 test s42systf sim_042::system_functions_follow_the_return_conventions
 test s42values sim_042::values_cover_every_format_and_put_mode
@@ -105,7 +106,7 @@ node module 37.5 type=vpiModule
   iterate vpiPrimitiveArray implemented walk
   iterate vpiModPath implemented walk
   iterate vpiTchk implemented walk
-  iterate vpiDefParam unsupported the targets and values of defparam statements are not captured from the frontend
+  iterate vpiDefParam implemented a19d56
   iterate vpiIODecl implemented walk
   iterate vpiAliasStmt unsupported alias statements are not objects
   iterate vpiClockingBlock implemented walk
@@ -1140,10 +1141,10 @@ node spec_param 37.26 type=vpiSpecParam
   handle vpiParent extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
-node def_param 37.26 type=vpiDefParam default=unsupported the targets and values of defparam statements are not captured from the frontend
-  handle vpiModule
-  handle vpiLhs
-  handle vpiRhs
+node def_param 37.26 type=vpiDefParam
+  handle vpiModule implemented a19d56
+  handle vpiLhs implemented a19d56
+  handle vpiRhs implemented a19d56
 
 node param_assign 37.26 type=vpiParamAssign default=unsupported the parameter overrides of instance arrays are not captured
   get vpiConnByName
@@ -2122,7 +2123,7 @@ node gen_scope 37.80 type=vpiGenScope
   iterate vpiModuleArray implemented walk
   iterate vpiPrimitive implemented walk
   iterate vpiPrimitiveArray implemented walk
-  iterate vpiDefParam unsupported the targets and values of defparam statements are not captured from the frontend
+  iterate vpiDefParam implemented a19d56
   iterate vpiGenScopeArray implemented walk
   iterate vpiProgram implemented walk
   iterate vpiProgramArray implemented walk

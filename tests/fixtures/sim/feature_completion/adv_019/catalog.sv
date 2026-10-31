@@ -50,7 +50,7 @@ interface bus_if (input logic clk);
 endinterface
 
 (* catalog_def = "leaf" *) module leaf (input logic [3:0] a, output logic [3:0] y);
-  (* keep *) assign y = ~a;
+  parameter W = 1; (* keep *) assign y = ~a;
 endmodule
 
 module sink (bus_if.src b);
@@ -172,7 +172,7 @@ module tb;
   bus_if bi (clk);
   bus_if bia [1:0] (clk);
   leaf u [1:0] (.a(r0), .y());
-  (* weight = 3 *) leaf single (.a(r0), .y(lw));
+  (* weight = 3 *) leaf single (.a(r0), .y(lw)); defparam single.W = 2;
   sink sk (.b(bi));
   dut dt (.a(a_in), .clk(clk), .d(d_in), .y(y));
   fsm_unit fu (.clk(clk));

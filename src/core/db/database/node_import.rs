@@ -278,12 +278,15 @@ pub(super) fn node_kind_from_slang(
         }
         // A `defparam` is an elaboration-time parameter assignment. Slang has
         // already applied its override when the snapshot is captured, so the
-        // owned tree only needs to record that this declaration was consumed
-        // during elaboration; classifying it as an executable `Other` node
-        // would make every legal defparam a lowering failure.
-        SemanticKind::Unsupported if node.detail == "DefParam" => {
-            NodeKind::ParamAssign { overridden: true }
-        }
+        // owned tree records that this declaration was consumed during
+        // elaboration, with the parameter and value expression the VPI object
+        // model reports (IEEE 1800-2009 37.26); classifying it as an
+        // executable `Other` node would make every legal defparam a lowering
+        // failure.
+        SemanticKind::Unsupported if node.detail == "DefParam" => NodeKind::ParamAssign {
+            overridden: true,
+            target: first(SemanticEdgeRole::Reference)?,
+        },
         SemanticKind::Unsupported => NodeKind::Other,
     })
 }
