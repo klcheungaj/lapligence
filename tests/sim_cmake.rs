@@ -862,8 +862,9 @@ fn build_counter(
     model_dir: &std::path::Path,
     opts: &sim::build::CmakeBuildOpts,
 ) -> Result<String, String> {
-    std::fs::create_dir_all(model_dir).map_err(|error| error.to_string())?;
     sim_harness::with_cwd(dir, || {
+        // Inside `dir`, so a relative `model_dir` lands there.
+        std::fs::create_dir_all(model_dir).map_err(|error| error.to_string())?;
         let generated = compile_counter(model_dir)?;
         let exe = sim::build::build_model_cmake_with_opts(
             model_dir,
@@ -1215,6 +1216,57 @@ fn opt_in_tree_templates_replace_checked_fresh_configures() {
     );
     assert_eq!(field(lines[6], "template"), None, "{text}");
     assert!(field(lines[6], "configure_ms").is_some(), "{text}");
+}
+
+/// Relative output directories (`llg --out-dir build`, most CLI builds) use
+/// templates too: the trees configure from absolute paths, as CMake makes
+/// them anyway, so a third relative tree is written from the template.
+#[test]
+fn relative_model_directories_use_tree_templates() {
+    let _guard = TEST_LOCK.lock().unwrap();
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    let dir = fresh_dir("tree-template-relative");
+    let record = dir.path().join("timings.tsv");
+    let _timings = EnvVarGuard::set(
+        sim::build::BUILD_TIMINGS_ENV,
+        record.to_str().expect("UTF-8 temp path"),
+    );
+    let _templates = EnvVarGuard::set(sim::build::TREE_TEMPLATE_ENV, "1");
+    let opts = sim::build::CmakeBuildOpts {
+        runtime_cache_dir: Some(dir.path().join("runtime-cache")),
+        ..Default::default()
+    };
+    for model in ["first", "second", "third"] {
+        let stdout =
+            build_counter(dir.path(), std::path::Path::new(model), &opts).expect("model runs");
+        assert_eq!(stdout, EXPECTED_STDOUT, "{model}");
+    }
+    let text = std::fs::read_to_string(&record).expect("timings written");
+    let templates: Vec<_> = text
+        .lines()
+        .map(|line| {
+            line.split('\t')
+                .find_map(|field| field.strip_prefix("template="))
+                .map(str::to_owned)
+        })
+        .collect();
+    // The character set templates substitute (tree_template.rs `plain_absolute`).
+    let eligible = dir.path().to_str().is_some_and(|text| {
+        text.char_indices().all(|(index, character)| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '_' | '-' | '.' | '/' | '~' | '+')
+                || (cfg!(windows) && (character == '\\' || (character == ':' && index == 1)))
+        })
+    });
+    if !eligible {
+        eprintln!("SKIP: temporary directory not eligible for templates: {text}");
+        return;
+    }
+    let expected = ["captured", "verified", "applied"].map(|value| Some(value.to_owned()));
+    assert_eq!(templates, expected, "{text}");
 }
 
 /// A seed that breaks configuration is not trusted again: the build retries

@@ -1082,6 +1082,12 @@ fn run_configure(
     templates: bool,
     timings: &mut timings::BuildTimings,
 ) -> Result<Option<tree_template::Plan>, BuildError> {
+    // CMake makes `-S` and `-B` absolute itself, so the configured tree is
+    // the same either way; absolute paths here also let a relative output
+    // directory (`llg --out-dir build`, most CLI test builds) use templates,
+    // which accept only absolute spellings.
+    let source = &std::path::absolute(source).unwrap_or_else(|_| source.to_path_buf());
+    let build_dir = &std::path::absolute(build_dir).unwrap_or_else(|_| build_dir.to_path_buf());
     let command =
         |seed_args: &[String]| configure_command(source, build_dir, toolchain, extra, seed_args);
     let launch_error = |source| BuildError::CmakeLaunch {
