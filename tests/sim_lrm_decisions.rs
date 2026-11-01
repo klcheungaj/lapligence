@@ -2174,6 +2174,15 @@ fn a19_d67_packed_array_elements() {
 }
 
 #[test]
+fn a19_d68_udp_initial_statement() {
+    run_vpi_decision(
+        "A19-D68_udp_initial_statement",
+        &["task $d68()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D68_udp_initial_statement.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",

@@ -10,7 +10,8 @@
 
 static int rts_slot(const llg_vpi_slot_t* slot) {
     return slot->kind == SLOT_TIMEQ || slot->kind == SLOT_UDPDEFN || slot->kind == SLOT_UDPIO ||
-           slot->kind == SLOT_TABLEENTRY || slot->kind == SLOT_THREAD || slot->kind == SLOT_FRAME;
+           slot->kind == SLOT_TABLEENTRY || slot->kind == SLOT_UDPINIT || slot->kind == SLOT_THREAD ||
+           slot->kind == SLOT_FRAME;
 }
 
 static int rts_type(const llg_vpi_slot_t* slot) {
@@ -19,6 +20,8 @@ static int rts_type(const llg_vpi_slot_t* slot) {
         case SLOT_UDPDEFN: return vpiUdpDefn;
         case SLOT_UDPIO: return vpiIODecl;
         case SLOT_TABLEENTRY: return vpiTableEntry;
+        case SLOT_UDPINIT:
+            return slot->left == 0 ? vpiInitial : slot->left == 1 ? vpiAssignment : vpiConstant;
         case SLOT_THREAD: return vpiThread;
         case SLOT_FRAME: return vpiFrame;
         default: return vpiUndefined;
@@ -966,6 +969,16 @@ static PLI_INT64 rts_get(int property, llg_vpi_slot_t* slot, int* handled) {
                 default: break;
             }
             break;
+        case SLOT_UDPINIT:
+            /* 37.32: `initial q = 1'b1;` is an initial process whose
+             * statement is a blocking assignment of a one-bit binary
+             * constant (decision A19-D68). */
+            if (property == vpiLineNo) return udp->line;
+            if (slot->left == 1 && property == vpiOpType) return vpiAssignmentOp;
+            if (slot->left == 1 && property == vpiBlocking) return 1;
+            if (slot->left == 2 && property == vpiConstType) return vpiBinaryConst;
+            if (slot->left == 2 && property == vpiSize) return 1;
+            break;
         case SLOT_TABLEENTRY:
             switch (property) {
                 case vpiSize: {
@@ -1023,6 +1036,14 @@ static const char* rts_get_str(int property, llg_vpi_slot_t* slot, int* handled)
 static void rts_get_value(llg_vpi_slot_t* slot, p_vpi_value output) {
     if (slot->kind == SLOT_TABLEENTRY) {
         rts_entry_value(slot, output);
+        return;
+    }
+    const llg_vpi_udp_t* udp = rts_udp(slot->aux);
+    if (slot->kind == SLOT_UDPINIT && slot->left == 2 && udp) {
+        llg_vpi_datum_t datum = {0};
+        datum.packed = udp->initial == 'x' ? sv4_x(1u, 0) : sv4_from_u64(udp->initial == '1', 1u, 0);
+        fill_value(&datum, 0, vpiConstant, output);
+        datum_destroy(&datum);
         return;
     }
     vpi_error("LLG_VPI_VALUE", "this object has no value");
@@ -1085,10 +1106,18 @@ static vpiHandle rts_handle(int type, vpiHandle reference, int* handled) {
         }
     }
     if (type == vpiInitial && slot->kind == SLOT_UDPDEFN) {
+        /* 37.32: NULL without an error for a definition with no initial
+         * statement. */
+        const llg_vpi_udp_t* udp = rts_udp(slot->aux);
         *handled = 1;
-        vpi_error("LLG_VPI_UNSUPPORTED",
-                  "the initial statement of a UDP is kept only as its value, not as an object");
-        return NULL;
+        return udp && udp->initial ? rts_make(SLOT_UDPINIT, (uint32_t)slot->aux, 0) : NULL;
+    }
+    if (slot->kind == SLOT_UDPINIT) {
+        *handled = 1;
+        if (slot->left == 0 && type == vpiStmt) return rts_make(SLOT_UDPINIT, (uint32_t)slot->aux, 1);
+        if (slot->left == 1 && type == vpiRhs) return rts_make(SLOT_UDPINIT, (uint32_t)slot->aux, 2);
+        /* The assigned output is the definition's output declaration. */
+        if (slot->left == 1 && type == vpiLhs) return rts_make(SLOT_UDPIO, (uint32_t)slot->aux, 0);
     }
     if (rts_slot(slot)) {
         *handled = 1;

@@ -18,7 +18,7 @@ step 1
     entry 1?:1 symbols=3 line=9
     entry ?1:1 symbols=3 line=10
     entry 00:0 symbols=3 line=11
-    vpiInitial NULL error 1
+    vpiInitial NULL error 0
   vpiUdpDefn rt_latch inputs=2 prim=27 protected=0 line=15
     vpiName error 1
     io q dir=2 scalar=1 same defn=1
@@ -27,7 +27,7 @@ step 1
     entry ?0:?:- symbols=4 line=21
     entry 01:?:0 symbols=4 line=22
     entry 11:?:1 symbols=4 line=23
-    vpiInitial NULL error 1
+    vpiInitial object error 0
   tb.u1 definition rt_or
   uses of tb.r: vpiPrimTerm@31 vpiPrimTerm@31 vpiContAssign@34 vpiAssignment@37
   net iterator vpiUse is tb: 1

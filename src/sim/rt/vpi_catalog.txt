@@ -58,6 +58,7 @@ test a19d64 sim_lrm_decisions::a19_d64_switch_values_and_class_object_names
 test a19d65 sim_lrm_decisions::a19_d65_refused_relations
 test a19d66 sim_lrm_decisions::a19_d66_specparam_expressions
 test a19d67 sim_lrm_decisions::a19_d67_packed_array_elements
+test a19d68 sim_lrm_decisions::a19_d68_udp_initial_statement
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test a20d16 sim_lrm_decisions::a20_d16_delay_expressions
 test a20d17 sim_lrm_decisions::a20_d17_port_delays
@@ -1338,7 +1339,7 @@ node udp_defn 37.32 type=vpiUdpDefn
   get vpiPrimType implemented walk
   iterate vpiIODecl implemented walk
   iterate vpiTableEntry implemented walk
-  handle vpiInitial unsupported the initial statement of a sequential UDP is captured only as its value character, so it has no object (its vpiLhs, vpiRhs and value)
+  handle vpiInitial implemented a19d68
 
 node table_entry 37.32 type=vpiTableEntry
   get vpiSize implemented walk

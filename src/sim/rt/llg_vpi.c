@@ -98,6 +98,8 @@ typedef enum {
     SLOT_UDPDEFN,    /* UDP definition `aux` (static slot, 37.32) */
     SLOT_UDPIO,      /* port `left` of UDP definition `aux` */
     SLOT_TABLEENTRY, /* table entry `left` of UDP definition `aux` */
+    SLOT_UDPINIT,    /* initial statement of UDP definition `aux`: the initial (`left`
+                      * 0), its assignment (1) or the assigned constant (2) */
     SLOT_THREAD,     /* thread: registry slot `aux`, process identity `left` (37.40) */
     SLOT_FRAME,      /* frame `element` of the frame stack of (`aux`, `left`) (37.39) */
 } llg_vpi_slot_kind_t;

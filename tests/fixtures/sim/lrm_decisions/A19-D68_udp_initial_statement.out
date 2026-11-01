@@ -1,0 +1,8 @@
+tb.u_ff ff: initial=24 error=0
+  compare=1
+  stmt type=3 optype=82 blocking=1
+  lhs type=28 name=q direction=2
+  rhs type=7 const=3 size=1 int=1 bin=1
+  error=0
+tb.u_latch latch: initial=0 error=0
+tb.u_inv inv: initial=0 error=0

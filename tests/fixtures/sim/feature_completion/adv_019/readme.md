@@ -756,8 +756,9 @@ runs it in both optimizer modes with both value backends. Every line of
   property (error); io declarations in port order with vpiDirection 2
   (output) and 1 (input), scalar, their vpiUdpDefn the same definition; the
   table entries decompiled as in decision A19-D38 with vpiSize 3 (two inputs
-  and the output) or 4 (with the state); vpiInitial fails (llg keeps the
-  initial value only). `tb.u1` reaches `rt_or`.
+  and the output) or 4 (with the state); vpiInitial is NULL without an
+  error for `rt_or` (no initial statement) and an object for `rt_latch`
+  (decision A19-D68). `tb.u1` reaches `rt_or`.
 - Uses of `tb.r` (37.54, L60774-L60812, decision A19-D43): the continuous
   assignment, the two UDP terminals, and the assignment `r = 1`; the first
   use of `tb.r[0]` is its UDP terminal (the continuous assignment reads bit

@@ -2318,8 +2318,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   recorded); `vpiReturn` of an automatic function and the argument
   variables of an automatic task or function, and the string, chandle,
   class and event arguments of a static one (decisions A19-D53, A19-D57); a fork branch started inside a task has no frame of that task
-  (its frame stack starts empty); `vpiInitial` of a UDP definition (the initial value is
-  captured only as a character, so the initial statement has no object);
+  (its frame stack starts empty);
   `cbValueChange` on a continuous assignment or primitive (38.36.1 lists
   variables, expressions, terminals and events; industry-standard tools
   refuse both too); a delayed
@@ -2379,8 +2378,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   (ADV-019 closure, 2026-11: named event arrays and the `vpiIndex` of
   elements of string, chandle, class and event arrays; virtual interface
   declarations of classes; `vpiWaitingProcesses` of mailboxes and
-  semaphores; `vpiImport`; `vpiInitial` of a UDP definition and
-  `vpi_put_value` to a sequential UDP; a frame's `vpiOrigin` and
+  semaphores; `vpiImport`; `vpi_put_value` to a sequential UDP; a frame's `vpiOrigin` and
   `vpiAutomatics`; the bodies, variables and formal defaults of sequence and
   property declarations; pattern and `expect` objects; the list operation
   of an instance array's connections; a structure member's default
