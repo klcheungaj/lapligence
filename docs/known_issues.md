@@ -1901,6 +1901,44 @@ patch.
 [adv_013](../tests/fixtures/sim/feature_completion/adv_013/readme.md); the
 other items need small hand-written cases.
 
+## Port connections kept as continuous assignments
+
+**Status:** open; whole variable and `wire` ports share their source's
+storage (decisions A21-D1..A21-D3 in [LRM decisions](lrm_decisions.md)).
+
+### Symptom
+
+- A port whose sink 23.3.3.7 allows to merge with its source still runs one
+  copy process when the sink has drivers of its own (a coerced input net that
+  the child drives, an output actual with a second driver), an internal net
+  type other than `wire`/`tri`/`logic`, a net delay, a type conversion, or is
+  a variable sink of a net source. Every change of the source then wakes the
+  copy before any reader of the sink.
+- The copy resolves each side separately, which differs from a simulated
+  net. `tests/fixtures/sim/port_collapse/fallbacks.sv` prints
+  `coerced: c=1 u0.n=x`, `second driver: m=x u1.o=1` and `types: z=z
+  u2.t=0`; a simulator that merges these nets prints `c=x`, `u1.o=x` and
+  `z=0` (the `tri0` formal dominates its `wire` actual, Table 23-1).
+
+### Cause
+
+Net sink collapse (`lowering/collection/nets/port_sinks.rs`) only gives a
+sink a second name for its source: it applies when the merged net is exactly
+the source. Merging drivers of both sides or a dominating internal type needs
+one net group spanning both nets with the type of Table 23-1, which
+`build_net_groups` builds only for `inout` ports.
+
+### Intended direction
+
+Group coerced ports and ports with a dominating internal type like `inout`
+connections (one resolved net with both sides' drivers and the dominating
+type), keeping copies only where a merge would drop a net delay or a
+conversion, or where VPI, SDF or specify paths need each side's own net.
+
+### Reproduce
+
+`tests/sim_port_collapse.rs::kept_links_preserve_each_side`.
+
 ## Global clocking future sampled value function limits
 
 **Status:** open (ADV-014 boundary).
