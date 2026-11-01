@@ -167,14 +167,6 @@ pub enum IrInertialDelay {
     /// ([`super::IrModel::sdf_gate_delays`]), read each time the driver
     /// schedules an update.
     Annotated(u32),
-    /// The delays of `delay`, except that the site publishes at once,
-    /// replacing any pending update, while the one-bit `now` is true: the
-    /// gate of a sequential UDP after `vpi_put_value` (IEEE 1800-2009
-    /// 38.34). Only models generated for VPI applications have it.
-    Interruptible {
-        delay: Box<IrInertialDelay>,
-        now: Box<IrExpr>,
-    },
 }
 
 /// Source delay values of a runtime-valued driver delay. One value serves
@@ -223,7 +215,7 @@ impl IrInertialDelay {
     pub(in crate::sim) fn constant(&self) -> Option<IrTransitionDelay> {
         match self {
             Self::Constant(delay) => Some(*delay),
-            Self::Runtime(_) | Self::Annotated(_) | Self::Interruptible { .. } => None,
+            Self::Runtime(_) | Self::Annotated(_) => None,
         }
     }
 
@@ -232,11 +224,6 @@ impl IrInertialDelay {
         match self {
             Self::Constant(_) | Self::Annotated(_) => Vec::new(),
             Self::Runtime(delay) => delay.expressions(),
-            Self::Interruptible { delay, now } => {
-                let mut expressions = delay.expressions();
-                expressions.push(now);
-                expressions
-            }
         }
     }
 
@@ -244,11 +231,6 @@ impl IrInertialDelay {
         match self {
             Self::Constant(_) | Self::Annotated(_) => Vec::new(),
             Self::Runtime(delay) => delay.expressions_mut(),
-            Self::Interruptible { delay, now } => {
-                let mut expressions = delay.expressions_mut();
-                expressions.push(now);
-                expressions
-            }
         }
     }
 }

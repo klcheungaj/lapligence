@@ -36,9 +36,6 @@ pub(super) fn render_inertial(
 ) -> Result<String, String> {
     let rendered = render_expr_impl(ctx, rhs)?;
     let (prefix, delays) = match delay {
-        IrInertialDelay::Interruptible { .. } => {
-            return Err("an interruptible inertial delay needs the owned emitter".to_owned());
-        }
         IrInertialDelay::Constant(delay) => (
             String::new(),
             format!(

@@ -2318,8 +2318,8 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - structure objects (ADV-019 family 2; their relations are in the
   catalog): elements of multidimensional primitive arrays, and `vpiIndex`
   of an element of a multidimensional instance array; `vpi_put_value` to a
-  sequential UDP whose delayed output drives several aliased nets (other
-  sequential UDPs take it, decision A19-D74); `vpiOrigin` of a frame (the activating call is not
+  sequential UDP (38.34 sets it with no delay; the path measured would cost
+  VPI models with delayed sequential UDPs run time); `vpiOrigin` of a frame (the activating call is not
   recorded); `vpiReturn` of an automatic function and the argument
   variables of an automatic task or function, and the string, chandle,
   class and event arguments of a static one (decisions A19-D53, A19-D57); a fork branch started inside a task has no frame of that task
@@ -2381,7 +2381,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   its relations and `vpiDecompile` are those of the expression;
 - every property, relation and iteration the catalog marks `unsupported`
   (after the ADV-019 closure, 2026-11: the named event arrays of class
-  definitions and objects; `vpiImport`, which 37.12 detail 4 defines as
+  definitions and objects; `vpi_put_value` to a sequential UDP; `vpiImport`, which 37.12 detail 4 defines as
   the package items referenced through an import, a per-reference fact the
   owned database does not capture; a frame's `vpiOrigin` and
   `vpiAutomatics`). Rows the catalog marks `error` are refused on purpose,

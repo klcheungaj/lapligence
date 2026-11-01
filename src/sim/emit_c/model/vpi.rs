@@ -62,9 +62,7 @@ struct Entry {
     constant_variable: bool,
     activation: Option<(u32, u32)>,
     timing: Option<IrVpiTiming>,
-    /// `(storage, dependency, shape)` of a dynamic object; a sequential
-    /// UDP that takes vpi_put_value has its state digit and doorbell, and
-    /// shape `usize::MAX` (emitted as 0: none).
+    /// `(storage, dependency, shape)` of a dynamic object.
     dynamic: Option<(String, String, usize)>,
     code: Option<u32>,
     instance: Option<IrVpiInstance>,
@@ -263,13 +261,6 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 continue;
             };
             Some(storage)
-        } else if let Some((state, doorbell)) = object.udp_put {
-            // A sequential UDP that takes vpi_put_value: its state digit
-            // and the doorbell of its gate process (no shape).
-            let Some((packed, _, _)) = signal_storage(model, doorbell) else {
-                continue;
-            };
-            Some((format!("&llg_udp_state_{state}.state"), packed, usize::MAX))
         } else {
             None
         };
@@ -673,11 +664,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         if entry.activation.is_some() {
             flags.push("LLG_VPI_OBJ_ACTIVATION");
         }
-        if entry
-            .dynamic
-            .as_ref()
-            .is_some_and(|(_, _, shape)| *shape != usize::MAX)
-        {
+        if entry.dynamic.is_some() {
             flags.push("LLG_VPI_OBJ_DYNAMIC");
         }
         if entry.constant_variable {
@@ -707,7 +694,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
                 .map_or_else(String::new, |(storage, dependency, shape)| {
                     format!(
                         ", .storage = {storage}, .dependency = {dependency}, .shape = {}u",
-                        shape.wrapping_add(1)
+                        shape + 1
                     )
                 });
         let (declaration, instance) = entry.activation.unwrap_or((0, 0));

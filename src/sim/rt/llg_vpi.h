@@ -319,10 +319,7 @@ typedef struct llg_vpi_model_object {
     /* A dynamic object (LLG_VPI_OBJ_DYNAMIC): its storage (llg_string_t,
      * void* handle or container), the change marker a handle store
      * publishes (NULL for strings and containers, which publish their own),
-     * and its shape index + 1 in the dynamic tables. A sequential UDP that
-     * takes vpi_put_value (38.34) has its state digit (uint8_t: 0, 1, 2 for
-     * X) as `storage`, the one-bit doorbell of its gate process as
-     * `dependency` and no shape. */
+     * and its shape index + 1 in the dynamic tables. */
     void* storage;
     sv4_t* dependency;
     uint32_t shape;

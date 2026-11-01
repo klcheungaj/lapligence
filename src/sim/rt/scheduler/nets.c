@@ -1237,10 +1237,6 @@ cleanup:
 
 }
 
-void llg_inertial_drop(llg_inertial_t** handle) {
-    if (*handle && region_can_mutate("inertial scheduling")) inertial_unlink_pending(*handle);
-}
-
 void llg_inertial_assign(llg_inertial_t** handle, sv4_t* target,
                          sv4_t value, uint64_t rise, uint64_t fall,
                          uint64_t turn_off) {

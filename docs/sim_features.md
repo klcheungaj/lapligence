@@ -2561,8 +2561,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   decision A19-D65), `n/a`, or `unsupported` with its reason (statement
   processes, structure net members, switch values, class object names and
   specparam expressions: A19-D62..D66; after the ADV-019 closure only
-  `vpiImport`, class event array properties and a frame's `vpiOrigin` and
-  `vpiAutomatics` stay unsupported). A generated
+  `vpiImport`, class event array properties, `vpi_put_value` to a
+  sequential UDP and a frame's `vpiOrigin` and `vpiAutomatics` stay
+  unsupported). A generated
   object catalog and the common VPI routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
   relative to a scope, and constant element/bit/part selects in the name),
   `vpi_handle_by_index`/`_multi_index`, `vpi_handle` (`vpiParent`, `vpiScope`,
@@ -2634,8 +2635,7 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpiSwitchArray`, `vpiUdpArray`) with `vpiRange`, element iteration,
   `vpi_handle_by_index` and the elements' `vpiIndex`, primitives (`vpiGate`,
   `vpiSwitch`, `vpiUdp`, `vpiPrimType`, `vpiPrimTerm` terminals with
-  `vpiExpr`, output value; `vpi_put_value` sets a sequential UDP with no
-  delay, decision A19-D74), `vpiContAssign` with `vpiLhs`/`vpiRhs` and its
+  `vpiExpr`, output value), `vpiContAssign` with `vpiLhs`/`vpiRhs` and its
   value, processes (`vpiProcess`: `vpiInitial`, `vpiAlways` with
   `vpiAlwaysType`, `vpiFinal`), task and function declarations
   (`vpiTaskFunc`, scopes with `vpiFuncType`, `vpiSize`, `vpiAutomatic`) and

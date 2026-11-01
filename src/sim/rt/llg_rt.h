@@ -797,10 +797,6 @@ void llg_switch_controls_start(const llg_switch_control_t* controls, uint32_t co
 // The runtime owns each inertial driver and its pending event. The caller's
 // initially NULL handle, target and net must persist until cleanup, which
 // resets the handle to NULL. Repeated evaluation never suspends the caller.
-// Drop the pending update of an inertial driver (none: no effect), so the
-// next update publishes from the committed value; a sequential UDP that
-// vpi_put_value sets (IEEE 1800-2009 38.34) publishes at once this way.
-void llg_inertial_drop(llg_inertial_t** handle);
 void llg_inertial_assign(llg_inertial_t** handle, sv4_t* target,
                          sv4_t value, uint64_t rise, uint64_t fall,
                          uint64_t turn_off);
