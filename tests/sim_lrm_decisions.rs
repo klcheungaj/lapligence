@@ -2618,6 +2618,15 @@ fn a19_d61_connectivity_order() {
 }
 
 #[test]
+fn a19_d62_statement_processes() {
+    run_vpi_decision(
+        "A19-D62_statement_processes",
+        &["task $d62()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D62_statement_processes.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

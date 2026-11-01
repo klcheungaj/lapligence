@@ -151,6 +151,7 @@ module tb;
   int qs;
   int aa[int];
   event ev;
+  event ev2;
   wire [3:0] w;
   wire w1, g_out, u_out, y, a_in, d_in;
   wire [3:0] lw;
@@ -282,6 +283,8 @@ module tb;
     join_none
     wait fork;
     disable fork;
+    // A wait_order statement (37.62) that never runs.
+    if (k == 1000) wait_order (ev, ev2) k = 1; else k = 2;
     assume (k >= 0);
     cover (k >= 0);
     if (k == 0) disable work;

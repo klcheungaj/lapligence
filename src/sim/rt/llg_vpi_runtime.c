@@ -857,6 +857,77 @@ static void rts_runtime_shutdown(void) {
     llg_vpi_frames_on = 0;
 }
 
+/* ── statement processes (37.56, 37.58) ──────────────────────────────────── */
+
+/* The catalog row + 1 of the process whose body is root code row `row`,
+ * indexed on the first vpiProcess query; a root owned by a task, a function
+ * or nothing has 0. */
+static uint32_t* rts_code_owners;
+
+/* The atomic statements of 37.56: every statement object except blocks,
+ * repeat controls and concurrent assertions. A function call, though in
+ * the tf call class, is an expression and has no process (decision
+ * A19-D62). */
+static int rts_atomic_statement(int type) {
+    switch (type) {
+        case vpiBegin: case vpiFork: case vpiNamedBegin: case vpiNamedFork:
+        case vpiRepeatControl: case vpiAssert: case vpiAssume: case vpiCover:
+            return 0;
+        default:
+            return code_is_statement(type);
+    }
+}
+
+static int rts_process_owners(void) {
+    if (rts_code_owners) return 1;
+    if (!rts_code_parents()) return 0;
+    uint32_t* owners = (uint32_t*)calloc(g_vpi.code->node_count, sizeof(*owners));
+    if (!owners) return 0;
+    for (size_t row = 0; row < g_vpi.object_count; ++row) {
+        const llg_vpi_model_object_t* object = &g_vpi.objects[row];
+        int process = object->type == vpiInitial || object->type == vpiAlways ||
+                      object->type == vpiFinal;
+        if (!process || !object->code || object->code > g_vpi.code->node_count) continue;
+        /* A body may be a link to a shared root. */
+        owners[object->code - 1u] = (uint32_t)row + 1u;
+        owners[code_visible(object->code - 1u)] = (uint32_t)row + 1u;
+    }
+    rts_code_owners = owners;
+    return 1;
+}
+
+/* vpiProcess of an atomic statement (decision A19-D62): the initial,
+ * always or final construct whose body contains it; NULL without an error
+ * for a statement of a task or function, which no process owns. `handled`
+ * stays 0 for other objects. */
+static vpiHandle rts_statement_process(const llg_vpi_slot_t* slot, int* handled) {
+    uint32_t row = LLG_VPI_NONE;
+    if (slot->kind == SLOT_CODE) {
+        row = code_visible((uint32_t)slot->aux);
+        const llg_vpi_code_t* node = code_at(row);
+        if (!node || (node->flags & LLG_VPI_CODE_ALIAS) || !rts_atomic_statement(node->type))
+            return NULL;
+    } else if (slot->kind == SLOT_OBJECT) {
+        /* A for or foreach statement that declares its loop variables is a
+         * scope (37.12 details 2 and 3): a catalog row with its code. */
+        const llg_vpi_model_object_t* object = row_object(slot->object);
+        if (!object || (object->type != vpiFor && object->type != vpiForeachStmt) ||
+            !object->code || !g_vpi.code || object->code > g_vpi.code->node_count)
+            return NULL;
+        row = object->code - 1u;
+    } else {
+        return NULL;
+    }
+    *handled = 1;
+    if (!rts_process_owners()) {
+        vpi_error("LLG_VPI_NOMEM", "VPI statement process index allocation failed");
+        return NULL;
+    }
+    while (g_vpi.code_parents[row]) row = g_vpi.code_parents[row] - 1u;
+    uint32_t owner = rts_code_owners[row];
+    return owner ? object_handle(owner - 1u) : NULL;
+}
+
 /* ── dispatch ───────────────────────────────────────────────────────────── */
 
 static PLI_INT64 rts_get(int property, llg_vpi_slot_t* slot, int* handled) {
@@ -997,6 +1068,10 @@ static vpiHandle rts_handle(int type, vpiHandle reference, int* handled) {
         }
         return (vpiHandle)slot->use;
     }
+    if (type == vpiProcess) {
+        vpiHandle process = rts_statement_process(slot, handled);
+        if (*handled) return process;
+    }
     if (type == vpiUdpDefn) {
         if (slot->kind == SLOT_UDPIO) {
             *handled = 1;
@@ -1100,4 +1175,8 @@ static vpiHandle rts_iterate(int type, vpiHandle reference, int* handled) {
     return NULL;
 }
 
-static void rts_shutdown(void) { rts_runtime_shutdown(); }
+static void rts_shutdown(void) {
+    rts_runtime_shutdown();
+    free(rts_code_owners);
+    rts_code_owners = NULL;
+}

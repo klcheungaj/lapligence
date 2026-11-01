@@ -52,6 +52,7 @@ test a19d44 sim_lrm_decisions::a19_d44_frames_and_threads
 test a19d46 sim_lrm_decisions::a19_d46_statement_toggle_objects
 test a19thr adv_019::threads_and_frames_follow_processes_and_subprogram_calls
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
+test a19d62 sim_lrm_decisions::a19_d62_statement_processes
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test a20d16 sim_lrm_decisions::a20_d16_delay_expressions
 test a20d17 sim_lrm_decisions::a20_d17_port_delays
@@ -342,7 +343,7 @@ node instance_array 37.11 members=primitive_array,interface_array,program_array,
   str vpiFullName implemented walk
   get vpiSize implemented walk
   func vpi_handle_by_index implemented a19struct
-  func vpi_handle_by_multi_index unsupported vpi_handle_by_multi_index of instance arrays is not implemented
+  func vpi_handle_by_multi_index implemented a19struct
   handle vpiExpr unsupported the list operation of an instance array's connections (37.11 detail 1) is not built: llg keeps the connections of each element instance
   iterate vpiRange implemented walk
   handle vpiLeftRange implemented walk
@@ -1512,6 +1513,7 @@ node task_call 37.38 type=vpiTaskCall
   get vpiUserDefn implemented walk
 
 node func_call 37.38 type=vpiFuncCall
+  handle vpiProcess error a19d62 a function call is an expression with no process of its own; industry-standard behaviour refuses the relation
   get vpiFuncType implemented walk
   func vpi_get_value unsupported this object has no value in llg
   handle vpiFunction implemented walk
@@ -1522,6 +1524,7 @@ node func_call 37.38 type=vpiFuncCall
   get vpiVector extension walk the sign and width of the object's value
 
 node method_func_call 37.38 type=vpiMethodFuncCall
+  handle vpiProcess error a19d62 a function call is an expression with no process of its own; industry-standard behaviour refuses the relation
   func vpi_get_value unsupported this object has no value in llg
   handle vpiFunction implemented walk
   handle vpiPrefix implemented walk
@@ -1542,6 +1545,7 @@ node method_task_call 37.38 type=vpiMethodTaskCall
   iterate vpiArgument implemented walk
 
 node sys_func_call 37.38 type=vpiSysFuncCall
+  handle vpiProcess error a19d62 a function call is an expression with no process of its own; industry-standard behaviour refuses the relation
   get vpiFuncType implemented walk
   func vpi_get_value unsupported this object has no value in llg
   func vpi_put_value implemented s42systf
@@ -1890,7 +1894,7 @@ node atomic_stmt 37.56 members=if,if_else,while,repeat,wait,ordered_wait,wait_fo
   get vpiCoverMax implemented walk
   get vpiCoveredCount implemented walk
   str vpiName implemented walk
-  handle vpiProcess unsupported statements have no vpiProcess relation in llg
+  handle vpiProcess implemented walk
 
 node stmt 37.58 members=scope,atomic_stmt
   handle vpiScope implemented walk
@@ -1941,13 +1945,13 @@ node wait 37.62 type=vpiWait
   handle vpiStmt implemented walk
   handle vpiCondition implemented walk
 
-node ordered_wait 37.62 type=vpiOrderedWait default=unsupported wait_order statements are opaque statement objects
-  handle vpiStmt
-  iterate vpiCondition
-  handle vpiElseStmt
+node ordered_wait 37.62 type=vpiOrderedWait
+  handle vpiStmt implemented walk
+  iterate vpiCondition implemented walk
+  handle vpiElseStmt implemented walk
 
 node wait_fork 37.62 type=vpiWaitFork
-  handle vpiStmt unsupported this statement does not expose its body
+  handle vpiStmt implemented a19d62
 
 node delay_control 37.63 type=vpiDelayControl
   func vpi_get_delays implemented a20d19

@@ -191,6 +191,9 @@ static void arrays(vpiHandle scope) {
                        vpi_get(vpiArrayMember, element));
             check(vpi_compare_objects(vpi_handle_by_index(array, value.value.integer), element),
                   "element by index");
+            PLI_INT32 index = value.value.integer;
+            check(vpi_compare_objects(vpi_handle_by_multi_index(array, 1, &index), element),
+                  "element by multi index");
         }
         vpi_printf("\n");
     }

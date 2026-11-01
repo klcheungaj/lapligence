@@ -5020,6 +5020,9 @@ static int code_relation_applies(int type, int relation) {
                    relation == vpiForIncStmt || relation == vpiStmt;
         case vpiForeachStmt: return relation == vpiVariables || relation == vpiStmt;
         case vpiOrderedWait: return relation == vpiStmt || relation == vpiElseStmt;
+        /* 37.62: the waits class draws vpiStmt, and `wait fork` has no
+         * statement, so the relation is NULL (decision A19-D62). */
+        case vpiWaitFork: return relation == vpiStmt;
         case vpiDelayControl: return relation == vpiDelay || relation == vpiStmt;
         case vpiRepeatControl: return relation == vpiExpr || relation == vpiEventControl;
         case vpiEventStmt: return relation == vpiNamedEvent;
