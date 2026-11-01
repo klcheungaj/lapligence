@@ -812,7 +812,8 @@ interfaces with a modport, ports, nets and net arrays, every variable kind,
 class, string and container variables, parameters, gates, a UDP and a
 switch, a module path, a timing check and a specparam, continuous assignments, a generate
 loop with its genvar (decision A19-D42), sequences, properties and concurrent assertions, tasks and functions
-with most statement and expression kinds, an FSM declared with the
+with most statement and expression kinds (a `wait_order` statement that
+never runs included, 37.62), an FSM declared with the
 state-vector pragma (decision A17-D11), a package and a `$unit` variable,
 a program and a program array (decision A19-D29), and clocking blocks in
 the top module, an interface and a program with io declarations, a
@@ -846,3 +847,10 @@ modes and checks, per object type reached:
 The check is per object type: an object type that answers a row on one
 object and refuses it on another (for example a statement reached through
 different relations) counts as answering it.
+
+The walk also covers the rows closed by ADV-019's catalog closure: the
+`vpiProcess` of every atomic statement (NULL without an error inside a
+task or function, decision A19-D62), `vpiStmt` of `wait fork` (NULL),
+the members of the structure net `sn` (nets, decision A19-D63), the value
+of the switch `tr` and the `vpiName` of class objects (decision A19-D64),
+and the rows refused with an error on purpose (decision A19-D65).
