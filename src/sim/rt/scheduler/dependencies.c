@@ -684,6 +684,33 @@ static void deferred_trigger_event(llg_event_object_t* ev) {
     }
 }
 
+// A publication of `target` seen by an ordered dependency wait, armed or
+// between wakes: like W_DEPS, a whole dependency changes on every
+// publication and a selected one only when its bits changed. Each changed
+// dependency is logged with its offset; returns whether any changed.
+static int wait_change_log_packed(llg_wait_change_log_t* log, sv4_t* target) {
+    llg_wait_retained_t* retained = log->sink.proc->retained_wait;
+    int changed = 0;
+    for (int i = 0; i < retained->n; i++) {
+        const llg_wait_dependency_t* dependency = &retained->dependencies[i];
+        if (dependency->sig != target) continue;
+        if (!dependency->width) {
+            wait_change_note(log, target, LLG_WAIT_CHANGE_WHOLE);
+            changed = 1;
+            continue;
+        }
+        sv4_t selected = sv4_part_select(
+            dependency->value ? *dependency->value : *target,
+            (int64_t)dependency->lsb + dependency->width - 1, dependency->lsb);
+        if (!sv4_same(retained->last[i], selected)) {
+            wait_change_note(log, target, dependency->lsb);
+            changed = 1;
+        }
+        sv4_move(&retained->last[i], &selected);
+    }
+    return changed;
+}
+
 static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
     clocking_record_edge(target, old, value);
     clocking_drive_signal_match(target, old, value);
@@ -752,7 +779,10 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
             }
         } else if (w->kind == W_DEPS) {
             llg_wait_expression_payload_t* payload = &w->payload.expression;
-            for (int i = 0; i < payload->n; i++) {
+            // An ordered wait shares its lists with its retained record.
+            if (LLG_CO_UNLIKELY(w->proc->wait_ordered))
+                wake = wait_change_log_packed(w->proc->retained_wait->changes, target);
+            else for (int i = 0; i < payload->n; i++) {
                 const llg_wait_dependency_t* dependency = &payload->dependencies[i];
                 if (dependency->sig == target) {
                     if (dependency->width) {
@@ -770,6 +800,8 @@ static void sig_publish_changed(sv4_t* target, sv4_t old, sv4_t value) {
         } else if (w->kind == W_LEVEL) {
             llg_wait_level_payload_t* level = &w->payload.rare->level;
             if (level->sig == target && sv4_same(*target, level->value)) wake = 1;
+        } else if (w->kind == W_CHANGE_LOG) {
+            (void)wait_change_log_packed((llg_wait_change_log_t*)w, target);
         }
         if (wake && !wait_held_by_suspension(w)) wake_proc(w->proc);
     }
@@ -917,8 +949,16 @@ static void real_write(double* target, double value) {
             for (int i = 0; i < w->payload.expression.n; i++) {
                 if (expression_update(w, i, NULL, target)) wake = 1;
             }
+        } else if (w->kind == W_CHANGE_LOG) {
+            wait_change_note((llg_wait_change_log_t*)w, target,
+                             LLG_WAIT_CHANGE_WHOLE);
         }
-        if (wake && !wait_held_by_suspension(w)) wake_proc(w->proc);
+        if (wake && !wait_held_by_suspension(w)) {
+            if (LLG_CO_UNLIKELY(w->proc->wait_ordered))
+                wait_change_note(w->proc->retained_wait->changes, target,
+                                 LLG_WAIT_CHANGE_WHOLE);
+            wake_proc(w->proc);
+        }
     }
     if (source) wait_subscription_unlink(&cursor);
     deferred_trigger_source_change(NULL, target);

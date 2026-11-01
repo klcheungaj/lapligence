@@ -94,6 +94,8 @@ static void register_wait(void) {
     p->wait_missed = 0;
     p->next_wait_event = 0;
     p->next_wait_refresh = 0;
+    p->next_wait_ordered = 0;
+    p->wait_ordered = 0;
     p->wait_refreshed = 0;
     w->next = g.waiters;
     w->prev_link = &g.waiters;

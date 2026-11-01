@@ -275,10 +275,21 @@ static void wait_retained_drop(llg_proc_t* proc) {
     for (size_t i = 0; i < retained->n_subscriptions; i++)
         wait_subscription_unlink(&retained->subscriptions[i]);
     free(retained->subscriptions);
+    if (retained->changes) free(retained->changes->changes);
+    free(retained->changes);
     sv4_destroy_array(retained->last, (size_t)retained->n);
     free(retained->last);
     free(retained->dependencies);
     free(retained);
+}
+
+// Append a change to an ordered wait's log unless it is already there.
+static void wait_change_note(llg_wait_change_log_t* log, const void* key,
+                             uint32_t bit) {
+    for (uint32_t i = 0; i < log->n; i++)
+        if (log->changes[i].key == key && log->changes[i].bit == bit) return;
+    if (log->n < log->cap)
+        log->changes[log->n++] = (llg_wait_change_t){key, bit};
 }
 
 static void wait_subscriptions_register(llg_wait_t* wait) {
@@ -379,9 +390,13 @@ static void remove_waiters_entry(llg_wait_t* w) {
     }
     llg_wait_retained_t* retained = wait_retained_of(w);
     if (retained && w->subscriptions == retained->subscriptions) {
-        // Dormant until the next re-arm or wait_retained_drop.
+        // Dormant until the next re-arm or wait_retained_drop; an ordered
+        // wait's memberships keep logging changes into its sink.
+        llg_wait_t* dormant = w->proc->wait_ordered && retained->changes
+                                  ? &retained->changes->sink
+                                  : NULL;
         for (size_t i = 0; i < w->n_subscriptions; i++)
-            w->subscriptions[i].wait = NULL;
+            w->subscriptions[i].wait = dormant;
         w->subscriptions = NULL;
         w->n_subscriptions = 0;
         return;

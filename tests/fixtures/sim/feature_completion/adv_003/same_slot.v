@@ -4,8 +4,8 @@
 // separated by #0 (the Inactive region runs only after the Active region,
 // where the UDP evaluation event runs) are separate transitions. Changes of
 // several inputs that one evaluation sees are processed one transition at a
-// time in port order (decision S3-D2): with the clock first, a rising clock
-// still samples the old data.
+// time in the order they changed (decision S3-D5): the concatenation writes
+// the clock first, so the rising clock still samples the old data.
 primitive toggle_any (q, t);
     output q; reg q;
     input t;

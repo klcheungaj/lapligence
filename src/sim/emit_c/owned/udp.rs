@@ -188,10 +188,13 @@ fn byte_table(out: &mut String, name: &str, bytes: &[u8]) {
 
 /// The step function and state type of sequential definition `index`.
 ///
-/// The dense step folds each input's digit into the stored code in port
-/// order; a digit that changed is one transition, looked up with the code
-/// in which earlier inputs already hold their new values (decision S3-D2).
-/// The state record keeps the prior code and the output state.
+/// Each input whose digit changed is one transition, looked up with the
+/// code in which the inputs already taken hold their new values. The inputs
+/// whose storage (`in[k]`) appears in `changes` are taken first, in the
+/// order those storages changed (the writer's statement order, IEEE
+/// 1800-2009 4.7); the rest follow in port order (decision S3-D2), where an
+/// input already taken no longer differs. The state record keeps the prior
+/// code and the output state.
 fn sequential_step(
     out: &mut String,
     index: usize,
@@ -200,25 +203,41 @@ fn sequential_step(
 ) {
     let inputs = table.input_count;
     let parameters = (0..inputs)
-        .map(|input| format!("size_t d{input}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+        .map(|input| format!(", size_t d{input}"))
+        .collect::<String>();
+    // The changed storages' inputs first, in change order.
+    let ordered = |out: &mut String, case: &dyn Fn(usize) -> String| {
+        out.push_str(&format!(
+            "  for (size_t c = 0; c < changes.n; ++c) {{\n    for (size_t k = 0; k < {inputs}u; ++k) {{\n      if (!llg_wait_change_is(changes.changes[c], in[k])) continue;\n      switch (k) {{\n"
+        ));
+        for input in 0..inputs {
+            out.push_str(&format!(
+                "      case {input}u: {{\n{}      }} break;\n",
+                case(input)
+            ));
+        }
+        out.push_str("      default: break;\n      }\n    }\n  }\n");
+    };
     if let Some(dense) = sequential_index(inputs, sequential) {
         byte_table(out, &format!("llg_udp_next_{index}"), &dense);
         let combinations = 3usize.pow(inputs as u32);
         let edges = sequential.edge_inputs(inputs);
-        out.push_str(&format!(
-            "static inline void llg_udp_step_{index}(llg_udp_seq_t* s, {parameters}) {{\n  size_t code = s->inputs;\n  size_t state = s->state, was;\n"
-        ));
-        for input in 0..inputs {
+        let block = |input: usize| {
             let weight = 3usize.pow((inputs - 1 - input) as u32);
             let slot = match edges.iter().position(|edge| *edge == input) {
                 Some(ordinal) => format!("{}u + was - (was > d{input})", 1 + 2 * ordinal),
                 None => "0u".to_owned(),
             };
-            out.push_str(&format!(
+            format!(
                 "  was = code / {weight}u % 3u;\n  if (d{input} != was) {{\n    code = code - was * {weight}u + d{input} * {weight}u;\n    state = llg_udp_next_{index}[(({slot}) * {combinations}u + code) * 3u + state];\n  }}\n"
-            ));
+            )
+        };
+        out.push_str(&format!(
+            "static inline void llg_udp_step_{index}(llg_udp_seq_t* s, llg_wait_changes_t changes, const llg_wait_change_t* in{parameters}) {{\n  size_t code = s->inputs;\n  size_t state = s->state, was;\n"
+        ));
+        ordered(out, &block);
+        for input in 0..inputs {
+            out.push_str(&block(input));
         }
         out.push_str("  s->inputs = (uint32_t)code;\n  s->state = (uint8_t)state;\n}\n");
         return;
@@ -232,30 +251,34 @@ fn sequential_step(
     let stride = 3 + 2 * inputs;
     out.push_str(&format!(
         "typedef struct {{ uint8_t inputs[{inputs}]; uint8_t state; }} llg_udp_wide_{index}_t;\n\
-         static inline void llg_udp_step_{index}(llg_udp_wide_{index}_t* s, {parameters}) {{\n\
+         static inline void llg_udp_wide_{index}_take(llg_udp_wide_{index}_t* s, size_t* state, size_t k, size_t now) {{\n\
+         \x20 const size_t was = s->inputs[k];\n\
+         \x20 if (now == was) return;\n\
+         \x20 s->inputs[k] = (uint8_t)now;\n\
+         \x20 size_t next = 2u;\n\
+         \x20 int found = 0;\n\
+         \x20 /* Level rows decide first (IEEE 1364-2001 8.7), then edge rows on k. */\n\
+         \x20 for (int pass = 0; pass < 2 && !found; ++pass) {{\n\
+         \x20   for (size_t r = 0; r < {rows}u && !found; ++r) {{\n\
+         \x20     const uint8_t* row = llg_udp_rows_{index} + r * {stride}u;\n\
+         \x20     if (row[0] != (uint8_t)pass || !(row[1] & (1u << *state))) continue;\n\
+         \x20     if (pass == 1 && !(row[4 + 2 * k] & (1u << was))) continue;\n\
+         \x20     size_t j = 0;\n\
+         \x20     while (j < {inputs}u && (row[3 + 2 * j] & (1u << s->inputs[j]))) ++j;\n\
+         \x20     if (j < {inputs}u) continue;\n\
+         \x20     next = row[2] == 3u ? *state : row[2];\n\
+         \x20     found = 1;\n\
+         \x20   }}\n\
+         \x20 }}\n\
+         \x20 *state = next;\n\
+         }}\n\
+         static inline void llg_udp_step_{index}(llg_udp_wide_{index}_t* s, llg_wait_changes_t changes, const llg_wait_change_t* in{parameters}) {{\n\
          \x20 const size_t now[{inputs}] = {{{arguments}}};\n\
          \x20 size_t state = s->state;\n\
-         \x20 for (size_t k = 0; k < {inputs}u; ++k) {{\n\
-         \x20   const size_t was = s->inputs[k];\n\
-         \x20   if (now[k] == was) continue;\n\
-         \x20   s->inputs[k] = (uint8_t)now[k];\n\
-         \x20   size_t next = 2u;\n\
-         \x20   int found = 0;\n\
-         \x20   /* Level rows decide first (IEEE 1364-2001 8.7), then edge rows on k. */\n\
-         \x20   for (int pass = 0; pass < 2 && !found; ++pass) {{\n\
-         \x20     for (size_t r = 0; r < {rows}u && !found; ++r) {{\n\
-         \x20       const uint8_t* row = llg_udp_rows_{index} + r * {stride}u;\n\
-         \x20       if (row[0] != (uint8_t)pass || !(row[1] & (1u << state))) continue;\n\
-         \x20       if (pass == 1 && !(row[4 + 2 * k] & (1u << was))) continue;\n\
-         \x20       size_t j = 0;\n\
-         \x20       while (j < {inputs}u && (row[3 + 2 * j] & (1u << s->inputs[j]))) ++j;\n\
-         \x20       if (j < {inputs}u) continue;\n\
-         \x20       next = row[2] == 3u ? state : row[2];\n\
-         \x20       found = 1;\n\
-         \x20     }}\n\
-         \x20   }}\n\
-         \x20   state = next;\n\
-         \x20 }}\n\
+         \x20 for (size_t c = 0; c < changes.n; ++c)\n\
+         \x20   for (size_t k = 0; k < {inputs}u; ++k)\n\
+         \x20     if (llg_wait_change_is(changes.changes[c], in[k])) llg_udp_wide_{index}_take(s, &state, k, now[k]);\n\
+         \x20 for (size_t k = 0; k < {inputs}u; ++k) llg_udp_wide_{index}_take(s, &state, k, now[k]);\n\
          \x20 s->state = (uint8_t)state;\n\
          }}\n",
         arguments = (0..inputs)
@@ -464,17 +487,61 @@ impl Frame<'_, '_> {
     }
 
     /// Advance one sequential instance's state from its current inputs.
+    ///
+    /// Inputs that read a signal (whole, or one constant bit of it) name
+    /// that storage and offset, so the step takes them in the order the
+    /// gate's wait saw them change (`llg_wait_changes`); other inputs, and
+    /// every input of an instance with no such input, go in port order.
     pub(super) fn udp_step(&mut self, state: usize, inputs: &[IrExpr]) -> Result<(), String> {
         let table = self.ctx.model.udp_states[state];
+        let changes = inputs
+            .iter()
+            .map(|input| self.udp_change(input))
+            .collect::<Vec<_>>();
         let (digits, held) = self.udp_digits(inputs)?;
+        let order = if changes.iter().any(Option::is_some) {
+            let changes = changes
+                .iter()
+                .map(|change| change.as_deref().unwrap_or("{ NULL, 0u }"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("llg_wait_changes(self), (const llg_wait_change_t[]){{ {changes} }}")
+        } else {
+            "(llg_wait_changes_t){ NULL, 0 }, NULL".to_owned()
+        };
         self.line(format!(
-            "llg_udp_step_{table}(&llg_udp_state_{state}, {});",
+            "llg_udp_step_{table}(&llg_udp_state_{state}, {order}, {});",
             digits.join(", ")
         ));
         for value in held {
             self.discard(value);
         }
         Ok(())
+    }
+
+    /// The change-log entry (`llg_wait_change_t`) that announces a change of
+    /// `input`: the signal it reads, whole or at one constant bit; `None`
+    /// when no single storage holds it. The bit is a `ULL` literal like the
+    /// digit's, so instances that differ only in it still share one body.
+    fn udp_change(&self, input: &IrExpr) -> Option<String> {
+        let source = state_source(input);
+        let (base, bit) = match &source.kind {
+            IrExprKind::BitSel { base, idx } => {
+                (base.as_ref(), format!("(uint32_t){}ULL", constant_offset(idx)?))
+            }
+            IrExprKind::PartSel { base, left, right } if left == right => {
+                (base.as_ref(), format!("(uint32_t){}ULL", u64::try_from(*right).ok()?))
+            }
+            _ => (source, "LLG_WAIT_CHANGE_WHOLE".to_owned()),
+        };
+        let IrExprKind::SigRead(index) = &base.kind else {
+            return None;
+        };
+        let signal = self.ctx.model.signal(*index);
+        signal
+            .net_alias
+            .is_empty()
+            .then(|| format!("{{ (const void*)&{}, {bit} }}", signal.c_name))
     }
 
     /// The output of one sequential instance, as its last step left it.

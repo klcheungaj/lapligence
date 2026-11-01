@@ -125,6 +125,14 @@ source lookup runs per wake. Arming a different list, completion, kill and
 teardown release the record. The development-only C define
 `LLG_DEV_LEGACY_GATE_PATH` restores per-wake registration, and the net and
 scope paths below, for differential tests.
+An ordered dependency wait (armed after `llg_wait_changes`, which every
+sequential UDP step calls) is always retained and also owns a change log
+(`llg_wait_change_log_t`, one entry per dependency): the dependencies whose
+change woke it, then, because its memberships point at the log's
+`W_CHANGE_LOG` sink between wakes instead of NULL, each other dependency the
+first time it changes before the process runs. Publication logs into the
+sink without waking anything; other waits pay only the `wait_ordered` byte
+test on the W_DEPS path. Re-arming clears the log.
 
 Net writes keep the driver interval index exact but cheap: a whole-slot write
 indexes the driver by its driven (non-Z) extent rather than the full net, a

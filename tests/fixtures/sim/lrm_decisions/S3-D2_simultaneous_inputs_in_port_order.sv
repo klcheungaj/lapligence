@@ -1,9 +1,11 @@
-// Decision S3-D2: when several inputs of a sequential UDP have changed by the
-// time the UDP is evaluated (they were assigned in one step of one process),
-// llg processes them as one transition each, in port order, every one seeing
-// the new values of the inputs before it and the old values of the inputs
-// after it. One evaluation drives only the final state. A change that is
-// undone before the UDP is evaluated is not seen.
+// Decision S3-D2: inputs of a sequential UDP whose changes one evaluation
+// cannot tell apart are taken one transition each in port order, every one
+// seeing the new values of the inputs before it and the old values of the
+// inputs after it: two bits of one vector changed by one write, and inputs
+// that are not a variable, a net or a constant bit of one. Inputs changed by
+// separate writes follow the order of the writes (decision S3-D5); one
+// evaluation drives only the final state, and a change that is undone
+// before the UDP is evaluated is not seen.
 //
 // IEEE 1800-2009 4.7 (SystemVerilog-1800-2009.txt L3465-3471): "statements
 // without time-control constructs in procedural blocks do not have to be
@@ -11,8 +13,9 @@
 // nondeterministic". 29.6 L48960: "Each table entry can have a transition
 // specification on at most one input." Whether the UDP sees the clock or the
 // data change first, or a zero-width clock pulse, is not determined, so the
-// lines without the `llg` label hold for every conforming simulator. llg sees
-// the clock first (q stays 0) and does not see the pulse.
+// lines without the `llg` label hold for every conforming simulator. The
+// concatenation writes the clock first (q stays 0) and the pulse is not
+// seen.
 primitive dff (q, clk, d);
     output q;
     reg q;

@@ -2869,6 +2869,33 @@ llg_co_arm_t llg_arm_ref_dependencies(llg_proc_t* self,
                                       const llg_wait_dependency_t* deps, int n,
                                       const llg_ref_t* const* refs, int n_refs,
                                       int event);
+// The dependencies of `self`'s last dependency wait in the order they
+// changed since it was armed: those whose change woke it, then each other
+// one the first time it changed before the process ran. An entry names the
+// storage and, for a selected dependency, its offset (else
+// LLG_WAIT_CHANGE_WHOLE). The call also makes the next dependency wait of
+// `self` record that order, so a loop that calls it before every wait sees
+// each wake's order; the entries stay valid until that wait is armed. A
+// sequential UDP takes its input changes in this order (IEEE 1800-2009 4.7
+// lets it evaluate between any two statements of the writer).
+#define LLG_WAIT_CHANGE_WHOLE UINT32_MAX
+typedef struct {
+    const void* key;
+    uint32_t bit;
+} llg_wait_change_t;
+typedef struct {
+    const llg_wait_change_t* changes;
+    size_t n;
+} llg_wait_changes_t;
+// Whether `change` covers the one-bit input `input` (offset `bit` of `key`,
+// LLG_WAIT_CHANGE_WHOLE for the whole storage).
+static inline int llg_wait_change_is(llg_wait_change_t change,
+                                     llg_wait_change_t input) {
+    return change.key == input.key &&
+           (change.bit == input.bit || change.bit == LLG_WAIT_CHANGE_WHOLE ||
+            input.bit == LLG_WAIT_CHANGE_WHOLE);
+}
+llg_wait_changes_t llg_wait_changes(llg_proc_t* self);
 // Mark the next event-control wait of `self` as evaluated by the process: if
 // an occurrence was withheld while it was suspended, resume() wakes it with
 // llg_wait_refreshed() true so it takes its armed values again instead of

@@ -74,6 +74,16 @@ Line numbers are those of the `pdftotext -layout` extractions
   UDPs shall contain a reg declaration for the output port ... Combinational
   UDPs cannot contain a reg declaration." V L7839: "they shall allow at least 9
   inputs for sequential UDPs".
+- Update events, SV 4.3 L3038-3043: "Every change in state of a net or
+  variable in the system description being simulated is considered an update
+  event. Processes are sensitive to update events. When an update event is
+  executed, all the processes that are sensitive to that event are considered
+  for evaluation in an arbitrary order."
+- Interleaving, SV 4.7 L3465-3471: "statements without time-control
+  constructs in procedural blocks do not have to be executed as one event ...
+  At any time while evaluating a procedural statement, the simulator may
+  suspend execution and place the partially completed event as a pending
+  event in the event region."
 - Scheduling, SV 4.4.2.3 L3152-3156: "The Inactive region holds the events to
   be evaluated after all the Active events are processed. ... an explicit #0
   delay control requires the process to be suspended and an event to be
@@ -93,7 +103,8 @@ input's old and new value (decision S3-D1).
 | `mixed_tables.v` | the 8.7 `jk_edge_ff` (preset/clear level rows, clock and j/k edge rows) and a table where a level row overrides an edge row for the same rising clock |
 | `initial_delay.v` | 8.5 examples 1 and 2 (Figure 30 timing), `output reg q = 0`, an undelayed initial value on a `#(4, 6)` instance, then rise, fall and to-x delays |
 | `instance_array.v` | instance-array elements and separate instances keep independent states; scalar actuals fan out to every element |
-| `same_slot.v` | changes separated by `#0` are separate transitions; two inputs changed in one step follow S3-D2 |
+| `same_slot.v` | changes separated by `#0` are separate transitions; two inputs changed by one statement follow S3-D5 |
+| `change_order.v` | S3-D5: inputs changed before one evaluation are taken in the order they changed (statement order, separate processes), for reg, net and bit-select inputs, a module whose instances share a body and a ten-input row-scan definition; two bits changed by one write keep port order (S3-D2); a zero-width pulse is not seen |
 | `strengths.v` | drive strengths, resolution with other drivers, an X state at its strength, a delayed instance with strengths |
 | `time_zero.v` | S3-D4: constant and supply inputs are transitions from x at time zero, undriven inputs are not |
 | `wide_table.v` | ten inputs with four edge inputs: above the dense next-state limit, so the row-scan step runs; level dominance and level-only inputs there |

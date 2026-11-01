@@ -1,0 +1,5 @@
+open q1=1 q2=1 q3=1 q4=1 w=1
+closed_first q1=1 data_first q2=0 bits w=1
+clock_first f1=0 data_first f2=1
+b_last o1=1 c_last o2=0
+nonblocking q3=1 q4=0

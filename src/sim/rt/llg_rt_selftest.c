@@ -1094,6 +1094,73 @@ static void test_retained_dependency_waits(void) {
     sv4_destroy(&rw_v);
 }
 
+// Ordered dependency waits (llg_wait_changes) log their dependencies in the
+// order they changed: the one that woke the waiter, then the others the first
+// time each changes before it runs. A selected dependency logs its offset and
+// only when its bits change; an undone change keeps its first position.
+static sv4_t ow_x, ow_y, ow_v;
+static char ow_log[64];
+static int ow_n;
+
+static void ow_record(llg_wait_changes_t changes) {
+    for (size_t i = 0; i < changes.n && ow_n < (int)sizeof(ow_log) - 3; i++) {
+        const llg_wait_change_t* change = &changes.changes[i];
+        ow_log[ow_n++] = change->key == (const void*)&ow_x ? 'x'
+                         : change->key == (const void*)&ow_y ? 'y' : 'v';
+        if (change->bit != LLG_WAIT_CHANGE_WHOLE) ow_log[ow_n++] = (char)('0' + change->bit);
+    }
+    ow_log[ow_n++] = '|';
+}
+
+LLG_SELFTEST_PROCESS(ow_waiter, 1) {
+    LLG_SELFTEST_BEGIN(1);
+    for (F->index = 0; F->index < 4; F->index++) {
+        ow_record(llg_wait_changes(self));
+        LLG_SELFTEST_AWAIT(1, llg_arm_event_dependencies(
+            self, (llg_wait_dependency_t[]){
+                {.sig = &ow_x}, {.sig = &ow_y},
+                {.sig = &ow_v, .value = &ow_v, .lsb = 0u, .width = 1u},
+                {.sig = &ow_v, .value = &ow_v, .lsb = 2u, .width = 1u}}, 4));
+    }
+    ow_record(llg_wait_changes(self));
+    LLG_SELFTEST_DONE();
+}
+
+LLG_SELFTEST_PROCESS(ow_writer, 3) {
+    LLG_SELFTEST_BEGIN(3);
+    LLG_SELFTEST_AWAIT(1, llg_arm_time(self, 1));
+    llg_ba(&ow_y, test_temp(SV4_C(1, 1)));
+    llg_ba(&ow_x, test_temp(SV4_C(1, 1)));
+    llg_ba(&ow_y, test_temp(SV4_C(0, 1)));
+    LLG_SELFTEST_AWAIT(2, llg_arm_time(self, 1));
+    llg_ba(&ow_v, test_temp(SV4_C(2, 4)));  // neither selected bit
+    llg_ba(&ow_v, test_temp(SV4_C(6, 4)));  // bit 2
+    llg_ba(&ow_v, test_temp(SV4_C(7, 4)));  // bit 0
+    llg_ba(&ow_x, test_temp(SV4_C(0, 1)));
+    LLG_SELFTEST_AWAIT(3, llg_arm_time(self, 1));
+    llg_ba(&ow_v, test_temp(SV4_C(2, 4)));  // bits 2 and 0 in one write
+    LLG_SELFTEST_DONE();
+}
+
+static void test_ordered_dependency_waits(void) {
+    llg_rt_init();
+    sv4_replace(&ow_x, SV4_C(0, 1));
+    sv4_replace(&ow_y, SV4_C(0, 1));
+    sv4_replace(&ow_v, SV4_C(0, 4));
+    ow_n = 0;
+    llg_spawn(&ow_waiter_desc, "ow-waiter");
+    llg_spawn(&ow_writer_desc, "ow-writer");
+    llg_rt_run();
+    ow_log[ow_n] = 0;
+    CHECK(strcmp(ow_log, "|yx|v2v0x|v0v2|") == 0);
+    if (strcmp(ow_log, "|yx|v2v0x|v0v2|") != 0)
+        fprintf(stderr, "ordered dependency changes: %s\n", ow_log);
+    llg_rt_cleanup();
+    sv4_destroy(&ow_x);
+    sv4_destroy(&ow_y);
+    sv4_destroy(&ow_v);
+}
+
 // Delay ordering: two processes with staggered #delays must wake in time order.
 static uint64_t order_log[8];
 static int order_n;
@@ -2792,6 +2859,7 @@ static int run_selftests(int argc, char** argv) {
     test_real_dependencies();
     test_clear_temporaries();
     test_retained_dependency_waits();
+    test_ordered_dependency_waits();
     test_clear_temporaries();
     test_llg_net();
     test_clear_temporaries();

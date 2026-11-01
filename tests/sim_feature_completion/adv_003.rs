@@ -103,6 +103,20 @@ fn repeated_same_slot_changes_are_separate_transitions() {
 }
 
 #[test]
+fn simultaneous_changes_follow_their_order() {
+    let expected = include_str!("../fixtures/sim/feature_completion/adv_003/change_order.out");
+    for edition in BOTH {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "change_order.v",
+            expected,
+            &["--edition", edition],
+            &[],
+        );
+    }
+}
+
+#[test]
 fn outputs_drive_with_strengths_and_delays() {
     let expected = include_str!("../fixtures/sim/feature_completion/adv_003/strengths.out");
     for edition in BOTH {

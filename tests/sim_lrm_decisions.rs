@@ -3742,6 +3742,14 @@ fn s3_d4_time_zero_inputs_start_x() {
 }
 
 #[test]
+fn s3_d5_inputs_in_change_order() {
+    run_decision(
+        "S3-D5_inputs_in_change_order",
+        include_str!("fixtures/sim/lrm_decisions/S3-D5_inputs_in_change_order.out"),
+    );
+}
+
+#[test]
 fn s99_d1_procedural_queue() {
     run_decision(
         "S99-D1_procedural_queue",

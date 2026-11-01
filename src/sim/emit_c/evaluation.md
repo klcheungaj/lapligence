@@ -288,7 +288,11 @@ input has a slot per `old - (old > new)`. The index is built by evaluating
 `IrUdpSequential::next_state` for every entry, so the emitted lookup and the
 IR rule cannot diverge. Larger definitions keep encoded rows and scan them
 in the step (level rows, then edge rows on the changed input). Changed inputs
-are taken in port order (decision S3-D2) and Z/X changes are skipped.
+are taken in the order the gate's dependency wait saw them change
+(`llg_wait_changes`, decision S3-D5): each input that reads a signal, whole
+or at one constant bit, passes that storage and offset to the step, which
+takes the logged changes first and then every other input in port order
+(decision S3-D2); Z/X changes are skipped.
 
 ArrayMux uses uniform leaf defaults; StructMux passes one period's leaf layout to
 `sv4_record_conditional_merge`.

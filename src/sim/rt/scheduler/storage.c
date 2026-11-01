@@ -33,6 +33,7 @@ typedef enum {
     W_MAILBOX_GET,
     W_MAILBOX_PUT,
     W_ASSERTION, // procedural expect waiting for one assertion endpoint
+    W_CHANGE_LOG, // dormant memberships of an ordered dependency wait (a sink)
 } llg_wait_kind_t;
 
 static void value_scope_release(llg_value_scope_t* scope);
@@ -323,6 +324,8 @@ typedef struct {
     int n;
     llg_wait_subscription_t* subscriptions;
     size_t n_subscriptions;
+    // Change order of an ordered wait (llg_wait_changes), else NULL.
+    struct llg_wait_change_log* changes;
 } llg_wait_retained_t;
 
 typedef struct llg_wait {
@@ -345,6 +348,20 @@ typedef struct llg_wait {
         llg_wait_rare_t* rare;
     } payload;
 } llg_wait_t;
+
+// The order in which the dependencies of an ordered wait changed since it
+// was armed (llg_wait_changes): those whose change woke it, then each other
+// one the first time it changed while the process was queued. Between wakes
+// the retained memberships point at `sink` (kind W_CHANGE_LOG, never in the
+// waiter list) instead of NULL, so publication logs without waking
+// anything. A (storage, offset) pair holds one entry, so `cap`, the
+// dependency count, bounds the log.
+typedef struct llg_wait_change_log {
+    llg_wait_t sink;
+    llg_wait_change_t* changes;
+    uint32_t n;
+    uint32_t cap;
+} llg_wait_change_log_t;
 
 struct llg_semaphore_wait {
     llg_semaphore_wait_t* next;
@@ -533,6 +550,10 @@ struct llg_proc {
     uint8_t deadlock_counted;
     // A VPI cbEnterThread record watches this process (llg_rt_thread_watch_enter).
     uint8_t vpi_enter;
+    // The next dependency wait records its change order (llg_wait_changes);
+    // the registered one does.
+    uint8_t next_wait_ordered;
+    uint8_t wait_ordered;
     llg_process_handle_t* handle;
     llg_process_local_ref_t* process_locals;
     llg_proc_t* next_retired;
@@ -639,6 +660,8 @@ static void process_local_release_all(llg_proc_t* proc);
 static void start_pending_fork_children(llg_proc_t* parent);
 static void proc_complete(llg_proc_t* self);
 static void wait_retained_drop(llg_proc_t* proc);
+static void wait_change_note(llg_wait_change_log_t* log, const void* key,
+                             uint32_t bit);
 static void event_triggered_unlink(llg_wait_t* w);
 static void mailbox_unlink_wait(llg_wait_t* w);
 static void mailbox_value_destroy(llg_mailbox_value_t* value);

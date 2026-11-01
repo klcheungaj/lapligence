@@ -441,8 +441,24 @@ llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
     w->resume_region = take_wait_resume_region(self);
     llg_wait_expression_payload_t* payload = &w->payload.expression;
     payload->n = n;
-    llg_wait_retained_t* retained = LLG_GATE_FAST_PATH && n > 0
+    // An ordered wait always retains its memberships: they log the changes
+    // that follow its wake (llg_wait_changes).
+    int ordered = self->next_wait_ordered && n > 0;
+    llg_wait_retained_t* retained = (LLG_GATE_FAST_PATH || ordered) && n > 0
         ? wait_retained_for(self, deps, n) : NULL;
+    if (ordered) {
+        if (!retained->changes) {
+            retained->changes = (llg_wait_change_log_t*)llg_checked_calloc(
+                1, sizeof(*retained->changes), "dependency change log");
+            retained->changes->changes = (llg_wait_change_t*)llg_checked_calloc(
+                (size_t)n, sizeof(*retained->changes->changes),
+                "dependency change log");
+            retained->changes->cap = (uint32_t)n;
+            retained->changes->sink.kind = W_CHANGE_LOG;
+            retained->changes->sink.proc = self;
+        }
+        retained->changes->n = 0;
+    }
     if (retained) {
         payload->dependencies = retained->dependencies;
         payload->last = retained->last;
@@ -470,7 +486,20 @@ llg_co_arm_t llg_arm_any_dependencies(llg_proc_t* self,
         }
     }
     register_wait();
+    self->wait_ordered = (uint8_t)ordered;
     return LLG_CO_ARM_SUSPEND;
+}
+
+llg_wait_changes_t llg_wait_changes(llg_proc_t* self) {
+    llg_wait_changes_t changes = {NULL, 0};
+    if (!self) return changes;
+    self->next_wait_ordered = 1;
+    const llg_wait_retained_t* retained = self->retained_wait;
+    if (retained && retained->changes) {
+        changes.changes = retained->changes->changes;
+        changes.n = retained->changes->n;
+    }
+    return changes;
 }
 
 llg_co_arm_t llg_arm_event_dependencies(llg_proc_t* self,

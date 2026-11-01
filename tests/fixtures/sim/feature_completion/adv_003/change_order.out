@@ -1,0 +1,6 @@
+open n1=1 n2=1 b1=1 b2=1 bp=1 s1=1 s2=1 pq=1
+nets n1=1 n2=0
+bits b1=1 b2=0 one_write=0
+shared s1=1 s2=0
+wide clock_first=0 data_first=1 pulse=1
+processes q3=1 q4=0
