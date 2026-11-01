@@ -83,7 +83,9 @@ and objects remain separate. `validate.rs` supplies the shared context for
 
 ## Storage, views, and delayed work
 
-Variable aliases identify canonical storage. True-net aliases retain bit-level
+Storage aliases (`IrSignal::alias`: `ref` ports and collapsed port sinks)
+identify canonical storage, a variable or a whole resolved net's cell, never
+another alias or a true-net alias. True-net aliases retain bit-level
 resolved-group bindings through pruning, including read dependencies,
 force/release descriptors, and waveform observations. Net-array cells retain
 checked bounds and electrical target widths.

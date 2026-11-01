@@ -89,8 +89,10 @@ variable has two ordinary records in one step (S47-D2).
   those three names share one identifier code. The `clk` inputs of both stages
   and the `d` input of stage 0 are connected to whole variables of their own
   type, so they share the actual's storage and its code (decision A21-D1):
-  `{tb.clk, both stage clk}` and `{tb.d, stage 0 d}`; every other path has its
-  own.
+  `{tb.clk, both stage clk}` and `{tb.d, stage 0 d}`. The `q0` and `q1` wires
+  are driven only by the `q` output of their stage, so each merges with that
+  variable (decision A21-D2): `{tb.q0, stage 0 q}` and `{tb.q1, stage 1 q}`.
+  Every other path has its own.
   `$dumpvars` runs after `d = 0` and before `d = 3` at step 0, so the
   checkpoint shows `d = 0011` (S47-D1).
   - `clk`, `extra`, both stage `clk`: 0@0, 1@1000, 0@2000, 1@3000.

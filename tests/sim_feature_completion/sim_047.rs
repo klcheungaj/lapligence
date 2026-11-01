@@ -180,7 +180,8 @@ fn check_trace_values(label: &str, dir: &sim_harness::TempDir, output: &Output) 
     // The inout port nets collapse into `shared` (one net), so the three
     // names share one identifier code. The input ports connected to the
     // whole `clk` and `d` variables share their actual's storage, so they
-    // share its code too; every other path has its own.
+    // share its code too, and so do the `q0`/`q1` wires that only the stage
+    // outputs drive (A21-D2); every other path has its own.
     let mut groups = vec![
         sorted(vec![
             path(&["tb", "g[0]", "first", "s", "bus"]),
@@ -195,6 +196,14 @@ fn check_trace_values(label: &str, dir: &sim_harness::TempDir, output: &Output) 
         sorted(vec![
             path(&["tb", "d"]),
             path(&["tb", "g[0]", "first", "s", "d"]),
+        ]),
+        sorted(vec![
+            path(&["tb", "q0"]),
+            path(&["tb", "g[0]", "first", "s", "q"]),
+        ]),
+        sorted(vec![
+            path(&["tb", "q1"]),
+            path(&["tb", "g[1]", "second", "s", "q"]),
         ]),
     ];
     groups.sort();
