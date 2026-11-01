@@ -62,6 +62,7 @@ test a19d68 sim_lrm_decisions::a19_d68_udp_initial_statement
 test a19d69 sim_lrm_decisions::a19_d69_named_event_arrays
 test a19d71 sim_lrm_decisions::a19_d71_mailbox_semaphore_waiters
 test a19d72 sim_lrm_decisions::a19_d72_virtual_interface_properties
+test a19d73 sim_lrm_decisions::a19_d73_fixed_handle_array_elements
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test a20d16 sim_lrm_decisions::a20_d16_delay_expressions
 test a20d17 sim_lrm_decisions::a20_d17_port_delays
@@ -932,8 +933,8 @@ node string_var 37.17 type=vpiStringVar
   get vpiScalar implemented walk
   get vpiVector implemented walk
   handle vpiTypespec implemented walk
-  handle vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
-  iterate vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
+  handle vpiIndex implemented a19d73
+  iterate vpiIndex implemented a19d73
   str vpiDecompile implemented walk
 
 node chandle_var 37.17 type=vpiChandleVar
@@ -942,8 +943,8 @@ node chandle_var 37.17 type=vpiChandleVar
   get vpiScalar implemented walk
   get vpiVector implemented walk
   handle vpiTypespec implemented walk
-  handle vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
-  iterate vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
+  handle vpiIndex implemented a19d73
+  iterate vpiIndex implemented a19d73
   str vpiDecompile implemented walk
 
 node class_var 37.17 type=vpiClassVar
@@ -956,8 +957,8 @@ node class_var 37.17 type=vpiClassVar
   func vpi_get_value error a19d65 a class variable holds an object reference, which no value format represents (38.15); industry-standard behaviour returns an address, which is not portable (decision A19-D65)
   get vpiScalar implemented walk
   get vpiVector implemented walk
-  handle vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
-  iterate vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
+  handle vpiIndex implemented a19d73
+  iterate vpiIndex implemented a19d73
   str vpiDecompile implemented walk
 
 node var_bit 37.17 type=vpiRegBit

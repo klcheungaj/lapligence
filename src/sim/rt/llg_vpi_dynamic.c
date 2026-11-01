@@ -116,7 +116,7 @@ static int dyn_tables_valid(void) {
         if (shape->shape == LLG_VPI_SHAPE_CONTAINER &&
             (shape->element >= i || shape->key > LLG_VPI_KEY_OTHER ||
              (shape->array_type != vpiDynamicArray && shape->array_type != vpiQueueArray &&
-              shape->array_type != vpiAssocArray)))
+              shape->array_type != vpiAssocArray && shape->array_type != vpiStaticArray)))
             return 0;
     }
     for (uint32_t i = 0; i < t->class_count; ++i) {
@@ -170,8 +170,11 @@ static int dyn_tables_valid(void) {
 static int dyn_row_valid(const llg_vpi_model_object_t* object) {
     const llg_vpi_shape_t* shape = object->shape ? dyn_shape(object->shape - 1u) : NULL;
     if (!shape || !object->storage || shape->shape == LLG_VPI_SHAPE_OTHER ||
-        object->packed || object->real || object->dim_count)
+        object->packed || object->real)
         return 0;
+    /* A fixed-size array row carries its one declared range. */
+    int fixed = shape->shape == LLG_VPI_SHAPE_CONTAINER && shape->array_type == vpiStaticArray;
+    if (object->dim_count != (fixed ? 1u : 0u) || (fixed && !object->dims)) return 0;
     if (object->dependency && shape->shape != LLG_VPI_SHAPE_CLASS &&
         shape->shape != LLG_VPI_SHAPE_CHANDLE)
         return 0;
@@ -383,6 +386,27 @@ typedef struct {
     uint32_t row;             /* the catalog row, or LLG_VPI_NONE */
     const char* name;         /* the variable's name */
 } dyn_place_t;
+
+/* The declared range of a fixed-size array row (37.17): its elements are
+ * numbered from `left`. */
+static int dyn_fixed_range(const dyn_place_t* place, int64_t* left, int64_t* right) {
+    if (place->shape->shape != LLG_VPI_SHAPE_CONTAINER ||
+        place->shape->array_type != vpiStaticArray || place->row == LLG_VPI_NONE)
+        return 0;
+    const llg_vpi_model_object_t* row = row_object(place->row);
+    if (!row || row->dim_count != 1u) return 0;
+    *left = row->dims[0];
+    *right = row->dims[1];
+    return 1;
+}
+
+/* The declared index of element `offset` of a fixed-size array, or the
+ * offset itself for other containers. */
+static int64_t dyn_declared_index(const dyn_place_t* place, uint64_t offset) {
+    int64_t left, right;
+    if (!dyn_fixed_range(place, &left, &right)) return (int64_t)offset;
+    return left >= right ? left - (int64_t)offset : left + (int64_t)offset;
+}
 
 static int dyn_is_dying(const void* object) {
     const llg_vpi_live_t* entry = object ? live_find(object) : NULL;
@@ -1387,6 +1411,16 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
                 if (!dyn_object_class(slot->pointer, &class_index)) break;
                 return make_property(slot->pointer, class_index, (uint32_t)slot->aux);
             }
+            if (!slot->pointer &&
+                (type == vpiModule || type == vpiInstance || type == vpiScope)) {
+                /* 37.17: an element of a module-level array is declared
+                 * where the array is. */
+                vpiHandle array = object_handle(slot->object);
+                if (!array) return NULL;
+                vpiHandle result = vpi_handle(type, array);
+                vpi_release_handle(array);
+                return result;
+            }
             if (type == vpiIndex) {
                 /* A string key is a string constant (decision A19-D23). */
                 if (slot->lsb == DYN_AT_STRING)
@@ -1403,7 +1437,10 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
                     sv4_destroy(&key);
                     return dyn_constant(value);
                 }
-                return dyn_constant((int64_t)slot->element);
+                dyn_place_t place;
+                if (!dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux, &place))
+                    break;
+                return dyn_constant(dyn_declared_index(&place, slot->element));
             }
             if (type == vpiClassObj) {
                 int ok;
@@ -1419,6 +1456,15 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
                                               : NULL;
                 if (type == vpiTypespec && shape->typespec)
                     return typespec_handle(typespec_ref(shape->typespec));
+                if (type == vpiTypespec && !slot->pointer) {
+                    /* The element type of the array's typespec (37.17). */
+                    vpiHandle array = object_handle(slot->object);
+                    vpiHandle array_ts = array ? vpi_handle(vpiTypespec, array) : NULL;
+                    vpiHandle result = array_ts ? vpi_handle(vpiElemTypespec, array_ts) : NULL;
+                    if (array_ts) vpi_release_handle(array_ts);
+                    if (array) vpi_release_handle(array);
+                    if (result) return result;
+                }
             }
             break;
         }
@@ -1474,6 +1520,9 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
             if ((type == vpiLeftRange || type == vpiRightRange) &&
                 shape->shape == LLG_VPI_SHAPE_CONTAINER && place.storage &&
                 shape->array_type != vpiAssocArray) {
+                int64_t left, right;
+                if (dyn_fixed_range(&place, &left, &right))
+                    return dyn_constant(type == vpiLeftRange ? left : right);
                 /* 37.17 detail 6: [0:size-1]; NULL with no element. */
                 size_t size = dyn_container_size(&place);
                 if (!size) return NULL;
@@ -1609,6 +1658,20 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
         case SLOT_PROPERTY:
         case SLOT_OBJECT: {
             dyn_place_t place;
+            if (slot->kind == SLOT_DYNELEM && type == vpiIndex) {
+                /* 37.17 detail 18: the index that selects the element. */
+                int index_handled;
+                vpiHandle index = dyn_handle(vpiIndex, slot, &index_handled);
+                if (!index) return NULL;
+                uintptr_t* items = (uintptr_t*)calloc(1u, sizeof(*items));
+                if (!items) {
+                    vpi_release_handle(index);
+                    vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+                    return NULL;
+                }
+                items[0] = (uintptr_t)index;
+                return make_list_iterator(vpiIndex, items, 1u);
+            }
             if (slot->kind == SLOT_DYNELEM || !dyn_place(slot, &place)) {
                 if (slot->kind == SLOT_OBJECT) {
                     *handled = 0;
@@ -1627,8 +1690,17 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
                 }
                 break;
             }
+            int64_t fixed_left, fixed_right;
+            int fixed = dyn_fixed_range(&place, &fixed_left, &fixed_right);
+            /* A fixed-size array's ranges are its row's (37.17 detail 6). */
+            if (fixed && slot->kind == SLOT_OBJECT && type == vpiRange) {
+                *handled = 0;
+                return NULL;
+            }
             const llg_vpi_shape_t* element = dyn_shape(place.shape->element);
-            if (!element || !dyn_element_type_matches(element, type)) break;
+            if (!element || !(dyn_element_type_matches(element, type) ||
+                              (fixed && type == vpiVarSelect)))
+                break;
             if (!place.storage) {
                 vpi_error("LLG_VPI_RELATION",
                           "a property of a class definition has no elements (37.27 detail 2)");
@@ -1973,7 +2045,7 @@ static char* dyn_element_name(const llg_vpi_slot_t* slot, int full) {
         sv4_destroy(&key);
         return text;
     }
-    return dyn_text("%s[%llu]", base, (unsigned long long)slot->element);
+    return dyn_text("%s[%lld]", base, (long long)dyn_declared_index(&place, slot->element));
 }
 
 /* vpi_get_str(property, slot); `*handled` 0 when llg_vpi.c should answer. */
@@ -2190,6 +2262,16 @@ static vpiHandle dyn_element_by_index(const dyn_place_t* place, uint32_t field, 
             return NULL;
         }
         return make_dyn_element(place, field, DYN_AT_INTEGRAL, (uint64_t)index, NULL, 0);
+    }
+    int64_t left, right;
+    if (dyn_fixed_range(place, &left, &right)) {
+        /* A fixed-size array: the declared index (37.17). */
+        int64_t low = left < right ? left : right, high = left < right ? right : left;
+        if (index < low || index > high) {
+            if (!quiet) vpi_error("LLG_VPI_INDEX", "index outside the array range");
+            return NULL;
+        }
+        index = left >= right ? left - index : index - left;
     }
     if (index < 0 || (uint64_t)index >= dyn_container_size(place)) {
         if (!quiet) vpi_error("LLG_VPI_INDEX", "array index is outside the current size");

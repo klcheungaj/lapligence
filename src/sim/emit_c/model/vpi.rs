@@ -240,7 +240,8 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
         let dims = if matches!(
             object.kind,
             IrVpiObjectKind::InstanceArray | IrVpiObjectKind::NamedEventArray
-        ) {
+        ) || (object.kind == IrVpiObjectKind::Dynamic && !object.dims.is_empty())
+        {
             let Some(dims) = object
                 .dims
                 .iter()

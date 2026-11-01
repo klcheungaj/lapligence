@@ -21,6 +21,10 @@ pub enum IrVpiArrayType {
     Dynamic,
     Queue,
     Assoc,
+    /// A one-dimensional fixed-size array whose elements are strings,
+    /// chandles or class handles (37.17): its row's `dims` give the
+    /// declared range the element indices follow.
+    Static,
 }
 
 impl IrVpiArrayType {
@@ -29,6 +33,7 @@ impl IrVpiArrayType {
             Self::Dynamic => "vpiDynamicArray",
             Self::Queue => "vpiQueueArray",
             Self::Assoc => "vpiAssocArray",
+            Self::Static => "vpiStaticArray",
         }
     }
 }

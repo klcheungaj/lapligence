@@ -2219,6 +2219,15 @@ fn a19_d72_virtual_interface_properties() {
 }
 
 #[test]
+fn a19_d73_fixed_handle_array_elements() {
+    run_vpi_decision(
+        "A19-D73_fixed_handle_array_elements",
+        &["task $d73()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D73_fixed_handle_array_elements.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",

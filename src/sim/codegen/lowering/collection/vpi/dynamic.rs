@@ -40,7 +40,9 @@ impl Codegen<'_> {
             }
             NodeKind::Array { .. } => {
                 let meta = self.db.array_meta(id)?;
-                if matches!(meta.kind(), ArrayKind::Static) {
+                // A fixed-size array is a container only when its elements
+                // are strings, chandles or class handles; one dimension.
+                if matches!(meta.kind(), ArrayKind::Static) && meta.dimensions().len() != 1 {
                     return None;
                 }
                 let info = self.container_globals.get(&id)?;
@@ -61,6 +63,7 @@ impl Codegen<'_> {
         storage: IrVpiStorage,
     ) -> Option<IrVpiObject> {
         let descriptor = self.db.type_descriptor(id)?;
+        let mut dims = Vec::new();
         let shape = match storage {
             IrVpiStorage::Object(index) => {
                 let object = model.objects.get(index)?;
@@ -74,21 +77,31 @@ impl Codegen<'_> {
             }
             IrVpiStorage::Container(index) => {
                 let container = model.containers.get(index)?;
-                if !container.is_global_storage() || container.initial_size.is_some() {
+                if !container.is_global_storage() {
                     return None;
                 }
-                self.vpi_container_shape(dynamic, typespecs, descriptor, container, 0)?
+                if container.initial_size.is_some() {
+                    let (left, right) = self.db.array_meta(id)?.dimensions().first().copied()??;
+                    dims.push((i64::from(left), i64::from(right)));
+                    self.vpi_static_container_shape(dynamic, typespecs, descriptor, container)?
+                } else {
+                    self.vpi_container_shape(dynamic, typespecs, descriptor, container, 0)?
+                }
             }
         };
         // A string or chandle variable is a simple expression, which
         // always has a typespec (37.55 detail 5, decision A19-D32); a
-        // dynamic array, queue or associative array has its array typespec
-        // (decision A19-D60).
+        // dynamic array, queue, associative array or fixed array has its
+        // array typespec (decision A19-D60).
         let typespec = match shape {
             IrVpiShape::String => {
                 self.vpi_typespec(typespecs, descriptor, self.db.declared_typedef(id), 0)
             }
-            _ if matches!(descriptor.shape, TypeShape::Container { .. }) => {
+            _ if matches!(
+                descriptor.shape,
+                TypeShape::Container { .. } | TypeShape::FixedArray { .. }
+            ) =>
+            {
                 self.vpi_typespec(typespecs, descriptor, self.db.declared_typedef(id), 0)
             }
             IrVpiShape::Chandle => Some(typespecs.intern(IrVpiTypespec {
@@ -105,7 +118,45 @@ impl Codegen<'_> {
             storage: Some(storage),
             shape: Some(shape),
             typespec,
+            dims,
             ..IrVpiObject::default()
+        })
+    }
+
+    /// The shape of a one-dimensional fixed-size array of strings, chandles
+    /// or class handles (37.17); other element types have no VPI form here.
+    fn vpi_static_container_shape(
+        &self,
+        dynamic: &mut IrVpiDynamic,
+        typespecs: &mut TypespecTable,
+        descriptor: &TypeDescriptor,
+        container: &crate::sim::ir::IrContainer,
+    ) -> Option<IrVpiShape> {
+        let TypeShape::FixedArray {
+            element: element_type,
+            dimensions,
+        } = &descriptor.shape
+        else {
+            return None;
+        };
+        if dimensions.len() != 1 {
+            return None;
+        }
+        let element = self.vpi_element_shape(typespecs, element_type, &container.element, 0);
+        if !matches!(
+            element,
+            IrVpiShape::String
+                | IrVpiShape::Chandle
+                | IrVpiShape::Class { .. }
+                | IrVpiShape::Builtin { .. }
+        ) {
+            return None;
+        }
+        Some(IrVpiShape::Container {
+            array_type: IrVpiArrayType::Static,
+            values: !container.element.is_packed(),
+            key: IrVpiKey::None,
+            element: dynamic.intern(element),
         })
     }
 
