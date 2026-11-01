@@ -177,6 +177,8 @@ jobs:
         shell: bash
         run: |
           tested="$RUNNER_TEMP/tested-archive"
+          # nextest requires an existing extraction directory.
+          mkdir -p "$tested"
           cargo nextest list --archive-file target/nextest-archive.tar.zst \
             --workspace-remap "$GITHUB_WORKSPACE" --extract-to "$tested" \
             --list-type binaries-only
