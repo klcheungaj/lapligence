@@ -196,6 +196,20 @@ pub const LLG_DENSE_FIXED_ARRAY_CELLS: u64 = 4096;
 /// See `docs/sim_performance_tradeoffs.md` for the measurement behind it.
 pub const LLG_DENSE_CELL_RUN_MIN: usize = 6;
 
+/// Largest weight (IR statements, lvalues and expression nodes) of one run
+/// of consecutive statements the emitter moves out of a process or
+/// subprogram body into its own C function (`emit_c/owned/outline.rs`), and
+/// the statement-sequence weight from which it starts doing so. C compilers
+/// optimize a function in time superlinear in its size while the generated C
+/// grows linearly with the weight, so bounding each function's share keeps
+/// compile time near linear. Bodies at or below it are emitted unchanged.
+/// See `docs/sim_performance_tradeoffs.md` for the measurement behind it.
+pub const LLG_OUTLINE_RUN_WEIGHT: usize = 1024;
+
+/// Smallest weight of an outlined run: a shorter run stays inline, where it
+/// costs no call. See [`LLG_OUTLINE_RUN_WEIGHT`].
+pub const LLG_OUTLINE_MIN_RUN_WEIGHT: usize = 128;
+
 fn validate_width(path: &str, width: u32) -> Result<(), IrValidationError> {
     if width != 0 {
         Ok(())

@@ -18,9 +18,15 @@ pub(super) fn coroutine_branch<'a, 'm>(
     analysis: &crate::sim::execution::ExecutionAnalysis,
     frame_upper_bounds: &std::collections::BTreeMap<usize, usize>,
     names: &'a StorageNames<'m>,
+    outline: bool,
 ) -> Result<(String, super::super::super::frame_layout::FrameLayout), String> {
     let mut frame = Frame::new_coframe(ctx, analysis, owner, frame_upper_bounds)?;
     frame.storage_names = Some(names);
+    if outline {
+        if let IrPreFn::Branch { c_name, .. } | IrPreFn::CapturedBranch { c_name, .. } = pre {
+            frame.enable_outlining(c_name, true);
+        }
+    }
     let (source, layout) = render_with_frame(ctx, pre, frame, true)?;
     Ok((
         source,
@@ -84,6 +90,7 @@ fn render_with_frame(
             } else {
                 frame.line("return;");
             }
+            let frame_helpers = frame.outlined_helpers();
             let prologue = frame.prologue();
             let dispatch = frame.dispatch();
             let macro_epilogue = frame.macro_epilogue();
@@ -100,8 +107,9 @@ fn render_with_frame(
             } else {
                 String::new()
             };
+            let helpers = frame_helpers;
             let source = format!(
-                "static {} {c_name}({}) {{\n{frame_pointer}{prologue}{body}\n}}\n{macro_epilogue}",
+                "{helpers}static {} {c_name}({}) {{\n{frame_pointer}{prologue}{body}\n}}\n{macro_epilogue}",
                 if coroutine { "llg_co_status_t" } else { "void" },
                 if coroutine {
                     "llg_co_frame_t* co, llg_co_chain_t* ch"

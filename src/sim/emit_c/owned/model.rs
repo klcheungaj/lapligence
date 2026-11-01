@@ -59,9 +59,13 @@ pub(in crate::sim::emit_c) fn function<'a, 'm>(
     ctx: &'a RCtx<'m>,
     function: &IrFunc,
     names: &'a StorageNames<'m>,
+    outline: bool,
 ) -> Result<String, String> {
     let mut frame = Frame::new(ctx);
     frame.storage_names = Some(names);
+    if outline {
+        frame.enable_outlining(&function.c_name, true);
+    }
     render_function(ctx, function, frame, false).map(|(source, _, _)| source)
 }
 
@@ -147,6 +151,7 @@ pub(in crate::sim::emit_c) fn coroutine_function<'a, 'm>(
     analysis: &ExecutionAnalysis,
     frame_upper_bounds: &BTreeMap<usize, usize>,
     names: &'a StorageNames<'m>,
+    outline: bool,
 ) -> Result<(String, super::super::frame_layout::FrameLayout), String> {
     let mut frame = Frame::new_coframe(
         ctx,
@@ -155,6 +160,9 @@ pub(in crate::sim::emit_c) fn coroutine_function<'a, 'm>(
         frame_upper_bounds,
     )?;
     frame.storage_names = Some(names);
+    if outline {
+        frame.enable_outlining(&function.c_name, true);
+    }
     for (ty, name) in super::super::model::owned_frame_param_fields(function) {
         frame.frame_field(&ty, &name)?;
     }
@@ -755,6 +763,7 @@ fn render_function(
     } else {
         super::super::model::owned_func_params(function)
     };
+    let helpers = frame.outlined_helpers();
     let prologue = frame.prologue();
     let dispatch = frame.dispatch();
     let macro_epilogue = frame.macro_epilogue();
@@ -776,7 +785,7 @@ fn render_function(
     } else {
         String::new()
     };
-    let source = format!("static {return_type} {name}({signature}) {{\n{coroutine_prologue}    if ({depth} >= 256) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n{prologue}{body}\n}}\n{macro_epilogue}");
+    let source = format!("{helpers}static {return_type} {name}({signature}) {{\n{coroutine_prologue}    if ({depth} >= 256) {{ fprintf(stderr, \"llg: recursion limit exceeded\\n\"); {guard} }}\n{prologue}{body}\n}}\n{macro_epilogue}");
     Ok((source, layout, sites))
 }
 
@@ -822,6 +831,9 @@ fn dpi_context_shim(
     Ok((source, Some(finished.layout), 0))
 }
 
+// The renderer inputs of every other body plus the outlining decision;
+// bundling them would only rename the same tuple.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::sim::emit_c) fn coroutine_process<'a, 'm>(
     ctx: &'a RCtx<'m>,
     process: &IrProcess,
@@ -830,6 +842,7 @@ pub(in crate::sim::emit_c) fn coroutine_process<'a, 'm>(
     analysis: &ExecutionAnalysis,
     frame_upper_bounds: &BTreeMap<usize, usize>,
     names: &'a StorageNames<'m>,
+    outline: bool,
 ) -> Result<CoroutineProcessBody, String> {
     let mut frame = Frame::new_coframe(
         ctx,
@@ -838,6 +851,9 @@ pub(in crate::sim::emit_c) fn coroutine_process<'a, 'm>(
         frame_upper_bounds,
     )?;
     frame.storage_names = Some(names);
+    if outline {
+        frame.enable_outlining(&process.c_name, false);
+    }
     frame.batch_owner = Some(process.c_name.clone());
     let (source, layout, net_batches) = render_process(ctx, process, execution, frame, true)?;
     Ok((
@@ -855,6 +871,8 @@ pub(in crate::sim::emit_c) fn process<'a, 'm>(
 ) -> Result<String, String> {
     let mut frame = Frame::new(ctx);
     frame.storage_names = Some(names);
+    // A final procedure is never shared between instances.
+    frame.enable_outlining(&process.c_name, false);
     render_process(ctx, process, execution, frame, false).map(|(source, _, _)| source)
 }
 
@@ -925,6 +943,7 @@ fn render_process(
     } else {
         frame.line("return;");
     }
+    let helpers = frame.outlined_helpers();
     let prologue = frame.prologue();
     let dispatch = frame.dispatch();
     let macro_epilogue = frame.macro_epilogue();
@@ -944,7 +963,7 @@ fn render_process(
         String::new()
     };
     let source = format!(
-        "static {} {}({}) {{\n{frame_pointer}{prologue}{body}\n}}\n{macro_epilogue}",
+        "{helpers}static {} {}({}) {{\n{frame_pointer}{prologue}{body}\n}}\n{macro_epilogue}",
         if coroutine { "llg_co_status_t" } else { "void" },
         process.c_name,
         if coroutine {
@@ -971,6 +990,15 @@ pub(in crate::sim::emit_c) fn coroutine_branch<'a, 'm>(
     analysis: &ExecutionAnalysis,
     frame_upper_bounds: &BTreeMap<usize, usize>,
     names: &'a StorageNames<'m>,
+    outline: bool,
 ) -> Result<(String, super::super::frame_layout::FrameLayout), String> {
-    callbacks::coroutine_branch(ctx, pre, owner, analysis, frame_upper_bounds, names)
+    callbacks::coroutine_branch(
+        ctx,
+        pre,
+        owner,
+        analysis,
+        frame_upper_bounds,
+        names,
+        outline,
+    )
 }

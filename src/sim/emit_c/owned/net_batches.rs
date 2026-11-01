@@ -91,10 +91,25 @@ impl Frame<'_, '_> {
         })
     }
 
-    /// Emit a statement sequence, folding runs of consecutive structural net
-    /// contributions into one descriptor-table loop and runs of whole-cell
-    /// stores into consecutive dense array cells into one range call.
-    pub(super) fn statements(&mut self, mut statements: &[IrStmt]) -> Result<(), String> {
+    /// Emit a statement sequence, moving long runs of it into separate C
+    /// functions (`outline.rs`) when this body outlines.
+    pub(super) fn statements(&mut self, statements: &[IrStmt]) -> Result<(), String> {
+        match self.outline_plan(statements) {
+            super::outline::OutlinePlan::Off => self.inline_statements(statements),
+            super::outline::OutlinePlan::Light => {
+                let light = std::mem::replace(&mut self.outline_light, true);
+                let rendered = self.inline_statements(statements);
+                self.outline_light = light;
+                rendered
+            }
+            super::outline::OutlinePlan::Split(plan) => self.outlined_statements(statements, plan),
+        }
+    }
+
+    /// Emit a statement sequence in place, folding runs of consecutive
+    /// structural net contributions into one descriptor-table loop and runs of
+    /// whole-cell stores into consecutive dense array cells into one range call.
+    pub(super) fn inline_statements(&mut self, mut statements: &[IrStmt]) -> Result<(), String> {
         while let Some(statement) = statements.first() {
             let mut consumed = self.net_batch(statements)?;
             if consumed == 0 {

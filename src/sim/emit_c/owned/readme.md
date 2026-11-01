@@ -14,6 +14,7 @@ and payloads; escaping or unproven cells retain stable heap owners. Feature guar
 | `expressions.rs`, `control.rs`, `system.rs` | Expressions, branches and system operations. |
 | `repeated_values.rs` | Typed repeated concatenation appends with per-iteration evaluation and cleanup. |
 | `stores.rs`, `statements.rs` | Captured lvalues/masks, writes and lexical/loop cleanup. |
+| `outline.rs` | Long statement runs of a body moved into helper functions (C compile time). |
 | `calls.rs`, `pure_calls.rs`, `events.rs`, `formatting.rs` | Call/result/address ownership, callback inlining, events and output. |
 | `cached_fields.rs` | C-local mirrors of resume-stable frame fields, reloaded after every suspension. |
 | `captures.rs`, `event_waits.rs`, `model/callbacks.rs` | Activation frames, wait contexts and evaluator callbacks. |

@@ -43,6 +43,7 @@ pub(super) mod native_values;
 pub(super) mod net_batches;
 mod objects;
 mod operands;
+mod outline;
 pub(super) mod patterns;
 mod pure_calls;
 mod qualifiers;
@@ -241,6 +242,14 @@ pub(super) struct Frame<'a, 'm> {
     scope_fields: bool,
     /// The renderer's model storage index; frames without one scan the model.
     storage_names: Option<&'a StorageNames<'m>>,
+    /// Outlined statement runs of this body (`outline.rs`); `None` keeps
+    /// every statement inline.
+    outline: Option<outline::OutlineSink>,
+    /// Rendering a statement heavier than one outlined run: its statement
+    /// sequences are split even when each is lighter than a run.
+    outline_pressure: bool,
+    /// Rendering a sequence no heavier than one run: nothing inside it splits.
+    outline_light: bool,
 }
 
 fn pending(feature: &str) -> String {
@@ -449,6 +458,9 @@ impl<'a, 'm> Frame<'a, 'm> {
             synchronous: false,
             scope_fields: false,
             storage_names: None,
+            outline: None,
+            outline_pressure: false,
+            outline_light: false,
         }
     }
     fn line(&mut self, text: impl AsRef<str>) {
