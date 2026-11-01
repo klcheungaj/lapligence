@@ -6,6 +6,8 @@
 // vpiPullDrive); z reports vpiHiZ in both; a variable reads strong. A
 // cbValueChange record with vpiStrengthVal runs on strength-only changes
 // too (St1 -> We1 -> St1), a vpiBinStrVal record only on value changes.
+// Some simulators also run the vpiBinStrVal record on strength-only
+// changes; llg follows 38.36.1, which singles out vpiStrengthVal records.
 //
 // IEEE 1800-2009 38.15 (SystemVerilog-1800-2009.txt L62608-L62611): "typedef
 // struct t_vpi_strengthval { PLI_INT32 logic; /* vpi[0,1,X,Z] */ PLI_INT32

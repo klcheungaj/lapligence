@@ -1,0 +1,9 @@
+m by_index 1: NULL level=3
+m multi {1}: NULL level=3
+m multi {9}: NULL level=3
+m by_name m[1]: NULL level=3
+m multi {1,2}: tb.m[1][2] size=8 value=12 level=0
+m3 multi {1,0}: NULL level=3
+m3 multi {1}: NULL level=3
+m3 by_name m3[1][0]: NULL level=3
+w multi {1}: NULL level=3

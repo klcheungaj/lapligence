@@ -2282,7 +2282,9 @@ with no error status, as for a name that denotes nothing (S42-D11):
   class and event arguments of a static one (decisions A19-D53, A19-D57); a fork branch started inside a task has no frame of that task
   (its frame stack starts empty); `vpiInitial` of a UDP definition (the initial value is
   captured only as a character, so the initial statement has no object);
-  `cbValueChange` on a continuous assignment or primitive; a delayed
+  `cbValueChange` on a continuous assignment or primitive (38.36.1 lists
+  variables, expressions, terminals and events; industry-standard tools
+  refuse both too); a delayed
   `vpi_put_value` to a named event (only `vpiNoDelay` triggers, decision
   A19-D8). A `cbValueChange` on a named event watches the synchronization
   object the event names at registration;
@@ -2306,14 +2308,20 @@ with no error status, as for a name that denotes nothing (S42-D11):
   class variables and objects, VPI-O4), the name of a typedef used as an
   enum's base type (the base typespec is unnamed), and `vpiPacked` of a
   tagged union;
-- subarray handles: `vpi_handle_by_multi_index` with fewer indices than the
-  array has unpacked dimensions, and bit handles of a `vpiPackedArrayVar`;
+- subarray handles: `vpi_handle_by_index`, `vpi_handle_by_multi_index` and
+  `vpi_handle_by_name` with fewer indices than the array has unpacked
+  dimensions return NULL with an error (decision A20-D23: the 2009 object
+  model has no subarray object); element and bit handles of a
+  `vpiPackedArrayVar` (`pa[2]`, `pa[2][3]`) are not served;
 - expression and statement objects (ADV-019 families 3 and 4, decisions
   A19-D11 to A19-D13) exist only in models built with `--vpi`, `--dpi-lib`
   or a user system task call site. `vpi_get_value` of a function call, a
   system function call or an expression with side effects (`i++`, an
   assignment), and of every expression containing one, fails, although
-  38.15 asks for a full evaluation including the side effects. Assignment
+  38.15 asks for a full evaluation including the side effects (a full
+  evaluation needs a run-time expression interpreter with function calls;
+  industry-standard tools do not evaluate them either: they fail on calls
+  and return the last value of the other forms without their effects). Assignment
   patterns, streaming concatenations, `<->`, tagged and `let` expressions,
   sequence and property expressions, class method calls and members reached
   through a hierarchical path are opaque objects: their type, size and line
@@ -2328,29 +2336,32 @@ with no error status, as for a name that denotes nothing (S42-D11):
   the size and value of the formal it is passed to (a call snapshot) while
   its relations and `vpiDecompile` are those of the expression;
 - every property, relation and iteration the catalog marks `unsupported`;
-- callback reasons other than `cbValueChange`, the seven time reasons,
-  `cbEndOfCompile`, `cbStartOfSimulation`, `cbEndOfSimulation`,
-  `cbForce`/`cbRelease`, `cbAssign`/`cbDeassign` (accepted; they never run,
-  since procedural `assign`/`deassign` is rejected), `cbDisable`, the
-  class object reasons `cbCreateObj`, `cbReclaimObj` and `cbEndOfObject` and
-  the frame and thread reasons (A19-D44):
-  `cbStmt` (a statement has no execution hook; adding one would cost every
-  model statement a check), `cbSizeChange`, `cbError`/`cbPLIError`/
-  `cbSignal` and the save, restart, reset and interactive
-  features;
+- callback reasons refused with an error naming the reason: `cbStmt` (a
+  statement has no execution hook; adding one would cost every model
+  statement a check, or a second statement-hooked code path per process),
+  `cbSizeChange` (dynamic arrays, queues and associative arrays have no
+  resize notification; it would add a check to every resize),
+  `cbAssign`/`cbDeassign` (procedural `assign`/`deassign` is rejected,
+  decision A20-D9), `cbUnresolvedSystf` (every system call is resolved when
+  the model is generated) and the save, restart, reset and interactive
+  reasons (no such features). `cbError` reports run-time error reports, not
+  compile errors (decision A20-D20); `cbSignal` catches the signal with the
+  C `signal()` handler, replacing the model's own;
 - the `vpiForce`/`vpiRelease` handle of a `cbForce`/`cbRelease` callback has
   only `vpiType` and `vpiLhs`, and `vpiLhs` is NULL with an error for a
   concatenation (no expression objects); `cbDisable` on a system task call
   watches the named blocks enclosing it (its `vpiScope` chain), so a call in
   a task body does not see `disable` of the task;
 - `cbValueChange` on a whole unpacked array of more than
-  2^20 elements (register it on the elements), or with `vpiStrengthVal` to see
-  strength-only changes (it runs on value changes only);
+  2^20 elements (register it on the elements); `vpiStrengthVal` reads and records
+  report real strengths for resolved nets and their selects only: elements
+  of net arrays and nets the model keeps without a resolution function
+  report strong (or `vpiHiZ`) values and no strength-only changes;
 - `vpi_control(vpiReset)` and `vpiSetInteractiveScope` return 0 with an
   error (no `$reset`, no interactive mode; decision A20-D11);
 - `vpi_put_value_array` to a net array (its elements are read-only to VPI,
-  as for `vpi_put_value`; decision A20-D8), and `vpiPropagateOff`, which is
-  accepted but still notifies every fanout (A20-D7);
+  as for `vpi_put_value`; decision A20-D8; serving it needs a per-element
+  override until a driver changes, like a force without its release);
 - delays (VPI-T1, VPI-F8): `vpi_get_delays`/`vpi_put_delays` serve module
   paths, timing checks, primitives, input and inout ports and port bits
   (module input port delays) and intermodule paths; continuous
@@ -2373,9 +2384,12 @@ with no error status, as for a name that denotes nothing (S42-D11):
   They are declared and defined so that applications link, and return
   NULL, 0 or nothing with an `LLG_VPI_UNSUPPORTED` error without reading or
   writing their arguments;
-- user VPI system functions in read-only evaluators other than
-  `$strobe`/`$monitor` arguments (evaluated event controls, force
-  re-evaluation, functions called from those evaluators).
+- `vpi_put_value` to a sequential UDP (38.34 lists it): the UDP state is
+  generated static storage that the catalog does not reach, and a put must
+  also republish the output without stepping the table;
+- `vpi_put_value` with force or release on strings, class properties and
+  container elements, and delayed puts to properties and elements
+  (decision A19-D23), and delayed puts to named events (A19-D8).
 
 System task and function registrations are also limited (SIM-099):
 

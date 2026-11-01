@@ -468,4 +468,5 @@ A20-D16 (`vpiDelay` expressions), A20-D17 (module input port delays),
 A20-D18 (intermodule paths) and A20-D19 (runtime-valued and read-only
 delays). A20-D20 covers the action callbacks (`cbError` reports,
 `cbPLIError` and `cbSignal` safe points) and A20-D21 the strength fields of
-an unknown value; A20-D22 the delayed puts to strings.
+an unknown value; A20-D22 the delayed puts to strings and A20-D23 the
+subarray handles (NULL with an error).

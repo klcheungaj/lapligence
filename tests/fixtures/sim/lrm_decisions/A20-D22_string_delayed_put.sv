@@ -4,7 +4,9 @@
 // pending puts of the variable, a transport put keeps the earlier ones, and
 // the write wakes processes waiting on the variable at its time. Force and
 // release of a string, and delayed puts to class properties and container
-// elements, fail with vpiError.
+// elements, fail with vpiError. The scheduled write wakes `@(s)`; some
+// simulators apply it without waking event controls, while 9.4.2 makes any
+// change of the operand an event.
 //
 // IEEE 1800-2009 38.34 (SystemVerilog-1800-2009.txt L64176-L64183): "The
 // routine can be applied to nets, variables, variable selects, memory words,

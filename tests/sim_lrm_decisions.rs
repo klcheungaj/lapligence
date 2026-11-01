@@ -2156,6 +2156,15 @@ fn a20_d22_string_delayed_put() {
 }
 
 #[test]
+fn a20_d23_subarray_handles() {
+    run_vpi_decision(
+        "A20-D23_subarray_handles",
+        &["task $d23()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D23_subarray_handles.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",
