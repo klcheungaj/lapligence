@@ -318,6 +318,12 @@ most `LLG_VPI_MAX_PLI_ERRORS` between two safe points) and `cbSignal`
 installs a C `signal` handler that only sets a flag; both run their records
 at a safe point: the next `vpi_enter`, the return of a callback or calltf, a
 time slot (they install the time-slot hook) or the end of simulation.
+`vpiStrengthVal` of a resolved net (a catalog row whose `packed` is its
+`llg_net_t`'s `resolved`) reads the net's strength view
+(`llg_net_strength_snapshot`: the published view, or one computed from the
+drivers); a `cbValueChange` record with that format also watches the view,
+attaching a VPI-owned one (`llg_net_strength_attach`) to a net without a
+`%v` consumer, and fires when the codes of its bits change (A20-D21).
 
 End-of-step recording, the pending dump and the producer-side dump state
 (SIM-047, S47-D1..D8): `llg_wave.h` and `llg_wave.c` comments. Registrations name

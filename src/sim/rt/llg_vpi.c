@@ -384,6 +384,9 @@ static int svc_bind_cb(struct llg_vpi_cb* cb, const s_cb_data* data);
 static void svc_cb_added(const struct llg_vpi_cb* cb);
 static void svc_cb_removed(const struct llg_vpi_cb* cb);
 static void svc_shutdown(void);
+static void svc_strength_fill(const llg_vpi_target_t* target, p_vpi_value value);
+static int svc_strength_bind(struct llg_vpi_cb* cb);
+static int svc_strength_changed(struct llg_vpi_cb* cb);
 static int code_tables_valid(const llg_vpi_code_tables_t* t);
 static PLI_INT32 unsupported_property(void);
 
@@ -10103,6 +10106,9 @@ void vpi_get_value(vpiHandle handle, p_vpi_value output) {
     }
     fill_value(&datum, is_signed, type, output);
     datum_destroy(&datum);
+    llg_vpi_target_t target;
+    if (output->format == vpiStrengthVal && handle_target(slot, &target))
+        svc_strength_fill(&target, output);
 }
 
 static uint64_t ticks_from_time(const s_vpi_time* time, const llg_vpi_model_object_t* scope,
@@ -11020,6 +11026,11 @@ typedef struct llg_vpi_cb {
     /* cbValueChange: one watch on the watched storage, or for a whole
      * unpacked array one per element (decision S43-D7). */
     struct llg_vpi_watch* watches;
+    /* cbValueChange with vpiStrengthVal on a resolved net: the net, whose
+     * strength view is watched too, and the strength codes of the watched
+     * bits last reported (llg_vpi_services.c). */
+    llg_net_t* strength_net;
+    uint8_t* strength_last;
     uint64_t watch_total;
     /* CB_FORCE: 0 every statement (NULL obj), 1 statements writing `target`,
      * 2 statements writing an element of the array row `target.object`. */
@@ -11067,6 +11078,7 @@ typedef struct llg_vpi_watch {
 
 static void vpi_cb_free(llg_vpi_cb_t* cb) {
     sv4_destroy(&cb->last);
+    free(cb->strength_last);
     free(cb->watches);
     free(cb);
 }
@@ -11476,7 +11488,15 @@ static void vpi_value_changed(const void* key) {
             datum_destroy(&datum);
             continue;
         }
-        if (cb->target.span) {
+        if (cb->strength_net) {
+            /* A strength record fires when the strength view of its bits
+             * changed (a value change changes it too), so the value
+             * publication and the view publication after it report once. */
+            if (!svc_strength_changed(cb)) {
+                datum_destroy(&datum);
+                continue;
+            }
+        } else if (cb->target.span) {
             /* A select fires only when its own bits changed. */
             if (sv4_same(cb->last, datum.packed)) {
                 datum_destroy(&datum);
@@ -11494,6 +11514,7 @@ static void vpi_value_changed(const void* key) {
             memset(&value, 0, sizeof(value));
             value.format = cb->value.format;
             fill_value(&datum, cb->value_signed, cb->value_type, &value);
+            if (value.format == vpiStrengthVal) svc_strength_fill(&target, &value);
             data.value = &value;
         }
         datum_destroy(&datum);
@@ -12132,6 +12153,8 @@ static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
         if (read_target(&target, &datum)) sv4_move(&cb->last, &datum.packed);
         datum_destroy(&datum);
     }
+    if (!whole_array && data->value && data->value->format == vpiStrengthVal)
+        return svc_strength_bind(cb);
     return 1;
 }
 

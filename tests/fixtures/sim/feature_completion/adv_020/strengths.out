@@ -1,0 +1,38 @@
+tb.w1 level=0 [0]1 s0=08 s1=08
+tb.w2 level=0 [0]0 s0=20 s1=20
+tb.w3 level=0 [0]1 s0=40 s1=40
+tb.w4 level=0 [0]x s0=40 s1=40
+tb.w5 level=0 [0]1 s0=20 s1=20
+tb.w6 level=0 [0]x s0=01 s1=40
+tb.w7 level=0 [0]x s0=40 s1=01
+tb.w8 level=0 [0]z s0=01 s1=01
+tb.w9 level=0 [0]1 s0=80 s1=80
+tb.w10 level=0 [0]1 s0=20 s1=20
+tb.w11 level=0 [0]0 s0=08 s1=08
+tb.w12 level=0 [0]x s0=08 s1=20
+tb.a level=0 [0]0 s0=40 s1=40
+tb.v level=0 [1]1 s0=40 s1=40 [0]1 s0=40 s1=40
+tb.v[1] level=0 [0]1 s0=40 s1=40
+watch w strength: handle level=0
+watch w value: handle level=0
+watch v strength: handle level=0
+watch v[1] strength: handle level=0
+watch v[0] strength: handle level=0
+watch removed: handle level=0
+remove: 1
+  v[1] strength at 2: [0]1 s0=08 s1=08
+  v strength at 2: [1]1 s0=08 s1=08 [0]1 s0=40 s1=40
+  w strength at 2: [0]1 s0=08 s1=08
+  w strength at 3: [0]1 s0=40 s1=40
+  v[1] strength at 3: [0]1 s0=40 s1=40
+  v strength at 3: [1]1 s0=40 s1=40 [0]1 s0=40 s1=40
+  v[0] strength at 5: [0]0 s0=40 s1=40
+  v[1] strength at 5: [0]0 s0=40 s1=40
+  v strength at 5: [1]0 s0=40 s1=40 [0]0 s0=40 s1=40
+  w value at 5: 0
+  w strength at 5: [0]0 s0=40 s1=40
+  w value at 6: z
+  w strength at 6: [0]z s0=01 s1=01
+  v[1] strength at 6: [0]z s0=01 s1=01
+  v strength at 6: [1]z s0=01 s1=01 [0]0 s0=40 s1=40
+end w=HiZ v=HiZ St0

@@ -528,6 +528,23 @@ void llg_net_strength_reset(llg_net_t* net) {
     sv4_replace(net->strength, llg_net_strength_levels(net));
 }
 
+void llg_net_strength_snapshot(llg_net_t* net, sv4_t* out) {
+    if (!net || !out) return;
+    if (net->strength) sv4_copy(out, net->strength);
+    else sv4_replace(out, llg_net_strength_levels(net));
+}
+
+int llg_net_strength_attach(llg_net_t* net, sv4_t* view) {
+    if (!net || !view || net->strength) return 0;
+    net->strength = view;
+    sv4_replace(view, llg_net_strength_levels(net));
+    return 1;
+}
+
+void llg_net_strength_detach(llg_net_t* net, sv4_t* view) {
+    if (net && view && net->strength == view) net->strength = NULL;
+}
+
 static void llg_net_delay_stage(llg_net_t* net, sv4_t resolved);
 static void llg_net_propagate_paths(llg_net_t* net, sv4_t resolved);
 

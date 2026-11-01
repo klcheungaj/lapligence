@@ -187,3 +187,25 @@ fn action_callbacks_report_errors_and_signals() {
         &[("LLG_VPI_PLUGIN", &library)],
     );
 }
+
+const STRENGTHS: &[&str] = &[
+    "--define-system-task",
+    "task $st_read()",
+    "--define-system-task",
+    "task $st_watch()",
+];
+
+#[test]
+fn net_strengths_read_and_report_strength_only_changes() {
+    let directory = sim_harness::TempDir::new("adv020-strengths").expect("temporary directory");
+    let Some(library) = plugin(&directory, "strengths") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "strengths",
+        include_str!("../fixtures/sim/feature_completion/adv_020/strengths.out"),
+        STRENGTHS,
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}

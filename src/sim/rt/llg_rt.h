@@ -731,6 +731,16 @@ void llg_net_write_selected(llg_net_t* net, int idx, sv4_t value,
                             sv4_select_plan_t plan, int reverse);
 void llg_net_index_reset(llg_net_t* net);
 void llg_net_strength_reset(llg_net_t* net); /* startup view, no wakeups */
+/* VPI vpiStrengthVal (IEEE 1800-2009 38.15, 38.36.1): the net's strength
+ * view as llg_net_t.strength encodes it (the published view, or one
+ * computed from the drivers when the net has none) replaces `*out`.
+ * llg_net_strength_attach gives a net without a view the caller-owned,
+ * empty `view` (initialized now, without wakeups) so that strength-only
+ * changes publish; it returns 0 when the net already has a view.
+ * llg_net_strength_detach takes such a view back. */
+void llg_net_strength_snapshot(llg_net_t* net, sv4_t* out);
+int llg_net_strength_attach(llg_net_t* net, sv4_t* view);
+void llg_net_strength_detach(llg_net_t* net, sv4_t* view);
 void llg_net_alias_bind(llg_net_alias_t* alias);
 void llg_net_alias_clear(llg_net_t* net); /* release a model net's alias list */
 sv4_t llg_net_alias_read(llg_net_alias_t* alias);

@@ -373,6 +373,37 @@ obj, index and the `vpi_chk_error` status it sees.
 - **Removal.** `$act_remove` removes the three records (each 1); the next
   routine error and `$error("unobserved error")` run nothing.
 
+## strengths (38.15, 38.36.1)
+
+`$st_read` reads `vpiStrengthVal` of nets driven with strengths, of the
+variable `a` and of the vector `v`; each bit prints `[i]logic s0 s1` (hex
+Annex K codes: `80` supply, `40` strong, `20` pull, `08` weak, `01` HiZ).
+The strengths follow 28.11 and 28.12; the `%v` of each net (We1 Pu0 St1 StX
+Pu1 StL StH HiZ Su1 Pu1 We0 53X) gives the same levels.
+
+- **Values.** 38.15 (L62675-L62677): "If the format field in the s_vpi_value
+  structure is set to vpiStrengthVal, the value.strength pointer shall point
+  to an array of s_vpi_strengthval structures. ... If the object is a reg or
+  variable, the strength will always be returned as strong." A known value
+  reports its strength in `s0` and `s1` (`w1` We1: `08 08`; `w9` supply1:
+  `80 80`); `w8` (undriven) is z with `01 01`; the variable `a` is strong.
+  An unknown value reports `x` with the strength of its 1 part in `s0` and of
+  its 0 part in `s1` (L62608-L62611 only says "refer to strength coding in
+  Annex K"; decision A20-D21): `w4` StX `40 40`, `w6` StL `01 40`, `w7` StH
+  `40 01`, `w12` 53X `08 20`.
+- **Strength-only changes.** 38.36.1 (L64771-L64772): "If a cbValueChange
+  callback is registered and the format is set to vpiStrengthVal, then the
+  callback shall occur whenever the object changes strength, including
+  changes that do not result in a value change." `w` and `v[1]` have a strong
+  and a weak driver of `d`. At 2 ns `en1 = 0` leaves We1 and at 3 ns
+  `en1 = 1` St1 again: the strength records on `w`, `v` and `v[1]` run, the
+  `vpiBinStrVal` record on `w` does not (no value change), and `v[0]` (one
+  strong driver) does not change. At 4 ns `en2 = 0` leaves St1 (no change).
+  At 5 ns `d = 0`: every record runs once (St0), the value record too. At
+  6 ns `en1 = 0` makes `w` and `v[1]` z (`01 01`). The record removed right
+  after its registration never runs. Records on the same storage run newest
+  first (decision S43-D6).
+
 ## Decisions
 
 The choices where the text is silent are the portable cases A20-D1 to A20-D4
@@ -393,4 +424,5 @@ delays) and A20-D15 (`cbTchkViolation`); the delay objects of VPI-F8 are
 A20-D16 (`vpiDelay` expressions), A20-D17 (module input port delays),
 A20-D18 (intermodule paths) and A20-D19 (runtime-valued and read-only
 delays). A20-D20 covers the action callbacks (`cbError` reports,
-`cbPLIError` and `cbSignal` safe points).
+`cbPLIError` and `cbSignal` safe points) and A20-D21 the strength fields of
+an unknown value.

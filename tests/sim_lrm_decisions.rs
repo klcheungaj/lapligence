@@ -2138,6 +2138,15 @@ fn a20_d20_action_callbacks() {
 }
 
 #[test]
+fn a20_d21_strength_values() {
+    run_vpi_decision(
+        "A20-D21_strength_values",
+        &["task $d21()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D21_strength_values.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",

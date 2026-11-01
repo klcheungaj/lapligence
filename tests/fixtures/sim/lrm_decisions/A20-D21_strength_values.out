@@ -1,0 +1,11 @@
+tb.w1: logic=1 s0=8 s1=8
+tb.wl: logic=3 s0=1 s1=64
+tb.wh: logic=3 s0=64 s1=1
+tb.wx: logic=3 s0=8 s1=32
+tb.wz: logic=2 s0=1 s1=1
+tb.d: logic=1 s0=64 s1=64
+  strength at 2: logic=1 s0=8 s1=8
+  strength at 3: logic=1 s0=64 s1=64
+  value at 4: 0
+  strength at 4: logic=0 s0=64 s1=64
+w=St0
