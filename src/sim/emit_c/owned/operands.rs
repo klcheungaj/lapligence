@@ -113,6 +113,41 @@ impl Frame<'_, '_> {
         self.value(constructor, width, signed)
     }
 
+    /// A packed literal or fill, which evaluates without effects and so may
+    /// be constructed wherever its value is consumed.
+    pub(super) fn is_packed_constant(expr: &IrExpr) -> bool {
+        expr.width != 0
+            && match &expr.kind {
+                IrExprKind::Const(constant) => constant.real.is_none() && constant.width != 0,
+                IrExprKind::Fill(_) => true,
+                _ => false,
+            }
+    }
+
+    /// Construct the packed constant `expr` (see [`Self::is_packed_constant`])
+    /// in the initialized owner at `destination`, an address expression.
+    /// Through 64 bits the constructor writes the destination directly; a
+    /// pooled wide constant is cloned into it. Either way no temporary is
+    /// built, moved and destroyed.
+    pub(super) fn constant_into(&mut self, destination: &str, expr: &IrExpr) -> Result<(), String> {
+        let value = match &expr.kind {
+            IrExprKind::Const(constant) if constant.width <= u64::BITS => {
+                self.assign(destination, &emit_const(constant));
+                return Ok(());
+            }
+            IrExprKind::Const(constant) => self.constant(constant, true),
+            IrExprKind::Fill(fill) => self.packed_fill(*fill, expr.width, expr.signed, true),
+            _ => return Err("constant_into takes a packed constant".to_owned()),
+        };
+        if value.slot.is_some() {
+            self.line(format!("sv4_move({destination}, &{});", value.code));
+            self.discard(value);
+        } else {
+            self.assign(destination, &format!("sv4_clone({})", value.address()));
+        }
+        Ok(())
+    }
+
     pub(super) fn packed_fill(
         &mut self,
         fill: u8,

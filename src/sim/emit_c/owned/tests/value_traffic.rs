@@ -523,3 +523,44 @@ fn vpi_results_normalize_unproven_runtime_shapes_before_elision() {
         .contains("sv4_cast_to(&_llg_t[0], &_llg_t[0], 5, 0);"));
     assert_eq!(frame.slots.len(), 1);
 }
+
+#[test]
+fn constant_format_arguments_are_constructed_in_their_argument() {
+    let model = numeric_model();
+    let constants = super::super::super::constants::PackedConstants::default();
+    let ctx = RCtx {
+        value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+        model: &model,
+        func: None,
+        sampled: false,
+        activation_label: None,
+        constants: Some(&constants),
+    };
+    let mut frame = Frame::new(&ctx);
+    let args = [
+        IrDisplayArg::Packed(number(5, 32)),
+        IrDisplayArg::Packed(read()),
+        IrDisplayArg::Packed(number(7, 65)),
+        IrDisplayArg::Strength(IrExpr::new(IrExprKind::Fill(2), 65, false, Some(2))),
+    ];
+    let array = frame.formatted_arguments(&args, 1).unwrap();
+    let body = frame.body();
+    // Through 64 bits the constructor writes the argument itself.
+    assert!(body.contains(&format!(
+        "sv4_from_masks_to(&{array}[0].value.packed, 5ULL, 0ULL, 0ULL, 32, 0);"
+    )));
+    // Pooled wide constants and fills are cloned into theirs.
+    assert!(body.contains(&format!(
+        "sv4_copy(&{array}[2].value.packed, &llg_constant_"
+    )));
+    assert!(body.contains(&format!(
+        "sv4_copy(&{array}[3].value.packed, &llg_constant_"
+    )));
+    assert!(body.contains(&format!("{array}[3].kind = LLG_FMT_STRENGTH;")));
+    // Only the signal read goes through a temporary, and it is read before
+    // any argument is installed.
+    assert_eq!(body.matches("sv4_move(").count(), 1);
+    assert_eq!(body.matches("sv4_destroy(").count(), 1);
+    assert!(body.find("_llg_t[0]").unwrap() < body.find(&format!("{array}[0]")).unwrap());
+    assert!(frame.slots.iter().all(|used| !used));
+}

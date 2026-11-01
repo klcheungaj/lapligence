@@ -1,4 +1,5 @@
-//! Transfer packed owners to the formatter only after all arguments evaluate.
+//! Transfer packed owners to the formatter only after all arguments evaluate;
+//! packed constants are constructed in their argument at that point.
 use super::*;
 
 impl Frame<'_, '_> {
@@ -7,13 +8,20 @@ impl Frame<'_, '_> {
         args: &[IrDisplayArg],
         time_unit: u64,
     ) -> Result<String, String> {
-        enum Prepared {
+        enum Prepared<'e> {
             Numeric(Value),
+            /// A packed constant, constructed in its argument at transfer.
+            Constant(&'e IrExpr),
             Text(super::native::NativeValue),
         }
         let mut values = Vec::new();
         for arg in args {
             values.push(match arg {
+                IrDisplayArg::Packed(expr) | IrDisplayArg::Strength(expr)
+                    if Self::is_packed_constant(expr) =>
+                {
+                    Prepared::Constant(expr)
+                }
                 IrDisplayArg::Packed(expr)
                 | IrDisplayArg::Real(expr)
                 | IrDisplayArg::Strength(expr) => Prepared::Numeric(self.expression(expr)?),
@@ -38,6 +46,15 @@ impl Frame<'_, '_> {
                         value.code
                     ));
                     self.discard(value);
+                }
+                (IrDisplayArg::Packed(_) | IrDisplayArg::Strength(_), Prepared::Constant(expr)) => {
+                    let kind = if matches!(arg, IrDisplayArg::Strength(_)) {
+                        "LLG_FMT_STRENGTH"
+                    } else {
+                        "LLG_FMT_PACKED"
+                    };
+                    self.line(format!("{array}[{index}].kind = {kind};"));
+                    self.constant_into(&format!("&{array}[{index}].value.packed"), expr)?;
                 }
                 (IrDisplayArg::Strength(_), Prepared::Numeric(value)) => {
                     self.line(format!("{array}[{index}].kind = LLG_FMT_STRENGTH;"));
