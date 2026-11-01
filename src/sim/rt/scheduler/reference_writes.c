@@ -15,6 +15,7 @@ static int llg_ref_report_tag_failure(const llg_ref_view_t* view,
             "llg: runtime error: access to inactive tagged-union member %s at %s\n",
             member, location);
     fflush(stderr);
+    llg_rt_note_error(0, "access to an inactive tagged-union member", location);
     return 0;
 }
 

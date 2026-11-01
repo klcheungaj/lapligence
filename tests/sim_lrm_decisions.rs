@@ -2129,6 +2129,15 @@ fn a20_d11_control_reset_interactive() {
 }
 
 #[test]
+fn a20_d20_action_callbacks() {
+    run_vpi_decision(
+        "A20-D20_action_callbacks",
+        &["task $d20()", "task $d20_fail()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D20_action_callbacks.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",

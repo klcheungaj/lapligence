@@ -308,6 +308,16 @@ scheduling. `vpi_control` stop/finish use `llg_rt_control_stop/finish`
 `llg_rt_control_stop_before_run`, which under the EXIT policy suspends before
 the first `llg_rt_run` (the generated `main` then skips the advance, S43-D10);
 `cbEndOfSimulation` runs once, from advance or close.
+The action callbacks live in `llg_vpi_services.c` (after `llg_vpi_runtime.c`
+in the same translation unit, decision A20-D20). `cbError` installs the
+runtime error hook (`llg_rt_error_hook`; the severity reports, default
+assertion failures and the runtime's own error reports call
+`llg_rt_note_error`) while a record exists and runs its records inside the
+report. `cbPLIError` queues each error status `vpi_set_error` records (at
+most `LLG_VPI_MAX_PLI_ERRORS` between two safe points) and `cbSignal`
+installs a C `signal` handler that only sets a flag; both run their records
+at a safe point: the next `vpi_enter`, the return of a callback or calltf, a
+time slot (they install the time-slot hook) or the end of simulation.
 
 End-of-step recording, the pending dump and the producer-side dump state
 (SIM-047, S47-D1..D8): `llg_wave.h` and `llg_wave.c` comments. Registrations name

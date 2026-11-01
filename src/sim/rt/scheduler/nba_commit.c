@@ -21,6 +21,7 @@ static int nba_tag_commit_valid(const llg_ref_view_t* view, const sv4_t* target)
             "found an inactive tag at commit\n",
             member, view->location ? view->location : "<unknown>");
     fflush(stderr);
+    llg_rt_note_error(0, "nonblocking write to an inactive tagged-union member", view->location);
     return 0;
 }
 

@@ -1,0 +1,31 @@
+register error handle: level=0 code=-
+register sigterm handle: level=0 code=-
+register signal 0 NULL: level=3 code=LLG_VPI_CALLBACK
+register signal -1 NULL: level=3 code=LLG_VPI_CALLBACK
+register cbStmt NULL: level=3 code=LLG_VPI_UNSUPPORTED
+register cbAssign NULL: level=3 code=LLG_VPI_UNSUPPORTED
+register cbDeassign NULL: level=3 code=LLG_VPI_UNSUPPORTED
+register cbUnresolvedSystf NULL: level=3 code=LLG_VPI_UNSUPPORTED
+register cbStartOfSave NULL: level=3 code=LLG_VPI_UNSUPPORTED
+register cbEndOfRestart NULL: level=3 code=LLG_VPI_UNSUPPORTED
+register cbStartOfReset NULL: level=3 code=LLG_VPI_UNSUPPORTED
+register cbEnterInteractive NULL: level=3 code=LLG_VPI_UNSUPPORTED
+register cbInteractiveScopeChange NULL: level=3 code=LLG_VPI_UNSUPPORTED
+register reason 999 NULL: level=3 code=LLG_VPI_CALLBACK
+register pli handle: level=0 code=-
+before the failing call
+  cbPLIError(pli) at 0: obj=NULL index=0 level=3 state=3 code=LLG_VPI_HANDLE
+vpi_get(vpiSize, NULL): level=3 code=LLG_VPI_HANDLE
+size=-1, next call
+  cbPLIError(pli) at 0: obj=NULL index=0 level=3 state=3 code=LLG_VPI_HANDLE
+returning
+after act_pli
+  cbError(error) at 1000: obj=NULL index=0 level=3 state=3 code=LLG_RUNTIME_ERROR message has "first error 0"
+  cbError(error) at 1000: obj=NULL index=0 level=3 state=3 code=LLG_RUNTIME_ERROR message has "assertion assert failed"
+else action
+raising SIGTERM
+  cbSignal(sigterm) at 2000: obj=NULL index=SIGTERM level=0 state=0 code=-
+after raise
+remove error=1 pli=1 sigterm=1
+after an unobserved routine error
+done

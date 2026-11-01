@@ -587,6 +587,7 @@ static int32_t llg_coverage_merge(uint64_t type, const char* name, const char* w
                 "changed\n",
                 what, name, error);
         llg_rt_mark_failed();
+        llg_rt_note_error(0, "coverage database was not merged", NULL);
         status = LLG_SV_COV_ERROR;
     }
     llg_cov_db_file_free(&db);

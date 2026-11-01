@@ -6,8 +6,9 @@
 // for each statement that writes any of its bits. vpi_put_value with
 // vpiForceFlag or vpiReleaseFlag, and the reevaluation of a force whose
 // right-hand side changed, are not statements and run no callback.
-// Registering cbAssign or cbDeassign succeeds; llg rejects procedural assign
-// and deassign statements, so those records never run.
+// Registering cbAssign or cbDeassign fails with vpiError (NULL): llg rejects
+// procedural assign and deassign statements (unsupported by design), so such
+// a record could never run.
 //
 // IEEE 1800-2009 38.36.1 (SystemVerilog-1800-2009.txt L64646-L64647):
 // "cbForce/cbRelease After a force or release has occurred. cbAssign/

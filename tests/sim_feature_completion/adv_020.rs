@@ -161,3 +161,29 @@ fn delays_read_and_write_paths_checks_primitives_and_assignments() {
         &[],
     );
 }
+
+const ACTIONS: &[&str] = &[
+    "--define-system-task",
+    "task $act_register()",
+    "--define-system-task",
+    "task $act_pli()",
+    "--define-system-task",
+    "task $act_signal()",
+    "--define-system-task",
+    "task $act_remove()",
+];
+
+#[test]
+fn action_callbacks_report_errors_and_signals() {
+    let directory = sim_harness::TempDir::new("adv020-actions").expect("temporary directory");
+    let Some(library) = plugin(&directory, "actions") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "actions",
+        include_str!("../fixtures/sim/feature_completion/adv_020/actions.out"),
+        ACTIONS,
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}

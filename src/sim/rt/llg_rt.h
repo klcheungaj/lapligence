@@ -1853,6 +1853,15 @@ void llg_rt_fatal_typed(int finish_number, const char* fmt,
 // Counts reset at llg_rt_init and remain available through final-block
 // execution. Invalid levels return zero.
 uint64_t llg_rt_severity_count(int severity);
+// Observer of run-time errors (VPI cbError, IEEE 1800-2009 38.36.3): runs
+// after each run-time error or fatal error was reported, before a fatal one
+// ends the run. Reports are `$error`/`$fatal` (20.10), failing assertions
+// without an action block and the errors the runtime detects itself;
+// `message` is the reported text and `location` the source location or
+// NULL. Without a hook each report pays one branch.
+typedef void (*llg_rt_error_fn)(int fatal, const char* message, const char* location);
+void llg_rt_error_hook(llg_rt_error_fn hook);
+void llg_rt_note_error(int fatal, const char* message, const char* location);
 // Immediate assertion default-failure and successful-cover callbacks. The
 // identity is retained at the call boundary for future per-assertion APIs.
 void llg_assertion_failure(int kind, uint64_t identity, const char* label,

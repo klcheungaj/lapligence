@@ -1,4 +1,18 @@
 
+static llg_rt_error_fn llg_error_hook;
+static int llg_error_hook_active;
+
+void llg_rt_error_hook(llg_rt_error_fn hook) { llg_error_hook = hook; }
+
+// An error reported while the observer runs (its own application failing)
+// is not reported to it again.
+void llg_rt_note_error(int fatal, const char* message, const char* location) {
+    if (!llg_error_hook || llg_error_hook_active) return;
+    llg_error_hook_active = 1;
+    llg_error_hook(fatal, message ? message : "", location && location[0] ? location : NULL);
+    llg_error_hook_active = 0;
+}
+
 static const char* llg_severity_name(int severity) {
     switch (severity) {
         case LLG_SEVERITY_INFO: return "info";
@@ -35,6 +49,11 @@ static void llg_report_severity_typed(int severity, const char* fmt,
     llg_report_bytes(&report, out, len);
     llg_report_bytes(&report, "\n", 1);
     llg_report_emit(&report, stderr);
+    if (severity >= LLG_SEVERITY_ERROR && llg_error_hook) {
+        char message[512];
+        snprintf(message, sizeof message, "%.*s", len > 511u ? 511 : (int)len, out);
+        llg_rt_note_error(severity == LLG_SEVERITY_FATAL, message, location);
+    }
     free(out);
 }
 
@@ -96,6 +115,13 @@ static void assertion_report_failure(int kind, const char* label,
     if (label && label[0]) llg_report_printf(&report, " (%s)", label);
     llg_report_bytes(&report, "\n", 1);
     llg_report_emit(&report, stderr);
+    if (llg_error_hook) {
+        char message[256];
+        snprintf(message, sizeof message, "assertion %s failed%s%s%s", llg_assertion_name(kind),
+                 label && label[0] ? " (" : "", label && label[0] ? label : "",
+                 label && label[0] ? ")" : "");
+        llg_rt_note_error(0, message, location);
+    }
 }
 
 void llg_assertion_failure(int kind, uint64_t identity, const char* label,

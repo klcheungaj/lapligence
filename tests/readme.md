@@ -438,8 +438,9 @@ Windows DLL linked against the model import library) and as a static archive
 `vpi_get_value_array`/`vpi_put_value_array`; `force_callbacks` and `disable`
 cover `cbForce`/`cbRelease`/`cbAssign`/`cbDeassign` and `cbDisable`; `delays`
 (VPI-T1) reads and writes path, check, primitive and continuous assignment
-delays and counts `cbTchkViolation` records. Decisions
-A20-D1..D15 are in `sim_lrm_decisions` (`-E 'test(/a20_d/)'`); the export list
+delays and counts `cbTchkViolation` records; `actions` covers `cbError`,
+`cbPLIError`, `cbSignal` and the refused reasons. Decisions
+A20-D1..D20 are in `sim_lrm_decisions` (`-E 'test(/a20_d/)'`); the export list
 check is `sim::build::import_library::tests`.
 
 SIM-043's callback fixtures use

@@ -374,6 +374,16 @@ static int rts_bind_cb(struct llg_vpi_cb* cb, const s_cb_data* data);
 static void rts_cb_added(const struct llg_vpi_cb* cb);
 static void rts_cb_removed(const struct llg_vpi_cb* cb);
 static void rts_enable(void);
+/* Action callbacks (cbError, cbPLIError, cbSignal): llg_vpi_services.c,
+ * appended after the runtime-structure layer. */
+struct llg_vpi_cb;
+static void svc_error_recorded(void);
+static void svc_safe_point(void);
+static int svc_reason(int reason);
+static int svc_bind_cb(struct llg_vpi_cb* cb, const s_cb_data* data);
+static void svc_cb_added(const struct llg_vpi_cb* cb);
+static void svc_cb_removed(const struct llg_vpi_cb* cb);
+static void svc_shutdown(void);
 static int code_tables_valid(const llg_vpi_code_tables_t* t);
 static PLI_INT32 unsupported_property(void);
 
@@ -389,6 +399,7 @@ static void vpi_set_error(int state, int level, const char* code,
              code ? code : "LLG_VPI");
     snprintf(g_vpi.error_message, sizeof(g_vpi.error_message), "%s",
              message ? message : "VPI operation failed");
+    svc_error_recorded();
 }
 
 static void vpi_set_errorf(int state, int level, const char* code,
@@ -403,6 +414,7 @@ static void vpi_set_errorf(int state, int level, const char* code,
     va_start(ap, format);
     vsnprintf(g_vpi.error_message, sizeof(g_vpi.error_message), format, ap);
     va_end(ap);
+    svc_error_recorded();
 }
 
 static int vpi_state(void) { return g_vpi.running ? vpiRun : vpiPLI; }
@@ -414,6 +426,9 @@ static void vpi_error(const char* code, const char* message) {
 /* 38.2: the error status is reset by every VPI routine except
  * vpi_chk_error(). Every public entry point calls this first. */
 static void vpi_enter(void) {
+    /* A safe point for cbPLIError and cbSignal: the previous routine has
+     * returned. */
+    svc_safe_point();
     g_vpi.error_pending = 0;
     g_vpi.iterate_ref = 0;
 }
@@ -10978,6 +10993,7 @@ typedef enum {
     CB_TCHK,       /* cbTchkViolation */
     CB_OBJECT,     /* cbCreateObj, cbReclaimObj, cbEndOfObject (llg_vpi_dynamic.c) */
     CB_RUNTIME,    /* frame and thread reasons (llg_vpi_runtime.c) */
+    CB_SERVICE,    /* cbError, cbPLIError, cbSignal (llg_vpi_services.c) */
 } llg_vpi_cb_kind_t;
 
 typedef struct llg_vpi_cb {
@@ -11188,6 +11204,7 @@ static void vpi_cb_detach(llg_vpi_cb_t* cb, llg_vpi_cb_done_t* done) {
     if (cb->kind == CB_TCHK) --g_vpi.tchk_cbs;
     if (cb->kind == CB_OBJECT) dyn_object_cb_removed();
     if (cb->kind == CB_RUNTIME) rts_cb_removed(cb);
+    if (cb->kind == CB_SERVICE) svc_cb_removed(cb);
     if (cb->waiting) {
         cb->waiting = 0;
         --g_vpi.next_time_pending;
@@ -11261,6 +11278,7 @@ static void invoke_cb(llg_vpi_cb_t* cb, s_cb_data* data) {
         llg_rt_request_finish();
     }
     (void)cb;
+    svc_safe_point();
 }
 
 static void base_data(const llg_vpi_cb_t* cb, s_cb_data* out) {
@@ -11360,6 +11378,7 @@ static int matches_next_time(const llg_vpi_cb_t* cb, const void* context) {
 /* Runtime time-slot hook, called at the start of every Pre-Active pass:
  * queue the cbNextSimTime records registered in an earlier slot. */
 static void vpi_time_slot(void) {
+    svc_safe_point();
     if (!g_vpi.next_time_pending) return;
     uint64_t now = llg_time();
     llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
@@ -12116,6 +12135,38 @@ static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
     return 1;
 }
 
+/* Reasons llg does not raise: the error names why (38.36.3 lists the
+ * feature reasons as tool-specific). */
+static void vpi_refuse_reason(int reason) {
+    const char* why = NULL;
+    switch (reason) {
+        case cbStmt:
+            why = "cbStmt is not supported by llg: statements have no execution hook";
+            break;
+        case cbSizeChange: why = "cbSizeChange is not supported by llg"; break;
+        case cbUnresolvedSystf:
+            why = "cbUnresolvedSystf never occurs in llg: every system task and function call "
+                  "is resolved when the model is generated";
+            break;
+        case cbStartOfSave:
+        case cbEndOfSave:
+        case cbStartOfRestart:
+        case cbEndOfRestart: why = "llg has no save and restart"; break;
+        case cbStartOfReset:
+        case cbEndOfReset: why = "llg has no $reset (decision A20-D11)"; break;
+        case cbEnterInteractive:
+        case cbExitInteractive:
+        case cbInteractiveScopeChange:
+            why = "llg has no interactive mode (decision A20-D11)";
+            break;
+        default:
+            vpi_set_error(vpi_state(), vpiError, "LLG_VPI_CALLBACK",
+                          "unsupported or invalid VPI callback registration");
+            return;
+    }
+    vpi_set_error(vpi_state(), vpiError, "LLG_VPI_UNSUPPORTED", why);
+}
+
 static int time_reason(int reason) {
     return reason == cbAtStartOfSimTime || reason == cbReadWriteSynch ||
            reason == cbReadOnlySynch || reason == cbAfterDelay || reason == cbNBASynch ||
@@ -12155,11 +12206,17 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         }
     } else if (reason == cbValueChange) {
         kind = CB_VALUE;
-    } else if (reason == cbForce || reason == cbRelease || reason == cbAssign ||
-               reason == cbDeassign) {
-        /* cbAssign/cbDeassign are accepted but never run: llg rejects
-         * procedural assign and deassign statements (decision A20-D9). */
+    } else if (reason == cbForce || reason == cbRelease) {
         kind = CB_FORCE;
+    } else if (reason == cbAssign || reason == cbDeassign) {
+        /* llg rejects procedural assign and deassign statements (ADV-032),
+         * so no such callback could ever run (decision A20-D9). */
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "cbAssign and cbDeassign need procedural assign and deassign statements, "
+                  "which llg does not support");
+        return NULL;
+    } else if (svc_reason(reason)) {
+        kind = CB_SERVICE;
     } else if (reason == cbDisable) {
         kind = CB_DISABLE;
     } else if (assertion_system_reason(reason)) {
@@ -12199,12 +12256,11 @@ vpiHandle vpi_register_cb(p_cb_data data) {
             return NULL;
         }
     } else {
-        vpi_set_error(vpi_state(), vpiError, "LLG_VPI_CALLBACK",
-                      "unsupported or invalid VPI callback registration");
+        vpi_refuse_reason(reason);
         return NULL;
     }
     if ((kind == CB_VALUE || kind == CB_FORCE || kind == CB_DISABLE || kind == CB_TCHK ||
-         kind == CB_OBJECT || kind == CB_RUNTIME) &&
+         kind == CB_OBJECT || kind == CB_RUNTIME || kind == CB_SERVICE) &&
         g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
         vpi_error("LLG_VPI_CALLBACK", "the simulation has ended; no value can change");
         return NULL;
@@ -12266,6 +12322,10 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         vpi_cb_free(cb);
         return NULL;
     }
+    if (kind == CB_SERVICE && !svc_bind_cb(cb, data)) {
+        vpi_cb_free(cb);
+        return NULL;
+    }
     cb->data.time = data->time ? &cb->time : NULL;
     cb->data.value = data->value ? &cb->value : NULL;
     uint32_t index = alloc_slot(SLOT_CALLBACK);
@@ -12302,6 +12362,7 @@ vpiHandle vpi_register_cb(p_cb_data data) {
     }
     if (kind == CB_OBJECT) dyn_object_cb_added();
     if (kind == CB_RUNTIME) rts_cb_added(cb);
+    if (kind == CB_SERVICE) svc_cb_added(cb);
     if (kind == CB_NEXT_TIME) {
         cb->waiting = 1;
         ++g_vpi.next_time_pending;
@@ -12413,6 +12474,7 @@ void llg_vpi_end_simulation(void) {
     /* All assertions have completed (39.4.1 cbAssertionSysEnd "typically
      * occurs after the end of simulation"), before cbEndOfSimulation. */
     assertion_callbacks_end();
+    svc_safe_point();
     g_vpi.phase = LLG_VPI_PHASE_ENDED;
     invoke_action(cbEndOfSimulation);
     g_vpi.running = 0;
@@ -12654,6 +12716,7 @@ static int invoke_calltf(llg_vpi_call_t* call) {
     ++g_vpi.call_depth;
     PLI_INT32 result = calltf(site->registration->data.user_data);
     --g_vpi.call_depth;
+    svc_safe_point();
     site->active = NULL;
     release_call_slots(call);
     g_vpi.active_call = call->previous;
@@ -12800,6 +12863,7 @@ void llg_vpi_shutdown(void) {
     llg_timing_violation_hook(NULL);
     tchk_rows_release();
     while (g_vpi.cbs) vpi_cb_retire(g_vpi.cbs);
+    svc_shutdown();
     free(g_vpi.watch_buckets);
     for (size_t i = g_vpi.static_count; i < g_vpi.slot_count; ++i) {
         llg_vpi_slot_t* slot = &g_vpi.slots[i];

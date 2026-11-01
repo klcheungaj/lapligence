@@ -6,8 +6,8 @@ register r-force handle: level=0 code=-
 register n-release handle: level=0 code=-
 register n[0]-force NULL: level=3 code=LLG_VPI_CALLBACK
 register P-force NULL: level=3 code=LLG_VPI_CALLBACK
-register any-assign handle: level=0 code=-
-register v-deassign handle: level=0 code=-
+register any-assign NULL: level=3 code=LLG_VPI_UNSUPPORTED
+register v-deassign NULL: level=3 code=LLG_VPI_UNSUPPORTED
 any-force at 1: vpiForce lhs=tb.v value=01011010
 any-release at 2: vpiRelease lhs=tb.v value=5a
 any-force at 3: vpiForce lhs=tb.n value=11110000
