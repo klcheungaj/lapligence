@@ -2627,6 +2627,15 @@ fn a19_d62_statement_processes() {
 }
 
 #[test]
+fn a19_d63_structure_net_members() {
+    run_vpi_decision(
+        "A19-D63_structure_net_members",
+        &["task $d63()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D63_structure_net_members.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

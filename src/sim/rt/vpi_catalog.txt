@@ -728,7 +728,7 @@ node net 37.16 members=struct_net,enum_net,integer_net,time_net,logic_net,packed
 node struct_net 37.16 type=vpiStructNet
   get vpiPackedArrayMember implemented walk
   get vpiPacked extension walk whether the net's data type is packed
-  iterate vpiMember unsupported members of structure or union nets are not objects in llg
+  iterate vpiMember implemented walk
   iterate vpiRange error walk 37.16 detail 1: a structure net without explicit packed ranges allows no range iteration
 
 node enum_net 37.16 type=vpiEnumNet

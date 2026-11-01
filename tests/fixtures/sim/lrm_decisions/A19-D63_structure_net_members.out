@@ -1,0 +1,28 @@
+vpiStructNet tb.sn
+  vpiNet tb.sn.f size=2 value=10 parent=tb.sn member=1 nettype=1
+    by name same
+  vpiNet tb.sn.g size=1 value=1 parent=tb.sn member=1 nettype=1
+    by name same
+vpiNet tb.un
+  vpiNet tb.un.a size=3 value=011 parent=tb.un member=1 nettype=1
+    by name same
+  vpiStructNet tb.un.b size=3 value=011 parent=tb.un member=1 nettype=1
+    by name same
+    vpiNet tb.un.b.f size=2 value=01 parent=tb.un.b member=1 nettype=1
+      by name same
+    vpiNet tb.un.b.g size=1 value=1 parent=tb.un.b member=1 nettype=1
+      by name same
+vpiStructNet tb.on
+  vpiEnumNet tb.on.st size=2 value=10 parent=tb.on member=1 nettype=2
+    by name same
+  vpiStructNet tb.on.in size=3 value=110 parent=tb.on member=1 nettype=2
+    by name same
+    vpiNet tb.on.in.f size=2 value=11 parent=tb.on.in member=1 nettype=2
+      by name same
+    vpiNet tb.on.in.g size=1 value=0 parent=tb.on.in member=1 nettype=2
+      by name same
+vpiStructNet tb.sarr[1]
+  vpiNet tb.sarr[1].f size=2 value=01 parent=tb.sarr[1] member=1 nettype=1
+    by name same
+  vpiNet tb.sarr[1].g size=1 value=0 parent=tb.sarr[1] member=1 nettype=1
+    by name same

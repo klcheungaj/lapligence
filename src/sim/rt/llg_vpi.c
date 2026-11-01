@@ -3660,7 +3660,7 @@ static vpiHandle member_from_suffix(uint32_t row, const char* suffix) {
     const llg_vpi_typespec_t* typespec = element == LLG_VPI_NO_ELEMENT
         ? typespec_ref(object->typespec) : element_typespec(object);
     if (!is_aggregate_typespec(typespec) || (object->flags & LLG_VPI_OBJ_RECORD) ||
-        object->is_net || (element == LLG_VPI_NO_ELEMENT && !has_storage(object)))
+        (element == LLG_VPI_NO_ELEMENT && !has_storage(object)))
         return NULL;
     uint32_t first = typespec->first_node, count = typespec->node_count, node = LLG_VPI_NONE;
     while (*p == '.') {
@@ -8364,11 +8364,6 @@ static vpiHandle iterate_members(const llg_vpi_slot_t* slot) {
         vpi_error("LLG_VPI_RELATION", "vpiMember iterates a structure or union variable");
         return NULL;
     }
-    if (object && object->is_net) {
-        /* Members of a struct net are nets (37.16); llg exposes none. */
-        vpi_error("LLG_VPI_UNSUPPORTED", "members of a structure or union net are not VPI objects");
-        return NULL;
-    }
     uint32_t first = typespec->first_node, count = typespec->node_count;
     if (slot->kind == SLOT_MEMBER) {
         const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
@@ -8832,6 +8827,20 @@ static int is_static_variable_part(const llg_vpi_slot_t* slot,
            (slot->kind == SLOT_SELECT && slot->span == 1);
 }
 
+/* 37.16 detail 1: a member of a structure or union net is a net of the
+ * member's data type; 1800-2009 has no union net type, so a union member
+ * is a vpiNet like a union net (decision A19-D63). */
+static int net_member_type(int var_type) {
+    switch (var_type) {
+        case vpiStructVar: return vpiStructNet;
+        case vpiEnumVar: return vpiEnumNet;
+        case vpiIntegerVar: return vpiIntegerNet;
+        case vpiTimeVar: return vpiTimeNet;
+        case vpiPackedArrayVar: return vpiPackedArrayNet;
+        default: return vpiNet;
+    }
+}
+
 static int handle_type(const llg_vpi_slot_t* slot) {
     if (dyn_slot(slot)) return dyn_type(slot);
     if (rts_slot(slot)) return rts_type(slot);
@@ -8865,7 +8874,9 @@ static int handle_type(const llg_vpi_slot_t* slot) {
         case SLOT_FSMSTATE: return vpiFsmHandle;
         case SLOT_MEMBER: {
             const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
-            return node ? node->type : vpiUndefined;
+            if (!node) return vpiUndefined;
+            const llg_vpi_model_object_t* object = row_object(slot->object);
+            return object && object->is_net ? net_member_type(node->type) : node->type;
         }
         case SLOT_TYPESPEC: return typespec_at((uint32_t)slot->aux)->type;
         case SLOT_TSMEMBER: return vpiTypespecMember;
@@ -9405,7 +9416,8 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 return vpiWire;
             /* A net array and a net bit have their nets' type (37.16). */
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiNetArray) return vpiWire;
-            if (slot->kind == SLOT_SELECT && slot->span == 1 && object && object->is_net)
+            if (((slot->kind == SLOT_SELECT && slot->span == 1) || slot->kind == SLOT_MEMBER) &&
+                object && object->is_net)
                 return is_net_type(object->type) && object->subtype ? object->subtype : vpiWire;
             return unsupported_property();
         case vpiInputEdge:
