@@ -79,6 +79,13 @@ jobs:
       # the test jobs. The checkout is mounted at /workspace here and in
       # every test container because tests embed compile-time paths
       # (CARGO_MANIFEST_DIR, CARGO_BIN_EXE_*).
+      #
+      # The archive build is the only build of the executables: it compiles
+      # them (CARGO_BIN_EXE_*) with every test binary in the release profile,
+      # and the audits and the package below take those same files from
+      # target/<triple>/release/. A separate `cargo build` could resolve
+      # dependency features differently (dev-dependencies are unified only
+      # when tests are built) and ship executables the `test` jobs never ran.
       - name: Build static musl executables and release test archive
         shell: bash
         run: |
@@ -89,6 +96,7 @@ jobs:
             --workdir /workspace \
             --env CMAKE_GENERATOR=Ninja \
             --env LLG_TARGET="${{ inputs.target }}" \
+            --env LLG_SLANG_LTO=1 \
             rust:1.98.0-alpine sh -euxc '
               apk add --no-cache build-base cmake curl git linux-headers ninja python3
               git config --global --add safe.directory /workspace
@@ -109,7 +117,6 @@ jobs:
                   exit 1
                   ;;
               esac
-              cargo build --locked --release --bin llg_ls --bin llg --target "$LLG_TARGET"
               # A small test harness exposes accidental dynamic libc links
               # that larger frontend binaries can mask by pulling libc.a first.
               cargo test --locked --release --test cli_info --target "$LLG_TARGET" -- --list --format terse
@@ -119,6 +126,24 @@ jobs:
               "$nextest/cargo-nextest" nextest archive --locked --all-features --cargo-profile release \
                 --target "$LLG_TARGET" --archive-file target/nextest-archive.tar.zst
             '
+
+      # The executables the `test` jobs run are the archive's copies; extract
+      # them with the container's static nextest (listing binaries only runs
+      # nothing) and require the files audited and packaged below to be
+      # byte-identical.
+      - name: Check the executables against the test archive
+        shell: bash
+        run: |
+          tested="$RUNNER_TEMP/tested-archive"
+          # nextest requires an existing extraction directory.
+          mkdir -p "$tested"
+          target/nextest-bin/cargo-nextest nextest list \
+            --archive-file target/nextest-archive.tar.zst \
+            --workspace-remap "$GITHUB_WORKSPACE" --extract-to "$tested" \
+            --list-type binaries-only
+          python3 scripts/ci_same_binaries.py \
+            --tested "$tested/target/${{ inputs.target }}/release" \
+            --name llg_ls --name llg "target/${{ inputs.target }}/release"
 
       - name: Upload release test archive
         uses: actions/upload-artifact@v4
@@ -165,6 +190,9 @@ jobs:
           install -m 755 "target/${{ inputs.target }}/release/llg_ls" dist/package/llg_ls
           install -m 755 "target/${{ inputs.target }}/release/llg" dist/package/llg
           install -m 644 LICENSE readme.md dist/package/
+          python3 scripts/ci_same_binaries.py \
+            --tested "$RUNNER_TEMP/tested-archive/target/${{ inputs.target }}/release" \
+            --name llg_ls --name llg dist/package
           tar -C dist/package -czf "dist/$archive" llg_ls llg LICENSE readme.md
           (cd dist && sha256sum "$archive" > "$archive.sha256")
 

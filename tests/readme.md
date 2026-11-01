@@ -1312,6 +1312,7 @@ Script regression checks (fake tools; no Rust/native build required):
 python3 -m unittest discover -s scripts -p test_dev_env.py
 python3 -m unittest discover -s scripts -p test_run_tests.py
 python3 -m unittest discover -s scripts -p test_ci_cache.py  # CI ccache/prune helpers
+python3 -m unittest discover -s scripts -p test_ci_same_binaries.py  # packaged = tested executables
 python3 -m unittest discover -s scripts -p test_ci_build_timings.py  # CI model-build timing summary
 python3 -m unittest discover -s scripts -p test_ci_windows_runner.py  # Windows CI runner cost probe
 python3 -m unittest discover -s scripts -p test_ci_resource_sampler.py  # CI test-job resource sampler

@@ -141,7 +141,17 @@ proptest = "1"
 [profile.dev.package."*"]
 debug = "line-tables-only"
 
+# Shipped executables and the CI test archive (`--cargo-profile release`) use
+# this profile, so CI tests the binaries that ship. Thin LTO optimizes Rust
+# across crates; build.rs also compiles Slang, fmt and the wrapper for LTO in
+# this profile (docs/cross_platform.md#link-time-optimization). Codegen units
+# stay at the default 16: thin LTO already inlines across them, and one unit
+# would serialize the largest crate's code generation.
+[profile.release]
+lto = "thin"
+
 # Match release optimization; keep these in sync if [profile.release] sets it.
+# No LTO: edit-test loops would relink every test binary through it.
 # Test retains dev's debug assertions and overflow checks.
 [profile.test]
 opt-level = 3

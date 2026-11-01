@@ -14,11 +14,19 @@ the rules a change must keep. Platform pitfalls are in
   tag pushes.
 - Each platform (`windows-x86_64`, `windows-arm64`, `macos-arm64`,
   `linux-x86_64`, `linux-arm64`) is an independent caller job. Its `build` job
-  compiles the executables, runs the platform audits, packages, and archives the
-  release-profile test binaries (`cargo nextest archive`); its `test` job needs
+  builds once: `cargo nextest archive --cargo-profile release` compiles the
+  test binaries and the executables, then the job audits and packages those
+  executables ([release packages](#release-packages)); its `test` job needs
   only that `build`, downloads the archive and runs the full suite
   (`--no-fail-fast`). `release` needs all five callers plus lint, sanitizers and
   audit.
+- The release profile uses thin LTO for Rust and LTO for the native frontend
+  ([LTO](../docs/cross_platform.md#link-time-optimization)); build jobs set
+  `LLG_SLANG_LTO=1` so a toolchain without it fails instead of shipping
+  without it. Every release link that uses the library (each test group and
+  both executables) repeats the frontend's link-time code generation, which
+  lengthens `build` jobs; lint and sanitizer jobs use the dev/test profiles
+  without LTO.
 - Every `cargo nextest`/`cargo test` step passes `--no-fail-fast`, and a later
   test step of the same job runs under `if: ${{ !cancelled() }}`, so one failure
   hides no other (run 111325565657 cancelled 4117 of 5951 lint-job tests); a
@@ -118,6 +126,13 @@ the rules a change must keep. Platform pitfalls are in
 
 ## Release packages
 
+- Ship exactly what the `test` jobs ran: the packaged executables are the ones
+  the test archive's build produced, never a separate `cargo build` (feature
+  unification with dev-dependencies or other flags could relink them). The
+  `build` job extracts the archive (`cargo nextest list --list-type
+  binaries-only`) and `scripts/ci_same_binaries.py` fails it unless the audited
+  files in `target/<triple>/release/` and the packaged copies have the archive
+  copies' SHA-256.
 - Audit architecture, static Linux/static Windows CRT linkage, system-only
   Windows/macOS imports and startup before packaging. Alpine also lists
   `cli_info` from a small release test binary to catch allocator/libc startup

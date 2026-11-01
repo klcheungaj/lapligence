@@ -2260,9 +2260,15 @@ enum RawError {}
 // sink remain valid for each blocking call, the returned error owner is
 // destroyed by the matching shim function, and borrowed views are copied
 // before their owner is destroyed.
-#[link(name = "llg_slang_wrapper", kind = "static")]
-#[link(name = "svlang", kind = "static")]
-#[link(name = "fmt", kind = "static")]
+//
+// `-bundle` leaves the archives out of this rlib: the final link reads the
+// files build.rs installed (its `rustc-link-search`). Release builds fill them
+// with LTO IR (GCC GIMPLE, LLVM bitcode, MSVC `/GL` objects); a bundled copy
+// would carry rustc's own archive symbol index, which cannot list GIMPLE or
+// `/GL` members, so GNU ld and link.exe would not pull them.
+#[link(name = "llg_slang_wrapper", kind = "static", modifiers = "-bundle")]
+#[link(name = "svlang", kind = "static", modifiers = "-bundle")]
+#[link(name = "fmt", kind = "static", modifiers = "-bundle")]
 unsafe extern "C" {
     fn llg_slang_compile(
         request: *const RawCompileRequest,

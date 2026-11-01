@@ -12,12 +12,15 @@ mod vendor_patches;
 
 #[path = "build_support/compiler_cache.rs"]
 mod compiler_cache;
+#[path = "build_support/native_lto.rs"]
+mod native_lto;
 
 fn emit_rerun_if_changed() {
     let target = std::env::var("TARGET").unwrap_or_default();
     let target_underscored = target.replace('-', "_");
     for variable in [
         "LLG_CCACHE".to_string(),
+        "LLG_SLANG_LTO".to_string(),
         "LLG_SYSROOT".to_string(),
         "CC".to_string(),
         "CXX".to_string(),
@@ -42,6 +45,7 @@ fn emit_rerun_if_changed() {
         "scripts/sccache.sh",
         "build_support/compiler_cache.rs",
         "build_support/host_platform.rs",
+        "build_support/native_lto.rs",
         "vendor/slang/CMakeLists.txt",
         "vendor/slang/cmake",
         "vendor/slang/external",
@@ -127,13 +131,23 @@ fn build_slang(manifest_dir: &Path) {
     let is_msvc = target_env == "msvc";
     let is_musl = target_env == "musl";
 
+    let lto = native_lto::request(
+        &std::env::var("LLG_SLANG_LTO").unwrap_or_default(),
+        &profile,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+
     let project = manifest_dir.join("src/wrapper/slang");
     let repo = manifest_dir.join("vendor/slang");
     let build_dir = manifest_dir
         .join("target/slang")
         .join(&target)
-        .join(profile)
-        .join(workspace_cache_key(manifest_dir));
+        .join(&profile)
+        .join(format!(
+            "{}{}",
+            workspace_cache_key(manifest_dir),
+            lto.build_dir_suffix()
+        ));
 
     sync_cmake_source(&build_dir, &project);
 
@@ -145,6 +159,7 @@ fn build_slang(manifest_dir: &Path) {
         .profile("Release")
         .define("LLG_SLANG_SOURCE_DIR", &repo)
         .define("CMAKE_INSTALL_LIBDIR", "lib")
+        .define("LLG_SLANG_LTO", lto.cmake_value())
         .define("FETCHCONTENT_TRY_FIND_PACKAGE_MODE", "NEVER");
     if is_msvc {
         config
@@ -182,9 +197,13 @@ fn build_slang(manifest_dir: &Path) {
 
     let install_dir = config.build();
     emit_native_search(&install_dir.join("lib"), is_msvc);
-    println!("cargo:rustc-link-lib=static=llg_slang_wrapper");
-    println!("cargo:rustc-link-lib=static=svlang");
-    println!("cargo:rustc-link-lib=static=fmt");
+    // llg_slang_wrapper, svlang and fmt are linked unbundled by the `#[link]`
+    // attributes in src/ffi/slang.rs, which rustc does not let a build-script
+    // `rustc-link-lib` override; see the reason there.
+    let lto_mode = read_lto_mode(&install_dir, lto);
+    for argument in native_lto::link_args(&lto_mode, &target_os, &target_env) {
+        println!("cargo:rustc-link-arg={argument}");
+    }
 
     if is_musl {
         let mimalloc_archive = build_mimalloc_shim(manifest_dir, &target);
@@ -207,6 +226,17 @@ fn build_slang(manifest_dir: &Path) {
             }
         }
     }
+}
+
+/// The LTO mode the CMake configure recorded (`native_lto::link_args`).
+fn read_lto_mode(install_dir: &Path, lto: native_lto::Request) -> String {
+    let record = install_dir.join("build/llg_slang_lto.txt");
+    let mode = std::fs::read_to_string(&record)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", record.display()));
+    if lto != native_lto::Request::Off && !native_lto::is_enabled(&mode) {
+        println!("cargo:warning=Slang was built without link-time optimization");
+    }
+    mode
 }
 
 fn build_mimalloc_shim(manifest_dir: &Path, target: &str) -> PathBuf {

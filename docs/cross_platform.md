@@ -25,6 +25,51 @@ neutral interface:
   behaviour (symlinks, permissions).
 - Add a layer function instead of a new conditional elsewhere.
 
+## Link-time optimization
+
+The Cargo `release` profile, which builds the shipped executables and the CI
+test archive, uses thin LTO for Rust (`Cargo.toml`) and compiles Slang, fmt and
+the C++ wrapper for LTO (`build_support/native_lto.rs`,
+`src/wrapper/slang/CMakeLists.txt`); `dev`, `test` and `quick` use none.
+CMake's IPO support chooses the compile flags. rustc's linker performs the
+final link, so build.rs adds what that link needs:
+
+| C++ compiler | Compile and archive | Final link |
+| --- | --- | --- |
+| GCC (Linux musl CI container, glibc hosts) | `-flto=auto -fno-fat-lto-objects`, `gcc-ar` | `cc` passes GCC's LTO plugin to GNU ld or mold; build.rs adds `-flto=auto`, and `-fuse-ld=bfd` on Linux GNU targets |
+| AppleClang (macOS) | `-flto=thin` | ld64 reads the bitcode through libLTO; nothing added |
+| Clang (Linux, not shipped) | `-flto=thin`, `llvm-ar` | a linker that reads LLVM bitcode; nothing added |
+| MSVC (Windows x64 and arm64) | `/GL`, `lib /LTCG` | build.rs adds `/LTCG` |
+
+- GCC has no ThinLTO. `-flto=auto` is its partitioned (WHOPR) mode, whose
+  link-time code generation runs in parallel: the nearest equivalent. MSVC has
+  no thin mode; `/LTCG:INCREMENTAL` only speeds relinks after small edits and
+  is not used.
+- The archives hold IR only (GCC slim objects, LLVM bitcode, `/GL` objects), so
+  a final link that does not run LTO fails with undefined Slang symbols instead
+  of silently shipping unoptimized code.
+- The `#[link]` attributes in `src/ffi/slang.rs` use `-bundle`: rustc's rlib
+  archive index cannot list GIMPLE or `/GL` members, so the final link reads
+  the archives CMake wrote with the compiler's archiver.
+- On x86_64 Linux GNU, rustc links through its bundled lld by default, which
+  ignores GCC's plugin; build.rs therefore selects GNU ld for GCC LTO archives.
+  A later `-fuse-ld` (the `LLG_MOLD=1` wrapper's) still wins; mold runs the
+  plugin too. That bundled lld does read Clang bitcode (LLVM 22 reads older
+  bitcode). CMake's IPO check needs `llvm-ar` beside a Linux Clang.
+- `LLG_SLANG_LTO`: unset or `auto` uses LTO in release builds and falls back to
+  ordinary objects with a build warning when CMake's IPO check fails; `1`
+  requires it in every profile (CI release builds set it); `0` disables it.
+  LTO archives live in their own `target/slang/<triple>/<profile>/<key>-lto`
+  tree, so changing the setting never mixes LTO and ordinary archives.
+- No cross-language LTO (`-Clinker-plugin-lto`): it needs a Clang whose LLVM
+  matches rustc's (LLVM 22 for Rust 1.98; hosts carry other Clang versions,
+  Apple Clang and MSVC differ) and GCC cannot take part. Rust and C++ are each
+  optimized as a whole; calls across the C ABI stay ordinary calls.
+- Every release link of a binary that uses the library (each test group and
+  both executables) repeats the frontend's link-time code generation.
+- The generated-model C runtime never links into Rust binaries and is
+  unaffected.
+
 ## Paths and text
 
 - Resolve and compare paths the way `ffi/secure_fs.rs` does, never by string.

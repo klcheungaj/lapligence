@@ -58,3 +58,7 @@ destroyed and every table streams to the caller's `LlgSlangSink`. Contracts:
 - Snapshot users stay correct after native owners are destroyed.
 - Wrapper edits rebuild the shim; Slang/CMake/patch edits may rebuild the
   frontend. Keep the root build's static library and patch-preflight integration.
+- Release builds compile the wrapper, Slang and fmt for LTO and rustc's linker
+  runs the link-time backend; compiler flags and per-toolchain link rules are
+  in [LTO](../../docs/cross_platform.md#link-time-optimization). Check a
+  CMake flag change with a release build too.
