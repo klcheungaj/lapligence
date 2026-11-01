@@ -171,10 +171,8 @@ impl<'a> Codegen<'a> {
                 NodeKind::MethodCall {
                     callee: Some(method),
                     ..
-                } => {
-                    if visited.insert(*method) {
-                        pending.extend(self.func_body(*method));
-                    }
+                } if visited.insert(*method) => {
+                    pending.extend(self.func_body(*method));
                 }
                 _ => {}
             }
