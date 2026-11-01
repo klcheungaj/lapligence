@@ -291,10 +291,10 @@ fn mixed_width_contexts_match_independent_oracle() {
 
 // The default optimizer folds literal operands it can evaluate; --no-opt
 // computes every one at run time. Both must match the same oracle. One fixture
-// per width: all four widths in one `initial` block made a single 33,000-line
-// C function whose GCC `-O3` compile alone took 29 s locally (superlinear in
-// function size; 9,000 lines took 5 s) and exceeded the 180 s per-run limit
-// on loaded CI runners.
+// per width: all four widths in one `initial` block took 28 s to compile with
+// GCC `-O3` as one C function and exceeded the 180 s per-run limit on loaded
+// CI runners. Outlined statement runs (`src/sim/emit_c/owned/outline.rs`)
+// bring that to 7 s, but separate cases also run in parallel.
 #[test]
 fn constant_operands_fold_like_runtime_operations_w1() {
     let expected = constants_expected(1);

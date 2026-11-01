@@ -176,6 +176,7 @@ fn render_bounded(
         &execution,
         config.backend,
         &super::constants::PackedConstants::default(),
+        threshold,
     )
     .map_err(EmitError::new)?;
     let forced = upper_bounds
@@ -253,13 +254,52 @@ fn origin_location(origin: &crate::sim::semantic::Origin) -> String {
     origin.location()
 }
 
+/// Bodies per source location, the provenance part of an instance-sharing
+/// key. A body with outlined statement runs is never shared
+/// (`sharing::normalize`), so bodies whose location occurs at least
+/// `threshold` times keep their statements inline: they may form a sharing
+/// group. Bodies at any other location can never be shared and outline
+/// their long runs (`owned/outline.rs`).
+struct OutlinePolicy {
+    threshold: usize,
+    counts: HashMap<String, usize>,
+}
+
+impl OutlinePolicy {
+    fn new(threshold: usize, locations: impl IntoIterator<Item = String>) -> Self {
+        let mut counts = HashMap::new();
+        if threshold != usize::MAX {
+            for location in locations {
+                *counts.entry(location).or_insert(0) += 1;
+            }
+        }
+        Self { threshold, counts }
+    }
+
+    fn outlines(&self, location: &str) -> bool {
+        self.counts.get(location).copied().unwrap_or(0) < self.threshold
+    }
+}
+
+fn function_outline_policy(model: &IrModel, threshold: usize) -> OutlinePolicy {
+    OutlinePolicy::new(
+        threshold,
+        model
+            .funcs
+            .iter()
+            .map(|function| origin_location(function.origin())),
+    )
+}
+
 fn render_coroutine_functions(
     execution: &ExecutionModel,
     backend: crate::sim::value_backend::ValueBackend,
     constants: &super::constants::PackedConstants,
+    threshold: usize,
 ) -> Result<(CoroutineArtifacts, CoroutineUpperBounds), String> {
     let model = execution.ir();
     let names = super::owned::StorageNames::new(model);
+    let policy = function_outline_policy(model, threshold);
     let mut artifacts = BTreeMap::new();
     let mut upper_bounds = BTreeMap::new();
     for &index in execution.analysis().callee_first_functions() {
@@ -272,6 +312,7 @@ fn render_coroutine_functions(
             activation_label: None,
             constants: Some(constants),
         };
+        let location = origin_location(function.origin());
         let (source, layout) = super::owned::model::coroutine_function(
             &ctx,
             function,
@@ -279,6 +320,7 @@ fn render_coroutine_functions(
             execution.analysis(),
             &upper_bounds,
             &names,
+            policy.outlines(&location),
         )?;
         let upper_bound = layout.upper_bound()?;
         upper_bounds.insert(index, upper_bound);
@@ -290,7 +332,7 @@ fn render_coroutine_functions(
                 frame_type: format!("{}_frame_t", function.c_name),
                 desc_name: format!("{}_desc", function.c_name),
                 display_name: function.diagnostic_name().to_owned(),
-                location: origin_location(function.origin()),
+                location,
                 owner: CoroutineId::Function(index),
                 root: false,
                 shared_entry: None,
@@ -363,9 +405,22 @@ fn render_coroutine_processes(
     backend: crate::sim::value_backend::ValueBackend,
     constants: &super::constants::PackedConstants,
     upper_bounds: &BTreeMap<usize, usize>,
+    threshold: usize,
 ) -> Result<Vec<Option<CoroutineArtifact>>, String> {
     let count = execution.processes().len();
     let mut artifacts = Vec::with_capacity(count);
+    let policy = {
+        let model = execution.ir();
+        OutlinePolicy::new(
+            threshold,
+            execution
+                .processes()
+                .iter()
+                .map(|executable| &model.processes[executable.semantic_process])
+                .filter(|process| process.kind() != IrProcessKind::Final)
+                .map(|process| origin_location(process.origin())),
+        )
+    };
     match execution {
         Cow::Borrowed(execution) => {
             let model = execution.ir();
@@ -380,6 +435,7 @@ fn render_coroutine_processes(
                         backend,
                         constants,
                         names: &names,
+                        policy: &policy,
                     },
                     upper_bounds,
                 )?);
@@ -398,6 +454,7 @@ fn render_coroutine_processes(
                         backend,
                         constants,
                         names: &names,
+                        policy: &policy,
                     },
                     upper_bounds,
                 )?;
@@ -417,6 +474,7 @@ struct RenderTables<'r, 'm> {
     backend: crate::sim::value_backend::ValueBackend,
     constants: &'r super::constants::PackedConstants,
     names: &'r super::owned::StorageNames<'m>,
+    policy: &'r OutlinePolicy,
 }
 
 fn render_coroutine_process(
@@ -439,6 +497,7 @@ fn render_coroutine_process(
     if process.kind() == IrProcessKind::Final {
         return Ok(None);
     }
+    let location = origin_location(process.origin());
     let (source, layout, net_batches) = super::owned::model::coroutine_process(
         &ctx,
         process,
@@ -447,6 +506,7 @@ fn render_coroutine_process(
         analysis,
         upper_bounds,
         tables.names,
+        tables.policy.outlines(&location),
     )?;
     Ok(Some(CoroutineArtifact {
         source: retained(source),
@@ -454,7 +514,7 @@ fn render_coroutine_process(
         frame_type: format!("{}_frame_t", process.c_name),
         desc_name: format!("{}_desc", process.c_name),
         display_name: process.label().to_owned(),
-        location: origin_location(process.origin()),
+        location,
         owner: CoroutineId::Process(index),
         root: true,
         shared_entry: None,
@@ -478,6 +538,7 @@ fn render_coroutine_branches(
     backend: crate::sim::value_backend::ValueBackend,
     constants: &super::constants::PackedConstants,
     upper_bounds: &BTreeMap<usize, usize>,
+    threshold: usize,
 ) -> Result<BTreeMap<CoroutineId, CoroutineArtifact>, String> {
     fn pre_name(pre: &crate::sim::ir::IrPreFn) -> &str {
         match pre {
@@ -508,12 +569,41 @@ fn render_coroutine_branches(
     };
     let names = super::owned::StorageNames::new(model);
     let mut artifacts = BTreeMap::new();
+    // Sharing keys separate function and process branches.
+    let function_branches = model
+        .funcs
+        .iter()
+        .enumerate()
+        .flat_map(|(function, definition)| {
+            (0..definition.pre_fns.len())
+                .filter(move |&helper| {
+                    execution
+                        .analysis()
+                        .is_coroutine(CoroutineId::FunctionBranch { function, helper })
+                })
+                .map(move |_| format!("f:{}", origin_location(definition.origin())))
+        });
+    let process_branches = model
+        .processes
+        .iter()
+        .enumerate()
+        .flat_map(|(process, definition)| {
+            (0..definition.pre_fns.len())
+                .filter(move |&helper| {
+                    execution
+                        .analysis()
+                        .is_coroutine(CoroutineId::ProcessBranch { process, helper })
+                })
+                .map(move |_| format!("p:{}", origin_location(definition.origin())))
+        });
+    let policy = OutlinePolicy::new(threshold, function_branches.chain(process_branches));
     for (function, definition) in model.funcs.iter().enumerate() {
         for (helper, pre) in definition.pre_fns.iter().enumerate() {
             let owner = CoroutineId::FunctionBranch { function, helper };
             if !execution.analysis().is_coroutine(owner) {
                 continue;
             }
+            let location = origin_location(definition.origin());
             let (source, layout) = super::owned::model::coroutine_branch(
                 &ctx,
                 pre,
@@ -521,6 +611,7 @@ fn render_coroutine_branches(
                 execution.analysis(),
                 upper_bounds,
                 &names,
+                policy.outlines(&format!("f:{location}")),
             )?;
             let name = pre_name(pre);
             artifacts.insert(
@@ -531,7 +622,7 @@ fn render_coroutine_branches(
                     frame_type: format!("{name}_frame_t"),
                     desc_name: format!("{name}_desc"),
                     display_name: format!("{}.fork", definition.diagnostic_name()),
-                    location: origin_location(definition.origin()),
+                    location,
                     owner,
                     root: true,
                     shared_entry: None,
@@ -549,6 +640,7 @@ fn render_coroutine_branches(
             if !execution.analysis().is_coroutine(owner) {
                 continue;
             }
+            let location = origin_location(definition.origin());
             let (source, layout) = super::owned::model::coroutine_branch(
                 &ctx,
                 pre,
@@ -556,6 +648,7 @@ fn render_coroutine_branches(
                 execution.analysis(),
                 upper_bounds,
                 &names,
+                policy.outlines(&format!("p:{location}")),
             )?;
             let name = pre_name(pre);
             artifacts.insert(
@@ -566,7 +659,7 @@ fn render_coroutine_branches(
                     frame_type: format!("{name}_frame_t"),
                     desc_name: format!("{name}_desc"),
                     display_name: format!("{}.fork", definition.label()),
-                    location: origin_location(definition.origin()),
+                    location,
                     owner,
                     root: true,
                     shared_entry: None,
@@ -1002,18 +1095,24 @@ fn render_model(
     let constants = super::constants::PackedConstants::default();
     let host_descs = callback_host_descs(execution.ir());
     let (mut coroutine_functions, frame_upper_bounds) =
-        render_coroutine_functions(&execution, config.backend, &constants)?;
+        render_coroutine_functions(&execution, config.backend, &constants, threshold)?;
     let mut coroutine_processes = render_coroutine_processes(
         &mut execution,
         config.backend,
         &constants,
         &frame_upper_bounds,
+        threshold,
     )?;
     let execution: &ExecutionModel = &execution;
     let model = execution.ir();
     let names = super::owned::StorageNames::new(model);
-    let mut coroutine_branches =
-        render_coroutine_branches(execution, config.backend, &constants, &frame_upper_bounds)?;
+    let mut coroutine_branches = render_coroutine_branches(
+        execution,
+        config.backend,
+        &constants,
+        &frame_upper_bounds,
+        threshold,
+    )?;
     let mut recursive_functions =
         render_recursive_functions(execution, config.backend, &constants)?;
     let frame_types = share_frame_types(
@@ -1024,6 +1123,7 @@ fn render_model(
         &mut coroutine_branches,
     )?;
     let mut plain_functions = BTreeMap::new();
+    let function_policy = function_outline_policy(model, threshold);
     for (index, function) in model.funcs.iter().enumerate() {
         if !super::owned::model::inline_template(function)
             && !coroutine_functions.contains_key(&index)
@@ -1039,7 +1139,12 @@ fn render_model(
             };
             plain_functions.insert(
                 index,
-                retained(super::owned::model::function(&ctx, function, &names)?),
+                retained(super::owned::model::function(
+                    &ctx,
+                    function,
+                    &names,
+                    function_policy.outlines(&origin_location(function.origin())),
+                )?),
             );
         }
     }

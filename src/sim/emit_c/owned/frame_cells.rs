@@ -1,7 +1,7 @@
 //! Conservative descriptor escape proof over typed procedure operations.
 use super::*;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct CellEligibility {
     proven: bool,
     retained: BTreeSet<String>,
