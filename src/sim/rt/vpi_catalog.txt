@@ -59,6 +59,7 @@ test a19d65 sim_lrm_decisions::a19_d65_refused_relations
 test a19d66 sim_lrm_decisions::a19_d66_specparam_expressions
 test a19d67 sim_lrm_decisions::a19_d67_packed_array_elements
 test a19d68 sim_lrm_decisions::a19_d68_udp_initial_statement
+test a19d69 sim_lrm_decisions::a19_d69_named_event_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test a20d16 sim_lrm_decisions::a20_d16_delay_expressions
 test a20d17 sim_lrm_decisions::a20_d17_port_delays
@@ -328,7 +329,7 @@ node instance 37.10 members=package,interface,program,module
   iterate vpiRegArray implemented walk
   iterate vpiMemory implemented walk
   iterate vpiNamedEvent implemented walk
-  iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
+  iterate vpiNamedEventArray implemented walk
   iterate vpiParameter implemented walk
   iterate vpiSpecParam implemented walk
   iterate vpiAssertion implemented walk
@@ -400,7 +401,7 @@ node scope 37.12 members=instance,task_func,named_begin,begin,named_fork,fork,cl
   iterate vpiSequenceDecl implemented walk
   iterate vpiConcurrentAssertions implemented walk
   iterate vpiNamedEvent implemented walk
-  iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
+  iterate vpiNamedEventArray implemented walk
   iterate vpiVariables implemented walk
   iterate vpiReg implemented walk
   iterate vpiRegArray implemented walk
@@ -1102,20 +1103,22 @@ node named_event 37.25 type=vpiNamedEvent
   handle vpiScope implemented walk
   handle vpiModule implemented walk
   handle vpiParent implemented walk
-  handle vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
+  handle vpiIndex implemented walk
   iterate vpiIndex implemented walk
 
-node named_event_array 37.25 type=vpiNamedEventArray default=unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
-  str vpiName
-  str vpiFullName
-  func vpi_handle_by_index
-  func vpi_handle_by_multi_index
-  get vpiAutomatic
-  get vpiAllocScheme
-  handle vpiInstance
-  handle vpiModule
-  iterate vpiRange
-  iterate vpiNamedEvent
+node named_event_array 37.25 type=vpiNamedEventArray
+  str vpiName implemented walk
+  str vpiFullName implemented walk
+  func vpi_handle_by_index implemented a19d69
+  func vpi_handle_by_multi_index implemented a19d69
+  get vpiAutomatic implemented walk
+  get vpiAllocScheme implemented walk
+  handle vpiInstance implemented walk
+  handle vpiModule implemented walk
+  iterate vpiRange implemented walk
+  iterate vpiNamedEvent implemented walk
+  get vpiSize extension walk the number of elements, as for a variable array (37.17)
+  handle vpiParent extension walk the enclosing scope, instance, module or parent
 
 node parameters 37.26 members=parameter,type_parameter
   get vpiLocalParam implemented walk

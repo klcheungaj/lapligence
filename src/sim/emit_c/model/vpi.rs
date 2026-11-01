@@ -237,7 +237,10 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
         if object.kind == IrVpiObjectKind::NamedEvent && event == "NULL" {
             continue;
         }
-        let dims = if object.kind == IrVpiObjectKind::InstanceArray {
+        let dims = if matches!(
+            object.kind,
+            IrVpiObjectKind::InstanceArray | IrVpiObjectKind::NamedEventArray
+        ) {
             let Some(dims) = object
                 .dims
                 .iter()
@@ -275,6 +278,7 @@ fn catalog(model: &IrModel, objects: &[IrVpiObject]) -> Vec<Entry> {
                 (object.kind.c_type(), object.direction.c_code())
             }
             IrVpiObjectKind::Record => (object.var_kind.c_type(), "0"),
+            IrVpiObjectKind::NamedEventArray => (object.kind.c_type(), "vpiNamedEvent"),
             kind => (object.type_code.unwrap_or(kind.c_type()), "0"),
         };
         let order = entries
@@ -640,6 +644,9 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         }
         if entry.member {
             flags.push("LLG_VPI_OBJ_MEMBER");
+        }
+        if entry.type_code == "vpiNamedEvent" && entry.port_target.is_some() {
+            flags.push("LLG_VPI_OBJ_ELEMENT");
         }
         if entry.slice {
             flags.push("LLG_VPI_OBJ_SLICE");

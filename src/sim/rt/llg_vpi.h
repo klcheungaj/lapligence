@@ -35,6 +35,10 @@ extern "C" {
 #define LLG_VPI_OBJ_DPI_EXPORT 0x100000u
 #define LLG_VPI_OBJ_DPI_PURE 0x200000u
 #define LLG_VPI_OBJ_DPI_CONTEXT 0x400000u
+/* An element of the named event array row `target` (37.25): element number
+ * `port_index` in row-major order. The elements of an array follow its row
+ * in that order; `parent` stays the declaring scope. */
+#define LLG_VPI_OBJ_ELEMENT 0x800000u
 
 /* Typespecs (IEEE 1800-2009 37.23). The generated model emits interned
  * tables; fields naming an optional entry hold its index + 1 (0: none),

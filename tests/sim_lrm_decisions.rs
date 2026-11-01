@@ -2183,6 +2183,15 @@ fn a19_d68_udp_initial_statement() {
 }
 
 #[test]
+fn a19_d69_named_event_arrays() {
+    run_vpi_decision(
+        "A19-D69_named_event_arrays",
+        &["task $d69()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D69_named_event_arrays.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",

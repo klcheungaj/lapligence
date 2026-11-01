@@ -1,0 +1,29 @@
+  tb named event arrays: ev ev2 (2) error=0
+  tb named events: single (1) error=0
+ev: type=129 size=3 module=tb
+  ev ranges: [0:2] (1) error=0
+  ev elements: ev[0] ev[1] ev[2] (3) error=0
+  ev2 ranges: [1:0] [0:1] (2) error=0
+  ev2 elements: ev2[1][0] ev2[1][1] ev2[0][0] ev2[0][1] (4) error=0
+ev by index 1: ev[1] type=34 full=tb.ev[1] array_member=1
+  parent=tb.ev
+  index=1
+  indices: 1 (1) error=0
+ev by index 5: NULL error=1
+ev2 by indices 0 1: ev2[0][1] type=34 full=tb.ev2[0][1] array_member=1
+  parent=tb.ev2
+  index NULL error=1
+  indices: 1 0 (2) error=0
+ev2 by index 1: NULL error=1
+ev2[1][0] by name: ev2[1][0] type=34 full=tb.ev2[1][0] array_member=1
+  parent=tb.ev2
+  index NULL error=1
+  indices: 0 1 (2) error=0
+by name compares=1
+array value: error=1
+ev[1] waiting=1 error=0
+callback=1
+  value change on tb.ev[1]
+put error=0
+woke on ev[1] at 1000
+done

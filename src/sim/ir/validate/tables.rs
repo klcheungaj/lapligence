@@ -129,6 +129,7 @@ impl Validator<'_> {
                 | IrVpiObjectKind::ContAssign
                 | IrVpiObjectKind::Primitive
                 | IrVpiObjectKind::InstanceArray
+                | IrVpiObjectKind::NamedEventArray
                 | IrVpiObjectKind::Modport
                 | IrVpiObjectKind::ModPath
                 | IrVpiObjectKind::Tchk

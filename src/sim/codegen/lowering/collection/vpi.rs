@@ -1801,15 +1801,74 @@ impl Codegen<'_> {
                     }));
                 }
                 NodeKind::NamedEvent | NodeKind::Var { .. }
-                    if !node.name.is_empty() && self.event_globals.contains_key(&id) =>
+                    if !node.name.is_empty()
+                        && (self.event_globals.contains_key(&id)
+                            || self.event_arrays.contains_key(&id)) =>
                 {
-                    insert(source(IrVpiObject {
-                        full_name: self.vpi_full_name(id),
-                        name: node.name.clone(),
-                        kind: IrVpiObjectKind::NamedEvent,
-                        event: Some(self.event_globals[&id].ir),
-                        ..IrVpiObject::default()
-                    }));
+                    let ir = self
+                        .event_globals
+                        .get(&id)
+                        .map_or_else(|| self.event_arrays[&id], |info| info.ir);
+                    let array = model.events.get(ir).and_then(|event| {
+                        Some((
+                            event.array_dims()?.to_vec(),
+                            event.array_elements().to_vec(),
+                        ))
+                    });
+                    if array.is_none() {
+                        insert(source(IrVpiObject {
+                            full_name: self.vpi_full_name(id),
+                            name: node.name.clone(),
+                            kind: IrVpiObjectKind::NamedEvent,
+                            event: Some(ir),
+                            ..IrVpiObject::default()
+                        }));
+                    }
+                    let (dims, elements) = array.unwrap_or_default();
+                    // 37.25: a named event array and its elements, each a
+                    // named event of its own whose `port_target` names the
+                    // array. The elements follow the array in row-major
+                    // order, the order the runtime indexes them in.
+                    let full_name = self.vpi_full_name(id);
+                    if !dims.is_empty() {
+                        insert(source(IrVpiObject {
+                            full_name: full_name.clone(),
+                            name: node.name.clone(),
+                            kind: IrVpiObjectKind::NamedEventArray,
+                            dims: dims
+                                .iter()
+                                .map(|(left, right)| (i64::from(*left), i64::from(*right)))
+                                .collect(),
+                            ..IrVpiObject::default()
+                        }));
+                        for (number, element) in elements.iter().enumerate() {
+                            let mut rest = number;
+                            let mut suffix = Vec::with_capacity(dims.len());
+                            for (left, right) in dims.iter().rev() {
+                                let extent =
+                                    usize::try_from(left.abs_diff(*right)).unwrap_or(0) + 1;
+                                let offset = i64::try_from(rest % extent).unwrap_or(0);
+                                rest /= extent;
+                                let index = if left >= right {
+                                    i64::from(*left) - offset
+                                } else {
+                                    i64::from(*left) + offset
+                                };
+                                suffix.push(format!("[{index}]"));
+                            }
+                            suffix.reverse();
+                            let suffix = suffix.concat();
+                            insert(source(IrVpiObject {
+                                full_name: format!("{full_name}{suffix}"),
+                                name: format!("{}{suffix}", node.name),
+                                kind: IrVpiObjectKind::NamedEvent,
+                                event: Some(*element),
+                                port_index: u32::try_from(number).unwrap_or(u32::MAX),
+                                port_target: Some(full_name.clone()),
+                                ..IrVpiObject::default()
+                            }));
+                        }
+                    }
                 }
                 NodeKind::Process { kind } => {
                     let (type_code, detail) = match kind {

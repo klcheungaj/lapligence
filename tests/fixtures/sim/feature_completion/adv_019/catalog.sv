@@ -152,6 +152,8 @@ module tb;
   int aa[int];
   event ev;
   event ev2;
+  // A named event array (37.25).
+  event eva [1:0];
   wire [3:0] w;
   wire w1, g_out, u_out, y, a_in, d_in;
   wire [3:0] lw;

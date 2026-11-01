@@ -499,6 +499,7 @@ static int is_scope_iteration(int type) {
     switch (type) {
         case vpiPropertyDecl: case vpiSequenceDecl: case vpiNamedEvent: case vpiVariables:
         case vpiReg: case vpiRegArray: case vpiMemory: case vpiParameter: case vpiInternalScope:
+        case vpiNamedEventArray:
             return 1;
         default:
             return 0;
@@ -538,7 +539,8 @@ static int is_instance_array_type(int type) {
  * 37.26, 37.31, 37.43, 37.58). */
 static int is_structure_type(int type) {
     return is_process_type(type) || is_primitive_type(type) || is_instance_array_type(type) ||
-           type == vpiContAssign || type == vpiNamedEvent || type == vpiModport ||
+           type == vpiContAssign || type == vpiNamedEvent || type == vpiNamedEventArray ||
+           type == vpiModport ||
            type == vpiModPath || type == vpiTchk || type == vpiClockingIODecl ||
            type == vpiDefParam;
 }
@@ -589,6 +591,8 @@ static int has_storage(const llg_vpi_model_object_t* object) {
     return object->is_real ? object->real != NULL : object->packed != NULL;
 }
 
+static uint64_t dims_element_count(const llg_vpi_model_object_t* object);
+
 static int model_object_valid(const llg_vpi_model_object_t* object) {
     uint32_t parent = 0, target = 0;
     if (!object->name || !object->full_name ||
@@ -633,6 +637,17 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
         }
     }
     if (object->type == vpiModPath || object->type == vpiTchk) return object->timing != NULL;
+    if (object->type == vpiNamedEventArray)
+        return object->dim_count > 0 && !object->packed && !object->real && !object->event;
+    if (object->flags & LLG_VPI_OBJ_ELEMENT) {
+        /* An element follows its array, in row-major order. */
+        if (object->type != vpiNamedEvent || !object->target ||
+            object->target->type != vpiNamedEventArray || target >= g_vpi.object_count ||
+            (uint64_t)target + 1u + object->port_index >= g_vpi.object_count ||
+            &g_vpi.objects[target + 1u + object->port_index] != object ||
+            object->port_index >= dims_element_count(object->target))
+            return 0;
+    }
     if (is_structure_type(object->type)) {
         if (object->packed || object->real) return 0;
         if (object->type == vpiNamedEvent) return object->event != NULL;
@@ -809,7 +824,8 @@ static int vpi_ready(void) {
             g_vpi.next_sibling[i] = g_vpi.first_child[parent];
             g_vpi.first_child[parent] = (uint32_t)i + 1u;
         }
-        if (is_array_type(object->type) || is_instance_array_type(object->type))
+        if (is_array_type(object->type) || is_instance_array_type(object->type) ||
+            object->type == vpiNamedEventArray)
             g_vpi.element_counts[i] = dims_element_count(object);
     }
     /* Ports live in their own namespace, attributes are found only from
@@ -2096,6 +2112,14 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
     uint32_t dims = slot->element != LLG_VPI_NO_ELEMENT && slot->kind != SLOT_OBJECT &&
                             is_array_type(object->type)
                         ? object->dim_count : 0u;
+    /* A named event array element row: the indices of its element number. */
+    const llg_vpi_model_object_t* array = object;
+    uint64_t rest = slot->element;
+    if (slot->kind == SLOT_OBJECT && (object->flags & LLG_VPI_OBJ_ELEMENT)) {
+        array = object->target;
+        dims = array->dim_count;
+        rest = object->port_index;
+    }
     uint32_t count = dims + (bit ? 1u : 0u) + packed_count;
     if (!dims && !packed_count) {
         int type = bit ? 0 : handle_type(slot);
@@ -2108,7 +2132,6 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
     }
     /* make_constant may move the slot table: keep no slot pointer across it. */
     int64_t bit_index = slot->left;
-    uint64_t rest = slot->element;
     uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
@@ -2126,7 +2149,7 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
     /* Row-major element number: the last dimension varies fastest. */
     for (uint32_t d = dims; d-- > 0;) {
         int64_t left = 0, right = 0;
-        array_dim(object, d, &left, &right);
+        array_dim(array, d, &left, &right);
         uint64_t extent = (uint64_t)(left >= right ? left - right : right - left) + 1u;
         uint64_t offset = rest % extent;
         rest /= extent;
@@ -4097,6 +4120,32 @@ static vpiHandle declaration_relation(int type, uint32_t row, int* handled) {
     return NULL;
 }
 
+/* Element `values` (one index per dimension) of named event array `row`
+ * (37.25): the element row, which follows the array in row-major order;
+ * NULL with an error for a wrong index count or an index out of range. */
+static vpiHandle event_element(uint32_t row, const int64_t* values, uint32_t count) {
+    const llg_vpi_model_object_t* array = row_object(row);
+    if (count != array->dim_count) {
+        vpi_error("LLG_VPI_INDEX", "index count does not match the array dimensions");
+        return NULL;
+    }
+    uint64_t flat = 0;
+    for (uint32_t d = 0; d < count; ++d) {
+        int64_t left = 0, right = 0;
+        array_dim(array, d, &left, &right);
+        int64_t low = left < right ? left : right, high = left < right ? right : left;
+        if (values[d] < low || values[d] > high) {
+            vpi_error("LLG_VPI_INDEX", "index outside the array range");
+            return NULL;
+        }
+        uint64_t extent = (uint64_t)(high - low) + 1u;
+        uint64_t offset = left >= right ? (uint64_t)(left - values[d]) : (uint64_t)(values[d] - left);
+        flat = flat * extent + offset;
+    }
+    if (flat >= g_vpi.element_counts[row]) return NULL;
+    return object_handle(row + 1u + (uint32_t)flat);
+}
+
 vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
     vpi_enter();
     llg_vpi_slot_t* slot = checked_handle(object, NULL);
@@ -4106,6 +4155,14 @@ vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
     if (slot->kind == SLOT_OBJECT) {
         llg_vpi_model_object_t* base = row_object(slot->object);
         if (base->type == vpiGenScopeArray) return gen_scope_by_index(slot->object, value);
+        if (base->type == vpiNamedEventArray) {
+            if (base->dim_count != 1) {
+                vpi_error("LLG_VPI_INDEX",
+                          "use vpi_handle_by_multi_index for a multidimensional array");
+                return NULL;
+            }
+            return event_element(slot->object, &value, 1u);
+        }
         if (is_instance_array_type(base->type)) {
             /* 37.11: an instance of the array; NULL outside its range. */
             if (base->dim_count != 1) {
@@ -4173,6 +4230,7 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
     }
     if (is_instance_array_type(base->type))
         return object_handle(instance_element(row, values, (uint32_t)count));
+    if (base->type == vpiNamedEventArray) return event_element(row, values, (uint32_t)count);
     if (!is_array_type(base->type)) {
         if (packed_array_typespec(row, LLG_VPI_NO_ELEMENT))
             return packed_select(row, LLG_VPI_NO_ELEMENT, values, (uint32_t)count, 0);
@@ -7045,6 +7103,9 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
             if (slot->kind == SLOT_OBJECT && object &&
                 (object->type == vpiPackage || object->type == vpiProgram))
                 break;
+            /* 37.25: a named event array element's parent is its array. */
+            if (slot->kind == SLOT_OBJECT && object && (object->flags & LLG_VPI_OBJ_ELEMENT))
+                return object_handle(row_of(object->target));
             if (slot->kind == SLOT_OBJECT)
                 return object && object->parent ? object_handle(row_of(object->parent)) : NULL;
             /* A typespec's range has no owning object. */
@@ -7144,6 +7205,21 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 array_dim(object, 0, &left, &right);
                 int64_t value = left >= right ? left - (int64_t)slot->element
                                               : left + (int64_t)slot->element;
+                return make_constant(value, vpiDecConst);
+            }
+            if (slot->kind == SLOT_OBJECT && (object->flags & LLG_VPI_OBJ_ELEMENT)) {
+                /* 37.25 detail 1: the index of a named event array element;
+                 * a deeper element's come from the vpiIndex iteration. */
+                const llg_vpi_model_object_t* array = object->target;
+                if (array->dim_count != 1) {
+                    vpi_error("LLG_VPI_RELATION",
+                              "vpiIndex of an element of a multidimensional array");
+                    return NULL;
+                }
+                int64_t left, right;
+                array_dim(array, 0, &left, &right);
+                int64_t value = left >= right ? left - (int64_t)object->port_index
+                                              : left + (int64_t)object->port_index;
                 return make_constant(value, vpiDecConst);
             }
             /* A whole net, variable or named event is not an array element
@@ -8378,6 +8454,8 @@ static vpiHandle cont_assign_bit_lhs(uint32_t row, uint32_t bit) {
 /* ── iteration ──────────────────────────────────────────────────────────── */
 
 static int child_matches(const llg_vpi_model_object_t* child, int type) {
+    /* A named event array element is reached through its array only. */
+    if (child->flags & LLG_VPI_OBJ_ELEMENT) return 0;
     switch (type) {
         case vpiVariables:
             /* 37.12: every variable, string, chandle, class and container
@@ -8429,7 +8507,8 @@ static int iteration_type_supported(int type) {
         case vpiPackedArrayVar: case vpiRegArray: case vpiNetArray: case vpiMemory:
         case vpiVariables: case vpiInternalScope: case vpiParameter: case vpiPort:
         case vpiGenScope: case vpiNamedBegin: case vpiNamedFork:
-        case vpiNamedEvent: case vpiProcess: case vpiContAssign: case vpiTaskFunc:
+        case vpiNamedEvent: case vpiNamedEventArray: case vpiProcess: case vpiContAssign:
+        case vpiTaskFunc:
         case vpiTask: case vpiFunction: case vpiPrimitive: case vpiGate: case vpiSwitch:
         case vpiUdp: case vpiModuleArray: case vpiInterfaceArray: case vpiPrimitiveArray:
         case vpiGateArray: case vpiSwitchArray: case vpiUdpArray: case vpiInstanceArray:
@@ -8823,6 +8902,25 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
                                          ? UINT32_MAX : g_vpi.element_counts[iterator->object]);
         iterator->aux = type;
         return encode_handle(index);
+    }
+    if (slot->kind == SLOT_OBJECT && object && object->type == vpiNamedEventArray) {
+        /* 37.25 detail 2: the ranges, leftmost first; the elements, in
+         * row-major order (they follow the array row). */
+        if (type == vpiRange) return iterate_dims(slot->object, type);
+        if (type == vpiNamedEvent) {
+            uint64_t total = g_vpi.element_counts[slot->object];
+            uint32_t row = slot->object;
+            uintptr_t* items = (uintptr_t*)calloc((size_t)total + 1u, sizeof(*items));
+            if (!items) {
+                vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+                return NULL;
+            }
+            for (uint64_t i = 0; i < total; ++i)
+                items[i] = (uintptr_t)object_handle(row + 1u + (uint32_t)i);
+            return make_list_iterator(vpiNamedEvent, items, (uint32_t)total);
+        }
+        vpi_error("LLG_VPI_RELATION", "a named event array iterates vpiRange and vpiNamedEvent");
+        return NULL;
     }
     if (slot->kind == SLOT_OBJECT && object && is_instance_array_type(object->type)) {
         /* 37.11: the ranges and the instances of an instance array. */
@@ -9294,7 +9392,7 @@ static int static_variable_slot(const llg_vpi_slot_t* slot,
     switch (slot->kind) {
         case SLOT_OBJECT:
             return is_variable_type(object->type) || object->type == vpiRegArray ||
-                   object->type == vpiNamedEvent;
+                   object->type == vpiNamedEvent || object->type == vpiNamedEventArray;
         case SLOT_ELEMENT:
         case SLOT_MEMBER:
             return !object->is_net;
@@ -9453,7 +9551,8 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 return (PLI_INT32)value_type->member_count;
         }
             if (slot->kind == SLOT_OBJECT && object &&
-                (is_array_type(object->type) || is_instance_array_type(object->type))) {
+                (is_array_type(object->type) || is_instance_array_type(object->type) ||
+                 object->type == vpiNamedEventArray)) {
                 uint64_t count = g_vpi.element_counts[slot->object];
                 return count > INT32_MAX ? INT32_MAX : (PLI_INT32)count;
             }
@@ -9505,6 +9604,8 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 return unsupported_property();
             return is_array_type(object->type);
         case vpiArrayMember:
+            if (slot->kind == SLOT_OBJECT && object && (object->flags & LLG_VPI_OBJ_ELEMENT))
+                return 1;
             if (slot->kind == SLOT_OBJECT && object &&
                 (object->type == vpiModule || object->type == vpiInterface ||
                  object->type == vpiProgram || is_primitive_type(object->type)))

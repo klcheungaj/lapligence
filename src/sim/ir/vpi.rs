@@ -49,6 +49,12 @@ pub enum IrVpiObjectKind {
     Record,
     /// A named event (`vpiNamedEvent`, 37.25) backed by [`IrVpiObject::event`].
     NamedEvent,
+    /// An unpacked array of named events (`vpiNamedEventArray`, 37.25):
+    /// [`IrVpiObject::dims`] holds its ranges, outermost first. Its elements
+    /// are [`Self::NamedEvent`] rows that follow it in row-major order, each
+    /// naming the array as its `port_target` and its element number as its
+    /// `port_index`.
+    NamedEventArray,
     /// An `initial`, `always` or `final` procedure (37.58); unnamed.
     Process,
     /// A continuous assignment (37.43); unnamed, `conns` holds lhs and rhs.
@@ -115,6 +121,7 @@ impl IrVpiObjectKind {
             Self::Port => "vpiPort",
             Self::Record => "vpiStructVar",
             Self::NamedEvent => "vpiNamedEvent",
+            Self::NamedEventArray => "vpiNamedEventArray",
             Self::Process => "vpiInitial",
             Self::ContAssign => "vpiContAssign",
             Self::TaskFunc => "vpiTask",
