@@ -604,7 +604,12 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
         (!g_vpi.types || object->typespec > g_vpi.types->typespec_count))
         return 0;
     if (object->flags & LLG_VPI_OBJ_DYNAMIC) return dyn_row_valid(object);
-    if (object->storage || object->dependency || object->shape) return 0;
+    /* A sequential UDP that takes vpi_put_value: state digit and doorbell. */
+    if (object->type == vpiUdp && object->detail == vpiSeqPrim && object->storage &&
+        object->dependency && !object->shape && llg_sv4_width(*object->dependency) == 1u)
+        ;
+    else if (object->storage || object->dependency || object->shape)
+        return 0;
     if (object->flags & LLG_VPI_OBJ_RECORD)
         return (object->type == vpiStructVar || object->type == vpiUnionVar) &&
                !object->packed && !object->real;
@@ -10653,6 +10658,37 @@ static vpiHandle schedule_put(const llg_vpi_target_t* target, llg_vpi_datum_t* d
     return encode_handle(index);
 }
 
+/* 38.34: a sequential UDP is set to the value with no delay whatever the
+ * delay of the instance, with vpiNoDelay only. The state digit changes at
+ * once; ringing the doorbell wakes the gate process, which publishes the
+ * state through zero-delay updates that replace a pending transition. Z
+ * sets X, as a table output can only be 0, 1 or X. */
+static vpiHandle udp_put_value(const llg_vpi_model_object_t* object, p_vpi_value input,
+                               int mode) {
+    if (object->detail != vpiSeqPrim) {
+        vpi_error("LLG_VPI_VALUE", "a combinational UDP has no state to put a value to (38.34)");
+        return NULL;
+    }
+    if (!object->storage || !object->dependency) {
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "vpi_put_value to this sequential UDP is not supported: its delayed output "
+                  "drives aliased nets");
+        return NULL;
+    }
+    if (mode != vpiNoDelay) {
+        vpi_error("LLG_VPI_FLAGS", "values are put to a UDP with vpiNoDelay (38.34)");
+        return NULL;
+    }
+    llg_vpi_datum_t datum;
+    if (!value_from_vpi(input, 1u, 0, 0, &datum)) return NULL;
+    unsigned digit = datum.is_real ? 2u : llg_sv4_state(datum.packed, 0);
+    datum_destroy(&datum);
+    *(uint8_t*)object->storage = (uint8_t)(digit > 1u ? 2u : digit);
+    sv4_t* doorbell = object->dependency;
+    llg_ba(doorbell, sv4_from_u64(llg_sv4_state(*doorbell, 0) == 1u ? 0u : 1u, 1, 0));
+    return NULL;
+}
+
 vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
                         PLI_INT32 flags) {
     vpi_enter();
@@ -10731,6 +10767,8 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
                        llg_region_name(llg_current_region()));
         return NULL;
     }
+    if (slot->kind == SLOT_OBJECT && g_vpi.objects[slot->object].type == vpiUdp)
+        return udp_put_value(&g_vpi.objects[slot->object], input, mode);
     if ((mode == vpiInertialDelay || mode == vpiTransportDelay || mode == vpiPureTransportDelay) &&
         svc_string_row(slot))
         return svc_put_string_delayed(slot, input, time, mode, return_event);

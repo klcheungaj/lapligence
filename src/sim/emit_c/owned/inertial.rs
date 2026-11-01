@@ -50,18 +50,28 @@ impl Frame<'_, '_> {
             let driver = self.site_static("llg_inertial_t*", "inertial", None);
             format!("&{driver}")
         };
+        // A sequential UDP set by vpi_put_value publishes at once (38.34):
+        // the pending update is dropped and the delays are zero.
+        let (delay, now) = match delay {
+            IrInertialDelay::Interruptible { delay, now } => {
+                (delay.as_ref(), Some(self.condition(now)?))
+            }
+            delay => (delay, None),
+        };
         let delays = match delay {
-            IrInertialDelay::Constant(delay) => format!(
-                "{}ULL, {}ULL, {}ULL",
-                delay.rise, delay.fall, delay.turn_off
-            ),
+            IrInertialDelay::Interruptible { .. } => {
+                return Err("nested interruptible inertial delay".to_owned());
+            }
+            IrInertialDelay::Constant(delay) => vec![
+                format!("{}ULL", delay.rise),
+                format!("{}ULL", delay.fall),
+                format!("{}ULL", delay.turn_off),
+            ],
             IrInertialDelay::Annotated(slot) => {
                 let base = 3 * *slot;
-                format!(
-                    "llg_sdf_gate_delays[{base}], llg_sdf_gate_delays[{}], llg_sdf_gate_delays[{}]",
-                    base + 1,
-                    base + 2
-                )
+                (base..base + 3)
+                    .map(|index| format!("llg_sdf_gate_delays[{index}]"))
+                    .collect()
             }
             // Runtime values are evaluated each time the site schedules.
             IrInertialDelay::Runtime(delay) => {
@@ -87,11 +97,22 @@ impl Frame<'_, '_> {
                                 3 * slot
                             ),
                         );
-                        format!("{delays}[0], {delays}[1], {delays}[2]")
+                        (0..3).map(|index| format!("{delays}[{index}]")).collect()
                     }
-                    None => format!("{rise}, {fall}, {turn_off}"),
+                    None => vec![rise, fall, turn_off],
                 }
             }
+        };
+        let delays = match &now {
+            Some(now) => {
+                self.line(format!("if ({now}) llg_inertial_drop({handle});"));
+                delays
+                    .iter()
+                    .map(|delay| format!("({now} ? 0ULL : {delay})"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+            None => delays.join(", "),
         };
         self.line(format!("if ({}) {{", target.valid));
         if let Some(selection) = &target.selection {

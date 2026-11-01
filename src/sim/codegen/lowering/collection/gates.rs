@@ -598,6 +598,10 @@ impl<'a> Codegen<'a> {
             // Delayed-driver initialization above used the UDP start value.
             self.delayed_driver_start = None;
             let mut body = body;
+            let udp_state = match &udp_step {
+                Some(IrStmt::UdpStep { state, .. }) => Some(*state),
+                _ => None,
+            };
             if let Some(step) = udp_step {
                 body.insert(0, step);
             }
@@ -618,6 +622,10 @@ impl<'a> Codegen<'a> {
                 body,
                 origin,
             ));
+            if let Some(state) = udp_state {
+                let process = self.model.processes.len() - 1;
+                self.udp_gate_processes.push((g, state, process));
+            }
         }
         Ok(())
     }
@@ -643,6 +651,99 @@ impl<'a> Codegen<'a> {
             ENABLE_ONE_SIDE_TERMINAL,
         )?;
         Ok(())
+    }
+}
+
+impl Codegen<'_> {
+    /// Give each sequential UDP gate process of a VPI model a doorbell that
+    /// `vpi_put_value` rings after it sets the instance state. IEEE
+    /// 1800-2009 38.34 sets a sequential UDP "with no delay regardless of
+    /// any delay on the primitive instance": woken by the doorbell, the
+    /// process publishes the state at once, and a delayed publication drops
+    /// its pending transition (`IrInertialDelay::Interruptible`) while the
+    /// doorbell differs from the value the process last served, kept in a
+    /// second hidden variable. A gate whose publication is not a plain or
+    /// inertial assignment (a delayed output aliasing several nets) gets no
+    /// doorbell, and a put to it is an error.
+    pub(in crate::sim::codegen) fn add_udp_put_doorbells(&mut self) {
+        for (gate, state, process) in std::mem::take(&mut self.udp_gate_processes) {
+            let Some(entry) = self.model.processes.get(process) else {
+                continue;
+            };
+            let stepped =
+                matches!(entry.body.first(), Some(IrStmt::UdpStep { state: s, .. }) if *s == state);
+            let plain = entry.body.iter().skip(1).all(|stmt| {
+                matches!(
+                    stmt,
+                    IrStmt::Assign { .. }
+                        | IrStmt::InertialAssign { .. }
+                        | IrStmt::DeclLocal { .. }
+                )
+            });
+            if !matches!(entry.shape, IrShape::SensLoop { .. }) || !stepped || !plain {
+                continue;
+            }
+            let delayed = entry
+                .body
+                .iter()
+                .any(|stmt| matches!(stmt, IrStmt::InertialAssign { .. }));
+            let mut hidden = |c_name: String| {
+                let index = self.model.signals.len();
+                self.model.signals.push(IrSignal {
+                    fixed_default: None,
+                    c_name,
+                    hdl_name: None,
+                    ty: IrType::Packed {
+                        width: 1,
+                        signed: false,
+                        two_state: true,
+                    },
+                    net_driver: None,
+                    net_alias: Vec::new(),
+                    alias: None,
+                    omit: false,
+                });
+                index
+            };
+            let doorbell_name = format!("llg_udp_put_{state}");
+            let doorbell = hidden(doorbell_name.clone());
+            let served = delayed.then(|| hidden(format!("llg_udp_served_{state}")));
+            let read = |signal: usize| IrExpr::new(IrExprKind::SigRead(signal), 1, false, None);
+            let entry = &mut self.model.processes[process];
+            if let IrShape::SensLoop { reads } = &mut entry.shape {
+                reads.push(IrDependency::scalar(doorbell_name));
+            }
+            if let Some(served) = served {
+                let now = IrExpr::new(
+                    IrExprKind::Bin {
+                        op: IrBinOp::Neq,
+                        a: Box::new(read(doorbell)),
+                        b: Box::new(read(served)),
+                    },
+                    1,
+                    false,
+                    None,
+                );
+                for stmt in &mut entry.body {
+                    if let IrStmt::InertialAssign { delay, .. } = stmt {
+                        let inner = std::mem::replace(
+                            delay,
+                            IrInertialDelay::Constant(IrTransitionDelay::uniform(0)),
+                        );
+                        *delay = IrInertialDelay::Interruptible {
+                            delay: Box::new(inner),
+                            now: Box::new(now.clone()),
+                        };
+                    }
+                }
+                entry.body.push(IrStmt::Assign {
+                    lhs: IrLhs::Whole(served),
+                    rhs: read(doorbell),
+                    nba: false,
+                });
+            }
+            self.udp_put_states.insert(gate, (state, doorbell));
+        }
     }
 }
 

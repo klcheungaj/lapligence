@@ -1067,6 +1067,7 @@ impl Codegen<'_> {
                     .map_or_else(|| keyword.to_owned(), |table| table.name.clone()),
             ),
             kind: IrVpiObjectKind::Primitive,
+            udp_put: self.udp_put_states.get(&id).copied(),
             type_code: Some(type_code),
             detail: Some(detail),
             conns,

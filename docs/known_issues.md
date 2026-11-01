@@ -2286,19 +2286,23 @@ with no error status, as for a name that denotes nothing (S42-D11):
 
 - objects outside the generated catalog: sparse fixed arrays (stored in a keyed
   container), automatic variables (a frame's `vpiAutomatics` fails: the
-  lowered model keeps no source names for them), named event arrays, tasks and functions of packages, the
+  lowered model keeps no source names for them), named event array
+  properties of classes, tasks and functions of packages, the
   statements of class methods and class methods by name, programs, and checker objects (a checker instance is a module
   scope with its variables; VPI-C1);
 - dynamic objects (VPI-O4) other than static string, chandle and class
   variables and dynamic, queue and associative arrays (of instances,
-  packages, `$unit`, named blocks and tasks and functions): automatic ones,
-  fixed-size arrays of class handles, static class properties (static
-  event properties included), events other than instance event properties
-  of class objects (decision A19-D45), and virtual interfaces (variables and
-  class properties);
-  mailbox and semaphore objects (`vpiClassType`, `vpiMessages`,
-  `vpiWaitingProcesses`; their typespecs are NULL); `foreach` constraints
-  (no 2009 object, decision A19-D37); `vpiInterfaceDecl` and `vpiTypedef`
+  packages, `$unit`, named blocks and tasks and functions) and
+  one-dimensional fixed-size arrays of strings, chandles and class handles
+  (decision A19-D73): automatic ones, fixed-size arrays of more dimensions
+  or of other element types not stored as packed values, static class
+  properties (static event properties included), events other than
+  instance event properties of class objects (decision A19-D45), and
+  virtual interface variables (virtual interface properties of classes are
+  served, decision A19-D72);
+  mailbox and semaphore objects (`vpiClassType` and `vpiMessages`; their
+  typespecs are NULL; `vpiWaitingProcesses` is served, decision A19-D71);
+  `foreach` constraints (no 2009 object, decision A19-D37); `vpiTypedef`
   of class definitions and objects,
   `vpiArgument` of `vpiExtends` and `vpiParamAssign` of class typespecs; a
   parameterized class lists one class defn per specialization, each under
@@ -2314,7 +2318,8 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - structure objects (ADV-019 family 2; their relations are in the
   catalog): elements of multidimensional primitive arrays, and `vpiIndex`
   of an element of a multidimensional instance array; `vpi_put_value` to a
-  sequential UDP; `vpiOrigin` of a frame (the activating call is not
+  sequential UDP whose delayed output drives several aliased nets (other
+  sequential UDPs take it, decision A19-D74); `vpiOrigin` of a frame (the activating call is not
   recorded); `vpiReturn` of an automatic function and the argument
   variables of an automatic task or function, and the string, chandle,
   class and event arguments of a static one (decisions A19-D53, A19-D57); a fork branch started inside a task has no frame of that task
@@ -2375,15 +2380,17 @@ with no error status, as for a name that denotes nothing (S42-D11):
   the size and value of the formal it is passed to (a call snapshot) while
   its relations and `vpiDecompile` are those of the expression;
 - every property, relation and iteration the catalog marks `unsupported`
-  (ADV-019 closure, 2026-11: named event arrays and the `vpiIndex` of
-  elements of string, chandle, class and event arrays; virtual interface
-  declarations of classes; `vpiWaitingProcesses` of mailboxes and
-  semaphores; `vpiImport`; `vpi_put_value` to a sequential UDP; a frame's `vpiOrigin` and
-  `vpiAutomatics`; the bodies, variables and formal defaults of sequence and
-  property declarations; pattern and `expect` objects; the list operation
-  of an instance array's connections; a structure member's default
-  expression). Rows the catalog marks `error` are refused on purpose, as
-  industry-standard behaviour refuses them (decision A19-D65);
+  (after the ADV-019 closure, 2026-11: the named event arrays of class
+  definitions and objects; `vpiImport`, which 37.12 detail 4 defines as
+  the package items referenced through an import, a per-reference fact the
+  owned database does not capture; a frame's `vpiOrigin` and
+  `vpiAutomatics`). Rows the catalog marks `error` are refused on purpose,
+  as industry-standard behaviour refuses them (decision A19-D65); among
+  them the bodies, variables and formal defaults of sequence and property
+  declarations, `expect` relations, the list operation of an instance
+  array's connections and a structure member's default expression; pattern
+  objects are `n/a` for comparison (industry-standard tools reject
+  `case ... matches`) and keep llg's opaque objects;
 - callback reasons refused with an error naming the reason: `cbStmt` (a
   statement has no execution hook; adding one would cost every model
   statement a check, or a second statement-hooked code path per process),

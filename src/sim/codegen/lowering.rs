@@ -761,6 +761,12 @@ fn lower_model_with(
     cg.finish_switch_network()?;
     // Sampled-value event clocks may be requested by any body lowered above.
     let sampled_clock_processes = cg.emit_sampled_clock_processes();
+    // A model that keeps the VPI catalog (finish_generation) lets an
+    // application put a value to a sequential UDP; no other model pays
+    // for the path.
+    if options.vpi || !cg.model.vpi_compile_calls.is_empty() {
+        cg.add_udp_put_doorbells();
+    }
     let mut model = std::mem::replace(
         &mut cg.model,
         IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
@@ -1418,6 +1424,12 @@ struct Codegen<'a> {
     /// borrowed) → `model.udp_tables` index: later instances of a declaration
     /// skip conversion and hashing.
     udp_declaration_indices: HashMap<usize, usize>,
+    /// `(gate, state, process)` of each sequential UDP instance's gate
+    /// process, for [`Self::add_udp_put_doorbells`].
+    udp_gate_processes: Vec<(NodeId, usize, usize)>,
+    /// The sequential UDP instances a VPI application may put a value to
+    /// (38.34): gate node to state index and doorbell signal.
+    udp_put_states: HashMap<NodeId, (usize, usize)>,
     /// Start value of the delayed driver being initialized: `Some` for a
     /// sequential UDP output with an `initial` value, which is not delayed
     /// (IEEE 1364-2001 8.5); `None` starts at X (decision S2-D4).
@@ -2120,6 +2132,8 @@ impl<'a> Codegen<'a> {
             dpi_site_ids: HashMap::new(),
             udp_table_indices: HashMap::new(),
             udp_declaration_indices: HashMap::new(),
+            udp_gate_processes: Vec::new(),
+            udp_put_states: HashMap::new(),
             delayed_driver_start: None,
             static_formals: HashMap::new(),
             static_string_formals: HashMap::new(),

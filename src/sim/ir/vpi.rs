@@ -363,6 +363,10 @@ pub struct IrVpiObject {
     /// `vpiStrength0` and `vpiStrength1` code names of a primitive or
     /// continuous assignment (37.31, 37.43).
     pub(in crate::sim) strength: Option<(&'static str, &'static str)>,
+    /// `(state, doorbell signal)` of a sequential UDP instance that takes
+    /// `vpi_put_value` (38.34): its `llg_udp_state_N` record and the hidden
+    /// variable that wakes its gate process.
+    pub(in crate::sim) udp_put: Option<(usize, usize)>,
     /// `vpiImplicitDecl` of a net (37.16).
     pub(in crate::sim) implicit: bool,
     /// `vpiExplicitScalared`/`vpiExplicitVectored` of a net (37.16),
