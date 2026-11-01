@@ -2165,6 +2165,15 @@ fn a20_d23_subarray_handles() {
 }
 
 #[test]
+fn a19_d67_packed_array_elements() {
+    run_vpi_decision(
+        "A19-D67_packed_array_elements",
+        &["task $d67()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D67_packed_array_elements.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",

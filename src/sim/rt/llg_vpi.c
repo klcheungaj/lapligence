@@ -1175,6 +1175,154 @@ static int whole_unpacked_aggregate(const llg_vpi_slot_t* slot) {
     return is_aggregate_typespec(typespec) && (typespec->flags & LLG_VPI_TS_UNPACKED);
 }
 
+/* ── packed array elements and bits (decision A19-D67) ──────────────────── */
+
+/* Packed indices a select may name: the limit of vpi_handle_by_multi_index. */
+#define LLG_VPI_PACKED_INDICES 16u
+
+/* The typespec of the value a row (or its unpacked element `element`) holds
+ * when that value is a packed array of bit or logic vectors (two or more
+ * packed ranges), else NULL. Its ranges are leftmost first. */
+static const llg_vpi_typespec_t* packed_array_typespec(uint32_t row, uint64_t element) {
+    const llg_vpi_model_object_t* object = row_object(row);
+    if (!object || object->is_real || !object->packed || !g_vpi.types) return NULL;
+    const llg_vpi_typespec_t* typespec;
+    if (element != LLG_VPI_NO_ELEMENT)
+        typespec = is_array_type(object->type) ? element_typespec(object) : NULL;
+    else
+        typespec = is_array_type(object->type) ? NULL : typespec_ref(object->typespec);
+    if (!typespec ||
+        (typespec->type != vpiLogicTypespec && typespec->type != vpiBitTypespec) ||
+        typespec->range_count < 2u || typespec->range_count > LLG_VPI_PACKED_INDICES ||
+        !typespec->width)
+        return NULL;
+    return typespec;
+}
+
+/* Extent of packed range `range` (left, right). */
+static uint64_t packed_extent(const int64_t* range) {
+    return (uint64_t)(range[0] >= range[1] ? range[0] - range[1] : range[1] - range[0]) + 1u;
+}
+
+/* Whether a select handle is an element or bit of a packed array: its `aux`
+ * holds the number of packed indices that name it. */
+static int is_packed_select(const llg_vpi_slot_t* slot) {
+    return slot->kind == SLOT_SELECT && slot->aux > 0;
+}
+
+/* Whether a packed select names a bit (every packed index) rather than an
+ * element (all but the last). */
+static int packed_select_is_bit(const llg_vpi_slot_t* slot) {
+    const llg_vpi_typespec_t* typespec = packed_array_typespec(slot->object, slot->element);
+    return typespec && (uint32_t)slot->aux == typespec->range_count;
+}
+
+/* The packed indices of a packed select, leftmost first, decoded from its
+ * storage offset; returns their number. */
+static uint32_t packed_select_indices(const llg_vpi_slot_t* slot, int64_t* indices) {
+    const llg_vpi_typespec_t* typespec = packed_array_typespec(slot->object, slot->element);
+    if (!typespec || slot->aux <= 0 || (uint32_t)slot->aux > typespec->range_count) return 0;
+    const int64_t* ranges = &g_vpi.types->ranges[2u * typespec->first_range];
+    uint64_t stride = typespec->width;
+    for (uint32_t i = 0; i < (uint32_t)slot->aux; ++i) {
+        const int64_t* range = &ranges[2u * i];
+        uint64_t extent = packed_extent(range);
+        stride /= extent;
+        uint64_t offset = stride ? (slot->lsb / stride) % extent : 0u;
+        indices[i] = range[0] >= range[1] ? range[1] + (int64_t)offset
+                                          : range[1] - (int64_t)offset;
+    }
+    return (uint32_t)slot->aux;
+}
+
+/* The element (all packed indices but the last) or bit (every packed
+ * index) of the packed array a row or unpacked element holds. Any other
+ * index count, such as a subarray of a three-dimensional packed array, is
+ * refused like industry-standard behaviour; an index outside its range is
+ * an error. */
+static vpiHandle packed_select(uint32_t row, uint64_t element, const int64_t* indices,
+                               uint32_t count, int quiet) {
+    const llg_vpi_typespec_t* typespec = packed_array_typespec(row, element);
+    if (!typespec || (count != typespec->range_count && count + 1u != typespec->range_count)) {
+        if (!quiet)
+            vpi_error("LLG_VPI_INDEX",
+                      typespec ? "a packed array element needs every packed index but the last"
+                               : "object has no access by index");
+        return NULL;
+    }
+    const int64_t* ranges = &g_vpi.types->ranges[2u * typespec->first_range];
+    uint64_t stride = typespec->width, lsb = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        const int64_t* range = &ranges[2u * i];
+        uint64_t extent = packed_extent(range), offset;
+        stride /= extent;
+        /* The storage offset counts from the right bound. */
+        if (!index_offset(range[1], range[0], indices[i], &offset)) {
+            if (!quiet) vpi_error("LLG_VPI_INDEX", "packed index is outside the declared range");
+            return NULL;
+        }
+        lsb += offset * stride;
+    }
+    if (!stride || lsb + stride > typespec->width) return NULL;
+    int bit = count == typespec->range_count;
+    const int64_t* last = &ranges[2u * (typespec->range_count - 1u)];
+    vpiHandle handle = make_select(row, element, (uint32_t)lsb, (uint32_t)stride,
+                                   bit ? indices[count - 1u] : last[0],
+                                   bit ? indices[count - 1u] : last[1], NULL);
+    llg_vpi_slot_t* slot = decode_handle(handle, NULL);
+    if (slot) slot->aux = (int32_t)count;
+    return handle;
+}
+
+/* The packed bit at storage offset `offset` of a packed array value, named
+ * by all its packed indices (vpiBit of the array or of one element). */
+static vpiHandle packed_bit(uint32_t row, uint64_t element, uint32_t offset) {
+    const llg_vpi_typespec_t* typespec = packed_array_typespec(row, element);
+    if (!typespec) return NULL;
+    llg_vpi_slot_t view;
+    memset(&view, 0, sizeof(view));
+    view.kind = SLOT_SELECT;
+    view.object = row;
+    view.element = element;
+    view.lsb = offset;
+    view.aux = (int32_t)typespec->range_count;
+    int64_t indices[LLG_VPI_PACKED_INDICES];
+    uint32_t count = packed_select_indices(&view, indices);
+    return count ? packed_select(row, element, indices, count, 1) : NULL;
+}
+
+/* The bit (or deeper select) of a packed array element: its own packed
+ * indices followed by `count` more. */
+static vpiHandle packed_select_more(const llg_vpi_slot_t* slot, const int64_t* more,
+                                   uint32_t count) {
+    int64_t indices[2u * LLG_VPI_PACKED_INDICES];
+    uint32_t have = packed_select_indices(slot, indices);
+    if (count > LLG_VPI_PACKED_INDICES) count = LLG_VPI_PACKED_INDICES;
+    for (uint32_t i = 0; i < count; ++i) indices[have + i] = more[i];
+    return packed_select(slot->object, slot->element, indices, have + count, 0);
+}
+
+/* The vpiType of a packed select: a bit is a bit-select (37.54), as
+ * industry-standard behaviour reports it, an element a net or a logic or bit
+ * variable by its element type (decision A19-D67). */
+static int packed_select_type(const llg_vpi_slot_t* slot) {
+    const llg_vpi_model_object_t* object = row_object(slot->object);
+    const llg_vpi_typespec_t* typespec = packed_array_typespec(slot->object, slot->element);
+    if (!object || !typespec) return vpiPartSelect;
+    if ((uint32_t)slot->aux == typespec->range_count) return vpiBitSelect;
+    if (object->is_net) return vpiNet;
+    return typespec->type == vpiBitTypespec ? vpiBitVar : vpiReg;
+}
+
+/* The typespec of a packed element: its array's typespec after one element
+ * step per packed index. */
+static const llg_vpi_typespec_t* packed_select_typespec(const llg_vpi_slot_t* slot) {
+    const llg_vpi_typespec_t* typespec = packed_array_typespec(slot->object, slot->element);
+    for (int32_t i = 0; typespec && i < slot->aux; ++i) typespec = typespec_ref(typespec->element);
+    return typespec;
+}
+
+
 /* 37.31: the terminal whose value is a primitive's value: the output of a
  * gate or UDP, and the first terminal of a switch, which has no output
  * (decision A19-D64). LLG_VPI_NONE when there is none. */
@@ -1414,12 +1562,16 @@ static int handle_target(const llg_vpi_slot_t* slot, llg_vpi_target_t* target) {
         case SLOT_ELEMENT:
             target->element = slot->element;
             return 1;
-        case SLOT_SELECT:
+        case SLOT_SELECT: {
             target->element = slot->element;
             target->lsb = slot->lsb;
             target->span = slot->span;
-            target->is_signed = 0;
+            /* A packed array element is signed only by its own type (7.4.1). */
+            const llg_vpi_typespec_t* typespec =
+                is_packed_select(slot) ? packed_select_typespec(slot) : NULL;
+            target->is_signed = typespec && (typespec->flags & LLG_VPI_TS_SIGNED) ? 1 : 0;
             return 1;
+        }
         case SLOT_MEMBER: {
             const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
             /* An unpacked array member has no value of its own (37.17). */
@@ -1873,6 +2025,7 @@ static vpiHandle iterate_dims(uint32_t row, int type) {
  * relations of 37.16, 37.17 and 37.25 (an expression object answers its
  * own). */
 static int has_index_relation(const llg_vpi_slot_t* slot) {
+    if (is_packed_select(slot)) return 1;
     if (slot->kind != SLOT_OBJECT && slot->kind != SLOT_ELEMENT &&
         !(slot->kind == SLOT_SELECT && slot->span == 1))
         return 0;
@@ -1933,12 +2086,16 @@ static vpiHandle iterate_packed_ranges(const llg_vpi_slot_t* slot) {
 static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
     const llg_vpi_model_object_t* object = row_object(slot->object);
     if (!object) return NULL;
-    int bit = slot->kind == SLOT_SELECT && slot->span == 1;
+    /* A packed array element or bit: its packed indices, innermost first,
+     * like the indices of a var select (decision A19-D67). */
+    int64_t packed[LLG_VPI_PACKED_INDICES];
+    uint32_t packed_count = is_packed_select(slot) ? packed_select_indices(slot, packed) : 0u;
+    int bit = slot->kind == SLOT_SELECT && slot->span == 1 && !packed_count;
     uint32_t dims = slot->element != LLG_VPI_NO_ELEMENT && slot->kind != SLOT_OBJECT &&
                             is_array_type(object->type)
                         ? object->dim_count : 0u;
-    uint32_t count = dims + (bit ? 1u : 0u);
-    if (!dims) {
+    uint32_t count = dims + (bit ? 1u : 0u) + packed_count;
+    if (!dims && !packed_count) {
         int type = bit ? 0 : handle_type(slot);
         if (is_net_type(type) || type == vpiNamedEvent || type == vpiPackedArrayVar ||
             type == vpiRegArray)
@@ -1958,6 +2115,10 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
     uint32_t made = 0;
     if (bit) {
         vpiHandle index = make_constant(bit_index, vpiDecConst);
+        if (index) items[made++] = (uintptr_t)index;
+    }
+    for (uint32_t i = packed_count; i-- > 0;) {
+        vpiHandle index = make_constant(packed[i], vpiDecConst);
         if (index) items[made++] = (uintptr_t)index;
     }
     /* Row-major element number: the last dimension varies fastest. */
@@ -3670,16 +3831,22 @@ static vpiHandle select_from_suffix(uint32_t row, const char* suffix) {
     if (is_array_type(object->type)) {
         if ((uint32_t)count == object->dim_count)
             return element_by_indices(row, indices, count, 1);
-        if ((uint32_t)count == object->dim_count + 1u) {
-            vpiHandle base = element_by_indices(row, indices, count - 1, 1);
+        if ((uint32_t)count > object->dim_count) {
+            vpiHandle base = element_by_indices(row, indices, (int)object->dim_count, 1);
             llg_vpi_slot_t* slot = decode_handle(base, NULL);
             if (!slot) return NULL;
             uint64_t element = slot->element;
             vpi_release_handle(base);
-            return bit_by_index(row, element, indices[count - 1], BIT_QUIET);
+            if (packed_array_typespec(row, element))
+                return packed_select(row, element, indices + object->dim_count,
+                                     (uint32_t)count - object->dim_count, 1);
+            if ((uint32_t)count == object->dim_count + 1u)
+                return bit_by_index(row, element, indices[count - 1], BIT_QUIET);
         }
         return NULL;
     }
+    if (packed_array_typespec(row, LLG_VPI_NO_ELEMENT))
+        return packed_select(row, LLG_VPI_NO_ELEMENT, indices, (uint32_t)count, 1);
     return count == 1 ? bit_by_index(row, LLG_VPI_NO_ELEMENT, indices[0], BIT_QUIET) : NULL;
 }
 
@@ -3958,12 +4125,19 @@ vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
             vpi_error("LLG_VPI_INDEX", "object has no access by index");
             return NULL;
         }
+        if (packed_array_typespec(slot->object, LLG_VPI_NO_ELEMENT))
+            return packed_select(slot->object, LLG_VPI_NO_ELEMENT, &value, 1u, 0);
         /* A bit index outside a vector's range is a plain NULL answer; one
          * outside an element's range stays an error (decision S42-D7). */
         return bit_by_index(slot->object, LLG_VPI_NO_ELEMENT, value, BIT_QUIET_RANGE);
     }
-    if (slot->kind == SLOT_ELEMENT)
+    if (slot->kind == SLOT_ELEMENT) {
+        if (packed_array_typespec(slot->object, slot->element))
+            return packed_select(slot->object, slot->element, &value, 1u, 0);
         return bit_by_index(slot->object, slot->element, value, BIT_ERRORS);
+    }
+    if (is_packed_select(slot) && !packed_select_is_bit(slot))
+        return packed_select_more(slot, &value, 1u);
     vpi_error("LLG_VPI_INDEX", "object has no access by index");
     return NULL;
 }
@@ -3979,8 +4153,12 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
     int64_t values[16];
     for (int i = 0; i < count; ++i) values[i] = indices[i];
     if (slot->kind != SLOT_OBJECT) {
+        if (slot->kind == SLOT_ELEMENT && packed_array_typespec(slot->object, slot->element))
+            return packed_select(slot->object, slot->element, values, (uint32_t)count, 0);
         if (slot->kind == SLOT_ELEMENT && count == 1)
             return bit_by_index(slot->object, slot->element, values[0], BIT_ERRORS);
+        if (is_packed_select(slot) && !packed_select_is_bit(slot))
+            return packed_select_more(slot, values, (uint32_t)count);
         vpi_error("LLG_VPI_INDEX", "object has no access by index");
         return NULL;
     }
@@ -3994,19 +4172,27 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
     if (is_instance_array_type(base->type))
         return object_handle(instance_element(row, values, (uint32_t)count));
     if (!is_array_type(base->type)) {
+        if (packed_array_typespec(row, LLG_VPI_NO_ELEMENT))
+            return packed_select(row, LLG_VPI_NO_ELEMENT, values, (uint32_t)count, 0);
         if (count == 1) return bit_by_index(row, LLG_VPI_NO_ELEMENT, values[0], BIT_QUIET_RANGE);
         vpi_error("LLG_VPI_INDEX", "too many indices for a packed object");
         return NULL;
     }
     if ((uint32_t)count == base->dim_count) return element_by_indices(row, values, count, 0);
-    if ((uint32_t)count == base->dim_count + 1u) {
-        vpiHandle element = element_by_indices(row, values, count - 1, 0);
+    if ((uint32_t)count > base->dim_count) {
+        vpiHandle element = element_by_indices(row, values, (int)base->dim_count, 0);
         uint32_t element_index = LLG_VPI_NONE;
         llg_vpi_slot_t* element_slot = decode_handle(element, &element_index);
         if (!element_slot) return NULL;
         uint64_t flat = element_slot->element;
         release_slot(element_index);
-        return bit_by_index(row, flat, values[count - 1], BIT_ERRORS);
+        /* An element that is a packed array takes the rest as packed
+         * indices (decision A19-D67). */
+        if (packed_array_typespec(row, flat))
+            return packed_select(row, flat, values + base->dim_count,
+                                 (uint32_t)count - base->dim_count, 0);
+        if ((uint32_t)count == base->dim_count + 1u)
+            return bit_by_index(row, flat, values[count - 1], BIT_ERRORS);
     }
     vpi_error("LLG_VPI_INDEX", "index count does not match the array dimensions");
     return NULL;
@@ -6768,6 +6954,13 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
             }
             break;
         case vpiTypespec: {
+            if (is_packed_select(slot) && !packed_select_is_bit(slot)) {
+                /* A packed array element has its array's element typespec. */
+                const llg_vpi_typespec_t* typespec = packed_select_typespec(slot);
+                if (typespec) return declared_typespec_handle(typespec, slot->object, 0);
+                vpi_error("LLG_VPI_UNSUPPORTED", "llg exposes no typespec for the type of this object");
+                return NULL;
+            }
             if ((slot->kind == SLOT_SELECT && slot->span == 1) || slot->kind == SLOT_PORTBIT) {
                 /* 37.55 detail 5: a bit of a packed value has the scalar
                  * typespec at the end of the element chain of its vector;
@@ -6929,6 +7122,17 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 if (dims == 1) return make_constant(value, vpiDecConst);
                 vpi_error("LLG_VPI_UNSUPPORTED",
                           "vpiIndex of an element of a multidimensional instance array");
+                return NULL;
+            }
+            if (is_packed_select(slot) && !packed_select_is_bit(slot)) {
+                /* 37.17 detail 5, as for a var select: the index of an
+                 * element of a one-dimensional packed array; the indices of
+                 * a deeper element come from the vpiIndex iteration. */
+                int64_t indices[LLG_VPI_PACKED_INDICES];
+                if (packed_select_indices(slot, indices) == 1u)
+                    return make_constant(indices[0], vpiDecConst);
+                vpi_error("LLG_VPI_RELATION",
+                          "vpiIndex of an element of a multidimensional packed array");
                 return NULL;
             }
             if (slot->kind == SLOT_SELECT && slot->span == 1)
@@ -7762,13 +7966,14 @@ static int slot_span(const llg_vpi_slot_t* slot, llg_vpi_span_t* span, int* bit)
             *bit = !object->is_real && object->width == 1;
             return 1;
         case SLOT_SELECT:
-            /* A bit select is a net or variable bit; a part select is an
+            /* A bit select is a net or variable bit, a packed array element
+             * a net or variable (decision A19-D67); a part select is an
              * expression without connectivity relations. */
-            if (slot->span != 1) return 0;
+            if (slot->span != 1 && slot->aux <= 0) return 0;
             span->element = slot->element;
             span->lsb = slot->lsb;
-            span->width = 1;
-            *bit = 1;
+            span->width = slot->span;
+            *bit = slot->span == 1;
             return 1;
         case SLOT_MEMBER:
             if (!slot->span) return 0;
@@ -8703,6 +8908,23 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
             value_type == vpiPackedArrayNet)
             return iterate_packed_ranges(slot);
     }
+    if (type == vpiBit && is_packed_select(slot) && !packed_select_is_bit(slot)) {
+        /* The bits of a packed array element, most significant first, each
+         * named by every packed index (decision A19-D67). */
+        uint64_t element = slot->element;
+        uint32_t row = slot->object, lsb = slot->lsb, span = slot->span;
+        uint32_t index = alloc_slot(SLOT_ITERATOR);
+        if (index == LLG_VPI_NONE) return NULL;
+        llg_vpi_slot_t* iterator = &g_vpi.slots[index];
+        iterator->iter_kind = ITER_BITS;
+        iterator->object = row;
+        iterator->element = element;
+        iterator->lsb = lsb;
+        iterator->span = span;
+        iterator->count = span;
+        iterator->aux = vpiBit;
+        return encode_handle(index);
+    }
     if (type == vpiBit && (slot->kind == SLOT_OBJECT || slot->kind == SLOT_ELEMENT) && object &&
         !object->is_real && object->packed &&
         !(slot->kind == SLOT_OBJECT && is_array_type(object->type))) {
@@ -8817,6 +9039,12 @@ vpiHandle vpi_scan(vpiHandle iterator_handle) {
             uint32_t row = slot->object;
             uint64_t element = slot->element;
             llg_vpi_model_object_t* object = row_object(row);
+            /* A packed array or one of its elements: bits named by every
+             * packed index (decision A19-D67). */
+            if (slot->span)
+                return packed_bit(row, element, slot->lsb + slot->span - 1u - position);
+            if (packed_array_typespec(row, element))
+                return packed_bit(row, element, object->width - 1u - position);
             int64_t left, right;
             packed_range(object, &left, &right);
             /* Bits are returned from the left (most significant) index. */
@@ -8874,7 +9102,7 @@ static int is_static_variable_part(const llg_vpi_slot_t* slot,
         object->type != vpiArrayVar)
         return 0;
     return slot->kind == SLOT_OBJECT || slot->kind == SLOT_ELEMENT ||
-           (slot->kind == SLOT_SELECT && slot->span == 1);
+           (slot->kind == SLOT_SELECT && (slot->span == 1 || slot->aux > 0));
 }
 
 /* 37.16 detail 1: a member of a structure or union net is a net of the
@@ -8899,6 +9127,7 @@ static int handle_type(const llg_vpi_slot_t* slot) {
         case SLOT_OBJECT: return object->type;
         case SLOT_ELEMENT: return value_type_of(object, slot->element);
         case SLOT_SELECT:
+            if (slot->aux > 0) return packed_select_type(slot);
             if (slot->span != 1) return vpiPartSelect;
             return object->is_net ? vpiNetBit : vpiRegBit;
         case SLOT_CONSTANT: return vpiConstant;
@@ -8986,9 +9215,13 @@ static int handle_width(const llg_vpi_slot_t* slot, uint32_t* width, int* is_sig
             *width = object->width;
             *is_signed = object->is_signed;
             return 1;
-        case SLOT_SELECT:
+        case SLOT_SELECT: {
             *width = slot->span;
+            const llg_vpi_typespec_t* typespec =
+                is_packed_select(slot) ? packed_select_typespec(slot) : NULL;
+            *is_signed = typespec && (typespec->flags & LLG_VPI_TS_SIGNED) ? 1 : 0;
             return 1;
+        }
         case SLOT_MEMBER: {
             const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
             if (!node || node->type == vpiRegArray || !node->width) return 0;
@@ -9064,7 +9297,7 @@ static int static_variable_slot(const llg_vpi_slot_t* slot,
         case SLOT_MEMBER:
             return !object->is_net;
         case SLOT_SELECT:
-            return slot->span == 1 && !object->is_net;
+            return (slot->span == 1 || slot->aux > 0) && !object->is_net;
         default:
             return 0;
     }
@@ -9261,8 +9494,11 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if (!has_value || real || is_structure_type(type)) return unsupported_property();
             return property == vpiScalar ? width == 1 : width > 1;
         case vpiArray:
-            /* A net or variable bit is not an array (37.16, 37.17). */
-            if (slot->kind == SLOT_SELECT && slot->span == 1) return 0;
+            /* A net or variable bit, an array element and a packed array
+             * element are not arrays (37.16, 37.17). */
+            if ((slot->kind == SLOT_SELECT && (slot->span == 1 || slot->aux > 0)) ||
+                slot->kind == SLOT_ELEMENT)
+                return 0;
             if (slot->kind != SLOT_OBJECT || !has_array_properties(object))
                 return unsupported_property();
             return is_array_type(object->type);
@@ -9283,8 +9519,9 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             return vpiStaticArray;
         case vpiStructUnionMember:
             if (slot->kind == SLOT_MEMBER) return 1;
-            /* 37.16 detail 30, 37.17 detail 17: a bit is never a member. */
-            if (slot->kind == SLOT_SELECT && slot->span == 1) return 0;
+            /* 37.16 detail 30, 37.17 detail 17: a bit or a packed array
+             * element is never a member. */
+            if (slot->kind == SLOT_SELECT && (slot->span == 1 || slot->aux > 0)) return 0;
             if ((slot->kind == SLOT_OBJECT && object &&
                  (is_variable_type(object->type) || is_net_type(object->type) ||
                   is_array_type(object->type))) ||
@@ -9296,8 +9533,11 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
             if (type == vpiPackedArrayVar) return 1;
             return packed_property(value_typespec(slot));
         case vpiPackedArrayMember:
-            /* 37.18 detail 4: TRUE only for a sub-element of a packed array,
-             * which llg does not expose (decision A19-D28). */
+            /* 37.18 detail 4: TRUE only for a struct, union, enum or packed
+             * array sub-element of a packed array; llg's packed elements
+             * are logic or bit vectors and bits (decision A19-D67), and
+             * other sub-elements are not objects (decision A19-D28). */
+            if (is_packed_select(slot)) return unsupported_property();
             if (type == vpiPackedArrayVar || type == vpiStructVar || type == vpiUnionVar ||
                 type == vpiEnumVar || type == vpiPackedArrayNet || type == vpiStructNet ||
                 type == vpiEnumNet)
@@ -9309,7 +9549,7 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
              * catalog net, bit and element is (decision A19-D28). */
             if (is_net_type(type) || type == vpiNetBit || type == vpiNetArray ||
                 type == vpiRegBit || type == vpiPackedArrayVar || type == vpiStructVar ||
-                type == vpiUnionVar || type == vpiEnumVar)
+                type == vpiUnionVar || type == vpiEnumVar || is_packed_select(slot))
                 return 1;
             return unsupported_property();
         case vpiIsMemory:
@@ -9875,7 +10115,15 @@ static char* composed_name(const llg_vpi_slot_t* slot, int full) {
         }
         return buffer;
     }
-    if (slot->kind == SLOT_SELECT) {
+    if (is_packed_select(slot)) {
+        int64_t indices[LLG_VPI_PACKED_INDICES];
+        uint32_t count = packed_select_indices(slot, indices);
+        for (uint32_t i = 0; i < count; ++i) {
+            written = snprintf(buffer + at, capacity - at, "[%lld]", (long long)indices[i]);
+            if (written < 0 || (size_t)written >= capacity - at) return NULL;
+            at += (size_t)written;
+        }
+    } else if (slot->kind == SLOT_SELECT) {
         if (slot->span == 1)
             written = snprintf(buffer + at, capacity - at, "[%lld]", (long long)slot->left);
         else

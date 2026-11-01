@@ -20,13 +20,13 @@ METADATA = {
     'rt/llg_rt_selftest.c': ('net', ''),
     # VPI catalog rows, argument shapes, structure-object connections,
     # force-part and net-alias descriptors, the connectivity index's bit
-    # spans and links, and the port rows and nets of delay records carry
-    # metadata widths, not value payloads.
+    # spans and links, the port rows and nets of delay records and the
+    # typespec rows of packed arrays carry metadata widths, not value payloads.
     'rt/llg_vpi.c': ('a[i]', 'alias', 'args[i]', 'argument', 'b[i]', 'b[k]', 'call->args[i]',
                      'conn->ref', 'from', 'g_vpi.objects[row]', 'link', 'net->net', 'node',
                      'object', 'object->conns[i].ref', 'operand', 'out->row', 'outer', 'owner',
                      'part', 'port', 'port->target', 'query', 'ref', 'site->args[i]', 'source',
-                     'span', 'start', 'target', 'to'),
+                     'span', 'start', 'target', 'to', 'typespec'),
     # VPI catalog rows and their nets: strength views are sized by the
     # object's and the net's metadata widths.
     'rt/llg_vpi_services.c': ('object', 'object->net'),

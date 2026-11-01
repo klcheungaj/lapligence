@@ -2339,7 +2339,8 @@ with no error status, as for a name that denotes nothing (S42-D11):
   whose instances the optimizer split into per-field arrays), unpacked
   array, string, handle and dynamic members of an unpacked structure, and
   unpacked structures inside an unpacked union; bit and part selects of a
-  member (`tb.s.f[1]`); `vpiElement` of a `vpiPackedArrayVar`;
+  member (`tb.s.f[1]`); `vpiElement` of a `vpiPackedArrayVar` (its elements
+  and bits are reached by index or name, decision A19-D67);
 - typespecs (the served properties and relations are in the catalog):
   interface, void and chandle typespecs (class typespecs are reached from
   class variables and objects, VPI-O4), the name of a typedef used as an
@@ -2348,8 +2349,10 @@ with no error status, as for a name that denotes nothing (S42-D11):
 - subarray handles: `vpi_handle_by_index`, `vpi_handle_by_multi_index` and
   `vpi_handle_by_name` with fewer indices than the array has unpacked
   dimensions return NULL with an error (decision A20-D23: the 2009 object
-  model has no subarray object); element and bit handles of a
-  `vpiPackedArrayVar` (`pa[2]`, `pa[2][3]`) are not served;
+  model has no subarray object), and so do subarrays of a packed array
+  with three or more dimensions (`pb[1]` of `bit [1:0][2:0][3:0] pb`,
+  decision A19-D67); a part-select of a packed array element
+  (`pa[2][3:0]`) is not served by name;
 - expression and statement objects (ADV-019 families 3 and 4, decisions
   A19-D11 to A19-D13) exist only in models built with `--vpi`, `--dpi-lib`
   or a user system task call site. `vpi_get_value` of a function call, a
