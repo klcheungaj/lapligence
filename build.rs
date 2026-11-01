@@ -197,10 +197,13 @@ fn build_slang(manifest_dir: &Path) {
 
     let install_dir = config.build();
     emit_native_search(&install_dir.join("lib"), is_msvc);
-    println!("cargo:rustc-link-lib=static=llg_slang_wrapper");
-    println!("cargo:rustc-link-lib=static=svlang");
-    println!("cargo:rustc-link-lib=static=fmt");
-    emit_lto_link_args(&install_dir, lto);
+    // llg_slang_wrapper, svlang and fmt are linked unbundled by the `#[link]`
+    // attributes in src/ffi/slang.rs, which rustc does not let a build-script
+    // `rustc-link-lib` override; see the reason there.
+    let lto_mode = read_lto_mode(&install_dir, lto);
+    for argument in native_lto::link_args(&lto_mode, &target_os, &target_env) {
+        println!("cargo:rustc-link-arg={argument}");
+    }
 
     if is_musl {
         let mimalloc_archive = build_mimalloc_shim(manifest_dir, &target);
@@ -225,17 +228,15 @@ fn build_slang(manifest_dir: &Path) {
     }
 }
 
-/// Add the final-link arguments for the LTO mode the CMake configure recorded.
-fn emit_lto_link_args(install_dir: &Path, lto: native_lto::Request) {
+/// The LTO mode the CMake configure recorded (`native_lto::link_args`).
+fn read_lto_mode(install_dir: &Path, lto: native_lto::Request) -> String {
     let record = install_dir.join("build/llg_slang_lto.txt");
     let mode = std::fs::read_to_string(&record)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", record.display()));
     if lto != native_lto::Request::Off && !native_lto::is_enabled(&mode) {
         println!("cargo:warning=Slang was built without link-time optimization");
     }
-    for argument in native_lto::link_args(&mode) {
-        println!("cargo:rustc-link-arg={argument}");
-    }
+    mode
 }
 
 fn build_mimalloc_shim(manifest_dir: &Path, target: &str) -> PathBuf {

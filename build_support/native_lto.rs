@@ -50,18 +50,23 @@ pub fn request(setting: &str, cargo_profile: &str) -> Result<Request, String> {
 }
 
 /// Final-link arguments for the compiler family CMake recorded
-/// (`CMAKE_CXX_COMPILER_ID`, or `off`).
+/// (`CMAKE_CXX_COMPILER_ID`, or `off`) on a target with Cargo's
+/// `CARGO_CFG_TARGET_OS`/`CARGO_CFG_TARGET_ENV` values.
 ///
 /// - GNU: slim GIMPLE objects need GCC's linker plugin, which the `cc` driver
-///   loads by default; `-flto=auto` makes the link-time backend run its
-///   partitions in parallel instead of serially.
+///   hands to GNU ld or mold. `-flto=auto` states the parallel partitioned
+///   backend on the link line instead of relying on the options recorded in
+///   the objects. On Linux GNU targets rustc links through its bundled lld by
+///   default, which ignores the plugin and leaves every Slang symbol undefined,
+///   so GNU ld is selected; a later `-fuse-ld` (the mold wrapper's) still wins.
 /// - MSVC: `/LTCG` tells link.exe up front that `/GL` objects follow, instead
 ///   of restarting the link when it meets the first one.
 /// - Clang and AppleClang: the linker reads ThinLTO bitcode itself (ld64
-///   through libLTO, lld natively, GNU ld/gold/mold through LLVMgold.so) and
-///   the `cc` driver may be GCC, which rejects `-flto=thin`, so nothing is added.
-pub fn link_args(mode: &str) -> &'static [&'static str] {
+///   through libLTO, lld natively) and the `cc` driver may be GCC, which
+///   rejects `-flto=thin`, so nothing is added.
+pub fn link_args(mode: &str, target_os: &str, target_env: &str) -> &'static [&'static str] {
     match mode.trim() {
+        "GNU" if target_os == "linux" && target_env == "gnu" => &["-flto=auto", "-fuse-ld=bfd"],
         "GNU" => &["-flto=auto"],
         "MSVC" => &["/LTCG"],
         _ => &[],

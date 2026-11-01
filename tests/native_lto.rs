@@ -41,15 +41,25 @@ fn lto_archives_live_in_their_own_build_directory() {
 
 #[test]
 fn link_arguments_follow_the_recorded_compiler_family() {
-    assert_eq!(link_args("GNU\n"), ["-flto=auto"]);
-    assert_eq!(link_args("MSVC\n"), ["/LTCG"]);
+    assert_eq!(link_args("GNU\n", "linux", "musl"), ["-flto=auto"]);
+    assert_eq!(link_args("MSVC\n", "windows", "msvc"), ["/LTCG"]);
     // The linker reads LLVM bitcode itself; a GCC `cc` driver would reject
     // `-flto=thin`.
-    assert!(link_args("Clang\n").is_empty());
-    assert!(link_args("AppleClang\n").is_empty());
-    assert!(link_args("off\n").is_empty());
+    assert!(link_args("Clang\n", "linux", "gnu").is_empty());
+    assert!(link_args("AppleClang\n", "macos", "").is_empty());
+    assert!(link_args("off\n", "linux", "gnu").is_empty());
     assert!(is_enabled("GNU\n"));
     assert!(is_enabled("AppleClang"));
     assert!(!is_enabled("off\n"));
     assert!(!is_enabled(""));
+}
+
+#[test]
+fn gcc_lto_on_linux_gnu_avoids_rustc_bundled_lld() {
+    // rustc's default lld on x86_64 Linux GNU cannot run GCC's plugin.
+    assert_eq!(
+        link_args("GNU", "linux", "gnu"),
+        ["-flto=auto", "-fuse-ld=bfd"]
+    );
+    assert_eq!(link_args("GNU", "macos", ""), ["-flto=auto"]);
 }
