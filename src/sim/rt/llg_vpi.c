@@ -206,6 +206,9 @@ typedef struct llg_vpi_event {
     llg_delayed_call_id_t id; /* the carrier process while pending */
     uint32_t slot;            /* vpiSchedEvent handle: index + 1, or 0 */
     int pending;
+    /* A delayed put to a string variable: the value (owned), written to
+     * the row's llg_string_t storage; NULL for a packed or real put. */
+    llg_string_t* text;
     struct llg_vpi_event* next;
     struct llg_vpi_event** prev_link;
 } llg_vpi_event_t;
@@ -385,6 +388,9 @@ static void svc_cb_added(const struct llg_vpi_cb* cb);
 static void svc_cb_removed(const struct llg_vpi_cb* cb);
 static void svc_shutdown(void);
 static void svc_strength_fill(const llg_vpi_target_t* target, p_vpi_value value);
+static int svc_string_row(const llg_vpi_slot_t* slot);
+static vpiHandle svc_put_string_delayed(llg_vpi_slot_t* slot, p_vpi_value input, p_vpi_time time,
+                                        int mode, int return_event);
 static int svc_strength_bind(struct llg_vpi_cb* cb);
 static int svc_strength_changed(struct llg_vpi_cb* cb);
 static int code_tables_valid(const llg_vpi_code_tables_t* t);
@@ -10157,10 +10163,18 @@ static void vpi_event_unlink(llg_vpi_event_t* event) {
     event->prev_link = NULL;
 }
 
+static void vpi_event_text_free(llg_vpi_event_t* event) {
+    if (!event->text) return;
+    llg_string_destroy(event->text);
+    free(event->text);
+    event->text = NULL;
+}
+
 static void vpi_event_finish(llg_vpi_event_t* event) {
     event->pending = 0;
     vpi_event_unlink(event);
     if (!event->is_real) sv4_destroy(&event->value);
+    vpi_event_text_free(event);
     if (event->slot) {
         /* The vpiSchedEvent handle keeps the record until it is released. */
         return;
@@ -10183,8 +10197,17 @@ static void vpi_event_fire(void* data) {
     datum.real = event->real;
     datum.packed = event->value;
     event->value = VPI_EMPTY;
+    llg_string_t* text = event->text;
+    event->text = NULL;
     /* The vpiSchedEvent handle keeps the record until it is released. */
     if (!event->slot) free(event);
+    if (text) {
+        /* The store publishes the string's own change marker. */
+        llg_string_move_take((llg_string_t*)row_object(target.object)->storage, text);
+        llg_string_destroy(text);
+        free(text);
+        return;
+    }
     write_target(&target, &datum);
     if (!datum.is_real) sv4_destroy(&datum.packed);
 }
@@ -10199,7 +10222,7 @@ static int same_object(const llg_vpi_target_t* a, const llg_vpi_target_t* b) {
 }
 
 static vpiHandle schedule_put(const llg_vpi_target_t* target, llg_vpi_datum_t* datum,
-                              uint64_t ticks, int mode, int return_event) {
+                              llg_string_t* text, uint64_t ticks, int mode, int return_event) {
     if (ticks > UINT64_MAX - llg_time()) {
         vpi_error("LLG_VPI_TIME", "the vpi_put_value delay passes the last simulation time");
         return NULL;
@@ -10217,6 +10240,15 @@ static vpiHandle schedule_put(const llg_vpi_target_t* target, llg_vpi_datum_t* d
         vpi_error("LLG_VPI_NOMEM", "VPI scheduled event allocation failed");
         return NULL;
     }
+    if (text) {
+        event->text = (llg_string_t*)malloc(sizeof(*event->text));
+        if (!event->text) {
+            free(event);
+            vpi_error("LLG_VPI_NOMEM", "VPI scheduled event allocation failed");
+            return NULL;
+        }
+        *event->text = llg_string_take(text);
+    }
     event->target = *target;
     event->is_real = datum->is_real;
     event->real = datum->real;
@@ -10229,6 +10261,7 @@ static vpiHandle schedule_put(const llg_vpi_target_t* target, llg_vpi_datum_t* d
     if (!llg_schedule_delayed_call("vpi_put_value delay", vpi_event_fire, event, ticks,
                                    &event->id)) {
         if (!event->is_real) sv4_destroy(&event->value);
+        vpi_event_text_free(event);
         free(event);
         vpi_error("LLG_VPI_SCHEDULE", "the scheduler rejected the delayed VPI write");
         return NULL;
@@ -10324,6 +10357,9 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
                        llg_region_name(llg_current_region()));
         return NULL;
     }
+    if ((mode == vpiInertialDelay || mode == vpiTransportDelay || mode == vpiPureTransportDelay) &&
+        svc_string_row(slot))
+        return svc_put_string_delayed(slot, input, time, mode, return_event);
     if (dyn_slot(slot)) {
         dyn_put_value(slot, input, mode);
         return NULL;
@@ -10379,7 +10415,7 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
                 vpi_error("LLG_VPI_TIME", "unsupported or negative vpi_put_value delay");
                 return NULL;
             }
-            vpiHandle event = schedule_put(&target, &datum, ticks, mode, return_event);
+            vpiHandle event = schedule_put(&target, &datum, NULL, ticks, mode, return_event);
             datum_destroy(&datum);
             return event;
         }

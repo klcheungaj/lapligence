@@ -209,3 +209,25 @@ fn net_strengths_read_and_report_strength_only_changes() {
         &[("LLG_VPI_PLUGIN", &library)],
     );
 }
+
+const STRING_PUTS: &[&str] = &[
+    "--define-system-task",
+    "task $sp_put()",
+    "--define-system-task",
+    "task $sp_cancel()",
+];
+
+#[test]
+fn delayed_puts_reach_string_variables() {
+    let directory = sim_harness::TempDir::new("adv020-strings").expect("temporary directory");
+    let Some(library) = plugin(&directory, "string_puts") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "string_puts",
+        include_str!("../fixtures/sim/feature_completion/adv_020/string_puts.out"),
+        STRING_PUTS,
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}

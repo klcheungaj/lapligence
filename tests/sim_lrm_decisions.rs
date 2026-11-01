@@ -2147,6 +2147,15 @@ fn a20_d21_strength_values() {
 }
 
 #[test]
+fn a20_d22_string_delayed_put() {
+    run_vpi_decision(
+        "A20-D22_string_delayed_put",
+        &["task $d22()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D22_string_delayed_put.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",

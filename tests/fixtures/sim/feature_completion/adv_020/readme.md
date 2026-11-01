@@ -405,6 +405,29 @@ Pu1 StL StH HiZ Su1 Pu1 We0 53X) gives the same levels.
   after its registration never runs. Records on the same storage run newest
   first (decision S43-D6).
 
+## string_puts (38.34)
+
+`$sp_put` writes the string variables `s`, `t` and `u` with delays (the
+`vpiSimTime` delays are 1 ns ticks under `` `timescale 1ns/1ns``); `$sp_cancel`
+cancels the event it kept. 38.34 (L64176-L64183): "The routine can be applied
+to nets, variables, variable selects, memory words, named events, system
+function calls, sequential UDPs, and scheduled events. ... vpiInertialDelay
+All scheduled events on the object shall be removed before this event is
+scheduled. vpiTransportDelay All events on the object scheduled for times
+later than this event shall be removed (modified transport delay)."
+
+- `s3` (inertial, 3) is removed by `s4` (inertial, 4): `s` changes once, at
+  5 ns, which wakes `always @(s)` (`5: s changed to s4`).
+- `t2` and `t5` (transport) both happen: `t2` at 3 ns (the display at 3 ns
+  runs after the earlier-scheduled write, decision S42-D5) and `t5` at 6 ns.
+- `u6` with `vpiReturnEvent` returns a `vpiSchedEvent` handle (L64197-L64199:
+  "If the flags argument also has the bit mask vpiReturnEvent,
+  vpi_put_value() shall return a handle of type vpiSchedEvent to the newly
+  scheduled event"); `vpiCancelEvent` at 2 ns removes it, so `u` stays `u0`.
+- A delayed put without a time is `LLG_VPI_TIME`; `vpiForceFlag` on a string
+  and a delayed put to the queue element `q[0]` are `LLG_VPI_FLAGS` with
+  level 3 (decisions A20-D22, A19-D23).
+
 ## Decisions
 
 The choices where the text is silent are the portable cases A20-D1 to A20-D4
@@ -426,4 +449,4 @@ A20-D16 (`vpiDelay` expressions), A20-D17 (module input port delays),
 A20-D18 (intermodule paths) and A20-D19 (runtime-valued and read-only
 delays). A20-D20 covers the action callbacks (`cbError` reports,
 `cbPLIError` and `cbSignal` safe points) and A20-D21 the strength fields of
-an unknown value.
+an unknown value; A20-D22 the delayed puts to strings.

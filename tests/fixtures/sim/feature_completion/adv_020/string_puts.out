@@ -1,0 +1,12 @@
+put tb.s=s3 flags=2 delay=3 no event: level=0 code=-
+put tb.s=s4 flags=2 delay=4 no event: level=0 code=-
+put tb.t=t2 flags=3 delay=2 no event: level=0 code=-
+put tb.t=t5 flags=3 delay=5 no event: level=0 code=-
+put tb.u=u6 flags=4098 delay=6 event: level=0 code=-
+put tb.s without a time: level=3 code=LLG_VPI_TIME
+put tb.s=forced flags=5 delay=0 no event: level=3 code=LLG_VPI_FLAGS
+put tb.q[0]=q2 delay=2: level=3 code=LLG_VPI_FLAGS
+cancel u6: level=0 code=-
+3: s=s0 t=t2 u=u0 q0=q0 p=p0
+5: s changed to s4
+13: s=s4 t=t5 u=u0 q0=q0 p=p0

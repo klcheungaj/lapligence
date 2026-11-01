@@ -411,6 +411,54 @@ static int svc_strength_bind(llg_vpi_cb_t* cb) {
     return 1;
 }
 
+/* ── delayed puts to string variables ─────────────────────────────────── */
+
+/* A static string variable of the catalog (37.17): its storage is the
+ * row's own llg_string_t. */
+static int svc_string_row(const llg_vpi_slot_t* slot) {
+    if (slot->kind != SLOT_OBJECT) return 0;
+    const llg_vpi_model_object_t* object = row_object(slot->object);
+    return object && (object->flags & LLG_VPI_OBJ_DYNAMIC) && object->type == vpiStringVar &&
+           object->storage;
+}
+
+/* 38.34: a delayed vpi_put_value to a string variable schedules the write
+ * like one to a packed variable (an Active-region event of its time slot,
+ * inertial and transport delays cancelling pending puts as for vectors, an
+ * optional vpiSchedEvent handle); the value is converted now. Class
+ * properties and container elements still take vpiNoDelay only, and force
+ * and release stay refused (decision A19-D23). */
+static vpiHandle svc_put_string_delayed(llg_vpi_slot_t* slot, p_vpi_value input, p_vpi_time time,
+                                        int mode, int return_event) {
+    llg_vpi_model_object_t* object = row_object(slot->object);
+    if (!input) {
+        vpi_error("LLG_VPI_VALUE", "null vpi_put_value value");
+        return NULL;
+    }
+    if (!time) {
+        vpi_error("LLG_VPI_TIME", "a delayed vpi_put_value needs a time");
+        return NULL;
+    }
+    int ok;
+    uint64_t ticks = ticks_from_time(time, object, &ok);
+    if (!ok) {
+        vpi_error("LLG_VPI_TIME", "unsupported or negative vpi_put_value delay");
+        return NULL;
+    }
+    llg_string_t text;
+    if (!dyn_string_input(input, &text)) return NULL;
+    llg_vpi_target_t target;
+    memset(&target, 0, sizeof(target));
+    target.object = slot->object;
+    target.element = LLG_VPI_NO_ELEMENT;
+    llg_vpi_datum_t datum;
+    memset(&datum, 0, sizeof(datum));
+    datum.packed = VPI_EMPTY;
+    vpiHandle event = schedule_put(&target, &datum, &text, ticks, mode, return_event);
+    llg_string_destroy(&text);
+    return event;
+}
+
 static void svc_shutdown(void) {
     llg_rt_error_hook(NULL);
     for (size_t i = 0; i < g_svc.view_count; ++i) {

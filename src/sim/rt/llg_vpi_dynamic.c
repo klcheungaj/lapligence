@@ -2018,8 +2018,8 @@ static void dyn_put_value(llg_vpi_slot_t* slot, p_vpi_value input, int mode) {
     }
     if (mode != vpiNoDelay) {
         vpi_error("LLG_VPI_FLAGS",
-                  "llg writes strings, class properties and array elements with vpiNoDelay only "
-                  "(decision A19-D23)");
+                  "llg writes class properties and array elements with vpiNoDelay only and "
+                  "forces no string, property or element (decision A19-D23)");
         return;
     }
     if (g_dyn.reclaiming) {
