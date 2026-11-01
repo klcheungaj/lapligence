@@ -145,6 +145,34 @@ once: inserting cell by cell renormalized the whole wide value per cell,
 which made a 4,096-record copy quadratic (1.7× slower than per-element
 code at `-O1` instead of 0.13×).
 
+### Long bodies as helper functions
+
+- **Trade-off:** GCC and Clang optimize a function in time superlinear in its
+  size, so one C function per long body compiles slowly; a helper function per
+  statement run adds one call and an exit test per run.
+- **Decision:** statement runs that share no state with the rest of the body
+  are moved into static helpers of at most `LLG_OUTLINE_RUN_WEIGHT` (1,024)
+  IR nodes; runs under `LLG_OUTLINE_MIN_RUN_WEIGHT` (128) stay inline, so
+  bodies up to one run keep their C byte for byte
+  ([emitter notes](../src/sim/emit_c/evaluation.md),
+  [residual cases](known_issues.md#long-bodies-that-cannot-be-outlined-compile-superlinearly)).
+- **Evidence:** `--no-opt` `rtl_006` constant-operand bodies repeated 1, 2, 4
+  and 8 times in one `initial` block (9,000 to 70,000 lines of C), one CPU:
+  GCC 5.7, 13.5, 38.6 and 129.6 s become 2.1, 3.9, 8.1 and 14.1 s; Clang 19
+  3.0, 10.2, 43.2 and 196.6 s become 1.7, 3.4, 7.7 and 16.9 s. Weights 256
+  to 4,096 were measured on the same series and on 3,000 distinct
+  assignments: 4,096 was slower throughout and 2,048 below 8 repeats, and 256
+  and 512 were no faster on distinct statements (Clang 2.7 s against 1.6 s)
+  while growing the C by 3-9%. Their gain at 4 and 8 repeats came from GCC
+  folding identical helpers of the repeated text, which real bodies rarely
+  contain. Across 2,665 test fixtures per optimizer mode, 44 (default) and
+  52 (`--no-opt`) models change, 6% smaller (block locals move from the
+  coroutine frame into helper C locals), and the rest are byte-identical, as
+  are the `perf/` corpus and `perf-portsel` models. Hot loops that do split (400
+  assignments per cycle in 3 helpers; a 16-arm `case` of 60 assignments per
+  arm in 16 helpers) ran 1.006× and 1.008× the inline time, within the
+  spread of 7 interleaved pinned pairs.
+
 ### Coroutine frame: C locals wherever possible
 
 - **Trade-off:** keeping every local in the coroutine frame is simplest and

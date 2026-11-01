@@ -331,38 +331,52 @@ the baseline, including both optimizer modes for the representative fixtures.
 Use the command in the frontend memory entry with `LLG_CORPUS_N` set to
 5,000, 10,000, 20,000 and 40,000, and compare wall times.
 
-## Long process bodies compile superlinearly in the C compiler
+## Long bodies that cannot be outlined compile superlinearly
 
-**Status:** open; the affected test fixture was split (ci-fix-4, 2026-10-30).
+**Status:** narrowed. Statement runs of long process, function, task and fork
+branch bodies are outlined into helper C functions
+(`src/sim/emit_c/owned/outline.rs`, tunables `LLG_OUTLINE_RUN_WEIGHT` and
+`LLG_OUTLINE_MIN_RUN_WEIGHT` in `src/sim/ir.rs`); the bodies listed under
+Cause still become one C function each.
 
 ### Symptom
 
-Each process becomes one C function, so the C compile time of a model with
-one long straight-line `initial` block grows faster than its statement count.
-Measured on Linux with GCC 14 at the model default `-O3` (`--no-opt`
-`rtl_006` constant-operand corpus, one `$display` of 14 or 4 operations per
-statement): 91 statements, 9,000 lines, 5.0 s; 182 statements, 17,800 lines,
-11.7 s; 364 statements, 32,900 lines, 29.3 s. GCC `-ftime-report` puts most
-of it in function expansion and dominator optimization; the generated C itself
-grows linearly (about 90 lines per statement).
+GCC and Clang optimize a function in time superlinear in its size. Before
+outlining, the four `rtl_006` constant-operand bodies in one `initial` block
+(`--no-opt`, 33,000 lines of C) built in 27.7 s with GCC 14 `-O3` against
+18.0 s for the four widths built separately; with outlining they build in
+6.8 s against 8.0 s (Clang 19: 37.3 s → 10.5 s). Bodies outside the cases
+below now build in time about linear in their length (see
+[performance trade-offs](sim_performance_tradeoffs.md#long-bodies-as-helper-functions)).
 
 ### Cause
 
-GCC's per-function optimization passes are superlinear in function size;
-llg emits no split point inside a process body.
+A run is outlined only when no state of the body crosses into it, so these
+stay in one C function:
+
+- statements that read or write a local or formal of the enclosing body, and
+  statements that suspend, fork, disable, or call a subprogram that may
+  suspend or disable;
+- one statement whose nested statement lists are each shorter than a run,
+  such as a `case` with thousands of short arms;
+- bodies that instance sharing may merge (at least `LLG_SHARE_MIN_INSTANCES`
+  processes from one source location), recursive functions, continuous
+  assignment evaluators, callbacks and storage initializers.
 
 ### Intended direction
 
-Outline straight-line runs of a long process body into separate C functions
-at points where no coroutine state crosses (between statements outside
-suspension points), with the run length a named tunable, keeping generated C
-of short processes unchanged.
+Pass the live body locals to helpers by address, and group consecutive light
+arms or iterations of one statement into helpers, when a design shows the
+cost; both change the generated C of bodies that build in acceptable time
+now.
 
 ### Reproduce
 
-Concatenate the four `tests/fixtures/sim/feature_completion/rtl_006/arith_constants_w*.sv`
-bodies into one `initial` block, run `llg --no-opt` with `LLG_BUILD_TIMINGS`
-set, and compare `build_ms` with one width alone (27.0 s against 5.1 s).
+Write an `initial` block of 3,000 32-bit assignments to one automatic
+variable declared in the block, run `llg --no-opt` with `LLG_BUILD_TIMINGS`
+set, and compare `build_ms` with the same statements assigning a module
+variable: 9.2 s (one function) against 3.4 s (44 helpers; 8.6 s before
+outlining), GCC 14 `-O3`, one CPU.
 
 ## Gate-level netlist generation memory
 

@@ -52,10 +52,11 @@ fn every_long_body_kind_outlines_in_both_optimizer_modes() {
             "p_tb_fork_2_b0",
             "p_tb_fork_3_b1",
         ] {
+            // Subprogram and fork-branch helpers also take the recursion depth.
             assert!(
                 model
                     .model_c
-                    .contains(&format!("static int {owner}_llg_run_0(sv4_t* _llg_t) {{")),
+                    .contains(&format!("static int {owner}_llg_run_0(sv4_t* _llg_t")),
                 "{owner} has no outlined run"
             );
         }
