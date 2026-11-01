@@ -253,6 +253,19 @@ void llg_ba_d(double* target, double value) {
     real_write(target, value);
 }
 
+void llg_store_unpublished(sv4_t* target, sv4_t value) {
+    if (!target || llg_is_forced(target)) {
+        sv4_destroy(&value);
+        return;
+    }
+    sv4_replace(target, value);
+}
+
+void llg_store_unpublished_d(double* target, double value) {
+    if (!target || llg_is_real_forced(target)) return;
+    *target = value;
+}
+
 /* Wait sources of `ref` descriptors. Every store publishes at its variable,
  * element cell or class-property address, and container element stores
  * publish their container's contents marker. A view selects bits of its

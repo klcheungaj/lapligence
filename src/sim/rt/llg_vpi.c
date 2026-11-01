@@ -1340,6 +1340,24 @@ static void write_target(const llg_vpi_target_t* target, const llg_vpi_datum_t* 
     sv4_destroy(&value);
 }
 
+/* vpi_put_value_array with vpiPropagateOff (38.35): store an array
+ * element's value without publishing it, so no waiting process, continuous
+ * assignment, value-change callback or dump sees the write; a later
+ * published write of the element does. */
+static void write_element_quiet(const llg_vpi_target_t* target, const llg_vpi_datum_t* datum) {
+    llg_vpi_model_object_t* object = row_object(target->object);
+    if (object->is_real) {
+        double value = datum->is_real ? datum->real : sv4_to_real(datum->packed);
+        if (object->flags & LLG_VPI_OBJ_SHORTREAL) value = (double)(float)value;
+        llg_store_unpublished_d(real_cell(target), value);
+        return;
+    }
+    sv4_t value = datum->is_real ? sv4_from_real(datum->real, object->width, object->is_signed)
+                                 : sv4_resize(datum->packed, object->width, object->is_signed);
+    if (object->flags & LLG_VPI_OBJ_TWO_STATE) sv4_replace(&value, sv4_to_two_state(value));
+    llg_store_unpublished(packed_cell(target), value);
+}
+
 /* The force/release descriptor of a packed target (one storage part). */
 static llg_force_part_t force_part(const llg_vpi_target_t* target) {
     llg_vpi_model_object_t* object = row_object(target->object);
@@ -10760,7 +10778,8 @@ void vpi_put_value_array(vpiHandle handle, p_vpi_arrayvalue arrayvalue_p, PLI_IN
         target.object = row;
         target.element = first + i;
         target.is_signed = object->is_signed;
-        write_target(&target, &datum);
+        if (arrayvalue_p->flags & vpiPropagateOff) write_element_quiet(&target, &datum);
+        else write_target(&target, &datum);
         datum_destroy(&datum);
     }
 }

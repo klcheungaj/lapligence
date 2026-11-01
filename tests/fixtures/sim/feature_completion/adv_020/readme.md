@@ -190,9 +190,10 @@ design's unpacked arrays; the design prints the arrays after the puts.
   `vpiPropagateOff` (`00000000001`, `00000000101`, `00000010101`,
   `00001010101`, `001010101xx`). `vpiOneValue` (L64476-L64477: "This flag set
   causes the function to apply only a single element value to the entire
-  array section specified") writes `abc` to all of `b`; `b[1]` changed, so the
-  `always @(b[1])` process ran once although `vpiPropagateOff` was set
-  (`changes=1`, decision A20-D7). L64449-L64450: "If the vpiRawFourStateVal
+  array section specified") writes `abc` to all of `b`; `b[1]` changed, but
+  `vpiPropagateOff` (L64471-L64472: "This flag inhibits notification of the
+  fanouts of the array that one or more values have changed") was set, so the
+  `always @(b[1])` process did not run (`changes=0`, decision A20-D7). L64449-L64450: "If the vpiRawFourStateVal
   format is set for a 2-state array type, the bvalbits shall be ignored. If
   the vpiRawTwoStateVal format is specified for a 4-state array type, the
   bvalbits shall be assumed to be 0.": `b[2]` becomes `234`; `a[2][3]`
@@ -414,7 +415,7 @@ for `0x80000000` and `0x80000002`), the count and status of a write to several
 or partly closed channels (A20-D3), and closing or flushing channels that are
 not open (A20-D4). The value-array choices are A20-D5 (argument errors, get
 flags, no partial writes), A20-D6 (x and z read as 0 in the raw two-state
-form), A20-D7 (`vpiPropagateOff` still propagates) and A20-D8 (no puts to net
+form), A20-D7 (`vpiPropagateOff` notifies no fanout) and A20-D8 (no puts to net
 arrays). The callback choices are A20-D9 (`cbForce`/`cbRelease` timing,
 object matching and VPI forces; `cbAssign`/`cbDeassign` are refused) and A20-D10
 (`cbDisable` timing, inactive and enclosing blocks); A20-D11 covers

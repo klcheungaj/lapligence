@@ -119,8 +119,9 @@ unpacked array rows: the section is validated (array, element type, format,
 indices, count) before any value moves, gets fill one simulator buffer
 (`array_values`, overwritten by the next call) unless `vpiUserAllocFlag`
 names the application's, and puts write element by element through
-`llg_ba`/`llg_ba_d` like `vpi_put_value` with `vpiNoDelay`. `vpiPropagateOff`
-is accepted and every fanout is still notified (A20-D5..D8).
+`llg_ba`/`llg_ba_d` like `vpi_put_value` with `vpiNoDelay`; with
+`vpiPropagateOff` they store through `llg_store_unpublished`/`_d`, which skip
+the publication, so no fanout is notified (A20-D5..D8).
 `cbForce`/`cbRelease` use `llg_force_watch_hook` and `cbDisable`
 `llg_disable_watch_hook` (`llg_rt.h`): the runtime calls them after a force or
 release statement, or a `disable` that ended something, behind one unlikely

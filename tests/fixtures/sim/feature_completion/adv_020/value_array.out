@@ -80,7 +80,7 @@ vpiRawFourStateVal to real: level=3 code=LLG_VPI_FORMAT
 null arrayvalue_p: level=3 code=LLG_VPI_ARGUMENT
 a[1][4]=00000000001 a[1][5]=00000000101 a[0][3]=00000010101 a[0][4]=00001010101 a[0][5]=001010101xx
 a[2][3]=00000000201 a[2][5]=30000000025
-b=abc abc 234 abc changes=1
+b=abc abc 234 abc changes=0
 by=-2 127 -128 si=-300 32767 iv[1]=-1 iv[0]=300
 li=-1 42 r=1.5 3.25 -0.5 sr=1.25 2.5
 ig=5 0000000z t=4294967296 7

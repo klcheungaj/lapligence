@@ -3426,6 +3426,12 @@ void llg_ref_nba_masked(llg_ref_t* ref, sv4_t value, sv4_t mask, uint64_t ticks)
 void llg_ref_write_bit(llg_ref_t* ref, uint64_t index, sv4_t value);
 void llg_nba_d(double* target, double value);
 void llg_ba_d(double* target, double value);
+// VPI vpi_put_value_array with vpiPropagateOff (IEEE 1800-2009 38.35): store
+// like llg_ba/llg_ba_d (a forced target keeps its forced value) without
+// publishing the change, so no waiter, continuous assignment or watch sees
+// it. `value` is consumed.
+void llg_store_unpublished(sv4_t* target, sv4_t value);
+void llg_store_unpublished_d(double* target, double value);
 // Reorder `count` elements of `element_cells` contiguous real cells in place
 // (LLG_CONTAINER_METHOD_REVERSE/SORT/RSORT; sorting needs one-cell elements).
 // Keys compare numerically and NaN keys keep their positions. The new order is
