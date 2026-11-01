@@ -144,8 +144,60 @@ jobs:
               if ($LASTEXITCODE -ne 0) { throw "include-only $($variant.Name) compile failed" }
           }
 
-      - name: Build release executables
-        run: cargo build --locked --release --bin llg_ls ${{ inputs.lsp_only && '' || '--bin llg' }} --target ${{ inputs.target }}
+      # Build once: the archive compiles every test binary and the executables
+      # (CARGO_BIN_EXE_*) in the release profile, and every later step audits,
+      # smoke-tests and packages those same files in target/<triple>/release/.
+      # A separate `cargo build` could resolve dependency features differently
+      # (dev-dependencies are unified only when tests are built) and ship
+      # executables the `test` job never ran. The `test` job runs the whole
+      # suite from this archive on a second runner of the same kind; the
+      # checkout path and target directory are identical on both runners, so
+      # compile-time paths embedded in the test binaries (CARGO_MANIFEST_DIR,
+      # CARGO_BIN_EXE_*) resolve after extraction.
+      #
+      # The language-server scope archives only the library, llg_ls and the
+      # `general` group (which holds the LSP wire suites); the other groups
+      # are simulator suites. Cargo still compiles the `llg` driver for them
+      # (CARGO_BIN_EXE_llg), but it is neither run, audited nor packaged.
+      - name: Build release executables and test archive
+        shell: bash
+        env:
+          # Fail the build instead of shipping a frontend without LTO.
+          LLG_SLANG_LTO: "1"
+        run: >-
+          cargo nextest archive --locked --all-features --cargo-profile release
+          --target ${{ inputs.target }}
+          ${{ inputs.lsp_only && '--lib --bin llg_ls --test general' || '' }}
+          --archive-file target/nextest-archive.tar.zst
+
+      # The executables the `test` job runs are the archive's copies; extract
+      # them (listing binaries only runs nothing) and require the files that
+      # are audited and packaged below to be byte-identical.
+      - name: Check the executables against the test archive
+        shell: bash
+        run: |
+          tested="$RUNNER_TEMP/tested-archive"
+          cargo nextest list --archive-file target/nextest-archive.tar.zst \
+            --workspace-remap "$GITHUB_WORKSPACE" --extract-to "$tested" \
+            --list-type binaries-only
+          suffix=${{ inputs.platform == 'windows' && '.exe' || '' }}
+          names=(--name "llg_ls$suffix")
+          if [ "${{ inputs.lsp_only }}" != "true" ]; then
+            names+=(--name "llg$suffix")
+          fi
+          python scripts/ci_same_binaries.py \
+            --tested "$tested/target/${{ inputs.target }}/release" "${names[@]}" \
+            "target/${{ inputs.target }}/release"
+
+      - name: Upload release test archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextest-archive-${{ inputs.target }}
+          if-no-files-found: error
+          # The archive is already zstd-compressed.
+          compression-level: 0
+          retention-days: 1
+          path: target/nextest-archive.tar.zst
 
       - name: Build and run generated model with MSVC
         if: inputs.platform == 'windows' && !inputs.lsp_only
@@ -262,35 +314,6 @@ jobs:
           set -e
           test "$status" -eq 2
 
-      # Compile every test executable in the release profile (reusing the
-      # release build above) and archive it for the `test` job, which runs the
-      # whole suite on a second runner of the same kind. The checkout path and
-      # target directory are identical on both runners, so compile-time paths
-      # embedded in the test binaries (CARGO_MANIFEST_DIR, CARGO_BIN_EXE_*)
-      # resolve after extraction.
-      #
-      # The language-server scope archives only the library, llg_ls and the
-      # `general` group (which holds the LSP wire suites); the other groups
-      # are simulator suites. Cargo still compiles the `llg` driver for them
-      # (CARGO_BIN_EXE_llg), but it is neither run, audited nor packaged.
-      - name: Archive release-profile test binaries
-        shell: bash
-        run: >-
-          cargo nextest archive --locked --all-features --cargo-profile release
-          --target ${{ inputs.target }}
-          ${{ inputs.lsp_only && '--lib --bin llg_ls --test general' || '' }}
-          --archive-file target/nextest-archive.tar.zst
-
-      - name: Upload release test archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: nextest-archive-${{ inputs.target }}
-          if-no-files-found: error
-          # The archive is already zstd-compressed.
-          compression-level: 0
-          retention-days: 1
-          path: target/nextest-archive.tar.zst
-
       - name: Report runner resources
         if: always()
         shell: bash
@@ -309,6 +332,9 @@ jobs:
           install -m 755 "target/${{ inputs.target }}/release/llg_ls" dist/package/llg_ls
           install -m 755 "target/${{ inputs.target }}/release/llg" dist/package/llg
           install -m 644 LICENSE readme.md dist/package/
+          python scripts/ci_same_binaries.py \
+            --tested "$RUNNER_TEMP/tested-archive/target/${{ inputs.target }}/release" \
+            --name llg_ls --name llg dist/package
           tar -C dist/package -czf "dist/$archive" llg_ls llg LICENSE readme.md
           if command -v sha256sum >/dev/null 2>&1; then
             (cd dist && sha256sum "$archive" > "$archive.sha256")
@@ -328,6 +354,12 @@ jobs:
               Copy-Item -LiteralPath "target/${{ inputs.target }}/release/llg.exe" -Destination dist/package/
           }
           Copy-Item -LiteralPath LICENSE, readme.md -Destination dist/package/
+          $names = @("--name", "llg_ls.exe")
+          if ("${{ inputs.lsp_only }}" -ne "true") {
+              $names += @("--name", "llg.exe")
+          }
+          & python scripts/ci_same_binaries.py --tested "$env:RUNNER_TEMP/tested-archive/target/${{ inputs.target }}/release" @names dist/package
+          if ($LASTEXITCODE -ne 0) { throw "packaged executables differ from the tested ones" }
           Compress-Archive -Path dist/package/* -DestinationPath "dist/$archive"
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath "dist/$archive").Hash.ToLowerInvariant()
           "$hash  $archive" | Set-Content -Encoding ascii "dist/$archive.sha256"
