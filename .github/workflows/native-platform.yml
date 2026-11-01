@@ -416,8 +416,11 @@ jobs:
       # compiler and generator the tests will use (CMAKE_GENERATOR=Ninja, the
       # compiler on PATH) and silently disables itself if that does not hit.
       # One full suite writes about 0.3 GB of objects (Windows x64 from an
-      # empty cache: 0.3 of 500M; Linux filled 300M and evicted 825 times), so
-      # 500M keeps the previous run's objects while this run adds its misses.
+      # empty cache: 0.3 of 500M; Linux filled 300M and evicted 825 times).
+      # At 500M Windows x64 ran full (219 cleanups, 1513 misses in run
+      # 111587635242), and an LRU cleanup during a suite evicts the entries the
+      # tests at its end still need; 1G keeps a whole suite's objects within
+      # the repository's 10 GB cache budget (tests/ci.md).
       - name: Set up the generated-model compiler cache
         id: ccache
         if: ${{ !inputs.lsp_only }}
@@ -425,7 +428,7 @@ jobs:
         with:
           key: test-${{ inputs.target }}
           python: python
-          max-size: 500M
+          max-size: 1G
 
       # The archive carries no build script run, so this fresh checkout still
       # holds the pristine vendor/libfst; the standalone CMake probes need the
@@ -453,10 +456,17 @@ jobs:
       # compile-time paths. Every model build appends its phase timings to
       # LLG_BUILD_TIMINGS (src/sim/build/timings.rs), summarized below. A
       # sharded platform runs every N-th test from shard k's position.
+      #
+      # Windows writes fresh seeded model trees from configured-tree templates
+      # (src/sim/build/tree_template.rs) instead of running CMake's configure:
+      # a seeded configure was the largest model-build phase there (11,047 s
+      # of 28,296 s, median 406 ms against 35 ms on Linux, run 111587635242).
+      # Builds without a ready template still configure, so both paths run.
       - name: Run release suite
         shell: bash
         env:
           LLG_BUILD_TIMINGS: ${{ runner.temp }}/llg-build-timings.tsv
+          LLG_CMAKE_TREE_TEMPLATES: ${{ inputs.platform == 'windows' && '1' || '' }}
           SHARD: ${{ matrix.shard }}
           SHARDS: ${{ strategy.job-total }}
         run: |
@@ -544,6 +554,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
           path: ${{ runner.temp }}/llg-resources.jsonl
+
+      # One line per model build with its test (src/sim/build/timings.rs), so
+      # a slow phase can be traced to the tests that ran it.
+      - name: Upload model-build timings
+        if: always() && inputs.platform == 'windows' && !inputs.lsp_only
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-timings-${{ inputs.target }}-${{ matrix.shard }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: ${{ runner.temp }}/llg-build-timings.tsv
 
       # The shards share one key; only the first saves it, a second save of
       # the same key would race it. (This used to pass the restore's

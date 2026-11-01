@@ -44,8 +44,12 @@ the rules a change must keep. Platform pitfalls are in
   toolchain but apply the libfst patch to the fresh checkout.
 - A caller may split its test job with `test_shards`; no platform does now.
 - Windows-only diagnostics (`scripts/ci_windows_runner.py measure`,
-  `scripts/ci_resource_sampler.py`, `report` steps) are read-only and never fail
-  a job.
+  `scripts/ci_resource_sampler.py`, `report` steps, the uploaded resource samples
+  and per-build timings, each line naming its nextest test) are read-only and
+  never fail a job.
+- The Windows `test` job sets `LLG_CMAKE_TREE_TEMPLATES=1` (configure is its
+  largest model-build phase); the build job's `measure` still compares builds
+  with and without templates, and other platforms keep the default.
 
 ## Windows on ARM
 

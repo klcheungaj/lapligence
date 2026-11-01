@@ -9,6 +9,7 @@ PHASES = ("generate", "gen_check", "gen_write", "gen_prune", "probe", "runtime",
           "build", "total")
 OUTCOMES = ("result", "runtime", "seed", "template", "configure_retry", "gen_tree")
 SLOWEST_GENERATE = 10
+SLOWEST_TESTS = 15
 
 
 def parse(lines):
@@ -129,6 +130,30 @@ def windows(records, minutes=15):
     return "\n".join(out)
 
 
+def slowest_tests(records, count=SLOWEST_TESTS):
+    groups = defaultdict(list)
+    for r in records:
+        total = number(r, "total_ms")
+        if r.get("test") and total is not None:
+            groups[r["test"]].append(r)
+    if not groups:
+        return ""
+
+    def median(group, phase):
+        values = [number(r, phase + "_ms") for r in group if number(r, phase + "_ms") is not None]
+        return str(percentile(values, 0.5)) if values else "-"
+
+    out = [f"tests by summed model-build time (top {min(count, len(groups))} of {len(groups)}):",
+           "   sum_s  builds  median_total  median_configure  median_build  test"]
+    ranked = sorted(groups.items(), key=lambda item: sum(number(r, "total_ms") for r in item[1]),
+                    reverse=True)[:count]
+    for test, group in ranked:
+        total = sum(number(r, "total_ms") for r in group)
+        out.append(f"{total / 1000:>8.1f} {len(group):>7} {median(group, 'total'):>13} "
+                   f"{median(group, 'configure'):>17} {median(group, 'build'):>13}  {test}")
+    return "\n".join(out)
+
+
 def short_location(location):
     path, sep, line = location.rpartition(":")
     if not sep or not line.isdigit():
@@ -212,6 +237,9 @@ def main(argv=None):
         windowed = windows(records, args.window_minutes)
         if windowed:
             print(windowed)
+        tests = slowest_tests(records)
+        if tests:
+            print(tests)
     if args.cmake_profiles:
         profiles, unreadable = load_profiles(args.cmake_profiles)
         print(summarize_profiles(profiles))

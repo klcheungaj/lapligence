@@ -13,8 +13,11 @@
 //! was new), with the counts `gen_files`, `gen_bytes`, `gen_model_bytes` (the
 //! generated model sources alone) and `gen_dir_calls` and the outcome
 //! `gen_tree=new|existing`. Processes running in parallel append to the same file;
-//! each line is one write. CI uses it to show where model-build time goes on
-//! each platform (`scripts/ci_build_timings.py`). Write failures are ignored:
+//! each line is one write. Under cargo-nextest each line also names the test
+//! that ran the build (`test=<binary id> <test name>`, from nextest's
+//! `NEXTEST_BINARY_ID` and `NEXTEST_TEST_NAME`), so slow builds can be traced
+//! to their tests. CI uses it to show where model-build time goes on each
+//! platform (`scripts/ci_build_timings.py`). Write failures are ignored:
 //! the timings are diagnostics and never change a build's outcome.
 //!
 //! When `$LLG_CMAKE_PROFILE_DIR` names a directory, every model and runtime
@@ -123,9 +126,16 @@ impl BuildTimings {
         }
     }
 
-    /// The record line for a build of `out_dir` that took `total` and ended
-    /// `end_unix_ms` milliseconds after the Unix epoch.
-    fn line(&self, out_dir: &Path, total: Duration, ok: bool, end_unix_ms: u128) -> String {
+    /// The record line for a build of `out_dir` that took `total`, ended
+    /// `end_unix_ms` milliseconds after the Unix epoch and ran under `test`.
+    fn line(
+        &self,
+        out_dir: &Path,
+        total: Duration,
+        ok: bool,
+        end_unix_ms: u128,
+        test: Option<&str>,
+    ) -> String {
         let mut line = format!(
             "llg-build\tresult={}\ttotal_ms={}\tend_unix_ms={end_unix_ms}",
             if ok { "ok" } else { "error" },
@@ -142,6 +152,9 @@ impl BuildTimings {
         }
         for (name, text) in &self.details {
             line.push_str(&format!("\t{name}={text}"));
+        }
+        if let Some(test) = test {
+            line.push_str(&format!("\ttest={}", test.replace(['\t', '\n', '\r'], " ")));
         }
         // Tabs and newlines in a path would break the record format.
         let dir = out_dir
@@ -160,7 +173,13 @@ impl BuildTimings {
         let end_unix_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_millis());
-        let line = self.line(out_dir, started.elapsed(), ok, end_unix_ms);
+        let line = self.line(
+            out_dir,
+            started.elapsed(),
+            ok,
+            end_unix_ms,
+            nextest_test().as_deref(),
+        );
         if let Ok(mut file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -169,6 +188,18 @@ impl BuildTimings {
             let _ = file.write_all(line.as_bytes());
         }
     }
+}
+
+/// The nextest test running this process, as nextest prints it
+/// (`<binary id> <test name>`), or `None` outside cargo-nextest.
+fn nextest_test() -> Option<String> {
+    let name = std::env::var("NEXTEST_TEST_NAME")
+        .ok()
+        .filter(|name| !name.is_empty())?;
+    Some(match std::env::var("NEXTEST_BINARY_ID") {
+        Ok(binary) if !binary.is_empty() => format!("{binary} {name}"),
+        _ => name,
+    })
 }
 
 #[cfg(test)]
@@ -189,6 +220,7 @@ mod tests {
             Duration::from_millis(1234),
             true,
             1_760_000_000_123,
+            None,
         );
         assert!(
             line.starts_with("llg-build\tresult=ok\ttotal_ms=1234\tend_unix_ms=1760000000123\t"),
@@ -197,7 +229,7 @@ mod tests {
         assert!(line.ends_with("\tseed=applied\tdir=out dir\n"), "{line}");
         assert_eq!(line.matches("configure_ms=").count(), 1, "{line}");
         assert!(line.contains("\tbuild_ms="), "{line}");
-        let failed = BuildTimings::default().line(Path::new("x"), Duration::ZERO, false, 7);
+        let failed = BuildTimings::default().line(Path::new("x"), Duration::ZERO, false, 7, None);
         assert_eq!(
             failed,
             "llg-build\tresult=error\ttotal_ms=0\tend_unix_ms=7\tdir=x\n"
@@ -212,7 +244,7 @@ mod tests {
         timings.count("gen_bytes", 10);
         timings.count("gen_files", 140);
         timings.detail("template_reason", "why");
-        let line = timings.line(Path::new("d"), Duration::ZERO, true, 0);
+        let line = timings.line(Path::new("d"), Duration::ZERO, true, 0, None);
         assert!(
             line.ends_with(
                 "\tgen_tree=new\tgen_files=140\tgen_bytes=10\ttemplate_reason=why\tdir=d\n"
@@ -227,15 +259,32 @@ mod tests {
         timings.note("template", "rejected");
         timings.detail("template_reason", "first");
         timings.detail("template_reason", "a\tb\r\nc");
-        let line = timings.line(Path::new("d"), Duration::ZERO, true, 0);
+        let line = timings.line(Path::new("d"), Duration::ZERO, true, 0, None);
         assert!(
             line.ends_with("\ttemplate=rejected\ttemplate_reason=a b  c\tdir=d\n"),
             "{line}"
         );
         timings.detail("template_reason", &"x".repeat(MAX_DETAIL_CHARS + 5));
-        let line = timings.line(Path::new("d"), Duration::ZERO, true, 0);
+        let line = timings.line(Path::new("d"), Duration::ZERO, true, 0, None);
         let kept = format!("template_reason={}...\t", "x".repeat(MAX_DETAIL_CHARS));
         assert!(line.contains(&kept), "{line}");
+    }
+
+    #[test]
+    fn the_test_name_precedes_the_directory() {
+        let mut timings = BuildTimings::default();
+        timings.note("seed", "applied");
+        let line = timings.line(
+            Path::new("d"),
+            Duration::ZERO,
+            true,
+            0,
+            Some("llg::sim_n_z sim_waveform::a\tb"),
+        );
+        assert!(
+            line.ends_with("\tseed=applied\ttest=llg::sim_n_z sim_waveform::a b\tdir=d\n"),
+            "{line}"
+        );
     }
 
     #[test]

@@ -105,6 +105,19 @@ class BuildTimingsTest(unittest.TestCase):
                 self.assertEqual(timings.main([str(path), "--window-minutes", "5"]), 0)
             self.assertIn("per 5-minute window", output.getvalue())
 
+    def test_tests_are_ranked_by_summed_build_time(self):
+        records = timings.parse([
+            "llg-build\tresult=ok\ttotal_ms=1000\tconfigure_ms=400\tbuild_ms=500\ttest=llg::a t1\tdir=x",
+            "llg-build\tresult=ok\ttotal_ms=3000\tconfigure_ms=1800\tbuild_ms=1100\ttest=llg::a t1\tdir=y",
+            "llg-build\tresult=ok\ttotal_ms=5000\tconfigure_ms=2000\tbuild_ms=2900\ttest=llg::b t2\tdir=z",
+            "llg-build\tresult=ok\ttotal_ms=9000\tdir=untagged",
+        ])
+        lines = timings.slowest_tests(records).splitlines()
+        self.assertEqual(lines[0], "tests by summed model-build time (top 2 of 2):")
+        self.assertEqual(lines[2].split(), ["5.0", "1", "5000", "2000", "2900", "llg::b", "t2"])
+        self.assertEqual(lines[3].split(), ["4.0", "2", "1000", "400", "500", "llg::a", "t1"])
+        self.assertEqual(timings.slowest_tests(timings.parse(LINES)), "")
+
     def test_missing_file_is_not_an_error(self):
         with tempfile.TemporaryDirectory() as directory:
             output = io.StringIO()
