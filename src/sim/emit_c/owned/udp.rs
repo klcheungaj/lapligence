@@ -526,12 +526,14 @@ impl Frame<'_, '_> {
     fn udp_change(&self, input: &IrExpr) -> Option<String> {
         let source = state_source(input);
         let (base, bit) = match &source.kind {
-            IrExprKind::BitSel { base, idx } => {
-                (base.as_ref(), format!("(uint32_t){}ULL", constant_offset(idx)?))
-            }
-            IrExprKind::PartSel { base, left, right } if left == right => {
-                (base.as_ref(), format!("(uint32_t){}ULL", u64::try_from(*right).ok()?))
-            }
+            IrExprKind::BitSel { base, idx } => (
+                base.as_ref(),
+                format!("(uint32_t){}ULL", constant_offset(idx)?),
+            ),
+            IrExprKind::PartSel { base, left, right } if left == right => (
+                base.as_ref(),
+                format!("(uint32_t){}ULL", u64::try_from(*right).ok()?),
+            ),
             _ => (source, "LLG_WAIT_CHANGE_WHOLE".to_owned()),
         };
         let IrExprKind::SigRead(index) = &base.kind else {
