@@ -165,15 +165,30 @@ static int thread_waits_on(const llg_proc_t* proc, const void* event) {
     return 0;
 }
 
+// Whether `proc` is suspended in a get, peek or put of mailbox `object`, or
+// in a get of semaphore `object` (15.3, 15.4).
+static int thread_waits_for(const llg_proc_t* proc, const void* object) {
+    const llg_wait_t* w = &proc->wait;
+    if (!w->payload.rare) return 0;
+    switch (w->kind) {
+        case W_SEMAPHORE: return (const void*)w->payload.rare->semaphore.semaphore == object;
+        case W_MAILBOX_GET: return (const void*)w->payload.rare->mailbox_get.mailbox == object;
+        case W_MAILBOX_PUT: return (const void*)w->payload.rare->mailbox_put.mailbox == object;
+        default: return 0;
+    }
+}
+
 typedef struct {
     const llg_proc_t* parent; // children of this thread, or NULL
     const void* event;        // threads waiting on this event object, or NULL
+    const void* resource;     // threads waiting for this mailbox or semaphore, or NULL
 } thread_filter_t;
 
 static int thread_selected(const llg_proc_t* proc, const thread_filter_t* filter) {
     if (!proc || proc->completed || proc->killed || !thread_procedural(proc)) return 0;
     if (filter->parent && thread_parent(proc) != filter->parent) return 0;
     if (filter->event && !thread_waits_on(proc, filter->event)) return 0;
+    if (filter->resource && !thread_waits_for(proc, filter->resource)) return 0;
     return 1;
 }
 
@@ -209,7 +224,7 @@ static size_t thread_list(const thread_filter_t* filter, int** slots, uint64_t**
 
 size_t llg_rt_threads(int parent_slot, uint64_t parent_identity, int** slots,
                       uint64_t** identities) {
-    thread_filter_t filter = {NULL, NULL};
+    thread_filter_t filter = {NULL, NULL, NULL};
     if (parent_slot >= 0) {
         filter.parent = thread_lookup(parent_slot, parent_identity);
         if (!filter.parent) {
@@ -222,8 +237,18 @@ size_t llg_rt_threads(int parent_slot, uint64_t parent_identity, int** slots,
 }
 
 size_t llg_rt_event_waiters(const llg_event_t* event, int** slots, uint64_t** identities) {
-    thread_filter_t filter = {NULL, event ? (const void*)event->object : NULL};
+    thread_filter_t filter = {NULL, event ? (const void*)event->object : NULL, NULL};
     if (!filter.event) {
+        *slots = NULL;
+        *identities = NULL;
+        return 0;
+    }
+    return thread_list(&filter, slots, identities);
+}
+
+size_t llg_rt_resource_waiters(const void* resource, int** slots, uint64_t** identities) {
+    thread_filter_t filter = {NULL, NULL, resource};
+    if (!resource) {
         *slots = NULL;
         *identities = NULL;
         return 0;

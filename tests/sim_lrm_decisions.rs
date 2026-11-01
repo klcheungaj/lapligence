@@ -2201,6 +2201,15 @@ fn a19_d70_variable_bit_types() {
 }
 
 #[test]
+fn a19_d71_mailbox_semaphore_waiters() {
+    run_vpi_decision(
+        "A19-D71_mailbox_semaphore_waiters",
+        &["task $d71()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D71_mailbox_semaphore_waiters.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",

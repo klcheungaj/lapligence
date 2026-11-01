@@ -2982,6 +2982,9 @@ typedef struct {
 // The live procedural threads suspended on the object named event `event`
 // currently refers to, as llg_rt_threads lists them (37.25 detail 1).
 size_t llg_rt_event_waiters(const llg_event_t* event, int** slots, uint64_t** identities);
+// The live procedural threads suspended in a get, peek or put of the mailbox
+// `resource`, or in a get of the semaphore `resource` (37.29 detail 3).
+size_t llg_rt_resource_waiters(const void* resource, int** slots, uint64_t** identities);
 
 // Resolve a fixed unpacked event-array select using declaration-order
 // flattening. Unknown/out-of-range indices resolve to a null handle, which

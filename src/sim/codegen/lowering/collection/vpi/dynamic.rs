@@ -10,8 +10,8 @@ use crate::core::db::{ArrayKind, AssociativeIndex};
 use crate::core::db::{MemberVisibility, RandQualifier};
 use crate::sim::ir::{
     IrClassFieldType, IrContainerElement, IrContainerKind, IrObjectType, IrVpiArrayType,
-    IrVpiClass, IrVpiClassItem, IrVpiClassItemKind, IrVpiDynamic, IrVpiField, IrVpiKey, IrVpiRand,
-    IrVpiShape, IrVpiStorage, IrVpiVisibility,
+    IrVpiBuiltin, IrVpiClass, IrVpiClassItem, IrVpiClassItemKind, IrVpiDynamic, IrVpiField,
+    IrVpiKey, IrVpiRand, IrVpiShape, IrVpiStorage, IrVpiVisibility,
 };
 
 /// Nesting of container element types the capture follows; deeper element
@@ -34,7 +34,7 @@ impl Codegen<'_> {
                 let index = *self.object_globals.get(&id)?;
                 matches!(
                     model.objects.get(index)?.ty,
-                    IrObjectType::String | IrObjectType::Chandle
+                    IrObjectType::String | IrObjectType::Chandle | IrObjectType::Semaphore
                 )
                 .then_some(IrVpiStorage::Object(index))
             }
@@ -66,7 +66,9 @@ impl Codegen<'_> {
                 let object = model.objects.get(index)?;
                 match object.ty {
                     IrObjectType::String => IrVpiShape::String,
-                    IrObjectType::Chandle => self.vpi_handle_shape(descriptor)?,
+                    IrObjectType::Chandle | IrObjectType::Semaphore => {
+                        self.vpi_handle_shape(descriptor)?
+                    }
                     _ => return None,
                 }
             }
@@ -110,6 +112,22 @@ impl Codegen<'_> {
     /// Class, chandle or other handle storage, by the declared type.
     fn vpi_handle_shape(&self, descriptor: &TypeDescriptor) -> Option<IrVpiShape> {
         match &descriptor.shape {
+            // The built-in mailbox and semaphore classes (15.3, 15.4).
+            TypeShape::Opaque { kind } if kind == "Class" && descriptor.name == "semaphore" => {
+                Some(IrVpiShape::Builtin {
+                    kind: IrVpiBuiltin::Semaphore,
+                })
+            }
+            TypeShape::Opaque { kind }
+                if kind == "Class"
+                    && (descriptor.name == "mailbox"
+                        || descriptor.name.starts_with("mailbox#("))
+                    && self.vpi_class_index(descriptor).is_none() =>
+            {
+                Some(IrVpiShape::Builtin {
+                    kind: IrVpiBuiltin::Mailbox,
+                })
+            }
             TypeShape::Opaque { kind } if kind == "Class" => Some(IrVpiShape::Class {
                 class: self.vpi_class_index(descriptor),
             }),

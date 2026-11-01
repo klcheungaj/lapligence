@@ -60,6 +60,7 @@ test a19d66 sim_lrm_decisions::a19_d66_specparam_expressions
 test a19d67 sim_lrm_decisions::a19_d67_packed_array_elements
 test a19d68 sim_lrm_decisions::a19_d68_udp_initial_statement
 test a19d69 sim_lrm_decisions::a19_d69_named_event_arrays
+test a19d71 sim_lrm_decisions::a19_d71_mailbox_semaphore_waiters
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test a20d16 sim_lrm_decisions::a20_d16_delay_expressions
 test a20d17 sim_lrm_decisions::a20_d17_port_delays
@@ -1236,7 +1237,7 @@ node class_obj 37.29 type=vpiClassObj
   get vpiObjId implemented walk
   iterate vpiVariables implemented walk
   handle vpiClassTypespec implemented walk
-  iterate vpiWaitingProcesses unsupported a mailbox or semaphore object has no class layout in llg (its vpiClassType is refused and a semaphore variable is no catalog object), so its waiters in the runtime queues are not reached
+  iterate vpiWaitingProcesses implemented a19d71
   iterate vpiMessages error walk 37.29 detail 4 names the iteration but the standard defines no object type for a message (no diagram, no Annex M constant)
   iterate vpiMethods implemented walk
   iterate vpiConstraint implemented a19cons

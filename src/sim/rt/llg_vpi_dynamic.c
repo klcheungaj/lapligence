@@ -107,6 +107,9 @@ static int dyn_tables_valid(void) {
             shape->typespec > typespecs || shape->width >= LLG_SUPPORTED_WIDTH_LIMIT)
             return 0;
         if (shape->shape == LLG_VPI_SHAPE_PACKED && shape->width == 0) return 0;
+        if (shape->builtin > LLG_VPI_BUILTIN_SEMAPHORE ||
+            (shape->builtin && (shape->shape != LLG_VPI_SHAPE_CLASS || shape->class_index)))
+            return 0;
         if (shape->shape == LLG_VPI_SHAPE_CONTAINER &&
             (shape->element >= i || shape->key > LLG_VPI_KEY_OTHER ||
              (shape->array_type != vpiDynamicArray && shape->array_type != vpiQueueArray &&
@@ -322,6 +325,18 @@ static vpiHandle make_object(void* object) {
     if (index == LLG_VPI_NONE) return NULL;
     entry->named = 1;
     g_vpi.slots[index].pointer = object;
+    return encode_handle(index);
+}
+
+/* The class object a handle of `shape` names: a mailbox or semaphore is a
+ * built-in object the runtime owns, never read through the class layout
+ * accessor. */
+static vpiHandle make_shape_object(const llg_vpi_shape_t* shape, void* object) {
+    if (!shape || !shape->builtin) return make_object(object);
+    uint32_t index = alloc_slot(SLOT_BUILTINOBJ);
+    if (index == LLG_VPI_NONE) return NULL;
+    g_vpi.slots[index].pointer = object;
+    g_vpi.slots[index].aux = (int32_t)shape->builtin;
     return encode_handle(index);
 }
 
@@ -924,6 +939,7 @@ static const llg_vpi_shape_t* dyn_element_shape(const llg_vpi_slot_t* slot) {
 static int dyn_slot(const llg_vpi_slot_t* slot) {
     switch (slot->kind) {
         case SLOT_CLASSOBJ:
+        case SLOT_BUILTINOBJ:
         case SLOT_PROPERTY:
         case SLOT_DYNELEM:
         case SLOT_CLASSDEFN:
@@ -942,7 +958,8 @@ static int dyn_slot(const llg_vpi_slot_t* slot) {
 
 static int dyn_type(const llg_vpi_slot_t* slot) {
     switch (slot->kind) {
-        case SLOT_CLASSOBJ: return vpiClassObj;
+        case SLOT_CLASSOBJ:
+        case SLOT_BUILTINOBJ: return vpiClassObj;
         case SLOT_CLASSDEFN: return vpiClassDefn;
         case SLOT_CLASSTS: return vpiClassTypespec;
         case SLOT_EXTENDS: return vpiExtends;
@@ -1388,7 +1405,7 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
                 int ok;
                 void* object = dyn_class_target(slot, &ok);
                 if (!ok) break;
-                return object ? make_object(object) : NULL;
+                return object ? make_shape_object(dyn_element_shape(slot), object) : NULL;
             }
             if (type == vpiClassTypespec || type == vpiTypespec) {
                 const llg_vpi_shape_t* shape = dyn_element_shape(slot);
@@ -1421,7 +1438,7 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
                 if (dyn_refuse_dying(place.owner, "vpiClassObj")) return NULL;
                 void* object = *(void**)place.storage;
                 /* 37.29 detail 5: NULL for a null class variable. */
-                return object ? make_object(object) : NULL;
+                return object ? make_shape_object(shape, object) : NULL;
             }
             if ((type == vpiClassTypespec || type == vpiTypespec) &&
                 shape->shape == LLG_VPI_SHAPE_CLASS)
@@ -1958,6 +1975,11 @@ static const char* dyn_get_str(int property, llg_vpi_slot_t* slot, int* handled)
             if (property == vpiName || property == vpiFullName)
                 return dyn_element_name(slot, property == vpiFullName);
             break;
+        case SLOT_BUILTINOBJ:
+            /* The built-in class's name, like a class object's (A19-D64). */
+            if (property == vpiName)
+                return slot->aux == LLG_VPI_BUILTIN_MAILBOX ? "mailbox" : "semaphore";
+            break;
         case SLOT_CLASSOBJ:
             /* 37.29: a class object is named by its class (decision
              * A19-D64); it has no full name, being in no scope. */
@@ -2065,6 +2087,7 @@ static int dyn_compare(const llg_vpi_slot_t* a, uint32_t a_index, const llg_vpi_
     if (a->kind != b->kind) return 0;
     switch (a->kind) {
         case SLOT_CLASSOBJ:
+        case SLOT_BUILTINOBJ:
             return a->pointer == b->pointer;
         case SLOT_PROPERTY:
             /* A declaration's property is its own object (no storage). */
@@ -2342,7 +2365,8 @@ static void dyn_reclaimed(void* const* objects, size_t count) {
     if (named) {
         for (size_t i = g_vpi.static_count; i < g_vpi.slot_count; ++i) {
             llg_vpi_slot_t* slot = &g_vpi.slots[i];
-            int bound = slot->kind == SLOT_CLASSOBJ || slot->kind == SLOT_PROPERTY ||
+            int bound = slot->kind == SLOT_CLASSOBJ || slot->kind == SLOT_BUILTINOBJ ||
+                        slot->kind == SLOT_PROPERTY ||
                         slot->kind == SLOT_DYNELEM || slot->kind == SLOT_CLASSITEM ||
                         (slot->kind == SLOT_ITERATOR && slot->iter_kind == ITER_DYN);
             if (bound && slot->pointer && dyn_is_dying(slot->pointer)) release_slot((uint32_t)i);

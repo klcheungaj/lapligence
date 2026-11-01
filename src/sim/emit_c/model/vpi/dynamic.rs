@@ -61,6 +61,7 @@ pub(super) fn render_vpi_dynamic(model: &IrModel, out: &mut String) {
             let (mut array_type, mut values, mut key, mut width) = ("0", 0, "LLG_VPI_KEY_NONE", 0);
             let (mut signed, mut two_state, mut shortreal) = (false, false, false);
             let (mut class, mut element, mut typespec) = (0, 0, 0);
+            let mut builtin = "LLG_VPI_BUILTIN_NONE";
             match shape {
                 IrVpiShape::Packed {
                     width: bits,
@@ -76,6 +77,7 @@ pub(super) fn render_vpi_dynamic(model: &IrModel, out: &mut String) {
                 }
                 IrVpiShape::Real { shortreal: short } => shortreal = *short,
                 IrVpiShape::Class { class: layout } => class = layout.map_or(0, |layout| layout + 1),
+                IrVpiShape::Builtin { kind } => builtin = kind.c_code(),
                 IrVpiShape::Container {
                     array_type: kind,
                     values: elements,
@@ -95,7 +97,7 @@ pub(super) fn render_vpi_dynamic(model: &IrModel, out: &mut String) {
                 IrVpiShape::String | IrVpiShape::Chandle | IrVpiShape::Event | IrVpiShape::Other => {}
             }
             format!(
-                "    {{ {}, {}, {array_type}, {values}u, {key}, {width}u, {}, {}, {}, {class}u, {element}u, {typespec}u }}",
+                "    {{ {}, {}, {array_type}, {values}u, {key}, {width}u, {}, {}, {}, {class}u, {element}u, {typespec}u, {builtin} }}",
                 shape.c_type(),
                 shape.c_code(),
                 u8::from(signed),
@@ -312,11 +314,11 @@ mod tests {
         let mut out = String::new();
         render_vpi_dynamic(&model, &mut out);
         assert!(
-            out.contains("{ vpiReg, LLG_VPI_SHAPE_PACKED, 0, 0u, LLG_VPI_KEY_NONE, 8u, 1, 0, 0, 0u, 0u, 0u }"),
+            out.contains("{ vpiReg, LLG_VPI_SHAPE_PACKED, 0, 0u, LLG_VPI_KEY_NONE, 8u, 1, 0, 0, 0u, 0u, 0u, LLG_VPI_BUILTIN_NONE }"),
             "{out}"
         );
         assert!(
-            out.contains("{ vpiArrayVar, LLG_VPI_SHAPE_CONTAINER, vpiQueueArray, 0u, LLG_VPI_KEY_NONE, 0u, 0, 0, 0, 0u, 0u, 0u }"),
+            out.contains("{ vpiArrayVar, LLG_VPI_SHAPE_CONTAINER, vpiQueueArray, 0u, LLG_VPI_KEY_NONE, 0u, 0, 0, 0, 0u, 0u, 0u, LLG_VPI_BUILTIN_NONE }"),
             "{out}"
         );
         assert!(

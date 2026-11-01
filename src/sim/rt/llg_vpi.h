@@ -344,6 +344,14 @@ enum {
     LLG_VPI_SHAPE_OTHER = 6,     /* listed without a value */
     LLG_VPI_SHAPE_EVENT = 7,     /* void*: an event property's synchronization object */
 };
+/* The built-in class a class handle shape names (class_index 0): its
+ * storage is the runtime's mailbox or semaphore, not a collected class
+ * object with a layout. */
+enum {
+    LLG_VPI_BUILTIN_NONE = 0,
+    LLG_VPI_BUILTIN_MAILBOX = 1,
+    LLG_VPI_BUILTIN_SEMAPHORE = 2,
+};
 /* Associative array index kinds. */
 enum {
     LLG_VPI_KEY_NONE = 0,
@@ -365,6 +373,7 @@ typedef struct {
     uint32_t class_index;     /* class layout + 1 of a class handle; 0: built-in */
     uint32_t element;         /* container element shape */
     uint32_t typespec;        /* typespec index + 1 of a packed value; 0: none */
+    uint8_t builtin;          /* LLG_VPI_BUILTIN_* of a built-in class handle */
 } llg_vpi_shape_t;
 
 typedef struct {

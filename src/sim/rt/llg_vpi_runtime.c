@@ -1170,6 +1170,18 @@ static vpiHandle rts_iterate(int type, vpiHandle reference, int* handled) {
         if (object && object->type == vpiNamedEvent && object->event)
             return rts_event_waiters(object->event);
     }
+    if (type == vpiWaitingProcesses && slot->kind == SLOT_BUILTINOBJ) {
+        /* 37.29 detail 3: the threads waiting on a mailbox or semaphore. */
+        int* slots;
+        uint64_t* identities;
+        size_t count = llg_rt_resource_waiters(slot->pointer, &slots, &identities);
+        rts_handles_t list = {0};
+        for (size_t i = 0; i < count; ++i)
+            rts_push(&list, rts_thread_handle(slots[i], identities[i]));
+        free(slots);
+        free(identities);
+        return rts_list(vpiThread, list.items, list.count, list.failed);
+    }
     if (type == vpiWaitingProcesses && slot->kind == SLOT_PROPERTY) {
         /* 37.25 detail 1 for an event property of a class object. */
         dyn_place_t place;

@@ -75,6 +75,8 @@ typedef enum {
                      * running cbForce/cbRelease dispatch: llg_vpi_stmt_t */
     /* Dynamic objects (llg_vpi_dynamic.c). */
     SLOT_CLASSOBJ,  /* class object `pointer` */
+    SLOT_BUILTINOBJ, /* mailbox or semaphore `pointer` (LLG_VPI_BUILTIN_* `aux`): a
+                      * built-in class object (37.29 detail 3) */
     SLOT_PROPERTY,  /* property `aux` of class `right`: of object `pointer`, or of the
                      * class definition when `pointer` is NULL */
     SLOT_DYNELEM,   /* element of the container row `object` or of property `aux` of

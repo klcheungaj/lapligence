@@ -67,6 +67,11 @@ pub enum IrVpiShape {
     Class {
         class: Option<usize>,
     },
+    /// A mailbox or semaphore handle (37.29 detail 3): a built-in class
+    /// object the runtime names and lists the waiting threads of.
+    Builtin {
+        kind: IrVpiBuiltin,
+    },
     Chandle,
     Container {
         array_type: IrVpiArrayType,
@@ -92,7 +97,7 @@ impl IrVpiShape {
             Self::Real { shortreal: true } => "vpiShortRealVar",
             Self::Real { shortreal: false } => "vpiRealVar",
             Self::String => "vpiStringVar",
-            Self::Class { .. } => "vpiClassVar",
+            Self::Class { .. } | Self::Builtin { .. } => "vpiClassVar",
             Self::Chandle => "vpiChandleVar",
             Self::Container { .. } => "vpiArrayVar",
             Self::Event => "vpiNamedEvent",
@@ -106,11 +111,28 @@ impl IrVpiShape {
             Self::Packed { .. } => "LLG_VPI_SHAPE_PACKED",
             Self::Real { .. } => "LLG_VPI_SHAPE_REAL",
             Self::String => "LLG_VPI_SHAPE_STRING",
-            Self::Class { .. } => "LLG_VPI_SHAPE_CLASS",
+            Self::Class { .. } | Self::Builtin { .. } => "LLG_VPI_SHAPE_CLASS",
             Self::Chandle => "LLG_VPI_SHAPE_CHANDLE",
             Self::Container { .. } => "LLG_VPI_SHAPE_CONTAINER",
             Self::Event => "LLG_VPI_SHAPE_EVENT",
             Self::Other => "LLG_VPI_SHAPE_OTHER",
+        }
+    }
+}
+
+/// The built-in class of a [`IrVpiShape::Builtin`] handle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IrVpiBuiltin {
+    Mailbox,
+    Semaphore,
+}
+
+impl IrVpiBuiltin {
+    /// The runtime code (`LLG_VPI_BUILTIN_*`).
+    pub const fn c_code(self) -> &'static str {
+        match self {
+            Self::Mailbox => "LLG_VPI_BUILTIN_MAILBOX",
+            Self::Semaphore => "LLG_VPI_BUILTIN_SEMAPHORE",
         }
     }
 }

@@ -1,0 +1,10 @@
+$d71:
+tb.mb: object type=621 name=mailbox waiting=2 threads=1 error=0
+tb.full: object type=621 name=mailbox waiting=1 threads=1 error=0
+tb.sm: object type=621 name=semaphore waiting=1 threads=1 error=0
+got 5
+got keys
+$d71:
+tb.mb: object type=621 name=mailbox waiting=1 threads=1 error=0
+tb.full: object type=621 name=mailbox waiting=1 threads=1 error=0
+tb.sm: object type=621 name=semaphore waiting=0 threads=1 error=0
