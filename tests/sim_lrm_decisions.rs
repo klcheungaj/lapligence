@@ -2654,6 +2654,51 @@ fn a19_d61_connectivity_order() {
 }
 
 #[test]
+fn a19_d62_statement_processes() {
+    run_vpi_decision(
+        "A19-D62_statement_processes",
+        &["task $d62()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D62_statement_processes.out"),
+    );
+}
+
+#[test]
+fn a19_d63_structure_net_members() {
+    run_vpi_decision(
+        "A19-D63_structure_net_members",
+        &["task $d63()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D63_structure_net_members.out"),
+    );
+}
+
+#[test]
+fn a19_d64_switch_values_and_class_object_names() {
+    run_vpi_decision(
+        "A19-D64_switch_values_and_class_object_names",
+        &["task $d64()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D64_switch_values_and_class_object_names.out"),
+    );
+}
+
+#[test]
+fn a19_d65_refused_relations() {
+    run_vpi_decision(
+        "A19-D65_refused_relations",
+        &["task $d65()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D65_refused_relations.out"),
+    );
+}
+
+#[test]
+fn a19_d66_specparam_expressions() {
+    run_vpi_decision(
+        "A19-D66_specparam_expressions",
+        &["task $d66()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D66_specparam_expressions.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

@@ -1175,6 +1175,16 @@ static int whole_unpacked_aggregate(const llg_vpi_slot_t* slot) {
     return is_aggregate_typespec(typespec) && (typespec->flags & LLG_VPI_TS_UNPACKED);
 }
 
+/* 37.31: the terminal whose value is a primitive's value: the output of a
+ * gate or UDP, and the first terminal of a switch, which has no output
+ * (decision A19-D64). LLG_VPI_NONE when there is none. */
+static uint32_t primitive_value_conn(const llg_vpi_model_object_t* object) {
+    for (uint32_t i = 0; i < object->conn_count; ++i)
+        if (object->conns[i].direction == vpiOutput) return i;
+    if (object->type == vpiSwitch && object->conn_count) return 0u;
+    return LLG_VPI_NONE;
+}
+
 static vpiHandle make_member(uint32_t row, uint64_t element, uint32_t node_index) {
     const llg_vpi_member_node_t* node = node_at(node_index);
     if (!node) return NULL;
@@ -1457,11 +1467,8 @@ static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is
             llg_vpi_model_object_t* object = row_object(slot->object);
             if (!object) return 0;
             if (is_primitive_type(object->type)) {
-                /* 37.31: a primitive's value is its output terminal's. */
-                for (uint32_t i = 0; i < object->conn_count; ++i)
-                    if (object->conns[i].direction == vpiOutput)
-                        return read_conn(slot->object, i, out, is_signed);
-                return 0;
+                uint32_t conn = primitive_value_conn(object);
+                return conn != LLG_VPI_NONE && read_conn(slot->object, conn, out, is_signed);
             }
             if (object->type == vpiContAssign) {
                 /* The value the assignment drives: its right-hand side
@@ -3702,7 +3709,7 @@ static vpiHandle member_from_suffix(uint32_t row, const char* suffix) {
     const llg_vpi_typespec_t* typespec = element == LLG_VPI_NO_ELEMENT
         ? typespec_ref(object->typespec) : element_typespec(object);
     if (!is_aggregate_typespec(typespec) || (object->flags & LLG_VPI_OBJ_RECORD) ||
-        object->is_net || (element == LLG_VPI_NO_ELEMENT && !has_storage(object)))
+        (element == LLG_VPI_NO_ELEMENT && !has_storage(object)))
         return NULL;
     uint32_t first = typespec->first_node, count = typespec->node_count, node = LLG_VPI_NONE;
     while (*p == '.') {
@@ -5062,6 +5069,9 @@ static int code_relation_applies(int type, int relation) {
                    relation == vpiForIncStmt || relation == vpiStmt;
         case vpiForeachStmt: return relation == vpiVariables || relation == vpiStmt;
         case vpiOrderedWait: return relation == vpiStmt || relation == vpiElseStmt;
+        /* 37.62: the waits class draws vpiStmt, and `wait fork` has no
+         * statement, so the relation is NULL (decision A19-D62). */
+        case vpiWaitFork: return relation == vpiStmt;
         case vpiDelayControl: return relation == vpiDelay || relation == vpiStmt;
         case vpiRepeatControl: return relation == vpiExpr || relation == vpiEventControl;
         case vpiEventStmt: return relation == vpiNamedEvent;
@@ -7014,10 +7024,11 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 return conn_handle(slot->object, (uint32_t)slot->aux);
             /* 37.17 detail 8, 37.26 detail 3: the initialization expression
              * of a variable, the default expression of a value parameter
-             * (decision A19-D32); NULL without one. */
+             * (decision A19-D32) or the value expression of a specparam
+             * (decision A19-D66); NULL without one. */
             if (slot->kind == SLOT_OBJECT && object &&
                 (is_variable_type(object->type) || object->type == vpiRegArray ||
-                 object->type == vpiParameter || (object->flags & LLG_VPI_OBJ_DYNAMIC))) {
+                 is_parameter_type(object->type) || (object->flags & LLG_VPI_OBJ_DYNAMIC))) {
                 if (!g_vpi.code) {
                     vpi_error("LLG_VPI_UNSUPPORTED",
                               "expressions are objects only in models generated with --vpi or "
@@ -8403,11 +8414,6 @@ static vpiHandle iterate_members(const llg_vpi_slot_t* slot) {
         vpi_error("LLG_VPI_RELATION", "vpiMember iterates a structure or union variable");
         return NULL;
     }
-    if (object && object->is_net) {
-        /* Members of a struct net are nets (37.16); llg exposes none. */
-        vpi_error("LLG_VPI_UNSUPPORTED", "members of a structure or union net are not VPI objects");
-        return NULL;
-    }
     uint32_t first = typespec->first_node, count = typespec->node_count;
     if (slot->kind == SLOT_MEMBER) {
         const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
@@ -8871,6 +8877,20 @@ static int is_static_variable_part(const llg_vpi_slot_t* slot,
            (slot->kind == SLOT_SELECT && slot->span == 1);
 }
 
+/* 37.16 detail 1: a member of a structure or union net is a net of the
+ * member's data type; 1800-2009 has no union net type, so a union member
+ * is a vpiNet like a union net (decision A19-D63). */
+static int net_member_type(int var_type) {
+    switch (var_type) {
+        case vpiStructVar: return vpiStructNet;
+        case vpiEnumVar: return vpiEnumNet;
+        case vpiIntegerVar: return vpiIntegerNet;
+        case vpiTimeVar: return vpiTimeNet;
+        case vpiPackedArrayVar: return vpiPackedArrayNet;
+        default: return vpiNet;
+    }
+}
+
 static int handle_type(const llg_vpi_slot_t* slot) {
     if (dyn_slot(slot)) return dyn_type(slot);
     if (rts_slot(slot)) return rts_type(slot);
@@ -8904,7 +8924,9 @@ static int handle_type(const llg_vpi_slot_t* slot) {
         case SLOT_FSMSTATE: return vpiFsmHandle;
         case SLOT_MEMBER: {
             const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
-            return node ? node->type : vpiUndefined;
+            if (!node) return vpiUndefined;
+            const llg_vpi_model_object_t* owner = row_object(slot->object);
+            return owner && owner->is_net ? net_member_type(node->type) : node->type;
         }
         case SLOT_TYPESPEC: return typespec_at((uint32_t)slot->aux)->type;
         case SLOT_TSMEMBER: return vpiTypespecMember;
@@ -8939,12 +8961,10 @@ static int handle_width(const llg_vpi_slot_t* slot, uint32_t* width, int* is_sig
             if (!object || is_scope_type(object->type) || (object->flags & LLG_VPI_OBJ_RECORD))
                 return 0;
             if (is_primitive_type(object->type)) {
-                for (uint32_t i = 0; i < object->conn_count; ++i)
-                    if (object->conns[i].direction == vpiOutput) {
-                        *width = object->conns[i].ref.width;
-                        return *width != 0;
-                    }
-                return 0;
+                uint32_t i = primitive_value_conn(object);
+                if (i == LLG_VPI_NONE) return 0;
+                *width = object->conns[i].ref.width;
+                return *width != 0;
             }
             if (object->type == vpiContAssign) {
                 *width = object->width;
@@ -9444,7 +9464,8 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 return vpiWire;
             /* A net array and a net bit have their nets' type (37.16). */
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiNetArray) return vpiWire;
-            if (slot->kind == SLOT_SELECT && slot->span == 1 && object && object->is_net)
+            if (((slot->kind == SLOT_SELECT && slot->span == 1) || slot->kind == SLOT_MEMBER) &&
+                object && object->is_net)
                 return is_net_type(object->type) && object->subtype ? object->subtype : vpiWire;
             return unsupported_property();
         case vpiInputEdge:

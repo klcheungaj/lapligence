@@ -2556,7 +2556,11 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   iterations served per object are listed in
   [`src/sim/rt/vpi_catalog.txt`](../src/sim/rt/vpi_catalog.txt), the single
   source of truth for the VPI object model; a query it does not list fails
-  with a `vpi_chk_error` error (ADV-019 A03, decision A19-D26). A generated
+  with a `vpi_chk_error` error (ADV-019 A03, decision A19-D26); every
+  applicable row is implemented, an extension, refused on purpose (`error`,
+  decision A19-D65), `n/a`, or `unsupported` with its reason (statement
+  processes, structure net members, switch values, class object names and
+  specparam expressions: A19-D62..D66). A generated
   object catalog and the common VPI routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
   relative to a scope, and constant element/bit/part selects in the name),
   `vpi_handle_by_index`/`_multi_index`, `vpi_handle` (`vpiParent`, `vpiScope`,

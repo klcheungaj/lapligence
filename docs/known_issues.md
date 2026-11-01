@@ -2335,8 +2335,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   connection) are not indexed; a port declared with a module-side
   concatenation (`.q({y1, y0})`) on an element of an instance array has no
   `vpiHighConn` (decision A19-D58);
-- structure and union members that are not exposed: members of structure or
-  union nets, members of a record kept in columns (an unpacked structure
+- structure and union members that are not exposed: members of a record kept in columns (an unpacked structure
   whose instances the optimizer split into per-field arrays), unpacked
   array, string, handle and dynamic members of an unpacked structure, and
   unpacked structures inside an unpacked union; bit and part selects of a
@@ -2373,7 +2372,17 @@ with no error status, as for a name that denotes nothing (S42-D11):
   `vpiUse` lists the enclosing statement of a procedural use (A19-D43). An argument that is not a whole object keeps
   the size and value of the formal it is passed to (a call snapshot) while
   its relations and `vpiDecompile` are those of the expression;
-- every property, relation and iteration the catalog marks `unsupported`;
+- every property, relation and iteration the catalog marks `unsupported`
+  (ADV-019 closure, 2026-11: named event arrays and the `vpiIndex` of
+  elements of string, chandle, class and event arrays; virtual interface
+  declarations of classes; `vpiWaitingProcesses` of mailboxes and
+  semaphores; `vpiImport`; `vpiInitial` of a UDP definition and
+  `vpi_put_value` to a sequential UDP; a frame's `vpiOrigin` and
+  `vpiAutomatics`; the bodies, variables and formal defaults of sequence and
+  property declarations; pattern and `expect` objects; the list operation
+  of an instance array's connections; a structure member's default
+  expression). Rows the catalog marks `error` are refused on purpose, as
+  industry-standard behaviour refuses them (decision A19-D65);
 - callback reasons refused with an error naming the reason: `cbStmt` (a
   statement has no execution hook; adding one would cost every model
   statement a check, or a second statement-hooked code path per process),
