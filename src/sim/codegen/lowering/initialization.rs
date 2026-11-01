@@ -113,11 +113,15 @@ impl<'a> Codegen<'a> {
     pub(super) fn build_init_steps(&self, model: &mut IrModel) -> Result<(), String> {
         use crate::sim::ir::IrInitStep;
         // Ungrouped nets include ordinary ports, interface members and gate
-        // outputs. Their initial Z value must not inherit a variable's X.
+        // outputs. Their initial Z value must not inherit a variable's X. A
+        // collapsed port sink has its source's storage and start.
         for node in self.design_nodes() {
             let Some(info) = self.sig_globals.get(&node) else {
                 continue;
             };
+            if self.port_alias_sinks.contains(&node) {
+                continue;
+            }
             if matches!(self.kind(node), NodeKind::Net { .. })
                 && model.signals[info.ir].net_driver.is_none()
                 && !info.real

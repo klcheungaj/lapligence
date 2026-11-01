@@ -52,10 +52,10 @@
 //!   gate terminals remain explicit boundaries;
 //! - every child-instance port pair gets a link process copying the parent
 //!   side to the child side (inputs) or the child side to the parent side
-//!   (outputs) whenever the source changes, except an input variable port
-//!   connected to a whole variable of the same type where sharing is exact:
-//!   its formal aliases the actual's storage (`collection/port_aliases.rs`,
-//!   decision A21-D1);
+//!   (outputs) whenever the source changes, except where sharing is exact:
+//!   the sink then aliases the source's storage (`collection/port_aliases.rs`
+//!   for variables, decisions A21-D1 and A21-D3; `collection/nets/port_sinks.rs`
+//!   for a `wire` sink only its port drives, merged with its source, A21-D2);
 //! - every inout port collapses its parent + child nets into ONE resolved
 //!   simulated net (`llg_net_t`, LRM §23.3.3.7): each member net gets a
 //!   driver slot, whole-signal writes lower to `llg_net_write`, and every
@@ -519,8 +519,12 @@ struct LoweredModel {
     sdf_logs: Vec<(String, String)>,
     /// The design calls a `$coverage_*` function (40.3.2).
     coverage_api_used: bool,
-    /// Some input port shares its actual's storage.
+    /// Some port shares its actual's storage.
     collapsed_ports: bool,
+    /// Collapsed net ports whose sink a time-zero observer reads but whose
+    /// root net does not start at X on every bit: lowered again with these
+    /// ports kept as links (`collection/port_aliases.rs`).
+    retry_ports: Vec<NodeId>,
 }
 
 /// The semantic model of a design that passed the simulation checks.
@@ -581,6 +585,8 @@ fn lower_timing_metadata(
         cg.reserve_vpi_delays();
     }
     drop(sdf_read_stage);
+    // Net port sinks collapse while the groups are built; variable ports
+    // after the timing metadata (`collection/port_aliases.rs`).
     cg.build_net_groups()?;
     // Module paths name net groups and their structural driver sites.
     cg.lower_module_paths()?;
@@ -614,19 +620,35 @@ fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String
     // A VPI application may write either side of a port, so a model that
     // keeps the VPI catalog keeps every port link. User system calls are
     // known only once the bodies are lowered: a design that has them is
-    // lowered again without collapsed ports.
-    let lowered = lower_model_with(db, options, !options.vpi)?;
-    if lowered.collapsed_ports && !lowered.model.vpi_compile_calls.is_empty() {
-        drop(lowered);
-        return lower_model_with(db, options, false);
+    // lowered again without collapsed ports. A collapsed net port whose
+    // time-zero start the lowered model shows to differ from the link's is
+    // kept as a link in a further lowering; keeping a link only makes its
+    // sink a driven net that starts at X, so a second retry does not occur
+    // in practice, and collapse is switched off after it as a bound.
+    let mut excluded = HashSet::new();
+    for _ in 0..MAX_PORT_COLLAPSE_RETRIES {
+        let lowered = lower_model_with(db, options, !options.vpi, &excluded)?;
+        if lowered.collapsed_ports && !lowered.model.vpi_compile_calls.is_empty() {
+            drop(lowered);
+            return lower_model_with(db, options, false, &HashSet::new());
+        }
+        if lowered.retry_ports.is_empty() {
+            return Ok(lowered);
+        }
+        excluded.extend(lowered.retry_ports.iter().copied());
     }
-    Ok(lowered)
+    lower_model_with(db, options, false, &HashSet::new())
 }
+
+/// Lowerings that may keep further net ports as links before every port
+/// keeps its link ([`lower_model`]).
+const MAX_PORT_COLLAPSE_RETRIES: usize = 3;
 
 fn lower_model_with(
     db: &Db,
     options: &CodegenOptions,
     collapse_ports: bool,
+    excluded_ports: &HashSet<NodeId>,
 ) -> Result<LoweredModel, String> {
     let waveform = options.waveform.as_ref();
     let semantic = checked_semantic(db)?;
@@ -634,6 +656,8 @@ fn lower_model_with(
     let mut cg = Codegen::new(&semantic);
     cg.vpi_return_signals = options.vpi;
     cg.user_system_functions = options.user_system_functions.iter().cloned().collect();
+    cg.collapse_ports = collapse_ports;
+    cg.port_collapse_exclusions = excluded_ports.clone();
     cg.check_fsm_pragmas()?;
     let tops = collect_tops(&mut cg)?;
     cg.plan_code_coverage(options.vpi);
@@ -656,9 +680,7 @@ fn lower_model_with(
     }
     let compilation_units = cg.compilation_unit_scopes();
     lower_timing_metadata(&mut cg, &tops, options)?;
-    if collapse_ports {
-        cg.collapse_input_ports()?;
-    }
+    cg.collapse_variable_ports()?;
     cg.collect_clocking_storage()?;
     cg.validate_const_method_writes()?;
     cg.validate_process_semantics()?;
@@ -748,6 +770,7 @@ fn lower_model_with(
     cg.build_init_steps(&mut model)?;
     // Every driver site and delayed-driver start now exists.
     net_delay_layout::assign_net_delay_layouts(&mut model);
+    let retry_ports = cg.port_collapse_retries(&model);
     check_wave_variable_targets(&cg.wave_variable_targets, &model)?;
     let timing = cg.vpi_timing_metadata(&tops);
     model.vpi_delays_writable = options.vpi;
@@ -829,6 +852,7 @@ fn lower_model_with(
         sdf_logs,
         coverage_api_used,
         collapsed_ports,
+        retry_ports,
     })
 }
 
@@ -1448,9 +1472,19 @@ struct Codegen<'a> {
     reference_arrays: HashMap<usize, usize>,
     /// Canonical object storage for module `ref` string/chandle ports.
     reference_objects: HashMap<usize, usize>,
-    /// Input ports whose formal shares the actual's storage
+    /// Ports whose sink shares the source's storage
     /// (`collection/port_aliases.rs`); they have no link process.
     port_aliases: HashSet<NodeId>,
+    /// Ports may share storage: false for a model that keeps the VPI
+    /// catalog and for the SDF target scan.
+    collapse_ports: bool,
+    /// Ports a previous lowering showed must keep their link.
+    port_collapse_exclusions: HashSet<NodeId>,
+    /// Collapsed net ports with a time-zero observer of the sink, and the
+    /// root storage whose start the lowered model must show to be all X.
+    port_start_checks: Vec<(NodeId, usize)>,
+    /// The sink declarations of `port_aliases`.
+    port_alias_sinks: HashSet<NodeId>,
     object_globals: HashMap<NodeId, usize>,
     scope_object_names: HashMap<String, HashMap<String, usize>>,
     /// Nominal class declaration → execution-IR layout index.
@@ -2105,6 +2139,10 @@ impl<'a> Codegen<'a> {
             clocking_history_ticks: HashMap::new(),
             reference_signals: HashMap::new(),
             port_aliases: HashSet::new(),
+            collapse_ports: false,
+            port_collapse_exclusions: HashSet::new(),
+            port_start_checks: Vec::new(),
+            port_alias_sinks: HashSet::new(),
             reference_arrays: HashMap::new(),
             reference_objects: HashMap::new(),
             object_globals: HashMap::new(),

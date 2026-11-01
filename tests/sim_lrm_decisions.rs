@@ -2734,6 +2734,22 @@ fn a21_d1_input_port_shares_actual_variable() {
 }
 
 #[test]
+fn a21_d2_net_port_merges_with_source() {
+    run_decision(
+        "A21-D2_net_port_merges_with_source",
+        include_str!("fixtures/sim/lrm_decisions/A21-D2_net_port_merges_with_source.out"),
+    );
+}
+
+#[test]
+fn a21_d3_output_port_shares_actual_variable() {
+    run_decision(
+        "A21-D3_output_port_shares_actual_variable",
+        include_str!("fixtures/sim/lrm_decisions/A21-D3_output_port_shares_actual_variable.out"),
+    );
+}
+
+#[test]
 fn a17_d1_attempt_callbacks() {
     run_vpi_decision(
         "A17-D1_attempt_callbacks",

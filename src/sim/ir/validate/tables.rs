@@ -499,16 +499,17 @@ impl Validator<'_> {
                 let canonical = self.model.signals.get(target).ok_or_else(|| {
                     IrValidationError::new(format!("{path}.alias"), "alias target is out of bounds")
                 })?;
+                // A collapsed port sink may share a resolved net's cell.
                 if target == idx
                     || canonical.alias.is_some()
-                    || canonical.net_driver.is_some()
+                    || !canonical.net_alias.is_empty()
                     || canonical.ty != signal.ty
                     || canonical.c_name != signal.c_name
                     || (!signal.omit && canonical.omit)
                 {
                     return self.fail(
                         format!("{path}.alias"),
-                        "alias must name matching canonical variable storage",
+                        "alias must name matching canonical storage",
                     );
                 }
             } else if !signal.omit && !storage_names.insert(signal.c_name.as_str()) {
