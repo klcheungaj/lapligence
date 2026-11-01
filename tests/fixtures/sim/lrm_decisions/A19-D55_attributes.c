@@ -3,6 +3,14 @@
 #include "sv_vpi_user.h"
 #include <stdio.h>
 #include <string.h>
+/* The file name without its directory; Windows paths use backslashes. */
+static const char* base_name(const char* path) {
+    const char* slash = strrchr(path, '/');
+    const char* backslash = strrchr(path, '\\');
+    if (backslash && (!slash || backslash > slash)) slash = backslash;
+    return slash ? slash + 1 : path;
+}
+
 /* Each attribute of `owner` with its natural value, binary value,
  * vpiDefAttribute, definition location, parent, full name and size. */
 static void attrs(const char* what, vpiHandle owner) {
@@ -27,7 +35,6 @@ static void attrs(const char* what, vpiHandle owner) {
         bits.format = vpiBinStrVal;
         vpi_get_value(a, &bits);
         const char* file = (const char*)vpi_get_str(vpiDefFile, a);
-        const char* base = file ? strrchr(file, '/') : NULL;
         vpiHandle parent = vpi_handle(vpiParent, a);
         const char* full = (const char*)vpi_get_str(vpiFullName, a);
         int size = (int)vpi_get(vpiSize, a);
@@ -35,7 +42,7 @@ static void attrs(const char* what, vpiHandle owner) {
         vpi_printf("  %s %s value=%s bits=%s def=%d at=%s:%d parent=%s full=%s size=%d%s\n",
                    (const char*)vpi_get_str(vpiName, a), (const char*)vpi_get_str(vpiType, a),
                    text, bits.value.str, (int)vpi_get(vpiDefAttribute, a),
-                   base ? base + 1 : file ? file : "NULL", (int)vpi_get(vpiDefLineNo, a),
+                   file ? base_name(file) : "NULL", (int)vpi_get(vpiDefLineNo, a),
                    parent ? (const char*)vpi_get_str(vpiType, parent) : "NULL",
                    full ? full : "NULL", size, size_failed ? "(error)" : "");
     }

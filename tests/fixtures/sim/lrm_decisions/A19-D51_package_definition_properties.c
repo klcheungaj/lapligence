@@ -3,6 +3,14 @@
 #include "sv_vpi_user.h"
 #include <stdio.h>
 #include <string.h>
+/* The file name without its directory; Windows paths use backslashes. */
+static const char* base_name(const char* path) {
+    const char* slash = strrchr(path, '/');
+    const char* backslash = strrchr(path, '\\');
+    if (backslash && (!slash || backslash > slash)) slash = backslash;
+    return slash ? slash + 1 : path;
+}
+
 /* The definition properties of design element `name`, each with whether
  * the query reported a vpiError; file names without their directory. */
 static void show(const char* name) {
@@ -27,8 +35,7 @@ static void show(const char* name) {
         s_vpi_error_info e;
         PLI_BYTE8* v = vpi_get_str(strs[i].prop, p);
         int err = vpi_chk_error(&e);
-        const char* base = v ? strrchr((const char*)v, '/') : NULL;
-        vpi_printf("  %s=%s%s\n", strs[i].name, v ? (base ? base + 1 : (const char*)v) : "NULL",
+        vpi_printf("  %s=%s%s\n", strs[i].name, v ? base_name((const char*)v) : "NULL",
                    err ? " (error)" : "");
     }
 }
