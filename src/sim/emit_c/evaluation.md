@@ -122,7 +122,8 @@ a new cached kind only after proving it is assigned only at its declaration. The
 frame lint rejects a cached local read after a suspension without a reload.
 
 Long bodies: a statement sequence heavier than `LLG_OUTLINE_RUN_WEIGHT`
-moves runs of self-contained, non-suspending statements into `static int`
+(IR nodes plus the fixed C of formatting arguments and block scopes, so one
+unit renders to one or two C lines) moves runs of self-contained, non-suspending statements into `static int`
 helpers that share the caller's `_llg_t` (purpose, admission rules and exit
 protocol: `owned/outline.rs` module docs). Resume points, cancellation
 points, body locals, formals and labels never leave the body, and bodies that
@@ -157,6 +158,9 @@ selectors; whole signal/reference assignments may borrow through their one
 alias-safe publication call. General expression, call arguments, delayed writes,
 stream fan-out, sampled reads and callback outputs retain owners. Never destroy,
 move or retag a borrow. Read-only private stores materialize an owner before move.
+A packed constant formatting argument (`owned/formatting.rs`) is constructed in
+its argument-array entry once every other argument has been evaluated, with no
+temporary to move and destroy.
 
 Elide packed cast/resize only when width and signedness match and there is no
 context fill. Two-state coercion remains explicit. VPI callback results first

@@ -345,8 +345,11 @@ GCC and Clang optimize a function in time superlinear in its size. Before
 outlining, the four `rtl_006` constant-operand bodies in one `initial` block
 (`--no-opt`, 33,000 lines of C) built in 27.7 s with GCC 14 `-O3` against
 18.0 s for the four widths built separately; with outlining they build in
-6.8 s against 8.0 s (Clang 19: 37.3 s → 10.5 s). Bodies outside the cases
-below now build in time about linear in their length (see
+6.8 s against 8.0 s (Clang 19: 37.3 s → 10.5 s). The run weight counts the C that
+formatting arguments and block scopes render, so helpers stay under about
+1,800 lines in both optimizer modes; counted by IR nodes alone, the optimized
+rows became a 4,610-line helper that MSVC `/O2` did not build within 180 s.
+Bodies outside the cases below now build in time about linear in their length (see
 [performance trade-offs](sim_performance_tradeoffs.md#long-bodies-as-helper-functions)).
 
 ### Cause

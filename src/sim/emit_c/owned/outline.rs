@@ -35,15 +35,29 @@
 //! inline would have. A flag that a statement only sets (`$finish`) is left
 //! to the caller's next check, as inline.
 //!
-//! The weight counts IR statements, lvalues and expression nodes; each node
-//! renders to a few C lines, so it bounds the C size of a helper while being
-//! known before rendering. A statement heavier than one run is rendered in
-//! place, and every sequence inside it is then split even when lighter than
-//! a run, so its own runs leave the body too.
+//! The weight counts IR statements, lvalues and expression nodes, plus the
+//! fixed C a construct renders around its nodes (each formatting argument's
+//! transfer, each block's value scope). A unit then renders to one or two C
+//! lines in every statement form, so the weight bounds the C size of a
+//! helper while being known before rendering. A statement heavier than one
+//! run is rendered in place, and every sequence inside it is then split even
+//! when lighter than a run, so its own runs leave the body too.
 use super::*;
 use crate::sim::ir::{LLG_OUTLINE_MIN_RUN_WEIGHT, LLG_OUTLINE_RUN_WEIGHT};
 use std::collections::HashSet;
 use std::ops::Range;
+
+/// Weight of moving one argument into a formatting call's argument array,
+/// beyond its expression's nodes: setting its kind and time unit and
+/// installing the value render about three C lines. Without it a `$display`
+/// of folded constants renders about four times as many C lines per unit as
+/// other statements, and its runs become helpers of four times the intended
+/// size.
+const FORMAT_ARGUMENT_WEIGHT: usize = 2;
+
+/// Weight of a block's lexical value scope on top of the block statement:
+/// its braces, mark and unwind are four C lines whatever the block holds.
+const SCOPE_WEIGHT: usize = 2;
 
 /// Outlined helpers of one body and their naming state, moved into each
 /// helper frame while it renders.
@@ -271,6 +285,7 @@ impl Check<'_, '_, '_> {
             }
             IrStmt::Display { args, .. } => {
                 for (value, _) in args {
+                    self.weight += FORMAT_ARGUMENT_WEIGHT;
                     self.expr(value);
                 }
             }
@@ -293,7 +308,10 @@ impl Check<'_, '_, '_> {
                 }
                 self.declare(name);
             }
-            IrStmt::Block(body) => self.body(body),
+            IrStmt::Block(body) => {
+                self.weight += SCOPE_WEIGHT;
+                self.body(body)
+            }
             IrStmt::If {
                 cond, then_, els, ..
             } => {
@@ -381,6 +399,7 @@ impl Check<'_, '_, '_> {
 
     fn display_args(&mut self, args: &[IrDisplayArg]) {
         for arg in args {
+            self.weight += FORMAT_ARGUMENT_WEIGHT;
             match arg {
                 IrDisplayArg::Packed(value)
                 | IrDisplayArg::Real(value)
@@ -863,6 +882,70 @@ mod tests {
 
     const RUN: usize = LLG_OUTLINE_RUN_WEIGHT;
     const MIN: usize = LLG_OUTLINE_MIN_RUN_WEIGHT;
+
+    fn constant(value: u64) -> IrExpr {
+        IrExpr::new(
+            IrExprKind::Const(IrConst {
+                bits: vec![value],
+                x: vec![0],
+                z: vec![0],
+                width: 32,
+                signed: false,
+                real: None,
+                fill: None,
+            }),
+            32,
+            false,
+            None,
+        )
+    }
+
+    fn display(args: Vec<IrDisplayArg>) -> IrStmt {
+        IrStmt::DisplayTyped {
+            fmt: "\"\"".to_owned(),
+            args,
+            scope: "tb".to_owned(),
+            newline: true,
+            default_radix: IrDisplayRadix::Decimal,
+            descriptor: None,
+            time_unit_fs: 1,
+        }
+    }
+
+    /// Weight and admission of each statement, as `outline_plan` sees them.
+    fn weights(statements: &[IrStmt]) -> Vec<(usize, bool)> {
+        let model = IrModel::new("weights".to_owned(), 1).unwrap();
+        let ctx = RCtx {
+            value_backend: crate::sim::value_backend::ValueBackend::Legacy,
+            model: &model,
+            func: None,
+            sampled: false,
+            activation_label: None,
+            constants: None,
+        };
+        let frame = Frame::new(&ctx);
+        frame.statement_weights(statements, false, &mut HashMap::new())
+    }
+
+    #[test]
+    fn format_arguments_and_block_scopes_weigh_the_c_around_their_nodes() {
+        let packed = |value| IrDisplayArg::Packed(constant(value));
+        let text = IrDisplayArg::Text(IrStringExpr::Literal(b"t".to_vec()));
+        let argument = 1 + FORMAT_ARGUMENT_WEIGHT;
+        assert_eq!(weights(&[display(Vec::new())]), vec![(1, true)]);
+        assert_eq!(
+            weights(&[display(vec![packed(1), text.clone(), packed(2)])]),
+            vec![(1 + 3 * argument, true)]
+        );
+        let block = 1 + SCOPE_WEIGHT;
+        assert_eq!(
+            weights(&[
+                IrStmt::Block(vec![display(vec![packed(1)])]),
+                IrStmt::Block(vec![IrStmt::Block(Vec::new())]),
+            ]),
+            vec![(block + 1 + argument, true), (2 * block, true)]
+        );
+    }
 
     #[test]
     fn runs_never_exceed_the_run_weight() {

@@ -239,3 +239,62 @@ fn bodies_instance_sharing_may_merge_stay_whole() {
         assert!(unshared.contains(&format!("static int p_run{index}_llg_run_1(sv4_t* _llg_t)")));
     }
 }
+
+/// Arguments of [`constant_display`], as many as an `rtl_006` constant row.
+const DISPLAY_ARGUMENTS: u64 = 17;
+
+/// `begin $display("%h ...", <constants>); end`: what the optimizer leaves of
+/// a display whose arguments are constant expressions.
+fn constant_display(first: u64) -> IrStmt {
+    IrStmt::Block(vec![IrStmt::DisplayTyped {
+        fmt: format!("\"{}\"", vec!["%h"; DISPLAY_ARGUMENTS as usize].join(" ")),
+        args: (first..first + DISPLAY_ARGUMENTS)
+            .map(|value| IrDisplayArg::Packed(number(value, 32)))
+            .collect(),
+        scope: "tb".to_owned(),
+        newline: true,
+        default_radix: IrDisplayRadix::Decimal,
+        descriptor: None,
+        time_unit_fs: 1,
+    }])
+}
+
+#[test]
+fn folded_constant_displays_split_into_helpers_of_bounded_size() {
+    // Counted by IR nodes alone, each display weighs 19, and runs of 1,024
+    // became helpers of 3,000 C lines (4,600 while each constant still went
+    // through a temporary).
+    let count = 91;
+    let source = render(
+        1,
+        (0..count)
+            .map(|row| constant_display(row * DISPLAY_ARGUMENTS))
+            .collect(),
+    );
+    let mut displays = 0;
+    let mut helpers = 0;
+    while source.contains(&format!("static int p_run0_llg_run_{helpers}(")) {
+        let text = helper(&source, &format!("p_run0_llg_run_{helpers}"));
+        assert!(
+            text.lines().count() <= 2 * LLG_OUTLINE_RUN_WEIGHT,
+            "helper {helpers}: {} lines",
+            text.lines().count()
+        );
+        displays += text.matches("llg_display_typed(").count();
+        helpers += 1;
+    }
+    assert!(helpers >= 4, "{helpers} helpers");
+    let main = body(&source, "p_run0");
+    assert_eq!(
+        displays + main.matches("llg_display_typed(").count(),
+        count as usize
+    );
+    // Rows keep their order and their constants go straight into the
+    // argument arrays.
+    let last = DISPLAY_ARGUMENTS * count - 1;
+    assert!(
+        source.find("1ULL, 0ULL, 0ULL, 32, 0);").unwrap()
+            < source.find(&format!("{last}ULL, 0ULL")).unwrap()
+    );
+    assert!(!source.contains("sv4_move(&_llg_format_args"));
+}

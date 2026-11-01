@@ -163,7 +163,9 @@ code at `-O1` instead of 0.13×).
   statement run adds one call and an exit test per run.
 - **Decision:** statement runs that share no state with the rest of the body
   are moved into static helpers of at most `LLG_OUTLINE_RUN_WEIGHT` (1,024)
-  IR nodes; runs under `LLG_OUTLINE_MIN_RUN_WEIGHT` (128) stay inline, so
+  weight units: IR nodes, plus two per formatting argument and two per block
+  scope for the fixed C they render, so a unit is one to two C lines in
+  every statement form and helpers stay at about 700-1,800 lines; runs under `LLG_OUTLINE_MIN_RUN_WEIGHT` (128) stay inline, so
   bodies up to one run keep their C byte for byte
   ([emitter notes](../src/sim/emit_c/evaluation.md),
   [residual cases](known_issues.md#long-bodies-that-cannot-be-outlined-compile-superlinearly)).
@@ -183,6 +185,22 @@ code at `-O1` instead of 0.13×).
   assignments per cycle in 3 helpers; a 16-arm `case` of 60 assignments per
   arm in 16 helpers) ran 1.006× and 1.008× the inline time, within the
   spread of 7 interleaved pinned pairs.
+- **Evidence (weight units):** counting IR nodes alone, a `$display` of 17
+  folded constants weighed 19 and rendered about 90 lines, so the optimized
+  `rtl_006` constant rows became a 4,610-line helper, which MSVC `/O2` did
+  not compile within 180 s on Windows CI (a 2,900-line helper did). With
+  the per-argument and per-scope units, and constant arguments built in
+  their argument entry, the largest helper is 1,284 lines (largest of any
+  test fixture model: 1,777 lines; before, 68 fixture models in the two
+  modes had a helper over 2,000 lines), and GCC 14 `-O2` (the local stand-in for MSVC) builds the model
+  in 0.6-0.9 s instead of 1.4 s. Run weights 768 to 2,048 were measured
+  again on those rows, the 1x-8x series, 3,000 distinct assignments and a
+  mixed-type fixture (GCC 14 and Clang 19, `-O2`/`-O3`, one pinned CPU, host
+  load about 20): no setting was best on every input, 768 was faster with
+  GCC on several inputs but 2.3× slower with Clang on the distinct
+  assignments (`--no-opt`), as 512 was before, so 1,024 stays. Generated
+  C changes only in long bodies and in formatting calls with constant
+  arguments; `perf/` hot loops keep their C.
 
 ### Coroutine frame: C locals wherever possible
 

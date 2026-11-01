@@ -196,8 +196,9 @@ pub const LLG_DENSE_FIXED_ARRAY_CELLS: u64 = 4096;
 /// See `docs/sim_performance_tradeoffs.md` for the measurement behind it.
 pub const LLG_DENSE_CELL_RUN_MIN: usize = 6;
 
-/// Largest weight (IR statements, lvalues and expression nodes) of one run
-/// of consecutive statements the emitter moves out of a process or
+/// Largest weight (IR statements, lvalues and expression nodes, plus the fixed
+/// C of formatting arguments and block scopes) of one run of consecutive
+/// statements the emitter moves out of a process or
 /// subprogram body into its own C function (`emit_c/owned/outline.rs`), and
 /// the statement-sequence weight from which it starts doing so. C compilers
 /// optimize a function in time superlinear in its size while the generated C

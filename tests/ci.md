@@ -46,7 +46,11 @@ the rules a change must keep. Platform pitfalls are in
   [known issues](../docs/known_issues.md#long-bodies-that-cannot-be-outlined-compile-superlinearly)):
   keep such a straight-line fixture body under about 10,000 generated lines,
   split by case (run 111325565657: `rtl_006/arith_constants`, before
-  outlining, timed out at 180 s on Windows x86_64).
+  outlining, timed out at 180 s on Windows x86_64). MSVC is the most
+  sensitive: on master `56becdf2` the optimized `arith_constants_w{1,32,64}`
+  models, one 4,600-line helper each because the run weight undercounted
+  folded `$display` arguments, timed out there again while a 2,900-line one
+  passed. `sim_outline_bodies` now bounds those helpers to 2,000 lines.
 - Linux builds only in the static-musl Alpine container; its `test` jobs run the
   archive on Ubuntu 24.04 and Rocky Linux 9. Windows/macOS `test` jobs run on the
   build job's runner kind with the checkout at the same path, so compile-time
