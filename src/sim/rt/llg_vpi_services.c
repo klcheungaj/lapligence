@@ -278,7 +278,9 @@ static llg_net_t* svc_target_net(const llg_vpi_target_t* target) {
 }
 
 static uint32_t svc_target_width(const llg_vpi_target_t* target) {
-    return target->span ? target->span : row_object(target->object)->width;
+    if (target->span) return target->span;
+    const llg_vpi_model_object_t* object = row_object(target->object);
+    return object->width;
 }
 
 /* The strength code of net bit `bit` in a view (llg_net_t.strength: high
