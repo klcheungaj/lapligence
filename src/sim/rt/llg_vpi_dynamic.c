@@ -491,7 +491,9 @@ static size_t dyn_container_size(const dyn_place_t* place) {
     const llg_vpi_shape_t* shape = place->shape;
     void* storage = place->storage;
     switch (shape->array_type) {
+        /* A fixed array keeps dynamic array storage. */
         case vpiDynamicArray:
+        case vpiStaticArray:
             return shape->values ? llg_dyn_value_size((const llg_dyn_value_array_t*)storage)
                                  : llg_dyn_size((const llg_dyn_array_t*)storage);
         case vpiQueueArray:
@@ -600,7 +602,7 @@ static llg_value_t* dyn_locate(const dyn_place_t* place, const llg_vpi_slot_t* s
         *exists = 1;
         if (!shape->values) return NULL;
         sv4_t index = sv4_from_u64(slot->element, 64, 0);
-        llg_value_t* element = shape->array_type == vpiDynamicArray
+        llg_value_t* element = (shape->array_type == vpiDynamicArray || shape->array_type == vpiStaticArray)
             ? llg_dyn_value_element((llg_dyn_value_array_t*)place->storage, &index, 1)
             : llg_queue_value_element((llg_queue_value_array_t*)place->storage, &index, 1);
         sv4_destroy(&index);
@@ -657,7 +659,9 @@ static void* dyn_value_storage(llg_value_t* element, const llg_vpi_shape_t* shap
 
 static void dyn_touch(const dyn_place_t* place) {
     switch (place->shape->array_type) {
-        case vpiDynamicArray: llg_dyn_value_touch((llg_dyn_value_array_t*)place->storage); break;
+        /* A fixed array keeps dynamic array storage. */
+        case vpiDynamicArray:
+        case vpiStaticArray: llg_dyn_value_touch((llg_dyn_value_array_t*)place->storage); break;
         case vpiQueueArray: llg_queue_value_touch((llg_queue_value_array_t*)place->storage); break;
         default: llg_assoc_value_touch((llg_assoc_value_t*)place->storage); break;
     }
@@ -861,7 +865,7 @@ static void dyn_element_get(const llg_vpi_slot_t* slot, p_vpi_value output) {
     sv4_t value;
     if (slot->lsb == DYN_AT_INDEX) {
         sv4_t index = sv4_from_u64(slot->element, 64, 0);
-        value = place.shape->array_type == vpiDynamicArray
+        value = (place.shape->array_type == vpiDynamicArray || place.shape->array_type == vpiStaticArray)
             ? llg_dyn_get((const llg_dyn_array_t*)place.storage, index)
             : llg_queue_get((const llg_queue_t*)place.storage, index);
         sv4_destroy(&index);
@@ -916,7 +920,7 @@ static void dyn_element_put(const llg_vpi_slot_t* slot, const s_vpi_value* input
     if (!dyn_packed_input(shape, input, &value)) return;
     if (slot->lsb == DYN_AT_INDEX) {
         sv4_t index = sv4_from_u64(slot->element, 64, 0);
-        if (place.shape->array_type == vpiDynamicArray)
+        if ((place.shape->array_type == vpiDynamicArray || place.shape->array_type == vpiStaticArray))
             (void)llg_dyn_set((llg_dyn_array_t*)place.storage, index, value);
         else
             (void)llg_queue_set((llg_queue_t*)place.storage, index, value);

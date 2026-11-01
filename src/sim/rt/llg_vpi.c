@@ -10685,7 +10685,9 @@ static vpiHandle udp_put_value(const llg_vpi_model_object_t* object, p_vpi_value
     datum_destroy(&datum);
     *(uint8_t*)object->storage = (uint8_t)(digit > 1u ? 2u : digit);
     sv4_t* doorbell = object->dependency;
-    llg_ba(doorbell, sv4_from_u64(llg_sv4_state(*doorbell, 0) == 1u ? 0u : 1u, 1, 0));
+    sv4_t ring = sv4_from_u64(llg_sv4_state(*doorbell, 0) == 1u ? 0u : 1u, 1, 0);
+    llg_ba(doorbell, ring); /* llg_ba copies the value */
+    sv4_destroy(&ring);
     return NULL;
 }
 
