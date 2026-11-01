@@ -428,6 +428,25 @@ later than this event shall be removed (modified transport delay)."
   and a delayed put to the queue element `q[0]` are `LLG_VPI_FLAGS` with
   level 3 (decisions A20-D22, A19-D23).
 
+## systf_evaluators (36.2, 9.4.2, 10.6.2)
+
+`$plus1(v)` is a user system function whose calltf returns `v + 1`. A user
+system function is called like any function (36.2), but its calltf may write
+any object through VPI, so the waiting process evaluates each context itself
+(the way it evaluates a context DPI import) instead of the read-only change
+callback. The number of calltf calls is not observable here and is not
+specified; the values are.
+
+- `always @($plus1(a))` waits for a change of the call's value (9.4.2): the
+  write `a = 5` at 2 ns wakes it once (`event=1`), and `a = 6` at 5 ns once
+  more (`event=2` at 6 ns).
+- `force y = $plus1(a)` at 1 ns follows its source (10.6.2): `y=1`, then
+  `y=6` and `y=7` after the writes.
+- `wait (twice(a) == 14)` calls `$plus1` through a function and completes at
+  5 ns, when `a = 6`.
+- `$monitor` with a `$plus1(a)` argument prints at 3 ns (its first Postponed
+  region) and again when `a` changes at 5 ns.
+
 ## Decisions
 
 The choices where the text is silent are the portable cases A20-D1 to A20-D4

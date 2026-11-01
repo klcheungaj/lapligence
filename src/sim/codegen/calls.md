@@ -51,7 +51,8 @@ target private; reject external refs, scheduler/net writes, timing, NBAs, static
 locals or unproved static returns. `EmptyArgument` wrappers do not bypass checks.
 `classify_event_expression` separates those callback rejections from legal
 zero-time helpers that only fail read-only proof (visible or persistent writes,
-unproved static results, descriptor-array formals/results): a blocking event
+unproved static results, descriptor-array formals/results, DPI imports, user
+system functions named by `CodegenOptions::user_system_functions`): a blocking event
 control with such a helper becomes a process-evaluated loop (evaluate at arm,
 `WaitAny` on the union of read sets, re-evaluate every source, LSB edge tests,
 qualifier on detection; declared named events by trigger count, reals by IEEE
@@ -63,7 +64,8 @@ waiting: intra-assignment NBA and `->>` controls arm at issue and wait in a
 hidden per-site source signal, re-evaluated by a guard process gated by
 `IrRuntimeQuery::ForceSourceActive`. `$monitor`/`$strobe` helpers
 (`classify_postponed_expression`) may store only to storage they own
-(`DisplayEval.private_effects`); other writes reject (SV 4.4.2.9). Callee
+(`DisplayEval.private_effects`); other writes reject (SV 4.4.2.9); an argument calling a user system function
+keeps the callback form. Callee
 activation arrays never enter dependency sets. Writes inside functions called by a continuous
 assignment are procedural writers in the SV 6.5 conflict check; only its LHS
 is the continuous driver.

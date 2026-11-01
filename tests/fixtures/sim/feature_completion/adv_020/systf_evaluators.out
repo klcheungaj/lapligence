@@ -1,0 +1,6 @@
+t=2 y=1
+t=3 y=6 event=1
+monitor t=3 plus1=6
+wait done t=5 a=6
+monitor t=5 plus1=7
+t=6 y=7 event=2

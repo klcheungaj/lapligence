@@ -231,3 +231,22 @@ fn delayed_puts_reach_string_variables() {
         &[("LLG_VPI_PLUGIN", &library)],
     );
 }
+
+const SYSTF_EVALUATORS: &[&str] = &["--define-system-task", "function int $plus1(input int v)"];
+
+/// A user system function in an event control, a force source, a wait
+/// condition (through a function) and a `$monitor` argument.
+#[test]
+fn user_system_functions_run_in_evaluated_contexts() {
+    let directory = sim_harness::TempDir::new("adv020-systf").expect("temporary directory");
+    let Some(library) = plugin(&directory, "systf_evaluators") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "systf_evaluators",
+        include_str!("../fixtures/sim/feature_completion/adv_020/systf_evaluators.out"),
+        SYSTF_EVALUATORS,
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}
