@@ -1,0 +1,3 @@
+vpiSpecParam tb.tm value=4 expr vpiConstant value=4
+vpiSpecParam tb.tsum value=5 expr vpiOperation value=5 op=24 operands vpiConstant=2 vpiConstant=3
+vpiSpecParam tb.tmul value=8 expr vpiOperation value=8 op=25 operands vpiSpecParam=4 vpiConstant=2

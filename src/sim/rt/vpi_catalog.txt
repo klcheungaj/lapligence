@@ -56,6 +56,7 @@ test a19d62 sim_lrm_decisions::a19_d62_statement_processes
 test a19d63 sim_lrm_decisions::a19_d63_structure_net_members
 test a19d64 sim_lrm_decisions::a19_d64_switch_values_and_class_object_names
 test a19d65 sim_lrm_decisions::a19_d65_refused_relations
+test a19d66 sim_lrm_decisions::a19_d66_specparam_expressions
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test a20d16 sim_lrm_decisions::a20_d16_delay_expressions
 test a20d17 sim_lrm_decisions::a20_d17_port_delays
@@ -1139,7 +1140,7 @@ node spec_param 37.26 type=vpiSpecParam
   str vpiFullName implemented walk
   get vpiConstType implemented walk
   get vpiSigned implemented walk
-  handle vpiExpr unsupported initialization and default expressions are not exposed
+  handle vpiExpr implemented a19d66
   get vpiScalar extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
   handle vpiLeftRange extension walk the packed range of the object's value, as of a parameter

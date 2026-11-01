@@ -6982,10 +6982,11 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 return conn_handle(slot->object, (uint32_t)slot->aux);
             /* 37.17 detail 8, 37.26 detail 3: the initialization expression
              * of a variable, the default expression of a value parameter
-             * (decision A19-D32); NULL without one. */
+             * (decision A19-D32) or the value expression of a specparam
+             * (decision A19-D66); NULL without one. */
             if (slot->kind == SLOT_OBJECT && object &&
                 (is_variable_type(object->type) || object->type == vpiRegArray ||
-                 object->type == vpiParameter || (object->flags & LLG_VPI_OBJ_DYNAMIC))) {
+                 is_parameter_type(object->type) || (object->flags & LLG_VPI_OBJ_DYNAMIC))) {
                 if (!g_vpi.code) {
                     vpi_error("LLG_VPI_UNSUPPORTED",
                               "expressions are objects only in models generated with --vpi or "

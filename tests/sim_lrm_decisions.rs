@@ -2654,6 +2654,15 @@ fn a19_d65_refused_relations() {
 }
 
 #[test]
+fn a19_d66_specparam_expressions() {
+    run_vpi_decision(
+        "A19-D66_specparam_expressions",
+        &["task $d66()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D66_specparam_expressions.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",
