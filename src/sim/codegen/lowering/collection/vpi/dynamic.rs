@@ -307,6 +307,12 @@ impl Codegen<'_> {
                         IrClassFieldType::Real { shortreal } => IrVpiShape::Real { shortreal },
                         IrClassFieldType::String => IrVpiShape::String,
                         IrClassFieldType::Chandle if slot.event => IrVpiShape::Event,
+                        IrClassFieldType::Chandle
+                            if matches!(&descriptor.shape,
+                                TypeShape::Opaque { kind } if kind == "VirtualInterface") =>
+                        {
+                            IrVpiShape::VirtualInterface
+                        }
                         IrClassFieldType::Chandle => self
                             .vpi_handle_shape(descriptor)
                             .unwrap_or(IrVpiShape::Other),

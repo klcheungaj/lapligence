@@ -2210,6 +2210,15 @@ fn a19_d71_mailbox_semaphore_waiters() {
 }
 
 #[test]
+fn a19_d72_virtual_interface_properties() {
+    run_vpi_decision(
+        "A19-D72_virtual_interface_properties",
+        &["task $d72()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D72_virtual_interface_properties.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",

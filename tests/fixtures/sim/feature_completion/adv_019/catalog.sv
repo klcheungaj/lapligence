@@ -86,6 +86,8 @@ module tb;
     int id;
     // An event property: a named event of each object (37.25, 37.29).
     event done;
+    // A virtual interface property (37.27 detail 7, 37.29 detail 7).
+    virtual bus_if vif;
     function new(int i);
       id = i;
     endfunction
@@ -306,6 +308,7 @@ module tb;
 
   initial begin : main
     p = new(7);
+    p.vif = bi;
     sq = new;
     da = new[2];
     q.push_back(1);

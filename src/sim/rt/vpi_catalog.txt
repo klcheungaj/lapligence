@@ -61,6 +61,7 @@ test a19d67 sim_lrm_decisions::a19_d67_packed_array_elements
 test a19d68 sim_lrm_decisions::a19_d68_udp_initial_statement
 test a19d69 sim_lrm_decisions::a19_d69_named_event_arrays
 test a19d71 sim_lrm_decisions::a19_d71_mailbox_semaphore_waiters
+test a19d72 sim_lrm_decisions::a19_d72_virtual_interface_properties
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test a20d16 sim_lrm_decisions::a20_d16_delay_expressions
 test a20d17 sim_lrm_decisions::a20_d17_port_delays
@@ -1183,7 +1184,7 @@ node class_defn 37.27 type=vpiClassDefn
   iterate vpiMethods implemented walk
   iterate vpiConstraint implemented walk
   iterate vpiParameter implemented a19classes
-  iterate vpiInterfaceDecl unsupported a virtual interface property holds a runtime interface reference that llg does not map back to the interface instance it names, so it is not an object
+  iterate vpiInterfaceDecl implemented a19d72
   iterate vpiNamedEvent implemented walk
   iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
   iterate vpiTypedef error a19d65 typedefs declared in a class are not objects; industry-standard behaviour refuses it (decision A19-D65)
@@ -1242,7 +1243,7 @@ node class_obj 37.29 type=vpiClassObj
   iterate vpiMethods implemented walk
   iterate vpiConstraint implemented a19cons
   iterate vpiParameter implemented walk
-  iterate vpiInterfaceDecl unsupported a virtual interface property holds a runtime interface reference that llg does not map back to the interface instance it names, so it is not an object
+  iterate vpiInterfaceDecl implemented walk
   iterate vpiNamedEvent implemented walk
   iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
   iterate vpiInternalScope implemented walk

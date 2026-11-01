@@ -1,0 +1,12 @@
+object error=0
+  vi type=608 virtual=1 actual=NULL actual_type=0 error=0 value_error=1
+definition error=0
+  vi type=608 virtual=1 actual=NULL actual_type=0 error=1 value_error=1
+object error=0
+  vi type=608 virtual=1 actual=tb.i1 actual_type=601 error=0 value_error=1
+definition error=0
+  vi type=608 virtual=1 actual=NULL actual_type=0 error=1 value_error=1
+object error=0
+  vi type=608 virtual=1 actual=tb.i0 actual_type=601 error=0 value_error=1
+definition error=0
+  vi type=608 virtual=1 actual=NULL actual_type=0 error=1 value_error=1

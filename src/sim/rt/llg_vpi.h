@@ -343,6 +343,7 @@ enum {
     LLG_VPI_SHAPE_CONTAINER = 5, /* dynamic array, queue or associative array */
     LLG_VPI_SHAPE_OTHER = 6,     /* listed without a value */
     LLG_VPI_SHAPE_EVENT = 7,     /* void*: an event property's synchronization object */
+    LLG_VPI_SHAPE_VIF = 8,       /* void*: a virtual interface property's environment record */
 };
 /* The built-in class a class handle shape names (class_index 0): its
  * storage is the runtime's mailbox or semaphore, not a collected class
@@ -439,6 +440,13 @@ enum {
     LLG_VPI_FIELD_PAYLOAD = 4,  /* owned container or record */
 };
 
+/* The interface instance (catalog row `row`) a virtual interface handle
+ * names when it holds `env` (37.27 detail 7). */
+typedef struct {
+    const void* env;
+    uint32_t row;
+} llg_vpi_vif_t;
+
 typedef struct {
     const llg_vpi_shape_t* shapes;
     uint32_t shape_count;
@@ -452,6 +460,9 @@ typedef struct {
     int (*object)(void* handle, uint32_t* class_id);
     /* The storage of field `index` of a live object and its kind. */
     void* (*field)(void* handle, uint32_t index, unsigned* kind);
+    /* The environment records virtual interface properties may hold. */
+    const llg_vpi_vif_t* vifs;
+    uint32_t vif_count;
 } llg_vpi_dynamic_tables_t;
 
 /* The dynamic tables of the catalog, borrowed like the catalog and

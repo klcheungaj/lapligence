@@ -85,6 +85,10 @@ pub enum IrVpiShape {
     /// An `event` class property (37.25): a named event object whose
     /// storage is the handle slot naming its synchronization object.
     Event,
+    /// A virtual interface class property (37.27 detail 7, 37.29 detail
+    /// 7): a reference object whose storage is the handle naming the
+    /// interface instance's environment record.
+    VirtualInterface,
     /// Events, records, nested fixed arrays: listed, without a value.
     Other,
 }
@@ -101,6 +105,7 @@ impl IrVpiShape {
             Self::Chandle => "vpiChandleVar",
             Self::Container { .. } => "vpiArrayVar",
             Self::Event => "vpiNamedEvent",
+            Self::VirtualInterface => "vpiRefObj",
             Self::Other => "vpiUndefined",
         }
     }
@@ -115,6 +120,7 @@ impl IrVpiShape {
             Self::Chandle => "LLG_VPI_SHAPE_CHANDLE",
             Self::Container { .. } => "LLG_VPI_SHAPE_CONTAINER",
             Self::Event => "LLG_VPI_SHAPE_EVENT",
+            Self::VirtualInterface => "LLG_VPI_SHAPE_VIF",
             Self::Other => "LLG_VPI_SHAPE_OTHER",
         }
     }

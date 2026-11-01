@@ -45,7 +45,11 @@ pub(super) fn row_type(model: &IrModel, object: &IrVpiObject) -> &'static str {
 
 /// Emit `llg_vpi_dynamic_tables` (NULL when the model has no dynamic
 /// shapes or classes).
-pub(super) fn render_vpi_dynamic(model: &IrModel, out: &mut String) {
+pub(super) fn render_vpi_dynamic(
+    model: &IrModel,
+    indices: &std::collections::HashMap<&str, usize>,
+    out: &mut String,
+) {
     let dynamic = &model.vpi_dynamic;
     if !model.vpi_catalog || dynamic.is_empty() {
         out.push_str(
@@ -94,7 +98,11 @@ pub(super) fn render_vpi_dynamic(model: &IrModel, out: &mut String) {
                     };
                     element = *shape;
                 }
-                IrVpiShape::String | IrVpiShape::Chandle | IrVpiShape::Event | IrVpiShape::Other => {}
+                IrVpiShape::String
+                | IrVpiShape::Chandle
+                | IrVpiShape::Event
+                | IrVpiShape::VirtualInterface
+                | IrVpiShape::Other => {}
             }
             format!(
                 "    {{ {}, {}, {array_type}, {values}u, {key}, {width}u, {}, {}, {}, {class}u, {element}u, {typespec}u, {builtin} }}",
@@ -215,13 +223,46 @@ static void* llg_class_vpi_field(void* handle, uint32_t index, unsigned* kind) {
         );
         "llg_class_vpi_object, llg_class_vpi_field"
     };
+    // The interface instance each virtual interface environment record
+    // stands for (37.27 detail 7), when a class has a virtual interface
+    // property.
+    let vifs = if dynamic
+        .shapes
+        .iter()
+        .any(|shape| matches!(shape, IrVpiShape::VirtualInterface))
+    {
+        model
+            .virtual_interfaces
+            .iter()
+            .flat_map(|interface| &interface.instances)
+            .filter_map(|instance| {
+                let row = indices.get(instance.path.as_str())?;
+                Some(format!(
+                    "    {{ (const void*)&{}, {row}u }}",
+                    instance.c_name
+                ))
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let vif_table = if vifs.is_empty() {
+        "NULL".to_owned()
+    } else {
+        out.push_str(&format!(
+            "static const llg_vpi_vif_t llg_vpi_vifs[] = {{\n{}\n}};\n",
+            vifs.join(",\n")
+        ));
+        "llg_vpi_vifs".to_owned()
+    };
     out.push_str(&format!(
-        "static const llg_vpi_dynamic_tables_t llg_vpi_dynamic_tables_value = {{ {shape_table}, {}u, {class_table}, {}u, {field_table}, {}u, {item_table}, {}u, {accessors} }};\n\
+        "static const llg_vpi_dynamic_tables_t llg_vpi_dynamic_tables_value = {{ {shape_table}, {}u, {class_table}, {}u, {field_table}, {}u, {item_table}, {}u, {accessors}, {vif_table}, {}u }};\n\
          static const llg_vpi_dynamic_tables_t* const llg_vpi_dynamic_tables = &llg_vpi_dynamic_tables_value;\n",
         shapes.len(),
         classes.len(),
         fields.len(),
-        items.len()
+        items.len(),
+        vifs.len()
     ));
 }
 
@@ -288,7 +329,7 @@ mod tests {
     fn a_model_without_dynamic_objects_has_no_tables() {
         let model = IrModel::new("tb".to_owned(), 1).expect("model");
         let mut out = String::new();
-        render_vpi_dynamic(&model, &mut out);
+        render_vpi_dynamic(&model, &std::collections::HashMap::new(), &mut out);
         assert_eq!(
             out,
             "static const llg_vpi_dynamic_tables_t* const llg_vpi_dynamic_tables = NULL;\n"
@@ -312,7 +353,7 @@ mod tests {
             element,
         });
         let mut out = String::new();
-        render_vpi_dynamic(&model, &mut out);
+        render_vpi_dynamic(&model, &std::collections::HashMap::new(), &mut out);
         assert!(
             out.contains("{ vpiReg, LLG_VPI_SHAPE_PACKED, 0, 0u, LLG_VPI_KEY_NONE, 8u, 1, 0, 0, 0u, 0u, 0u, LLG_VPI_BUILTIN_NONE }"),
             "{out}"
@@ -322,7 +363,9 @@ mod tests {
             "{out}"
         );
         assert!(
-            out.contains("{ llg_vpi_shapes, 2u, NULL, 0u, NULL, 0u, NULL, 0u, NULL, NULL }"),
+            out.contains(
+                "{ llg_vpi_shapes, 2u, NULL, 0u, NULL, 0u, NULL, 0u, NULL, NULL, NULL, 0u }"
+            ),
             "{out}"
         );
     }

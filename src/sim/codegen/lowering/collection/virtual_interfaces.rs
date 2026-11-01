@@ -520,6 +520,7 @@ impl<'a> Codegen<'a> {
                                 .collect::<Vec<_>>()
                         )
                     ),
+                    path: self.vpi_full_name(interface),
                     members: member_slots,
                     methods: method_slots,
                 });

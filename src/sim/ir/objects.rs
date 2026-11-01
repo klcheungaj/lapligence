@@ -66,6 +66,9 @@ pub struct IrVirtualInterfaceMember {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct IrVirtualInterfaceInstance {
     pub(in crate::sim) c_name: String,
+    /// The VPI catalog key of the interface instance, which a virtual
+    /// interface property of a class names (`vpiActual`, 37.27 detail 7).
+    pub(in crate::sim) path: String,
     pub(in crate::sim) members: Vec<Option<usize>>,
     pub(in crate::sim) methods: Vec<Option<usize>>,
 }

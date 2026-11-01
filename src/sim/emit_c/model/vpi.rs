@@ -494,7 +494,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
              static const llg_vpi_type_tables_t* const llg_vpi_type_tables = NULL;\n\
              static const llg_vpi_code_tables_t* const llg_vpi_code_tables = NULL;\n",
         );
-        dynamic::render_vpi_dynamic(model, out);
+        dynamic::render_vpi_dynamic(model, &std::collections::HashMap::new(), out);
         return;
     }
     let entries = catalog_for(model);
@@ -507,7 +507,7 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         .collect::<Vec<_>>();
     scope_typedefs.sort_by_key(|(row, _)| *row);
     render_vpi_typespecs(model.vpi_typespecs(), &scope_typedefs, out);
-    dynamic::render_vpi_dynamic(model, out);
+    dynamic::render_vpi_dynamic(model, &indices, out);
     for (index, entry) in entries.iter().enumerate() {
         if entry.dims.is_empty() {
             continue;

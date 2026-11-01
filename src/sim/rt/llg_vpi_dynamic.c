@@ -98,12 +98,15 @@ static int dyn_tables_valid(void) {
     const llg_vpi_dynamic_tables_t* t = g_dyn.tables;
     if (!t) return 1;
     if ((t->shape_count && !t->shapes) || (t->class_count && !t->classes) ||
-        (t->field_count && !t->fields) || (t->class_count && (!t->object || !t->field)))
+        (t->field_count && !t->fields) || (t->class_count && (!t->object || !t->field)) ||
+        (t->vif_count && !t->vifs))
         return 0;
+    for (uint32_t i = 0; i < t->vif_count; ++i)
+        if (!t->vifs[i].env || t->vifs[i].row >= g_vpi.object_count) return 0;
     uint32_t typespecs = g_vpi.types ? g_vpi.types->typespec_count : 0u;
     for (uint32_t i = 0; i < t->shape_count; ++i) {
         const llg_vpi_shape_t* shape = &t->shapes[i];
-        if (shape->shape > LLG_VPI_SHAPE_EVENT || shape->class_index > t->class_count ||
+        if (shape->shape > LLG_VPI_SHAPE_VIF || shape->class_index > t->class_count ||
             shape->typespec > typespecs || shape->width >= LLG_SUPPORTED_WIDTH_LIMIT)
             return 0;
         if (shape->shape == LLG_VPI_SHAPE_PACKED && shape->width == 0) return 0;
@@ -398,7 +401,8 @@ static void* dyn_field_storage(void* object, uint32_t field, const llg_vpi_shape
         case LLG_VPI_SHAPE_STRING: return kind == LLG_VPI_FIELD_STRING ? storage : NULL;
         case LLG_VPI_SHAPE_CLASS:
         case LLG_VPI_SHAPE_CHANDLE:
-        case LLG_VPI_SHAPE_EVENT: return kind == LLG_VPI_FIELD_HANDLE ? storage : NULL;
+        case LLG_VPI_SHAPE_EVENT:
+        case LLG_VPI_SHAPE_VIF: return kind == LLG_VPI_FIELD_HANDLE ? storage : NULL;
         case LLG_VPI_SHAPE_CONTAINER: return kind == LLG_VPI_FIELD_PAYLOAD ? storage : NULL;
         default: return NULL;
     }
@@ -1429,6 +1433,22 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
                 break;
             }
             const llg_vpi_shape_t* shape = place.shape;
+            if (type == vpiActual && shape->shape == LLG_VPI_SHAPE_VIF) {
+                /* 37.15: the interface instance a virtual interface property
+                 * names; NULL while it names none. */
+                if (!place.storage) {
+                    vpi_error("LLG_VPI_RELATION",
+                              "a property of a class definition names no interface (37.27 detail 2)");
+                    return NULL;
+                }
+                if (dyn_refuse_dying(place.owner, "vpiActual")) return NULL;
+                const void* env = *(void* const*)place.storage;
+                if (!env) return NULL;
+                for (uint32_t i = 0; i < g_dyn.tables->vif_count; ++i)
+                    if (g_dyn.tables->vifs[i].env == env) return object_handle(g_dyn.tables->vifs[i].row);
+                vpi_error("LLG_VPI_RELATION", "the interface instance this virtual interface names has no object");
+                return NULL;
+            }
             if (type == vpiClassObj && shape->shape == LLG_VPI_SHAPE_CLASS) {
                 if (!place.storage) {
                     vpi_error("LLG_VPI_RELATION",
@@ -1445,7 +1465,8 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
                 return shape->class_index ? class_typespec_handle(shape->class_index - 1u) : NULL;
             if (type == vpiTypespec && shape->shape == LLG_VPI_SHAPE_PACKED && shape->typespec)
                 return typespec_handle(typespec_ref(shape->typespec));
-            if (slot->kind == SLOT_PROPERTY && type == vpiParent) {
+            if (slot->kind == SLOT_PROPERTY && type == vpiParent &&
+                shape->shape != LLG_VPI_SHAPE_VIF) {
                 /* 37.17 detail 26: a property reached by iteration has no
                  * parent. */
                 return NULL;
@@ -1483,6 +1504,9 @@ static int dyn_field_listed(uint32_t class_index, uint32_t field, int type) {
     if (!shape || shape->shape == LLG_VPI_SHAPE_OTHER) return 0;
     /* An event property is a named event, not a variable (37.25, 37.29). */
     if (shape->shape == LLG_VPI_SHAPE_EVENT) return type == vpiNamedEvent;
+    /* A virtual interface property is an interface declaration (37.27
+     * detail 7). */
+    if (shape->shape == LLG_VPI_SHAPE_VIF) return type == vpiInterfaceDecl;
     return !type || shape->type == type;
 }
 
@@ -1547,8 +1571,10 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
                 return dyn_iterate_items(class_index, type, 0,
                                          type == vpiConstraint ? slot->pointer : NULL);
             }
-            /* 37.29: the object's event properties, inherited ones first. */
-            if (type == vpiNamedEvent) return dyn_iterate_fields(slot->pointer, class_index, 0, type);
+            /* 37.29 details 6 and 7: the object's event and virtual
+             * interface properties, inherited ones first. */
+            if (type == vpiNamedEvent || type == vpiInterfaceDecl)
+                return dyn_iterate_fields(slot->pointer, class_index, 0, type);
             break;
         }
         case SLOT_CLASSITEM:
@@ -1566,7 +1592,7 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
             if (dyn_class_iteration(type)) return dyn_iterate_items(class_index, type, 0, NULL);
             /* 37.27, 37.28: the event properties the class declares; they
              * name no synchronization object. */
-            if (type == vpiNamedEvent)
+            if (type == vpiNamedEvent || (type == vpiInterfaceDecl && slot->kind == SLOT_CLASSDEFN))
                 return dyn_iterate_fields(NULL, class_index, dyn_inherited_fields(class_index), type);
             if (type == vpiDerivedClasses && slot->kind == SLOT_CLASSDEFN) {
                 uint32_t count = 0;
@@ -1840,6 +1866,11 @@ static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
             dyn_place_t place;
             if (!dyn_place(slot, &place)) break;
             const llg_vpi_shape_t* shape = place.shape;
+            if (shape->shape == LLG_VPI_SHAPE_VIF) {
+                /* 37.15: a reference object for a virtual interface. */
+                if (property == vpiVirtual) return 1;
+                break;
+            }
             switch (property) {
                 case vpiSize: {
                     int ok;
@@ -2016,6 +2047,10 @@ static void dyn_get_value(llg_vpi_slot_t* slot, p_vpi_value output) {
             if (!dyn_place(slot, &place)) return;
             if (place.shape->shape == LLG_VPI_SHAPE_EVENT) {
                 vpi_error("LLG_VPI_VALUE", "a named event has no value (37.25)");
+                return;
+            }
+            if (place.shape->shape == LLG_VPI_SHAPE_VIF) {
+                vpi_error("LLG_VPI_VALUE", "a virtual interface has no value (37.15)");
                 return;
             }
             if (!place.storage) {
