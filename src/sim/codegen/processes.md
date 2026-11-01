@@ -88,14 +88,23 @@ Input links evaluate in the parent scope; selected outputs preserve untouched
 bits. Constants/omitted defaults run once; explicit opens ignore defaults. Whole
 packed/fixed aggregate refs retain canonical storage and member views without
 copy links. Scalar real links use doubles and notify changed dependencies.
-An input variable port on a whole variable actual of the identical type has no
-link: `collapse_input_ports` makes the formal an alias of the actual's storage
-(`collection/port_aliases.rs`, A21-D1) right after the timing metadata, unless a
-force/release names the formal, either side is a net, the formal has an
-initializer, the instance owns specify paths or timing checks, the design reads
-SDF, the formal is a ref-port target, or an initialized actual has a time-0
-observer of the formal. `lower_model` lowers again without collapse when the
-lowered model keeps the VPI catalog (known only after the bodies).
+A port whose sink can share its source's storage has no link
+(`collection/port_aliases.rs`, `collection/nets/port_sinks.rs`): the sink
+becomes an alias of the source's root storage. Three forms: an input variable
+formal on a whole variable actual (A21-D1) and an output variable actual of a
+variable formal that nothing else writes (A21-D3), both by
+`collapse_variable_ports` right after the timing metadata; and a `wire`/`tri`/
+`logic` net sink that only its port drives, merged with a variable or whole
+resolved net source while `build_net_groups` builds the standalone groups
+(A21-D2), so the sink never gets a group. The link stays when a force/release
+names a variable sink (or a net sink of a variable), the types differ, the
+sink has an initializer, another driver, a net delay or a net type of its
+own, either instance owns specify paths or timing checks, the design reads
+SDF, the sink is a ref-port target, or a source that does not start at X has
+a time-0 observer of the sink. For a net source that start is known only
+after lowering: `lower_model` lowers again with those ports kept
+(`port_collapse_retries`), and without collapse when the lowered model keeps
+the VPI catalog (known only after the bodies).
 Interface/modport bodies use the actual Slang-bound instance; a simple modport
 port resolves to its same-named interface member. Connection indices must be
 elaborated constants (including genvars), except a variable output target: it is

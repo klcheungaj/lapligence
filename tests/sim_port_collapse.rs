@@ -1,11 +1,13 @@
-//! An input port whose formal is a variable connected to a whole variable of
-//! the same type shares the actual's storage (decision A21-D1): the model has
-//! no link process for it. Every case where sharing would be observable
-//! keeps the link. These checks count the link processes of one instance in
+//! A port whose sink shares its source's storage has no link process: an
+//! input variable formal of a whole variable actual (decision A21-D1), a
+//! `wire` sink that only its port drives (A21-D2) and an output variable
+//! actual of a variable formal (A21-D3). Every case where sharing would be
+//! observable keeps the link. These checks count the link processes of one instance in
 //! the generated C (`"<instance>.link"` descriptors), so they stay cheap and
-//! independent of host timing; behaviour is covered by the A21-D1 decision
-//! case and the port fixtures.
+//! independent of host timing; behaviour is covered by the A21-D1..A21-D3
+//! decision cases and the `port_collapse` fixtures run below.
 
+use crate::sim_cli;
 use llg::core::compile::{compile_sources_checked, CompileOpts, OwnedSource};
 use llg::core::db::Db;
 use llg::sim::codegen::{generate_from_db_with_codegen_options, CodegenOptions};
@@ -110,31 +112,270 @@ endmodule
     }
 }
 
+/// A `wire` sink that only its port drives merges with its source
+/// (decision A21-D2): an input net formal with a variable or net actual, an
+/// output net actual of a variable or net formal, through a chain of
+/// instances. No link process and no resolved net of its own remain.
 #[test]
-fn net_formals_and_net_actuals_keep_the_link() {
+fn net_sinks_merge_with_their_source() {
+    let model = render(
+        "module leaf(input wire c, input wire [7:0] d, output wire [7:0] q, output wire [7:0] r);
+  logic [7:0] s;
+  always @(posedge c) s <= d;
+  assign q = s;
+  assign r = ~s;
+endmodule
+module mid(input c, input [7:0] d, output [7:0] q, output logic [7:0] r);
+  wire [7:0] t;
+  leaf l(.c(c), .d(d), .q(t), .r());
+  leaf l2(.c(c), .d(t), .q(q), .r(r));
+endmodule
+module tb;
+  logic c;
+  logic [7:0] d;
+  wire [7:0] q;
+  logic [7:0] r;
+  mid u(.c(c), .d(d), .q(q), .r(r));
+  initial begin c = 0; d = 1; #1 c = 1; #1 $display(\"%h %h\", q, r); $finish; end
+endmodule
+",
+    );
+    // Only the variable `mid.r` keeps the link from the net `l2.r`: a
+    // variable sink is no net merge.
+    assert_eq!(links_named(&model, ".link\""), 1, "{model}");
+    assert_eq!(links_named(&model, "\"tb.u.l2.link\""), 1, "{model}");
+    // One resolved net per leaf output; every sink is a second name.
+    assert_eq!(net_groups(&model), 4, "{model}");
+}
+
+/// Resolved nets declared by the model.
+fn net_groups(model: &str) -> usize {
+    model
+        .lines()
+        .filter_map(|line| line.strip_prefix("static llg_net_t "))
+        .map(|names| names.split(',').count())
+        .sum()
+}
+
+/// Merging is not an alias when the sink has another driver, a type that
+/// could dominate or a delay of its own, or the two sides differ.
+#[test]
+fn net_sinks_that_merging_would_change_keep_the_link() {
+    for (formal, body, actual, connection, label) in [
+        (
+            "input wire a",
+            "assign a = 1'bz;",
+            "logic x;",
+            ".a(x)",
+            "coerced input",
+        ),
+        ("input tri0 a", "", "wire x = y;", ".a(x)", "tri0 formal"),
+        ("input wand a", "", "wire x = y;", ".a(x)", "wand formal"),
+        (
+            "input wire [1:0] a",
+            "",
+            "wire [3:0] x = {4{y}};",
+            ".a(x)",
+            "width",
+        ),
+        (
+            "input wire signed [3:0] a",
+            "",
+            "wire [3:0] x = {4{y}};",
+            ".a(x)",
+            "sign",
+        ),
+        (
+            "input wire a",
+            "",
+            "wire [3:0] x = {4{y}};",
+            ".a(x[1])",
+            "select",
+        ),
+        ("input wire a", "", "wire x = y;", ".a(~x)", "expression"),
+        (
+            "output wire a",
+            "assign a = 1'b0;",
+            "wire x; assign x = y;",
+            ".a(x)",
+            "second actual driver",
+        ),
+        (
+            "output wire a",
+            "assign (weak0, weak1) a = 1'b0;",
+            "wire x;",
+            ".a(x)",
+            "strength of the formal does not matter",
+        ),
+    ] {
+        let model = render(&format!(
+            "module child({formal});
+  {body}
+endmodule
+module tb;
+  logic y;
+  {actual}
+  child u({connection});
+  initial begin y = 0; #1 y = 1; $finish; end
+endmodule
+"
+        ));
+        let expected = usize::from(label != "strength of the formal does not matter");
+        assert_eq!(links(&model), expected, "{label}: {model}");
+    }
+    // A net delay on the formal (a non-ANSI declaration may give one).
+    let model = render(
+        "module child(a);
+  input a;
+  wire #2 a;
+endmodule
+module tb;
+  wire x;
+  logic y;
+  assign x = y;
+  child u(.a(x));
+  initial begin y = 0; #1 y = 1; #3 $finish; end
+endmodule
+",
+    );
+    assert_eq!(links(&model), 1, "formal net delay: {model}");
+}
+
+/// A force on a net sink merged with a source net forces the merged net; a
+/// net sink of a variable keeps its link, so the force stays on the sink.
+#[test]
+fn forced_net_sinks_merge_only_with_a_source_net() {
     let model = render(
         "module child(input wire a);
-  always @(a) $display(\"%b\", a);
+endmodule
+module tb;
+  logic y;
+  wire x = y;
+  child u(.a(x));
+  initial begin y = 0; #1 force u.a = 1; #1 release u.a; $finish; end
+endmodule
+",
+    );
+    assert_eq!(links(&model), 0, "net source: {model}");
+    let model = render(
+        "module child(input wire a);
 endmodule
 module tb;
   logic x;
   child u(.a(x));
-  initial begin x = 0; #1 x = 1; $finish; end
+  initial begin x = 0; #1 force u.a = 1; #1 release u.a; $finish; end
 endmodule
 ",
     );
-    assert_eq!(links(&model), 1, "net formal: {model}");
-    let model = render(&with_child(
-        "module tb;
-  logic x0;
-  wire x = x0;
-  logic [3:0] y;
-  child u(.a(x), .v(y));
-  initial begin x0 = 0; y = 0; #1 x0 = 1; $finish; end
+    assert_eq!(links(&model), 1, "variable source: {model}");
+}
+
+/// The sink of a link is a driven net that starts at X (T0-D3). A merged
+/// sink starts where its source starts: a source that does not start at X
+/// keeps the link only when a process already waiting at time 0 reads the
+/// sink; for a net source this is known after lowering, which then lowers
+/// again with that port kept.
+#[test]
+fn net_sinks_keep_the_link_for_time_zero_observers_of_a_different_start() {
+    let top = |actual: &str, observer: &str| {
+        format!(
+            "module child(input wire a);
+  logic seen;
+  {observer}
 endmodule
-",
+module tb;
+  {actual}
+  child u(.a(x));
+  initial #2 $finish;
+endmodule
+"
+        )
+    };
+    for (actual, observer, expected, label) in [
+        (
+            "wire x;",
+            "always @(a) seen = 1;",
+            1,
+            "undriven net starts z",
+        ),
+        (
+            "wire x;",
+            "initial @(a) seen = 1;",
+            0,
+            "starts after the links",
+        ),
+        ("tri1 x;", "always @(a) seen = 1;", 1, "pulled net"),
+        (
+            "wire x; logic y; assign x = y;",
+            "always @(a) seen = 1;",
+            0,
+            "driven net starts x",
+        ),
+        ("logic x;", "always @(a) seen = 1;", 0, "variable starts x"),
+        (
+            "logic x = 1'b1;",
+            "always @(posedge a) seen = 1;",
+            1,
+            "initialized variable",
+        ),
+        (
+            "logic x = 1'b1;",
+            "always @(negedge a) seen = 1;",
+            0,
+            "x to 1 is no negedge",
+        ),
+    ] {
+        let model = render(&top(actual, observer));
+        assert_eq!(links(&model), expected, "{label}: {model}");
+    }
+}
+
+/// An output variable formal connected to a whole variable that nothing
+/// else writes shares that variable (decision A21-D3).
+#[test]
+fn output_variables_share_their_actual() {
+    let child = "module child(input logic c, output logic q, output logic [3:0] v);
+  always @(posedge c) begin q <= ~q; v <= v + 4'd1; end
+  initial begin q = 0; v = 0; end
+endmodule
+";
+    let model = render(&format!(
+        "{child}module tb;
+  logic c, y;
+  logic [3:0] w;
+  child u(.c(c), .q(y), .v(w));
+  initial begin c = 0; #1 c = 1; #1 $display(\"%b %h\", y, w); $finish; end
+endmodule
+"
     ));
-    assert_eq!(links(&model), 1, "net actual: {model}");
+    assert_eq!(links(&model), 0, "{model}");
+    for (top, label) in [
+        (
+            "logic c, y; logic [7:0] w; child u(.c(c), .q(y), .v(w));",
+            "width conversion",
+        ),
+        (
+            "logic c, y; logic [3:0] w; child u(.c(c), .q(y), .v(w)); initial #1 force w = 0;",
+            "forced actual",
+        ),
+        (
+            "logic c, y; logic [3:0] w; child u(.c(c), .q(y), .v(w)); initial #1 release w;",
+            "released actual",
+        ),
+        (
+            "logic c, y; logic [3:0] w; child u(.c(c), .q(y), .v(w[3:0]));",
+            "select",
+        ),
+    ] {
+        let model = render(&format!(
+            "{child}module tb;
+  {top}
+  initial begin c = 0; #1 c = 1; #1 $finish; end
+endmodule
+"
+        ));
+        assert_eq!(links(&model), 1, "{label}: {model}");
+    }
 }
 
 #[test]
@@ -181,6 +422,24 @@ endmodule
         &[],
     );
     assert_eq!(links(&model), 2, "--vpi: {model}");
+    let model = render_with(
+        "module child(input wire a, output wire b);
+  assign b = a;
+endmodule
+module tb;
+  logic x;
+  wire y;
+  child u(.a(x), .b(y));
+  initial begin x = 0; #1 x = 1; $finish; end
+endmodule
+",
+        &CodegenOptions {
+            vpi: true,
+            ..Default::default()
+        },
+        &[],
+    );
+    assert_eq!(links(&model), 2, "--vpi net ports: {model}");
     // A user system task makes the model keep the VPI catalog; it is only
     // known once the bodies are lowered, which then happens again.
     let model = render_with(
@@ -294,6 +553,23 @@ endmodule
 ",
     );
     assert_eq!(links(&model), 2, "{model}");
+    let model = render(
+        "module child(input wire clk, input wire d, output wire q);
+  assign q = d;
+  specify
+    (d => q) = 1;
+    $setup(d, posedge clk, 1);
+  endspecify
+endmodule
+module tb;
+  logic c, x;
+  wire y;
+  child u(.clk(c), .d(x), .q(y));
+  initial begin c = 0; x = 0; #5 c = 1; #1 $finish; end
+endmodule
+",
+    );
+    assert_eq!(links(&model), 3, "net ports: {model}");
 }
 
 /// A constant part-select actual whose bounds depend on a generate loop
@@ -332,5 +608,75 @@ endmodule
         links_named(&model, ".link\""),
         0,
         "links are shared: {model}"
+    );
+}
+
+/// A sink that keeps its link is the source of the sinks below it: they
+/// merge with it, not with the storage beyond its link.
+#[test]
+fn sinks_below_a_kept_link_merge_with_the_kept_net() {
+    let model = render(
+        "module leaf(input wire b);
+  logic y;
+  assign y = b;
+endmodule
+module mid(input wire a);
+  logic seen;
+  always @(posedge a) seen = 1;
+  leaf l(.b(a));
+endmodule
+module tb;
+  logic x = 1'b1;
+  mid u(.a(x));
+  initial #2 $finish;
+endmodule
+",
+    );
+    assert_eq!(
+        links(&model),
+        1,
+        "the observed formal keeps its link: {model}"
+    );
+    assert_eq!(links_named(&model, "\"tb.u.l.link\""), 0, "{model}");
+    assert_eq!(net_groups(&model), 1, "{model}");
+    // `assign y = b` reads the kept net `a`, not `x`.
+    assert!(
+        model
+            .lines()
+            .any(|line| line.contains("llg_ba_from(") && line.ends_with(", &g_net_0.resolved);")),
+        "{model}"
+    );
+}
+
+const MERGED: &str =
+    "input chain: u.d=1 u.l.d=1\noutput net: u.l.q=1 q=1\noutput variable: r=1 tb.r=1\n";
+
+#[test]
+fn merged_sinks_read_their_source_in_the_same_step() {
+    sim_cli::run_case("port_collapse", "merged", MERGED, "", &[]);
+}
+
+#[test]
+fn vpi_models_keep_port_updates_one_step_later() {
+    sim_cli::run_case_with_args(
+        "port_collapse",
+        "merged",
+        "input chain: u.d=0 u.l.d=0\noutput net: u.l.q=1 q=1\noutput variable: r=1 tb.r=x\n",
+        "",
+        &[],
+        &["--vpi"],
+    );
+}
+
+#[test]
+fn kept_links_preserve_each_side() {
+    sim_cli::run_case(
+        "port_collapse",
+        "fallbacks",
+        "coerced: c=1 u0.n=x\nsecond driver: m=x u1.o=1\n\
+         types: z=z u2.t=0 wo=1 u2.a=1 u2.w=11\n\
+         delay: dl=1 u3.n=x\ndelay later: dl=1 u3.n=1\n",
+        "",
+        &[],
     );
 }

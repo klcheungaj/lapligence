@@ -19,7 +19,8 @@ pub struct IrSignal {
     /// alias. Each entry identifies one signal bit and the resolved group bit
     /// that owns its electrical value.
     pub(in crate::sim) net_alias: Vec<IrNetAliasBinding>,
-    /// Canonical variable storage for a reference alias; never another alias.
+    /// Canonical storage for a reference alias or a collapsed port sink: a
+    /// variable or a whole resolved net's cell; never another alias.
     pub(in crate::sim) alias: Option<usize>,
     /// Storage pruning marker (`unused_storage` pass): the declaration is
     /// skipped when set.  Indices are NEVER remapped.

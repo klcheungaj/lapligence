@@ -5,6 +5,7 @@ use super::net_collapse::NetPoint;
 use super::*;
 
 mod global_index;
+mod port_sinks;
 #[cfg(test)]
 mod tests;
 mod writer_index;
@@ -34,6 +35,9 @@ enum AliasBitView {
 thread_local! {
     static ALIAS_BIT_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
+
+/// The structural driver sites of one net and their (strength0, strength1).
+type DriverSites = Vec<(NodeId, (u8, u8))>;
 
 impl AliasBitView {
     fn len(&self) -> usize {
@@ -2464,89 +2468,87 @@ impl<'a> Codegen<'a> {
             })
             .collect();
 
+        let sinks = self.port_sink_candidates(nodes);
         let global_index = self.signal_global_index();
+        let mut deferred = Vec::new();
         for (net, kind) in standalone {
-            let shown = self.display_name(net);
-            let member_set = HashSet::from([net]);
-            let mut sites: HashMap<NodeId, (u8, u8)> = HashMap::new();
-            for position in writers.candidates(&[net]) {
-                let id = &nodes[position];
-                if let Some(site) = self.clocking_net_site(*id, &member_set)? {
-                    sites.insert(*id, site);
+            let sites = self.standalone_net_sites(net, nodes, writers)?;
+            if let Some(sink) = sinks.get(&net).copied() {
+                if self.port_sink_drivers_only_port(net, sink.port, &sites) {
+                    deferred.push((net, kind, sites, sink));
                     continue;
                 }
-                match self.kind(*id) {
-                    NodeKind::ContAssign {
-                        strength0,
-                        strength1,
-                        ..
-                    } => {
-                        let Some(lhs) = self.node(*id).children.first().copied() else {
-                            continue;
-                        };
-                        if self.nested_member_target(lhs, &member_set).is_some() {
-                            self.reject_supply_drive_strength(*id, net, *strength0, *strength1)?;
-                        }
-                        // A hierarchical LHS that the owned database resolved to
-                        // this net is a real driver identity and is admitted
-                        // through the HierPath site below. The source-text
-                        // fallback only rejects an unresolved top-self path
-                        // (no owned target) so it cannot silently drop a driver.
-                        // A member select of a local aggregate also has no
-                        // signal, but its owned path resolves to that aggregate.
-                        if matches!(
-                            self.kind(lhs),
-                            NodeKind::Expr(ExprKind::HierPath { refs, .. })
-                                if refs.iter().all(Option::is_none)
-                        ) && self.hier_path_signal(lhs).is_none()
-                            && self.cont_assign_source_has_hier_lhs(*id, net)
-                        {
-                            return Err(format!(
-                                "hierarchical continuous assignment to wired net `{shown}` is not supported"
-                            ));
-                        }
-                        match self.member_write_kind(lhs, &member_set) {
-                            MemberWrite::None => {
-                                if matches!(
-                                    self.kind(lhs),
-                                    NodeKind::Expr(ExprKind::HierPath { .. })
-                                ) && self.member_write_base(lhs, &member_set).is_some()
-                                {
-                                    let width = self
-                                        .sig_globals
-                                        .get(&net)
-                                        .map(|info| info.width)
-                                        .unwrap_or(1);
-                                    let strengths = continuous_assignment_strengths_for_width(
-                                        *strength0, *strength1, &shown, width,
-                                    )?;
-                                    sites.insert(*id, strengths);
-                                } else if self.nested_member_target(lhs, &member_set).is_some() {
-                                    let width = self
-                                        .sig_globals
-                                        .get(&net)
-                                        .map(|info| info.width)
-                                        .unwrap_or(1);
-                                    let strengths = continuous_assignment_strengths_for_width(
-                                        *strength0, *strength1, &shown, width,
-                                    )?;
-                                    sites.insert(*id, strengths);
-                                }
-                            }
-                            MemberWrite::Whole => {
+            }
+            self.build_standalone_net_group(net, kind, sites, &global_index)?;
+        }
+        if !deferred.is_empty() {
+            self.collapse_net_port_sinks(deferred, nodes)?;
+        }
+        Ok(())
+    }
+
+    /// The structural driver sites of a standalone net and their strengths,
+    /// in node order.
+    fn standalone_net_sites(
+        &self,
+        net: NodeId,
+        nodes: &[NodeId],
+        writers: &NetWriterIndex,
+    ) -> Result<DriverSites, String> {
+        let shown = self.display_name(net);
+        let member_set = HashSet::from([net]);
+        let mut sites: HashMap<NodeId, (u8, u8)> = HashMap::new();
+        for position in writers.candidates(&[net]) {
+            let id = &nodes[position];
+            if let Some(site) = self.clocking_net_site(*id, &member_set)? {
+                sites.insert(*id, site);
+                continue;
+            }
+            match self.kind(*id) {
+                NodeKind::ContAssign {
+                    strength0,
+                    strength1,
+                    ..
+                } => {
+                    let Some(lhs) = self.node(*id).children.first().copied() else {
+                        continue;
+                    };
+                    if self.nested_member_target(lhs, &member_set).is_some() {
+                        self.reject_supply_drive_strength(*id, net, *strength0, *strength1)?;
+                    }
+                    // A hierarchical LHS that the owned database resolved to
+                    // this net is a real driver identity and is admitted
+                    // through the HierPath site below. The source-text
+                    // fallback only rejects an unresolved top-self path
+                    // (no owned target) so it cannot silently drop a driver.
+                    // A member select of a local aggregate also has no
+                    // signal, but its owned path resolves to that aggregate.
+                    if matches!(
+                        self.kind(lhs),
+                        NodeKind::Expr(ExprKind::HierPath { refs, .. })
+                            if refs.iter().all(Option::is_none)
+                    ) && self.hier_path_signal(lhs).is_none()
+                        && self.cont_assign_source_has_hier_lhs(*id, net)
+                    {
+                        return Err(format!(
+                            "hierarchical continuous assignment to wired net `{shown}` is not supported"
+                        ));
+                    }
+                    match self.member_write_kind(lhs, &member_set) {
+                        MemberWrite::None => {
+                            if matches!(self.kind(lhs), NodeKind::Expr(ExprKind::HierPath { .. }))
+                                && self.member_write_base(lhs, &member_set).is_some()
+                            {
                                 let width = self
                                     .sig_globals
                                     .get(&net)
                                     .map(|info| info.width)
                                     .unwrap_or(1);
-                                sites.insert(
-                                    *id,
-                                    continuous_assignment_strengths_for_width(
-                                        *strength0, *strength1, &shown, width,
-                                    )?,
-                                );
-                            }
-                            MemberWrite::Select => {
+                                let strengths = continuous_assignment_strengths_for_width(
+                                    *strength0, *strength1, &shown, width,
+                                )?;
+                                sites.insert(*id, strengths);
+                            } else if self.nested_member_target(lhs, &member_set).is_some() {
                                 let width = self
                                     .sig_globals
                                     .get(&net)
@@ -2558,146 +2560,178 @@ impl<'a> Codegen<'a> {
                                 sites.insert(*id, strengths);
                             }
                         }
-                    }
-                    NodeKind::Stmt(StmtKind::Assign { blocking, .. }) => {
-                        let Some(lhs) = self.node(*id).children.first().copied() else {
-                            continue;
-                        };
-                        // A synchronous drive updates its clockvar's own
-                        // driver slot, collected above.
-                        if self.is_clocking_drive_lhs(lhs) {
-                            continue;
+                        MemberWrite::Whole => {
+                            let width = self
+                                .sig_globals
+                                .get(&net)
+                                .map(|info| info.width)
+                                .unwrap_or(1);
+                            sites.insert(
+                                *id,
+                                continuous_assignment_strengths_for_width(
+                                    *strength0, *strength1, &shown, width,
+                                )?,
+                            );
                         }
-                        if self.nested_member_target(lhs, &member_set).is_some() {
-                            let form = if *blocking { "blocking" } else { "nonblocking" };
-                            return Err(format!(
-                                "procedural {form} assignment to wired net `{shown}` is not supported"
-                            ));
-                        }
-                    }
-                    NodeKind::Stmt(StmtKind::Force { .. })
-                    | NodeKind::Stmt(StmtKind::Release { .. }) => {}
-                    NodeKind::Gate {
-                        prim_type,
-                        strength0,
-                        strength1,
-                        ..
-                    } => {
-                        if self
-                            .gate_driven_terms(*id)
-                            .into_iter()
-                            .any(|term| self.nested_member_target(term, &member_set).is_some())
-                        {
-                            let strengths = gate_driver_strengths(
-                                *prim_type,
-                                *strength0,
-                                *strength1,
-                                &self.display_name(*id),
+                        MemberWrite::Select => {
+                            let width = self
+                                .sig_globals
+                                .get(&net)
+                                .map(|info| info.width)
+                                .unwrap_or(1);
+                            let strengths = continuous_assignment_strengths_for_width(
+                                *strength0, *strength1, &shown, width,
                             )?;
                             sites.insert(*id, strengths);
                         }
                     }
-                    NodeKind::Port {
-                        direction,
-                        high,
-                        low,
-                        high_expr,
-                        strength0,
-                        strength1,
-                        ..
-                    } => {
-                        let target = match direction {
-                            DbDirection::Input => self.port_child_target(*id, *low),
-                            DbDirection::Output => high_expr.or(*high),
-                            _ => None,
-                        };
-                        if target.is_some_and(|target| {
-                            self.nested_member_target(target, &member_set).is_some()
-                        }) {
-                            sites.insert(
-                                *id,
-                                self.effective_port_driver_strengths(
-                                    *id, *strength0, *strength1, *low,
-                                )?,
-                            );
-                        }
+                }
+                NodeKind::Stmt(StmtKind::Assign { blocking, .. }) => {
+                    let Some(lhs) = self.node(*id).children.first().copied() else {
+                        continue;
+                    };
+                    // A synchronous drive updates its clockvar's own
+                    // driver slot, collected above.
+                    if self.is_clocking_drive_lhs(lhs) {
+                        continue;
                     }
-                    NodeKind::FuncCall { .. }
-                        if self.task_actual_member_write(*id, &member_set).is_some() =>
-                    {
+                    if self.nested_member_target(lhs, &member_set).is_some() {
+                        let form = if *blocking { "blocking" } else { "nonblocking" };
                         return Err(format!(
-                            "function/task output/inout driving wired net `{shown}` is not supported"
+                            "procedural {form} assignment to wired net `{shown}` is not supported"
                         ));
                     }
-                    _ => {}
                 }
+                NodeKind::Stmt(StmtKind::Force { .. })
+                | NodeKind::Stmt(StmtKind::Release { .. }) => {}
+                NodeKind::Gate {
+                    prim_type,
+                    strength0,
+                    strength1,
+                    ..
+                } => {
+                    if self
+                        .gate_driven_terms(*id)
+                        .into_iter()
+                        .any(|term| self.nested_member_target(term, &member_set).is_some())
+                    {
+                        let strengths = gate_driver_strengths(
+                            *prim_type,
+                            *strength0,
+                            *strength1,
+                            &self.display_name(*id),
+                        )?;
+                        sites.insert(*id, strengths);
+                    }
+                }
+                NodeKind::Port {
+                    direction,
+                    high,
+                    low,
+                    high_expr,
+                    strength0,
+                    strength1,
+                    ..
+                } => {
+                    let target = match direction {
+                        DbDirection::Input => self.port_child_target(*id, *low),
+                        DbDirection::Output => high_expr.or(*high),
+                        _ => None,
+                    };
+                    if target.is_some_and(|target| {
+                        self.nested_member_target(target, &member_set).is_some()
+                    }) {
+                        sites.insert(
+                            *id,
+                            self.effective_port_driver_strengths(
+                                *id, *strength0, *strength1, *low,
+                            )?,
+                        );
+                    }
+                }
+                NodeKind::FuncCall { .. }
+                    if self.task_actual_member_write(*id, &member_set).is_some() =>
+                {
+                    return Err(format!(
+                        "function/task output/inout driving wired net `{shown}` is not supported"
+                    ));
+                }
+                _ => {}
             }
-            let mut sites = sites.into_iter().collect::<Vec<_>>();
-            sites.sort_by_key(|(id, _)| id.0);
-            if sites.len() > LLG_MAX_NET_DRIVERS {
-                return Err(format!(
-                    "wired net `{shown}` has {} continuous driver sites, exceeding the runtime driver-count range",
-                    sites.len()
-                ));
-            }
+        }
+        let mut sites = sites.into_iter().collect::<Vec<_>>();
+        sites.sort_by_key(|(id, _)| id.0);
+        if sites.len() > LLG_MAX_NET_DRIVERS {
+            return Err(format!(
+                "wired net `{shown}` has {} continuous driver sites, exceeding the runtime driver-count range",
+                sites.len()
+            ));
+        }
+        Ok(sites)
+    }
 
-            let info = self
-                .sig_globals
-                .get(&net)
-                .cloned()
-                .ok_or_else(|| format!("wired net `{shown}` has no lowered scalar storage"))?;
-            if info.real {
-                return Err(format!("real-valued wired net `{shown}` is not supported"));
-            }
-            let propagation_delay = self.net_propagation_delay_for_members(
-                std::slice::from_ref(&net),
-                0,
-                &shown,
-                Some(self.model.net_groups.len()),
-            )?;
-            let name = format!("g_net_{}", self.model.net_groups.len());
-            let group = self.model.net_groups.len();
-            let initial_drivers = usize::from(sites.is_empty());
-            self.model.net_groups.push(crate::sim::ir::IrNetGroup {
-                c_name: name.clone(),
-                width: info.width,
-                signed: info.signed,
-                kind,
-                n_drivers: initial_drivers,
-                driver_strengths: vec![(6, 6); initial_drivers],
-                propagation_delay,
-                propagation_segments: Vec::new(),
-                starts_unknown: false,
-                driven_runs: Vec::new(),
-                runtime_delay: false,
-                strength_view: None,
-            });
+    /// Build the resolved group of one standalone net from its driver sites.
+    fn build_standalone_net_group(
+        &mut self,
+        net: NodeId,
+        kind: crate::sim::ir::IrNetKind,
+        sites: DriverSites,
+        global_index: &global_index::SignalGlobalIndex,
+    ) -> Result<(), String> {
+        let shown = self.display_name(net);
+        let info = self
+            .sig_globals
+            .get(&net)
+            .cloned()
+            .ok_or_else(|| format!("wired net `{shown}` has no lowered scalar storage"))?;
+        if info.real {
+            return Err(format!("real-valued wired net `{shown}` is not supported"));
+        }
+        let propagation_delay = self.net_propagation_delay_for_members(
+            std::slice::from_ref(&net),
+            0,
+            &shown,
+            Some(self.model.net_groups.len()),
+        )?;
+        let name = format!("g_net_{}", self.model.net_groups.len());
+        let group = self.model.net_groups.len();
+        let initial_drivers = usize::from(sites.is_empty());
+        self.model.net_groups.push(crate::sim::ir::IrNetGroup {
+            c_name: name.clone(),
+            width: info.width,
+            signed: info.signed,
+            kind,
+            n_drivers: initial_drivers,
+            driver_strengths: vec![(6, 6); initial_drivers],
+            propagation_delay,
+            propagation_segments: Vec::new(),
+            starts_unknown: false,
+            driven_runs: Vec::new(),
+            runtime_delay: false,
+            strength_view: None,
+        });
 
-            let old_global = info.global;
-            let resolved = format!("{name}.resolved");
-            if let Some(mapped) = self.sig_globals.get_mut(&net) {
-                mapped.global = resolved.clone();
-                mapped.net_driver = Some((name.clone(), 0));
-            }
-            if let Some(signal) = self.model.signals.get_mut(info.ir) {
-                signal.c_name = resolved.clone();
-                signal.net_driver = Some((group, 0));
-                self.invalidate_signal_names();
-            }
-            self.retarget_signal_global(&global_index, &old_global, &resolved, (&name, 0), false);
+        let old_global = info.global;
+        let resolved = format!("{name}.resolved");
+        if let Some(mapped) = self.sig_globals.get_mut(&net) {
+            mapped.global = resolved.clone();
+            mapped.net_driver = Some((name.clone(), 0));
+        }
+        if let Some(signal) = self.model.signals.get_mut(info.ir) {
+            signal.c_name = resolved.clone();
+            signal.net_driver = Some((group, 0));
+            self.invalidate_signal_names();
+        }
+        self.retarget_signal_global(global_index, &old_global, &resolved, (&name, 0), false);
 
-            if sites.is_empty() {
-                let id = self.record_structural_driver(info.ir)?;
-                self.insert_structural_driver_site(
-                    (self.structural_site_owner(net), net, group),
-                    id,
-                );
-            }
+        if sites.is_empty() {
+            let id = self.record_structural_driver(info.ir)?;
+            self.insert_structural_driver_site((self.structural_site_owner(net), net, group), id);
+        }
 
-            for (source, strengths) in sites {
-                let signal = self.add_structural_driver(group, source, strengths)?;
-                self.record_wired_driver_site(source, signal);
-            }
+        for (source, strengths) in sites {
+            let signal = self.add_structural_driver(group, source, strengths)?;
+            self.record_wired_driver_site(source, signal);
         }
         Ok(())
     }

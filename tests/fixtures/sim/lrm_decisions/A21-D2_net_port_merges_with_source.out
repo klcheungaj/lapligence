@@ -1,0 +1,6 @@
+same step: w=1 u.n=1
+output sink: k.o=1 o=1
+strength through the port: pu=Pu1 u.p=Pu1
+forced net formal: fw=0 u.f=0
+forced net formal of a variable: v=0 u.g=1
+released: fw=1 u.f=1 v=0 u.g=0
