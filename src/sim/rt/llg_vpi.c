@@ -1151,6 +1151,16 @@ static int whole_unpacked_aggregate(const llg_vpi_slot_t* slot) {
     return is_aggregate_typespec(typespec) && (typespec->flags & LLG_VPI_TS_UNPACKED);
 }
 
+/* 37.31: the terminal whose value is a primitive's value: the output of a
+ * gate or UDP, and the first terminal of a switch, which has no output
+ * (decision A19-D64). LLG_VPI_NONE when there is none. */
+static uint32_t primitive_value_conn(const llg_vpi_model_object_t* object) {
+    for (uint32_t i = 0; i < object->conn_count; ++i)
+        if (object->conns[i].direction == vpiOutput) return i;
+    if (object->type == vpiSwitch && object->conn_count) return 0u;
+    return LLG_VPI_NONE;
+}
+
 static vpiHandle make_member(uint32_t row, uint64_t element, uint32_t node_index) {
     const llg_vpi_member_node_t* node = node_at(node_index);
     if (!node) return NULL;
@@ -1415,11 +1425,8 @@ static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is
             llg_vpi_model_object_t* object = row_object(slot->object);
             if (!object) return 0;
             if (is_primitive_type(object->type)) {
-                /* 37.31: a primitive's value is its output terminal's. */
-                for (uint32_t i = 0; i < object->conn_count; ++i)
-                    if (object->conns[i].direction == vpiOutput)
-                        return read_conn(slot->object, i, out, is_signed);
-                return 0;
+                uint32_t conn = primitive_value_conn(object);
+                return conn != LLG_VPI_NONE && read_conn(slot->object, conn, out, is_signed);
             }
             if (object->type == vpiContAssign) {
                 /* The value the assignment drives: its right-hand side
@@ -8911,12 +8918,10 @@ static int handle_width(const llg_vpi_slot_t* slot, uint32_t* width, int* is_sig
             if (!object || is_scope_type(object->type) || (object->flags & LLG_VPI_OBJ_RECORD))
                 return 0;
             if (is_primitive_type(object->type)) {
-                for (uint32_t i = 0; i < object->conn_count; ++i)
-                    if (object->conns[i].direction == vpiOutput) {
-                        *width = object->conns[i].ref.width;
-                        return *width != 0;
-                    }
-                return 0;
+                uint32_t conn = primitive_value_conn(object);
+                if (conn == LLG_VPI_NONE) return 0;
+                *width = object->conns[conn].ref.width;
+                return *width != 0;
             }
             if (object->type == vpiContAssign) {
                 *width = object->width;

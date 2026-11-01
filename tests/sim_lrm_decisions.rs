@@ -2636,6 +2636,24 @@ fn a19_d63_structure_net_members() {
 }
 
 #[test]
+fn a19_d64_switch_values_and_class_object_names() {
+    run_vpi_decision(
+        "A19-D64_switch_values_and_class_object_names",
+        &["task $d64()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D64_switch_values_and_class_object_names.out"),
+    );
+}
+
+#[test]
+fn a19_d65_refused_relations() {
+    run_vpi_decision(
+        "A19-D65_refused_relations",
+        &["task $d65()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D65_refused_relations.out"),
+    );
+}
+
+#[test]
 fn a20_d12_delay_counts() {
     run_vpi_decision(
         "A20-D12_delay_counts",

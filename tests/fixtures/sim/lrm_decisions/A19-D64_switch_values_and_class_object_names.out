@@ -1,0 +1,5 @@
+vpiSwitch tb.sw1 value=1
+vpiSwitch tb.sw0 value=1
+vpiSwitch tb.sw2 value=0
+tb.p object name=Packet full=NULL(error)
+tb.b object name=Burst full=NULL(error)
