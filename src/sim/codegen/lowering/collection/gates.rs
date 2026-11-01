@@ -736,10 +736,17 @@ impl Codegen<'_> {
                         };
                     }
                 }
-                entry.body.push(IrStmt::Assign {
-                    lhs: IrLhs::Whole(served),
-                    rhs: read(doorbell),
-                    nba: false,
+                // Only a rung doorbell writes the served copy, so an
+                // ordinary evaluation adds no store.
+                entry.body.push(IrStmt::If {
+                    cond: now,
+                    then_: vec![IrStmt::Assign {
+                        lhs: IrLhs::Whole(served),
+                        rhs: read(doorbell),
+                        nba: false,
+                    }],
+                    els: None,
+                    check: IrUniquePriorityCheck::None,
                 });
             }
             self.udp_put_states.insert(gate, (state, doorbell));
