@@ -2192,6 +2192,15 @@ fn a19_d69_named_event_arrays() {
 }
 
 #[test]
+fn a19_d70_variable_bit_types() {
+    run_vpi_decision(
+        "A19-D70_variable_bit_types",
+        &["task $d70()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D70_variable_bit_types.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",

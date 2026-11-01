@@ -1,0 +1,25 @@
+tb.v:
+  by index 1: tb.v[1] type=49 vpiRegBit value=1
+  first of vpiBit: tb.v[3] type=49 vpiRegBit value=1
+  by name: tb.v[2] type=49 vpiRegBit value=0
+tb.b:
+  by index 1: tb.b[1] type=49 vpiRegBit value=1
+  first of vpiBit: tb.b[3] type=49 vpiRegBit value=0
+  by name: tb.b[2] type=49 vpiRegBit value=0
+tb.i:
+  by index 1: tb.i[1] type=49 vpiRegBit value=0
+  first of vpiBit: tb.i[31] type=49 vpiRegBit value=0
+  by name: tb.i[2] type=49 vpiRegBit value=1
+tb.g:
+  by index 1: tb.g[1] type=49 vpiRegBit value=1
+  first of vpiBit: tb.g[31] type=49 vpiRegBit value=0
+  by name: tb.g[2] type=49 vpiRegBit value=0
+tb.w:
+  by index 1: tb.w[1] type=37 vpiNetBit value=1
+  first of vpiBit: tb.w[3] type=37 vpiNetBit value=0
+  by name: tb.w[2] type=37 vpiNetBit value=1
+tb.m[0]:
+  by index 1: tb.m[0][1] type=49 vpiRegBit value=0
+  by name: tb.m[0][2] type=49 vpiRegBit value=1
+tb.n[0]:
+  by index 1: tb.n[0][1] type=37 vpiNetBit value=z
