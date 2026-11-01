@@ -8883,8 +8883,8 @@ static int handle_type(const llg_vpi_slot_t* slot) {
         case SLOT_MEMBER: {
             const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
             if (!node) return vpiUndefined;
-            const llg_vpi_model_object_t* object = row_object(slot->object);
-            return object && object->is_net ? net_member_type(node->type) : node->type;
+            const llg_vpi_model_object_t* owner = row_object(slot->object);
+            return owner && owner->is_net ? net_member_type(node->type) : node->type;
         }
         case SLOT_TYPESPEC: return typespec_at((uint32_t)slot->aux)->type;
         case SLOT_TSMEMBER: return vpiTypespecMember;
@@ -8919,9 +8919,9 @@ static int handle_width(const llg_vpi_slot_t* slot, uint32_t* width, int* is_sig
             if (!object || is_scope_type(object->type) || (object->flags & LLG_VPI_OBJ_RECORD))
                 return 0;
             if (is_primitive_type(object->type)) {
-                uint32_t conn = primitive_value_conn(object);
-                if (conn == LLG_VPI_NONE) return 0;
-                *width = object->conns[conn].ref.width;
+                uint32_t i = primitive_value_conn(object);
+                if (i == LLG_VPI_NONE) return 0;
+                *width = object->conns[i].ref.width;
                 return *width != 0;
             }
             if (object->type == vpiContAssign) {
