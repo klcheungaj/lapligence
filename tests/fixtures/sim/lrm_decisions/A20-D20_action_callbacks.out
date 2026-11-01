@@ -1,0 +1,13 @@
+register cbError: handle level=0
+register cbSignal: handle level=0
+register cbPLIError: handle level=0
+failing call
+  cbPLIError at 0: level=3 state=3 index=0
+vpi_get(vpiSize, NULL) = -1 level=3
+  cbSignal at 0: level=0 state=0 index=SIGTERM
+after raise
+after d20_fail
+  cbError at 1: level=3 state=3 index=0
+  cbError at 1: level=3 state=3 index=0
+else action
+done

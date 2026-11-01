@@ -15,6 +15,7 @@ static int llg_ref_report_tag_failure(const llg_ref_view_t* view,
             "llg: runtime error: access to inactive tagged-union member %s at %s\n",
             member, location);
     fflush(stderr);
+    llg_rt_note_error(0, "access to an inactive tagged-union member", location);
     return 0;
 }
 
@@ -250,6 +251,19 @@ void llg_nba_d(double* target, double value) {
 void llg_ba_d(double* target, double value) {
     if (llg_is_real_forced(target)) return;
     real_write(target, value);
+}
+
+void llg_store_unpublished(sv4_t* target, sv4_t value) {
+    if (!target || llg_is_forced(target)) {
+        sv4_destroy(&value);
+        return;
+    }
+    sv4_replace(target, value);
+}
+
+void llg_store_unpublished_d(double* target, double value) {
+    if (!target || llg_is_real_forced(target)) return;
+    *target = value;
 }
 
 /* Wait sources of `ref` descriptors. Every store publishes at its variable,

@@ -2129,6 +2129,42 @@ fn a20_d11_control_reset_interactive() {
 }
 
 #[test]
+fn a20_d20_action_callbacks() {
+    run_vpi_decision(
+        "A20-D20_action_callbacks",
+        &["task $d20()", "task $d20_fail()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D20_action_callbacks.out"),
+    );
+}
+
+#[test]
+fn a20_d21_strength_values() {
+    run_vpi_decision(
+        "A20-D21_strength_values",
+        &["task $d21()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D21_strength_values.out"),
+    );
+}
+
+#[test]
+fn a20_d22_string_delayed_put() {
+    run_vpi_decision(
+        "A20-D22_string_delayed_put",
+        &["task $d22()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D22_string_delayed_put.out"),
+    );
+}
+
+#[test]
+fn a20_d23_subarray_handles() {
+    run_vpi_decision(
+        "A20-D23_subarray_handles",
+        &["task $d23()"],
+        include_str!("fixtures/sim/lrm_decisions/A20-D23_subarray_handles.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",
@@ -2614,6 +2650,51 @@ fn a19_d61_connectivity_order() {
         "A19-D61_connectivity_order",
         &["task $d61()"],
         include_str!("fixtures/sim/lrm_decisions/A19-D61_connectivity_order.out"),
+    );
+}
+
+#[test]
+fn a19_d62_statement_processes() {
+    run_vpi_decision(
+        "A19-D62_statement_processes",
+        &["task $d62()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D62_statement_processes.out"),
+    );
+}
+
+#[test]
+fn a19_d63_structure_net_members() {
+    run_vpi_decision(
+        "A19-D63_structure_net_members",
+        &["task $d63()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D63_structure_net_members.out"),
+    );
+}
+
+#[test]
+fn a19_d64_switch_values_and_class_object_names() {
+    run_vpi_decision(
+        "A19-D64_switch_values_and_class_object_names",
+        &["task $d64()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D64_switch_values_and_class_object_names.out"),
+    );
+}
+
+#[test]
+fn a19_d65_refused_relations() {
+    run_vpi_decision(
+        "A19-D65_refused_relations",
+        &["task $d65()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D65_refused_relations.out"),
+    );
+}
+
+#[test]
+fn a19_d66_specparam_expressions() {
+    run_vpi_decision(
+        "A19-D66_specparam_expressions",
+        &["task $d66()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D66_specparam_expressions.out"),
     );
 }
 

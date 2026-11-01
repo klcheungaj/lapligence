@@ -182,6 +182,11 @@ fn run(options: DriverOptions) -> i32 {
         cli_build_options,
     } = options;
     let _generation_stage = llg::profile::Stage::new("generation");
+    let user_system_functions: Vec<String> = system_subroutines
+        .iter()
+        .filter_map(|prototype| sim::codegen::user_system_function_name(prototype))
+        .map(str::to_owned)
+        .collect();
     let frontend_stage = llg::profile::Stage::new("frontend");
     // 1. Slang parse, compile and elaborate into an owned snapshot.
     let out = match compile::compile_checked(&compile::CompileOpts {
@@ -322,6 +327,7 @@ fn run(options: DriverOptions) -> i32 {
             path_pulse,
             timing_checks,
             sdf,
+            user_system_functions,
             ..Default::default()
         },
     );

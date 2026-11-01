@@ -268,7 +268,7 @@ fn runtime_units(root: &Path, scratch: &Path) -> Vec<NarrowingUnit> {
     let vpi_unit = scratch.join("llg_vpi_unit.c");
     std::fs::write(
         &vpi_unit,
-        "#include \"llg_vpi.c\"\n#include \"llg_vpi_dynamic.c\"\n#include \"llg_vpi_runtime.c\"\n#include \"llg_dpi.c\"\n",
+        "#include \"llg_vpi.c\"\n#include \"llg_vpi_dynamic.c\"\n#include \"llg_vpi_runtime.c\"\n#include \"llg_vpi_services.c\"\n#include \"llg_dpi.c\"\n",
     )
     .expect("write the VPI unit");
     let mut units = Vec::new();

@@ -6,8 +6,8 @@
 // (1800-2009 defines no union net type). An element of an array of such
 // nets has the same type. vpi_iterate(vpiNet, scope) returns nets of every
 // type. vpiPackedArrayMember is FALSE for these nets. Range iteration is an
-// error on a structure net and an enum net. Members of a structure net are
-// not objects (vpiMember fails).
+// error on a structure net and an enum net. The members of a structure or
+// union net are nets (vpiMember, decision A19-D63).
 //
 // IEEE 1800-2009 37.16 (SystemVerilog-1800-2009.txt L58411-58470) draws
 // struct, enum, integer, time, logic and packed array nets; detail 1

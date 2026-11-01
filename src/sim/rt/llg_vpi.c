@@ -206,6 +206,9 @@ typedef struct llg_vpi_event {
     llg_delayed_call_id_t id; /* the carrier process while pending */
     uint32_t slot;            /* vpiSchedEvent handle: index + 1, or 0 */
     int pending;
+    /* A delayed put to a string variable: the value (owned), written to
+     * the row's llg_string_t storage; NULL for a packed or real put. */
+    llg_string_t* text;
     struct llg_vpi_event* next;
     struct llg_vpi_event** prev_link;
 } llg_vpi_event_t;
@@ -374,6 +377,22 @@ static int rts_bind_cb(struct llg_vpi_cb* cb, const s_cb_data* data);
 static void rts_cb_added(const struct llg_vpi_cb* cb);
 static void rts_cb_removed(const struct llg_vpi_cb* cb);
 static void rts_enable(void);
+/* Action callbacks (cbError, cbPLIError, cbSignal): llg_vpi_services.c,
+ * appended after the runtime-structure layer. */
+struct llg_vpi_cb;
+static void svc_error_recorded(void);
+static void svc_safe_point(void);
+static int svc_reason(int reason);
+static int svc_bind_cb(struct llg_vpi_cb* cb, const s_cb_data* data);
+static void svc_cb_added(const struct llg_vpi_cb* cb);
+static void svc_cb_removed(const struct llg_vpi_cb* cb);
+static void svc_shutdown(void);
+static void svc_strength_fill(const llg_vpi_target_t* target, p_vpi_value value);
+static int svc_string_row(const llg_vpi_slot_t* slot);
+static vpiHandle svc_put_string_delayed(llg_vpi_slot_t* slot, p_vpi_value input, p_vpi_time time,
+                                        int mode, int return_event);
+static int svc_strength_bind(struct llg_vpi_cb* cb);
+static int svc_strength_changed(struct llg_vpi_cb* cb);
 static int code_tables_valid(const llg_vpi_code_tables_t* t);
 static PLI_INT32 unsupported_property(void);
 
@@ -389,6 +408,7 @@ static void vpi_set_error(int state, int level, const char* code,
              code ? code : "LLG_VPI");
     snprintf(g_vpi.error_message, sizeof(g_vpi.error_message), "%s",
              message ? message : "VPI operation failed");
+    svc_error_recorded();
 }
 
 static void vpi_set_errorf(int state, int level, const char* code,
@@ -403,6 +423,7 @@ static void vpi_set_errorf(int state, int level, const char* code,
     va_start(ap, format);
     vsnprintf(g_vpi.error_message, sizeof(g_vpi.error_message), format, ap);
     va_end(ap);
+    svc_error_recorded();
 }
 
 static int vpi_state(void) { return g_vpi.running ? vpiRun : vpiPLI; }
@@ -414,6 +435,9 @@ static void vpi_error(const char* code, const char* message) {
 /* 38.2: the error status is reset by every VPI routine except
  * vpi_chk_error(). Every public entry point calls this first. */
 static void vpi_enter(void) {
+    /* A safe point for cbPLIError and cbSignal: the previous routine has
+     * returned. */
+    svc_safe_point();
     g_vpi.error_pending = 0;
     g_vpi.iterate_ref = 0;
 }
@@ -1151,6 +1175,16 @@ static int whole_unpacked_aggregate(const llg_vpi_slot_t* slot) {
     return is_aggregate_typespec(typespec) && (typespec->flags & LLG_VPI_TS_UNPACKED);
 }
 
+/* 37.31: the terminal whose value is a primitive's value: the output of a
+ * gate or UDP, and the first terminal of a switch, which has no output
+ * (decision A19-D64). LLG_VPI_NONE when there is none. */
+static uint32_t primitive_value_conn(const llg_vpi_model_object_t* object) {
+    for (uint32_t i = 0; i < object->conn_count; ++i)
+        if (object->conns[i].direction == vpiOutput) return i;
+    if (object->type == vpiSwitch && object->conn_count) return 0u;
+    return LLG_VPI_NONE;
+}
+
 static vpiHandle make_member(uint32_t row, uint64_t element, uint32_t node_index) {
     const llg_vpi_member_node_t* node = node_at(node_index);
     if (!node) return NULL;
@@ -1322,6 +1356,24 @@ static void write_target(const llg_vpi_target_t* target, const llg_vpi_datum_t* 
     sv4_destroy(&value);
 }
 
+/* vpi_put_value_array with vpiPropagateOff (38.35): store an array
+ * element's value without publishing it, so no waiting process, continuous
+ * assignment, value-change callback or dump sees the write; a later
+ * published write of the element does. */
+static void write_element_quiet(const llg_vpi_target_t* target, const llg_vpi_datum_t* datum) {
+    llg_vpi_model_object_t* object = row_object(target->object);
+    if (object->is_real) {
+        double value = datum->is_real ? datum->real : sv4_to_real(datum->packed);
+        if (object->flags & LLG_VPI_OBJ_SHORTREAL) value = (double)(float)value;
+        llg_store_unpublished_d(real_cell(target), value);
+        return;
+    }
+    sv4_t value = datum->is_real ? sv4_from_real(datum->real, object->width, object->is_signed)
+                                 : sv4_resize(datum->packed, object->width, object->is_signed);
+    if (object->flags & LLG_VPI_OBJ_TWO_STATE) sv4_replace(&value, sv4_to_two_state(value));
+    llg_store_unpublished(packed_cell(target), value);
+}
+
 /* The force/release descriptor of a packed target (one storage part). */
 static llg_force_part_t force_part(const llg_vpi_target_t* target) {
     llg_vpi_model_object_t* object = row_object(target->object);
@@ -1415,11 +1467,8 @@ static int read_handle(const llg_vpi_slot_t* slot, llg_vpi_datum_t* out, int* is
             llg_vpi_model_object_t* object = row_object(slot->object);
             if (!object) return 0;
             if (is_primitive_type(object->type)) {
-                /* 37.31: a primitive's value is its output terminal's. */
-                for (uint32_t i = 0; i < object->conn_count; ++i)
-                    if (object->conns[i].direction == vpiOutput)
-                        return read_conn(slot->object, i, out, is_signed);
-                return 0;
+                uint32_t conn = primitive_value_conn(object);
+                return conn != LLG_VPI_NONE && read_conn(slot->object, conn, out, is_signed);
             }
             if (object->type == vpiContAssign) {
                 /* The value the assignment drives: its right-hand side
@@ -3660,7 +3709,7 @@ static vpiHandle member_from_suffix(uint32_t row, const char* suffix) {
     const llg_vpi_typespec_t* typespec = element == LLG_VPI_NO_ELEMENT
         ? typespec_ref(object->typespec) : element_typespec(object);
     if (!is_aggregate_typespec(typespec) || (object->flags & LLG_VPI_OBJ_RECORD) ||
-        object->is_net || (element == LLG_VPI_NO_ELEMENT && !has_storage(object)))
+        (element == LLG_VPI_NO_ELEMENT && !has_storage(object)))
         return NULL;
     uint32_t first = typespec->first_node, count = typespec->node_count, node = LLG_VPI_NONE;
     while (*p == '.') {
@@ -5020,6 +5069,9 @@ static int code_relation_applies(int type, int relation) {
                    relation == vpiForIncStmt || relation == vpiStmt;
         case vpiForeachStmt: return relation == vpiVariables || relation == vpiStmt;
         case vpiOrderedWait: return relation == vpiStmt || relation == vpiElseStmt;
+        /* 37.62: the waits class draws vpiStmt, and `wait fork` has no
+         * statement, so the relation is NULL (decision A19-D62). */
+        case vpiWaitFork: return relation == vpiStmt;
         case vpiDelayControl: return relation == vpiDelay || relation == vpiStmt;
         case vpiRepeatControl: return relation == vpiExpr || relation == vpiEventControl;
         case vpiEventStmt: return relation == vpiNamedEvent;
@@ -6972,10 +7024,11 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 return conn_handle(slot->object, (uint32_t)slot->aux);
             /* 37.17 detail 8, 37.26 detail 3: the initialization expression
              * of a variable, the default expression of a value parameter
-             * (decision A19-D32); NULL without one. */
+             * (decision A19-D32) or the value expression of a specparam
+             * (decision A19-D66); NULL without one. */
             if (slot->kind == SLOT_OBJECT && object &&
                 (is_variable_type(object->type) || object->type == vpiRegArray ||
-                 object->type == vpiParameter || (object->flags & LLG_VPI_OBJ_DYNAMIC))) {
+                 is_parameter_type(object->type) || (object->flags & LLG_VPI_OBJ_DYNAMIC))) {
                 if (!g_vpi.code) {
                     vpi_error("LLG_VPI_UNSUPPORTED",
                               "expressions are objects only in models generated with --vpi or "
@@ -8361,11 +8414,6 @@ static vpiHandle iterate_members(const llg_vpi_slot_t* slot) {
         vpi_error("LLG_VPI_RELATION", "vpiMember iterates a structure or union variable");
         return NULL;
     }
-    if (object && object->is_net) {
-        /* Members of a struct net are nets (37.16); llg exposes none. */
-        vpi_error("LLG_VPI_UNSUPPORTED", "members of a structure or union net are not VPI objects");
-        return NULL;
-    }
     uint32_t first = typespec->first_node, count = typespec->node_count;
     if (slot->kind == SLOT_MEMBER) {
         const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
@@ -8829,6 +8877,20 @@ static int is_static_variable_part(const llg_vpi_slot_t* slot,
            (slot->kind == SLOT_SELECT && slot->span == 1);
 }
 
+/* 37.16 detail 1: a member of a structure or union net is a net of the
+ * member's data type; 1800-2009 has no union net type, so a union member
+ * is a vpiNet like a union net (decision A19-D63). */
+static int net_member_type(int var_type) {
+    switch (var_type) {
+        case vpiStructVar: return vpiStructNet;
+        case vpiEnumVar: return vpiEnumNet;
+        case vpiIntegerVar: return vpiIntegerNet;
+        case vpiTimeVar: return vpiTimeNet;
+        case vpiPackedArrayVar: return vpiPackedArrayNet;
+        default: return vpiNet;
+    }
+}
+
 static int handle_type(const llg_vpi_slot_t* slot) {
     if (dyn_slot(slot)) return dyn_type(slot);
     if (rts_slot(slot)) return rts_type(slot);
@@ -8862,7 +8924,9 @@ static int handle_type(const llg_vpi_slot_t* slot) {
         case SLOT_FSMSTATE: return vpiFsmHandle;
         case SLOT_MEMBER: {
             const llg_vpi_member_node_t* node = node_at((uint32_t)slot->aux);
-            return node ? node->type : vpiUndefined;
+            if (!node) return vpiUndefined;
+            const llg_vpi_model_object_t* owner = row_object(slot->object);
+            return owner && owner->is_net ? net_member_type(node->type) : node->type;
         }
         case SLOT_TYPESPEC: return typespec_at((uint32_t)slot->aux)->type;
         case SLOT_TSMEMBER: return vpiTypespecMember;
@@ -8897,12 +8961,10 @@ static int handle_width(const llg_vpi_slot_t* slot, uint32_t* width, int* is_sig
             if (!object || is_scope_type(object->type) || (object->flags & LLG_VPI_OBJ_RECORD))
                 return 0;
             if (is_primitive_type(object->type)) {
-                for (uint32_t i = 0; i < object->conn_count; ++i)
-                    if (object->conns[i].direction == vpiOutput) {
-                        *width = object->conns[i].ref.width;
-                        return *width != 0;
-                    }
-                return 0;
+                uint32_t i = primitive_value_conn(object);
+                if (i == LLG_VPI_NONE) return 0;
+                *width = object->conns[i].ref.width;
+                return *width != 0;
             }
             if (object->type == vpiContAssign) {
                 *width = object->width;
@@ -9402,7 +9464,8 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                 return vpiWire;
             /* A net array and a net bit have their nets' type (37.16). */
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiNetArray) return vpiWire;
-            if (slot->kind == SLOT_SELECT && slot->span == 1 && object && object->is_net)
+            if (((slot->kind == SLOT_SELECT && slot->span == 1) || slot->kind == SLOT_MEMBER) &&
+                object && object->is_net)
                 return is_net_type(object->type) && object->subtype ? object->subtype : vpiWire;
             return unsupported_property();
         case vpiInputEdge:
@@ -10088,6 +10151,9 @@ void vpi_get_value(vpiHandle handle, p_vpi_value output) {
     }
     fill_value(&datum, is_signed, type, output);
     datum_destroy(&datum);
+    llg_vpi_target_t target;
+    if (output->format == vpiStrengthVal && handle_target(slot, &target))
+        svc_strength_fill(&target, output);
 }
 
 static uint64_t ticks_from_time(const s_vpi_time* time, const llg_vpi_model_object_t* scope,
@@ -10118,10 +10184,18 @@ static void vpi_event_unlink(llg_vpi_event_t* event) {
     event->prev_link = NULL;
 }
 
+static void vpi_event_text_free(llg_vpi_event_t* event) {
+    if (!event->text) return;
+    llg_string_destroy(event->text);
+    free(event->text);
+    event->text = NULL;
+}
+
 static void vpi_event_finish(llg_vpi_event_t* event) {
     event->pending = 0;
     vpi_event_unlink(event);
     if (!event->is_real) sv4_destroy(&event->value);
+    vpi_event_text_free(event);
     if (event->slot) {
         /* The vpiSchedEvent handle keeps the record until it is released. */
         return;
@@ -10144,8 +10218,17 @@ static void vpi_event_fire(void* data) {
     datum.real = event->real;
     datum.packed = event->value;
     event->value = VPI_EMPTY;
+    llg_string_t* text = event->text;
+    event->text = NULL;
     /* The vpiSchedEvent handle keeps the record until it is released. */
     if (!event->slot) free(event);
+    if (text) {
+        /* The store publishes the string's own change marker. */
+        llg_string_move_take((llg_string_t*)row_object(target.object)->storage, text);
+        llg_string_destroy(text);
+        free(text);
+        return;
+    }
     write_target(&target, &datum);
     if (!datum.is_real) sv4_destroy(&datum.packed);
 }
@@ -10160,7 +10243,7 @@ static int same_object(const llg_vpi_target_t* a, const llg_vpi_target_t* b) {
 }
 
 static vpiHandle schedule_put(const llg_vpi_target_t* target, llg_vpi_datum_t* datum,
-                              uint64_t ticks, int mode, int return_event) {
+                              llg_string_t* text, uint64_t ticks, int mode, int return_event) {
     if (ticks > UINT64_MAX - llg_time()) {
         vpi_error("LLG_VPI_TIME", "the vpi_put_value delay passes the last simulation time");
         return NULL;
@@ -10178,6 +10261,15 @@ static vpiHandle schedule_put(const llg_vpi_target_t* target, llg_vpi_datum_t* d
         vpi_error("LLG_VPI_NOMEM", "VPI scheduled event allocation failed");
         return NULL;
     }
+    if (text) {
+        event->text = (llg_string_t*)malloc(sizeof(*event->text));
+        if (!event->text) {
+            free(event);
+            vpi_error("LLG_VPI_NOMEM", "VPI scheduled event allocation failed");
+            return NULL;
+        }
+        *event->text = llg_string_take(text);
+    }
     event->target = *target;
     event->is_real = datum->is_real;
     event->real = datum->real;
@@ -10190,6 +10282,7 @@ static vpiHandle schedule_put(const llg_vpi_target_t* target, llg_vpi_datum_t* d
     if (!llg_schedule_delayed_call("vpi_put_value delay", vpi_event_fire, event, ticks,
                                    &event->id)) {
         if (!event->is_real) sv4_destroy(&event->value);
+        vpi_event_text_free(event);
         free(event);
         vpi_error("LLG_VPI_SCHEDULE", "the scheduler rejected the delayed VPI write");
         return NULL;
@@ -10285,6 +10378,9 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
                        llg_region_name(llg_current_region()));
         return NULL;
     }
+    if ((mode == vpiInertialDelay || mode == vpiTransportDelay || mode == vpiPureTransportDelay) &&
+        svc_string_row(slot))
+        return svc_put_string_delayed(slot, input, time, mode, return_event);
     if (dyn_slot(slot)) {
         dyn_put_value(slot, input, mode);
         return NULL;
@@ -10340,7 +10436,7 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
                 vpi_error("LLG_VPI_TIME", "unsupported or negative vpi_put_value delay");
                 return NULL;
             }
-            vpiHandle event = schedule_put(&target, &datum, ticks, mode, return_event);
+            vpiHandle event = schedule_put(&target, &datum, NULL, ticks, mode, return_event);
             datum_destroy(&datum);
             return event;
         }
@@ -10739,7 +10835,8 @@ void vpi_put_value_array(vpiHandle handle, p_vpi_arrayvalue arrayvalue_p, PLI_IN
         target.object = row;
         target.element = first + i;
         target.is_signed = object->is_signed;
-        write_target(&target, &datum);
+        if (arrayvalue_p->flags & vpiPropagateOff) write_element_quiet(&target, &datum);
+        else write_target(&target, &datum);
         datum_destroy(&datum);
     }
 }
@@ -10978,6 +11075,7 @@ typedef enum {
     CB_TCHK,       /* cbTchkViolation */
     CB_OBJECT,     /* cbCreateObj, cbReclaimObj, cbEndOfObject (llg_vpi_dynamic.c) */
     CB_RUNTIME,    /* frame and thread reasons (llg_vpi_runtime.c) */
+    CB_SERVICE,    /* cbError, cbPLIError, cbSignal (llg_vpi_services.c) */
 } llg_vpi_cb_kind_t;
 
 typedef struct llg_vpi_cb {
@@ -11004,6 +11102,11 @@ typedef struct llg_vpi_cb {
     /* cbValueChange: one watch on the watched storage, or for a whole
      * unpacked array one per element (decision S43-D7). */
     struct llg_vpi_watch* watches;
+    /* cbValueChange with vpiStrengthVal on a resolved net: the net, whose
+     * strength view is watched too, and the strength codes of the watched
+     * bits last reported (llg_vpi_services.c). */
+    llg_net_t* strength_net;
+    uint8_t* strength_last;
     uint64_t watch_total;
     /* CB_FORCE: 0 every statement (NULL obj), 1 statements writing `target`,
      * 2 statements writing an element of the array row `target.object`. */
@@ -11051,6 +11154,7 @@ typedef struct llg_vpi_watch {
 
 static void vpi_cb_free(llg_vpi_cb_t* cb) {
     sv4_destroy(&cb->last);
+    free(cb->strength_last);
     free(cb->watches);
     free(cb);
 }
@@ -11188,6 +11292,7 @@ static void vpi_cb_detach(llg_vpi_cb_t* cb, llg_vpi_cb_done_t* done) {
     if (cb->kind == CB_TCHK) --g_vpi.tchk_cbs;
     if (cb->kind == CB_OBJECT) dyn_object_cb_removed();
     if (cb->kind == CB_RUNTIME) rts_cb_removed(cb);
+    if (cb->kind == CB_SERVICE) svc_cb_removed(cb);
     if (cb->waiting) {
         cb->waiting = 0;
         --g_vpi.next_time_pending;
@@ -11261,6 +11366,7 @@ static void invoke_cb(llg_vpi_cb_t* cb, s_cb_data* data) {
         llg_rt_request_finish();
     }
     (void)cb;
+    svc_safe_point();
 }
 
 static void base_data(const llg_vpi_cb_t* cb, s_cb_data* out) {
@@ -11360,6 +11466,7 @@ static int matches_next_time(const llg_vpi_cb_t* cb, const void* context) {
 /* Runtime time-slot hook, called at the start of every Pre-Active pass:
  * queue the cbNextSimTime records registered in an earlier slot. */
 static void vpi_time_slot(void) {
+    svc_safe_point();
     if (!g_vpi.next_time_pending) return;
     uint64_t now = llg_time();
     llg_vpi_cb_t* buffer[LLG_VPI_DISPATCH_INLINE];
@@ -11457,7 +11564,15 @@ static void vpi_value_changed(const void* key) {
             datum_destroy(&datum);
             continue;
         }
-        if (cb->target.span) {
+        if (cb->strength_net) {
+            /* A strength record fires when the strength view of its bits
+             * changed (a value change changes it too), so the value
+             * publication and the view publication after it report once. */
+            if (!svc_strength_changed(cb)) {
+                datum_destroy(&datum);
+                continue;
+            }
+        } else if (cb->target.span) {
             /* A select fires only when its own bits changed. */
             if (sv4_same(cb->last, datum.packed)) {
                 datum_destroy(&datum);
@@ -11475,6 +11590,7 @@ static void vpi_value_changed(const void* key) {
             memset(&value, 0, sizeof(value));
             value.format = cb->value.format;
             fill_value(&datum, cb->value_signed, cb->value_type, &value);
+            if (value.format == vpiStrengthVal) svc_strength_fill(&target, &value);
             data.value = &value;
         }
         datum_destroy(&datum);
@@ -12113,7 +12229,41 @@ static int bind_value_cb(llg_vpi_cb_t* cb, const s_cb_data* data) {
         if (read_target(&target, &datum)) sv4_move(&cb->last, &datum.packed);
         datum_destroy(&datum);
     }
+    if (!whole_array && data->value && data->value->format == vpiStrengthVal)
+        return svc_strength_bind(cb);
     return 1;
+}
+
+/* Reasons llg does not raise: the error names why (38.36.3 lists the
+ * feature reasons as tool-specific). */
+static void vpi_refuse_reason(int reason) {
+    const char* why = NULL;
+    switch (reason) {
+        case cbStmt:
+            why = "cbStmt is not supported by llg: statements have no execution hook";
+            break;
+        case cbSizeChange: why = "cbSizeChange is not supported by llg"; break;
+        case cbUnresolvedSystf:
+            why = "cbUnresolvedSystf never occurs in llg: every system task and function call "
+                  "is resolved when the model is generated";
+            break;
+        case cbStartOfSave:
+        case cbEndOfSave:
+        case cbStartOfRestart:
+        case cbEndOfRestart: why = "llg has no save and restart"; break;
+        case cbStartOfReset:
+        case cbEndOfReset: why = "llg has no $reset (decision A20-D11)"; break;
+        case cbEnterInteractive:
+        case cbExitInteractive:
+        case cbInteractiveScopeChange:
+            why = "llg has no interactive mode (decision A20-D11)";
+            break;
+        default:
+            vpi_set_error(vpi_state(), vpiError, "LLG_VPI_CALLBACK",
+                          "unsupported or invalid VPI callback registration");
+            return;
+    }
+    vpi_set_error(vpi_state(), vpiError, "LLG_VPI_UNSUPPORTED", why);
 }
 
 static int time_reason(int reason) {
@@ -12155,11 +12305,17 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         }
     } else if (reason == cbValueChange) {
         kind = CB_VALUE;
-    } else if (reason == cbForce || reason == cbRelease || reason == cbAssign ||
-               reason == cbDeassign) {
-        /* cbAssign/cbDeassign are accepted but never run: llg rejects
-         * procedural assign and deassign statements (decision A20-D9). */
+    } else if (reason == cbForce || reason == cbRelease) {
         kind = CB_FORCE;
+    } else if (reason == cbAssign || reason == cbDeassign) {
+        /* llg rejects procedural assign and deassign statements (ADV-032),
+         * so no such callback could ever run (decision A20-D9). */
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "cbAssign and cbDeassign need procedural assign and deassign statements, "
+                  "which llg does not support");
+        return NULL;
+    } else if (svc_reason(reason)) {
+        kind = CB_SERVICE;
     } else if (reason == cbDisable) {
         kind = CB_DISABLE;
     } else if (assertion_system_reason(reason)) {
@@ -12199,12 +12355,11 @@ vpiHandle vpi_register_cb(p_cb_data data) {
             return NULL;
         }
     } else {
-        vpi_set_error(vpi_state(), vpiError, "LLG_VPI_CALLBACK",
-                      "unsupported or invalid VPI callback registration");
+        vpi_refuse_reason(reason);
         return NULL;
     }
     if ((kind == CB_VALUE || kind == CB_FORCE || kind == CB_DISABLE || kind == CB_TCHK ||
-         kind == CB_OBJECT || kind == CB_RUNTIME) &&
+         kind == CB_OBJECT || kind == CB_RUNTIME || kind == CB_SERVICE) &&
         g_vpi.phase >= LLG_VPI_PHASE_ENDED) {
         vpi_error("LLG_VPI_CALLBACK", "the simulation has ended; no value can change");
         return NULL;
@@ -12266,6 +12421,10 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         vpi_cb_free(cb);
         return NULL;
     }
+    if (kind == CB_SERVICE && !svc_bind_cb(cb, data)) {
+        vpi_cb_free(cb);
+        return NULL;
+    }
     cb->data.time = data->time ? &cb->time : NULL;
     cb->data.value = data->value ? &cb->value : NULL;
     uint32_t index = alloc_slot(SLOT_CALLBACK);
@@ -12302,6 +12461,7 @@ vpiHandle vpi_register_cb(p_cb_data data) {
     }
     if (kind == CB_OBJECT) dyn_object_cb_added();
     if (kind == CB_RUNTIME) rts_cb_added(cb);
+    if (kind == CB_SERVICE) svc_cb_added(cb);
     if (kind == CB_NEXT_TIME) {
         cb->waiting = 1;
         ++g_vpi.next_time_pending;
@@ -12413,6 +12573,7 @@ void llg_vpi_end_simulation(void) {
     /* All assertions have completed (39.4.1 cbAssertionSysEnd "typically
      * occurs after the end of simulation"), before cbEndOfSimulation. */
     assertion_callbacks_end();
+    svc_safe_point();
     g_vpi.phase = LLG_VPI_PHASE_ENDED;
     invoke_action(cbEndOfSimulation);
     g_vpi.running = 0;
@@ -12654,6 +12815,7 @@ static int invoke_calltf(llg_vpi_call_t* call) {
     ++g_vpi.call_depth;
     PLI_INT32 result = calltf(site->registration->data.user_data);
     --g_vpi.call_depth;
+    svc_safe_point();
     site->active = NULL;
     release_call_slots(call);
     g_vpi.active_call = call->previous;
@@ -12800,6 +12962,7 @@ void llg_vpi_shutdown(void) {
     llg_timing_violation_hook(NULL);
     tchk_rows_release();
     while (g_vpi.cbs) vpi_cb_retire(g_vpi.cbs);
+    svc_shutdown();
     free(g_vpi.watch_buckets);
     for (size_t i = g_vpi.static_count; i < g_vpi.slot_count; ++i) {
         llg_vpi_slot_t* slot = &g_vpi.slots[i];

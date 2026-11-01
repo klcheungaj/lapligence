@@ -1,6 +1,6 @@
 // llg-test-fixture: ADV-020 force and release callbacks. force_callbacks.c
 // ($watch, $vpi_force, $stale) registers cbForce and cbRelease records, for
-// every statement and on objects, and cbAssign/cbDeassign records, then
+// every statement and on objects, tries cbAssign/cbDeassign records, then
 // reports each statement with its vpiForce/vpiRelease handle, vpiLhs and
 // left-hand value (IEEE 1800-2009 38.36.1). Expected output:
 // force_callbacks.out.

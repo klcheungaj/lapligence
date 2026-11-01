@@ -408,6 +408,28 @@ pub struct CodegenOptions {
     pub timing_checks: crate::sim::ir::IrTimingCheckOptions,
     /// SDF files annotated before simulation starts (`--sdf`), in order.
     pub sdf: Vec<SdfCommand>,
+    /// Names (with `$`) of the user system functions declared for VPI
+    /// applications (`--define-system-task` function prototypes; see
+    /// [`user_system_function_name`]). Evaluated event controls, waits and
+    /// force sources that call one are evaluated by the waiting process,
+    /// because a calltf may write any object through VPI.
+    pub user_system_functions: Vec<String>,
+}
+
+/// The name of the system function a `--define-system-task` prototype
+/// declares (`function int $f(...)` gives `$f`); `None` for a task
+/// prototype or a prototype without a `$` name.
+pub fn user_system_function_name(prototype: &str) -> Option<&str> {
+    let rest = prototype.trim_start().strip_prefix("function")?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let start = rest.find('$')?;
+    let name = &rest[start..];
+    let end = name[1..]
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+        .map_or(name.len(), |end| end + 1);
+    (end > 1).then(|| &name[..end])
 }
 
 /// Lower an owned Slang semantic database with default optimizations.
@@ -633,6 +655,7 @@ fn lower_model_with(
     let lowering_stage = crate::profile::Stage::new("lowering");
     let mut cg = Codegen::new(&semantic);
     cg.vpi_return_signals = options.vpi;
+    cg.user_system_functions = options.user_system_functions.iter().cloned().collect();
     cg.collapse_ports = collapse_ports;
     cg.port_collapse_exclusions = excluded_ports.clone();
     cg.check_fsm_pragmas()?;
@@ -1351,6 +1374,9 @@ struct Codegen<'a> {
     /// a signal, so its return variable is a catalog object (IEEE
     /// 1800-2009 37.37 details 1-3).
     vpi_return_signals: bool,
+    /// Names of the user (VPI) system functions the design was compiled
+    /// with (`CodegenOptions::user_system_functions`).
+    user_system_functions: HashSet<String>,
     /// Set while collecting an always_comb/always_latch sensitivity list:
     /// SV 9.2.2.2.1 "References to class objects and method calls of class
     /// objects do not add anything", so the read walk skips class property
@@ -2080,6 +2106,7 @@ impl<'a> Codegen<'a> {
             db: semantic.db(),
             round_time_literals: db.edition() == LanguageEdition::SystemVerilog2009,
             vpi_return_signals: false,
+            user_system_functions: HashSet::new(),
             comb_excludes_class_references: std::cell::Cell::new(false),
             warnings: Vec::new(),
             model: IrModel::new(String::new(), Timescale::DEFAULT.precision_fs)
@@ -4098,5 +4125,25 @@ mod startup_spawn_tests {
             Some("tb.always"),
             "{labels:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod user_system_function_name_tests {
+    use super::user_system_function_name;
+
+    #[test]
+    fn function_prototypes_name_their_system_function() {
+        assert_eq!(
+            user_system_function_name("function int $myf(input logic [7:0] v)"),
+            Some("$myf")
+        );
+        assert_eq!(
+            user_system_function_name("  function $f_2$x;"),
+            Some("$f_2$x")
+        );
+        assert_eq!(user_system_function_name("task $t(int a)"), None);
+        assert_eq!(user_system_function_name("functional $f"), None);
+        assert_eq!(user_system_function_name("function int $(x)"), None);
     }
 }

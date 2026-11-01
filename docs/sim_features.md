@@ -1362,8 +1362,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   checks every source pair against an exhaustive outcome oracle in both
   editions. Explicit continuous strengths on vectors, selected vector bits and
   supply nets reject; gate instance arrays keep per-instance strengths. Delayed
-  enable gates still drive X for an unknown enable; VPI strength values,
-  charge and resistive contexts are outside this row (`trireg` and the resistive
+  enable gates still drive X for an unknown enable; VPI reads these strengths
+  through `vpiStrengthVal` (decision A20-D21); charge and resistive contexts
+  are outside this row (`trireg` and the resistive
   MOS primitives are unsupported by design).
   V §§3.4, 3.7, 6.1, 7.9–7.13, 17.1.1.5; SV §§10.3.4, 21.2.1.5 **[1995]**.
 - 🟨 **Dissimilar inout collapse** — Admitted whole/selected/concatenated packed
@@ -2555,7 +2556,11 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   iterations served per object are listed in
   [`src/sim/rt/vpi_catalog.txt`](../src/sim/rt/vpi_catalog.txt), the single
   source of truth for the VPI object model; a query it does not list fails
-  with a `vpi_chk_error` error (ADV-019 A03, decision A19-D26). A generated
+  with a `vpi_chk_error` error (ADV-019 A03, decision A19-D26); every
+  applicable row is implemented, an extension, refused on purpose (`error`,
+  decision A19-D65), `n/a`, or `unsupported` with its reason (statement
+  processes, structure net members, switch values, class object names and
+  specparam expressions: A19-D62..D66). A generated
   object catalog and the common VPI routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
   relative to a scope, and constant element/bit/part selects in the name),
   `vpi_handle_by_index`/`_multi_index`, `vpi_handle` (`vpiParent`, `vpiScope`,
@@ -2584,13 +2589,16 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpi_get_value_array`/`vpi_put_value_array` (38.16, 38.35) read and write
   sections of static unpacked variable arrays (gets also net arrays) in every
   format the clauses define, with `vpiUserAllocFlag`, `vpiOneValue` and
-  `vpiPropagateOff` (ADV-020, decisions A20-D5..D8). `cbForce`/`cbRelease`
+  `vpiPropagateOff`, which stores without notifying fanouts (ADV-020,
+  decisions A20-D5..D8). Delayed `vpi_put_value` writes reach string
+  variables (A20-D22). `cbForce`/`cbRelease`
   run after every force or release statement (all statements with a NULL
   object, or those writing a variable, net, element, select, member or array
   element) with a `vpiForce`/`vpiRelease` handle whose `vpiLhs` is the
   forced object and the left-hand value; `cbDisable` runs when `disable`
   ends a named block, named fork or task, or a block enclosing a registered
-  system task call; `cbAssign`/`cbDeassign` register and never run;
+  system task call; `cbAssign`/`cbDeassign` are refused (no procedural
+  `assign`/`deassign`);
   `vpiModPath` and `vpiTchk` objects iterate from instances with their
   terms, edges, conditions, path type, polarities, `vpiModPathHasIfNone`,
   `vpiTchkType` and notifier (37.35, 37.36; decisions A19-D9, A19-D10);
@@ -2700,8 +2708,14 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   emitted only with `--vpi`, `--dpi-lib` or a user system task call site.
   Registered packed/real system-function calls have direct
   expression-evaluation paths and may be `$strobe`/`$monitor` arguments (their
-  design writes are rejected there); other read-only evaluators (event
-  controls, force re-evaluation) still reject them. Assertion handles,
+  design writes are rejected there); in event controls, waits and force
+  sources (directly or through a function) the waiting process evaluates them
+  like a context DPI import (ADV-020 `systf_evaluators`). Action callbacks
+  (38.36.3, decision A20-D20): `cbError` runs for each run-time error and
+  fatal error report, `cbPLIError` for each VPI routine error once the
+  routine returned, `cbSignal` at the next safe point after a caught signal;
+  `cbValueChange` with `vpiStrengthVal` reports net strengths and runs on
+  strength-only changes (A20-D21). Assertion handles,
   their coverage counters and the coverage operations of `vpi_control`
   (SIM-046) are described under the coverage control API. Assertion
   callbacks and control (SV 39.4, 39.5, ADV-017): `vpi_register_assertion_cb`

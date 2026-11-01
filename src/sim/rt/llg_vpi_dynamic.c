@@ -1958,6 +1958,16 @@ static const char* dyn_get_str(int property, llg_vpi_slot_t* slot, int* handled)
             if (property == vpiName || property == vpiFullName)
                 return dyn_element_name(slot, property == vpiFullName);
             break;
+        case SLOT_CLASSOBJ:
+            /* 37.29: a class object is named by its class (decision
+             * A19-D64); it has no full name, being in no scope. */
+            if (property == vpiName) {
+                uint32_t class_index;
+                if (dyn_refuse_dying(slot->pointer, "vpi_get_str")) return NULL;
+                if (dyn_object_class(slot->pointer, &class_index))
+                    return dyn_class(class_index)->name;
+            }
+            break;
         case SLOT_OBJECT:
             *handled = 0;
             return NULL;
@@ -2018,8 +2028,8 @@ static void dyn_put_value(llg_vpi_slot_t* slot, p_vpi_value input, int mode) {
     }
     if (mode != vpiNoDelay) {
         vpi_error("LLG_VPI_FLAGS",
-                  "llg writes strings, class properties and array elements with vpiNoDelay only "
-                  "(decision A19-D23)");
+                  "llg writes class properties and array elements with vpiNoDelay only and "
+                  "forces no string, property or element (decision A19-D23)");
         return;
     }
     if (g_dyn.reclaiming) {

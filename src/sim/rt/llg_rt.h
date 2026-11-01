@@ -731,6 +731,16 @@ void llg_net_write_selected(llg_net_t* net, int idx, sv4_t value,
                             sv4_select_plan_t plan, int reverse);
 void llg_net_index_reset(llg_net_t* net);
 void llg_net_strength_reset(llg_net_t* net); /* startup view, no wakeups */
+/* VPI vpiStrengthVal (IEEE 1800-2009 38.15, 38.36.1): the net's strength
+ * view as llg_net_t.strength encodes it (the published view, or one
+ * computed from the drivers when the net has none) replaces `*out`.
+ * llg_net_strength_attach gives a net without a view the caller-owned,
+ * empty `view` (initialized now, without wakeups) so that strength-only
+ * changes publish; it returns 0 when the net already has a view.
+ * llg_net_strength_detach takes such a view back. */
+void llg_net_strength_snapshot(llg_net_t* net, sv4_t* out);
+int llg_net_strength_attach(llg_net_t* net, sv4_t* view);
+void llg_net_strength_detach(llg_net_t* net, sv4_t* view);
 void llg_net_alias_bind(llg_net_alias_t* alias);
 void llg_net_alias_clear(llg_net_t* net); /* release a model net's alias list */
 sv4_t llg_net_alias_read(llg_net_alias_t* alias);
@@ -1853,6 +1863,15 @@ void llg_rt_fatal_typed(int finish_number, const char* fmt,
 // Counts reset at llg_rt_init and remain available through final-block
 // execution. Invalid levels return zero.
 uint64_t llg_rt_severity_count(int severity);
+// Observer of run-time errors (VPI cbError, IEEE 1800-2009 38.36.3): runs
+// after each run-time error or fatal error was reported, before a fatal one
+// ends the run. Reports are `$error`/`$fatal` (20.10), failing assertions
+// without an action block and the errors the runtime detects itself;
+// `message` is the reported text and `location` the source location or
+// NULL. Without a hook each report pays one branch.
+typedef void (*llg_rt_error_fn)(int fatal, const char* message, const char* location);
+void llg_rt_error_hook(llg_rt_error_fn hook);
+void llg_rt_note_error(int fatal, const char* message, const char* location);
 // Immediate assertion default-failure and successful-cover callbacks. The
 // identity is retained at the call boundary for future per-assertion APIs.
 void llg_assertion_failure(int kind, uint64_t identity, const char* label,
@@ -3407,6 +3426,12 @@ void llg_ref_nba_masked(llg_ref_t* ref, sv4_t value, sv4_t mask, uint64_t ticks)
 void llg_ref_write_bit(llg_ref_t* ref, uint64_t index, sv4_t value);
 void llg_nba_d(double* target, double value);
 void llg_ba_d(double* target, double value);
+// VPI vpi_put_value_array with vpiPropagateOff (IEEE 1800-2009 38.35): store
+// like llg_ba/llg_ba_d (a forced target keeps its forced value) without
+// publishing the change, so no waiter, continuous assignment or watch sees
+// it. `value` is consumed.
+void llg_store_unpublished(sv4_t* target, sv4_t value);
+void llg_store_unpublished_d(double* target, double value);
 // Reorder `count` elements of `element_cells` contiguous real cells in place
 // (LLG_CONTAINER_METHOD_REVERSE/SORT/RSORT; sorting needs one-cell elements).
 // Keys compare numerically and NaN keys keep their positions. The new order is

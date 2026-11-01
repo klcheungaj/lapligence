@@ -2,8 +2,8 @@ register force: handle level=0
 register release: handle level=0
 register n[7:4] force: handle level=0
 register v[0] force: NULL level=3
-register assign: handle level=0
-register deassign: handle level=0
+register assign: NULL level=3
+register deassign: NULL level=3
 force at 1: vpiForce lhs=tb.v value=5a
 after force at 1
 force at 2: vpiForce lhs=tb.n[3:0] value=3

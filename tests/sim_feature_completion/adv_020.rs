@@ -161,3 +161,92 @@ fn delays_read_and_write_paths_checks_primitives_and_assignments() {
         &[],
     );
 }
+
+const ACTIONS: &[&str] = &[
+    "--define-system-task",
+    "task $act_register()",
+    "--define-system-task",
+    "task $act_pli()",
+    "--define-system-task",
+    "task $act_signal()",
+    "--define-system-task",
+    "task $act_remove()",
+];
+
+#[test]
+fn action_callbacks_report_errors_and_signals() {
+    let directory = sim_harness::TempDir::new("adv020-actions").expect("temporary directory");
+    let Some(library) = plugin(&directory, "actions") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "actions",
+        include_str!("../fixtures/sim/feature_completion/adv_020/actions.out"),
+        ACTIONS,
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}
+
+const STRENGTHS: &[&str] = &[
+    "--define-system-task",
+    "task $st_read()",
+    "--define-system-task",
+    "task $st_watch()",
+];
+
+#[test]
+fn net_strengths_read_and_report_strength_only_changes() {
+    let directory = sim_harness::TempDir::new("adv020-strengths").expect("temporary directory");
+    let Some(library) = plugin(&directory, "strengths") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "strengths",
+        include_str!("../fixtures/sim/feature_completion/adv_020/strengths.out"),
+        STRENGTHS,
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}
+
+const STRING_PUTS: &[&str] = &[
+    "--define-system-task",
+    "task $sp_put()",
+    "--define-system-task",
+    "task $sp_cancel()",
+];
+
+#[test]
+fn delayed_puts_reach_string_variables() {
+    let directory = sim_harness::TempDir::new("adv020-strings").expect("temporary directory");
+    let Some(library) = plugin(&directory, "string_puts") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "string_puts",
+        include_str!("../fixtures/sim/feature_completion/adv_020/string_puts.out"),
+        STRING_PUTS,
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}
+
+const SYSTF_EVALUATORS: &[&str] = &["--define-system-task", "function int $plus1(input int v)"];
+
+/// A user system function in an event control, a force source, a wait
+/// condition (through a function) and a `$monitor` argument.
+#[test]
+fn user_system_functions_run_in_evaluated_contexts() {
+    let directory = sim_harness::TempDir::new("adv020-systf").expect("temporary directory");
+    let Some(library) = plugin(&directory, "systf_evaluators") else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "systf_evaluators",
+        include_str!("../fixtures/sim/feature_completion/adv_020/systf_evaluators.out"),
+        SYSTF_EVALUATORS,
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}

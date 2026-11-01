@@ -1,0 +1,26 @@
+active time format: NULL error
+tb alias statements: NULL error
+tb let declarations: NULL error
+let by name: NULL
+modport vpi_get(vpiName): -1 error
+port by index: NULL error
+tb.c typespec instance: NULL error
+tb.c typespec module: NULL error
+tb.c typespec scope: NULL error
+tb.sv typespec instance: NULL error
+tb.sv typespec module: NULL error
+tb.sv typespec scope: NULL error
+enum constant typespec: NULL error
+tb.mem value: error
+tb.nets value: error
+tb.d value: error
+class defn memories: NULL error
+class typespec memories: NULL error
+class object memories: NULL error
+class typespec typedefs: NULL error
+class object typedefs: NULL error
+class typespec parameter assignments: NULL error
+class typespec typedef alias: NULL error
+class object scope: NULL error
+class object full name: NULL error
+function call value: error

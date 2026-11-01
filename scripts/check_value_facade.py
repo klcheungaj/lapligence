@@ -27,6 +27,9 @@ METADATA = {
                      'object', 'object->conns[i].ref', 'operand', 'out->row', 'outer', 'owner',
                      'part', 'port', 'port->target', 'query', 'ref', 'site->args[i]', 'source',
                      'span', 'start', 'target', 'to'),
+    # VPI catalog rows and their nets: strength views are sized by the
+    # object's and the net's metadata widths.
+    'rt/llg_vpi_services.c': ('object', 'object->net'),
     # Class item rows (method results, arguments, parameters) carry declared widths.
     'rt/llg_vpi_dynamic.c': ('item', 'shape'),
     'rt/llg_wave.c': ('g_wave.regs[alias]', 'g_wave.regs[i]', 'reg'),

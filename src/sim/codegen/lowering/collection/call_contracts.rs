@@ -104,6 +104,11 @@ impl<'a> Codegen<'a> {
         let Ok((process, external)) = self.event_expression_effects(expression, scope_path) else {
             return Ok(PostponedEvaluation::Callback);
         };
+        // A user system function keeps the callback form there: its calltf
+        // runs from the Postponed callback like any other system call.
+        if self.calls_user_system_function(expression) {
+            return Ok(PostponedEvaluation::Callback);
+        }
         if let Some(reason) = external {
             return Err(format!(
                 "{reason}: `$monitor`/`$strobe` arguments are evaluated in the read-only Postponed region (IEEE 1800-2009 4.4.2.9)"
@@ -135,6 +140,45 @@ impl<'a> Codegen<'a> {
             &mut external,
         )?;
         Ok((process, external))
+    }
+
+    /// Whether `expression`, or a function body it reaches, calls a user
+    /// (VPI) system function. Models without user system functions return
+    /// at once.
+    fn calls_user_system_function(&self, expression: NodeId) -> bool {
+        if self.user_system_functions.is_empty() {
+            return false;
+        }
+        let mut visited = HashSet::new();
+        let mut pending = vec![expression];
+        while let Some(node) = pending.pop() {
+            match self.kind(node) {
+                NodeKind::SysCall { name } if self.user_system_functions.contains(name) => {
+                    return true;
+                }
+                NodeKind::FuncCall {
+                    name,
+                    is_task: false,
+                    callee,
+                    ..
+                } => {
+                    if let Ok((ft, _)) = self.resolve_callee_env(self.inst, name, false, *callee) {
+                        if visited.insert(ft) {
+                            pending.extend(self.func_body(ft));
+                        }
+                    }
+                }
+                NodeKind::MethodCall {
+                    callee: Some(method),
+                    ..
+                } if visited.insert(*method) => {
+                    pending.extend(self.func_body(*method));
+                }
+                _ => {}
+            }
+            pending.extend(self.node(node).children.iter().copied());
+        }
+        false
     }
 
     /// Built-in container and string methods that only read their receiver
@@ -284,6 +328,19 @@ impl<'a> Codegen<'a> {
                         external,
                     )?;
                 }
+            }
+            NodeKind::SysCall { name } if self.user_system_functions.contains(name) => {
+                // A user (VPI) system function has no effect summary: its
+                // calltf may write any object through VPI. It is a legal
+                // zero-time call (IEEE 1800-2009 36.2), so the waiting
+                // process evaluates it with ordinary call semantics, like a
+                // context DPI import.
+                needs_process(process, "user system functions have no effect summary");
+                external.get_or_insert_with(|| {
+                    format!(
+                        "user system function `{name}` in `{scope_path}` may write SystemVerilog storage through VPI"
+                    )
+                });
             }
             NodeKind::SysCall { name } => {
                 return rejected(&format!("system call `{name}` has no pure effect summary"));

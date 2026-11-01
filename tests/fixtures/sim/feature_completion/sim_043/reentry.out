@@ -1,6 +1,6 @@
 info: reason=1 user=second value format=6
 release kept handle -> 1
-cbStmt -> null LLG_VPI_CALLBACK
+cbStmt -> null LLG_VPI_UNSUPPORTED
 cbForce -> handle none
 whole array -> handle none
 remove a whole-array callback -> 1

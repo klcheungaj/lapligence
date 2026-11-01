@@ -2,6 +2,7 @@
 #include "llg_vpi.c"
 #include "llg_vpi_dynamic.c"
 #include "llg_vpi_runtime.c"
+#include "llg_vpi_services.c"
 #include "probe.h"
 
 static PLI_INT32 function_size(PLI_BYTE8* data) { (void)data; return 129; }

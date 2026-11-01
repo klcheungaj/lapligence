@@ -190,9 +190,10 @@ design's unpacked arrays; the design prints the arrays after the puts.
   `vpiPropagateOff` (`00000000001`, `00000000101`, `00000010101`,
   `00001010101`, `001010101xx`). `vpiOneValue` (L64476-L64477: "This flag set
   causes the function to apply only a single element value to the entire
-  array section specified") writes `abc` to all of `b`; `b[1]` changed, so the
-  `always @(b[1])` process ran once although `vpiPropagateOff` was set
-  (`changes=1`, decision A20-D7). L64449-L64450: "If the vpiRawFourStateVal
+  array section specified") writes `abc` to all of `b`; `b[1]` changed, but
+  `vpiPropagateOff` (L64471-L64472: "This flag inhibits notification of the
+  fanouts of the array that one or more values have changed") was set, so the
+  `always @(b[1])` process did not run (`changes=0`, decision A20-D7). L64449-L64450: "If the vpiRawFourStateVal
   format is set for a 2-state array type, the bvalbits shall be ignored. If
   the vpiRawTwoStateVal format is specified for a 4-state array type, the
   bvalbits shall be assumed to be 0.": `b[2]` becomes `234`; `a[2][3]`
@@ -217,7 +218,7 @@ design's unpacked arrays; the design prints the arrays after the puts.
 object, `cbForce` on the part-select `tb.n[7:4]`, `cbRelease` on the net array
 `tb.na`, `cbForce` on `tb.r` and `cbRelease` on `tb.n`, then tries `cbForce` on
 the bit-select `tb.n[0]` and on the parameter `tb.P`, and registers `cbAssign`
-(NULL object) and `cbDeassign` on `tb.v`. Each callback prints its label, the
+(NULL object) and `cbDeassign` on `tb.v`, which are refused. Each callback prints its label, the
 time, `vpiType` of its object, the full name of `vpiLhs` and the value in the
 registered format.
 
@@ -226,8 +227,9 @@ registered format.
   L64788-L64789: "It is illegal to attempt to place a callback for reason
   cbForce, cbRelease, or cbDisable on a variable bit-select." The bit-select
   and the parameter (never forced) are refused with level 3. `cbAssign` and
-  `cbDeassign` register; llg rejects procedural `assign`/`deassign`, so they
-  never run (decision A20-D9).
+  `cbDeassign` are refused with level 3 and `LLG_VPI_UNSUPPORTED`: llg rejects
+  procedural `assign`/`deassign` (unsupported by design), so such a record
+  could never run (decision A20-D9).
 - **Object and value.** L64780-L64783: "For cbForce, cbRelease, cbAssign, and
   cbDeassign callbacks, the object returned in the obj field shall be a handle
   to the force, release, assign, or deassign statement. The value field shall
@@ -321,6 +323,130 @@ the declared or written delays.
   `$setuphold` sees none (`one-check=0`); one on a net is refused
   (decision A20-D15).
 
+## actions (38.36.3)
+
+`actions.c` registers `cbError`, a `cbSignal` record for `SIGTERM` and, last,
+`cbPLIError`, and tries the reasons llg does not raise. Every callback prints
+its reason, label, time (`vpiSimTime` ticks of 1 ps, the default precision),
+obj, index and the `vpi_chk_error` status it sees.
+
+- **Actions.** 38.36.3 (L65003-L65004): "Actions are differentiated from
+  features in that actions shall occur in all VPI-compliant tools", and
+  (L65021-L65024) "cbError Simulation run-time error occurred / cbPLIError
+  Simulation run-time error occurred in a PLI function call / cbTchkViolation
+  Timing check error occurred / cbSignal A signal occurred". The three
+  registrations return handles with level 0.
+- **cbSignal index.** L65039-L65041: "set the reason field to cbSignal, and
+  set the index field to one of the legal signals specified by the operating
+  system. When this signal occurs, the simulator will trap the signal,
+  proceed to a safe point (if possible), and then call the callback
+  routine." Index 0 and -1 are not signals: NULL, level 3,
+  `LLG_VPI_CALLBACK`. `$act_signal` raises `SIGTERM`; the record runs at the
+  next VPI call (`vpi_printf("after raise")`, the safe point), with index
+  `SIGTERM`, a NULL obj and no error status (decision A20-D20).
+- **Refused reasons.** `cbStmt` (no statement hook), `cbAssign`/`cbDeassign`
+  (no procedural assign, decision A20-D9), `cbUnresolvedSystf` (every call is
+  resolved when the model is generated), the save and restart reasons, the
+  reset and interactive reasons (decision A20-D11) return NULL with level 3
+  and `LLG_VPI_UNSUPPORTED`; L65025-L65033 lists save, restart, interactive
+  mode and unresolved system calls as "Examples of possible feature-related
+  callbacks", which "might not exist in all VPI-compliant tools"
+  (L65003-L65004); reset is such a feature too ($reset, Annex D.8). An unknown reason (999) is
+  `LLG_VPI_CALLBACK`. None of these refusals reaches `cbPLIError`, which is
+  registered after them.
+- **cbPLIError.** `$act_pli` calls `vpi_get(vpiSize, NULL)`, which returns
+  `vpiUndefined` (-1) with `LLG_VPI_HANDLE`. The record runs at the next
+  routine call, after the failing one returned: before the report line, which
+  calls `vpi_printf` after reading `vpi_chk_error`, and again before
+  `returning` for the second failing call; inside it `vpi_chk_error` gives
+  that error (level 3, state 3 = `vpiRun`, `LLG_VPI_HANDLE`). The routine
+  itself calls `vpi_get(vpiSize, NULL)`, which is not reported again
+  (decision A20-D20).
+- **cbError.** L65047-L65048: "On a cbError callback, the routine
+  vpi_chk_error() can be called to retrieve error information."; 20.9
+  (L34909-L34913): "$fatal shall generate a run-time fatal error ... $error
+  shall be a run-time error."; 16.3 (L21073): "assert statement fails
+  and no else clause is specified, the tool shall, by default, call $error". At 1 ns the record runs
+  for `$error("first error 0")` and for the failing `assert (x == 2)`
+  without an action block, each with level 3, state 3 and
+  `LLG_RUNTIME_ERROR` and the report in the message; `$warning`, `$info` and
+  the assertion with an `else` action do not run it.
+- **Removal.** `$act_remove` removes the three records (each 1); the next
+  routine error and `$error("unobserved error")` run nothing.
+
+## strengths (38.15, 38.36.1)
+
+`$st_read` reads `vpiStrengthVal` of nets driven with strengths, of the
+variable `a` and of the vector `v`; each bit prints `[i]logic s0 s1` (hex
+Annex K codes: `80` supply, `40` strong, `20` pull, `08` weak, `01` HiZ).
+The strengths follow 28.11 and 28.12; the `%v` of each net (We1 Pu0 St1 StX
+Pu1 StL StH HiZ Su1 Pu1 We0 53X) gives the same levels.
+
+- **Values.** 38.15 (L62675-L62677): "If the format field in the s_vpi_value
+  structure is set to vpiStrengthVal, the value.strength pointer shall point
+  to an array of s_vpi_strengthval structures. ... If the object is a reg or
+  variable, the strength will always be returned as strong." A known value
+  reports its strength in `s0` and `s1` (`w1` We1: `08 08`; `w9` supply1:
+  `80 80`); `w8` (undriven) is z with `01 01`; the variable `a` is strong.
+  An unknown value reports `x` with the strength of its 1 part in `s0` and of
+  its 0 part in `s1` (L62608-L62611 only says "refer to strength coding in
+  Annex K"; decision A20-D21): `w4` StX `40 40`, `w6` StL `01 40`, `w7` StH
+  `40 01`, `w12` 53X `08 20`.
+- **Strength-only changes.** 38.36.1 (L64771-L64772): "If a cbValueChange
+  callback is registered and the format is set to vpiStrengthVal, then the
+  callback shall occur whenever the object changes strength, including
+  changes that do not result in a value change." `w` and `v[1]` have a strong
+  and a weak driver of `d`. At 2 ns `en1 = 0` leaves We1 and at 3 ns
+  `en1 = 1` St1 again: the strength records on `w`, `v` and `v[1]` run, the
+  `vpiBinStrVal` record on `w` does not (no value change), and `v[0]` (one
+  strong driver) does not change. At 4 ns `en2 = 0` leaves St1 (no change).
+  At 5 ns `d = 0`: every record runs once (St0), the value record too. At
+  6 ns `en1 = 0` makes `w` and `v[1]` z (`01 01`). The record removed right
+  after its registration never runs. Records on the same storage run newest
+  first (decision S43-D6).
+
+## string_puts (38.34)
+
+`$sp_put` writes the string variables `s`, `t` and `u` with delays (the
+`vpiSimTime` delays are 1 ns ticks under `` `timescale 1ns/1ns``); `$sp_cancel`
+cancels the event it kept. 38.34 (L64176-L64183): "The routine can be applied
+to nets, variables, variable selects, memory words, named events, system
+function calls, sequential UDPs, and scheduled events. ... vpiInertialDelay
+All scheduled events on the object shall be removed before this event is
+scheduled. vpiTransportDelay All events on the object scheduled for times
+later than this event shall be removed (modified transport delay)."
+
+- `s3` (inertial, 3) is removed by `s4` (inertial, 4): `s` changes once, at
+  5 ns, which wakes `always @(s)` (`5: s changed to s4`).
+- `t2` and `t5` (transport) both happen: `t2` at 3 ns (the display at 3 ns
+  runs after the earlier-scheduled write, decision S42-D5) and `t5` at 6 ns.
+- `u6` with `vpiReturnEvent` returns a `vpiSchedEvent` handle (L64197-L64199:
+  "If the flags argument also has the bit mask vpiReturnEvent,
+  vpi_put_value() shall return a handle of type vpiSchedEvent to the newly
+  scheduled event"); `vpiCancelEvent` at 2 ns removes it, so `u` stays `u0`.
+- A delayed put without a time is `LLG_VPI_TIME`; `vpiForceFlag` on a string
+  and a delayed put to the queue element `q[0]` are `LLG_VPI_FLAGS` with
+  level 3 (decisions A20-D22, A19-D23).
+
+## systf_evaluators (36.2, 9.4.2, 10.6.2)
+
+`$plus1(v)` is a user system function whose calltf returns `v + 1`. A user
+system function is called like any function (36.2), but its calltf may write
+any object through VPI, so the waiting process evaluates each context itself
+(the way it evaluates a context DPI import) instead of the read-only change
+callback. The number of calltf calls is not observable here and is not
+specified; the values are.
+
+- `always @($plus1(a))` waits for a change of the call's value (9.4.2): the
+  write `a = 5` at 2 ns wakes it once (`event=1`), and `a = 6` at 5 ns once
+  more (`event=2` at 6 ns).
+- `force y = $plus1(a)` at 1 ns follows its source (10.6.2): `y=1`, then
+  `y=6` and `y=7` after the writes.
+- `wait (twice(a) == 14)` calls `$plus1` through a function and completes at
+  5 ns, when `a = 6`.
+- `$monitor` with a `$plus1(a)` argument prints at 3 ns (its first Postponed
+  region) and again when `a` changes at 5 ns.
+
 ## Decisions
 
 The choices where the text is silent are the portable cases A20-D1 to A20-D4
@@ -331,13 +457,16 @@ for `0x80000000` and `0x80000002`), the count and status of a write to several
 or partly closed channels (A20-D3), and closing or flushing channels that are
 not open (A20-D4). The value-array choices are A20-D5 (argument errors, get
 flags, no partial writes), A20-D6 (x and z read as 0 in the raw two-state
-form), A20-D7 (`vpiPropagateOff` still propagates) and A20-D8 (no puts to net
+form), A20-D7 (`vpiPropagateOff` notifies no fanout) and A20-D8 (no puts to net
 arrays). The callback choices are A20-D9 (`cbForce`/`cbRelease` timing,
-object matching and VPI forces; `cbAssign`/`cbDeassign` never run) and A20-D10
+object matching and VPI forces; `cbAssign`/`cbDeassign` are refused) and A20-D10
 (`cbDisable` timing, inactive and enclosing blocks); A20-D11 covers
 `vpi_control(vpiReset)` and `vpiSetInteractiveScope`. The delay choices are A20-D12 (counts and order),
 A20-D13 (`mtm_flag`, `append_flag`, `pulsere_flag`), A20-D14 (objects with
 delays) and A20-D15 (`cbTchkViolation`); the delay objects of VPI-F8 are
 A20-D16 (`vpiDelay` expressions), A20-D17 (module input port delays),
 A20-D18 (intermodule paths) and A20-D19 (runtime-valued and read-only
-delays).
+delays). A20-D20 covers the action callbacks (`cbError` reports,
+`cbPLIError` and `cbSignal` safe points) and A20-D21 the strength fields of
+an unknown value; A20-D22 the delayed puts to strings and A20-D23 the
+subarray handles (NULL with an error).

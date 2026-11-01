@@ -52,6 +52,11 @@ test a19d44 sim_lrm_decisions::a19_d44_frames_and_threads
 test a19d46 sim_lrm_decisions::a19_d46_statement_toggle_objects
 test a19thr adv_019::threads_and_frames_follow_processes_and_subprogram_calls
 test a19struct adv_019::structure_walker_reaches_ports_processes_assignments_primitives_and_arrays
+test a19d62 sim_lrm_decisions::a19_d62_statement_processes
+test a19d63 sim_lrm_decisions::a19_d63_structure_net_members
+test a19d64 sim_lrm_decisions::a19_d64_switch_values_and_class_object_names
+test a19d65 sim_lrm_decisions::a19_d65_refused_relations
+test a19d66 sim_lrm_decisions::a19_d66_specparam_expressions
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test a20d16 sim_lrm_decisions::a20_d16_delay_expressions
 test a20d17 sim_lrm_decisions::a20_d17_port_delays
@@ -80,7 +85,7 @@ node null 37.5 type=NULL
   iterate vpiThread implemented a19thr
   iterate vpiCallback implemented a19rts
   iterate vpiTimeQueue implemented a19rts
-  handle vpiActiveTimeFormat unsupported $timeformat calls are not objects
+  handle vpiActiveTimeFormat error a19d65 37.77 detail 1 defines only the NULL before any $timeformat call; industry-standard behaviour refuses it after one too (decision A19-D65)
   iterate vpiPackage implemented walk
   get vpiTimeUnit implemented walk
   get vpiTimePrecision implemented walk
@@ -89,7 +94,7 @@ node null 37.5 type=NULL
 
 node module 37.5 type=vpiModule
   get vpiTopModule implemented walk
-  get vpiDefDecayTime unsupported trireg nets and the `default_decay_time directive are unsupported (ADV-006)
+  get vpiDefDecayTime n/a trireg nets and the `default_decay_time directive are unsupported by user decision (ADV-006)
   handle vpiIndex implemented walk
   handle vpiGlobalClocking implemented walk
   handle vpiDefaultClocking implemented walk
@@ -110,7 +115,7 @@ node module 37.5 type=vpiModule
   iterate vpiTchk implemented walk
   iterate vpiDefParam implemented a19d56
   iterate vpiIODecl implemented walk
-  iterate vpiAliasStmt unsupported alias statements are not objects
+  iterate vpiAliasStmt error a19d65 alias statements are not objects; industry-standard behaviour refuses it (decision A19-D65)
   iterate vpiClockingBlock implemented walk
   iterate vpiGenScopeArray implemented walk
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
@@ -194,7 +199,7 @@ node interface 37.6 type=vpiInterface
   iterate vpiUnionVar extension walk per-type child iteration (IEEE 1364)
 
 node modport 37.7 type=vpiModport
-  get vpiName unsupported a modport reports its name through vpi_get_str
+  get vpiName error walk vpiName is a string property (37.14), so vpi_get of it is an error; industry-standard behaviour refuses it
   handle vpiInterface implemented walk
   iterate vpiIODecl implemented walk
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
@@ -342,7 +347,7 @@ node instance_array 37.11 members=primitive_array,interface_array,program_array,
   str vpiFullName implemented walk
   get vpiSize implemented walk
   func vpi_handle_by_index implemented a19struct
-  func vpi_handle_by_multi_index unsupported vpi_handle_by_multi_index of instance arrays is not implemented
+  func vpi_handle_by_multi_index implemented a19struct
   handle vpiExpr unsupported the list operation of an instance array's connections (37.11 detail 1) is not built: llg keeps the connections of each element instance
   iterate vpiRange implemented walk
   handle vpiLeftRange implemented walk
@@ -350,7 +355,7 @@ node instance_array 37.11 members=primitive_array,interface_array,program_array,
   iterate vpiInstance implemented walk
 
 node interface_array 37.11 type=vpiInterfaceArray
-  iterate vpiParamAssign unsupported the parameter overrides of instance arrays are not captured
+  iterate vpiParamAssign error walk the parameter overrides of an instance array are not objects; industry-standard behaviour refuses it for instances (decision A19-D65)
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiModule extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
@@ -358,13 +363,13 @@ node interface_array 37.11 type=vpiInterfaceArray
   iterate vpiInterface extension walk per-type child iteration (IEEE 1364)
 
 node program_array 37.11 type=vpiProgramArray
-  iterate vpiParamAssign unsupported the parameter overrides of instance arrays are not captured
+  iterate vpiParamAssign error walk the parameter overrides of an instance array are not objects; industry-standard behaviour refuses it for instances (decision A19-D65)
   handle vpiParent extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
   iterate vpiProgram extension walk per-type child iteration (IEEE 1364)
 
 node module_array 37.11 type=vpiModuleArray
-  iterate vpiParamAssign unsupported the parameter overrides of instance arrays are not captured
+  iterate vpiParamAssign error walk the parameter overrides of an instance array are not objects; industry-standard behaviour refuses it for instances (decision A19-D65)
   iterate vpiModule implemented walk
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiModule extension walk the enclosing scope, instance, module or parent
@@ -402,7 +407,7 @@ node scope 37.12 members=instance,task_func,named_begin,begin,named_fork,fork,cl
   iterate vpiInternalScope implemented walk
   iterate vpiImport unsupported imports are not exposed
   iterate vpiTypedef implemented walk
-  iterate vpiLetDecl unsupported the bodies of let declarations are not captured
+  iterate vpiLetDecl error walk let declarations are not objects; industry-standard behaviour refuses it (decision A19-D65)
 
 node task_func 37.12 members=task,function
   handle vpiStmt implemented walk
@@ -592,8 +597,8 @@ node io_decl 37.13 type=vpiIODecl
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node ports 37.14 members=port,port_bit
-  func vpi_handle_by_index unsupported ports are not indexed
-  func vpi_handle_by_multi_index unsupported ports are not indexed
+  func vpi_handle_by_index error a19d65 a port is not an indexed object (38.19); industry-standard behaviour refuses it (decision A19-D65)
+  func vpi_handle_by_multi_index error a19d65 a port is not an indexed object (38.19); industry-standard behaviour refuses it (decision A19-D65)
   get vpiConnByName implemented a19d35
   func vpi_get_delays implemented a20d17
   func vpi_put_delays implemented a20d17
@@ -628,18 +633,18 @@ node ref_obj 37.15 type=vpiRefObj
   str vpiName implemented walk
   str vpiFullName implemented walk
   get vpiVirtual implemented walk
-  get vpiGeneric unsupported generic interfaces are unsupported
+  get vpiGeneric n/a generic interface ports are unsupported by llg
   str vpiDefName implemented walk
-  iterate vpiPort unsupported the ports an interface or modport port reference connects are not indexed (only nets and variables are)
-  iterate vpiPortInst unsupported the ports an interface or modport port reference connects are not indexed (only nets and variables are)
+  iterate vpiPort error walk llg's reference objects stand only for interface and modport ports, whose ports, task or function and parent are not indexed; industry-standard behaviour refuses it for a modport port
+  iterate vpiPortInst error walk llg's reference objects stand only for interface and modport ports, whose ports, task or function and parent are not indexed; industry-standard behaviour refuses it for a modport port
   handle vpiInstance implemented walk
-  handle vpiTaskFunc unsupported reference objects of task arguments are not exposed
-  handle vpiParent unsupported the parent of a reference object is not exposed
+  handle vpiTaskFunc error walk llg's reference objects stand only for interface and modport ports, whose ports, task or function and parent are not indexed; industry-standard behaviour refuses it for a modport port
+  handle vpiParent error walk llg's reference objects stand only for interface and modport ports, whose ports, task or function and parent are not indexed; industry-standard behaviour refuses it for a modport port
   handle vpiTypespec n/a llg's reference objects stand for interface and modport port connections, which have no data type
   handle vpiActual implemented walk
   str vpiDecompile implemented walk
   get vpiSize n/a llg reference objects stand only for interface and modport ports, which have no size
-  func vpi_get_value unsupported this object has no value in llg
+  func vpi_get_value error walk an interface or modport port reference has no value; industry-standard behaviour refuses it
   get vpiSigned extension walk the sign and width of the object's value
   handle vpiModule extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
@@ -669,7 +674,7 @@ node nets 37.16 members=net,net_bit,array_net
   get vpiSize implemented walk
   get vpiStrength0 implemented a19d35
   get vpiStrength1 implemented a19d35
-  get vpiChargeStrength unsupported trireg nets are unsupported (ADV-006)
+  get vpiChargeStrength n/a trireg nets are unsupported by user decision (ADV-006)
   func vpi_get_value implemented walk
   func vpi_put_value implemented s42obj
   get vpiVector implemented walk
@@ -704,7 +709,7 @@ node array_net 37.16 type=vpiNetArray
   iterate vpiRange implemented walk
   iterate vpiNet implemented walk
   get vpiNetType implemented walk
-  func vpi_get_value unsupported this object has no value in llg
+  func vpi_get_value error a19d65 a net array has no value of its own (37.16 lists none); industry-standard behaviour refuses it (decision A19-D65)
   get vpiStructUnionMember implemented walk
   str vpiDecompile implemented walk
   get vpiArrayType extension walk the array properties of array variables (37.17) applied to net arrays
@@ -727,7 +732,7 @@ node net 37.16 members=struct_net,enum_net,integer_net,time_net,logic_net,packed
 node struct_net 37.16 type=vpiStructNet
   get vpiPackedArrayMember implemented walk
   get vpiPacked extension walk whether the net's data type is packed
-  iterate vpiMember unsupported members of structure or union nets are not objects in llg
+  iterate vpiMember implemented a19d63
   iterate vpiRange error walk 37.16 detail 1: a structure net without explicit packed ranges allows no range iteration
 
 node enum_net 37.16 type=vpiEnumNet
@@ -742,7 +747,7 @@ node logic_net 37.16 type=vpiNet
 
 node packed_array_net 37.16 type=vpiPackedArrayNet
   get vpiPackedArrayMember implemented walk
-  iterate vpiElement unsupported the sub-elements of a packed array are not objects in llg (vpiBit, vpiRange and part selects reach them; decision A19-D28)
+  iterate vpiElement error walk the sub-elements of a packed array are not objects (decision A19-D28); industry-standard behaviour has no packed array net objects either
 
 node variables 37.17 members=short_real_var,real_var,byte_var,short_int_var,int_var,long_int_var,integer_var,time_var,array_var,packed_array_var,bit_var,logic_var,struct_var,union_var,enum_var,string_var,chandle_var,class_var,var_bit
   get vpiCovered implemented walk
@@ -847,7 +852,7 @@ node array_var 37.17 type=vpiRegArray
   handle vpiRightRange implemented walk
   iterate vpiRange implemented walk
   get vpiStructUnionMember implemented walk
-  func vpi_get_value unsupported this object has no value in llg
+  func vpi_get_value error a19d65 a variable array has no value of its own (37.20 lists none); industry-standard behaviour refuses it (decision A19-D65)
   handle vpiIndex error a19d28 the text defines no index for a whole variable array (decision A19-D28)
   iterate vpiIndex implemented a19d28
   str vpiDecompile implemented walk
@@ -858,7 +863,7 @@ node packed_array_var 37.17 type=vpiPackedArrayVar
   get vpiPackedArrayMember implemented walk
   get vpiConstantSelect implemented walk
   iterate vpiIndex implemented walk
-  iterate vpiElement unsupported the sub-elements of a packed array are not objects in llg (vpiBit, vpiRange and part selects reach them; decision A19-D28)
+  iterate vpiElement error walk the sub-elements of a packed array are not objects (decision A19-D28); industry-standard behaviour has no packed array variable objects either
   iterate vpiBit implemented walk
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
@@ -939,7 +944,7 @@ node class_var 37.17 type=vpiClassVar
   get vpiArray implemented walk
   get vpiSize error walk 37.17 detail 9 leaves vpiSize undefined for a class variable
   get vpiStructUnionMember implemented walk
-  func vpi_get_value unsupported this object has no value in llg
+  func vpi_get_value error a19d65 a class variable holds an object reference, which no value format represents (38.15); industry-standard behaviour returns an address, which is not portable (decision A19-D65)
   get vpiScalar implemented walk
   get vpiVector implemented walk
   handle vpiIndex unsupported arrays of string, chandle and class variables and of named events are not objects in llg, so none is an array element; a whole one has no index (decision A19-D28)
@@ -1005,9 +1010,9 @@ node enum_typespec 37.23 type=vpiEnumTypespec
   handle vpiBaseTypespec implemented walk
   iterate vpiEnumConst implemented walk
   handle vpiElemTypespec implemented walk
-  handle vpiInstance unsupported this object does not report its instance
-  handle vpiModule unsupported this object does not report its module
-  handle vpiScope unsupported this object does not report its scope
+  handle vpiInstance error a19d65 a typespec does not report where it is declared; industry-standard behaviour refuses it (decision A19-D65)
+  handle vpiModule error a19d65 a typespec does not report where it is declared; industry-standard behaviour refuses it (decision A19-D65)
+  handle vpiScope error a19d65 a typespec does not report where it is declared; industry-standard behaviour refuses it (decision A19-D65)
 
 node string_typespec 37.23 type=vpiStringTypespec
 
@@ -1017,18 +1022,18 @@ node struct_typespec 37.23 type=vpiStructTypespec
   get vpiPacked implemented walk
   iterate vpiTypespecMember implemented walk
   handle vpiElemTypespec implemented walk
-  handle vpiInstance unsupported this object does not report its instance
-  handle vpiModule unsupported this object does not report its module
-  handle vpiScope unsupported this object does not report its scope
+  handle vpiInstance error a19d65 a typespec does not report where it is declared; industry-standard behaviour refuses it (decision A19-D65)
+  handle vpiModule error a19d65 a typespec does not report where it is declared; industry-standard behaviour refuses it (decision A19-D65)
+  handle vpiScope error a19d65 a typespec does not report where it is declared; industry-standard behaviour refuses it (decision A19-D65)
 
 node union_typespec 37.23 type=vpiUnionTypespec
   get vpiPacked implemented walk
   get vpiTagged implemented walk
   iterate vpiTypespecMember implemented walk
   handle vpiElemTypespec implemented walk
-  handle vpiInstance unsupported this object does not report its instance
-  handle vpiModule unsupported this object does not report its module
-  handle vpiScope unsupported this object does not report its scope
+  handle vpiInstance error a19d65 a typespec does not report where it is declared; industry-standard behaviour refuses it (decision A19-D65)
+  handle vpiModule error a19d65 a typespec does not report where it is declared; industry-standard behaviour refuses it (decision A19-D65)
+  handle vpiScope error a19d65 a typespec does not report where it is declared; industry-standard behaviour refuses it (decision A19-D65)
 
 node bit_typespec 37.23 type=vpiBitTypespec
   get vpiVector implemented walk
@@ -1070,11 +1075,11 @@ node event_typespec 37.23 type=vpiEventTypespec
 node enum_const 37.23 type=vpiEnumConst
   str vpiName implemented walk
   func vpi_get_value implemented walk
-  handle vpiEnumTypespec unsupported an enum constant does not lead back to its typespec
+  handle vpiEnumTypespec error a19d65 an enum constant does not lead back to its typespec; industry-standard behaviour refuses it (decision A19-D65)
 
 node typespec_member 37.23 type=vpiTypespecMember
   str vpiName implemented walk
-  get vpiRandType unsupported randomization properties are not captured
+  get vpiRandType error walk llg keeps no rand qualifier on a structure member (18.4 gives it meaning only for class properties); industry-standard behaviour reaches no typespec member of an unpacked structure
   handle vpiTypespec implemented walk
   handle vpiExpr unsupported the owned database keeps a structure member default as its folded constant value, not as an expression
 
@@ -1126,7 +1131,7 @@ node parameter 37.26 type=vpiParameter
   get vpiVector extension walk the sign and width of the object's value
   handle vpiParent extension walk the enclosing scope, instance, module or parent
 
-node type_parameter 37.26 type=vpiTypeParameter default=unsupported type parameters have no value and no captured default type expression; the typespecs of the declarations that use one give the type
+node type_parameter 37.26 type=vpiTypeParameter default=n/a type parameters are not objects; industry-standard behaviour lists none either (decision A19-D65)
   handle vpiTypespec
   handle vpiExpr
 
@@ -1135,7 +1140,7 @@ node spec_param 37.26 type=vpiSpecParam
   str vpiFullName implemented walk
   get vpiConstType implemented walk
   get vpiSigned implemented walk
-  handle vpiExpr unsupported initialization and default expressions are not exposed
+  handle vpiExpr implemented a19d66
   get vpiScalar extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
   handle vpiLeftRange extension walk the packed range of the object's value, as of a parameter
@@ -1148,7 +1153,7 @@ node def_param 37.26 type=vpiDefParam
   handle vpiLhs implemented a19d56
   handle vpiRhs implemented a19d56
 
-node param_assign 37.26 type=vpiParamAssign default=unsupported the parameter overrides of instance arrays are not captured
+node param_assign 37.26 type=vpiParamAssign default=n/a the parameter overrides of instance arrays are not objects (decision A19-D65)
   get vpiConnByName
   handle vpiModule
   handle vpiScope
@@ -1156,7 +1161,7 @@ node param_assign 37.26 type=vpiParamAssign default=unsupported the parameter ov
   handle vpiRhs
 
 node class_defn 37.27 type=vpiClassDefn
-  iterate vpiMemory unsupported class properties are listed by vpiVariables, vpiReg and vpiRegArray; vpiMemory does not select them
+  iterate vpiMemory error a19d65 class properties are listed by vpiVariables, vpiReg and vpiRegArray; industry-standard behaviour refuses it (decision A19-D65)
   str vpiName implemented walk
   get vpiVirtual implemented a19classes
   get vpiAutomatic implemented walk
@@ -1171,7 +1176,7 @@ node class_defn 37.27 type=vpiClassDefn
   iterate vpiInterfaceDecl unsupported a virtual interface property holds a runtime interface reference that llg does not map back to the interface instance it names, so it is not an object
   iterate vpiNamedEvent implemented walk
   iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
-  iterate vpiTypedef unsupported typedefs declared in a class are not captured as class members
+  iterate vpiTypedef error a19d65 typedefs declared in a class are not objects; industry-standard behaviour refuses it (decision A19-D65)
   iterate vpiInternalScope implemented a19d36
   handle vpiModule implemented a19d36
   str vpiFullName implemented a19d36
@@ -1186,24 +1191,24 @@ node class_defn 37.27 type=vpiClassDefn
 
 node extends 37.27 type=vpiExtends
   handle vpiClassTypespec implemented walk
-  iterate vpiArgument unsupported the base-class constructor arguments of an extends clause are not exposed
+  iterate vpiArgument error walk the base-class constructor arguments of an extends clause are not objects; industry-standard behaviour refuses it
 
 node class_typespec 37.28 type=vpiClassTypespec
-  iterate vpiMemory unsupported class properties are listed by vpiVariables, vpiReg and vpiRegArray; vpiMemory does not select them
-  iterate vpiTypedef unsupported typedefs declared in a class are not captured as class members
+  iterate vpiMemory error a19d65 class properties are listed by vpiVariables, vpiReg and vpiRegArray; industry-standard behaviour refuses it (decision A19-D65)
+  iterate vpiTypedef error a19d65 typedefs declared in a class are not objects; industry-standard behaviour refuses it (decision A19-D65)
   str vpiName implemented walk
   get vpiClassType implemented walk
   get vpiAutomatic implemented walk
-  iterate vpiParamAssign unsupported the parameter values of a class specialization are not captured
+  iterate vpiParamAssign error a19d65 the parameter values of a class specialization are not objects; industry-standard behaviour refuses it (decision A19-D65)
   handle vpiExtends implemented walk
   handle vpiClassDefn implemented walk
   iterate vpiVariables implemented walk
   iterate vpiMethods implemented walk
   iterate vpiConstraint implemented walk
   iterate vpiParameter implemented walk
-  iterate vpiInterfaceDecl unsupported a virtual interface property holds a runtime interface reference that llg does not map back to the interface instance it names, so it is not an object
+  iterate vpiInterfaceDecl error walk a class typespec lists no virtual interface declarations; industry-standard behaviour refuses it (37.28 detail 11 names the class specialization's)
   iterate vpiNamedEvent implemented walk
-  iterate vpiNamedEventArray unsupported arrays of named events have no catalog storage and their elements are not objects (decision A19-D28)
+  iterate vpiNamedEventArray error walk a class typespec lists no named event arrays; industry-standard behaviour refuses it
   iterate vpiInternalScope implemented walk
   handle vpiInstance implemented walk
   handle vpiModule implemented walk
@@ -1214,16 +1219,16 @@ node class_typespec 37.28 type=vpiClassTypespec
   iterate vpiReg implemented walk
   iterate vpiRegArray implemented walk
   handle vpiScope implemented walk
-  handle vpiTypedefAlias unsupported class typedef aliases are not exposed
+  handle vpiTypedefAlias error a19d65 class typedef aliases are not exposed; industry-standard behaviour refuses it (decision A19-D65)
 
 node class_obj 37.29 type=vpiClassObj
-  iterate vpiMemory unsupported class properties are listed by vpiVariables, vpiReg and vpiRegArray; vpiMemory does not select them
-  iterate vpiTypedef unsupported typedefs declared in a class are not captured as class members
+  iterate vpiMemory error a19d65 class properties are listed by vpiVariables, vpiReg and vpiRegArray; industry-standard behaviour refuses it (decision A19-D65)
+  iterate vpiTypedef error a19d65 typedefs declared in a class are not objects; industry-standard behaviour refuses it (decision A19-D65)
   get vpiObjId implemented walk
   iterate vpiVariables implemented walk
   handle vpiClassTypespec implemented walk
   iterate vpiWaitingProcesses unsupported a mailbox or semaphore object has no class layout in llg (its vpiClassType is refused and a semaphore variable is no catalog object), so its waiters in the runtime queues are not reached
-  iterate vpiMessages unsupported 37.29 detail 4 names the iteration but the standard defines no object type for a message (no diagram, no Annex M constant), and llg keeps mailbox messages in runtime scheduler queues the VPI tables do not reach
+  iterate vpiMessages error walk 37.29 detail 4 names the iteration but the standard defines no object type for a message (no diagram, no Annex M constant)
   iterate vpiMethods implemented walk
   iterate vpiConstraint implemented a19cons
   iterate vpiParameter implemented walk
@@ -1233,14 +1238,14 @@ node class_obj 37.29 type=vpiClassObj
   iterate vpiInternalScope implemented walk
   get vpiAutomatic implemented walk
   get vpiAllocScheme implemented walk
-  str vpiName unsupported this object has no name in llg
-  str vpiFullName unsupported this object has no full name in llg
+  str vpiName implemented walk
+  str vpiFullName error a19d64 a class object is in no scope, so it has no full name; industry-standard behaviour refuses it (decision A19-D64)
   iterate vpiPropertyDecl implemented walk
   iterate vpiConcurrentAssertions implemented walk
   iterate vpiSequenceDecl implemented walk
   iterate vpiReg implemented walk
   iterate vpiRegArray implemented walk
-  handle vpiScope unsupported this object does not report its scope
+  handle vpiScope error a19d65 a class object is in no scope; industry-standard behaviour refuses it (decision A19-D65)
 
 node constraint 37.30 type=vpiConstraint
   get vpiVirtual implemented walk
@@ -1293,7 +1298,8 @@ node gate 37.31 type=vpiGate
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
 node switch 37.31 type=vpiSwitch
-  func vpi_get_value unsupported this object has no value in llg
+  get vpiSigned extension walk the sign and width of the object's value
+  func vpi_get_value implemented walk
   handle vpiInstance extension walk the enclosing scope, instance, module or parent
   handle vpiParent extension walk the enclosing scope, instance, module or parent
   handle vpiScope extension walk the enclosing scope, instance, module or parent
@@ -1512,8 +1518,9 @@ node task_call 37.38 type=vpiTaskCall
   get vpiUserDefn implemented walk
 
 node func_call 37.38 type=vpiFuncCall
+  handle vpiProcess error a19d62 a function call is an expression with no process of its own; industry-standard behaviour refuses the relation
   get vpiFuncType implemented walk
-  func vpi_get_value unsupported this object has no value in llg
+  func vpi_get_value error a19d65 a call's value exists only while it is evaluated; industry-standard behaviour refuses it (decision A19-D65)
   handle vpiFunction implemented walk
   get vpiUserDefn implemented walk
   handle vpiTypespec implemented walk
@@ -1522,7 +1529,8 @@ node func_call 37.38 type=vpiFuncCall
   get vpiVector extension walk the sign and width of the object's value
 
 node method_func_call 37.38 type=vpiMethodFuncCall
-  func vpi_get_value unsupported this object has no value in llg
+  handle vpiProcess error a19d62 a function call is an expression with no process of its own; industry-standard behaviour refuses the relation
+  func vpi_get_value error a19d65 a call's value exists only while it is evaluated; industry-standard behaviour refuses it (decision A19-D65)
   handle vpiFunction implemented walk
   handle vpiPrefix implemented walk
   handle vpiWith implemented walk
@@ -1542,8 +1550,9 @@ node method_task_call 37.38 type=vpiMethodTaskCall
   iterate vpiArgument implemented walk
 
 node sys_func_call 37.38 type=vpiSysFuncCall
+  handle vpiProcess error a19d62 a function call is an expression with no process of its own; industry-standard behaviour refuses the relation
   get vpiFuncType implemented walk
-  func vpi_get_value unsupported this object has no value in llg
+  func vpi_get_value error a19d65 a call's value exists only while it is evaluated; industry-standard behaviour refuses it (decision A19-D65)
   func vpi_put_value implemented s42systf
   handle vpiUserSystf implemented walk
   handle vpiTypespec implemented walk
@@ -1805,11 +1814,11 @@ node clocked_seq 37.52 type=vpiClockedSeq
   handle vpiExpr implemented walk
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
-node let_expr 37.53 type=vpiLetExpr default=unsupported a let invocation is captured only as the body the frontend binds for it: it is an opaque vpiOperation, and the owned database keeps no let declaration to relate it to
+node let_expr 37.53 type=vpiLetExpr default=n/a let invocations are not objects: llg keeps only the body the frontend binds (decision A19-D65)
   iterate vpiArgument
   handle vpiLetDecl
 
-node let_decl 37.53 type=vpiLetDecl default=unsupported the bodies of let declarations are not captured
+node let_decl 37.53 type=vpiLetDecl default=n/a let declarations are not objects (decision A19-D65)
   str vpiName
   handle vpiExpr
   iterate vpiSeqFormalDecl
@@ -1890,7 +1899,7 @@ node atomic_stmt 37.56 members=if,if_else,while,repeat,wait,ordered_wait,wait_fo
   get vpiCoverMax implemented walk
   get vpiCoveredCount implemented walk
   str vpiName implemented walk
-  handle vpiProcess unsupported statements have no vpiProcess relation in llg
+  handle vpiProcess implemented walk
 
 node stmt 37.58 members=scope,atomic_stmt
   handle vpiScope implemented walk
@@ -1941,20 +1950,20 @@ node wait 37.62 type=vpiWait
   handle vpiStmt implemented walk
   handle vpiCondition implemented walk
 
-node ordered_wait 37.62 type=vpiOrderedWait default=unsupported wait_order statements are opaque statement objects
-  handle vpiStmt
-  iterate vpiCondition
-  handle vpiElseStmt
+node ordered_wait 37.62 type=vpiOrderedWait
+  handle vpiStmt implemented walk
+  iterate vpiCondition implemented walk
+  handle vpiElseStmt implemented walk
 
 node wait_fork 37.62 type=vpiWaitFork
-  handle vpiStmt unsupported this statement does not expose its body
+  handle vpiStmt implemented a19d62
 
 node delay_control 37.63 type=vpiDelayControl
   func vpi_get_delays implemented a20d19
   handle vpiStmt implemented walk
   handle vpiDelay implemented walk
 
-node repeat_control 37.64 type=vpiRepeatControl default=unsupported intra-assignment repeat controls are not objects
+node repeat_control 37.64 type=vpiRepeatControl default=n/a an intra-assignment repeat control is not an object: vpiDelayControl of its assignment is NULL; industry-standard behaviour creates none either
   handle vpiExpr
   handle vpiEventControl
 
@@ -2036,7 +2045,7 @@ node foreach_stmt 37.70 type=vpiForeachStmt
   iterate vpiParameter implemented walk
   iterate vpiInternalScope implemented walk
 
-node alias_stmt 37.71 type=vpiAliasStmt default=unsupported alias statements are not objects
+node alias_stmt 37.71 type=vpiAliasStmt default=n/a alias statements are not objects (decision A19-D65)
   handle vpiLhs
   handle vpiRhs
   handle vpiInstance
@@ -2137,7 +2146,7 @@ node gen_scope 37.80 type=vpiGenScope
   iterate vpiAssertion implemented walk
   iterate vpiInterface implemented walk
   iterate vpiInterfaceArray implemented walk
-  iterate vpiAliasStmt unsupported alias statements are not objects
+  iterate vpiAliasStmt error a19d65 alias statements are not objects; industry-standard behaviour refuses it (decision A19-D65)
   iterate vpiClockingBlock implemented walk
   get vpiTimePrecision extension walk the time unit and precision of the enclosing instance
   get vpiTimeUnit extension walk the time unit and precision of the enclosing instance

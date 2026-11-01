@@ -169,6 +169,7 @@ static int randomize_report(const llg_cr_problem_t* problem, llg_cr_status_t sta
                 "or proof of unsatisfiability was found (raise %s); randomize returns 0\n",
                 site, report->budget, report->budget);
         llg_last_failure = 1;
+        llg_rt_note_error(0, "randomize solver budget exhausted", site);
         return 0;
     default: {
         const char* name = NULL;
@@ -194,6 +195,7 @@ static int randomize_report(const llg_cr_problem_t* problem, llg_cr_status_t sta
                 randomize_reason_text(report->reason), name ? " (`" : "", name ? name : "",
                 name ? "`)" : "", ends_run ? "" : "; randomize returns 0");
         llg_last_failure = 1;
+        if (!ends_run) llg_rt_note_error(0, randomize_reason_text(report->reason), site);
         if (ends_run) {
             llg_rt_skip_finals();
             llg_rt_fatal_typed(0, randomize_reason_text(report->reason), NULL, 0, "", site);

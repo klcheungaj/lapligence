@@ -1,0 +1,9 @@
+put tb.s=s3 mode=2 delay=3 level=0
+put tb.s=s4 mode=2 delay=4 level=0
+put tb.t=t2 mode=3 delay=2 level=0
+put tb.t=t5 mode=3 delay=5 level=0
+put tb.t=forced mode=5 delay=0 level=3
+3: t=t2
+5: s=s4
+6: t=t5
+11: done s=s4 t=t5

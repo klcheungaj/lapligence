@@ -932,6 +932,7 @@ static void llg_cov_xlayout_error(const llg_cov_inst_t* inst, const llg_cov_cros
             "limitation)\n",
             inst->group->name, cross->name, what);
     llg_rt_mark_failed();
+    llg_rt_note_error(0, "cross bins are not counted", NULL);
 }
 
 typedef struct {
@@ -2011,7 +2012,10 @@ static void llg_cov_illegal_transition(const llg_cov_inst_t* inst, const llg_cov
             inst->group->name, point->name, value, what, bin->name, bin->site);
     // An illegal `default sequence` count reports and the run continues
     // (S45-D10); an explicit illegal transition ends it (S45-D3).
-    if (bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT) llg_rt_mark_failed();
+    if (bin->kind == LLG_COV_BIN_ILLEGAL_DEFAULT) {
+        llg_rt_mark_failed();
+        llg_rt_note_error(0, "illegal_bins transition sampled", bin->site);
+    }
     else llg_cov_fatal("illegal_bins transition sampled", bin->site);
 }
 
@@ -2675,6 +2679,7 @@ static void llg_cov_merged_cross(llg_cov_type_t* type, const llg_cov_inst_t* con
                         "needs every instance to have the same cross bins (llg limitation)\n",
                         first->group->name, first->group->crosses[index].name);
                 llg_rt_mark_failed();
+                llg_rt_note_error(0, "merged type coverage needs equal cross bins", NULL);
             }
             return;
         }
