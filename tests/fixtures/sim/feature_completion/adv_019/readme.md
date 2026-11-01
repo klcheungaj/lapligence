@@ -855,3 +855,12 @@ task or function, decision A19-D62), `vpiStmt` of `wait fork` (NULL),
 the members of the structure net `sn` (nets, decision A19-D63), the value
 of the switch `tr` and the `vpiName` of class objects (decision A19-D64),
 and the rows refused with an error on purpose (decision A19-D65).
+
+The later closure of the rows that industry-standard behaviour serves adds
+three declarations to `catalog.sv`: the named event array `eva` (its array
+row, element rows and the `vpiNamedEventArray` iteration of the module,
+decision A19-D69), the virtual interface property `vif` of the class
+`Packet`, which the initial block points at `bi` (`vpiInterfaceDecl` of the
+class definition and object, decision A19-D72), and an `expect` statement in
+a branch the walk never takes (its relations are refused on purpose,
+decision A19-D65).

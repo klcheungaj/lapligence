@@ -2560,7 +2560,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   applicable row is implemented, an extension, refused on purpose (`error`,
   decision A19-D65), `n/a`, or `unsupported` with its reason (statement
   processes, structure net members, switch values, class object names and
-  specparam expressions: A19-D62..D66). A generated
+  specparam expressions: A19-D62..D66; after the ADV-019 closure only
+  `vpiImport`, class event array properties and a frame's `vpiOrigin` and
+  `vpiAutomatics` stay unsupported). A generated
   object catalog and the common VPI routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
   relative to a scope, and constant element/bit/part selects in the name),
   `vpi_handle_by_index`/`_multi_index`, `vpi_handle` (`vpiParent`, `vpiScope`,
@@ -2632,12 +2634,15 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpiSwitchArray`, `vpiUdpArray`) with `vpiRange`, element iteration,
   `vpi_handle_by_index` and the elements' `vpiIndex`, primitives (`vpiGate`,
   `vpiSwitch`, `vpiUdp`, `vpiPrimType`, `vpiPrimTerm` terminals with
-  `vpiExpr`, output value), `vpiContAssign` with `vpiLhs`/`vpiRhs` and its
+  `vpiExpr`, output value; `vpi_put_value` sets a sequential UDP with no
+  delay, decision A19-D74), `vpiContAssign` with `vpiLhs`/`vpiRhs` and its
   value, processes (`vpiProcess`: `vpiInitial`, `vpiAlways` with
   `vpiAlwaysType`, `vpiFinal`), task and function declarations
   (`vpiTaskFunc`, scopes with `vpiFuncType`, `vpiSize`, `vpiAutomatic`) and
   named events (`vpiNamedEvent`: `vpi_put_value` triggers, `cbValueChange`
-  runs at each trigger), decisions A19-D5..D8.
+  runs at each trigger) and named event arrays (`vpiNamedEventArray` with
+  element access by index and name, decision A19-D69), decisions
+  A19-D5..D8.
   Expression and statement objects (ADV-019 families 3 and 4, 37.54-37.74):
   right-hand sides, connections, terminals and system task arguments that
   are not whole objects are expression trees: `vpiOperation` (`vpiOpType`,
@@ -2656,7 +2661,10 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   force and release, each with `vpiLineNo` and `vpiFile`. Built from
   compact static tables only for VPI models; decisions A19-D11..D13.
   Dynamic objects (VPI-O4; 37.17, 37.27-37.29, 38.36.1): static string,
-  chandle and class variables and dynamic, queue and associative arrays of
+  chandle and class variables, one-dimensional fixed-size arrays of them
+  (decision A19-D73), mailbox and semaphore `vpiWaitingProcesses`
+  (decision A19-D71), virtual interface properties of classes
+  (`vpiInterfaceDecl`, decision A19-D72) and dynamic, queue and associative arrays of
   instances, packages, named blocks and tasks are catalog objects (`vpiStringVar`, `vpiChandleVar`,
   `vpiClassVar`, `vpiArrayVar` with `vpiArrayType`); `vpiClassObj` reaches
   the class object with `vpiObjId`, `vpiClassTypespec` (declared and created
