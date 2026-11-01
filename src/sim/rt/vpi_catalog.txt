@@ -350,7 +350,7 @@ node instance_array 37.11 members=primitive_array,interface_array,program_array,
   get vpiSize implemented walk
   func vpi_handle_by_index implemented a19struct
   func vpi_handle_by_multi_index implemented a19struct
-  handle vpiExpr unsupported the list operation of an instance array's connections (37.11 detail 1) is not built: llg keeps the connections of each element instance
+  handle vpiExpr error walk llg keeps the connections of each element instance and builds no list operation for the array (37.11 detail 1); industry-standard behaviour has no instance array objects
   iterate vpiRange implemented walk
   handle vpiLeftRange implemented walk
   handle vpiRightRange implemented walk
@@ -1087,7 +1087,7 @@ node typespec_member 37.23 type=vpiTypespecMember
   str vpiName implemented walk
   get vpiRandType error walk llg keeps no rand qualifier on a structure member (18.4 gives it meaning only for class properties); industry-standard behaviour reaches no typespec member of an unpacked structure
   handle vpiTypespec implemented walk
-  handle vpiExpr unsupported the owned database keeps a structure member default as its folded constant value, not as an expression
+  handle vpiExpr error walk llg keeps a structure member default as its folded value, not as an expression; industry-standard behaviour reaches no typespec member of an unpacked structure
 
 node named_event 37.25 type=vpiNamedEvent
   get vpiArray implemented walk
@@ -1755,14 +1755,14 @@ node immediate_cover 37.45 type=vpiImmediateCover
 node property_decl 37.47 type=vpiPropertyDecl
   str vpiName implemented walk
   str vpiFullName implemented walk
-  iterate vpiVariables unsupported the owned database keeps no declaration body: the frontend binds a sequence or property body, its local variables and its formal defaults per instance, and each instance holds its expanded body and actual arguments
-  handle vpiPropertySpec unsupported the owned database keeps no declaration body: the frontend binds a sequence or property body, its local variables and its formal defaults per instance, and each instance holds its expanded body and actual arguments
+  iterate vpiVariables error walk llg answers the declarations, not their bodies (the frontend binds a body, its local variables and its formal defaults per instance); industry-standard behaviour gives a declaration no body, variables or formal defaults either
+  handle vpiPropertySpec error walk llg answers the declarations, not their bodies (the frontend binds a body, its local variables and its formal defaults per instance); industry-standard behaviour gives a declaration no body, variables or formal defaults either
   iterate vpiPropFormalDecl implemented walk
 
 node prop_formal_decl 37.47 type=vpiPropFormalDecl
   str vpiName implemented walk
   get vpiDirection implemented walk
-  handle vpiExpr unsupported the owned database keeps no declaration body: the frontend binds a sequence or property body, its local variables and its formal defaults per instance, and each instance holds its expanded body and actual arguments
+  handle vpiExpr error walk llg answers the declarations, not their bodies (the frontend binds a body, its local variables and its formal defaults per instance); industry-standard behaviour gives a declaration no body, variables or formal defaults either
   handle vpiTypespec implemented walk
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
@@ -1790,14 +1790,14 @@ node case_property_item 37.48 type=vpiCasePropertyItem
 node sequence_decl 37.49 type=vpiSequenceDecl
   str vpiName implemented walk
   str vpiFullName implemented walk
-  iterate vpiVariables unsupported the owned database keeps no declaration body: the frontend binds a sequence or property body, its local variables and its formal defaults per instance, and each instance holds its expanded body and actual arguments
-  handle vpiExpr unsupported the owned database keeps no declaration body: the frontend binds a sequence or property body, its local variables and its formal defaults per instance, and each instance holds its expanded body and actual arguments
+  iterate vpiVariables error walk llg answers the declarations, not their bodies (the frontend binds a body, its local variables and its formal defaults per instance); industry-standard behaviour gives a declaration no body, variables or formal defaults either
+  handle vpiExpr error walk llg answers the declarations, not their bodies (the frontend binds a body, its local variables and its formal defaults per instance); industry-standard behaviour gives a declaration no body, variables or formal defaults either
   iterate vpiSeqFormalDecl implemented walk
 
 node seq_formal_decl 37.49 type=vpiSeqFormalDecl
   str vpiName implemented walk
   get vpiDirection implemented walk
-  handle vpiExpr unsupported the owned database keeps no declaration body: the frontend binds a sequence or property body, its local variables and its formal defaults per instance, and each instance holds its expanded body and actual arguments
+  handle vpiExpr error walk llg answers the declarations, not their bodies (the frontend binds a body, its local variables and its formal defaults per instance); industry-standard behaviour gives a declaration no body, variables or formal defaults either
   handle vpiTypespec implemented walk
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
@@ -2018,19 +2018,19 @@ node case_item 37.67 type=vpiCaseItem
   handle vpiStmt implemented walk
   handle vpiScope extension walk the enclosing scope, instance, module or parent
 
-node any_pattern 37.67 type=vpiAnyPattern default=unsupported pattern case items are opaque statement objects
+node any_pattern 37.67 type=vpiAnyPattern default=n/a llg keeps a pattern case item as an opaque case item and creates no pattern objects; industry-standard behaviour rejects `case ... matches`, so there is no reference answer to follow
   str vpiName
 
-node tagged_pattern 37.67 type=vpiTaggedPattern default=unsupported pattern case items are opaque statement objects
+node tagged_pattern 37.67 type=vpiTaggedPattern default=n/a llg keeps a pattern case item as an opaque case item and creates no pattern objects; industry-standard behaviour rejects `case ... matches`, so there is no reference answer to follow
   str vpiName
   handle vpiPattern
   handle vpiTypespec
 
-node struct_pattern 37.67 type=vpiStructPattern default=unsupported pattern case items are opaque statement objects
+node struct_pattern 37.67 type=vpiStructPattern default=n/a llg keeps a pattern case item as an opaque case item and creates no pattern objects; industry-standard behaviour rejects `case ... matches`, so there is no reference answer to follow
   str vpiName
   handle vpiPattern
 
-node expect_stmt 37.68 type=vpiExpectStmt default=unsupported expect statements are opaque statement objects
+node expect_stmt 37.68 type=vpiExpectStmt default=error walk an expect statement is an opaque statement object: its property, pass and fail statements are not reached; industry-standard behaviour has no expect statement object (it lists a begin)
   handle vpiPropertySpec
   handle vpiStmt
   handle vpiElseStmt

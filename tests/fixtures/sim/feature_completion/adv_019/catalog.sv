@@ -285,6 +285,8 @@ module tb;
     disable fork;
     // A wait_order statement (37.62) that never runs.
     if (k == 1000) wait_order (ev, ev2) k = 1; else k = 2;
+    // An expect statement (37.68) that never runs.
+    if (k == 1001) expect (@(posedge clk) r0 == 4'h1) k = 3; else k = 4;
     assume (k >= 0);
     cover (k >= 0);
     if (k == 0) disable work;
