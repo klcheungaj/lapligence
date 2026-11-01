@@ -3,6 +3,10 @@ cmake_minimum_required(VERSION 3.20...3.31)
 project(llg_slang_wrapper LANGUAGES CXX)
 
 option(LLG_SLANG_MUSL "Build Slang with a musl C++ toolchain" OFF)
+# AUTO tries link-time optimization and falls back to ordinary objects when the
+# toolchain cannot produce LTO archives; ON requires it; OFF never uses it.
+set(LLG_SLANG_LTO OFF CACHE STRING "Link-time optimization: OFF, AUTO or ON")
+set_property(CACHE LLG_SLANG_LTO PROPERTY STRINGS OFF AUTO ON)
 
 if(LLG_SLANG_MUSL)
   if(NOT UNIX OR APPLE)
@@ -35,6 +39,32 @@ set(SLANG_INCLUDE_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(SLANG_USE_MIMALLOC OFF CACHE BOOL "" FORCE)
 set(SLANG_USE_CPPTRACE OFF CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+# Link-time optimization of Slang, fmt and the wrapper. CMake's IPO flags are
+# GCC `-flto=auto -fno-fat-lto-objects` (GCC has no ThinLTO; this is its
+# parallel partitioned mode), Clang/AppleClang `-flto=thin` and MSVC `/GL`
+# (archives with `/LTCG`). The archives then hold only IR, so the final link,
+# which rustc's linker performs, must run the matching LTO backend: build.rs
+# reads the mode recorded below and adds the link arguments it needs.
+set(llg_slang_lto_mode "off")
+if(NOT LLG_SLANG_LTO STREQUAL "OFF")
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT llg_ipo_supported OUTPUT llg_ipo_output
+                      LANGUAGES CXX)
+  if(llg_ipo_supported)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+    set(llg_slang_lto_mode "${CMAKE_CXX_COMPILER_ID}")
+  elseif(LLG_SLANG_LTO STREQUAL "ON")
+    message(FATAL_ERROR
+      "LLG_SLANG_LTO=ON but ${CMAKE_CXX_COMPILER_ID} IPO is unavailable: "
+      "${llg_ipo_output}")
+  else()
+    message(WARNING
+      "Building Slang without LTO; ${CMAKE_CXX_COMPILER_ID} IPO is "
+      "unavailable: ${llg_ipo_output}")
+  endif()
+endif()
+file(WRITE "${CMAKE_BINARY_DIR}/llg_slang_lto.txt" "${llg_slang_lto_mode}\n")
 
 # Slang v11 normally fetches fmt with Git. The release archive is equivalent,
 # smaller, and works where only GitHub's codeload endpoint is admitted.
