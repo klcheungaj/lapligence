@@ -1325,14 +1325,15 @@ static vpiHandle packed_select_more(const llg_vpi_slot_t* slot, const int64_t* m
     return packed_select(slot->object, slot->element, indices, have + count, 0);
 }
 
-/* The vpiType of a packed select: a bit is a bit-select (37.54), as
- * industry-standard behaviour reports it, an element a net or a logic or bit
- * variable by its element type (decision A19-D67). */
+/* The vpiType of a packed select: a bit is a net bit or a var bit (37.16
+ * detail 19, 37.17 details 19 and 21), as a bit of a plain vector is
+ * (decision A19-D70); an element is a net or a logic or bit variable by its
+ * element type (decision A19-D67). */
 static int packed_select_type(const llg_vpi_slot_t* slot) {
     const llg_vpi_model_object_t* object = row_object(slot->object);
     const llg_vpi_typespec_t* typespec = packed_array_typespec(slot->object, slot->element);
     if (!object || !typespec) return vpiPartSelect;
-    if ((uint32_t)slot->aux == typespec->range_count) return vpiBitSelect;
+    if ((uint32_t)slot->aux == typespec->range_count) return object->is_net ? vpiNetBit : vpiRegBit;
     if (object->is_net) return vpiNet;
     return typespec->type == vpiBitTypespec ? vpiBitVar : vpiReg;
 }
@@ -9237,7 +9238,7 @@ static int handle_type(const llg_vpi_slot_t* slot) {
         case SLOT_SELECT:
             if (slot->aux > 0) return packed_select_type(slot);
             if (slot->span != 1) return vpiPartSelect;
-            return vpiBitSelect;
+            return object->is_net ? vpiNetBit : vpiRegBit;
         case SLOT_CONSTANT: return vpiConstant;
         case SLOT_RANGE: return vpiRange;
         case SLOT_ITERATOR: return vpiIterator;

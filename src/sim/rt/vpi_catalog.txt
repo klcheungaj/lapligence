@@ -1849,26 +1849,6 @@ node bit_select 37.54 type=vpiBitSelect
   get vpiSigned extension walk the sign and width of the object's value
   get vpiVector extension walk the sign and width of the object's value
   handle vpiScope extension walk the enclosing scope, instance, module or parent
-  get vpiAllocScheme extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  get vpiArray extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  get vpiArrayMember extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  get vpiAutomatic extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  get vpiConstantVariable extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  get vpiIsRandomized extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  get vpiRandType extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  get vpiStructUnionMember extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  get vpiVisibility extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  handle vpiInstance extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  handle vpiModule extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  iterate vpiContAssign extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  iterate vpiDriver extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  iterate vpiIndex extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  iterate vpiLoad extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  iterate vpiPathTerm extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  iterate vpiPort extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  iterate vpiPortInst extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  iterate vpiPrimTerm extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
-  iterate vpiTchkTerm extension walk a bit of a packed array answers as the net or variable bit it selects (decision A19-D67)
 
 node expr 37.55 members=indexed_part_select,simple_expr,part_select,operation,constant,func_call,method_func_call,sys_func_call,let_expr
   str vpiDecompile implemented walk

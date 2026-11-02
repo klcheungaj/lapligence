@@ -87,6 +87,8 @@ static PLI_INT32 d67(PLI_BYTE8* data) {
     show("pb multi {1,2}", vpi_handle_by_multi_index(pb, 2, element3));
     show("pb by_index 1", vpi_handle_by_index(pb, 1));
     show("pn by_index 1", vpi_handle_by_index(pn, 1));
+    show("pb name [1][2][3]", get("tb.pb[1][2][3]"));
+    show("pn name [1][3]", get("tb.pn[1][3]"));
     show("upa multi {1,0}", vpi_handle_by_multi_index(upa, 2, unpacked));
     show("upa name [1][0][2]", get("tb.upa[1][0][2]"));
     show("ps by_index 0", vpi_handle_by_index(ps, 0));

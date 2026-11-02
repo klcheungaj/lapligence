@@ -2,7 +2,9 @@
 // vpi_handle_by_index, vpi_handle_by_multi_index and vpi_handle_by_name
 // with every packed index but the last give an element (a vpiReg, a vpiBitVar
 // for a two-state array, a vpiNet for a net, sized by the last dimension);
-// with every packed index they give a bit, a vpiBitSelect (37.54). An
+// with every packed index they give a bit: a var bit (vpiRegBit) of a
+// variable, also of a two-state array, or a vpiNetBit of a net (decision
+// A19-D70; 37.17 details 19 and 21, L58786-58808 and L58849). An
 // element of an unpacked array that is a packed array takes the packed
 // indices after the unpacked ones. Other index counts (a subarray of a
 // three-dimensional packed array) and indices outside the declared ranges
@@ -31,7 +33,8 @@
 // leftmost packed dimension". 7.4.1 (L8032-8033): "The individual elements
 // of the array are unsigned unless they are of a named type declared as
 // signed." The
-// object types follow industry-standard behaviour. Some simulators iterate
+// element types follow industry-standard behaviour; some simulators report
+// a bit of a packed array as a vpiBitSelect. Some simulators iterate
 // the indices of a bit left to right; llg follows the clause text, innermost
 // index first (as decision A19-D28 does for unpacked elements).
 //
