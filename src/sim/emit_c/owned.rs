@@ -1096,14 +1096,17 @@ impl<'a, 'm> Frame<'a, 'm> {
     /// End the VPI frame before releasing the lexical scopes from mark
     /// index `first` on when they hold its body locals: cbEndOfFrame then
     /// still reads them (38.36.1, decision A19-D78), and no later read sees
-    /// released storage. Ending a frame twice is a no-op in the runtime.
+    /// released storage. Clearing the serial leaves the exit at the
+    /// function's return a branch.
     fn vpi_frame_end(&mut self, first: usize) {
         let Some(depth) = self.vpi_auto_depth else {
             return;
         };
         if first < depth {
             if let Some(serial) = self.vpi_frame_serial.clone() {
-                self.line(format!("if ({serial}) llg_vpi_frame_exit({serial});"));
+                self.line(format!(
+                    "if ({serial}) {{ llg_vpi_frame_exit({serial}); {serial} = 0u; }}"
+                ));
             }
         }
     }

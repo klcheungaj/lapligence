@@ -64,6 +64,25 @@ fn generate_iteration_bodies_share_one_body_per_kind() {
     assert!(!model.contains("    static llg_inertial_t*"));
 }
 
+/// A VPI model shares the same bodies: the call row each iteration's task
+/// call stores as its callee frame's `vpiOrigin` is a record operand
+/// (decision A19-D75), not part of the shared body.
+#[test]
+fn generate_iteration_bodies_stay_shared_in_vpi_models() {
+    let (directory, output) =
+        sim_cli::run_case_keeping_dir("instance_sharing", "generate_bodies", true, &["--vpi"], &[]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "y=11111001\ny=01011001 q=10100110\nsum 0 33 77\n"
+    );
+    let model = std::fs::read_to_string(directory.path().join("build/sim/tb/model.c"))
+        .expect("generated model");
+    assert!(model.contains("llg_vpi_next_origin = "));
+    assert_eq!(model.matches("LLG_CO_DISPATCH_BEGIN").count(), 4);
+    assert_eq!(model.matches("sv4_mul").count(), 1);
+}
+
 /// Gates annotated by SDF DEVICE entries share one body: each instance's
 /// delay slot is a record operand, like its nets (see the fixture readme).
 #[test]
