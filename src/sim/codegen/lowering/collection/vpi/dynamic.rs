@@ -387,8 +387,21 @@ impl Codegen<'_> {
                 Some(IrVpiShape::Chandle)
             }
             TypeShape::Opaque { .. } => self.vpi_handle_shape(descriptor),
-            TypeShape::PackedAtom { .. } | TypeShape::Aggregate(_) => {
-                descriptor.info.width.map(|width| {
+            // An unpacked or tagged aggregate is a record value, not a
+            // packed cell: it is listed without a value.
+            TypeShape::Aggregate(layout)
+                if !matches!(
+                    layout.kind,
+                    AggregateKind::PackedStruct | AggregateKind::PackedUnion
+                ) =>
+            {
+                None
+            }
+            TypeShape::PackedAtom { .. } | TypeShape::Aggregate(_) => descriptor
+                .info
+                .width
+                .filter(|width| *width > 0)
+                .map(|width| {
                     self.vpi_packed_shape(
                         typespecs,
                         descriptor,
@@ -396,8 +409,7 @@ impl Codegen<'_> {
                         descriptor.info.signed,
                         descriptor.two_state,
                     )
-                })
-            }
+                }),
         };
         automatic.shape = shape.map(|shape| dynamic.intern(shape));
     }

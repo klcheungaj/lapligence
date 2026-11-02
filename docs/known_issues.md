@@ -2288,8 +2288,9 @@ of a handle or value; `vpi_handle_by_name` of such an object returns NULL
 with no error status, as for a name that denotes nothing (S42-D11):
 
 - objects outside the generated catalog: sparse fixed arrays (stored in a keyed
-  container), the elements of automatic array variables (a frame lists
-  them under `vpiAutomatics` without elements, decision A19-D76) and the
+  container), the elements of automatic array variables and the size and
+  value of automatic unpacked structures and unions (a frame lists them
+  under `vpiAutomatics` without elements or a value, decision A19-D76) and the
   automatic variables of blocks inside a task or function (llg models no
   block frames, decisions A19-D44, A19-D76), named event array
   properties of classes, tasks and functions of packages, the

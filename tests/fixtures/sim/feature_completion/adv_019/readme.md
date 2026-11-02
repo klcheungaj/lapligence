@@ -808,6 +808,22 @@ decision A19-D44:
   valid; cbEndOfThread ran when it ended. Step 6: the held branch thread has
   ended, so querying it fails (38.36.1 cbEndOfThread, L64666-L64670).
 
+## frame_records (37.17, 37.39, decision A19-D76)
+
+`frame_records.sv` calls the automatic task `t` with an unpacked structure
+formal `ri` and a packed structure formal `pi`, and `t` declares one local of
+each (`rl`, `pl`). `frame_records.c` prints, at `$frames(1)`, the automatics
+of each subprogram frame: name, type, line, size and value.
+`adv_019::frame_automatics_of_structure_type_are_listed` runs it in both
+optimizer modes with both value backends. The single frame `tb.t` lists the
+formals then the top-level locals in declaration order (A19-D76, 37.39
+detail 1, L60160), each a structure variable (`vpiStructVar`, 37.17) on its
+declaration line. The packed ones have size 8 and the value of their bits
+(`8'h3c` = 60). An unpacked structure is a record value llg keeps without a
+cell the frame names, so it is listed with size -1 and no value (a known
+gap: other simulators give its member count and value). `g=18` is
+`(5 + 1) + 4'hc`.
+
 ## catalog (A03; 37.3, 38.6, 38.18, 38.23, 40.5.3)
 
 `catalog.sv` holds an object of most kinds the VPI catalog

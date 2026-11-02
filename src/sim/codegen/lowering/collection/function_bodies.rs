@@ -1386,6 +1386,15 @@ impl<'a> Codegen<'a> {
                 .or_else(|| chandle_locals.get(&child))
             {
                 automatics.push(entry(name, child, IrVpiAutoStorage::Local(local.clone())));
+            } else if matches!(
+                self.db
+                    .type_descriptor(child)
+                    .map(|descriptor| &descriptor.shape),
+                Some(TypeShape::Aggregate(_))
+            ) {
+                // An unpacked structure or union is a record value with no
+                // cell the frame can name: listed without a value.
+                automatics.push(entry(name, child, IrVpiAutoStorage::Unstored));
             }
         }
         automatics.extend(arrays);

@@ -266,7 +266,16 @@ fn vpi_automatic_rows(function: &IrFunc, model: &IrModel) -> String {
         {
             Some(shape) => shape.c_type(),
             None if automatic.array_type.is_some() => "vpiArrayVar",
-            None => "vpiUndefined",
+            // An unpacked structure or union, listed without a value.
+            None => match automatic
+                .typespec
+                .and_then(|typespec| model.vpi_typespecs.get(typespec))
+                .map(|typespec| typespec.kind)
+            {
+                Some(crate::sim::ir::IrVpiTypespecKind::Struct) => "vpiStructVar",
+                Some(crate::sim::ir::IrVpiTypespecKind::Union) => "vpiUnionVar",
+                _ => "vpiUndefined",
+            },
         };
         let mut flags = Vec::new();
         if matches!(

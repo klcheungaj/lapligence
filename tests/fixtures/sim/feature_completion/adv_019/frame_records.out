@@ -1,0 +1,3 @@
+step 1
+  tb.t: ri:vpiStructVar@10/-1=? pi:vpiStructVar@10/8= 60 rl:vpiStructVar@11/-1=? pl:vpiStructVar@12/8= 60
+g=18

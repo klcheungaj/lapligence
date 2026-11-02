@@ -291,6 +291,27 @@ fn threads_and_frames_follow_processes_and_subprogram_calls() {
     );
 }
 
+/// Frame automatics of structure type (decision A19-D76): packed
+/// structures are listed with their values, unpacked ones (records) without
+/// a value, in both backends and optimizer modes.
+#[test]
+fn frame_automatics_of_structure_type_are_listed() {
+    let directory = sim_harness::TempDir::new("adv019-frame-records").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "frame_records", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "frame_records",
+        include_str!("../fixtures/sim/feature_completion/adv_019/frame_records.out"),
+        &[
+            "--define-system-task",
+            "task $frames(input int)",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
 /// The answers of one catalog walk: the object types it reached and, per
 /// type, the (kind, name) queries answered without an error.
 struct Walk {
