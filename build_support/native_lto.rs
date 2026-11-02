@@ -73,6 +73,31 @@ pub fn link_args(mode: &str, target_os: &str, target_env: &str) -> &'static [&'s
     }
 }
 
+/// Compile options the CMake project adds to Slang, fmt and the wrapper only
+/// when GCC builds them for LTO, for a target with Cargo's
+/// `CARGO_CFG_TARGET_ENV` value (passed as `LLG_SLANG_GNU_LTO_OPTIONS`).
+///
+/// - musl: Alpine's GCC defines `_FORTIFY_SOURCE` whenever it optimizes, and
+///   its fortify-headers replace libc functions with `always_inline`
+///   `gnu_inline` wrappers of the same name. Under LTO the static libc's
+///   definition prevails at link time, so an LTRANS unit that turns an
+///   indirect call into a direct one (libstdc++'s `std::to_string` passes
+///   `vsnprintf` by pointer) cannot inline the wrapper and the link fails:
+///   "inlining failed in call to 'always_inline' 'vsnprintf': function body
+///   can be overwritten at link time". Fortification is turned off for the
+///   frontend on musl only, which then calls libc without the fortify bounds
+///   checks. `-U` removes a definition made before the user options and
+///   `=0` also satisfies a driver default that only yields to an explicit
+///   `-D_FORTIFY_SOURCE`; fortify-headers and glibc both test `> 0`.
+/// - Other targets: glibc's fortify wrappers call `__*_chk` builtins and link
+///   under GCC LTO, so nothing is added.
+pub fn gnu_lto_compile_options(target_env: &str) -> &'static [&'static str] {
+    match target_env {
+        "musl" => &["-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=0"],
+        _ => &[],
+    }
+}
+
 /// Whether the recorded mode means the archives contain LTO IR.
 pub fn is_enabled(mode: &str) -> bool {
     let mode = mode.trim();

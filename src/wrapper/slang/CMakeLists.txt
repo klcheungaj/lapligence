@@ -7,6 +7,10 @@ option(LLG_SLANG_MUSL "Build Slang with a musl C++ toolchain" OFF)
 # toolchain cannot produce LTO archives; ON requires it; OFF never uses it.
 set(LLG_SLANG_LTO OFF CACHE STRING "Link-time optimization: OFF, AUTO or ON")
 set_property(CACHE LLG_SLANG_LTO PROPERTY STRINGS OFF AUTO ON)
+# Compile options only GCC LTO builds need on this target, chosen by build.rs
+# (build_support/native_lto.rs `gnu_lto_compile_options`).
+set(LLG_SLANG_GNU_LTO_OPTIONS "" CACHE STRING
+    "Extra compile options for GCC LTO builds of the frontend")
 
 if(LLG_SLANG_MUSL)
   if(NOT UNIX OR APPLE)
@@ -54,6 +58,11 @@ if(NOT LLG_SLANG_LTO STREQUAL "OFF")
   if(llg_ipo_supported)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
     set(llg_slang_lto_mode "${CMAKE_CXX_COMPILER_ID}")
+    # Directory options reach Slang, fmt (fetched inside Slang's tree) and the
+    # wrapper, which are all added below.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND LLG_SLANG_GNU_LTO_OPTIONS)
+      add_compile_options(${LLG_SLANG_GNU_LTO_OPTIONS})
+    endif()
   elseif(LLG_SLANG_LTO STREQUAL "ON")
     message(FATAL_ERROR
       "LLG_SLANG_LTO=ON but ${CMAKE_CXX_COMPILER_ID} IPO is unavailable: "

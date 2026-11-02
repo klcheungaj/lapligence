@@ -160,6 +160,10 @@ fn build_slang(manifest_dir: &Path) {
         .define("LLG_SLANG_SOURCE_DIR", &repo)
         .define("CMAKE_INSTALL_LIBDIR", "lib")
         .define("LLG_SLANG_LTO", lto.cmake_value())
+        .define(
+            "LLG_SLANG_GNU_LTO_OPTIONS",
+            native_lto::gnu_lto_compile_options(&target_env).join(";"),
+        )
         .define("FETCHCONTENT_TRY_FIND_PACKAGE_MODE", "NEVER");
     if is_msvc {
         config

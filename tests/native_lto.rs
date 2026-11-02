@@ -5,7 +5,7 @@
 #[path = "../build_support/native_lto.rs"]
 mod native_lto;
 
-use native_lto::{is_enabled, link_args, request, Request};
+use native_lto::{gnu_lto_compile_options, is_enabled, link_args, request, Request};
 
 #[test]
 fn default_enables_lto_in_release_profiles_only() {
@@ -62,4 +62,22 @@ fn gcc_lto_on_linux_gnu_avoids_rustc_bundled_lld() {
         ["-flto=auto", "-fuse-ld=bfd"]
     );
     assert_eq!(link_args("GNU", "macos", ""), ["-flto=auto"]);
+}
+
+#[test]
+fn gcc_lto_on_musl_compiles_the_frontend_without_fortify_wrappers() {
+    // Alpine's fortify-headers wrappers cannot be inlined in GCC LTRANS units
+    // once the static libc definition prevails.
+    assert_eq!(
+        gnu_lto_compile_options("musl"),
+        ["-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=0"]
+    );
+    // glibc's fortify wrappers link under GCC LTO; other toolchains never
+    // receive these options.
+    for target_env in ["gnu", "msvc", ""] {
+        assert!(
+            gnu_lto_compile_options(target_env).is_empty(),
+            "{target_env}"
+        );
+    }
 }

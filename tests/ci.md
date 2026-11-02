@@ -26,7 +26,11 @@ the rules a change must keep. Platform pitfalls are in
   without it. Every release link that uses the library (each test group and
   both executables) repeats the frontend's link-time code generation, which
   lengthens `build` jobs; lint and sanitizer jobs use the dev/test profiles
-  without LTO.
+  without LTO. The static-musl Alpine build compiles that frontend without
+  `_FORTIFY_SOURCE`, which its fortify-headers would otherwise break at the
+  LTO link ([LTO](../docs/cross_platform.md#link-time-optimization)); no
+  local job reproduces the Alpine toolchain, so only the Linux `build` jobs
+  confirm that link.
 - Every `cargo nextest`/`cargo test` step passes `--no-fail-fast`, and a later
   test step of the same job runs under `if: ${{ !cancelled() }}`, so one failure
   hides no other (run 111325565657 cancelled 4117 of 5951 lint-job tests); a

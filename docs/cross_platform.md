@@ -61,6 +61,18 @@ final link, so build.rs adds what that link needs:
   requires it in every profile (CI release builds set it); `0` disables it.
   LTO archives live in their own `target/slang/<triple>/<profile>/<key>-lto`
   tree, so changing the setting never mixes LTO and ordinary archives.
+- On musl the GCC LTO frontend is compiled with
+  `-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0`
+  (`native_lto::gnu_lto_compile_options`, applied by the CMake project only
+  when GCC IPO is on). Alpine's GCC fortifies every optimized compile, and its
+  fortify-headers wrap libc functions in same-named `always_inline` functions
+  that GCC cannot inline in LTRANS units once the static libc definition
+  prevails (CI run 112001470354: "inlining failed in call to 'always_inline'
+  'vsnprintf': function body can be overwritten at link time", from
+  `std::to_string`). Trade-off: the musl frontend calls libc without fortify
+  bounds checks; the Rust code, the `cc`-built C (mimalloc shim, compiled
+  without LTO and still fortified) and the glibc, macOS and Windows frontends
+  are unchanged. glibc's fortify wrappers link under GCC LTO.
 - No cross-language LTO (`-Clinker-plugin-lto`): it needs a Clang whose LLVM
   matches rustc's (LLVM 22 for Rust 1.98; hosts carry other Clang versions,
   Apple Clang and MSVC differ) and GCC cannot take part. Rust and C++ are each
