@@ -167,6 +167,13 @@ MSVC compiler:
   out-parameter call that a short-circuit can skip is C4701 even when a flag
   guards its use; initialize it. Clang
   `-Wconditional-uninitialized`/`-Wunreachable-code` approximate C4701/C4702.
+  They track scalars only: a struct read after an out-parameter call that a
+  condition can skip is C4701 too, even with a member assigned first and the
+  read under the same condition (`if (h) vpi_get_value(h, &value);` then
+  `h ? value.value.integer : -1`; CI: `A19-D73_fixed_handle_array_elements.c`),
+  and neither Clang, GCC `-Wmaybe-uninitialized` at any level nor
+  `-fanalyzer` reports it. Initialize such structs at their declaration
+  (`s_vpi_value value = {0};`).
   A cast that truncates a constant is C4310 (GCC and Clang never warn on an
   explicit cast): a complemented constant, `(uint8_t)~FLAG` (mask first,
   `(uint8_t)(x & ~FLAG)`), or a literal the type cannot hold, `(PLI_BYTE8)0xff`

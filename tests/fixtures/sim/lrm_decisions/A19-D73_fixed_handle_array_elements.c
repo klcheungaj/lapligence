@@ -14,7 +14,7 @@ static const char* name_of(vpiHandle h) {
 
 static void element(vpiHandle e) {
     vpiHandle parent, module, scope, index, it, object;
-    s_vpi_value value;
+    s_vpi_value value = {0};
     int error, count = 0;
     /* vpi_get_str reuses one buffer, so each string is printed at once. */
     vpi_printf("  %s", name_of(e));

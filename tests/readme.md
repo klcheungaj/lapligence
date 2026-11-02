@@ -1564,7 +1564,10 @@ seconds; the Clang checks skip without a Clang driver and on Windows.
   Clang `-Werror=implicit-int-conversion,shorten-64-to-32,…` (MSVC C4244/C4267)
   and `-Werror=conditional-uninitialized,…` (C4701/C4703) over the runtime
   units in the legacy and compact backends, the non-`compact_*` probes and
-  every C file under `tests/fixtures/`, with the bundled zlib headers.
+  every C file under `tests/fixtures/`, with the bundled zlib headers. It
+  cannot see C4701 on a struct filled by a skippable out-parameter call
+  ([rule](../docs/cross_platform.md#windows-msvc)); no Clang or GCC option
+  does.
 - `runtime_strict_sources::runtime_sources_have_no_truncating_constant_casts`:
   a scan for constant casts MSVC truncates (C4310) in the same files.
 - `runtime_strict_sources::probe_built_runtime_sources_have_no_code_after_fatal_helpers`:
