@@ -151,7 +151,10 @@ mod processes;
 pub use processes::{IrPreFn, IrProcess, IrProcessKind, IrShape};
 mod functions;
 pub(in crate::sim) use functions::dimension_size;
-pub use functions::{IrDpiExport, IrDpiImport, IrDpiType, IrFormal, IrFormalMode, IrFunc, IrLocal};
+pub use functions::{
+    IrDpiExport, IrDpiImport, IrDpiType, IrFormal, IrFormalMode, IrFunc, IrLocal, IrVpiAutoStorage,
+    IrVpiAutomatic,
+};
 mod initialization;
 pub use initialization::{IrInitPhase, IrInitStep, IrInitTarget, IrInitialization};
 mod storage;
@@ -667,6 +670,11 @@ pub struct IrModel {
     pub(in crate::sim) vpi_code_files: Vec<String>,
     /// UDP definitions (37.32), captured with the code tables.
     pub(in crate::sim) vpi_udps: Vec<IrVpiUdp>,
+    /// The [`Self::vpi_code`] entry of each source subroutine call, by the
+    /// call's design node ([`IrCallExpr::vpi_call`]): the
+    /// `vpiOrigin` of the frames it activates (37.39). Captured with the
+    /// code tables.
+    pub(in crate::sim) vpi_call_rows: std::collections::HashMap<u32, u32>,
     /// Type-only VPI call sites run through compiletf/sizetf before the
     /// generated scheduler starts. Empty for hand-built IR fixtures.
     pub(in crate::sim) vpi_compile_calls: Vec<IrVpiCompileCall>,
@@ -861,6 +869,7 @@ impl IrModel {
             vpi_code: Vec::new(),
             vpi_code_files: Vec::new(),
             vpi_udps: Vec::new(),
+            vpi_call_rows: Default::default(),
             vpi_compile_calls: Vec::new(),
             vpi_builtin_calls: Vec::new(),
             vpi_catalog: true,

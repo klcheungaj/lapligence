@@ -11,8 +11,10 @@
 static int rts_slot(const llg_vpi_slot_t* slot) {
     return slot->kind == SLOT_TIMEQ || slot->kind == SLOT_UDPDEFN || slot->kind == SLOT_UDPIO ||
            slot->kind == SLOT_TABLEENTRY || slot->kind == SLOT_UDPINIT || slot->kind == SLOT_THREAD ||
-           slot->kind == SLOT_FRAME;
+           slot->kind == SLOT_FRAME || slot->kind == SLOT_AUTO;
 }
+
+static int rts_auto_type(const llg_vpi_slot_t* slot);
 
 static int rts_type(const llg_vpi_slot_t* slot) {
     switch (slot->kind) {
@@ -24,6 +26,7 @@ static int rts_type(const llg_vpi_slot_t* slot) {
             return slot->left == 0 ? vpiInitial : slot->left == 1 ? vpiAssignment : vpiConstant;
         case SLOT_THREAD: return vpiThread;
         case SLOT_FRAME: return vpiFrame;
+        case SLOT_AUTO: return rts_auto_type(slot);
         default: return vpiUndefined;
     }
 }
@@ -33,7 +36,8 @@ static int rts_identity(const llg_vpi_slot_t* slot, uint64_t identity[4]) {
     identity[0] = 2u + slot->kind;
     identity[1] = (uint64_t)(uint32_t)slot->aux;
     identity[2] = (uint64_t)slot->left;
-    identity[3] = slot->kind == SLOT_FRAME ? slot->element : 0u;
+    identity[3] = slot->kind == SLOT_FRAME || slot->kind == SLOT_AUTO ? slot->element : 0u;
+    if (slot->kind == SLOT_AUTO) identity[0] += (uint64_t)slot->right << 8;
     return 1;
 }
 
@@ -378,6 +382,7 @@ static int rts_simple_expr(int object_type) {
  * points into scheduler or model memory (ADV-019-A02). */
 
 int llg_vpi_frames_on;
+uint32_t llg_vpi_next_origin;
 
 #define RTS_ROW_UNRESOLVED (LLG_VPI_NONE - 1u)
 
@@ -385,6 +390,11 @@ typedef struct {
     uint64_t serial;   /* unique per run; the frame handle's name */
     const char* name;  /* the subprogram's full name (generated literal) */
     uint32_t row;      /* its task or function row, resolved on demand */
+    uint32_t origin;   /* the call that activated it: code row + 1, 0 for none */
+    uint32_t auto_count;
+    const llg_vpi_auto_t* autos; /* its automatic variables (static table) */
+    void** slots;      /* their addresses in the activation */
+    int ending;        /* cbEndOfFrame runs: the automatics have ended */
 } rts_frame_t;
 
 typedef struct {
@@ -475,6 +485,20 @@ static uint32_t rts_frame_row(rts_frame_t* frame) {
     return frame->row;
 }
 
+/* The table entry of an automatic-variable handle while its frame lives,
+ * with the frame; NULL once the frame ended. */
+static const llg_vpi_auto_t* rts_auto(const llg_vpi_slot_t* slot, rts_frame_t** frame_out) {
+    rts_frame_t* frame = rts_frame_find(slot->aux, (uint64_t)slot->left, slot->element, NULL);
+    if (!frame || slot->right < 0 || (uint64_t)slot->right >= frame->auto_count) return NULL;
+    if (frame_out) *frame_out = frame;
+    return &frame->autos[slot->right];
+}
+
+static int rts_auto_type(const llg_vpi_slot_t* slot) {
+    const llg_vpi_auto_t* entry = rts_auto(slot, NULL);
+    return entry ? entry->type : vpiUndefined;
+}
+
 static vpiHandle rts_thread_handle(int slot, uint64_t identity) {
     return rts_make(SLOT_THREAD, (uint32_t)slot, (int64_t)identity);
 }
@@ -507,11 +531,74 @@ static int rts_alive(const llg_vpi_slot_t* slot) {
         vpi_error("LLG_VPI_HANDLE", "this frame has ended; its handle is no longer valid");
         return 0;
     }
+    if (slot->kind == SLOT_AUTO) {
+        if (rts_auto(slot, NULL)) return 1;
+        vpi_error("LLG_VPI_HANDLE",
+                  "the frame of this automatic variable has ended; its handle is no longer valid");
+        return 0;
+    }
     return 1;
 }
 
 static int rts_runtime_slot(const llg_vpi_slot_t* slot) {
-    return slot->kind == SLOT_THREAD || slot->kind == SLOT_FRAME;
+    return slot->kind == SLOT_THREAD || slot->kind == SLOT_FRAME || slot->kind == SLOT_AUTO;
+}
+
+/* The automatic variables of a frame (37.39 detail 1), in table order. */
+static vpiHandle rts_automatics(const llg_vpi_slot_t* frame_slot) {
+    /* Copied first: making handles may move the slot table. */
+    int thread_slot = frame_slot->aux;
+    int64_t identity = frame_slot->left;
+    uint64_t serial = frame_slot->element;
+    rts_frame_t* frame = rts_frame_find(thread_slot, (uint64_t)identity, serial, NULL);
+    if (!frame || !frame->auto_count) return NULL;
+    uint32_t count = frame->auto_count;
+    rts_handles_t list = {0};
+    for (uint32_t i = 0; i < count; ++i) {
+        vpiHandle handle = rts_make(SLOT_AUTO, (uint32_t)thread_slot, identity);
+        llg_vpi_slot_t* entry = handle ? decode_handle(handle, NULL) : NULL;
+        if (entry) {
+            entry->element = serial;
+            entry->right = (int64_t)i;
+        }
+        rts_push(&list, handle);
+    }
+    return rts_list(vpiAutomatics, list.items, list.count, list.failed);
+}
+
+/* The value of an automatic variable: read from the activation's cell while
+ * its declaration has run and the frame has not begun to end. */
+static void rts_auto_value(llg_vpi_slot_t* slot, p_vpi_value output) {
+    rts_frame_t* frame = NULL;
+    const llg_vpi_auto_t* entry = rts_auto(slot, &frame);
+    void* cell = entry && !frame->ending ? frame->slots[slot->right] : NULL;
+    if (!cell || entry->kind == 3) {
+        vpi_error("LLG_VPI_VALUE", "this automatic variable has no value at this point");
+        return;
+    }
+    if (entry->kind == 2) {
+        if (output->format != vpiStringVal && output->format != vpiObjTypeVal) {
+            vpi_error("LLG_VPI_VALUE", "a string variable reads only as vpiStringVal");
+            return;
+        }
+        const llg_string_t* text = (const llg_string_t*)cell;
+        char* buffer = text_buffer(text->len + 1u);
+        if (text->len) memcpy(buffer, text->data, text->len);
+        buffer[text->len] = 0;
+        output->format = vpiStringVal;
+        output->value.str = buffer;
+        return;
+    }
+    llg_vpi_datum_t datum;
+    memset(&datum, 0, sizeof(datum));
+    if (entry->kind == 1) {
+        datum.is_real = 1;
+        datum.real = *(const double*)cell;
+    } else {
+        datum.packed = sv4_clone((const sv4_t*)cell);
+    }
+    fill_value(&datum, entry->is_signed, entry->type, output);
+    datum_destroy(&datum);
 }
 
 /* ── frame and thread callbacks ── */
@@ -662,6 +749,8 @@ static void rts_pop_frame(int slot, uint64_t identity) {
     rts_stack_t* stack = rts_stack(slot, identity, 0);
     if (!stack || !stack->depth) return;
     uint64_t serial = stack->frames[stack->depth - 1].serial;
+    /* The body's scopes may have released the automatics' cells. */
+    stack->frames[stack->depth - 1].ending = 1;
     if (rts.end_frame_cbs) {
         rts_cb_match_t match = {cbEndOfFrame, slot, identity, serial, 0};
         rts_dispatch(&match);
@@ -672,7 +761,10 @@ static void rts_pop_frame(int slot, uint64_t identity) {
     stack->depth--;
 }
 
-uint64_t llg_vpi_frame_enter(const char* full_name) {
+static uint64_t rts_enter(const char* full_name, const llg_vpi_auto_t* autos, uint32_t count,
+                          void** slots) {
+    uint32_t origin = llg_vpi_next_origin;
+    llg_vpi_next_origin = 0u;
     uint64_t identity;
     int slot = llg_rt_current_thread(&identity);
     rts_stack_t* stack = rts_stack(slot, identity, 1);
@@ -688,6 +780,11 @@ uint64_t llg_vpi_frame_enter(const char* full_name) {
     frame->serial = ++rts.next_serial;
     frame->name = full_name;
     frame->row = RTS_ROW_UNRESOLVED;
+    frame->origin = origin;
+    frame->auto_count = count;
+    frame->autos = autos;
+    frame->slots = slots;
+    frame->ending = 0;
     uint64_t serial = frame->serial;
     if (rts.start_frame_cbs) {
         uint32_t row = rts_frame_row(frame);
@@ -697,6 +794,19 @@ uint64_t llg_vpi_frame_enter(const char* full_name) {
         }
     }
     return serial;
+}
+
+uint64_t llg_vpi_frame_enter(const char* full_name) {
+    return rts_enter(full_name, NULL, 0u, NULL);
+}
+
+uint64_t llg_vpi_frame_enter_autos(const char* full_name, const llg_vpi_auto_t* autos,
+                                   uint32_t count, void** slots) {
+    /* Body locals are stored as their declarations run; until then they
+     * have no address. */
+    for (uint32_t i = 0; i < count; ++i)
+        if (autos[i].local) slots[i] = NULL;
+    return rts_enter(full_name, autos, count, slots);
 }
 
 void llg_vpi_frame_exit(uint64_t serial) {
@@ -777,6 +887,10 @@ static const char* rts_runtime_get_str(int property, llg_vpi_slot_t* slot) {
 }
 
 static vpiHandle rts_runtime_handle(int type, llg_vpi_slot_t* slot) {
+    if (slot->kind == SLOT_AUTO) {
+        vpi_error("LLG_VPI_RELATION", "this object has no such relation");
+        return NULL;
+    }
     int thread_slot = slot->aux;
     uint64_t identity = (uint64_t)slot->left;
     if (slot->kind == SLOT_THREAD) {
@@ -820,9 +934,12 @@ static vpiHandle rts_runtime_handle(int type, llg_vpi_slot_t* slot) {
             return encode_handle(index);
         }
         if (type == vpiOrigin) {
-            vpi_error("LLG_VPI_UNSUPPORTED",
-                      "the call that activated a frame is not recorded (no vpiOrigin)");
-            return NULL;
+            /* 37.39: the task, function or method call that activated the
+             * frame; NULL for one no source call activated (a DPI export
+             * called from C, a function a continuous assignment evaluates). */
+            rts_frame_t* frame = &stack->frames[depth];
+            if (!frame->origin || !code_at(frame->origin - 1u)) return NULL;
+            return code_handle(frame->origin - 1u);
         }
     }
     vpi_error("LLG_VPI_RELATION", "this object has no such relation");
@@ -941,6 +1058,16 @@ static PLI_INT64 rts_get(int property, llg_vpi_slot_t* slot, int* handled) {
             *handled = 0;
             return 0;
         }
+        if (slot->kind == SLOT_AUTO) {
+            const llg_vpi_auto_t* entry = rts_auto(slot, NULL);
+            switch (property) {
+                case vpiAutomatic: return 1;
+                case vpiLineNo: return entry->line;
+                case vpiSize: return entry->kind == 0 ? (PLI_INT64)entry->width : 1;
+                case vpiSigned: return entry->is_signed;
+                default: return unsupported_property();
+            }
+        }
         switch (property) {
             case vpiActive:
             case vpiLineNo: return rts_runtime_get(property, slot);
@@ -1003,6 +1130,18 @@ static const char* rts_get_str(int property, llg_vpi_slot_t* slot, int* handled)
     *handled = 1;
     if (rts_runtime_slot(slot)) {
         if (!rts_alive(slot)) return NULL;
+        if (slot->kind == SLOT_AUTO && property != vpiType) {
+            rts_frame_t* frame = NULL;
+            const llg_vpi_auto_t* entry = rts_auto(slot, &frame);
+            if (property == vpiName) return entry->name;
+            if (property == vpiFullName) {
+                snprintf(g_vpi.str_buffer, sizeof(g_vpi.str_buffer), "%s.%s", frame->name,
+                         entry->name);
+                return g_vpi.str_buffer;
+            }
+            vpi_error("LLG_VPI_PROPERTY", "this object has no such string property");
+            return NULL;
+        }
         switch (property) {
             case vpiType: *handled = 0; return NULL;
             case vpiFullName:
@@ -1034,6 +1173,10 @@ static const char* rts_get_str(int property, llg_vpi_slot_t* slot, int* handled)
 }
 
 static void rts_get_value(llg_vpi_slot_t* slot, p_vpi_value output) {
+    if (slot->kind == SLOT_AUTO) {
+        if (rts_alive(slot)) rts_auto_value(slot, output);
+        return;
+    }
     if (slot->kind == SLOT_TABLEENTRY) {
         rts_entry_value(slot, output);
         return;
@@ -1157,11 +1300,7 @@ static vpiHandle rts_iterate(int type, vpiHandle reference, int* handled) {
         if (!rts_alive(slot)) return NULL;
         if (slot->kind == SLOT_THREAD && type == vpiThread)
             return rts_thread_list(slot->aux, (uint64_t)slot->left);
-        if (slot->kind == SLOT_FRAME && type == vpiAutomatics) {
-            vpi_error("LLG_VPI_UNSUPPORTED",
-                      "automatic variables have no objects (their source names are not kept)");
-            return NULL;
-        }
+        if (slot->kind == SLOT_FRAME && type == vpiAutomatics) return rts_automatics(slot);
         vpi_error("LLG_VPI_RELATION", "this object has no such iteration");
         return NULL;
     }

@@ -435,6 +435,34 @@ impl IrLocal {
     }
 }
 
+/// Where the value of one VPI automatic variable lives in an activation.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IrVpiAutoStorage {
+    /// The function-name return variable (`_ret`).
+    Return,
+    /// Formal `index` of the subprogram.
+    Formal(usize),
+    /// The body-scope automatic local with this IR name.
+    Local(String),
+}
+
+/// One automatic variable of a task or function frame (IEEE 1800-2009
+/// 37.39 detail 1, `vpiAutomatics`): its source name and value shape. Only
+/// models generated with the VPI catalog keep these.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IrVpiAutomatic {
+    pub(in crate::sim) name: String,
+    /// The object's `vpiType` constant name.
+    pub(in crate::sim) type_code: &'static str,
+    pub(in crate::sim) line: u32,
+    /// Packed width; 0 for a real or a string.
+    pub(in crate::sim) width: u32,
+    pub(in crate::sim) signed: bool,
+    pub(in crate::sim) real: bool,
+    pub(in crate::sim) string: bool,
+    pub(in crate::sim) storage: IrVpiAutoStorage,
+}
+
 /// A lowered function or delay-free task: a static C function with a
 /// recursion-depth guard.
 #[derive(Clone, Debug, PartialEq)]
@@ -497,6 +525,11 @@ pub struct IrFunc {
     pub(in crate::sim) locals: Vec<IrLocal>,
     pub(in crate::sim) pre_fns: Vec<IrPreFn>,
     pub(in crate::sim) body: Vec<IrStmt>,
+    /// The frame's automatic variables in `vpiAutomatics` order: the
+    /// return variable, the formals, then the body-scope locals in
+    /// declaration order. Empty for a static subprogram and in models
+    /// without the VPI catalog.
+    pub(in crate::sim) vpi_automatics: Vec<IrVpiAutomatic>,
 }
 
 impl IrFunc {
@@ -536,6 +569,7 @@ impl IrFunc {
             locals,
             pre_fns,
             body,
+            vpi_automatics: Vec::new(),
         }
     }
 

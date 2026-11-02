@@ -169,6 +169,10 @@ pub struct IrCallExpr {
     /// Index into [`IrModel::dpi_sites`] of this call's source position when
     /// the callee is a context DPI-C import (`svGetCallerInfo`, H.9.3).
     pub(in crate::sim) dpi_site: Option<u32>,
+    /// Design node of the source call, which [`IrModel::vpi_call_rows`]
+    /// maps to its VPI call object: the `vpiOrigin` of the frame the call
+    /// activates (37.39). `None` for a call the source does not write.
+    pub(in crate::sim) vpi_call: Option<u32>,
 }
 
 impl IrCallExpr {
@@ -184,6 +188,7 @@ impl IrCallExpr {
             virtual_call: None,
             void_x,
             dpi_site: None,
+            vpi_call: None,
         }
     }
 
@@ -244,6 +249,8 @@ pub struct IrCall {
     pub(in crate::sim) copyouts: Vec<(IrLhs, String, u32, bool)>,
     /// See [`IrCallExpr::dpi_site`].
     pub(in crate::sim) dpi_site: Option<u32>,
+    /// See [`IrCallExpr::vpi_call`].
+    pub(in crate::sim) vpi_call: Option<u32>,
 }
 
 impl IrCall {
@@ -265,6 +272,7 @@ impl IrCall {
             temps,
             copyouts,
             dpi_site: None,
+            vpi_call: None,
         }
     }
 

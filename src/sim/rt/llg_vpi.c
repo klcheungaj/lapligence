@@ -104,6 +104,7 @@ typedef enum {
                       * 0), its assignment (1) or the assigned constant (2) */
     SLOT_THREAD,     /* thread: registry slot `aux`, process identity `left` (37.40) */
     SLOT_FRAME,      /* frame `element` of the frame stack of (`aux`, `left`) (37.39) */
+    SLOT_AUTO,       /* automatic variable `right` of that frame (37.39 detail 1) */
 } llg_vpi_slot_kind_t;
 
 enum {

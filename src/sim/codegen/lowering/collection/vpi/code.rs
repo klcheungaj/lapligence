@@ -109,6 +109,8 @@ pub(super) struct FinishedCode {
     pub(super) named_blocks: Vec<(usize, u32)>,
     /// The entry of each statement node (statement coverage, A19-D46).
     pub(super) statement_rows: HashMap<NodeId, u32>,
+    /// The entry of each task, function and method call node.
+    pub(super) call_rows: HashMap<NodeId, u32>,
 }
 
 pub(super) struct CodeTables<'c, 'a> {
@@ -136,6 +138,9 @@ pub(super) struct CodeTables<'c, 'a> {
     /// The entry of each statement node built (statement coverage links
     /// its entities to them, 40.5.3).
     statement_rows: HashMap<NodeId, u32>,
+    /// The entry of each subroutine call node built (the `vpiOrigin` of the
+    /// frames the call activates, 37.39).
+    call_rows: HashMap<NodeId, u32>,
 }
 
 impl<'c, 'a> CodeTables<'c, 'a> {
@@ -167,6 +172,7 @@ impl<'c, 'a> CodeTables<'c, 'a> {
             declarations: HashMap::new(),
             line_starts: HashMap::new(),
             statement_rows: HashMap::new(),
+            call_rows: HashMap::new(),
         }
     }
 
@@ -177,6 +183,7 @@ impl<'c, 'a> CodeTables<'c, 'a> {
             files: self.files,
             named_blocks: self.named_blocks,
             statement_rows: self.statement_rows,
+            call_rows: self.call_rows,
         }
     }
 
@@ -290,7 +297,19 @@ impl<'c, 'a> CodeTables<'c, 'a> {
             }
             _ => {}
         }
+        let node = match &item {
+            Item::Expr(id) | Item::Stmt(id) | Item::ExprStmt(id) => Some(*id),
+            _ => None,
+        };
         let (mut code, children, inner) = self.build(item, scope);
+        if let Some(node) = node.filter(|_| {
+            matches!(
+                code.type_code,
+                "vpiTaskCall" | "vpiFuncCall" | "vpiMethodTaskCall" | "vpiMethodFuncCall"
+            )
+        }) {
+            self.call_rows.entry(node).or_insert(entry);
+        }
         if let Some(row) = self.pending_block.take() {
             self.named_blocks
                 .push((row, u32::try_from(slot).unwrap_or(u32::MAX)));

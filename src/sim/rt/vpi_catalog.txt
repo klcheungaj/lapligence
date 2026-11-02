@@ -1584,11 +1584,11 @@ node user_systf 37.38 type=vpiUserSystf
 
 node frame 37.39 type=vpiFrame
   get vpiActive implemented a19d44
-  handle vpiOrigin unsupported the call that activated a frame is not recorded at run time
+  handle vpiOrigin implemented walk
   handle vpiParent implemented a19thr
   handle vpiStmt implemented a19d44
   handle vpiThread implemented a19thr
-  iterate vpiAutomatics unsupported automatic variables have no objects: the lowered model keeps no source names for them
+  iterate vpiAutomatics implemented walk
   str vpiFullName extension a19thr the full name of the task or function the frame activates, as other tools report it
 
 node thread 37.40 type=vpiThread

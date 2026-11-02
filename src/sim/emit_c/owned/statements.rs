@@ -189,6 +189,7 @@ impl Frame<'_, '_> {
                 if let Some(value) = init {
                     self.string_assign(&binding.address, value)?;
                 }
+                self.vpi_auto_bind_address(name, &binding.address);
             }
             IrStmt::SharedString {
                 name,
@@ -328,7 +329,10 @@ impl Frame<'_, '_> {
                 signed,
                 init,
                 two_state,
-            } => self.local(name, *width, *signed, *two_state, init.as_deref())?,
+            } => {
+                self.local(name, *width, *signed, *two_state, init.as_deref())?;
+                self.vpi_auto_bind(name);
+            }
             IrStmt::SharedLocal {
                 name,
                 width,

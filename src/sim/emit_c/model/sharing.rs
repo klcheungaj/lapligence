@@ -475,7 +475,10 @@ fn normalize(
             // one net in different generate iterations differ only here. An
             // SDF-annotated gate's delay slot is likewise its own.
             let preceding = &source[..start];
+            // The call object a frame takes as its vpiOrigin is the
+            // instance's own source call.
             let identity = preceding.ends_with(".drivers[")
+                || preceding.trim_end().ends_with("llg_vpi_next_origin =")
                 || preceding.ends_with("llg_sdf_gate_delays[")
                 || arguments
                     .last()

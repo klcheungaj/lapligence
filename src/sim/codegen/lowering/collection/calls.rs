@@ -553,6 +553,7 @@ impl<'a> Codegen<'a> {
                 virtual_call,
                 void_x: ret_val.is_none(),
                 dpi_site: self.dpi_call_site(function, h),
+                vpi_call: u32::try_from(h.index()).ok(),
             })),
             ret_w,
             ret_s,

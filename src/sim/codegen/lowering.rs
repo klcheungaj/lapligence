@@ -914,6 +914,7 @@ fn finish_generation(
         model.vpi_code.clear();
         model.vpi_code_files.clear();
         model.vpi_udps.clear();
+        model.vpi_call_rows.clear();
         model.vpi_catalog = false;
         if let Some(coverage) = model.assertion_coverage.as_mut() {
             coverage

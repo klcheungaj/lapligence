@@ -283,6 +283,7 @@ impl Codegen<'_> {
             temps: Vec::new(),
             copyouts: Vec::new(),
             dpi_site: None,
+            vpi_call: None,
         })))
     }
 

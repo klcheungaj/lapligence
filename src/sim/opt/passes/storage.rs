@@ -168,6 +168,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         vpi_code: _,
         vpi_code_files: _,
         vpi_udps: _,
+        vpi_call_rows: _,
         vpi_compile_calls: _,
         vpi_builtin_calls: _,
         vpi_catalog: _,
@@ -1084,6 +1085,7 @@ fn collect_call_rw(call: &crate::sim::ir::IrCall, model: &IrModel, rw: &mut Rw) 
         temps,
         copyouts,
         dpi_site: _,
+        vpi_call: _,
     } = call;
     collect_call_target_reads(receiver.as_ref(), virtual_call.as_ref(), model, rw);
     collect_call_args_rw(*f, args, model, rw);
@@ -1111,6 +1113,7 @@ fn collect_call_expr_rw(call: &crate::sim::ir::IrCallExpr, model: &IrModel, rw: 
         virtual_call,
         void_x: _,
         dpi_site: _,
+        vpi_call: _,
     } = call;
     collect_call_target_reads(receiver.as_ref(), virtual_call.as_ref(), model, rw);
     collect_call_args_rw(*f, args, model, rw);

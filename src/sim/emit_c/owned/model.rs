@@ -177,7 +177,7 @@ pub(in crate::sim::emit_c) fn coroutine_function<'a, 'm>(
 /// VPI catalog; `None` elsewhere, which keeps their bodies unchanged.
 /// A class method is named as its class item is (`tb.C::m`, decision
 /// A19-D36) when one class definition has the method's class name.
-fn vpi_frame_name(ctx: &RCtx<'_>, function: &IrFunc) -> Option<String> {
+pub(super) fn vpi_frame_name(ctx: &RCtx<'_>, function: &IrFunc) -> Option<String> {
     if !ctx.model.vpi_catalog || function.inline_expanded {
         return None;
     }
@@ -197,6 +197,120 @@ fn vpi_frame_name(ctx: &RCtx<'_>, function: &IrFunc) -> Option<String> {
         }
     }
     Some(name.to_owned())
+}
+
+/// Whether a VPI frame of `function` lists automatic variables: an
+/// automatic task or function with a frame in a catalog model.
+fn has_vpi_automatics(model: &IrModel, function: &IrFunc) -> bool {
+    model.vpi_catalog
+        && !function.inline_expanded
+        && function.dpi.is_none()
+        && function.diagnostic_name.is_some()
+        && function.automatic
+        && !function.vpi_automatics.is_empty()
+}
+
+/// The descriptor rows of `function`'s automatics (`llg_vpi_auto_t`, 37.39
+/// detail 1). Value kinds: 0 packed (sv4_t*), 1 real (double*), 2 string
+/// (llg_string_t*), 3 no readable value.
+fn vpi_automatic_rows(function: &IrFunc) -> String {
+    use crate::sim::ir::IrVpiAutoStorage;
+    let mut rows = String::new();
+    for auto in &function.vpi_automatics {
+        let unreadable = match &auto.storage {
+            IrVpiAutoStorage::Return => auto.string,
+            IrVpiAutoStorage::Formal(position) => function.formals[*position].is_ref(),
+            IrVpiAutoStorage::Local(_) => false,
+        };
+        let kind = if unreadable {
+            3
+        } else if auto.string {
+            2
+        } else if auto.real {
+            1
+        } else {
+            0
+        };
+        rows.push_str(&format!(
+            "    {{ {}, {}, {}u, {}u, {}, {kind}, {} }},\n",
+            c_string_literal(&auto.name),
+            auto.type_code,
+            auto.line,
+            auto.width,
+            u8::from(auto.signed),
+            u8::from(matches!(auto.storage, IrVpiAutoStorage::Local(_)))
+        ));
+    }
+    rows
+}
+
+/// The name of the descriptor table with `rows`: one table per distinct
+/// content, so every instance of a subprogram names the same table and
+/// instance sharing still merges their bodies.
+fn vpi_automatic_table(rows: &str) -> String {
+    let hash = rows.bytes().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    format!("llg_vpi_autos_{hash:016x}")
+}
+
+/// The automatic-variable descriptor tables of every VPI frame, once each.
+pub(in crate::sim::emit_c) fn vpi_automatic_tables(model: &IrModel, out: &mut String) {
+    let mut tables = BTreeMap::new();
+    for function in model.funcs.iter().filter(|f| has_vpi_automatics(model, f)) {
+        let rows = vpi_automatic_rows(function);
+        tables.entry(vpi_automatic_table(&rows)).or_insert(rows);
+    }
+    for (name, rows) in tables {
+        out.push_str(&format!(
+            "static const llg_vpi_auto_t {name}[] = {{\n{rows}}};\n"
+        ));
+    }
+}
+
+/// The VPI automatics of `function` (37.39 detail 1): declares the
+/// activation's address array, stores the addresses of the return variable
+/// and the formals, and registers the body-scope locals, whose declarations
+/// store theirs. Returns the descriptor table's name and the array.
+fn vpi_automatics(frame: &mut Frame<'_, '_>, function: &IrFunc) -> (String, String) {
+    use crate::sim::ir::IrVpiAutoStorage;
+    let table = vpi_automatic_table(&vpi_automatic_rows(function));
+    let slots = frame.declare_array("void*", "vpi_autos", function.vpi_automatics.len());
+    let mut locals = HashMap::new();
+    for (index, auto) in function.vpi_automatics.iter().enumerate() {
+        let address = match &auto.storage {
+            IrVpiAutoStorage::Return if auto.string => None,
+            IrVpiAutoStorage::Return => frame.lookup("_ret").map(|binding| binding.address),
+            IrVpiAutoStorage::Formal(position) => {
+                let formal = &function.formals[*position];
+                if formal.string {
+                    frame.native_bindings[0]
+                        .get(&format!("a{position}"))
+                        .map(|binding| binding.address.clone())
+                } else if let Some(shared) = formal.shared_local.as_ref() {
+                    frame.lookup(shared).map(|binding| binding.address)
+                } else if formal.is_ref() {
+                    None
+                } else if formal.is_out {
+                    Some(format!("o{position}"))
+                } else {
+                    frame
+                        .lookup(&format!("a{position}"))
+                        .map(|binding| binding.address)
+                }
+            }
+            IrVpiAutoStorage::Local(name) => {
+                locals.insert(name.clone(), index);
+                continue;
+            }
+        };
+        // An entry without an address stays NULL (the array starts zeroed).
+        if let Some(address) = address {
+            frame.line(format!("{slots}[{index}] = (void*)({address});"));
+        }
+    }
+    frame.vpi_autos = Some((slots.clone(), locals));
+    (table, slots)
 }
 
 fn render_function(
@@ -548,14 +662,21 @@ fn render_function(
     // VPI frames (37.39): a catalog model brackets the body once the inputs
     // are in place; the runtime flag keeps a model without an application
     // at one load and branch per call.
-    let vpi_frame = vpi_frame_name(ctx, function).map(|name| {
-        frame.scalar(
-            "uint64_t",
-            format!(
-                "llg_vpi_frames_on ? llg_vpi_frame_enter({}) : 0u",
-                c_string_literal(&name)
+    let vpi_name = vpi_frame_name(ctx, function);
+    let autos_table = vpi_name
+        .as_ref()
+        .filter(|_| has_vpi_automatics(ctx.model, function))
+        .map(|_| vpi_automatics(&mut frame, function));
+    let vpi_frame = vpi_name.map(|name| {
+        let enter = match &autos_table {
+            Some((table, slots)) => format!(
+                "llg_vpi_frame_enter_autos({}, {table}, {}u, {slots})",
+                c_string_literal(&name),
+                function.vpi_automatics.len()
             ),
-        )
+            None => format!("llg_vpi_frame_enter({})", c_string_literal(&name)),
+        };
+        frame.scalar("uint64_t", format!("llg_vpi_frames_on ? {enter} : 0u"))
     });
     if function.receiver_class.is_some() {
         // A method entered with a null receiver (reported above) returns at

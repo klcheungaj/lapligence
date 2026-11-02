@@ -781,6 +781,7 @@ impl EmitCtx<'_, '_> {
             temps,
             copyouts,
             dpi_site: self.cg.dpi_call_site(fidx, h),
+            vpi_call: u32::try_from(h.index()).ok(),
         }));
         if before.is_empty() && after.is_empty() {
             Ok(call)

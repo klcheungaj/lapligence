@@ -230,7 +230,7 @@ impl Frame<'_, '_> {
         args: &[IrCallArg],
         depth: IrDepth,
     ) -> Result<Option<CallValue>, String> {
-        self.call_target(f, args, depth, None, false, None, None)
+        self.call_target(f, args, depth, None, false, None, None, None)
     }
 
     // The call shape (receiver, dispatch, interface call, DPI site) is the
@@ -245,6 +245,7 @@ impl Frame<'_, '_> {
         virtual_dispatch: bool,
         virtual_call: Option<&IrVirtualCall>,
         dpi_site: Option<u32>,
+        vpi_call: Option<u32>,
     ) -> Result<Option<CallValue>, String> {
         if !self.allow_calls {
             return Err(pending("subprogram calls in declaration initialization"));
@@ -855,6 +856,17 @@ impl Frame<'_, '_> {
             // been evaluated, so no other import call intervenes.
             self.line(format!("llg_dpi_next_site = &llg_dpi_sites[{site}];"));
         }
+        if function.dpi.is_none() && super::model::vpi_frame_name(self.ctx, &function).is_some() {
+            // VPI frames (37.39): the callee's frame entry takes the call
+            // object that activates it from here, as its vpiOrigin. Every
+            // argument has been evaluated, so no other call intervenes;
+            // 0 names no object (a call the source does not write). A DPI
+            // import has no frame: an export it calls takes no origin.
+            let origin = vpi_call
+                .and_then(|node| self.ctx.model.vpi_call_rows.get(&node))
+                .map_or(0, |row| u64::from(*row) + 1);
+            self.line(format!("llg_vpi_next_origin = {origin}u;"));
+        }
         let call_mark = self.cancellation_mark();
         let result = if coroutine {
             self.coroutine_call(f, &function, &parameters)?;
@@ -980,6 +992,7 @@ impl Frame<'_, '_> {
             virtual_dispatch,
             None,
             None,
+            None,
         )? {
             Some(CallValue::Native(value)) if value.kind == kind => Ok(value),
             _ => Err("native method result type mismatch".to_owned()),
@@ -996,6 +1009,7 @@ impl Frame<'_, '_> {
                 call.virtual_dispatch,
                 call.virtual_call.as_ref(),
                 call.dpi_site,
+                call.vpi_call,
             )? {
                 Some(CallValue::Numeric(value)) => value,
                 Some(CallValue::Native(_)) => {
@@ -1082,6 +1096,7 @@ impl Frame<'_, '_> {
             call.virtual_dispatch,
             call.virtual_call.as_ref(),
             call.dpi_site,
+            call.vpi_call,
         )? {
             match value {
                 CallValue::Numeric(value) => self.discard(value),

@@ -557,6 +557,7 @@ impl<'a> Codegen<'a> {
                     locals: Vec::new(),
                     pre_fns: Vec::new(),
                     body: Vec::new(),
+                    vpi_automatics: Vec::new(),
                 });
                 self.func_meta.insert(
                     *c,

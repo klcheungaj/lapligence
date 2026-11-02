@@ -2377,6 +2377,7 @@ impl Codegen<'_> {
             files,
             named_blocks,
             statement_rows,
+            call_rows,
         } = {
             let mut tables = code::CodeTables::new(self, model, typespecs);
             // Declarations first, so the instances of assertions link to
@@ -2550,6 +2551,10 @@ impl Codegen<'_> {
                 item.code = node.and_then(|node| statement_rows.get(&node).copied());
             }
         }
+        model.vpi_call_rows = call_rows
+            .into_iter()
+            .filter_map(|(node, row)| Some((u32::try_from(node.index()).ok()?, row)))
+            .collect();
         model.vpi_code = code;
         model.vpi_code_files = files;
         model.vpi_udps = self.vpi_udp_definitions();

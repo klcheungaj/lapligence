@@ -1,6 +1,7 @@
 //! Function bodies.
 
 use super::*;
+use crate::sim::ir::{IrVpiAutoStorage, IrVpiAutomatic};
 
 impl<'a> Codegen<'a> {
     /// Emit one static C function for a function/task definition.  The body
@@ -264,6 +265,11 @@ impl<'a> Codegen<'a> {
             local_seq += 1;
             locals.insert(*target, (name, width, signed, two_state, false));
         }
+        let vpi_automatics = if automatic {
+            self.vpi_automatics(ft, body, ret, ret_string, &formals, &locals)
+        } else {
+            Vec::new()
+        };
         let mut declaration_initializers = HashMap::new();
         self.collect_subroutine_decl_initializers(body, &mut declaration_initializers);
         let local_ids = sorted_node_ids(&locals);
@@ -1248,6 +1254,7 @@ impl<'a> Codegen<'a> {
         entry.callback_return_independent = callback_return_independent;
         entry.pre_fns = pre_fns;
         entry.body = body_stmts;
+        entry.vpi_automatics = vpi_automatics;
         for ((index, name), observed) in shared_outputs.into_iter().zip(observed_outputs) {
             if let Some(formal) = entry.formals.get_mut(index) {
                 formal.shared_local = Some(name);
@@ -1256,6 +1263,113 @@ impl<'a> Codegen<'a> {
         }
         let _ = (guard, decl, has_ret, ret_x, c_name.as_str());
         Ok(())
+    }
+
+    /// The automatic variables a VPI frame of `ft` lists (37.39 detail 1):
+    /// the function-name return variable, the formals, then the automatic
+    /// locals the body declares at its top level, in declaration order.
+    /// Block-scope locals belong to the frames of their blocks and static
+    /// locals are no automatics. Only packed, real and string values are
+    /// listed.
+    fn vpi_automatics(
+        &self,
+        ft: NodeId,
+        body: NodeId,
+        ret: Option<(u32, bool, bool, bool)>,
+        ret_string: bool,
+        formals: &[(NodeId, bool)],
+        locals: &HashMap<NodeId, (String, u32, bool, bool, bool)>,
+    ) -> Vec<IrVpiAutomatic> {
+        let type_code = |kind: &str, width: u32| -> &'static str {
+            match kind {
+                "int" => "vpiIntVar",
+                "integer" => "vpiIntegerVar",
+                "byte" => "vpiByteVar",
+                "shortint" => "vpiShortIntVar",
+                "longint" => "vpiLongIntVar",
+                "time" => "vpiTimeVar",
+                "real" | "realtime" => "vpiRealVar",
+                "shortreal" => "vpiShortRealVar",
+                "string" => "vpiStringVar",
+                "bit" if width == 1 => "vpiBitVar",
+                "bit" => "vpiBitVar",
+                _ => "vpiReg",
+            }
+        };
+        let mut automatics = Vec::new();
+        if let (Some((width, signed, _, _)), false) = (ret, ret_string) {
+            let kind = match self.kind(ft) {
+                NodeKind::FuncTask { ret: Some(ty), .. } => ty.kind.clone(),
+                _ => String::new(),
+            };
+            automatics.push(IrVpiAutomatic {
+                name: self.node(ft).name.clone(),
+                type_code: type_code(&kind, width),
+                line: self.node(ft).line,
+                width,
+                signed,
+                real: width == 0,
+                string: false,
+                storage: IrVpiAutoStorage::Return,
+            });
+        }
+        for (index, (formal, _)) in formals.iter().enumerate() {
+            let NodeKind::FuncArg { ty, .. } = self.kind(*formal) else {
+                continue;
+            };
+            let string = ty.kind == "string";
+            let real = is_real_kind(&ty.kind);
+            if !string && !real && (is_handle_kind(&ty.kind) || ty.width.is_none()) {
+                continue;
+            }
+            let width = if string || real {
+                0
+            } else {
+                ty.width.unwrap_or(0)
+            };
+            automatics.push(IrVpiAutomatic {
+                name: self.node(*formal).name.clone(),
+                type_code: type_code(&ty.kind, width),
+                line: self.node(*formal).line,
+                width,
+                signed: ty.signed,
+                real,
+                string,
+                storage: IrVpiAutoStorage::Formal(index),
+            });
+        }
+        // A top-level local is the variable of a declaration statement of
+        // the body's statement list.
+        let declared = self.node(body).children.iter().flat_map(|statement| {
+            self.node(*statement)
+                .children
+                .iter()
+                .copied()
+                .filter(|child| self.node(*child).parent == Some(*statement))
+        });
+        for child in declared {
+            if self.db.variable_lifetime(child) != VariableLifetime::Automatic {
+                continue;
+            }
+            let Some((name, width, signed, _, _)) = locals.get(&child) else {
+                continue;
+            };
+            let NodeKind::Var { ty } = self.kind(child) else {
+                continue;
+            };
+            let string = ty.kind == "string";
+            automatics.push(IrVpiAutomatic {
+                name: self.node(child).name.clone(),
+                type_code: type_code(&ty.kind, *width),
+                line: self.node(child).line,
+                width: if string { 0 } else { *width },
+                signed: *signed,
+                real: !string && *width == 0,
+                string,
+                storage: IrVpiAutoStorage::Local(name.clone()),
+            });
+        }
+        automatics
     }
 
     fn static_return_requires_signal(&self, return_variable: NodeId) -> bool {

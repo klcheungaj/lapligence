@@ -1387,6 +1387,7 @@ fn render_model(
     render_signal_decls(model, &mut out);
     render_static_local_decls(model, &mut out);
     super::owned::model::persistent_returns(model, &mut out);
+    super::owned::model::vpi_automatic_tables(model, &mut out);
     for object in &model.objects {
         if object.ty.has_change_marker() {
             out.push_str(&format!(

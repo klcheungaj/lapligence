@@ -515,7 +515,30 @@ int llg_vpi_startup(void);
  * application's startup routines in a catalog model; a model without an
  * application pays one load and branch per call. */
 extern int llg_vpi_frames_on;
+/* The call object (code row + 1, 0 for none) that activates the next frame,
+ * its vpiOrigin: stored by the caller right before a call of a task or
+ * function with a frame, taken and cleared by llg_vpi_frame_enter. */
+extern uint32_t llg_vpi_next_origin;
 uint64_t llg_vpi_frame_enter(const char* full_name);
+/* One automatic variable of a frame (37.39 detail 1), in a model's static
+ * per-subprogram table. `kind` names what the activation's address array
+ * holds for it: 0 an sv4_t*, 1 a double*, 2 an llg_string_t*, 3 nothing
+ * readable. A `local` entry is stored where the body declares it; the
+ * others are stored before the frame is entered. */
+typedef struct {
+    const char* name;
+    int32_t type;
+    uint32_t line;
+    uint32_t width;
+    uint8_t is_signed;
+    uint8_t kind;
+    uint8_t local;
+} llg_vpi_auto_t;
+/* llg_vpi_frame_enter for a subprogram with automatic variables: `slots`
+ * is the activation's address array (one entry per table row), which lives
+ * as long as the frame. */
+uint64_t llg_vpi_frame_enter_autos(const char* full_name, const llg_vpi_auto_t* autos,
+                                   uint32_t count, void** slots);
 void llg_vpi_frame_exit(uint64_t frame);
 /* Run a statically linked application's startup table (the model links the
  * archive that defines it) before LLG_VPI_PLUGIN libraries are loaded. */

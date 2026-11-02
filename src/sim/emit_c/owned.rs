@@ -250,6 +250,9 @@ pub(super) struct Frame<'a, 'm> {
     outline_pressure: bool,
     /// Rendering a sequence no heavier than one run: nothing inside it splits.
     outline_light: bool,
+    /// VPI frame automatics (37.39): the activation's address array and the
+    /// entry of each body-scope local, stored where the local is declared.
+    vpi_autos: Option<(String, HashMap<String, usize>)>,
 }
 
 fn pending(feature: &str) -> String {
@@ -461,6 +464,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             outline: None,
             outline_pressure: false,
             outline_light: false,
+            vpi_autos: None,
         }
     }
     fn line(&mut self, text: impl AsRef<str>) {
@@ -1036,6 +1040,33 @@ impl<'a, 'm> Frame<'a, 'm> {
             result
         }
     }
+    /// Record the address of VPI automatic `name` in the activation's
+    /// address array once its declaration has bound it.
+    fn vpi_auto_bind(&mut self, name: &str) {
+        let Some((slots, index)) = self
+            .vpi_autos
+            .as_ref()
+            .and_then(|(slots, locals)| Some((slots.clone(), *locals.get(name)?)))
+        else {
+            return;
+        };
+        if let Some(binding) = self.lookup(name) {
+            self.line(format!("{slots}[{index}] = (void*)({});", binding.address));
+        }
+    }
+
+    /// [`Self::vpi_auto_bind`] for a native local bound at `address`.
+    fn vpi_auto_bind_address(&mut self, name: &str, address: &str) {
+        let Some((slots, index)) = self
+            .vpi_autos
+            .as_ref()
+            .and_then(|(slots, locals)| Some((slots.clone(), *locals.get(name)?)))
+        else {
+            return;
+        };
+        self.line(format!("{slots}[{index}] = (void*)({address});"));
+    }
+
     fn lookup(&self, name: &str) -> Option<Binding> {
         for bindings in self.bindings.iter().rev() {
             if let Some(binding) = bindings.get(name) {
