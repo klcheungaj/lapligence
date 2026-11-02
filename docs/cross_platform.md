@@ -51,6 +51,12 @@ final link, so build.rs adds what that link needs:
 - The `#[link]` attributes in `src/ffi/slang.rs` use `-bundle`: rustc's rlib
   archive index cannot list GIMPLE or `/GL` members, so the final link reads
   the archives CMake wrote with the compiler's archiver.
+- The static musl link adds libstdc++, libsupc++, libgcc_eh and libgcc with
+  `-bundle` too (`native_lto::static_cxx_runtime_link_libs`). rustc puts a
+  crate's unbundled libraries right after its rlib, the `#[link]` ones first,
+  so the C++ runtime follows `-lsvlang -lfmt`. Bundled, the runtime sat inside
+  the rlib before them and GNU ld, which does not rescan passed archives, left
+  libstdc++ symbols undefined (`basic_string::_M_mutate`, `system_error`).
 - On x86_64 Linux GNU, rustc links through its bundled lld by default, which
   ignores GCC's plugin; build.rs therefore selects GNU ld for GCC LTO archives.
   A later `-fuse-ld` (the `LLG_MOLD=1` wrapper's) still wins; mold runs the

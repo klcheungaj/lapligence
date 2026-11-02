@@ -5,7 +5,9 @@
 #[path = "../build_support/native_lto.rs"]
 mod native_lto;
 
-use native_lto::{gnu_lto_compile_options, is_enabled, link_args, request, Request};
+use native_lto::{
+    gnu_lto_compile_options, is_enabled, link_args, request, static_cxx_runtime_link_libs, Request,
+};
 
 #[test]
 fn default_enables_lto_in_release_profiles_only() {
@@ -80,4 +82,24 @@ fn gcc_lto_on_musl_compiles_the_frontend_without_fortify_wrappers() {
             "{target_env}"
         );
     }
+}
+
+#[test]
+fn static_cxx_runtime_follows_the_unbundled_frontend_archives() {
+    // A bundled runtime would sit inside the rlib, before `-lsvlang`, where a
+    // single GNU ld scan cannot serve the frontend's references.
+    assert_eq!(
+        static_cxx_runtime_link_libs(|_| true),
+        [
+            "static:-bundle=stdc++",
+            "static:-bundle=supc++",
+            "static:-bundle=gcc_eh",
+            "static:-bundle=gcc",
+        ]
+    );
+    // Optional archives a toolchain lacks are left out; the order is kept.
+    assert_eq!(
+        static_cxx_runtime_link_libs(|archive| archive == "gcc" || archive == "stdc++"),
+        ["static:-bundle=stdc++", "static:-bundle=gcc"]
+    );
 }

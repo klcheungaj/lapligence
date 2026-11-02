@@ -98,6 +98,31 @@ pub fn gnu_lto_compile_options(target_env: &str) -> &'static [&'static str] {
     }
 }
 
+/// The static C++ runtime archives of a fully static (musl) link, in the
+/// order they must be scanned.
+const STATIC_CXX_RUNTIME: [&str; 4] = ["stdc++", "supc++", "gcc_eh", "gcc"];
+
+/// `cargo:rustc-link-lib` values for the static C++ runtime archives in
+/// `available`, in `STATIC_CXX_RUNTIME` order.
+///
+/// They are unbundled for the same reason as the frontend archives and so
+/// that they follow them on the link line. rustc places a crate's unbundled
+/// static libraries right after its rlib, the `#[link]` ones (wrapper, svlang,
+/// fmt) first and the build-script ones after. A bundled runtime would sit
+/// inside the rlib, before `-lsvlang`. GNU ld does not return to an archive
+/// it has passed (outside `--start-group`), so the libstdc++ members that the
+/// frontend's LTRANS objects need would never be extracted, while members
+/// pulled from the rlib would keep references that no later archive resolves
+/// (CI: `basic_string::_M_mutate`, `system_error` undefined in `eh_alloc.o`,
+/// `fs_path.o`). glibc builds link libstdc++ dynamically and never meet this.
+pub fn static_cxx_runtime_link_libs(available: impl Fn(&str) -> bool) -> Vec<String> {
+    STATIC_CXX_RUNTIME
+        .iter()
+        .filter(|archive| available(archive))
+        .map(|archive| format!("static:-bundle={archive}"))
+        .collect()
+}
+
 /// Whether the recorded mode means the archives contain LTO IR.
 pub fn is_enabled(mode: &str) -> bool {
     let mode = mode.trim();

@@ -213,10 +213,10 @@ fn build_slang(manifest_dir: &Path) {
         let mimalloc_archive = build_mimalloc_shim(manifest_dir, &target);
         let drivers = collect_driver_candidates(&target);
         let archives = find_static_archives(&drivers, &["stdc++", "gcc"], &["supc++", "gcc_eh"]);
-        for archive in ["stdc++", "supc++", "gcc_eh", "gcc"] {
-            if archives.contains(archive) {
-                println!("cargo:rustc-link-lib=static={archive}");
-            }
+        // Unbundled so that they follow the unbundled frontend archives on
+        // the link line (see `static_cxx_runtime_link_libs`).
+        for lib in native_lto::static_cxx_runtime_link_libs(|archive| archives.contains(archive)) {
+            println!("cargo:rustc-link-lib={lib}");
         }
         println!("cargo:rustc-link-arg=-static");
         emit_mimalloc_link_args(&mimalloc_archive, &archives);
