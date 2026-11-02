@@ -375,7 +375,10 @@ impl<'a> Codegen<'a> {
     /// extend the program's lifetime.
     fn emit_cont_assign(&mut self, inst: NodeId, path: &str, ca: NodeId) -> Result<(), String> {
         let first = self.model.processes.len();
-        self.emit_cont_assign_driver(inst, path, ca)?;
+        let continuous = std::mem::replace(&mut self.continuous_lowering, true);
+        let lowered = self.emit_cont_assign_driver(inst, path, ca);
+        self.continuous_lowering = continuous;
+        lowered?;
         if self.db.is_program_instance(inst) {
             for process in &mut self.model.processes[first..] {
                 process.set_program(Some(inst.0));

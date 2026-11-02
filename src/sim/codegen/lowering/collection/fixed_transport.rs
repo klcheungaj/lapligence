@@ -39,13 +39,10 @@ impl Codegen<'_> {
                 args.insert(outputs - 1, IrCallArg::FixedArray(result.ir));
                 return Ok(IrFixedValue::Call {
                     array: result.ir,
-                    call: Box::new(IrCall::new(
-                        expression.f,
-                        args,
-                        expression.depth,
-                        Vec::new(),
-                        Vec::new(),
-                    )),
+                    call: Box::new(
+                        IrCall::new(expression.f, args, expression.depth, Vec::new(), Vec::new())
+                            .with_vpi_call(expression.vpi_call),
+                    ),
                 });
             }
         }

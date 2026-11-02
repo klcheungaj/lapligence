@@ -975,6 +975,7 @@ impl Frame<'_, '_> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn native_method_call(
         &mut self,
         function: usize,
@@ -983,6 +984,7 @@ impl Frame<'_, '_> {
         kind: NativeKind,
         receiver: Option<&IrChandleExpr>,
         virtual_dispatch: bool,
+        vpi_call: Option<u32>,
     ) -> Result<NativeValue, String> {
         match self.call_target(
             function,
@@ -992,7 +994,7 @@ impl Frame<'_, '_> {
             virtual_dispatch,
             None,
             None,
-            None,
+            vpi_call,
         )? {
             Some(CallValue::Native(value)) if value.kind == kind => Ok(value),
             _ => Err("native method result type mismatch".to_owned()),

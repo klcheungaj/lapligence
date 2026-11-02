@@ -378,6 +378,7 @@ impl Frame<'_, '_> {
             }
             let target = self.new_container(*container)?;
             self.containers.insert(*container, target);
+            self.vpi_auto_bind(VpiAutoKey::Container(*container));
             return Ok(());
         }
         if let IrContainerStmt::SharedDeclare(container) = operation {
@@ -396,6 +397,7 @@ impl Frame<'_, '_> {
                 crate::sim::ir::shared_container_capture_name(*container),
                 (format!("(*{owner})"), 0),
             );
+            self.vpi_auto_bind(VpiAutoKey::Container(*container));
             return Ok(());
         }
         let mut values = Vec::new();

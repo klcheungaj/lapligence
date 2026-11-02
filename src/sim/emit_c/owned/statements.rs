@@ -25,6 +25,11 @@ impl Frame<'_, '_> {
         );
     }
     pub(super) fn end_block(&mut self) {
+        let first = self.marks.len().saturating_sub(1);
+        self.vpi_frame_end(first);
+        if self.vpi_auto_depth == Some(self.marks.len()) {
+            self.vpi_auto_depth = None;
+        }
         let marker = self.marks.pop().expect("matched lexical scope");
         self.mark_blocks.pop();
         self.line(format!("llg_value_scopes_end_since({marker});"));
@@ -82,6 +87,7 @@ impl Frame<'_, '_> {
             }
         }
         if target + 1 < self.marks.len() {
+            self.vpi_frame_end(target + 1);
             self.line(format!(
                 "llg_value_scopes_end_since({});",
                 self.marks[target + 1]
@@ -189,7 +195,7 @@ impl Frame<'_, '_> {
                 if let Some(value) = init {
                     self.string_assign(&binding.address, value)?;
                 }
-                self.vpi_auto_bind_address(name, &binding.address);
+                self.vpi_auto_bind(VpiAutoKey::Name(name.clone()));
             }
             IrStmt::SharedString {
                 name,
@@ -226,6 +232,7 @@ impl Frame<'_, '_> {
                 if let Some(value) = init {
                     self.string_assign(&address, value)?;
                 }
+                self.vpi_auto_bind(VpiAutoKey::Name(name.clone()));
             }
             IrStmt::DelayedStringAssign { target, rhs, ticks } => {
                 let binding = self.native_lookup(target, super::native::NativeKind::String)?;
@@ -331,7 +338,7 @@ impl Frame<'_, '_> {
                 two_state,
             } => {
                 self.local(name, *width, *signed, *two_state, init.as_deref())?;
-                self.vpi_auto_bind(name);
+                self.vpi_auto_bind(VpiAutoKey::Name(name.clone()));
             }
             IrStmt::SharedLocal {
                 name,
@@ -339,7 +346,10 @@ impl Frame<'_, '_> {
                 signed,
                 init,
                 two_state,
-            } => self.shared_local(name, *width, *signed, *two_state, init.as_deref())?,
+            } => {
+                self.shared_local(name, *width, *signed, *two_state, init.as_deref())?;
+                self.vpi_auto_bind(VpiAutoKey::Name(name.clone()));
+            }
             IrStmt::InertialAssign { lhs, rhs, delay } => self.inertial_assign(lhs, rhs, delay)?,
             IrStmt::SetNetDelay { group, delay } => self.set_net_delay(*group, delay)?,
             IrStmt::UdpStep { state, inputs } => self.udp_step(*state, inputs)?,

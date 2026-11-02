@@ -22,7 +22,7 @@ step 2 t=1000
   waiting on ev: 1
   cb eof-t1 t=1000 obj=vpiFrame
 step 3 t=1000
-  frames (error 0): tb.fact(active 1, stmt vpiSysTaskCall) tb.fact(active 0, stmt NULL) tb.fact(active 0, stmt NULL)
+  frames (error 0): tb.fact(active 1, stmt vpiSysTaskCall) tb.fact(active 0, stmt vpiReturnStmt) tb.fact(active 0, stmt vpiReturnStmt)
   threads: [active 1 parent NULL origin NULL/0 frame - children 0] [active 1 parent NULL origin NULL/0 frame tb.fact children 0]
   held frame: active -1 error 1
   cb sot t=1000 obj=NULL

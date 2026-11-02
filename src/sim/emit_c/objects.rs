@@ -93,6 +93,7 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             depth,
             receiver,
             virtual_dispatch,
+            ..
         } => {
             let mut rendered = Vec::with_capacity(args.len() + 2);
             if let Some(receiver) = receiver {
@@ -118,6 +119,7 @@ pub(super) fn string(ctx: &RCtx<'_>, value: &IrStringExpr) -> Result<String, Str
             depth,
             receiver,
             virtual_dispatch,
+            ..
         } => super::expressions::with_ref_scope(
             render_typed_call(
                 ctx,
@@ -332,6 +334,7 @@ pub(super) fn chandle(ctx: &RCtx<'_>, value: &IrChandleExpr) -> Result<String, S
             depth,
             receiver,
             virtual_dispatch,
+            ..
         } => {
             let source_args = args;
             let mut args = args

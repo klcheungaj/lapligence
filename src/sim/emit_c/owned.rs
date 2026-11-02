@@ -252,7 +252,21 @@ pub(super) struct Frame<'a, 'm> {
     outline_light: bool,
     /// VPI frame automatics (37.39): the activation's address array and the
     /// entry of each body-scope local, stored where the local is declared.
-    vpi_autos: Option<(String, HashMap<String, usize>)>,
+    vpi_autos: Option<(String, HashMap<VpiAutoKey, usize>)>,
+    /// The serial of the VPI frame the body runs in (37.39), while it is
+    /// rendered.
+    vpi_frame_serial: Option<String>,
+    /// The lexical depth (`marks.len()`) of the scope holding the frame's
+    /// body locals, once a declaration stored one's address.
+    vpi_auto_depth: Option<usize>,
+}
+
+/// A body-scope automatic a declaration binds: a local by IR name, or an
+/// automatic container.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum VpiAutoKey {
+    Name(String),
+    Container(usize),
 }
 
 fn pending(feature: &str) -> String {
@@ -465,6 +479,8 @@ impl<'a, 'm> Frame<'a, 'm> {
             outline_pressure: false,
             outline_light: false,
             vpi_autos: None,
+            vpi_frame_serial: None,
+            vpi_auto_depth: None,
         }
     }
     fn line(&mut self, text: impl AsRef<str>) {
@@ -1040,31 +1056,56 @@ impl<'a, 'm> Frame<'a, 'm> {
             result
         }
     }
-    /// Record the address of VPI automatic `name` in the activation's
+    /// The address of the packed, real, string or handle cell `name` is
+    /// bound to, for a VPI frame's automatics.
+    fn vpi_binding_address(&self, name: &str) -> Option<String> {
+        if let Some(binding) = self.lookup(name) {
+            return Some(binding.address);
+        }
+        self.native_bindings
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .map(|binding| binding.address.clone())
+    }
+
+    /// Record the address of VPI automatic `key` in the activation's
     /// address array once its declaration has bound it.
-    fn vpi_auto_bind(&mut self, name: &str) {
+    fn vpi_auto_bind(&mut self, key: VpiAutoKey) {
         let Some((slots, index)) = self
             .vpi_autos
             .as_ref()
-            .and_then(|(slots, locals)| Some((slots.clone(), *locals.get(name)?)))
+            .and_then(|(slots, locals)| Some((slots.clone(), *locals.get(&key)?)))
         else {
             return;
         };
-        if let Some(binding) = self.lookup(name) {
-            self.line(format!("{slots}[{index}] = (void*)({});", binding.address));
+        let address = match &key {
+            VpiAutoKey::Name(name) => self.vpi_binding_address(name),
+            VpiAutoKey::Container(container) => self
+                .containers
+                .get(container)
+                .map(|bound| format!("&{bound}")),
+        };
+        if let Some(address) = address {
+            self.line(format!("{slots}[{index}] = (void*)({address});"));
+            let depth = self.marks.len();
+            self.vpi_auto_depth = Some(self.vpi_auto_depth.map_or(depth, |d| d.min(depth)));
         }
     }
 
-    /// [`Self::vpi_auto_bind`] for a native local bound at `address`.
-    fn vpi_auto_bind_address(&mut self, name: &str, address: &str) {
-        let Some((slots, index)) = self
-            .vpi_autos
-            .as_ref()
-            .and_then(|(slots, locals)| Some((slots.clone(), *locals.get(name)?)))
-        else {
+    /// End the VPI frame before releasing the lexical scopes from mark
+    /// index `first` on when they hold its body locals: cbEndOfFrame then
+    /// still reads them (38.36.1, decision A19-D78), and no later read sees
+    /// released storage. Ending a frame twice is a no-op in the runtime.
+    fn vpi_frame_end(&mut self, first: usize) {
+        let Some(depth) = self.vpi_auto_depth else {
             return;
         };
-        self.line(format!("{slots}[{index}] = (void*)({address});"));
+        if first < depth {
+            if let Some(serial) = self.vpi_frame_serial.clone() {
+                self.line(format!("if ({serial}) llg_vpi_frame_exit({serial});"));
+            }
+        }
     }
 
     fn lookup(&self, name: &str) -> Option<Binding> {

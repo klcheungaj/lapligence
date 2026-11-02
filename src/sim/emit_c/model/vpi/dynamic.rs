@@ -255,14 +255,30 @@ static void* llg_class_vpi_field(void* handle, uint32_t index, unsigned* kind) {
         ));
         "llg_vpi_vifs".to_owned()
     };
+    // The class method item each method call row calls (37.38).
+    let method_table = if dynamic.method_calls.is_empty() {
+        "NULL".to_owned()
+    } else {
+        let triples = dynamic
+            .method_calls
+            .iter()
+            .map(|(row, class, item)| format!("{row}u, {class}u, {item}u"))
+            .collect::<Vec<_>>();
+        out.push_str(&format!(
+            "static const uint32_t llg_vpi_method_calls[] = {{\n    {}\n}};\n",
+            triples.join(",\n    ")
+        ));
+        "llg_vpi_method_calls".to_owned()
+    };
     out.push_str(&format!(
-        "static const llg_vpi_dynamic_tables_t llg_vpi_dynamic_tables_value = {{ {shape_table}, {}u, {class_table}, {}u, {field_table}, {}u, {item_table}, {}u, {accessors}, {vif_table}, {}u }};\n\
+        "static const llg_vpi_dynamic_tables_t llg_vpi_dynamic_tables_value = {{ {shape_table}, {}u, {class_table}, {}u, {field_table}, {}u, {item_table}, {}u, {accessors}, {vif_table}, {}u, {method_table}, {}u }};\n\
          static const llg_vpi_dynamic_tables_t* const llg_vpi_dynamic_tables = &llg_vpi_dynamic_tables_value;\n",
         shapes.len(),
         classes.len(),
         fields.len(),
         items.len(),
-        vifs.len()
+        vifs.len(),
+        dynamic.method_calls.len()
     ));
 }
 
@@ -364,7 +380,7 @@ mod tests {
         );
         assert!(
             out.contains(
-                "{ llg_vpi_shapes, 2u, NULL, 0u, NULL, 0u, NULL, 0u, NULL, NULL, NULL, 0u }"
+                "{ llg_vpi_shapes, 2u, NULL, 0u, NULL, 0u, NULL, 0u, NULL, NULL, NULL, 0u, NULL, 0u }"
             ),
             "{out}"
         );

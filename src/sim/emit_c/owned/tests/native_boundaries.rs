@@ -98,6 +98,7 @@ fn native_access_receiver_is_evaluated_once_at_the_use_site() {
         depth: IrDepth::PROC,
         receiver: None,
         virtual_dispatch: false,
+        vpi_call: None,
     };
     let ctx = RCtx {
         value_backend: crate::sim::value_backend::ValueBackend::Legacy,

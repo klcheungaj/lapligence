@@ -2561,9 +2561,9 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   decision A19-D65), `n/a`, or `unsupported` with its reason (statement
   processes, structure net members, switch values, class object names and
   specparam expressions: A19-D62..D66; after the ADV-019 closure only
-  `vpiImport`, class event array properties, `vpi_put_value` to a
-  sequential UDP and a frame's `vpiOrigin` and `vpiAutomatics` stay
-  unsupported). A generated
+  `vpiImport`, class event array properties and `vpi_put_value` to a
+  sequential UDP stay unsupported; a frame's `vpiOrigin` and
+  `vpiAutomatics` are served, decisions A19-D75..D78). A generated
   object catalog and the common VPI routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
   relative to a scope, and constant element/bit/part selects in the name),
   `vpi_handle_by_index`/`_multi_index`, `vpi_handle` (`vpiParent`, `vpiScope`,

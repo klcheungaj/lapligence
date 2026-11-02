@@ -170,6 +170,8 @@ pub enum IrStringExpr {
         function: usize,
         args: Vec<IrExpr>,
         depth: super::IrDepth,
+        /// See [`super::IrCallExpr::vpi_call`].
+        vpi_call: Option<u32>,
     },
     /// Typed subroutine call used when at least one formal is a native string
     /// (or when an object-valued output/ref formal needs call-boundary
@@ -180,6 +182,8 @@ pub enum IrStringExpr {
         function: usize,
         args: Vec<super::IrCallArg>,
         depth: super::IrDepth,
+        /// See [`super::IrCallExpr::vpi_call`].
+        vpi_call: Option<u32>,
     },
     Concat(Vec<IrStringExpr>),
     Repeat(Box<IrStringExpr>, Box<IrExpr>),
@@ -364,6 +368,8 @@ pub enum IrChandleExpr {
         /// without making a chandle look like an integer.
         args: Vec<IrCallArg>,
         depth: super::IrDepth,
+        /// See [`super::IrCallExpr::vpi_call`].
+        vpi_call: Option<u32>,
     },
     /// Conditional operator with a chandle result (SV 11.4.11). An
     /// ambiguous predicate evaluates both arms and yields their common

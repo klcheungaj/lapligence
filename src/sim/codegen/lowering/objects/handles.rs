@@ -554,6 +554,7 @@ impl Codegen<'_> {
                 function,
                 args: out_args,
                 depth: parse_depth(&self.depth_arg),
+                vpi_call: self.vpi_call_origin(node),
             });
         }
         Err(format!(

@@ -2288,8 +2288,10 @@ of a handle or value; `vpi_handle_by_name` of such an object returns NULL
 with no error status, as for a name that denotes nothing (S42-D11):
 
 - objects outside the generated catalog: sparse fixed arrays (stored in a keyed
-  container), automatic variables (a frame's `vpiAutomatics` fails: the
-  lowered model keeps no source names for them), named event array
+  container), the elements of automatic array variables (a frame lists
+  them under `vpiAutomatics` without elements, decision A19-D76) and the
+  automatic variables of blocks inside a task or function (llg models no
+  block frames, decisions A19-D44, A19-D76), named event array
   properties of classes, tasks and functions of packages, the
   statements of class methods and class methods by name, programs, and checker objects (a checker instance is a module
   scope with its variables; VPI-C1);
@@ -2322,8 +2324,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   catalog): elements of multidimensional primitive arrays, and `vpiIndex`
   of an element of a multidimensional instance array; `vpi_put_value` to a
   sequential UDP (38.34 sets it with no delay; the path measured would cost
-  VPI models with delayed sequential UDPs run time); `vpiOrigin` of a frame (the activating call is not
-  recorded); `vpiReturn` of an automatic function and the argument
+  VPI models with delayed sequential UDPs run time); `vpiReturn` of an automatic function and the argument
   variables of an automatic task or function, and the string, chandle,
   class and event arguments of a static one (decisions A19-D53, A19-D57); a fork branch started inside a task has no frame of that task
   (its frame stack starts empty);
@@ -2386,8 +2387,7 @@ with no error status, as for a name that denotes nothing (S42-D11):
   (after the ADV-019 closure, 2026-11: the named event arrays of class
   definitions and objects; `vpi_put_value` to a sequential UDP; `vpiImport`, which 37.12 detail 4 defines as
   the package items referenced through an import, a per-reference fact the
-  owned database does not capture; a frame's `vpiOrigin` and
-  `vpiAutomatics`). Rows the catalog marks `error` are refused on purpose,
+  owned database does not capture). Rows the catalog marks `error` are refused on purpose,
   as industry-standard behaviour refuses them (decision A19-D65); among
   them the bodies, variables and formal defaults of sequence and property
   declarations, `expect` relations, the list operation of an instance

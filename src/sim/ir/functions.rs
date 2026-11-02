@@ -440,27 +440,46 @@ impl IrLocal {
 pub enum IrVpiAutoStorage {
     /// The function-name return variable (`_ret`).
     Return,
+    /// The method's receiver (`this`, a class handle).
+    This,
     /// Formal `index` of the subprogram.
     Formal(usize),
-    /// The body-scope automatic local with this IR name.
+    /// The body-scope automatic local with this IR name: a packed, real,
+    /// string, class or chandle local.
     Local(String),
+    /// The body-scope automatic container (dynamic array, queue or
+    /// associative array) with this index into [`IrModel::containers`].
+    ///
+    /// [`IrModel::containers`]: crate::sim::ir::IrModel
+    Container(usize),
+    /// Listed without storage: a fixed-size unpacked array, whose type and
+    /// size are static and which has no value of its own (37.17 detail 11).
+    Unstored,
 }
 
 /// One automatic variable of a task or function frame (IEEE 1800-2009
-/// 37.39 detail 1, `vpiAutomatics`): its source name and value shape. Only
-/// models generated with the VPI catalog keep these.
+/// 37.39 detail 1, `vpiAutomatics`): its source name, its design node and
+/// where its value lives. Only models generated with the VPI catalog keep
+/// these; the catalog capture fills the value shape and typespec.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IrVpiAutomatic {
     pub(in crate::sim) name: String,
-    /// The object's `vpiType` constant name.
-    pub(in crate::sim) type_code: &'static str,
     pub(in crate::sim) line: u32,
-    /// Packed width; 0 for a real or a string.
-    pub(in crate::sim) width: u32,
-    pub(in crate::sim) signed: bool,
-    pub(in crate::sim) real: bool,
-    pub(in crate::sim) string: bool,
+    /// Design node of the declaration (the subprogram for its return
+    /// variable and for `this`).
+    pub(in crate::sim) node: u32,
     pub(in crate::sim) storage: IrVpiAutoStorage,
+    /// Index into the VPI dynamic shapes of its value; `None` for a
+    /// fixed-size unpacked array or a type without a VPI form.
+    pub(in crate::sim) shape: Option<usize>,
+    /// Index into [`IrModel::vpi_typespecs`](crate::sim::ir::IrModel).
+    pub(in crate::sim) typespec: Option<usize>,
+    /// Element count of a fixed-size unpacked array (its `vpiSize`).
+    pub(in crate::sim) size: u32,
+    /// `vpiArrayType` of an array variable, as a constant name.
+    pub(in crate::sim) array_type: Option<&'static str>,
+    /// The elements of a fixed-size unpacked array are signed.
+    pub(in crate::sim) signed: bool,
 }
 
 /// A lowered function or delay-free task: a static C function with a

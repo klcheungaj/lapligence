@@ -1211,10 +1211,19 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                 callee,
                 ..
             } => {
-                let type_code = if *is_task {
-                    "vpiTaskCall"
-                } else {
-                    "vpiFuncCall"
+                // A class method called without an object (`C::m()`, a
+                // static method) is a method call (37.38), as other tools
+                // report it; its subroutine is the class item.
+                let method = callee.is_some_and(|callee| {
+                    cg.node(callee)
+                        .parent
+                        .is_some_and(|parent| matches!(cg.kind(parent), NodeKind::ClassDef))
+                });
+                let type_code = match (*is_task, method) {
+                    (true, false) => "vpiTaskCall",
+                    (false, false) => "vpiFuncCall",
+                    (true, true) => "vpiMethodTaskCall",
+                    (false, true) => "vpiMethodFuncCall",
                 };
                 let mut code = if statement {
                     self.located(type_code, id)
@@ -1225,6 +1234,10 @@ impl<'c, 'a> CodeTables<'c, 'a> {
                 if !statement {
                     // The type of the value (decision A19-D32).
                     code.typespec = self.value_typespec(id);
+                }
+                if method {
+                    code.flags |= IrVpiCode::USER;
+                    return (code, arguments());
                 }
                 let row = callee.and_then(|callee| self.decl_row(callee));
                 code.object = row;

@@ -1,0 +1,19 @@
+step 1
+  tb.cf origin NULL (error 0) stmt vpiSysTaskCall@25 (error 0)
+step 1
+  tb.cf origin NULL (error 0) stmt vpiSysTaskCall@25 (error 0)
+step 2
+  tb.fact origin vpiFuncCall@33 calls tb.fact (error 0) (error 0) stmt vpiSysTaskCall@30 (error 0)
+  tb.fact origin vpiFuncCall@60 calls tb.fact (error 0) (error 0) stmt vpiReturnStmt@33 (error 0)
+step 3
+  tb.vf origin vpiFuncCall@61 calls tb.vf (error 0) (error 0) stmt vpiSysTaskCall@36 (error 0)
+step 4
+  tb.rt origin vpiTaskCall@39 calls tb.rt (error 0) (error 0) stmt vpiSysTaskCall@40 (error 0)
+  tb.rt origin vpiTaskCall@62 calls tb.rt (error 0) (error 0) stmt vpiIfElse@39 (error 0)
+step 5
+  tb.C::fm origin vpiMethodFuncCall@64 calls tb.C::fm (error 0) (error 0) stmt vpiSysTaskCall@45 (error 0)
+step 6
+  tb.C::tm origin vpiMethodTaskCall@64 calls tb.C::tm (error 0) (error 0) stmt vpiSysTaskCall@49 (error 0)
+step 7
+  tb.C::sf origin vpiMethodFuncCall@65 calls tb.C::sf (error 0) (error 0) stmt vpiSysTaskCall@52 (error 0)
+g=8 w=6

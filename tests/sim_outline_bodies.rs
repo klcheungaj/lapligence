@@ -114,3 +114,60 @@ fn folded_constant_rows_render_helpers_of_bounded_size() {
         }
     }
 }
+
+/// A call made from an outlined run of a task records its call as the
+/// callee frame's `vpiOrigin`, and the task's frame lists its automatics
+/// with their values (decisions A19-D75, A19-D76): the helper stores the
+/// origin before the call, and the run never holds the task's locals.
+#[test]
+fn vpi_frames_see_calls_made_from_outlined_runs() {
+    let directory =
+        crate::sim_harness::TempDir::new("outline-frames").expect("temporary directory");
+    let mut source = String::from(
+        "module tb;\n  int g, k;\n  function automatic int h(int v);\n    $d75(1);\n    return v + 1;\n  endfunction\n  task automatic t(input int a);\n    int acc = a + 1;\n    g = acc;\n",
+    );
+    for index in 0..3000 {
+        source.push_str(&format!("    g = (g ^ {index}) + {};\n", index % 7));
+        if index == 1500 {
+            source.push_str("    k = h(g);\n");
+        }
+    }
+    source.push_str("    g = g + k + acc;\n  endtask\n  initial begin\n    t(5);\n    $display(\"g=%0d k=%0d\", g, k);\n    $finish;\n  end\nendmodule\n");
+    let path = directory.path().join("outline_frames.sv");
+    std::fs::write(&path, source).expect("write source");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let companion = root.join("tests/fixtures/sim/lrm_decisions/A19-D75_frame_origins.c");
+    let archive = crate::c_compiler::static_archive(&companion, directory.path(), "frames", &[])
+        .expect("VPI application archive");
+    let expected = "step 1\n  tb.h origin vpiFuncCall@1511 calls tb.h (error 0) (error 0) stmt vpiSysTaskCall@4 (error 0)\n  tb.t origin vpiTaskCall@3014 calls tb.t (error 0) (error 0) stmt vpiAssignment@1511 (error 0)\ng=1766 k=810\n";
+    for optimized in [true, false] {
+        let work = directory
+            .path()
+            .join(if optimized { "opt" } else { "noopt" });
+        std::fs::create_dir_all(&work).expect("work directory");
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_llg"));
+        command
+            .current_dir(&work)
+            .args(["--top", "tb", "-Wno-error"]);
+        if !optimized {
+            command.arg("--no-opt");
+        }
+        let output = command
+            .args(["--define-system-task", "task $d75(input int)", "--dpi-lib"])
+            .arg(&archive)
+            .arg(&path)
+            .output()
+            .expect("run llg");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout == expected,
+            "optimized={optimized}\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let model_c = std::fs::read_to_string(work.join("build/sim/tb/model.c")).expect("model C");
+        assert!(
+            model_c.contains("static int fn_tb_t_llg_run_"),
+            "optimized={optimized}: the task body has no outlined run"
+        );
+    }
+}

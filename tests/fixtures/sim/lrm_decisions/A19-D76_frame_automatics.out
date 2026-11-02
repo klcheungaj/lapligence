@@ -1,0 +1,16 @@
+step 1
+  tb.C::sm: C::sm:vpiStringVar@34/0="" this:vpiClassVar@34/-1=<vpiClassObj> k:vpiIntVar@34/32=          2
+step 2
+  tb.t: a:vpiIntVar@42/32=          3 o:vpiIntVar@42/32=          4 io:vpiIntVar@42/32=         11 r:vpiIntVar@42/32=         22 wv:vpiLogicVar@43/70=                     3 loc:vpiIntVar@44/32=          4 s:vpiStringVar@47/2="hi" rr:vpiRealVar@48/64=1.5 lc:vpiClassVar@49/-1=<vpiClassObj> qa:vpiArrayVar@42/1=<array 4> la:vpiArrayVar@46/2=<array 1> lq:vpiArrayVar@50/1=<array 4>
+  put r=41 (error 0)
+step 3
+  tb.t: a:vpiIntVar@42/32=          3 o:vpiIntVar@42/32=          4 io:vpiIntVar@42/32=         11 r:vpiIntVar@42/32=         41 wv:vpiLogicVar@43/70=                     3 loc:vpiIntVar@44/32=          4 s:vpiStringVar@47/2="hi" rr:vpiRealVar@48/64=1.5 lc:vpiClassVar@49/-1=<vpiClassObj> qa:vpiArrayVar@42/1=<array 4> la:vpiArrayVar@46/2=<array 1> lq:vpiArrayVar@50/1=<array 4>
+step 4
+  tb.t: a:vpiIntVar@42/32=          3 o:vpiIntVar@42/32=          4 io:vpiIntVar@42/32=         11 r:vpiIntVar@42/32=         41 wv:vpiLogicVar@43/70=                     3 loc:vpiIntVar@44/32=          4 s:vpiStringVar@47/2="hi" rr:vpiRealVar@48/64=1.5 lc:vpiClassVar@49/-1=<vpiClassObj> qa:vpiArrayVar@42/1=<array 4> la:vpiArrayVar@46/2=<array 1> lq:vpiArrayVar@50/1=<array 4>
+o=4 io=11 gr=41 res=12
+step 5
+  tb.f: f:vpiIntVar@63/32=          0 x:vpiIntVar@63/32=          1 y:vpiIntVar@64/32=          2
+  put y=100 (error 0)
+f=100
+step 6
+  tb.ts: none (error 0)

@@ -2228,6 +2228,42 @@ fn a19_d73_fixed_handle_array_elements() {
 }
 
 #[test]
+fn a19_d75_frame_origins() {
+    run_vpi_decision(
+        "A19-D75_frame_origins",
+        &["task $d75(input int)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D75_frame_origins.out"),
+    );
+}
+
+#[test]
+fn a19_d76_frame_automatics() {
+    run_vpi_decision(
+        "A19-D76_frame_automatics",
+        &["task $d76(input int)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D76_frame_automatics.out"),
+    );
+}
+
+#[test]
+fn a19_d77_ended_frame_automatics() {
+    run_vpi_decision(
+        "A19-D77_ended_frame_automatics",
+        &["task $d77(input int)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D77_ended_frame_automatics.out"),
+    );
+}
+
+#[test]
+fn a19_d78_end_of_frame_values() {
+    run_vpi_decision(
+        "A19-D78_end_of_frame_values",
+        &["task $d78(input int)"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D78_end_of_frame_values.out"),
+    );
+}
+
+#[test]
 fn a19_d1_enum_string_value() {
     run_vpi_decision(
         "A19-D1_enum_string_value",

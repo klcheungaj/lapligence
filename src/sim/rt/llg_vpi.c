@@ -376,6 +376,8 @@ static const char* rts_get_str(int property, llg_vpi_slot_t* slot, int* handled)
 static vpiHandle rts_handle(int type, vpiHandle reference, int* handled);
 static vpiHandle rts_iterate(int type, vpiHandle reference, int* handled);
 static void rts_get_value(llg_vpi_slot_t* slot, p_vpi_value output);
+static void rts_auto_put(llg_vpi_slot_t* slot, const s_vpi_value* input, int mode);
+static vpiHandle dyn_method_call_item(uint32_t row);
 static void rts_shutdown(void);
 static int rts_cb_reason(int reason);
 static int rts_bind_cb(struct llg_vpi_cb* cb, const s_cb_data* data);
@@ -5487,8 +5489,11 @@ static vpiHandle code_relation(int type, uint32_t index) {
     if (child == LLG_VPI_NONE && (node->flags & LLG_VPI_CODE_USER) &&
         (type == vpiFunction || type == vpiTask) &&
         (node->type == vpiMethodFuncCall || node->type == vpiMethodTaskCall)) {
+        /* 37.38: the class method's item (decision A19-D36). */
+        vpiHandle item = dyn_method_call_item(index);
+        if (item) return item;
         /* 37.38 detail 11 gives NULL only for a built-in method. */
-        vpi_error("LLG_VPI_UNSUPPORTED", "class methods are not VPI objects in llg");
+        vpi_error("LLG_VPI_UNSUPPORTED", "llg does not name the method this call runs");
         return NULL;
     }
     return child != LLG_VPI_NONE ? code_handle(child) : NULL;
@@ -9232,7 +9237,7 @@ static int handle_type(const llg_vpi_slot_t* slot) {
         case SLOT_SELECT:
             if (slot->aux > 0) return packed_select_type(slot);
             if (slot->span != 1) return vpiPartSelect;
-            return object->is_net ? vpiNetBit : vpiRegBit;
+            return vpiBitSelect;
         case SLOT_CONSTANT: return vpiConstant;
         case SLOT_RANGE: return vpiRange;
         case SLOT_ITERATOR: return vpiIterator;
@@ -10737,6 +10742,10 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
         return svc_put_string_delayed(slot, input, time, mode, return_event);
     if (dyn_slot(slot)) {
         dyn_put_value(slot, input, mode);
+        return NULL;
+    }
+    if (slot->kind == SLOT_AUTO) {
+        rts_auto_put(slot, input, mode);
         return NULL;
     }
     llg_vpi_target_t target;
@@ -12659,6 +12668,13 @@ vpiHandle vpi_register_cb(p_cb_data data) {
         }
     } else if (reason == cbValueChange) {
         kind = CB_VALUE;
+        /* 37.39 detail 2: no value change callback on an automatic. */
+        llg_vpi_slot_t* target = data->obj ? decode_handle(data->obj, NULL) : NULL;
+        if (target && target->kind == SLOT_AUTO) {
+            vpi_error("LLG_VPI_CALLBACK",
+                      "an automatic variable takes no value change callback (37.39 detail 2)");
+            return NULL;
+        }
     } else if (reason == cbForce || reason == cbRelease) {
         kind = CB_FORCE;
     } else if (reason == cbAssign || reason == cbDeassign) {

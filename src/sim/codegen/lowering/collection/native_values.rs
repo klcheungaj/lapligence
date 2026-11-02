@@ -1643,6 +1643,7 @@ impl Codegen<'_> {
             .count();
         args.insert(outputs - 1, IrCallArg::NativeValue(result));
         let mut lowered = IrCall::new(expression.f, args, expression.depth, Vec::new(), Vec::new());
+        lowered.vpi_call = expression.vpi_call;
         lowered.receiver = expression.receiver;
         lowered.virtual_dispatch = expression.virtual_dispatch;
         lowered.virtual_call = expression.virtual_call;

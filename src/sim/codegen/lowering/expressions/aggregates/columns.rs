@@ -1364,13 +1364,10 @@ impl Codegen<'_> {
         for (offset, argument) in results.into_iter().enumerate() {
             args.insert(first + offset, argument);
         }
-        out.push(IrStmt::Call(Box::new(IrCall::new(
-            expression.f,
-            args,
-            expression.depth,
-            Vec::new(),
-            Vec::new(),
-        ))));
+        out.push(IrStmt::Call(Box::new(
+            IrCall::new(expression.f, args, expression.depth, Vec::new(), Vec::new())
+                .with_vpi_call(expression.vpi_call),
+        )));
         if !direct {
             self.record_copy(path, dst, &result, nba, &mut out)?;
         }

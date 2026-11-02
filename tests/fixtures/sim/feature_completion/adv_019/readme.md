@@ -797,7 +797,10 @@ decision A19-D44:
   detail 1, L59303-L59304).
 - Step 3: three `tb.fact` frames, only the innermost active, each the
   vpiParent of the one it called; the frame held from `t1` has ended, so
-  querying it fails (37.3.8, L57568).
+  querying it fails (37.3.8, L57568). The statement of each calling frame is
+  the `return` statement holding the recursive call (37.39 detail 4,
+  L60163-L60165: "The frame to stmt transition shall return the currently
+  active statement within the frame."; decision A19-D75).
 - Step 4: cbStartOfThread ran for both fork branches; the main thread has
   two children whose vpiParent is that thread. A thread has no assertion
   iteration (the 37.40 diagram lists none).

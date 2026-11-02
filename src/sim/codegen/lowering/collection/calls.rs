@@ -3,6 +3,16 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    /// The design node of source call `call` as the `vpiOrigin` of the
+    /// frame it activates (37.39); `None` in a continuous assignment, whose
+    /// evaluation runs in no thread (decision A19-D75).
+    pub(in super::super) fn vpi_call_origin(&self, call: NodeId) -> Option<u32> {
+        if self.continuous_lowering {
+            return None;
+        }
+        u32::try_from(call.index()).ok()
+    }
+
     pub(in super::super) fn ref_lhs_type(&self, lhs: &IrLhs) -> Option<(u32, bool, bool, bool)> {
         match lhs {
             IrLhs::PackedSelect {
@@ -553,7 +563,7 @@ impl<'a> Codegen<'a> {
                 virtual_call,
                 void_x: ret_val.is_none(),
                 dpi_site: self.dpi_call_site(function, h),
-                vpi_call: u32::try_from(h.index()).ok(),
+                vpi_call: self.vpi_call_origin(h),
             })),
             ret_w,
             ret_s,

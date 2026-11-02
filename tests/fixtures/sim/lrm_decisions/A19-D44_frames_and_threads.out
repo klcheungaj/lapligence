@@ -15,7 +15,7 @@ step 2: frame tb.t2 (error 0) [tb.t2 active 1/0 stmt vpiSysTaskCall]
   thread 0: active 1 origin NULL/0 parent NULL
   thread 1: active 1 origin NULL/0 parent NULL
   ended frame: active -1 (error 1)
-step 3: frame tb.fact (error 0) [tb.fact active 1/0 stmt vpiSysTaskCall] [tb.fact active 0/0 stmt NULL]
+step 3: frame tb.fact (error 0) [tb.fact active 1/0 stmt vpiSysTaskCall] [tb.fact active 0/0 stmt vpiReturnStmt]
   thread 0: active 1 origin NULL/0 parent NULL
   thread 1: active 1 origin NULL/0 parent NULL
   ended frame: active -1 (error 1)

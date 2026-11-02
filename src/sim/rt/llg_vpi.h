@@ -463,6 +463,10 @@ typedef struct {
     /* The environment records virtual interface properties may hold. */
     const llg_vpi_vif_t* vifs;
     uint32_t vif_count;
+    /* (code row, class layout, item) of each call of a class method,
+     * ascending by code row: the method the call names (37.38). */
+    const uint32_t* method_calls;
+    uint32_t method_call_count;
 } llg_vpi_dynamic_tables_t;
 
 /* The dynamic tables of the catalog, borrowed like the catalog and
@@ -521,24 +525,35 @@ extern int llg_vpi_frames_on;
 extern uint32_t llg_vpi_next_origin;
 uint64_t llg_vpi_frame_enter(const char* full_name);
 /* One automatic variable of a frame (37.39 detail 1), in a model's static
- * per-subprogram table. `kind` names what the activation's address array
- * holds for it: 0 an sv4_t*, 1 a double*, 2 an llg_string_t*, 3 nothing
- * readable. A `local` entry is stored where the body declares it; the
- * others are stored before the frame is entered. */
+ * per-subprogram table. The activation's address array holds, for each row,
+ * the storage of the variable's value shape (an sv4_t, double, llg_string_t,
+ * void* handle or container), a packed `ref` formal's llg_ref_t
+ * (LLG_VPI_AUTO_REF), or nothing (LLG_VPI_AUTO_NO_VALUE). */
 typedef struct {
     const char* name;
-    int32_t type;
+    int32_t type;             /* vpiType */
     uint32_t line;
-    uint32_t width;
-    uint8_t is_signed;
-    uint8_t kind;
-    uint8_t local;
+    uint32_t shape;           /* value shape index + 1 in the dynamic tables; 0: none */
+    uint32_t typespec;        /* typespec index + 1; 0: none */
+    uint32_t size;            /* vpiSize of a fixed-size unpacked array */
+    int32_t array_type;       /* vpiArrayType of an array variable, else 0 */
+    uint32_t flags;           /* LLG_VPI_AUTO_* */
 } llg_vpi_auto_t;
+/* A body local: its address is stored where the body declares it, so it
+ * has none until then. Other addresses are stored before the frame enters. */
+#define LLG_VPI_AUTO_LOCAL 0x01u
+#define LLG_VPI_AUTO_REF 0x02u
+#define LLG_VPI_AUTO_NO_VALUE 0x04u
+/* vpiSigned of a fixed-size unpacked array: its elements are signed. */
+#define LLG_VPI_AUTO_SIGNED 0x08u
 /* llg_vpi_frame_enter for a subprogram with automatic variables: `slots`
  * is the activation's address array (one entry per table row), which lives
  * as long as the frame. */
 uint64_t llg_vpi_frame_enter_autos(const char* full_name, const llg_vpi_auto_t* autos,
                                    uint32_t count, void** slots);
+/* End frame `frame` (and any frame entered after it). A model also calls it
+ * before releasing the value scopes that hold the body's locals, so
+ * cbEndOfFrame still reads them; a frame already ended is left alone. */
 void llg_vpi_frame_exit(uint64_t frame);
 /* Run a statically linked application's startup table (the model links the
  * archive that defines it) before LLG_VPI_PLUGIN libraries are loaded. */

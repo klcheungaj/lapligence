@@ -915,6 +915,9 @@ fn finish_generation(
         model.vpi_code_files.clear();
         model.vpi_udps.clear();
         model.vpi_call_rows.clear();
+        for function in &mut model.funcs {
+            function.vpi_automatics = Vec::new();
+        }
         model.vpi_catalog = false;
         if let Some(coverage) = model.assertion_coverage.as_mut() {
             coverage
@@ -1447,6 +1450,10 @@ struct Codegen<'a> {
     /// Persistent native-pointer storage for static chandle locals in
     /// functions and delay-bearing tasks.
     static_task_chandle_locals: HashMap<(NodeId, NodeId), usize>,
+    /// Lowering a continuous assignment: a subroutine its expression calls
+    /// runs in no thread, so its frame has no `vpiOrigin` (decision
+    /// A19-D75).
+    continuous_lowering: bool,
     /// All lowered signals, in collection order (deterministic emission).
     signals: Vec<SignalInfo>,
     /// Net/Var arena node → lowered signal info (all instances + gen scopes).
@@ -2131,6 +2138,7 @@ impl<'a> Codegen<'a> {
             pending_switches: Vec::new(),
             static_string_task_locals: HashMap::new(),
             static_task_chandle_locals: HashMap::new(),
+            continuous_lowering: false,
             signals: Vec::new(),
             sig_globals: HashMap::new(),
             sig_global_by_ir: HashMap::new(),

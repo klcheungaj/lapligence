@@ -5,6 +5,7 @@ use crate::sim::execution::{
     CoroutineId, ExecutionAnalysis, ExecutionModel, ExecutionProcess, ExecutionTerminator,
     TriggerPlan,
 };
+use crate::sim::ir::{IrVpiAutoStorage, IrVpiAutomatic};
 use std::collections::BTreeMap;
 
 type ProcessBody = (
@@ -175,16 +176,15 @@ pub(in crate::sim::emit_c) fn coroutine_function<'a, 'm>(
 
 /// The full name a VPI frame of `function` reports, for models built with the
 /// VPI catalog; `None` elsewhere, which keeps their bodies unchanged.
-/// A class method is named as its class item is (`tb.C::m`, decision
-/// A19-D36) when one class definition has the method's class name.
+/// A class method, static or not, is named as its class item is
+/// (`tb.C::m`, decision A19-D36) when one class definition has the method's
+/// class name; only class methods have diagnostic names with `::`.
 pub(super) fn vpi_frame_name(ctx: &RCtx<'_>, function: &IrFunc) -> Option<String> {
     if !ctx.model.vpi_catalog || function.inline_expanded {
         return None;
     }
     let name = function.diagnostic_name.as_deref()?;
-    let method = name
-        .rsplit_once("::")
-        .filter(|_| function.receiver_class.is_some());
+    let method = name.rsplit_once("::");
     if let Some((class, method)) = method {
         let mut defns = ctx
             .model
@@ -210,35 +210,92 @@ fn has_vpi_automatics(model: &IrModel, function: &IrFunc) -> bool {
         && !function.vpi_automatics.is_empty()
 }
 
+/// What an activation's address array holds for one automatic.
+#[derive(Clone, Copy, PartialEq)]
+enum VpiAutoAccess {
+    /// The variable's own storage, of its value shape.
+    Cell,
+    /// A packed `ref` formal's descriptor (`llg_ref_t*`).
+    Ref,
+    /// Nothing: the variable is listed without a value.
+    None,
+}
+
+fn vpi_auto_access(function: &IrFunc, automatic: &IrVpiAutomatic) -> VpiAutoAccess {
+    match &automatic.storage {
+        IrVpiAutoStorage::Unstored => VpiAutoAccess::None,
+        IrVpiAutoStorage::Formal(position) => {
+            let Some(formal) = function.formals.get(*position) else {
+                return VpiAutoAccess::None;
+            };
+            let packed = !formal.string
+                && !formal.chandle
+                && !formal.real
+                && !formal.event
+                && formal.container.is_none()
+                && formal.native_value.is_none()
+                && formal.fixed_array.is_none()
+                && formal.real_array.is_none();
+            if formal.is_ref() {
+                if packed {
+                    VpiAutoAccess::Ref
+                } else {
+                    VpiAutoAccess::None
+                }
+            } else if formal.native_value.is_some()
+                || formal.fixed_array.is_some()
+                || formal.real_array.is_some()
+            {
+                VpiAutoAccess::None
+            } else {
+                VpiAutoAccess::Cell
+            }
+        }
+        _ => VpiAutoAccess::Cell,
+    }
+}
+
 /// The descriptor rows of `function`'s automatics (`llg_vpi_auto_t`, 37.39
-/// detail 1). Value kinds: 0 packed (sv4_t*), 1 real (double*), 2 string
-/// (llg_string_t*), 3 no readable value.
-fn vpi_automatic_rows(function: &IrFunc) -> String {
-    use crate::sim::ir::IrVpiAutoStorage;
+/// detail 1).
+fn vpi_automatic_rows(function: &IrFunc, model: &IrModel) -> String {
     let mut rows = String::new();
-    for auto in &function.vpi_automatics {
-        let unreadable = match &auto.storage {
-            IrVpiAutoStorage::Return => auto.string,
-            IrVpiAutoStorage::Formal(position) => function.formals[*position].is_ref(),
-            IrVpiAutoStorage::Local(_) => false,
+    for automatic in &function.vpi_automatics {
+        let type_code = match automatic
+            .shape
+            .and_then(|shape| model.vpi_dynamic.shapes.get(shape))
+        {
+            Some(shape) => shape.c_type(),
+            None if automatic.array_type.is_some() => "vpiArrayVar",
+            None => "vpiUndefined",
         };
-        let kind = if unreadable {
-            3
-        } else if auto.string {
-            2
-        } else if auto.real {
-            1
-        } else {
-            0
-        };
+        let mut flags = Vec::new();
+        if matches!(
+            automatic.storage,
+            IrVpiAutoStorage::Local(_) | IrVpiAutoStorage::Container(_)
+        ) {
+            flags.push("LLG_VPI_AUTO_LOCAL");
+        }
+        match vpi_auto_access(function, automatic) {
+            VpiAutoAccess::Cell => {}
+            VpiAutoAccess::Ref => flags.push("LLG_VPI_AUTO_REF"),
+            VpiAutoAccess::None => flags.push("LLG_VPI_AUTO_NO_VALUE"),
+        }
+        if automatic.signed {
+            flags.push("LLG_VPI_AUTO_SIGNED");
+        }
         rows.push_str(&format!(
-            "    {{ {}, {}, {}u, {}u, {}, {kind}, {} }},\n",
-            c_string_literal(&auto.name),
-            auto.type_code,
-            auto.line,
-            auto.width,
-            u8::from(auto.signed),
-            u8::from(matches!(auto.storage, IrVpiAutoStorage::Local(_)))
+            "    {{ {}, {type_code}, {}u, {}u, {}u, {}u, {}, {} }},\n",
+            c_string_literal(&automatic.name),
+            automatic.line,
+            automatic.shape.map_or(0, |shape| shape + 1),
+            automatic.typespec.map_or(0, |typespec| typespec + 1),
+            automatic.size,
+            automatic.array_type.unwrap_or("0"),
+            if flags.is_empty() {
+                "0u".to_owned()
+            } else {
+                flags.join(" | ")
+            }
         ));
     }
     rows
@@ -258,7 +315,7 @@ fn vpi_automatic_table(rows: &str) -> String {
 pub(in crate::sim::emit_c) fn vpi_automatic_tables(model: &IrModel, out: &mut String) {
     let mut tables = BTreeMap::new();
     for function in model.funcs.iter().filter(|f| has_vpi_automatics(model, f)) {
-        let rows = vpi_automatic_rows(function);
+        let rows = vpi_automatic_rows(function, model);
         tables.entry(vpi_automatic_table(&rows)).or_insert(rows);
     }
     for (name, rows) in tables {
@@ -268,41 +325,53 @@ pub(in crate::sim::emit_c) fn vpi_automatic_tables(model: &IrModel, out: &mut St
     }
 }
 
+/// The address of formal `position` the activation's address array holds.
+fn vpi_formal_address(frame: &Frame<'_, '_>, function: &IrFunc, position: usize) -> Option<String> {
+    let formal = function.formals.get(position)?;
+    if let Some(container) = formal.container {
+        return frame
+            .containers
+            .get(&container)
+            .map(|bound| format!("&{bound}"));
+    }
+    if let Some(shared) = formal.shared_local.as_ref() {
+        return frame.vpi_binding_address(shared);
+    }
+    if formal.is_ref() {
+        return Some(format!("r{position}"));
+    }
+    if formal.is_out {
+        return Some(format!("o{position}"));
+    }
+    frame.vpi_binding_address(&format!("a{position}"))
+}
+
 /// The VPI automatics of `function` (37.39 detail 1): declares the
-/// activation's address array, stores the addresses of the return variable
-/// and the formals, and registers the body-scope locals, whose declarations
-/// store theirs. Returns the descriptor table's name and the array.
+/// activation's address array, stores the addresses of the return variable,
+/// `this` and the formals, and registers the body-scope locals, whose
+/// declarations store theirs. Returns the descriptor table's name and the
+/// array.
 fn vpi_automatics(frame: &mut Frame<'_, '_>, function: &IrFunc) -> (String, String) {
-    use crate::sim::ir::IrVpiAutoStorage;
-    let table = vpi_automatic_table(&vpi_automatic_rows(function));
+    let table = vpi_automatic_table(&vpi_automatic_rows(function, frame.ctx.model));
     let slots = frame.declare_array("void*", "vpi_autos", function.vpi_automatics.len());
     let mut locals = HashMap::new();
-    for (index, auto) in function.vpi_automatics.iter().enumerate() {
-        let address = match &auto.storage {
-            IrVpiAutoStorage::Return if auto.string => None,
-            IrVpiAutoStorage::Return => frame.lookup("_ret").map(|binding| binding.address),
-            IrVpiAutoStorage::Formal(position) => {
-                let formal = &function.formals[*position];
-                if formal.string {
-                    frame.native_bindings[0]
-                        .get(&format!("a{position}"))
-                        .map(|binding| binding.address.clone())
-                } else if let Some(shared) = formal.shared_local.as_ref() {
-                    frame.lookup(shared).map(|binding| binding.address)
-                } else if formal.is_ref() {
-                    None
-                } else if formal.is_out {
-                    Some(format!("o{position}"))
-                } else {
-                    frame
-                        .lookup(&format!("a{position}"))
-                        .map(|binding| binding.address)
-                }
-            }
+    for (index, automatic) in function.vpi_automatics.iter().enumerate() {
+        if vpi_auto_access(function, automatic) == VpiAutoAccess::None {
+            continue;
+        }
+        let address = match &automatic.storage {
+            IrVpiAutoStorage::Return => frame.vpi_binding_address("_ret"),
+            IrVpiAutoStorage::This => Some("&_this".to_owned()),
+            IrVpiAutoStorage::Formal(position) => vpi_formal_address(frame, function, *position),
             IrVpiAutoStorage::Local(name) => {
-                locals.insert(name.clone(), index);
+                locals.insert(VpiAutoKey::Name(name.clone()), index);
                 continue;
             }
+            IrVpiAutoStorage::Container(container) => {
+                locals.insert(VpiAutoKey::Container(*container), index);
+                continue;
+            }
+            IrVpiAutoStorage::Unstored => None,
         };
         // An entry without an address stays NULL (the array starts zeroed).
         if let Some(address) = address {
@@ -683,7 +752,11 @@ fn render_function(
         // once, like a `return`, rather than run on a null object.
         frame.line("if (!_this) goto _llg_return;");
     }
+    // The frame also ends where control leaves the scope of its body
+    // locals, before that scope releases them (`Frame::vpi_frame_end`).
+    frame.vpi_frame_serial = vpi_frame.clone();
     frame.block(&function.body)?;
+    frame.vpi_frame_serial = None;
     frame.line("goto _llg_return;");
     frame.line("_llg_return: ;");
     if let Some(serial) = vpi_frame {

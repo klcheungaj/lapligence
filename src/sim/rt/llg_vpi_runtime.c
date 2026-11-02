@@ -302,6 +302,30 @@ static uint32_t rts_enclosing_statement(uint32_t row) {
     return LLG_VPI_NONE;
 }
 
+/* The statement a frame that made call row `row` is running (decision
+ * A19-D75): the statement holding the call that sits directly in a
+ * sequential or parallel block or is the body of the task, function or
+ * process, as `if (c) t();` is for its call `t()`. A call that is itself a
+ * statement (a task call, or a function call written as one) in a block is
+ * that statement. */
+static uint32_t rts_call_statement(uint32_t row) {
+    const llg_vpi_code_t* node = code_at(row);
+    if (!node || !rts_code_parents()) return LLG_VPI_NONE;
+    uint32_t statement =
+        code_is_statement(node->type) || node->role == vpiStmt ? row : LLG_VPI_NONE;
+    for (uint32_t parent = g_vpi.code_parents[row]; parent; parent = g_vpi.code_parents[row]) {
+        row = parent - 1u;
+        node = code_at(row);
+        if (!node) break;
+        if (node->type == vpiBegin || node->type == vpiNamedBegin || node->type == vpiFork ||
+            node->type == vpiNamedFork)
+            break;
+        if (code_is_statement(node->type) && !(node->flags & LLG_VPI_CODE_HIDDEN))
+            statement = row;
+    }
+    return statement;
+}
+
 /* 37.54: the statements, continuous assignments, terminals and ports that
  * use a net, variable, parameter or select of one (decision A19-D39). A
  * select reports every use of its parent object that covers its bits. */
@@ -394,7 +418,6 @@ typedef struct {
     uint32_t auto_count;
     const llg_vpi_auto_t* autos; /* its automatic variables (static table) */
     void** slots;      /* their addresses in the activation */
-    int ending;        /* cbEndOfFrame runs: the automatics have ended */
 } rts_frame_t;
 
 typedef struct {
@@ -566,39 +589,182 @@ static vpiHandle rts_automatics(const llg_vpi_slot_t* frame_slot) {
     return rts_list(vpiAutomatics, list.items, list.count, list.failed);
 }
 
-/* The value of an automatic variable: read from the activation's cell while
- * its declaration has run and the frame has not begun to end. */
-static void rts_auto_value(llg_vpi_slot_t* slot, p_vpi_value output) {
+/* The place of an automatic variable (37.39 detail 1): its value shape and
+ * its storage in the activation. The storage is NULL for a variable listed
+ * without a value and for a body local whose declaration has not run; a
+ * packed `ref` formal's is its reference descriptor. */
+static const llg_vpi_auto_t* rts_auto_place(const llg_vpi_slot_t* slot, dyn_place_t* place) {
     rts_frame_t* frame = NULL;
     const llg_vpi_auto_t* entry = rts_auto(slot, &frame);
-    void* cell = entry && !frame->ending ? frame->slots[slot->right] : NULL;
-    if (!cell || entry->kind == 3) {
-        vpi_error("LLG_VPI_VALUE", "this automatic variable has no value at this point");
+    memset(place, 0, sizeof(*place));
+    place->row = LLG_VPI_NONE;
+    if (!entry) return NULL;
+    place->shape = entry->shape ? dyn_shape(entry->shape - 1u) : NULL;
+    place->name = entry->name;
+    if (!(entry->flags & LLG_VPI_AUTO_NO_VALUE)) place->storage = frame->slots[slot->right];
+    return entry;
+}
+
+/* The storage of an automatic that has a value now, else an error. */
+static const llg_vpi_auto_t* rts_auto_storage(const llg_vpi_slot_t* slot, dyn_place_t* place) {
+    const llg_vpi_auto_t* entry = rts_auto_place(slot, place);
+    if (!entry) return NULL;
+    if (place->shape && place->shape->shape == LLG_VPI_SHAPE_CONTAINER) {
+        vpi_error("LLG_VPI_VALUE",
+                  "an array variable has no value; access its elements (37.17 detail 11)");
+        return NULL;
+    }
+    if (!place->shape || (entry->flags & LLG_VPI_AUTO_NO_VALUE)) {
+        vpi_error("LLG_VPI_VALUE", entry->type == vpiArrayVar
+                      ? "an array variable has no value; access its elements (37.17 detail 11)"
+                      : "llg keeps no value of this automatic variable");
+        return NULL;
+    }
+    if (!place->storage) {
+        vpi_error("LLG_VPI_VALUE", "this automatic variable is not declared yet in its frame");
+        return NULL;
+    }
+    return entry;
+}
+
+static void rts_auto_value(llg_vpi_slot_t* slot, p_vpi_value output) {
+    dyn_place_t place;
+    const llg_vpi_auto_t* entry = rts_auto_storage(slot, &place);
+    if (!entry) return;
+    if (entry->flags & LLG_VPI_AUTO_REF) {
+        /* A packed `ref` formal reads its actual (13.5.2). */
+        llg_vpi_datum_t datum;
+        memset(&datum, 0, sizeof(datum));
+        datum.packed = llg_rt_ref_read((const llg_ref_t*)place.storage);
+        fill_value(&datum, place.shape->is_signed, place.shape->type, output);
+        datum_destroy(&datum);
         return;
     }
-    if (entry->kind == 2) {
-        if (output->format != vpiStringVal && output->format != vpiObjTypeVal) {
-            vpi_error("LLG_VPI_VALUE", "a string variable reads only as vpiStringVal");
-            return;
+    dyn_read(place.shape, place.storage, output);
+}
+
+/* 37.39 details 2-3: an automatic variable takes only a vpiNoDelay value. */
+static void rts_auto_put(llg_vpi_slot_t* slot, const s_vpi_value* input, int mode) {
+    if (!rts_alive(slot)) return;
+    if (mode != vpiNoDelay) {
+        vpi_error("LLG_VPI_FLAGS",
+                  "an automatic variable takes only a vpiNoDelay value (37.39 detail 3)");
+        return;
+    }
+    dyn_place_t place;
+    const llg_vpi_auto_t* entry = rts_auto_storage(slot, &place);
+    if (!entry) return;
+    if (entry->flags & LLG_VPI_AUTO_REF) {
+        sv4_t value;
+        if (!dyn_packed_input(place.shape, input, &value)) return;
+        llg_ref_write((llg_ref_t*)place.storage, value);
+        sv4_destroy(&value);
+        return;
+    }
+    if (place.shape->shape == LLG_VPI_SHAPE_CLASS) {
+        vpi_error("LLG_VPI_VALUE", "a class variable cannot receive a value through VPI");
+        return;
+    }
+    dyn_write(place.shape, place.storage, NULL, input);
+}
+
+static PLI_INT64 rts_auto_get(int property, const llg_vpi_slot_t* slot) {
+    dyn_place_t place;
+    const llg_vpi_auto_t* entry = rts_auto_place(slot, &place);
+    const llg_vpi_shape_t* shape = place.shape;
+    switch (property) {
+        case vpiAutomatic: return 1;
+        case vpiLineNo: return entry->line;
+        case vpiArray: return entry->type == vpiArrayVar;
+        case vpiArrayMember:
+        case vpiConstantVariable:
+        case vpiStructUnionMember: return 0;
+        case vpiAllocScheme: return vpiAutomaticScheme;
+        case vpiArrayType:
+            if (entry->array_type) return entry->array_type;
+            break;
+        case vpiSigned:
+            if (!shape && entry->type == vpiArrayVar)
+                return (entry->flags & LLG_VPI_AUTO_SIGNED) != 0;
+            if (shape && shape->shape == LLG_VPI_SHAPE_PACKED) return shape->is_signed;
+            if (shape && (shape->shape == LLG_VPI_SHAPE_REAL || shape->shape == LLG_VPI_SHAPE_STRING ||
+                          shape->shape == LLG_VPI_SHAPE_CHANDLE))
+                return 0;
+            if (shape && shape->shape == LLG_VPI_SHAPE_CONTAINER) {
+                const llg_vpi_shape_t* element = dyn_shape(shape->element);
+                if (element && element->shape == LLG_VPI_SHAPE_PACKED) return element->is_signed;
+            }
+            break;
+        case vpiSize:
+            if (!shape) {
+                if (entry->type == vpiArrayVar) return entry->size;
+                break;
+            }
+            if (shape->shape == LLG_VPI_SHAPE_CONTAINER || shape->shape == LLG_VPI_SHAPE_STRING) {
+                if (!place.storage) {
+                    vpi_error("LLG_VPI_VALUE", "this automatic variable is not declared yet in its frame");
+                    return vpiUndefined;
+                }
+                int ok;
+                PLI_INT64 size = dyn_size(&place, &ok);
+                if (ok) return size;
+                break;
+            }
+            if (shape->shape == LLG_VPI_SHAPE_PACKED) return shape->width;
+            if (shape->shape == LLG_VPI_SHAPE_CHANDLE) return 64;
+            if (shape->shape == LLG_VPI_SHAPE_REAL) return shape->shortreal ? 32 : 64;
+            break;
+        case vpiScalar:
+        case vpiVector:
+            if (shape && shape->shape == LLG_VPI_SHAPE_PACKED)
+                return property == vpiScalar ? shape->width == 1u : shape->width != 1u;
+            if (shape) return 0;
+            break;
+        case vpiObjId:
+            if (shape && shape->shape == LLG_VPI_SHAPE_CLASS && place.storage) {
+                void* object = *(void**)place.storage;
+                llg_vpi_live_t* live = object ? live_get(object) : NULL;
+                return live ? (PLI_INT64)live->id : 0;
+            }
+            break;
+        default: break;
+    }
+    return unsupported_property();
+}
+
+/* vpi_handle from an automatic variable: its subprogram (vpiScope), its
+ * typespec and, for a class variable, the object it holds. 37.39 gives an
+ * automatic no parent object (NULL, as for other simulators). */
+static vpiHandle rts_auto_handle(int type, const llg_vpi_slot_t* slot) {
+    rts_frame_t* frame = NULL;
+    const llg_vpi_auto_t* entry = rts_auto(slot, &frame);
+    switch (type) {
+        case vpiScope: {
+            uint32_t row = rts_frame_row(frame);
+            if (row != LLG_VPI_NONE) return object_handle(row);
+            return NULL;
         }
-        const llg_string_t* text = (const llg_string_t*)cell;
-        char* buffer = text_buffer(text->len + 1u);
-        if (text->len) memcpy(buffer, text->data, text->len);
-        buffer[text->len] = 0;
-        output->format = vpiStringVal;
-        output->value.str = buffer;
-        return;
+        case vpiParent: return NULL;
+        case vpiTypespec:
+            return declared_typespec_handle(typespec_ref(entry->typespec), LLG_VPI_NONE, 0);
+        case vpiClassObj: {
+            dyn_place_t place;
+            if (!rts_auto_place(slot, &place) || !place.shape ||
+                place.shape->shape != LLG_VPI_SHAPE_CLASS)
+                break;
+            if (!place.storage) {
+                vpi_error("LLG_VPI_VALUE", "this automatic variable is not declared yet in its frame");
+                return NULL;
+            }
+            void* object = *(void**)place.storage;
+            return object ? make_shape_object(place.shape, object) : NULL;
+        }
+        default: break;
     }
-    llg_vpi_datum_t datum;
-    memset(&datum, 0, sizeof(datum));
-    if (entry->kind == 1) {
-        datum.is_real = 1;
-        datum.real = *(const double*)cell;
-    } else {
-        datum.packed = sv4_clone((const sv4_t*)cell);
-    }
-    fill_value(&datum, entry->is_signed, entry->type, output);
-    datum_destroy(&datum);
+    vpi_error("LLG_VPI_RELATION", entry->type == vpiArrayVar
+                  ? "llg serves no elements of an automatic array variable"
+                  : "this object has no such relation");
+    return NULL;
 }
 
 /* ── frame and thread callbacks ── */
@@ -749,8 +915,6 @@ static void rts_pop_frame(int slot, uint64_t identity) {
     rts_stack_t* stack = rts_stack(slot, identity, 0);
     if (!stack || !stack->depth) return;
     uint64_t serial = stack->frames[stack->depth - 1].serial;
-    /* The body's scopes may have released the automatics' cells. */
-    stack->frames[stack->depth - 1].ending = 1;
     if (rts.end_frame_cbs) {
         rts_cb_match_t match = {cbEndOfFrame, slot, identity, serial, 0};
         rts_dispatch(&match);
@@ -784,7 +948,6 @@ static uint64_t rts_enter(const char* full_name, const llg_vpi_auto_t* autos, ui
     frame->auto_count = count;
     frame->autos = autos;
     frame->slots = slots;
-    frame->ending = 0;
     uint64_t serial = frame->serial;
     if (rts.start_frame_cbs) {
         uint32_t row = rts_frame_row(frame);
@@ -805,7 +968,7 @@ uint64_t llg_vpi_frame_enter_autos(const char* full_name, const llg_vpi_auto_t* 
     /* Body locals are stored as their declarations run; until then they
      * have no address. */
     for (uint32_t i = 0; i < count; ++i)
-        if (autos[i].local) slots[i] = NULL;
+        if (autos[i].flags & LLG_VPI_AUTO_LOCAL) slots[i] = NULL;
     return rts_enter(full_name, autos, count, slots);
 }
 
@@ -887,10 +1050,7 @@ static const char* rts_runtime_get_str(int property, llg_vpi_slot_t* slot) {
 }
 
 static vpiHandle rts_runtime_handle(int type, llg_vpi_slot_t* slot) {
-    if (slot->kind == SLOT_AUTO) {
-        vpi_error("LLG_VPI_RELATION", "this object has no such relation");
-        return NULL;
-    }
+    if (slot->kind == SLOT_AUTO) return rts_auto_handle(type, slot);
     int thread_slot = slot->aux;
     uint64_t identity = (uint64_t)slot->left;
     if (slot->kind == SLOT_THREAD) {
@@ -920,11 +1080,17 @@ static vpiHandle rts_runtime_handle(int type, llg_vpi_slot_t* slot) {
         if (type == vpiStmt) {
             /* 37.39 detail 4: the active statement of the innermost frame of
              * the running thread while it runs a system task or function
-             * call is that call; other frames name none llg records. */
+             * call is that call. A frame that called another runs the
+             * statement holding the call that activated it (decision
+             * A19-D75); a suspended innermost frame names none llg records. */
+            if (depth + 1u < stack->depth) {
+                uint32_t origin = stack->frames[depth + 1u].origin;
+                uint32_t statement = origin ? rts_call_statement(origin - 1u) : LLG_VPI_NONE;
+                return statement == LLG_VPI_NONE ? NULL : code_handle(statement);
+            }
             uint64_t current;
             int current_slot = llg_rt_current_thread(&current);
-            if (!g_vpi.active_call || current_slot != thread_slot || current != identity ||
-                depth + 1u != stack->depth)
+            if (!g_vpi.active_call || current_slot != thread_slot || current != identity)
                 return NULL;
             /* A handle of its own: releasing it leaves the call's
              * vpiSysTfCall handle valid. */
@@ -1058,16 +1224,7 @@ static PLI_INT64 rts_get(int property, llg_vpi_slot_t* slot, int* handled) {
             *handled = 0;
             return 0;
         }
-        if (slot->kind == SLOT_AUTO) {
-            const llg_vpi_auto_t* entry = rts_auto(slot, NULL);
-            switch (property) {
-                case vpiAutomatic: return 1;
-                case vpiLineNo: return entry->line;
-                case vpiSize: return entry->kind == 0 ? (PLI_INT64)entry->width : 1;
-                case vpiSigned: return entry->is_signed;
-                default: return unsupported_property();
-            }
-        }
+        if (slot->kind == SLOT_AUTO) return rts_auto_get(property, slot);
         switch (property) {
             case vpiActive:
             case vpiLineNo: return rts_runtime_get(property, slot);
@@ -1130,7 +1287,10 @@ static const char* rts_get_str(int property, llg_vpi_slot_t* slot, int* handled)
     *handled = 1;
     if (rts_runtime_slot(slot)) {
         if (!rts_alive(slot)) return NULL;
-        if (slot->kind == SLOT_AUTO && property != vpiType) {
+        /* The type names of runtime objects include the variable types of
+         * automatics. */
+        if (property == vpiType) return dyn_type_name(rts_type(slot));
+        if (slot->kind == SLOT_AUTO) {
             rts_frame_t* frame = NULL;
             const llg_vpi_auto_t* entry = rts_auto(slot, &frame);
             if (property == vpiName) return entry->name;
@@ -1139,11 +1299,14 @@ static const char* rts_get_str(int property, llg_vpi_slot_t* slot, int* handled)
                          entry->name);
                 return g_vpi.str_buffer;
             }
+            if (property == vpiFile) {
+                const llg_vpi_model_object_t* object = row_object(rts_frame_row(frame));
+                if (object) return object->file;
+            }
             vpi_error("LLG_VPI_PROPERTY", "this object has no such string property");
             return NULL;
         }
         switch (property) {
-            case vpiType: *handled = 0; return NULL;
             case vpiFullName:
             case vpiFile: return rts_runtime_get_str(property, slot);
             default: break;
@@ -1210,6 +1373,7 @@ static vpiHandle rts_handle(int type, vpiHandle reference, int* handled) {
     if (rts_runtime_slot(slot)) {
         *handled = 1;
         if (!rts_alive(slot)) return NULL;
+        if (slot->kind == SLOT_AUTO) return rts_auto_handle(type, slot);
         switch (type) {
             case vpiParent:
             case vpiOrigin:

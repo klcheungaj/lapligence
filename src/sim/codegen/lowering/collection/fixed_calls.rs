@@ -216,12 +216,15 @@ impl Codegen<'_> {
         expression
             .args
             .insert(output_count - 1, IrCallArg::FixedArray(dst));
-        Ok(Some(IrStmt::Call(Box::new(IrCall::new(
-            expression.f,
-            expression.args,
-            expression.depth,
-            Vec::new(),
-            Vec::new(),
-        )))))
+        Ok(Some(IrStmt::Call(Box::new(
+            IrCall::new(
+                expression.f,
+                expression.args,
+                expression.depth,
+                Vec::new(),
+                Vec::new(),
+            )
+            .with_vpi_call(expression.vpi_call),
+        ))))
     }
 }

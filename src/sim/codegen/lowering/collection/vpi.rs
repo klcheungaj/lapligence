@@ -2315,6 +2315,7 @@ impl Codegen<'_> {
             }
         }
         let constraints = self.vpi_dynamic_classes(model, &mut dynamic, &mut typespecs);
+        self.vpi_frame_automatics(model, &mut dynamic, &mut typespecs);
         let mut rows = objects.into_values().collect::<Vec<_>>();
         rows.sort_unstable_by_key(|(order, _)| *order);
         model.vpi_objects = rows.into_iter().map(|(_, object)| object).collect();
@@ -2551,6 +2552,44 @@ impl Codegen<'_> {
                 item.code = node.and_then(|node| statement_rows.get(&node).copied());
             }
         }
+        // The class item of each call of a class method (method names are
+        // unique in a class, 8.18).
+        let mut method_calls = Vec::new();
+        for (node, row) in &call_rows {
+            let (NodeKind::FuncCall {
+                callee: Some(callee),
+                ..
+            }
+            | NodeKind::MethodCall {
+                callee: Some(callee),
+                ..
+            }) = self.kind(*node)
+            else {
+                continue;
+            };
+            let Some(class) = self
+                .node(*callee)
+                .parent
+                .and_then(|parent| self.class_nodes.get(&parent).copied())
+            else {
+                continue;
+            };
+            let name = &self.node(*callee).name;
+            let item = dynamic.classes.get(class).and_then(|layout| {
+                layout.items.iter().position(|item| {
+                    matches!(
+                        item.kind,
+                        crate::sim::ir::IrVpiClassItemKind::Task
+                            | crate::sim::ir::IrVpiClassItemKind::Function
+                    ) && item.name == *name
+                })
+            });
+            if let (Ok(class), Some(Ok(item))) = (u32::try_from(class), item.map(u32::try_from)) {
+                method_calls.push((*row, class, item));
+            }
+        }
+        method_calls.sort_unstable();
+        dynamic.method_calls = method_calls;
         model.vpi_call_rows = call_rows
             .into_iter()
             .filter_map(|(node, row)| Some((u32::try_from(node.index()).ok()?, row)))

@@ -293,6 +293,10 @@ pub struct IrVpiClass {
 pub struct IrVpiDynamic {
     pub(in crate::sim) shapes: Vec<IrVpiShape>,
     pub(in crate::sim) classes: Vec<IrVpiClass>,
+    /// `(code row, class layout, item)` of every call of a class method,
+    /// ascending by code row: the method item is the call's `vpiTask` or
+    /// `vpiFunction` (37.38).
+    pub(in crate::sim) method_calls: Vec<(u32, u32, u32)>,
 }
 
 impl IrVpiDynamic {

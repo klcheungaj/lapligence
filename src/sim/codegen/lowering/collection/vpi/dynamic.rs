@@ -302,6 +302,106 @@ impl Codegen<'_> {
         }
     }
 
+    /// Type the automatic variables of every task and function frame
+    /// (37.39 detail 1) as catalog variables are typed: the value shape
+    /// and typespec of each, and the size and array type of an array.
+    pub(super) fn vpi_frame_automatics(
+        &self,
+        model: &mut IrModel,
+        dynamic: &mut IrVpiDynamic,
+        typespecs: &mut TypespecTable,
+    ) {
+        for index in 0..model.funcs.len() {
+            if model.funcs[index].vpi_automatics.is_empty() {
+                continue;
+            }
+            let mut automatics = std::mem::take(&mut model.funcs[index].vpi_automatics);
+            for automatic in &mut automatics {
+                self.vpi_automatic_type(model, index, automatic, dynamic, typespecs);
+            }
+            model.funcs[index].vpi_automatics = automatics;
+        }
+    }
+
+    fn vpi_automatic_type(
+        &self,
+        model: &IrModel,
+        function: usize,
+        automatic: &mut crate::sim::ir::IrVpiAutomatic,
+        dynamic: &mut IrVpiDynamic,
+        typespecs: &mut TypespecTable,
+    ) {
+        use crate::sim::ir::IrVpiAutoStorage;
+        let node = NodeId::from_index(automatic.node as usize);
+        if automatic.storage == IrVpiAutoStorage::This {
+            let class = self.class_nodes.get(&node).copied();
+            automatic.shape = Some(dynamic.intern(IrVpiShape::Class { class }));
+            return;
+        }
+        let Some(descriptor) = self.db.type_descriptor(node) else {
+            return;
+        };
+        let typedef = self.db.declared_typedef(node);
+        automatic.typespec = self.vpi_typespec(typespecs, descriptor, typedef, 0);
+        let shape = match &descriptor.shape {
+            TypeShape::FixedArray {
+                dimensions,
+                element,
+            } => {
+                automatic.signed = element.info.signed;
+                automatic.size = dimensions
+                    .iter()
+                    .map(|(left, right)| left.abs_diff(*right).saturating_add(1))
+                    .fold(1u32, u32::saturating_mul);
+                automatic.array_type = Some(IrVpiArrayType::Static.c_code());
+                None
+            }
+            TypeShape::Container { .. } => {
+                let container = match &automatic.storage {
+                    IrVpiAutoStorage::Container(container) => Some(*container),
+                    IrVpiAutoStorage::Formal(position) => model.funcs[function]
+                        .formals
+                        .get(*position)
+                        .and_then(|formal| formal.container),
+                    _ => None,
+                };
+                let shape = container
+                    .and_then(|container| model.containers.get(container))
+                    .and_then(|container| {
+                        self.vpi_container_shape(dynamic, typespecs, descriptor, container, 0)
+                    });
+                if let Some(IrVpiShape::Container { array_type, .. }) = &shape {
+                    automatic.array_type = Some(array_type.c_code());
+                }
+                shape
+            }
+            TypeShape::String => Some(IrVpiShape::String),
+            TypeShape::Real { shortreal } => Some(IrVpiShape::Real {
+                shortreal: *shortreal,
+            }),
+            TypeShape::Opaque { kind } if kind == "Chandle" => {
+                automatic.typespec = Some(typespecs.intern(IrVpiTypespec {
+                    kind: IrVpiTypespecKind::Chandle,
+                    ..IrVpiTypespec::default()
+                }));
+                Some(IrVpiShape::Chandle)
+            }
+            TypeShape::Opaque { .. } => self.vpi_handle_shape(descriptor),
+            TypeShape::PackedAtom { .. } | TypeShape::Aggregate(_) => {
+                descriptor.info.width.map(|width| {
+                    self.vpi_packed_shape(
+                        typespecs,
+                        descriptor,
+                        width,
+                        descriptor.info.signed,
+                        descriptor.two_state,
+                    )
+                })
+            }
+        };
+        automatic.shape = shape.map(|shape| dynamic.intern(shape));
+    }
+
     /// The layout of every class: its name, base and properties in object
     /// field order (base fields first; hidden runtime fields stay `None`).
     /// Build the class layouts and items of `dynamic`; returns the body of

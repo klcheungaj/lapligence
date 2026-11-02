@@ -99,8 +99,14 @@ static int dyn_tables_valid(void) {
     if (!t) return 1;
     if ((t->shape_count && !t->shapes) || (t->class_count && !t->classes) ||
         (t->field_count && !t->fields) || (t->class_count && (!t->object || !t->field)) ||
-        (t->vif_count && !t->vifs))
+        (t->vif_count && !t->vifs) || (t->method_call_count && !t->method_calls))
         return 0;
+    for (uint32_t i = 0; i < t->method_call_count; ++i) {
+        const uint32_t* call = &t->method_calls[3u * i];
+        if (call[1] >= t->class_count || call[2] >= t->classes[call[1]].item_count ||
+            (i && call[0] <= t->method_calls[3u * (i - 1u)]))
+            return 0;
+    }
     for (uint32_t i = 0; i < t->vif_count; ++i)
         if (!t->vifs[i].env || t->vifs[i].row >= g_vpi.object_count) return 0;
     uint32_t typespecs = g_vpi.types ? g_vpi.types->typespec_count : 0u;
@@ -234,6 +240,21 @@ static vpiHandle item_handle(uint32_t class_index, uint32_t item) {
 }
 static vpiHandle class_typespec_handle(uint32_t class_index) {
     return dyn_class_handle(class_index, 1);
+}
+
+/* The method item a call of a class method (code row `row`) names, or
+ * NULL when the row calls none. */
+static vpiHandle dyn_method_call_item(uint32_t row) {
+    const llg_vpi_dynamic_tables_t* t = g_dyn.tables;
+    uint32_t low = 0, high = t ? t->method_call_count : 0u;
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2u;
+        const uint32_t* call = &t->method_calls[3u * middle];
+        if (call[0] == row) return item_handle(call[1], call[2]);
+        if (call[0] < row) low = middle + 1u;
+        else high = middle;
+    }
+    return NULL;
 }
 
 /* ── live objects ───────────────────────────────────────────────────────── */

@@ -287,6 +287,19 @@ within noise on a call-heavy design, and tracking costs about 5% there.
 The scheduler reports thread creation (roots with `LLG_DESC_PROCEDURAL`),
 ends and watched turns through `llg_rt_set_thread_hook`, which the bridge
 installs with frame tracking and removes at shutdown.
+A frame's `vpiOrigin` is the code row of the call that activated it: the
+caller stores `llg_vpi_next_origin` (row + 1) just before a call it makes to
+a framed subprogram, and frame entry takes and clears it, so an entry no
+source call made (a continuous assignment, a DPI export) has none
+(A19-D75). `vpiAutomatics` (A19-D76) reads a static `llg_vpi_auto_t`
+descriptor table per subprogram (name, type, line, dynamic-layer shape and
+typespec, flags) and an activation's `void*` address array, filled as
+formals bind and body declarations run (`llg_vpi_frame_enter_autos`); a
+`SLOT_AUTO` handle names one entry of one frame serial and reads, writes
+(`vpiNoDelay` only, 37.39 detail 3) and types it through the dynamic
+layer, failing once that frame has ended (A19-D77). A model ends a frame
+before releasing the value scopes that hold its body locals, so
+cbEndOfFrame still reads them (A19-D78).
 Module paths and timing checks (VPI-T1) are unnamed `vpiModPath`/`vpiTchk`
 rows whose conns carry a role (`LLG_VPI_ROLE_*`: path input, output, data,
 condition, check reference/data term, argument, notifier, term condition),

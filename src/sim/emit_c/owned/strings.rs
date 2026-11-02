@@ -316,6 +316,7 @@ impl Frame<'_, '_> {
                 depth,
                 receiver,
                 virtual_dispatch,
+                vpi_call,
             } => {
                 let args = args.iter().cloned().map(IrCallArg::Val).collect::<Vec<_>>();
                 self.native_method_call(
@@ -325,6 +326,7 @@ impl Frame<'_, '_> {
                     NativeKind::String,
                     receiver.as_deref(),
                     *virtual_dispatch,
+                    *vpi_call,
                 )?
             }
             TypedCall {
@@ -333,6 +335,7 @@ impl Frame<'_, '_> {
                 depth,
                 receiver,
                 virtual_dispatch,
+                vpi_call,
             } => self.native_method_call(
                 *function,
                 args,
@@ -340,6 +343,7 @@ impl Frame<'_, '_> {
                 NativeKind::String,
                 receiver.as_deref(),
                 *virtual_dispatch,
+                *vpi_call,
             )?,
         })
     }

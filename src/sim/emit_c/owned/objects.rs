@@ -211,6 +211,7 @@ impl Frame<'_, '_> {
                 depth,
                 receiver,
                 virtual_dispatch,
+                vpi_call,
             } => {
                 let value = self.native_method_call(
                     *function,
@@ -219,6 +220,7 @@ impl Frame<'_, '_> {
                     NativeKind::Chandle,
                     receiver.as_deref(),
                     *virtual_dispatch,
+                    *vpi_call,
                 )?;
                 let pointer = self.scalar("void*", value.code());
                 self.native_discard(value);
@@ -436,6 +438,7 @@ impl Frame<'_, '_> {
                     let value = self.chandle(initializer)?;
                     self.line(format!("*({address}) = {value};"));
                 }
+                self.vpi_auto_bind(VpiAutoKey::Name(name.clone()));
             }
             ChandleDeclareLocal(name, initializer) => {
                 let binding = self.native_local(name, NativeKind::Chandle);
@@ -443,6 +446,7 @@ impl Frame<'_, '_> {
                     let value = self.chandle(initializer)?;
                     self.line(format!("*({}) = {value};", binding.address));
                 }
+                self.vpi_auto_bind(VpiAutoKey::Name(name.clone()));
             }
             ChandleAssign(index, value) => {
                 let value = self.chandle(value)?;

@@ -1203,6 +1203,7 @@ fn string_calls_validate_packed_arguments_and_depth_context() {
             function: 0,
             args: vec![packed_const(1, width)],
             depth,
+            vpi_call: None,
         })))
     };
     assert_eq!(

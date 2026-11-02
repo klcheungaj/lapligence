@@ -298,6 +298,7 @@ impl Codegen<'_> {
                     function,
                     args,
                     depth: parse_depth(&self.depth_arg),
+                    vpi_call: self.vpi_call_origin(node),
                 });
             }
             return Ok(IrStringExpr::TypedCall {
@@ -306,6 +307,7 @@ impl Codegen<'_> {
                 function,
                 args: out_args,
                 depth: parse_depth(&self.depth_arg),
+                vpi_call: self.vpi_call_origin(node),
             });
         }
         if let Some(index) = self.object_of(path, node) {

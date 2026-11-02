@@ -276,6 +276,13 @@ impl IrCall {
         }
     }
 
+    /// This call carrying the source call `vpi_call` of the expression it
+    /// was lowered from ([`IrCallExpr::vpi_call`]).
+    pub(in crate::sim) fn with_vpi_call(mut self, vpi_call: Option<u32>) -> Self {
+        self.vpi_call = vpi_call;
+        self
+    }
+
     /// Bind a class/object receiver to this statement call.
     pub fn with_receiver(mut self, receiver: IrChandleExpr) -> Self {
         self.receiver = Some(receiver);

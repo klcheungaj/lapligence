@@ -254,7 +254,8 @@ impl Codegen<'_> {
             .insert(outputs - 1, IrCallArg::RealArray(temporary));
         Ok(Some((
             temporary,
-            IrCall::new(call.f, call.args, call.depth, Vec::new(), Vec::new()),
+            IrCall::new(call.f, call.args, call.depth, Vec::new(), Vec::new())
+                .with_vpi_call(call.vpi_call),
         )))
     }
 }
