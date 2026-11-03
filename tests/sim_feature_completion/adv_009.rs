@@ -4,7 +4,7 @@
 //! hand-derived from IEEE 1364-2001 15 and IEEE 1800-2009 31, as quoted in
 //! the fixture readme. Every positive case runs in both editions, both
 //! optimizer modes and on every value backend.
-use super::{sim_cli, sim_harness};
+use super::{c_compiler, sim_cli, sim_harness};
 use std::path::Path;
 use std::process::Output;
 
@@ -51,6 +51,35 @@ fn setup_hold_recovery_and_removal_windows() {
             &[],
         );
     }
+}
+
+/// Clang flags that stop a model at pointer arithmetic on a null pointer
+/// (`NULL + 0` is undefined in C). Trap mode needs no sanitizer runtime.
+const POINTER_OVERFLOW_TRAP: &str = "-fsanitize=pointer-overflow -fsanitize-trap=pointer-overflow";
+
+/// A model without delayed-signal lines passes a NULL line pool to the
+/// timing-check layout, which must not advance it. Only Clang diagnoses
+/// `NULL + 0` (GCC's `pointer-overflow` check does not), so other compilers
+/// skip; the Clang CI row runs it.
+#[test]
+fn timing_check_layout_never_offsets_an_unused_null_pool() {
+    let compiler = c_compiler::host_c_compiler();
+    if c_compiler::is_msvc(&compiler)
+        || !matches!(
+            c_compiler::cmake_compiler_id(&compiler),
+            Some("Clang" | "AppleClang")
+        )
+    {
+        eprintln!("SKIP: `{compiler}` is not Clang");
+        return;
+    }
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "windows.v",
+        fixture!("windows.out"),
+        &["--cflags", POINTER_OVERFLOW_TRAP],
+        &[],
+    );
 }
 
 #[test]

@@ -1553,6 +1553,24 @@ also runs its ANSI control. Inspect generated-model reports separately from
 handwritten native probes. Test counts represent repeated optimizer
 executions, not unique designs.
 
+### Generated-runtime sanitizers (Clang)
+
+Clang's UBSan has checks GCC lacks for C, notably `pointer-overflow` on
+`NULL + 0`. Trap mode needs no sanitizer runtime library (a check stops the
+model with `SIGILL`), so it also works where `libclang_rt` is not installed:
+
+```sh
+LLG_CC=clang LLG_CFLAGS='-fsanitize=undefined -fsanitize-trap=all' \
+scripts/run-tests.sh --test-work-dir /build <filters>
+```
+
+Build the test binaries first without `CC` set: `CC=clang` makes the root
+`build.rs` rebuild Slang with Clang; `LLG_CC` only selects the model compiler.
+Tests that pick another compiler or check the exact flags can fail under these
+flags by design. `adv_009::timing_check_layout_never_offsets_an_unused_null_pool`
+keeps the `pointer-overflow` trap in the default suite when the host compiler is
+Clang (the Linux Clang CI row).
+
 ### MSVC and Windows guards on Linux
 
 Default-suite tests that fail on Linux/macOS for classes that otherwise surface

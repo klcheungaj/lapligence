@@ -312,32 +312,40 @@ void llg_timing_checks_layout(llg_timing_check_set_t* set, const char* scope,
     const llg_timing_template_t* t = checks_template;
     memset(set, 0, sizeof(*set));
     set->scope = scope;
+    /* The model passes NULL for a pool no set uses, and NULL + 0 is undefined
+     * in C, so each pool advances only by a nonzero count. */
     set->n_terminals = t->n_terminals;
-    set->terminals = pools->terminals;
-    for (uint32_t index = 0; index < t->n_terminals; index++) {
-        pools->terminals[index] = t->terminals[index];
-        pools->terminals[index].value = pools->values[index];
+    set->terminals = t->n_terminals ? pools->terminals : NULL;
+    if (t->n_terminals) {
+        for (uint32_t index = 0; index < t->n_terminals; index++) {
+            pools->terminals[index] = t->terminals[index];
+            pools->terminals[index].value = pools->values[index];
+        }
+        pools->terminals += t->n_terminals;
+        pools->values += t->n_terminals;
     }
-    pools->terminals += t->n_terminals;
-    pools->values += t->n_terminals;
     set->n_checks = t->n_checks;
     set->checks = t->n_checks ? pools->checks : NULL;
-    if (t->n_checks) memcpy(pools->checks, t->checks, t->n_checks * sizeof(*pools->checks));
-    pools->checks += t->n_checks;
+    if (t->n_checks) {
+        memcpy(pools->checks, t->checks, t->n_checks * sizeof(*pools->checks));
+        pools->checks += t->n_checks;
+    }
     set->conditions = t->conditions;
     set->n_conditions = t->n_conditions;
     set->condition_context = condition_context;
     set->n_notifiers = t->n_notifiers;
     set->notifiers = t->n_notifiers ? pools->values : NULL;
-    pools->values += t->n_notifiers;
+    if (t->n_notifiers) pools->values += t->n_notifiers;
     set->n_lines = t->n_lines;
     set->lines = t->n_lines ? pools->lines : NULL;
-    for (uint32_t index = 0; index < t->n_lines; index++) {
-        pools->lines[index] = t->lines[index];
-        pools->lines[index].net = pools->line_nets[index];
+    if (t->n_lines) {
+        for (uint32_t index = 0; index < t->n_lines; index++) {
+            pools->lines[index] = t->lines[index];
+            pools->lines[index].net = pools->line_nets[index];
+        }
+        pools->lines += t->n_lines;
+        pools->line_nets += t->n_lines;
     }
-    pools->lines += t->n_lines;
-    pools->line_nets += t->n_lines;
     set->pairs = pairs;
     set->n_pairs = n_pairs;
 }
