@@ -933,9 +933,10 @@ The same walk checks the A01 properties of every object it reaches:
   returns NULL, the iterator handle is no longer valid and cannot be used
   again."; 38.3 (L61867-61868): "The VPI routine vpi_compare_objects()
   shall return 1 (TRUE) if the two handles refer to the same underlying
-  simulation object at the time the function is called". Range objects and the constants of `vpiIndex` are made per
-  request and compare equal only to their own handle
-  (`docs/known_issues.md`), so the second run checks only their number;
+  simulation object at the time the function is called". Range objects
+  and the range bounds and `vpiIndex` constants made per request are
+  checked too: a range is one object per declared dimension, such a
+  constant one object per value, type and scope (decision A19-D86);
 - relationship reversibility: for each object an iteration returns, each
   of `vpiParent`, `vpiScope`, `vpiModule`, `vpiPrimitive`, `vpiModPath`,
   `vpiTchk`, `vpiClassDefn` and `vpiInstance` that answers with an object
@@ -949,9 +950,13 @@ The same walk checks the A01 properties of every object it reaches:
   some object within the source code. The exceptions are objects of the
   following types: vpiCallback, vpiDelayTerm, vpiDelayDevice,
   vpiInterModPath, vpiIterator, vpiTimeQueue, vpiGenScopeArray,
-  vpiGenScope". An object type that answers `vpiLineNo` with an error must
-  be one the test lists with its reason (the exceptions, objects made at
-  run time, and the provenance gaps of `docs/known_issues.md`).
+  vpiGenScope". An object that answers `vpiLineNo` with an error prints
+  its type and the type of the object it was reached from; it must be one
+  the test lists with its reason: the exceptions, objects made at run
+  time, and, as in industry-standard behaviour, typespecs without a
+  typedef, enum constants and typespec members; a range or range bound
+  without a line only when reached from a typespec that no declaration
+  owns (decision A19-D86, `docs/known_issues.md`).
 
 To reach the remaining object kinds the design also has a switch array
 `tra` and a UDP array `uda` (37.11), a `final` procedure (37.58) and a

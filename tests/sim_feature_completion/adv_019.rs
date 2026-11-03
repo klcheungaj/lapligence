@@ -342,8 +342,9 @@ struct Walk {
     answers: BTreeMap<i64, BTreeSet<(String, String)>>,
     /// Failed identity, iteration, reversibility and source checks.
     bad: Vec<String>,
-    /// The object types that answered `vpiLineNo` with an error.
-    no_line: BTreeSet<i64>,
+    /// (object type, type of the object it was reached from) of each
+    /// object that answered `vpiLineNo` with an error.
+    no_line: BTreeSet<(i64, i64)>,
     /// (type, iteration, reverse relation) triples the walk confirmed.
     reversed: BTreeSet<(i64, String, String)>,
 }
@@ -384,7 +385,7 @@ fn parse_walk(stdout: &str, label: &str) -> Walk {
             Some("!") => panic!("{label}: error with a value: `{line}`"),
             Some("bad") => walk.bad.push(line.to_owned()),
             Some("noline") => {
-                walk.no_line.insert(number(1));
+                walk.no_line.insert((number(1), number(2)));
             }
             Some("~") => {
                 walk.reversed
@@ -398,60 +399,72 @@ fn parse_walk(stdout: &str, label: &str) -> Walk {
     walk
 }
 
-/// Object types that may answer `vpiLineNo` with an error, with the reason.
+/// Object types that may answer `vpiLineNo` with an error, with the reason,
+/// and the only types of object they may be reached from (`None`: any).
 /// 37.3.3 makes the location properties apply to every object that
 /// corresponds to source code, except the types it lists; the others here
-/// are made at run time or are the provenance gaps of docs/known_issues.md.
-const NO_LINE: &[(&str, &str)] = &[
-    ("vpiCallback", "37.3.3 exception"),
-    ("vpiIterator", "37.3.3 exception"),
-    ("vpiTimeQueue", "37.3.3 exception"),
-    ("vpiSchedEvent", "made by vpi_put_value, no source object"),
+/// are made at run time, or follow industry-standard behaviour, which gives
+/// typespecs, enum constants and typespec members no line (decision
+/// A19-D86).
+const NO_LINE: &[(&str, Option<&[&str]>, &str)] = &[
+    ("vpiCallback", None, "37.3.3 exception"),
+    ("vpiIterator", None, "37.3.3 exception"),
+    ("vpiTimeQueue", None, "37.3.3 exception"),
+    (
+        "vpiSchedEvent",
+        None,
+        "made by vpi_put_value, no source object",
+    ),
     (
         "vpiUserSystf",
+        None,
         "registered by the application, no source object",
     ),
-    ("vpiClassObj", "made by new at run time"),
-    ("vpiThread", "a run-time thread"),
-    (
-        "vpiConstant",
-        "index values and range bounds made per request",
-    ),
+    ("vpiClassObj", None, "made by new at run time"),
+    ("vpiThread", None, "a run-time thread"),
     (
         "vpiRange",
-        "made per request from the declaration (known issue)",
-    ),
-    ("vpiFsmHandle", "FSM states have no line (known issue)"),
-    ("vpiEnumConst", "no line (known issue)"),
-    ("vpiTypespecMember", "no line (known issue)"),
-    ("vpiExtends", "no line (known issue)"),
-    (
-        "vpiRefObj",
-        "class virtual interface properties (known issue)",
+        Some(UNOWNED_TYPESPECS),
+        "a range of a typespec no declaration owns and no typedef names",
     ),
     (
-        "vpiIntVar",
-        "class properties and container elements (known issue)",
+        "vpiConstant",
+        Some(UNOWNED_TYPESPECS),
+        "a range bound of a typespec no declaration owns and no typedef names",
     ),
-    ("vpiBitVar", "class properties (known issue)"),
-    ("vpiNamedEvent", "class event properties (known issue)"),
     (
-        "vpiNamedEventArray",
-        "class event array properties (known issue)",
+        "vpiEnumConst",
+        None,
+        "no line in industry-standard behaviour",
     ),
-    ("vpiLongIntTypespec", "a type without a typedef"),
-    ("vpiShortRealTypespec", "a type without a typedef"),
-    ("vpiByteTypespec", "a type without a typedef"),
-    ("vpiShortIntTypespec", "a type without a typedef"),
-    ("vpiIntTypespec", "a type without a typedef"),
-    ("vpiStringTypespec", "a type without a typedef"),
-    ("vpiChandleTypespec", "a type without a typedef"),
-    ("vpiIntegerTypespec", "a type without a typedef"),
-    ("vpiTimeTypespec", "a type without a typedef"),
-    ("vpiRealTypespec", "a type without a typedef"),
-    ("vpiBitTypespec", "a type without a typedef"),
-    ("vpiLogicTypespec", "a type without a typedef"),
-    ("vpiArrayTypespec", "a type without a typedef"),
+    (
+        "vpiTypespecMember",
+        None,
+        "industry-standard behaviour reaches none and gives typespecs no line",
+    ),
+    ("vpiLongIntTypespec", None, "a type without a typedef"),
+    ("vpiShortRealTypespec", None, "a type without a typedef"),
+    ("vpiByteTypespec", None, "a type without a typedef"),
+    ("vpiShortIntTypespec", None, "a type without a typedef"),
+    ("vpiIntTypespec", None, "a type without a typedef"),
+    ("vpiStringTypespec", None, "a type without a typedef"),
+    ("vpiChandleTypespec", None, "a type without a typedef"),
+    ("vpiIntegerTypespec", None, "a type without a typedef"),
+    ("vpiTimeTypespec", None, "a type without a typedef"),
+    ("vpiRealTypespec", None, "a type without a typedef"),
+    ("vpiBitTypespec", None, "a type without a typedef"),
+    ("vpiLogicTypespec", None, "a type without a typedef"),
+    ("vpiArrayTypespec", None, "a type without a typedef"),
+];
+
+/// The typespecs whose ranges may lack a line: an enum's base type or a
+/// structure member's type reached from the shared typespec, not from a
+/// declaration.
+const UNOWNED_TYPESPECS: &[&str] = &[
+    "vpiLogicTypespec",
+    "vpiBitTypespec",
+    "vpiPackedArrayTypespec",
+    "vpiArrayTypespec",
 ];
 
 /// (object type, iteration, reverse relation) triples the walk must
@@ -483,7 +496,9 @@ const REVERSED: &[(&str, &str, &str)] = &[
 /// with the same objects in the same order, every object an iteration
 /// returns leads back to the iterated object through each reverse relation
 /// of its type (`REVERSED` must be among them), and every object with a
-/// source line names a file holding it; only `NO_LINE` types lack a line.
+/// source line names a file holding it; only `NO_LINE` objects lack a line.
+/// Ranges and the range bounds and indices made per request compare equal
+/// across requests (decision A19-D86).
 #[test]
 fn catalog_walk_matches_the_vpi_catalog() {
     let catalog = vpi_catalog::Catalog::load();
@@ -532,9 +547,17 @@ fn catalog_walk_matches_the_vpi_catalog() {
             walk.types
         );
         let mut errors = walk.bad.clone();
-        let no_line: BTreeSet<i64> = NO_LINE.iter().map(|(name, _)| values[*name]).collect();
-        for t in walk.no_line.difference(&no_line) {
-            errors.push(format!("object type {t} has no vpiLineNo"));
+        for (t, from) in &walk.no_line {
+            let allowed = NO_LINE.iter().any(|(name, origins, _)| {
+                values[*name] == *t
+                    && origins
+                        .is_none_or(|origins| origins.iter().any(|origin| values[*origin] == *from))
+            });
+            if !allowed {
+                errors.push(format!(
+                    "object type {t} (reached from type {from}) has no vpiLineNo"
+                ));
+            }
         }
         for (t, iteration, reverse) in REVERSED {
             let key = (values[*t], (*iteration).to_owned(), (*reverse).to_owned());

@@ -1082,17 +1082,26 @@ static vpiHandle make_select(uint32_t row, uint64_t element, uint32_t lsb, uint3
     return encode_handle(index);
 }
 
-static vpiHandle make_constant(int64_t value, int const_type) {
+/* The integer constants llg makes per request (a range bound, an index)
+ * are one object per value, type and scope (38.3, decision A19-D86): two
+ * requests for the same bound or index give handles that compare equal.
+ * `scope` is the catalog row whose source location the constant reports
+ * (37.3.3), the nearest located scope of the declaration it comes from, or
+ * LLG_VPI_NONE; the slot keeps it in `span` (row + 1) so `object` stays
+ * free of a design row. */
+static vpiHandle make_constant(int64_t value, int const_type, uint32_t scope) {
     uint32_t index = alloc_slot(SLOT_CONSTANT);
     if (index == LLG_VPI_NONE) return NULL;
     g_vpi.slots[index].left = value;
     g_vpi.slots[index].aux = const_type;
+    g_vpi.slots[index].span = scope == LLG_VPI_NONE ? 0u : scope + 1u;
     return encode_handle(index);
 }
 
 /* A vpiStringConst holding a copy of `length` bytes in `items`/`count`
- * (an associative array's string key, decision A19-D23). */
-static vpiHandle make_string_constant(const char* bytes, uint32_t length) {
+ * (an associative array's string key, decision A19-D23), located like
+ * make_constant's. */
+static vpiHandle make_string_constant(const char* bytes, uint32_t length, uint32_t scope) {
     char* copy = (char*)malloc((size_t)length + 1u);
     if (!copy) {
         vpi_error("LLG_VPI_NOMEM", "VPI constant allocation failed");
@@ -1108,6 +1117,7 @@ static vpiHandle make_string_constant(const char* bytes, uint32_t length) {
     g_vpi.slots[index].aux = vpiStringConst;
     g_vpi.slots[index].items = (uintptr_t*)(void*)copy;
     g_vpi.slots[index].count = length;
+    g_vpi.slots[index].span = scope == LLG_VPI_NONE ? 0u : scope + 1u;
     return encode_handle(index);
 }
 
@@ -1124,6 +1134,102 @@ static llg_vpi_model_object_t* row_object(uint32_t row) {
 static uint32_t row_of(const llg_vpi_model_object_t* object) {
     uint32_t row;
     return model_pointer_index(object, &row) ? row : LLG_VPI_NONE;
+}
+
+/* The nearest scope from `scope` outwards (itself included) that has a
+ * source location, skipping generate scopes and their arrays (37.3.3
+ * exceptions); LLG_VPI_NONE when there is none. The parent chain of a
+ * validated catalog is acyclic and at most object_count long. */
+static uint32_t located_scope(const llg_vpi_model_object_t* scope) {
+    for (size_t guard = 0; scope && guard < g_vpi.object_count; scope = scope->parent, ++guard)
+        if (scope->line > 0 && scope->file && scope->type != vpiGenScope &&
+            scope->type != vpiGenScopeArray)
+            return row_of(scope);
+    return LLG_VPI_NONE;
+}
+
+/* The located scope that declares catalog row `row` (decision A19-D86):
+ * where the range bounds and indices of its declaration are located. */
+static uint32_t declaration_scope(uint32_t row) {
+    const llg_vpi_model_object_t* object = row_object(row);
+    return object ? located_scope(object->parent) : LLG_VPI_NONE;
+}
+
+/* Ranges (37.22) are made per request but are one object per declared
+ * dimension (38.3, decision A19-D86): a range slot keeps its flavor in
+ * `lsb`, the declaration it belongs to in `element` (and `position`) and
+ * the dimension in `aux`, which together are its identity; `object` is the
+ * declaration row of vpiParent (LLG_VPI_NONE for a typespec, automatic or
+ * class property range), `span` the scope row + 1 of its bounds, `count`
+ * and `pointer` its vpiLineNo and vpiFile (0 and NULL when unknown). */
+enum {
+    RANGE_UNPACKED = 1, /* an unpacked dimension of catalog row `owner` */
+    RANGE_PACKED = 2,   /* a packed dimension of catalog row `owner` */
+    RANGE_TYPESPEC = 3, /* typespec `owner` & 0xffffffff of declaration row
+                         * `owner` >> 32 (LLG_VPI_NONE: none), member `extra` */
+    RANGE_AUTO = 4,     /* an automatic variable: its table entry's address */
+    RANGE_PROPERTY = 5, /* field `owner` & 0xffffffff of class layout `owner` >> 32 */
+};
+
+typedef struct {
+    unsigned flavor;
+    uint64_t owner;
+    uint32_t extra;
+    uint32_t parent;          /* vpiParent row, or LLG_VPI_NONE */
+    uint32_t scope;           /* located scope of the bounds, or LLG_VPI_NONE */
+    uint32_t line;
+    const char* file;
+} llg_vpi_range_origin_t;
+
+/* The origin of the ranges of catalog row `row` itself. */
+static llg_vpi_range_origin_t row_range_origin(unsigned flavor, uint32_t row) {
+    const llg_vpi_model_object_t* object = row_object(row);
+    llg_vpi_range_origin_t origin = { flavor, row, 0u, row, declaration_scope(row),
+                                      object && object->file ? (uint32_t)object->line : 0u,
+                                      object && object->line > 0 ? object->file : NULL };
+    return origin;
+}
+
+/* A range handle of dimension `dimension` with bounds `left`, `right`.
+ * alloc_slot may move the slot table: keep no slot pointer across it. */
+static vpiHandle make_range(const llg_vpi_range_origin_t* origin, uint32_t dimension, int64_t left,
+                            int64_t right) {
+    uint32_t index = alloc_slot(SLOT_RANGE);
+    if (index == LLG_VPI_NONE) return NULL;
+    llg_vpi_slot_t* slot = &g_vpi.slots[index];
+    slot->object = origin->parent;
+    slot->lsb = origin->flavor;
+    slot->element = origin->owner;
+    slot->position = origin->extra;
+    slot->aux = (int32_t)dimension;
+    slot->left = left;
+    slot->right = right;
+    slot->span = origin->scope == LLG_VPI_NONE ? 0u : origin->scope + 1u;
+    slot->count = origin->file ? origin->line : 0u;
+    slot->pointer = origin->line ? (void*)(uintptr_t)origin->file : NULL;
+    return encode_handle(index);
+}
+
+/* The scope row the bounds of a range or the indices of an element are
+ * located in (decision A19-D86): from the declaration the handle names. */
+static uint32_t constant_scope(const llg_vpi_slot_t* slot) {
+    if (slot->kind == SLOT_RANGE) return slot->span ? slot->span - 1u : LLG_VPI_NONE;
+    return slot->object == LLG_VPI_NONE ? LLG_VPI_NONE : declaration_scope(slot->object);
+}
+
+/* vpiLineNo (returned, 0 when unknown) and vpiFile of a constant made per
+ * request: the definition of its located scope (the module, interface or
+ * program definition of an instance, the scope itself otherwise; decision
+ * A19-D86). */
+static int constant_location(const llg_vpi_slot_t* slot, const char** file) {
+    const llg_vpi_model_object_t* scope = slot->span ? row_object(slot->span - 1u) : NULL;
+    if (!scope) return 0;
+    if (scope->instance && scope->instance->def_file && scope->instance->def_line > 0) {
+        *file = scope->instance->def_file;
+        return scope->instance->def_line;
+    }
+    *file = scope->file;
+    return scope->file ? scope->line : 0;
 }
 
 static uint32_t find_row(const char* full_name) {
@@ -2102,13 +2208,13 @@ static vpiHandle iterate_dims(uint32_t row, int type) {
     uintptr_t* items = (uintptr_t*)calloc(object->dim_count + 1u, sizeof(*items));
     if (!items) return NULL;
     uint32_t count = 0;
+    llg_vpi_range_origin_t origin = row_range_origin(RANGE_UNPACKED, row);
     for (uint32_t d = 0; d < object->dim_count; ++d) {
-        uint32_t range = alloc_slot(SLOT_RANGE);
-        if (range == LLG_VPI_NONE) break;
-        g_vpi.slots[range].object = row;
-        g_vpi.slots[range].aux = (int32_t)d;
-        array_dim(object, d, &g_vpi.slots[range].left, &g_vpi.slots[range].right);
-        items[count++] = (uintptr_t)encode_handle(range);
+        int64_t left = 0, right = 0;
+        array_dim(object, d, &left, &right);
+        vpiHandle range = make_range(&origin, d, left, right);
+        if (!range) break;
+        items[count++] = (uintptr_t)range;
     }
     return make_list_iterator(type, items, count);
 }
@@ -2155,14 +2261,11 @@ static vpiHandle iterate_packed_ranges(const llg_vpi_slot_t* slot) {
         return NULL;
     }
     uint32_t made = 0;
+    llg_vpi_range_origin_t origin = row_range_origin(RANGE_PACKED, row);
     for (uint32_t i = 0; i < count; ++i) {
-        uint32_t range = alloc_slot(SLOT_RANGE);
-        if (range == LLG_VPI_NONE) break;
-        g_vpi.slots[range].object = row;
-        g_vpi.slots[range].left = bounds[2u * i];
-        g_vpi.slots[range].right = bounds[2u * i + 1u];
-        g_vpi.slots[range].aux = (int32_t)i;
-        items[made++] = (uintptr_t)encode_handle(range);
+        vpiHandle range = make_range(&origin, i, bounds[2u * i], bounds[2u * i + 1u]);
+        if (!range) break;
+        items[made++] = (uintptr_t)range;
     }
     return make_list_iterator(vpiRange, items, made);
 }
@@ -2206,6 +2309,7 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
     }
     /* make_constant may move the slot table: keep no slot pointer across it. */
     int64_t bit_index = slot->left;
+    uint32_t scope = constant_scope(slot);
     uintptr_t* items = (uintptr_t*)calloc(count, sizeof(*items));
     if (!items) {
         vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
@@ -2213,11 +2317,11 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
     }
     uint32_t made = 0;
     if (bit) {
-        vpiHandle index = make_constant(bit_index, vpiDecConst);
+        vpiHandle index = make_constant(bit_index, vpiDecConst, scope);
         if (index) items[made++] = (uintptr_t)index;
     }
     for (uint32_t i = packed_count; i-- > 0;) {
-        vpiHandle index = make_constant(packed[i], vpiDecConst);
+        vpiHandle index = make_constant(packed[i], vpiDecConst, scope);
         if (index) items[made++] = (uintptr_t)index;
     }
     /* Row-major element number: the last dimension varies fastest. */
@@ -2228,7 +2332,7 @@ static vpiHandle iterate_indices(const llg_vpi_slot_t* slot) {
         uint64_t offset = rest % extent;
         rest /= extent;
         int64_t value = left >= right ? left - (int64_t)offset : left + (int64_t)offset;
-        vpiHandle index = make_constant(value, vpiDecConst);
+        vpiHandle index = make_constant(value, vpiDecConst, scope);
         if (index) items[made++] = (uintptr_t)index;
     }
     return make_list_iterator(vpiIndex, items, made);
@@ -5007,11 +5111,32 @@ static vpiHandle fsm_relation(int type, const llg_vpi_slot_t* slot) {
 /* The integer properties of an FSM or state handle (40.5.3): vpiCovered is
  * the number of reached states (0 or 1 for a state), vpiCoverMax the number
  * of states (1 for a state) and vpiCoveredCount the visits. */
+/* The parameter that names state `state` of `fsm` (40.4.6): a catalog row
+ * of the FSM's instance, or NULL. A state is in the source where its
+ * parameter is declared (37.3.3, decision A19-D86). */
+static const llg_vpi_model_object_t* fsm_state_parameter(const llg_fcov_fsm_t* fsm,
+                                                         uint32_t state) {
+    const llg_acov_instance_t* owner = llg_acov_instance_at((size_t)fsm->instance);
+    if (!owner || !owner->path || state >= fsm->n_states) return NULL;
+    char name[1024];
+    int length = snprintf(name, sizeof name, "%s.%s", owner->path, fsm->states[state].name);
+    if (length < 0 || (size_t)length >= sizeof name) return NULL;
+    const llg_vpi_model_object_t* object = row_object(find_row(name));
+    return object && is_parameter_type(object->type) && object->line > 0 && object->file
+               ? object : NULL;
+}
+
 static int fsm_property(const llg_vpi_slot_t* slot, int property, uint64_t* value) {
     const llg_fcov_fsm_t* fsm = slot_fsm(slot);
     if (!fsm) return 0;
     if (slot->kind == SLOT_FSMSTATE) {
         uint64_t visits = fsm->visits[slot->aux];
+        if (property == vpiLineNo) {
+            const llg_vpi_model_object_t* parameter = fsm_state_parameter(fsm, (uint32_t)slot->aux);
+            if (!parameter) return 0;
+            *value = (uint64_t)parameter->line;
+            return 1;
+        }
         switch (property) {
             case vpiCovered: *value = visits != 0; return 1;
             case vpiCoverMax: *value = 1; return 1;
@@ -7715,7 +7840,7 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                     return NULL;
                 break;
             }
-            return make_constant(value, vpiDecConst);
+            return make_constant(value, vpiDecConst, constant_scope(slot));
         }
         case vpiIndex:
             /* 37.80: the index of a generate scope array element (the
@@ -7728,7 +7853,7 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 char* end = NULL;
                 long long value = open ? strtoll(open + 1, &end, 10) : 0;
                 if (!open || !end || *end != ']') return NULL;
-                return make_constant((int64_t)value, vpiDecConst);
+                return make_constant((int64_t)value, vpiDecConst, constant_scope(slot));
             }
             if (slot->kind == SLOT_OBJECT && object &&
                 (object->type == vpiModule || object->type == vpiInterface ||
@@ -7738,7 +7863,7 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 int64_t value = 0;
                 int dims = 0;
                 if (instance_array_of(slot->object, &value, &dims) == LLG_VPI_NONE) return NULL;
-                if (dims == 1) return make_constant(value, vpiDecConst);
+                if (dims == 1) return make_constant(value, vpiDecConst, constant_scope(slot));
                 vpi_error("LLG_VPI_UNSUPPORTED",
                           "vpiIndex of an element of a multidimensional instance array");
                 return NULL;
@@ -7749,19 +7874,19 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                  * a deeper element come from the vpiIndex iteration. */
                 int64_t indices[LLG_VPI_PACKED_INDICES];
                 if (packed_select_indices(slot, indices) == 1u)
-                    return make_constant(indices[0], vpiDecConst);
+                    return make_constant(indices[0], vpiDecConst, constant_scope(slot));
                 vpi_error("LLG_VPI_RELATION",
                           "vpiIndex of an element of a multidimensional packed array");
                 return NULL;
             }
             if (slot->kind == SLOT_SELECT && slot->span == 1)
-                return make_constant(slot->left, vpiDecConst);
+                return make_constant(slot->left, vpiDecConst, constant_scope(slot));
             if (slot->kind == SLOT_ELEMENT && object->dim_count == 1) {
                 int64_t left, right;
                 array_dim(object, 0, &left, &right);
                 int64_t value = left >= right ? left - (int64_t)slot->element
                                               : left + (int64_t)slot->element;
-                return make_constant(value, vpiDecConst);
+                return make_constant(value, vpiDecConst, constant_scope(slot));
             }
             if (slot->kind == SLOT_OBJECT && (object->flags & LLG_VPI_OBJ_ELEMENT)) {
                 /* 37.25 detail 1: the index of a named event array element;
@@ -7776,7 +7901,7 @@ vpiHandle vpi_handle(PLI_INT32 type, vpiHandle ref_handle) {
                 array_dim(array, 0, &left, &right);
                 int64_t value = left >= right ? left - (int64_t)object->port_index
                                               : left + (int64_t)object->port_index;
-                return make_constant(value, vpiDecConst);
+                return make_constant(value, vpiDecConst, constant_scope(slot));
             }
             /* A whole net, variable or named event is not an array element
              * and has no index: the text defines none (decision A19-D28). */
@@ -9314,6 +9439,40 @@ static vpiHandle iterate_members(const llg_vpi_slot_t* slot) {
     return encode_handle(index);
 }
 
+/* The origin of the ranges of typespec handle `slot` (decision A19-D86).
+ * The typespec of a declaration (not of a structure member) has the
+ * declaration's own ranges: its unpacked dimensions when it is the
+ * declaration's typespec, its packed ones when it is the typespec of the
+ * declaration's elements; a deeper typespec of the declaration has ranges
+ * of its own, located at the declaration. A typespec no declaration owns is
+ * located at its typedef, when it has one. */
+static llg_vpi_range_origin_t typespec_range_origin(const llg_vpi_slot_t* slot,
+                                                    const llg_vpi_typespec_t* typespec) {
+    uint32_t row = slot->object;
+    const llg_vpi_model_object_t* object = row_object(row);
+    if (object && slot->left == 0) {
+        if (typespec->type == vpiArrayTypespec && typespec_ref(object->typespec) == typespec &&
+            object->dim_count == typespec->range_count)
+            return row_range_origin(RANGE_UNPACKED, row);
+        if (typespec->type != vpiArrayTypespec && element_typespec(object) == typespec)
+            return row_range_origin(RANGE_PACKED, row);
+    }
+    llg_vpi_range_origin_t origin = {
+        RANGE_TYPESPEC, (uint64_t)row << 32 | typespec_index(typespec), (uint32_t)slot->left,
+        LLG_VPI_NONE, LLG_VPI_NONE, 0u, NULL };
+    if (object) {
+        origin.scope = declaration_scope(row);
+        if (object->line > 0 && object->file) {
+            origin.line = (uint32_t)object->line;
+            origin.file = object->file;
+        }
+    } else if (typespec->line && typespec->file) {
+        origin.line = typespec->line;
+        origin.file = typespec->file;
+    }
+    return origin;
+}
+
 /* vpiTypespecMember, vpiEnumConst and vpiRange of a typespec (37.23). */
 static vpiHandle iterate_typespec(const llg_vpi_slot_t* slot, int type) {
     const llg_vpi_typespec_t* typespec = typespec_at((uint32_t)slot->aux);
@@ -9341,18 +9500,16 @@ static vpiHandle iterate_typespec(const llg_vpi_slot_t* slot, int type) {
         return NULL;
     }
     uint32_t made = 0;
+    llg_vpi_range_origin_t origin = typespec_range_origin(slot, typespec);
     for (uint32_t i = 0; i < count; ++i) {
         if (base != LLG_VPI_NONE) {
             items[made++] = (uintptr_t)encode_handle(base + i);
             continue;
         }
-        uint32_t range = alloc_slot(SLOT_RANGE);
-        if (range == LLG_VPI_NONE) break;
         const int64_t* bounds = &g_vpi.types->ranges[2u * (typespec->first_range + i)];
-        g_vpi.slots[range].left = bounds[0];
-        g_vpi.slots[range].right = bounds[1];
-        g_vpi.slots[range].aux = (int32_t)i;
-        items[made++] = (uintptr_t)encode_handle(range);
+        vpiHandle range = make_range(&origin, i, bounds[0], bounds[1]);
+        if (!range) break;
+        items[made++] = (uintptr_t)range;
     }
     return make_list_iterator(type, items, made);
 }
@@ -10173,8 +10330,13 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
         case vpiSigned:
             if (slot->kind == SLOT_OBJECT && object && object->type == vpiFunction && object->width)
                 return object->is_signed != 0;
-            if (!has_value && !(object && object->type == vpiPort)) return unsupported_property();
-            return object && object->type == vpiPort ? object->is_signed != 0 : is_signed != 0;
+            {
+                /* A port's sign (its bits and reference objects too); a
+                 * range of a port has none. */
+                int port = slot->kind != SLOT_RANGE && object && object->type == vpiPort;
+                if (!has_value && !port) return unsupported_property();
+                return port ? object->is_signed != 0 : is_signed != 0;
+            }
         case vpiScalar:
         case vpiVector:
             /* 37.14 detail 6: a port is scalar or vector by its own size. */
@@ -10448,15 +10610,25 @@ PLI_INT32 vpi_get(PLI_INT32 property, vpiHandle handle) {
                        : (object->flags & LLG_VPI_OBJ_TEXT) ? vpiStringConst : vpiBinaryConst;
             return unsupported_property();
         case vpiLineNo:
-            /* A terminal, port bit or assignment bit is on its owner's line;
-             * a bit, select, element or member of a declared object is on
-             * its declaration's line (decision A19-D47). */
+            /* A terminal, port bit, assignment bit, connection or port
+             * reference object is on its owner's line; a bit, select,
+             * element or member of a declared object is on its
+             * declaration's line (decisions A19-D47, A19-D86). */
             if ((slot->kind == SLOT_OBJECT || slot->kind == SLOT_CABIT ||
                  slot->kind == SLOT_PRIMTERM || slot->kind == SLOT_PORTBIT ||
-                 slot->kind == SLOT_TERM || slot->kind == SLOT_ELEMENT ||
+                 slot->kind == SLOT_TERM || slot->kind == SLOT_CONN ||
+                 slot->kind == SLOT_REFOBJ || slot->kind == SLOT_ELEMENT ||
                  slot->kind == SLOT_SELECT || slot->kind == SLOT_MEMBER) && object)
                 return object->line;
             if (slot->kind == SLOT_CALL) return ((llg_vpi_callsite_t*)slot->pointer)->line;
+            /* A range is on its declaration's line, a range bound or an
+             * index on its located scope's (decision A19-D86). */
+            if (slot->kind == SLOT_RANGE && slot->count) return (PLI_INT32)slot->count;
+            if (slot->kind == SLOT_CONSTANT) {
+                const char* file = NULL;
+                int line = constant_location(slot, &file);
+                if (line > 0) return line;
+            }
             return unsupported_property();
         case vpiTimeUnit:
         case vpiTimePrecision:
@@ -10964,14 +11136,17 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
         case SLOT_PRIMTERM:
         case SLOT_PORTBIT:
         case SLOT_TERM:
-            /* 37.3.3: on its owner's line (decision A19-D47), so in its
-             * owner's file. */
+        case SLOT_CONN:
+            /* 37.3.3: on its owner's line (decisions A19-D47, A19-D86), so
+             * in its owner's file. */
             if (property == vpiFile && object && object->file) return (PLI_BYTE8*)object->file;
             break;
         case SLOT_REFOBJ: {
             /* 37.15: the low reference is the port's formal, the high one
              * names the connected instance or modport. */
             const llg_vpi_model_object_t* actual = object->target;
+            /* 37.3.3: on its port's line (decision A19-D86). */
+            if (property == vpiFile && object->file) return (PLI_BYTE8*)object->file;
             if (!actual) break;
             /* A reference object is a simple expression: it decompiles
              * to its name (37.55, decision A19-D32). */
@@ -10986,7 +11161,15 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
             }
             break;
         }
+        case SLOT_RANGE:
+            if (property == vpiFile && slot->count) return (PLI_BYTE8*)slot->pointer;
+            break;
         case SLOT_CONSTANT:
+            if (property == vpiFile) {
+                const char* file = NULL;
+                if (constant_location(slot, &file) > 0) return (PLI_BYTE8*)file;
+                break;
+            }
             if (property != vpiDecompile) break;
             /* A string key decompiles as its characters, an integer (a
              * range bound, an index) as its decimal value (A19-D60). */
@@ -11045,6 +11228,11 @@ PLI_BYTE8* vpi_get_str(PLI_INT32 property, vpiHandle handle) {
             /* A state is named by its parameter (40.4.6). */
             const llg_fcov_fsm_t* fsm = slot_fsm(slot);
             if (fsm && property == vpiName) return (PLI_BYTE8*)fsm->states[slot->aux].name;
+            if (fsm && property == vpiFile) {
+                const llg_vpi_model_object_t* parameter =
+                    fsm_state_parameter(fsm, (uint32_t)slot->aux);
+                if (parameter) return (PLI_BYTE8*)parameter->file;
+            }
             break;
         }
         default:
@@ -12023,13 +12211,30 @@ static int handle_identity(const llg_vpi_slot_t* slot, uint32_t index, uint64_t 
         identity[3] = slot->kind == SLOT_SELECT ? ((uint64_t)slot->lsb << 32) | slot->span : 0;
         return 1;
     }
+    if (slot->kind == SLOT_RANGE) {
+        /* One object per declared dimension (decision A19-D86). */
+        identity[0] = 2u + slot->kind;
+        identity[1] = ((uint64_t)slot->lsb << 32) | (uint32_t)slot->aux;
+        identity[2] = slot->element;
+        identity[3] = ((uint64_t)slot->position << 32) | slot->object;
+        return 1;
+    }
+    if (slot->kind == SLOT_CONSTANT) {
+        /* One object per value, type and located scope (decision A19-D86);
+         * vpi_compare_objects compares a string constant's characters. */
+        identity[0] = 2u + slot->kind;
+        identity[1] = ((uint64_t)(uint32_t)slot->aux << 32) | slot->span;
+        identity[2] = is_string_constant(slot) ? (uint64_t)(uintptr_t)slot->items
+                                               : (uint64_t)slot->left;
+        identity[3] = 0;
+        return 1;
+    }
     identity[0] = 2u + slot->kind;
     identity[1] = slot->kind == SLOT_CALL || slot->kind == SLOT_SYSTF ||
                   slot->kind == SLOT_EVENT ? (uint64_t)(uintptr_t)slot->pointer
                   : slot->kind == SLOT_ASSERTION || slot->kind == SLOT_FSM ||
                     slot->kind == SLOT_FSMSTATE ? (uint64_t)slot->left : index;
-    identity[2] = slot->kind == SLOT_CONSTANT ? (uint64_t)slot->left
-                  : slot->kind == SLOT_FSMSTATE ? (uint64_t)(uint32_t)slot->aux : 0;
+    identity[2] = slot->kind == SLOT_FSMSTATE ? (uint64_t)(uint32_t)slot->aux : 0;
     identity[3] = 0;
     return 1;
 }
@@ -12046,11 +12251,12 @@ PLI_INT32 vpi_compare_objects(vpiHandle object1, vpiHandle object2) {
     uint64_t a[4], b[4];
     handle_identity(first, first_index, a);
     handle_identity(second, second_index, b);
-    if (first->kind == SLOT_CONSTANT || second->kind == SLOT_CONSTANT ||
-        first->kind == SLOT_ARGUMENT || second->kind == SLOT_ARGUMENT ||
-        first->kind == SLOT_ITERATOR || second->kind == SLOT_ITERATOR ||
-        first->kind == SLOT_RANGE || second->kind == SLOT_RANGE)
+    if (first->kind == SLOT_ARGUMENT || second->kind == SLOT_ARGUMENT ||
+        first->kind == SLOT_ITERATOR || second->kind == SLOT_ITERATOR)
         return first_index == second_index;
+    if (is_string_constant(first) && is_string_constant(second))
+        return first->span == second->span && first->count == second->count &&
+               memcmp(first->items, second->items, first->count) == 0;
     return memcmp(a, b, sizeof(a)) == 0;
 }
 

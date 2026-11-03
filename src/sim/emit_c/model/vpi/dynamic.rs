@@ -175,15 +175,20 @@ pub(super) fn render_vpi_dynamic(
         for field in &class.fields {
             fields.push(match field {
                 Some(field) => format!(
-                    "    {{ {}, {}u, {}, {}, {}u, {}u }}",
+                    "    {{ {}, {}u, {}, {}, {}u, {}u, {}u, {} }}",
                     c_string_literal(&field.name),
                     field.shape,
                     field.rand.c_code(),
                     field.visibility.c_code(),
                     field.mode.map_or(0, |mode| mode + 1),
-                    u8::from(field.is_const)
+                    u8::from(field.is_const),
+                    field.line,
+                    field
+                        .file
+                        .as_deref()
+                        .map_or_else(|| "NULL".to_owned(), c_string_literal)
                 ),
-                None => "    { NULL, 0u, vpiNotRand, vpiPublicVis, 0u, 0u }".to_owned(),
+                None => "    { NULL, 0u, vpiNotRand, vpiPublicVis, 0u, 0u, 0u, NULL }".to_owned(),
             });
         }
         for item in &class.items {

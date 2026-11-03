@@ -2625,7 +2625,10 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   innermost activation), A19-D84; a
   scope's `vpiImport`, decision A19-D79, and the event array properties of
   class definitions and objects, decision A19-D80, with the imports of class
-  methods and the events of a definition's event array property, A19-D85). A generated
+  methods and the events of a definition's event array property, A19-D85; the
+  source locations of class properties, container elements, ranges and the
+  range bounds and indices made per request, and the identity of ranges and
+  those constants, A19-D86). A generated
   object catalog and the common VPI routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
   relative to a scope, constant element/bit/part selects in the name, and
   associative array elements by integral or string key, `tb.aa["x"]`, decision A19-D81),

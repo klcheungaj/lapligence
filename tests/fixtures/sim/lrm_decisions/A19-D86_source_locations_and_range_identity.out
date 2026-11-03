@@ -1,0 +1,33 @@
+defn id: line 48 A19-D86_source_locations_and_range_identity.sv
+defn done: line 49 A19-D86_source_locations_and_range_identity.sv
+defn steps: line 50 A19-D86_source_locations_and_range_identity.sv
+defn vif: line 51 A19-D86_source_locations_and_range_identity.sv
+object: no line
+object id: line 48 A19-D86_source_locations_and_range_identity.sv
+object done: line 49 A19-D86_source_locations_and_range_identity.sv
+object steps: line 50 A19-D86_source_locations_and_range_identity.sv
+object vif: line 51 A19-D86_source_locations_and_range_identity.sv
+da[1]: line 60 A19-D86_source_locations_and_range_identity.sv
+da[1] index: line 46 A19-D86_source_locations_and_range_identity.sv
+mem[1]: line 59 A19-D86_source_locations_and_range_identity.sv
+mem[1] index: line 46 A19-D86_source_locations_and_range_identity.sv
+mem range: line 59
+a range: line 57
+a left: line 46 A19-D86_source_locations_and_range_identity.sv
+a range left: line 46 A19-D86_source_locations_and_range_identity.sv
+su.st range: line 36
+su.st left: line 35 A19-D86_source_locations_and_range_identity.sv
+su.smem[1] index: line 35 A19-D86_source_locations_and_range_identity.sv
+su.blk.bv left: line 38 A19-D86_source_locations_and_range_identity.sv
+a typespec: no line
+a range twice: 1
+mem range twice: 1
+a range vs b range: 0
+a left twice: 1
+a left vs range left: 1
+a left vs b left: 1
+a left vs a right: 0
+mem[1] index of two words: 1
+mem[1] index vs mem[2] index: 0
+da[1] index twice: 1
+done 7 3
