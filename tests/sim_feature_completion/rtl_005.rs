@@ -20,6 +20,14 @@ fn conditional_arms_keep_reached_effects_and_leaf_defaults() {
 }
 
 #[test]
+fn conditional_container_operands_select_or_merge_elements() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_005/container_conditionals.out");
+    sim_cli::run_case_backend_parity(SUITE, "container_conditionals", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "container_conditionals", expected);
+}
+
+#[test]
 fn dynamic_and_static_casts_share_one_success_contract() {
     let expected = include_str!("../fixtures/sim/feature_completion/rtl_005/cast_contract.out");
     sim_cli::run_case(SUITE, "cast_contract", expected, "", &[]);

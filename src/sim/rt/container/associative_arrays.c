@@ -568,3 +568,87 @@ void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src) {
                (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
                    (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
 }
+
+/* Key order of two entries of associative arrays of one index type. */
+static int llg_assoc_entry_compare(uint8_t key_kind, sv4_t a_integral,
+                                   const unsigned char* a_string,
+                                   size_t a_length, sv4_t b_integral,
+                                   const unsigned char* b_string,
+                                   size_t b_length) {
+    return key_kind == LLG_ASSOC_INTEGRAL
+        ? llg_integral_compare(a_integral, b_integral)
+        : llg_assoc_string_compare(a_string, a_length, b_string, b_length);
+}
+
+static void llg_assoc_key_clone(sv4_t* integral, unsigned char** string,
+                                size_t* length, sv4_t src_integral,
+                                const unsigned char* src_string,
+                                size_t src_length) {
+    *integral = sv4_clone(&src_integral);
+    *length = src_length;
+    *string = NULL;
+    if (src_length) {
+        *string = llg_alloc_items(src_length, 1);
+        memcpy(*string, src_string, src_length);
+    }
+}
+
+static int llg_assoc_same_index_type(const llg_assoc_t* a,
+                                     const llg_assoc_t* b) {
+    return a->key_kind == b->key_kind && a->key_width == b->key_width &&
+           a->key_signed == b->key_signed &&
+           a->key_two_state == b->key_two_state;
+}
+
+/* SV 11.4.11 merge of associative arrays: the result has the union of the
+ * keys (both arrays are sorted by key, so one linear pass); a key in both
+ * keeps a known-equal value, every other key takes the element default. An
+ * explicit default survives only when both arrays have one. */
+void llg_assoc_merge(llg_assoc_t* dst, const llg_assoc_t* a,
+                     const llg_assoc_t* b) {
+    if (!llg_assoc_same_index_type(dst, a) || !llg_assoc_same_index_type(dst, b))
+        llg_container_fatal("incompatible associative-array index types");
+    llg_assoc_t merged;
+    if (dst->key_kind == LLG_ASSOC_INTEGRAL)
+        llg_assoc_init_integral(&merged, dst->element_width,
+                                dst->element_signed, dst->element_two_state,
+                                dst->key_width, dst->key_signed,
+                                dst->key_two_state);
+    else
+        llg_assoc_init_string(&merged, dst->element_width, dst->element_signed,
+                              dst->element_two_state);
+    if (a->size > SIZE_MAX - b->size)
+        llg_container_fatal("associative-array size overflow");
+    llg_assoc_reserve(&merged, a->size + b->size);
+    size_t i = 0, j = 0;
+    while (i < a->size || j < b->size) {
+        const llg_assoc_entry_t* left = i < a->size ? &a->entries[i] : NULL;
+        const llg_assoc_entry_t* right = j < b->size ? &b->entries[j] : NULL;
+        int cmp = !left ? 1
+            : !right ? -1
+            : llg_assoc_entry_compare(dst->key_kind, left->integral_key,
+                                      left->string_key, left->string_length,
+                                      right->integral_key, right->string_key,
+                                      right->string_length);
+        const llg_assoc_entry_t* key = cmp <= 0 ? left : right;
+        llg_assoc_entry_t* entry = &merged.entries[merged.size++];
+        memset(entry, 0, sizeof(*entry));
+        llg_assoc_key_clone(&entry->integral_key, &entry->string_key,
+                            &entry->string_length, key->integral_key,
+                            key->string_key, key->string_length);
+        entry->value = llg_element_merge(
+            cmp == 0 ? &left->value : NULL, cmp == 0 ? &right->value : NULL,
+            dst->element_width, dst->element_signed, dst->element_two_state);
+        if (cmp <= 0) ++i;
+        if (cmp >= 0) ++j;
+    }
+    if (a->has_default_value && b->has_default_value) {
+        sv4_t value = llg_element_merge(
+            &a->default_value, &b->default_value, dst->element_width,
+            dst->element_signed, dst->element_two_state);
+        sv4_move(&merged.default_value, &value);
+        merged.has_default_value = 1;
+    }
+    llg_assoc_copy(dst, &merged);
+    llg_assoc_destroy(&merged);
+}

@@ -194,6 +194,18 @@ static void llg_value_merge(llg_value_t* target, const llg_value_desc_t* desc,
     }
 }
 
+/* An element only one operand has merges with the element default, so a
+ * nested container keeps its size with default leaves; every other leaf
+ * kind takes its default either way. */
+static void llg_value_merge_present(llg_value_t* target,
+                                    const llg_value_desc_t* desc,
+                                    const llg_value_t* present) {
+    llg_value_t fallback = {0};
+    llg_value_default(&fallback, desc);
+    llg_value_merge(target, desc, &fallback, present);
+    llg_value_drop(&fallback);
+}
+
 void llg_dyn_value_merge(llg_dyn_value_array_t* dst,
                          const llg_dyn_value_array_t* a,
                          const llg_dyn_value_array_t* b) {
@@ -207,7 +219,8 @@ void llg_dyn_value_merge(llg_dyn_value_array_t* dst,
         if (i < a->size && i < b->size)
             llg_value_merge(&data[i], dst->element, &a->data[i], &b->data[i]);
         else
-            llg_value_copy(&data[i], dst->element, NULL);
+            llg_value_merge_present(&data[i], dst->element,
+                                    i < a->size ? &a->data[i] : &b->data[i]);
     }
     llg_dyn_value_commit(dst, data, size);
 }

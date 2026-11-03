@@ -347,6 +347,14 @@ fn r05_d1_aggregate_conditional_leaves() {
 }
 
 #[test]
+fn r05_d2_resizable_conditional_merge() {
+    run_decision(
+        "R05-D2_resizable_conditional_merge",
+        include_str!("fixtures/sim/lrm_decisions/R05-D2_resizable_conditional_merge.out"),
+    );
+}
+
+#[test]
 fn r11_d1_sibling_port_net_types() {
     run_decision(
         "R11-D1_sibling_port_net_types",

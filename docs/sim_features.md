@@ -1098,8 +1098,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   members merge as wholes, an integral member survives only when known equal,
   and each reached arm (calls included) is evaluated once (SIM-004). Fixed
   arrays of strings, handles and native records merge known-equal immediate
-  elements and default the rest (SIM-007); other dynamic aggregate merges
-  remain restricted.
+  elements and default the rest (SIM-007). Queue, dynamic-array and
+  associative-array operands (packed, string, record and nested-container
+  elements, bounded queues, call arms) assign the selected arm for a known
+  condition; an ambiguous one merges element by element to the larger size
+  or the union of the keys, an element only one arm has merging with the
+  element default (decision R05-D2,
+  [rtl_005](../tests/fixtures/sim/feature_completion/rtl_005/readme.md)).
   V Table 28; SV Table 11-20, §11.4.11 **[2001/SV-2009]**.
 - 🟦 **Concatenation, replication and selection** — Preserve order and
   self-determined widths, including singleton-concatenation unsigned/fill
