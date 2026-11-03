@@ -22,18 +22,18 @@ use std::collections::HashMap;
 
 /// Bytes per blob row, `LLG_VPI_PACK_ROW` in `llg_vpi.h`: each row holds
 /// `PACK_ROW - 1` payload bytes and the literal's NUL.
-pub(super) const PACK_ROW: usize = 4096;
+pub(in crate::sim::emit_c) const PACK_ROW: usize = 4096;
 /// Payload bytes per literal piece: with every byte escaped (four source
 /// characters) a piece stays well under MSVC's 16,380-character limit for
 /// one string literal (C2026).
 const PIECE: usize = 1024;
 /// The varint alphabet: no quote, backslash or `?` (trigraphs).
-pub(super) const DIGITS: &[u8; 64] =
+pub(in crate::sim::emit_c) const DIGITS: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /// Builds the pool, the symbol and reference tables and one stream at a time.
 #[derive(Default)]
-pub(super) struct Pack {
+pub(in crate::sim::emit_c) struct Pack {
     pool: Vec<u8>,
     strings: HashMap<String, u32>,
     symbols: Vec<String>,
@@ -43,10 +43,10 @@ pub(super) struct Pack {
 }
 
 /// One stream taken from a [`Pack`] (see [`Pack::take_stream`]).
-pub(super) type Stream = Vec<u8>;
+pub(in crate::sim::emit_c) type Stream = Vec<u8>;
 
 impl Pack {
-    pub(super) fn uint(&mut self, mut value: u64) {
+    pub(in crate::sim::emit_c) fn uint(&mut self, mut value: u64) {
         loop {
             let group = (value & 0x1f) as usize;
             value >>= 5;
@@ -58,7 +58,7 @@ impl Pack {
         }
     }
 
-    pub(super) fn int(&mut self, value: i64) {
+    pub(in crate::sim::emit_c) fn int(&mut self, value: i64) {
         self.uint(((value << 1) ^ (value >> 63)) as u64);
     }
 
@@ -68,7 +68,7 @@ impl Pack {
 
     /// An optional string: its pool offset + 1, 0 for none. Equal strings
     /// share one pool entry.
-    pub(super) fn string(&mut self, text: Option<&str>) {
+    pub(in crate::sim::emit_c) fn string(&mut self, text: Option<&str>) {
         let Some(text) = text else {
             self.uint(0);
             return;
@@ -106,7 +106,12 @@ impl Pack {
         self.refs.push(address);
     }
 
-    pub(super) fn take_stream(&mut self) -> Stream {
+    /// The string pool: the strings [`Pack::string`] took, each NUL-terminated.
+    pub(in crate::sim::emit_c) fn pool(&self) -> &[u8] {
+        &self.pool
+    }
+
+    pub(in crate::sim::emit_c) fn take_stream(&mut self) -> Stream {
         std::mem::take(&mut self.stream)
     }
 
@@ -138,30 +143,10 @@ impl Pack {
         payload.extend_from_slice(&self.pool);
         payload.extend_from_slice(objects);
         payload.extend_from_slice(code);
-        let rows = payload.chunks(PACK_ROW - 1).collect::<Vec<_>>();
-        let chunks = if rows.is_empty() {
-            "NULL".to_owned()
-        } else {
-            let _ = writeln!(
-                out,
-                "static const char llg_vpi_pack_chunks[{}][LLG_VPI_PACK_ROW] = {{",
-                rows.len()
-            );
-            for row in &rows {
-                for piece in row.chunks(PIECE) {
-                    out.push_str("    \"");
-                    escape_into(piece, out);
-                    out.push_str("\"\n");
-                }
-                out.push_str("    ,\n");
-            }
-            out.push_str("};\n");
-            "&llg_vpi_pack_chunks[0][0]".to_owned()
-        };
+        let (chunks, rows) = render_rows(&payload, "llg_vpi_pack_chunks", "LLG_VPI_PACK_ROW", out);
         let _ = writeln!(
             out,
-            "static const llg_vpi_packed_t {name} = {{ {chunks}, {}u, {}u, {}u, {}u, {symbols}, {}u, {refs}, {}u }};",
-            rows.len(),
+            "static const llg_vpi_packed_t {name} = {{ {chunks}, {rows}u, {}u, {}u, {}u, {symbols}, {}u, {refs}, {}u }};",
             self.pool.len(),
             objects.len(),
             code.len(),
@@ -169,6 +154,38 @@ impl Pack {
             self.refs.len(),
         );
     }
+}
+
+/// Emit `payload` as the blob `array`: `char[R][row_macro]` rows of string
+/// literal pieces, each row `PACK_ROW - 1` payload bytes and its NUL (the
+/// runtime macro `row_macro` must equal [`PACK_ROW`]). Returns the C
+/// expression of the first byte (`NULL` for an empty payload) and `R`.
+pub(in crate::sim::emit_c) fn render_rows(
+    payload: &[u8],
+    array: &str,
+    row_macro: &str,
+    out: &mut String,
+) -> (String, usize) {
+    use std::fmt::Write as _;
+    let rows = payload.chunks(PACK_ROW - 1).collect::<Vec<_>>();
+    if rows.is_empty() {
+        return ("NULL".to_owned(), 0);
+    }
+    let _ = writeln!(
+        out,
+        "static const char {array}[{}][{row_macro}] = {{",
+        rows.len()
+    );
+    for row in &rows {
+        for piece in row.chunks(PIECE) {
+            out.push_str("    \"");
+            escape_into(piece, out);
+            out.push_str("\"\n");
+        }
+        out.push_str("    ,\n");
+    }
+    out.push_str("};\n");
+    (format!("&{array}[0][0]"), rows.len())
 }
 
 /// C string literal text of `bytes`: printable ASCII as is, everything else
@@ -186,14 +203,14 @@ fn escape_into(bytes: &[u8], out: &mut String) {
 
 /// Test decoder mirroring `catalog_unpack`'s stream reader.
 #[cfg(test)]
-pub(super) struct Reader<'a> {
-    pub(super) bytes: &'a [u8],
-    pub(super) at: usize,
+pub(in crate::sim::emit_c) struct Reader<'a> {
+    pub(in crate::sim::emit_c) bytes: &'a [u8],
+    pub(in crate::sim::emit_c) at: usize,
 }
 
 #[cfg(test)]
 impl Reader<'_> {
-    pub(super) fn uint(&mut self) -> Option<u64> {
+    pub(in crate::sim::emit_c) fn uint(&mut self) -> Option<u64> {
         let mut value = 0u64;
         let mut shift = 0u32;
         loop {
@@ -211,10 +228,38 @@ impl Reader<'_> {
         }
     }
 
-    pub(super) fn int(&mut self) -> Option<i64> {
+    pub(in crate::sim::emit_c) fn int(&mut self) -> Option<i64> {
         let value = self.uint()?;
         Some(((value >> 1) as i64) ^ -((value & 1) as i64))
     }
+}
+
+/// The payload of the first blob [`render_rows`] wrote with `row_macro`,
+/// read back from the generated C (tests); empty when there is none.
+#[cfg(test)]
+pub(in crate::sim::emit_c) fn parse_rows(out: &str, row_macro: &str) -> Vec<u8> {
+    let mut payload = Vec::new();
+    if let Some(start) = out.find(&format!("[{row_macro}] = {{\n")) {
+        let body = &out[start..];
+        for line in body[..body.find("};\n").unwrap()].lines().skip(1) {
+            let line = line.trim();
+            if let Some(literal) = line.strip_prefix('"').and_then(|l| l.strip_suffix('"')) {
+                let bytes = literal.as_bytes();
+                let mut at = 0;
+                while at < bytes.len() {
+                    if bytes[at] == b'\\' {
+                        let digits = std::str::from_utf8(&bytes[at + 1..at + 4]).unwrap();
+                        payload.push(u8::from_str_radix(digits, 8).unwrap());
+                        at += 4;
+                    } else {
+                        payload.push(bytes[at]);
+                        at += 1;
+                    }
+                }
+            }
+        }
+    }
+    payload
 }
 
 /// The tables `render` wrote, read back from the generated C (tests).
@@ -353,27 +398,7 @@ impl Rendered {
         };
         let symbols = table("static const int64_t llg_vpi_pack_symbols[] = {\n");
         let refs = table("static const void* const llg_vpi_pack_refs[] = {\n");
-        let mut payload = Vec::new();
-        if let Some(start) = out.find("[LLG_VPI_PACK_ROW] = {\n") {
-            let body = &out[start..];
-            for line in body[..body.find("};\n").unwrap()].lines().skip(1) {
-                let line = line.trim();
-                if let Some(literal) = line.strip_prefix('"').and_then(|l| l.strip_suffix('"')) {
-                    let bytes = literal.as_bytes();
-                    let mut at = 0;
-                    while at < bytes.len() {
-                        if bytes[at] == b'\\' {
-                            let digits = std::str::from_utf8(&bytes[at + 1..at + 4]).unwrap();
-                            payload.push(u8::from_str_radix(digits, 8).unwrap());
-                            at += 4;
-                        } else {
-                            payload.push(bytes[at]);
-                            at += 1;
-                        }
-                    }
-                }
-            }
-        }
+        let payload = parse_rows(out, "LLG_VPI_PACK_ROW");
         let value = out
             .lines()
             .find(|line| line.starts_with("static const llg_vpi_packed_t "))

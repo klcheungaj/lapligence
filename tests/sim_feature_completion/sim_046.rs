@@ -668,6 +668,55 @@ fn vpi_reads_and_controls_assertion_coverage() {
     );
 }
 
+/// A19-D46 with shared bodies: the five `leaf` instances run one shared
+/// `always` body that counts in the model-wide counter array from its
+/// instance record's base. Coverage started, stopped and reset per instance
+/// through `vpi_control` after time 0 counts each instance's own
+/// statements only, from its START on.
+#[test]
+fn vpi_started_statement_coverage_counts_per_shared_instance() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/sim/feature_completion/sim_046/vpi_shared_start.sv");
+    let compiled = llg::core::compile::compile_checked(&llg::core::compile::CompileOpts {
+        files: vec![path.to_string_lossy().into_owned()],
+        top: Some("tb".to_owned()),
+        system_subroutines: vec!["task $cov_phase(input int phase)".to_owned()],
+        ..Default::default()
+    })
+    .expect("vpi_shared_start compiles");
+    let db = llg::core::db::Db::from_slang(&compiled.snapshot).expect("owned database");
+    let c = llg::sim::codegen::generate_from_db_with_codegen_options(
+        &db,
+        &llg::sim::codegen::CodegenOptions {
+            vpi: true,
+            ..Default::default()
+        },
+    )
+    .expect("vpi_shared_start emits")
+    .model_c;
+    assert!(
+        c.contains("++llg_scov[I->"),
+        "the shared body counts from its instance base"
+    );
+    let directory =
+        super::sim_harness::TempDir::new("sim046-vpi-shared").expect("temporary directory");
+    let Some(library) = super::sim_040::plugin_library(SUITE, &directory, "vpi_shared_start", &[])
+    else {
+        return;
+    };
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "vpi_shared_start",
+        include_str!("../fixtures/sim/feature_completion/sim_046/vpi_shared_start.out"),
+        &[
+            "--vpi",
+            "--define-system-task",
+            "task $cov_phase(input int phase)",
+        ],
+        &[("LLG_VPI_PLUGIN", &library)],
+    );
+}
+
 /// S46-D13: the statement counters leave the code they count unchanged: a
 /// unique-if ladder reports both true conditions, a disabled named block
 /// forming a whole fork branch ends it KILLED, the helper that a continuous
@@ -703,7 +752,7 @@ fn statement_counters_keep_the_shape_of_the_counted_code() {
         let c = llg::sim::codegen::generate_from_db_with_opts(&db, &options)
             .expect("statement_shapes emits")
             .model_c;
-        assert!(c.contains("++llg_scov_"), "the model counts statements");
+        assert!(c.contains("++llg_scov["), "the model counts statements");
         assert!(
             c.lines()
                 .any(|line| line.contains("llg_value_scope_register(") && line.contains("&F->")),

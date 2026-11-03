@@ -175,19 +175,6 @@ fn registry(
             registry.insert(name.clone(), Operand::pointer(&ty, ty.clone(), &name));
         }
     }
-    // Statement coverage counters (40.2.2): each instance's body counts in
-    // its own entities, so the counters are operands.
-    for entity in 0..model
-        .assertion_coverage
-        .as_ref()
-        .map_or(0, |table| table.statements.len())
-    {
-        let name = super::super::owned::coverage::statement_counter(entity as u32);
-        registry.insert(
-            name.clone(),
-            Operand::pointer("uint64_t", "statement counter".to_owned(), &name),
-        );
-    }
     for event in &model.events {
         if !event.is_array() {
             registry.insert(
@@ -384,6 +371,37 @@ fn quoted_end(bytes: &[u8], mut index: usize) -> usize {
     bytes.len()
 }
 
+/// The entity of a statement counter access `<counters>[<entity>]` whose
+/// name ends at `index`, and the index after its `]`.
+fn statement_counter_at(bytes: &[u8], index: usize) -> Option<(u32, usize)> {
+    let digits = bytes.get(index + 1..)?;
+    let length = digits
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    if bytes.get(index) != Some(&b'[') || length == 0 || digits.get(length) != Some(&b']') {
+        return None;
+    }
+    let entity = std::str::from_utf8(&digits[..length]).ok()?.parse().ok()?;
+    Some((entity, index + 1 + length + 1))
+}
+
+/// The lowest statement counter entity `source` names, if any. A body's
+/// counter accesses become `counters[base + offset]` with this as the
+/// instance-record base: instances whose bodies count the same statements
+/// at the same relative entities share one body and one record field.
+fn statement_counter_base(source: &str, counters: &str) -> Option<u32> {
+    let bytes = source.as_bytes();
+    source
+        .match_indices(counters)
+        .filter(|(at, _)| {
+            *at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_')
+        })
+        .filter_map(|(at, _)| statement_counter_at(bytes, at + counters.len()))
+        .map(|(entity, _)| entity)
+        .min()
+}
+
 /// These are compiler-owned operands, never arbitrary C supplied through IR.
 fn normalize(
     source: &str,
@@ -422,6 +440,9 @@ fn normalize(
     let mut index = 0;
     let mut arguments: Vec<(String, usize)> = Vec::new();
     let mut last_word = String::new();
+    let counters = super::super::owned::coverage::statement_counters();
+    let counter_base = statement_counter_base(&source, counters);
+    let mut counter_slot = None;
     while index < bytes.len() {
         let start = index;
         let mut operand = None;
@@ -442,6 +463,29 @@ fn normalize(
             index = word_end(bytes, index);
             let word = &source[start..index];
             last_word = word.to_owned();
+            if let (true, Some(base), Some((entity, end))) = (
+                word == counters,
+                counter_base,
+                statement_counter_at(bytes, index),
+            ) {
+                // Statement coverage (40.2.2): one base per body, so a
+                // shared record carries one integer, not a counter
+                // pointer per statement.
+                let slot = *counter_slot.get_or_insert_with(|| {
+                    operands.push(scalars.operand("uint32_t", &format!("{base}u")));
+                    operands.len() - 1
+                });
+                match entity - base {
+                    0 => out.push_str(&format!("{word}[llg_body_operand_{slot}]")),
+                    // Size arithmetic: the offset folds into the address
+                    // displacement (a 32-bit sum would have to wrap).
+                    offset => out.push_str(&format!(
+                        "{word}[(size_t)llg_body_operand_{slot} + {offset}u]"
+                    )),
+                }
+                index = end;
+                continue;
+            }
             if let Some(label) = labels.get(word) {
                 out.push_str(label);
                 continue;
@@ -1172,5 +1216,64 @@ mod tests {
         assert!(Rc::ptr_eq(&first.operands[0].kind, &first.operands[3].kind));
         assert_eq!(first.operands[1].shape(), "const char*");
         assert_eq!(first.operands[1].access(), "I->@");
+    }
+
+    #[test]
+    fn statement_counters_share_one_base_per_body() {
+        let registry = HashMap::new();
+        let constants = HashMap::new();
+        let mut scalars = ScalarOperands::default();
+        let body = |name: &str, entities: [u32; 3]| {
+            format!(
+                "static void {name}(void) {{\n    ++llg_scov[{}];\n    ++llg_scov[{}];\n    if (x) ++llg_scov[{}];\n    ++xllg_scov[3];\n}}\n",
+                entities[0], entities[1], entities[2]
+            )
+        };
+        let mut normalize_body = |name: &str, entities| {
+            normalize(
+                &body(name, entities),
+                name,
+                false,
+                &registry,
+                &constants,
+                &mut scalars,
+            )
+            .unwrap()
+        };
+        // Bodies of two instances: the same statements at a different base.
+        let first = normalize_body("p_0", [12, 10, 13]);
+        let second = normalize_body("p_1", [22, 20, 23]);
+        assert_eq!(first.source, second.source);
+        assert!(first
+            .source
+            .contains("++llg_scov[(size_t)llg_body_operand_0 + 2u];"));
+        assert!(first.source.contains("++llg_scov[llg_body_operand_0];"));
+        assert!(first
+            .source
+            .contains("++llg_scov[(size_t)llg_body_operand_0 + 3u];"));
+        // Other words are left alone.
+        assert!(first.source.contains("++xllg_scov[3];"));
+        let values = |normalized: &Normalized| {
+            normalized
+                .operands
+                .iter()
+                .map(|operand| (operand.declaration().to_owned(), operand.value.to_string()))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            values(&first),
+            [("uint32_t @".to_owned(), "10u".to_owned())]
+        );
+        assert_eq!(
+            values(&second),
+            [("uint32_t @".to_owned(), "20u".to_owned())]
+        );
+        // Different relative entities never share a body.
+        let third = normalize_body("p_2", [31, 30, 34]);
+        assert_ne!(first.source, third.source);
+        assert_eq!(statement_counter_base("++llg_scov[];", "llg_scov"), None);
+        assert_eq!(statement_counter_at(b"llg_scov[7]", 8), Some((7, 11)));
+        assert_eq!(statement_counter_at(b"llg_scov[7", 8), None);
+        assert_eq!(statement_counter_at(b"llg_scov[x]", 8), None);
     }
 }

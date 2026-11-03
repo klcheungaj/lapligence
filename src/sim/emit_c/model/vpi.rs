@@ -3,7 +3,7 @@
 use super::*;
 
 mod dynamic;
-mod pack;
+pub(in crate::sim::emit_c) mod pack;
 use crate::sim::ir::{
     IrSdfTarget, IrVpiArgRef, IrVpiCode, IrVpiCompileCall, IrVpiConn, IrVpiConstant,
     IrVpiContainer, IrVpiInstance, IrVpiObject, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind,

@@ -4146,11 +4146,14 @@ size_t llg_fcov_covered_in(int32_t instance);
  * Present only in a model generated with them (decision S46-D13): a
  * `$coverage_*` call names the kind, or the model keeps the VPI catalog.
  *
- * Statement coverage: one generated row per statement entity. Its counter
- * is model storage that the statement's code increments each time the
- * statement starts; llg_scov_model binds the table before any process runs
- * and keeps per-entity offsets, so STOP, START, RESET and merges never
- * touch the generated code and a stopped entity costs the same increment.
+ * Statement coverage: one generated counter per statement entity, all in
+ * one model array (`llg_scov[entity]`) that the statement's code increments
+ * each time the statement starts; llg_scov_model binds it before any
+ * process runs and keeps per-entity offsets, so STOP, START, RESET and
+ * merges never touch the generated code and a stopped entity costs the
+ * same increment. The entities' source positions, instances and VPI code
+ * rows are packed (llg_scov_packed_t) and decoded on the first query that
+ * needs them.
  *
  * Toggle coverage: one generated row per packed net or variable of an
  * instance (decision S46-D14). llg_tcov_model (after the storage
@@ -4159,14 +4162,22 @@ size_t llg_fcov_covered_in(int32_t instance);
  * 0/1 sightings and their 0->1 / 1->0 counts. A stopped signal drops its
  * watch, so a model whose toggle coverage never starts pays nothing per
  * publication. */
-typedef struct llg_scov_item {
-    uint64_t* count;      /* generated counter: executions since model start */
-    const char* file;     /* source file; "" when unknown */
-    uint32_t line;
-    uint32_t column;
-    uint32_t code;        /* VPI statement object (llg_vpi_code_t row + 1), 0: none */
-    int32_t instance;     /* owning instance index, -1 for $root */
-} llg_scov_item_t;
+/* The packed statement entity table: `chunk_count` rows of
+ * LLG_SCOV_PACK_ROW bytes, each LLG_SCOV_PACK_ROW - 1 payload bytes and a
+ * NUL; its payload is a string pool of `pool_bytes` (NUL-terminated file
+ * names) followed by the item stream (`item_bytes`), in the varint
+ * alphabet of the VPI catalog blob (io.md). Per entity: the file (0: the
+ * previous entity's, else pool offset + 1), then zigzag deltas from the
+ * previous entity of the line, the column, the VPI code row + 1 (0: none)
+ * and the instance (-1: $root); the first entity's predecessor is all zero
+ * with instance -1. Layout written by src/sim/emit_c/owned/coverage.rs. */
+#define LLG_SCOV_PACK_ROW 4096u
+typedef struct llg_scov_packed {
+    const char* chunks;
+    uint32_t chunk_count;
+    uint64_t pool_bytes;
+    uint64_t item_bytes;
+} llg_scov_packed_t;
 
 typedef struct llg_tcov_signal {
     sv4_t* storage;       /* the signal's packed storage */
@@ -4179,7 +4190,10 @@ typedef struct llg_tcov_signal {
 /* `started` is nonzero when the design requests the kind (40.3.2.1:
  * coverage starts at the beginning of simulation); otherwise it stays
  * available but stopped until a START. */
-void llg_scov_model(const llg_scov_item_t* items, size_t n_items, int started);
+/* `counters` holds `n_items` counters (the runtime zeroes them: a model
+ * started again restarts at 0); `items` describes them. */
+void llg_scov_model(uint64_t* counters, size_t n_items, const llg_scov_packed_t* items,
+                    int started);
 void llg_tcov_model(const llg_tcov_signal_t* signals, size_t n_signals, int started);
 /* The VPI bridge (llg_vpi.c, 40.5.3). Statement entities: the entity a VPI
  * statement object (code row) stands for, or -1; its execution count while

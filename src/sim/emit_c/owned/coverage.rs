@@ -2,10 +2,11 @@
 //! the statements and queries that drive `coverage/coverage.c`.
 use super::native::NativeKind;
 use super::*;
+use crate::sim::emit_c::model::vpi::pack::{render_rows, Pack};
 use crate::sim::ir::{
     IrCoverAutomatic, IrCoverBinShape, IrCoverBound, IrCoverCount, IrCoverCross,
     IrCoverTransitions, IrCoverageApiCall, IrCoverageQuery, IrCoverageScope, IrCoverageStmt,
-    IrCoverageTextQuery, IrFsmExpression, IrPlusArgTarget,
+    IrCoverageTextQuery, IrFsmExpression, IrPlusArgTarget, IrStatementItem,
 };
 
 fn group_name(group: usize) -> String {
@@ -558,10 +559,16 @@ pub(in crate::sim::emit_c) fn fsm_tables(model: &IrModel, out: &mut String) {
     ));
 }
 
+/// The model-wide statement counter array: entity `k` counts in
+/// `llg_scov[k]`, so a shared body indexes it with one instance-record base.
+const STATEMENT_COUNTERS: &str = "llg_scov";
+
 /// The statement coverage counters and entity table (IEEE 1800-2009
-/// 40.2.2): one `uint64_t` per statement entity, which the statement's
-/// generated code increments, and a row per entity naming its counter.
-/// Emitted before the bodies that count; empty without statement coverage.
+/// 40.2.2): one `uint64_t` per statement entity in one array, which the
+/// statement's generated code increments, and the entities' positions
+/// packed into a blob the runtime decodes on the first coverage query
+/// (`llg_scov_packed_t`). Emitted before the bodies that count; empty
+/// without statement coverage.
 pub(in crate::sim::emit_c) fn statement_tables(model: &IrModel, out: &mut String) {
     let Some(table) = &model.assertion_coverage else {
         return;
@@ -569,24 +576,52 @@ pub(in crate::sim::emit_c) fn statement_tables(model: &IrModel, out: &mut String
     if table.statements.is_empty() {
         return;
     }
-    let index = |instance: Option<u32>| instance.map_or(-1, i64::from);
-    let mut rows = Vec::with_capacity(table.statements.len());
-    for (entity, item) in table.statements.iter().enumerate() {
-        let counter = statement_counter(entity as u32);
-        out.push_str(&format!("static uint64_t {counter};\n"));
-        rows.push(format!(
-            "{{ &{counter}, {}, {}u, {}u, {}u, {} }}",
-            c_string_literal(&item.file),
-            item.line,
-            item.column,
-            item.code.map_or(0, |code| u64::from(code) + 1),
-            index(item.instance)
-        ));
-    }
     out.push_str(&format!(
-        "static const llg_scov_item_t llg_model_scov_items[] = {{\n    {}\n}};\n",
-        rows.join(",\n    ")
+        "static uint64_t {STATEMENT_COUNTERS}[{}];\n",
+        table.statements.len()
     ));
+    let mut pack = Pack::default();
+    encode_statement_items(&table.statements, &mut pack);
+    let items = pack.take_stream();
+    let mut payload = Vec::with_capacity(pack.pool().len() + items.len());
+    payload.extend_from_slice(pack.pool());
+    payload.extend_from_slice(&items);
+    let (chunks, rows) = render_rows(&payload, "llg_scov_pack_chunks", "LLG_SCOV_PACK_ROW", out);
+    out.push_str(&format!(
+        "static const llg_scov_packed_t llg_scov_pack = {{ {chunks}, {rows}u, UINT64_C({}), UINT64_C({}) }};\n",
+        pack.pool().len(),
+        items.len()
+    ));
+}
+
+/// The item stream of the statement entities, in entity order (decoded by
+/// `llg_scov_unpack` in `coverage/code.c`). Per entity: the file as 0
+/// (the previous entity's) or its pool offset + 1, then zigzag deltas of
+/// the line, the column, the VPI code row + 1 (0: none) and the instance
+/// (-1: `$root`) from the previous entity, which starts at all zero and
+/// instance -1. Consecutive entities of one body mostly share their file
+/// and instance and have nearby lines, so most fields are one character.
+pub(in crate::sim::emit_c) fn encode_statement_items(items: &[IrStatementItem], pack: &mut Pack) {
+    let mut file: Option<&str> = None;
+    let (mut line, mut column, mut code, mut instance) = (0i64, 0i64, 0i64, -1i64);
+    for item in items {
+        if file == Some(item.file.as_str()) {
+            pack.uint(0);
+        } else {
+            pack.string(Some(&item.file));
+            file = Some(&item.file);
+        }
+        let next_code = item.code.map_or(0, |code| i64::from(code) + 1);
+        let next_instance = item.instance.map_or(-1, i64::from);
+        pack.int(i64::from(item.line) - line);
+        pack.int(i64::from(item.column) - column);
+        pack.int(next_code - code);
+        pack.int(next_instance - instance);
+        line = i64::from(item.line);
+        column = i64::from(item.column);
+        code = next_code;
+        instance = next_instance;
+    }
 }
 
 /// The toggle coverage signal table (IEEE 1800-2009 40.2.2): per packed
@@ -697,7 +732,7 @@ pub(in crate::sim::emit_c) fn startup(model: &IrModel) -> String {
         // Before any process runs: every statement counts from here.
         if !table.statements.is_empty() {
             out.push_str(&format!(
-                "    llg_scov_model(llg_model_scov_items, {}u, {});\n",
+                "    llg_scov_model({STATEMENT_COUNTERS}, {}u, &llg_scov_pack, {});\n",
                 table.statements.len(),
                 u8::from(table.statement_started)
             ));
@@ -706,9 +741,16 @@ pub(in crate::sim::emit_c) fn startup(model: &IrModel) -> String {
     out
 }
 
-/// The model storage that counts statement entity `entity`.
+/// The model storage that counts statement entity `entity`. Body sharing
+/// (`model/sharing.rs`) recognizes this form: a shared body indexes the
+/// array from an instance-record base.
 pub(in crate::sim::emit_c) fn statement_counter(entity: u32) -> String {
-    format!("llg_scov_{entity}")
+    format!("{STATEMENT_COUNTERS}[{entity}]")
+}
+
+/// The name of the statement counter array (`model/sharing.rs`).
+pub(in crate::sim::emit_c) fn statement_counters() -> &'static str {
+    STATEMENT_COUNTERS
 }
 
 fn point_index(point: Option<u32>) -> String {
@@ -1175,5 +1217,127 @@ impl Frame<'_, '_> {
             ),
         };
         Ok(self.native_value(NativeKind::String, code))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::emit_c::model::vpi::pack::{parse_rows, Reader, PACK_ROW};
+
+    fn item(
+        file: &str,
+        line: u32,
+        column: u32,
+        code: Option<u32>,
+        instance: Option<u32>,
+    ) -> IrStatementItem {
+        IrStatementItem {
+            identity: 0,
+            instance,
+            file: file.to_owned(),
+            line,
+            column,
+            code,
+        }
+    }
+
+    /// Mirror of `llg_scov_unpack` in `coverage/code.c`.
+    fn decode(pool: &[u8], stream: &[u8], n: usize) -> Vec<(String, u32, u32, u32, i32)> {
+        let mut reader = Reader {
+            bytes: stream,
+            at: 0,
+        };
+        let mut file = None;
+        let (mut line, mut column, mut code, mut instance) = (0i64, 0i64, 0i64, -1i64);
+        let mut items = Vec::new();
+        for _ in 0..n {
+            let offset = reader.uint().unwrap() as usize;
+            if offset != 0 {
+                let end = pool[offset - 1..]
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .unwrap();
+                file =
+                    Some(String::from_utf8(pool[offset - 1..offset - 1 + end].to_vec()).unwrap());
+            }
+            line += reader.int().unwrap();
+            column += reader.int().unwrap();
+            code += reader.int().unwrap();
+            instance += reader.int().unwrap();
+            items.push((
+                file.clone().unwrap(),
+                u32::try_from(line).unwrap(),
+                u32::try_from(column).unwrap(),
+                u32::try_from(code).unwrap(),
+                i32::try_from(instance).unwrap(),
+            ));
+        }
+        assert_eq!(reader.at, stream.len(), "the stream is consumed exactly");
+        items
+    }
+
+    #[test]
+    fn statement_items_round_trip_through_the_blob() {
+        let mut items = vec![
+            item("", 0, 0, None, None),
+            item("a/top.sv", 12, 5, Some(0), Some(0)),
+            item("a/top.sv", 11, 9, Some(7), Some(0)),
+            item(
+                "b/leaf.sv",
+                u32::MAX,
+                u32::MAX,
+                Some(u32::MAX - 1),
+                Some(i32::MAX as u32),
+            ),
+            item("a/top.sv", 0, 1, None, None),
+        ];
+        // Enough entities to span several blob rows.
+        for k in 0..3000u32 {
+            items.push(item(
+                "q\"uote\\??.sv",
+                40 + k % 7,
+                3,
+                Some(k * 9),
+                Some(k / 3),
+            ));
+        }
+        let mut pack = Pack::default();
+        encode_statement_items(&items, &mut pack);
+        let stream = pack.take_stream();
+        let mut out = String::new();
+        let (chunks, rows) = render_rows(
+            &[pack.pool(), &stream].concat(),
+            "llg_scov_pack_chunks",
+            "LLG_SCOV_PACK_ROW",
+            &mut out,
+        );
+        assert_eq!(chunks, "&llg_scov_pack_chunks[0][0]");
+        assert!(rows > 1);
+        let payload = parse_rows(&out, "LLG_SCOV_PACK_ROW");
+        let (pool, stream) = payload.split_at(pack.pool().len());
+        let decoded = decode(pool, stream, items.len());
+        for (item, decoded) in items.iter().zip(&decoded) {
+            assert_eq!(
+                (
+                    item.file.clone(),
+                    item.line,
+                    item.column,
+                    item.code.map_or(0, |code| code + 1),
+                    item.instance.map_or(-1, |instance| instance as i32)
+                ),
+                *decoded
+            );
+        }
+        // Repeated files and nearby lines take one character per field.
+        assert!(stream.len() < items.len() * 7);
+    }
+
+    #[test]
+    fn statement_row_width_matches_the_runtime_header() {
+        let header = include_str!("../../rt/llg_rt.h");
+        assert!(header.contains(&format!("#define LLG_SCOV_PACK_ROW {PACK_ROW}u")));
+        let runtime = include_str!("../../rt/coverage/code.c");
+        assert!(runtime.contains("The alphabet of src/sim/emit_c/model/vpi/pack.rs"));
     }
 }

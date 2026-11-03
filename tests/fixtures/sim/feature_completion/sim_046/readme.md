@@ -437,6 +437,38 @@ L66756-66771.
   0 with no error (A19-D46). vpiCoverageSave and vpiCoverageMerge of the same
   file return 1, after which `u2.p` reads (6, 4, 0, 2, 0, 0).
 
+## vpi_shared_start.sv and vpi_shared_start.c
+
+A run-time VPI application called as `$cov_phase(k)` in a model built with
+`--vpi`: statement coverage is available and stopped (A19-D46: no
+`$coverage_*` call).
+The five `leaf` instances share one `always` body (instance body sharing),
+which the test checks in the generated C (`++llg_scov[I->`). Clauses:
+40.3.2.1 L66123-66127: "`SV_COV_START, if possible, starts collecting
+coverage information in the specified hierarchy. ... `SV_COV_STOP stops
+collecting coverage information in the specified hierarchy. ...
+`SV_COV_RESET resets all available coverage information in the specified
+hierarchy."; 40.5.3 L66585-66586: "vpi_get(<coverageType>,
+instance_handle) returns the number of covered items of the given coverage
+type in the given instance."; L66723-66725: "When the handle points to an
+item containing multiple coverable entities ... the result is the sum of
+coverage counts for each of the constituent entities."; 40.5.4
+L66769-66770: statement coverage is "controllable only at the instance
+level".
+
+Each `leaf` has 5 statements: the event control, the block, `n++`, the `if`
+and `n = 0`. Per `go` edge `n` goes 1, 2, 3 (then `n = 0`), 1, 2, 3 ...:
+the first four statements run on every edge, `n = 0` on edges 3 and 6.
+The event control's vpiCoveredCount sums all five.
+
+- Phase 0 (time 0): nothing counted; START `u1`, `u3` (1).
+- Phase 1 (after edges 1-3): `u1`, `u3` 5/5 covered, count 4 x 3 + 1 = 13;
+  the others 0. STOP `u1`, START `u4` (1).
+- Phase 2 (after edges 4-5): `u1` keeps 13; `u3` 13 + 8 = 21; `u4` counted
+  edges 4-5 only: 4 covered (not `n = 0`), count 8. RESET `u3` (1).
+- Phase 3 (after edge 6, which runs `n = 0`): `u3` counts edge 6 only: 5,
+  5 covered; `u4` 8 + 5 = 13, 5 covered; `u0`, `u2` never started: 0.
+
 ## Negative cases
 
 | Fixture | Rejected construct | Owner |

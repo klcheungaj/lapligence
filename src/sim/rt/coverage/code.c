@@ -1,11 +1,15 @@
 // ── Statement and toggle coverage (IEEE 1800-2009 40.2.2, 40.3.2) ──────────
 //
 // Statement coverage (decision S46-D13): the generated model counts each
-// statement entity in its own `uint64_t` (one increment as the statement
-// starts). The runtime never writes those counters: an entity's coverage
-// count is its counter minus `base`, read at `mark` while stopped, so
-// START, STOP, RESET and merges are offsets kept here, and a stopped
-// entity costs its statement the same increment. Counts are modulo 2^64.
+// statement entity in its own element of one `uint64_t` array (one
+// increment as the statement starts). The runtime writes those counters
+// only to zero them when a model starts again: an entity's coverage count
+// is its counter minus `base`, read at `mark` while stopped, so START,
+// STOP, RESET and merges are offsets kept here, and a stopped entity costs
+// its statement the same increment. Counts are modulo 2^64. The offsets
+// exist only once a control or merge needs them (until then every entity
+// is as the model started it), and the packed entity table is decoded on
+// the first query that needs positions, instances or code rows.
 //
 // Toggle coverage (decision S46-D14): "for each bit of every signal ...
 // whether that bit has both a 0 value and a 1 value" (40.2.2). Each bit
@@ -28,43 +32,168 @@ typedef struct {
     uint8_t stopped;
 } llg_scov_state_t;
 
-static const llg_scov_item_t* llg_scov_items;
+// One decoded entity of the packed table (llg_scov_packed_t).
+typedef struct {
+    const char* file;     // source file (in llg_scov_pool); "" when unknown
+    uint32_t line;
+    uint32_t column;
+    uint32_t code;        // VPI statement object (llg_vpi_code_t row + 1), 0: none
+    int32_t instance;     // owning instance index, -1 for $root
+} llg_scov_item_t;
+
+static uint64_t* llg_scov_counts;
 static size_t llg_scov_n;
+static const llg_scov_packed_t* llg_scov_packed;
+static int llg_scov_started;
+// Per-entity offsets, NULL until the first control or merge.
 static llg_scov_state_t* llg_scov_states;
+// Decoded entities and their file names, NULL until first needed.
+static llg_scov_item_t* llg_scov_items;
+static char* llg_scov_pool;
 // (code row, entity) pairs sorted by code row, built on the first VPI query.
 static uint64_t* llg_scov_by_code;
 static size_t llg_scov_n_by_code;
 static int llg_scov_indexed;
 
-void llg_scov_model(const llg_scov_item_t* items, size_t n_items, int started) {
+void llg_scov_model(uint64_t* counters, size_t n_items, const llg_scov_packed_t* items,
+                    int started) {
     free(llg_scov_states);
+    free(llg_scov_items);
+    free(llg_scov_pool);
     free(llg_scov_by_code);
+    llg_scov_states = NULL;
+    llg_scov_items = NULL;
+    llg_scov_pool = NULL;
     llg_scov_by_code = NULL;
     llg_scov_n_by_code = 0;
     llg_scov_indexed = 0;
-    llg_scov_items = items;
-    llg_scov_n = items ? n_items : 0u;
-    llg_scov_states = llg_scov_n ? (llg_scov_state_t*)llg_checked_calloc(
-                                       llg_scov_n, sizeof(*llg_scov_states), "statement coverage")
-                                 : NULL;
-    // A model started again keeps its counters: coverage restarts at 0.
-    for (size_t i = 0; i < llg_scov_n; ++i) {
-        uint64_t now = *llg_scov_items[i].count;
-        llg_scov_states[i] = (llg_scov_state_t){now, now, (uint8_t)!started};
+    // A model started again restarts its coverage at 0; the first start
+    // finds its zero-initialized static counters untouched.
+    if (counters && counters == llg_scov_counts && llg_scov_n)
+        memset(counters, 0, llg_scov_n * sizeof(*counters));
+    llg_scov_counts = counters;
+    llg_scov_packed = items;
+    llg_scov_n = counters && items ? n_items : 0u;
+    llg_scov_started = started != 0;
+}
+
+// The offsets, created on first use as the model started them.
+static llg_scov_state_t* llg_scov_state_table(void) {
+    if (!llg_scov_states && llg_scov_n) {
+        llg_scov_states = (llg_scov_state_t*)llg_checked_calloc(
+            llg_scov_n, sizeof(*llg_scov_states), "statement coverage");
+        if (!llg_scov_started)
+            for (size_t i = 0; i < llg_scov_n; ++i) llg_scov_states[i].stopped = 1;
     }
+    return llg_scov_states;
+}
+
+// Reads the item stream of the packed table in place, one payload byte at a
+// time across its blob rows.
+typedef struct {
+    const char* chunks;
+    size_t pos;   // payload position
+    size_t end;   // payload position the stream ends at
+    int bad;
+} llg_scov_reader_t;
+
+#define LLG_SCOV_PAYLOAD (LLG_SCOV_PACK_ROW - 1u)
+
+static uint64_t llg_scov_get_uint(llg_scov_reader_t* r) {
+    uint64_t value = 0;
+    for (unsigned shift = 0; shift < 64u && r->pos < r->end; shift += 5u) {
+        size_t row = r->pos / LLG_SCOV_PAYLOAD;
+        unsigned char c = (unsigned char)
+            r->chunks[row * LLG_SCOV_PACK_ROW + (r->pos - row * LLG_SCOV_PAYLOAD)];
+        ++r->pos;
+        // The alphabet of src/sim/emit_c/model/vpi/pack.rs.
+        int digit = c >= 'A' && c <= 'Z'   ? c - 'A'
+                    : c >= 'a' && c <= 'z' ? c - 'a' + 26
+                    : c >= '0' && c <= '9' ? c - '0' + 52
+                    : c == '+'             ? 62
+                    : c == '/'             ? 63
+                                           : -1;
+        if (digit < 0) break;
+        value |= (uint64_t)(digit & 0x1f) << shift;
+        if (!(digit & 0x20)) return value;
+    }
+    r->bad = 1;
+    return 0;
+}
+
+// Add a zigzag delta to `value` (wrapping; the caller checks the range).
+static int64_t llg_scov_get_delta(llg_scov_reader_t* r, int64_t value) {
+    uint64_t zigzag = llg_scov_get_uint(r);
+    uint64_t delta = (zigzag >> 1) ^ (uint64_t)0 - (zigzag & 1u);
+    uint64_t sum = (uint64_t)value + delta;
+    return sum <= (uint64_t)INT64_MAX ? (int64_t)sum : -(int64_t)(~sum) - 1;
+}
+
+// Decode the packed entity table (llg_rt.h llg_scov_packed_t) once. Every
+// read is bounds-checked and the stream must be consumed exactly; the
+// generated table is always valid, so a corrupt one is a fatal error.
+static const llg_scov_item_t* llg_scov_unpack(void) {
+    if (llg_scov_items || !llg_scov_n) return llg_scov_items;
+    const llg_scov_packed_t* packed = llg_scov_packed;
+    uint64_t total = packed->pool_bytes + packed->item_bytes;
+    int bad = total < packed->pool_bytes || (packed->chunk_count && !packed->chunks) ||
+              total > (uint64_t)packed->chunk_count * LLG_SCOV_PAYLOAD ||
+              packed->pool_bytes >= SIZE_MAX;
+    if (!bad) {
+        // The pool is copied: a name may run across a blob row.
+        llg_scov_pool = (char*)llg_checked_malloc((size_t)packed->pool_bytes + 1u, 1u,
+                                                  "statement coverage");
+        for (size_t at = 0, row = 0; at < packed->pool_bytes; at += LLG_SCOV_PAYLOAD, ++row) {
+            size_t bytes = packed->pool_bytes - at < LLG_SCOV_PAYLOAD
+                               ? (size_t)(packed->pool_bytes - at)
+                               : (size_t)LLG_SCOV_PAYLOAD;
+            memcpy(llg_scov_pool + at, packed->chunks + row * LLG_SCOV_PACK_ROW, bytes);
+        }
+        llg_scov_pool[packed->pool_bytes] = '\0';
+        if (packed->pool_bytes && llg_scov_pool[packed->pool_bytes - 1u] != '\0') bad = 1;
+    }
+    if (!bad) {
+        llg_scov_items = (llg_scov_item_t*)llg_checked_malloc(llg_scov_n, sizeof(*llg_scov_items),
+                                                             "statement coverage");
+        llg_scov_reader_t r = {packed->chunks, (size_t)packed->pool_bytes, (size_t)total, 0};
+        const char* file = NULL;
+        int64_t line = 0, column = 0, code = 0, instance = -1;
+        for (size_t i = 0; i < llg_scov_n && !r.bad; ++i) {
+            uint64_t offset = llg_scov_get_uint(&r);
+            if (offset > packed->pool_bytes) r.bad = 1;
+            else if (offset) file = llg_scov_pool + (offset - 1u);
+            line = llg_scov_get_delta(&r, line);
+            column = llg_scov_get_delta(&r, column);
+            code = llg_scov_get_delta(&r, code);
+            instance = llg_scov_get_delta(&r, instance);
+            if (!file || line < 0 || line > UINT32_MAX || column < 0 || column > UINT32_MAX ||
+                code < 0 || code > UINT32_MAX || instance < -1 || instance > INT32_MAX)
+                r.bad = 1;
+            else
+                llg_scov_items[i] = (llg_scov_item_t){file, (uint32_t)line, (uint32_t)column,
+                                                      (uint32_t)code, (int32_t)instance};
+        }
+        bad = r.bad || r.pos != r.end;
+    }
+    if (bad) {
+        fprintf(stderr, "llg: fatal: invalid statement coverage table\n");
+        abort();
+    }
+    return llg_scov_items;
 }
 
 static uint64_t llg_scov_value(size_t entity) {
+    if (!llg_scov_states) return llg_scov_started ? llg_scov_counts[entity] : 0u;
     const llg_scov_state_t* state = &llg_scov_states[entity];
-    uint64_t raw = state->stopped ? state->mark : *llg_scov_items[entity].count;
+    uint64_t raw = state->stopped ? state->mark : llg_scov_counts[entity];
     return raw - state->base;
 }
 
 uint64_t llg_scov_hits(size_t entity) { return entity < llg_scov_n ? llg_scov_value(entity) : 0u; }
 
 static void llg_scov_control(size_t entity, uint32_t operation) {
-    llg_scov_state_t* state = &llg_scov_states[entity];
-    uint64_t now = *llg_scov_items[entity].count;
+    llg_scov_state_t* state = &llg_scov_state_table()[entity];
+    uint64_t now = llg_scov_counts[entity];
     if (operation == LLG_SV_COV_START && state->stopped) {
         state->base += now - state->mark;
         state->stopped = 0;
@@ -81,9 +210,10 @@ static void llg_scov_control(size_t entity, uint32_t operation) {
 static llg_ccov_tally_t llg_scov_scope(int hier, int32_t scope, const char* definition,
                                        uint32_t operation) {
     llg_ccov_tally_t tally = {0, 0};
+    const llg_scov_item_t* items = llg_scov_unpack();
     for (size_t i = 0; i < llg_scov_n; ++i) {
-        if (!llg_acov_in_scope(llg_scov_items[i].instance, hier, scope, definition)) continue;
-        llg_scov_control(i, operation);
+        if (!llg_acov_in_scope(items[i].instance, hier, scope, definition)) continue;
+        if (operation != UINT32_MAX) llg_scov_control(i, operation);
         tally.items++;
         tally.covered += llg_scov_value(i) != 0;
     }
@@ -102,14 +232,15 @@ static int llg_scov_code_compare(const void* left, const void* right) {
 int64_t llg_scov_at_code(uint32_t code_row) {
     if (!llg_scov_indexed) {
         llg_scov_indexed = 1;
-        for (size_t i = 0; i < llg_scov_n; ++i) llg_scov_n_by_code += llg_scov_items[i].code != 0;
+        const llg_scov_item_t* items = llg_scov_unpack();
+        for (size_t i = 0; i < llg_scov_n; ++i) llg_scov_n_by_code += items[i].code != 0;
         if (llg_scov_n_by_code) {
             llg_scov_by_code = (uint64_t*)llg_checked_malloc(
                 llg_scov_n_by_code, sizeof(*llg_scov_by_code), "statement coverage");
             size_t at = 0;
             for (size_t i = 0; i < llg_scov_n; ++i)
-                if (llg_scov_items[i].code)
-                    llg_scov_by_code[at++] = ((uint64_t)(llg_scov_items[i].code - 1u) << 32) | i;
+                if (items[i].code)
+                    llg_scov_by_code[at++] = ((uint64_t)(items[i].code - 1u) << 32) | i;
             qsort(llg_scov_by_code, llg_scov_n_by_code, sizeof(*llg_scov_by_code),
                   llg_scov_code_compare);
         }
@@ -148,8 +279,9 @@ static const char* llg_ccov_base_name(const char* file) {
 static uint64_t llg_scov_schema_hash(void) {
     uint64_t hash = LLG_COV_FNV_OFFSET;
     llg_cov_fnv_u64(&hash, (uint64_t)llg_scov_n);
+    const llg_scov_item_t* items = llg_scov_unpack();
     for (size_t i = 0; i < llg_scov_n; ++i) {
-        const llg_scov_item_t* item = &llg_scov_items[i];
+        const llg_scov_item_t* item = &items[i];
         llg_cov_fnv_text(&hash, llg_ccov_instance_path(item->instance));
         llg_cov_fnv_text(&hash, llg_ccov_base_name(item->file));
         llg_cov_fnv_u64(&hash, item->line);
@@ -180,7 +312,7 @@ static const char* llg_scov_merge_section(const llg_cov_db_file_t* db) {
     for (size_t i = 0; i < llg_scov_n; ++i) {
         uint64_t value = 0;
         (void)llg_cov_get_u64(&reader, &value);
-        llg_scov_states[i].base -= value;
+        llg_scov_state_table()[i].base -= value;
     }
     return NULL;
 }

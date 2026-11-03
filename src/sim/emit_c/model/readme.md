@@ -128,6 +128,11 @@ structural; they share a body with the instance record passed as the set's
 condition context. Net driver slots (`.drivers[slot]`, the slot argument of
 `llg_net_write*`, `llg_nba_net_*` and `llg_inertial_*net`) and an SDF-annotated
 gate's `llg_sdf_gate_delays` index are identity operands of every body.
+Statement coverage counters are elements of one model array
+(`llg_scov[entity]`): a body's accesses become `llg_scov[base + offset]`
+with its lowest entity as one `uint32_t` record field, so instances whose
+bodies count the same statements at the same relative entities share the
+body (the offsets are part of its normalized source).
 A coroutine process's per-site mutable state (inertial handles, sparse-array
 handle keys, delayed batch handles) is a file-scope object named after the
 process (`Frame::site_static`), registered as a pointer operand, so instances
