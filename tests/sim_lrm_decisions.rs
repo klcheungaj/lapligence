@@ -4989,3 +4989,11 @@ fn r14_d1_chandle_inside() {
         include_str!("fixtures/sim/lrm_decisions/R14-D1_chandle_inside.out"),
     );
 }
+
+#[test]
+fn s06_d1_nested_element_invalid_index() {
+    run_decision(
+        "S06-D1_nested_element_invalid_index",
+        include_str!("fixtures/sim/lrm_decisions/S06-D1_nested_element_invalid_index.out"),
+    );
+}

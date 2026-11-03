@@ -1048,6 +1048,12 @@ input grammar is ADV-011. Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | --- | --- | --- | --- | --- |
 | R14-D1 | **`inside` over chandles.** A chandle selector or set item is compared with `==`, as class handles are: null matches null and two chandles match when they name the same C pointer. | 11.4.13 L15363, L15376; 6.14 L5576-5577 | `R14-D1_chandle_inside` | industry-standard behaviour (11.4.13 defines nonintegral membership through `==`, which 6.14 allows on chandles, but 6.14 does not list `inside` among the valid chandle operators) |
 
+## Invalid indices of nested containers (FIN-001 follow-up)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S06-D1 | **An out-of-range element of a container of containers is an invalid index.** A method call (`qq[7].push_back(x)`, `delete`, `insert`), a whole write (`qq[7] = t`) or an element write (`qq[7][0] = 5`) on an element of a queue or dynamic array of containers past its current size does nothing; a read of it (`qq[7].size()`, `qq[7].pop_front()`, `qq[7][0]`) returns the default of its type. The run continues. | 7.4.6 L8235-8238; 7.10 L8979-8980 | `S06-D1_nested_element_invalid_index` | LRM text. Some simulators stop with a fatal error at any use of such an element; llg follows the clause text because 7.4.6 states that a read with an invalid index returns the default and a write performs no operation |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named
