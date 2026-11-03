@@ -3,11 +3,12 @@
 //! The bit-level alias graph, type plan and partitioner cost memory and time
 //! per bit, and every published cell costs an electrical group, a declared
 //! view and generated C. Only *connected* cells need that: cells that a
-//! structural driver, a true alias, a selected inout connection or a
+//! structural driver, a true alias, a selected inout connection, a selected
+//! input port that always merges with them (a dominating cell type) or a
 //! force/release target reaches, plus every whole-array inout peer of such a
 //! cell. Every other cell, with all of its whole-array inout peers, is an
-//! undriven net: its value is the constant fill of its effective net type and
-//! it never changes, so it becomes part of an `IrNetCellRun` instead.
+//! undriven net: its value is the constant fill of its effective net type
+//! and it never changes, so it becomes part of an `IrNetCellRun` instead.
 //!
 //! Effective types still follow the dissimilar-port collapse rules. Undriven
 //! classes with the same shape (member arrays, relative cell offsets and
@@ -339,6 +340,9 @@ impl Codegen<'_> {
                     vec![*lhs]
                 }
                 NodeKind::ContAssign { .. } | NodeKind::Gate { .. } | NodeKind::Port { .. } => {
+                    // An input port that may merge with its selected actual
+                    // (`nets/port_merges.rs`) reaches the cells it reads.
+                    mark_bits(plan, &self.input_merge_cells(*id));
                     self.structural_source_targets(*id)
                 }
                 _ => continue,

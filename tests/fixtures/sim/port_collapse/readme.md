@@ -2,7 +2,7 @@
 
 Run by `tests/sim_port_collapse.rs` in both optimizer modes. Structural
 checks (link processes, resolved nets) are in the same file; the decision
-cases are `A21-D1`..`A21-D4` in `tests/fixtures/sim/lrm_decisions/`.
+cases are `A21-D1`..`A21-D5` in `tests/fixtures/sim/lrm_decisions/`.
 
 Clauses (SystemVerilog-1800-2009.txt):
 
@@ -74,17 +74,55 @@ output, since a model that keeps the VPI catalog merges these ports too.
   the force through the parent's name reaching the child's name.
 - `x=0: c=0 u0.n=0 vec=0000 u2.v=0000`: both sides now drive 0.
 
+## `merged_selects.sv`
+
+Net ports whose actual is a constant bit or part select, a net-array element
+(or a part of one) or a concatenation of nets merge with their formal bit by
+bit, MSB to MSB, where a copy would show something else (A21-D5, 23.3.3 and
+23.3.3.7: the connected bits become one simulated net). The output is the same with `--vpi` and in both optimizer
+modes.
+
+- `bit select: v=1xx1 u0.n=x StX`: the child drives its input `n` with 0, the
+  parent drives `v[1]` with 1; the merged bit is x under both names. Bit 2 is
+  x too because `u14.g` drives the input below `u14.m` (`chain` line).
+- `disjoint and overlapping: o=x1xx u1.n=x u2.n=x u3.n=1x`: `u1` merges with
+  `o[0]` and `u2` with `o[3]`, each driving 0 against the parent's 1; `u3`
+  merges with `o[2:1]` and drives only its bit 0 (`o[1]`), so `o[2]` keeps the
+  parent's 1.
+- `pulled bit: t=11 u4.n=1 Pu1`: the formal of the undriven `tri1` bit shows
+  the pull strength, which a copy would turn into a strong 1.
+- `tri0 formal: d=z0zz Pu0 u5.n=Pu0`: the internal `tri0` dominates the
+  external `wire` bit (Table 23-1 "internal"), so `d[2]` is pulled down.
+- `array element: w0=1 w1=x u6.n=x`: the child's 0 on the formal of `w[1]`
+  meets the parent's 1; `w[0]` is unaffected.
+- `array element part: wa0=111x u7.n=1x`: bit 0 of `wa[0]` meets the child's
+  0 on `n[0]`.
+- `concatenation: c=1 e=x u8.n=1x`: `{c, e}` pairs `c` with `n[1]` and `e`
+  with `n[0]`, which the child drives.
+- `output bits: a=z11z St1 We1`: the weak child driver of `a[2]` merges and
+  stays weak; `a[1]`, driven strong by its port alone, keeps its exact copy.
+- `second driver: b=zzxz u11.o=x`: the parent's 0 on `b[1]` and the child's 1
+  resolve to x under both names.
+- `output concatenation: g=1 h=0 u12.o=10`: the child's `2'b10` splits MSB to
+  MSB.
+- `output element: w2=St1 u13.o=1`: the child drives net-array cell `w[2]`;
+  the port selects the whole cell, so it merges although a copy would be
+  exact.
+- `chain: v=1xx1 u14.m=x u14.g.n=x`: the whole port of `mid` into `coerced`
+  joins the merged bit, so the grandchild's 0 reaches `v[2]`.
+- `forced formal: f=1101 u15.m=0 u15.k=0`: a force of the formal overrides
+  every driver of the merged net (10.6.2), so `f[1]` shows it too; after the
+  release `f=1111 u15.m=1`.
+- `x=0: ...`: every merged bit follows the parent's 0 once both sides agree.
+
 ## `fallbacks.sv`
 
 Ports that keep their continuous assignment because a merge would drop or
-change something (A21-D2 and A21-D4 exceptions).
+change something (A21-D2, A21-D4 and A21-D5 exceptions).
 
 - `width: wide=1111 u2.w=11`: the 2-bit formal of a 4-bit actual is a
   converting copy.
 - `variable actual: vr=1 u4.n=x`: a variable is no net to merge with; the
   formal resolves the port's 1 with the child's 0.
-- `selected actual: v=1111 u5.n=x`: the actual is a bit of `v`, so the port
-  keeps its copy and `v` keeps its own value. Some simulators merge the
-  selected bit with the formal (`v=11x1`); llg merges whole nets only.
 - `delay: dl=1 u3.n=x` then `delay later: dl=1 u3.n=1`: the formal's own
   `#2` net delay applies to the copy.

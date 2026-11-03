@@ -1,0 +1,12 @@
+bit select: v=x1x1 u0.n=x StX
+two ports: o=11xx u1.n=x u2.n=1x
+pulled bit: u3.n=Pu1
+tri0 formal: d=z0zz u4.n=Pu0
+array element: w0=1 w1=x u5.n=x
+concatenation: c=1 e=x u6.n=1x
+weak output: a=z1zz We1
+output concatenation: g=1 h=0 u8.o=10
+chain: u9.m=x u9.g.n=x
+forced formal: f=1101 u10.n=0
+released: f=1111 u10.n=1
+x=0: v=0000 o=0000 w1=0 u6.n=00 g=x

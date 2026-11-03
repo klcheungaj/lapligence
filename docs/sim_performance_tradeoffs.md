@@ -132,7 +132,22 @@ those scripts. Differences within the observed spread are reported as noise.
   child that also drives it 11.1 s → 8.5 s (−23%), and into a `tri0` formal
   7.7 s → 5.2 s (−32%); 1,000 links and 1,000 of 2,001 net groups gone,
   `model.c` 822 → 668 KB and 739 → 585 KB. The `perf/` corpus and designs
-  generate identical C.
+  generate identical C. Selected net actuals (A21-D5) merge bit by bit only where the copy
+  would differ or the actual is whole nets and net-array cells, since
+  splitting a vector gives each selected bit a group of its own that every
+  wide driver of the vector contributes to: merging every selected port of a
+  1,000-bit bus split into one-bit inputs made `model.c` twice as large and
+  the run 24% slower than the copies. A net alias view refreshes only the
+  changed net's parts (`llg_net_alias_ref`); rebuilding it from every part
+  per bit change was quadratic (a 1,000-bit bus with coerced one-bit inputs,
+  1,000 cycles: 24 s → 1.6 s). Pinned medians of 5 interleaved runs, 1,000
+  instances, 20,000 cycles: inputs on whole `wire` net-array cells 13.0 s →
+  10.3 s (−21%, 1,000 links gone, `model.c` 3.5 → 1.5 MB); coerced inputs on
+  cells 19.8 → 18.9 s; coerced one-bit inputs of a bus driven per bit
+  13.6 → 14.7 s (+8.5%) and of a bus with one wide driver 8.2 → 11.1 s
+  (+37%), the cost of the merged nets the copies got wrong. Plain bus-bit
+  inputs, outputs and gate netlists keep identical C (4.5 → 4.5 s), as do
+  the `perf/` corpus and designs.
 
 ### Loops and tables instead of unrolled statements
 

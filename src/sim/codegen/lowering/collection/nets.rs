@@ -1275,6 +1275,7 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
+        let true_aliases = alias_nets.clone();
         // Every bit of an alias-participating net gets an explicit mapping:
         // aliased bits use their shared root, while the remaining bits use a
         // singleton network so ordinary net drivers still resolve electrically.
@@ -1506,20 +1507,39 @@ impl<'a> Codegen<'a> {
             }
         }
 
-        // Input and output ports whose sink would differ from its source
-        // merge like whole inout connections and lose their link
-        // (`nets/port_merges.rs`, decision A21-D4).
+        // Input and output ports whose sink would differ from its source,
+        // and ports with selected actuals, merge like inout connections and
+        // lose their link (`nets/port_merges.rs`, decisions A21-D4, A21-D5).
         let writers = self.net_writer_index(&nodes);
-        let merged_ports = self.merged_net_ports(&nodes, &writers, &parent, &alias_nets);
-        for port in &merged_ports {
+        let merges = self.merged_net_ports(&port_merges::MergeContext {
+            nodes: &nodes,
+            writers: &writers,
+            parent: &parent,
+            true_aliases: &true_aliases,
+            bit_nets: &alias_nets,
+            cells: &cell_plan,
+        });
+        let mut merged_ports = HashSet::new();
+        for port in &merges.whole {
             let Some((_, actual, formal)) = self.whole_port_connection(*port) else {
                 return Err("merged port lost its whole connection".into());
             };
             inout_ports.push(*port);
             union(&mut parent, &mut rank, actual, formal);
             self.port_aliases.insert(*port);
+            merged_ports.insert(*port);
         }
-        let merged_ports = merged_ports.into_iter().collect::<HashSet<_>>();
+        for merge in &merges.selected {
+            for (actual, formal) in &merge.bits {
+                alias_bits.extend([*actual, *formal]);
+                alias_nets.extend(actual.net().into_iter().chain(formal.net()));
+                alias_union(&mut alias_parent, &mut alias_rank, *actual, *formal);
+            }
+            inout_ports.push(merge.port);
+            array_ports.insert(merge.port);
+            self.port_aliases.insert(merge.port);
+            merged_ports.insert(merge.port);
+        }
 
         // Port traversal order must not split a whole-net connection from a
         // selected or explicitly aliased endpoint discovered later.

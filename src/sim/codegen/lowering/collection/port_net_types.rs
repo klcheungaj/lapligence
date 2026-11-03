@@ -127,7 +127,7 @@ impl Codegen<'_> {
             return Ok(formal
                 .into_iter()
                 .zip(actual)
-                .map(|(internal, external)| (NetPoint::Bit(internal), NetPoint::Bit(external)))
+                .map(|(internal, external)| (internal.point(), external.point()))
                 .collect());
         }
         let high = high.ok_or("whole inout type plan has no external declaration")?;

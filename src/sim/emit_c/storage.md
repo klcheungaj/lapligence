@@ -40,7 +40,9 @@ released cell (decision A19-D78); outlined runs hold no such locals.
 - Alias visible cells have independent owners, canonical dependency addresses and
   explicit startup/close. Alias parts are run-length rows
   (`model/storage.rs::render_alias_parts` docs); the runtime refreshes and writes each run as one part
-  select. Alias/stochastic publication temporaries must be
+  select. A net change rewrites only its own parts of an alias whose parts cover
+  its width (`llg_net_alias_ref`), so a vector split into per-bit nets costs one
+  part per change; other aliases are rebuilt whole. Alias/stochastic publication temporaries must be
   registered; alias reads are pure. Sequence-local writes remain private.
 - Packed formals resolve through current activation bindings, including callbacks,
   never synthetic model globals. Input mutation is private; ref writes clone/update

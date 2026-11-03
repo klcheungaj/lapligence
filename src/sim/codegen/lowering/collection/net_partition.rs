@@ -48,6 +48,10 @@ impl Codegen<'_> {
         let mut forced: HashMap<AliasBit, Vec<NodeId>> = HashMap::new();
         let mut opaque = HashSet::new();
         for source in nodes {
+            // A merged port is no driver: its nets are one group.
+            if self.port_aliases.contains(source) {
+                continue;
+            }
             let targets = match self.kind(*source) {
                 NodeKind::ContAssign { .. } => self
                     .node(*source)
