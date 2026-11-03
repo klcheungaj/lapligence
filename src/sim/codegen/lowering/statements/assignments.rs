@@ -1418,10 +1418,9 @@ impl EmitCtx<'_, '_> {
             .iter()
             .map(|arm| self.capture_event_assignment_expr(frame, &mut captures, arm.value.clone()))
             .collect();
-        let wait = plan.resumed(armed);
         let mut body = match count {
-            Some(count) => vec![IrStmt::Repeat { count, body: wait }],
-            None => wait,
+            Some(count) => plan.resumed_repeat(armed, count),
+            None => plan.resumed(armed),
         };
         body.extend(action);
         let name = self.cg.new_fn_name(&self.path, kind);

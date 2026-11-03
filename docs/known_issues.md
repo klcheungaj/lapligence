@@ -1286,53 +1286,6 @@ path.
 
 `tests/fixtures/sim/feature_completion/sim_004/neg_delayed_string_continuous.sv`.
 
-## Repeated event controls on detached nonblocking assignments end at the first event
-
-**Status:** open (found by the FIN-001 audit). A nonblocking assignment with
-`repeat (n) @(...)` whose control the waiting process evaluates commits as
-soon as the first event of the control occurs, not after the `n`-th.
-
-### Symptom
-
-`s <= repeat (3) @(e) "v";` on a string, the same form on a class handle or
-chandle, and a packed target whose event control the waiting process
-evaluates (`x <= repeat (3) @(posedge h.w) 5;`, a class property) all store
-their value at the first event (SV 9.4.5 requires `n` occurrences). Packed
-and real targets of named-event and signal controls that use the runtime
-callback path (`x <= repeat (3) @(e) 5;`) wait for all three events, and
-blocking forms are correct.
-
-### Cause
-
-`spawn_process_evaluated_action` in
-[`statements/assignments.rs`](../src/sim/codegen/lowering/statements/assignments.rs)
-wraps the resumed wait in `IrStmt::Repeat` but seeds every iteration with the
-values armed at issue (named-event trigger counts, edge operands). After the
-first event those issue-time values differ from the current ones, so every
-later iteration ends immediately. The witness
-`sim_014/persistent_repeat_nba_witness.sv` reads the string only after both
-edges and does not see this.
-
-### Intended direction
-
-Use the issue-time armed values for the first iteration only and re-arm from
-the current values on each later iteration, as the blocking form does.
-
-### Reproduce
-
-```systemverilog
-module tb;
-  string t = "a";
-  event e;
-  initial begin
-    t <= repeat (3) @(e) "rep";
-    #1 -> e;
-    #1 $display("%s", t); // prints "rep"; expected "a"
-    $finish;
-  end
-endmodule
-```
-
 ## `%l` in runtime-built format strings
 
 Lowering replaces `%l`/`%L` with the scope's static `library.cell` binding in

@@ -453,9 +453,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   `""` for an ambiguous predicate
   ([sim_004](../tests/fixtures/sim/feature_completion/sim_004/readme.md)).
   String bytes and class properties are not nonblocking targets (SV §6.21).
-  Event- and repeat-controlled string NBAs execute (SIM-014), but a repeated
-  control commits at its first event
-  ([known issue](known_issues.md#repeated-event-controls-on-detached-nonblocking-assignments-end-at-the-first-event)).
+  Event- and repeat-controlled string NBAs execute and a repeated control
+  commits after its last event (SIM-014).
   Delayed continuous drivers, automatic monitors and broader aggregate
   combinations remain restricted; automatic
   procedural-block strings and handles share the fork limit of block records
@@ -1009,9 +1008,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   Controls with effectful helpers wait in the blocking process; NBA and `->>`
   forms arm at issue and wait in a detached process outside `wait
   fork`/`disable fork` (§9). A repeated control of a detached NBA (string or
-  handle target, or a control the waiting process evaluates) commits at its
-  first event
-  ([known issue](known_issues.md#repeated-event-controls-on-detached-nonblocking-assignments-end-at-the-first-event)).
+  handle target, or a control the waiting process evaluates) re-arms after
+  each event and commits after the last one.
   NBAs to automatic storage, class properties and
   dynamic elements reject as language rules (SV 6.21, 13.3.2); a select within
   a resizable-container element (`q[i][3:0] = @e v`) and process-evaluated NBA

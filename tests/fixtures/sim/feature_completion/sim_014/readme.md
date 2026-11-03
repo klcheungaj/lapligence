@@ -26,11 +26,13 @@ and `Verilog-1364-2001.txt` (V2001), the `pdftotext -layout` extractions.
 | `wait_order_error` | SV 15.5.4 | `wait_order (a, b);` without a fail statement fails at 1 when `b` triggers first (after the line printed before the trigger): llg reports `severity fatal` at `tb:9:9` on stderr and the run ends at once with exit status 1; neither the waiting process nor the parent continues (S14-D6). |
 | `cancellation` | SV 9.7, 9.6.3, 9.4.5 | A branch blocked in `repeat (3) @e` is killed at 3 after one event; it never prints. A new `repeat (3) @e` from 5 counts 6, 8, 10. A branch in `x = repeat (3) @e 9` is killed at 15 after two events: `x` stays 0. `disable fork` at 23 ends a standalone and a blocking repeated wait after one event each; `y` stays 0, and `repeat (2) @e` from 25 ends at 28. |
 | `task_timing` | SV 9.4.5, 13.3, 13.5 | `hold(2, 5)` (automatic) assigns `loc = repeat (2) @e v` at 4, then `text = @e $sformatf(...)` at 6 (`e` already occurred at 4 when the control is reached). Recursive `digits(3)` takes one event per level: 8, 10, 12, so `h = 321`. The static task `queue_writes` at 13 issues `arr[1] <= repeat (2) @e 8'h3c` (updated at 16) and `label <= @e "late"` (updated at 14) and returns at once. |
+| `repeat_nba_progress` | SV 9.4.5, 10.4.2, 15.5.1 | The first process issues at 0, without waiting, seven detached forms: `t <= repeat (3) @(e) "rep"` (string), `r <= repeat (3) @(e) 1.5` (real), `h <= repeat (3) @(e) k` (class handle, `k.v = 7`), `x <= repeat (3) @(posedge g.w) 5` (an edge of a class property, evaluated by the waiting process), `y <= repeat (3) @(posedge clk) 6` (module variable), `z <= repeat (0) @(e) 9` (count 0: updated in the NBA region at 0) and `->> repeat (2) @(posedge g.w) f`. The second process triggers `e` and raises `g.w` and `clk` at 1, 3 and 5 (lowered at 2 and 4) and prints at 1 (before the first events), 2, 4 and 6. At 1 and 2 nothing but `z` has changed; at 4 (two events) only `f` has occurred (its second edge at 3), so `fired` is 1; at 6 every target holds its value (`rep 1.5`, `h` not null with `v = 7`, `x = 5`, `y = 6`). |
 | `v2001_forms` (`--edition v2001`) | V2001 9.7.7, 9.6 | An `integer` count of -3 waits zero times; `reg [1:0]` 2'b11 waits three events (2, 4, 6). `c <= repeat (2) @e 8'h77` issued at 3 updates at 6. `a = repeat (n) @e b` from 7 with `n = 2` assigns 12 at 10. `m[i] = @e 8'h5a` from 11 with `i` changed to 2 at 12 writes `m[2]`. |
 
-Adopted FND-002 witnesses (source unchanged): `repeat_real_witness.v`
+Adopted FND-002 witnesses (source unchanged unless noted): `repeat_real_witness.v`
 (L-F06-05-03; an integral-valued real count, 2.0), `persistent_repeat_nba_witness`
-(L-F06-04-04; `s <= repeat (2) @(posedge clk) "ok"`), `repeat_nested_timing_witness`
+(L-F06-04-04; `s <= repeat (2) @(posedge clk) "ok"` with posedges at 1 and 3; FIN-001
+added a read at 2, between the edges, where `s` is still empty), `repeat_nested_timing_witness`
 (L-F06-04-01, L-F06-05-02; a repeat loop around `x = repeat (2) @(posedge clk) 7`)
 and `trigger_repeat_witness` (`->> repeat (2) @(posedge clk) e`).
 
