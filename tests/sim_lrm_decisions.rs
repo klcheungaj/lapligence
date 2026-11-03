@@ -2902,6 +2902,14 @@ fn a21_d4_port_nets_merge_like_inout() {
 }
 
 #[test]
+fn a21_d5_selected_port_nets_merge() {
+    run_decision(
+        "A21-D5_selected_port_nets_merge",
+        include_str!("fixtures/sim/lrm_decisions/A21-D5_selected_port_nets_merge.out"),
+    );
+}
+
+#[test]
 fn a17_d1_attempt_callbacks() {
     run_vpi_decision(
         "A17-D1_attempt_callbacks",

@@ -3,12 +3,14 @@
 //! `wire` sink that only its port drives (A21-D2) and an output variable
 //! actual of a variable formal (A21-D3). A net port whose sink has drivers
 //! or a type of its own merges with its source into one resolved net and
-//! has no link either (A21-D4). Every case where sharing or merging would
-//! be observable keeps the link. These checks count the link processes of
-//! one instance in the generated C (`"<instance>.link"` descriptors) and the
-//! resolved nets, so they stay cheap and independent of host timing;
-//! behaviour is covered by the A21-D1..A21-D4 decision cases and the
-//! `port_collapse` fixtures run below.
+//! has no link either (A21-D4), and so does a net port whose actual is a
+//! constant select, a net-array element or a concatenation of nets
+//! (A21-D5). Every case where sharing or merging would be observable keeps
+//! the link. These checks count the link processes of one instance in the
+//! generated C (`"<instance>.link"` descriptors) and the resolved nets, so
+//! they stay cheap and independent of host timing; behaviour is covered by
+//! the A21-D1..A21-D5 decision cases and the `port_collapse` fixtures run
+//! below.
 
 use crate::sim_cli;
 use llg::core::compile::{compile_sources_checked, CompileOpts, OwnedSource};
@@ -244,10 +246,205 @@ endmodule
     assert_eq!(net_groups(&model), 2, "{model}");
 }
 
+/// A port whose actual is a constant select of nets, a net-array element or
+/// a concatenation of those merges bit by bit where its sink has drivers of
+/// its own, a net on either side has a type of its own, the source drives
+/// with a strength or a force names the sink (A21-D5); so does a whole port
+/// below a merged formal. Other selected ports keep the cheaper copy.
+#[test]
+fn selected_net_ports_merge_bit_by_bit() {
+    let child = |formal: &str, body: &str, actual: &str, connection: &str| {
+        render(&format!(
+            "module child({formal});
+  {body}
+endmodule
+module tb;
+  logic y;
+  {actual}
+  child u({connection});
+  initial begin y = 0; #1 y = 1; $finish; end
+endmodule
+"
+        ))
+    };
+    for (formal, body, actual, connection, label) in [
+        (
+            "input wire a",
+            "assign a = 1'b0;",
+            "wire [3:0] x = {4{y}};",
+            ".a(x[1])",
+            "coerced bit select",
+        ),
+        (
+            "input wire [1:0] a",
+            "assign a[0] = 1'b0;",
+            "wire [3:0] x = {4{y}};",
+            ".a(x[0+:2])",
+            "coerced indexed part select",
+        ),
+        (
+            "input wire a",
+            "",
+            "tri1 [1:0] x;",
+            ".a(x[1])",
+            "pulled bit",
+        ),
+        (
+            "input tri0 a",
+            "",
+            "wire [1:0] x;",
+            ".a(x[0])",
+            "tri0 formal",
+        ),
+        (
+            "input wire [1:0] a",
+            "",
+            "wire p, q; assign (weak0, weak1) p = y; assign q = y;",
+            ".a({p, q})",
+            "weak source",
+        ),
+        (
+            "input wire a",
+            "initial begin force a = 1'b0; end",
+            "wire [1:0] x = {2{y}};",
+            ".a(x[0])",
+            "forced formal",
+        ),
+        (
+            "input wire a",
+            "assign a = 1'b0;",
+            "wire w [0:3]; assign w[2] = y;",
+            ".a(w[2])",
+            "coerced net-array element",
+        ),
+        (
+            "input wire a",
+            "",
+            "tri1 w [0:3];",
+            ".a(w[3])",
+            "undriven tri1 net-array element",
+        ),
+        (
+            "input wire a",
+            "assign a = 1'b0;",
+            "wire [3:0] w [0:1]; assign w[1] = {4{y}};",
+            ".a(w[1][2])",
+            "coerced bit of a net-array element",
+        ),
+        (
+            "input wire [2:0] a",
+            "assign a[0] = 1'b0;",
+            "wire p = y; wire [1:0] q = {2{y}};",
+            ".a({p, q})",
+            "coerced concatenation",
+        ),
+        (
+            "input wire [3:0] a",
+            "assign a[0] = 1'b0;",
+            "wire [1:0] q = {2{y}};",
+            ".a({2{q}})",
+            "coerced replication",
+        ),
+        (
+            "output wire a",
+            "assign a = 1'b1;",
+            "wire [3:0] x; assign x[3] = y;",
+            ".a(x[3])",
+            "output bit with a second driver",
+        ),
+        (
+            "output wire a",
+            "assign (weak0, weak1) a = 1'b1;",
+            "wire [3:0] x;",
+            ".a(x[3])",
+            "weak output",
+        ),
+        (
+            "output wire [1:0] a",
+            "assign a = 2'b01;",
+            "wire p, q; assign p = y;",
+            ".a({p, q})",
+            "output concatenation with a second driver",
+        ),
+        (
+            "output wire a",
+            "assign a = 1'b1;",
+            "wire w [0:1]; assign w[0] = y;",
+            ".a(w[0])",
+            "output net-array element with a second driver",
+        ),
+    ] {
+        let model = child(formal, body, actual, connection);
+        assert_eq!(links(&model), 0, "{label}: {model}");
+    }
+    for (formal, actual, connection, label) in [
+        (
+            "input wire a",
+            "wire [3:0] x = {4{y}};",
+            ".a(x[1])",
+            "bit select",
+        ),
+        (
+            "input wire [1:0] a",
+            "wire [3:0] x = {4{y}};",
+            ".a(x[2:1])",
+            "part select",
+        ),
+        (
+            "input wire a",
+            "wire w [0:3]; assign w[2] = y;",
+            ".a(w[2])",
+            "net-array element",
+        ),
+        (
+            "input wire [1:0] a",
+            "wire p = y; wire q = y;",
+            ".a({p, q})",
+            "concatenation",
+        ),
+        (
+            "output wire a",
+            "wire [3:0] x; assign x[2] = y;",
+            ".a(x[3])",
+            "output bit beside a driven bit",
+        ),
+    ] {
+        let model = child(formal, "", actual, connection);
+        assert_eq!(links(&model), 1, "plain {label}: {model}");
+    }
+    // A whole port below a merged formal merges too: one whose sink then
+    // has the other side's drivers, and one whose formal joins the
+    // bit-level net (a storage alias cannot name a net with bit-level
+    // bindings).
+    for (leaf, mid) in [
+        ("assign b = 1'b0;", ""),
+        ("logic seen; always @(b) seen = b;", "assign a = 1'b0;"),
+    ] {
+        let model = render(&format!(
+            "module leaf(input wire b);
+  {leaf}
+endmodule
+module mid(input wire a);
+  {mid}
+  leaf l(.b(a));
+endmodule
+module tb;
+  logic y;
+  wire [3:0] x = {{4{{y}}}};
+  mid u(.a(x[2]));
+  initial begin y = 0; #1 y = 1; $finish; end
+endmodule
+"
+        ));
+        assert_eq!(links_named(&model, ".link\""), 0, "chain: {model}");
+    }
+}
+
 /// A port keeps its link where a merge would change more than the
-/// resolution: a variable source, a conversion, a select or expression
-/// actual, a net delay or a `uwire` net. A drive strength on the formal of
-/// an output does not matter: its actual merges as a second name (A21-D2).
+/// resolution: a variable source, a conversion, a non-constant select or
+/// expression actual, a net delay or a `uwire` net. A drive strength on the
+/// formal of an output does not matter: its actual merges as a second name
+/// (A21-D2).
 #[test]
 fn net_ports_that_a_merge_would_change_keep_the_link() {
     for (formal, body, actual, connection, label) in [
@@ -276,8 +473,50 @@ fn net_ports_that_a_merge_would_change_keep_the_link() {
             "input wire a",
             "assign a = 1'b0;",
             "wire [3:0] x = {4{y}};",
+            ".a(x[y])",
+            "variable select",
+        ),
+        (
+            "input wire a",
+            "assign a = 1'b0;",
+            "wire w [0:1]; assign w[0] = y; assign w[1] = y;",
+            ".a(w[y])",
+            "variable net-array index",
+        ),
+        (
+            "input wire [1:0] a",
+            "assign a = 2'b00;",
+            "wire x = y;",
+            ".a({x, y})",
+            "concatenation with a variable",
+        ),
+        (
+            "input wire [1:0] a",
+            "assign a = 2'b00;",
+            "wire x = y;",
+            ".a({x, 1'b0})",
+            "concatenation with a constant",
+        ),
+        (
+            "input wire [1:0] a",
+            "assign a = 2'b00;",
+            "wire [3:0] x = {4{y}};",
+            ".a(x[2:0])",
+            "selected width",
+        ),
+        (
+            "input wire a",
+            "assign a = 1'b0;",
+            "uwire [3:0] x = {4{y}};",
             ".a(x[1])",
-            "select",
+            "uwire actual",
+        ),
+        (
+            "input wire a",
+            "assign a = 1'b0;",
+            "wire [3:0] #2 x; assign x = {4{y}};",
+            ".a(x[1])",
+            "delayed selected actual",
         ),
         (
             "input wire a",
@@ -553,6 +792,25 @@ endmodule
     );
     assert_eq!(links(&model), 0, "--vpi merged net port: {model}");
     assert_eq!(net_groups(&model), 1, "--vpi merged net port: {model}");
+    let model = render_with(
+        "module child(input wire a);
+  assign a = 1'b0;
+endmodule
+module tb;
+  logic x;
+  wire [1:0] y;
+  assign y = {x, x};
+  child u(.a(y[1]));
+  initial begin x = 0; #1 x = 1; $finish; end
+endmodule
+",
+        &CodegenOptions {
+            vpi: true,
+            ..Default::default()
+        },
+        &[],
+    );
+    assert_eq!(links(&model), 0, "--vpi selected net port: {model}");
     // A user system task makes the model keep the VPI catalog; it is only
     // known once the bodies are lowered, which then happens again.
     let model = render_with(
@@ -701,6 +959,24 @@ endmodule
 ",
     );
     assert_eq!(links(&model), 2, "coerced net port: {model}");
+    // So does a selected actual of such a net.
+    let model = render(
+        "module child(input wire clk, input wire d);
+  assign d = 1'b0;
+  specify
+    $setup(d, posedge clk, 1);
+  endspecify
+endmodule
+module tb;
+  logic c, x;
+  wire [1:0] w;
+  assign w = {x, x};
+  child u(.clk(c), .d(w[1]));
+  initial begin c = 0; x = 0; #5 c = 1; #1 $finish; end
+endmodule
+",
+    );
+    assert_eq!(links(&model), 2, "selected net port: {model}");
 }
 
 /// A constant part-select actual whose bounds depend on a generate loop
@@ -805,7 +1081,6 @@ fn kept_links_preserve_each_side() {
         "port_collapse",
         "fallbacks",
         "width: wide=1111 u2.w=11\nvariable actual: vr=1 u4.n=x\n\
-         selected actual: v=1111 u5.n=x\n\
          delay: dl=1 u3.n=x\ndelay later: dl=1 u3.n=1\n",
         "",
         &[],
@@ -836,6 +1111,39 @@ fn vpi_models_merge_the_same_nets() {
         "port_collapse",
         "merged_nets",
         MERGED_NETS,
+        "",
+        &[],
+        &["--vpi"],
+    );
+}
+
+const MERGED_SELECTS: &str = "bit select: v=1xx1 u0.n=x StX\n\
+disjoint and overlapping: o=x1xx u1.n=x u2.n=x u3.n=1x\n\
+pulled bit: t=11 u4.n=1 Pu1\n\
+tri0 formal: d=z0zz Pu0 u5.n=Pu0\n\
+array element: w0=1 w1=x u6.n=x\n\
+array element part: wa0=111x u7.n=1x\n\
+concatenation: c=1 e=x u8.n=1x\n\
+output bits: a=z11z St1 We1\n\
+second driver: b=zzxz u11.o=x\n\
+output concatenation: g=1 h=0 u12.o=10\n\
+output element: w2=St1 u13.o=1\n\
+chain: v=1xx1 u14.m=x u14.g.n=x\n\
+forced formal: f=1101 u15.m=0 u15.k=0\n\
+released: f=1111 u15.m=1\n\
+x=0: v=0000 o=0000 u0.n=0 u3.n=00 w1=0 u8.n=00\n";
+
+#[test]
+fn selected_actuals_merge_with_their_formal() {
+    sim_cli::run_case("port_collapse", "merged_selects", MERGED_SELECTS, "", &[]);
+}
+
+#[test]
+fn vpi_models_merge_the_same_selected_nets() {
+    sim_cli::run_case_with_args(
+        "port_collapse",
+        "merged_selects",
+        MERGED_SELECTS,
         "",
         &[],
         &["--vpi"],

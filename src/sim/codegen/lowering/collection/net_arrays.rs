@@ -398,6 +398,10 @@ impl Codegen<'_> {
         // source per cell made whole-array drivers quadratic in the cell count.
         let mut cell_sources: HashMap<(usize, u64), Vec<CellSource>> = HashMap::new();
         for source in nodes {
+            // A merged port is no driver: its nets are one group.
+            if self.port_aliases.contains(source) {
+                continue;
+            }
             let targets = match self.kind(*source) {
                 NodeKind::ContAssign { .. } => {
                     let Some(target) = self.node(*source).children.first().copied() else {

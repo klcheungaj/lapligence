@@ -9,6 +9,13 @@ nets whose sink has another driver or a type of its own joins the inout union
 before the type plan (`nets/port_merges.rs`, A21-D4): it is a port edge of
 `port_batch` (without the codegen dissimilar-type warning, which the frontend
 already gives), the port is no structural driver site, and it emits no link.
+A port whose actual is a constant select, net-array element or concatenation
+of nets joins the bit-level union instead, bit by bit, when a copy would
+differ (A21-D5: a driver census over the selected bits decides); a whole port
+touching a net of the bit-level union merges too, since a storage alias
+cannot name it. `net_cells.rs` connects the cells such a port always merges
+with (`input_merge_cells`), and merged ports are no partition or net-array
+cell sources.
 Other input/output links feeding a group retain their own structural driver
 sites.
 Resolve net-type/delay selection through `net_collapse`/`port_net_types` before
