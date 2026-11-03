@@ -1957,35 +1957,6 @@ specify paths need each side's own net.
 
 `tests/sim_port_collapse.rs::kept_links_preserve_each_side`.
 
-## Selected port merges on scattered vector bits
-
-**Status:** open (decision A21-D5).
-
-### Symptom
-
-A design whose instances connect single bits of shared vectors
-(`stage c(clk, en, q[i-1], l[(i + 7) % N], q[i], l[i])` for 500 instances)
-runs about 3 times slower with the merged selected ports than with a copy
-per port: 4.2 s without VPI, against 1.45 s for the same design generated
-with `--vpi-port-delays`, which keeps every port a continuous assignment.
-Models with the VPI catalog merge the same ports (A21-D6).
-
-### Cause
-
-Not profiled. The merged bits of `q` and `l` share bit-level groups with the
-rest of their vectors, so a change of one bit is suspected to wake the
-readers of every merged formal of that vector.
-
-### Intended direction
-
-Keep each selected bit's wakeups to its own readers, or keep the copy where
-a merged group would fan a one-bit change out to unrelated formals.
-
-### Reproduce
-
-`mixed_perf.sv` (500 stages of UDPs, gates and an `always`), built with and
-without `--vpi-port-delays`.
-
 ## Global clocking future sampled value function limits
 
 **Status:** open (ADV-014 boundary).

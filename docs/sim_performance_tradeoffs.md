@@ -208,6 +208,43 @@ those scripts. Differences within the observed spread are reported as noise.
   bit-level net fixtures all shrink (for example `net_partition/ranges.sv`
   700 → 582 KB).
 
+### Per-bit delayed drivers of shared groups
+
+- **Trade-off:** merging selected ports (A21-D5) puts a vector's per-bit
+  drivers into one shared group. The copies it replaced kept a group per bit
+  and coalesced the vector in their links, which run inside the region drain
+  (S2-D11); a merged group lost that point. Its delayed drivers maturing
+  together then published the group, refreshed its wide views and checked
+  every selected reader of the vector once per bit, a narrow delayed record
+  carried a group-wide value and mask, and each driver started from a
+  group-wide constant, so time and `model.c` grew with drivers times width
+  (`mixed_perf`, 500 stages: 0.69 s with copies, 2.8–4.2 s merged; gprof:
+  55 M reader part selects against 2.7 M).
+- **Decision:** the inertial updates due at one time commit as one batch
+  with exact deferral (`commit_inertial_batch`): a net publishes once per
+  batch while the batch writes disjoint bits of it, and a write over a bit
+  already written first publishes everything pending, so each bit keeps its
+  value sequence and only the order of same-time update events changes
+  (IEEE 1800-2009 4.7). A delayed driver of a constant part of a net slot
+  keeps only those bits (`llg_inertial_part_net`) and starts on them
+  (`llg_net_write_driven_part`), and a gate with one contribution selects it
+  from its value without a per-evaluation local. No cost model is needed:
+  the merge is no slower than the copy on the measured designs.
+- **Evidence:** pinned medians of 5 interleaved runs (load average 5–16;
+  copy = before plain selected ports merged, base = before this change):
+  `mixed_perf` 0.693 s (copy) / 2.99 s (base) → 0.688 s, `model.c` 1.15 /
+  2.98 → 1.09 MB; with `--vpi` 1.35 / 3.67 → 1.43 s (all ports kept with
+  `--vpi-port-delays`: 1.73 s base, 1.34 s new); a 1,000-cell scattered
+  design (UDP flip-flops, tri-state drivers on a `tri0` vector, three
+  vectors) 3.08 / 4.73 → 1.95 s, `model.c` 7.85 / 14.0 → 2.54 MB, and with
+  `--vpi` 1.97 / 3.92 → 1.66 s. The earlier merge wins stay (3 runs): a
+  1,000-bit bus of one-bit inputs 4.50 / 2.54 → 2.58 s, a 256×8 nand netlist
+  16.95 / 9.11 → 8.35 s; `udp_perf` (7 runs) 2.57 / 2.56 → 2.55 s and the
+  port hierarchies are within noise. Outputs are identical. The `perf/` corpus and
+  designs, the gate fixtures and the port hierarchies generate identical C;
+  `udp_perf` (per-bit delayed UDP outputs on one vector) shrinks 3.34 →
+  0.88 MB.
+
 ### Loops and tables instead of unrolled statements
 
 Each item replaces per-element C with a table and a loop, sometimes calling a
@@ -451,8 +488,8 @@ processes or clock edges, at the cost of a few bytes per object.
   port actuals like the model without VPI (A21-D5) and runs 2.15 s → 5.78 s;
   the same model with `--vpi-port-delays` (every port a link) runs in
   1.45 s and the model without VPI in 4.2 s, so the cost is that of the
-  A21-D5 merge on this design, not of VPI (known issue "Selected port
-  merges on scattered vector bits"). The corpus, `udp_perf` and
+  A21-D5 merge on this design, not of VPI (since removed: "Per-bit delayed
+  drivers of shared groups"). The corpus, `udp_perf` and
   `perf/designs` generate identical C with and without the change.
 
   Model C size is the generated source; C build time is one cold build on
