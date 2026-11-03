@@ -95,7 +95,10 @@ static void put_int(vpiHandle x, int v) {
     value.format = vpiIntVal;
     value.value.integer = v;
     vpi_put_value(x, &value, NULL, vpiNoDelay);
-    vpi_printf("  put %s=%d (error %d)\n", text(vpi_get_str(vpiName, x)), v, failed());
+    /* Sample the status first: argument evaluation order is unspecified and
+     * vpi_get_str resets it. */
+    int error = failed();
+    vpi_printf("  put %s=%d (error %d)\n", text(vpi_get_str(vpiName, x)), v, error);
 }
 
 static PLI_INT32 calltf(PLI_BYTE8* user_data) {
