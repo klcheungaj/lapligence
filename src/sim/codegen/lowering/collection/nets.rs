@@ -5,6 +5,7 @@ use super::net_collapse::NetPoint;
 use super::*;
 
 mod global_index;
+mod port_merges;
 mod port_sinks;
 #[cfg(test)]
 mod tests;
@@ -1505,6 +1506,21 @@ impl<'a> Codegen<'a> {
             }
         }
 
+        // Input and output ports whose sink would differ from its source
+        // merge like whole inout connections and lose their link
+        // (`nets/port_merges.rs`, decision A21-D4).
+        let writers = self.net_writer_index(&nodes);
+        let merged_ports = self.merged_net_ports(&nodes, &writers, &parent, &alias_nets);
+        for port in &merged_ports {
+            let Some((_, actual, formal)) = self.whole_port_connection(*port) else {
+                return Err("merged port lost its whole connection".into());
+            };
+            inout_ports.push(*port);
+            union(&mut parent, &mut rank, actual, formal);
+            self.port_aliases.insert(*port);
+        }
+        let merged_ports = merged_ports.into_iter().collect::<HashSet<_>>();
+
         // Port traversal order must not split a whole-net connection from a
         // selected or explicitly aliased endpoint discovered later.
         let mut whole_components: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
@@ -1574,8 +1590,13 @@ impl<'a> Codegen<'a> {
                 }
             }
         }
-        let type_plan =
-            self.build_port_net_type_plan(&nodes, &alias_nets, &alias_bits, &cell_plan)?;
+        let type_plan = self.build_port_net_type_plan(
+            &nodes,
+            &alias_nets,
+            &alias_bits,
+            &cell_plan,
+            &merged_ports,
+        )?;
         self.publish_undriven_net_cells(&cell_plan, &type_plan)?;
         let mut uwire_drivers: HashMap<usize, std::collections::BTreeMap<usize, NodeId>> =
             HashMap::new();
@@ -1602,7 +1623,6 @@ impl<'a> Codegen<'a> {
         let mut array_alias_bindings: HashMap<(usize, u64), Vec<IrNetAliasBinding>> =
             HashMap::new();
         let alias_runs = self.partition_electrical_bits(alias_groups, &nodes, &type_plan)?;
-        let writers = self.net_writer_index(&nodes);
         for run in alias_runs {
             let width = run.len() as u32;
             let bits = run.iter().flatten().copied().collect::<Vec<_>>();
@@ -2381,6 +2401,10 @@ impl<'a> Codegen<'a> {
                     strength1,
                     ..
                 } => {
+                    // A merged port is no driver: its nets are one group.
+                    if self.port_aliases.contains(&id) {
+                        continue;
+                    }
                     let target = match direction {
                         DbDirection::Input => self.port_child_target(id, *low),
                         DbDirection::Output => high_expr.or(*high),

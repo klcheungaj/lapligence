@@ -1379,8 +1379,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   design) remains unsupported; a pass switch joins the collapsed nets, so a
   port is one switch node and never reduces strength (ADV-005); a net-array
   declaration delay follows the same winning-declaration rule. Oversized net
-  arrays still expand per cell (known issue).
-  V §12.3.10 / Table 45; SV §§23.3.3.6–23.3.3.7 / Table 23-1 **[1995]**.
+  arrays still expand per cell (known issue). Whole input and output
+  connections between two nets whose sink has drivers of its own (port
+  coercion, a second output driver) or a type other than `wire`/`tri`/`logic`
+  merge into the same kind of group, VPI models included (decision A21-D4);
+  selected actuals, net delays and `uwire` sides keep a copy (known issue).
+  V §12.3.10 / Table 45; SV §§23.3.3.1, 23.3.3.6–23.3.3.7 / Table 23-1 **[1995]**.
 - 🟨 **True aliases** — Same-declared-net-type packed networks, fully indexed
   fixed net-array elements, multidimensional/static indexed projections and
   constant member selects of packed and unpacked structure nets (a local

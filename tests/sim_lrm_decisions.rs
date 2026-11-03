@@ -2912,6 +2912,14 @@ fn a21_d3_output_port_shares_actual_variable() {
 }
 
 #[test]
+fn a21_d4_port_nets_merge_like_inout() {
+    run_decision(
+        "A21-D4_port_nets_merge_like_inout",
+        include_str!("fixtures/sim/lrm_decisions/A21-D4_port_nets_merge_like_inout.out"),
+    );
+}
+
+#[test]
 fn a17_d1_attempt_callbacks() {
     run_vpi_decision(
         "A17-D1_attempt_callbacks",

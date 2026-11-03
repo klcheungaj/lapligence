@@ -1,11 +1,14 @@
 //! A port whose sink shares its source's storage has no link process: an
 //! input variable formal of a whole variable actual (decision A21-D1), a
 //! `wire` sink that only its port drives (A21-D2) and an output variable
-//! actual of a variable formal (A21-D3). Every case where sharing would be
-//! observable keeps the link. These checks count the link processes of one instance in
-//! the generated C (`"<instance>.link"` descriptors), so they stay cheap and
-//! independent of host timing; behaviour is covered by the A21-D1..A21-D3
-//! decision cases and the `port_collapse` fixtures run below.
+//! actual of a variable formal (A21-D3). A net port whose sink has drivers
+//! or a type of its own merges with its source into one resolved net and
+//! has no link either (A21-D4). Every case where sharing or merging would
+//! be observable keeps the link. These checks count the link processes of
+//! one instance in the generated C (`"<instance>.link"` descriptors) and the
+//! resolved nets, so they stay cheap and independent of host timing;
+//! behaviour is covered by the A21-D1..A21-D4 decision cases and the
+//! `port_collapse` fixtures run below.
 
 use crate::sim_cli;
 use llg::core::compile::{compile_sources_checked, CompileOpts, OwnedSource};
@@ -157,42 +160,35 @@ fn net_groups(model: &str) -> usize {
         .sum()
 }
 
-/// Merging is not an alias when the sink has another driver, a type that
-/// could dominate or a delay of its own, or the two sides differ.
+/// A net port whose sink has another driver or a type that is not dominated
+/// by every other type merges with its source: no link, one resolved net
+/// for both sides (the actual `x` alone would have one too).
 #[test]
-fn net_sinks_that_merging_would_change_keep_the_link() {
+fn net_ports_whose_sink_differs_merge_into_one_net() {
     for (formal, body, actual, connection, label) in [
         (
             "input wire a",
-            "assign a = 1'bz;",
-            "logic x;",
+            "assign a = 1'b0;",
+            "wire x = y;",
             ".a(x)",
             "coerced input",
         ),
-        ("input tri0 a", "", "wire x = y;", ".a(x)", "tri0 formal"),
+        ("input tri0 a", "", "wire x;", ".a(x)", "tri0 formal"),
         ("input wand a", "", "wire x = y;", ".a(x)", "wand formal"),
         (
-            "input wire [1:0] a",
+            "input supply0 a",
             "",
-            "wire [3:0] x = {4{y}};",
+            "wire x = y;",
             ".a(x)",
-            "width",
+            "supply0 formal",
         ),
         (
-            "input wire signed [3:0] a",
-            "",
-            "wire [3:0] x = {4{y}};",
+            "input wor a",
+            "assign a = 1'b1;",
+            "wand x = y;",
             ".a(x)",
-            "sign",
+            "wired types",
         ),
-        (
-            "input wire a",
-            "",
-            "wire [3:0] x = {4{y}};",
-            ".a(x[1])",
-            "select",
-        ),
-        ("input wire a", "", "wire x = y;", ".a(~x)", "expression"),
         (
             "output wire a",
             "assign a = 1'b0;",
@@ -200,6 +196,97 @@ fn net_sinks_that_merging_would_change_keep_the_link() {
             ".a(x)",
             "second actual driver",
         ),
+        ("output wire a", "", "tri1 x;", ".a(x)", "tri1 actual"),
+    ] {
+        let model = render(&format!(
+            "module child({formal});
+  {body}
+endmodule
+module tb;
+  logic y;
+  {actual}
+  child u({connection});
+  initial begin y = 0; #1 y = 1; $finish; end
+endmodule
+"
+        ));
+        assert_eq!(links(&model), 0, "{label}: {model}");
+        assert_eq!(net_groups(&model), 1, "{label}: {model}");
+    }
+    // Two outputs on one actual, and a formal that is itself the source of
+    // a merged port below it: every net joins one group.
+    let model = render(
+        "module drv(output wire o, input logic d);
+  assign o = d;
+endmodule
+module coerced(input wire n);
+  assign n = 1'b0;
+endmodule
+module mid(input wire m);
+  coerced g(.n(m));
+endmodule
+module tb;
+  logic y;
+  wire w, c;
+  drv u(.o(w), .d(y));
+  drv v(.o(w), .d(1'b0));
+  assign c = y;
+  mid k(.m(c));
+  initial begin y = 0; #1 y = 1; $finish; end
+endmodule
+",
+    );
+    assert_eq!(
+        links_named(&model, ".link\""),
+        1,
+        "only the constant `v.d` links: {model}"
+    );
+    assert_eq!(net_groups(&model), 2, "{model}");
+}
+
+/// A port keeps its link where a merge would change more than the
+/// resolution: a variable source, a conversion, a select or expression
+/// actual, a net delay or a `uwire` net. A drive strength on the formal of
+/// an output does not matter: its actual merges as a second name (A21-D2).
+#[test]
+fn net_ports_that_a_merge_would_change_keep_the_link() {
+    for (formal, body, actual, connection, label) in [
+        (
+            "input wire a",
+            "assign a = 1'bz;",
+            "logic x;",
+            ".a(x)",
+            "variable actual",
+        ),
+        (
+            "input wire [1:0] a",
+            "assign a = 2'b00;",
+            "wire [3:0] x = {4{y}};",
+            ".a(x)",
+            "width",
+        ),
+        (
+            "input wire signed [3:0] a",
+            "assign a = 4'b0000;",
+            "wire [3:0] x = {4{y}};",
+            ".a(x)",
+            "sign",
+        ),
+        (
+            "input wire a",
+            "assign a = 1'b0;",
+            "wire [3:0] x = {4{y}};",
+            ".a(x[1])",
+            "select",
+        ),
+        (
+            "input wire a",
+            "assign a = 1'b0;",
+            "wire x = y;",
+            ".a(~x)",
+            "expression",
+        ),
+        ("input uwire a", "", "wire x = y;", ".a(x)", "uwire formal"),
         (
             "output wire a",
             "assign (weak0, weak1) a = 1'b0;",
@@ -223,22 +310,26 @@ endmodule
         let expected = usize::from(label != "strength of the formal does not matter");
         assert_eq!(links(&model), expected, "{label}: {model}");
     }
-    // A net delay on the formal (a non-ANSI declaration may give one).
-    let model = render(
-        "module child(a);
+    // A net delay on the formal (a non-ANSI declaration may give one) or
+    // on the actual.
+    for (formal, actual) in [("wire #2 a;", "wire x;"), ("wire a;", "wire #2 x;")] {
+        let model = render(&format!(
+            "module child(a);
   input a;
-  wire #2 a;
+  {formal}
+  assign a = 1'b0;
 endmodule
 module tb;
-  wire x;
+  {actual}
   logic y;
   assign x = y;
   child u(.a(x));
   initial begin y = 0; #1 y = 1; #3 $finish; end
 endmodule
-",
-    );
-    assert_eq!(links(&model), 1, "formal net delay: {model}");
+"
+        ));
+        assert_eq!(links(&model), 1, "net delay {formal} {actual}: {model}");
+    }
 }
 
 /// A force on a net sink merged with a source net forces the merged net; a
@@ -440,6 +531,28 @@ endmodule
         &[],
     );
     assert_eq!(links(&model), 2, "--vpi net ports: {model}");
+    // A net port whose sink has a driver of its own merges under VPI too:
+    // both names are nets of one group, which VPI reads and writes as one.
+    let model = render_with(
+        "module child(input wire a);
+  assign a = 1'b0;
+endmodule
+module tb;
+  logic x;
+  wire y;
+  assign y = x;
+  child u(.a(y));
+  initial begin x = 0; #1 x = 1; $finish; end
+endmodule
+",
+        &CodegenOptions {
+            vpi: true,
+            ..Default::default()
+        },
+        &[],
+    );
+    assert_eq!(links(&model), 0, "--vpi merged net port: {model}");
+    assert_eq!(net_groups(&model), 1, "--vpi merged net port: {model}");
     // A user system task makes the model keep the VPI catalog; it is only
     // known once the bodies are lowered, which then happens again.
     let model = render_with(
@@ -570,6 +683,24 @@ endmodule
 ",
     );
     assert_eq!(links(&model), 3, "net ports: {model}");
+    // A port whose net the child drives keeps its link too.
+    let model = render(
+        "module child(input wire clk, input wire d);
+  assign d = 1'b0;
+  specify
+    $setup(d, posedge clk, 1);
+  endspecify
+endmodule
+module tb;
+  logic c, x;
+  wire w;
+  assign w = x;
+  child u(.clk(c), .d(w));
+  initial begin c = 0; x = 0; #5 c = 1; #1 $finish; end
+endmodule
+",
+    );
+    assert_eq!(links(&model), 2, "coerced net port: {model}");
 }
 
 /// A constant part-select actual whose bounds depend on a generate loop
@@ -673,10 +804,40 @@ fn kept_links_preserve_each_side() {
     sim_cli::run_case(
         "port_collapse",
         "fallbacks",
-        "coerced: c=1 u0.n=x\nsecond driver: m=x u1.o=1\n\
-         types: z=z u2.t=0 wo=1 u2.a=1 u2.w=11\n\
+        "width: wide=1111 u2.w=11\nvariable actual: vr=1 u4.n=x\n\
+         selected actual: v=1111 u5.n=x\n\
          delay: dl=1 u3.n=x\ndelay later: dl=1 u3.n=1\n",
         "",
         &[],
+    );
+}
+
+const MERGED_NETS: &str = "coerced: c=x u0.n=x\n\
+weak child driver: cw=1 St1 u1.n=1 St1\n\
+vector: vec=11xx u2.v=11xx\n\
+output on wand actual: wn=0 u3.o=0\n\
+wor output on wire actual: nq=1 St1 u4.o=1\n\
+wire output on tri0 actual: et0=0 Pu0 u5.o=0 Pu0\n\
+table over a wor formal: wa=0 u6.a=0\n\
+1 wake u0.n: c=1 u0.n=1\n\
+forced actual: c=1 u0.n=1\n\
+2 wake u0.n: c=x u0.n=x\n\
+3 wake u0.n: c=0 u0.n=0\n\
+x=0: c=0 u0.n=0 vec=0000 u2.v=0000\n";
+
+#[test]
+fn merged_nets_hold_the_drivers_of_both_sides() {
+    sim_cli::run_case("port_collapse", "merged_nets", MERGED_NETS, "", &[]);
+}
+
+#[test]
+fn vpi_models_merge_the_same_nets() {
+    sim_cli::run_case_with_args(
+        "port_collapse",
+        "merged_nets",
+        MERGED_NETS,
+        "",
+        &[],
+        &["--vpi"],
     );
 }

@@ -105,13 +105,16 @@ those scripts. Differences within the observed spread are reported as noise.
   the identical type (decision A21-D1), an output variable actual that only
   the port writes (A21-D3), and a `wire`/`tri`/`logic` net sink that only
   its port drives, merged with a variable or whole resolved net source of the
-  same type (A21-D2). Every case where sharing would be observable keeps the
-  copy (force/release on a variable sink, other drivers, conversions,
-  initializers, net delays and dominating net types, specify paths and
-  timing checks, SDF, VPI models, a time-0 observer of a source that does not
-  start at X), in
-  [`collection/port_aliases.rs`](../src/sim/codegen/lowering/collection/port_aliases.rs)
-  and [`collection/nets/port_sinks.rs`](../src/sim/codegen/lowering/collection/nets/port_sinks.rs).
+  same type (A21-D2). A net sink with other drivers or a dominating net type
+  merges with its source into one resolved net instead (A21-D4), which costs
+  one group and no process. Every other case where sharing would be
+  observable keeps the copy (force/release on a variable sink, conversions,
+  initializers, net delays, selected actuals, specify paths and timing
+  checks, SDF, VPI models for storage aliases, a time-0 observer of a source
+  that does not start at X), in
+  [`collection/port_aliases.rs`](../src/sim/codegen/lowering/collection/port_aliases.rs),
+  [`collection/nets/port_sinks.rs`](../src/sim/codegen/lowering/collection/nets/port_sinks.rs)
+  and [`collection/nets/port_merges.rs`](../src/sim/codegen/lowering/collection/nets/port_merges.rs).
   An indexed part-select port actual whose index is a constant per generate
   iteration becomes a constant part-select whose bounds are record operands
   of the shared body.
@@ -124,7 +127,12 @@ those scripts. Differences within the observed spread are reported as noise.
   outputs 1.94 → 1.01 s (768 links gone, `model.c` 274 → 122 KB). The small
   designs lose all their links (cpu 21, fifo 15, uart 6) with times within
   noise; net-array element and part-select actuals keep theirs, and the
-  corpus workloads, which have no instance ports, generate identical C.
+  corpus workloads, which have no instance ports, generate identical C. Merged net ports (A21-D4), pinned medians of 7 interleaved runs: 1,000
+  generate instances, 20,000 cycles, each with a whole `wire` net into a
+  child that also drives it 11.1 s → 8.5 s (−23%), and into a `tri0` formal
+  7.7 s → 5.2 s (−32%); 1,000 links and 1,000 of 2,001 net groups gone,
+  `model.c` 822 → 668 KB and 739 → 585 KB. The `perf/` corpus and designs
+  generate identical C.
 
 ### Loops and tables instead of unrolled statements
 

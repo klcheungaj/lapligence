@@ -4,8 +4,13 @@ Inout collapse: `lowering.rs` module docs. A standalone `wire`/`tri`/`logic`
 net that only an input or output port drives is deferred by
 `build_wired_net_groups` and, when it can merge with its source, gets no group:
 it aliases the source's storage (`nets/port_sinks.rs`, A21-D2; links contract
-in [processes](processes.md)).
-Input/output links feeding a group retain their own structural driver sites.
+in [processes](processes.md)). A whole input/output connection between two
+nets whose sink has another driver or a type of its own joins the inout union
+before the type plan (`nets/port_merges.rs`, A21-D4): it is a port edge of
+`port_batch` (without the codegen dissimilar-type warning, which the frontend
+already gives), the port is no structural driver site, and it emits no link.
+Other input/output links feeding a group retain their own structural driver
+sites.
 Resolve net-type/delay selection through `net_collapse`/`port_net_types` before
 storage union; same-net-type alias checks precede more permissive port rules.
 Parent connections precede descendants, and each hierarchy depth collapses as
