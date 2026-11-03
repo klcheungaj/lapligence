@@ -1,6 +1,7 @@
 #ifndef LLG_SV4_COMPACT_SELECTION_INLINE_H
 #define LLG_SV4_COMPACT_SELECTION_INLINE_H
 /* Included by backend.h after the storage/bridge inlines. */
+#include "../llg_compiler.h"
 static inline uint32_t g4_selection_width(uint64_t width) {
     if (width >= LLG_GMP_SUPPORTED_WIDTH_LIMIT)
         llg_gmp_sv4_fail("width reaches exclusive limit");
@@ -133,6 +134,8 @@ static inline void llg_gmp_sv4_idx_part_select_set(g4_t* dst, uint64_t base, uin
         g4_selection_small_write(dst, (int64_t)base - (negative ? (int64_t)width - 1 : 0), source,
                                  0, width);
 }
+/* `index` is read only after g4_selection_small_index set it. */
+LLG_MAYBE_UNINIT_BEGIN
 static inline g4_t llg_gmp_sv4_idx_part_select_value(g4_t source, g4_t base, uint32_t width,
                                                      int negative) {
     g4_selection_width(width);
@@ -155,6 +158,7 @@ static inline void llg_gmp_sv4_idx_part_select_set_value(g4_t* dst, g4_t base, u
         g4_selection_small_write(dst, index - (negative ? (int64_t)width - 1 : 0), source, 0,
                                  width);
 }
+LLG_MAYBE_UNINIT_END
 static inline g4_t llg_gmp_sv4_concat(g4_t hi, g4_t lo) {
     uint32_t width = g4_selection_width((uint64_t)hi.width + lo.width);
     if (width > 64)

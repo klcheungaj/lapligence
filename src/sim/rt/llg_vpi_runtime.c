@@ -410,19 +410,25 @@ uint32_t llg_vpi_next_origin;
 
 #define RTS_ROW_UNRESOLVED (LLG_VPI_NONE - 1u)
 
+/* One record per framed call while an application is loaded: kept at 32
+ * bytes in a 64-byte aligned array, so no record straddles a cache line.
+ * A 48-byte record cost deep recursion about 4% (task recursion of depth
+ * 200; 24 and 40 bytes straddle lines too). The automatics table lives in
+ * the activation's address array (LLG_VPI_AUTOS_TABLE), not here. */
 typedef struct {
     uint64_t serial;   /* unique per run; the frame handle's name */
     const char* name;  /* the subprogram's full name (generated literal) */
+    void** slots;      /* the activation's address array, or NULL */
     uint32_t row;      /* its task or function row, resolved on demand */
     uint32_t origin;   /* the call that activated it: code row + 1, 0 for none */
-    uint32_t auto_count;
-    const llg_vpi_auto_t* autos; /* its automatic variables (static table) */
-    void** slots;      /* their addresses in the activation */
 } rts_frame_t;
+
+#define RTS_FRAME_ALIGN 64u
 
 typedef struct {
     uint64_t identity; /* process identity the frames belong to */
-    rts_frame_t* frames;
+    rts_frame_t* frames; /* RTS_FRAME_ALIGN aligned inside `block` */
+    void* block;
     uint32_t depth;
     uint32_t capacity;
 } rts_stack_t;
@@ -508,13 +514,26 @@ static uint32_t rts_frame_row(rts_frame_t* frame) {
     return frame->row;
 }
 
+/* A frame's automatics table (the activation's address array holds it)
+ * and its row count (up to the terminating row with no name). */
+static const llg_vpi_auto_t* rts_auto_table(const rts_frame_t* frame) {
+    return frame->slots ? (const llg_vpi_auto_t*)frame->slots[LLG_VPI_AUTOS_TABLE] : NULL;
+}
+
+static uint32_t rts_auto_count(const rts_frame_t* frame) {
+    const llg_vpi_auto_t* table = rts_auto_table(frame);
+    uint32_t count = 0;
+    while (table && table[count].name) ++count;
+    return count;
+}
+
 /* The table entry of an automatic-variable handle while its frame lives,
  * with the frame; NULL once the frame ended. */
 static const llg_vpi_auto_t* rts_auto(const llg_vpi_slot_t* slot, rts_frame_t** frame_out) {
     rts_frame_t* frame = rts_frame_find(slot->aux, (uint64_t)slot->left, slot->element, NULL);
-    if (!frame || slot->right < 0 || (uint64_t)slot->right >= frame->auto_count) return NULL;
+    if (!frame || slot->right < 0 || (uint64_t)slot->right >= rts_auto_count(frame)) return NULL;
     if (frame_out) *frame_out = frame;
-    return &frame->autos[slot->right];
+    return &rts_auto_table(frame)[slot->right];
 }
 
 static int rts_auto_type(const llg_vpi_slot_t* slot) {
@@ -574,8 +593,8 @@ static vpiHandle rts_automatics(const llg_vpi_slot_t* frame_slot) {
     int64_t identity = frame_slot->left;
     uint64_t serial = frame_slot->element;
     rts_frame_t* frame = rts_frame_find(thread_slot, (uint64_t)identity, serial, NULL);
-    if (!frame || !frame->auto_count) return NULL;
-    uint32_t count = frame->auto_count;
+    uint32_t count = frame ? rts_auto_count(frame) : 0u;
+    if (!count) return NULL;
     rts_handles_t list = {0};
     for (uint32_t i = 0; i < count; ++i) {
         vpiHandle handle = rts_make(SLOT_AUTO, (uint32_t)thread_slot, identity);
@@ -587,6 +606,117 @@ static vpiHandle rts_automatics(const llg_vpi_slot_t* frame_slot) {
         rts_push(&list, handle);
     }
     return rts_list(vpiAutomatics, list.items, list.count, list.failed);
+}
+
+/* The live frame with `serial` on any thread, with its thread (VPI queries
+ * only: a scan of the frame stacks). */
+static rts_frame_t* rts_frame_by_serial(uint64_t serial, int* thread_slot, uint64_t* identity) {
+    for (uint32_t i = 0; i < rts.stack_count; ++i) {
+        rts_stack_t* stack = &rts.stacks[i];
+        if (!stack->depth) continue;
+        rts_frame_t* frame = rts_frame_find((int)i - 1, stack->identity, serial, NULL);
+        if (frame) {
+            if (thread_slot) *thread_slot = (int)i - 1;
+            if (identity) *identity = stack->identity;
+            return frame;
+        }
+    }
+    return NULL;
+}
+
+/* The container automatic `index` of frame `serial` as a dynamic-layer
+ * place (its elements, decision A19-D82); 0 once the frame has ended or
+ * when the variable keeps no container. */
+static int rts_auto_container(uint64_t serial, uint32_t index, dyn_place_t* place) {
+    rts_frame_t* frame = rts_frame_by_serial(serial, NULL, NULL);
+    if (!frame || index >= rts_auto_count(frame)) return 0;
+    const llg_vpi_auto_t* entry = &rts_auto_table(frame)[index];
+    const llg_vpi_shape_t* shape = entry->shape ? dyn_shape(entry->shape - 1u) : NULL;
+    void* storage = (entry->flags & LLG_VPI_AUTO_NO_VALUE)
+                        ? NULL
+                        : frame->slots[LLG_VPI_AUTOS_FIRST + index];
+    if (!shape || shape->shape != LLG_VPI_SHAPE_CONTAINER || !storage) return 0;
+    place->shape = shape;
+    place->storage = storage;
+    place->row = DYN_AUTO_ROW;
+    place->name = entry->name;
+    place->serial = (int64_t)serial;
+    return 1;
+}
+
+static const char* rts_auto_frame_name(uint64_t serial) {
+    rts_frame_t* frame = rts_frame_by_serial(serial, NULL, NULL);
+    if (!frame) vpi_error("LLG_VPI_HANDLE", "the frame of this element has ended");
+    return frame ? frame->name : NULL;
+}
+
+/* The automatic-variable handle of entry `index` of frame `serial`. */
+static vpiHandle rts_auto_handle_by_serial(uint64_t serial, uint32_t index) {
+    int thread_slot = 0;
+    uint64_t identity = 0;
+    if (!rts_frame_by_serial(serial, &thread_slot, &identity)) {
+        vpi_error("LLG_VPI_HANDLE", "the frame of this element has ended");
+        return NULL;
+    }
+    vpiHandle handle = rts_make(SLOT_AUTO, (uint32_t)thread_slot, (int64_t)identity);
+    llg_vpi_slot_t* entry = handle ? decode_handle(handle, NULL) : NULL;
+    if (entry) {
+        entry->element = serial;
+        entry->right = (int64_t)index;
+    }
+    return handle;
+}
+
+/* The container place of an automatic-variable handle, else an error. */
+static int rts_auto_elements(const llg_vpi_slot_t* slot, dyn_place_t* place) {
+    memset(place, 0, sizeof(*place));
+    if (slot->right >= 0 && rts_auto_container(slot->element, (uint32_t)slot->right, place))
+        return 1;
+    rts_frame_t* frame = NULL;
+    const llg_vpi_auto_t* entry = rts_auto(slot, &frame);
+    vpi_error("LLG_VPI_RELATION",
+              entry && entry->type == vpiArrayVar
+                  ? (entry->flags & LLG_VPI_AUTO_LOCAL) && entry->shape &&
+                            !(entry->flags & LLG_VPI_AUTO_NO_VALUE)
+                        ? "this automatic variable is not declared yet in its frame"
+                        : "llg serves no elements of a fixed-size automatic array or of an "
+                          "array passed by reference"
+                  : "this object has no elements");
+    return 0;
+}
+
+/* vpi_iterate(vpiReg / vpiVarSelect ...) of a dynamic array, queue or
+ * associative array automatic: its elements (37.17 detail 4). */
+static vpiHandle rts_auto_iterate(int type, const llg_vpi_slot_t* slot) {
+    dyn_place_t place;
+    if (!rts_auto_elements(slot, &place)) return NULL;
+    const llg_vpi_shape_t* element = dyn_shape(place.shape->element);
+    if (!element || !dyn_element_type_matches(element, type)) {
+        vpi_error("LLG_VPI_RELATION", "this object has no such iteration");
+        return NULL;
+    }
+    if (place.shape->key == LLG_VPI_KEY_OTHER) {
+        vpi_error("LLG_VPI_UNSUPPORTED", "llg does not iterate associative arrays with a wildcard index");
+        return NULL;
+    }
+    size_t size = dyn_container_size(&place);
+    if (size > UINT32_MAX) size = UINT32_MAX;
+    vpiHandle iterator = dyn_iterator(DYN_ITER_ELEMENTS, (uint32_t)size);
+    llg_vpi_slot_t* state = iterator ? decode_handle(iterator, NULL) : NULL;
+    if (!state) return NULL;
+    state->object = DYN_AUTO_ROW;
+    state->right = place.serial;
+    state->pointer = NULL;
+    state->lsb = (uint32_t)slot->right;
+    return iterator;
+}
+
+/* vpi_handle_by_index of a container automatic: the element at `index`. */
+static vpiHandle rts_auto_by_index(const llg_vpi_slot_t* slot, PLI_INT32 index) {
+    if (!rts_alive(slot)) return NULL;
+    dyn_place_t place;
+    if (!rts_auto_elements(slot, &place)) return NULL;
+    return dyn_element_by_index(&place, (uint32_t)slot->right, index, 0);
 }
 
 /* The place of an automatic variable (37.39 detail 1): its value shape and
@@ -601,7 +731,7 @@ static const llg_vpi_auto_t* rts_auto_place(const llg_vpi_slot_t* slot, dyn_plac
     if (!entry) return NULL;
     place->shape = entry->shape ? dyn_shape(entry->shape - 1u) : NULL;
     place->name = entry->name;
-    if (!(entry->flags & LLG_VPI_AUTO_NO_VALUE)) place->storage = frame->slots[slot->right];
+    if (!(entry->flags & LLG_VPI_AUTO_NO_VALUE)) place->storage = frame->slots[LLG_VPI_AUTOS_FIRST + (uint64_t)slot->right];
     return entry;
 }
 
@@ -698,6 +828,10 @@ static PLI_INT64 rts_auto_get(int property, const llg_vpi_slot_t* slot) {
         case vpiSize:
             if (!shape) {
                 if (entry->type == vpiArrayVar) return entry->size;
+                /* 37.17 detail 9: an unpacked structure or union reports
+                 * its number of fields, as a static one does. */
+                const llg_vpi_typespec_t* typespec = typespec_ref(entry->typespec);
+                if (is_aggregate_typespec(typespec)) return typespec->member_count;
                 break;
             }
             if (shape->shape == LLG_VPI_SHAPE_CONTAINER || shape->shape == LLG_VPI_SHAPE_STRING) {
@@ -925,29 +1059,36 @@ static void rts_pop_frame(int slot, uint64_t identity) {
     stack->depth--;
 }
 
-static uint64_t rts_enter(const char* full_name, const llg_vpi_auto_t* autos, uint32_t count,
-                          void** slots) {
+/* Grow a frame stack to `capacity` records, keeping RTS_FRAME_ALIGN. */
+static int rts_grow(rts_stack_t* stack, uint32_t capacity) {
+    if ((uint64_t)capacity * sizeof(rts_frame_t) > (uint64_t)(SIZE_MAX - RTS_FRAME_ALIGN)) return 0;
+    void* block = malloc((size_t)capacity * sizeof(rts_frame_t) + RTS_FRAME_ALIGN);
+    if (!block) return 0;
+    uintptr_t address = ((uintptr_t)block + RTS_FRAME_ALIGN - 1u) & ~(uintptr_t)(RTS_FRAME_ALIGN - 1u);
+    rts_frame_t* frames = (rts_frame_t*)(void*)address;
+    if (stack->depth) memcpy(frames, stack->frames, stack->depth * sizeof(*frames));
+    free(stack->block);
+    stack->block = block;
+    stack->frames = frames;
+    stack->capacity = capacity;
+    return 1;
+}
+
+static uint64_t rts_enter(const char* full_name, void** slots) {
     uint32_t origin = llg_vpi_next_origin;
     llg_vpi_next_origin = 0u;
     uint64_t identity;
     int slot = llg_rt_current_thread(&identity);
     rts_stack_t* stack = rts_stack(slot, identity, 1);
     if (!stack) return 0;
-    if (stack->depth == stack->capacity) {
-        uint32_t capacity = stack->capacity ? stack->capacity * 2u : 8u;
-        rts_frame_t* grown = (rts_frame_t*)realloc(stack->frames, capacity * sizeof(*grown));
-        if (!grown) return 0;
-        stack->frames = grown;
-        stack->capacity = capacity;
-    }
+    if (stack->depth == stack->capacity && !rts_grow(stack, stack->capacity ? stack->capacity * 2u : 8u))
+        return 0;
     rts_frame_t* frame = &stack->frames[stack->depth++];
     frame->serial = ++rts.next_serial;
     frame->name = full_name;
+    frame->slots = slots;
     frame->row = RTS_ROW_UNRESOLVED;
     frame->origin = origin;
-    frame->auto_count = count;
-    frame->autos = autos;
-    frame->slots = slots;
     uint64_t serial = frame->serial;
     if (rts.start_frame_cbs) {
         uint32_t row = rts_frame_row(frame);
@@ -960,16 +1101,15 @@ static uint64_t rts_enter(const char* full_name, const llg_vpi_auto_t* autos, ui
 }
 
 uint64_t llg_vpi_frame_enter(const char* full_name) {
-    return rts_enter(full_name, NULL, 0u, NULL);
+    return rts_enter(full_name, NULL);
 }
 
 uint64_t llg_vpi_frame_enter_autos(const char* full_name, const llg_vpi_auto_t* autos,
-                                   uint32_t count, void** slots) {
-    /* Body locals are stored as their declarations run; until then they
-     * have no address. */
-    for (uint32_t i = 0; i < count; ++i)
-        if (autos[i].flags & LLG_VPI_AUTO_LOCAL) slots[i] = NULL;
-    return rts_enter(full_name, autos, count, slots);
+                                   void** slots) {
+    /* The model zeroes the array, so body locals have no address until
+     * their declarations run. */
+    slots[LLG_VPI_AUTOS_TABLE] = (void*)autos;
+    return rts_enter(full_name, slots);
 }
 
 void llg_vpi_frame_exit(uint64_t serial) {
@@ -1137,7 +1277,7 @@ static vpiHandle rts_event_waiters(const llg_event_t* event) {
 
 static void rts_runtime_shutdown(void) {
     if (rts.hooked) llg_rt_set_thread_hook(NULL);
-    for (uint32_t i = 0; i < rts.stack_count; ++i) free(rts.stacks[i].frames);
+    for (uint32_t i = 0; i < rts.stack_count; ++i) free(rts.stacks[i].block);
     free(rts.stacks);
     memset(&rts, 0, sizeof(rts));
     llg_vpi_frames_on = 0;
@@ -1465,6 +1605,7 @@ static vpiHandle rts_iterate(int type, vpiHandle reference, int* handled) {
         if (slot->kind == SLOT_THREAD && type == vpiThread)
             return rts_thread_list(slot->aux, (uint64_t)slot->left);
         if (slot->kind == SLOT_FRAME && type == vpiAutomatics) return rts_automatics(slot);
+        if (slot->kind == SLOT_AUTO) return rts_auto_iterate(type, slot);
         vpi_error("LLG_VPI_RELATION", "this object has no such iteration");
         return NULL;
     }

@@ -371,6 +371,7 @@ static void dyn_object_cb_removed(void);
 static void dyn_shutdown(void);
 /* Runtime structures: llg_vpi_runtime.c, appended after the dynamic layer. */
 static int rts_slot(const llg_vpi_slot_t* slot);
+static vpiHandle rts_auto_by_index(const llg_vpi_slot_t* slot, PLI_INT32 index);
 static int rts_type(const llg_vpi_slot_t* slot);
 static int rts_identity(const llg_vpi_slot_t* slot, uint64_t identity[4]);
 static PLI_INT64 rts_get(int property, llg_vpi_slot_t* slot, int* handled);
@@ -4159,6 +4160,7 @@ vpiHandle vpi_handle_by_index(vpiHandle object, PLI_INT32 index) {
     llg_vpi_slot_t* slot = checked_handle(object, NULL);
     if (!slot) return NULL;
     if (dyn_slot(slot)) return dyn_handle_by_index(slot, index);
+    if (slot->kind == SLOT_AUTO) return rts_auto_by_index(slot, index);
     int64_t value = index;
     if (slot->kind == SLOT_OBJECT) {
         llg_vpi_model_object_t* base = row_object(slot->object);
@@ -13439,7 +13441,12 @@ PLI_INT32 vpi_vprintf(PLI_BYTE8* format, va_list ap) {
         vpi_error("LLG_VPI_ARGUMENT", "null vpi_vprintf format");
         return EOF;
     }
-    return vfprintf(stdout, (const char*)format, ap);
+    int result = vfprintf(stdout, (const char*)format, ap);
+    /* Flushed like $display and vpi_mcd_printf, so the runtime's own
+     * stderr notes (a $finish report) cannot overtake it when stdout is a
+     * file or pipe. */
+    fflush(stdout);
+    return result;
 }
 
 PLI_INT32 vpi_printf(PLI_BYTE8* format, ...) {
@@ -13452,6 +13459,7 @@ PLI_INT32 vpi_printf(PLI_BYTE8* format, ...) {
     va_start(ap, format);
     int result = vfprintf(stdout, (const char*)format, ap);
     va_end(ap);
+    fflush(stdout); /* as vpi_vprintf */
     return result;
 }
 

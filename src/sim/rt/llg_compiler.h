@@ -49,4 +49,17 @@
 #define LLG_MAYBE_UNUSED
 #endif
 
+// Silence GCC's -Wmaybe-uninitialized over a region where a variable is read
+// only after the helper that writes it reported success (GCC 13 false
+// positive). Initializing the variable instead changes register allocation
+// on the hot path, so the generated code is left exactly as it was.
+#if defined(__GNUC__) && !defined(__clang__)
+#define LLG_MAYBE_UNINIT_BEGIN \
+    _Pragma("GCC diagnostic push") _Pragma("GCC diagnostic ignored \"-Wmaybe-uninitialized\"")
+#define LLG_MAYBE_UNINIT_END _Pragma("GCC diagnostic pop")
+#else
+#define LLG_MAYBE_UNINIT_BEGIN
+#define LLG_MAYBE_UNINIT_END
+#endif
+
 #endif

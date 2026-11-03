@@ -558,11 +558,15 @@ typedef struct {
 #define LLG_VPI_AUTO_NO_VALUE 0x04u
 /* vpiSigned of a fixed-size unpacked array: its elements are signed. */
 #define LLG_VPI_AUTO_SIGNED 0x08u
-/* llg_vpi_frame_enter for a subprogram with automatic variables: `slots`
- * is the activation's address array (one entry per table row), which lives
- * as long as the frame. */
+/* llg_vpi_frame_enter for a subprogram with automatic variables: `autos`
+ * is its table, ended by a row with a NULL name; `slots` is the
+ * activation's address array, zeroed by the model before it stores any
+ * address and living as long as the frame. Entry LLG_VPI_AUTOS_TABLE
+ * receives the table; row i's address is entry LLG_VPI_AUTOS_FIRST + i. */
+#define LLG_VPI_AUTOS_TABLE 0u
+#define LLG_VPI_AUTOS_FIRST 1u
 uint64_t llg_vpi_frame_enter_autos(const char* full_name, const llg_vpi_auto_t* autos,
-                                   uint32_t count, void** slots);
+                                   void** slots);
 /* End frame `frame` (and any frame entered after it). A model also calls it
  * before releasing the value scopes that hold the body's locals, so
  * cbEndOfFrame still reads them; a frame already ended is left alone. */

@@ -819,9 +819,13 @@ optimizer modes with both value backends. The single frame `tb.t` lists the
 formals then the top-level locals in declaration order (A19-D76, 37.39
 detail 1, L60160), each a structure variable (`vpiStructVar`, 37.17) on its
 declaration line. The packed ones have size 8 and the value of their bits
-(`8'h3c` = 60). An unpacked structure is a record value llg keeps without a
-cell the frame names, so it is listed with size -1 and no value (a known
-gap: other simulators give its member count and value). `g=18` is
+(`8'h3c` = 60). An unpacked structure has size 3, its number of fields
+(37.17 detail 9, SystemVerilog-1800-2009.txt L58763: "For unpacked
+structures and unions, the size returned indicates the number of fields in
+the structure or union"), and no value (detail 11, L58766-58767: "Struct
+var and union var variables for which the vpiVector property is FALSE do
+not have a value property"). Its members are not served: llg keeps the
+record without member cells the frame names (a known gap). `g=18` is
 `(5 + 1) + 4'hc`.
 
 ## catalog (A03; 37.3, 38.6, 38.18, 38.23, 40.5.3)
