@@ -370,3 +370,54 @@ fn vpi_checker_instances_are_hierarchy_scopes() {
         .expect("VPI checker fixture should complete");
     }
 }
+
+/// With stdout and stderr in one file (both fully buffered or not), a
+/// vpi_printf line keeps its place before a later runtime note on stderr,
+/// as `$display` lines do.
+#[test]
+fn vpi_printf_stays_ordered_with_runtime_notes_in_a_file() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    sim_harness::with_frontend_temp_cwd("vpi-printf-order", |dir| {
+        let executable = build_model(
+            dir,
+            "vpi_printf_order.sv",
+            &fixture("vpi_printf_order.sv"),
+            &["task $vpi_say(input int value)"],
+        );
+        let plugin = compile_plugin(dir, "vpi_printf_order.c");
+        let log_path = dir.join("combined.log");
+        let log = fs::File::create(&log_path).expect("create combined log");
+        let status = Command::new(&executable)
+            .env("LLG_VPI_PLUGIN", &plugin)
+            .stdout(log.try_clone().expect("clone log handle"))
+            .stderr(log)
+            .status()
+            .expect("generated model should run");
+        assert!(status.success(), "VPI simulation failed: {status:?}");
+        let combined = fs::read_to_string(&log_path).expect("read combined log");
+        let lines: Vec<&str> = combined.lines().collect();
+        let position = |text: &str| {
+            lines
+                .iter()
+                .position(|line| line.starts_with(text))
+                .unwrap_or_else(|| panic!("`{text}` missing from:\n{combined}"))
+        };
+        assert!(
+            position("vpi_printf 1") < position("display 1"),
+            "{combined}"
+        );
+        assert!(
+            position("display 1") < position("vpi_printf 2"),
+            "{combined}"
+        );
+        assert!(
+            position("vpi_printf 2") < position("llg: $finish"),
+            "{combined}"
+        );
+        Ok(())
+    })
+    .expect("VPI printf order fixture should complete");
+}

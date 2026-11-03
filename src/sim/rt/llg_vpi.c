@@ -13439,7 +13439,12 @@ PLI_INT32 vpi_vprintf(PLI_BYTE8* format, va_list ap) {
         vpi_error("LLG_VPI_ARGUMENT", "null vpi_vprintf format");
         return EOF;
     }
-    return vfprintf(stdout, (const char*)format, ap);
+    int result = vfprintf(stdout, (const char*)format, ap);
+    /* Flushed like $display and vpi_mcd_printf, so the runtime's own
+     * stderr notes (a $finish report) cannot overtake it when stdout is a
+     * file or pipe. */
+    fflush(stdout);
+    return result;
 }
 
 PLI_INT32 vpi_printf(PLI_BYTE8* format, ...) {
@@ -13452,6 +13457,7 @@ PLI_INT32 vpi_printf(PLI_BYTE8* format, ...) {
     va_start(ap, format);
     int result = vfprintf(stdout, (const char*)format, ap);
     va_end(ap);
+    fflush(stdout); /* as vpi_vprintf */
     return result;
 }
 
