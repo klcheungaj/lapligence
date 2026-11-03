@@ -607,6 +607,7 @@ fn render_coroutine_branches(
             let (source, layout) = super::owned::model::coroutine_branch(
                 &ctx,
                 pre,
+                Some(definition),
                 owner,
                 execution.analysis(),
                 upper_bounds,
@@ -644,6 +645,7 @@ fn render_coroutine_branches(
             let (source, layout) = super::owned::model::coroutine_branch(
                 &ctx,
                 pre,
+                None,
                 owner,
                 execution.analysis(),
                 upper_bounds,
@@ -1620,7 +1622,12 @@ fn render_model(
             if let Some(artifact) = coroutine_branches.get_mut(&owner) {
                 out.push_str(&std::mem::take(&mut artifact.source));
             } else {
-                out.push_str(&super::owned::model::pre_function(&ctx, pre, &names)?);
+                out.push_str(&super::owned::model::pre_function(
+                    &ctx,
+                    pre,
+                    Some(f),
+                    &names,
+                )?);
             }
         }
         if let Some(artifact) = coroutine_functions.get_mut(&index) {
@@ -1657,7 +1664,7 @@ fn render_model(
             if let Some(artifact) = coroutine_branches.get_mut(&owner) {
                 out.push_str(&std::mem::take(&mut artifact.source));
             } else {
-                out.push_str(&super::owned::model::pre_function(&ctx, pre, &names)?);
+                out.push_str(&super::owned::model::pre_function(&ctx, pre, None, &names)?);
             }
         }
         if let Some(artifact) = &mut coroutine_processes[index] {

@@ -1,0 +1,22 @@
+1 saw 11
+2 branch reads 11
+2 after join 11
+2 a=11
+3 saw 33
+4 branch reads 33
+4 after join 33
+4 arr=33 40
+5 saw 10
+6 branch reads 10
+6 after join 10
+6 q=5 10
+9 mixed 3.00 abc! ae
+9 x=3.00 s=abc! w=ae
+10 event seen in branch
+11 saw 8
+12 branch reads 8
+12 after join 8
+15 mixed 0.50 xc! a0
+16 event seen in branch
+16 locals 8 0.50 xc! a0
+16 done; a woke 1 with 11, ev woke 10

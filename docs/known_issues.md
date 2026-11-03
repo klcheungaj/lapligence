@@ -644,11 +644,15 @@ container-result call used other than as a whole assignment source or a
 statement (`f()[i]`, `f().size()`); a container argument in expression
 position that is neither a variable of the formal's type nor a packed/real
 assignment pattern; event controls and monitors on subroutine or object
-containers; mutating methods of a nested container element (`q[i].push_back`;
-`q[i].size()` and `$size(q[i])` work), and other methods of a nested element
-(`q[i].sum()`, `q[i].find(...)`); a whole nested element read into a
-container (`row = q[i]`); a nested element written from an associative
-variable; `foreach` with an omitted slot over a container of containers;
+containers; methods of a nested container element outside assignment, call
+and system-task statements (`if (q[i].pop_front())`, `return q[i].sum()`;
+inside those statements the element is staged whole, and `q[i].size()` and
+`$size(q[i])` work everywhere); a nested element passed whole as a subroutine
+argument (`f(q[i])`); a select into a queue or dynamic array nested in a
+string-keyed associative array element (`sq["k"][1]`); one statement that
+changes two nested elements of one container
+(`sq["b"].push_back(sq["a"].pop_front())`); a nested element written from an
+associative variable; `foreach` with an omitted slot over a container of containers;
 `foreach` with several loop variables whose outer dimension is associative
 (`foreach (ad[k, j])` over `int ad[int][]`); any element access of an
 associative array nested in a queue, dynamic or associative array element
@@ -668,8 +672,11 @@ that re-reads the handle at each use (SIM-011); a handle computed by an
 element select or a call, a nested element and a call result have no binding
 the operation can name without an addressed-container operand; references
 need retained element cells and fork branches need capture pins. Nested
-storage is a dynamic-array value, so queue methods on it would need dynamic
-array forms of every queue mutation.
+storage is a dynamic-array value, so a statement stages a nested element it
+uses whole in a lexical queue or dynamic array and writes it back afterwards;
+each staged element costs a copy in and, when changed, a copy out, and
+statements without a statement-level staging point (conditions, `return`)
+have no place for that copy.
 
 ### Intended direction
 
@@ -1541,34 +1548,32 @@ strings get one).
 ## `ref` formals in fork-join branches
 
 **Status:** open (FIN-001 G3, F09-04). Illegal forms are rejected with their
-location; one legal form is rejected as unsupported.
+location; one legal form is rejected as unsupported. Packed, real, string and
+event `ref` formals work in `fork ... join` branches
+(`sim_010/ref_formal_fork_join`).
 
 ### Symptom
 
-A branch of a `fork ... join` inside a task that reads or writes a packed,
-real, string, handle or event `ref` formal of that task is legal (SV 9.3.2
+A branch of a `fork ... join` inside a task that reads or writes a class,
+chandle or other handle `ref` formal of that task is legal (SV 9.3.2
 restricts only `join_any`/`join_none`; SV 13.5.2) but stops with "a
-fork-join branch that reads or writes a packed, real, string, handle or
-event `ref` formal is not supported". Before FIN-001 the branch silently
-worked on a copy and its writes never reached the actual. Inside
-`join_any`/`join_none` a reference outside a fork block-item initializer is
-illegal (SV 9.3.2) and rejects with its location; block-item initializers
-(`fork automatic int k = r; ... join_none`) execute.
+fork-join branch that reads or writes a handle `ref` formal is not
+supported". Inside `join_any`/`join_none` a reference outside a fork
+block-item initializer is illegal (SV 9.3.2) and rejects with its location;
+block-item initializers (`fork automatic int k = r; ... join_none`) execute.
 
 ### Cause
 
-A branch is its own coroutine with a capture frame. A `ref` formal is an
-`llg_ref_t` descriptor (or a handle/event address) that only the declaring
-function frame names (`IrExprKind::FormalRead`, `r<index>`); the capture
-path copies its value into the branch frame instead.
+A `join` branch receives a packed, real, string or event `ref` formal's
+descriptor (`rN`) in an opaque slot of its capture frame and names the
+formal as the task does. A handle `ref` formal has a second parameter, the
+actual's change marker that stores publish and waits observe, which no
+branch slot carries yet.
 
 ### Intended direction
 
-Capture the descriptor pointer as an opaque frame slot (valid for the whole
-join, since the task waits for every branch) and give captured branches a
-formal table so formal reads, stores, selects and waits emit through it.
-Estimate: 2-3 days (codegen capture plus emitter formal binding, tests for
-every `ref` kind).
+Capture the marker pointer in a second opaque slot and bind it under the
+formal's marker parameter name in the branch. Estimate: half a day.
 
 ### Reproduce
 

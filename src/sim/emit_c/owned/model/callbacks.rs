@@ -4,16 +4,40 @@ use super::*;
 pub(super) fn render<'a, 'm>(
     ctx: &'a RCtx<'m>,
     pre: &IrPreFn,
+    function: Option<&'m IrFunc>,
     names: &'a StorageNames<'m>,
 ) -> Result<String, String> {
     let mut frame = Frame::new(ctx);
     frame.storage_names = Some(names);
+    bind_branch_formals(&mut frame, pre, function)?;
     render_with_frame(ctx, pre, frame, false).map(|(source, _)| source)
 }
 
+/// A captured branch that names `ref` formals of its subroutine through
+/// captured descriptors resolves them with that subroutine's formal table.
+fn bind_branch_formals<'m>(
+    frame: &mut Frame<'_, 'm>,
+    pre: &IrPreFn,
+    function: Option<&'m IrFunc>,
+) -> Result<(), String> {
+    let IrPreFn::CapturedBranch { captures, .. } = pre else {
+        return Ok(());
+    };
+    if captures
+        .iter()
+        .any(|capture| matches!(capture.initial().kind(), IrExprKind::FormalRead(_)))
+    {
+        frame.branch_formals =
+            Some(function.ok_or("a process fork branch cannot capture a `ref` formal")?);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) fn coroutine_branch<'a, 'm>(
     ctx: &'a RCtx<'m>,
     pre: &IrPreFn,
+    function: Option<&'m IrFunc>,
     owner: crate::sim::execution::CoroutineId,
     analysis: &crate::sim::execution::ExecutionAnalysis,
     frame_upper_bounds: &std::collections::BTreeMap<usize, usize>,
@@ -22,6 +46,7 @@ pub(super) fn coroutine_branch<'a, 'm>(
 ) -> Result<(String, super::super::super::frame_layout::FrameLayout), String> {
     let mut frame = Frame::new_coframe(ctx, analysis, owner, frame_upper_bounds)?;
     frame.storage_names = Some(names);
+    bind_branch_formals(&mut frame, pre, function)?;
     if outline {
         if let IrPreFn::Branch { c_name, .. } | IrPreFn::CapturedBranch { c_name, .. } = pre {
             frame.enable_outlining(c_name, true);

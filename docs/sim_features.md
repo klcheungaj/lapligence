@@ -499,8 +499,16 @@ Macros, includes and their edition-specific behavior are counted in §11.
   queue, dynamic or associative members copy them whole, also into a selected
   record member (`w.inner = src`)
   ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
-  Whole reads of a nested container element (`row = qq[0]`) and methods on
-  nested elements reject.
+  A queue or dynamic array nested in an element (`qq[i]`, `sq["k"]`) takes
+  every method and is read or written whole (`row = qq[i]`, `sq["k"] = src`,
+  `qq.push_back(qq[0])`) in assignment, call and system-task statements; the
+  statement works on a staged copy of the element that is written back when
+  the statement changes it
+  ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md)).
+  Methods of nested elements in other statements (an `if` condition, a
+  `return`), selects into a queue or dynamic array nested in a string-keyed
+  element, and two changed nested elements of one container in one statement
+  reject.
   `ref` formals of queue, dynamic and associative type alias the caller's
   container variable, including from timed tasks and fork branches
   ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)).
@@ -508,8 +516,7 @@ Macros, includes and their edition-specific behavior are counted in §11.
   event controls and `wait` on them wake on another process's change
   ([sim_010](../tests/fixtures/sim/feature_completion/sim_010/readme.md)).
   Class container properties selected through other handle expressions
-  (`a[i].q`) or outside procedural statements (SIM-011) and mutating methods of
-  nested elements remain
+  (`a[i].q`) or outside procedural statements (SIM-011) remain
   restricted ([known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
   Whole record elements compare member-wise (SIM-007, §7) and string-keyed
   index results are string queues (SIM-019, §7).
@@ -1271,8 +1278,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
   A popped class handle selects its properties (`q.pop_front().v`,
   [rtl_006](../tests/fixtures/sim/feature_completion/rtl_006/readme.md)).
-  Generated loops over wildcard-index arrays and methods on nested container
-  elements reject. `shuffle` draws from the calling thread's random stream
+  Methods on nested container elements run on a staged copy of the element
+  in assignment, call and system-task statements (§7 resizable containers);
+  generated loops over wildcard-index arrays reject. `shuffle` draws from the calling thread's random stream
   ([sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md)).
   SV §7.12 **[SV-2005]**.
 - 🟨 **Bit-stream casts and streaming** — Fixed arrays/nested records, selected
@@ -1763,8 +1771,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).
   A `ref` formal initializes fork block items (`ref_formal_fork_initializers`);
   any other reference to one inside `join_any`/`join_none` is illegal
-  (SV 9.3.2) and rejects with its location, and a `fork ... join` branch
-  naming a packed, real, string, handle or event `ref` formal rejects
+  (SV 9.3.2) and rejects with its location. `fork ... join` branches read,
+  write and wait on packed, real, string and event `ref` formals through the
+  caller's actual (`ref_formal_fork_join`, SV 13.5.2); a handle `ref` formal
+  there rejects
   ([known issue](known_issues.md#ref-formals-in-fork-join-branches)). Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2

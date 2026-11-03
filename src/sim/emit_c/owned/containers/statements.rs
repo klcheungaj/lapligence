@@ -1102,6 +1102,10 @@ pub(super) fn render(
                     frame.native_value_address(*value)?
                 }
                 IrValueItemRoot::Value(value) => frame.native_value_item(*value, items)?,
+                // An empty path names a whole nested container element.
+                IrValueItemRoot::Element(element) if items.is_empty() => {
+                    format!("((llg_value_t*){})", frame.chandle(element)?)
+                }
                 IrValueItemRoot::Element(element) => {
                     let element = frame.chandle(element)?;
                     frame.value_item(&format!("((llg_value_t*){element})"), items)?

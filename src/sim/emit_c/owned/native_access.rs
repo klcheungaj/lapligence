@@ -216,7 +216,7 @@ impl Frame<'_, '_> {
     /// names in the function being emitted.
     fn handle_ref_formal(&self, address: &str) -> Option<usize> {
         let index = address.strip_prefix('r')?.parse::<usize>().ok()?;
-        let formal = self.ctx.func?.formals.get(index)?;
+        let formal = self.formal_function()?.formals.get(index)?;
         (formal.chandle && formal.is_ref()).then_some(index)
     }
 

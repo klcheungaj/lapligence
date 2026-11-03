@@ -11,7 +11,9 @@ See [shared lint](../readme.md).
   is declared (the body is the Db's recorded `body`; extra scope-only `Begin`
   children of a subroutine with loops or blocks are not it), and so do formal
   defaults. A concatenation, streaming or assignment-pattern write target counts
-  for each member (`collect_writes_with_members`). Generate scopes (loop, if,
+  for each member, and a write to an unpacked element or record member counts
+  for the whole object (`collect_writes_with_members`). Every index, key and
+  select bound of a write target is a read (`q[i][j] = v` reads `i` and `j`). Generate scopes (loop, if,
   case) are analysed like module scopes. Signals connected to a black box (an
   instance of an unknown module, `black_box_connection_signals`) are skipped.
   The `default disable iff` condition a checker instance takes for

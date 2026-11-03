@@ -267,6 +267,9 @@ impl<'a> Codegen<'a> {
     }
 
     pub(in super::super) fn container_of(&self, node: NodeId) -> Option<ContainerInfo> {
+        if let Some(ir) = self.staged_nested_element(node) {
+            return Some(ContainerInfo { ir });
+        }
         match self.kind(node) {
             NodeKind::Array { .. }
             | NodeKind::NamedEvent
@@ -338,7 +341,8 @@ impl<'a> Codegen<'a> {
     /// A diagnostic for a select whose base is a resizable container with an
     /// associative array nested in its elements (`int aa[string][int]`,
     /// `int qa[$][int]`): element values have no nested associative form, so
-    /// such elements cannot be addressed.
+    /// such elements cannot be addressed. Selects into a queue or dynamic
+    /// array nested in a string-keyed associative array are reported too.
     pub(in super::super) fn nested_associative_select_error(
         &self,
         base: NodeId,
@@ -346,6 +350,21 @@ impl<'a> Codegen<'a> {
     ) -> Option<String> {
         let container = self.container_of(base)?;
         let mut element = &self.model.containers[container.ir].element;
+        // Only whole uses of such an element are staged (`sq[k].push_back(x)`,
+        // `sq[k] = src`); a select into it has no element path.
+        if matches!(
+            self.model.containers[container.ir].kind,
+            IrContainerKind::Associative {
+                key: IrAssocKey::String
+            }
+        ) && matches!(element, IrContainerElement::Container { kind, .. }
+            if !kind.to_ascii_lowercase().contains("assoc"))
+        {
+            return Some(format!(
+                "elements of a queue or dynamic array nested in string-keyed associative array `{}` in `{path}` are not supported; copy the element into a queue or dynamic-array variable first",
+                self.node(base).name
+            ));
+        }
         while let IrContainerElement::Container {
             kind,
             element: next,
@@ -493,6 +512,10 @@ impl<'a> Codegen<'a> {
         if let Some((container, iterator, string_key)) = self.inline_element_path(node) {
             return (!string_key).then(|| (container, vec![iterator]));
         }
+        // A staged nested element is a whole container of its own.
+        if self.staged_nested_element(node).is_some() {
+            return None;
+        }
         let (base, indices) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, vec![*index]),
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if !indices.is_empty() => {
@@ -567,6 +590,9 @@ impl<'a> Codegen<'a> {
     ) -> Option<(usize, NodeId)> {
         if let Some((container, iterator, true)) = self.inline_element_path(node) {
             return Some((container, iterator));
+        }
+        if self.staged_nested_element(node).is_some() {
+            return None;
         }
         let (base, key) = match self.kind(node) {
             NodeKind::Expr(ExprKind::BitSelect { base, index }) => (*base, *index),

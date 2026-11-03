@@ -137,8 +137,7 @@ impl Frame<'_, '_> {
                     return Ok(self.read_binding(&binding));
                 }
                 let func = self
-                    .ctx
-                    .func
+                    .formal_function()
                     .ok_or_else(|| "formal read outside a function".to_owned())?;
                 let formal = func
                     .formals

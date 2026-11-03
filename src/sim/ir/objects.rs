@@ -2192,7 +2192,7 @@ impl IrChandleExpr {
                     indices: indices.clone(),
                     key: key.as_deref().cloned(),
                 };
-                slot.element(container, true, None, model).map(|_| ())
+                slot.located_element(container, None, model).map(|_| ())
             }
             Self::QueuePop { container, .. } => {
                 if !model.containers.get(*container).is_some_and(|container| {

@@ -85,8 +85,7 @@ impl Frame<'_, '_> {
             }
             FormalRead(index) => {
                 let function = self
-                    .ctx
-                    .func
+                    .formal_function()
                     .ok_or_else(|| "string formal outside a function".to_owned())?;
                 let formal = function
                     .formals

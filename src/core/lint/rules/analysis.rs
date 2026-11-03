@@ -290,8 +290,10 @@ pub fn collect_writes(db: &Db, root: NodeId) -> Vec<NodeId> {
 }
 
 /// [`collect_writes`] that also resolves each member of a concatenation,
-/// streaming or assignment-pattern target (`assign {a, b} = ...`).  Kept apart
-/// so that rules built on [`collect_writes`] keep their established behavior.
+/// streaming or assignment-pattern target (`assign {a, b} = ...`), and each
+/// target through unpacked element selects and record members to the whole
+/// written object.  Kept apart so that rules built on [`collect_writes`] keep
+/// their established behavior.
 pub fn collect_writes_with_members(db: &Db, root: NodeId) -> Vec<NodeId> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
@@ -402,23 +404,64 @@ fn walk_reads(db: &Db, node: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<N
 }
 
 /// Walk only the index/bounds expressions of an assignment LHS (the base
-/// itself is the write target, never a read).
+/// itself is the write target, never a read).  Selects nest (`aa[k][3:0]`,
+/// `q[i][j]`), so every level's selectors are reads; a member path rooted at
+/// an element select (`s[i].f`) keeps that select among its references, and
+/// each member of a concatenation, streaming or pattern target selects
+/// through its own operands.
 fn walk_lhs_select_reads(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: &mut Vec<NodeId>) {
     match db.node_kind(lhs) {
-        NodeKind::Expr(ExprKind::BitSelect { index, .. }) => {
+        NodeKind::Expr(ExprKind::BitSelect { base, index }) => {
+            walk_lhs_select_reads(db, *base, seen, out);
             walk_reads(db, *index, seen, out);
         }
-        NodeKind::Expr(ExprKind::PartSelect { left, right, .. }) => {
+        NodeKind::Expr(ExprKind::PartSelect { base, left, right }) => {
+            walk_lhs_select_reads(db, *base, seen, out);
             walk_reads(db, *left, seen, out);
             walk_reads(db, *right, seen, out);
         }
         NodeKind::Expr(ExprKind::IndexedPartSelect {
+            base,
             base_expr,
             width_expr,
             ..
         }) => {
+            walk_lhs_select_reads(db, *base, seen, out);
             walk_reads(db, *base_expr, seen, out);
             walk_reads(db, *width_expr, seen, out);
+        }
+        NodeKind::Expr(ExprKind::ArraySelect { base, indices }) => {
+            walk_lhs_select_reads(db, *base, seen, out);
+            for index in indices {
+                walk_reads(db, *index, seen, out);
+            }
+        }
+        NodeKind::Expr(ExprKind::MemberSelect { base, .. }) => {
+            walk_lhs_select_reads(db, *base, seen, out);
+        }
+        NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+            for root in refs.iter().flatten() {
+                if matches!(db.node_kind(*root), NodeKind::Expr(_)) {
+                    walk_lhs_select_reads(db, *root, seen, out);
+                }
+            }
+        }
+        NodeKind::Expr(ExprKind::Operation {
+            op: Operation::Concat | Operation::AssignmentPattern,
+            operands,
+            ..
+        }) => {
+            for member in operands {
+                walk_lhs_select_reads(db, *member, seen, out);
+            }
+        }
+        NodeKind::Expr(ExprKind::Streaming { streams, .. }) => {
+            for stream in streams {
+                walk_lhs_select_reads(db, stream.value, seen, out);
+                if let Some(with) = stream.with_expr {
+                    walk_reads(db, with, seen, out);
+                }
+            }
         }
         _ => {}
     }
@@ -731,8 +774,10 @@ fn add_lhs_write(
     out: &mut Vec<NodeId>,
 ) {
     let sig = match targets {
+        // A write to an element or member of an unpacked object writes that
+        // object (`q[i] = v`, `aa[k][7:0] = v`, `rq[i].f = v`).
         LhsTargets::Members => {
-            add_lhs_members(db, lhs, |db, id| [signal_of_ref(db, id), None], seen, out);
+            add_lhs_members(db, lhs, written_objects_of_lhs, seen, out);
             return;
         }
         LhsTargets::Whole => signal_of_ref(db, lhs),
@@ -819,6 +864,23 @@ fn add_driver_lhs_write(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: &
 /// has a parent and stays the only driven object.
 fn driven_objects_of_lhs(db: &Db, id: NodeId) -> [Option<NodeId>; 2] {
     [driver_signal_of_lhs(db, id), member_owner_of_lhs(db, id)]
+}
+
+/// [`driven_objects_of_lhs`], also resolving a member path rooted at an
+/// element select (`rq[i].f`, whose references keep the select) to the array.
+fn written_objects_of_lhs(db: &Db, id: NodeId) -> [Option<NodeId>; 2] {
+    let mut driven = driven_objects_of_lhs(db, id);
+    if driven[1].is_some() {
+        return driven;
+    }
+    if let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = db.node_kind(id) {
+        driven[1] = refs
+            .iter()
+            .flatten()
+            .find(|root| matches!(db.node_kind(**root), NodeKind::Expr(_)))
+            .and_then(|root| driver_signal_of_lhs(db, *root));
+    }
+    driven
 }
 
 fn member_owner_of_lhs(db: &Db, id: NodeId) -> Option<NodeId> {

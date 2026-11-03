@@ -259,6 +259,9 @@ pub(super) struct Frame<'a, 'm> {
     /// The lexical depth (`marks.len()`) of the scope holding the frame's
     /// body locals, once a declaration stored one's address.
     vpi_auto_depth: Option<usize>,
+    /// The subroutine whose `ref` formals a fork-join branch names through
+    /// captured descriptors (`rN`); `None` outside such branches.
+    branch_formals: Option<&'m IrFunc>,
 }
 
 /// A body-scope automatic a declaration binds: a local by IR name, or an
@@ -276,6 +279,13 @@ fn pending(feature: &str) -> String {
 }
 
 impl<'a, 'm> Frame<'a, 'm> {
+    /// The subroutine whose formals this frame names: the function being
+    /// rendered, or the subroutine of a fork-join branch that names its
+    /// `ref` formals.
+    fn formal_function(&self) -> Option<&'m IrFunc> {
+        self.ctx.func.or(self.branch_formals)
+    }
+
     pub(super) fn new(ctx: &'a RCtx<'m>) -> Self {
         Self::with_storage(ctx, FrameStorage::CStack)
     }
@@ -439,6 +449,7 @@ impl<'a, 'm> Frame<'a, 'm> {
             return_address: None,
             allow_calls: true,
             read_only_callback: false,
+            branch_formals: None,
             postponed_reader: false,
             deferred_action: false,
             sampled_reads: ctx.sampled,
@@ -1137,7 +1148,7 @@ impl<'a, 'm> Frame<'a, 'm> {
         if let Some(name) = address.strip_prefix('&') {
             return self.resolve_lookup(name);
         }
-        if let Some(func) = self.ctx.func {
+        if let Some(func) = self.formal_function() {
             for (index, formal) in func.formals.iter().enumerate() {
                 if address == format!("o{index}") && formal.is_out && !formal.is_ref() {
                     return Ok(Binding {

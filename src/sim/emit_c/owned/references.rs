@@ -8,7 +8,7 @@ impl Frame<'_, '_> {
     pub(super) fn reference_address(&self, address: &str) -> Result<String, String> {
         // Forwarded references are canonical formal descriptors (rN). There
         // are no executable, string-keyed reference bindings in this frame.
-        if let Some(function) = self.ctx.func {
+        if let Some(function) = self.formal_function() {
             for (index, formal) in function.formals.iter().enumerate() {
                 if formal.is_ref()
                     && !formal.string
@@ -24,8 +24,7 @@ impl Frame<'_, '_> {
 
     /// Whether the real reference formal named `address` is a shortreal.
     pub(super) fn real_reference_is_short(&self, address: &str) -> Result<bool, String> {
-        self.ctx
-            .func
+        self.formal_function()
             .and_then(|function| {
                 function
                     .formals

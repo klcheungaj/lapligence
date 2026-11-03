@@ -230,7 +230,7 @@ impl Frame<'_, '_> {
         if let Some(name) = address.strip_prefix('&') {
             return self.native_lookup(name, kind);
         }
-        if let Some(function) = self.ctx.func {
+        if let Some(function) = self.formal_function() {
             for (index, formal) in function.formals.iter().enumerate() {
                 // A `ref` process formal is a chandle slot bound to the
                 // caller's counted process-handle storage.

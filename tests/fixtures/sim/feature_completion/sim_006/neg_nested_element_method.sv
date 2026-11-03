@@ -2,6 +2,6 @@ module tb;
   int q[$][$];
   initial begin
     q.push_back({1});
-    q[0].push_back(2);
+    if (q[0].pop_front() == 1) $display("one");
   end
 endmodule

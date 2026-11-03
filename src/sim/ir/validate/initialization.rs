@@ -30,9 +30,14 @@ impl Validator<'_> {
                             &format!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
                         )?;
                     }
+                    // A fork-join branch names the `ref` formals whose
+                    // descriptors it captured as the subroutine does.
+                    let ref_formals = captures.iter().any(|capture| {
+                        matches!(capture.initial().kind(), IrExprKind::FormalRead(_))
+                    });
                     self.validate_stmts(
                         body,
-                        branch_formals,
+                        if ref_formals { formals } else { branch_formals },
                         &format!("{path}.pre_fns[{idx}].body"),
                     )?;
                 }

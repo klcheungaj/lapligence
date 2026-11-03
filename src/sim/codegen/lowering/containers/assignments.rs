@@ -11,6 +11,20 @@ impl<'a> Codegen<'a> {
         blocking: bool,
         op: Operation,
     ) -> Result<Option<IrStmt>, String> {
+        // A staged nested element (`sq[k] = src`) is a whole container.
+        if let Some(staged) = self.staged_nested_element(lhs) {
+            if !blocking {
+                return Err(format!(
+                    "nonblocking assignment to nested resizable container element in {path} is illegal"
+                ));
+            }
+            if op != Operation::Assignment {
+                return Err(format!(
+                    "compound assignment to nested resizable container element in {path} is not supported"
+                ));
+            }
+            return self.lower_container_into(path, lhs, staged, rhs).map(Some);
+        }
         if let Some(statement) =
             self.lower_stream_container_assignment(path, lhs, rhs, blocking, op)?
         {
