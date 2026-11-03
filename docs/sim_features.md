@@ -2569,9 +2569,13 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   `vpiOrigin` and `vpiAutomatics` are served, decisions A19-D75..D78, with the
   elements of dynamic, queue and associative array automatics, the values of
   string and real `ref` formals and the field count of unpacked structures,
-  A19-D82; a
+  A19-D82; the elements of fixed-size automatic arrays and array formals, by
+  value and `ref`, with `vpiVarSelect` of container elements, A19-D83; the
+  members of unpacked structure automatics and automatics by name (the
+  innermost activation), A19-D84; a
   scope's `vpiImport`, decision A19-D79, and the event array properties of
-  class definitions and objects, decision A19-D80). A generated
+  class definitions and objects, decision A19-D80, with the imports of class
+  methods and the events of a definition's event array property, A19-D85). A generated
   object catalog and the common VPI routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
   relative to a scope, constant element/bit/part selects in the name, and
   associative array elements by integral or string key, `tb.aa["x"]`, decision A19-D81),

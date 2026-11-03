@@ -1,0 +1,20 @@
+class C
+  method m
+    imports iter error=0
+    import pv int_var=1
+  method plain
+    imports NULL error=0
+  event array ea size=2
+    vpiNamedEvent NULL error=1
+    ea by index 0: ea[0] named_event=1 parent=ea
+      value error=1 waiting=NULL error=1
+    ea by index 2: NULL error=1
+    ea by index 3: NULL error=1
+  event array eb size=2
+    vpiNamedEvent NULL error=1
+    eb by index 0: NULL error=1
+    eb by index 2: eb[2] named_event=1 parent=eb
+      value error=1 waiting=NULL error=1
+    eb by index 3: eb[3] named_event=1 parent=eb
+      value error=1 waiting=NULL error=1
+g=1

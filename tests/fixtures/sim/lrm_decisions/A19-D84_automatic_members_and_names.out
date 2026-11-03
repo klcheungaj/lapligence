@@ -1,0 +1,43 @@
+step 0
+  tb.t.rl: NULL error=0
+  tb.rt.loc: NULL error=0
+step 1
+  tb.t.rl struct size=2 value error=1
+    a tb.t.rl.a int size=32 struct_member=1 auto=1 parent=rl hex=00000006
+    b tb.t.rl.b logic size=8 struct_member=1 auto=1 parent=rl hex=3c
+  tb.t.ri struct size=2 value error=1
+    a tb.t.ri.a int size=32 struct_member=1 auto=1 parent=ri hex=00000005
+    b tb.t.ri.b logic size=8 struct_member=1 auto=1 parent=ri hex=11
+  tb.t.ro struct size=2 value error=1
+    a tb.t.ro.a int size=32 struct_member=1 auto=1 parent=ro hex=0000000b
+    b tb.t.ro.b logic size=8 struct_member=1 auto=1 parent=ro hex=0c
+  tb.t.pl struct size=8
+    h tb.t.pl.h logic size=4 struct_member=1 auto=1 parent=pl hex=c
+    l tb.t.pl.l logic size=4 struct_member=1 auto=1 parent=pl hex=3
+  tb.t.pa[1] struct size=8
+    h tb.t.pa[1].h logic size=4 struct_member=1 auto=1 parent=pa[1] hex=3
+    l tb.t.pa[1].l logic size=4 struct_member=1 auto=1 parent=pa[1] hex=4
+  a in tb.t.rl: tb.t.rl.a
+    put tb.t.rl.a=42 error=0
+    put tb.t.ro.a=43 error=0
+    put tb.t.pl.h=1 error=0
+    put tb.t.pa[1].l=9 error=0
+  tb.t.ri.a: tb.t.ri.a value=5
+in task: rl.a=42 ri.a=5 ro.a=43 pl=13 pa[1]=39
+after: o.a=43 o.b=12
+step 2
+  tb.rt.n: tb.rt.n value=0
+  tb.rt.loc: tb.rt.loc value=0
+step 3
+  tb.rt.n: tb.rt.n value=0
+  tb.rt.loc: tb.rt.loc value=0
+step 3
+  tb.rt.n: tb.rt.n value=1
+  tb.rt.loc: tb.rt.loc value=10
+step 3
+  tb.rt.n: tb.rt.n value=2
+  tb.rt.loc: tb.rt.loc value=20
+after rt: g=30
+step 0
+  tb.t.rl: NULL error=0
+  tb.rt.loc: NULL error=0

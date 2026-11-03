@@ -213,17 +213,31 @@ fn has_vpi_automatics(model: &IrModel, function: &IrFunc) -> bool {
 /// What an activation's address array holds for one automatic.
 #[derive(Clone, Copy, PartialEq)]
 enum VpiAutoAccess {
-    /// The variable's own storage, of its value shape.
+    /// The variable's own storage, of its value shape (for a fixed-size
+    /// array or an unpacked structure: its packed image).
     Cell,
     /// A packed `ref` formal's descriptor (`llg_ref_t*`).
     Ref,
+    /// The `double` cells of a fixed-size real array.
+    Reals,
     /// Nothing: the variable is listed without a value.
     None,
 }
 
-fn vpi_auto_access(function: &IrFunc, automatic: &IrVpiAutomatic) -> VpiAutoAccess {
+fn vpi_auto_access(
+    model: &IrModel,
+    function: &IrFunc,
+    automatic: &IrVpiAutomatic,
+) -> VpiAutoAccess {
     match &automatic.storage {
         IrVpiAutoStorage::Unstored => VpiAutoAccess::None,
+        IrVpiAutoStorage::Array(array) => {
+            if model.arrays.get(*array).is_some_and(|array| array.real) {
+                VpiAutoAccess::Reals
+            } else {
+                VpiAutoAccess::None
+            }
+        }
         IrVpiAutoStorage::Formal(position) => {
             let Some(formal) = function.formals.get(*position) else {
                 return VpiAutoAccess::None;
@@ -236,26 +250,26 @@ fn vpi_auto_access(function: &IrFunc, automatic: &IrVpiAutomatic) -> VpiAutoAcce
                 && formal.native_value.is_none()
                 && formal.fixed_array.is_none()
                 && formal.real_array.is_none();
-            if formal.is_ref() {
+            if formal.real_array.is_some() {
+                // By value, by `ref` or as an output: the callee's `double*`.
+                VpiAutoAccess::Reals
+            } else if formal.is_ref() {
                 if packed {
                     VpiAutoAccess::Ref
                 } else if (formal.string || formal.real || formal.chandle)
-                    && formal.container.is_none()
                     && formal.native_value.is_none()
                     && formal.fixed_array.is_none()
-                    && formal.real_array.is_none()
+                    || formal.container.is_some()
                 {
                     // A string, real or chandle `ref` is a pointer to its
-                    // actual's own cell, which the value shape reads and
-                    // writes directly.
+                    // actual's own cell, and a container `ref` the actual's
+                    // container, which the value shape reads and writes
+                    // directly.
                     VpiAutoAccess::Cell
                 } else {
                     VpiAutoAccess::None
                 }
-            } else if formal.native_value.is_some()
-                || formal.fixed_array.is_some()
-                || formal.real_array.is_some()
-            {
+            } else if formal.native_value.is_some() || formal.fixed_array.is_some() {
                 VpiAutoAccess::None
             } else {
                 VpiAutoAccess::Cell
@@ -263,6 +277,25 @@ fn vpi_auto_access(function: &IrFunc, automatic: &IrVpiAutomatic) -> VpiAutoAcce
         }
         _ => VpiAutoAccess::Cell,
     }
+}
+
+/// Whether `automatic` is a fixed-size unpacked array or an unpacked
+/// structure or union kept as one value without a VPI value shape: its
+/// storage, when it has one, is a packed image (or real cells) whose parts
+/// VPI reads by the declared typespec.
+fn vpi_auto_aggregate(model: &IrModel, automatic: &IrVpiAutomatic) -> bool {
+    automatic.shape.is_none()
+        && (automatic.array_type.is_some()
+            || automatic
+                .typespec
+                .and_then(|typespec| model.vpi_typespecs.get(typespec))
+                .is_some_and(|typespec| {
+                    matches!(
+                        typespec.kind,
+                        crate::sim::ir::IrVpiTypespecKind::Struct
+                            | crate::sim::ir::IrVpiTypespecKind::Union
+                    )
+                }))
 }
 
 /// The descriptor rows of `function`'s automatics (`llg_vpi_auto_t`, 37.39
@@ -294,10 +327,35 @@ fn vpi_automatic_rows(function: &IrFunc, model: &IrModel) -> String {
         ) {
             flags.push("LLG_VPI_AUTO_LOCAL");
         }
-        match vpi_auto_access(function, automatic) {
+        let access = vpi_auto_access(model, function, automatic);
+        // A container's storage is no image, even without a value shape.
+        let container = match &automatic.storage {
+            IrVpiAutoStorage::Container(_) => true,
+            IrVpiAutoStorage::Formal(position) => function
+                .formals
+                .get(*position)
+                .is_some_and(|formal| formal.container.is_some()),
+            _ => false,
+        };
+        let aggregate = !container && vpi_auto_aggregate(model, automatic);
+        match access {
             VpiAutoAccess::Cell => {}
             VpiAutoAccess::Ref => flags.push("LLG_VPI_AUTO_REF"),
+            VpiAutoAccess::Reals => {}
             VpiAutoAccess::None => flags.push("LLG_VPI_AUTO_NO_VALUE"),
+        }
+        // A fixed-size array's row carries its element shape instead of a
+        // value shape (it has none, 37.17 detail 11).
+        let mut shape = automatic.shape;
+        if aggregate {
+            match access {
+                VpiAutoAccess::Cell | VpiAutoAccess::Ref => flags.push("LLG_VPI_AUTO_IMAGE"),
+                VpiAutoAccess::Reals => flags.push("LLG_VPI_AUTO_REALS"),
+                VpiAutoAccess::None => {}
+            }
+            if access != VpiAutoAccess::None && automatic.array_type.is_some() {
+                shape = automatic.element;
+            }
         }
         if automatic.signed {
             flags.push("LLG_VPI_AUTO_SIGNED");
@@ -306,7 +364,7 @@ fn vpi_automatic_rows(function: &IrFunc, model: &IrModel) -> String {
             "    {{ {}, {type_code}, {}u, {}u, {}u, {}u, {}, {} }},\n",
             c_string_literal(&automatic.name),
             automatic.line,
-            automatic.shape.map_or(0, |shape| shape + 1),
+            shape.map_or(0, |shape| shape + 1),
             automatic.typespec.map_or(0, |typespec| typespec + 1),
             automatic.size,
             automatic.array_type.unwrap_or("0"),
@@ -352,6 +410,10 @@ pub(in crate::sim::emit_c) const VPI_AUTOS_FIRST: usize = 1;
 /// The address of formal `position` the activation's address array holds.
 fn vpi_formal_address(frame: &Frame<'_, '_>, function: &IrFunc, position: usize) -> Option<String> {
     let formal = function.formals.get(position)?;
+    if let Some(array) = formal.real_array {
+        // The bound `double*` itself.
+        return frame.fixed_arrays.get(&array).cloned();
+    }
     if let Some(container) = formal.container {
         return frame
             .containers
@@ -385,7 +447,7 @@ fn vpi_automatics(frame: &mut Frame<'_, '_>, function: &IrFunc) -> (String, Stri
     );
     let mut locals = HashMap::new();
     for (index, automatic) in function.vpi_automatics.iter().enumerate() {
-        if vpi_auto_access(function, automatic) == VpiAutoAccess::None {
+        if vpi_auto_access(frame.ctx.model, function, automatic) == VpiAutoAccess::None {
             continue;
         }
         let address = match &automatic.storage {
@@ -398,6 +460,10 @@ fn vpi_automatics(frame: &mut Frame<'_, '_>, function: &IrFunc) -> (String, Stri
             }
             IrVpiAutoStorage::Container(container) => {
                 locals.insert(VpiAutoKey::Container(*container), index);
+                continue;
+            }
+            IrVpiAutoStorage::Array(array) => {
+                locals.insert(VpiAutoKey::Array(*array), index);
                 continue;
             }
             IrVpiAutoStorage::Unstored => None,

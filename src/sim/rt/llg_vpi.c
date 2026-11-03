@@ -372,6 +372,10 @@ static void dyn_shutdown(void);
 /* Runtime structures: llg_vpi_runtime.c, appended after the dynamic layer. */
 static int rts_slot(const llg_vpi_slot_t* slot);
 static vpiHandle rts_auto_by_index(const llg_vpi_slot_t* slot, PLI_INT32 index);
+static vpiHandle rts_auto_by_multi_index(const llg_vpi_slot_t* slot, const int64_t* indices,
+                                         uint32_t count);
+static vpiHandle rts_auto_by_name(const char* name);
+static vpiHandle rts_auto_by_scoped_name(const llg_vpi_slot_t* scope, const char* name);
 static int rts_type(const llg_vpi_slot_t* slot);
 static int rts_identity(const llg_vpi_slot_t* slot, uint64_t identity[4]);
 static PLI_INT64 rts_get(int property, llg_vpi_slot_t* slot, int* handled);
@@ -3947,6 +3951,8 @@ vpiHandle vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope) {
         if (!slot) return NULL;
         llg_vpi_model_object_t* parent =
             slot->kind == SLOT_OBJECT ? row_object(slot->object) : NULL;
+        /* A member of an automatic structure, relative to it. */
+        if (slot->kind == SLOT_AUTO) return rts_auto_by_scoped_name(slot, (const char*)name);
         if (!parent || !is_scope_type(parent->type)) {
             vpi_error("LLG_VPI_SCOPE", "VPI name lookup scope is not a scope object");
             return NULL;
@@ -3961,9 +3967,12 @@ vpiHandle vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope) {
         snprintf(full, length + 1u, "%s%s%s", parent->full_name,
                  parent->type == vpiPackage ? "::" : ".", (const char*)name);
         result = lookup_full_name(full, &selected);
+        /* An automatic variable of a live frame of a task or function. */
+        if (!result && !g_vpi.error_pending) result = rts_auto_by_name(full);
         free(full);
     } else {
         result = lookup_full_name((const char*)name, &selected);
+        if (!result && !g_vpi.error_pending) result = rts_auto_by_name((const char*)name);
     }
     /* 37.10 detail 6: no object within a compilation unit is found by
      * name (`$unit` itself is). */
@@ -4222,6 +4231,7 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
     int64_t values[16];
     for (int i = 0; i < count; ++i) values[i] = indices[i];
     if (slot->kind != SLOT_OBJECT) {
+        if (slot->kind == SLOT_AUTO) return rts_auto_by_multi_index(slot, values, (uint32_t)count);
         /* 37.25: a named event array property has one dimension. */
         if (dyn_event_array_property(slot)) {
             if (count == 1) return dyn_handle_by_index(slot, indices[0]);

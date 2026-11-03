@@ -448,12 +448,18 @@ pub enum IrVpiAutoStorage {
     /// string, class or chandle local.
     Local(String),
     /// The body-scope automatic container (dynamic array, queue or
-    /// associative array) with this index into [`IrModel::containers`].
+    /// associative array, or a fixed-size array of strings or handles)
+    /// with this index into [`IrModel::containers`].
     ///
     /// [`IrModel::containers`]: crate::sim::ir::IrModel
     Container(usize),
-    /// Listed without storage: a fixed-size unpacked array, whose type and
-    /// size are static and which has no value of its own (37.17 detail 11).
+    /// The body-scope fixed-size real array with this index into
+    /// [`IrModel::arrays`]: its `double` cells.
+    ///
+    /// [`IrModel::arrays`]: crate::sim::ir::IrModel
+    Array(usize),
+    /// Listed without storage: a variable whose storage has no VPI form
+    /// (a record or array kept as a descriptor-backed value).
     Unstored,
 }
 
@@ -480,6 +486,11 @@ pub struct IrVpiAutomatic {
     pub(in crate::sim) array_type: Option<&'static str>,
     /// The elements of a fixed-size unpacked array are signed.
     pub(in crate::sim) signed: bool,
+    /// Index into the VPI dynamic shapes of the element of a fixed-size
+    /// unpacked array of packed or real elements: what an element reads
+    /// and writes when the array is kept as one packed image or as real
+    /// cells.
+    pub(in crate::sim) element: Option<usize>,
 }
 
 /// A lowered function or delay-free task: a static C function with a

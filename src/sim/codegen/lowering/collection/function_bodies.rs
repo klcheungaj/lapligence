@@ -1291,6 +1291,7 @@ impl<'a> Codegen<'a> {
             size: 0,
             array_type: None,
             signed: false,
+            element: None,
         };
         let is_array = |node: NodeId| {
             matches!(
@@ -1336,15 +1337,9 @@ impl<'a> Codegen<'a> {
             };
             let name = self.node(*formal).name.clone();
             if is_array(*formal) {
-                let container = self.db.type_descriptor(*formal).is_some_and(|descriptor| {
-                    matches!(descriptor.shape, TypeShape::Container { .. })
-                });
-                let storage = if container {
-                    IrVpiAutoStorage::Formal(index)
-                } else {
-                    IrVpiAutoStorage::Unstored
-                };
-                arrays.push(entry(name, *formal, storage));
+                // The emitter decides from the formal's passing form
+                // whether its storage has a VPI form.
+                arrays.push(entry(name, *formal, IrVpiAutoStorage::Formal(index)));
             } else if ty.kind != "event" {
                 automatics.push(entry(name, *formal, IrVpiAutoStorage::Formal(index)));
             }
@@ -1379,7 +1374,20 @@ impl<'a> Codegen<'a> {
                     IrVpiAutoStorage::Container(container.ir),
                 ));
             } else if is_array(child) {
-                local_arrays.push(entry(name, child, IrVpiAutoStorage::Unstored));
+                // A fixed-size array is one packed image local, real cells
+                // or a descriptor-backed value without a VPI form.
+                let storage = if let Some(array) = self
+                    .array_globals
+                    .get(&child)
+                    .filter(|array| self.model.arrays[array.ir].real)
+                {
+                    IrVpiAutoStorage::Array(array.ir)
+                } else if let Some(local) = locals.get(&child) {
+                    IrVpiAutoStorage::Local(local.0.clone())
+                } else {
+                    IrVpiAutoStorage::Unstored
+                };
+                local_arrays.push(entry(name, child, storage));
             } else if let Some(local) = locals
                 .get(&child)
                 .map(|local| &local.0)

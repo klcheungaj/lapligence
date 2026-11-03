@@ -407,12 +407,22 @@ typedef struct {
     uint32_t row;             /* the catalog row, LLG_VPI_NONE, or DYN_AUTO_ROW */
     const char* name;         /* the variable's name */
     int64_t serial;           /* DYN_AUTO_ROW: the frame serial */
+    uint32_t class_index;     /* a property's class layout */
+    /* DYN_AUTO_ROW: the declared [left:right] of a fixed-size array. */
+    int ranged;
+    int64_t left;
+    int64_t right;
 } dyn_place_t;
 
 /* The `row` of an automatic container variable's elements and element
  * iterators: `right` holds the frame serial and the field (an element's
  * `aux`, an iterator's `lsb`) the variable's index in its frame. */
 #define DYN_AUTO_ROW (LLG_VPI_NONE - 2u)
+
+/* The `row` of an event of a class definition's named event array
+ * property (37.25): `aux` holds the property and `right` the class layout.
+ * It names no storage (37.27 detail 2). */
+#define DYN_DEFN_ROW (LLG_VPI_NONE - 3u)
 
 /* llg_vpi_runtime.c: the container automatic `index` of frame `serial`,
  * or 0 once that frame has ended; its vpiFullName prefix (the frame). */
@@ -437,6 +447,12 @@ static int dyn_fixed_range(const dyn_place_t* place, int64_t* left, int64_t* rig
     if (place->shape->shape != LLG_VPI_SHAPE_CONTAINER ||
         place->shape->array_type != vpiStaticArray || place->row == LLG_VPI_NONE)
         return 0;
+    if (place->row == DYN_AUTO_ROW) {
+        if (!place->ranged) return 0;
+        *left = place->left;
+        *right = place->right;
+        return 1;
+    }
     const llg_vpi_model_object_t* row = row_object(place->row);
     if (!row || row->dim_count != 1u) return 0;
     *left = row->dims[0];
@@ -496,6 +512,7 @@ static int dyn_place(const llg_vpi_slot_t* slot, dyn_place_t* place) {
     place->shape = dyn_shape(field->shape);
     place->name = field->name;
     place->owner = slot->pointer;
+    place->class_index = class_index;
     if (slot->pointer) {
         place->storage = dyn_field_storage(slot->pointer, (uint32_t)slot->aux, place->shape);
         if (!place->storage && place->shape->shape != LLG_VPI_SHAPE_OTHER) {
@@ -1008,6 +1025,11 @@ static void* dyn_class_target(const llg_vpi_slot_t* slot, int* ok) {
 
 /* The element shape of an element handle. */
 static const llg_vpi_shape_t* dyn_element_shape(const llg_vpi_slot_t* slot) {
+    if (slot->object == DYN_DEFN_ROW) {
+        const llg_vpi_class_field_t* field = dyn_field((uint32_t)slot->right, (uint32_t)slot->aux);
+        const llg_vpi_shape_t* array = field && field->name ? dyn_shape(field->shape) : NULL;
+        return dyn_is_event_array(array) ? dyn_shape(array->element) : NULL;
+    }
     dyn_place_t place;
     if (!dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux, slot->right, &place)) return NULL;
     return dyn_shape(place.shape->element);
@@ -1361,6 +1383,13 @@ static vpiHandle dyn_item_iterate(int type, const llg_vpi_slot_t* slot) {
         if (type == vpiIODecl)
             return dyn_iterate_items((uint32_t)slot->right, vpiIODecl, (uint64_t)slot->aux + 1u,
                                      NULL);
+        if (type == vpiImport) {
+            /* 37.12 detail 4: keyed by the method's index in the item table
+             * with LLG_VPI_IMPORT_CLASS set (decision A19-D85). */
+            uint32_t index = dyn_class((uint32_t)slot->right)->first_item + (uint32_t)slot->aux;
+            return index < LLG_VPI_IMPORT_CLASS ? iterate_scope_imports(index | LLG_VPI_IMPORT_CLASS)
+                                                : NULL;
+        }
         /* 37.12: a method declares only automatic variables, which llg keeps
          * no objects for (decision A19-D42). */
         if (is_scope_iteration(type)) return NULL;
@@ -1460,10 +1489,20 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
                 /* 37.17 detail 26: the containing array. */
                 if (slot->object == DYN_AUTO_ROW)
                     return rts_auto_handle_by_serial((uint64_t)slot->right, (uint32_t)slot->aux);
+                if (slot->object == DYN_DEFN_ROW)
+                    return make_property(NULL, (uint32_t)slot->right, (uint32_t)slot->aux);
                 if (!slot->pointer) return object_handle(slot->object);
                 uint32_t class_index;
                 if (!dyn_object_class(slot->pointer, &class_index)) break;
                 return make_property(slot->pointer, class_index, (uint32_t)slot->aux);
+            }
+            if (slot->object == DYN_AUTO_ROW && type == vpiScope) {
+                /* An automatic's element: the subprogram of its frame. */
+                vpiHandle array = rts_auto_handle_by_serial((uint64_t)slot->right, (uint32_t)slot->aux);
+                if (!array) return NULL;
+                vpiHandle result = vpi_handle(type, array);
+                vpi_release_handle(array);
+                return result;
             }
             if (!slot->pointer && slot->object != DYN_AUTO_ROW &&
                 (type == vpiModule || type == vpiInstance || type == vpiScope)) {
@@ -1674,8 +1713,10 @@ static vpiHandle dyn_event_array_ranges(const llg_vpi_shape_t* shape) {
     return make_list_iterator(vpiRange, items, 1u);
 }
 
+/* 37.17 details 4 and 7: vpiReg and vpiVarSelect iterate the elements of
+ * an array variable, whatever their type (decision A19-D83). */
 static int dyn_element_type_matches(const llg_vpi_shape_t* element, int type) {
-    return type == vpiReg || type == vpiMemoryWord || type == element->type;
+    return type == vpiReg || type == vpiVarSelect || type == vpiMemoryWord || type == element->type;
 }
 
 static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
@@ -1789,9 +1830,7 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
                 return NULL;
             }
             const llg_vpi_shape_t* element = dyn_shape(place.shape->element);
-            if (!element || !(dyn_element_type_matches(element, type) ||
-                              (fixed && type == vpiVarSelect)))
-                break;
+            if (!element || !dyn_element_type_matches(element, type)) break;
             if (!place.storage) {
                 vpi_error("LLG_VPI_RELATION",
                           "a property of a class definition has no elements (37.27 detail 2)");
@@ -1994,6 +2033,11 @@ static int dyn_event_element(const llg_vpi_slot_t* slot) {
 
 /* The event an element of a named event array property names. */
 static int dyn_element_event(const llg_vpi_slot_t* slot, llg_event_t* event, const char* what) {
+    if (slot->object == DYN_DEFN_ROW) {
+        vpi_error("LLG_VPI_VALUE",
+                  "an event of a property of a class definition names no event (37.27 detail 2)");
+        return 0;
+    }
     dyn_place_t place;
     if (!dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux, slot->right, &place)) {
         vpi_error("LLG_VPI_HANDLE", "the array of this element no longer exists");
@@ -2206,6 +2250,18 @@ static char* dyn_element_text(const llg_vpi_slot_t* slot, const dyn_place_t* pla
 /* `name[index]`, `name[key]` or `name["key"]` of an element; `full` uses
  * the array's full name, which a class property does not have. */
 static char* dyn_element_name(const llg_vpi_slot_t* slot, int full) {
+    if (slot->object == DYN_DEFN_ROW) {
+        const llg_vpi_class_field_t* field = dyn_field((uint32_t)slot->right, (uint32_t)slot->aux);
+        const llg_vpi_shape_t* array = field && field->name ? dyn_shape(field->shape) : NULL;
+        if (full || !dyn_is_event_array(array)) {
+            vpi_error("LLG_VPI_PROPERTY",
+                      "an element of a class property has no vpiFullName (37.17 detail 25)");
+            return NULL;
+        }
+        int64_t left = array->left, right = array->right;
+        int64_t index = left >= right ? left - (int64_t)slot->element : left + (int64_t)slot->element;
+        return dyn_text("%s[%lld]", field->name, (long long)index);
+    }
     dyn_place_t place;
     if (!dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux, slot->right,
                              &place))
@@ -2448,6 +2504,25 @@ static vpiHandle dyn_property_by_name(void* object, const char* name, size_t len
  * integral key of an associative array). */
 static vpiHandle dyn_element_by_index(const dyn_place_t* place, uint32_t field, int64_t index,
                                       int quiet) {
+    if (!place->storage && !place->owner && dyn_is_event_array(place->shape)) {
+        /* An event of a class definition's event array property: named and
+         * typed, with no event object (37.25, 37.27 detail 2). */
+        int64_t left = place->shape->left, right = place->shape->right;
+        int64_t low = left < right ? left : right, high = left < right ? right : left;
+        if (index < low || index > high) {
+            if (!quiet) vpi_error("LLG_VPI_INDEX", "index outside the array range");
+            return NULL;
+        }
+        uint32_t made = alloc_slot(SLOT_DYNELEM);
+        if (made == LLG_VPI_NONE) return NULL;
+        llg_vpi_slot_t* slot = &g_vpi.slots[made];
+        slot->object = DYN_DEFN_ROW;
+        slot->right = (int64_t)place->class_index;
+        slot->aux = (int32_t)field;
+        slot->lsb = DYN_AT_INDEX;
+        slot->element = (uint64_t)(left >= right ? left - index : index - left);
+        return encode_handle(made);
+    }
     if (!place->storage) {
         if (!quiet)
             vpi_error("LLG_VPI_INDEX",
