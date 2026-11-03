@@ -67,3 +67,23 @@ fn electrical_partition_keeps_alias_width_legality() {
         &["--edition", "sv2009"],
     );
 }
+
+#[test]
+fn shared_runs_keep_each_bit_s_value_strength_and_force() {
+    sim_cli::run_case_with_args(
+        "net_partition",
+        "shared_runs",
+        "t0 bus=10101010 g0=0 g7=1 sb=0011 sb2=St0\n\
+         t1d db=00xx\n\
+         t1 bus=1010xx10 g1=1 g2=x g3=x\n\
+         t2 bus=zzzz0110 g4=z g0=0\n\
+         t3 bus=zzzz0100 g1=0\n\
+         t4 bus=zzzz0110 g1=1\n\
+         t5 sb=0101 sb0=We1 sb1=We0 h3=0\n\
+         t6 sb=01z1 sb1=HiZ\n\
+         t7 bus=00000110 bit2_changes=2 db=0000\n",
+        "",
+        &[],
+        &["--edition", "sv2009"],
+    );
+}

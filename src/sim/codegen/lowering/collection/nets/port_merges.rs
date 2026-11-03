@@ -24,8 +24,11 @@
 //! sink driver besides the port, a type that could dominate, a source
 //! driver that is not strong, a force of the sink) or when the actual
 //! selects whole nets and net-array cells only. Any other exact copy stays:
-//! a bit-level group per selected bit makes every wide driver of the actual
-//! contribute to each bit's group, dearer than one copy process. A merged
+//! the merged bits share one group with the rest of their vector
+//! (`net_partition.rs`), which simulates faster than the copies, but each
+//! merged formal becomes a net alias view with its own storage, descriptors
+//! and start value, so the model C grows well beyond one shared copy row per
+//! port (A21-D5 trade-off). A merged
 //! net carries bit-level bindings (`IrSignal::net_alias`), which a storage
 //! alias cannot share, so a whole port with such a net on either side
 //! merges into it too instead of keeping its link.
@@ -689,10 +692,9 @@ impl Codegen<'_> {
     /// (on one simulated net it forces both sides, 10.6.2). Otherwise the
     /// copy is exact up to its update step, and the port merges only when
     /// that is cheaper: when the actual selects whole nets and whole
-    /// net-array cells, so no actual net is split into groups of its own.
-    /// Splitting a vector gives every selected bit a group of its own, and
-    /// every wide driver of the vector then contributes to each of them,
-    /// which costs more than the copy (A21-D5 trade-off).
+    /// net-array cells, so no actual net is split. A split vector stays one
+    /// shared group, but every merged formal adds a net alias view, which
+    /// makes the model larger than the copy (A21-D5 trade-off).
     fn selected_port_merges(
         &self,
         port: NodeId,

@@ -91,7 +91,16 @@ roots for fixed arrays and selected/aliased scalar or vector nets. Adjacent
 positions must have the same declared members, structural source/terminal sites,
 force/release membership and resolved net type/delay owners; each member and
 source offset advances by one. Reversed/permuted or opaque projections retain
-bit groups. Include driver ranges before partitioning, and extend that source
+bit groups. A run is also shared across columns whose members differ (a vector
+split bit by bit by selected ports or inouts, or aliased in pieces): some member
+continues affinely, some member starts or ends, and every member and source
+terminal covers one contiguous affine range of the run; it stops at
+`MAX_SHARED_RUN_SLOT_BITS` (slots times width). Columns are ordered by their bit
+on the widest member, so a split vector's columns are adjacent. A source that
+covers a contiguous ascending part of a wider group writes only that part of its
+slot (`alias_driver_assignments`, an `IrLhs::Part` of the driver; delayed ones
+start X on those bits only), and instance-shared bodies take the part bounds as
+record operands. Include driver ranges before partitioning, and extend that source
 inventory for new topology forms. Ordinary whole vector groups already resolve
 word-parallel and retain their existing path. Keep per-bit declared-view bindings
 with a group-bit offset (the emitter renders consecutive bits as one run-length

@@ -990,11 +990,9 @@ impl<'a> Codegen<'a> {
                     )
                     .ok_or("net-array port is too wide")?;
                 let value = IrExpr::new(IrExprKind::Concat { parts }, width, false, None);
-                for (driver, rhs) in
-                    self.alias_driver_assignments(port, &bindings, &value, |_| 0)?
-                {
+                for (lhs, rhs) in self.alias_driver_assignments(port, &bindings, &value, |_| 0)? {
                     captures.push(IrStmt::Assign {
-                        lhs: IrLhs::Whole(driver),
+                        lhs,
                         rhs,
                         nba: false,
                     });
@@ -2052,11 +2050,9 @@ impl<'a> Codegen<'a> {
                 init: Some(Box::new(rhs)),
                 two_state: false,
             }];
-            for (driver, value) in
-                self.alias_driver_assignments(port, &bindings, &rhs_value, |_| 0)?
-            {
+            for (lhs, value) in self.alias_driver_assignments(port, &bindings, &rhs_value, |_| 0)? {
                 body.push(IrStmt::Assign {
-                    lhs: IrLhs::Whole(driver),
+                    lhs,
                     rhs: value,
                     nba: false,
                 });
@@ -2113,8 +2109,8 @@ impl Codegen<'_> {
                     let body = self
                         .alias_driver_assignments(port, &bindings, &value, |_| 0)?
                         .into_iter()
-                        .map(|(driver, rhs)| IrStmt::Assign {
-                            lhs: IrLhs::Whole(driver),
+                        .map(|(lhs, rhs)| IrStmt::Assign {
+                            lhs,
                             rhs,
                             nba: false,
                         })
@@ -2159,8 +2155,8 @@ impl Codegen<'_> {
         let body = if let Some(bindings) = self.alias_lvalue_bindings(port, internal)? {
             self.alias_driver_assignments(port, &bindings, &value, |_| 0)?
                 .into_iter()
-                .map(|(driver, rhs)| IrStmt::Assign {
-                    lhs: IrLhs::Whole(driver),
+                .map(|(lhs, rhs)| IrStmt::Assign {
+                    lhs,
                     rhs,
                     nba: false,
                 })

@@ -163,7 +163,13 @@ events. Zero-delay drivers drain Active. Deferred multi-slot net resolution (S2-
 commits, startup, callbacks) resolve at once. Generated nets provide exact-size
 driver interval nodes and overlap scratch storage. Selected writes replace their
 previous interval, release it to Z when a selector moves, and resolve/publish only
-the union of old and new ranges against overlapping drivers. Keep full-net waiter
+the union of old and new ranges against overlapping drivers; a selected driver
+that turns off over exactly its range keeps its interval node (Z adds no drive).
+A ranged publication refreshes only the alias parts that read the changed bits
+(`llg_net_alias_refresh_range`): a net with `LLG_NET_ALIAS_SPAN_MIN` or more
+alias entries finds them through `llg_net_alias_span`, a sorted span array
+walked as an implicit search tree, built on demand and invalidated by every
+bind; fewer entries are all refreshed, in bind order. Keep full-net waiter
 identity and notification behavior. Pending delayed drivers start X, not driverless
 Z. Fixed-array delayed sites retain per-element identity.
 
