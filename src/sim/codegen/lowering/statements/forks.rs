@@ -366,8 +366,8 @@ impl EmitCtx<'_, '_> {
     /// `join` branch names it through its descriptor (`rN`): a packed, real,
     /// string, event or handle formal the subroutine reads through its
     /// parameter. Containers and records are aliased through shared frames
-    /// instead. A process handle formal aliases a counted slot no branch
-    /// binds.
+    /// instead. A process handle formal binds like other handle formals: the
+    /// branch addresses the caller's counted slot and publishes its marker.
     fn ref_formal_descriptor(&self, target: NodeId) -> Option<RefFormalBinding> {
         if !self.cg.is_ref_formal(target) {
             return None;
@@ -380,9 +380,6 @@ impl EmitCtx<'_, '_> {
         let function = self.func.as_ref().or(self.cg.func.as_ref())?;
         if matches!(self.cg.kind(target), NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind))
         {
-            if self.cg.is_process_formal(target) {
-                return None;
-            }
             return match function.chandle_read.get(&target) {
                 Some(IrChandleExpr::FormalRead(index)) => Some(RefFormalBinding::Handle(*index)),
                 _ => None,
@@ -407,9 +404,8 @@ impl EmitCtx<'_, '_> {
     /// subroutine where the branch would not reach the caller's variable.
     /// Inside `join_any`/`join_none` such a reference is illegal except in a
     /// fork block-item initializer, which the forking process evaluates
-    /// (SV 9.3.2). A `join` branch is legal; a process handle `ref` formal
-    /// would be copied into the branch frame, so its writes would never
-    /// reach the actual: that form is rejected.
+    /// (SV 9.3.2). A `join` branch is legal and binds the formal's
+    /// descriptor; a formal it cannot bind is rejected.
     fn check_ref_formal_captures(
         &self,
         join: IrJoinKind,
@@ -434,7 +430,7 @@ impl EmitCtx<'_, '_> {
                 });
                 if !aliased && self.ref_formal_descriptor(*target).is_none() {
                     return Err(format!(
-                        "fork branch at {location} in `{}` refers to `ref` formal `{name}` of the enclosing task; a fork-join branch that reads or writes a process `ref` formal is not supported",
+                        "fork branch at {location} in `{}` refers to `ref` formal `{name}` of the enclosing task, which the branch cannot bind to the caller's actual",
                         self.cg.source_path(&self.path)
                     ));
                 }

@@ -1788,10 +1788,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   any other reference to one inside `join_any`/`join_none` is illegal
   (SV 9.3.2) and rejects with its location. `fork ... join` branches read,
   write and wait on packed, real, string, event, class, chandle, virtual
-  interface, semaphore and mailbox `ref` formals through the caller's actual
-  (`ref_formal_fork_join`, `ref_formal_fork_join_handles`, SV 13.5.2); a
-  process `ref` formal there rejects
-  ([known issue](known_issues.md#ref-formals-in-fork-join-branches)). Static-local
+  interface, semaphore, mailbox and `process` `ref` formals through the
+  caller's actual (`ref_formal_fork_join`, `ref_formal_fork_join_handles`,
+  `ref_formal_fork_join_process`, SV 13.5.2). Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2
   **[1995/SV-2005]**.

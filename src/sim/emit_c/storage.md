@@ -231,4 +231,6 @@ the fork stores the caller's marker (NULL for an actual no other process can
 name) in one holder frame slot per formal that every branch aliases, and a
 branch binds the marker parameter to that pointer or, when it is NULL, to the
 holder's own marker (`llg_frame_opaque_marker`), so sibling branches' stores
-and waits meet. Process handle `ref` formals reject.
+and waits meet. A process handle `ref` formal binds the same way; a store
+through it (`llg_process_assign` on the caller's counted slot) publishes the
+marker when the handle changes, like other handle stores.

@@ -105,15 +105,17 @@ fn handle_ref_formals_reach_the_actual_from_fork_join_branches() {
 }
 
 #[test]
+fn process_ref_formals_reach_the_actual_from_fork_join_branches() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_010/ref_formal_fork_join_process.out");
+    sim_cli::run_case_backend_parity(SUITE, "ref_formal_fork_join_process", expected, &[], &[]);
+}
+
+#[test]
 fn neg_ref_formals_in_fork_branches() {
     sim_cli::reject_case(
         SUITE,
         "neg_ref_formal_join_none",
         "neg_ref_formal_join_none.sv:8:7 in `tb` refers to `ref` formal `r` inside a fork-join_any or fork-join_none block; this is illegal except in the initializer of a fork block-item declaration (IEEE 1800-2009 9.3.2)",
-    );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_ref_formal_fork_join",
-        "neg_ref_formal_fork_join.sv:9:7 in `tb` refers to `ref` formal `r` of the enclosing task; a fork-join branch that reads or writes a process `ref` formal is not supported",
     );
 }

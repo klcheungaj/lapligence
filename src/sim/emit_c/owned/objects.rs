@@ -516,11 +516,22 @@ impl Frame<'_, '_> {
             ProcessAssignLocal(name, source) => {
                 let binding = self.native_lookup(name, NativeKind::Process)?;
                 let value = self.process_value(source)?;
-                self.line(format!(
-                    "llg_process_assign({}, {});",
-                    binding.address,
-                    value.code()
-                ));
+                // A store through a process `ref` formal (or a fork-shared
+                // slot) publishes the actual's marker at once, as handle
+                // stores do (SV 13.5.2).
+                if let Some(marker) = self.handle_store_marker(name) {
+                    self.line(format!(
+                        "if ((void*)({value}) != *(void**)({address})) {{ llg_process_assign({address}, {value}); llg_dependency_changed({marker}); }}",
+                        value = value.code(),
+                        address = binding.address
+                    ));
+                } else {
+                    self.line(format!(
+                        "llg_process_assign({}, {});",
+                        binding.address,
+                        value.code()
+                    ));
+                }
                 self.native_discard(value);
             }
             ProcessControl { op, target } => {
