@@ -89,6 +89,7 @@ impl EmitCtx<'_, '_> {
             .iter()
             .map(|branch| self.cg.fork_capture_targets(*branch))
             .collect::<Vec<_>>();
+        self.check_ref_formal_captures(join, branches, &capture_targets)?;
         // A class method's branches read `this`; the receiver cannot be
         // reassigned, so each branch copies the handle. This includes the
         // branches of a fork nested in a detached method branch.
@@ -306,5 +307,46 @@ impl EmitCtx<'_, '_> {
                 target,
             }])
         }
+    }
+
+    /// Reject fork branches that name a `ref` formal of the enclosing
+    /// subroutine where the branch would not reach the caller's variable.
+    /// Inside `join_any`/`join_none` such a reference is illegal except in a
+    /// fork block-item initializer, which the forking process evaluates
+    /// (SV 9.3.2). A `join` branch is legal, but a packed, real, string,
+    /// handle or event `ref` formal would be copied into the branch frame, so
+    /// its writes would never reach the actual: that form is rejected until
+    /// branches can carry the reference itself.
+    fn check_ref_formal_captures(
+        &self,
+        join: IrJoinKind,
+        branches: &[NodeId],
+        capture_targets: &[Vec<NodeId>],
+    ) -> Result<(), String> {
+        for (branch, targets) in branches.iter().zip(capture_targets) {
+            for target in targets {
+                if !self.cg.is_ref_formal(*target) {
+                    continue;
+                }
+                let name = &self.cg.node(*target).name;
+                let location = self.cg.source_location(*branch);
+                if join != IrJoinKind::Join {
+                    return Err(format!(
+                        "fork branch at {location} in `{}` refers to `ref` formal `{name}` inside a fork-join_any or fork-join_none block; this is illegal except in the initializer of a fork block-item declaration (IEEE 1800-2009 9.3.2)",
+                        self.cg.source_path(&self.path)
+                    ));
+                }
+                let aliased = self.cg.capture_source(*target).is_some_and(|source| {
+                    matches!(source.kind, StorageKind::Container | StorageKind::Native)
+                });
+                if !aliased {
+                    return Err(format!(
+                        "fork branch at {location} in `{}` refers to `ref` formal `{name}` of the enclosing task; a fork-join branch that reads or writes a packed, real, string, handle or event `ref` formal is not supported",
+                        self.cg.source_path(&self.path)
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }

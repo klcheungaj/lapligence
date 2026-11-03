@@ -909,9 +909,17 @@ impl<'a> Codegen<'a> {
                     self.signal_read_expr(info)
                 } else if let Some(info) = self.clocking_var_read_source_info(*target)? {
                     self.signal_read_expr(info)
-                } else {
+                } else if self.db.is_clocking_block(*target) {
                     Err(format!(
                         "clocking block scope `{}` is not a value in `{scope_path}`",
+                        self.node(*target).name
+                    ))
+                } else {
+                    // An instance name used as a value outside the
+                    // virtual-interface assignment and argument paths (for
+                    // example a mailbox `put` of an interface instance).
+                    Err(format!(
+                        "instance `{}` is used as a value in `{scope_path}`; assign it to a virtual interface variable first",
                         self.node(*target).name
                     ))
                 }
@@ -1129,12 +1137,15 @@ impl<'a> Codegen<'a> {
                     .or_else(|| self.array_of(*base))
                     .cloned()
                     .ok_or_else(|| {
-                    format!(
-                        "cannot resolve array base of select `{}` in `{scope_path}` (base kind: {:?})",
-                        self.node(*base).name,
-                        self.kind(*base)
-                    )
-                })?;
+                        self.nested_associative_select_error(*base, scope_path)
+                            .unwrap_or_else(|| {
+                                format!(
+                                    "cannot resolve array base of select `{}` in `{scope_path}` (base kind: {:?})",
+                                    self.node(*base).name,
+                                    self.kind(*base)
+                                )
+                            })
+                    })?;
                 let ndims = ai.dims.len();
                 if indices.len() == ndims {
                     let ies = indices

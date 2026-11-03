@@ -335,6 +335,34 @@ impl<'a> Codegen<'a> {
             .and_then(|(_, _, member)| member.container)
     }
 
+    /// A diagnostic for a select whose base is a resizable container with an
+    /// associative array nested in its elements (`int aa[string][int]`,
+    /// `int qa[$][int]`): element values have no nested associative form, so
+    /// such elements cannot be addressed.
+    pub(in super::super) fn nested_associative_select_error(
+        &self,
+        base: NodeId,
+        path: &str,
+    ) -> Option<String> {
+        let container = self.container_of(base)?;
+        let mut element = &self.model.containers[container.ir].element;
+        while let IrContainerElement::Container {
+            kind,
+            element: next,
+            ..
+        } = element
+        {
+            if kind.to_ascii_lowercase().contains("assoc") {
+                return Some(format!(
+                    "elements of `{}` in `{path}` are not supported: an associative array nested in a queue, dynamic or associative array element has no element value form",
+                    self.node(base).name
+                ));
+            }
+            element = next;
+        }
+        None
+    }
+
     /// The container selected by `select`, whose frontend `base` may be the
     /// record member's declaration (`m.q[i]` selects through field `q`); the
     /// select then carries its owning record and member path.

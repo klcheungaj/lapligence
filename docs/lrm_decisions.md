@@ -1039,6 +1039,12 @@ input grammar is ADV-011. Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | S11-D1 | **A failed task-form class cast ends the run without final procedures; a null source casts.** A task-form `$cast` whose source object is not of the destination's class reports a run-time error and ends the simulation at the call: the destination keeps its value, no later statement or process runs, the final procedures do not run and the exit status is 1. A null source handle is a successful cast that assigns null, in both forms (the function form returns 1). | 6.24.2 L7430-7431; 8.15 L10220-10222 | `S11-D1_task_cast_class_failure` (negative at run time: the `.out` holds the output before the error) | industry-standard behaviour (the text does not say whether the run-time error ends the simulation, or how a null source handle is checked; changed: the error was reported and the run continued, and a null source failed) |
 | S11-D2 | **A failed task-form enum cast ends the run; final procedures run.** A task-form `$cast` of a value that is no member of the destination enumeration reports a run-time error and ends the simulation at the call: the destination keeps its value, no later statement or process runs, the final procedures run and the exit status is 1. The function form returns 0 and the run continues. | 6.24.2 L7430-7434 | `S11-D2_task_cast_enum_failure` (negative at run time) | industry-standard behaviour (the text does not say whether the run-time error ends the simulation; changed: the error was reported and the run continued) |
 
+## Set membership over handles (FIN-001 follow-up)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| R14-D1 | **`inside` over chandles.** A chandle selector or set item is compared with `==`, as class handles are: null matches null and two chandles match when they name the same C pointer. | 11.4.13 L15363, L15376; 6.14 L5576-5577 | `R14-D1_chandle_inside` | industry-standard behaviour (11.4.13 defines nonintegral membership through `==`, which 6.14 allows on chandles, but 6.14 does not list `inside` among the valid chandle operators) |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named

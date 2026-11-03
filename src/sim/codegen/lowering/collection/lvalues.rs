@@ -770,10 +770,13 @@ impl<'a> Codegen<'a> {
                     .or_else(|| self.array_of(*base))
                     .cloned()
                     .ok_or_else(|| {
-                        format!(
-                            "cannot resolve array base of select `{}` in `{path}`",
-                            self.node(*base).name,
-                        )
+                        self.nested_associative_select_error(*base, path)
+                            .unwrap_or_else(|| {
+                                format!(
+                                    "cannot resolve array base of select `{}` in `{path}`",
+                                    self.node(*base).name,
+                                )
+                            })
                     })?;
                 let ndims = ai.dims.len();
                 if indices.len() == ndims {

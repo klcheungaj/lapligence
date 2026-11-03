@@ -4957,3 +4957,11 @@ fn a5_d6_tran_supply_reduction() {
         include_str!("fixtures/sim/lrm_decisions/A5-D6_tran_supply_reduction.out"),
     );
 }
+
+#[test]
+fn r14_d1_chandle_inside() {
+    run_decision(
+        "R14-D1_chandle_inside",
+        include_str!("fixtures/sim/lrm_decisions/R14-D1_chandle_inside.out"),
+    );
+}

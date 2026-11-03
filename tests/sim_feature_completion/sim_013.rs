@@ -45,6 +45,13 @@ fn handle_formals_and_class_held_interfaces_compose() {
 }
 
 #[test]
+fn always_comb_reruns_on_native_record_leaves_in_containers() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_013/native_container_leaves.out");
+    sim_cli::run_case_backend_parity(SUITE, "native_container_leaves", expected, &[], &[]);
+}
+
+#[test]
 fn always_comb_and_at_star_keep_distinct_sensitivity() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_013/comb_sensitivity.out");
     // The always_comb that reads only `h.x` has an empty sensitivity list

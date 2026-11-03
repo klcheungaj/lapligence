@@ -71,6 +71,17 @@ fn blocking_container_element_destinations_resolve_at_update() {
 }
 
 #[test]
+fn blocking_selects_inside_container_elements_resolve_at_update() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "container_element_selects",
+        include_str!("../fixtures/sim/feature_completion/sim_014/container_element_selects.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn nonblocking_triggers_keep_the_event_named_at_issue() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_014/nb_triggers.out");
     sim_cli::run_case_backend_parity(SUITE, "nb_triggers", expected, &[], &[]);
@@ -89,6 +100,26 @@ fn mixed_lists_and_event_formals_of_tasks_functions_and_methods() {
         include_str!("../fixtures/sim/feature_completion/sim_014/event_formals.out"),
         &[],
         &[],
+    );
+}
+
+#[test]
+fn output_and_inout_event_formals_bind_class_event_properties() {
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "class_event_formals",
+        include_str!("../fixtures/sim/feature_completion/sim_014/class_event_formals.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
+fn neg_class_event_property_ref_actual() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_class_event_ref_formal",
+        "class event property actual of `ref` event formal `r` in `tb` is not supported",
     );
 }
 
