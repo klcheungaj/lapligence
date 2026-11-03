@@ -42,7 +42,7 @@ mod metadata;
 pub use metadata::{parse_metadata, DefinitionNames, MetadataRequest};
 use metadata::{RawMetadataRequest, RawMetadataSink};
 
-const ABI_VERSION: u32 = 69;
+const ABI_VERSION: u32 = 70;
 const INVALID_ID: u64 = u64::MAX;
 
 const STATUS_OK: u32 = 0;
@@ -1242,6 +1242,10 @@ pub enum SemanticEdgeRole {
     /// From a procedural checker statement to each checker instance it
     /// instantiates (IEEE 1800-2009 17.3.1); the index is the ordinal.
     ProceduralChecker,
+    /// From an import declaration to each package item a name reference
+    /// resolved through it (IEEE 1800-2009 26.3, 37.12 detail 4); the index
+    /// is the ordinal.
+    Imported,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

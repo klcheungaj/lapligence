@@ -349,6 +349,8 @@ static void dyn_static_slots(uint32_t base);
 static int dyn_row_valid(const llg_vpi_model_object_t* object);
 static int dyn_slot(const llg_vpi_slot_t* slot);
 static vpiHandle dyn_iterate_class_defns(uint32_t scope);
+static vpiHandle defn_handle(uint32_t class_index);
+static int dyn_event_array_property(const llg_vpi_slot_t* slot);
 static int dyn_is_class_scope(const llg_vpi_slot_t* slot);
 static int dyn_type(const llg_vpi_slot_t* slot);
 static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled);
@@ -4218,6 +4220,12 @@ vpiHandle vpi_handle_by_multi_index(vpiHandle object, PLI_INT32 count, PLI_INT32
     int64_t values[16];
     for (int i = 0; i < count; ++i) values[i] = indices[i];
     if (slot->kind != SLOT_OBJECT) {
+        /* 37.25: a named event array property has one dimension. */
+        if (dyn_event_array_property(slot)) {
+            if (count == 1) return dyn_handle_by_index(slot, indices[0]);
+            vpi_error("LLG_VPI_INDEX", "a named event array property has one dimension");
+            return NULL;
+        }
         if (slot->kind == SLOT_ELEMENT && packed_array_typespec(slot->object, slot->element))
             return packed_select(slot->object, slot->element, values, (uint32_t)count, 0);
         if (slot->kind == SLOT_ELEMENT && count == 1)
@@ -8658,6 +8666,38 @@ static vpiHandle iterate_scope_typedefs(uint32_t row) {
     return make_list_iterator(vpiTypedef, items, count);
 }
 
+/* vpiImport (37.12 detail 4): the package items name references reached
+ * through the import declarations of scope `row`, in declaration order;
+ * NULL when no reference used one. */
+static vpiHandle iterate_scope_imports(uint32_t row) {
+    const llg_vpi_type_tables_t* types = g_vpi.types;
+    if (!types || !types->import_count) return NULL;
+    /* The pairs are in row order: find the first of this row. */
+    uint32_t low = 0, high = types->import_count;
+    while (low < high) {
+        uint32_t mid = low + (high - low) / 2u;
+        if (types->scope_imports[2u * mid] < row) low = mid + 1u;
+        else high = mid;
+    }
+    uint32_t end = low;
+    while (end < types->import_count && types->scope_imports[2u * end] == row) ++end;
+    if (end == low) return NULL;
+    uintptr_t* items = (uintptr_t*)calloc(end - low, sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    uint32_t count = 0;
+    for (uint32_t i = low; i < end; ++i) {
+        uint32_t object = types->scope_imports[2u * i + 1u];
+        vpiHandle item = NULL;
+        if (object & LLG_VPI_IMPORT_CLASS) item = defn_handle(object & ~LLG_VPI_IMPORT_CLASS);
+        else if (object < g_vpi.object_count) item = object_handle(object);
+        if (item) items[count++] = (uintptr_t)item;
+    }
+    return make_list_iterator(vpiImport, items, count);
+}
+
 /* vpiMember (37.24): the member rows of an unpacked structure or union kept
  * as member storage, in declaration order, or the member nodes of a packed
  * value, an element of an array of structures, or an enclosing member. */
@@ -8871,6 +8911,8 @@ vpiHandle vpi_iterate(PLI_INT32 type, vpiHandle ref_handle) {
     if (type == vpiTypedef && slot->kind == SLOT_OBJECT && object &&
         (is_scope_type(object->type) || is_statement_scope_type(object->type)))
         return iterate_scope_typedefs(slot->object);
+    if (type == vpiImport && slot->kind == SLOT_OBJECT && object && is_scope_type(object->type))
+        return iterate_scope_imports(slot->object);
     if (slot->kind == SLOT_OBJECT && object && is_statement_scope_type(object->type)) {
         /* 37.12: a statement scope iterates its declarations; the other
          * iterations are its statement's (37.69, 37.70). */

@@ -98,14 +98,27 @@ pub(super) fn render_vpi_dynamic(
                     };
                     element = *shape;
                 }
+                IrVpiShape::EventArray { element: shape, .. } => {
+                    array_type = "vpiStaticArray";
+                    values = 1;
+                    element = *shape;
+                }
                 IrVpiShape::String
                 | IrVpiShape::Chandle
                 | IrVpiShape::Event
                 | IrVpiShape::VirtualInterface
                 | IrVpiShape::Other => {}
             }
+            // Only an event array names a declared range; the other shapes
+            // leave it zero, so their rows keep their text.
+            let range = match shape {
+                IrVpiShape::EventArray { left, right, .. } => {
+                    format!(", INT64_C({left}), INT64_C({right})")
+                }
+                _ => String::new(),
+            };
             format!(
-                "    {{ {}, {}, {array_type}, {values}u, {key}, {width}u, {}, {}, {}, {class}u, {element}u, {typespec}u, {builtin} }}",
+                "    {{ {}, {}, {array_type}, {values}u, {key}, {width}u, {}, {}, {}, {class}u, {element}u, {typespec}u, {builtin}{range} }}",
                 shape.c_type(),
                 shape.c_code(),
                 u8::from(signed),

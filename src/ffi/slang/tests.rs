@@ -864,7 +864,12 @@ fn sequential_predicate_pattern_edge_decodes_and_unknown_roles_still_fail() {
         .semantic_edges;
     assert_eq!(decoded[0].role, SemanticEdgeRole::ProceduralChecker);
     assert_eq!(decoded[0].index, 1);
-    let message = invalid_native_message(stream(&tables(edge(45, 2, 0))));
+    let decoded = stream(&tables(edge(45, 3, 0)))
+        .expect("imported item role (ABI 70)")
+        .semantic_edges;
+    assert_eq!(decoded[0].role, SemanticEdgeRole::Imported);
+    assert_eq!(decoded[0].index, 3);
+    let message = invalid_native_message(stream(&tables(edge(46, 2, 0))));
     assert!(message.contains("unknown role"), "{message}");
 }
 

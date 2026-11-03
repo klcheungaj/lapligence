@@ -86,6 +86,8 @@ module tb;
     int id;
     // An event property: a named event of each object (37.25, 37.29).
     event done;
+    // An event array property: a named event array of each object.
+    event steps [0:1];
     // A virtual interface property (37.27 detail 7, 37.29 detail 7).
     virtual bus_if vif;
     function new(int i);
@@ -156,6 +158,9 @@ module tb;
   event ev2;
   // A named event array (37.25).
   event eva [1:0];
+  // An import a reference uses (37.12 detail 4: vpiImport).
+  import cat_pkg::PKP;
+  localparam int via_import = PKP;
   wire [3:0] w;
   wire w1, g_out, u_out, y, a_in, d_in;
   wire [3:0] lw;

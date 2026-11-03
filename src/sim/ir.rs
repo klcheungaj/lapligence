@@ -164,8 +164,8 @@ pub use storage::{
 mod vpi;
 pub use vpi::{
     IrVpiArgRef, IrVpiBuiltinCall, IrVpiCode, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn,
-    IrVpiConnRole, IrVpiConstant, IrVpiContainer, IrVpiDirection, IrVpiInstance, IrVpiObject,
-    IrVpiObjectKind, IrVpiQualifiers, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind,
+    IrVpiConnRole, IrVpiConstant, IrVpiContainer, IrVpiDirection, IrVpiImport, IrVpiInstance,
+    IrVpiObject, IrVpiObjectKind, IrVpiQualifiers, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind,
     IrVpiTypespecMember, IrVpiUdp, IrVpiVarKind,
 };
 mod vpi_dynamic;
@@ -659,6 +659,10 @@ pub struct IrModel {
     /// The typedefs each scope declares, in declaration order: the scope's
     /// catalog key and the typespec of the typedef (37.10 detail 1).
     pub(in crate::sim) vpi_scope_typedefs: Vec<(String, usize)>,
+    /// The objects each scope's import declarations supplied to name
+    /// references (37.12 detail 4), in declaration order: the scope's
+    /// catalog key and the object.
+    pub(in crate::sim) vpi_scope_imports: Vec<(String, IrVpiImport)>,
     /// Value shapes and class layouts of the dynamic catalog objects
     /// (strings, handles, containers, class objects; 37.17, 37.29).
     pub(in crate::sim) vpi_dynamic: IrVpiDynamic,
@@ -865,6 +869,7 @@ impl IrModel {
             vpi_objects: Vec::new(),
             vpi_typespecs: Vec::new(),
             vpi_scope_typedefs: Vec::new(),
+            vpi_scope_imports: Vec::new(),
             vpi_dynamic: IrVpiDynamic::default(),
             vpi_code: Vec::new(),
             vpi_code_files: Vec::new(),

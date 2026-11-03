@@ -408,9 +408,20 @@ typedef struct {
     const char* name;         /* the variable's name */
 } dyn_place_t;
 
-/* The declared range of a fixed-size array row (37.17): its elements are
- * numbered from `left`. */
+/* Whether `shape` is a named event array class property (37.25): a
+ * fixed-size container of events with its declared range. */
+static int dyn_is_event_array(const llg_vpi_shape_t* shape) {
+    return shape && shape->shape == LLG_VPI_SHAPE_CONTAINER && shape->type == vpiNamedEventArray;
+}
+
+/* The declared range of a fixed-size array row (37.17) or of a named event
+ * array property (37.25): its elements are numbered from `left`. */
 static int dyn_fixed_range(const dyn_place_t* place, int64_t* left, int64_t* right) {
+    if (dyn_is_event_array(place->shape)) {
+        *left = place->shape->left;
+        *right = place->shape->right;
+        return 1;
+    }
     if (place->shape->shape != LLG_VPI_SHAPE_CONTAINER ||
         place->shape->array_type != vpiStaticArray || place->row == LLG_VPI_NONE)
         return 0;
@@ -1544,7 +1555,7 @@ static vpiHandle dyn_handle(int type, llg_vpi_slot_t* slot, int* handled) {
             }
             if ((type == vpiLeftRange || type == vpiRightRange) &&
                 shape->shape == LLG_VPI_SHAPE_CONTAINER && place.storage &&
-                shape->array_type != vpiAssocArray) {
+                shape->array_type != vpiAssocArray && !dyn_is_event_array(shape)) {
                 int64_t left, right;
                 if (dyn_fixed_range(&place, &left, &right))
                     return dyn_constant(type == vpiLeftRange ? left : right);
@@ -1578,6 +1589,7 @@ static int dyn_field_listed(uint32_t class_index, uint32_t field, int type) {
     if (!shape || shape->shape == LLG_VPI_SHAPE_OTHER) return 0;
     /* An event property is a named event, not a variable (37.25, 37.29). */
     if (shape->shape == LLG_VPI_SHAPE_EVENT) return type == vpiNamedEvent;
+    if (dyn_is_event_array(shape)) return type == vpiNamedEventArray;
     /* A virtual interface property is an interface declaration (37.27
      * detail 7). */
     if (shape->shape == LLG_VPI_SHAPE_VIF) return type == vpiInterfaceDecl;
@@ -1624,12 +1636,37 @@ static vpiHandle dyn_iterate_fields(void* object, uint32_t class_index, uint32_t
     return iterator;
 }
 
+/* vpiRange of a named event array property: its one declared range. */
+static vpiHandle dyn_event_array_ranges(const llg_vpi_shape_t* shape) {
+    uintptr_t* items = (uintptr_t*)calloc(1u, sizeof(*items));
+    if (!items) {
+        vpi_error("LLG_VPI_NOMEM", "VPI iterator allocation failed");
+        return NULL;
+    }
+    uint32_t range = alloc_slot(SLOT_RANGE);
+    if (range == LLG_VPI_NONE) {
+        free(items);
+        return NULL;
+    }
+    g_vpi.slots[range].object = LLG_VPI_NONE;
+    g_vpi.slots[range].left = shape->left;
+    g_vpi.slots[range].right = shape->right;
+    g_vpi.slots[range].aux = 0;
+    items[0] = (uintptr_t)encode_handle(range);
+    return make_list_iterator(vpiRange, items, 1u);
+}
+
 static int dyn_element_type_matches(const llg_vpi_shape_t* element, int type) {
     return type == vpiReg || type == vpiMemoryWord || type == element->type;
 }
 
 static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
     *handled = 1;
+    /* 37.12 detail 4: a class declares no import (A.1.9 class_item), so its
+     * definition, typespec and objects import nothing. */
+    if (type == vpiImport &&
+        (slot->kind == SLOT_CLASSOBJ || slot->kind == SLOT_CLASSDEFN || slot->kind == SLOT_CLASSTS))
+        return NULL;
     switch (slot->kind) {
         case SLOT_CLASSOBJ: {
             uint32_t class_index;
@@ -1645,9 +1682,9 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
                 return dyn_iterate_items(class_index, type, 0,
                                          type == vpiConstraint ? slot->pointer : NULL);
             }
-            /* 37.29 details 6 and 7: the object's event and virtual
-             * interface properties, inherited ones first. */
-            if (type == vpiNamedEvent || type == vpiInterfaceDecl)
+            /* 37.29 details 6 and 7: the object's event, event array and
+             * virtual interface properties, inherited ones first. */
+            if (type == vpiNamedEvent || type == vpiNamedEventArray || type == vpiInterfaceDecl)
                 return dyn_iterate_fields(slot->pointer, class_index, 0, type);
             break;
         }
@@ -1664,9 +1701,10 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
                                           type == vpiVariables ? 0 : type);
             /* 37.27, 37.28 detail 5: the items the class declares. */
             if (dyn_class_iteration(type)) return dyn_iterate_items(class_index, type, 0, NULL);
-            /* 37.27, 37.28: the event properties the class declares; they
-             * name no synchronization object. */
-            if (type == vpiNamedEvent || (type == vpiInterfaceDecl && slot->kind == SLOT_CLASSDEFN))
+            /* 37.27, 37.28: the event and event array properties the class
+             * declares; they name no synchronization object. */
+            if (type == vpiNamedEvent || (type == vpiNamedEventArray && slot->kind == SLOT_CLASSDEFN) ||
+                (type == vpiInterfaceDecl && slot->kind == SLOT_CLASSDEFN))
                 return dyn_iterate_fields(NULL, class_index, dyn_inherited_fields(class_index), type);
             if (type == vpiDerivedClasses && slot->kind == SLOT_CLASSDEFN) {
                 uint32_t count = 0;
@@ -1708,6 +1746,16 @@ static vpiHandle dyn_iterate(int type, llg_vpi_slot_t* slot, int* handled) {
             /* 37.25 detail 1 (named event array): an event property is not
              * part of an array, so it has no indices. */
             if (type == vpiIndex && place.shape->shape == LLG_VPI_SHAPE_EVENT) return NULL;
+            if (dyn_is_event_array(place.shape)) {
+                /* 37.25 detail 2 (decision A19-D69): the range and the
+                 * events of a named event array. */
+                if (type == vpiRange) return dyn_event_array_ranges(place.shape);
+                if (type != vpiNamedEvent) {
+                    vpi_error("LLG_VPI_RELATION",
+                              "a named event array iterates vpiRange and vpiNamedEvent");
+                    return NULL;
+                }
+            }
             if (place.shape->shape != LLG_VPI_SHAPE_CONTAINER) {
                 if (slot->kind == SLOT_OBJECT) {
                     *handled = 0;
@@ -1898,12 +1946,59 @@ static PLI_INT64 dyn_event_get(int property, const dyn_place_t* place) {
     }
 }
 
+/* 37.25 properties of a named event array property, as a module-level
+ * array answers them (decision A19-D69); others are wrong-object queries. */
+static PLI_INT64 dyn_event_array_get(int property, const dyn_place_t* place) {
+    const llg_vpi_shape_t* shape = place->shape;
+    switch (property) {
+        case vpiSize:
+            /* The declared size, also for a class definition's property. */
+            return (shape->left > shape->right ? shape->left - shape->right
+                                               : shape->right - shape->left) + 1;
+        case vpiAutomatic:
+            return 1;
+        case vpiAllocScheme:
+            return place->owner ? vpiDynamicScheme : vpiOtherScheme;
+        default:
+            unsupported_property();
+            return vpiUndefined;
+    }
+}
+
+/* Whether element handle `slot` is an event of a named event array
+ * property. */
+static int dyn_event_element(const llg_vpi_slot_t* slot) {
+    if (slot->kind != SLOT_DYNELEM) return 0;
+    const llg_vpi_shape_t* shape = dyn_element_shape(slot);
+    return shape && shape->shape == LLG_VPI_SHAPE_EVENT;
+}
+
+/* The event an element of a named event array property names. */
+static int dyn_element_event(const llg_vpi_slot_t* slot, llg_event_t* event, const char* what) {
+    dyn_place_t place;
+    if (!dyn_container_place(slot->object, slot->pointer, (uint32_t)slot->aux, &place)) {
+        vpi_error("LLG_VPI_HANDLE", "the array of this element no longer exists");
+        return 0;
+    }
+    if (dyn_refuse_dying(place.owner, what)) return 0;
+    int exists;
+    llg_value_t* element = dyn_locate(&place, slot, &exists);
+    if (!exists || !element || !element->desc || element->desc->kind != LLG_VALUE_EVENT) {
+        vpi_error("LLG_VPI_INDEX", "this element no longer exists (decision A19-D23)");
+        return 0;
+    }
+    event->object = (llg_event_object_t*)element->value.handle;
+    return 1;
+}
+
 static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
     *handled = 1;
     if (property == vpiType) return dyn_type(slot);
     {
         dyn_place_t place;
         if (dyn_event_property(slot, &place)) return dyn_event_get(property, &place);
+        if (slot->kind == SLOT_PROPERTY && dyn_place(slot, &place) && dyn_is_event_array(place.shape))
+            return dyn_event_array_get(property, &place);
     }
     switch (slot->kind) {
         case SLOT_CLASSDEFN:
@@ -1938,6 +2033,12 @@ static PLI_INT64 dyn_get(int property, llg_vpi_slot_t* slot, int* handled) {
             if (property == vpiArrayMember) return 1;
             if (property == vpiAllocScheme) return vpiDynamicScheme;
             if (property == vpiAutomatic) return 1;
+            /* 37.25: an event of a named event array property has the
+             * properties of a named event only. */
+            if (shape->shape == LLG_VPI_SHAPE_EVENT) {
+                if (property == vpiArray) return 0;
+                break;
+            }
             if (property == vpiSigned) return shape->is_signed;
             if (property == vpiSize) {
                 if (shape->shape == LLG_VPI_SHAPE_PACKED) return shape->width;
@@ -2136,6 +2237,10 @@ static void dyn_get_value(llg_vpi_slot_t* slot, p_vpi_value output) {
             dyn_item_value(slot, output);
             return;
         case SLOT_DYNELEM:
+            if (dyn_event_element(slot)) {
+                vpi_error("LLG_VPI_VALUE", "a named event has no value (37.25)");
+                return;
+            }
             dyn_element_get(slot, output);
             return;
         case SLOT_OBJECT:
@@ -2144,6 +2249,10 @@ static void dyn_get_value(llg_vpi_slot_t* slot, p_vpi_value output) {
             if (!dyn_place(slot, &place)) return;
             if (place.shape->shape == LLG_VPI_SHAPE_EVENT) {
                 vpi_error("LLG_VPI_VALUE", "a named event has no value (37.25)");
+                return;
+            }
+            if (dyn_is_event_array(place.shape)) {
+                vpi_error("LLG_VPI_VALUE", "a named event array has no value (37.25)");
                 return;
             }
             if (place.shape->shape == LLG_VPI_SHAPE_VIF) {
@@ -2177,6 +2286,21 @@ static void dyn_put_value(llg_vpi_slot_t* slot, p_vpi_value input, int mode) {
                 return;
             }
             if (dyn_property_event(slot, &event, "vpi_put_value")) llg_event_trigger(&event);
+            return;
+        }
+        if (dyn_event_element(slot)) {
+            /* 38.34 for an event of a named event array property, as for a
+             * module-level array's (decision A19-D69). */
+            llg_event_t event;
+            if (mode != vpiNoDelay) {
+                vpi_error("LLG_VPI_UNSUPPORTED", "llg triggers a named event only with vpiNoDelay");
+                return;
+            }
+            if (dyn_element_event(slot, &event, "vpi_put_value")) llg_event_trigger(&event);
+            return;
+        }
+        if (slot->kind == SLOT_PROPERTY && dyn_place(slot, &place) && dyn_is_event_array(place.shape)) {
+            vpi_error("LLG_VPI_VALUE", "a named event array cannot receive a value (37.25)");
             return;
         }
     }
@@ -2303,6 +2427,12 @@ static vpiHandle dyn_element_by_index(const dyn_place_t* place, uint32_t field, 
         return NULL;
     }
     return make_dyn_element(place, field, DYN_AT_INDEX, (uint64_t)index, NULL, 0);
+}
+
+/* Whether `slot` is a named event array class property (37.25). */
+static int dyn_event_array_property(const llg_vpi_slot_t* slot) {
+    dyn_place_t place;
+    return slot->kind == SLOT_PROPERTY && dyn_place(slot, &place) && dyn_is_event_array(place.shape);
 }
 
 static vpiHandle dyn_handle_by_index(llg_vpi_slot_t* slot, PLI_INT32 index) {

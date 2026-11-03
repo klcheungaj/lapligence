@@ -63,6 +63,8 @@ test a19d69 sim_lrm_decisions::a19_d69_named_event_arrays
 test a19d71 sim_lrm_decisions::a19_d71_mailbox_semaphore_waiters
 test a19d72 sim_lrm_decisions::a19_d72_virtual_interface_properties
 test a19d73 sim_lrm_decisions::a19_d73_fixed_handle_array_elements
+test a19d79 sim_lrm_decisions::a19_d79_scope_imports
+test a19d80 sim_lrm_decisions::a19_d80_class_event_arrays
 test a20delays adv_020::delays_read_and_write_paths_checks_primitives_and_assignments
 test a20d16 sim_lrm_decisions::a20_d16_delay_expressions
 test a20d17 sim_lrm_decisions::a20_d17_port_delays
@@ -411,7 +413,7 @@ node scope 37.12 members=instance,task_func,named_begin,begin,named_fork,fork,cl
   iterate vpiMemory implemented walk
   iterate vpiParameter implemented walk
   iterate vpiInternalScope implemented walk
-  iterate vpiImport unsupported 37.12 detail 4 returns the package items referenced through an import (explicit or wildcard), as industry-standard behaviour does; the owned database does not record which references resolve through an import
+  iterate vpiImport implemented a19d79
   iterate vpiTypedef implemented walk
   iterate vpiLetDecl error walk let declarations are not objects; industry-standard behaviour refuses it (decision A19-D65)
 
@@ -1187,7 +1189,7 @@ node class_defn 37.27 type=vpiClassDefn
   iterate vpiParameter implemented a19classes
   iterate vpiInterfaceDecl implemented a19d72
   iterate vpiNamedEvent implemented walk
-  iterate vpiNamedEventArray unsupported an event array property of a class has no VPI shape (module-level named event arrays are served, decision A19-D69)
+  iterate vpiNamedEventArray implemented a19d80
   iterate vpiTypedef error a19d65 typedefs declared in a class are not objects; industry-standard behaviour refuses it (decision A19-D65)
   iterate vpiInternalScope implemented a19d36
   handle vpiModule implemented a19d36
@@ -1246,7 +1248,7 @@ node class_obj 37.29 type=vpiClassObj
   iterate vpiParameter implemented walk
   iterate vpiInterfaceDecl implemented walk
   iterate vpiNamedEvent implemented walk
-  iterate vpiNamedEventArray unsupported an event array property of a class has no VPI shape (module-level named event arrays are served, decision A19-D69)
+  iterate vpiNamedEventArray implemented a19d80
   iterate vpiInternalScope implemented walk
   get vpiAutomatic implemented walk
   get vpiAllocScheme implemented walk

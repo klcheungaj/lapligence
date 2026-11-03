@@ -2478,6 +2478,120 @@ public:
     }
   }
 
+  // IEEE 1800-2009 37.12 detail 4: the package items each import
+  // declaration supplied to some name reference (26.3). Slang records the
+  // use of an explicit import in its reference map and every name a
+  // wildcard import supplied in its scope's import data; both are complete
+  // once diagnostics and analysis have run, so this is called after the
+  // root traversal. A reference through a package's re-export (26.6) also
+  // uses the import the exporting package declares. Emits one IMPORTED edge
+  // per item from each import declaration, for items the capture reached;
+  // reads only Slang's recorded lookup results, never repeats a lookup.
+  void captureImports(const Compilation& compilation) {
+    if (importSites.empty())
+      return;
+    std::unordered_map<const Symbol*, std::vector<const Symbol*>> items;
+    const auto unwrap = [](const Symbol* symbol) {
+      while (symbol && symbol->kind == SymbolKind::TransparentMember)
+        symbol = &symbol->as<TransparentMemberSymbol>().wrapped;
+      return symbol;
+    };
+    const auto add = [&](const Symbol& import, const Symbol* item) {
+      auto& list = items[&import];
+      if (std::find(list.begin(), list.end(), item) == list.end())
+        list.push_back(item);
+    };
+    // The wildcard import of `scope` that supplied `item` under `name`: the
+    // first whose package exports it (Slang keeps the first on a tie).
+    const auto supplier = [](const Scope& scope, std::string_view name,
+                             const Symbol* item) -> const WildcardImportSymbol* {
+      const auto* data = scope.getWildcardImportData();
+      if (!data)
+        return nullptr;
+      for (const WildcardImportSymbol* import : data->wildcardImports) {
+        const PackageSymbol* package = import->getPackage();
+        if (package && package->findForImport(name) == item)
+          return import;
+      }
+      return nullptr;
+    };
+    // `item` reached through `package` without being declared there: the
+    // import `package` declares for it was used too. Bounded by the package
+    // nesting a re-export chain can have.
+    const auto throughExport = [&](const PackageSymbol* package, const Symbol* item) {
+      for (size_t depth = 0; package && depth < kMaxImportExportDepth; depth++) {
+        const Scope* owner = item->getParentScope();
+        if (!owner || &owner->asSymbol() == package)
+          return;
+        const PackageSymbol* next = nullptr;
+        const auto& names = package->getNameMap();
+        if (auto found = names.find(item->name); found != names.end() &&
+            found->second->kind == SymbolKind::ExplicitImport) {
+          const auto& explicitImport = found->second->as<ExplicitImportSymbol>();
+          if (unwrap(explicitImport.importedSymbol()) != item)
+            return;
+          add(explicitImport, item);
+          next = explicitImport.package();
+        }
+        else if (const auto* wildcard = supplier(*package, item->name, item)) {
+          add(*wildcard, item);
+          next = wildcard->getPackage();
+        }
+        package = next;
+      }
+    };
+    for (const auto& [id, symbol] : importSites) {
+      (void)id;
+      if (symbol->kind == SymbolKind::ExplicitImport) {
+        const auto& import = symbol->as<ExplicitImportSymbol>();
+        const auto* syntaxNode = import.getSyntax();
+        if (!syntaxNode)
+          continue;
+        const auto [read, written] = compilation.isReferenced(*syntaxNode);
+        const Symbol* item = unwrap(import.importedSymbol());
+        if ((!read && !written) || !item)
+          continue;
+        add(import, item);
+        throughExport(import.package(), item);
+        continue;
+      }
+      const Scope* scope = symbol->getParentScope();
+      const auto* data = scope ? scope->getWildcardImportData() : nullptr;
+      if (!data)
+        continue;
+      for (const auto& [name, imported] : data->importedSymbols) {
+        const Symbol* item = unwrap(imported);
+        const auto* import = supplier(*scope, name, item);
+        if (import != symbol)
+          continue;
+        add(*import, item);
+        throughExport(import->getPackage(), item);
+      }
+    }
+    for (const auto& [id, symbol] : importSites) {
+      auto found = items.find(symbol);
+      if (found == items.end())
+        continue;
+      auto& list = found->second;
+      // Wildcard import data is a hash map: order by declaration position
+      // so the capture is deterministic.
+      std::sort(list.begin(), list.end(), [](const Symbol* a, const Symbol* b) {
+        if (a->location.buffer() != b->location.buffer())
+          return a->location.buffer().getId() < b->location.buffer().getId();
+        if (a->location.offset() != b->location.offset())
+          return a->location.offset() < b->location.offset();
+        return a->name < b->name;
+      });
+      uint32_t index = 0;
+      for (const Symbol* item : list) {
+        const auto target = capture.semanticIds.find(item);
+        if (target == capture.semanticIds.end())
+          continue;
+        capture.semanticEdge(id, LLG_SLANG_EDGE_IMPORTED, target->second, index++);
+      }
+    }
+  }
+
   // Slang elaborates and looks up one definition per name in a scope; a
   // same-named definition in another file is elaborated only when an
   // explicit top selection makes it an unreferenced definition. Capture
@@ -3274,8 +3388,11 @@ public:
         handle(symbol.wrapped.template as<EnumValueSymbol>());
     }
     if constexpr (std::same_as<T, ExplicitImportSymbol> ||
-                  std::same_as<T, WildcardImportSymbol>)
+                  std::same_as<T, WildcardImportSymbol>) {
       bindImportItem(symbol);
+      if (!capture.declarationOnly)
+        importSites.emplace_back(id, &symbol);
+    }
     if constexpr (std::same_as<T, NetAliasSymbol>) {
       uint32_t index = 0;
       for (const Expression* expression : symbol.getNetReferences())
@@ -5419,6 +5536,12 @@ private:
   std::unordered_set<const syntax::SyntaxNode*> sourceBodies;
   std::unordered_set<const syntax::SyntaxNode*> sourceGenerateBlocks;
   std::vector<const UninstantiatedDefSymbol*> sourceConnections;
+  // Import declarations (node ID, symbol) in capture order; captureImports
+  // resolves their used items once every lookup has run.
+  std::vector<std::pair<uint64_t, const Symbol*>> importSites;
+  // A re-export chain (26.6) passes through at most this many packages; a
+  // longer chain is cut, never followed around a cycle.
+  static constexpr size_t kMaxImportExportDepth = 256;
   // The innermost symbol or statement block whose members, statements and
   // expressions are being visited: the lookup context of the names Slang
   // binds and then discards (bindSizeCastNames).
@@ -10128,6 +10251,7 @@ std::unique_ptr<CaptureOutput> compileImpl(const LlgSlangCompileRequest& request
     for (const Symbol* definition : compilation.getDefinitions())
       definition->visit(semanticCapture);
     semanticCapture.captureShadowedDefinitions(compilation, root);
+    semanticCapture.captureImports(compilation);
   }
   semanticStage.finish();
   ProfileStage finalizeStage("wrapper.finalize");

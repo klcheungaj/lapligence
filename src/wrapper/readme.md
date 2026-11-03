@@ -84,6 +84,16 @@ Defaults and structural ceilings: the `kHardMax*` and default-limit comments in
   `typedef_id`/`typedef_depth` of each aggregate member and the
   `LLG_SLANG_TYPEDEF_BUILTIN` auxiliary bit of a typedef renaming a built-in
   type.
+- Simulation capture exports which package items name references reached
+  through each import declaration (IEEE 1800-2009 37.12 detail 4): after the
+  root traversal, when every lookup has run, `captureImports` reads Slang's
+  recorded lookup results (the reference map for an explicit import, the
+  scope's wildcard import data for a wildcard one) and emits one
+  `LLG_SLANG_EDGE_IMPORTED` edge per item, in declaration order, from the
+  import declaration node. An item reached through a package's re-export
+  (26.6) also marks the import the exporting package declares. The cost is
+  one pass over the import declarations; declaration-only capture (the
+  language server) emits none.
 - An instance array node stores its declared range in `auxiliary` (left in
   bits 0-31, right in bits 32-63); the instances it holds keep their indexed
   names.

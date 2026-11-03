@@ -1,0 +1,23 @@
+sub pv=3
+tb 3 3 5 5 3
+f2=10
+tb imports=list error=0
+  pk PP type=41
+  pk pf type=20
+  pk pv type=612
+  pk2 qv type=612
+  handle=NULL error=1
+tb.u imports=list error=0
+  pk pv type=612
+  handle=NULL error=1
+tb.blk imports=NULL error=0
+  handle=NULL error=1
+tb.f2 imports=list error=0
+  pk px type=612
+  pk3 rv type=612
+  handle=NULL error=1
+pk imports=NULL error=0
+  handle=NULL error=1
+pk3 imports=list error=0
+  pk px type=612
+  handle=NULL error=1
