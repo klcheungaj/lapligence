@@ -1,0 +1,25 @@
+phase 0 u0 statements 0 covered=0 max=5 count=0
+phase 0 u1 statements 0 covered=0 max=5 count=0
+phase 0 u2 statements 0 covered=0 max=5 count=0
+phase 0 u3 statements 0 covered=0 max=5 count=0
+phase 0 u4 statements 0 covered=0 max=5 count=0
+start u1 -> 1
+start u3 -> 1
+phase 1 u0 statements 0 covered=0 max=5 count=0
+phase 1 u1 statements 5 covered=5 max=5 count=13
+phase 1 u2 statements 0 covered=0 max=5 count=0
+phase 1 u3 statements 5 covered=5 max=5 count=13
+phase 1 u4 statements 0 covered=0 max=5 count=0
+stop u1 -> 1
+start u4 -> 1
+phase 2 u0 statements 0 covered=0 max=5 count=0
+phase 2 u1 statements 5 covered=5 max=5 count=13
+phase 2 u2 statements 0 covered=0 max=5 count=0
+phase 2 u3 statements 5 covered=5 max=5 count=21
+phase 2 u4 statements 4 covered=4 max=5 count=8
+reset u3 -> 1
+phase 3 u0 statements 0 covered=0 max=5 count=0
+phase 3 u1 statements 5 covered=5 max=5 count=13
+phase 3 u2 statements 0 covered=0 max=5 count=0
+phase 3 u3 statements 5 covered=5 max=5 count=5
+phase 3 u4 statements 5 covered=5 max=5 count=13

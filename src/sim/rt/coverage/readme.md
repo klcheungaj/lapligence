@@ -84,11 +84,15 @@ hash, the visits and the transitions. `llg_vpi.c` reads the table through
 S46-D13, S46-D14, A19-D46). Codegen emits the tables only when a
 `$coverage_*` call can name the kind (it then starts at time 0) or the VPI
 catalog exists (stopped until START), so other models are unchanged.
-Statements: each entity is a static `uint64_t` the generated code
-increments when the statement starts (`llg_scov_item_t` names it with its
-source position, instance and VPI code row); a counter only grows, and
-start, stop and reset move per-entity offsets (`base`, `mark`), so a
-stopped statement still pays one increment and no branch. Toggles: each
+Statements: each entity is an element of one generated `uint64_t` array
+that the generated code increments when the statement starts; a counter
+only grows, and start, stop and reset move per-entity offsets (`base`,
+`mark`), so a stopped statement still pays one increment and no branch.
+The offsets are allocated at the first control or merge, and the entities'
+source positions, instances and VPI code rows (`llg_scov_packed_t`, a
+string-literal blob of varints) are decoded at the first scope query,
+database section or VPI statement lookup; a model whose coverage is never
+asked for decodes nothing. A model started again zeroes its counters. Toggles: each
 `llg_tcov_signal_t` names a packed storage and its width; the arena holds
 per signal the last known value, its known bits, the bits seen at 0 and at
 1 and per-bit 0->1 and 1->0 counts. START samples the present value and

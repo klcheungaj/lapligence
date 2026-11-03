@@ -493,8 +493,8 @@ processes or clock edges, at the cost of a few bytes per object.
   UDP and call-site tables stay initializers (small, or read at start-up).
   Not done: sharing code rows per module definition (each instance's rows
   name its own catalog rows and scopes, so sharing needs a per-instance
-  base in every handle and relation), and packing the statement coverage
-  tables, which non-catalog models with `$coverage_*` share.
+  base in every handle and relation). The statement coverage tables are
+  packed too (next section).
 - **Evidence:** model C compile, `-O3` with the model build's flags, pinned,
   median of 3 (seconds; plain is identical before and after):
 
@@ -507,10 +507,10 @@ processes or clock edges, at the cost of a few bytes per object.
   | udp_perf | 9.24 / 4.34 | 11.28 / 6.78 | 9.47 / 4.39 | 3.34 / 22.91 / 6.00 |
   | tasks | 0.93 / 0.53 | 1.34 / 1.02 | 1.05 / 0.61 | 0.28 / 4.36 / 1.42 |
 
-  What remains on `many-registers-10k` (gcc, by removing one table at a
+  What remained on `many-registers-10k` (gcc, by removing one table at a
   time): the statement coverage tables of a catalog model (70,000 counters,
   their item table and the counter pointers in the instance records) about
-  0.8 s, the blob about 0.3 s. Run time is unchanged (pinned medians of 7
+  0.8 s, since removed (next section), and the blob about 0.3 s. Run time is unchanged (pinned medians of 7
   to 9 rounds within 2% of before on every design, with and without an
   application; models without an application never decode). The first VPI
   use that reaches a design object decodes the object rows before it
@@ -524,6 +524,51 @@ processes or clock edges, at the cost of a few bytes per object.
   176 MB), because the code rows are no longer resident until asked for.
   Decoding the code rows on first access costs about 19 ms on
   `many-registers-10k` (400,000 rows, two thirds of it page faults).
+
+### Statement coverage tables
+
+- **Trade-off:** statement coverage (S46-D13; in every VPI catalog model and
+  in models whose `$coverage_*` calls can name `SV_COV_STATEMENT`) was one
+  `static uint64_t` per statement, a struct row per statement naming its
+  counter, file string, position, code row and instance, and in a shared
+  body one counter pointer per statement in every instance record
+  (`many-registers-10k`: 70,000 counters, rows and record pointers). Their
+  parsing and relocation was most of what a catalog model still cost over
+  plain after the packed catalog rows, and most of a `$coverage_*` model's
+  C. One counter array indexed from one record base moves no work to run
+  time; packing the rows moves their decoding to the first query that
+  needs positions or instances.
+- **Decision:** one model array `llg_scov[N]`; a statement increments
+  `llg_scov[k]`, a shared body `llg_scov[(size_t)I->base + offset]` with
+  the body's lowest entity as one `uint32_t` record field (bodies share only
+  when their relative entities match). The entity rows are a
+  string-literal blob in the catalog blob's row layout and varint alphabet
+  (`llg_scov_packed_t`, file per change, deltas of line, column, code row
+  and instance), decoded by `llg_scov_unpack` at the first scope query,
+  database section or VPI statement lookup; the per-entity START/STOP
+  offsets are allocated at the first control or merge. The counter
+  increment stays one add: GCC and Clang `-O2` load the base once and
+  increment `disp(base_reg, index, 8)` for each statement, where the
+  pointer form loaded one pointer per statement. Models without statement
+  coverage are byte-identical.
+- **Evidence:** model C compile, `-O3` with the model build's flags, pinned
+  on one core, median of 5 (seconds; load 2-5):
+
+  | design | plain gcc / clang | before gcc / clang | after gcc / clang | after / plain gcc, clang | C MB before / after |
+  | --- | --- | --- | --- | --- | --- |
+  | many-registers-10k `--vpi` | 0.44 / 0.49 | 2.09 / 1.93 | 0.76 / 0.63 | 1.7x, 1.3x | 28.87 / 16.66 |
+  | many-masked-20k `--vpi` | 0.45 / 0.46 | 1.41 / 1.29 | 0.75 / 0.58 | 1.7x, 1.3x | 23.66 / 16.79 |
+  | gen64_proto `--vpi` | 0.32 / 0.24 | 0.35 / 0.26 | 0.34 / 0.25 | 1.1x, 1.0x | 0.45 / 0.39 |
+  | many-registers-10k + `$coverage_get` | 0.44 / 0.49 | 1.79 / 1.82 | 0.48 / 0.52 | 1.1x, 1.1x | 17.19 / 3.12 |
+  | many-masked-20k + `$coverage_get` | 0.45 / 0.46 | 1.13 / 1.19 | 0.49 / 0.50 | 1.1x, 1.1x | 12.00 / 4.06 |
+
+  Run time, pinned medians of 9 interleaved rounds, identical output:
+  every design within noise of before or faster (`$coverage_*`
+  many-registers-10k 99.0 to 93.8 ms, a statement-heavy loop with 16
+  shared instances, about 33 million counted statement starts, 1399 to
+  1393 ms and with `--vpi` 1567 to 1410 ms; the same loop without
+  coverage 1409 ms). Start-up peak RSS: `many-registers-10k --vpi` 50.9 to
+  46.3 MB (plain 46.6), with `$coverage_get` 56.7 to 47.5 MB.
 
 ## Rejected or deferred
 
