@@ -13,9 +13,12 @@
 //! - `case` with a `default`: definite is the intersection over all items and
 //!   the default; a write in only some items is conditional.  Without a
 //!   `default`: a write present in some but not all items is conditional.
-//! - `begin` blocks union their children; plain assignments add their LHS
-//!   base signal; loop bodies (`for`/`while`/`repeat`/`forever`, and
-//!   `wait`/`fork` for conservativeness) make every write conditional.
+//! - `begin` blocks compose their children in sequence: a signal assigned
+//!   on every path by one child is definite even when another child assigns
+//!   it conditionally (a default assignment before an `if`); plain
+//!   assignments add their LHS base signal; loop bodies
+//!   (`for`/`while`/`repeat`/`forever`, and `wait`/`fork` for
+//!   conservativeness) make every write conditional.
 //!
 //! Every maybe-assigned signal is reported once, positioned at the process
 //! node.  The analysis is deliberately conservative (it does not account for
@@ -194,7 +197,10 @@ fn analyze_stmt(db: &Db, root: NodeId) -> PathWrites {
     }
 }
 
-/// Union of the analyses of every child statement.
+/// Sequential composition of the child statements: a signal that some child
+/// assigns on every path is assigned on every path through the sequence, so
+/// a conditional write before or after that child (`y = 0; if (c) y = a;`)
+/// leaves no latch.
 fn fold_children(db: &Db, root: NodeId) -> PathWrites {
     let mut out = PathWrites::default();
     for c in &db.node(root).children {
@@ -202,6 +208,7 @@ fn fold_children(db: &Db, root: NodeId) -> PathWrites {
         out.definite.extend(w.definite);
         out.maybe.extend(w.maybe);
     }
+    out.maybe.retain(|signal| !out.definite.contains(signal));
     out
 }
 
@@ -378,5 +385,41 @@ mod tests {
         let got = rule_diags(&incomplete, "if-latch");
         assert_eq!(got.len(), 1, "{incomplete:?}");
         assert!(got[0].message.contains("`y`"));
+    }
+
+    #[test]
+    fn default_assignment_before_a_conditional_write_is_quiet() {
+        // The first assignment covers every path, so the later conditional
+        // write cannot leave the signal unassigned.
+        let diags = lint_design(
+            "module il7;\n  typedef struct { string s; int n; } rec_t;\n\
+             \x20 rec_t q[$];\n  rec_t tmp;\n  logic en, y, a, b;\n\
+             \x20 always_comb begin\n\
+             \x20   tmp = '{\"\", 0};\n\
+             \x20   if (q.size() > 1) tmp = q[1];\n\
+             \x20 end\n\
+             \x20 always_comb begin\n\
+             \x20   if (en) y = a;\n\
+             \x20   y = b;\n\
+             \x20 end\nendmodule\n",
+            "il7",
+        );
+        let got = rule_diags(&diags, "if-latch");
+        assert!(got.is_empty(), "no latch findings: {diags:?}");
+    }
+
+    #[test]
+    fn conditional_write_in_a_sequence_still_warns() {
+        let diags = lint_design(
+            "module il8;\n  logic en, x, y, a;\n\
+             \x20 always_comb begin\n\
+             \x20   x = a;\n\
+             \x20   if (en) y = a;\n\
+             \x20 end\nendmodule\n",
+            "il8",
+        );
+        let got = rule_diags(&diags, "if-latch");
+        assert_eq!(got.len(), 1, "only y is conditional: {diags:?}");
+        assert!(got[0].message.contains("`y`"), "{}", got[0].message);
     }
 }

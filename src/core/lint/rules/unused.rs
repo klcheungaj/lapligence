@@ -573,4 +573,46 @@ mod tests {
             "the reads after the nested scopes belong to the body"
         );
     }
+
+    #[test]
+    fn indices_of_written_container_elements_are_reads() {
+        // Each key or index selecting the written element is read, at every
+        // select level and also under a timing control (SV 10.4.1).
+        let paths = unused_paths(
+            "module top;
+  event e;
+  int i = 3;
+  int j = 1;
+  string key = \"a\";
+             \x20 int n = 2;
+  int w = 0;
+  int dead;
+             \x20 logic [7:0] ai[int];
+  logic [15:0] as[string];
+  int qq[$][$];
+             \x20 typedef struct { logic [3:0] f; } rec_t;
+  rec_t rq[$];
+             \x20 initial begin
+             \x20   ai[i][7] = 1'b1;
+             \x20   as[key][15:8] = @e 8'h5A;
+             \x20   qq[j][0] = 1;
+             \x20   rq[n].f = 4'h1;
+             \x20   {ai[w], ai[0]} = 16'h0;
+             \x20 end
+endmodule
+",
+            "top",
+        );
+        // The arrays are written through their elements, never read.
+        assert_eq!(
+            paths,
+            [
+                "signal `ai` in `top` is never read",
+                "signal `as` in `top` is never read",
+                "signal `dead` in `top` is never used",
+                "signal `qq` in `top` is never read",
+                "signal `rq` in `top` is never read",
+            ]
+        );
+    }
 }
