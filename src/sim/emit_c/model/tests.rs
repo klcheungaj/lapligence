@@ -159,6 +159,24 @@ fn dpi_byte_is_plain_char_and_sign_extended_explicitly() {
 }
 
 #[test]
+fn only_catalog_models_mark_their_header() {
+    let header = |model: IrModel| {
+        let c = render(&ExecutionModel::lower(model).unwrap()).unwrap();
+        c.lines()
+            .take_while(|line| !line.starts_with("#include"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let catalog = IrModel::new("catalog".to_string(), 1).unwrap();
+    assert!(catalog.vpi_catalog);
+    assert!(header(catalog).contains(&"#define LLG_VPI_CATALOG 1".to_owned()));
+    let mut plain = IrModel::new("plain".to_string(), 1).unwrap();
+    plain.vpi_catalog = false;
+    let c = render(&ExecutionModel::lower(plain).unwrap()).unwrap();
+    assert!(!c.contains("LLG_VPI_CATALOG"), "{c}");
+}
+
+#[test]
 fn non_waveform_model_has_no_waveform_integration() {
     let model = IrModel::new("plain".to_string(), 1).unwrap();
     let execution = ExecutionModel::lower(model).unwrap();

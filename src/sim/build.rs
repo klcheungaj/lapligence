@@ -170,6 +170,20 @@ endif()
 {DPI_LINK}
 {IMPORT_LIBRARY}"#;
 
+/// Link setup of a model with the VPI object catalog on ELF hosts. The
+/// catalog's rows point at names, storage and each other: hundreds of
+/// thousands of pointers in a large design, each a load-time relocation of
+/// a position-independent executable, which also makes every catalog page
+/// private before `main` runs, VPI application or not (about 20 ms and
+/// 30 MB for 10,000 instances). A position-dependent executable has none.
+/// A VPI application still resolves the `vpi_*` routines through the
+/// exported symbol table. Other hosts keep their default link (arm64 Mach-O
+/// has no position-dependent executables).
+const VPI_CATALOG_LINK: &str = r#"
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+  target_link_options(sim PRIVATE -no-pie)
+endif()"#;
+
 /// Per-source options for generated model translation units. GCC's
 /// `-Wmisleading-indentation` costs time quadratic in file size (13.6 of 70.9 s
 /// on a 10.8 MB model) and only reports source layout, which carries no meaning
@@ -1223,7 +1237,7 @@ fn write_cmakelists(
         .replace("{IMPORT_LIBRARY}", import_library::CMAKE)
         .replace(
             "{DPI_LINK}",
-            &(dpi_link_setup(opts)? + foreign_context_link(extra)),
+            &(dpi_link_setup(opts)? + foreign_context_link(extra) + catalog_link(extra)),
         )
         + &value::cmake_setup(opts, "sim")?;
     writer.write(&out_dir.join("CMakeLists.txt"), cmakelists)?;
@@ -1245,6 +1259,28 @@ fn foreign_context_link(extra: &[(&str, &str)]) -> &'static str {
     } else {
         ""
     }
+}
+
+/// [`VPI_CATALOG_LINK`] for a model whose header defines `LLG_VPI_CATALOG`;
+/// nothing for any other model, whose project is unchanged.
+fn catalog_link(extra: &[(&str, &str)]) -> &'static str {
+    if extra
+        .iter()
+        .any(|(_, text)| model_header_defines(text, "#define LLG_VPI_CATALOG 1"))
+    {
+        VPI_CATALOG_LINK
+    } else {
+        ""
+    }
+}
+
+/// Whether the leading comment and `#define` lines of a model source (its
+/// header, before the first `#include`) contain `define`. Reading only the
+/// header keeps the check independent of the model's size.
+fn model_header_defines(text: &str, define: &str) -> bool {
+    text.lines()
+        .take_while(|line| line.starts_with("//") || line.starts_with("#define "))
+        .any(|line| line.trim_end() == define)
 }
 
 fn validate_dpi_libraries(opts: &CmakeBuildOpts) -> Result<(), BuildError> {
@@ -2122,6 +2158,27 @@ fn sorted_entries(dir: &Path) -> Option<Vec<PathBuf>> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn only_a_catalog_model_header_selects_the_position_dependent_link() {
+        let catalog = "// llg-generated C11 model for design `tb`\n\
+                       #define LLG_MODEL_PROCESS_ABI 3\n\
+                       #define LLG_VPI_CATALOG 1\n\
+                       #include \"llg_rt.h\"\n";
+        assert_eq!(catalog_link(&[("model.c", catalog)]), VPI_CATALOG_LINK);
+        let plain = "// llg-generated C11 model for design `tb`\n\
+                     #define LLG_MODEL_PROCESS_ABI 3\n\
+                     #include \"llg_rt.h\"\n";
+        assert_eq!(catalog_link(&[("model.c", plain)]), "");
+        // Only the header counts, not the same text later in a model.
+        let body = format!("{plain}#define LLG_VPI_CATALOG 1\n");
+        assert_eq!(catalog_link(&[("model.c", body.as_str())]), "");
+        assert!(
+            VPI_CATALOG_LINK.contains("CMAKE_SYSTEM_NAME STREQUAL \"Linux\"")
+                && VPI_CATALOG_LINK.contains("target_link_options(sim PRIVATE -no-pie)"),
+            "{VPI_CATALOG_LINK}"
+        );
+    }
 
     #[test]
     fn selected_runtime_keys_and_stale_ready_markers_are_rejected() {

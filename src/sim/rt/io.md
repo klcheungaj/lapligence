@@ -97,7 +97,12 @@ catalog fails with an error (decision A19-D26). `tests/fixtures/runtime/vpi_anne
 holds the Annex K, L and M listings the headers are checked against.
 
 VPI handle encoding and lazy catalog indexing: `llg_vpi.c` header and catalog
-comments; keep model init O(1). Slots made inside a compiletf/calltf (argument handles and
+comments; keep model init O(1). A registration only allocates the handle slot
+table (`vpi_slots_ready`); the catalog is validated and indexed (`vpi_ready`)
+on the first use that can reach a design object (a call site of a registered
+task compiles at start-up and is one), so an application that only registers
+system tasks and functions the design never calls pays nothing per catalog
+row. Slots made inside a compiletf/calltf (argument handles and
 iterators, element/select arguments) are owned by that invocation and released
 when it returns; the call handle itself persists per call site with its user
 data (every request shares it; releasing it is a no-op, 37.2.2). sizetf runs once per registration after the first site's compiletf with no

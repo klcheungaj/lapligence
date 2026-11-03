@@ -747,20 +747,58 @@ static uint32_t next_generation(uint32_t generation) {
     return generation ? generation : 1u;
 }
 
-/* Validate and index the borrowed catalog. Runs on the first VPI use, so a
- * model whose run loads no application never walks its catalog. */
-static int vpi_ready(void) {
-    if (g_vpi.indexed) return 1;
+/* Allocate the handle slot table: the catalog's static slots (rows,
+ * typespecs, their members, enum constants, class items) are reserved, and
+ * dynamic slots follow them. vpi_ready fills the static slots. A
+ * registration needs only this, so an application that registers system
+ * tasks and functions without reaching any design object never walks the
+ * catalog (on a 10,000-instance design that walk is most of the start-up
+ * cost of loading an application). */
+static int vpi_slots_ready(void) {
+    if (g_vpi.slots) return 1;
     if (!g_vpi.initialized) {
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_MODEL", "VPI used without model metadata");
         return 0;
     }
-    size_t count = g_vpi.object_count;
     if (!types_valid(g_vpi.types) || !dyn_tables_valid()) {
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_MODEL", "invalid VPI typespec tables");
         g_vpi.failed = 1;
         return 0;
     }
+    size_t count = g_vpi.object_count;
+    const llg_vpi_type_tables_t* types = g_vpi.types;
+    size_t typespecs = types ? types->typespec_count : 0u;
+    size_t tsmembers = types ? types->member_count : 0u;
+    size_t enumconsts = types ? types->const_count : 0u;
+    size_t static_count = count + typespecs + tsmembers + enumconsts + dyn_static_slot_count();
+    if (static_count >= LLG_VPI_INDEX_MASK - 1u) {
+        vpi_set_error(vpiPLI, vpiError, "LLG_VPI_LIMIT", "VPI catalog exceeds the handle index space");
+        g_vpi.failed = 1;
+        return 0;
+    }
+    size_t capacity = static_count + 64u;
+    g_vpi.slots = (llg_vpi_slot_t*)calloc(capacity, sizeof(*g_vpi.slots));
+    if (!g_vpi.slots) {
+        vpi_set_error(vpiPLI, vpiError, "LLG_VPI_NOMEM", "VPI catalog index allocation failed");
+        return 0;
+    }
+    g_vpi.slot_capacity = capacity;
+    g_vpi.slot_count = static_count;
+    g_vpi.typespec_base = (uint32_t)count;
+    g_vpi.tsmember_base = (uint32_t)(count + typespecs);
+    g_vpi.enumconst_base = (uint32_t)(count + typespecs + tsmembers);
+    g_vpi.static_count = (uint32_t)static_count;
+    return 1;
+}
+
+/* Validate and index the borrowed catalog. Runs on the first VPI use that
+ * can reach a design object, so a model whose run loads no application, or
+ * one that only registers system tasks and functions, never walks its
+ * catalog. */
+static int vpi_ready(void) {
+    if (g_vpi.indexed) return 1;
+    if (!vpi_slots_ready()) return 0;
+    size_t count = g_vpi.object_count;
     if (!code_tables_valid(g_vpi.code)) {
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_MODEL", "invalid VPI expression and statement tables");
         g_vpi.failed = 1;
@@ -774,46 +812,26 @@ static int vpi_ready(void) {
             return 0;
         }
     }
-    /* Typespecs, their members and enum constants are static slots after
-     * the catalog rows, so each has one handle for the whole run. */
-    const llg_vpi_type_tables_t* types = g_vpi.types;
-    size_t typespecs = types ? types->typespec_count : 0u;
-    size_t tsmembers = types ? types->member_count : 0u;
-    size_t enumconsts = types ? types->const_count : 0u;
-    size_t static_count = count + typespecs + tsmembers + enumconsts + dyn_static_slot_count();
-    if (static_count >= LLG_VPI_INDEX_MASK - 1u) {
-        vpi_set_error(vpiPLI, vpiError, "LLG_VPI_LIMIT", "VPI catalog exceeds the handle index space");
-        g_vpi.failed = 1;
-        return 0;
-    }
-    size_t capacity = static_count + 64u;
-    g_vpi.slots = (llg_vpi_slot_t*)calloc(capacity, sizeof(*g_vpi.slots));
+    size_t static_count = g_vpi.static_count;
     /* One extra row keeps the allocations non-empty for a model built
      * without a catalog (no `--vpi`), whose applications see no objects. */
     g_vpi.sorted = (uint32_t*)malloc((count + 1u) * sizeof(*g_vpi.sorted));
     g_vpi.first_child = (uint32_t*)calloc(count + 1u, sizeof(*g_vpi.first_child));
     g_vpi.next_sibling = (uint32_t*)calloc(count + 1u, sizeof(*g_vpi.next_sibling));
     g_vpi.element_counts = (uint64_t*)calloc(count + 1u, sizeof(*g_vpi.element_counts));
-    if (!g_vpi.slots || !g_vpi.sorted || !g_vpi.first_child ||
-        !g_vpi.next_sibling || !g_vpi.element_counts) {
-        free(g_vpi.slots);
+    if (!g_vpi.sorted || !g_vpi.first_child || !g_vpi.next_sibling || !g_vpi.element_counts) {
         free(g_vpi.sorted);
         free(g_vpi.first_child);
         free(g_vpi.next_sibling);
         free(g_vpi.element_counts);
-        g_vpi.slots = NULL;
         g_vpi.sorted = NULL;
         g_vpi.first_child = g_vpi.next_sibling = NULL;
         g_vpi.element_counts = NULL;
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_NOMEM", "VPI catalog index allocation failed");
         return 0;
     }
-    g_vpi.slot_capacity = capacity;
-    g_vpi.slot_count = static_count;
-    g_vpi.typespec_base = (uint32_t)count;
-    g_vpi.tsmember_base = (uint32_t)(count + typespecs);
-    g_vpi.enumconst_base = (uint32_t)(count + typespecs + tsmembers);
-    g_vpi.static_count = (uint32_t)static_count;
+    /* Typespecs, their members and enum constants are static slots after
+     * the catalog rows, so each has one handle for the whole run. */
     for (size_t i = count; i < static_count; ++i) {
         llg_vpi_slot_t* slot = &g_vpi.slots[i];
         slot->generation = g_vpi.model_generation;
@@ -831,7 +849,8 @@ static int vpi_ready(void) {
         }
     }
     /* Class definitions, typespecs and extends objects follow. */
-    dyn_static_slots((uint32_t)(count + typespecs + tsmembers + enumconsts));
+    size_t enumconsts = g_vpi.types ? g_vpi.types->const_count : 0u;
+    dyn_static_slots(g_vpi.enumconst_base + (uint32_t)enumconsts);
     g_vpi.sorted_count = 0;
     /* Children keep catalog order: link in reverse. */
     for (size_t i = count; i-- > 0;) {
@@ -876,7 +895,7 @@ static vpiHandle encode_handle(uint32_t index) {
  * inlined, even though callers read it only after a non-NULL result. */
 static llg_vpi_slot_t* decode_handle(vpiHandle handle, uint32_t* index_out) {
     if (index_out) *index_out = LLG_VPI_NONE;
-    if (!handle || !g_vpi.indexed) return NULL;
+    if (!handle || !g_vpi.slots) return NULL;
     uintptr_t value = (uintptr_t)handle;
     uintptr_t index = value & LLG_VPI_INDEX_MASK;
     uint32_t generation = (uint32_t)(value >> LLG_VPI_INDEX_BITS);
@@ -893,10 +912,19 @@ static llg_vpi_slot_t* checked_handle(vpiHandle handle, uint32_t* index) {
     return slot;
 }
 
+static uint32_t alloc_unindexed_slot(llg_vpi_slot_kind_t kind);
+
 /* Allocate a dynamic slot; returns its index or LLG_VPI_NONE. The slot
  * array may move, so callers re-derive slot pointers after allocating. */
 static uint32_t alloc_slot(llg_vpi_slot_kind_t kind) {
     if (!vpi_ready()) return LLG_VPI_NONE;
+    return alloc_unindexed_slot(kind);
+}
+
+/* alloc_slot for a slot that names no design object (a registration),
+ * which leaves the catalog unindexed. */
+static uint32_t alloc_unindexed_slot(llg_vpi_slot_kind_t kind) {
+    if (!vpi_slots_ready()) return LLG_VPI_NONE;
     if (g_vpi.live_dynamic >= LLG_VPI_MAX_LIVE_HANDLES) {
         vpi_error("LLG_VPI_LIMIT", "too many live VPI handles; release unused handles");
         return LLG_VPI_NONE;
@@ -3715,7 +3743,7 @@ vpiHandle vpi_register_systf(p_vpi_systf_data data) {
                        "VPI system task/function `%s` registered twice", data->tfname);
         return NULL;
     }
-    if (g_vpi.registration_count >= LLG_VPI_MAX_REGISTRATIONS || !vpi_ready()) {
+    if (g_vpi.registration_count >= LLG_VPI_MAX_REGISTRATIONS || !vpi_slots_ready()) {
         if (!g_vpi.error_pending)
             vpi_set_error(vpiCompile, vpiError, "LLG_VPI_LIMIT", "too many VPI registrations");
         return NULL;
@@ -3734,7 +3762,7 @@ vpiHandle vpi_register_systf(p_vpi_systf_data data) {
     llg_vpi_registration_t* registration =
         (llg_vpi_registration_t*)calloc(1, sizeof(*registration));
     char* name = vpi_strdup((const char*)data->tfname);
-    uint32_t slot = registration && name ? alloc_slot(SLOT_SYSTF) : LLG_VPI_NONE;
+    uint32_t slot = registration && name ? alloc_unindexed_slot(SLOT_SYSTF) : LLG_VPI_NONE;
     if (slot == LLG_VPI_NONE) {
         free(registration);
         free(name);

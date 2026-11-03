@@ -421,3 +421,55 @@ fn vpi_printf_stays_ordered_with_runtime_notes_in_a_file() {
     })
     .expect("VPI printf order fixture should complete");
 }
+
+#[test]
+fn vpi_registration_alone_leaves_the_catalog_for_first_use() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    sim_harness::with_frontend_temp_cwd("vpi-lazy-catalog", |dir| {
+        let executable = build_model(
+            dir,
+            "vpi_lazy_catalog.sv",
+            &fixture("vpi_lazy_catalog.sv"),
+            &["task $lazy_probe()"],
+        );
+        // A catalog model links position-dependent on Linux, so its rows
+        // need no load-time relocation; the plugin still finds the vpi_*
+        // routines in the executable's exported symbols.
+        if cfg!(target_os = "linux") {
+            let header = fs::read(&executable).expect("read the model executable");
+            assert_eq!(&header[..4], b"\x7fELF");
+            assert_eq!(
+                u16::from_le_bytes([header[16], header[17]]),
+                2,
+                "a catalog model is an ET_EXEC executable"
+            );
+        }
+        let plugin = compile_plugin(dir, "vpi_lazy_catalog.c");
+        let output = run_plugin(dir, &executable, &plugin);
+        assert!(
+            output.status.success(),
+            "VPI lazy catalog fixture failed: {output:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "registered $lazy_probe systf=1\n\
+             unindexed-handle=LLG_VPI_HANDLE\n\
+             probe $lazy_probe\n\
+             handles=1 callback=1 same-task=1\n\
+             change w=5 at 1\n\
+             t=2 a=5 w=5\n\
+             change w=9 at 2\n\
+             t=3 a=9 w=9\n"
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "unexpected VPI stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    })
+    .expect("VPI lazy catalog fixture should complete");
+}
