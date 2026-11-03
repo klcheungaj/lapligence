@@ -10815,8 +10815,10 @@ static void udp_put_due_now(void* data) {
  * once; the gate process is woken as by an input change and publishes it,
  * and a delayed output drops its pending transition and has the update that
  * evaluation schedules made due now. Neither adds a wait dependency or a
- * check to the gate's evaluation. A put before the procedures start sets
- * the state the first evaluation starts from. Z sets X, as a table output
+ * check to the gate's evaluation. A put while the gate is already due to
+ * evaluate an input change (from a value change callback of that input)
+ * is taken by that evaluation, through the instance delay. A put before the
+ * procedures start sets the state the first evaluation starts from. Z sets X, as a table output
  * can only be 0, 1 or X. */
 static vpiHandle udp_put_value(const llg_vpi_model_object_t* object, p_vpi_value input,
                                int mode) {
@@ -10846,13 +10848,17 @@ static vpiHandle udp_put_value(const llg_vpi_model_object_t* object, p_vpi_value
         return NULL;
     }
     if (put->inertial) llg_inertial_drop(put->inertial);
-    if (put->slot < 0 || !llg_rt_thread_wake(put->slot, put->identity)) {
+    int woken = put->slot < 0 ? 0 : llg_rt_thread_wake(put->slot, put->identity);
+    if (!woken) {
         vpi_error("LLG_VPI_UNSUPPORTED", "the gate process of this UDP is not running");
         return NULL;
     }
     /* Queued after the woken process: its evaluation schedules the state
-     * through the instance delay, which this call makes due now. */
-    if (put->inertial && !llg_schedule_delayed_call("UDP put", udp_put_due_now, put, 0, NULL))
+     * through the instance delay, which this call makes due now. A process
+     * already due to run evaluates an input change from the new state, and
+     * that change keeps the instance delay. */
+    if (put->inertial && woken == 2 &&
+        !llg_schedule_delayed_call("UDP put", udp_put_due_now, put, 0, NULL))
         vpi_error("LLG_VPI_VALUE", "the UDP output could not be scheduled");
     return NULL;
 }

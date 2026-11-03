@@ -25,9 +25,9 @@
 60 put tb.un level=0 value=1
 60 put tb.ud level=0 value=1
 60 qs=0 qn=0 qd=1 qa=1x qw=x qg=0111
-60 qs=0 qn=0 qd=0 qa=1x qw=x qg=0111
-61 qs=0 qn=0 qd=0 qa=1x qw=0 qg=0111
-63 qs=0 qn=0 qd=0 qa=00 qw=0 qg=0000
+61 qs=0 qn=0 qd=1 qa=1x qw=0 qg=0111
+63 qs=0 qn=0 qd=1 qa=00 qw=0 qg=0000
+64 qs=0 qn=0 qd=0 qa=00 qw=0 qg=0000
 70 put tb.us level=0 value=0
 70 put tb.g[0].u level=0 value=0
 70 qs=1 qn=0 qd=0 qa=00 qw=0 qg=0000

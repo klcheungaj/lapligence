@@ -277,9 +277,9 @@ void llg_rt_visit_processes(void (*visit)(void* context, int slot, uint64_t iden
 // resume.
 int llg_rt_thread_wake(int slot, uint64_t identity) {
     llg_proc_t* proc = thread_lookup(slot, identity);
-    if (!proc) return 0;
-    if (!region_can_mutate("process wake")) return 0;
+    if (!proc || !region_can_mutate("process wake")) return 0;
     llg_wait_t* wait = &proc->wait;
-    if (wait->kind != W_NONE && !wait_held_by_suspension(wait)) wake_proc(proc);
-    return 1;
+    if (wait->kind == W_NONE || wait_held_by_suspension(wait)) return 1;
+    wake_proc(proc);
+    return 2;
 }

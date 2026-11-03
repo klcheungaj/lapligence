@@ -2603,8 +2603,9 @@ void llg_rt_visit_processes(void (*visit)(void* context, int slot, uint64_t iden
                                           const llg_co_desc_t* desc, const void* root),
                             void* context);
 // Wake the live process (slot, identity) from its wait, as a change of a
-// value it waits on would; returns 0 when no such process lives. A VPI put
-// to a sequential UDP wakes the instance's gate process this way, so the
+// value it waits on would: 2 when it was woken, 1 when it was already due
+// to run (or is held suspended), 0 when no such process lives. A VPI put to
+// a sequential UDP wakes the instance's gate process this way, so the
 // process publishes the new state with no extra wait dependency.
 int llg_rt_thread_wake(int slot, uint64_t identity);
 // Return the activation frame retained by a process, or NULL for ordinary

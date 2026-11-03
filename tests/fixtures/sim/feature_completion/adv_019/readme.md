@@ -816,10 +816,10 @@ runs it in both optimizer modes with both value backends. Every line of
 - 60: the callback runs when `clk` rises, before the instances evaluate the
   edge, and puts 1 to `un` and `ud`; the edge with `d` 0 then gives 0 from
   that state. A put while the instance already has an input event to
-  evaluate in the same step is taken by that evaluation, which publishes at
-  once (decision A19-D74): `qn` and `qd` fall at 60 (the undelayed `us`
-  first, then `qd`). `uw` falls after its delay 1 (61); `ua` (x and 1 to 0)
-  and `g[0]`..`g[2]` fall after 3 (63).
+  evaluate in the same step is taken by that evaluation, whose output
+  change keeps the instance delay (decision A19-D74): `qs` and `qn` fall at
+  60 and `qd` after 4 (64). `uw` falls after its delay 1 (61); `ua` (x and
+  1 to 0) and `g[0]`..`g[2]` fall after 3 (63).
 - 70: `us` and `g[0].u` (a shared-body instance) take 1 at once.
 
 ## threads (37.25, 37.39, 37.40, 38.36.1)
