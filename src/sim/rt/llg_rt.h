@@ -558,6 +558,7 @@ typedef struct llg_net llg_net_t;
 typedef struct llg_net_driver_index llg_net_driver_index_t;
 typedef struct llg_net_alias_part llg_net_alias_part_t;
 typedef struct llg_net_alias llg_net_alias_t;
+typedef struct llg_net_alias_ref llg_net_alias_ref_t;
 
 // One intrusive interval-tree node per driver. Generated models provide an
 // exact-size mutable array; no node is allocated while a contribution moves.
@@ -605,9 +606,11 @@ struct llg_net {
      * delay, whose vector updates take the whole-value rule of a delayed
      * continuous assignment instead of the least significant bit (S2-D9). */
     int8_t net_delayed;
+    /* The alias parts this net publishes into, grouped by alias (see
+     * llg_net_alias_ref); runtime-owned, rebuilt by llg_net_alias_bind. */
     int n_aliases;
     int alias_capacity;
-    llg_net_alias_t** aliases;
+    llg_net_alias_ref_t* aliases;
     /* Optional strength view, emitted only for nets with a strength consumer
      * (`%v`). Each net bit owns one two-state byte: the high nibble is
      * hi + 7 and the low nibble lo + 7, where [lo, hi] is the resolved
@@ -657,6 +660,16 @@ struct llg_net_alias {
     uint32_t n_parts;
     /* Optional array-cell publication target; borrowed from model storage. */
     sv4_t* publication_target;
+};
+
+/* One part of `alias` that a net publishes into. A change of the net
+ * rewrites only its own parts of the alias's visible value, so a vector split
+ * into one net per bit costs one part per change, not one per bit. `part` is
+ * UINT32_MAX for an alias whose parts do not cover its width: it is rebuilt
+ * whole from its storage and every part. */
+struct llg_net_alias_ref {
+    llg_net_alias_t* alias;
+    uint32_t part;
 };
 
 void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */

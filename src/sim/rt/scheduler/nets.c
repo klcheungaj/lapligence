@@ -358,10 +358,58 @@ static void llg_net_alias_refresh(llg_net_alias_t* alias) {
 
 }
 
+/* Whether a part fits both its alias's visible value and its net. */
+static int llg_net_alias_part_fits(const llg_net_alias_t* alias,
+                                   const llg_net_alias_part_t* part) {
+    return alias->storage && part->net && part->bit_count != 0 &&
+           (uint64_t)part->signal_bit + part->bit_count <= llg_sv4_width(*alias->storage) &&
+           (uint64_t)part->group_bit + part->bit_count <= part->net->width;
+}
+
+/* Rewrite `count` parts of an alias whose parts cover its whole width from
+ * their nets. Every other bit of the visible value already holds its net's
+ * last published value: llg_net_alias_bind built it whole, and every later
+ * change of a net refreshes that net's parts. */
+static void llg_net_alias_refresh_parts(llg_net_alias_t* alias,
+                                        const llg_net_alias_ref_t* refs, int count) {
+    if (!alias->storage || llg_sv4_width(alias->visible) != llg_sv4_width(*alias->storage)) {
+        llg_net_alias_refresh(alias);
+        return;
+    }
+    llg_value_scope_t* scope = value_scope_begin_private(1);
+    sv4_t* owned = llg_value_scope_values(scope);
+    sv4_copy(&owned[0], &alias->visible);
+    for (int i = 0; i < count; i++) {
+        const llg_net_alias_part_t* part = &alias->parts[refs[i].part];
+        sv4_t bits = sv4_part_select(part->net->resolved,
+                                     (int64_t)part->group_bit + part->bit_count - 1,
+                                     part->group_bit);
+        sv4_part_select_set(&owned[0], (int64_t)part->signal_bit + part->bit_count - 1,
+                            part->signal_bit, bits);
+        sv4_destroy(&bits);
+    }
+    sig_write(&alias->visible, owned[0]);
+    if (alias->publication_target) sig_write(alias->publication_target, owned[0]);
+    llg_value_scope_end(scope);
+}
+
 static void llg_net_alias_refresh_all(llg_net_t* net) {
     if (!net) return;
-    for (int i = 0; i < net->n_aliases; i++)
-        llg_net_alias_refresh(net->aliases[i]);
+    int i = 0;
+    while (i < net->n_aliases) {
+        llg_net_alias_t* alias = net->aliases[i].alias;
+        if (net->aliases[i].part == UINT32_MAX) {
+            llg_net_alias_refresh(alias);
+            i++;
+            continue;
+        }
+        int end = i + 1;
+        while (end < net->n_aliases && net->aliases[end].alias == alias &&
+               net->aliases[end].part != UINT32_MAX)
+            end++;
+        llg_net_alias_refresh_parts(alias, &net->aliases[i], end - i);
+        i = end;
+    }
 }
 
 
@@ -937,7 +985,7 @@ static void llg_net_alias_reserve(llg_net_t* net) {
         }
         capacity *= 2;
     }
-    llg_net_alias_t** grown = (llg_net_alias_t**)llg_checked_malloc(
+    llg_net_alias_ref_t* grown = (llg_net_alias_ref_t*)llg_checked_malloc(
         (size_t)capacity, sizeof(*grown), "net alias table");
     for (int i = 0; i < net->n_aliases; i++) grown[i] = net->aliases[i];
     free(net->aliases);
@@ -947,15 +995,29 @@ static void llg_net_alias_reserve(llg_net_t* net) {
 
 void llg_net_alias_bind(llg_net_alias_t* alias) {
     if (!alias || !alias->parts || alias->n_parts == 0) return;
+    /* Parts that fit and cover the width exactly let each net refresh only
+     * its own parts (llg_net_alias_ref); otherwise every net of the alias
+     * rebuilds it whole. */
+    uint64_t covered = 0;
+    int exact = 1;
+    for (uint32_t i = 0; i < alias->n_parts; i++) {
+        if (!llg_net_alias_part_fits(alias, &alias->parts[i])) exact = 0;
+        else covered += alias->parts[i].bit_count;
+    }
+    if (!alias->storage || covered != llg_sv4_width(*alias->storage)) exact = 0;
     for (uint32_t i = 0; i < alias->n_parts; i++) {
         llg_net_t* net = alias->parts[i].net;
         if (!net) continue;
+        /* A second bind of the same alias adds nothing. */
+        uint32_t part = exact ? i : UINT32_MAX;
         int seen = 0;
         for (int j = 0; j < net->n_aliases; j++)
-            if (net->aliases[j] == alias) seen = 1;
+            if (net->aliases[j].alias == alias && net->aliases[j].part == part) seen = 1;
         if (seen) continue;
         llg_net_alias_reserve(net);
-        net->aliases[net->n_aliases++] = alias;
+        net->aliases[net->n_aliases].alias = alias;
+        net->aliases[net->n_aliases].part = part;
+        net->n_aliases++;
     }
     llg_net_alias_refresh(alias);
 }

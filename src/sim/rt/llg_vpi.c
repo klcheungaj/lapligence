@@ -5070,7 +5070,7 @@ static int part_location(const llg_force_part_t* part, uint32_t* row, uint64_t* 
     const llg_net_t* net = part->net;
     if (!net) return 0;
     for (int i = 0; i < net->n_aliases; ++i) {
-        const llg_net_alias_t* alias = net->aliases[i];
+        const llg_net_alias_t* alias = net->aliases[i].alias;
         if (alias->publication_target && alias->n_parts == 1 && alias->parts[0].net == net &&
             alias->parts[0].signal_bit == 0 && alias->parts[0].group_bit == 0 &&
             alias->parts[0].bit_count == alias->width &&
