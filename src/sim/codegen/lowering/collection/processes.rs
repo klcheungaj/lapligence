@@ -661,7 +661,7 @@ impl<'a> Codegen<'a> {
         source: NodeId,
         name: String,
         value: IrExpr,
-        assignments: Vec<(usize, IrExpr)>,
+        assignments: Vec<(IrLhs, IrExpr)>,
         delay: Option<IrInertialDelay>,
     ) -> Result<Vec<IrStmt>, String> {
         let capture = |init: IrExpr| IrStmt::DeclLocal {
@@ -673,21 +673,22 @@ impl<'a> Codegen<'a> {
         };
         let Some(delay) = delay else {
             let mut body = vec![capture(value)];
-            body.extend(assignments.into_iter().map(|(driver, rhs)| IrStmt::Assign {
-                lhs: IrLhs::Whole(driver),
+            body.extend(assignments.into_iter().map(|(lhs, rhs)| IrStmt::Assign {
+                lhs,
                 rhs,
                 nba: false,
             }));
             return Ok(body);
         };
-        for (driver, _) in &assignments {
-            self.initialize_delayed_driver(*driver)?;
+        // A narrow contribution starts X on its own bits only.
+        for (lhs, _) in &assignments {
+            self.initialize_delayed_lhs(lhs)?;
         }
-        if let [(driver, rhs)] = assignments.as_slice() {
+        if let [(lhs, rhs)] = assignments.as_slice() {
             return Ok(vec![
                 capture(value),
                 IrStmt::InertialAssign {
-                    lhs: IrLhs::Whole(*driver),
+                    lhs: lhs.clone(),
                     rhs: rhs.clone(),
                     delay,
                 },
@@ -695,8 +696,8 @@ impl<'a> Codegen<'a> {
         }
         let scheduled = self.delayed_shadow_driver(path, source, value, delay, |shadow| {
             let mut body = vec![capture(shadow)];
-            body.extend(assignments.into_iter().map(|(driver, rhs)| IrStmt::Assign {
-                lhs: IrLhs::Whole(driver),
+            body.extend(assignments.into_iter().map(|(lhs, rhs)| IrStmt::Assign {
+                lhs,
                 rhs,
                 nba: false,
             }));

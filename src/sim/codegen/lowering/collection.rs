@@ -45,6 +45,7 @@ mod net_arrays;
 mod net_cells;
 mod net_collapse;
 mod net_partition;
+pub(super) use net_partition::MAX_SHARED_RUN_SLOT_BITS;
 mod nets;
 mod packed_elements;
 pub(super) mod packed_formals;

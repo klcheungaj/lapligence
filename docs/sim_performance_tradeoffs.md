@@ -133,11 +133,12 @@ those scripts. Differences within the observed spread are reported as noise.
   7.7 s → 5.2 s (−32%); 1,000 links and 1,000 of 2,001 net groups gone,
   `model.c` 822 → 668 KB and 739 → 585 KB. The `perf/` corpus and designs
   generate identical C. Selected net actuals (A21-D5) merge bit by bit only where the copy
-  would differ or the actual is whole nets and net-array cells, since
-  splitting a vector gives each selected bit a group of its own that every
-  wide driver of the vector contributes to: merging every selected port of a
-  1,000-bit bus split into one-bit inputs made `model.c` twice as large and
-  the run 24% slower than the copies. A net alias view refreshes only the
+  would differ or the actual is whole nets and net-array cells. A vector
+  split bit by bit stays one shared net group (see "Shared groups for split
+  vectors" below), so merging every selected port now runs faster than the
+  copies, but each merged formal becomes a net alias view with its own
+  storage, descriptors and start value, so `model.c` stays about twice as
+  large; plain selected ports therefore keep their copies. A net alias view refreshes only the
   changed net's parts (`llg_net_alias_ref`); rebuilding it from every part
   per bit change was quadratic (a 1,000-bit bus with coerced one-bit inputs,
   1,000 cycles: 24 s → 1.6 s). Pinned medians of 5 interleaved runs, 1,000
@@ -145,9 +146,36 @@ those scripts. Differences within the observed spread are reported as noise.
   10.3 s (−21%, 1,000 links gone, `model.c` 3.5 → 1.5 MB); coerced inputs on
   cells 19.8 → 18.9 s; coerced one-bit inputs of a bus driven per bit
   13.6 → 14.7 s (+8.5%) and of a bus with one wide driver 8.2 → 11.1 s
-  (+37%), the cost of the merged nets the copies got wrong. Plain bus-bit
+  (+37%), the cost of the merged nets the copies got wrong (since recovered
+  by shared groups, below). Plain bus-bit
   inputs, outputs and gate netlists keep identical C (4.5 → 4.5 s), as do
   the `perf/` corpus and designs.
+
+### Shared groups for split vectors
+
+- **Trade-off:** when the bits of a vector net join different electrical
+  roots (a selected port or inout per bit, a piecewise alias), one group per
+  bit makes every wide driver of the vector write one slot per bit and every
+  bit change refresh the vector's alias view; one shared group gives every
+  per-bit member and driver a full-width slot of its own, so its slot memory
+  and the cost of a write spanning it grow with members times width.
+- **Decision:** `collection/net_partition.rs` keeps adjacent columns in one
+  group while some member continues and every member and source covers one
+  contiguous affine range, up to `MAX_SHARED_RUN_SLOT_BITS` (2^22 slot bits);
+  a narrow source writes only its part of its slot (`IrLhs::Part`, shared
+  bodies take the bounds as operands), a ranged publication refreshes only
+  the alias parts it overlaps (`llg_net_alias_span`, from
+  `LLG_NET_ALIAS_SPAN_MIN` = 16 entries), and a selected driver turning off
+  keeps its interval node.
+- **Evidence:** pinned medians of 5 interleaved runs, 1,000 instances,
+  20,000 cycles (load average 3.5 → 2.9): coerced one-bit inputs on a bus with
+  one wide driver 11.1 s (per-bit groups) → 7.95 s, below the 8.18 s of the
+  old copies; driven per bit 15.0 s → 12.3 s (copies 13.5 s); `model.c`
+  1.11 → 1.01 MB and 1.17 → 1.12 MB (copies 0.69 and 0.79 MB). Merging every
+  plain selected port (a probe, 3 runs): a 1,000-bit bus of one-bit inputs
+  4.49 s (copies) → 2.69 s, `model.c` 0.42 → 0.77 MB; a 256×8 nand netlist
+  14.3 s → 9.2 s, `model.c` 0.93 → 2.89 MB. The `perf/` corpus and designs,
+  gate netlists and plain selected ports generate identical C.
 
 ### Loops and tables instead of unrolled statements
 

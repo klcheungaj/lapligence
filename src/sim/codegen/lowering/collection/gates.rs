@@ -532,11 +532,11 @@ impl<'a> Codegen<'a> {
                 }
                 let mut body = Vec::new();
                 for (side, terminal) in [(zero_side, 0), (one_side, ENABLE_ONE_SIDE_TERMINAL)] {
-                    for (driver, rhs) in
+                    for (lhs, rhs) in
                         self.alias_driver_assignments(g, bindings, side, |_| terminal)?
                     {
                         body.push(IrStmt::Assign {
-                            lhs: IrLhs::Whole(driver),
+                            lhs,
                             rhs,
                             nba: false,
                         });

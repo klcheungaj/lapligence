@@ -521,6 +521,9 @@ fn normalize(
                     .is_some_and(|(call, arg)| match call.as_str() {
                         "sv4_part_select" => (1..=2).contains(arg),
                         "sv4_part_select_to" => (2..=3).contains(arg),
+                        // The bits of a shared net group an instance's
+                        // narrow contribution writes.
+                        "sv4_select_plan_part" => (1..=2).contains(arg),
                         _ => false,
                     })
             {

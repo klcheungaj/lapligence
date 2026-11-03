@@ -500,3 +500,143 @@ fn array_contribution_work_grows_by_ranges_instead_of_bit_operations() {
         assert_eq!(writes_per_group, [2, 2, 2]);
     }
 }
+
+/// Lower `source`'s net groups and continuous processes with a shared-run
+/// bound of `limit` slot bits.
+fn shared_run_model(source: &str, limit: u64) -> IrModel {
+    let compiled = crate::core::compile::compile_sources_checked(
+        &[crate::core::compile::OwnedSource::compilation_unit(
+            "shared_runs.sv",
+            source,
+        )],
+        &crate::core::compile::CompileOpts {
+            top: Some("tb".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let database = Db::from_slang(&compiled.snapshot).unwrap();
+    let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
+    let mut cg = Codegen::new(&semantic);
+    cg.shared_run_slot_bits = limit;
+    let tops = cg.collect_design().unwrap();
+    cg.bind_reference_ports().unwrap();
+    cg.collect_timescales();
+    cg.build_net_groups().unwrap();
+    for top in tops {
+        cg.emit_pass(top, Pass::Comb).unwrap();
+    }
+    cg.model
+}
+
+fn group_widths(model: &IrModel) -> Vec<u32> {
+    model.net_groups.iter().map(|group| group.width).collect()
+}
+
+const PER_BIT_INOUTS: &str = r#"
+module leaf(inout wire a, input logic v);
+    assign a = v;
+endmodule
+module tb;
+    logic [15:0] r = '0;
+    wire [15:0] bus;
+    assign bus = r;
+    for (genvar i = 0; i < 16; i++) begin : g
+        leaf u(.a(bus[i]), .v(r[i]));
+    end
+endmodule
+"#;
+
+#[test]
+fn a_vector_split_by_per_bit_connections_stays_one_group() {
+    let model = shared_run_model(PER_BIT_INOUTS, MAX_SHARED_RUN_SLOT_BITS);
+    assert_eq!(group_widths(&model), [16]);
+    // The vector, sixteen formals, the wide driver and sixteen per-bit drivers.
+    assert_eq!(model.net_groups[0].n_drivers, 1 + 16 + 1 + 16);
+    let mut narrow = Vec::new();
+    let mut whole = 0;
+    for statement in model.processes.iter().flat_map(|process| &process.body) {
+        match statement {
+            IrStmt::Assign {
+                lhs: IrLhs::Part(signal, left, right, false),
+                rhs,
+                nba: false,
+            } if model.signals[*signal].net_driver.is_some() => {
+                assert_eq!(left, right, "each leaf drives its own bit");
+                assert_eq!(rhs.width(), 1);
+                narrow.push(*left);
+            }
+            IrStmt::Assign {
+                lhs: IrLhs::Whole(signal),
+                rhs,
+                nba: false,
+            } if model.signals[*signal].net_driver.is_some() => {
+                assert_eq!(rhs.width(), 16);
+                whole += 1;
+            }
+            _ => {}
+        }
+    }
+    narrow.sort_unstable();
+    assert_eq!(narrow, (0..16).collect::<Vec<_>>());
+    assert_eq!(whole, 1, "the wide driver writes its whole slot once");
+}
+
+#[test]
+fn a_shared_run_stops_at_its_slot_bound() {
+    // Slots after w bits: the vector, w formals, the wide driver and w
+    // per-bit drivers; 2w + 2 slots times w bits stay within 160 up to w = 8.
+    let model = shared_run_model(PER_BIT_INOUTS, 160);
+    assert_eq!(group_widths(&model), [8, 8]);
+    let model = shared_run_model(PER_BIT_INOUTS, 143);
+    assert_eq!(group_widths(&model), [7, 7, 2]);
+}
+
+#[test]
+fn shared_runs_split_where_a_member_returns_or_reverses() {
+    // `a` covers bits 0 and 2: it may not return after bit 1 left it.
+    let model = shared_run_model(
+        r#"
+module pair(inout wire [1:0] a);
+endmodule
+module tb;
+    wire [3:0] bus;
+    assign bus = '0;
+    pair u(.a({bus[2], bus[0]}));
+endmodule
+"#,
+        MAX_SHARED_RUN_SLOT_BITS,
+    );
+    assert_eq!(group_widths(&model), [2, 2]);
+    // A member whose bits descend against the vector's cannot share either.
+    let model = shared_run_model(
+        r#"
+module pair(inout wire [1:0] a);
+endmodule
+module tb;
+    wire [3:0] bus;
+    assign bus = '0;
+    pair u(.a({bus[0], bus[1]}));
+endmodule
+"#,
+        MAX_SHARED_RUN_SLOT_BITS,
+    );
+    assert_eq!(group_widths(&model), [1, 3]);
+}
+
+#[test]
+fn driver_boundaries_alone_still_split_a_run() {
+    // Every column has the same members; only the drivers change.
+    let model = shared_run_model(
+        r#"
+module tb;
+    wire [7:0] a, b;
+    alias a = b;
+    assign a = '0;
+    assign b[5:2] = '1;
+endmodule
+"#,
+        MAX_SHARED_RUN_SLOT_BITS,
+    );
+    assert_eq!(group_widths(&model), [2, 4, 2]);
+}

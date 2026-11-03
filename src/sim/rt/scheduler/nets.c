@@ -393,6 +393,140 @@ static void llg_net_alias_refresh_parts(llg_net_alias_t* alias,
     llg_value_scope_end(scope);
 }
 
+/* A net with fewer alias entries than this refreshes every one of them on a
+ * ranged publication, in bind order; more entries (a wide group shared by
+ * per-bit views) are found through the span index, so a narrow change costs
+ * the entries it overlaps instead of all of them. */
+#define LLG_NET_ALIAS_SPAN_MIN 16
+
+/* Whether bits [a_low, a_low + count) of `a` equal those of `b` from
+ * `b_low`; both ranges fit. */
+static int llg_net_bits_same(const sv4_t* a, uint32_t a_low, const sv4_t* b,
+                             uint32_t b_low, uint32_t count) {
+    for (uint32_t bit = 0; bit < count;) {
+        unsigned chunk = count - bit < 64u ? count - bit : 64u;
+        for (unsigned plane = LLG_SV4_BITS; plane <= LLG_SV4_Z; ++plane)
+            if (llg_sv4_plane_slice(*a, a_low + bit, chunk, plane) !=
+                llg_sv4_plane_slice(*b, b_low + bit, chunk, plane))
+                return 0;
+        bit += chunk;
+    }
+    return 1;
+}
+
+/* Rewrite the bits [low, high] of one alias entry of `net` that its part
+ * reads; a whole-rebuilt alias is rebuilt. Unchanged bits publish nothing,
+ * and are found without building a value. */
+static void llg_net_alias_refresh_entry(llg_net_t* net, const llg_net_alias_ref_t* ref,
+                                        uint32_t low, uint32_t high) {
+    llg_net_alias_t* alias = ref->alias;
+    if (ref->part == UINT32_MAX || !alias->storage ||
+        llg_sv4_width(alias->visible) != llg_sv4_width(*alias->storage) ||
+        (alias->publication_target &&
+         llg_sv4_width(*alias->publication_target) != llg_sv4_width(alias->visible))) {
+        llg_net_alias_refresh(alias);
+        return;
+    }
+    const llg_net_alias_part_t* part = &alias->parts[ref->part];
+    uint32_t first = part->group_bit > low ? part->group_bit : low;
+    uint32_t last = part->group_bit + part->bit_count - 1u;
+    if (last > high) last = high;
+    if (first > last || last >= net->width) return;
+    uint32_t offset = part->signal_bit + (first - part->group_bit);
+    uint32_t count = last - first + 1u;
+    if ((uint64_t)offset + count > llg_sv4_width(alias->visible)) return;
+    if (llg_net_bits_same(&net->resolved, first, &alias->visible, offset, count) &&
+        (!alias->publication_target ||
+         llg_net_bits_same(&net->resolved, first, alias->publication_target, offset, count)))
+        return;
+    llg_value_scope_t* scope = value_scope_begin_private(1);
+    sv4_t* owned = llg_value_scope_values(scope);
+    sv4_replace(&owned[0], sv4_part_select(net->resolved, (int64_t)last, (int64_t)first));
+    sig_write_range(&alias->visible, offset, owned[0]);
+    if (alias->publication_target)
+        sig_write_range(alias->publication_target, offset, owned[0]);
+    llg_value_scope_end(scope);
+}
+
+static int llg_net_alias_span_order(const void* left, const void* right) {
+    const llg_net_alias_span_t* a = (const llg_net_alias_span_t*)left;
+    const llg_net_alias_span_t* b = (const llg_net_alias_span_t*)right;
+    if (a->low != b->low) return a->low < b->low ? -1 : 1;
+    return (a->ref > b->ref) - (a->ref < b->ref);
+}
+
+static uint32_t llg_net_alias_span_reach(llg_net_alias_span_t* spans, int begin, int end) {
+    if (begin >= end) return 0;
+    int mid = begin + (end - begin) / 2;
+    uint32_t reach = spans[mid].high;
+    uint32_t left = llg_net_alias_span_reach(spans, begin, mid);
+    uint32_t right = llg_net_alias_span_reach(spans, mid + 1, end);
+    if (left > reach) reach = left;
+    if (right > reach) reach = right;
+    spans[mid].reach = reach;
+    return reach;
+}
+
+static void llg_net_alias_spans_build(llg_net_t* net) {
+    free(net->alias_spans);
+    net->alias_spans = (llg_net_alias_span_t*)llg_checked_malloc(
+        (size_t)net->n_aliases, sizeof(llg_net_alias_span_t), "net alias spans");
+    for (int i = 0; i < net->n_aliases; i++) {
+        const llg_net_alias_ref_t* ref = &net->aliases[i];
+        llg_net_alias_span_t* span = &net->alias_spans[i];
+        span->ref = i;
+        span->low = net->width ? net->width - 1u : 0u;
+        span->high = 0;
+        for (uint32_t index = 0; index < ref->alias->n_parts; index++) {
+            if (ref->part != UINT32_MAX && index != ref->part) continue;
+            const llg_net_alias_part_t* part = &ref->alias->parts[index];
+            if (part->net != net || part->bit_count == 0) continue;
+            uint32_t high = part->group_bit + part->bit_count - 1u;
+            if (part->group_bit < span->low) span->low = part->group_bit;
+            if (high > span->high) span->high = high;
+        }
+        if (span->low > span->high) {
+            span->low = 0;
+            span->high = net->width ? net->width - 1u : 0u;
+        }
+    }
+    qsort(net->alias_spans, (size_t)net->n_aliases, sizeof(llg_net_alias_span_t),
+          llg_net_alias_span_order);
+    llg_net_alias_span_reach(net->alias_spans, 0, net->n_aliases);
+    net->alias_spans_valid = 1;
+}
+
+static void llg_net_alias_spans_visit(llg_net_t* net, int begin, int end,
+                                      uint32_t low, uint32_t high) {
+    while (begin < end) {
+        int mid = begin + (end - begin) / 2;
+        const llg_net_alias_span_t* span = &net->alias_spans[mid];
+        if (span->reach < low) return;
+        llg_net_alias_spans_visit(net, begin, mid, low, high);
+        if (span->low > high) return;
+        if (span->high >= low)
+            llg_net_alias_refresh_entry(net, &net->aliases[span->ref], low, high);
+        begin = mid + 1;
+    }
+}
+
+static void llg_net_alias_refresh_all(llg_net_t* net);
+
+/* Refresh the alias bits that read group bits [low, high] of `net`, in
+ * group-bit order. A net with few aliases, or one whose span index is being
+ * walked by an outer refresh, refreshes every alias. */
+static void llg_net_alias_refresh_range(llg_net_t* net, uint32_t low, uint32_t high) {
+    if (!net || net->n_aliases == 0) return;
+    if (net->n_aliases < LLG_NET_ALIAS_SPAN_MIN || (net->alias_spans_busy && !net->alias_spans_valid)) {
+        llg_net_alias_refresh_all(net);
+        return;
+    }
+    if (!net->alias_spans_valid) llg_net_alias_spans_build(net);
+    net->alias_spans_busy++;
+    llg_net_alias_spans_visit(net, 0, net->n_aliases, low, high);
+    net->alias_spans_busy--;
+}
+
 static void llg_net_alias_refresh_all(llg_net_t* net) {
     if (!net) return;
     int i = 0;
@@ -611,15 +745,19 @@ static void llg_net_publish(llg_net_t* net, sv4_t resolved) {
 static void llg_net_publish_range(llg_net_t* net, uint32_t low,
                                   sv4_t resolved) {
     if (sig_write_range(&net->resolved, low, resolved))
-        llg_net_alias_refresh_all(net);
+        llg_net_alias_refresh_range(net, low, low + llg_sv4_width(resolved) - 1u);
 }
 
 static void llg_net_publish_ranges(llg_net_t* net,
                                    uint32_t first_low, sv4_t first,
                                    uint32_t second_low, sv4_t second) {
     if (sig_write_ranges(&net->resolved, first_low, first,
-                         second_low, second, 1))
-        llg_net_alias_refresh_all(net);
+                         second_low, second, 1)) {
+        uint32_t first_high = first_low + llg_sv4_width(first) - 1u;
+        uint32_t second_high = second_low + llg_sv4_width(second) - 1u;
+        llg_net_alias_refresh_range(net, first_low < second_low ? first_low : second_low,
+                                    first_high > second_high ? first_high : second_high);
+    }
 }
 
 void llg_net_start_unknown(llg_net_t* net, int resolve) {
@@ -890,6 +1028,13 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
         old_active = node->active;
     }
     int new_active = llg_sv4_width(selected) && !llg_net_all_z(&selected);
+    // A driver turning off over exactly its indexed range keeps its node:
+    // high impedance adds no drive, and a tri-state driver of one bit of a
+    // wide shared group then toggles without reshaping the index.
+    if (LLG_GATE_FAST_PATH && !new_active && old_active && llg_net_has_index(net) &&
+        llg_sv4_width(selected) && new_low == old_low &&
+        new_low + llg_sv4_width(selected) - 1u == old_high)
+        new_active = 1;
     uint32_t new_high = new_active ? new_low + llg_sv4_width(selected) - 1u : new_low;
     int settle = net->unsettled;
     if (settle) llg_net_settle_cover(net, new_low, llg_sv4_width(selected));
@@ -1015,6 +1160,7 @@ void llg_net_alias_bind(llg_net_alias_t* alias) {
             if (net->aliases[j].alias == alias && net->aliases[j].part == part) seen = 1;
         if (seen) continue;
         llg_net_alias_reserve(net);
+        net->alias_spans_valid = 0;
         net->aliases[net->n_aliases].alias = alias;
         net->aliases[net->n_aliases].part = part;
         net->n_aliases++;
@@ -1028,6 +1174,9 @@ void llg_net_alias_clear(llg_net_t* net) {
     net->aliases = NULL;
     net->n_aliases = 0;
     net->alias_capacity = 0;
+    free(net->alias_spans);
+    net->alias_spans = NULL;
+    net->alias_spans_valid = 0;
 }
 
 sv4_t llg_net_alias_read(llg_net_alias_t* alias) {

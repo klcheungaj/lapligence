@@ -1504,6 +1504,9 @@ struct Codegen<'a> {
     /// Input and output net ports may merge into one group
     /// (`collection/nets/port_merges.rs`): false for the SDF target scan.
     merge_ports: bool,
+    /// Slot-bit bound of a shared electrical run
+    /// (`collection/net_partition.rs`); tests lower it.
+    shared_run_slot_bits: u64,
     /// Ports a previous lowering showed must keep their link.
     port_collapse_exclusions: HashSet<NodeId>,
     /// Collapsed net ports with a time-zero observer of the sink, and the
@@ -2169,6 +2172,7 @@ impl<'a> Codegen<'a> {
             port_aliases: HashSet::new(),
             collapse_ports: false,
             merge_ports: false,
+            shared_run_slot_bits: collection::MAX_SHARED_RUN_SLOT_BITS,
             port_collapse_exclusions: HashSet::new(),
             port_start_checks: Vec::new(),
             port_alias_sinks: HashSet::new(),

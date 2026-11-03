@@ -559,10 +559,14 @@ typedef struct llg_net_driver_index llg_net_driver_index_t;
 typedef struct llg_net_alias_part llg_net_alias_part_t;
 typedef struct llg_net_alias llg_net_alias_t;
 typedef struct llg_net_alias_ref llg_net_alias_ref_t;
+typedef struct llg_net_alias_span llg_net_alias_span_t;
 
 // One intrusive interval-tree node per driver. Generated models provide an
 // exact-size mutable array; no node is allocated while a contribution moves.
-// Inactive drivers are electrically all-Z and are absent from the tree.
+// Inactive drivers are electrically all-Z and are absent from the tree. A
+// selected driver that turns all-Z over exactly its indexed range stays in
+// the tree, still active: Z adds no drive, and its node is reused when it
+// drives again.
 struct llg_net_driver_index {
     uint32_t low;
     uint32_t high;
@@ -611,6 +615,13 @@ struct llg_net {
     int n_aliases;
     int alias_capacity;
     llg_net_alias_ref_t* aliases;
+    /* The group bits each alias entry reads, ordered for ranged
+     * publication (llg_net_alias_span); runtime-owned, built on demand and
+     * invalidated by every bind. `alias_spans_busy` counts the ranged
+     * refreshes walking it. */
+    llg_net_alias_span_t* alias_spans;
+    int alias_spans_valid;
+    int alias_spans_busy;
     /* Optional strength view, emitted only for nets with a strength consumer
      * (`%v`). Each net bit owns one two-state byte: the high nibble is
      * hi + 7 and the low nibble lo + 7, where [lo, hi] is the resolved
@@ -670,6 +681,18 @@ struct llg_net_alias {
 struct llg_net_alias_ref {
     llg_net_alias_t* alias;
     uint32_t part;
+};
+
+/* The group bits [low, high] that alias entry `ref` of a net reads (a
+ * whole-rebuilt alias reads the hull of its parts on that net). A net keeps
+ * them sorted by `low` as an implicit balanced search tree in which `reach`
+ * is the highest `high` of each subtree, so a change of a few bits of a wide
+ * group shared by many per-bit views refreshes only the views it overlaps. */
+struct llg_net_alias_span {
+    uint32_t low;
+    uint32_t high;
+    uint32_t reach;
+    int ref;
 };
 
 void llg_net_resolve(llg_net_t* net); /* strength-aware resolution, per limb */

@@ -42,7 +42,9 @@ released cell (decision A19-D78); outlined runs hold no such locals.
   (`model/storage.rs::render_alias_parts` docs); the runtime refreshes and writes each run as one part
   select. A net change rewrites only its own parts of an alias whose parts cover
   its width (`llg_net_alias_ref`), so a vector split into per-bit nets costs one
-  part per change; other aliases are rebuilt whole. Alias/stochastic publication temporaries must be
+  part per change; other aliases are rebuilt whole. A ranged publication of a
+  wide group shared by many per-bit views rewrites only the parts that read the
+  changed bits (`llg_net_alias_span`). Alias/stochastic publication temporaries must be
   registered; alias reads are pure. Sequence-local writes remain private.
 - Packed formals resolve through current activation bindings, including callbacks,
   never synthetic model globals. Input mutation is private; ref writes clone/update

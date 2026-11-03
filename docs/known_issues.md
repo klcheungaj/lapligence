@@ -1939,6 +1939,10 @@ differ (decisions A21-D1..A21-D5 in [LRM decisions](lrm_decisions.md)).
   `delay: dl=1 u3.n=x` for a child driving its delayed input net.
 - A port that selects part of a vector net and whose copy is exact (A21-D5)
   keeps it by design: it shows each change one update after the source.
+  Merging it would simulate faster (the split vector stays one shared group)
+  but roughly doubles `model.c`, because each merged formal becomes a net
+  alias view with its own storage, descriptors and start value
+  ([trade-off](sim_performance_tradeoffs.md#shared-groups-for-split-vectors)).
 
 ### Cause
 
@@ -1953,7 +1957,9 @@ would let a procedural write or a force of the variable reach the net.
 
 Decide the delay of a merged net with a delayed side from Table 23-1's
 dominating declaration, keeping copies only for conversions and where SDF or
-specify paths need each side's own net.
+specify paths need each side's own net. Emit net alias views of one-part
+members as table rows without per-signal storage and start steps, then merge
+plain selected ports too.
 
 ### Reproduce
 

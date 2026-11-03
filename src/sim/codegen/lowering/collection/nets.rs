@@ -1018,13 +1018,19 @@ impl<'a> Codegen<'a> {
         Ok(())
     }
 
+    /// The contribution of `source` to each alias group its `bindings`
+    /// reach: the group's driver slot as the target and the value from
+    /// `rhs`. A source that covers one contiguous, ascending range of a wider
+    /// group (a per-bit member or driver of a shared run) writes only that
+    /// range of its slot; any other source writes its whole slot, high
+    /// impedance where it does not drive.
     pub(super) fn alias_driver_assignments<F: Fn(usize) -> usize>(
         &self,
         source: NodeId,
         bindings: &[(IrNetAliasBinding, u32)],
         rhs: &IrExpr,
         terminal_for_group: F,
-    ) -> Result<Vec<(usize, IrExpr)>, String> {
+    ) -> Result<Vec<(IrLhs, IrExpr)>, String> {
         if rhs.is_real() {
             return Err(format!(
                 "continuous assignment `{}` has a real RHS for a packed net alias at {}:{}:{}",
@@ -1107,6 +1113,23 @@ impl<'a> Codegen<'a> {
                 .iter()
                 .map(|(binding, position)| (binding.group_bit(), rhs.width() - 1 - *position))
                 .collect::<HashMap<_, _>>();
+            if let Some((low, high, source_low)) = narrow_contribution(&mapped, width) {
+                let span = high - low + 1;
+                result.push((
+                    IrLhs::Part(driver, i64::from(high), i64::from(low), false),
+                    IrExpr::new(
+                        IrExprKind::PartSel {
+                            base: Box::new(rhs.clone()),
+                            left: i64::from(source_low + span - 1),
+                            right: i64::from(source_low),
+                        },
+                        span,
+                        false,
+                        None,
+                    ),
+                ));
+                continue;
+            }
             let mut parts = Vec::new();
             let mut remaining = width;
             while remaining != 0 {
@@ -1148,7 +1171,7 @@ impl<'a> Codegen<'a> {
             } else {
                 IrExpr::new(IrExprKind::Concat { parts }, width, false, None)
             };
-            result.push((driver, value));
+            result.push((IrLhs::Whole(driver), value));
         }
         Ok(result)
     }
@@ -1632,14 +1655,8 @@ impl<'a> Codegen<'a> {
         for bits in &mut alias_groups {
             bits.sort_by_key(|bit| bit.sort_key());
         }
-        alias_groups.sort_by_key(|bits| {
-            bits.first().map(|bit| bit.sort_key()).unwrap_or((
-                u32::MAX,
-                u8::MAX,
-                u64::MAX,
-                u32::MAX,
-            ))
-        });
+        let mut owner_widths = HashMap::new();
+        alias_groups.sort_by_cached_key(|bits| self.electrical_column_key(bits, &mut owner_widths));
         let mut array_alias_bindings: HashMap<(usize, u64), Vec<IrNetAliasBinding>> =
             HashMap::new();
         let alias_runs = self.partition_electrical_bits(alias_groups, &nodes, &type_plan)?;
@@ -3019,4 +3036,20 @@ impl<'a> Codegen<'a> {
         }
         None
     }
+}
+
+/// The group bits `[low, high]` a source drives and the source bit of `low`,
+/// when they are one contiguous range narrower than the group and the source
+/// bits ascend with them.
+fn narrow_contribution(mapped: &HashMap<u32, u32>, width: u32) -> Option<(u32, u32, u32)> {
+    let low = *mapped.keys().min()?;
+    let high = *mapped.keys().max()?;
+    let span = high - low + 1;
+    if span >= width || mapped.len() != span as usize {
+        return None;
+    }
+    let source_low = mapped[&low];
+    (low..=high)
+        .all(|bit| source_low.checked_add(bit - low) == mapped.get(&bit).copied())
+        .then_some((low, high, source_low))
 }
