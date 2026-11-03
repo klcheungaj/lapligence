@@ -1938,6 +1938,10 @@ struct Codegen<'a> {
     /// (IEEE 1800-2009 11.11) whose value is being lowered, innermost last.
     /// Its `OverloadCurrent` operand reads the mutation's captured target.
     overload_current: Vec<OverloadCurrent>,
+    /// Handle locals that stand for the computed base of a property access
+    /// (`get().v`) while one read-modify-write statement is lowered, so the
+    /// base is evaluated once (SV 11.4.1-11.4.2).
+    computed_receivers: HashMap<NodeId, IrChandleExpr>,
     /// Owning module-instance arena node of the current emission context;
     /// used to resolve unbound callees by name.
     inst: NodeId,
@@ -2361,6 +2365,7 @@ impl<'a> Codegen<'a> {
             func: None,
             depth_arg: "0".to_string(),
             overload_current: Vec::new(),
+            computed_receivers: HashMap::new(),
             inst: NodeId(0),
             design_name: String::new(),
             proc_seq: 0,
@@ -3843,6 +3848,27 @@ fn bin_expr(op: IrBinOp, a: IrExpr, b: IrExpr) -> IrExpr {
         s,
         None,
     )
+}
+
+/// `===`/`!==` (`op`) of two real aggregate leaves: the operators compare
+/// bit for bit (SV 11.4.5), so a real leaf compares its IEEE 754 bit pattern
+/// and 0.0 differs from -0.0 (decision R05-D3). Equivalent aggregate types
+/// pair a real leaf only with a real leaf.
+fn real_leaf_case_cmp_ir(op: IrBinOp, a: IrExpr, b: IrExpr, path: &str) -> Result<IrExpr, String> {
+    if !a.is_real() || !b.is_real() {
+        return Err(format!(
+            "case equality pairs a real aggregate member with an integral one in `{path}`"
+        ));
+    }
+    let bits = |value: IrExpr| {
+        IrExpr::new(
+            IrExprKind::SysFunc(Box::new(IrSysFunc::RealToBits(Box::new(value)))),
+            64,
+            false,
+            None,
+        )
+    };
+    Ok(cmp_expr_ir(op, bits(a), bits(b)))
 }
 
 /// A comparison/equality node (1-bit unsigned result).

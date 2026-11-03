@@ -196,6 +196,28 @@ void llg_queue_value_copy(llg_queue_value_array_t* dst,
         llg_container_warning("bounded queue assignment discarded tail elements");
 }
 
+void llg_queue_value_merge(llg_queue_value_array_t* dst,
+                           const llg_queue_value_array_t* a,
+                           const llg_queue_value_array_t* b) {
+    if (!llg_value_desc_compatible(dst->element, a->element) ||
+        !llg_value_desc_compatible(dst->element, b->element))
+        llg_container_fatal("incompatible recursive queue element types");
+    size_t size = a->size > b->size ? a->size : b->size;
+    size_t count = size < dst->limit ? size : dst->limit;
+    llg_value_t* data = llg_alloc_items(count, sizeof(*data));
+    if (count) memset(data, 0, count * sizeof(*data));
+    for (size_t i = 0; i < count; ++i) {
+        if (i < a->size && i < b->size)
+            llg_value_merge(&data[i], dst->element, &a->data[i], &b->data[i]);
+        else
+            llg_value_merge_present(&data[i], dst->element,
+                                    i < a->size ? &a->data[i] : &b->data[i]);
+    }
+    llg_queue_value_commit(dst, data, count);
+    if (count != size)
+        llg_container_warning("bounded queue assignment discarded tail elements");
+}
+
 void llg_queue_value_assign_reals(llg_queue_value_array_t* dst,
                                   const double* values, size_t count) {
     size_t retained = count < dst->limit ? count : dst->limit;

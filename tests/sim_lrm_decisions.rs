@@ -347,6 +347,22 @@ fn r05_d1_aggregate_conditional_leaves() {
 }
 
 #[test]
+fn r05_d2_resizable_conditional_merge() {
+    run_decision(
+        "R05-D2_resizable_conditional_merge",
+        include_str!("fixtures/sim/lrm_decisions/R05-D2_resizable_conditional_merge.out"),
+    );
+}
+
+#[test]
+fn r05_d3_real_member_case_equality() {
+    run_decision(
+        "R05-D3_real_member_case_equality",
+        include_str!("fixtures/sim/lrm_decisions/R05-D3_real_member_case_equality.out"),
+    );
+}
+
+#[test]
 fn r11_d1_sibling_port_net_types() {
     run_decision(
         "R11-D1_sibling_port_net_types",
@@ -4064,6 +4080,14 @@ fn s11_d1_task_cast_class_failure() {
                 "$cast failed to assign an incompatible value at tb:36:5",
             );
         },
+    );
+}
+
+#[test]
+fn s11_d3_real_enum_cast() {
+    run_decision(
+        "S11-D3_real_enum_cast",
+        include_str!("fixtures/sim/lrm_decisions/S11-D3_real_enum_cast.out"),
     );
 }
 

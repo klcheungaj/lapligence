@@ -425,3 +425,63 @@ void llg_assoc_value_copy(llg_assoc_value_t* dst,
                (contents_changed ? LLG_CONTAINER_CHANGED_CONTENTS : 0) |
                    (shape_changed ? LLG_CONTAINER_CHANGED_SHAPE : 0));
 }
+
+static int llg_assoc_value_same_index_type(const llg_assoc_value_t* a,
+                                           const llg_assoc_value_t* b) {
+    return llg_value_desc_compatible(a->element, b->element) &&
+           a->key_kind == b->key_kind && a->key_width == b->key_width &&
+           a->key_signed == b->key_signed &&
+           a->key_two_state == b->key_two_state;
+}
+
+/* `llg_assoc_merge` for recursive elements: a key in both arrays merges its
+ * values leaf by leaf (`llg_value_merge`). */
+void llg_assoc_value_merge(llg_assoc_value_t* dst, const llg_assoc_value_t* a,
+                           const llg_assoc_value_t* b) {
+    if (!llg_assoc_value_same_index_type(dst, a) ||
+        !llg_assoc_value_same_index_type(dst, b))
+        llg_container_fatal("incompatible recursive associative-array types");
+    llg_assoc_value_t merged;
+    if (dst->key_kind == LLG_ASSOC_INTEGRAL)
+        llg_assoc_value_init_integral(&merged, dst->element, dst->key_width,
+                                      dst->key_signed, dst->key_two_state);
+    else
+        llg_assoc_value_init_string(&merged, dst->element);
+    if (a->size > SIZE_MAX - b->size)
+        llg_container_fatal("associative-array size overflow");
+    llg_assoc_value_reserve(&merged, a->size + b->size);
+    size_t i = 0, j = 0;
+    while (i < a->size || j < b->size) {
+        const llg_assoc_value_entry_t* left =
+            i < a->size ? &a->entries[i] : NULL;
+        const llg_assoc_value_entry_t* right =
+            j < b->size ? &b->entries[j] : NULL;
+        int cmp = !left ? 1
+            : !right ? -1
+            : llg_assoc_entry_compare(dst->key_kind, left->integral_key,
+                                      left->string_key, left->string_length,
+                                      right->integral_key, right->string_key,
+                                      right->string_length);
+        const llg_assoc_value_entry_t* key = cmp <= 0 ? left : right;
+        llg_assoc_value_entry_t* entry = &merged.entries[merged.size++];
+        memset(entry, 0, sizeof(*entry));
+        llg_assoc_key_clone(&entry->integral_key, &entry->string_key,
+                            &entry->string_length, key->integral_key,
+                            key->string_key, key->string_length);
+        if (cmp == 0)
+            llg_value_merge(&entry->value, dst->element, &left->value,
+                            &right->value);
+        else
+            llg_value_merge_present(&entry->value, dst->element, &key->value);
+        if (cmp <= 0) ++i;
+        if (cmp >= 0) ++j;
+    }
+    if (a->has_default_value && b->has_default_value) {
+        llg_value_drop(&merged.default_value);
+        llg_value_merge(&merged.default_value, dst->element, &a->default_value,
+                        &b->default_value);
+        merged.has_default_value = 1;
+    }
+    llg_assoc_value_copy(dst, &merged);
+    llg_assoc_value_destroy(&merged);
+}

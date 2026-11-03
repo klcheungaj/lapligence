@@ -1167,6 +1167,9 @@ pub(super) struct FixedMethodCopy {
     pub(super) queue: usize,
     pub(super) statements: Vec<IrStmt>,
     array: usize,
+    /// Leading indices of a selected row (`m[i].find(...)`), read from
+    /// locals the copy statements set once; empty for a whole array.
+    row: Vec<IrExpr>,
     range: (i32, i32),
     real: bool,
     width: u32,
@@ -1177,28 +1180,66 @@ impl Codegen<'_> {
     /// Copy a stored packed or real fixed array receiver, element by element
     /// in left-to-right order, into a fresh activation queue. Native fixed
     /// arrays (string, handle, record elements) are already containers and
-    /// return `None`, as do receivers that are not a whole stored array.
+    /// return `None`, as do receivers that are not a whole stored array or
+    /// a selected last-dimension row of one (`m[i]`, `m[i][j]`), whose row
+    /// selectors are evaluated once before the copy.
     pub(super) fn fixed_method_copy(
         &mut self,
+        path: &str,
         receiver: NodeId,
     ) -> Result<Option<FixedMethodCopy>, String> {
-        if !matches!(
-            self.kind(receiver),
+        let (base, row_nodes) = match self.kind(receiver) {
+            NodeKind::Expr(ExprKind::ArraySelect { base, indices })
+                if matches!(
+                    self.kind(*base),
+                    NodeKind::Array { .. }
+                        | NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
+                ) =>
+            {
+                (*base, indices.clone())
+            }
             NodeKind::Array { .. }
-                | NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. })
-        ) || self.container_of(receiver).is_some()
-        {
+            | NodeKind::Expr(ExprKind::Ref { .. } | ExprKind::HierPath { .. }) => {
+                (receiver, Vec::new())
+            }
+            _ => return Ok(None),
+        };
+        if self.container_of(base).is_some() {
             return Ok(None);
         }
         let Some(array) = self
-            .array_of(receiver)
-            .filter(|array| array.dims.len() == 1)
+            .array_of(base)
+            .filter(|array| array.dims.len() == row_nodes.len() + 1)
         else {
+            return Ok(None);
+        };
+        let range = array.dims[row_nodes.len()];
+        let mut statements = Vec::with_capacity(row_nodes.len() + 3);
+        let mut row = Vec::with_capacity(row_nodes.len());
+        for node in row_nodes {
+            let index = self.lower_expr(path, node)?;
+            if index.is_real() {
+                return Err(format!(
+                    "fixed-array row selector in `{path}` must be integral"
+                ));
+            }
+            let (index_width, index_signed) = (index.width, index.signed);
+            let name = self.inline_name("frow");
+            statements.push(IrStmt::DeclLocal {
+                name: name.clone(),
+                width: index_width,
+                signed: index_signed,
+                init: Some(Box::new(index)),
+                two_state: false,
+            });
+            row.push(local_read(&name, index_width, index_signed));
+        }
+        let Some(array) = self.array_of(base) else {
             return Ok(None);
         };
         let (array_ir, range, real, shortreal, width, signed) = (
             array.ir,
-            array.dims[0],
+            range,
             array.real,
             array.shortreal,
             if array.real { 0 } else { array.elem_width },
@@ -1219,17 +1260,19 @@ impl Codegen<'_> {
         let count = i128::from(range.0.abs_diff(range.1)) + 1;
         let position = self.inline_name("fpos");
         let read = || local_read(&position, 32, true);
+        let mut indices = row.clone();
+        indices.push(fixed_index_of(read(), range.0, range.1));
         let value = IrExpr::new(
             IrExprKind::ArrayRead {
                 arr: array,
-                indices: vec![fixed_index_of(read(), range.0, range.1)],
+                indices,
                 elem_sel: IrElemSel::Whole,
             },
             width,
             signed,
             None,
         );
-        let statements = vec![
+        statements.extend([
             declare,
             IrStmt::DeclLocal {
                 name: position.clone(),
@@ -1259,11 +1302,12 @@ impl Codegen<'_> {
                     },
                 ))],
             },
-        ];
+        ]);
         Ok(Some(FixedMethodCopy {
             queue,
             statements,
             array,
+            row,
             range,
             real,
             width,
@@ -1319,7 +1363,12 @@ impl Codegen<'_> {
                 body: vec![assign(
                     IrLhs::ArrayElem {
                         arr: copy.array,
-                        indices: vec![fixed_index_of(read(), copy.range.0, copy.range.1)],
+                        indices: copy
+                            .row
+                            .iter()
+                            .cloned()
+                            .chain([fixed_index_of(read(), copy.range.0, copy.range.1)])
+                            .collect(),
                         elem_sel: IrElemSel::Whole,
                     },
                     value,

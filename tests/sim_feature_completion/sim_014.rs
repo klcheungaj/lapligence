@@ -209,6 +209,19 @@ fn persistent_repeat_nba_witness() {
 }
 
 #[test]
+fn detached_repeat_nba_commits_after_the_last_event() {
+    // FIN-001 D1: string, real, class-handle, process-evaluated packed and
+    // `->>` forms observed between the events of `repeat (n) @(...)`.
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "repeat_nba_progress",
+        include_str!("../fixtures/sim/feature_completion/sim_014/repeat_nba_progress.out"),
+        &[],
+        &[],
+    );
+}
+
+#[test]
 fn repeat_nested_timing_witness() {
     // FND-002 L-F06-04-01 / L-F06-05-02: a repeat loop around a repeated
     // intra-assignment control.

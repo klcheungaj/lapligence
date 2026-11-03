@@ -100,6 +100,17 @@ void llg_queue_copy(llg_queue_t* dst, const llg_queue_t* src) {
     llg_queue_assign_values(dst, src->data, src->size);
 }
 
+void llg_queue_merge(llg_queue_t* dst, const llg_queue_t* a,
+                     const llg_queue_t* b) {
+    size_t count = a->size > b->size ? a->size : b->size;
+    sv4_t* values = llg_packed_merge_values(
+        a->data, a->size, b->data, b->size, count, dst->element_width,
+        dst->element_signed, dst->element_two_state);
+    llg_queue_assign_values(dst, values, count);
+    sv4_destroy_array(values, count);
+    free(values);
+}
+
 void llg_queue_assign_values(llg_queue_t* dst, const sv4_t* values,
                              size_t count) {
     size_t retained = count < dst->limit ? count : dst->limit;

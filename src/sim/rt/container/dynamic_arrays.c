@@ -197,6 +197,41 @@ void llg_dyn_copy(llg_dyn_array_t* dst, const llg_dyn_array_t* src) {
     llg_dyn_new_count(dst, size, src);
 }
 
+/* SV 11.4.11 ambiguous-condition result of one packed element pair: a pair
+ * that is known equal keeps its value; a differing pair, one with X or Z, or
+ * a position only one operand has takes the element's default-uninitialized
+ * value. `a` and `b` are borrowed and may be NULL. */
+static sv4_t llg_element_merge(const sv4_t* a, const sv4_t* b, uint32_t width,
+                               int8_t is_signed, uint8_t two_state) {
+    if (a && b && llg_packed_equality(*a, *b, 0) == LLG_VALUE_EQUAL)
+        return llg_element_assign(*a, width, is_signed, two_state);
+    return llg_element_default(width, is_signed, two_state);
+}
+
+/* Element-wise merge of packed arrays `a` and `b` into `count` new values. */
+static sv4_t* llg_packed_merge_values(const sv4_t* a, size_t a_size,
+                                      const sv4_t* b, size_t b_size,
+                                      size_t count, uint32_t width,
+                                      int8_t is_signed, uint8_t two_state) {
+    sv4_t* values = llg_alloc_items(count, sizeof(*values));
+    for (size_t i = 0; i < count; ++i)
+        values[i] = llg_element_merge(i < a_size ? &a[i] : NULL,
+                                      i < b_size ? &b[i] : NULL, width,
+                                      is_signed, two_state);
+    return values;
+}
+
+void llg_dyn_merge(llg_dyn_array_t* dst, const llg_dyn_array_t* a,
+                   const llg_dyn_array_t* b) {
+    size_t count = a->size > b->size ? a->size : b->size;
+    sv4_t* values = llg_packed_merge_values(
+        a->data, a->size, b->data, b->size, count, dst->element_width,
+        dst->element_signed, dst->element_two_state);
+    llg_dyn_assign_values(dst, values, count);
+    sv4_destroy_array(values, count);
+    free(values);
+}
+
 void llg_dyn_assign_values(llg_dyn_array_t* dst, const sv4_t* values,
                            size_t count) {
     sv4_t* data = llg_alloc_items(count, sizeof(*data));

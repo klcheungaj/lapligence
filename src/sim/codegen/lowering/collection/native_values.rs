@@ -2562,9 +2562,7 @@ impl Codegen<'_> {
                 if case && !a.is_real() && !b.is_real() {
                     cmp_expr_ir(IrBinOp::CaseEq, a, b)
                 } else if case {
-                    return Err(format!(
-                        "case equality on real record member in `{path}` is not supported"
-                    ));
+                    real_leaf_case_cmp_ir(IrBinOp::CaseEq, a, b, path)?
                 } else {
                     common_cmp_expr_ir(IrBinOp::Eq, a, b, path)?
                 }

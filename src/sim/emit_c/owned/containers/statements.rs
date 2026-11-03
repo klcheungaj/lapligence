@@ -109,7 +109,18 @@ pub(super) fn render(
             )
         }
         IrContainerStmt::Merge { dst, left, right } => format!(
-            "    llg_dyn_value_merge(&{}, &{}, &{});\n",
+            "    {}(&{}, &{}, &{});\n",
+            {
+                let container = &ctx.model.containers[*dst];
+                match (&container.kind, container.element.is_packed()) {
+                    (IrContainerKind::Dynamic, true) => "llg_dyn_merge",
+                    (IrContainerKind::Dynamic, false) => "llg_dyn_value_merge",
+                    (IrContainerKind::Queue { .. }, true) => "llg_queue_merge",
+                    (IrContainerKind::Queue { .. }, false) => "llg_queue_value_merge",
+                    (IrContainerKind::Associative { .. }, true) => "llg_assoc_merge",
+                    (IrContainerKind::Associative { .. }, false) => "llg_assoc_value_merge",
+                }
+            },
             name(frame, *dst)?,
             name(frame, *left)?,
             name(frame, *right)?

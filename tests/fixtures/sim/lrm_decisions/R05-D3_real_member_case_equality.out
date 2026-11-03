@@ -1,0 +1,7 @@
+eq 1 0 1
+ne 0 1 0
+zero 0 0
+nest 1
+nest2 0 1
+queue 0
+queue2 1

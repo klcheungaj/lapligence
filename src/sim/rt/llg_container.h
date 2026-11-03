@@ -226,8 +226,10 @@ void llg_dyn_value_copy_range(llg_dyn_value_array_t* dst, sv4_t dst_start,
  * by leaf, recursing through record members, fixed-array items and nested
  * containers; each leaf that is known equal in both keeps that value, every
  * other leaf takes its type's default-uninitialized value. Arrays of
- * different sizes merge to the larger size, unmatched positions taking the
- * default. `a` and `b` are borrowed and may alias `dst`. */
+ * different sizes merge to the larger size; a position only one array has
+ * merges with the element default, so its leaves take their defaults and a
+ * nested container keeps its size. `a` and `b` are borrowed and may alias
+ * `dst`. */
 void llg_dyn_value_merge(llg_dyn_value_array_t* dst,
                          const llg_dyn_value_array_t* a,
                          const llg_dyn_value_array_t* b);
@@ -413,6 +415,9 @@ void llg_queue_value_destroy(llg_queue_value_array_t* queue);
 void llg_queue_value_delete(llg_queue_value_array_t* queue);
 void llg_queue_value_copy(llg_queue_value_array_t* dst,
                           const llg_queue_value_array_t* src);
+void llg_queue_value_merge(llg_queue_value_array_t* dst,
+                           const llg_queue_value_array_t* a,
+                           const llg_queue_value_array_t* b);
 void llg_queue_value_assign_reals(llg_queue_value_array_t* dst,
                                   const double* values, size_t count);
 void llg_queue_value_assign_strings(llg_queue_value_array_t* dst,
@@ -599,6 +604,14 @@ void llg_dyn_init(llg_dyn_array_t* array, uint32_t element_width,
 void llg_dyn_destroy(llg_dyn_array_t* array);
 void llg_dyn_delete(llg_dyn_array_t* array);
 void llg_dyn_copy(llg_dyn_array_t* dst, const llg_dyn_array_t* src);
+/* Ambiguous-condition merges (SV 11.4.11) of packed dynamic arrays, queues
+ * and associative arrays and of recursive queues and associative arrays,
+ * with the leaf rule of `llg_dyn_value_merge`. Sequences merge position by
+ * position to the larger size; associative arrays merge to the union of
+ * their keys, and a key or position only one operand has merges with the
+ * element default. `a` and `b` are borrowed and must not alias `dst`. */
+void llg_dyn_merge(llg_dyn_array_t* dst, const llg_dyn_array_t* a,
+                   const llg_dyn_array_t* b);
 void llg_dyn_assign_values(llg_dyn_array_t* dst, const sv4_t* values,
                            size_t count);
 void llg_dyn_new(llg_dyn_array_t* dst, sv4_t size,
@@ -681,6 +694,8 @@ void llg_queue_init(llg_queue_t* queue, uint32_t element_width,
 void llg_queue_destroy(llg_queue_t* queue);
 void llg_queue_delete(llg_queue_t* queue);
 void llg_queue_copy(llg_queue_t* dst, const llg_queue_t* src);
+void llg_queue_merge(llg_queue_t* dst, const llg_queue_t* a,
+                     const llg_queue_t* b);
 void llg_queue_assign_values(llg_queue_t* dst, const sv4_t* values,
                              size_t count);
 sv4_t llg_queue_stream(const llg_queue_t* queue, uint32_t slice,
@@ -798,6 +813,8 @@ void llg_assoc_value_destroy(llg_assoc_value_t* array);
 void llg_assoc_value_delete(llg_assoc_value_t* array);
 void llg_assoc_value_copy(llg_assoc_value_t* dst,
                           const llg_assoc_value_t* src);
+void llg_assoc_value_merge(llg_assoc_value_t* dst, const llg_assoc_value_t* a,
+                           const llg_assoc_value_t* b);
 size_t llg_assoc_value_count(const llg_assoc_value_t* array);
 sv4_t llg_assoc_value_get_integral(const llg_assoc_value_t* array, sv4_t key);
 double llg_assoc_value_get_integral_real(const llg_assoc_value_t* array,
@@ -933,6 +950,8 @@ void llg_assoc_init_string(llg_assoc_t* array, uint32_t element_width,
 void llg_assoc_destroy(llg_assoc_t* array);
 void llg_assoc_delete(llg_assoc_t* array);
 void llg_assoc_copy(llg_assoc_t* dst, const llg_assoc_t* src);
+void llg_assoc_merge(llg_assoc_t* dst, const llg_assoc_t* a,
+                     const llg_assoc_t* b);
 /* Retained cells for `ref` actuals that select a dynamic-array element or an
  * associative entry (IEEE 1800-2009 13.5.2). A cell follows its element until
  * an operation outdates it: new[], delete() or whole assignment of the dynamic

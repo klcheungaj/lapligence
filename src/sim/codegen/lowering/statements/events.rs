@@ -137,6 +137,83 @@ impl ProcessEventPlan {
         block.push(self.wait_loop());
         vec![IrStmt::Block(block)]
     }
+
+    /// [`Self::resumed`] repeated `count` times (`repeat (n) @(...)`, SV
+    /// 9.4.5). Only the first wait starts from the values `armed` at issue;
+    /// every iteration advances the armed values, so each later wait starts
+    /// from the values its predecessor detected, as the blocking form re-arms
+    /// from current values. The catch-up iteration before the first
+    /// suspension runs only when at least one wait remains, so a count of
+    /// zero or less issues the action without evaluating the sources again.
+    pub(super) fn resumed_repeat(self, armed: Vec<IrExpr>, count: IrExpr) -> Vec<IrStmt> {
+        let primed = format!("{}p", self.hit);
+        let flag = |value: &IrExpr| IrStmt::Assign {
+            lhs: IrLhs::WholeRef {
+                addr: format!("&{primed}"),
+                width: 1,
+                signed: false,
+                two_state: true,
+                shortreal: false,
+            },
+            rhs: value.clone(),
+            nba: false,
+        };
+        // The two-state complement of the plan's one-bit zero.
+        let one = IrExpr::new(
+            IrExprKind::Un {
+                op: IrUnOp::LogNot,
+                a: Box::new(self.zero.clone()),
+            },
+            1,
+            false,
+            None,
+        );
+        let mut block = self
+            .arm
+            .iter()
+            .zip(armed)
+            .map(|(arm, value)| IrStmt::DeclLocal {
+                name: arm.local.clone(),
+                width: arm.width,
+                signed: arm.signed,
+                init: Some(Box::new(value)),
+                two_state: false,
+            })
+            .collect::<Vec<_>>();
+        block.push(IrStmt::DeclLocal {
+            name: primed.clone(),
+            width: 1,
+            signed: false,
+            init: Some(Box::new(self.zero.clone())),
+            two_state: true,
+        });
+        let catch_up = IrStmt::If {
+            cond: IrExpr::new(
+                IrExprKind::Un {
+                    op: IrUnOp::LogNot,
+                    a: Box::new(IrExpr::new(
+                        IrExprKind::LocalRead(primed.clone()),
+                        1,
+                        false,
+                        None,
+                    )),
+                },
+                1,
+                false,
+                None,
+            ),
+            then_: vec![flag(&one), IrStmt::Block(self.iteration.clone())],
+            els: None,
+            check: IrUniquePriorityCheck::None,
+        };
+        let body = vec![IrStmt::Block(vec![
+            self.hit_declaration(),
+            catch_up,
+            self.wait_loop(),
+        ])];
+        block.push(IrStmt::Repeat { count, body });
+        vec![IrStmt::Block(block)]
+    }
 }
 
 impl EmitCtx<'_, '_> {

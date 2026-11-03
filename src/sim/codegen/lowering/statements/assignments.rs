@@ -52,6 +52,46 @@ impl EmitCtx<'_, '_> {
         op: Operation,
         force_blocking: bool,
     ) -> Result<IrStmt, String> {
+        if op != Operation::Assignment {
+            if let Some(base) = self.cg.effectful_computed_receiver(lhs) {
+                return self.with_captured_receiver(base, |this| {
+                    this.lower_assignment_operands_captured(lhs, rhs, blocking, op, force_blocking)
+                });
+            }
+        }
+        self.lower_assignment_operands_captured(lhs, rhs, blocking, op, force_blocking)
+    }
+
+    /// Evaluate the computed handle `base` of a read-modify-write target
+    /// (`get().v += 1`) once into a handle local that every access of
+    /// `lower` uses (SV 11.4.1: the operand is evaluated once).
+    fn with_captured_receiver(
+        &mut self,
+        base: NodeId,
+        lower: impl FnOnce(&mut Self) -> Result<IrStmt, String>,
+    ) -> Result<IrStmt, String> {
+        let name = format!("_llg_recv{}", base.0);
+        let handle = self.cg.lower_chandle(&self.path, base)?;
+        let declare = IrStmt::Object(Box::new(IrObjectStmt::ChandleDeclareLocal(
+            name.clone(),
+            Some(handle),
+        )));
+        self.cg
+            .computed_receivers
+            .insert(base, IrChandleExpr::LocalRead(name));
+        let statement = lower(self);
+        self.cg.computed_receivers.remove(&base);
+        Ok(IrStmt::Block(vec![declare, statement?]))
+    }
+
+    fn lower_assignment_operands_captured(
+        &mut self,
+        lhs: NodeId,
+        rhs: NodeId,
+        blocking: bool,
+        op: Operation,
+        force_blocking: bool,
+    ) -> Result<IrStmt, String> {
         // Procedural covergroup option writes (19.7, SIM-046).
         if let Some(statement) = self
             .cg
@@ -630,6 +670,14 @@ impl EmitCtx<'_, '_> {
                 ))
             }
         };
+        if let Some(base) = self.cg.effectful_computed_receiver(operand) {
+            return self
+                .with_captured_receiver(base, |this| this.lower_inc_dec_captured(op, operand));
+        }
+        self.lower_inc_dec_captured(op, operand)
+    }
+
+    fn lower_inc_dec_captured(&mut self, op: Operation, operand: NodeId) -> Result<IrStmt, String> {
         if self.cg.is_container_element(operand) {
             let increment = matches!(op, Operation::PostIncrement | Operation::PreIncrement);
             return self.cg.lower_container_element_update(
@@ -650,7 +698,7 @@ impl EmitCtx<'_, '_> {
         ) {
             // Statement-position pre/post increment discards the yielded value,
             // so both forms commit the same single resolved store.
-            return self.lower_discarded_mutation(op, operands);
+            return self.lower_discarded_mutation(op, &[operand]);
         }
         if !matches!(
             lhs,
@@ -1429,10 +1477,9 @@ impl EmitCtx<'_, '_> {
             .iter()
             .map(|arm| self.capture_event_assignment_expr(frame, &mut captures, arm.value.clone()))
             .collect();
-        let wait = plan.resumed(armed);
         let mut body = match count {
-            Some(count) => vec![IrStmt::Repeat { count, body: wait }],
-            None => wait,
+            Some(count) => plan.resumed_repeat(armed, count),
+            None => plan.resumed(armed),
         };
         body.extend(action);
         let name = self.cg.new_fn_name(&self.path, kind);

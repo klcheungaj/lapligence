@@ -593,10 +593,11 @@ impl<'a> Codegen<'a> {
         Ok(IrQueueSource::Whole(temporary))
     }
 
-    /// `dst = c ? a : b` for descriptor-backed dynamic arrays (including
-    /// fixed-array views of native elements). A known predicate assigns one
-    /// arm; an ambiguous one evaluates both arms into temporaries and merges
-    /// them leaf by leaf (SV 11.4.11).
+    /// `dst = c ? a : b` for dynamic arrays (including fixed-array views of
+    /// native elements), queues and associative arrays. A known predicate
+    /// assigns one arm; an ambiguous one evaluates both arms into
+    /// temporaries and merges them leaf by leaf (SV 11.4.11, see
+    /// [`IrContainerStmt::Merge`]).
     fn lower_container_conditional_into(
         &mut self,
         path: &str,
@@ -629,13 +630,6 @@ impl<'a> Codegen<'a> {
             }
             _ => return Ok(None),
         };
-        if !matches!(self.model.containers[dst].kind, IrContainerKind::Dynamic)
-            || self.model.containers[dst].element.is_packed()
-        {
-            return Err(format!(
-                "conditional operator with resizable container operands in `{path}` is not supported"
-            ));
-        }
         let name = format!("_llg_container_sel_{}", source.index());
         let (width, signed) = (selector.width, selector.signed);
         let declare = IrStmt::DeclLocal {

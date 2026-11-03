@@ -669,10 +669,13 @@ pub enum IrContainerStmt {
         src_start: IrExpr,
         count: u64,
     },
-    /// Ambiguous-predicate conditional merge of two descriptor-backed
-    /// dynamic arrays into `dst` (SV 11.4.11): elements merge leaf by leaf;
-    /// known-equal leaves survive, others take their default-uninitialized
-    /// value.
+    /// Ambiguous-predicate conditional merge of two containers of `dst`'s
+    /// kind and element type into `dst` (SV 11.4.11): elements merge leaf by
+    /// leaf; known-equal leaves survive, others take their
+    /// default-uninitialized value. Dynamic arrays and queues merge position
+    /// by position to the larger size and associative arrays to the union of
+    /// their keys; an element only one operand has merges with the element
+    /// default.
     Merge {
         dst: usize,
         left: usize,
@@ -1713,20 +1716,24 @@ impl IrContainerStmt {
                 let dst = container_kind(model, *dst, None)?;
                 for source in [left, right] {
                     let source = container_kind(model, *source, None)?;
-                    if !matches!(source.kind, IrContainerKind::Dynamic)
+                    let same_kind = match (&source.kind, &dst.kind) {
+                        (IrContainerKind::Dynamic, IrContainerKind::Dynamic)
+                        | (IrContainerKind::Queue { .. }, IrContainerKind::Queue { .. }) => true,
+                        (
+                            IrContainerKind::Associative { key: source },
+                            IrContainerKind::Associative { key: target },
+                        ) => source == target,
+                        _ => false,
+                    };
+                    if !same_kind
+                        || source.element.is_packed() != dst.element.is_packed()
                         || !source.element.compatible_with(&dst.element)
                     {
                         return Err(IrValidationError::new(
                             "container",
-                            "container merge requires dynamic arrays of one element type",
+                            "container merge requires containers of one kind and element type",
                         ));
                     }
-                }
-                if !matches!(dst.kind, IrContainerKind::Dynamic) || dst.element.is_packed() {
-                    return Err(IrValidationError::new(
-                        "container",
-                        "container merge requires a descriptor-backed dynamic array",
-                    ));
                 }
                 Ok(())
             }

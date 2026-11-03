@@ -1053,9 +1053,7 @@ impl<'a> Codegen<'a> {
         let compare = |op: IrBinOp, left: IrExpr, right: IrExpr| {
             if op == IrBinOp::CaseEq || op == IrBinOp::CaseNeq {
                 if left.is_real() || right.is_real() {
-                    return Err(format!(
-                        "case equality on real aggregate member in `{path}` is not supported"
-                    ));
+                    return real_leaf_case_cmp_ir(op, left, right, path);
                 }
                 Ok(cmp_expr_ir(op, left, right))
             } else {
@@ -1168,9 +1166,7 @@ impl<'a> Codegen<'a> {
         let compare = |op: IrBinOp, left: IrExpr, right: IrExpr| {
             if op == IrBinOp::CaseEq || op == IrBinOp::CaseNeq {
                 if left.is_real() || right.is_real() {
-                    return Err(format!(
-                        "case equality on real aggregate member in `{path}` is not supported"
-                    ));
+                    return real_leaf_case_cmp_ir(op, left, right, path);
                 }
                 Ok(cmp_expr_ir(op, left, right))
             } else {

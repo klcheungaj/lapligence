@@ -163,7 +163,7 @@ impl<'a> Codegen<'a> {
         let Some(source) = source else {
             // A stored packed or real fixed array is copied once into a
             // queue; the generated loop then reports declared indices.
-            let Some(copy) = self.fixed_method_copy(receiver)? else {
+            let Some(copy) = self.fixed_method_copy(path, receiver)? else {
                 return Ok(None);
             };
             let mut statements = copy.statements.clone();

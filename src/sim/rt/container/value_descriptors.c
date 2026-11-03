@@ -385,7 +385,14 @@ int llg_value_equality(const llg_value_t* a, const llg_value_t* b,
             return llg_packed_equality(a->value.packed, b->value.packed,
                                        case_equality);
         case LLG_VALUE_REAL:
-            /* Numeric comparison: 0.0 equals -0.0 and NaN equals nothing. */
+            /* `==` compares numerically: 0.0 equals -0.0 and NaN equals
+             * nothing. `===` compares bit for bit (SV 11.4.5), so a real
+             * leaf compares its IEEE 754 pattern (decision R05-D3). */
+            if (case_equality)
+                return memcmp(&a->value.real, &b->value.real,
+                              sizeof(a->value.real)) == 0
+                           ? LLG_VALUE_EQUAL
+                           : LLG_VALUE_UNEQUAL;
             return a->value.real == b->value.real ? LLG_VALUE_EQUAL
                                                   : LLG_VALUE_UNEQUAL;
         case LLG_VALUE_STRING:

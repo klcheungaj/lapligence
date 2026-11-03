@@ -33,8 +33,58 @@ impl Codegen<'_> {
                     })
             }
             NodeKind::Var { .. } if self.class_fields.contains_key(&node) => Some(node),
+            NodeKind::Expr(ExprKind::MemberSelect { base, member }) => {
+                self.computed_handle_property(*base, member)
+            }
             _ => None,
         }
+    }
+
+    /// The computed handle base of a property target (`get().v`,
+    /// `get().a[i]`) whose evaluation has effects, if any.
+    pub(in super::super) fn effectful_computed_receiver(&self, target: NodeId) -> Option<NodeId> {
+        let mut node = target;
+        while let NodeKind::Expr(
+            ExprKind::BitSelect { base, .. }
+            | ExprKind::PartSelect { base, .. }
+            | ExprKind::IndexedPartSelect { base, .. }
+            | ExprKind::ArraySelect { base, .. },
+        ) = self.kind(node)
+        {
+            node = *base;
+        }
+        match self.kind(node) {
+            NodeKind::Expr(ExprKind::MemberSelect { base, member })
+                if self.computed_handle_property(*base, member).is_some()
+                    && !self.side_effect_free(*base) =>
+            {
+                Some(*base)
+            }
+            _ => None,
+        }
+    }
+
+    /// The instance property `member` of the class a computed handle value
+    /// (`q.pop_front().v`, `get().v`) names, found in its static class or
+    /// the nearest base class that declares it (SV 8.4, 8.13).
+    fn computed_handle_property(&self, base: NodeId, member: &str) -> Option<NodeId> {
+        let descriptor = self.query_descriptor(base)?;
+        if descriptor.info.kind != "class" {
+            return None;
+        }
+        let mut class = self.db.class_for_type(descriptor.id);
+        while let Some(current) = class {
+            if let Some(field) = self.node(current).children.iter().copied().find(|child| {
+                self.class_fields.contains_key(child) && self.node(*child).name == member
+            }) {
+                return Some(field);
+            }
+            class = self
+                .db
+                .class_metadata(current)
+                .and_then(|metadata| metadata.base);
+        }
+        None
     }
 
     pub(in super::super) fn is_class_method_call(&self, node: NodeId) -> bool {
@@ -380,6 +430,21 @@ impl Codegen<'_> {
         node: NodeId,
         field: NodeId,
     ) -> Result<Option<IrChandleExpr>, String> {
+        // A property of a computed handle: the base is evaluated once per
+        // access, like any other receiver expression.
+        if let NodeKind::Expr(ExprKind::MemberSelect { base, .. }) = self.kind(node) {
+            let base = *base;
+            let handle = match self.computed_receivers.get(&base) {
+                Some(captured) => captured.clone(),
+                None => self.lower_chandle(path, base)?,
+            };
+            return Ok(Some(self.required_handle(
+                handle,
+                "property access",
+                path,
+                node,
+            )));
+        }
         if let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = self.kind(node) {
             // The property is the last path component naming it: a chain
             // such as `n.next.next` names the same declaration twice.

@@ -39,6 +39,19 @@ the legacy and compact (portable and GMP) value backends.
 - `neg_string_container_inside`, `neg_real_container_inside` (llg limitations, FIN-001 G3): a queue of strings or of reals as a set item is legal (§11.4.13 L15365-15366: "If an expression in the list is an unpacked array, its elements are traversed") but rejected with an explicit diagnostic ([known issue](../../../../../docs/known_issues.md#set-membership-items-outside-packed-storage)).
 - `large`: 100,000-element hashed unique and a captured-bound locator,
   30,000-string unique, sort and keyed rsort, and a 20,000-record keyed sort.
+- `fixed_rows` (FIN-001 G3): locator, min/max, unique and shuffle methods on
+  a selected row of a two- and three-dimensional fixed array (SV 7.12.1
+  L9265: "Array locator methods operate on any unpacked array, including
+  queues, but their return type is a queue."). `m[1]` is `{9, 7, 8}`: `find`
+  with `x > 7` gives two items summing to 17; `m[0]` is `{3, 1, 2}`:
+  `find_last_index` with `x < 3` is 2, `min() with (item * -1)` is 3. `d[0]`
+  (declared `[4:2]`) holds `11, 22, 11`: two unique values, the first `8'h11`
+  at index 4; `d[1]` holds `05, 06, 07`, so the indices above `8'h05` are 3
+  and 2 (sum 5). `c[1][0][k]` is `100 + k` (first above 100: 101) and the
+  real row's minimum is -2.00. Every row selector call (`pick`) runs once,
+  also for `shuffle`, which keeps the row's sum 24 and product 504. Some
+  simulators evaluate the selector of a shuffled row twice; llg captures
+  selected receiver coordinates once, as for `sort` and `reverse`.
 - `neg_*`: illegal forms rejected by the frontend: index locators and foreach
   over a wildcard index, reductions of real and string elements, `find`
   without `with`, `max` of records without a key, a string-key index result
