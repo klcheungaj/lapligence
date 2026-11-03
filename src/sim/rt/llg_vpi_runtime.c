@@ -509,7 +509,10 @@ static rts_frame_t* rts_frame_find(int slot, uint64_t identity, uint64_t serial,
 
 static uint32_t rts_frame_row(rts_frame_t* frame) {
     if (frame->row == RTS_ROW_UNRESOLVED) {
-        uint32_t row = g_vpi.indexed ? find_row(frame->name) : LLG_VPI_NONE;
+        /* Resolved once the catalog is indexed (a registration alone does
+         * not index it). */
+        if (!g_vpi.indexed) return LLG_VPI_NONE;
+        uint32_t row = find_row(frame->name);
         const llg_vpi_model_object_t* object = row_object(row);
         frame->row = object && (object->type == vpiTask || object->type == vpiFunction)
                          ? row

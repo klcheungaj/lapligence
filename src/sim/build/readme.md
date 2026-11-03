@@ -39,6 +39,9 @@ where, plus the rules the code comments do not state.
   precedence as `--cflags`.
 - The job count is not part of the runtime cache key.
 - Re-measure before changing the host-stack estimate or the `/STACK` reserve.
+- A model whose header defines `LLG_VPI_CATALOG` links `-no-pie` on Linux
+  with GCC or Clang (`VPI_CATALOG_LINK` in `build.rs`): its catalog pointers
+  need no load-time relocation. Every other project is unchanged.
 - The `llg` driver resolves the launcher in `settings::layered` before it
   fills the option.
 - Keep the `sim.def` routine lists in step with the runtime (unit-tested).

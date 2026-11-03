@@ -1289,6 +1289,12 @@ fn render_model(
     if model.waveform {
         out.push_str("#define LLG_WAVEFORM 1\n");
     }
+    // The model build reads this header line: a catalog holds hundreds of
+    // thousands of pointers, which a position-independent executable
+    // relocates at every start (`sim::build`).
+    if model.vpi_catalog {
+        out.push_str("#define LLG_VPI_CATALOG 1\n");
+    }
     out.push_str("#include \"llg_rt.h\"\n");
     out.push_str("#if LLG_MODEL_PROCESS_ABI != LLG_PROCESS_ABI_VERSION\n#error \"generated model process ABI does not match llg_rt.h\"\n#endif\n");
     out.push_str("_Static_assert(LLG_MODEL_VALUE_BACKEND == LLG_SV4_USE_GMP, \"regenerate model: incompatible value backend\");\n_Static_assert(LLG_MODEL_COMPACT_KERNELS == LLG_SV4_GMP_KERNELS, \"regenerate model: incompatible compact kernels\");\n");
