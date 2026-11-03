@@ -339,11 +339,10 @@ impl Codegen<'_> {
                     );
                     if case {
                         if left.is_real() || right.is_real() {
-                            return Err(format!(
-                                "case equality on real aggregate member in `{path}` is not supported"
-                            ));
+                            real_leaf_case_cmp_ir(IrBinOp::CaseEq, left, right, path)?
+                        } else {
+                            cmp_expr_ir(IrBinOp::CaseEq, left, right)
                         }
-                        cmp_expr_ir(IrBinOp::CaseEq, left, right)
                     } else {
                         common_cmp_expr_ir(IrBinOp::Eq, left, right, path)?
                     }

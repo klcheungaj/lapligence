@@ -40,5 +40,19 @@ complement, -3, all X, and the pattern with Z in bit 0.
   mutations inside automatic and static functions. Continuous-assignment and
   port expressions call functions that mutate locals and module counters;
   each operand change evaluates them once. Its `.out` file is hand-derived.
+- `computed_handle_properties.sv` (FIN-001 G3) reads, writes and mutates
+  properties of a computed class handle: a function result (`get().v++`,
+  `get().v += 5`, `++get().v`, `get().v--`, `get().r += 1.5`, a derived
+  class's own and inherited properties through `getd()`), its string and
+  handle properties (`get().s`, `get().nxt.v`), a packed select read
+  (`get().b[3:0]` of 8'h5a is 10) and `pop_front()`/`pop_back()` results
+  (`q.pop_front().v`, SV 7.10.2). Every operation calls the function once,
+  so the counter `n` advances by one per property operation: 7 after the
+  seven mutations, 9 after `x = get().v` and `y = get().v++` (`y` is the old
+  value 6), 14 after the five calls of line `c`. The pops return `k` (40),
+  then `h` (`"hi!"`), leaving one element; `q[1].v *= 2` doubles `h.v` (42)
+  to 84. SV 11.4.1 L14478-14480: "An assignment operator is semantically
+  equivalent to a blocking assignment, with the exception that any
+  left-hand index expression is only evaluated once."
 - Negatives: `++` in a continuous assignment, an operator assignment as a port
   expression, incrementing a call result, and `+=` under the 2001 edition.

@@ -1286,6 +1286,133 @@ path.
 
 `tests/fixtures/sim/feature_completion/sim_004/neg_delayed_string_continuous.sv`.
 
+## `$cast` into strings and resizable-container elements
+
+**Status:** open (FIN-001 G3, F07-08). Legal (SV 6.24.2 admits any singular
+destination); other simulators run both forms.
+
+### Symptom
+
+`$cast(q[i], v)` whose destination is an element of a queue, dynamic array or
+associative array stops compilation ("cannot resolve array base of select"),
+and `$cast(s, v)` with a string destination is rejected as an unsupported
+destination type. Packed, real and enum variables, members and fixed-array
+elements, `ref` formals bound to them and class handles are served.
+
+### Cause
+
+`IrDynamicCast` writes through an `IrLhs`, which has no form for a
+resizable-container element or a string object; those writes go through the
+container and string statement families, and `$cast` is an expression.
+
+### Intended direction
+
+Lower the cast into a temporary of the destination type and store the
+temporary through the ordinary container or string assignment only when the
+cast succeeds, keeping the destination selectors evaluated once.
+
+### Reproduce
+
+```systemverilog
+module tb;
+  typedef enum { A = 1, B = 2 } e_t;
+  e_t q[$];
+  string s;
+  int ok;
+  initial begin
+    q.push_back(A);
+    ok = $cast(q[0], 2);   // expected 1, q[0] == B
+    ok = $cast(s, "abc");  // expected 1, s == "abc"
+    $finish;
+  end
+endmodule
+```
+
+## Selects of properties of computed class handles
+
+**Status:** open (FIN-001 G3, F07-09 and F07-14). Whole properties of a
+computed handle (`get().v`, `q.pop_front().s`, `get().nxt.v`) read, write
+and mutate with the handle evaluated once per operation, and a packed select
+of one reads (`get().b[3:0]`).
+
+### Symptom
+
+A packed select of such a property as a write target (`get().b[2] = 1'b1;`,
+`get().b[1:0] += 1;`) and any element of an unpacked array property
+(`get().a[1]`, `q.pop_front().a[0]`, read or written) stop compilation with
+"cannot resolve array base of select".
+
+### Cause
+
+Selects on class properties are resolved from declaration paths
+(`h.b[2]`, `h.a[1]`); the `MemberSelect` node of a computed base reaches only
+the whole-property access.
+
+### Intended direction
+
+Resolve the select's base through the same computed-handle property access
+(`computed_handle_property`) and build the packed or fixed-array element
+access on it, capturing the handle once for read-modify-write forms.
+
+### Reproduce
+
+```systemverilog
+module tb;
+  class C;
+    bit [7:0] b;
+    int a[3];
+  endclass
+  C h = new;
+  function automatic C get();
+    return h;
+  endfunction
+  initial begin
+    get().b[2] = 1'b1;  // expected h.b == 8'b00000100
+    get().a[1] = 5;     // expected h.a[1] == 5
+    $finish;
+  end
+endmodule
+```
+
+## Record results with real members as equality operands
+
+**Status:** open (FIN-001 G3, F07-03). Records with real members compare with
+`==`, `!=`, `===` and `!==` from variables, members and subroutine formals
+(decision R05-D3 for `===`).
+
+### Symptom
+
+A function result of a record type with a real member used directly as an
+equality operand (`mk(2.5) == a`, `mk(2.5) === a`) stops compilation with
+"real aggregate bit-stream source is not supported".
+
+### Cause
+
+Record-valued call operands of equality are flattened into one packed value,
+which has no representation for a real leaf.
+
+### Intended direction
+
+Compare a record call result through a record temporary, member by member,
+as variable operands are compared.
+
+### Reproduce
+
+```systemverilog
+module tb;
+  typedef struct { int i; real r; } rec_t;
+  rec_t a = '{1, 2.5};
+  function automatic rec_t mk(real r);
+    mk.i = 1;
+    mk.r = r;
+  endfunction
+  initial begin
+    $display("%0d %0d", mk(2.5) == a, mk(2.5) === a);  // expected 1 1
+    $finish;
+  end
+endmodule
+```
+
 ## `%l` in runtime-built format strings
 
 Lowering replaces `%l`/`%L` with the scope's static `library.cell` binding in

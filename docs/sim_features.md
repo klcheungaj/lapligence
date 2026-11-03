@@ -1078,8 +1078,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   two-state casts. Whole dynamic arrays, queues and fixed arrays of strings,
   handles and native records compare element by element at run time (sizes
   must match; strings by contents, handles by identity), and whole record
-  elements of containers compare member-wise (SIM-007). `===` on records with
-  real members and real-member formal/return operands remain partial. V §4.1.8; SV §§7.4.6, 11.4.5 **[1995]**.
+  elements of containers compare member-wise (SIM-007). `===` on records and
+  arrays with real members, including formals, compares each real leaf bit for
+  bit (decision R05-D3); a record call result with a real member as an
+  equality operand rejects
+  ([known issue](known_issues.md#record-results-with-real-members-as-equality-operands)).
+  V §4.1.8; SV §§7.4.6, 11.4.5 **[1995]**.
 - 🟨 **Conditional values** — Known truth selects one arm, including a vector
   predicate with a dominant known 1. Ambiguous truth evaluates both reached arms
   once. Packed values follow the selected published-table policy: equal 0, 1 or X
@@ -1140,8 +1144,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   failure, not after a class one), and a null class source casts to null
   (S11-D1, S11-D2). Non-singular destinations reject. Fixed bit-stream casts are
   described below; descriptor-backed arrays reshape and clear X/Z for two-state
-  targets before comparison or storage. Real-source enum `$cast` and unsupported
-  aggregate/net/reference targets remain restricted.
+  targets before comparison or storage. A real or shortreal source of an enum
+  `$cast` converts as to `int` before the membership check (decision S11-D3).
+  Unpacked aggregate destinations are not singular and nets are not variables
+  (SV 6.24.2); string and resizable-container-element destinations reject
+  ([known issue](known_issues.md#cast-into-strings-and-resizable-container-elements)).
   SV §6.24 **[SV-2005]**.
 - 🟨 **Mutating operators** — Prefix/postfix `++/--` and `+= -= *= /= %= &= |= ^=`
   plus shift assignments capture an admitted whole/member/selected/fixed-array
@@ -1151,9 +1158,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   procedural code, automatic and static functions, and functions called from
   continuous assignments and port expressions; widths, signs, X and overflow
   follow the operator at the target's width. Packed state conversion and real
-  targets are represented; non-lvalues, continuous/port mutation expressions
-  and unsupported aggregates/objects (including call-valued class receivers)
-  reject. SV §§11.4.1–11.4.2 **[SV-2005]**.
+  targets are represented. Whole properties of a call-valued class handle
+  (`get().v++`, `get().r += 1.5`, `y = get().v++`) mutate with the handle
+  evaluated once
+  ([rtl_006](../tests/fixtures/sim/feature_completion/rtl_006/readme.md));
+  selects of such a property as targets reject
+  ([known issue](known_issues.md#selects-of-properties-of-computed-class-handles)).
+  Non-lvalues, continuous/port mutation expressions and unsupported
+  aggregates reject. SV §§11.4.1–11.4.2 **[SV-2005]**.
 - 🟦 **Wildcard equality** — `==?`/`!=?` treat RHS X/Z as wildcards. Remaining
   LHS unknowns yield X unless a known mismatch decides the result; common-width
   and signed extension apply. SV §11.4.6 **[SV-2005]**.
@@ -1207,7 +1219,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   order. Fixed arrays of string, record or handle elements are containers and
   use the resizable-container methods
   ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
-  Multi-dimensional receivers and selected rows reject these methods. Stored real/shortreal arrays and rows
+  Selected last-dimension rows of multidimensional packed and real arrays
+  (`m[i].find(...)`, `c[i][j].min()`, `m[f()].shuffle()`) copy the row the
+  same way, with row selectors evaluated once
+  ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
+  Whole multidimensional receivers reject these methods (other simulators
+  reject them too). Stored real/shortreal arrays and rows
   `sort`/`rsort`/`reverse` in place by one numeric runtime reorder (stable;
   NaN keys keep their positions); a real `with` key rejects (SIM-005).
   SV §7.12.2 **[SV-2009]**.
@@ -1225,9 +1242,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   its keys in one pass and keyed sorts are O(n log n). Real keys compare
   numerically, strings lexically and handles by identity
   ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
-  Generated loops over wildcard-index arrays, methods on nested container
-  elements and member selection of a popped class handle (`q.pop_front().v`)
-  reject. `shuffle` draws from the calling thread's random stream
+  A popped class handle selects its properties (`q.pop_front().v`,
+  [rtl_006](../tests/fixtures/sim/feature_completion/rtl_006/readme.md)).
+  Generated loops over wildcard-index arrays and methods on nested container
+  elements reject. `shuffle` draws from the calling thread's random stream
   ([sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md)).
   SV §7.12 **[SV-2005]**.
 - 🟨 **Bit-stream casts and streaming** — Fixed arrays/nested records, selected

@@ -332,6 +332,14 @@ fn mutations_evaluate_receivers_indices_and_calls_once() {
 }
 
 #[test]
+fn computed_handle_properties_evaluate_the_handle_once() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/rtl_006/computed_handle_properties.out");
+    sim_cli::run_case_backend_parity(SUITE, "computed_handle_properties", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "computed_handle_properties", expected);
+}
+
+#[test]
 fn neg_continuous_increment() {
     sim_cli::reject_case(
         SUITE,

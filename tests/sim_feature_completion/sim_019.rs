@@ -13,6 +13,13 @@ fn locators_over_native_elements_and_sizes() {
 }
 
 #[test]
+fn methods_on_selected_fixed_rows() {
+    let expected = include_str!("../fixtures/sim/feature_completion/sim_019/fixed_rows.out");
+    sim_cli::run_case_backend_parity(SUITE, "fixed_rows", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "fixed_rows", expected);
+}
+
+#[test]
 fn index_results_keep_key_types_and_declared_indices() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_019/index_keys.out");
     sim_cli::run_case(SUITE, "index_keys", expected, "", &[]);

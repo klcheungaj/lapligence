@@ -44,7 +44,7 @@ impl<'a> Codegen<'a> {
         if name == "shuffle" && !self.db.method_call_has_with_clause(node) {
             // Shuffle a stored packed or real fixed array through a queue copy
             // and store the permutation back in declared order.
-            if let Some(copy) = self.fixed_method_copy(receiver)? {
+            if let Some(copy) = self.fixed_method_copy(path, receiver)? {
                 if !self
                     .container_method_arguments(path, node, receiver)?
                     .is_empty()

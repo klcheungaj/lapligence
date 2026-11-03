@@ -357,7 +357,7 @@ impl<'a> Codegen<'a> {
                 return Err(format!("$cast source must be a singular value in `{path}`"));
             }
         }
-        let rhs = self.lower_expr(path, *source)?;
+        let mut rhs = self.lower_expr(path, *source)?;
 
         let mut valid_values = Vec::new();
         let target_is_enum = target_descriptor
@@ -365,7 +365,10 @@ impl<'a> Codegen<'a> {
             .is_some_and(|descriptor| descriptor.info.kind == "enum");
         if target_is_enum {
             if rhs.is_real() {
-                return Err(format!("$cast enum source must be integral in `{path}`"));
+                // A real source converts as to `int` (SV 6.12.2: rounded,
+                // ties away from zero, low 32 bits kept) and that complete
+                // value is checked for membership (decision S11-D3).
+                rhs = ir_to_vector(rhs, 32, true)?;
             }
             let target_id = target_descriptor.as_ref().map(|descriptor| descriptor.id);
             let enum_nodes = self
