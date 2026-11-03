@@ -1921,36 +1921,36 @@ other items need small hand-written cases.
 ## Port connections kept as continuous assignments
 
 **Status:** open; whole variable and `wire` ports share their source's
-storage (decisions A21-D1..A21-D3 in [LRM decisions](lrm_decisions.md)).
+storage, and whole net ports whose sink has drivers or a net type of its own
+merge with their source into one resolved net (decisions A21-D1..A21-D4 in
+[LRM decisions](lrm_decisions.md)).
 
 ### Symptom
 
-- A port whose sink 23.3.3.7 allows to merge with its source still runs one
-  copy process when the sink has drivers of its own (a coerced input net that
-  the child drives, an output actual with a second driver), an internal net
-  type other than `wire`/`tri`/`logic`, a net delay, a type conversion, or is
-  a variable sink of a net source. Every change of the source then wakes the
-  copy before any reader of the sink.
+- A net port whose sink has drivers of its own (a coerced input net) still
+  runs one copy process when its actual is a selection, a net-array element
+  or a concatenation, when either side has a net delay, or when a side is a
+  `uwire` net; a variable sink of a net source keeps its copy too. Every
+  change of the source then wakes the copy before any reader of the sink.
 - The copy resolves each side separately, which differs from a simulated
   net. `tests/fixtures/sim/port_collapse/fallbacks.sv` prints
-  `coerced: c=1 u0.n=x`, `second driver: m=x u1.o=1` and `types: z=z
-  u2.t=0`; a simulator that merges these nets prints `c=x`, `u1.o=x` and
-  `z=0` (the `tri0` formal dominates its `wire` actual, Table 23-1).
+  `selected actual: v=1111 u5.n=x` for a child driving the input net that
+  `v[1]` connects; a simulator that merges the selected bit prints `v=11x1`.
 
 ### Cause
 
-Net sink collapse (`lowering/collection/nets/port_sinks.rs`) only gives a
-sink a second name for its source: it applies when the merged net is exactly
-the source. Merging drivers of both sides or a dominating internal type needs
-one net group spanning both nets with the type of Table 23-1, which
-`build_net_groups` builds only for `inout` ports.
+`lowering/collection/nets/port_merges.rs` merges only whole connections of
+two nets into the inout union; a selected actual would join the bit-level
+union, which the merge does not use yet. Net delays and `uwire` nets are left
+out because a merge would change which delay applies or turn a second driver
+into an error, which no reference behaviour confirms yet.
 
 ### Intended direction
 
-Group coerced ports and ports with a dominating internal type like `inout`
-connections (one resolved net with both sides' drivers and the dominating
-type), keeping copies only where a merge would drop a net delay or a
-conversion, or where VPI, SDF or specify paths need each side's own net.
+Route coerced ports with selected or net-array element actuals through the
+bit-level inout union, and decide the delay of a merged net with a delayed
+side from Table 23-1's dominating declaration, keeping copies only for
+conversions and where SDF or specify paths need each side's own net.
 
 ### Reproduce
 
