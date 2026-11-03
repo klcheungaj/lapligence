@@ -12,9 +12,22 @@
  * value, a handle or an iterator (38.6: vpiUndefined on error). The Rust
  * test compares the "+" lines with src/sim/rt/vpi_catalog.txt; the probe
  * tables must list every name the catalog and the runtime dispatch name,
- * which tests/runtime_vpi_catalog.rs checks. */
+ * which tests/runtime_vpi_catalog.rs checks.
+ *
+ * Every iteration is also run twice: the second run must return as many
+ * objects, each comparing equal to the object at the same position of the
+ * first (38.40: vpi_scan returns NULL once every object was returned; 38.3
+ * compare identity), except ranges and constants, which are made per
+ * request. For each object an iteration returns, the one-to-one
+ * relations of REVERSE that answer with an object of the iterated
+ * object's own type must answer with an object that compares equal to it
+ * ("~ <type> <relation> <reverse>" once per such pair; "bad reverse"
+ * otherwise). An object with a source line must name a readable file
+ * holding that line (37.3.3); "noline <type>" names a type that answered
+ * vpiLineNo with an error. A failed check prints a "bad" line. */
 #include "sv_vpi_user.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define PER_TYPE 1000
@@ -334,10 +347,21 @@ static const probe_t relation_probes[] = {
 
 #define COUNT(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
+/* The one-to-one relations that lead from an object back to an object
+ * that holds it. */
+static const probe_t reverse_probes[] = {
+    {"vpiParent", vpiParent},       {"vpiScope", vpiScope},
+    {"vpiModule", vpiModule},       {"vpiPrimitive", vpiPrimitive},
+    {"vpiModPath", vpiModPath},     {"vpiTchk", vpiTchk},
+    {"vpiClassDefn", vpiClassDefn}, {"vpiInstance", vpiInstance},
+};
+
 static vpiHandle queue[QUEUE];
 static int queue_type[QUEUE];
 static int head, tail;
 static int admitted[TYPES];
+/* (type, relation probe, reverse probe) triples already reported. */
+static unsigned char reversed[TYPES][COUNT(relation_probes)][COUNT(reverse_probes)];
 
 static int type_of(vpiHandle h) {
     PLI_INT32 t = vpi_get(vpiType, h);
@@ -371,27 +395,126 @@ static void admit(vpiHandle h) {
 
 static void probe(vpiHandle h, int t);
 
-static void probe_iterate(vpiHandle h, int t, const probe_t* p) {
-    vpiHandle it = vpi_iterate(p->value, h), item;
+static void bad(const char* check, int t, const char* what, vpiHandle h) {
+    vpi_printf("bad %s %d %s %s\n", check, t, what, h ? label(h) : "NULL");
+}
+
+/* Each reverse relation of `item` (returned by iterating relation probe
+ * `p` of `h`, type `t`) that leads to an object of type `t` must lead to
+ * `h`. */
+static void check_reverse(vpiHandle h, int t, int p, vpiHandle item) {
+    for (int r = 0; r < COUNT(reverse_probes); ++r) {
+        vpiHandle back = vpi_handle(reverse_probes[r].value, item);
+        if (vpi_chk_error(NULL) || !back) continue;
+        if (type_of(back) == t) {
+            if (!vpi_compare_objects(back, h)) {
+                vpi_printf("bad reverse %d %s %s %s\n", t, relation_probes[p].name,
+                           reverse_probes[r].name, label(item));
+            } else if (!reversed[t][p][r]) {
+                reversed[t][p][r] = 1;
+                vpi_printf("~ %d %s %s\n", t, relation_probes[p].name, reverse_probes[r].name);
+            }
+        }
+        vpi_release_handle(back);
+    }
+}
+
+static void probe_iterate(vpiHandle h, int t, int p) {
+    const probe_t* probe_name = &relation_probes[p];
+    vpiHandle it = vpi_iterate(probe_name->value, h), item;
     if (vpi_chk_error(NULL)) {
         if (it) {
-            vpi_printf("! iterate %d %s iterator\n", t, p->name);
+            vpi_printf("! iterate %d %s iterator\n", t, probe_name->name);
             vpi_release_handle(it);
         }
         return;
     }
-    int count = 0;
+    int count = 0, capacity = 0;
+    vpiHandle* items = NULL;
     if (it) {
         if (admitted[vpiIterator] == 0) {
             ++admitted[vpiIterator];
             probe(it, vpiIterator);
         }
         while ((item = vpi_scan(it))) {
-            ++count;
-            admit(item);
+            if (count == capacity) {
+                capacity = capacity ? 2 * capacity : 16;
+                vpiHandle* grown = (vpiHandle*)realloc(items, (size_t)capacity * sizeof(*items));
+                if (!grown) {
+                    bad("memory", t, probe_name->name, h);
+                    vpi_release_handle(item);
+                    vpi_release_handle(it);
+                    for (int i = 0; i < count; ++i) vpi_release_handle(items[i]);
+                    free(items);
+                    return;
+                }
+                items = grown;
+            }
+            items[count++] = item;
         }
     }
-    vpi_printf("+ iterate %d %s %d\n", t, p->name, count);
+    /* The iterator was exhausted (and is no longer valid, 38.40): a
+     * second iteration returns the same objects in the same order. */
+    vpiHandle again = vpi_iterate(probe_name->value, h);
+    int seen = 0;
+    if (vpi_chk_error(NULL)) {
+        bad("repeat", t, probe_name->name, h);
+    } else if (again) {
+        while ((item = vpi_scan(again))) {
+            /* Ranges and index constants are made per request and compare
+             * equal only to their own handle (docs/known_issues.md). */
+            int made = vpi_get(vpiType, item);
+            if (seen >= count ||
+                (made != vpiRange && made != vpiConstant && !vpi_compare_objects(item, items[seen])))
+                bad("repeat", t, probe_name->name, item);
+            ++seen;
+            vpi_release_handle(item);
+        }
+    }
+    if (seen != count) bad("repeat-count", t, probe_name->name, h);
+    for (int i = 0; i < count; ++i) {
+        if (h) check_reverse(h, t, p, items[i]);
+        admit(items[i]);
+    }
+    free(items);
+    vpi_printf("+ iterate %d %s %d\n", t, probe_name->name, count);
+}
+
+/* 37.3.3: an object with a source line names the file that holds it. */
+static void check_source(vpiHandle h, int t) {
+    static char file_names[8][1024];
+    static int file_lines[8], files;
+    PLI_INT32 line = vpi_get(vpiLineNo, h);
+    if (vpi_chk_error(NULL)) {
+        vpi_printf("noline %d\n", t);
+        return;
+    }
+    if (line <= 0) return;
+    const char* file = vpi_get_str(vpiFile, h);
+    if (vpi_chk_error(NULL) || !file || !*file) {
+        bad("source", t, "vpiFile", h);
+        return;
+    }
+    int f = 0;
+    while (f < files && strcmp(file_names[f], file) != 0) ++f;
+    if (f == files) {
+        FILE* in = fopen(file, "r");
+        if (!in || files == 8 || strlen(file) >= sizeof file_names[0]) {
+            if (in) fclose(in);
+            bad("source", t, file, h);
+            return;
+        }
+        int c, lines = 0, last = '\n';
+        while ((c = fgetc(in)) != EOF) {
+            if (c == '\n') ++lines;
+            last = c;
+        }
+        if (last != '\n') ++lines;
+        fclose(in);
+        strcpy(file_names[files], file);
+        file_lines[files++] = lines;
+    }
+    if (line > file_lines[f]) bad("source", t, "vpiLineNo", h);
 }
 
 static void probe(vpiHandle h, int t) {
@@ -426,7 +549,8 @@ static void probe(vpiHandle h, int t) {
         vpi_printf("+ handle %d %s %d\n", t, relation_probes[i].name, r ? type_of(r) : 0);
         if (r) admit(r);
     }
-    for (int i = 0; i < COUNT(relation_probes); ++i) probe_iterate(h, t, &relation_probes[i]);
+    for (int i = 0; i < COUNT(relation_probes); ++i) probe_iterate(h, t, i);
+    if (h) check_source(h, t);
     if (h) {
         s_vpi_value value;
         value.format = vpiObjTypeVal;
@@ -445,8 +569,39 @@ static void admit_intermodule_path(void) {
     if (path) admit(path);
 }
 
+/* The callback the walk registers so that vpiCallback (37.75) has an
+ * object; the run ends before it would matter what it does. */
+static PLI_INT32 at_end(p_cb_data data) {
+    (void)data;
+    return 0;
+}
+
+/* A callback (37.75, through the vpiCallback iteration of NULL) and a
+ * scheduled event (38.34: vpiReturnEvent): tb.tv gets its own value
+ * again one time unit later. */
+static void admit_runtime_objects(void) {
+    s_cb_data cb;
+    memset(&cb, 0, sizeof cb);
+    cb.reason = cbEndOfSimulation;
+    cb.cb_rtn = at_end;
+    vpiHandle callback = vpi_register_cb(&cb);
+    if (callback) vpi_release_handle(callback);
+    vpiHandle tv = vpi_handle_by_name((PLI_BYTE8*)"tb.tv", NULL);
+    s_vpi_value value;
+    value.format = vpiIntVal;
+    vpi_get_value(tv, &value);
+    s_vpi_time delay;
+    memset(&delay, 0, sizeof delay);
+    delay.type = vpiSimTime;
+    delay.low = 1000;
+    vpiHandle event = vpi_put_value(tv, &value, &delay, vpiInertialDelay | vpiReturnEvent);
+    if (event) admit(event);
+    vpi_release_handle(tv);
+}
+
 static PLI_INT32 walk(PLI_BYTE8* data) {
     (void)data;
+    admit_runtime_objects();
     probe(NULL, 0);
     admit_intermodule_path();
     while (head < tail) {

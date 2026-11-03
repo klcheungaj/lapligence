@@ -1431,7 +1431,7 @@ fn render_vpi_typespecs(
         };
         let optional = |entry: Option<usize>| entry.map_or(0, |entry| entry + 1);
         rows.push(format!(
-            "    {{ {}, {}, {}u, {}u, {}u, {}u, {flags}, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u }},\n",
+            "    {{ {}, {}, {}u, {}u, {}u, {}u, {flags}, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}u, {}, {}u }},\n",
             typespec.kind.c_type(),
             typespec
                 .name
@@ -1450,6 +1450,10 @@ fn render_vpi_typespecs(
             tree.0,
             tree.1,
             typespec.line,
+            typespec
+                .file
+                .as_deref()
+                .map_or_else(|| "NULL".to_owned(), c_string_literal),
             optional(typespec.index),
         ));
     }
@@ -1880,7 +1884,7 @@ mod tests {
         typespecs[0].name = Some("nib_t".to_owned());
         let mut out = String::new();
         render_vpi_typespecs(&typespecs, &[], &[], &mut out);
-        assert!(out.contains("{ vpiLogicTypespec, \"nib_t\", 0u, 3u, 0u, 4u, 0u, 0u, 1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u },"), "{out}");
+        assert!(out.contains("{ vpiLogicTypespec, \"nib_t\", 0u, 3u, 0u, 4u, 0u, 0u, 1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, NULL, 0u },"), "{out}");
         assert!(out.contains("#define llg_vpi_ts_consts NULL"), "{out}");
         assert!(out.contains("llg_vpi_ts_nodes, 6u"), "{out}");
     }
@@ -1910,8 +1914,8 @@ mod tests {
         ];
         let mut out = String::new();
         render_vpi_typespecs(&typespecs, &[], &[], &mut out);
-        assert!(out.contains("{ vpiArrayTypespec, NULL, 0u, 1u, 0u, 0u, LLG_VPI_TS_ASSOC, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 1u },"), "{out}");
-        assert!(out.contains("{ vpiArrayTypespec, NULL, 0u, 1u, 0u, 0u, LLG_VPI_TS_QUEUE, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u },"), "{out}");
+        assert!(out.contains("{ vpiArrayTypespec, NULL, 0u, 1u, 0u, 0u, LLG_VPI_TS_ASSOC, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, NULL, 1u },"), "{out}");
+        assert!(out.contains("{ vpiArrayTypespec, NULL, 0u, 1u, 0u, 0u, LLG_VPI_TS_QUEUE, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, NULL, 0u },"), "{out}");
     }
 
     /// `assign y = a + 2` with `a` a catalog variable: children follow

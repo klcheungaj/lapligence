@@ -753,6 +753,8 @@ pub struct IrVpiTypespec {
     /// `vpiLineNo`: the line of the typedef declaration that names this
     /// type; 0 for a type without one.
     pub(in crate::sim) line: u32,
+    /// `vpiFile`: the file of that typedef declaration.
+    pub(in crate::sim) file: Option<String>,
     /// The kind of an array typespec whose leftmost dimension is not fixed;
     /// `None` for a fixed one. Such a dimension has no range.
     pub(in crate::sim) container: Option<IrVpiContainer>,

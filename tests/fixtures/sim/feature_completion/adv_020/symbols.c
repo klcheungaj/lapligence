@@ -1,6 +1,7 @@
 /* ADV-020 A01: every Annex K/M VPI routine resolves, and the unprovided ones
  * report an error instead of a guessed success. Companion of symbols.sv. */
 #include "sv_vpi_user.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -67,6 +68,15 @@ static void report(const char* label, const char* result) {
     if (level && info.message) vpi_printf("  %s\n", (const char*)info.message);
 }
 
+/* vpi_vprintf with varargs already started (38.41). */
+static PLI_INT32 print_started(const char* format, ...) {
+    va_list ap;
+    va_start(ap, format);
+    PLI_INT32 written = vpi_vprintf((PLI_BYTE8*)format, ap);
+    va_end(ap);
+    return written;
+}
+
 static PLI_INT32 assertion_cb(PLI_INT32 reason, p_vpi_time cb_time, vpiHandle assertion,
                               p_vpi_attempt_info info, PLI_BYTE8* user_data) {
     (void)reason;
@@ -89,6 +99,10 @@ static PLI_INT32 symbols(PLI_BYTE8* data) {
             vpi_printf("unresolved: %s\n", routines[i].name);
     }
     vpi_printf("routines: %d of %d resolved\n", (int)resolved, (int)count);
+
+    PLI_INT32 written = print_started("vprintf %d %s\n", 42, "ok");
+    report("vpi_vprintf", written == 14 ? "14" : "other");
+    report("vpi_flush", vpi_flush() == 0 ? "0" : "nonzero");
 
     vpiHandle top = vpi_handle_by_name((PLI_BYTE8*)"tb", NULL);
     report("lookup tb", top ? "handle" : "NULL");
