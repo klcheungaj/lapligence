@@ -49,7 +49,7 @@ impl<'a> Codegen<'a> {
                     "compound nonblocking assignment in `{path}` is illegal"
                 ));
             }
-            if let Some(statement) = self.lower_fixed_view_nba(path, lhs, rhs)? {
+            if let Some(statement) = self.lower_fixed_view_nba(path, lhs, rhs, None)? {
                 return Ok(Some(statement));
             }
         }
@@ -164,15 +164,7 @@ impl<'a> Codegen<'a> {
                 return Ok(Some(IrStmt::Container(Box::new(operation))));
             }
         }
-        let selected = match self.kind(lhs) {
-            NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
-                .container_of_select(lhs, *base)
-                .map(|container| (container, *index)),
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => self
-                .container_of_select(lhs, *base)
-                .map(|container| (container, indices[0])),
-            _ => None,
-        };
+        let selected = self.element_select(lhs);
         if let Some((container, index)) = selected {
             if !blocking {
                 return Err(format!(
@@ -301,27 +293,36 @@ impl<'a> Codegen<'a> {
                     "nonblocking or compound assignment to a fixed-array slice of native elements in `{path}` is not supported"
                 ));
             }
-            // The source is the whole right-hand array, or a slice of one.
+            // The source is the whole right-hand array, or a slice of one;
+            // any other source (a pattern, call or conditional) is built in
+            // a temporary of the selection's own shape first.
+            let mut statements = Vec::new();
             let (src, src_start) = match self.fixed_view_slice(path, rhs)? {
                 Some((src, start, _)) => (src, start),
-                None => {
-                    let src = self.container_of(self.p30_unwrap_cast(rhs)).ok_or_else(|| {
-                        format!(
-                            "fixed-array slice assignment in `{path}` needs an array variable or slice source"
-                        )
-                    })?;
-                    (src.ir, pattern_key_expr(0, 64, true, false))
-                }
-            };
-            return Ok(Some(IrStmt::Container(Box::new(
-                IrContainerStmt::CopyRange {
-                    dst,
-                    dst_start,
-                    src,
-                    src_start,
-                    count,
+                None => match self.container_of(self.p30_unwrap_cast(rhs)) {
+                    Some(src) => (src.ir, pattern_key_expr(0, 64, true, false)),
+                    None => {
+                        let temporary = self.selection_temporary(dst, lhs, count);
+                        statements.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
+                            temporary,
+                        ))));
+                        statements.push(self.lower_container_into(path, lhs, temporary, rhs)?);
+                        (temporary, pattern_key_expr(0, 64, true, false))
+                    }
                 },
-            ))));
+            };
+            statements.push(IrStmt::Container(Box::new(IrContainerStmt::CopyRange {
+                dst,
+                dst_start,
+                src,
+                src_start,
+                count,
+            })));
+            return Ok(Some(if statements.len() == 1 {
+                statements.remove(0)
+            } else {
+                IrStmt::Block(statements)
+            }));
         }
         let Some(dst) = self.container_of(lhs) else {
             return Ok(None);
@@ -687,6 +688,44 @@ impl<'a> Codegen<'a> {
     /// Replace container `dst` with a slice of a fixed-array view. A
     /// dynamic-array destination takes the slice size first; the runtime
     /// snapshots the source before writing.
+    /// An activation container shaped like the selection `node` of view
+    /// `view` (`count` cells): the view's own shape when `node` is the whole
+    /// view, its declared row dimensions when `node` is a row of a
+    /// multidimensional view, else one dimension from 0.
+    pub(super) fn selection_temporary(&mut self, view: usize, node: NodeId, count: u64) -> usize {
+        let temporary = self.container_temporary_like(view);
+        if self
+            .container_of(self.p30_unwrap_cast(node))
+            .is_some_and(|whole| whole.ir == view)
+        {
+            return temporary;
+        }
+        self.model.containers[temporary].initial_size = Some(count);
+        self.fixed_view_ranges.remove(&temporary);
+        self.fixed_view_dims.remove(&temporary);
+        let rows = match self.kind(self.p30_unwrap_cast(node)) {
+            NodeKind::Expr(ExprKind::ArraySelect { indices, .. }) => self
+                .fixed_view_dims
+                .get(&view)
+                .filter(|dimensions| indices.len() < dimensions.len())
+                .map(|dimensions| dimensions[indices.len()..].to_vec()),
+            _ => None,
+        };
+        match rows {
+            Some(rows) if rows.len() > 1 => {
+                self.fixed_view_dims.insert(temporary, rows);
+            }
+            Some(rows) => {
+                self.fixed_view_ranges.insert(temporary, rows[0]);
+            }
+            None => {
+                let last = i32::try_from(count.saturating_sub(1)).unwrap_or(i32::MAX);
+                self.fixed_view_ranges.insert(temporary, (0, last));
+            }
+        }
+        temporary
+    }
+
     fn lower_slice_into(
         &mut self,
         path: &str,
@@ -742,16 +781,10 @@ impl<'a> Codegen<'a> {
         lhs: NodeId,
         update: &mut dyn FnMut(&str, IrExpr) -> Result<IrExpr, String>,
     ) -> Result<IrStmt, String> {
-        let (container, index) = match self.kind(lhs) {
-            NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
-                .container_of_select(lhs, *base)
-                .map(|container| (container.ir, *index)),
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => self
-                .container_of_select(lhs, *base)
-                .map(|container| (container.ir, indices[0])),
-            _ => None,
-        }
-        .ok_or_else(|| {
+        let (container, index) = self
+            .element_select(lhs)
+            .map(|(container, index)| (container.ir, index))
+            .ok_or_else(|| {
             format!("read-modify-write of a nested resizable container element in `{path}` is not supported")
         })?;
         if !self.side_effect_free(index) {
@@ -830,15 +863,7 @@ impl<'a> Codegen<'a> {
     /// Whether `node` selects one element of a resizable container with a
     /// single index.
     pub(in super::super) fn is_container_element(&self, node: NodeId) -> bool {
-        match self.kind(node) {
-            NodeKind::Expr(ExprKind::BitSelect { base, .. }) => {
-                self.container_of_select(node, *base).is_some()
-            }
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
-                self.container_of_select(node, *base).is_some()
-            }
-            _ => false,
-        }
+        self.element_select(node).is_some()
     }
 
     /// Whether evaluating `node` twice is indistinguishable from evaluating

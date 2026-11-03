@@ -484,13 +484,6 @@ impl<'a> Codegen<'a> {
                     descriptor.name
                 ))
             }
-            TypeShape::FixedArray {
-                dimensions,
-                element,
-            } if dimensions.len() > 1 && Self::is_fixed_handle_element(element) => Some(format!(
-                "multidimensional fixed array of `{}` elements is not supported",
-                element.name
-            )),
             TypeShape::Aggregate(layout) if layout.members.iter().any(|member| {
                 has_resizable_member(&member.descriptor)
             }) =>
@@ -1140,16 +1133,7 @@ impl<'a> Codegen<'a> {
         })?;
         let element = match &descriptor.shape {
             TypeShape::Container { element, .. } => lower_container_element(element)?,
-            TypeShape::FixedArray {
-                dimensions,
-                element,
-            } if Self::is_fixed_handle_element(element) => {
-                if dimensions.len() != 1 {
-                    return Err(format!(
-                        "multidimensional fixed array `{name}` of {} elements in `{path}` is not supported",
-                        element.name
-                    ));
-                }
+            TypeShape::FixedArray { element, .. } if Self::is_fixed_handle_element(element) => {
                 lower_container_element(element)?
             }
             _ => {
@@ -1187,8 +1171,20 @@ impl<'a> Codegen<'a> {
             .flatten();
         let ir = self.model.containers.len();
         if matches!(meta.kind(), ArrayKind::Static) {
-            if let [Some(range)] = meta.dimensions() {
-                self.fixed_view_ranges.insert(ir, *range);
+            match meta.dimensions() {
+                [Some(range)] => {
+                    self.fixed_view_ranges.insert(ir, *range);
+                }
+                // A multidimensional view keeps its cells in declaration
+                // (row-major) order; an element select addresses one cell
+                // and a row select a contiguous run of cells.
+                dimensions if dimensions.len() > 1 => {
+                    if let Some(dimensions) = dimensions.iter().copied().collect::<Option<Vec<_>>>()
+                    {
+                        self.fixed_view_dims.insert(ir, dimensions);
+                    }
+                }
+                _ => {}
             }
         }
         self.model.containers.push(IrContainer {

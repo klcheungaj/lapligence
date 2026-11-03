@@ -127,15 +127,9 @@ impl Codegen<'_> {
         copy_in: bool,
         temporary: &str,
     ) -> Result<Option<(Vec<IrStmt>, String, IrStmt)>, String> {
-        let selected = match self.kind(node) {
-            NodeKind::Expr(ExprKind::BitSelect { base, index }) => self
-                .container_of_select(node, *base)
-                .map(|container| (container.ir, *index)),
-            NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => self
-                .container_of_select(node, *base)
-                .map(|container| (container.ir, indices[0])),
-            _ => None,
-        };
+        let selected = self
+            .element_select(node)
+            .map(|(container, index)| (container.ir, index));
         let Some((container, index)) = selected else {
             return Ok(None);
         };
@@ -480,7 +474,7 @@ impl Codegen<'_> {
             for (idx, (formal, is_out)) in meta.formals.iter().enumerate() {
                 if self.is_subroutine_container(*formal) {
                     let argument =
-                        self.container_call_argument(path, *formal, bound[idx].expr, None)?;
+                        self.container_call_argument(path, *formal, bound[idx].expr, None, None)?;
                     // `ref` formals pass by address with the outputs.
                     if *is_out || self.is_ref_formal(*formal) {
                         out_args.push(argument);

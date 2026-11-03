@@ -95,18 +95,29 @@ pub(super) fn render(
             src,
             src_start,
             count,
+            delay,
         } => {
             let dst_start = match dst_start {
                 Some(start) => operand(frame, owners, start)?.code,
                 None => zero_operand(frame, owners),
             };
-            format!(
-                "    llg_dyn_value_nba(&{}, {dst_start}, &{}, {}, {count}ULL, {});\n",
+            let whole = u8::from(dst_start_whole(operation));
+            let (target, src, src_start) = (
                 name(frame, *target)?,
                 name(frame, *src)?,
                 operand(frame, owners, src_start)?.code,
-                u8::from(dst_start_whole(operation))
-            )
+            );
+            match delay {
+                None => format!(
+                    "    llg_dyn_value_nba(&{target}, {dst_start}, &{src}, {src_start}, {count}ULL, {whole});\n"
+                ),
+                Some(delay) => {
+                    let ticks = frame.delay(delay)?;
+                    format!(
+                        "    llg_dyn_value_nba_after(&{target}, {dst_start}, &{src}, {src_start}, {count}ULL, {whole}, {ticks});\n"
+                    )
+                }
+            }
         }
         IrContainerStmt::Merge { dst, left, right } => format!(
             "    {}(&{}, &{}, &{});\n",

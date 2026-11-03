@@ -1,0 +1,32 @@
+A1 s00 s12 s01
+A2 s11 X
+A3 differ
+A4 equal
+B1 s10 s11 s12
+B2 s10 s12
+B3 dyn dyn
+C1 abc zzz
+C2 ddd--k
+D1 ddd--k
+D2 f00f01f02f10f11f12
+D3 x00 y x01 x11
+D4 m11 m01 m10 m00
+D5 p q r t
+E1 d30 d21 3 0 2
+E2 110 010 011
+E3 t12 t00 0 1
+E4 o-0 o-2 t10! t12!
+E5 T12! 4 d
+F1 m10 10 1.500000
+F2 m01 chg
+F3 differ
+F4 total=22
+F5 pat 99 1.500000 11
+F6 m10 m11
+G1 1 3
+G2 77
+G3 same object
+G4 null
+G5 3 3
+H '{'{"p", "q"}, '{"r", "t"}}
+I C b d

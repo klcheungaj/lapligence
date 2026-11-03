@@ -362,11 +362,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   deep except chandles, which stay borrowed foreign pointers
   ([sim_003](../tests/fixtures/sim/feature_completion/sim_003/readme.md)).
   Module native records accept untimed/delayed NBAs, continuous assignments
-  and conditional merges (SIM-004). One-dimensional fixed arrays of strings,
-  class/chandle handles and native records are fixed-size views of the
-  recursive container runtime in module, static, subroutine and port storage:
-  run-time selects, slices, patterns, whole copies, equality, ambiguous
-  conditional merges and untimed NBAs act on owned elements. Class handles are
+  and conditional merges (SIM-004). Fixed arrays of strings, class/chandle
+  handles and native records are fixed-size views of the recursive container
+  runtime in module, static, subroutine and port storage: run-time selects,
+  slices, patterns, whole copies, equality, ambiguous conditional merges and
+  untimed or `#delay` NBAs act on owned elements. Class handles are
   identity leaves of native records (`r.h.v` reaches the object). Run-time
   indices into native member arrays select among at most 64 elements
   (`NATIVE_MEMBER_SELECT_LIMIT`); packed members of module native records take
@@ -381,7 +381,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   naming an element's member stage it). Scalar members of a native record
   call result (`f(x).s`, `f(x).n + 1`) and nested record pattern items from
   calls (`'{inner: f()}`) are evaluated through a temporary. Multidimensional
-  native arrays, associative members of element records, class-property or
+  fixed arrays of strings, handles and native records keep their cells in one
+  row-major view: element and row selects, patterns, copies, formals and
+  nonblocking writes work (row equality and rows as `ref` actuals reject).
+  Associative members of element records, class-property or
   nonblocking storage of container record members, record ports with built-in
   semaphore/mailbox/process members, element, run-time-indexed, subroutine-member
   and class-method actuals of native `ref` formals (whole records bind, §9),
@@ -552,7 +555,7 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 | Input/output/inout formal, result | yes (root) | yes, copy-in/out | yes | constant and run-time index: yes; scalar members of a call result (`f().m`): yes | `ref`/`const ref` formal: a whole subroutine record passes by address, a module, static or block record (or a constant selection of one) binds a specialization of the callee: yes ([sim_008](../tests/fixtures/sim/feature_completion/sim_008/readme.md)); container or fixed-array element actual, class-method formal: rejected | scope exit, cancel, close |
 | NBA target or source | module record: yes (untimed and `#delay`); static subroutine root target: rejected ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)); automatic: illegal | yes, issue-time copy | n/a | constant: yes | n/a | commit or cancellation |
 | Fork-join_none capture | SIM-010 | SIM-010 | n/a | n/a | n/a | SIM-010 |
-| Unpacked array element, slice | one-dimensional fixed array: yes ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); multidimensional: rejected | yes, elements, constant/indexed slices, patterns, conditional merges, untimed NBAs | yes, element-wise | yes | SIM-008 | owner scope or model close |
+| Unpacked array element, slice | fixed arrays of any dimension: yes, elements and rows ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); row equality and rows as `ref` actuals: rejected | yes, elements, rows, constant/indexed slices, patterns, conditional merges, untimed and `#delay` NBAs | yes, element-wise | yes | SIM-008 | owner scope or model close |
 | Queue/dynamic/associative element | yes (missing: default), including queue and dynamic-array members ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)); associative members: rejected | yes, whole element and push/insert/pop | yes, element-wise, including container members (whole associative arrays of records: rejected, [known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)) | constant and run-time element index: yes; container members in assignment, call and system-task statements | SIM-008 | delete, resize, container close |
 | Class property | instance property: yes, one value per object with member defaults and a per-object initializer, through `this`, handles and handle chains ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)); static, or with container members: rejected | yes | yes | constant: yes | SIM-011 | with its object, when the collector reclaims it or at model close ([sim_018](../tests/fixtures/sim/feature_completion/sim_018/readme.md)) |
 | DPI argument | sized unpacked structure formal of bit/logic/integral members, nested records and arrays: yes, in the C layout ([sim_040](../tests/fixtures/sim/feature_completion/sim_040/readme.md)); string, real, shortreal or chandle members: rejected ([known issue](known_issues.md#dpi-c-import-limits-sim-040)) | yes, copy-in/out through a thunk-owned buffer | n/a | n/a | n/a | end of the call |
@@ -590,10 +593,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   and `export *::*` chains. Separate/merged unit scope is retained (separate
   units keep same-named `$unit` variables apart; merged ones share them); a
   name redeclared in a package or unit scope rejects.
-  One-dimensional fixed arrays of strings are package storage too (SIM-007);
-  multidimensional native arrays
-  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)),
-  and post-2009 forms remain restricted. Package and `$unit` subroutines
+  Fixed arrays of strings, including multidimensional ones, are package
+  storage too (SIM-007); post-2009 forms remain restricted. Package and `$unit` subroutines
   (static and automatic, timed tasks with `ref` formals, class methods and
   static class members of package classes, forks in package tasks) execute
   from every importer (FIN-001 probes). Instance-hierarchical names are not constant-expression operands;
@@ -1713,9 +1714,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   automatic or static subroutine locals (SIM-006). Native record `ref` formals
   bind whole subroutine records and module, static and procedural-block
   records, and container `ref` formals alias whole containers (SIM-008).
-  One-dimensional fixed arrays of native records cross input, output and
+  Fixed arrays of native records, of any dimension, cross input, output and
   `ref` formals and fixed arrays of strings copy in and out of calls
-  (SIM-007); multidimensional native arrays reject ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)).
+  (SIM-007); a row of a multidimensional one is an input, output or inout
+  actual.
   V §§10.2–10.3; SV §§13.3–13.5 **[1995/2001/SV-2005]**.
 - 🟦 **Automatic/reentrant and finite zero-time calls** — Per-activation
   storage, finite recursion, local named-block exits, selected copy-out and

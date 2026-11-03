@@ -1,18 +1,21 @@
 //! Nonblocking writes to fixed-array views of string, record and handle
-//! elements (SIM-007). The source elements and the destination position are
-//! captured when the assignment executes; the runtime commits them in the
-//! NBA region (SV 10.4.2). Automatic arrays are not legal NBA targets.
+//! elements (SIM-007). The source elements, the destination position and an
+//! intra-assignment delay are captured when the assignment executes; the
+//! runtime commits them in the NBA region of the current or the delayed time
+//! step (SV 10.4.2). Automatic arrays are not legal NBA targets.
 
 use super::*;
 
 impl Codegen<'_> {
-    /// `a <= src`, `a[i] <= v` or `a[l:r] <= src` where `a` is a persistent
-    /// fixed-array view; `None` when `lhs` is not such a target.
+    /// `a <= src`, `a[i] <= v` or `a[l:r] <= src` (each optionally with an
+    /// intra-assignment `delay`) where `a` is a persistent fixed-array view;
+    /// `None` when `lhs` is not such a target.
     pub(in super::super) fn lower_fixed_view_nba(
         &mut self,
         path: &str,
         lhs: NodeId,
         rhs: NodeId,
+        delay: Option<IrDelay>,
     ) -> Result<Option<IrStmt>, String> {
         let zero = || pattern_key_expr(0, 64, true, false);
         // Whole array or slice target.
@@ -21,7 +24,7 @@ impl Codegen<'_> {
             None => self
                 .container_of(self.p30_unwrap_cast(lhs))
                 .map(|container| container.ir)
-                .filter(|container| self.fixed_view_ranges.contains_key(container))
+                .filter(|container| self.is_fixed_view(*container))
                 .and_then(|container| {
                     let count = self.model.containers[container].initial_size?;
                     Some((container, None, count))
@@ -35,8 +38,7 @@ impl Codegen<'_> {
                 None => match self.container_of(self.p30_unwrap_cast(rhs)) {
                     Some(src) => (src.ir, zero()),
                     None => {
-                        let temporary = self.container_temporary_like(target);
-                        self.model.containers[temporary].initial_size = Some(count);
+                        let temporary = self.selection_temporary(target, lhs, count);
                         statements.push(IrStmt::Container(Box::new(IrContainerStmt::Declare(
                             temporary,
                         ))));
@@ -57,6 +59,7 @@ impl Codegen<'_> {
                 src,
                 src_start,
                 count,
+                delay,
             })));
             return Ok(Some(IrStmt::Block(statements)));
         }
@@ -64,7 +67,7 @@ impl Codegen<'_> {
         let Some((target, indices)) = self.container_element_path(lhs) else {
             return Ok(None);
         };
-        if indices.len() != 1 || !self.fixed_view_ranges.contains_key(&target) {
+        if indices.len() != 1 || !self.is_fixed_view(target) {
             return Ok(None);
         }
         self.require_persistent_view(path, target)?;
@@ -84,6 +87,7 @@ impl Codegen<'_> {
                 src: temporary,
                 src_start: zero(),
                 count: 1,
+                delay,
             })),
         ])))
     }

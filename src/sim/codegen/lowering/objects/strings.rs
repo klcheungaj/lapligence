@@ -142,7 +142,7 @@ impl Codegen<'_> {
             for (idx, (io, is_out)) in formals.iter().enumerate() {
                 if self.is_subroutine_container(*io) {
                     let argument =
-                        self.container_call_argument(path, *io, bound[idx].expr, None)?;
+                        self.container_call_argument(path, *io, bound[idx].expr, None, None)?;
                     // `ref` formals pass by address with the outputs.
                     if *is_out || self.is_ref_formal(*io) {
                         out_args.push(argument);
