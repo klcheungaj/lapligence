@@ -2570,7 +2570,8 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   scope's `vpiImport`, decision A19-D79, and the event array properties of
   class definitions and objects, decision A19-D80). A generated
   object catalog and the common VPI routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
-  relative to a scope, and constant element/bit/part selects in the name),
+  relative to a scope, constant element/bit/part selects in the name, and
+  associative array elements by integral or string key, `tb.aa["x"]`, decision A19-D81),
   `vpi_handle_by_index`/`_multi_index`, `vpi_handle` (`vpiParent`, `vpiScope`,
   `vpiModule`, `vpiLeftRange`/`vpiRightRange`, `vpiIndex`, `vpiLowConn`,
   `vpiUserSystf`, `vpiSysTfCall`), `vpi_iterate`/`vpi_scan` (modules from NULL,

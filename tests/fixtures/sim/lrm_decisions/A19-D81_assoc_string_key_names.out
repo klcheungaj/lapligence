@@ -1,0 +1,12 @@
+tb.aa[""] -> tb.aa[""] = 5
+tb.aa["a\"b"] -> tb.aa["a\"b"] = 2
+tb.aa["a.b"] -> tb.aa["a.b"] = 3
+tb.aa["a\b"] -> tb.aa["a\b"] = 6
+tb.aa["a]b"] -> tb.aa["a]b"] = 4
+tb.aa["sp c"] -> tb.aa["sp c"] = 7
+tb.aa["x"] -> tb.aa["x"] = 1
+tb.aa["zz"] -> NULL error=0
+tb.sa["k"] -> tb.sa["k"] = v
+tb.sa["q"] -> NULL error=0
+aa["x"] in tb -> tb.aa["x"] = 1
+aa[x]=1 sa[k]=v

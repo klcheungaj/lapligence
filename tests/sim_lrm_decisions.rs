@@ -2246,6 +2246,15 @@ fn a19_d80_class_event_arrays() {
 }
 
 #[test]
+fn a19_d81_assoc_string_key_names() {
+    run_vpi_decision(
+        "A19-D81_assoc_string_key_names",
+        &["task $d81()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D81_assoc_string_key_names.out"),
+    );
+}
+
+#[test]
 fn a19_d75_frame_origins() {
     run_vpi_decision(
         "A19-D75_frame_origins",

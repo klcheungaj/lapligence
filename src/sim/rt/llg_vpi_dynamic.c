@@ -2161,8 +2161,28 @@ static char* dyn_element_name(const llg_vpi_slot_t* slot, int full) {
         }
         base = g_vpi.objects[place.row].full_name;
     }
-    if (slot->lsb == DYN_AT_STRING)
-        return dyn_text("%s[\"%.*s\"]", base, (int)slot->count, (const char*)(const void*)slot->items);
+    if (slot->lsb == DYN_AT_STRING) {
+        /* A quote in the key is written `\"`, so the name reads back by
+         * vpi_handle_by_name (decision A19-D81). */
+        const char* key = (const char*)(const void*)slot->items;
+        size_t quotes = 0;
+        for (uint32_t i = 0; i < slot->count; ++i) quotes += key[i] == '"';
+        if (!quotes)
+            return dyn_text("%s[\"%.*s\"]", base, (int)slot->count, key);
+        char* escaped = (char*)malloc((size_t)slot->count + quotes + 1u);
+        if (!escaped) {
+            vpi_error("LLG_VPI_NOMEM", "VPI element name allocation failed");
+            return NULL;
+        }
+        size_t n = 0;
+        for (uint32_t i = 0; i < slot->count; ++i) {
+            if (key[i] == '"') escaped[n++] = '\\';
+            escaped[n++] = key[i];
+        }
+        char* text = dyn_text("%s[\"%.*s\"]", base, (int)n, escaped);
+        free(escaped);
+        return text;
+    }
     if (slot->lsb == DYN_AT_INTEGRAL) {
         sv4_t key = dyn_integral_key(&place, slot->element);
         char* text = llg_sv4_signed(key)
@@ -2435,6 +2455,49 @@ static int dyn_event_array_property(const llg_vpi_slot_t* slot) {
     return slot->kind == SLOT_PROPERTY && dyn_place(slot, &place) && dyn_is_event_array(place.shape);
 }
 
+/* The element of string-keyed associative array `place` at `key`
+ * (`length` bytes), or NULL with no error when the key is absent: a name
+ * that denotes no object (decision S42-D2). */
+static vpiHandle dyn_element_by_key(const dyn_place_t* place, uint32_t field, const char* key,
+                                    size_t length) {
+    const llg_vpi_shape_t* shape = place->shape;
+    if (!place->storage || shape->array_type != vpiAssocArray || shape->key != LLG_VPI_KEY_STRING ||
+        length > LLG_VPI_MAX_ELEMENT_KEY)
+        return NULL;
+    int exists = shape->values
+        ? llg_assoc_value_exists_string((const llg_assoc_value_t*)place->storage, key, length)
+        : llg_assoc_exists_string((const llg_assoc_t*)place->storage, key, length);
+    return exists ? make_dyn_element(place, field, DYN_AT_STRING, 0,
+                                     (const unsigned char*)key, length)
+                  : NULL;
+}
+
+/* A `"key"` index of a name, as element names spell it (dyn_element_name):
+ * `\"` stands for a quote and any other backslash for itself. On success
+ * `*cursor` is past the closing quote and `*key` (malloc'd, `*length`
+ * bytes) holds the key. */
+static int dyn_parse_key(const char** cursor, char** key, size_t* length) {
+    const char* p = *cursor;
+    if (*p != '"') return 0;
+    size_t size = 0;
+    const char* q = ++p;
+    for (; *q && *q != '"'; ++q, ++size)
+        if (q[0] == '\\' && q[1] == '"') ++q;
+    if (*q != '"') return 0;
+    char* text = (char*)malloc(size + 1u);
+    if (!text) return 0;
+    size_t n = 0;
+    for (; p < q; ++p) {
+        if (p[0] == '\\' && p[1] == '"') ++p;
+        text[n++] = *p;
+    }
+    text[n] = '\0';
+    *key = text;
+    *length = n;
+    *cursor = q + 1;
+    return 1;
+}
+
 static vpiHandle dyn_handle_by_index(llg_vpi_slot_t* slot, PLI_INT32 index) {
     dyn_place_t place;
     if (slot->kind == SLOT_DYNELEM || !dyn_place(slot, &place) ||
@@ -2459,11 +2522,20 @@ static vpiHandle dyn_by_suffix(uint32_t row, const char* suffix) {
         if (*p == '[') {
             ++p;
             int64_t index = 0;
+            char* key = NULL;
+            size_t length = 0;
             dyn_place_t place;
-            if (parse_index(&p, &index) && *p == ']' && slot->kind != SLOT_DYNELEM &&
-                dyn_place(slot, &place) && place.shape->shape == LLG_VPI_SHAPE_CONTAINER)
-                next = dyn_element_by_index(
-                    &place, slot->kind == SLOT_PROPERTY ? (uint32_t)slot->aux : 0u, index, 1);
+            uint32_t field = slot->kind == SLOT_PROPERTY ? (uint32_t)slot->aux : 0u;
+            int container = slot->kind != SLOT_DYNELEM && dyn_place(slot, &place) &&
+                            place.shape->shape == LLG_VPI_SHAPE_CONTAINER;
+            if (*p == '"') {
+                /* A string key (decision A19-D81). */
+                if (dyn_parse_key(&p, &key, &length) && *p == ']' && container)
+                    next = dyn_element_by_key(&place, field, key, length);
+                free(key);
+            } else if (parse_index(&p, &index) && *p == ']' && container) {
+                next = dyn_element_by_index(&place, field, index, 1);
+            }
             if (next) ++p;
         } else if (*p == '.') {
             const char* name = ++p;
