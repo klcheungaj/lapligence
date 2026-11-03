@@ -338,6 +338,21 @@ typedef struct {
     uint32_t* code_parents;       /* parent code row + 1 of each code row, built on demand */
     int procedures_started;       /* llg_vpi_procedures_started ran: gate processes exist */
     int udp_resolved;             /* sequential UDP gate processes found (udp_resolve) */
+    /* Packed catalog rows (llg_vpi_model_packed) and what decoding them
+     * allocated: the string pool the rows' names point into, their
+     * connections, dimensions, instance properties and timing, and the
+     * code rows behind `code_value`, which `code` then names. */
+    const llg_vpi_packed_t* packed;
+    int unpacked;
+    int code_pending;             /* packed code rows not decoded yet (code_nodes) */
+    char* pack_pool;
+    llg_vpi_conn_t* pack_conns;
+    int64_t* pack_dims;
+    llg_vpi_instance_t* pack_instances;
+    llg_vpi_timing_t* pack_timings;
+    int64_t* pack_declared;
+    llg_vpi_code_t* pack_code;
+    llg_vpi_code_tables_t code_value;
 } llg_vpi_state_t;
 
 static llg_vpi_state_t g_vpi;
@@ -410,6 +425,9 @@ static vpiHandle svc_put_string_delayed(llg_vpi_slot_t* slot, p_vpi_value input,
 static int svc_strength_bind(struct llg_vpi_cb* cb);
 static int svc_strength_changed(struct llg_vpi_cb* cb);
 static int code_tables_valid(const llg_vpi_code_tables_t* t);
+static int code_nodes_valid(const llg_vpi_code_tables_t* t);
+static const llg_vpi_code_t* code_nodes(void);
+static int catalog_unpack(void);
 static PLI_INT32 unsupported_property(void);
 
 /* ── errors ─────────────────────────────────────────────────────────────── */
@@ -799,6 +817,11 @@ static int vpi_ready(void) {
     if (g_vpi.indexed) return 1;
     if (!vpi_slots_ready()) return 0;
     size_t count = g_vpi.object_count;
+    if (!catalog_unpack()) {
+        vpi_set_error(vpiPLI, vpiError, "LLG_VPI_MODEL", "invalid packed VPI catalog rows");
+        g_vpi.failed = 1;
+        return 0;
+    }
     if (!code_tables_valid(g_vpi.code)) {
         vpi_set_error(vpiPLI, vpiError, "LLG_VPI_MODEL", "invalid VPI expression and statement tables");
         g_vpi.failed = 1;
@@ -4411,6 +4434,7 @@ static vpiHandle iterate_declarations(int type, vpiHandle reference) {
         vpi_error("LLG_VPI_RELATION", "sequence and property declarations iterate from a scope");
         return NULL;
     }
+    (void)code_nodes();
     uint32_t total = g_vpi.code ? g_vpi.code->node_count : 0u, count = 0;
     for (uint32_t i = 0; i < total; ++i) {
         const llg_vpi_code_t* node = &g_vpi.code->nodes[i];
@@ -5212,7 +5236,8 @@ static vpiHandle statement_lhs(const llg_vpi_stmt_t* stmt) {
 #define LLG_VPI_MAX_EVAL_DEPTH 4096
 
 static const llg_vpi_code_t* code_at(uint32_t index) {
-    return g_vpi.code && index < g_vpi.code->node_count ? &g_vpi.code->nodes[index] : NULL;
+    const llg_vpi_code_t* nodes = code_nodes();
+    return nodes && index < g_vpi.code->node_count ? &nodes[index] : NULL;
 }
 
 static int code_is_select(int type) {
@@ -5320,11 +5345,19 @@ static int code_tables_valid(const llg_vpi_code_tables_t* t) {
             if (object->conns[i].ref.code > nodes) return 0;
     }
     if (!t) return 1;
-    if ((t->node_count && !t->nodes) || (t->text_count && !t->texts) ||
+    /* Packed rows are decoded and checked on first use (code_nodes). */
+    if ((t->node_count && !t->nodes && !g_vpi.code_pending) ||
+        (t->text_count && !t->texts) ||
         (t->file_count && !t->files) || (t->range_count && !t->ranges) ||
         (t->span_count && !t->spans) ||
         t->node_count >= (uint32_t)INT32_MAX)
         return 0;
+    return t->nodes ? code_nodes_valid(t) : 1;
+}
+
+/* The rows of the code tables: children follow their parents, references
+ * are in range. */
+static int code_nodes_valid(const llg_vpi_code_tables_t* t) {
     uint32_t typespecs = g_vpi.types ? g_vpi.types->typespec_count : 0u;
     for (uint32_t i = 0; i < t->node_count; ++i) {
         const llg_vpi_code_t* node = &t->nodes[i];
@@ -5350,6 +5383,439 @@ static int code_tables_valid(const llg_vpi_code_tables_t* t) {
 
 int llg_vpi_model_code(const llg_vpi_code_tables_t* tables) {
     g_vpi.code = tables;
+    return 1;
+}
+
+/* ── packed catalog rows (llg_vpi_packed_t) ─────────────────────────────── */
+
+int llg_vpi_model_packed(const llg_vpi_packed_t* packed) {
+    if (!g_vpi.initialized || g_vpi.indexed) {
+        vpi_set_error(vpiCompile, vpiError, "LLG_VPI_MODEL",
+                      "packed VPI catalog registered outside model initialization");
+        return 0;
+    }
+    g_vpi.packed = packed;
+    return 1;
+}
+
+/* The varint alphabet of src/sim/emit_c/model/vpi/pack.rs: five data bits
+ * per character, 0x20 set while more groups follow. */
+static const char pack_alphabet[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/* Digit value of each character, -1 outside the alphabet (pack_digits_init). */
+static signed char pack_digit[256];
+
+static void pack_digits_init(void) {
+    if (pack_digit[0] == -1) return;
+    memset(pack_digit, -1, sizeof(pack_digit));
+    for (int i = 0; i < 64; ++i) pack_digit[(unsigned char)pack_alphabet[i]] = (signed char)i;
+}
+
+/* Reads one stream of the payload in place: `at` runs to `stop`, the end of
+ * its blob row or of the stream, whichever comes first, and then steps over
+ * the row's NUL (pack_refill). */
+typedef struct {
+    const char* chunks;
+    const unsigned char* at;
+    const unsigned char* stop;
+    size_t row;               /* blob row of `at` */
+    size_t row_start;         /* payload position of that row's first byte */
+    size_t end;               /* payload position the stream ends at */
+    int bad;
+    const llg_vpi_packed_t* packed;
+    uint32_t next_ref;
+} pack_reader_t;
+
+#define PACK_PAYLOAD (LLG_VPI_PACK_ROW - 1u)
+
+static void pack_limit(pack_reader_t* r) {
+    size_t row_end = r->row_start + PACK_PAYLOAD;
+    r->stop = (const unsigned char*)r->chunks + r->row * LLG_VPI_PACK_ROW +
+              ((r->end < row_end ? r->end : row_end) - r->row_start);
+}
+
+static void pack_seek(pack_reader_t* r, size_t pos, size_t end) {
+    r->row = pos / PACK_PAYLOAD;
+    r->row_start = r->row * PACK_PAYLOAD;
+    r->end = end;
+    r->at = (const unsigned char*)r->chunks + r->row * LLG_VPI_PACK_ROW + (pos - r->row_start);
+    pack_limit(r);
+}
+
+/* Payload position of `at`. */
+static size_t pack_pos(const pack_reader_t* r) {
+    return r->row_start + (size_t)(r->at - ((const unsigned char*)r->chunks + r->row * LLG_VPI_PACK_ROW));
+}
+
+/* Move to the next row once `at` reached the end of its row; 0 at the end
+ * of the stream. */
+static int pack_refill(pack_reader_t* r) {
+    if (r->at < r->stop) return 1;
+    if (pack_pos(r) >= r->end) return 0;
+    ++r->row;
+    r->row_start += PACK_PAYLOAD;
+    r->at = (const unsigned char*)r->chunks + r->row * LLG_VPI_PACK_ROW;
+    pack_limit(r);
+    return 1;
+}
+
+static uint64_t pack_uint_long(pack_reader_t* r) {
+    uint64_t value = 0;
+    for (unsigned shift = 0; shift < 64u && pack_refill(r); shift += 5u) {
+        int digit = pack_digit[*r->at++];
+        if (digit < 0) break;
+        value |= (uint64_t)(digit & 0x1f) << shift;
+        if (!(digit & 0x20)) return value;
+    }
+    r->bad = 1;
+    return 0;
+}
+
+/* Most values are one character: take that path inline. */
+static inline uint64_t pack_uint(pack_reader_t* r) {
+    if (r->at < r->stop) {
+        int digit = pack_digit[*r->at];
+        if (digit >= 0 && digit < 0x20) {
+            ++r->at;
+            return (uint64_t)digit;
+        }
+    }
+    return pack_uint_long(r);
+}
+
+static int64_t pack_int(pack_reader_t* r) {
+    uint64_t value = pack_uint(r);
+    return (int64_t)(value >> 1) ^ -(int64_t)(value & 1u);
+}
+
+static int64_t pack_symbol(pack_reader_t* r) {
+    uint64_t index = pack_uint(r);
+    if (index >= r->packed->symbol_count) {
+        r->bad = 1;
+        return 0;
+    }
+    return r->packed->symbols[index];
+}
+
+static const char* pack_string(pack_reader_t* r) {
+    uint64_t offset = pack_uint(r);
+    if (!offset) return NULL;
+    if (offset > r->packed->pool_bytes) {
+        r->bad = 1;
+        return NULL;
+    }
+    return g_vpi.pack_pool + (offset - 1u);
+}
+
+static llg_vpi_model_object_t* pack_row(pack_reader_t* r) {
+    uint64_t row = pack_uint(r);
+    if (!row) return NULL;
+    if (row > g_vpi.object_count) {
+        r->bad = 1;
+        return NULL;
+    }
+    return &g_vpi.objects[row - 1u];
+}
+
+static void* pack_ref(pack_reader_t* r) {
+    if (r->next_ref >= r->packed->ref_count) {
+        r->bad = 1;
+        return NULL;
+    }
+    return (void*)r->packed->refs[r->next_ref++];
+}
+
+/* A count the stream announces, bounded by the stream itself (every item
+ * takes at least one character), so a corrupt count allocates nothing
+ * large. */
+static uint64_t pack_count(pack_reader_t* r) {
+    uint64_t count = pack_uint(r);
+    if (count > r->end - pack_pos(r)) r->bad = 1;
+    return r->bad ? 0u : count;
+}
+
+/* Bits of the reference mask ending an object row (pack.rs REF_*). */
+#define PACK_REF_PACKED 0x01u
+#define PACK_REF_REAL 0x02u
+#define PACK_REF_NET 0x04u
+#define PACK_REF_EVENT 0x08u
+#define PACK_REF_STORAGE 0x10u
+#define PACK_REF_DEPENDENCY 0x20u
+
+static void pack_conn(pack_reader_t* r, llg_vpi_conn_t* conn) {
+    conn->ref.ref_kind = (int8_t)pack_symbol(r);
+    conn->ref.const_type = (int)pack_symbol(r);
+    conn->ref.object = pack_int(r);
+    conn->ref.offset = pack_uint(r);
+    conn->ref.select_width = (uint32_t)pack_uint(r);
+    conn->ref.left = pack_int(r);
+    conn->ref.right = pack_int(r);
+    conn->ref.width = (uint32_t)pack_uint(r);
+    conn->ref.is_signed = (int8_t)pack_uint(r);
+    conn->ref.code = (uint32_t)pack_uint(r);
+    conn->direction = (int)pack_symbol(r);
+    conn->value = pack_string(r);
+    conn->role = (int)pack_symbol(r);
+    conn->edge = (int)pack_uint(r);
+    conn->condition = (uint32_t)pack_uint(r);
+}
+
+/* Decode the object stream into the model's (zero) object array. */
+static void pack_objects(pack_reader_t* r) {
+    uint64_t conns = pack_count(r), dims = pack_count(r), instances = pack_count(r);
+    uint64_t timings = pack_count(r), declared = pack_count(r);
+    if (r->bad) return;
+    g_vpi.pack_conns = (llg_vpi_conn_t*)calloc(conns + 1u, sizeof(llg_vpi_conn_t));
+    g_vpi.pack_dims = (int64_t*)calloc(2u * dims + 1u, sizeof(int64_t));
+    g_vpi.pack_instances = (llg_vpi_instance_t*)calloc(instances + 1u, sizeof(llg_vpi_instance_t));
+    g_vpi.pack_timings = (llg_vpi_timing_t*)calloc(timings + 1u, sizeof(llg_vpi_timing_t));
+    g_vpi.pack_declared = (int64_t*)calloc(declared + 1u, sizeof(int64_t));
+    if (!g_vpi.pack_conns || !g_vpi.pack_dims || !g_vpi.pack_instances ||
+        !g_vpi.pack_timings || !g_vpi.pack_declared) {
+        r->bad = 1;
+        return;
+    }
+    uint64_t next_conn = 0, next_dim = 0, next_instance = 0, next_timing = 0, next_declared = 0;
+    for (size_t row = 0; row < g_vpi.object_count && !r->bad; ++row) {
+        llg_vpi_model_object_t* object = &g_vpi.objects[row];
+        memset(object, 0, sizeof(*object));
+        object->type = (int)pack_symbol(r);
+        object->name = pack_string(r);
+        object->full_name = pack_string(r);
+        object->definition_name = pack_string(r);
+        object->file = pack_string(r);
+        object->line = (int)pack_uint(r);
+        object->width = (uint32_t)pack_uint(r);
+        uint64_t bits = pack_uint(r);
+        object->is_signed = (int8_t)(bits & 1u);
+        object->is_real = (int8_t)((bits >> 1) & 1u);
+        object->is_net = (int8_t)((bits >> 2) & 1u);
+        object->parent = pack_row(r);
+        object->time_unit_fs = pack_uint(r);
+        object->subtype = (int)pack_symbol(r);
+        object->flags = (uint32_t)pack_symbol(r);
+        object->left = pack_int(r);
+        object->right = pack_int(r);
+        uint64_t dim_count = pack_uint(r);
+        if (dim_count > dims - next_dim) {
+            r->bad = 1;
+            break;
+        }
+        if (dim_count) {
+            object->dims = &g_vpi.pack_dims[2u * next_dim];
+            object->dim_count = (uint32_t)dim_count;
+            for (uint64_t i = 0; i < 2u * dim_count; ++i)
+                g_vpi.pack_dims[2u * next_dim + i] = pack_int(r);
+            next_dim += dim_count;
+        }
+        object->port_index = (uint32_t)pack_uint(r);
+        object->target = pack_row(r);
+        object->constant = pack_string(r);
+        uint64_t real_bits = pack_uint(r);
+        memcpy(&object->real_constant, &real_bits, sizeof(real_bits));
+        object->typespec = (uint32_t)pack_uint(r);
+        object->detail = (int)pack_symbol(r);
+        uint64_t conn_count = pack_uint(r);
+        if (conn_count > conns - next_conn) {
+            r->bad = 1;
+            break;
+        }
+        if (conn_count) {
+            object->conns = &g_vpi.pack_conns[next_conn];
+            object->conn_count = (uint32_t)conn_count;
+            for (uint64_t i = 0; i < conn_count; ++i)
+                pack_conn(r, &g_vpi.pack_conns[next_conn + i]);
+            next_conn += conn_count;
+        }
+        object->activation_declaration = (uint32_t)pack_uint(r);
+        object->activation_instance = (uint32_t)pack_uint(r);
+        if (pack_uint(r)) {
+            if (next_timing >= timings) {
+                r->bad = 1;
+                break;
+            }
+            llg_vpi_timing_t* tm = &g_vpi.pack_timings[next_timing++];
+            tm->op_count = (uint32_t)pack_uint(r);
+            if (tm->op_count) tm->ops = (const llg_sdf_op_t*)pack_ref(r);
+            uint64_t count = pack_uint(r);
+            if (count > declared - next_declared) {
+                r->bad = 1;
+                break;
+            }
+            if (count) {
+                tm->declared = &g_vpi.pack_declared[next_declared];
+                tm->declared_count = (uint32_t)count;
+                for (uint64_t i = 0; i < count; ++i)
+                    g_vpi.pack_declared[next_declared + i] = pack_int(r);
+                next_declared += count;
+            }
+            tm->count = (uint32_t)pack_uint(r);
+            tm->polarity = (int)pack_symbol(r);
+            tm->data_polarity = (int)pack_symbol(r);
+            tm->has_ifnone = (int)pack_uint(r);
+            tm->delay = (uint32_t)pack_uint(r);
+            object->timing = tm;
+        }
+        object->shape = (uint32_t)pack_uint(r);
+        object->code = (uint32_t)pack_uint(r);
+        if (pack_uint(r)) {
+            if (next_instance >= instances) {
+                r->bad = 1;
+                break;
+            }
+            llg_vpi_instance_t* instance = &g_vpi.pack_instances[next_instance++];
+            instance->def_file = pack_string(r);
+            instance->def_line = (int)pack_uint(r);
+            instance->library = pack_string(r);
+            instance->cell = pack_string(r);
+            instance->config = pack_string(r);
+            instance->net_type = (int)pack_symbol(r);
+            instance->unconnected_drive = (int)pack_symbol(r);
+            instance->cell_define = (int8_t)pack_uint(r);
+            instance->automatic = (int8_t)pack_uint(r);
+            object->instance = instance;
+        }
+        if (pack_uint(r)) {
+            int strength0 = (int)pack_symbol(r);
+            int strength1 = (int)pack_symbol(r);
+            object->strength = strength0 | strength1 << 8;
+        }
+        uint64_t refs = pack_uint(r);
+        if (refs & PACK_REF_PACKED) object->packed = (sv4_t*)pack_ref(r);
+        if (refs & PACK_REF_REAL) object->real = (double*)pack_ref(r);
+        if (refs & PACK_REF_NET) object->net = (llg_net_t*)pack_ref(r);
+        if (refs & PACK_REF_EVENT) object->event = (llg_event_t*)pack_ref(r);
+        if (refs & PACK_REF_STORAGE) object->storage = pack_ref(r);
+        if (refs & PACK_REF_DEPENDENCY) object->dependency = (sv4_t*)pack_ref(r);
+    }
+    if (next_conn != conns || next_dim != dims || next_instance != instances ||
+        next_timing != timings || next_declared != declared)
+        r->bad = 1;
+}
+
+/* Decode the code stream into an owned row array. */
+static void pack_code(pack_reader_t* r, const llg_vpi_code_tables_t* tables) {
+    g_vpi.pack_code = (llg_vpi_code_t*)calloc(tables->node_count, sizeof(llg_vpi_code_t));
+    if (!g_vpi.pack_code) {
+        r->bad = 1;
+        return;
+    }
+    int64_t line = 0, scope = 0;
+    for (uint32_t i = 0; i < tables->node_count && !r->bad; ++i) {
+        llg_vpi_code_t* node = &g_vpi.pack_code[i];
+        node->type = (int16_t)pack_symbol(r);
+        node->subtype = (int16_t)pack_symbol(r);
+        node->role = (int16_t)pack_symbol(r);
+        node->qualifier = (int16_t)pack_symbol(r);
+        node->flags = (uint32_t)pack_symbol(r);
+        node->width = (uint32_t)pack_uint(r);
+        node->file = (uint32_t)pack_uint(r);
+        line += pack_int(r);
+        node->line = (uint32_t)line;
+        node->object = (int32_t)pack_int(r);
+        scope += pack_int(r);
+        node->scope = (uint32_t)scope;
+        node->first = (uint32_t)((int64_t)i + pack_int(r));
+        node->count = (uint32_t)pack_uint(r);
+        node->data = (uint32_t)pack_uint(r);
+        node->typespec = (uint32_t)pack_uint(r);
+        node->span = (uint32_t)pack_uint(r);
+    }
+}
+
+/* The code rows. Packed rows are decoded and validated on the first call,
+ * not with the catalog: most applications never ask for an expression or
+ * statement, and the rows are most of a large catalog. A corrupt stream
+ * reports an error and leaves no rows. */
+static const llg_vpi_code_t* code_nodes(void) {
+    if (!g_vpi.code_pending) return g_vpi.code ? g_vpi.code->nodes : NULL;
+    g_vpi.code_pending = 0;
+    const llg_vpi_packed_t* packed = g_vpi.packed;
+    const llg_vpi_code_tables_t* tables = g_vpi.code;
+    pack_reader_t reader;
+    memset(&reader, 0, sizeof(reader));
+    reader.chunks = packed->chunks;
+    reader.packed = packed;
+    size_t start = (size_t)packed->pool_bytes + packed->object_bytes;
+    pack_seek(&reader, start, start + packed->code_bytes);
+    pack_code(&reader, tables);
+    g_vpi.code_value = *tables;
+    g_vpi.code_value.nodes = g_vpi.pack_code;
+    g_vpi.code = &g_vpi.code_value;
+    if (reader.bad || pack_pos(&reader) != reader.end || !code_nodes_valid(g_vpi.code)) {
+        free(g_vpi.pack_code);
+        g_vpi.pack_code = NULL;
+        g_vpi.code_value.nodes = NULL;
+        g_vpi.code_value.node_count = 0;
+        vpi_set_error(vpiPLI, vpiError, "LLG_VPI_MODEL", "invalid packed VPI expression and statement rows");
+        g_vpi.failed = 1;
+    }
+    return g_vpi.code->nodes;
+}
+
+static void catalog_unpack_release(void) {
+    free(g_vpi.pack_pool);
+    free(g_vpi.pack_conns);
+    free(g_vpi.pack_dims);
+    free(g_vpi.pack_instances);
+    free(g_vpi.pack_timings);
+    free(g_vpi.pack_declared);
+    free(g_vpi.pack_code);
+    g_vpi.pack_pool = NULL;
+    g_vpi.pack_conns = NULL;
+    g_vpi.pack_dims = NULL;
+    g_vpi.pack_instances = NULL;
+    g_vpi.pack_timings = NULL;
+    g_vpi.pack_declared = NULL;
+    g_vpi.pack_code = NULL;
+}
+
+/* Decode the packed object rows once, right before the catalog is
+ * validated and indexed (the code rows wait for code_nodes). Every stream read is bounds-checked and the streams must be
+ * consumed exactly; the decoded rows then go through the same validation
+ * as rows a model emits directly. */
+static int catalog_unpack(void) {
+    const llg_vpi_packed_t* packed = g_vpi.packed;
+    if (!packed || g_vpi.unpacked) return 1;
+    uint64_t total = (uint64_t)packed->pool_bytes + packed->object_bytes + packed->code_bytes;
+    if ((packed->chunk_count && !packed->chunks) ||
+        total > (uint64_t)packed->chunk_count * (LLG_VPI_PACK_ROW - 1u) ||
+        (packed->symbol_count && !packed->symbols) || (packed->ref_count && !packed->refs) ||
+        !g_vpi.objects)
+        return 0;
+    pack_digits_init();
+    pack_reader_t reader;
+    memset(&reader, 0, sizeof(reader));
+    pack_reader_t* r = &reader;
+    r->chunks = packed->chunks;
+    r->packed = packed;
+    /* The pool is copied: the rows' names point into it and a string may
+     * run across a blob row. */
+    const llg_vpi_code_tables_t* code = g_vpi.code;
+    g_vpi.pack_pool = (char*)malloc((size_t)packed->pool_bytes + 1u);
+    if (!g_vpi.pack_pool) return 0;
+    for (size_t at = 0, row = 0; at < packed->pool_bytes; at += PACK_PAYLOAD, ++row) {
+        size_t bytes = packed->pool_bytes - at < PACK_PAYLOAD ? packed->pool_bytes - at
+                                                              : (size_t)PACK_PAYLOAD;
+        memcpy(g_vpi.pack_pool + at, packed->chunks + row * LLG_VPI_PACK_ROW, bytes);
+    }
+    g_vpi.pack_pool[packed->pool_bytes] = '\0';
+    if (packed->pool_bytes && g_vpi.pack_pool[packed->pool_bytes - 1u] != '\0') r->bad = 1;
+    pack_seek(r, packed->pool_bytes, (size_t)packed->pool_bytes + packed->object_bytes);
+    if (!r->bad) pack_objects(r);
+    if (pack_pos(r) != r->end || r->next_ref != packed->ref_count) r->bad = 1;
+    /* Code rows wait for code_nodes; without code tables there are none. */
+    if (code && !code->nodes && code->node_count)
+        g_vpi.code_pending = packed->code_bytes != 0;
+    else if (packed->code_bytes)
+        r->bad = 1;
+    if (r->bad) {
+        g_vpi.code_pending = 0;
+        catalog_unpack_release();
+        return 0;
+    }
+    g_vpi.unpacked = 1;
     return 1;
 }
 
@@ -7840,6 +8306,7 @@ static int links_ready(void) {
             }
         }
     }
+    (void)code_nodes();
     for (uint32_t index = 0; ok && g_vpi.code && index < g_vpi.code->node_count; ++index) {
         const llg_vpi_code_t* node = &g_vpi.code->nodes[index];
         if (node->type != vpiForce) continue;
@@ -13631,6 +14098,7 @@ void llg_vpi_shutdown(void) {
     dyn_shutdown();
     rts_shutdown();
     free(g_vpi.code_parents);
+    catalog_unpack_release();
     memset(&g_vpi, 0, sizeof(g_vpi));
 }
 
