@@ -182,7 +182,7 @@ server, accepted and ignored by `llg`.
 | `output.runtime_cache` | string | llg | `--runtime-cache` |
 
 Command-line-only: `--config`, `--help`, `--version`, `--vpi`,
-`--dpi-import-lib`, and the negations
+`--vpi-port-delays`, `--dpi-import-lib`, and the negations
 `--no-gen-only`, `--opt`, `--no-lint-only`, `-Wno-error`, `--no-wave`.
 
 ```toml

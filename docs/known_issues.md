@@ -1957,6 +1957,35 @@ specify paths need each side's own net.
 
 `tests/sim_port_collapse.rs::kept_links_preserve_each_side`.
 
+## Selected port merges on scattered vector bits
+
+**Status:** open (decision A21-D5).
+
+### Symptom
+
+A design whose instances connect single bits of shared vectors
+(`stage c(clk, en, q[i-1], l[(i + 7) % N], q[i], l[i])` for 500 instances)
+runs about 3 times slower with the merged selected ports than with a copy
+per port: 4.2 s without VPI, against 1.45 s for the same design generated
+with `--vpi-port-delays`, which keeps every port a continuous assignment.
+Models with the VPI catalog merge the same ports (A21-D6).
+
+### Cause
+
+Not profiled. The merged bits of `q` and `l` share bit-level groups with the
+rest of their vectors, so a change of one bit is suspected to wake the
+readers of every merged formal of that vector.
+
+### Intended direction
+
+Keep each selected bit's wakeups to its own readers, or keep the copy where
+a merged group would fan a one-bit change out to unrelated formals.
+
+### Reproduce
+
+`mixed_perf.sv` (500 stages of UDPs, gates and an `always`), built with and
+without `--vpi-port-delays`.
+
 ## Global clocking future sampled value function limits
 
 **Status:** open (ADV-014 boundary).
@@ -2438,7 +2467,12 @@ with no error status, as for a name that denotes nothing (S42-D11):
   expressions changes value; one that changes and changes back before the
   primitive's next transition keeps the written delay. Port delays need a
   port connected to a net of its own that no module path, switch or alias
-  drives (otherwise the write is refused). The delays of delayed timing
+  drives (otherwise the write is refused). By default a port between two
+  nets is one simulated net with its connection (decision A21-D6), and its
+  delays, those of its bits and of an intermodule path to it are refused;
+  `--vpi-port-delays` keeps every input and output port a net of its own
+  for the whole model (some simulators enable this per module), and an
+  inout port between two nets is always one simulated net. The delays of delayed timing
   check signals stay fixed, as for SDF. There are no delay device or delay
   term objects (37.41);
 - `vpiTchkTerm` and `vpiPathTerm` handles have no own source location;

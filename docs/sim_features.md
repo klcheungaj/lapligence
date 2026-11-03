@@ -1382,7 +1382,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   arrays still expand per cell (known issue). Whole input and output
   connections between two nets whose sink has drivers of its own (port
   coercion, a second output driver) or a type other than `wire`/`tri`/`logic`
-  merge into the same kind of group, VPI models included (decision A21-D4);
+  merge into the same kind of group, VPI models included (decisions A21-D4,
+  A21-D6; `--vpi-port-delays` keeps every port separate for VPI port delays);
   constant selects, net-array elements and concatenations of nets merge bit
   by bit with the formal (A21-D5); net delays and
   `uwire` sides keep a copy (known issue).
@@ -2603,7 +2604,10 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   and port bits, and intermodule paths from `vpi_handle_multi(vpiInterModPath,
   out, in)`. Port and intermodule path delays use a run-time interconnect
   stage on the port's net, created by the first write, so models that never
-  write one pay nothing.
+  write one pay nothing. A model merges a port between two nets as without
+  VPI (A21-D6), which leaves the port no net of its own: such a port refuses
+  delays unless the model is generated with `--vpi-port-delays`, which keeps
+  every input and output port separate.
   `vpi_get_value_array`/`vpi_put_value_array` (38.16, 38.35) read and write
   sections of static unpacked variable arrays (gets also net arrays) in every
   format the clauses define, with `vpiUserAllocFlag`, `vpiOneValue` and

@@ -110,7 +110,8 @@ those scripts. Differences within the observed spread are reported as noise.
   one group and no process. Every other case where sharing would be
   observable keeps the copy (force/release on a variable sink, conversions,
   initializers, net delays, selected actuals, specify paths and timing
-  checks, SDF, VPI models for storage aliases, a time-0 observer of a source
+  checks, SDF, a variable source in a VPI model (A21-D6),
+  `--vpi-port-delays`, a time-0 observer of a source
   that does not start at X), in
   [`collection/port_aliases.rs`](../src/sim/codegen/lowering/collection/port_aliases.rs),
   [`collection/nets/port_sinks.rs`](../src/sim/codegen/lowering/collection/nets/port_sinks.rs)
@@ -394,8 +395,8 @@ processes or clock edges, at the cost of a few bytes per object.
 ### Models with the VPI object catalog
 
 - **Trade-off:** a model built with `--vpi` or `--dpi-lib` keeps everything an
-  application may reach: the object catalog, port connections that other
-  models share or merge, writable gate delays, stopped statement and toggle
+  application may reach: the object catalog, port connections from a
+  variable that other models share, writable gate delays, stopped statement and toggle
   coverage, and, once an application runs, a frame record per framed call.
   The catalog costs compile time, memory and start-up; the kept structure
   costs run time only where it is on the hot path.
@@ -403,7 +404,10 @@ processes or clock edges, at the cost of a few bytes per object.
   Clang (`VPI_CATALOG_LINK` in [`build.rs`](../src/sim/build.rs)), so their
   catalog pointers need no load-time relocation, and the catalog is
   validated and indexed on the first VPI use that can reach a design object,
-  not at a registration ([I/O, VPI](../src/sim/rt/io.md)). Kept on purpose:
+  not at a registration ([I/O, VPI](../src/sim/rt/io.md)). Net ports merge
+  as without VPI (A21-D6), also when gates or timing checks reserve
+  writable delays; `--vpi-port-delays` keeps every port separate for
+  applications that give ports delays. Kept on purpose:
   port connections from a variable to a net (A21-D1..D3), because a put or
   force on the sink must not reach the source (IEEE 1800-2009 38.34: a put
   to a net "overrides the resolved value of the net. This value shall
@@ -436,6 +440,20 @@ processes or clock edges, at the cost of a few bytes per object.
   | rec (recursive task) | 2876.0 | 0.99 → 1.00 | 1.04 → 1.01 | 0.02 / 0.04 | 0.2 / 0.2 |
   | calls | 10591.4 | 1.01 → 1.00 | 1.04 → 1.04 | 0.02 / 0.04 | 0.2 / 0.2 |
   | forks | 347.4 | 1.01 → 1.02 | 1.04 → 1.04 | 0.03 / 0.05 | 0.2 / 0.3 |
+
+  Net ports merged in VPI models (A21-D6), pinned medians of 7 interleaved
+  runs on a loaded host (load average 8 to 18), identical output: a
+  256-stage `input wire`/`output wire` hierarchy (16-bit, depth 3) with
+  `--vpi` 17.9 s → 5.3 s (links 768 → 256, the remaining ones from
+  variables; net groups 2816 → 768; `model.c` 10.3 → 10.0 MB), and 18.0 s →
+  5.4 s with one delayed `buf` added (before, its reserved delay kept every
+  link). `mixed_perf` with `--vpi` now merges its selected `q[i]`/`l[i]`
+  port actuals like the model without VPI (A21-D5) and runs 2.15 s → 5.78 s;
+  the same model with `--vpi-port-delays` (every port a link) runs in
+  1.45 s and the model without VPI in 4.2 s, so the cost is that of the
+  A21-D5 merge on this design, not of VPI (known issue "Selected port
+  merges on scattered vector bits"). The corpus, `udp_perf` and
+  `perf/designs` generate identical C with and without the change.
 
   Model C size is the generated source; C build time is one cold build on
   a shared host. The tiny designs (`cpu` to `comb`) run in about 3 ms, where
