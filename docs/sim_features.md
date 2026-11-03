@@ -1279,7 +1279,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   A popped class handle selects its properties (`q.pop_front().v`,
   [rtl_006](../tests/fixtures/sim/feature_completion/rtl_006/readme.md)).
   Methods on nested container elements run on a staged copy of the element
-  in assignment, call and system-task statements (§7 resizable containers);
+  in assignment, call and system-task statements, which also pass such an
+  element whole to input formals (`f(qq[i])`, `nested_element_arguments`;
+  §7 resizable containers);
   generated loops over wildcard-index arrays reject. `shuffle` draws from the calling thread's random stream
   ([sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md)).
   SV §7.12 **[SV-2005]**.

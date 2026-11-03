@@ -648,7 +648,9 @@ containers; methods of a nested container element outside assignment, call
 and system-task statements (`if (q[i].pop_front())`, `return q[i].sum()`;
 inside those statements the element is staged whole, and `q[i].size()` and
 `$size(q[i])` work everywhere); a nested element passed whole as a subroutine
-argument (`f(q[i])`); a select into a queue or dynamic array nested in a
+argument outside those statements or to an output, inout or `ref` formal
+(input formals of calls in them work, `sim_006/nested_element_arguments`);
+a select into a queue or dynamic array nested in a
 string-keyed associative array element (`sq["k"][1]`); one statement that
 changes two nested elements of one container
 (`sq["b"].push_back(sq["a"].pop_front())`); a nested element written from an
