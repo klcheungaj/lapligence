@@ -284,6 +284,24 @@ typedef struct {
 } llg_vpi_instance_t;
 /* One catalog row. Generated models emit a static array of these; the
  * runtime only borrows it and indexes it on the first VPI use. */
+/* A sequential UDP instance that takes vpi_put_value (IEEE 1800-2009
+ * 38.34), emitted only into a model that keeps the VPI catalog: its state
+ * digit (0, 1, 2 for X), the inertial driver handle of its delayed output
+ * (NULL when the output is not delayed) and the gate process that publishes
+ * the output, named by its root descriptor and, for an instance of a shared
+ * body, the instance record its root frame holds at `record_offset`.
+ * `slot` and `identity` name that process once the bridge has found it
+ * (`slot` -1 until then). */
+typedef struct {
+    uint8_t* state;
+    llg_inertial_t** inertial;
+    const llg_co_desc_t* desc;
+    const void* record;
+    size_t record_offset;
+    int slot;
+    uint64_t identity;
+} llg_vpi_udp_put_t;
+
 typedef struct llg_vpi_model_object {
     int type;                 /* vpiType */
     const char* name;
@@ -327,7 +345,9 @@ typedef struct llg_vpi_model_object {
     /* A dynamic object (LLG_VPI_OBJ_DYNAMIC): its storage (llg_string_t,
      * void* handle or container), the change marker a handle store
      * publishes (NULL for strings and containers, which publish their own),
-     * and its shape index + 1 in the dynamic tables. */
+     * and its shape index + 1 in the dynamic tables. A sequential UDP that
+     * takes vpi_put_value has its llg_vpi_udp_put_t as `storage`, with no
+     * dependency and no shape. */
     void* storage;
     sv4_t* dependency;
     uint32_t shape;

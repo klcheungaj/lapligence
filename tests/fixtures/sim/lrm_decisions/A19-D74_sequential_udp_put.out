@@ -1,0 +1,17 @@
+10 q1=x q2=1 q3=x
+put tb.u1 0 flags=1 error=0
+put tb.u2 0 flags=1 error=0
+put tb.u3 1 flags=1 error=0
+12 q1=x q2=0 q3=1
+12 q1=0 q2=0 q3=1
+put tb.u1 0 flags=2 error=1
+put tb.u2 3 flags=1 error=0
+put tb.u3 0 flags=5 error=1
+put tb.u4 1 flags=1 error=1
+22 q1=0 q2=x q3=1
+put tb.u2 1 flags=1 error=0
+put tb.u1 2 flags=1 error=0
+42 q1=0 q2=1 q3=1
+42 q1=x q2=1 q3=1
+52 q1=x q2=0 q3=1
+57 q1=0 q2=0 q3=1

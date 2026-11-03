@@ -1086,6 +1086,75 @@ fn share_frame_types(
     Ok(frame_types)
 }
 
+/// The gate process of each sequential UDP the VPI catalog lets
+/// `vpi_put_value` set (38.34), by IR process C name: the inertial handle
+/// of a delayed output and the root descriptor (and shared-body instance
+/// record) the bridge finds the running process by. A process whose body
+/// keeps any other per-site state gets no site, and the put is refused.
+fn udp_put_sites(
+    model: &IrModel,
+    processes: &[Option<CoroutineArtifact>],
+    spawns: &super::owned::model::SharedSpawns,
+) -> vpi::UdpPutSites {
+    let wanted = model
+        .vpi_objects
+        .iter()
+        .filter_map(|object| object.udp_put.as_ref().map(|(_, process)| process.as_str()))
+        .collect::<HashSet<_>>();
+    let mut sites = vpi::UdpPutSites::new();
+    if wanted.is_empty() || !model.vpi_catalog {
+        return sites;
+    }
+    for (index, process) in model.processes.iter().enumerate() {
+        if !wanted.contains(process.c_name.as_str()) {
+            continue;
+        }
+        let Some(artifact) = processes.get(index).and_then(Option::as_ref) else {
+            continue;
+        };
+        // An undelayed output keeps no site state; a delayed one keeps
+        // exactly one scalar inertial driver handle.
+        let statics = &artifact.net_batches.statics;
+        if statics.len() > 1
+            || statics
+                .iter()
+                .any(|site| site.ty != "llg_inertial_t*" || site.len.is_some())
+        {
+            continue;
+        }
+        let Some(entry) = artifact.desc_name.strip_suffix("_desc") else {
+            continue;
+        };
+        // A member of a shared body class spawns with the class descriptor
+        // (when it has one) and its instance record (lifecycle.rs).
+        let (desc, record) = match spawns.members.get(entry) {
+            Some((class, member)) => {
+                let class = &spawns.classes[*class];
+                (
+                    class
+                        .desc
+                        .clone()
+                        .unwrap_or_else(|| artifact.desc_name.clone()),
+                    Some((
+                        format!("&{}[{member}]", class.records),
+                        format!("offsetof({}, _llg_instance)", class.frame),
+                    )),
+                )
+            }
+            None => (artifact.desc_name.clone(), None),
+        };
+        sites.insert(
+            process.c_name.clone(),
+            vpi::UdpPutSite {
+                handle: statics.first().map(|site| site.name.clone()),
+                desc,
+                record,
+            },
+        );
+    }
+    sites
+}
+
 fn render_model(
     mut execution: Cow<'_, ExecutionModel>,
     threshold: usize,
@@ -1497,7 +1566,11 @@ fn render_model(
     out.push_str(&net_tables.declarations);
     // The VPI catalog points at signal, array, static-local and net storage,
     // so it follows every storage declaration.
-    render_vpi_metadata(model, &mut out);
+    let udp_puts = render_vpi_metadata(
+        model,
+        &udp_put_sites(model, &coroutine_processes, &sharing.spawns),
+        &mut out,
+    );
     render_vpi_compile_calls(model, &mut out);
     render_vpi_builtin_calls(model, &mut out);
     // After the signal storage the FSM parts point at.
@@ -1506,6 +1579,8 @@ fn render_model(
     out.push_str(&sharing.declarations);
     out.push_str(&sharing.prototypes);
     out.push_str(&coroutine_metadata);
+    // After the descriptors and instance records its entries name.
+    out.push_str(&udp_puts);
     render_virtual_dispatch_prototypes(model, &mut out);
     render_virtual_interface_call_prototypes(model, &mut out);
     render_virtual_dispatch_bodies(

@@ -598,6 +598,10 @@ impl<'a> Codegen<'a> {
             // Delayed-driver initialization above used the UDP start value.
             self.delayed_driver_start = None;
             let mut body = body;
+            let udp_state = match &udp_step {
+                Some(IrStmt::UdpStep { state, .. }) => Some(*state),
+                _ => None,
+            };
             if let Some(step) = udp_step {
                 body.insert(0, step);
             }
@@ -609,6 +613,9 @@ impl<'a> Codegen<'a> {
                 }
             };
             let fn_name = self.new_fn_name(path, "gate");
+            if let Some(state) = udp_state {
+                self.udp_gate_processes.insert(g, (state, fn_name.clone()));
+            }
             let origin = self.origin(g);
             self.model.processes.push(IrProcess::new_with_origin(
                 fn_name,

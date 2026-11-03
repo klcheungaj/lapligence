@@ -336,6 +336,8 @@ typedef struct {
     int links_built;
     uintptr_t iterate_ref;        /* reference of the running vpi_iterate call */
     uint32_t* code_parents;       /* parent code row + 1 of each code row, built on demand */
+    int procedures_started;       /* llg_vpi_procedures_started ran: gate processes exist */
+    int udp_resolved;             /* sequential UDP gate processes found (udp_resolve) */
 } llg_vpi_state_t;
 
 static llg_vpi_state_t g_vpi;
@@ -610,7 +612,15 @@ static int model_object_valid(const llg_vpi_model_object_t* object) {
         (!g_vpi.types || object->typespec > g_vpi.types->typespec_count))
         return 0;
     if (object->flags & LLG_VPI_OBJ_DYNAMIC) return dyn_row_valid(object);
-    if (object->storage || object->dependency || object->shape) return 0;
+    /* A sequential UDP that takes vpi_put_value: its put record. */
+    if (object->type == vpiUdp && object->detail == vpiSeqPrim && object->storage) {
+        const llg_vpi_udp_put_t* put = (const llg_vpi_udp_put_t*)object->storage;
+        if (object->dependency || object->shape || !put->state || !put->desc ||
+            (put->record && put->record_offset < sizeof(llg_co_frame_t)))
+            return 0;
+    } else if (object->storage || object->dependency || object->shape) {
+        return 0;
+    }
     if (object->flags & LLG_VPI_OBJ_RECORD)
         return (object->type == vpiStructVar || object->type == vpiUnionVar) &&
                !object->packed && !object->real;
@@ -10704,6 +10714,139 @@ static vpiHandle schedule_put(const llg_vpi_target_t* target, llg_vpi_datum_t* d
     return encode_handle(index);
 }
 
+/* The gate processes of the sequential UDPs that take vpi_put_value, found
+ * once per run on the first put after the procedures started. Two
+ * open-addressing tables: the root descriptors with the offset of the
+ * instance record in their root frames (0: not shared), and the put records
+ * by descriptor and instance record. */
+typedef struct {
+    const llg_co_desc_t** descs;
+    size_t* offsets;
+    llg_vpi_udp_put_t** records;
+    size_t mask;
+} udp_process_index_t;
+
+static size_t udp_pointer_hash(const void* a, const void* b) {
+    uint64_t hash = (uint64_t)(uintptr_t)a * UINT64_C(0x9e3779b97f4a7c15) ^ (uint64_t)(uintptr_t)b;
+    hash ^= hash >> 33;
+    hash *= UINT64_C(0xff51afd7ed558ccd);
+    hash ^= hash >> 33;
+    return (size_t)hash;
+}
+
+static void udp_process_visit(void* context, int slot, uint64_t identity,
+                              const llg_co_desc_t* desc, const void* root) {
+    const udp_process_index_t* index = (const udp_process_index_t*)context;
+    size_t at = udp_pointer_hash(desc, NULL) & index->mask;
+    while (index->descs[at] && index->descs[at] != desc) at = (at + 1u) & index->mask;
+    if (!index->descs[at]) return;
+    const void* record = NULL;
+    if (index->offsets[at])
+        memcpy(&record, (const unsigned char*)root + index->offsets[at], sizeof(record));
+    for (at = udp_pointer_hash(desc, record) & index->mask; index->records[at];
+         at = (at + 1u) & index->mask) {
+        llg_vpi_udp_put_t* put = index->records[at];
+        if (put->desc == desc && put->record == record) {
+            if (put->slot < 0) {
+                put->slot = slot;
+                put->identity = identity;
+            }
+            return;
+        }
+    }
+}
+
+static int udp_resolve(void) {
+    size_t count = 0;
+    for (size_t i = 0; i < g_vpi.object_count; ++i) {
+        const llg_vpi_model_object_t* object = &g_vpi.objects[i];
+        count += object->type == vpiUdp && object->detail == vpiSeqPrim && object->storage;
+    }
+    size_t capacity = 2;
+    while (capacity < 2u * count) capacity *= 2u;
+    udp_process_index_t index = {
+        (const llg_co_desc_t**)calloc(capacity, sizeof(const llg_co_desc_t*)),
+        (size_t*)calloc(capacity, sizeof(size_t)),
+        (llg_vpi_udp_put_t**)calloc(capacity, sizeof(llg_vpi_udp_put_t*)), capacity - 1u};
+    if (!index.descs || !index.offsets || !index.records) {
+        free(index.descs);
+        free(index.offsets);
+        free(index.records);
+        return 0;
+    }
+    for (size_t i = 0; i < g_vpi.object_count; ++i) {
+        const llg_vpi_model_object_t* object = &g_vpi.objects[i];
+        if (object->type != vpiUdp || object->detail != vpiSeqPrim || !object->storage) continue;
+        llg_vpi_udp_put_t* put = (llg_vpi_udp_put_t*)object->storage;
+        /* A record keeps the process of an earlier run of this model. */
+        put->slot = -1;
+        size_t at = udp_pointer_hash(put->desc, NULL) & index.mask;
+        while (index.descs[at] && index.descs[at] != put->desc) at = (at + 1u) & index.mask;
+        index.descs[at] = put->desc;
+        index.offsets[at] = put->record ? put->record_offset : 0u;
+        at = udp_pointer_hash(put->desc, put->record) & index.mask;
+        while (index.records[at]) at = (at + 1u) & index.mask;
+        index.records[at] = put;
+    }
+    llg_rt_visit_processes(udp_process_visit, &index);
+    free(index.descs);
+    free(index.offsets);
+    free(index.records);
+    g_vpi.udp_resolved = 1;
+    return 1;
+}
+
+static void udp_put_due_now(void* data) {
+    llg_inertial_due_now(((llg_vpi_udp_put_t*)data)->inertial);
+}
+
+/* 38.34: a sequential UDP is set to the value with no delay whatever the
+ * delay of the instance, with vpiNoDelay only. The state digit changes at
+ * once; the gate process is woken as by an input change and publishes it,
+ * and a delayed output drops its pending transition and has the update that
+ * evaluation schedules made due now. Neither adds a wait dependency or a
+ * check to the gate's evaluation. A put before the procedures start sets
+ * the state the first evaluation starts from. Z sets X, as a table output
+ * can only be 0, 1 or X. */
+static vpiHandle udp_put_value(const llg_vpi_model_object_t* object, p_vpi_value input,
+                               int mode) {
+    if (object->detail != vpiSeqPrim) {
+        vpi_error("LLG_VPI_VALUE", "a combinational UDP has no state to put a value to (38.34)");
+        return NULL;
+    }
+    llg_vpi_udp_put_t* put = (llg_vpi_udp_put_t*)object->storage;
+    if (!put) {
+        vpi_error("LLG_VPI_UNSUPPORTED",
+                  "vpi_put_value to this sequential UDP is not supported: its output is not "
+                  "published by one gate process");
+        return NULL;
+    }
+    if (mode != vpiNoDelay) {
+        vpi_error("LLG_VPI_FLAGS", "values are put to a UDP with vpiNoDelay (38.34)");
+        return NULL;
+    }
+    llg_vpi_datum_t datum;
+    if (!value_from_vpi(input, 1u, 0, 0, &datum)) return NULL;
+    unsigned digit = datum.is_real ? 2u : llg_sv4_state(datum.packed, 0);
+    datum_destroy(&datum);
+    *put->state = (uint8_t)(digit > 1u ? 2u : digit);
+    if (!g_vpi.procedures_started) return NULL;
+    if (!g_vpi.udp_resolved && !udp_resolve()) {
+        vpi_error("LLG_VPI_NOMEM", "out of memory finding the UDP gate processes");
+        return NULL;
+    }
+    if (put->inertial) llg_inertial_drop(put->inertial);
+    if (put->slot < 0 || !llg_rt_thread_wake(put->slot, put->identity)) {
+        vpi_error("LLG_VPI_UNSUPPORTED", "the gate process of this UDP is not running");
+        return NULL;
+    }
+    /* Queued after the woken process: its evaluation schedules the state
+     * through the instance delay, which this call makes due now. */
+    if (put->inertial && !llg_schedule_delayed_call("UDP put", udp_put_due_now, put, 0, NULL))
+        vpi_error("LLG_VPI_VALUE", "the UDP output could not be scheduled");
+    return NULL;
+}
+
 vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
                         PLI_INT32 flags) {
     vpi_enter();
@@ -10782,6 +10925,8 @@ vpiHandle vpi_put_value(vpiHandle handle, p_vpi_value input, p_vpi_time time,
                        llg_region_name(llg_current_region()));
         return NULL;
     }
+    if (slot->kind == SLOT_OBJECT && g_vpi.objects[slot->object].type == vpiUdp)
+        return udp_put_value(&g_vpi.objects[slot->object], input, mode);
     if ((mode == vpiInertialDelay || mode == vpiTransportDelay || mode == vpiPureTransportDelay) &&
         svc_string_row(slot))
         return svc_put_string_delayed(slot, input, time, mode, return_event);
@@ -12969,6 +13114,7 @@ static void assertion_system_start(void* data) {
 }
 
 void llg_vpi_procedures_started(void) {
+    g_vpi.procedures_started = 1;
     if (!g_vpi.initialized || g_vpi.failed || g_vpi.phase != LLG_VPI_PHASE_RUNNING ||
         g_vpi.assertion_sys_started || g_vpi.assertion_sys_scheduled)
         return;

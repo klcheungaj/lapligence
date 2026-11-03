@@ -2055,3 +2055,20 @@ static void commit_inertial(llg_region_t region) {
     sv4_destroy(&mask);
     sv4_destroy(&value);
 }
+
+// A VPI put to a delayed sequential UDP (llg_rt.h); no scheduling path
+// calls these.
+void llg_inertial_drop(llg_inertial_t** handle) {
+    llg_inertial_t* driver = *handle;
+    if (driver && region_can_mutate("inertial scheduling")) inertial_unlink_pending(driver);
+}
+
+void llg_inertial_due_now(llg_inertial_t** handle) {
+    llg_inertial_t* driver = *handle;
+    if (!driver || !driver->pending || driver->time <= g.now ||
+        !region_can_mutate("inertial scheduling"))
+        return;
+    inertial_pending_remove(driver);
+    driver->time = g.now;
+    inertial_pending_insert(driver);
+}

@@ -270,6 +270,29 @@ fn runtime_structures_list_systfs_callbacks_time_queues_uses_and_udps() {
     );
 }
 
+/// `vpi_put_value` sets a sequential UDP with no delay (decision A19-D74)
+/// in every form its gate takes: undelayed and delayed outputs, instance
+/// array elements, generate instances sharing one body, a definition above
+/// the dense next-state index, a put before the run and a put during the
+/// instance's own input event.
+#[test]
+fn sequential_udp_put_sets_the_state_with_no_delay() {
+    let directory = sim_harness::TempDir::new("adv019-udp-put").expect("temporary directory");
+    let archive = super::sim_041::static_archive(SUITE, &directory, "udp_put", &[]);
+    sim_cli::run_case_backend_parity(
+        SUITE,
+        "udp_put",
+        include_str!("../fixtures/sim/feature_completion/adv_019/udp_put.out"),
+        &[
+            "--define-system-task",
+            "task $udp_put(input int)",
+            "--dpi-lib",
+            archive.as_str(),
+        ],
+        &[],
+    );
+}
+
 /// Threads follow the initial and always procedures and fork branches, and
 /// frames the task and function calls of each; frame and thread callbacks
 /// run, and handles to ended frames and threads fail (ADV-019-A02).
