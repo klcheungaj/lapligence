@@ -671,6 +671,25 @@ impl<'a> Codegen<'a> {
             init: Some(Box::new(init)),
             two_state: false,
         };
+        // One assignment reads the value once: it selects from the value
+        // itself, so an evaluation declares no local (a narrow contribution
+        // to a shared group then costs what the copy's whole write did).
+        if let [(lhs, rhs)] = assignments.as_slice() {
+            if let Some(rhs) = select_from_value(rhs, &name, &value) {
+                let lhs = lhs.clone();
+                return Ok(vec![match delay {
+                    None => IrStmt::Assign {
+                        lhs,
+                        rhs,
+                        nba: false,
+                    },
+                    Some(delay) => {
+                        self.initialize_delayed_lhs(&lhs)?;
+                        IrStmt::InertialAssign { lhs, rhs, delay }
+                    }
+                }]);
+            }
+        }
         let Some(delay) = delay else {
             let mut body = vec![capture(value)];
             body.extend(assignments.into_iter().map(|(lhs, rhs)| IrStmt::Assign {
@@ -2223,4 +2242,34 @@ fn dense_row_loop(statement: &IrStmt, model: &IrModel) -> bool {
     matches!(statement.unlocated(), IrStmt::For { .. })
         && writes(statement, model, &mut target)
         && target.is_some()
+}
+
+/// `rhs` with its read of local `name` replaced by `value`, when it is that
+/// read or a constant part select of it (the forms `alias_driver_assignments`
+/// builds over the local); `None` for any other form.
+fn select_from_value(rhs: &IrExpr, name: &str, value: &IrExpr) -> Option<IrExpr> {
+    let reads_local =
+        |expr: &IrExpr| matches!(&expr.kind, IrExprKind::LocalRead(local) if local == name);
+    if reads_local(rhs) {
+        return Some(value.clone());
+    }
+    let IrExprKind::PartSel { base, left, right } = &rhs.kind else {
+        return None;
+    };
+    if !reads_local(base) {
+        return None;
+    }
+    if *right == 0 && u32::try_from(*left).ok()? + 1 == value.width() {
+        return Some(value.clone());
+    }
+    Some(IrExpr::new(
+        IrExprKind::PartSel {
+            base: Box::new(value.clone()),
+            left: *left,
+            right: *right,
+        },
+        rhs.width(),
+        rhs.signed(),
+        None,
+    ))
 }

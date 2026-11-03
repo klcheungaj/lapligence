@@ -408,6 +408,38 @@ fn vpi_merged_selected_formals_answer_both_names() {
     }
 }
 
+/// Delayed gates driving the bits of one vector through merged output ports
+/// commit as one batch when they mature together: a value-change callback on
+/// the vector sees one change per batch with every new bit, and a formal still
+/// changes once per batch for its own bit.
+#[test]
+fn vpi_vector_of_delayed_bit_drivers_changes_once_per_batch() {
+    if !sim::build::cmake_available() {
+        eprintln!("SKIP: cmake not available");
+        return;
+    }
+    for optimization in [sim::opt::OptConfig::default(), sim::opt::OptConfig::none()] {
+        sim_harness::with_frontend_temp_cwd("vpi-batched-bits", |dir| {
+            let executable = build_model_with_opts(
+                dir,
+                "vpi_batched_bits.sv",
+                &fixture("vpi_batched_bits.sv"),
+                &[],
+                &optimization,
+            );
+            let plugin = compile_plugin(dir, "vpi_batched_bits.c");
+            let output = run_plugin(dir, &executable, &plugin);
+            assert!(output.status.success(), "{output:?}");
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                "2 q=00000000\n7 q=11111111\n12 q=00000000\nchanges of tb.g[3].s.q: 3\n"
+            );
+            Ok(())
+        })
+        .expect("VPI batched bits");
+    }
+}
+
 /// Net ports merge in a VPI model (decision A21-D6): a put, force or
 /// release through the sink reaches the source, a callback on the sink sees
 /// the source's driver change, and a merged port refuses port delays. A

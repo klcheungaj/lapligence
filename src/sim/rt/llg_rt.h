@@ -874,6 +874,13 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
                                int slot, sv4_t value, sv4_t mask,
                                uint64_t rise, uint64_t fall,
                                uint64_t turn_off);
+// A delayed driver of the contiguous bits `plan` selects of net slot `slot`
+// (a narrow contribution to a wider shared group). The record keeps only
+// those bits, so scheduling and committing cost the part's width, not the
+// group's. Same transition rules as llg_inertial_selected_net.
+void llg_inertial_part_net(llg_inertial_t** handle, llg_net_t* net, int slot,
+                           sv4_t value, sv4_select_plan_t plan, int reverse,
+                           uint64_t rise, uint64_t fall, uint64_t turn_off);
 // Drop the pending update of the driver behind `handle`, and move a
 // pending update due later to the current time (no driver or none pending:
 // no effect). A vpi_put_value to a delayed sequential UDP (IEEE 1800-2009

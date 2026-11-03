@@ -105,6 +105,29 @@ static int run_region_queue(llg_region_t region) {
     return !g.finish && !g.suspended;
 }
 
+// Commit every inertial update due now in `region` as one batch, each still
+// one pass of the zero-delay limit. Nets defer exactly (scheduler/nets.c,
+// "Deferred net updates") and publish when the batch ends, before any process
+// the updates woke runs; 0 when the limit stops the run.
+static int commit_inertial_batch(llg_region_t region) {
+    int ok = 1;
+    net_defer_active = 1;
+    net_defer_exact = 1;
+    do {
+        g.current_region = region;
+        if (!consume_limit(&g.region_passes, g.zero_loop_limit)) {
+            ok = 0;
+            break;
+        }
+        commit_inertial(region);
+    } while (!g.finish && inertial_ready(region));
+    net_defer_active = 0;
+    net_defer_exact = 0;
+    llg_net_flush_deferred();
+    if (!ok) report_zero_delay_loop();
+    return ok;
+}
+
 static void wake_zero_waits(llg_region_t region) {
     llg_wait_queue_t* queue = &g.zero_waits[region];
     llg_wait_t* wait = queue->head;
@@ -143,12 +166,7 @@ static int drain_design_set(void) {
                (region_pending(LLG_REGION_ACTIVE) ||
                 inertial_ready(LLG_REGION_ACTIVE))) {
             if (inertial_ready(LLG_REGION_ACTIVE)) {
-                g.current_region = LLG_REGION_ACTIVE;
-                if (!consume_limit(&g.region_passes, g.zero_loop_limit)) {
-                    report_zero_delay_loop();
-                    return 0;
-                }
-                commit_inertial(LLG_REGION_ACTIVE);
+                if (!commit_inertial_batch(LLG_REGION_ACTIVE)) return 0;
             } else if (!run_region_queue(LLG_REGION_ACTIVE)) {
                 return 0;
             }
@@ -239,12 +257,7 @@ static int drain_reactive_set(void) {
                (region_pending(LLG_REGION_REACTIVE) ||
                 inertial_ready(LLG_REGION_REACTIVE))) {
             if (inertial_ready(LLG_REGION_REACTIVE)) {
-                g.current_region = LLG_REGION_REACTIVE;
-                if (!consume_limit(&g.region_passes, g.zero_loop_limit)) {
-                    report_zero_delay_loop();
-                    return 0;
-                }
-                commit_inertial(LLG_REGION_REACTIVE);
+                if (!commit_inertial_batch(LLG_REGION_REACTIVE)) return 0;
             } else if (!run_region_queue(LLG_REGION_REACTIVE)) {
                 return 0;
             }

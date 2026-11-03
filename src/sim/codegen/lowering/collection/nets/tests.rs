@@ -489,11 +489,9 @@ fn array_contribution_work_grows_by_ranges_instead_of_bit_operations() {
                 assert!(contributions.insert(driver), "each driver writes once");
                 writes_per_group[driver.0] += 1;
                 assert_eq!(rhs.width(), width);
-                assert!(matches!(
-                    rhs.kind(),
-                    IrExprKind::PartSel { left, right: 0, .. }
-                        if *left == i64::from(width - 1)
-                ));
+                // The value reaches the slot whole, not as a concatenation
+                // of bit selects.
+                assert!(!matches!(rhs.kind(), IrExprKind::Concat { .. }));
             }
         }
         assert_eq!(contributions.len(), 6);
@@ -504,6 +502,10 @@ fn array_contribution_work_grows_by_ranges_instead_of_bit_operations() {
 /// Lower `source`'s net groups and continuous processes with a shared-run
 /// bound of `limit` slot bits.
 fn shared_run_model(source: &str, limit: u64) -> IrModel {
+    shared_run_model_with(source, limit, false)
+}
+
+fn shared_run_model_with(source: &str, limit: u64, merge_ports: bool) -> IrModel {
     let compiled = crate::core::compile::compile_sources_checked(
         &[crate::core::compile::OwnedSource::compilation_unit(
             "shared_runs.sv",
@@ -519,6 +521,7 @@ fn shared_run_model(source: &str, limit: u64) -> IrModel {
     let semantic = crate::sim::semantic::SemanticModel::from_db(&database);
     let mut cg = Codegen::new(&semantic);
     cg.shared_run_slot_bits = limit;
+    cg.merge_ports = merge_ports;
     let tops = cg.collect_design().unwrap();
     cg.bind_reference_ports().unwrap();
     cg.collect_timescales();
@@ -580,6 +583,74 @@ fn a_vector_split_by_per_bit_connections_stays_one_group() {
     narrow.sort_unstable();
     assert_eq!(narrow, (0..16).collect::<Vec<_>>());
     assert_eq!(whole, 1, "the wide driver writes its whole slot once");
+}
+
+/// Scattered bit-select ports on wide vectors (the `mixed_perf` shape): each
+/// stage's delayed gates drive one bit of a shared vector group through a
+/// merged output formal.
+const SCATTERED_DELAYED_BITS: &str = r#"
+module stage(input d, input en, output q, output l, output n);
+    buf #2 b(q, d);
+    bufif1 #1 t(l, q, en);
+    not x(n, d);
+endmodule
+module tb;
+    logic d = 0, en = 1;
+    wire [7:0] q, l, n;
+    for (genvar i = 0; i < 8; i++) begin : g
+        stage s(.d(d), .en(en), .q(q[i]), .l(l[(i + 3) % 8]), .n(n[i]));
+    end
+endmodule
+"#;
+
+#[test]
+fn delayed_per_bit_drivers_of_a_shared_vector_write_only_their_bits() {
+    let model = shared_run_model_with(SCATTERED_DELAYED_BITS, MAX_SHARED_RUN_SLOT_BITS, true);
+    // q, l and n stay one group each; the rest are the stages' one-bit nets.
+    let widths = group_widths(&model);
+    assert_eq!(widths.iter().filter(|width| **width == 8).count(), 3);
+    assert!(widths.iter().all(|width| *width == 8 || *width == 1));
+    let mut delayed = Vec::new();
+    let mut undelayed = Vec::new();
+    for mut statement in model.processes.iter().flat_map(|process| &process.body) {
+        while let IrStmt::Located {
+            statement: inner, ..
+        } = statement
+        {
+            statement = inner;
+        }
+        match statement {
+            IrStmt::InertialAssign {
+                lhs: IrLhs::Part(signal, left, right, false),
+                rhs,
+                ..
+            } if model.signals[*signal].net_driver.is_some() => {
+                assert_eq!((left, rhs.width()), (right, 1), "one bit per gate");
+                delayed.push(*left);
+            }
+            IrStmt::Assign {
+                lhs: IrLhs::Part(signal, left, right, false),
+                rhs,
+                nba: false,
+            } if model.signals[*signal].net_driver.is_some() => {
+                assert_eq!((left, rhs.width()), (right, 1), "one bit per gate");
+                undelayed.push(*left);
+            }
+            // A gate's value reaches its one contribution directly: a local
+            // would cost a value scope per evaluation.
+            IrStmt::DeclLocal { name, .. } => {
+                assert!(!name.starts_with("_alias_gate_value"), "{name}")
+            }
+            _ => {}
+        }
+    }
+    delayed.sort_unstable();
+    undelayed.sort_unstable();
+    assert_eq!(
+        delayed,
+        (0..8).flat_map(|bit| [bit, bit]).collect::<Vec<_>>()
+    );
+    assert_eq!(undelayed, (0..8).collect::<Vec<_>>());
 }
 
 #[test]

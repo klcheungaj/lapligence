@@ -411,9 +411,12 @@ static void switch_mark_dirty(uint32_t node) {
 
 // Inside a process turn the network waits for the end of the region queue
 // drain, like a net with several drivers (decision S2-D11); otherwise it is
-// solved at once.
+// solved at once. In a batch of inertial commits (exact deferral) it is
+// solved at once too, after the net updates the batch committed before it.
 static void switches_schedule(void) {
-    if (!net_defer_active && !g_sw.held) switches_flush();
+    if (g_sw.held) return;
+    if (!net_defer_active) switches_flush();
+    else if (net_defer_exact) llg_net_flush_deferred();
 }
 
 // A driver slot of `net` changed, or a force or release changed its forced
