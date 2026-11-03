@@ -56,7 +56,10 @@ the rules a change must keep. Platform pitfalls are in
   folded `$display` arguments, timed out there again while a 2,900-line one
   passed. `sim_outline_bodies` now bounds those helpers to 2,000 lines.
 - Linux builds only in the static-musl Alpine container; its `test` jobs run the
-  archive on Ubuntu 24.04 and Rocky Linux 9. Windows/macOS `test` jobs run on the
+  archive on Ubuntu 24.04 and Rocky Linux 9, which build generated models with
+  their default `cc` (GCC). On x86_64 a third row, `ubuntu-24.04-clang`, runs
+  the same archive with `LLG_CC=CC=clang`, so models and the C runtime are also
+  compiled by Clang on Linux. Windows/macOS `test` jobs run on the
   build job's runner kind with the checkout at the same path, so compile-time
   paths (`CARGO_MANIFEST_DIR`, `CARGO_BIN_EXE_*`) resolve; they need no Rust
   toolchain but apply the libfst patch to the fresh checkout.
