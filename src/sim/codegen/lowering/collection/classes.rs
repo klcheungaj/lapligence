@@ -278,6 +278,24 @@ impl<'a> Codegen<'a> {
                 // A record with string, real or handle leaves is one native
                 // value per object (SIM-011).
                 if self.native_value_type(child).is_some() {
+                    // A static one is one record for the whole model, stored
+                    // leaf by leaf like a package record (SV 8.9).
+                    let path = format!("llg_class{class_index}");
+                    if self.db.variable_lifetime(child) == VariableLifetime::Static
+                        && self.collect_aggregate(&path, child)?
+                    {
+                        if let Some(initializer) = self.db.var_initializer(child) {
+                            let aggregate = self.unpacked_aggregates[&child].clone();
+                            self.reserve_initializer_order(child);
+                            self.collect_unpacked_aggregate_decl_init(
+                                &path,
+                                child,
+                                initializer,
+                                &aggregate,
+                            )?;
+                        }
+                        continue;
+                    }
                     self.collect_class_native(class_index, child, &mut fields)?;
                     continue;
                 }

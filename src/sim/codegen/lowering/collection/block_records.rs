@@ -486,12 +486,21 @@ impl Codegen<'_> {
     pub(in super::super) fn emit_record_statement_initializers(&mut self) -> Result<(), String> {
         let initializers = std::mem::take(&mut self.record_statement_initializers);
         for (declaration, initializer, path) in initializers {
-            let inst = self.owner_instance(declaration).ok_or_else(|| {
-                format!(
-                    "record initializer for `{}` has no owning instance",
-                    self.node(declaration).name
-                )
-            })?;
+            // A static class property initializes in its class's scope, as
+            // the class's packed static initializers do.
+            let inst = self
+                .owner_instance(declaration)
+                .or_else(|| {
+                    self.node(declaration)
+                        .parent
+                        .filter(|class| matches!(self.kind(*class), NodeKind::ClassDef))
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "record initializer for `{}` has no owning instance",
+                        self.node(declaration).name
+                    )
+                })?;
             self.inst = inst;
             self.depth_arg = "0".into();
             let statement = self.block_record_assignment(&path, declaration, initializer)?;

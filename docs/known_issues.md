@@ -545,11 +545,10 @@ pops it), or named as the target of a timing-controlled assignment, a
 nonblocking target or a `ref` actual (reads in conditions, loop headers,
 `foreach`, initializers and timed assignment values copy the member at each
 evaluation); records with container members in nonblocking
-assignments; static class
-properties of a record type with string, real or handle members and class
-properties of a record type with container members (instance properties of
-records with string, real or handle members are one value per object and
-records of integral leaves are fixed-width properties, SIM-011); equality of records with an associative member (and conditionals
+assignments; instance class properties of a record type with container
+members (instance properties of records with string, real or handle members
+are one value per object, records of integral leaves are fixed-width
+properties, SIM-011, and static record properties are one shared record); equality of records with an associative member (and conditionals
 with an ambiguous predicate on such records);
 compound or nonblocking writes to a record element of a resizable container;
 a run-time index into a native member array of more than 64 elements, and
@@ -629,7 +628,7 @@ roots for forked automatic block records, strings and handles.
 `sim_007/bad_member_select_limit.sv`, `sim_007/bad_block_record_*.sv`,
 `sim_007/bad_block_native_*.sv`, `sim_007/bad_record_member_default.sv`,
 `sim_007/bad_record_element_*.sv`, `sim_007/bad_record_container_element.sv`,
-`sim_011/neg_{record_container,static_record}_property.sv`, `sim_007/bad_multidim_row_*.sv` and `sim_007/bad_tagged_*.sv`.
+`sim_011/neg_record_container_property.sv`, `sim_007/bad_multidim_row_*.sv` and `sim_007/bad_tagged_*.sv`.
 
 ## Resizable containers at subroutine, object and nesting boundaries
 

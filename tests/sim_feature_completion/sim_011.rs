@@ -246,9 +246,12 @@ fn unsupported_property_layouts_reject_explicitly() {
         "neg_multidim_property",
         "selecting a row, element or slice of a multidimensional class property in `tb` is not supported; it is accessed whole or through memory file tasks (SIM-011)",
     );
-    sim_cli::reject_case(
-        SUITE,
-        "neg_static_record_property",
-        "static class property `holder_c.shared` of an unpacked record or union type with string, real, handle or container members is not supported (SIM-011)",
-    );
+}
+
+#[test]
+fn static_record_properties_are_shared_records() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_011/static_record_property.out");
+    sim_cli::run_case_backend_parity(SUITE, "static_record_property", expected, &[], &[]);
+    sim_cli::run_case_after_db_drop(SUITE, "static_record_property", expected);
 }

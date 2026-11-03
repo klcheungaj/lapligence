@@ -2335,8 +2335,9 @@ These are bounded implementations, not full verification-infrastructure support.
   `LLG_GC_THRESHOLD`, `LLG_GC_GROWTH_PERCENT`, `LLG_GC=0` and `LLG_GC_STATS=1`
   tune, disable or report collection; limits are listed under
   [collector limits](known_issues.md#collected-objects-keep-some-runtime-objects-and-defer-collection).
-  Static record properties with string, real
-  or handle members, record properties with container members,
+  Static record properties of any record type are one shared record, stored
+  like a package record ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).
+  Instance record properties with container members,
   element, row and slice selects of multidimensional fixed-array properties
   (which are used whole: copies, equality, `%p`, nested positional patterns,
   memory files) and multidimensional properties of non-packed elements,
