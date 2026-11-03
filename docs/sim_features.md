@@ -383,8 +383,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   call result (`f(x).s`, `f(x).n + 1`) and nested record pattern items from
   calls (`'{inner: f()}`) are evaluated through a temporary. Multidimensional
   fixed arrays of strings, handles and native records keep their cells in one
-  row-major view: element and row selects, patterns, copies, formals and
-  nonblocking writes work (row equality and rows as `ref` actuals reject).
+  row-major view: element and row selects, patterns, copies, formals, `%p`
+  (nested patterns, rows and slices too; S07-D2), invalid indices per
+  dimension (S07-D1) and nonblocking writes work (row equality and rows as
+  `ref` actuals reject).
   Associative members of element records, class-property or
   nonblocking storage of container record members, record ports with built-in
   semaphore/mailbox/process members, element, run-time-indexed, subroutine-member

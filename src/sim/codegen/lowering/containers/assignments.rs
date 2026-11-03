@@ -692,7 +692,12 @@ impl<'a> Codegen<'a> {
     /// `view` (`count` cells): the view's own shape when `node` is the whole
     /// view, its declared row dimensions when `node` is a row of a
     /// multidimensional view, else one dimension from 0.
-    pub(super) fn selection_temporary(&mut self, view: usize, node: NodeId, count: u64) -> usize {
+    pub(in super::super) fn selection_temporary(
+        &mut self,
+        view: usize,
+        node: NodeId,
+        count: u64,
+    ) -> usize {
         let temporary = self.container_temporary_like(view);
         if self
             .container_of(self.p30_unwrap_cast(node))

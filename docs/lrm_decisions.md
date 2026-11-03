@@ -1055,6 +1055,14 @@ input grammar is ADV-011. Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | --- | --- | --- | --- | --- |
 | S06-D1 | **An out-of-range element of a container of containers is an invalid index.** A method call (`qq[7].push_back(x)`, `delete`, `insert`), a whole write (`qq[7] = t`) or an element write (`qq[7][0] = 5`) on an element of a queue or dynamic array of containers past its current size does nothing; a read of it (`qq[7].size()`, `qq[7].pop_front()`, `qq[7][0]`) returns the default of its type. The run continues. | 7.4.6 L8235-8238; 7.10 L8979-8980 | `S06-D1_nested_element_invalid_index` | LRM text. Some simulators stop with a fatal error at any use of such an element; llg follows the clause text because 7.4.6 states that a read with an invalid index returns the default and a write performs no operation |
 
+## Multidimensional native arrays and record element members (FIN-001 follow-up)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S07-D1 | **An invalid index of a multidimensional fixed array of strings, handles or native records is checked per dimension.** An element, row or member selected with an index outside its dimension's bounds, or with an X or Z bit, reads the default of its type (empty string, null, 0) and a write to it does nothing. The run continues. | 7.4.6 L8235-8238 | `S07-D1_multidim_native_invalid_index` | LRM text. Some simulators stop with a fatal error at such a read; llg follows the clause text because 7.4.6 states that a read with an invalid index returns the default and a write performs no operation |
+| S07-D2 | **`%p` of a multidimensional native array prints nested patterns.** A two-dimensional fixed array of strings or records prints one assignment pattern per unpacked dimension (`'{'{"a", "b"}, '{"c", "d"}}`); a row prints as a one-dimensional pattern. | 21.2.1.7 L36390-36403; 10.8 | `S07-D2_multidim_native_pattern_format` | LRM text. Some simulators print every element in one flat pattern, which is not a legal pattern for a two-dimensional array; llg follows the clause text, which requires a legal interpretation of the assignment pattern syntax |
+| S07-D3 | **An `always_comb` that reads a queue member of a record element runs again when the member changes.** `always_comb c = fa[0].q.size();` runs again after `fa[0].q.push_back(x)`, a whole member assignment and `pop_front()`. | 9.2.2.2.1 L11184-11186 | `S07-D3_comb_reads_element_member` | LRM text. Some simulators do not run the block again for such a change; llg follows the clause text, whose implicit sensitivity includes every variable or select expression the block reads |
+
 ## Earlier decisions
 
 These predate the register. Their evidence lives in the feature fixtures named

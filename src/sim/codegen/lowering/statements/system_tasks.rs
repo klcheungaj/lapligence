@@ -310,8 +310,10 @@ impl EmitCtx<'_, '_> {
                     } else {
                         (None, args.as_slice())
                     };
-                    let (fmt, display_args) =
-                        self.parse_display_call(name, display_args_source, default_radix)?;
+                    let outer = std::mem::replace(&mut self.cg.deferred_display_args, true);
+                    let parsed = self.parse_display_call(name, display_args_source, default_radix);
+                    self.cg.deferred_display_args = outer;
+                    let (fmt, display_args) = parsed?;
                     let reads = if !strobe {
                         let mut reads = self.collect_monitor_reads(display_args_source)?;
                         for read in self.cg.strength_view_dependencies(&display_args) {

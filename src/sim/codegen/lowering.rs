@@ -1713,6 +1713,10 @@ struct Codegen<'a> {
     /// read-only element staging; false keeps the scan off every other
     /// design.
     element_staging_possible: bool,
+    /// Set while the arguments of `$monitor`/`$strobe` are lowered: they are
+    /// read again when the report prints, so no operand may be copied into a
+    /// statement prelude.
+    deferred_display_args: bool,
     /// Staging container of a nested element → the nested container type,
     /// which no declaration names.
     staged_container_types: HashMap<usize, TypeDescriptor>,
@@ -2302,6 +2306,7 @@ impl<'a> Codegen<'a> {
             staged_element_members: HashMap::new(),
             staged_nested_elements: HashMap::new(),
             element_staging_possible: false,
+            deferred_display_args: false,
             staged_container_types: HashMap::new(),
             container_types_like: HashMap::new(),
             native_tagged_bypass: HashSet::new(),

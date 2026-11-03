@@ -1,7 +1,7 @@
 // Multidimensional fixed arrays of strings, class handles and records with
 // string/real members: element and row selects, patterns, copies, foreach,
 // array queries, package and subroutine storage (SV 7.4.5, 7.4.6, 10.9.1,
-// 13.5, 26.2).
+// 13.5, 21.2.1.7, 26.2).
 package nmd_pkg;
   string tbl[2][2] = '{'{"a", "b"}, '{"c", "d"}};
   function automatic string at(int i, int j);
@@ -150,6 +150,9 @@ module tb;
     // (I) package storage
     nmd_pkg::tbl[1][0] = "C";
     $display("I %s %s %s", nmd_pkg::at(1, 0), nmd_pkg::tbl[0][1], nmd_pkg::tbl[k][k]);
+    // (J) `%p` of a slice, an indexed slice and a row
+    row = '{"x", "y", "z"};
+    $display("J %p %p %p", row[1:2], row[k+:2], s3[1][k]);
     $finish(0);
   end
 endmodule
