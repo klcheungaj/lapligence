@@ -361,6 +361,75 @@ processes or clock edges, at the cost of a few bytes per object.
   time gain was not profiled; the removed work is a history node per signal
   per slot, and a search of the 324-entry history list on every signal write.
 
+### Models with the VPI object catalog
+
+- **Trade-off:** a model built with `--vpi` or `--dpi-lib` keeps everything an
+  application may reach: the object catalog, port connections that other
+  models share or merge, writable gate delays, stopped statement and toggle
+  coverage, and, once an application runs, a frame record per framed call.
+  The catalog costs compile time, memory and start-up; the kept structure
+  costs run time only where it is on the hot path.
+- **Decision:** catalog models link position-dependent on Linux with GCC or
+  Clang (`VPI_CATALOG_LINK` in [`build.rs`](../src/sim/build.rs)), so their
+  catalog pointers need no load-time relocation, and the catalog is
+  validated and indexed on the first VPI use that can reach a design object,
+  not at a registration ([I/O, VPI](../src/sim/rt/io.md)). Kept on purpose:
+  port connections from a variable to a net (A21-D1..D3), because a put or
+  force on the sink must not reach the source (IEEE 1800-2009 38.34: a put
+  to a net "overrides the resolved value of the net. This value shall
+  remain in effect until one of the drivers of the net changes value"), and
+  frame records while an application is loaded, because a later `vpiFrame`
+  query needs every activation entered since start-up.
+- **Evidence:** run time against the same model without the catalog
+  (`plain`), with the catalog and no application (`vpi`), and with a no-op
+  application that registers one system task (`app`); pinned medians of 9
+  interleaved rounds (5 for the long designs), identical output. Besides
+  the corpus and `perf/designs`, `mixed_perf`, `udp_perf`, `rec`, `calls`
+  and `forks` are local stress designs (netlist stages, a UDP ring, deep
+  recursion, task calls, forks):
+
+  | design | plain ms | vpi/plain before → after | app/plain before → after | model C MB plain / vpi | C build s plain / vpi |
+  | --- | ---: | --- | --- | ---: | ---: |
+  | many-registers-10k | 92.4 | 1.24 → 1.02 | 1.39 → 1.03 | 2.66 / 111.75 | 0.6 / 19.2 |
+  | many-masked-20k | 279.2 | 1.10 → 1.01 | 1.14 → 1.03 | 3.70 / 114.24 | 0.6 / 16.5 |
+  | tasks | 81.7 | 1.01 → 1.01 | 1.04 → 1.03 | 0.28 / 4.36 | 1.7 / 2.1 |
+  | zero-delay | 131.7 | 1.01 → 1.00 | 1.02 → 1.02 | 0.03 / 0.07 | 0.3 / 0.4 |
+  | wide-values (400 rounds) | 63.6 | 1.00 → 1.00 | 1.01 → 1.01 | 0.06 / 0.46 | 0.5 / 0.6 |
+  | mixed_perf | 689.3 | 1.92 → 1.87 | 1.91 → 1.86 | 1.15 / 17.65 | 8.8 / 11.8 |
+  | udp_perf (2,000 UDPs) | 2549.2 | 0.98 → 0.98 | 0.97 → 0.95 | 3.34 / 22.91 | 11.5 / 13.5 |
+  | gen64_proto | 3.4 | 1.21 → 1.13 | 1.28 → 1.14 | 0.15 / 1.95 | 0.6 / 0.7 |
+  | gen64_probe | 3.4 | 1.20 → 1.12 | 1.25 → 1.26 | 0.15 / 1.95 | 0.5 / 0.7 |
+  | cpu | 2.5 | 1.02 → 1.06 | 1.02 → 1.04 | 0.07 / 0.22 | 1.1 / 1.2 |
+  | fifo | 2.4 | 1.03 → 1.07 | 1.07 → 1.03 | 0.04 / 0.14 | 0.5 / 0.8 |
+  | uart | 2.6 | 0.99 → 0.97 | 1.05 → 1.05 | 0.04 / 0.14 | 0.5 / 0.6 |
+  | comb | 2.4 | 1.04 → 1.02 | 0.97 → 1.01 | 0.04 / 0.08 | 0.5 / 0.4 |
+  | rec (recursive task) | 2876.0 | 0.99 → 1.00 | 1.04 → 1.01 | 0.02 / 0.04 | 0.2 / 0.2 |
+  | calls | 10591.4 | 1.01 → 1.00 | 1.04 → 1.04 | 0.02 / 0.04 | 0.2 / 0.2 |
+  | forks | 347.4 | 1.01 → 1.02 | 1.04 → 1.04 | 0.03 / 0.05 | 0.2 / 0.3 |
+
+  Model C size is the generated source; C build time is one cold build on
+  a shared host. The tiny designs (`cpu` to `comb`) run in about 3 ms, where
+  0.1 ms is 4%.
+
+  Attribution, one choice at a time (generated-C toggles, relinks):
+  sharing the port links again brings `mixed_perf` (500 stages of UDPs,
+  gates and an `always`, clock and enable connected from variables) from
+  1.88x to 1.00x, so the kept links are its whole overhead; writable gate
+  delays are within noise there, and the statement counters too; without
+  the counters `tasks` runs at 1.00 instead of 1.01 and `forks` at 1.01
+  instead of 1.03 of plain. Sharing the links changes nothing on the designs
+  without such ports (`udp_perf`, `cpu`, `fifo`, `uart`). On
+  `many-registers-10k` the position-independent link applied 550,000
+  relocations and kept 28 MiB more resident (+22% run time), and a
+  registration indexed 60,000 catalog rows and 400,000 expression rows
+  (+17 ms). The `gen64` designs keep about 0.4 ms of start-up with the
+  catalog. Frame records with an application loaded cost
+  up to 5% on call-heavy designs (`rec`, `calls`). The catalog dominates
+  compile time on large designs (`many-registers-10k`: 0.6 s without, about
+  15-19 s with it); its expression and statement rows are about 60% of that
+  and the object rows about 7%. Mach-O and PE executables still relocate
+  the catalog at start.
+
 ## Rejected or deferred
 
 | Option | Effect | Decision |
