@@ -1099,6 +1099,43 @@ fn initialization_step(frame: &mut Frame<'_, '_>, step: &IrInitStep) -> Result<(
     Ok(())
 }
 
+/// The one contiguous run of non-Z bits of a net start value, when it is
+/// narrower than the net: its low bit and its bits as a constant of the run's
+/// width.
+fn narrow_driven_run(value: &IrConst, net_width: u32) -> Option<(u32, IrConst)> {
+    let width = value.width();
+    if width != net_width || value.fill().is_some() || value.real_value().is_some() {
+        return None;
+    }
+    let bit = |plane: &[u64], index: u32| {
+        plane
+            .get((index / 64) as usize)
+            .is_some_and(|word| word >> (index % 64) & 1 != 0)
+    };
+    let low = (0..width).find(|index| !bit(value.z_mask(), *index))?;
+    let high = (low..width)
+        .take_while(|index| !bit(value.z_mask(), *index))
+        .last()?;
+    if high - low + 1 == width || (high + 1..width).any(|index| !bit(value.z_mask(), index)) {
+        return None;
+    }
+    let span = high - low + 1;
+    let limbs = span.div_ceil(64) as usize;
+    let mut planes = [vec![0u64; limbs], vec![0u64; limbs]];
+    for index in 0..span {
+        let (limb, offset) = ((index / 64) as usize, index % 64);
+        if bit(value.bits(), low + index) {
+            planes[0][limb] |= 1 << offset;
+        }
+        if bit(value.x_mask(), low + index) {
+            planes[1][limb] |= 1 << offset;
+        }
+    }
+    let [bits, x] = planes;
+    let part = IrConst::packed(bits, x, vec![0; limbs], span, false, None).ok()?;
+    Some((low, part))
+}
+
 #[cfg(test)]
 mod storage_table_tests {
     use super::{StorageBlock, StorageTables};
@@ -1141,41 +1178,4 @@ mod storage_table_tests {
         block.flush(&mut tables, &mut again_init, &mut again_destroy);
         assert!(again_init.is_empty() && again_destroy.is_empty());
     }
-}
-
-/// The one contiguous run of non-Z bits of a net start value, when it is
-/// narrower than the net: its low bit and its bits as a constant of the run's
-/// width.
-fn narrow_driven_run(value: &IrConst, net_width: u32) -> Option<(u32, IrConst)> {
-    let width = value.width();
-    if width != net_width || value.fill().is_some() || value.real_value().is_some() {
-        return None;
-    }
-    let bit = |plane: &[u64], index: u32| {
-        plane
-            .get((index / 64) as usize)
-            .is_some_and(|word| word >> (index % 64) & 1 != 0)
-    };
-    let low = (0..width).find(|index| !bit(value.z_mask(), *index))?;
-    let high = (low..width)
-        .take_while(|index| !bit(value.z_mask(), *index))
-        .last()?;
-    if high - low + 1 == width || (high + 1..width).any(|index| !bit(value.z_mask(), index)) {
-        return None;
-    }
-    let span = high - low + 1;
-    let limbs = span.div_ceil(64) as usize;
-    let mut planes = [vec![0u64; limbs], vec![0u64; limbs]];
-    for index in 0..span {
-        let (limb, offset) = ((index / 64) as usize, index % 64);
-        if bit(value.bits(), low + index) {
-            planes[0][limb] |= 1 << offset;
-        }
-        if bit(value.x_mask(), low + index) {
-            planes[1][limb] |= 1 << offset;
-        }
-    }
-    let [bits, x] = planes;
-    let part = IrConst::packed(bits, x, vec![0; limbs], span, false, None).ok()?;
-    Some((low, part))
 }
