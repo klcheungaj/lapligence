@@ -1,4 +1,7 @@
 routines: 42 of 42 resolved
+vprintf 42 ok
+vpi_vprintf: 14 level=0 code=-
+vpi_flush: 0 level=0 code=-
 lookup tb: handle level=0 code=-
 vpi_handle_multi: NULL level=3 code=LLG_VPI_RELATION
   vpi_handle_multi gives only vpiInterModPath objects

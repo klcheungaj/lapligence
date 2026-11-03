@@ -27,6 +27,17 @@ the loader resolve the symbol when the plugin loads, and makes the static link
 resolve it, so the first line `routines: 42 of 42 resolved` is printed only
 when the model defines every routine.
 
+`vpi_vprintf` and `vpi_flush` are also called, so they do not rest on symbol
+presence alone: `vpi_vprintf("vprintf %d %s\n", ap)` with the started
+arguments 42 and `"ok"` prints `vprintf 42 ok` and a newline and returns 14,
+the number of characters written (38.41, L65449 and L65462: "Returns: PLI_INT32 The number of
+characters written." and "This routine performs the same function as
+vpi_printf(), except that varargs have already been started."), and
+`vpi_flush()` returns 0 (38.5, L62019 and L62026: "0 if successful; nonzero if
+unsuccessful." and "The routine vpi_flush() shall flush the output buffers
+for the simulator's output channel and current log file."), both with level
+0.
+
 The routines llg does not provide yet return their failure value and leave
 level 3 with code `LLG_VPI_UNSUPPORTED` and a message naming the routine:
 
