@@ -35,6 +35,8 @@ the legacy and compact (portable and GMP) value backends.
 - `foreach_dynamic`: foreach over queues, dynamic arrays, integral and string
   keyed associative arrays (key order), queues of queues with one and two
   loop variables, and a record's queue member.
+- `handle_inside` (FIN-001 G3): §11.4.13 L15363 "The expression on the left-hand side of the inside operator is any singular expression." and L15376 "The inside operator uses the equality ( == ) operator on nonintegral expressions to perform the comparison."; class handle `==` compares objects (§8.4). `h = b`: `h inside {a, b}` 1, `a inside {b, null}` 0, the null `k inside {a, null}` 1. `a.peer = b`: `a.peer inside {h}` 1; `b.peer` (null) `inside {arr[1]}` (null) 1. `h inside {arr[0]}` with `h = b`, `arr[0] = a` is 0; after `h = a`, `h inside {arr[0], b}` is 1: `hits = 10`; `!(h inside {b})` 1. Chandles take the same path (decision R14-D1).
+- `neg_string_container_inside`, `neg_real_container_inside` (llg limitations, FIN-001 G3): a queue of strings or of reals as a set item is legal (§11.4.13 L15365-15366: "If an expression in the list is an unpacked array, its elements are traversed") but rejected with an explicit diagnostic ([known issue](../../../../../docs/known_issues.md#set-membership-items-outside-packed-storage)).
 - `large`: 100,000-element hashed unique and a captured-bound locator,
   30,000-string unique, sort and keyed rsort, and a 20,000-record keyed sort.
 - `fixed_rows` (FIN-001 G3): locator, min/max, unique and shuffle methods on
@@ -54,6 +56,8 @@ the legacy and compact (portable and GMP) value backends.
   over a wildcard index, reductions of real and string elements, `find`
   without `with`, `max` of records without a key, a string-key index result
   into an `int` queue, `sort` arguments without `with`, `shuffle` with `with`.
+
+- `neg_nested_associative` (FIN-001 G3): `int aa[string][int]` is a legal associative array of associative arrays (§7.8), but the runtime has no value form for an associative array nested in a container element, so element access and `foreach (aa[k, j])` reject with an explicit diagnostic ([known issue](../../../../../docs/known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
 
 ## llg policy (not required by IEEE 1800-2009)
 

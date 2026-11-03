@@ -82,3 +82,24 @@ fn recursive_task_children_outlive_returns_and_sibling_disables() {
         include_str!("../fixtures/sim/feature_completion/sim_010/recursive_lifetimes.out");
     sim_cli::run_case_backend_parity(SUITE, "recursive_lifetimes", expected, &[], &[]);
 }
+
+#[test]
+fn ref_formals_initialize_fork_block_items() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_010/ref_formal_fork_initializers.out");
+    sim_cli::run_case_backend_parity(SUITE, "ref_formal_fork_initializers", expected, &[], &[]);
+}
+
+#[test]
+fn neg_ref_formals_in_fork_branches() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_ref_formal_join_none",
+        "neg_ref_formal_join_none.sv:8:7 in `tb` refers to `ref` formal `r` inside a fork-join_any or fork-join_none block; this is illegal except in the initializer of a fork block-item declaration (IEEE 1800-2009 9.3.2)",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_ref_formal_fork_join",
+        "neg_ref_formal_fork_join.sv:8:7 in `tb` refers to `ref` formal `r` of the enclosing task; a fork-join branch that reads or writes a packed, real, string, handle or event `ref` formal is not supported",
+    );
+}

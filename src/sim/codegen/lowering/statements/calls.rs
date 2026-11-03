@@ -376,7 +376,40 @@ impl EmitCtx<'_, '_> {
                         self.path
                     )
                 })?;
+                if let Some(access) = target.access.filter(|_| *is_out) {
+                    // An output or inout event formal bound to a class event
+                    // property: the property holds only the object identity,
+                    // so the callee works on a handle copied in at the call
+                    // (as the caller's handle address does for variables)
+                    // and its final handle is copied back into the property
+                    // of the object the actual names at return (SV 13.5).
+                    let slot = self
+                        .cg
+                        .class_event_slot(&self.path, access, target.declaration)?;
+                    let temporary = format!("_evout_{}_{idx}", h.0);
+                    before.push(IrStmt::EventCapture {
+                        name: temporary.clone(),
+                        source: IrEventRef::Handle(Box::new(IrChandleExpr::LocalRead(
+                            slot.clone(),
+                        ))),
+                    });
+                    after.push(IrStmt::Object(Box::new(IrObjectStmt::ChandleAssignLocal(
+                        slot,
+                        IrChandleExpr::EventObject(Box::new(IrEventRef::Captured(
+                            temporary.clone(),
+                        ))),
+                    ))));
+                    out_args.push(IrCallArg::EventAddr(IrEventRef::Captured(temporary)));
+                    continue;
+                }
                 let event = self.cg.event_ref_of(&target, &self.path)?;
+                if target.access.is_some() {
+                    return Err(format!(
+                        "class event property actual of `ref` event formal `{}` in `{}` is not supported; a `ref` event formal binds an event variable",
+                        self.cg.node(*io).name,
+                        self.path
+                    ));
+                }
                 if matches!(event, IrEventRef::Null | IrEventRef::Handle(_)) {
                     return Err(format!(
                         "event actual for output, inout or ref formal `{}` in `{}` must be an event variable",

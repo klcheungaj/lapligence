@@ -522,9 +522,7 @@ impl<'a> Codegen<'a> {
                     return Err(format!("inside set is empty in `{scope_path}`"));
                 }
                 if self.is_chandle_expr(scope_path, *value_node) {
-                    return Err(format!(
-                        "chandle-valued inside selector is not supported in `{scope_path}`"
-                    ));
+                    return self.lower_handle_inside(scope_path, *value_node, item_nodes);
                 }
                 if self.is_string_expr(scope_path, *value_node) {
                     let value = self.lower_string(scope_path, *value_node)?;

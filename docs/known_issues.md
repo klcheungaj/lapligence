@@ -562,7 +562,8 @@ to a static subroutine native record; sub-record, member-array or handle selects
 result (`f(...).inner`; scalar members such as `f(...).s` work); native outputs
 bound inside an expression (call them as a statement instead); record ports
 whose type has a built-in semaphore, mailbox or process member (those handles
-publish no change marker); an automatic record, string, chandle or class
+publish no change marker) or a chandle member (chandle ports themselves are
+illegal, SV 6.14, and value links carry no chandle leaf); an automatic record, string, chandle or class
 handle declared in a procedural block that a `join_any` or `join_none` fork
 can keep live while the block is entered again (declared in such a fork that
 runs again, such as the `for (...) fork automatic string s = ...; join_none`
@@ -647,7 +648,13 @@ containers; mutating methods of a nested container element (`q[i].push_back`;
 `q[i].size()` and `$size(q[i])` work), and other methods of a nested element
 (`q[i].sum()`, `q[i].find(...)`); a whole nested element read into a
 container (`row = q[i]`); a nested element written from an associative
-variable; `foreach` with an omitted slot over a container of containers; and
+variable; `foreach` with an omitted slot over a container of containers;
+`foreach` with several loop variables whose outer dimension is associative
+(`foreach (ad[k, j])` over `int ad[int][]`); any element access of an
+associative array nested in a queue, dynamic or associative array element
+(`int aa[string][int]`, `int qa[$][int]`: "an associative array nested in
+... has no element value form", FIN-001 F05-11) and the array queries of
+such a nested associative element (`$size(aa[1])`, F10-15); and
 compound or nonblocking writes to a record element. Reads of a
 missing nested associative element return the default without the SV 7.8.6
 warning.
@@ -673,7 +680,8 @@ receivers computed by element selects or calls, retained element cells for
 
 ### Reproduce
 
-`tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`.
+`tests/fixtures/sim/feature_completion/sim_006/neg_*.sv`,
+`sim_019/neg_nested_associative.sv`.
 
 ## Cell selects inside unpacked-array container elements and multidimensional class properties (SIM-011, SIM-027)
 
@@ -1530,6 +1538,178 @@ strings get one).
 `tests/fixtures/sim/feature_completion/sim_009/neg_record_ref_wait_actual.sv`,
 `neg_native_element_ref_wait.sv`, `neg_string_event_control.sv`.
 
+## `ref` formals in fork-join branches
+
+**Status:** open (FIN-001 G3, F09-04). Illegal forms are rejected with their
+location; one legal form is rejected as unsupported.
+
+### Symptom
+
+A branch of a `fork ... join` inside a task that reads or writes a packed,
+real, string, handle or event `ref` formal of that task is legal (SV 9.3.2
+restricts only `join_any`/`join_none`; SV 13.5.2) but stops with "a
+fork-join branch that reads or writes a packed, real, string, handle or
+event `ref` formal is not supported". Before FIN-001 the branch silently
+worked on a copy and its writes never reached the actual. Inside
+`join_any`/`join_none` a reference outside a fork block-item initializer is
+illegal (SV 9.3.2) and rejects with its location; block-item initializers
+(`fork automatic int k = r; ... join_none`) execute.
+
+### Cause
+
+A branch is its own coroutine with a capture frame. A `ref` formal is an
+`llg_ref_t` descriptor (or a handle/event address) that only the declaring
+function frame names (`IrExprKind::FormalRead`, `r<index>`); the capture
+path copies its value into the branch frame instead.
+
+### Intended direction
+
+Capture the descriptor pointer as an opaque frame slot (valid for the whole
+join, since the task waits for every branch) and give captured branches a
+formal table so formal reads, stores, selects and waits emit through it.
+Estimate: 2-3 days (codegen capture plus emitter formal binding, tests for
+every `ref` kind).
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_010/neg_ref_formal_fork_join.sv`.
+
+## Event formals without a typed handle binding
+
+**Status:** open (FIN-001 G3, F06-06). Output and inout event formals bound
+to class event properties execute (copied in at the call and back at
+return, `sim_014/class_event_formals`).
+
+### Symptom
+
+These legal forms reject with explicit diagnostics: a class event property
+(`c.ev`) as the actual of a `ref` event formal (SV 13.5.2 lists class
+properties), and an output, inout or `ref` event formal of a function called
+in an expression (`x = f(h)`, "has no typed value call path").
+
+### Cause
+
+A class event property stores only the event object's identity in an opaque
+object slot, not an `llg_event_t` handle cell, so there is no address a
+`ref` formal could rebind at once. Function-expression calls lower through
+the value call path, which passes no event handle addresses.
+
+### Intended direction
+
+Store class event properties as `llg_event_t` cells (or pass a slot
+descriptor that rebinds through the object), and add event-address
+arguments to value calls. Estimate: 1-2 days each.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_014/neg_class_event_ref_formal.sv`;
+for function expressions, `function automatic int f(output event o); o = g;
+return 1; endfunction` called as `x = f(h);`.
+
+## `ref` handle formals bound to array elements
+
+**Status:** open (FIN-001 G3, F12-06; SIM-016).
+
+### Symptom
+
+A `ref` formal of a class or built-in handle type (`ref semaphore s`) whose
+actual is an element of a fixed, queue, dynamic or associative array
+(`take(sq[1], 2)`, `take(sa[0], 3)`) is legal (SV 13.5.2) but rejects with
+"element references of handles are not supported (SIM-016)". Output and
+inout handle formals copy out into such elements.
+
+### Cause
+
+Handle `ref` formals are `void**` addresses of a handle variable or
+property. Array elements of handles live in container storage that has no
+stable per-element address (queues and dynamic arrays reallocate), and no
+retained element cell exists for handle elements as `llg_ref_queue` does for
+packed elements.
+
+### Intended direction
+
+Retained handle element cells (the packed `llg_ref_*` element references
+extended to opaque elements, with outdated-reference semantics), or a stable
+element address for fixed arrays. Estimate: 2 days.
+
+### Reproduce
+
+```systemverilog
+module tb;
+  semaphore sa[2];
+  task automatic take(ref semaphore s, input int n); s.get(n); endtask
+  initial begin sa[0] = new(3); take(sa[0], 3); end
+endmodule
+```
+
+## Wired-logic nets in bidirectional switch networks
+
+**Status:** open (FIN-001 G3, F08-11; ADV-005).
+
+### Symptom
+
+A `wand`, `wor`, `triand` or `trior` net that is a terminal of a
+`tran`/`rtran`/`tranif*`/`rtranif*` switch is legal but stops with "terminal
+`w` is a wired-logic (wand, wor, triand or trior) net; wired resolution
+across a switch network is not simulated".
+
+### Cause
+
+The switch solver resolves every node with the wire/tri strength rules. A
+wired node must first combine its own drivers with
+the wired-AND/OR rule and then take part in the network as one source, and
+values reaching it through the switches must combine the same way.
+
+### Intended direction
+
+Give each solver node a resolution kind and use the wired table at wired
+nodes, both for local drivers and for values passed through switches.
+Estimate: 2 days with the strength-table tests.
+
+### Reproduce
+
+```systemverilog
+module tb;
+  wand w; wire a; reg d1, d2, c;
+  assign w = d1; assign w = d2;
+  tranif1 t(w, a, c);
+  initial begin d1 = 1; d2 = 0; c = 1; #1 $display("%b %b", w, a); end
+endmodule
+```
+(expected `0 0`).
+
+## Set membership items outside packed storage
+
+**Status:** open (FIN-001 G3, F07-11). Class-handle and chandle selectors
+execute (`sim_019/handle_inside`, decision R14-D1).
+
+### Symptom
+
+These legal `inside` set items reject with explicit diagnostics: a queue,
+dynamic or associative array of strings (`s inside {sq}`); a container of
+reals, handles or records (`r inside {rq}`); an element of a container of
+containers (`x inside {qq[0]}`, "container element access ... requires a
+scalar value"); and a container-result call (`x inside {g()}`).
+
+### Cause
+
+String set items traverse only fixed and aggregate string storage; the
+container item form (`IrInsideItem::Container`) compares packed elements.
+Nested container elements and container results have no addressed-container
+operand (see
+[resizable containers](#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
+
+### Intended direction
+
+A string container item that walks the container's string elements, a real
+comparison for real containers, and the addressed-container operand for the
+nested and call forms. Estimate: 1 day for string and real containers.
+
+### Reproduce
+
+`tests/fixtures/sim/feature_completion/sim_019/neg_string_container_inside.sv`
+and `neg_real_container_inside.sv`.
+
 ## Waits on storage without a change notification
 
 **Status:** open (LRM audit part B).
@@ -1862,6 +2042,13 @@ for each expression port, selected by the bound instance at run time.
 
 Reproduce with `interface i; logic [7:0] a; modport m(input .p(a[3:0]));
 endinterface`, `virtual i.m v = inst;` and `$display("%h", v.p);`.
+
+An interface instance used directly as a value outside a virtual-interface
+assignment, argument or comparison (the message of `mb.put(i1)` for a
+`mailbox #(virtual ifc)`) also rejects ("instance `i1` is used as a value";
+assign it to a virtual interface variable first). Reproduce with
+`tests/fixtures/sim/feature_completion/sim_012/neg_instance_mailbox_put.sv`
+(FIN-001 F12-02).
 
 ## Tagged-union members of packed-array elements
 

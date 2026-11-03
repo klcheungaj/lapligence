@@ -3,6 +3,61 @@
 use super::*;
 
 impl<'a> Codegen<'a> {
+    /// `h inside {a, b, null}` over class handles or chandles: set
+    /// membership uses `==` on nonintegral operands (SV 11.4.13, decision
+    /// R14-D1 for chandles) and handle equality compares identity, so the
+    /// set is the `||` of `ChandleEq` tests. The selector is read once per item and the chain stops at the first
+    /// match, so the selector and items must be free of side effects;
+    /// ranges and container items have no handle meaning here.
+    pub(in super::super) fn lower_handle_inside(
+        &mut self,
+        path: &str,
+        value: NodeId,
+        items: &[NodeId],
+    ) -> Result<IrExpr, String> {
+        let unsupported = || {
+            format!(
+                "handle inside set in `{path}` must list handle variables, properties, elements or null without side effects"
+            )
+        };
+        if !self.side_effect_free(value) {
+            return Err(unsupported());
+        }
+        let selector = self.lower_chandle(path, value)?;
+        let mut result: Option<IrExpr> = None;
+        for item in items {
+            let null = matches!(
+                self.kind(*item),
+                NodeKind::Expr(ExprKind::Constant {
+                    const_type: ConstantType::Null,
+                    ..
+                })
+            );
+            if !self.side_effect_free(*item)
+                || !(null || self.is_chandle_expr(path, *item))
+                || self.container_of(*item).is_some()
+            {
+                return Err(unsupported());
+            }
+            let item = if null {
+                IrChandleExpr::Null
+            } else {
+                self.lower_chandle(path, *item)?
+            };
+            let test = IrExpr::new(
+                IrExprKind::ObjectQuery(Box::new(IrObjectQuery::ChandleEq(selector.clone(), item))),
+                1,
+                false,
+                None,
+            );
+            result = Some(match result {
+                None => test,
+                Some(previous) => cmp_expr_ir(IrBinOp::LogOr, previous, test),
+            });
+        }
+        result.ok_or_else(|| format!("inside set is empty in `{path}`"))
+    }
+
     fn inside_has_integral_leaves(descriptor: &TypeDescriptor) -> bool {
         match &descriptor.shape {
             TypeShape::FixedArray { element, .. } => Self::inside_has_integral_leaves(element),
@@ -282,6 +337,12 @@ impl<'a> Codegen<'a> {
             return Ok(());
         }
         if let Some(container) = self.container_of(node) {
+            if !self.model.containers[container.ir].element.is_packed() {
+                return Err(format!(
+                    "inside set container `{}` in `{path}` has real, string, handle, record or container elements; only containers of packed elements are supported as set items",
+                    self.node(node).name
+                ));
+            }
             out.push(IrInsideItem::Container {
                 container: container.ir,
             });
@@ -405,7 +466,7 @@ impl<'a> Codegen<'a> {
         }
         if self.array_of(node).is_some() || self.container_of(node).is_some() {
             return Err(format!(
-                "string-valued inside set array/container has unsupported storage in `{path}`"
+                "string inside set item in `{path}` is a queue, dynamic or associative array of strings (or string array storage the set cannot traverse); such set items are not supported"
             ));
         }
         out.push(IrStringInsideItem::Value(self.lower_string(path, node)?));

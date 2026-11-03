@@ -271,12 +271,14 @@ datatype_case!(
     "syn_005_inside_array_values"
 );
 
+/// `inside` over chandles compares with `==` (decision R14-D1): the frontend
+/// accepts the operand and both optimizer modes generate the model.
 #[test]
-fn inside_chandle_context_is_rejected_as_one_frontend_fault() {
+fn inside_chandle_context_compares_with_equality() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/sim/data_types_next")
         .join("inside_chandle_rejected.sv");
-    sim_harness::with_frontend_temp_cwd("data-types-next-inside-rejection", |dir| {
+    sim_harness::with_frontend_temp_cwd("data-types-next-inside-chandle", |dir| {
         let source = dir.join("inside_chandle_rejected.sv");
         std::fs::copy(&fixture, &source).map_err(|error| format!("copy fixture: {error}"))?;
         let compiled = compile::compile(&compile::CompileOpts {
@@ -286,11 +288,7 @@ fn inside_chandle_context_is_rejected_as_one_frontend_fault() {
         })
         .map_err(|error| format!("compile: {error}"))?;
         if !compiled.ok() {
-            let diagnostic = format!("{:?}", compiled.diagnostics).to_ascii_lowercase();
-            if diagnostic.contains("chandle") && diagnostic.contains("inside") {
-                return Ok(());
-            }
-            return Err(format!("unexpected inside diagnostic: {diagnostic}"));
+            return Err(format!("frontend: {:?}", compiled.diagnostics));
         }
         let database =
             Db::from_slang(&compiled.snapshot).map_err(|error| format!("database: {error}"))?;
@@ -298,17 +296,12 @@ fn inside_chandle_context_is_rejected_as_one_frontend_fault() {
             ("unoptimized", OptConfig::none()),
             ("optimized", OptConfig::default()),
         ] {
-            let error = sim::codegen::generate_from_db_with_opts(&database, &options)
-                .map(|_| "generated successfully".to_owned())
-                .unwrap_or_else(|error| error.to_string())
-                .to_ascii_lowercase();
-            if !error.contains("chandle") || !error.contains("inside") {
-                return Err(format!("{variant}: unexpected inside result: {error}"));
-            }
+            sim::codegen::generate_from_db_with_opts(&database, &options)
+                .map_err(|error| format!("{variant}: {error}"))?;
         }
         Ok(())
     })
-    .expect("chandle inside operand must be rejected");
+    .expect("chandle inside operand must generate");
 }
 
 #[test]

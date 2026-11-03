@@ -492,4 +492,47 @@ impl Codegen<'_> {
         block.push(stage.store);
         Ok(Some(IrStmt::Block(block)))
     }
+
+    /// A blocking assignment with intra-assignment timing whose destination
+    /// selects bits of one packed resizable-container element
+    /// (`q[i][3:0] = @e v`). The value is captured before `wait`; the keys,
+    /// the element copy, the select write and the store all run after it,
+    /// so the destination is resolved when the control completes (SV 9.4.5,
+    /// 10.4.1) and the element's other bits are the ones it has then.
+    /// `None` when `lhs` is not such a select.
+    pub(in super::super) fn lower_container_select_timed_assignment(
+        &mut self,
+        path: &str,
+        lhs: NodeId,
+        rhs: NodeId,
+        wait: &[IrStmt],
+    ) -> Result<Option<IrStmt>, String> {
+        let Some(select) = self.container_element_select(lhs) else {
+            return Ok(None);
+        };
+        let stage = self.container_select_stage(path, select, &lhs.0.to_string())?;
+        let value = self.lower_expr(path, rhs)?;
+        let value = apply_lhs_assignment_context(&self.model, &stage.target, value);
+        let value = ir_to_storage(value, stage.width, false, false)?;
+        let value_name = format!("_csv{}", lhs.0);
+        let mut block = vec![
+            IrStmt::DeclLocal {
+                name: value_name.clone(),
+                width: stage.width,
+                signed: false,
+                two_state: false,
+                init: Some(Box::new(value)),
+            },
+            IrStmt::Block(wait.to_vec()),
+        ];
+        block.extend(stage.keys);
+        block.push(stage.element);
+        block.push(IrStmt::Assign {
+            lhs: stage.target,
+            rhs: IrExpr::new(IrExprKind::LocalRead(value_name), stage.width, false, None),
+            nba: false,
+        });
+        block.push(stage.store);
+        Ok(Some(IrStmt::Block(block)))
+    }
 }

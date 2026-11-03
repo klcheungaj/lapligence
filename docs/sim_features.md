@@ -586,7 +586,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   One-dimensional fixed arrays of strings are package storage too (SIM-007);
   multidimensional native arrays
   ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)),
-  unsupported callable environments and post-2009 forms remain restricted. Instance-hierarchical names are not constant-expression operands;
+  and post-2009 forms remain restricted. Package and `$unit` subroutines
+  (static and automatic, timed tasks with `ref` formals, class methods and
+  static class members of package classes, forks in package tasks) execute
+  from every importer (FIN-001 probes). Instance-hierarchical names are not constant-expression operands;
   lexical package references remain distinct. SV §26 **[SV-2005]**.
 - 🟦 **Interfaces and modports** — Concrete storage, instance-local processes,
   parameterized interfaces, member references and modport views are represented.
@@ -621,7 +624,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   String and native-record value ports carry independent copies, including an
   output driven by a child `assign` (SIM-004).
   Output targets also written procedurally or by another port, invalid output
-  expressions, language-illegal chandle ports (SV §6.14), uncollected layouts
+  expressions, language-illegal chandle ports (SV §6.14), record ports with a
+  chandle or built-in semaphore, mailbox or process member
+  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage))
   and runtime-selected net or inout connections reject. V §12.3;
   SV §§6.5, 7.4.6, 23.2–23.3, 25.5 **[1995/SV-2005]**.
 - 🟨 **Reference and inout ports** — Matching packed/fixed-array references and
@@ -738,8 +743,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   vif-array elements) and `v.f()` calls are located errors
   ([sim_099](../tests/fixtures/sim/feature_completion/sim_099/readme.md)); dynamic
   container elements and sizes are read through their contents/shape markers
-  ([sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)).
-  Native record leaves held in dynamic containers remain partial.
+  ([sim_013](../tests/fixtures/sim/feature_completion/sim_013/readme.md)),
+  including string and integral leaves of records held in queue, dynamic and
+  associative elements, read directly, through a called function or by a
+  whole-record copy (`native_container_leaves`).
   SV §§9.2.2.2–9.2.2.3 **[SV-2005]**.
 - ✅ **`always_ff` and writer rules** — Requires one event control and rejects
   blocking timing (also in called tasks), forks and extra overlapping writers.
@@ -888,8 +895,15 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   one or several dimensions, each bounded by the size of the element its outer
   variables select
   ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md)).
-  Omitted slots in nested resizable traversal, associative nesting,
-  string/shared/native captures and illegal iterator writes remain rejected. SV §§12.7.1, 12.7.3 **[SV-2005]**.
+  Illegal iterator writes reject. Omitted slots in nested resizable
+  traversal, several loop variables over an associative outer dimension
+  (`foreach (ad[k, j])`) and associative arrays nested in container elements
+  (`int aa[string][int]`)
+  ([known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)),
+  and automatic strings, records and handles declared in a loop body that a
+  `join_none` fork keeps live into the next iteration
+  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage))
+  reject with explicit diagnostics. SV §§12.7.1, 12.7.3 **[SV-2005]**.
 - 🚫 **Procedural assign/deassign** — Every procedural `assign` and
   `deassign` statement, whatever its target (whole, concatenated, real,
   aggregate or non-numeric variables, and local or hierarchical references
@@ -1011,9 +1025,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   handle target, or a control the waiting process evaluates) re-arms after
   each event and commits after the last one.
   NBAs to automatic storage, class properties and
-  dynamic elements reject as language rules (SV 6.21, 13.3.2); a select within
-  a resizable-container element (`q[i][3:0] = @e v`) and process-evaluated NBA
-  controls on string or handle expressions reject. V §9.7.7 **[1995]**.
+  dynamic elements reject as language rules (SV 6.21, 13.3.2). A blocking
+  timed write of a bit, part or indexed part select inside a queue, dynamic or
+  associative element (`q[i][3:0] = @e v`) captures the value at issue and
+  selects the element, key and remaining bits when the control completes
+  (`container_element_selects`); its nonblocking form is illegal (SV 6.21).
+  Process-evaluated NBA controls on string or handle expressions reject.
+  V §9.7.7 **[1995]**.
 - 🟨 **Standalone repeated event waits** — `repeat (n) @ev;` is a repeat
   loop around an event wait whose count is evaluated once; X/Z and
   nonpositive signed counts run zero times and real counts round (SV 12.7.2,
@@ -1035,10 +1053,14 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `event` class properties execute: each object gets its own synchronization
   object at construction and a shallow copy shares the original's
   ([class-defects](../tests/fixtures/sim/feature_completion/ki_class_defects/readme.md)).
-  Event handles other than declared named events in process-evaluated lists
-  and output/ref event formals (class event properties included) and output/ref
-  event formals of function-expression calls reject. V §9.7.3; SV §15.5
-  **[1995/SV-2005]**.
+  Output and inout event formals bound to class event properties copy the
+  property's handle in at the call and back at return
+  (`class_event_formals`). Event handles other than declared named events in
+  process-evaluated lists reject; a class event property as a `ref` event
+  actual and output, inout or `ref` event formals of function-expression
+  calls reject explicitly
+  ([known issue](known_issues.md#event-formals-without-a-typed-handle-binding)).
+  V §9.7.3; SV §15.5 **[1995/SV-2005]**.
 - 🟨 **Cycle delays** — Procedural `##N` repeats the resolved default clocking
   event, including irregular periods; `##0` continues in a step where the
   event already occurred, and a default named by `default clocking cb;` or
@@ -1177,8 +1199,13 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   unknown row selector reads default elements. Packed dynamic/queue/associative
   storage has separate traversal. Packed values
   are single set items; casts are not bypassed; unpacked structures are illegal
-  member bags. Definite matches dominate an X fallback. Recursive/native objects,
-  unsupported resizable value expressions and over-limit payloads reject.
+  member bags. Definite matches dominate an X fallback. Class-handle and
+  chandle selectors compare identity with each handle item or `null`
+  (`sim_019/handle_inside`, decision R14-D1). Containers of strings, reals,
+  handles or records, elements of nested containers and container-result
+  calls as set items reject explicitly
+  ([known issue](known_issues.md#set-membership-items-outside-packed-storage)),
+  as do over-limit payloads.
   SV §11.4.13 **[SV-2005]**.
 - 🟨 **Fixed reductions** — `sum/product/and/or/xor`, optional parentheses and
   lexical `with` maps support immediate integral elements and admitted fixed-row/
@@ -1311,9 +1338,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   comparison and declaration-initializer contexts in SV2009, while V2001
   rejects the syntax. Free names and defaults never capture a caller's local
   of the same name, actuals bind at the use and formals shadow outer names,
-  including package, `$unit`, block and task lets (S22-D6). Recursive lets
-  reject. Expanded assertion and native bodies still need an admitted
-  consumer representation.
+  including package, `$unit`, block and task lets (S22-D6). Lets in
+  concurrent assertions (with sampled-value functions), string, real,
+  handle-member and container-method bodies execute. Recursive lets reject.
   SV §11.13 **[SV-2009]**.
 - 🟨 **Operator overloading** — `bind <op> function` declarations in module,
   interface, program, package, compilation-unit, generate, block and
@@ -1546,7 +1573,8 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   zero time stops with the zero-delay loop error
   ([ADV-005 fixtures](../tests/fixtures/sim/feature_completion/adv_005/readme.md)).
   Rejected with their location: wired-logic (`wand/wor/triand/trior`) nets
-  in a network, terminals wider than one bit (or than one bit per array
+  in a network
+  ([known issue](known_issues.md#wired-logic-nets-in-bidirectional-switch-networks)), terminals wider than one bit (or than one bit per array
   element), SDF annotation of a switch, and variables or delays on
   `tran/rtran` (frontend). A strength-only change of a switch node wakes no
   event control (llg wakes event controls on value changes only).
@@ -1732,8 +1760,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   formals are shared through an opaque frame slot
   ([sim_016](../tests/fixtures/sim/feature_completion/sim_016/readme.md)); a
   class method's branches use its receiver, implicitly or as `this`
-  ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)), and
-  ref-formal captures reject. Static-local
+  ([sim_011](../tests/fixtures/sim/feature_completion/sim_011/readme.md)).
+  A `ref` formal initializes fork block items (`ref_formal_fork_initializers`);
+  any other reference to one inside `join_any`/`join_none` is illegal
+  (SV 9.3.2) and rejects with its location, and a `fork ... join` branch
+  naming a packed, real, string, handle or event `ref` formal rejects
+  ([known issue](known_issues.md#ref-formals-in-fork-join-branches)). Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2
   **[1995/SV-2005]**.
@@ -1769,8 +1801,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md)).
   Process-handle formals of every direction execute (SIM-015, §12); the
   forms in [rejected process-handle forms](known_issues.md#rejected-process-handle-forms)
-  reject. Unresolved environments and broader
-  timing/native/aggregate combinations reject. V §12.4 **[1995]**.
+  reject. Timed tasks with native record formals in module, generate-scope and
+  interface instances called hierarchically, and upward-referencing functions,
+  execute (FIN-001 probes). V §12.4 **[1995]**.
 - 🟨 **Read-only helper calls** — Event, continuous, force and other read-only
   evaluators admit bounded numeric value/const-ref helpers with private locals,
   loops, nested eligible calls and fixed integral reductions. Private
@@ -2045,7 +2078,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `$size/$left/$right/$low/$high/$increment` of a nested dynamic or queue
   element (`qq[i]`) read its runtime size
   ([sim_019](../tests/fixtures/sim/feature_completion/sim_019/readme.md));
-  nested associative elements and deeper dimensions reject. Associative
+  queries of a nested associative element reject (the elements themselves
+  have no value form,
+  [known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)),
+  and a dimension argument beyond the first dynamically sized dimension is a
+  frontend error. Associative
   dimension bounds require integral index types; string/wildcard bounds are
   prohibited by SV §20.7. SV §§20.6–20.7 **[SV-2005]**.
 - 🟦 **Bit and math helpers** — `$onehot/$onehot0/$countones/$isunknown` use
@@ -2320,7 +2357,12 @@ These are bounded implementations, not full verification-infrastructure support.
   executes; whole-array, slice, compound, increment, output-argument,
   event-control and wait uses of such a member are located compile-time
   errors.
-  Modport expression ports and broader polymorphic/capture forms reject.
+  Handles held by class objects whose virtual methods use them, sent through
+  `mailbox #(virtual ifc)`, passed to timed tasks and captured by fork
+  branches execute. Modport expression ports and an interface instance used
+  directly as a value outside virtual-interface assignments (a mailbox
+  message) reject
+  ([known issue](known_issues.md#modport-expression-ports-through-virtual-interfaces)).
   SV §§25.5, 25.7, 25.9–25.10 **[SV-2009]**.
 - 🟨 **Programs** — Named, nested (implicitly instantiated) and bound
   programs with module-style, interface and modport ports, package imports,
@@ -2401,8 +2443,11 @@ These are bounded implementations, not full verification-infrastructure support.
   ([sim_016](../tests/fixtures/sim/feature_completion/sim_016/readme.md)).
   Semaphore members of module, block and automatic records, record arrays and
   record formals hold handles to shared semaphores. `ref` semaphore formals
-  bound to container elements and record ports with semaphore members reject
-  (SIM-016). SV §15.3 **[SV-2005]**.
+  bound to array elements
+  ([known issue](known_issues.md#ref-handle-formals-bound-to-array-elements))
+  and record ports with semaphore members
+  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage))
+  reject (SIM-016). SV §15.3 **[SV-2005]**.
 - 🟨 **Mailboxes** — Typed/untyped bounded/unbounded FIFO
   `new/num/put/get/peek/try_put/try_get/try_peek` supports packed, real/shortreal,
   string, record (string/real/queue/class members, nested), queue, dynamic-array

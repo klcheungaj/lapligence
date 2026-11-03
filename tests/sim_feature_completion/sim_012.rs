@@ -66,3 +66,12 @@ fn modport_and_specialization_violations_are_frontend_errors() {
         "value of type 'interface ifc#(W=8)' cannot be assigned to type 'virtual interface ifc#(W=4)'",
     );
 }
+
+#[test]
+fn neg_interface_instance_as_mailbox_message() {
+    sim_cli::reject_case(
+        SUITE,
+        "neg_instance_mailbox_put",
+        "instance `i1` is used as a value in `tb`; assign it to a virtual interface variable first",
+    );
+}

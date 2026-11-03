@@ -849,6 +849,16 @@ impl EmitCtx<'_, '_> {
         if self.cg.native_record_target(lhs) {
             return self.lower_blocking_native_record(h, lhs, rhs, op, wait);
         }
+        if op == Operation::Assignment {
+            let path = self.path.clone();
+            if let Some(statement) = self
+                .cg
+                .lower_container_select_timed_assignment(&path, lhs, rhs, &wait)?
+            {
+                self.saw_wait = true;
+                return Ok(vec![statement]);
+            }
+        }
         if self.container_write_target(lhs) {
             return self.lower_blocking_timed_container_element(h, lhs, rhs, op, wait);
         }
@@ -971,8 +981,9 @@ impl EmitCtx<'_, '_> {
     /// (`q[i] = @e v`, `aa[key] = #1 s`). The ordinary element store is
     /// lowered and its value moved into a temporary evaluated before `wait`;
     /// the index or key expression stays in the store, which runs after it.
-    /// Stores that need temporaries of their own (a select inside an
-    /// element) cannot be split this way and are rejected.
+    /// Selects inside an element are staged before this is reached
+    /// (`lower_container_select_timed_assignment`); other stores that need
+    /// temporaries of their own cannot be split this way and are rejected.
     fn lower_blocking_timed_container_element(
         &mut self,
         h: NodeId,
@@ -984,7 +995,7 @@ impl EmitCtx<'_, '_> {
         let path = self.path.clone();
         let unsupported = || {
             format!(
-                "intra-assignment timing on a select within a resizable container element or a compound container update in `{path}` is not supported"
+                "intra-assignment timing on this resizable container element destination in `{path}` is not supported"
             )
         };
         if op != Operation::Assignment {
