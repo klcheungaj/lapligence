@@ -645,7 +645,8 @@ struct llg_net {
      * (the formal of a merged selected port, a vector split by them): no
      * write targets them, so a group with one source resolves at once, as
      * the source's own net did, instead of deferring like a multi-driver
-     * net. A write to one of them sets it to 0. */
+     * net. A write to one of them sets it to 0. llg_net_layout clears it;
+     * the model then sets it from its `llg_net_silent` table. */
     int silent_slots;
     /* For a net with several drivers, one bit per net bit that still holds
      * its start X because no driver covering it has written yet. NULL once
@@ -752,9 +753,6 @@ typedef struct llg_net_shape {
     const uint32_t* segment_lsb;
     const uint32_t* driven_runs;
     uint32_t n_driven_runs;
-    /* The leading member slots of a bit-level alias group, which only its
-     * sources' slots drive; see llg_net_t.silent_slots. */
-    uint32_t silent_slots;
 } llg_net_shape_t;
 
 typedef struct llg_net_pools {

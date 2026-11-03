@@ -690,6 +690,7 @@ fn timing_check_tables_are_emitted_only_for_designs_with_checks() {
 #[test]
 fn one_run_net_views_are_table_rows_without_storage() {
     let mut model = net_model(2, 3);
+    model.net_groups[1].silent_slots = 2;
     let packed = |width| IrType::Packed {
         width,
         signed: width == 3,
@@ -738,6 +739,10 @@ fn one_run_net_views_are_table_rows_without_storage() {
         "static const llg_net_view_t llg_net_views[1] = {\n    { &llg_net_alias_0, { &g_net_1, 2, 0, 4, 3 }, 1 },\n};\n"
     ));
     assert!(!source.contains("G_one"));
+    // Silent member slots come from their own table, after the layout.
+    assert!(source.contains("llg_net_silent[] = {\n    { &g_net_1, 2 },\n};\n"));
+    assert!(lifecycle(&source, "llg_model_storage_defaults")
+        .contains("llg_net_silent[_llg_n].net->silent_slots = llg_net_silent[_llg_n].slots;"));
     assert!(!source.contains("llg_net_alias_0__parts"));
     let defaults = lifecycle(&source, "llg_model_storage_defaults");
     let start = defaults
@@ -765,4 +770,5 @@ fn one_run_net_views_are_table_rows_without_storage() {
 fn models_without_one_run_views_have_no_view_table() {
     let source = render(net_model(2, 3));
     assert!(!source.contains("llg_net_view"));
+    assert!(!source.contains("llg_net_silent"));
 }

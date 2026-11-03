@@ -32,9 +32,10 @@ pointers address cells as before. Optional strength views stay per net
 `IrDisplayArg::Strength` formats with `LLG_FMT_STRENGTH`. Net defaults, driver
 reset/destruction, index reset, driven-run starts and alias-list cleanup are
 fixed-size loops over `llg_net_storage`, independent of net count, driver
-count, width and resolution kind; only mutable index state needs resetting. A
-shape row of a bit-level group with silent member slots ends with their count
-(left out, so zero, for every other group). One-run views start first from
+count, width and resolution kind; only mutable index state needs resetting. The
+silent member slots of bit-level groups come from an `llg_net_silent` table
+after the layout loop (none in a model without them), so shape rows stay
+unchanged. One-run views start first from
 their `llg_net_views` rows (`llg_net_views_start`, after the nets start); the
 other scalar aliases then copy all visible owners before binding; array
 aliases copy and bind in original array/element order through one pointer

@@ -272,9 +272,7 @@ void llg_net_layout(llg_net_t* net, const llg_net_shape_t* shape,
     net->is_signed = shape->is_signed;
     net->resolution = shape->resolution;
     net->n_drivers = n_drivers;
-    net->silent_slots = shape->silent_slots <= (uint32_t)(n_drivers > 0 ? n_drivers : 0)
-                            ? (int)shape->silent_slots
-                            : 0;
+    net->silent_slots = 0;
     if (n_drivers > 0) {
         for (int slot = 0; slot < n_drivers; slot++)
             pools->driver_slots[slot] = &pools->cells[slot];

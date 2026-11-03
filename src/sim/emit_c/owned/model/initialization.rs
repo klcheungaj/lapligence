@@ -204,6 +204,7 @@ fn net_storage_lifecycle(
     let mut shape_rows = String::new();
     let mut net_rows = String::new();
     let mut views = Vec::new();
+    let mut silent = String::new();
     let (mut drivers, mut path_bits, mut segments) = (0usize, 0usize, 0usize);
     for group in groups {
         // A delayed net with drivers shows X until its first delayed
@@ -290,15 +291,8 @@ fn net_storage_lifecycle(
         } else {
             u8::from(group.propagation_delay.is_some())
         };
-        // The trailing silent-slot count is left to zero initialization
-        // when it is 0, so groups without silent slots keep their rows.
-        let silent = if group.silent_slots == 0 {
-            String::new()
-        } else {
-            format!(", {}u", group.silent_slots)
-        };
         let row = format!(
-            "{{ {}u, {}, {}, {propagation_enabled}, {net_delayed}, {fill}, {}, {}, {strength0}, {strength1}, {rise}ULL, {fall}ULL, {turn_off}ULL, {n_segments}u, {segment_lsb}, {driven_runs}, {n_runs}u{silent} }}",
+            "{{ {}u, {}, {}, {propagation_enabled}, {net_delayed}, {fill}, {}, {}, {strength0}, {strength1}, {rise}ULL, {fall}ULL, {turn_off}ULL, {n_segments}u, {segment_lsb}, {driven_runs}, {n_runs}u }}",
             group.width,
             u8::from(group.signed),
             group.kind.c_value(),
@@ -316,6 +310,12 @@ fn net_storage_lifecycle(
             path_bits += group.width as usize;
         }
         segments += n_segments;
+        if group.silent_slots != 0 {
+            silent.push_str(&format!(
+                "    {{ &{}, {} }},\n",
+                group.c_name, group.silent_slots
+            ));
+        }
         if let Some(view) = group
             .strength_view
             .and_then(|view| model.signals.get(view))
@@ -354,6 +354,17 @@ fn net_storage_lifecycle(
     ));
     for (net, view) in views {
         initialize.push_str(&format!("    {net}.strength = &{view};\n"));
+    }
+    // Silent member slots (`IrNetGroup::silent_slots`) are a table of their
+    // own, so the shape rows of every other model stay as they were.
+    if !silent.is_empty() {
+        tables.source.push_str(&format!(
+            "static const struct {{ llg_net_t* net; int slots; }} llg_net_silent[] = {{\n{silent}}};\n"
+        ));
+        initialize.push_str(&format!(
+            "    {}\n        llg_net_silent[_llg_n].net->silent_slots = llg_net_silent[_llg_n].slots;\n",
+            table_loop("llg_net_silent")
+        ));
     }
     initialize.push_str(&format!(
         "    {each} {{\n        llg_net_t* net = llg_net_storage[_llg_n].net;\n        for (int slot = 0; slot < net->n_drivers; ++slot)\n            sv4_fill_to(net->drivers[slot], 3, net->width, net->is_signed);\n        llg_net_index_reset(net);\n        sv4_fill_to(&net->resolved, llg_net_shapes[llg_net_storage[_llg_n].shape].fill, net->width, net->is_signed);\n        net->n_aliases = 0;\n        llg_net_strength_reset(net);\n    }}\n"
