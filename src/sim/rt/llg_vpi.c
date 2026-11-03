@@ -5612,27 +5612,27 @@ static void pack_objects(pack_reader_t* r) {
                 r->bad = 1;
                 break;
             }
-            llg_vpi_timing_t* timing = &g_vpi.pack_timings[next_timing++];
-            timing->op_count = (uint32_t)pack_uint(r);
-            if (timing->op_count) timing->ops = (const llg_sdf_op_t*)pack_ref(r);
+            llg_vpi_timing_t* tm = &g_vpi.pack_timings[next_timing++];
+            tm->op_count = (uint32_t)pack_uint(r);
+            if (tm->op_count) tm->ops = (const llg_sdf_op_t*)pack_ref(r);
             uint64_t count = pack_uint(r);
             if (count > declared - next_declared) {
                 r->bad = 1;
                 break;
             }
             if (count) {
-                timing->declared = &g_vpi.pack_declared[next_declared];
-                timing->declared_count = (uint32_t)count;
+                tm->declared = &g_vpi.pack_declared[next_declared];
+                tm->declared_count = (uint32_t)count;
                 for (uint64_t i = 0; i < count; ++i)
                     g_vpi.pack_declared[next_declared + i] = pack_int(r);
                 next_declared += count;
             }
-            timing->count = (uint32_t)pack_uint(r);
-            timing->polarity = (int)pack_symbol(r);
-            timing->data_polarity = (int)pack_symbol(r);
-            timing->has_ifnone = (int)pack_uint(r);
-            timing->delay = (uint32_t)pack_uint(r);
-            object->timing = timing;
+            tm->count = (uint32_t)pack_uint(r);
+            tm->polarity = (int)pack_symbol(r);
+            tm->data_polarity = (int)pack_symbol(r);
+            tm->has_ifnone = (int)pack_uint(r);
+            tm->delay = (uint32_t)pack_uint(r);
+            object->timing = tm;
         }
         object->shape = (uint32_t)pack_uint(r);
         object->code = (uint32_t)pack_uint(r);
