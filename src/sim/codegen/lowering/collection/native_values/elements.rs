@@ -991,9 +991,28 @@ impl Codegen<'_> {
                 }
             }
             // A member passed to a subroutine may be an output, inout or
-            // ref actual, so it is copied back after the call.
-            NodeKind::FuncCall { .. } => {
-                for child in children {
+            // ref actual, so it is copied back after the call. A nested
+            // element passed whole to an input formal is read once.
+            NodeKind::FuncCall { callee, .. } => {
+                let inputs: Vec<bool> = callee
+                    .map(|callee| {
+                        self.node(callee)
+                            .children
+                            .iter()
+                            .filter_map(|formal| match self.kind(*formal) {
+                                NodeKind::FuncArg { direction, .. } => {
+                                    Some(*direction == DbDirection::Input)
+                                }
+                                _ => None,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let positional = inputs.len() == children.len();
+                for (position, child) in children.into_iter().enumerate() {
+                    if positional && inputs[position] && self.stage_whole_read(child, out, nested) {
+                        continue;
+                    }
                     self.collect_staged_members(child, true, out, nested);
                 }
             }

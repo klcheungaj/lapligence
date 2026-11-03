@@ -210,6 +210,19 @@ fn a_self_controlled_network_reports_a_zero_delay_loop() {
 }
 
 #[test]
+fn wired_nets_resolve_across_switches() {
+    for edition in EDITIONS {
+        sim_cli::run_case_backend_parity(
+            SUITE,
+            "wired",
+            include_str!("../fixtures/sim/feature_completion/adv_005/wired.out"),
+            &["--edition", edition],
+            &[],
+        );
+    }
+}
+
+#[test]
 fn unsupported_switch_forms_are_located_errors() {
     for edition in EDITIONS {
         sim_cli::reject_case_with_args(
@@ -222,8 +235,16 @@ fn unsupported_switch_forms_are_located_errors() {
         sim_cli::reject_case_with_args(
             SUITE,
             "neg_wired",
-            "neg_wired.sv:6:8: terminal `w` is a wired-logic (wand, wor, triand or trior) \
-             net; wired resolution across a switch network is not simulated",
+            "neg_wired.sv:10:8: its switch network joins wired-AND (wand, triand) and \
+             wired-OR (wor, trior) nets; such a mixed network is not simulated",
+            &["--edition", edition],
+        );
+        sim_cli::reject_case_with_args(
+            SUITE,
+            "neg_wired_supply",
+            "neg_wired_supply.sv:9:8: its switch network joins a wired-logic (wand, wor, \
+             triand or trior) net and a tri0, tri1, supply0 or supply1 net; such a mixed \
+             network is not simulated",
             &["--edition", edition],
         );
         sim_cli::reject_case_with_args(

@@ -1283,7 +1283,9 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   A popped class handle selects its properties (`q.pop_front().v`,
   [rtl_006](../tests/fixtures/sim/feature_completion/rtl_006/readme.md)).
   Methods on nested container elements run on a staged copy of the element
-  in assignment, call and system-task statements (§7 resizable containers);
+  in assignment, call and system-task statements, which also pass such an
+  element whole to input formals (`f(qq[i])`, `nested_element_arguments`;
+  §7 resizable containers);
   generated loops over wildcard-index arrays reject. `shuffle` draws from the calling thread's random stream
   ([sim_028](../tests/fixtures/sim/feature_completion/sim_028/readme.md)).
   SV §7.12 **[SV-2005]**.
@@ -1584,8 +1586,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   process per switch), and a network that keeps switching its own controls in
   zero time stops with the zero-delay loop error
   ([ADV-005 fixtures](../tests/fixtures/sim/feature_completion/adv_005/readme.md)).
-  Rejected with their location: wired-logic (`wand/wor/triand/trior`) nets
-  in a network
+  Wired-logic (`wand/wor/triand/trior`) nets take part: nets joined by
+  `tran`/`rtran` collapse into one net of the wired type, and a net reached
+  through `tranif*`/`rtranif*` resolves its drivers and arrivals with its own
+  type (A5-D7, `wired`). Rejected with their location: a network joining
+  wired-AND and wired-OR nets or a wired net and a pull or supply net
   ([known issue](known_issues.md#wired-logic-nets-in-bidirectional-switch-networks)), terminals wider than one bit (or than one bit per array
   element), SDF annotation of a switch, and variables or delays on
   `tran/rtran` (frontend). A strength-only change of a switch node wakes no
@@ -1777,9 +1782,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   A `ref` formal initializes fork block items (`ref_formal_fork_initializers`);
   any other reference to one inside `join_any`/`join_none` is illegal
   (SV 9.3.2) and rejects with its location. `fork ... join` branches read,
-  write and wait on packed, real, string and event `ref` formals through the
-  caller's actual (`ref_formal_fork_join`, SV 13.5.2); a handle `ref` formal
-  there rejects
+  write and wait on packed, real, string, event, class, chandle, virtual
+  interface, semaphore and mailbox `ref` formals through the caller's actual
+  (`ref_formal_fork_join`, `ref_formal_fork_join_handles`, SV 13.5.2); a
+  process `ref` formal there rejects
   ([known issue](known_issues.md#ref-formals-in-fork-join-branches)). Static-local
   task NBAs are represented, including arrays; NBAs targeting automatic locals
   or automatic formals reject. V §§9.8.2, 10.2; SV §§9.3.2, 10.4.2, 13.3.2

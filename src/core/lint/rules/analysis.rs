@@ -16,7 +16,7 @@
 //! - `collect_driver_writes` is the active-driver variant used by rules that
 //!   must distinguish `force` from `release`/`deassign`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::core::db::Operation;
 use crate::core::db::{
@@ -58,6 +58,87 @@ pub fn signal_of_ref(db: &Db, id: NodeId) -> Option<NodeId> {
         | NodeKind::Expr(ExprKind::IndexedPartSelect { base, .. }) => signal_of_ref(db, *base),
         _ => None,
     }
+}
+
+/// The instance members that each member access through a virtual interface
+/// may name, keyed by the access's member node.
+///
+/// Such an access (`v.d`, `va[i].d`, `this.v.d`) resolves to a member of the
+/// interface definition's own body, which belongs to no instance. A virtual
+/// interface can hold any instance of its interface (SV 25.9), so the access
+/// counts for the like-named member of every instance. Accesses through a
+/// modport or into nested instances are not resolved.
+pub fn virtual_interface_members(db: &Db) -> HashMap<NodeId, Vec<NodeId>> {
+    let mut instances: HashMap<&str, Vec<NodeId>> = HashMap::new();
+    for (id, _) in iter_instances(db) {
+        if let NodeKind::ModuleInst {
+            def_name,
+            is_interface: true,
+            ..
+        } = db.node_kind(id)
+        {
+            instances.entry(def_name.as_str()).or_default().push(id);
+        }
+    }
+    let mut out = HashMap::new();
+    if instances.is_empty() {
+        return out;
+    }
+    for id in db.node_ids() {
+        let NodeKind::Expr(ExprKind::HierPath { refs, .. }) = db.node_kind(id) else {
+            continue;
+        };
+        let [Some(base), Some(member)] = refs.as_slice() else {
+            continue;
+        };
+        if db.node(*member).parent.is_some() || !is_signal(db, *member) || out.contains_key(member)
+        {
+            continue;
+        }
+        let Some(interface) = virtual_interface_name(db, *base) else {
+            continue;
+        };
+        let name = &db.node(*member).name;
+        let members = instances
+            .get(interface)
+            .into_iter()
+            .flatten()
+            .flat_map(|instance| db.node(*instance).children.iter().copied())
+            .filter(|child| is_signal(db, *child) && db.node(*child).name == *name)
+            .collect();
+        out.insert(*member, members);
+    }
+    out
+}
+
+/// The interface a virtual-interface variable, property or array element
+/// expression holds (without a modport).
+fn virtual_interface_name(db: &Db, id: NodeId) -> Option<&str> {
+    match db.node_kind(id) {
+        NodeKind::Var { ty } | NodeKind::Array { ty, .. } if ty.kind == "virtual_interface" => {
+            ty.type_name.as_deref().filter(|name| !name.contains('.'))
+        }
+        NodeKind::Expr(ExprKind::Ref {
+            target: Some(target),
+        }) => virtual_interface_name(db, *target),
+        NodeKind::Expr(ExprKind::ArraySelect { base, .. }) => virtual_interface_name(db, *base),
+        _ => None,
+    }
+}
+
+/// Add to `signals` the instance members that its virtual-interface member
+/// accesses may name (see [`virtual_interface_members`]).
+pub fn extend_virtual_interface_members(
+    signals: &mut HashSet<NodeId>,
+    members: &HashMap<NodeId, Vec<NodeId>>,
+) {
+    let named: Vec<NodeId> = signals
+        .iter()
+        .filter_map(|signal| members.get(signal))
+        .flatten()
+        .copied()
+        .collect();
+    signals.extend(named);
 }
 
 /// Width of a declared object (net, var, array or parameter); `None` when the
@@ -440,6 +521,12 @@ fn walk_lhs_select_reads(db: &Db, lhs: NodeId, seen: &mut HashSet<NodeId>, out: 
             walk_lhs_select_reads(db, *base, seen, out);
         }
         NodeKind::Expr(ExprKind::HierPath { refs, .. }) => {
+            // A member written through a virtual interface reads the handle.
+            if let Some(Some(handle)) = refs.first() {
+                if is_signal(db, *handle) && virtual_interface_name(db, *handle).is_some() {
+                    add_read(db, *handle, seen, out);
+                }
+            }
             for root in refs.iter().flatten() {
                 if matches!(db.node_kind(*root), NodeKind::Expr(_)) {
                     walk_lhs_select_reads(db, *root, seen, out);

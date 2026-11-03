@@ -202,7 +202,10 @@ off) is an 8-bucket strongest-first propagation: `tran*` keeps strength
 except supply to strong, `rtran*` uses Table 28-8, an unknown switch passes
 possible levels only (the union of A5-D1), a level leaves a node only if no
 stronger opposite known level holds it (A5-D2), and a forced bit is a fixed
-strong source (A5-D3). Each node entry rises at most once, so a solve is
+strong source (A5-D3). In a network with a wired net, nets that `tran`/`rtran`
+join form static wired groups (A5-D7): there an equal dominant known level
+(0 for wand, 1 for wor) also holds the other value, whose items wait until
+the rest of their level is taken, and the result uses the wired hull. Each node entry rises at most once, so a solve is
 O(nodes + switches) with no iteration cap. Changed nets republish in queue
 order through `llg_net_resolve`, whose compute and strength paths overlay the
 member bits with the network result. Inside a process turn the solve waits for

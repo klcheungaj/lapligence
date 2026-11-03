@@ -98,6 +98,13 @@ fn ref_formals_reach_the_actual_from_fork_join_branches() {
 }
 
 #[test]
+fn handle_ref_formals_reach_the_actual_from_fork_join_branches() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_010/ref_formal_fork_join_handles.out");
+    sim_cli::run_case_backend_parity(SUITE, "ref_formal_fork_join_handles", expected, &[], &[]);
+}
+
+#[test]
 fn neg_ref_formals_in_fork_branches() {
     sim_cli::reject_case(
         SUITE,
@@ -107,6 +114,6 @@ fn neg_ref_formals_in_fork_branches() {
     sim_cli::reject_case(
         SUITE,
         "neg_ref_formal_fork_join",
-        "neg_ref_formal_fork_join.sv:10:7 in `tb` refers to `ref` formal `r` of the enclosing task; a fork-join branch that reads or writes a handle `ref` formal is not supported",
+        "neg_ref_formal_fork_join.sv:9:7 in `tb` refers to `ref` formal `r` of the enclosing task; a fork-join branch that reads or writes a process `ref` formal is not supported",
     );
 }

@@ -41,6 +41,8 @@
 #define LLG_SWITCH_ENTRIES 4u
 #define LLG_SWITCH_ITEMS_PER_NODE 8u
 #define LLG_SWITCH_NO_ITEM UINT32_MAX
+// Item entry flag: a wired node's dominated value already waited once.
+#define LLG_SWITCH_ITEM_DEFERRED 4u
 // A node not solved yet keeps its net's own strength view.
 #define LLG_SWITCH_NO_CODE 0xFFu
 
@@ -91,6 +93,10 @@ static struct {
     uint32_t* dirty_list;
     uint32_t n_dirty;
     uint32_t* component;
+    // Networks with a wired net only (NULL otherwise): per node, the value
+    // its wired group resolves equal strengths to, or -1
+    // (`switch_wired_groups`).
+    int8_t* dominant;
     llg_switch_item_t* items;
     uint32_t n_items;
     uint32_t head[LLG_STRENGTH_SUPPLY + 1];
@@ -157,6 +163,7 @@ static void switches_release(void) {
     free(g_sw.mark);
     free(g_sw.dirty_list);
     free(g_sw.component);
+    free(g_sw.dominant);
     free(g_sw.items);
     free(g_sw.publish);
     memset(&g_sw, 0, sizeof(g_sw));
@@ -274,6 +281,44 @@ static uint32_t switch_other(uint32_t s, uint32_t node) {
     return g_sw.switches[s].a == node ? g_sw.switches[s].b : g_sw.switches[s].a;
 }
 
+// Wired groups, for a network with a wired net. Nets that `tran` and `rtran`
+// join (switches without a control, always on) collapse into one net, whose
+// type follows Table 23-1 (23.3.3.7): with a wand/triand member the group
+// resolves equal strengths to 0 at every member, with a wor/trior member to
+// 1 (28.12.4). A controlled switch joins no group, so a wired net reached
+// only through `tranif*`/`rtranif*` resolves its own drivers and what
+// arrives with its own wired function, and a plain net there keeps the wire
+// rule. The codegen rejects networks that join both wired kinds or a wired
+// net and a pull or supply net. The groups are static: computed once over
+// the uncontrolled switches. Uses `component` as scratch.
+static void switch_wired_groups(void) {
+    for (uint32_t n = 0; n < g_sw.n_nodes; n++) g_sw.dominant[n] = -2;
+    for (uint32_t root = 0; root < g_sw.n_nodes; root++) {
+        if (g_sw.dominant[root] != -2) continue;
+        uint32_t size = 0;
+        g_sw.component[size++] = root;
+        g_sw.dominant[root] = -1;
+        int wired = -1;
+        for (uint32_t k = 0; k < size; k++) {
+            uint32_t node = g_sw.component[k];
+            switch (g_sw.nodes[node].net->resolution) {
+            case LLG_RESOLVE_WAND: wired = 0; break;
+            case LLG_RESOLVE_WOR: wired = 1; break;
+            default: break;
+            }
+            for (uint32_t a = g_sw.adj_start[node]; a < g_sw.adj_start[node + 1u]; a++) {
+                uint32_t sw = g_sw.adj[a];
+                if (g_sw.switches[sw].flags & LLG_SWITCH_CONTROLLED) continue;
+                uint32_t other = switch_other(sw, node);
+                if (g_sw.dominant[other] != -2) continue;
+                g_sw.dominant[other] = -1;
+                g_sw.component[size++] = other;
+            }
+        }
+        for (uint32_t k = 0; k < size; k++) g_sw.dominant[g_sw.component[k]] = (int8_t)wired;
+    }
+}
+
 static void switch_queue_publish(llg_net_t* net) {
     struct llg_switch_net* members = net->switch_net;
     if (!members || members->queued) return;
@@ -319,24 +364,57 @@ static void switch_solve(uint32_t start) {
             if (entries[entry] >= 1) switch_push(node, entry, entries[entry]);
     }
     for (int level = LLG_STRENGTH_SUPPLY; level >= 1; level--) {
-        while (g_sw.head[level] != LLG_SWITCH_NO_ITEM) {
-            llg_switch_item_t item = g_sw.items[g_sw.head[level]];
-            g_sw.head[level] = item.next;
-            const int8_t* entries = &g_sw.level[(size_t)item.node * LLG_SWITCH_ENTRIES];
-            unsigned side = item.entry & 1u;
-            int known = item.entry < 2u;
-            // Stale: the entry rose after this item was queued.
-            if (entries[item.entry] != level) continue;
-            // Blocked: a stronger known opposite value wins at this node.
-            if (entries[1u - side] > level) continue;
-            uint32_t end = g_sw.adj_start[item.node] + g_sw.n_active[item.node];
-            for (uint32_t k = g_sw.adj_start[item.node]; k < end; k++) {
-                uint32_t s = g_sw.adj[k];
-                uint8_t state = g_sw.state[s];
-                switch_offer(switch_other(s, item.node), side,
-                             known && state == LLG_SWITCH_ON,
-                             switch_reduce(level, g_sw.switches[s].flags));
+        // A node of a wired group resolves its drivers and what arrives
+        // through the switches with the wired function (28.12.4): among
+        // equal strengths 0 wins in a wired-AND group and 1 in a wired-OR
+        // group, so a dominated value leaves such a node only when no
+        // dominant known value of its level is there. Those items wait until
+        // every other item of the level has been taken; the order is sound
+        // because one network holds one wired kind (the dominant value is
+        // one per network) and switches never change a value.
+        uint32_t deferred = LLG_SWITCH_NO_ITEM;
+        uint32_t deferred_tail = LLG_SWITCH_NO_ITEM;
+        for (;;) {
+            while (g_sw.head[level] != LLG_SWITCH_NO_ITEM) {
+                uint32_t index = g_sw.head[level];
+                llg_switch_item_t item = g_sw.items[index];
+                g_sw.head[level] = item.next;
+                const int8_t* entries = &g_sw.level[(size_t)item.node * LLG_SWITCH_ENTRIES];
+                unsigned entry = item.entry & 3u;
+                unsigned side = entry & 1u;
+                int known = entry < 2u;
+                // Stale: the entry rose after this item was queued.
+                if (entries[entry] != level) continue;
+                // Blocked: a stronger known opposite value wins at this node.
+                if (entries[1u - side] > level) continue;
+                int dominant = g_sw.dominant ? g_sw.dominant[item.node] : -1;
+                if (dominant >= 0 && side != (unsigned)dominant) {
+                    if (!(item.entry & LLG_SWITCH_ITEM_DEFERRED)) {
+                        g_sw.items[index].next = LLG_SWITCH_NO_ITEM;
+                        g_sw.items[index].entry = (uint8_t)(entry | LLG_SWITCH_ITEM_DEFERRED);
+                        if (deferred == LLG_SWITCH_NO_ITEM)
+                            deferred = index;
+                        else
+                            g_sw.items[deferred_tail].next = index;
+                        deferred_tail = index;
+                        continue;
+                    }
+                    // The wired function: an equal known dominant value wins.
+                    if (entries[1u - side] >= level) continue;
+                }
+                uint32_t end = g_sw.adj_start[item.node] + g_sw.n_active[item.node];
+                for (uint32_t k = g_sw.adj_start[item.node]; k < end; k++) {
+                    uint32_t s = g_sw.adj[k];
+                    uint8_t state = g_sw.state[s];
+                    switch_offer(switch_other(s, item.node), side,
+                                 known && state == LLG_SWITCH_ON,
+                                 switch_reduce(level, g_sw.switches[s].flags));
+                }
             }
+            if (deferred == LLG_SWITCH_NO_ITEM) break;
+            g_sw.head[level] = deferred;
+            g_sw.tail[level] = deferred_tail;
+            deferred = deferred_tail = LLG_SWITCH_NO_ITEM;
         }
     }
     for (uint32_t i = 0; i < count; i++) {
@@ -344,7 +422,11 @@ static void switch_solve(uint32_t start) {
         if (g_sw.fixed[node]) continue;
         const int8_t* e = &g_sw.level[(size_t)node * LLG_SWITCH_ENTRIES];
         llg_net_t* net = g_sw.nodes[node].net;
-        uint8_t code = llg_net_strength_hull(net->resolution, e[0], e[1], e[2], e[3]);
+        int dominant = g_sw.dominant ? g_sw.dominant[node] : -1;
+        int mode = dominant == 0   ? LLG_RESOLVE_WAND
+                   : dominant == 1 ? LLG_RESOLVE_WOR
+                                   : net->resolution;
+        uint8_t code = llg_net_strength_hull(mode, e[0], e[1], e[2], e[3]);
         int lo = (int)(code & 15u) - 7;
         int hi = (int)(code >> 4) - 7;
         uint8_t value = lo == 0 && hi == 0 ? 3u : hi < 0 ? 0u : lo > 0 ? 1u : 2u;
@@ -649,6 +731,13 @@ void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
     g_sw.items = (llg_switch_item_t*)llg_checked_calloc(
         (size_t)n_nodes * LLG_SWITCH_ITEMS_PER_NODE, sizeof(llg_switch_item_t),
         "switch solve queue");
+    for (uint32_t n = 0; n < n_nodes; n++) {
+        int resolution = nodes[n].net->resolution;
+        if (resolution == LLG_RESOLVE_WAND || resolution == LLG_RESOLVE_WOR) {
+            g_sw.dominant = (int8_t*)llg_checked_calloc(n_nodes, 1, "switch wired groups");
+            break;
+        }
+    }
     for (uint32_t s = 0; s < n_switches; s++) {
         if (switches[s].a >= n_nodes || switches[s].b >= n_nodes) {
             fputs("llg runtime fatal: invalid switch terminal\n", stderr);
@@ -715,6 +804,7 @@ void llg_switches_start(const llg_switch_node_t* nodes, uint32_t n_nodes,
         switch_mark_dirty(n);
     }
     for (uint32_t i = 0; i < n_nets; i++) switch_queue_publish(nets[i]);
+    if (g_sw.dominant) switch_wired_groups();
     g_sw.held = 1;
 }
 

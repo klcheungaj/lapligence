@@ -1,0 +1,9 @@
+1 St0 St0 | St1 St1 | We0 We0 | Pu1 We1
+1 1000 100x | StX St0 | Pu0 St0
+2 St0 HiZ | St1 St1 | St1 St1 | Pu1 We1
+2 1000 zz01 | St0 St0 | We1 Me1
+3 HiZ HiZ | St1 St1 | St0 St0 | HiZ HiZ
+3 1000 100x | St1 St0 | WeX MeX
+4 St0 St0 | St1 St1
+5 St1 St1
+6 St0 St0

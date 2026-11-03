@@ -30,6 +30,40 @@ impl Validator<'_> {
                             &format!("{path}.pre_fns[{idx}].captures[{capture_idx}].initial"),
                         )?;
                     }
+                    // Each `ref` formal's descriptor is captured once; a
+                    // handle formal's change marker follows it in the next
+                    // slot.
+                    let mut captured_formals: Vec<usize> = Vec::new();
+                    for (capture_idx, capture) in captures.iter().enumerate() {
+                        let IrExprKind::FormalRead(index) = capture.initial().kind() else {
+                            continue;
+                        };
+                        if capture.storage().kind() != StorageKind::Opaque {
+                            continue;
+                        }
+                        let repeated = captured_formals.contains(index);
+                        let handle = formals.get(*index).is_some_and(|formal| formal.chandle);
+                        let paired = capture_idx > 0
+                            && matches!(captures[capture_idx - 1].initial().kind(),
+                                IrExprKind::FormalRead(previous) if previous == index)
+                            && captured_formals
+                                .iter()
+                                .filter(|seen| *seen == index)
+                                .count()
+                                == 1;
+                        let marker_expected = handle
+                            && !repeated
+                            && !captures.get(capture_idx + 1).is_some_and(|next| {
+                                matches!(next.initial().kind(), IrExprKind::FormalRead(n) if n == index)
+                            });
+                        if (repeated && !(handle && paired)) || marker_expected {
+                            return self.fail(
+                                format!("{path}.pre_fns[{idx}].captures[{capture_idx}]"),
+                                "a `ref` formal is captured once, followed by its change marker for a handle formal",
+                            );
+                        }
+                        captured_formals.push(*index);
+                    }
                     // A fork-join branch names the `ref` formals whose
                     // descriptors it captured as the subroutine does.
                     let ref_formals = captures.iter().any(|capture| {

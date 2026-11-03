@@ -471,10 +471,11 @@ V2001 7.6). The fixtures and the derivation of every expected value are in
 | A5-D4 | **A `tranif` delay delays the switch state.** The state follows the control as an inertial copy: the turn-on delay to on, the turn-off delay to off, the smaller delay to unknown (x or z); a newer control change replaces a pending one. A delayed switch is unknown until its first delay elapses (S2-D4). Signals through the switch are never delayed. | 28.8 L47365, L47380-47384 | `A5-D4_tranif_delay_state` | LRM text for the delays; the initial unknown state and inertial replacement are industry-standard behaviour |
 | A5-D5 | **A net delay on a switch node delays only its own value.** The network is solved from the node's drivers, so the nodes beyond it change at once and the delayed net shows its value after its delay. | 10.3.3 L12911-12912; 28.8 L47365 | `A5-D5_member_net_delay` | industry-standard behaviour (the text does not combine net delays and switches) |
 | A5-D6 | **`tran*` reduces supply to strong whatever the driver's other strength.** Every other strength passes unchanged; `rtran*` reduces by Table 28-8. | 28.13 L48297-48298; 28.14 L48301-48325 | `A5-D6_tran_supply_reduction` | LRM text. Some simulators pass a supply strength through a `tran` unchanged when only one of the driver's two strengths is supply; llg follows 28.13, which reduces every supply strength |
+| A5-D7 | **Wired nets in switch networks.** Nets that `tran` or `rtran` join collapse into one net of the wired type when one of them is a wand/triand (or wor/trior) net: every member, a plain wire included, resolves its drivers and what arrives through the switches with the wired function (equal strengths give 0, or 1). A net reached only through `tranif*`/`rtranif*` resolves its drivers and arrivals with its own type. | 28.12.4 L48170-48171; 23.3.3.7 L41596-41597 | `A5-D7_wired_nets_in_switch_networks` | industry-standard behaviour (the text does not say how a wired net resolves across a switch; llg treats an uncontrolled switch like the port collapsing of Table 23-1). Some simulators resolve a plain wire joined by `tran` to a wand with the wire rule in some designs; llg applies one rule |
 
-Rejected with a located error: wired-logic nets (`wand`, `wor`, `triand`,
-`trior`) in a switch network (some simulators merge the wired type across
-`tran` connections only, a rule the text does not state), a terminal wider than
+Rejected with a located error: a switch network that joins wired-AND and
+wired-OR nets, or a wired net and a `tri0`, `tri1`, `supply0` or `supply1`
+net (simulators combine those types differently), a terminal wider than
 one bit or than one bit per array element (28.8, 28.3.6), and SDF annotation of
 a switch. MOS, CMOS and resistive MOS switches stay unsupported by design.
 
@@ -1047,6 +1048,12 @@ input grammar is ADV-011. Line numbers refer to `SystemVerilog-1800-2009.txt`.
 | ID | Decision | Clause (SV) | Case | Kind |
 | --- | --- | --- | --- | --- |
 | R14-D1 | **`inside` over chandles.** A chandle selector or set item is compared with `==`, as class handles are: null matches null and two chandles match when they name the same C pointer. | 11.4.13 L15363, L15376; 6.14 L5576-5577 | `R14-D1_chandle_inside` | industry-standard behaviour (11.4.13 defines nonintegral membership through `==`, which 6.14 allows on chandles, but 6.14 does not list `inside` among the valid chandle operators) |
+
+## Invalid indices of nested containers (FIN-001 follow-up)
+
+| ID | Decision | Clause (SV) | Case | Kind |
+| --- | --- | --- | --- | --- |
+| S06-D1 | **An out-of-range element of a container of containers is an invalid index.** A method call (`qq[7].push_back(x)`, `delete`, `insert`), a whole write (`qq[7] = t`) or an element write (`qq[7][0] = 5`) on an element of a queue or dynamic array of containers past its current size does nothing; a read of it (`qq[7].size()`, `qq[7].pop_front()`, `qq[7][0]`) returns the default of its type. The run continues. | 7.4.6 L8235-8238; 7.10 L8979-8980 | `S06-D1_nested_element_invalid_index` | LRM text. Some simulators stop with a fatal error at any use of such an element; llg follows the clause text because 7.4.6 states that a read with an invalid index returns the default and a write performs no operation |
 
 ## Earlier decisions
 

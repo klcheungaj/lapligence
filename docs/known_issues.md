@@ -654,7 +654,9 @@ containers; methods of a nested container element outside assignment, call
 and system-task statements (`if (q[i].pop_front())`, `return q[i].sum()`;
 inside those statements the element is staged whole, and `q[i].size()` and
 `$size(q[i])` work everywhere); a nested element passed whole as a subroutine
-argument (`f(q[i])`); a select into a queue or dynamic array nested in a
+argument outside those statements or to an output, inout or `ref` formal
+(input formals of calls in them work, `sim_006/nested_element_arguments`);
+a select into a queue or dynamic array nested in a
 string-keyed associative array element (`sq["k"][1]`); one statement that
 changes two nested elements of one container
 (`sq["b"].push_back(sq["a"].pop_front())`); a nested element written from an
@@ -1554,32 +1556,34 @@ strings get one).
 ## `ref` formals in fork-join branches
 
 **Status:** open (FIN-001 G3, F09-04). Illegal forms are rejected with their
-location; one legal form is rejected as unsupported. Packed, real, string and
-event `ref` formals work in `fork ... join` branches
-(`sim_010/ref_formal_fork_join`).
+location; one legal form is rejected as unsupported. Packed, real, string,
+event and handle (class, chandle, virtual interface, semaphore, mailbox)
+`ref` formals work in `fork ... join` branches
+(`sim_010/ref_formal_fork_join`, `sim_010/ref_formal_fork_join_handles`).
 
 ### Symptom
 
-A branch of a `fork ... join` inside a task that reads or writes a class,
-chandle or other handle `ref` formal of that task is legal (SV 9.3.2
-restricts only `join_any`/`join_none`; SV 13.5.2) but stops with "a
-fork-join branch that reads or writes a handle `ref` formal is not
-supported". Inside `join_any`/`join_none` a reference outside a fork
-block-item initializer is illegal (SV 9.3.2) and rejects with its location;
-block-item initializers (`fork automatic int k = r; ... join_none`) execute.
+A branch of a `fork ... join` inside a task that reads or writes a
+`process` `ref` formal of that task is legal (SV 9.3.2 restricts only
+`join_any`/`join_none`; SV 13.5.2) but stops with "a fork-join branch that
+reads or writes a process `ref` formal is not supported". Inside
+`join_any`/`join_none` a reference outside a fork block-item initializer is
+illegal (SV 9.3.2) and rejects with its location; block-item initializers
+(`fork automatic int k = r; ... join_none`) execute.
 
 ### Cause
 
-A `join` branch receives a packed, real, string or event `ref` formal's
-descriptor (`rN`) in an opaque slot of its capture frame and names the
-formal as the task does. A handle `ref` formal has a second parameter, the
-actual's change marker that stores publish and waits observe, which no
-branch slot carries yet.
+A `join` branch receives a `ref` formal's descriptor (`rN`) in an opaque
+slot of its capture frame and names the formal as the task does; a handle
+formal's change marker follows in a slot the fork's branches share. A
+process `ref` formal aliases the caller's counted process slot; stores
+through it retain the process but publish no marker, so a branch waiting on
+it would never wake (a probe deadlocks).
 
 ### Intended direction
 
-Capture the marker pointer in a second opaque slot and bind it under the
-formal's marker parameter name in the branch. Estimate: half a day.
+Publish the marker on stores to a process `ref` formal as handle stores do,
+then capture it like other handle formals. Estimate: half a day.
 
 ### Reproduce
 
@@ -1655,39 +1659,34 @@ endmodule
 
 ## Wired-logic nets in bidirectional switch networks
 
-**Status:** open (FIN-001 G3, F08-11; ADV-005).
+**Status:** open (FIN-001 G3, F08-11; ADV-005). Wired nets in a network of
+one wired kind without pull or supply nets work (decision A5-D7,
+`adv_005/wired`).
 
 ### Symptom
 
-A `wand`, `wor`, `triand` or `trior` net that is a terminal of a
-`tran`/`rtran`/`tranif*`/`rtranif*` switch is legal but stops with "terminal
-`w` is a wired-logic (wand, wor, triand or trior) net; wired resolution
-across a switch network is not simulated".
+A switch network that joins a wired-AND (`wand`, `triand`) and a wired-OR
+(`wor`, `trior`) net, or a wired net and a `tri0`, `tri1`, `supply0` or
+`supply1` net, is legal but stops with "its switch network joins ...; such a
+mixed network is not simulated".
 
 ### Cause
 
-The switch solver resolves every node with the wire/tri strength rules. A
-wired node must first combine its own drivers with
-the wired-AND/OR rule and then take part in the network as one source, and
-values reaching it through the switches must combine the same way.
+The solver takes the dominant value of a wired group (0 or 1) first among
+equal strengths, which needs one wired kind per network. How a wired net
+combines with a pull or supply net across a switch is not settled: the text
+is silent and the industry-standard behaviour observed is irregular (a
+`tran`-joined `trior` and `tri0` resolve as a plain wire without the pull).
 
 ### Intended direction
 
-Give each solver node a resolution kind and use the wired table at wired
-nodes, both for local drivers and for values passed through switches.
-Estimate: 2 days with the strength-table tests.
+Per-group dominance order for mixed networks (a second deferral pass) and a
+decision case for the pull and supply combinations. Estimate: 1 day.
 
 ### Reproduce
 
-```systemverilog
-module tb;
-  wand w; wire a; reg d1, d2, c;
-  assign w = d1; assign w = d2;
-  tranif1 t(w, a, c);
-  initial begin d1 = 1; d2 = 0; c = 1; #1 $display("%b %b", w, a); end
-endmodule
-```
-(expected `0 0`).
+`tests/fixtures/sim/feature_completion/adv_005/neg_wired.sv`,
+`neg_wired_supply.sv`.
 
 ## Set membership items outside packed storage
 

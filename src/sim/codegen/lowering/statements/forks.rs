@@ -7,6 +7,9 @@ use super::*;
 enum RefFormalBinding {
     /// Through the formal's descriptor parameter `rN`.
     Descriptor(usize),
+    /// Through a handle formal's descriptor parameter `rN` and the actual's
+    /// change marker parameter.
+    Handle(usize),
     /// Through the actual a specialization binds statically.
     Actual,
 }
@@ -167,18 +170,31 @@ impl EmitCtx<'_, '_> {
                     if binding == Some(RefFormalBinding::Actual) {
                         continue;
                     }
-                    if let Some(RefFormalBinding::Descriptor(index)) = binding {
-                        let storage = StorageRef::new(
-                            frame,
-                            slot as u32,
-                            StorageLifetime::Automatic,
-                            StorageOwnership::Owned,
-                        )
-                        .with_kind(StorageKind::Opaque);
-                        captures.push(IrCapture::new(
-                            storage,
-                            IrExpr::new(IrExprKind::FormalRead(index), 1, false, None),
-                        ));
+                    if let Some(
+                        RefFormalBinding::Descriptor(index) | RefFormalBinding::Handle(index),
+                    ) = binding
+                    {
+                        // A handle formal passes its change marker in a
+                        // second slot right after the descriptor's, so
+                        // branch stores publish it and waits observe it.
+                        let slots = if binding == Some(RefFormalBinding::Handle(index)) {
+                            2
+                        } else {
+                            1
+                        };
+                        for offset in 0..slots {
+                            let storage = StorageRef::new(
+                                frame,
+                                (slot + offset) as u32,
+                                StorageLifetime::Automatic,
+                                StorageOwnership::Owned,
+                            )
+                            .with_kind(StorageKind::Opaque);
+                            captures.push(IrCapture::new(
+                                storage,
+                                IrExpr::new(IrExprKind::FormalRead(index), 1, false, None),
+                            ));
+                        }
                         continue;
                     }
                 }
@@ -348,9 +364,10 @@ impl EmitCtx<'_, '_> {
 
     /// The index of `ref` formal `target` of the enclosing subroutine when a
     /// `join` branch names it through its descriptor (`rN`): a packed, real,
-    /// string or event formal the subroutine reads through its parameter.
-    /// Containers and records are aliased through shared frames instead;
-    /// handle formals also carry a change marker no branch binds.
+    /// string, event or handle formal the subroutine reads through its
+    /// parameter. Containers and records are aliased through shared frames
+    /// instead. A process handle formal aliases a counted slot no branch
+    /// binds.
     fn ref_formal_descriptor(&self, target: NodeId) -> Option<RefFormalBinding> {
         if !self.cg.is_ref_formal(target) {
             return None;
@@ -360,11 +377,17 @@ impl EmitCtx<'_, '_> {
         }) {
             return None;
         }
+        let function = self.func.as_ref().or(self.cg.func.as_ref())?;
         if matches!(self.cg.kind(target), NodeKind::FuncArg { ty, .. } if is_handle_kind(&ty.kind))
         {
-            return None;
+            if self.cg.is_process_formal(target) {
+                return None;
+            }
+            return match function.chandle_read.get(&target) {
+                Some(IrChandleExpr::FormalRead(index)) => Some(RefFormalBinding::Handle(*index)),
+                _ => None,
+            };
         }
-        let function = self.func.as_ref().or(self.cg.func.as_ref())?;
         if let Some(IrEventRef::Formal(index)) = function.event_args.get(&target) {
             return Some(RefFormalBinding::Descriptor(*index));
         }
@@ -384,9 +407,9 @@ impl EmitCtx<'_, '_> {
     /// subroutine where the branch would not reach the caller's variable.
     /// Inside `join_any`/`join_none` such a reference is illegal except in a
     /// fork block-item initializer, which the forking process evaluates
-    /// (SV 9.3.2). A `join` branch is legal; a handle `ref` formal would be
-    /// copied into the branch frame, so its writes would never reach the
-    /// actual: that form is rejected until branches bind its change marker.
+    /// (SV 9.3.2). A `join` branch is legal; a process handle `ref` formal
+    /// would be copied into the branch frame, so its writes would never
+    /// reach the actual: that form is rejected.
     fn check_ref_formal_captures(
         &self,
         join: IrJoinKind,
@@ -411,7 +434,7 @@ impl EmitCtx<'_, '_> {
                 });
                 if !aliased && self.ref_formal_descriptor(*target).is_none() {
                     return Err(format!(
-                        "fork branch at {location} in `{}` refers to `ref` formal `{name}` of the enclosing task; a fork-join branch that reads or writes a handle `ref` formal is not supported",
+                        "fork branch at {location} in `{}` refers to `ref` formal `{name}` of the enclosing task; a fork-join branch that reads or writes a process `ref` formal is not supported",
                         self.cg.source_path(&self.path)
                     ));
                 }
