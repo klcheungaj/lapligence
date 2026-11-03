@@ -13,7 +13,7 @@ See [shared lint](../readme.md).
   defaults. A concatenation, streaming or assignment-pattern write target counts
   for each member, and a write to an unpacked element or record member counts
   for the whole object (`collect_writes_with_members`). Every index, key and
-  select bound of a write target is a read (`q[i][j] = v` reads `i` and `j`). Generate scopes (loop, if,
+  select bound of a write target is a read (`q[i][j] = v` reads `i` and `j`). A member read or written through a virtual interface (`v.d`, `va[i].d`, a class property `kv.d`; not through a modport) counts for that member of every instance of the interface (`virtual_interface_members`), and the write reads the handle. Generate scopes (loop, if,
   case) are analysed like module scopes. Signals connected to a black box (an
   instance of an unknown module, `black_box_connection_signals`) are skipped.
   The `default disable iff` condition a checker instance takes for
@@ -32,8 +32,9 @@ See [shared lint](../readme.md).
 - `unconnected-port` (`unconnected_port.rs`): top ports are external boundaries;
   interface connections refer to actual instances, without frontend-generated
   copies.
-- `undriven-signal` (`undriven.rs`): drivers also include connected output/inout
-  flow, primitive output terminals and timing-check notifiers; output, inout and
+- `undriven-signal` (`undriven.rs`): drivers also include members written
+  through a virtual interface (in every instance of the interface), connected
+  output/inout flow, primitive output terminals and timing-check notifiers; output, inout and
   non-`const` `ref` actuals of any call (DPI imports, tasks,
   `$sscanf`/`$fscanf`/`$fgets`/`$fread`/`$readmem*`/`$sformat` destinations,
   `std::randomize` arguments, which Slang wraps in an assignment operation) and

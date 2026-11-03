@@ -3,16 +3,19 @@
 //! The rule works over the owned elaborated database.  It combines procedural
 //! and continuous activity with declaration initializers, primitive terminals,
 //! and representable module-port flow, then reports each declared object at
-//! its declaration when it is read but has no driver.
+//! its declaration when it is read but has no driver. A member written
+//! through a virtual interface counts as driven in every instance of the
+//! interface.
 
 use std::collections::HashSet;
 
 use crate::core::db::{ConstraintKind, Db, NodeId, NodeKind, RandQualifier};
 use crate::core::lint::rules::analysis::{
     all_nodes, black_box_connection_signals, collect_driver_writes, collect_reads,
-    connected_port_link_drivers, gate_terminal_drivers, gate_terminal_reads, is_signal,
-    port_link_reads, signal_scope_path, subroutine_body, timing_check_activity,
-    top_external_port_signals, unconnected_port_signals,
+    connected_port_link_drivers, extend_virtual_interface_members, gate_terminal_drivers,
+    gate_terminal_reads, is_signal, port_link_reads, signal_scope_path, subroutine_body,
+    timing_check_activity, top_external_port_signals, unconnected_port_signals,
+    virtual_interface_members,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -159,6 +162,12 @@ fn design_activity(db: &Db) -> (HashSet<NodeId>, HashSet<NodeId>) {
             reads.extend(collect_reads(db, init));
         }
     }
+
+    // A member access through a virtual interface may read or drive the
+    // member of any instance of its interface.
+    let members = virtual_interface_members(db);
+    extend_virtual_interface_members(&mut reads, &members);
+    extend_virtual_interface_members(&mut drivers, &members);
 
     (reads, drivers)
 }
@@ -777,5 +786,16 @@ mod tests {
             diags.is_empty(),
             "every read signal has a port driver: {diags:?}"
         );
+    }
+
+    #[test]
+    fn members_written_through_a_virtual_interface_are_driven() {
+        let names = undriven_names(
+            "interface ifc; logic d; logic e; endinterface\n\
+             module top;\n  ifc i0(), i1();\n  virtual ifc v;\n\
+             \x20 initial begin v = i1; v.d = 1; $display(i0.d, i1.d, i0.e); end\nendmodule\n",
+            "top",
+        );
+        assert_eq!(names, ["e"], "{names:?}");
     }
 }

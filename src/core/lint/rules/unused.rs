@@ -15,7 +15,8 @@
 //!
 //! Reads and writes inside any subroutine body count as well (a variable read
 //! only by a DPI-exported function is used); a write there alone leaves the
-//! signal "never read".
+//! signal "never read". A member read or written through a virtual interface
+//! counts for that member of every instance of the interface.
 //!
 //! Severity is Warning for both findings; the two cases are:
 //! - zero writes *and* zero reads → "never used" (dead declaration);
@@ -26,8 +27,9 @@ use std::collections::HashSet;
 use crate::core::db::{Db, Direction, NodeId, NodeKind};
 use crate::core::lint::rules::analysis::{
     all_design_nodes, black_box_connection_signals, collect_reads, collect_writes_with_members,
-    gate_terminal_drivers, gate_terminal_reads, is_signal, iter_instances, port_connected_signals,
-    signal_scope_path, subroutine_body, subroutine_formal_defaults, timing_check_activity,
+    extend_virtual_interface_members, gate_terminal_drivers, gate_terminal_reads, is_signal,
+    iter_instances, port_connected_signals, signal_scope_path, subroutine_body,
+    subroutine_formal_defaults, timing_check_activity, virtual_interface_members,
 };
 use crate::core::lint::{LintCtx, LintDiag, LintRule, LintSeverity};
 
@@ -99,6 +101,11 @@ impl LintRule for UnusedSignalRule {
         let (timing_reads, timing_writes) = timing_check_activity(db);
         reads.extend(timing_reads);
         writes.extend(timing_writes);
+        // A member access through a virtual interface may name the member
+        // of any instance of its interface.
+        let members = virtual_interface_members(db);
+        extend_virtual_interface_members(&mut reads, &members);
+        extend_virtual_interface_members(&mut writes, &members);
         let mut out = Vec::new();
         for inst_id in instances {
             for sig in &db.node(inst_id).children {
@@ -612,6 +619,29 @@ endmodule
                 "signal `dead` in `top` is never used",
                 "signal `qq` in `top` is never read",
                 "signal `rq` in `top` is never read",
+            ]
+        );
+    }
+
+    #[test]
+    fn virtual_interface_member_accesses_count_for_every_instance() {
+        let paths = unused_paths(
+            "interface ifc; int id; logic d; int spare; endinterface\n\
+             class K; virtual ifc kv; task t(); kv.d = 0; endtask endclass\n\
+             module tb; ifc i0(), i1(); virtual ifc v; virtual ifc va[2]; int x;\n\
+             \x20 initial begin v = i0; va[0] = i1; x = va[0].id; v.d = 1; $display(x); end\n\
+             endmodule\n",
+            "tb",
+        );
+        // `id` is read and `d` written through virtual interfaces in both
+        // instances; `spare` is never named.
+        assert_eq!(
+            paths,
+            vec![
+                "signal `d` in `tb.i0` is never read".to_owned(),
+                "signal `d` in `tb.i1` is never read".to_owned(),
+                "signal `spare` in `tb.i0` is never used".to_owned(),
+                "signal `spare` in `tb.i1` is never used".to_owned(),
             ]
         );
     }
