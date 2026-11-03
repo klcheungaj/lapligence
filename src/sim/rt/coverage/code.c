@@ -124,7 +124,7 @@ static uint64_t llg_scov_get_uint(llg_scov_reader_t* r) {
 // Add a zigzag delta to `value` (wrapping; the caller checks the range).
 static int64_t llg_scov_get_delta(llg_scov_reader_t* r, int64_t value) {
     uint64_t zigzag = llg_scov_get_uint(r);
-    uint64_t delta = (zigzag >> 1) ^ (uint64_t)0 - (zigzag & 1u);
+    uint64_t delta = (zigzag >> 1) ^ ((uint64_t)0 - (zigzag & 1u));
     uint64_t sum = (uint64_t)value + delta;
     return sum <= (uint64_t)INT64_MAX ? (int64_t)sum : -(int64_t)(~sum) - 1;
 }
