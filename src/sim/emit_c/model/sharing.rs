@@ -531,7 +531,9 @@ fn normalize(
                         | "llg_net_write_selected"
                         | "llg_nba_net_after"
                         | "llg_nba_net_selected_after" => *arg == 1,
-                        "llg_inertial_net" | "llg_inertial_selected_net" => *arg == 2,
+                        "llg_inertial_net"
+                        | "llg_inertial_selected_net"
+                        | "llg_inertial_part_net" => *arg == 2,
                         "llg_activation_enter" => *arg < 2,
                         "llg_disable_target" | "llg_fork_group_new_target" => (1..=2).contains(arg),
                         _ => false,

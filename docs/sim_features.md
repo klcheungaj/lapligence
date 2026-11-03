@@ -64,16 +64,17 @@ References: **V** = IEEE 1364-2001; **SV** = IEEE 1800-2009. Revision tags retai
 | 5. Procedural statements | 5 | 7 | 0 | 1 | 0 | 0 | 13 |
 | 6. Timing controls | 0 | 7 | 0 | 0 | 0 | 0 | 7 |
 | 7. Expressions/operators | 4 | 13 | 0 | 0 | 0 | 0 | 17 |
-| 8. Continuous/structural | 5 | 8 | 2 | 1 | 0 | 0 | 16 |
+| 8. Continuous/structural | 5 | 11 | 0 | 1 | 0 | 1 | 18 |
 | 9. Functions/tasks | 1 | 5 | 1 | 0 | 0 | 0 | 7 |
-| 10. System tasks/functions | 12 | 8 | 2 | 4 | 0 | 0 | 26 |
+| 10. System tasks/functions | 13 | 8 | 1 | 4 | 0 | 0 | 26 |
 | 11. Compiler directives | 6 | 1 | 0 | 2 | 0 | 0 | 9 |
-| 12. Verification/foreign interfaces | 1 | 14 | 0 | 1 | 3 | 0 | 19 |
-| **Total** | **49** | **81** | **5** | **9** | **3** | **1** | **148** |
+| 12. Verification/foreign interfaces | 1 | 18 | 0 | 1 | 0 | 0 | 20 |
+| **Total** | **50** | **88** | **2** | **9** | **0** | **2** | **151** |
 
-**131 rows have some source implementation; 81 of those remain partial and one
-is accepted.** The accepted row (`always_ff` and writer rules) carries
-post-change HDL execution evidence from RTL-013 and RTL-099; other rows have no
+**140 rows have some source implementation; 88 of those remain partial and two
+are accepted.** The accepted rows (`always_ff` and writer rules; combined and
+negative timing checks) carry post-change HDL execution evidence from RTL-013
+and RTL-099, and from ADV-010; other rows have no
 row-level acceptance promotion yet, which does not mean they lack passing tests.
 
 These are **grouped capability rows**, not individual grammar productions or a
@@ -86,7 +87,7 @@ count therefore do not imply newly implemented simulator functionality.
 The [SYN-038 Annex assignments](../tests/syn038_annex_assignments.json) are a
 separate finite-profile inventory: 811 extracted Annex names and 794 reference
 names have 665 in common, yielding 940 distinct names. Their dispositions are
-228 Core, 61 Extended, 18 implemented simulator forms outside Core, 411 profile
+228 Core, 61 Extended, 15 implemented simulator forms outside Core, 414 profile
 exclusions and 222 aliases/helpers, with zero unassigned names. The
 [pairwise source](../tests/syn038_pairwise.json) accounts for 1,849
 selected Core cases, 296 impossible cases and 102 cases outside the profile
@@ -337,9 +338,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   `$past`, `$stable` and `$changed` keep real samples numeric
   ([sim_005](../tests/fixtures/sim/feature_completion/sim_005/readme.md)).
   Generic containers support real/shortreal leaves; automatic real storage
-  survives admitted blocking mailbox delivery. Refs to real queue, dynamic and
-  associative elements (SIM-008) and keyed real `min/max/unique` remain
-  rejected; NBAs to automatic reals are illegal. V §3.9 **[1995]**.
+  survives admitted blocking mailbox delivery; `with`-keyed `min/max/unique`
+  and sorts of real container elements run in the calling frame (SIM-019,
+  §7). Refs to real queue, dynamic and associative elements remain rejected
+  ([known issue](known_issues.md#real-references-and-real-array-expressions-outside-stable-storage));
+  NBAs to automatic reals are illegal. V §3.9 **[1995]**.
 - 🟦 **Typedefs and enums** — Simple/packed aliases resolve through the frontend.
   Enums retain nominal identity, base width and sparse signed declaration-order
   values. `first/last/next/prev/num/name` support wrapping counts, owned names and
@@ -380,8 +383,12 @@ Macros, includes and their edition-specific behavior are counted in §11.
   calls (`'{inner: f()}`) are evaluated through a temporary. Multidimensional
   native arrays, associative members of element records, class-property or
   nonblocking storage of container record members, record ports with built-in
-  semaphore/mailbox/process members, native ref formals, static subroutine-root NBAs
-  and fork capture remain restricted. SV §§6.7, 7.2–7.4 **[SV-2005]**.
+  semaphore/mailbox/process members, element, run-time-indexed, subroutine-member
+  and class-method actuals of native `ref` formals (whole records bind, §9),
+  static subroutine-root NBAs and automatic block records kept live by a
+  re-entered fork remain restricted
+  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)).
+  SV §§6.7, 7.2–7.4 **[SV-2005]**.
 - 🟨 **Tagged unions** — Packed and unpacked tagged unions with fixed payloads
   use one finite storage owner: the tag in the most significant bits and each
   member right-justified below it. Construction and checked member access
@@ -446,8 +453,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   `""` for an ambiguous predicate
   ([sim_004](../tests/fixtures/sim/feature_completion/sim_004/readme.md)).
   String bytes and class properties are not nonblocking targets (SV §6.21).
-  Delayed continuous drivers, event/repeat-controlled string NBAs, automatic
-  monitors and broader aggregate combinations remain restricted; automatic
+  Event- and repeat-controlled string NBAs execute (SIM-014), but a repeated
+  control commits at its first event
+  ([known issue](known_issues.md#repeated-event-controls-on-detached-nonblocking-assignments-end-at-the-first-event)).
+  Delayed continuous drivers, automatic monitors and broader aggregate
+  combinations remain restricted; automatic
   procedural-block strings and handles share the fork limit of block records
   ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)).
   SV §6.16 **[SV-2005]**.
@@ -499,10 +509,11 @@ Macros, includes and their edition-specific behavior are counted in §11.
   event controls and `wait` on them wake on another process's change
   ([sim_010](../tests/fixtures/sim/feature_completion/sim_010/readme.md)).
   Class container properties selected through other handle expressions
-  (`a[i].q`) or outside procedural statements (SIM-011), mutating methods of
-  nested elements, record-element equality (SIM-007) and string-key
-  index-result queues remain
+  (`a[i].q`) or outside procedural statements (SIM-011) and mutating methods of
+  nested elements remain
   restricted ([known issue](known_issues.md#resizable-containers-at-subroutine-object-and-nesting-boundaries)).
+  Whole record elements compare member-wise (SIM-007, §7) and string-keyed
+  index results are string queues (SIM-019, §7).
   Methods are in §7. SV §§7.5, 7.8, 7.10, 7.12 **[SV-2005]**.
 - 🟨 **Chandle** — Typed native-pointer null/copy/identity/Boolean operations,
   locals, admitted aggregate/class fields, mixed signatures, returns and
@@ -573,8 +584,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   and `export *::*` chains. Separate/merged unit scope is retained (separate
   units keep same-named `$unit` variables apart; merged ones share them); a
   name redeclared in a package or unit scope rejects.
-  Native element layouts (for example string arrays), unsupported callable
-  environments and post-2009 forms remain restricted. Instance-hierarchical names are not constant-expression operands;
+  One-dimensional fixed arrays of strings are package storage too (SIM-007);
+  multidimensional native arrays
+  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)),
+  unsupported callable environments and post-2009 forms remain restricted. Instance-hierarchical names are not constant-expression operands;
   lexical package references remain distinct. SV §26 **[SV-2005]**.
 - 🟦 **Interfaces and modports** — Concrete storage, instance-local processes,
   parameterized interfaces, member references and modport views are represented.
@@ -699,8 +712,12 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
 - 🟨 **Named disable** — Resolved declaration/instance targets terminate their
   active invocations and clean up lexical activations before copy-out.
   Self-disable is not an early return. Finite local named-block exits are
-  represented; broader cross-process, recursive, native and shared-capture
-  cancellation remains partial. V ch.11 **[1995]**.
+  represented. `disable` of a task ends all of its active activations,
+  recursive task activations disable their own named fork branches, and
+  `disable fork` kills branches suspended on delays,
+  events, waits over fork-shared automatics, semaphores, mailboxes and task
+  calls ([sim_010](../tests/fixtures/sim/feature_completion/sim_010/readme.md));
+  class-method blocks and tasks follow CD-D1 (§12). V ch.11 **[1995]**.
 - 🟨 **`always_comb` / `always_latch`** — Execute once at time zero after every
   initial and always procedure has started; include transitive function reads
   and exclude written expressions. Fixed arrays (including 65,537-cell
@@ -840,9 +857,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   `casex`. Whole tagged bindings retain their type through later `&&&`
   clauses. Wrong tag names and non-tagged sources reject. Whole string/real
   wildcard and binding patterns, and tag/wildcard/binding/packed-payload
-  patterns of tagged unions with native members, work in processes (SIM-007);
-  string and real pattern variables in subroutine bodies, handle bindings,
-  native record structure patterns and dynamic payloads remain restricted. Column-layout record and tagged-union sources beyond packed
+  patterns of tagged unions with native members, work in processes and
+  subroutine bodies (SIM-007); handle bindings, native record structure
+  patterns and dynamic payloads remain restricted
+  ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)). Column-layout record and tagged-union sources beyond packed
   capacity match structure, tagged, wildcard and constant member patterns
   column by column (RTL-101) and bind whole records, record members and
   member arrays to pattern variables by copying columns into lexical storage
@@ -990,7 +1008,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md)).
   Controls with effectful helpers wait in the blocking process; NBA and `->>`
   forms arm at issue and wait in a detached process outside `wait
-  fork`/`disable fork` (§9). NBAs to automatic storage, class properties and
+  fork`/`disable fork` (§9). A repeated control of a detached NBA (string or
+  handle target, or a control the waiting process evaluates) commits at its
+  first event
+  ([known issue](known_issues.md#repeated-event-controls-on-detached-nonblocking-assignments-end-at-the-first-event)).
+  NBAs to automatic storage, class properties and
   dynamic elements reject as language rules (SV 6.21, 13.3.2); a select within
   a resizable-container element (`q[i][3:0] = @e v`) and process-evaluated NBA
   controls on string or handle expressions reject. V §9.7.7 **[1995]**.
@@ -1633,8 +1655,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   (SIM-003). Resizable containers cross formals and results by value and live in
   automatic or static subroutine locals (SIM-006). Native record `ref` formals
   bind whole subroutine records and module, static and procedural-block
-  records, and container `ref` formals alias whole containers (SIM-008);
-  fixed arrays of native records remain restricted.
+  records, and container `ref` formals alias whole containers (SIM-008).
+  One-dimensional fixed arrays of native records cross input, output and
+  `ref` formals and fixed arrays of strings copy in and out of calls
+  (SIM-007); multidimensional native arrays reject ([known issue](known_issues.md#native-record-values-outside-by-value-subroutine-storage)).
   V §§10.2–10.3; SV §§13.3–13.5 **[1995/2001/SV-2005]**.
 - 🟦 **Automatic/reentrant and finite zero-time calls** — Per-activation
   storage, finite recursion, local named-block exits, selected copy-out and
@@ -1721,8 +1745,10 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   ([known issue](known_issues.md#waited-ref-formals-with-unobservable-actuals)).
   Event expressions over by-value formals copy them when the control arms;
   event formals of class methods, virtual ones included, take the typed path
-  ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md));
-  the process-handle formal ABI remains unsupported. Unresolved environments and broader
+  ([sim_014](../tests/fixtures/sim/feature_completion/sim_014/readme.md)).
+  Process-handle formals of every direction execute (SIM-015, §12); the
+  forms in [rejected process-handle forms](known_issues.md#rejected-process-handle-forms)
+  reject. Unresolved environments and broader
   timing/native/aggregate combinations reject. V §12.4 **[1995]**.
 - 🟨 **Read-only helper calls** — Event, continuous, force and other read-only
   evaluators admit bounded numeric value/const-ref helpers with private locals,

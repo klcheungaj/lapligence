@@ -832,18 +832,102 @@ void llg_net_resolve(llg_net_t* net) {
 // published only when that queue is empty. The drivers' evaluations then all
 // precede the net's update, an order IEEE 1800-2009 4.7 leaves open, so one
 // tri-state driver turning off before another turns on in the same pass is
-// no glitch on the net. The table is empty outside run_region_queue.
+// no glitch on the net. The table is empty outside run_region_queue and
+// commit_inertial_batch.
+//
+// The delayed drivers whose updates mature together commit as one batch
+// (commit_inertial_batch) with exact deferral: a net still publishes once for
+// the batch, but only while its writes touch disjoint bits; a write over a bit
+// already written in the batch first publishes everything pending. Every bit
+// then takes the same values as with one publication per update, only the
+// order of the same-time update events changes (4.7). A vector shared by
+// many per-bit delayed drivers (merged selected ports) is then published and
+// its readers checked once per batch, as the vector driven through port
+// copies was, instead of once per bit.
 typedef struct {
     llg_net_t* net;
     uint32_t low;
     uint32_t high;
     uint8_t whole;
+    /* Exact deferral: the first word of this entry's written-bit map in
+     * net_deferred_bits; SIZE_MAX for a whole or ordinary entry. */
+    size_t map;
 } llg_net_deferred_t;
 
 static llg_net_deferred_t* net_deferred;
 static size_t net_deferred_count;
 static size_t net_deferred_capacity;
 static int net_defer_active;
+static int net_defer_exact;
+static uint64_t* net_deferred_bits;
+static size_t net_deferred_bits_count;
+static size_t net_deferred_bits_capacity;
+
+static int llg_net_flush_deferred(void);
+
+// Exact deferral: whether a pending entry already wrote one of bits
+// [low, high] in this batch (a whole entry wrote every bit).
+static int llg_net_deferred_touches(const llg_net_deferred_t* entry, uint32_t low,
+                                    uint32_t high) {
+    if (entry->whole || entry->map == SIZE_MAX) return 1;
+    const uint64_t* map = net_deferred_bits + entry->map;
+    for (uint32_t word = low / 64u; word <= high / 64u; word++) {
+        uint32_t first = word == low / 64u ? low % 64u : 0u;
+        uint32_t last = word == high / 64u ? high % 64u : 63u;
+        if (map[word] & (UINT64_MAX >> (63u - last)) & (UINT64_MAX << first)) return 1;
+    }
+    return 0;
+}
+
+static void llg_net_deferred_mark(const llg_net_deferred_t* entry, uint32_t low,
+                                  uint32_t high) {
+    if (entry->map == SIZE_MAX) return;
+    uint64_t* map = net_deferred_bits + entry->map;
+    for (uint32_t word = low / 64u; word <= high / 64u; word++) {
+        uint32_t first = word == low / 64u ? low % 64u : 0u;
+        uint32_t last = word == high / 64u ? high % 64u : 63u;
+        map[word] |= (UINT64_MAX >> (63u - last)) & (UINT64_MAX << first);
+    }
+}
+
+// A zeroed written-bit map for a `width`-bit net; its first word's index.
+static size_t llg_net_deferred_map(uint32_t width) {
+    size_t words = ((size_t)width + 63u) / 64u;
+    if (words > net_deferred_bits_capacity - net_deferred_bits_count) {
+        size_t capacity = net_deferred_bits_capacity ? net_deferred_bits_capacity : 64u;
+        while (capacity - net_deferred_bits_count < words) {
+            if (capacity > SIZE_MAX / 2u / sizeof(uint64_t)) {
+                fputs("llg runtime fatal: deferred net bit map overflow\n", stderr);
+                abort();
+            }
+            capacity *= 2u;
+        }
+        uint64_t* grown = (uint64_t*)llg_checked_calloc(capacity, sizeof(uint64_t),
+                                                        "deferred net bits");
+        if (net_deferred_bits_count)
+            memcpy(grown, net_deferred_bits, net_deferred_bits_count * sizeof(uint64_t));
+        free(net_deferred_bits);
+        net_deferred_bits = grown;
+        net_deferred_bits_capacity = capacity;
+    }
+    size_t first = net_deferred_bits_count;
+    memset(net_deferred_bits + first, 0, words * sizeof(uint64_t));
+    net_deferred_bits_count += words;
+    return first;
+}
+
+// Called before a driver write that may change bits [low, high] of `net`,
+// ahead of any state the write changes: in an exact batch, a write over a bit
+// that the batch already wrote first publishes every pending update, so no
+// bit skips a value.
+static void llg_net_defer_prepare(llg_net_t* net, uint32_t low, uint32_t high) {
+    if (!net_defer_exact || !net_defer_active || net->deferred_slot <= 0 || !net->width)
+        return;
+    if (high >= net->width) high = net->width - 1u;
+    if (low > high) low = high;
+    if (llg_net_deferred_touches(&net_deferred[net->deferred_slot - 1], low, high))
+        llg_net_flush_deferred();
+}
 
 // Queue the net's resolution of [low, high] (every bit when `whole`).
 static int llg_net_defer(llg_net_t* net, int whole, uint32_t low, uint32_t high) {
@@ -853,6 +937,7 @@ static int llg_net_defer(llg_net_t* net, int whole, uint32_t low, uint32_t high)
         if (whole) entry->whole = 1;
         if (low < entry->low) entry->low = low;
         if (high > entry->high) entry->high = high;
+        if (net_defer_exact && high < net->width) llg_net_deferred_mark(entry, low, high);
         return 1;
     }
     if (net_deferred_count >= (size_t)INT32_MAX) return 0;
@@ -866,7 +951,12 @@ static int llg_net_defer(llg_net_t* net, int whole, uint32_t low, uint32_t high)
         net_deferred = grown;
         net_deferred_capacity = capacity;
     }
-    net_deferred[net_deferred_count] = (llg_net_deferred_t){net, low, high, (uint8_t)(whole != 0)};
+    llg_net_deferred_t entry = {net, low, high, (uint8_t)(whole != 0), SIZE_MAX};
+    if (net_defer_exact && !whole && high < net->width) {
+        entry.map = llg_net_deferred_map(net->width);
+        llg_net_deferred_mark(&entry, low, high);
+    }
+    net_deferred[net_deferred_count] = entry;
     net->deferred_slot = (int32_t)++net_deferred_count;
     return 1;
 }
@@ -917,6 +1007,7 @@ static int llg_net_flush_deferred(void) {
             llg_net_publish_computed_range(entry.net, entry.low, entry.high);
     }
     net_deferred_count = 0;
+    net_deferred_bits_count = 0;
     net_defer_active = outer;
     switches_flush();
     return 1;
@@ -931,6 +1022,7 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value) {
 
 void llg_net_write_driven(llg_net_t* net, int idx, sv4_t value) {
     if (!net) return;
+    llg_net_defer_prepare(net, 0, net->width - 1u);
     if (net->start_pending) {
         uint32_t width = llg_sv4_width(value);
         if (width > net->width) width = net->width;
@@ -944,12 +1036,28 @@ void llg_net_write_driven(llg_net_t* net, int idx, sv4_t value) {
     llg_net_write_covering(net, idx, value, 0, 0);
 }
 
+static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
+                                uint32_t new_low);
+
+void llg_net_write_driven_part(llg_net_t* net, int idx, sv4_t value, uint32_t lsb) {
+    if (!net || !region_can_mutate("net write")) return;
+    uint32_t width = llg_sv4_width(value);
+    if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx] || !width ||
+        lsb > net->width || width > net->width - lsb) {
+        fputs("llg: fatal: invalid net start part\n", stderr);
+        abort();
+    }
+    if (net->start_pending) llg_net_pending_mark(net, lsb, width, 0);
+    llg_net_write_slice(net, idx, value, lsb);
+}
+
 // A whole-slot write whose driver drives [cover_low, cover_low + cover_count)
 // of the net (the whole net except for a port alias).
 static void llg_net_write_covering(llg_net_t* net, int idx, sv4_t value,
                                    uint32_t cover_low, uint32_t cover_count) {
     if (!net || !region_can_mutate("net write")) return;
     if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx]) return;
+    llg_net_defer_prepare(net, 0, net->width - 1u);
     if (idx < net->silent_slots) net->silent_slots = 0;
     sv4_t* slot = net->drivers[idx];
     // The first write of a driver of a net that started X resolves it whole,
@@ -1036,6 +1144,21 @@ static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
         old_low = node->low;
         old_high = node->high;
         old_active = node->active;
+    }
+    if (net_defer_exact && net->deferred_slot > 0) {
+        // The bits this write can change: its old and new driven ranges, or
+        // every bit when the net resolves whole.
+        uint32_t count = llg_sv4_width(selected);
+        uint32_t touch_low = 0;
+        uint32_t touch_high = net->width - 1u;
+        if (llg_net_has_index(net) && !net->unsettled && !net->propagation_enabled &&
+            !llg_is_forced(&net->resolved) && (old_active || count)) {
+            touch_low = count ? new_low : old_low;
+            touch_high = count ? new_low + count - 1u : old_high;
+            if (old_active && old_low < touch_low) touch_low = old_low;
+            if (old_active && old_high > touch_high) touch_high = old_high;
+        }
+        llg_net_defer_prepare(net, touch_low, touch_high);
     }
     int new_active = llg_sv4_width(selected) && !llg_net_all_z(&selected);
     // A driver turning off over exactly its indexed range keeps its node:
@@ -1412,41 +1535,65 @@ static void inertial_unlink_pending(llg_inertial_t* driver) {
 
 }
 
+// The current bits a driver record compares against: the whole target, or
+// the `width` bits from `part_lsb` of a part record.
+static void inertial_snapshot(llg_inertial_t* driver, const sv4_t* target) {
+    if (driver->part)
+        sv4_replace(&driver->current,
+                    sv4_part_select(*target, (int64_t)driver->part_lsb + driver->part_width - 1,
+                                    driver->part_lsb));
+    else
+        sv4_copy(&driver->current, target);
+}
+
+// Schedule `value` for the driver behind `handle`. A part record (`part`)
+// drives only bits [part_lsb, part_lsb + width of value) of a net slot and
+// keeps only those bits, so a narrow contribution to a wide shared group
+// costs its own width instead of the group's.
 static void inertial_update(llg_inertial_t** handle, sv4_t* target,
                             llg_net_t* net, int slot, sv4_t value,
                             const sv4_t* mask, uint64_t rise, uint64_t fall,
-                            uint64_t turn_off) {
+                            uint64_t turn_off, int part, uint32_t part_lsb) {
     if (!region_can_mutate("inertial scheduling")) return;
     llg_inertial_t* driver = *handle;
+    uint32_t part_width = part ? llg_sv4_width(value) : 0u;
     if (!driver) {
         driver = llg_checked_calloc(1, sizeof(*driver), "inertial driver");
         driver->handle = handle;
         driver->target = target;
         driver->net = net;
         driver->slot = slot;
-        sv4_copy(&driver->current, target);
+        driver->part = (int8_t)(part != 0);
+        driver->part_lsb = part_lsb;
+        driver->part_width = part_width;
+        inertial_snapshot(driver, target);
         driver->region = region_is_reactive(g.current_region)
                              ? LLG_REGION_REACTIVE
                              : LLG_REGION_ACTIVE;
         driver->next_all = g.inertial_drivers;
         g.inertial_drivers = driver;
         *handle = driver;
-    } else if (driver->target != target || driver->net != net || driver->slot != slot) {
+    } else if (driver->target != target || driver->net != net || driver->slot != slot ||
+               driver->part != (part != 0) || driver->part_lsb != part_lsb ||
+               driver->part_width != part_width) {
         inertial_unlink_pending(driver);
         driver->target = target;
         driver->net = net;
         driver->publication_net = NULL;
         driver->slot = slot;
-        sv4_copy(&driver->current, target);
+        driver->part = (int8_t)(part != 0);
+        driver->part_lsb = part_lsb;
+        driver->part_width = part_width;
+        inertial_snapshot(driver, target);
     }
     driver->region = region_is_reactive(g.current_region)
                          ? LLG_REGION_REACTIVE
                          : LLG_REGION_ACTIVE;
     // A per-bit net-delay record has no target cell; its width is that of
-    // the bit it publishes.
-    uint32_t target_width = target ? llg_sv4_width(*target)
-                                   : llg_sv4_width(driver->current);
-    value = sv4_resize(value, target_width, target && llg_sv4_signed(*target));
+    // the bit it publishes, like a part record's.
+    uint32_t target_width = target && !part ? llg_sv4_width(*target)
+                                            : llg_sv4_width(driver->current);
+    value = sv4_resize(value, target_width, target && !part && llg_sv4_signed(*target));
     sv4_t selected_mask = SV4_EMPTY;
     if (mask) {
         selected_mask = sv4_resize(*mask, target_width, 0);
@@ -1490,7 +1637,7 @@ cleanup:
 void llg_inertial_assign(llg_inertial_t** handle, sv4_t* target,
                          sv4_t value, uint64_t rise, uint64_t fall,
                          uint64_t turn_off) {
-    inertial_update(handle, target, NULL, 0, value, NULL, rise, fall, turn_off);
+    inertial_update(handle, target, NULL, 0, value, NULL, rise, fall, turn_off, 0, 0);
 }
 
 void llg_inertial_net(llg_inertial_t** handle, llg_net_t* net, int slot,
@@ -1501,13 +1648,13 @@ void llg_inertial_net(llg_inertial_t** handle, llg_net_t* net, int slot,
         abort();
     }
     inertial_update(handle, net->drivers[slot], net, slot, value, NULL, rise,
-                    fall, turn_off);
+                    fall, turn_off, 0, 0);
 }
 
 void llg_inertial_selected_assign(llg_inertial_t** handle, sv4_t* target,
                                   sv4_t value, sv4_t mask, uint64_t rise,
                                   uint64_t fall, uint64_t turn_off) {
-    inertial_update(handle, target, NULL, 0, value, &mask, rise, fall, turn_off);
+    inertial_update(handle, target, NULL, 0, value, &mask, rise, fall, turn_off, 0, 0);
 }
 
 void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
@@ -1519,7 +1666,24 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
         abort();
     }
     inertial_update(handle, net->drivers[slot], net, slot, value, &mask, rise,
-                    fall, turn_off);
+                    fall, turn_off, 0, 0);
+}
+
+void llg_inertial_part_net(llg_inertial_t** handle, llg_net_t* net, int slot,
+                           sv4_t value, sv4_select_plan_t plan, int reverse,
+                           uint64_t rise, uint64_t fall, uint64_t turn_off) {
+    if (slot < 0 || slot >= net->n_drivers || !net->drivers[slot] ||
+        plan.storage_width != net->width) {
+        fprintf(stderr, "llg: fatal: invalid inertial net driver slot\n");
+        abort();
+    }
+    // Scheduling runs no callback, so the slice needs no value scope.
+    sv4_t selected = sv4_select_plan_slice(value, &plan, reverse);
+    if (llg_sv4_width(selected) &&
+        (uint64_t)plan.storage_lsb + llg_sv4_width(selected) <= net->width)
+        inertial_update(handle, net->drivers[slot], net, slot, selected, NULL, rise,
+                        fall, turn_off, 1, plan.storage_lsb);
+    sv4_destroy(&selected);
 }
 
 // The publication record of bits [lsb, lsb + width) of `net`, created on
@@ -1570,7 +1734,7 @@ static void llg_net_delay_stage(llg_net_t* net, sv4_t resolved) {
         }
         inertial_update(&net->propagation, &net->resolved, NULL, 0, resolved,
                         NULL, net->propagation_rise, net->propagation_fall,
-                        net->propagation_turn_off);
+                        net->propagation_turn_off, 0, 0);
         return;
     }
     for (uint32_t part = 0; part < net->n_segments; part++) {
@@ -1581,7 +1745,7 @@ static void llg_net_delay_stage(llg_net_t* net, sv4_t resolved) {
         sv4_t value = sv4_part_select(resolved, lsb + width - 1u, lsb);
         inertial_update(handle, NULL, NULL, 0, value, NULL,
                         net->propagation_rise, net->propagation_fall,
-                        net->propagation_turn_off);
+                        net->propagation_turn_off, 0, 0);
         sv4_destroy(&value);
     }
 }
@@ -2207,6 +2371,13 @@ static void commit_inertial(llg_region_t region) {
                             value))
             llg_net_alias_refresh_all(publication_net);
         llg_net_strength_publish(publication_net);
+        sv4_destroy(&mask);
+        sv4_destroy(&value);
+        return;
+    }
+    if (driver->part) {
+        sv4_copy(&driver->current, &value);
+        llg_net_write_slice(driver->net, driver->slot, value, driver->part_lsb);
         sv4_destroy(&mask);
         sv4_destroy(&value);
         return;

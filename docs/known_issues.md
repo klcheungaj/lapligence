@@ -1286,6 +1286,53 @@ path.
 
 `tests/fixtures/sim/feature_completion/sim_004/neg_delayed_string_continuous.sv`.
 
+## Repeated event controls on detached nonblocking assignments end at the first event
+
+**Status:** open (found by the FIN-001 audit). A nonblocking assignment with
+`repeat (n) @(...)` whose control the waiting process evaluates commits as
+soon as the first event of the control occurs, not after the `n`-th.
+
+### Symptom
+
+`s <= repeat (3) @(e) "v";` on a string, the same form on a class handle or
+chandle, and a packed target whose event control the waiting process
+evaluates (`x <= repeat (3) @(posedge h.w) 5;`, a class property) all store
+their value at the first event (SV 9.4.5 requires `n` occurrences). Packed
+and real targets of named-event and signal controls that use the runtime
+callback path (`x <= repeat (3) @(e) 5;`) wait for all three events, and
+blocking forms are correct.
+
+### Cause
+
+`spawn_process_evaluated_action` in
+[`statements/assignments.rs`](../src/sim/codegen/lowering/statements/assignments.rs)
+wraps the resumed wait in `IrStmt::Repeat` but seeds every iteration with the
+values armed at issue (named-event trigger counts, edge operands). After the
+first event those issue-time values differ from the current ones, so every
+later iteration ends immediately. The witness
+`sim_014/persistent_repeat_nba_witness.sv` reads the string only after both
+edges and does not see this.
+
+### Intended direction
+
+Use the issue-time armed values for the first iteration only and re-arm from
+the current values on each later iteration, as the blocking form does.
+
+### Reproduce
+
+```systemverilog
+module tb;
+  string t = "a";
+  event e;
+  initial begin
+    t <= repeat (3) @(e) "rep";
+    #1 -> e;
+    #1 $display("%s", t); // prints "rep"; expected "a"
+    $finish;
+  end
+endmodule
+```
+
 ## `%l` in runtime-built format strings
 
 Lowering replaces `%l`/`%L` with the scope's static `library.cell` binding in
@@ -1956,35 +2003,6 @@ specify paths need each side's own net.
 ### Reproduce
 
 `tests/sim_port_collapse.rs::kept_links_preserve_each_side`.
-
-## Selected port merges on scattered vector bits
-
-**Status:** open (decision A21-D5).
-
-### Symptom
-
-A design whose instances connect single bits of shared vectors
-(`stage c(clk, en, q[i-1], l[(i + 7) % N], q[i], l[i])` for 500 instances)
-runs about 3 times slower with the merged selected ports than with a copy
-per port: 4.2 s without VPI, against 1.45 s for the same design generated
-with `--vpi-port-delays`, which keeps every port a continuous assignment.
-Models with the VPI catalog merge the same ports (A21-D6).
-
-### Cause
-
-Not profiled. The merged bits of `q` and `l` share bit-level groups with the
-rest of their vectors, so a change of one bit is suspected to wake the
-readers of every merged formal of that vector.
-
-### Intended direction
-
-Keep each selected bit's wakeups to its own readers, or keep the copy where
-a merged group would fan a one-bit change out to unrelated formals.
-
-### Reproduce
-
-`mixed_perf.sv` (500 stages of UDPs, gates and an `always`), built with and
-without `--vpi-port-delays`.
 
 ## Global clocking future sampled value function limits
 

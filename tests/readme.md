@@ -1109,7 +1109,7 @@ distinct names and the reference addendum has 794: 665 overlap, 146 appear
 only in the PDF extraction and 129 only in the addendum. The addendum-only
 entries mark their edition as an inference. These are name inventories, not
 grammar-support percentages. The 940 assignments contain 228 direct Core
-names, 61 Extended forms, 18 implemented outside-Core forms, 411 exclusions
+names, 61 Extended forms, 15 implemented outside-Core forms, 414 exclusions
 and 222 aliases/helpers, with zero OPEN or BOUNDARY names. The checker
 requires Extended entries to name real owning task fixtures and test functions;
 implemented outside-Core entries name a product row and execution owner.

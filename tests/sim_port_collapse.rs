@@ -62,6 +62,43 @@ fn with_child(top: &str) -> String {
     format!("{CHILD}{top}")
 }
 
+/// Scattered bit-select ports on wide vectors (the `mixed_perf` shape): every
+/// stage drives one bit of `q` and `l` through merged output ports, so each
+/// vector is one resolved net without links, and a stage's delayed gate keeps
+/// a record of its own bit only (`llg_inertial_part_net`) instead of a
+/// vector-wide value and mask.
+#[test]
+fn scattered_bit_ports_keep_one_net_per_vector_and_narrow_delayed_drivers() {
+    let model = render(
+        "module stage(input d, input en, output q, output l);
+  buf #2 b(q, d);
+  bufif1 #1 t(l, q, en);
+endmodule
+module tb;
+  reg d = 0, en = 1;
+  wire [15:0] q, l;
+  for (genvar i = 0; i < 16; i++) begin : g
+    stage s(.d(d), .en(en), .q(q[i]), .l(l[(i * 5 + 3) % 16]));
+  end
+  initial begin #5 d = 1; #5 en = 0; $finish; end
+endmodule
+",
+    );
+    assert_eq!(links_named(&model, ".link\""), 0);
+    let nets = model
+        .lines()
+        .filter(|line| line.starts_with("static llg_net_t "))
+        .flat_map(|line| line.split(','))
+        .count();
+    assert_eq!(nets, 2, "q and l are one net each");
+    assert!(model.contains("llg_inertial_part_net("));
+    assert!(!model.contains("llg_inertial_selected_net("));
+    // Each delayed driver also starts X on its own bit, without a
+    // vector-wide start constant.
+    assert!(model.contains("llg_net_write_driven_part("));
+    assert!(!model.contains("llg_net_write_driven("));
+}
+
 #[test]
 fn whole_variable_actuals_have_no_link() {
     let model = render(&with_child(

@@ -161,8 +161,14 @@ events. Zero-delay drivers drain Active. Deferred multi-slot net resolution (S2-
 "Deferred net updates" comment in `nets.c` (`llg_net_defer`,
 `deferred_slot`); the leading `silent_slots` of a bit-level group (members that
 no write targets) do not count as drivers there, and a write to one clears
-them. Writes outside a process turn (inertial
-commits, startup, callbacks) resolve at once. Generated nets provide exact-size
+them. The inertial updates due at one time and region commit as one batch
+(`commit_inertial_batch`) with exact deferral: a net publishes once per batch
+while the batch writes disjoint bits of it, and a write over a bit the batch
+already wrote first publishes everything pending (a switch solve too), so
+every bit keeps its value sequence and only the order of same-time update
+events changes (4.7). A delayed driver of a constant part of a net slot
+(`llg_inertial_part_net`) keeps only those bits. Other writes outside a
+process turn (startup, callbacks) resolve at once. Generated nets provide exact-size
 driver interval nodes and overlap scratch storage. Selected writes replace their
 previous interval, release it to Z when a selector moves, and resolve/publish only
 the union of old and new ranges against overlapping drivers; a selected driver

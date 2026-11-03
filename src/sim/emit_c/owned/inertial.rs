@@ -1,4 +1,5 @@
 //! Inertial drivers retain their own snapshots; generated operands are borrowed.
+use super::stores::Selection;
 use super::*;
 
 impl Frame<'_, '_> {
@@ -94,7 +95,27 @@ impl Frame<'_, '_> {
             }
         };
         self.line(format!("if ({}) {{", target.valid));
-        if let Some(selection) = &target.selection {
+        let part = match (&target.selection, &target.net) {
+            (Some(selection @ Selection::Part(left, right)), Some(net))
+                if left >= right
+                    && *right >= 0
+                    && u64::try_from(*left)
+                        .is_ok_and(|left| left < u64::from(target.binding.width)) =>
+            {
+                Some((selection, net))
+            }
+            _ => None,
+        };
+        if let Some((selection, (net, slot))) = part {
+            // A constant part of a net slot (a narrow contribution to a wider
+            // shared group): the record keeps only those bits.
+            let (plan, reverse) = self.selection_plan(selection, target.binding.width);
+            self.line(format!(
+                "llg_inertial_part_net({handle}, &{net}, {slot}, {}, {plan}, {}, {delays});",
+                value.code,
+                u8::from(reverse)
+            ));
+        } else if let Some(selection) = &target.selection {
             let updated = self.value(
                 format!("sv4_clone({})", target.binding.address),
                 target.binding.width,

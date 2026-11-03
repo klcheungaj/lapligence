@@ -771,6 +771,10 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value);
  * leave Z: a startup fill of a collapsed-net member or a delayed driver's
  * start value. Other drivers' bits keep their start X (T0-D3). */
 void llg_net_write_driven(llg_net_t* net, int idx, sv4_t value);
+/* The same start for a driver of bits [lsb, lsb + width of value) only (a
+ * narrow delayed contribution to a wider shared group): every bit of `value`
+ * is driven, and the slot's other bits stay Z. */
+void llg_net_write_driven_part(llg_net_t* net, int idx, sv4_t value, uint32_t lsb);
 // Selected writes replace the driver's previous range, so a moving selector
 // releases its old contribution to Z. `value` has plan.width bits; reverse is
 // true for ascending ordinary part-selects.
@@ -874,6 +878,13 @@ void llg_inertial_selected_net(llg_inertial_t** handle, llg_net_t* net,
                                int slot, sv4_t value, sv4_t mask,
                                uint64_t rise, uint64_t fall,
                                uint64_t turn_off);
+// A delayed driver of the contiguous bits `plan` selects of net slot `slot`
+// (a narrow contribution to a wider shared group). The record keeps only
+// those bits, so scheduling and committing cost the part's width, not the
+// group's. Same transition rules as llg_inertial_selected_net.
+void llg_inertial_part_net(llg_inertial_t** handle, llg_net_t* net, int slot,
+                           sv4_t value, sv4_select_plan_t plan, int reverse,
+                           uint64_t rise, uint64_t fall, uint64_t turn_off);
 // Drop the pending update of the driver behind `handle`, and move a
 // pending update due later to the current time (no driver or none pending:
 // no effect). A vpi_put_value to a delayed sequential UDP (IEEE 1800-2009

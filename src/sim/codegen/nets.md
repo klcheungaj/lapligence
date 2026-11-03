@@ -109,8 +109,10 @@ terminal covers one contiguous affine range of the run; it stops at
 on the widest member, so a split vector's columns are adjacent. A source that
 covers a contiguous ascending part of a wider group writes only that part of its
 slot (`alias_driver_assignments`, an `IrLhs::Part` of the driver; delayed ones
-start X on those bits only), and instance-shared bodies take the part bounds as
-record operands. Include driver ranges before partitioning, and extend that source
+start X on those bits only, and their inertial record keeps only those bits),
+and instance-shared bodies take the part bounds as record operands. A source
+with one such contribution selects it from its value directly
+(`publish_alias_drivers`), without a per-evaluation local. Include driver ranges before partitioning, and extend that source
 inventory for new topology forms. Ordinary whole vector groups already resolve
 word-parallel and retain their existing path. Keep per-bit declared-view bindings
 with a group-bit offset (the emitter renders consecutive bits as one run-length
