@@ -328,11 +328,16 @@ pub(in crate::sim::emit_c) fn vpi_automatic_tables(model: &IrModel, out: &mut St
         tables.entry(vpi_automatic_table(&rows)).or_insert(rows);
     }
     for (name, rows) in tables {
+        // The row with a NULL name ends the table.
         out.push_str(&format!(
-            "static const llg_vpi_auto_t {name}[] = {{\n{rows}}};\n"
+            "static const llg_vpi_auto_t {name}[] = {{\n{rows}    {{ NULL, 0, 0u, 0u, 0u, 0u, 0, 0u }},\n}};\n"
         ));
     }
 }
+
+/// The index of the first automatic's address in the activation's address
+/// array (`LLG_VPI_AUTOS_FIRST`); entry 0 holds the descriptor table.
+pub(in crate::sim::emit_c) const VPI_AUTOS_FIRST: usize = 1;
 
 /// The address of formal `position` the activation's address array holds.
 fn vpi_formal_address(frame: &Frame<'_, '_>, function: &IrFunc, position: usize) -> Option<String> {
@@ -362,7 +367,12 @@ fn vpi_formal_address(frame: &Frame<'_, '_>, function: &IrFunc, position: usize)
 /// array.
 fn vpi_automatics(frame: &mut Frame<'_, '_>, function: &IrFunc) -> (String, String) {
     let table = vpi_automatic_table(&vpi_automatic_rows(function, frame.ctx.model));
-    let slots = frame.declare_array("void*", "vpi_autos", function.vpi_automatics.len());
+    // Entry 0 receives the table at frame enter (LLG_VPI_AUTOS_TABLE).
+    let slots = frame.declare_array(
+        "void*",
+        "vpi_autos",
+        function.vpi_automatics.len() + VPI_AUTOS_FIRST,
+    );
     let mut locals = HashMap::new();
     for (index, automatic) in function.vpi_automatics.iter().enumerate() {
         if vpi_auto_access(function, automatic) == VpiAutoAccess::None {
@@ -384,7 +394,10 @@ fn vpi_automatics(frame: &mut Frame<'_, '_>, function: &IrFunc) -> (String, Stri
         };
         // An entry without an address stays NULL (the array starts zeroed).
         if let Some(address) = address {
-            frame.line(format!("{slots}[{index}] = (void*)({address});"));
+            frame.line(format!(
+                "{slots}[{}] = (void*)({address});",
+                index + VPI_AUTOS_FIRST
+            ));
         }
     }
     frame.vpi_autos = Some((slots.clone(), locals));
@@ -748,9 +761,8 @@ fn render_function(
     let vpi_frame = vpi_name.map(|name| {
         let enter = match &autos_table {
             Some((table, slots)) => format!(
-                "llg_vpi_frame_enter_autos({}, {table}, {}u, {slots})",
-                c_string_literal(&name),
-                function.vpi_automatics.len()
+                "llg_vpi_frame_enter_autos({}, {table}, {slots})",
+                c_string_literal(&name)
             ),
             None => format!("llg_vpi_frame_enter({})", c_string_literal(&name)),
         };

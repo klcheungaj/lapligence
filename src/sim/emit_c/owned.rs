@@ -1087,7 +1087,10 @@ impl<'a, 'm> Frame<'a, 'm> {
                 .map(|bound| format!("&{bound}")),
         };
         if let Some(address) = address {
-            self.line(format!("{slots}[{index}] = (void*)({address});"));
+            self.line(format!(
+                "{slots}[{}] = (void*)({address});",
+                index + model::VPI_AUTOS_FIRST
+            ));
             let depth = self.marks.len();
             self.vpi_auto_depth = Some(self.vpi_auto_depth.map_or(depth, |d| d.min(depth)));
         }

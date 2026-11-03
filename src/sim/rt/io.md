@@ -301,7 +301,10 @@ source call made (a continuous assignment, a DPI export) has none
 (A19-D75). `vpiAutomatics` (A19-D76) reads a static `llg_vpi_auto_t`
 descriptor table per subprogram (name, type, line, dynamic-layer shape and
 typespec, flags) and an activation's `void*` address array, filled as
-formals bind and body declarations run (`llg_vpi_frame_enter_autos`); a
+formals bind and body declarations run (`llg_vpi_frame_enter_autos`, which
+stores the table in the array's entry 0, so the per-call frame record stays
+32 bytes and cache-line aligned: a 48-byte record slowed deep recursion by
+about 4%); a
 `SLOT_AUTO` handle names one entry of one frame serial and reads, writes
 (`vpiNoDelay` only, 37.39 detail 3) and types it through the dynamic
 layer, failing once that frame has ended (A19-D77). A model ends a frame
