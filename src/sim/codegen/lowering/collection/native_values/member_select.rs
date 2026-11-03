@@ -6,7 +6,8 @@
 //! comparing the index with every declared index; an index that matches
 //! none (out of range, X or Z) reads the element default and writes nothing
 //! (SV 7.4.6). The comparison chain is bounded by
-//! [`NATIVE_MEMBER_SELECT_LIMIT`] elements.
+//! [`NATIVE_MEMBER_SELECT_LIMIT`] elements. An index with side effects is
+//! evaluated once into a local before the chain.
 
 use super::*;
 
@@ -19,6 +20,8 @@ pub(in crate::sim::codegen) struct NativeMemberSelect {
     /// Declared index and leaf of every element, in declaration order.
     elements: Vec<(i32, NativeEndpointLeaf)>,
     index: NodeId,
+    /// The index has side effects, so the chain compares a local copy.
+    hoist: bool,
 }
 
 impl Codegen<'_> {
@@ -29,7 +32,30 @@ impl Codegen<'_> {
         path: &str,
         node: NodeId,
     ) -> Result<Option<NativeMemberSelect>, String> {
-        let (base, index) = match self.kind(node) {
+        // `r.e[k].s`: a member path below a run-time selected record element
+        // of a member array selects that member of every element.
+        let (select, trailing) = match self.kind(node) {
+            NodeKind::Expr(ExprKind::HierPath { parts, refs }) => match refs.first() {
+                Some(Some(first))
+                    if matches!(
+                        self.kind(*first),
+                        NodeKind::Expr(ExprKind::ArraySelect { .. })
+                    ) =>
+                {
+                    let trailing = parts
+                        .iter()
+                        .skip(1)
+                        .filter(|part| !part.is_empty())
+                        .cloned()
+                        .map(AggregatePathPart::Member)
+                        .collect::<Vec<_>>();
+                    (*first, trailing)
+                }
+                _ => return Ok(None),
+            },
+            _ => (node, Vec::new()),
+        };
+        let (base, index) = match self.kind(select) {
             NodeKind::Expr(ExprKind::ArraySelect { base, indices }) if indices.len() == 1 => {
                 (*base, indices[0])
             }
@@ -39,6 +65,7 @@ impl Codegen<'_> {
         if self.eval_bound_i128(index).is_ok() {
             return Ok(None);
         }
+        let node = select;
         let select_path = self.db.array_select_path(node);
         let value_owned = match &select_path {
             Some((owner, _)) => self.native_roots.contains_key(owner),
@@ -68,7 +95,7 @@ impl Codegen<'_> {
             let Some(storage) = self.unpacked_aggregates.get(&root) else {
                 return Ok(None);
             };
-            element_leaves(&prefix, storage.leaves.iter(), |leaf| &leaf.path)
+            element_leaves(&prefix, &trailing, storage.leaves.iter(), |leaf| &leaf.path)
                 .map(|(index, leaf)| (index, NativeEndpointLeaf::Module(Box::new(leaf.clone()))))
                 .collect()
         } else {
@@ -89,7 +116,7 @@ impl Codegen<'_> {
                 return Ok(None);
             };
             let layout = self.native_layout_of_value(value)?;
-            element_leaves(&prefix, layout.leaves.iter(), |leaf| &leaf.path)
+            element_leaves(&prefix, &trailing, layout.leaves.iter(), |leaf| &leaf.path)
                 .map(|(index, leaf)| (index, NativeEndpointLeaf::Value(value, leaf.clone())))
                 .collect()
         };
@@ -102,23 +129,38 @@ impl Codegen<'_> {
                 elements.len()
             ));
         }
-        if !self.side_effect_free(index) {
-            return Err(format!(
-                "run-time index into a native record member array in `{path}` must be free of side effects"
-            ));
-        }
-        Ok(Some(NativeMemberSelect { elements, index }))
+        let hoist = !self.side_effect_free(index);
+        Ok(Some(NativeMemberSelect {
+            elements,
+            index,
+            hoist,
+        }))
     }
 
     /// One known test per element: the index equals its declared index.
+    /// A side-effecting index is first stored in a local, declared by the
+    /// statement pushed to `prelude`.
     fn member_select_tests(
         &mut self,
         path: &str,
         select: &NativeMemberSelect,
+        prelude: &mut Vec<IrStmt>,
     ) -> Result<Vec<(IrExpr, NativeEndpointLeaf)>, String> {
         let index = self.lower_container_index(path, select.index)?;
         let width = index.width.max(32) + 1;
-        let index = IrExpr::convert_to(index, width, true);
+        let mut index = IrExpr::convert_to(index, width, true);
+        if select.hoist {
+            let name = format!("_llg_member_index_{}", self.native_copy_sequence);
+            self.native_copy_sequence += 1;
+            prelude.push(IrStmt::DeclLocal {
+                name: name.clone(),
+                width,
+                signed: true,
+                two_state: false,
+                init: Some(Box::new(index)),
+            });
+            index = IrExpr::new(IrExprKind::LocalRead(name), width, true, None);
+        }
         Ok(select
             .elements
             .iter()
@@ -144,7 +186,8 @@ impl Codegen<'_> {
         path: &str,
         select: &NativeMemberSelect,
     ) -> Result<IrNativeLeafExpr, String> {
-        let tests = self.member_select_tests(path, select)?;
+        let mut prelude = Vec::new();
+        let tests = self.member_select_tests(path, select, &mut prelude)?;
         let two_state = match tests.first().map(|(_, leaf)| leaf) {
             Some(NativeEndpointLeaf::Value(_, leaf)) => {
                 matches!(
@@ -224,7 +267,47 @@ impl Codegen<'_> {
                 }
             };
         }
-        result.into_leaf_expr()
+        let value = result.into_leaf_expr()?;
+        if prelude.is_empty() {
+            return Ok(value);
+        }
+        // The hoisted index runs first: as the statements of a sequence, or
+        // of an always-true predicate for string and handle values.
+        let sequence = |value: IrExpr| {
+            let (width, signed) = (value.width, value.signed);
+            IrExpr::new(
+                IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                    statements: prelude.clone(),
+                    value,
+                })),
+                width,
+                signed,
+                None,
+            )
+        };
+        let first = || {
+            sequence(crate::sim::codegen::lowering::containers::pattern_key_expr(
+                1, 1, false, false,
+            ))
+        };
+        Ok(match value {
+            IrNativeLeafExpr::Packed(value) => IrNativeLeafExpr::Packed(sequence(value)),
+            IrNativeLeafExpr::Real(value) => IrNativeLeafExpr::Real(sequence(value)),
+            IrNativeLeafExpr::String(value) => {
+                IrNativeLeafExpr::String(IrStringExpr::Conditional {
+                    predicate: Box::new(first()),
+                    then: Box::new(value),
+                    otherwise: Box::new(IrStringExpr::Literal(Vec::new())),
+                })
+            }
+            IrNativeLeafExpr::Chandle(value) => {
+                IrNativeLeafExpr::Chandle(IrChandleExpr::Conditional {
+                    predicate: Box::new(first()),
+                    then: Box::new(value),
+                    otherwise: Box::new(IrChandleExpr::Null),
+                })
+            }
+        })
     }
 
     /// Store `rhs` into the selected element; an unmatched index writes
@@ -235,7 +318,8 @@ impl Codegen<'_> {
         select: &NativeMemberSelect,
         rhs: NodeId,
     ) -> Result<IrStmt, String> {
-        let tests = self.member_select_tests(path, select)?;
+        let mut prelude = Vec::new();
+        let tests = self.member_select_tests(path, select, &mut prelude)?;
         let (_, first) = tests
             .first()
             .ok_or("member array selection has no elements")?;
@@ -259,6 +343,8 @@ impl Codegen<'_> {
             format!("_llg_member_select_{sequence}"),
             &mut statements,
         );
+        // The value is evaluated before a hoisted index.
+        statements.append(&mut prelude);
         let mut chain: Option<IrStmt> = None;
         for (test, leaf) in tests.into_iter().rev() {
             let write = self.endpoint_leaf_write(path, &leaf, value.clone(), false)?;
@@ -274,19 +360,20 @@ impl Codegen<'_> {
     }
 }
 
-/// Elements one index below `prefix`, as (declared index, leaf).
+/// Leaves one index below `prefix` and then `trailing` members below that
+/// element, as (declared index, leaf).
 fn element_leaves<'a, T: 'a>(
     prefix: &'a [AggregatePathPart],
+    trailing: &'a [AggregatePathPart],
     leaves: impl Iterator<Item = &'a T> + 'a,
     path_of: impl Fn(&T) -> &Vec<AggregatePathPart> + 'a,
 ) -> impl Iterator<Item = (i32, &'a T)> + 'a {
     leaves.filter_map(move |leaf| {
         let path = path_of(leaf);
-        match path.split_last() {
-            Some((AggregatePathPart::Index(index), parent)) if parent == prefix => {
-                Some((*index, leaf))
-            }
-            _ => None,
-        }
+        let below = path.strip_prefix(prefix)?;
+        let (AggregatePathPart::Index(index), rest) = below.split_first()? else {
+            return None;
+        };
+        (rest == trailing).then_some((*index, leaf))
     })
 }

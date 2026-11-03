@@ -1708,6 +1708,11 @@ struct Codegen<'a> {
     /// being lowered, by select node → the lexical container staging each
     /// (`stage_element_members`).
     staged_nested_elements: HashMap<NodeId, usize>,
+    /// Whether any container element type holds a record with a queue or
+    /// dynamic-array member (or nests a container), so expressions may need
+    /// read-only element staging; false keeps the scan off every other
+    /// design.
+    element_staging_possible: bool,
     /// Staging container of a nested element → the nested container type,
     /// which no declaration names.
     staged_container_types: HashMap<usize, TypeDescriptor>,
@@ -2296,6 +2301,7 @@ impl<'a> Codegen<'a> {
             mailbox_statement_prelude: None,
             staged_element_members: HashMap::new(),
             staged_nested_elements: HashMap::new(),
+            element_staging_possible: false,
             staged_container_types: HashMap::new(),
             container_types_like: HashMap::new(),
             native_tagged_bypass: HashSet::new(),

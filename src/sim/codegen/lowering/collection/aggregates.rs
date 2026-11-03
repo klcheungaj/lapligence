@@ -1170,6 +1170,7 @@ impl<'a> Codegen<'a> {
             })
             .flatten();
         let ir = self.model.containers.len();
+        self.element_staging_possible |= element_nests_container(&element);
         if matches!(meta.kind(), ArrayKind::Static) {
             match meta.dimensions() {
                 [Some(range)] => {
@@ -1240,6 +1241,21 @@ pub(super) fn ir_container_kind(
             },
         },
     })
+}
+
+/// Whether a container element holds a resizable container: it is one, or a
+/// record member or fixed-array element below it is one. Statements and
+/// expressions naming such a nested container stage it.
+fn element_nests_container(element: &IrContainerElement) -> bool {
+    match element {
+        IrContainerElement::Container { .. } => true,
+        IrContainerElement::Aggregate { members, .. }
+        | IrContainerElement::Union { members, .. } => members
+            .iter()
+            .any(|member| element_nests_container(&member.element)),
+        IrContainerElement::FixedArray { element, .. } => element_nests_container(element),
+        _ => false,
+    }
 }
 
 /// Whether a record member is, or contains below fixed arrays and nested

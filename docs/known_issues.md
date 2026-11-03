@@ -539,9 +539,12 @@ member's size per statement. These legal forms still reject with
 explicit diagnostics: equality of rows of multidimensional fixed arrays of
 strings, handles or native records, and such rows as `ref` actuals;
 associative members of container or fixed-array record
-elements; an element's container member named in a condition, loop header,
-`foreach`, declaration initializer or timing-controlled assignment, or as a
-nonblocking target or `ref` actual; records with container members in nonblocking
+elements; an element's container member changed by an expression outside an
+assignment, call or system-task statement (a condition or loop header that
+pops it), or named as the target of a timing-controlled assignment, a
+nonblocking target or a `ref` actual (reads in conditions, loop headers,
+`foreach`, initializers and timed assignment values copy the member at each
+evaluation); records with container members in nonblocking
 assignments; static class
 properties of a record type with string, real or handle members and class
 properties of a record type with container members (instance properties of
@@ -549,10 +552,10 @@ records with string, real or handle members are one value per object and
 records of integral leaves are fixed-width properties, SIM-011); equality of records with an associative member (and conditionals
 with an ambiguous predicate on such records);
 compound or nonblocking writes to a record element of a resizable container;
-a run-time index into a native member array of more than 64 elements or with a
-side-effecting index; a run-time index into an array of records nested in a
-native record (`r.e[k].s`, which currently fails with a generic lowering
-diagnostic rather than a dedicated one); as the actual of a native record
+a run-time index into a native member array of more than 64 elements, and
+one into an array of records nested in a native record that selects a
+handle member or anything but one string, real or integral member
+(`r.e[k].h.v`, `r.e[k].inner`; `r.e[k].s` works); as the actual of a native record
 `ref` formal, an element of a queue, dynamic, associative or fixed array of
 records, a run-time-indexed member, a member of a subroutine record, or any
 module, static or block record passed to a class method (whole subroutine

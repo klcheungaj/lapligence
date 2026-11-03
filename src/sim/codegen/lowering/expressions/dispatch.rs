@@ -767,6 +767,26 @@ impl<'a> Codegen<'a> {
         if let Some(value) = self.lower_random_value(scope_path, h)? {
             return Ok(value);
         }
+        // An expression outside a staged statement (a condition, loop bound
+        // or initializer) reads element container members from copies made
+        // before each evaluation.
+        if self.element_staging_possible {
+            if let Some(before) = self.stage_expression_members(scope_path, h)? {
+                let value = self.lower_expr(scope_path, h);
+                self.end_element_member_staging();
+                let value = value?;
+                let (width, signed) = (value.width, value.signed);
+                return Ok(IrExpr::new(
+                    IrExprKind::Sequence(Box::new(crate::sim::ir::IrSequenceExpr {
+                        statements: before,
+                        value,
+                    })),
+                    width,
+                    signed,
+                    None,
+                ));
+            }
+        }
         // The iterator declaration of a generated method loop stands for its
         // current element index or key (see `inline_element_path`).
         if let Some(key) = self.inline_key_read(h) {

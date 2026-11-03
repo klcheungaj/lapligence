@@ -369,7 +369,8 @@ Macros, includes and their edition-specific behavior are counted in §11.
   untimed or `#delay` NBAs act on owned elements. Class handles are
   identity leaves of native records (`r.h.v` reaches the object). Run-time
   indices into native member arrays select among at most 64 elements
-  (`NATIVE_MEMBER_SELECT_LIMIT`); packed members of module native records take
+  (`NATIVE_MEMBER_SELECT_LIMIT`), including one scalar member of a record
+  element (`r.e[k].s`); an index with side effects is evaluated once; packed members of module native records take
   bit/part selects ([sim_007](../tests/fixtures/sim/feature_completion/sim_007/readme.md)).
   Patterns that read their own destination see the old string and handle
   members. Queue, dynamic and associative members of records are their own
@@ -508,8 +509,10 @@ Macros, includes and their edition-specific behavior are counted in §11.
   statement works on a staged copy of the element that is written back when
   the statement changes it
   ([sim_006](../tests/fixtures/sim/feature_completion/sim_006/readme.md)).
-  Methods of nested elements in other statements (an `if` condition, a
-  `return`), selects into a queue or dynamic array nested in a string-keyed
+  Other expressions (an `if` condition, a loop bound, a `return`, an
+  initializer) read nested elements and record-element members from a copy
+  made at each evaluation; such an expression that changes one, selects into
+  a queue or dynamic array nested in a string-keyed
   element, and two changed nested elements of one container in one statement
   reject.
   `ref` formals of queue, dynamic and associative type alias the caller's
