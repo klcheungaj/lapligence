@@ -195,7 +195,7 @@ those scripts. Differences within the observed spread are reported as noise.
   average 6.6 → 8.4; before = the old exact copies; `model.c` sizes and
   Release `-j1` compile times): a 1,000-bit bus of one-bit inputs 4.51 s →
   2.57 s, `model.c` 421 → 404 KB, compile 48.6 → 47.0 s, peak RSS 6.1 → 5.1 MB;
-  a 256×8 nand netlist 21.0 s → 9.65 s, `model.c` 926 → 758 KB (merged with
+  a 256×8 nand netlist 21.0 s → 9.65 s, `model.c` 926 → 759 KB (merged with
   the old views: 2.89 MB), compile 43.8 → 43.9 s, peak RSS 15.6 → 9.0 MB.
   Designs that already merged get smaller with the same run time: coerced
   one-bit inputs on a bus driven per bit 12.6 → 12.5 s, `model.c` 1.12 →
