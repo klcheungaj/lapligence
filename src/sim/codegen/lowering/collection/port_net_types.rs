@@ -137,12 +137,16 @@ impl Codegen<'_> {
     /// Storage unions deliberately have no notion of internal/external. Replay
     /// the owned connections separately so union rank and hash iteration cannot
     /// choose a resolver or make a dominated declaration's delay survive.
+    /// `merged` holds the input and output ports merged like inout ones
+    /// (`nets/port_merges.rs`); the frontend already warns about their
+    /// dissimilar net types, so only their ties are reported here.
     pub(super) fn build_port_net_type_plan(
         &mut self,
         nodes: &[NodeId],
         bit_nets: &HashSet<NodeId>,
         alias_bits: &HashSet<AliasBit>,
         cells: &NetCellPlan,
+        merged: &HashSet<NodeId>,
     ) -> Result<NetCollapsePlan, String> {
         let mut plan = NetCollapsePlan::default();
         // One representative per undriven net-array class shape.
@@ -204,17 +208,18 @@ impl Codegen<'_> {
             .iter()
             .copied()
             .filter(|node| {
-                matches!(
-                    self.kind(*node),
-                    NodeKind::Port {
-                        direction: DbDirection::Inout,
-                        high,
-                        high_expr,
-                        low,
-                        ..
-                    } if (high.is_some() || high_expr.is_some())
-                        && (low.is_some() || self.db.port_internal_expression(*node).is_some())
-                )
+                merged.contains(node)
+                    || matches!(
+                        self.kind(*node),
+                        NodeKind::Port {
+                            direction: DbDirection::Inout,
+                            high,
+                            high_expr,
+                            low,
+                            ..
+                        } if (high.is_some() || high_expr.is_some())
+                            && (low.is_some() || self.db.port_internal_expression(*node).is_some())
+                    )
             })
             .map(|port| {
                 let mut depth = 0usize;
@@ -269,7 +274,7 @@ impl Codegen<'_> {
                     let external_kind = self.collapse_net_type(external.owner())?;
                     let choice = port_choice(internal_kind, external_kind)
                         .ok_or("inout endpoint has no net-type table entry")?;
-                    if choice.warns() {
+                    if choice.warns() && !merged.contains(&port) {
                         let warning = CollapseWarning {
                             internal: internal_kind,
                             external: external_kind,
@@ -287,7 +292,9 @@ impl Codegen<'_> {
             }
             let (edge_warnings, ties) = plan.port_batch(&edges)?;
             for (edge, warning) in edge_warnings {
-                self.warn_port_collapse(edge_ports[edge], warning, &mut warnings);
+                if !merged.contains(&edge_ports[edge]) {
+                    self.warn_port_collapse(edge_ports[edge], warning, &mut warnings);
+                }
             }
             let mut tied = HashSet::new();
             for tie in ties {

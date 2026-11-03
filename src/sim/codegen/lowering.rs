@@ -55,7 +55,10 @@
 //!   (outputs) whenever the source changes, except where sharing is exact:
 //!   the sink then aliases the source's storage (`collection/port_aliases.rs`
 //!   for variables, decisions A21-D1 and A21-D3; `collection/nets/port_sinks.rs`
-//!   for a `wire` sink only its port drives, merged with its source, A21-D2);
+//!   for a `wire` sink only its port drives, merged with its source, A21-D2),
+//!   or where its sink would differ from its source: a net sink with drivers
+//!   of its own or a type of its own then merges with its source like an
+//!   inout connection (`collection/nets/port_merges.rs`, A21-D4);
 //! - every inout port collapses its parent + child nets into ONE resolved
 //!   simulated net (`llg_net_t`, LRM §23.3.3.7): each member net gets a
 //!   driver slot, whole-signal writes lower to `llg_net_write`, and every
@@ -618,7 +621,9 @@ pub fn sdf_targets(
 
 fn lower_model(db: &Db, options: &CodegenOptions) -> Result<LoweredModel, String> {
     // A VPI application may write either side of a port, so a model that
-    // keeps the VPI catalog keeps every port link. User system calls are
+    // keeps the VPI catalog keeps every port link that shares storage; a
+    // merged net port stays merged (both names are nets of one group, as in
+    // a model without VPI). User system calls are
     // known only once the bodies are lowered: a design that has them is
     // lowered again without collapsed ports. A collapsed net port whose
     // time-zero start the lowered model shows to differ from the link's is
@@ -657,6 +662,7 @@ fn lower_model_with(
     cg.vpi_return_signals = options.vpi;
     cg.user_system_functions = options.user_system_functions.iter().cloned().collect();
     cg.collapse_ports = collapse_ports;
+    cg.merge_ports = true;
     cg.port_collapse_exclusions = excluded_ports.clone();
     cg.check_fsm_pragmas()?;
     let tops = collect_tops(&mut cg)?;
@@ -841,7 +847,10 @@ fn lower_model_with(
     let warnings = std::mem::take(&mut cg.warnings);
     let sdf_logs = std::mem::take(&mut cg.sdf_logs);
     let coverage_api_used = cg.coverage_api_used;
-    let collapsed_ports = !cg.port_aliases.is_empty();
+    // Merged ports keep both names as nets of one group, which a VPI
+    // application reads and writes like any net, so only storage aliases
+    // count.
+    let collapsed_ports = !cg.port_alias_sinks.is_empty();
     drop(cg);
     drop(semantic);
     drop(lowering_stage);
@@ -1481,17 +1490,22 @@ struct Codegen<'a> {
     /// Canonical object storage for module `ref` string/chandle ports.
     reference_objects: HashMap<usize, usize>,
     /// Ports whose sink shares the source's storage
-    /// (`collection/port_aliases.rs`); they have no link process.
+    /// (`collection/port_aliases.rs`) or whose two nets are one merged
+    /// group (`collection/nets/port_merges.rs`); they have no link process
+    /// and drive nothing.
     port_aliases: HashSet<NodeId>,
     /// Ports may share storage: false for a model that keeps the VPI
     /// catalog and for the SDF target scan.
     collapse_ports: bool,
+    /// Input and output net ports may merge into one group
+    /// (`collection/nets/port_merges.rs`): false for the SDF target scan.
+    merge_ports: bool,
     /// Ports a previous lowering showed must keep their link.
     port_collapse_exclusions: HashSet<NodeId>,
     /// Collapsed net ports with a time-zero observer of the sink, and the
     /// root storage whose start the lowered model must show to be all X.
     port_start_checks: Vec<(NodeId, usize)>,
-    /// The sink declarations of `port_aliases`.
+    /// The sink declarations of the storage-sharing `port_aliases`.
     port_alias_sinks: HashSet<NodeId>,
     object_globals: HashMap<NodeId, usize>,
     scope_object_names: HashMap<String, HashMap<String, usize>>,
@@ -2149,6 +2163,7 @@ impl<'a> Codegen<'a> {
             reference_signals: HashMap::new(),
             port_aliases: HashSet::new(),
             collapse_ports: false,
+            merge_ports: false,
             port_collapse_exclusions: HashSet::new(),
             port_start_checks: Vec::new(),
             port_alias_sinks: HashSet::new(),
