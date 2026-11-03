@@ -30,6 +30,9 @@ impl Db {
             })
         };
         let mut typedefs = TypedefNames::default();
+        // IEEE 1800-2009 37.12 detail 4: the package items each import
+        // declaration supplied to a name reference, in edge-index order.
+        let mut imported_items = HashMap::<NodeId, Vec<(u32, NodeId)>>::new();
         for semantic in &snapshot.semantic_nodes {
             let id = NodeId::from_index(semantic.id as usize);
             if semantic.detail.as_str() == "TypeAlias"
@@ -40,6 +43,12 @@ impl Db {
             for edge in semantic_edges(snapshot, semantic)? {
                 if edge.role == SemanticEdgeRole::SourceIdentity {
                     source_identities.insert(id, semantic_id(&ids, edge.target_id)?);
+                }
+                if edge.role == SemanticEdgeRole::Imported {
+                    imported_items
+                        .entry(id)
+                        .or_default()
+                        .push((edge.index, semantic_id(&ids, edge.target_id)?));
                 }
                 if edge.role == SemanticEdgeRole::Typedef {
                     if let Some(typedef) = typedef_target(edge.target_id)? {
@@ -571,6 +580,7 @@ impl Db {
                         | SemanticEdgeRole::ReturnOwner
                         | SemanticEdgeRole::CheckerActual
                         | SemanticEdgeRole::ProceduralChecker
+                        | SemanticEdgeRole::Imported
                 ) {
                     children.push(semantic_id(&ids, edge.target_id)?);
                 }
@@ -1639,6 +1649,13 @@ impl Db {
             assertion_formal_directions,
             assertion_local_initializers,
             source_identities,
+            imported_items: imported_items
+                .into_iter()
+                .map(|(import, mut items)| {
+                    items.sort_unstable_by_key(|(index, _)| *index);
+                    (import, items.into_iter().map(|(_, item)| item).collect())
+                })
+                .collect(),
             clocking_blocks,
             coverage,
             clocking_vars,

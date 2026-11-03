@@ -255,7 +255,14 @@ rand qualifier, visibility, const flag and the index of the hidden
 `rand_mode` off bit that `vpiIsRandomized` reads. An `event` property has
 shape `LLG_VPI_SHAPE_EVENT`: its storage is the handle slot naming the
 synchronization object, it is listed by `vpiNamedEvent` and not by
-`vpiVariables`, and a put triggers it (decision A19-D45). A constraint item names
+`vpiVariables`, and a put triggers it (decision A19-D45). An `event` array
+property is a fixed-size container shape of type `vpiNamedEventArray` whose
+`left`/`right` hold its declared range: it is listed by
+`vpiNamedEventArray`, its elements are `SLOT_DYNELEM` slots whose event is
+the element's `LLG_VALUE_EVENT` handle, and a put to one triggers it
+(decision A19-D80). A scope's `vpiImport` items are the
+`scope_imports` pairs of the type tables, catalog rows or class layouts
+(`LLG_VPI_IMPORT_CLASS`), found by binary search (decision A19-D79). A constraint item names
 the hidden root code entry of its constraint items (37.30, 37.34) and its
 `constraint_mode` off bit (an object field, or the static signal of a
 static constraint); a constraint obtained from an object is a dynamic

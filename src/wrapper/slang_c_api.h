@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define LLG_SLANG_ABI_VERSION 69u
+#define LLG_SLANG_ABI_VERSION 70u
 #define LLG_SLANG_INVALID_ID UINT64_MAX
 
 typedef struct LlgSlangError LlgSlangError;
@@ -1307,7 +1307,15 @@ enum {
   /* From a PROCEDURAL_CHECKER statement to each checker instance
    * (INSTANCE_CHECKER) it instantiates, array elements in element order;
    * the index is the ordinal. Not a child edge. */
-  LLG_SLANG_EDGE_PROCEDURAL_CHECKER = 44
+  LLG_SLANG_EDGE_PROCEDURAL_CHECKER = 44,
+  /* From an import declaration (a node with detail ExplicitImport or
+   * WildcardImport) to each package item a name reference resolved through it
+   * (IEEE 1800-2009 26.3, 37.12 detail 4): an explicit import that some
+   * lookup used, each name a wildcard import supplied, and the import a
+   * package re-exports (26.6) when a reference through the exporting
+   * package reached it. Items are ordered by declaration position; the
+   * index is the ordinal. Simulation captures only. Not a child edge. */
+  LLG_SLANG_EDGE_IMPORTED = 45
 };
 
 /* Checker instance auxiliary bits and CHECKER_ACTUAL index flag. */

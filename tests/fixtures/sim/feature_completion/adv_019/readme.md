@@ -883,3 +883,13 @@ decision A19-D69), the virtual interface property `vif` of the class
 class definition and object, decision A19-D72), and an `expect` statement in
 a branch the walk never takes (its relations are refused on purpose,
 decision A19-D65).
+
+Two more declarations cover the last rows industry-standard behaviour
+serves: the import `import cat_pkg::PKP;` of `tb`, which `via_import`
+references (the `vpiImport` iteration of a scope lists `cat_pkg::PKP`,
+decision A19-D79; 37.12 detail 4, SystemVerilog-1800-2009.txt
+L58084-58086: "The vpiImport iterator shall return all objects imported
+into the current scope via import declarations. Only objects actually
+referenced through the import shall be returned"), and the event array
+property `steps [0:1]` of `Packet` (the `vpiNamedEventArray` iteration of
+the class definition and object, decision A19-D80).

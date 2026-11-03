@@ -100,6 +100,108 @@ module array_top;
 endmodule
 "#;
 
+/// IEEE 1800-2009 37.12 detail 4: each import declaration records the
+/// package items a name reference reached through it (26.3), including a
+/// reference from a nested scope, a wildcard-supplied name and a re-export
+/// (26.6); an import no reference used records none.
+#[test]
+fn import_declarations_record_the_package_items_references_reach() {
+    use llg::core::db::Db;
+    use std::collections::BTreeMap;
+
+    let snapshot = compile(
+        "tb",
+        r#"
+package pk;
+    int pv = 3;
+    int unused_v = 0;
+    parameter int PP = 5;
+    typedef logic [3:0] nib_t;
+    function int pf(int a); return a + 1; endfunction
+    int px = 9;
+endpackage
+package pk2;
+    int qv = 4;
+    int qw = 8;
+endpackage
+package pk3;
+    import pk::px;
+    export pk::px;
+    int rv = 1;
+endpackage
+module tb;
+    import pk::pv;
+    import pk::PP;
+    import pk::nib_t;
+    import pk::pf;
+    import pk::unused_v;
+    import pk2::*;
+    nib_t n = 4'h3;
+    function int f2;
+        import pk3::*;
+        return rv + px;
+    endfunction
+    initial begin : blk
+        import pk2::qw;
+        $display("%0d %0d %0d %0d %0d %0d", pv, pv, PP, pf(qv), n, f2());
+    end
+endmodule
+"#,
+    );
+    let database = Db::from_slang(&snapshot).expect("owned imports");
+    let mut imports = BTreeMap::new();
+    for id in database.node_ids() {
+        let detail = database.semantic_detail(id);
+        if !matches!(detail, Some("ExplicitImport" | "WildcardImport")) {
+            continue;
+        }
+        let node = database.node(id);
+        let scope = node
+            .parent
+            .map(|parent| database.node(parent).name.clone())
+            .unwrap_or_default();
+        let items = database
+            .imported_items(id)
+            .iter()
+            .map(|item| database.node(*item).name.clone())
+            .collect::<Vec<_>>();
+        let name = if detail == Some("WildcardImport") {
+            "*".to_owned()
+        } else {
+            node.name.clone()
+        };
+        // `export pk::px` adds a second declaration of the same name.
+        imports
+            .entry(format!("{scope}:{name}"))
+            .or_insert_with(Vec::new)
+            .push(items.join(","));
+    }
+    let expected = [
+        ("tb:pv", "pv"),
+        ("tb:PP", "PP"),
+        ("tb:nib_t", "nib_t"),
+        ("tb:pf", "pf"),
+        ("tb:unused_v", ""),
+        ("tb:*", "qv"),
+        ("f2:*", "px,rv"),
+        ("blk:qw", ""),
+        ("pk3:px", "px"),
+    ];
+    for (key, items) in expected {
+        let found = imports.get(key).map(|lists| {
+            let mut used = lists.iter().filter(|list| !list.is_empty());
+            used.next().map(String::as_str).unwrap_or("")
+        });
+        assert_eq!(found, Some(items), "{key} in {imports:?}");
+    }
+    // A node that declares no import has no imported items.
+    let top = database
+        .node_ids()
+        .find(|id| database.node(*id).name == "tb")
+        .expect("top instance");
+    assert!(database.imported_items(top).is_empty());
+}
+
 fn compile(top: &str, text: &str) -> Snapshot {
     let sources = [OwnedSource::compilation_unit("test.sv", text)];
     compile::compile_sources_checked(

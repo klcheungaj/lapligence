@@ -453,7 +453,12 @@ impl Codegen<'_> {
                     continue;
                 };
                 let slot = &layout.fields[field];
-                let shape = if let Some(container) =
+                let shape = if let Some(shape) = slot
+                    .container
+                    .and_then(|_| vpi_event_array_shape(dynamic, descriptor))
+                {
+                    shape
+                } else if let Some(container) =
                     slot.container.and_then(|index| model.containers.get(index))
                 {
                     self.vpi_container_shape(dynamic, typespecs, descriptor, container, 0)
@@ -737,4 +742,30 @@ fn vpi_visibility(visibility: MemberVisibility) -> IrVpiVisibility {
         MemberVisibility::Protected => IrVpiVisibility::Protected,
         MemberVisibility::Local => IrVpiVisibility::Local,
     }
+}
+
+/// The shape of a one-dimensional `event` array (37.25): its elements are
+/// the event objects of a fixed-size container; `None` for any other type.
+fn vpi_event_array_shape(
+    dynamic: &mut IrVpiDynamic,
+    descriptor: &TypeDescriptor,
+) -> Option<IrVpiShape> {
+    let TypeShape::FixedArray {
+        dimensions,
+        element,
+    } = &descriptor.shape
+    else {
+        return None;
+    };
+    let [(left, right)] = dimensions.as_slice() else {
+        return None;
+    };
+    if !matches!(&element.shape, TypeShape::Opaque { kind } if kind == "Event") {
+        return None;
+    }
+    Some(IrVpiShape::EventArray {
+        element: dynamic.intern(IrVpiShape::Event),
+        left: i64::from(*left),
+        right: i64::from(*right),
+    })
 }

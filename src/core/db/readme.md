@@ -52,6 +52,10 @@ Type records are canonical and carry no typedef names; `Db::declared_typedef`
 `Db::member_typedef` (aggregate members) and `Db::typedef_renames_builtin`
 keep the typedef each declared type names, with the number of dimensions
 declared above it, for VPI typespec names (IEEE 1800-2009 37.23).
+`Db::imported_items` keeps, per import declaration (semantic detail
+`ExplicitImport` or `WildcardImport`), the package items name references
+reached through it (`LLG_SLANG_EDGE_IMPORTED`), for VPI `vpiImport` (IEEE
+1800-2009 37.12 detail 4); those edges are metadata, never children.
 `Db::instance_array_range` keeps the declared `(left, right)` of every
 instance array level (`NodeKind::InstanceArray`), for VPI instance array
 objects (37.11).

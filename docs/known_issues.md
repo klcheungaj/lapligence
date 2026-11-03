@@ -2385,10 +2385,12 @@ with no error status, as for a name that denotes nothing (S42-D11):
   the size and value of the formal it is passed to (a call snapshot) while
   its relations and `vpiDecompile` are those of the expression;
 - every property, relation and iteration the catalog marks `unsupported`
-  (after the ADV-019 closure, 2026-11: the named event arrays of class
-  definitions and objects; `vpi_put_value` to a sequential UDP; `vpiImport`, which 37.12 detail 4 defines as
-  the package items referenced through an import, a per-reference fact the
-  owned database does not capture). Rows the catalog marks `error` are refused on purpose,
+  (after the ADV-019 closure, 2026-11: only `vpi_put_value` to a
+  sequential UDP). `vpiImport` lists no imports declared inside a class
+  method (a class item, not a catalog scope); the elements of a class
+  definition's event array property are not objects (they name no event),
+  and an event of an event array property takes no `cbValueChange`, as an
+  event property does not (decision A19-D80). Rows the catalog marks `error` are refused on purpose,
   as industry-standard behaviour refuses them (decision A19-D65); among
   them the bodies, variables and formal defaults of sequence and property
   declarations, `expect` relations, the list operation of an instance

@@ -90,6 +90,15 @@ pub enum IrVpiShape {
     /// An `event` class property (37.25): a named event object whose
     /// storage is the handle slot naming its synchronization object.
     Event,
+    /// A one-dimensional `event` array class property (37.25): a named
+    /// event array whose storage is the fixed-size event container, with
+    /// the declared `[left:right]` range; `element` is the index of the
+    /// [`IrVpiShape::Event`] shape of its elements.
+    EventArray {
+        element: usize,
+        left: i64,
+        right: i64,
+    },
     /// A virtual interface class property (37.27 detail 7, 37.29 detail
     /// 7): a reference object whose storage is the handle naming the
     /// interface instance's environment record.
@@ -110,6 +119,7 @@ impl IrVpiShape {
             Self::Chandle => "vpiChandleVar",
             Self::Container { .. } => "vpiArrayVar",
             Self::Event => "vpiNamedEvent",
+            Self::EventArray { .. } => "vpiNamedEventArray",
             Self::VirtualInterface => "vpiRefObj",
             Self::Other => "vpiUndefined",
         }
@@ -125,6 +135,8 @@ impl IrVpiShape {
             Self::Chandle => "LLG_VPI_SHAPE_CHANDLE",
             Self::Container { .. } => "LLG_VPI_SHAPE_CONTAINER",
             Self::Event => "LLG_VPI_SHAPE_EVENT",
+            // Elements are reached as those of any fixed-size container.
+            Self::EventArray { .. } => "LLG_VPI_SHAPE_CONTAINER",
             Self::VirtualInterface => "LLG_VPI_SHAPE_VIF",
             Self::Other => "LLG_VPI_SHAPE_OTHER",
         }
@@ -318,6 +330,9 @@ impl IrVpiDynamic {
             let path = format!("vpi_dynamic.shapes[{index}]");
             let valid = match shape {
                 IrVpiShape::Container { element, .. } => *element < index,
+                IrVpiShape::EventArray { element, .. } => {
+                    *element < index && self.shapes[*element] == IrVpiShape::Event
+                }
                 IrVpiShape::Class { class } => class.is_none_or(|class| class < self.classes.len()),
                 IrVpiShape::Packed {
                     width, typespec, ..

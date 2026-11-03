@@ -860,3 +860,16 @@ impl IrVpiObject {
         }
     }
 }
+
+/// One object a scope's `vpiImport` iteration returns (IEEE 1800-2009 37.12
+/// detail 4): a package item a name reference reached through one of the
+/// scope's import declarations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IrVpiImport {
+    /// A catalog object (a variable, named event, parameter, task or
+    /// function), by catalog key.
+    Row(String),
+    /// A class definition, by layout index into [`super::IrVpiDynamic`]'s
+    /// classes.
+    Class(usize),
+}

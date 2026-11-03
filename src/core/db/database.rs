@@ -428,6 +428,11 @@ pub struct Db {
     /// canonical formal declaration. This map is owned metadata, not a native
     /// AST relationship.
     source_identities: HashMap<NodeId, NodeId>,
+    /// The package items each import declaration (a node with semantic
+    /// detail `ExplicitImport` or `WildcardImport`) supplied to some name
+    /// reference (IEEE 1800-2009 26.3, 37.12 detail 4), in declaration
+    /// order. Import declarations no reference used have no entry.
+    imported_items: HashMap<NodeId, Box<[NodeId]>>,
     /// Clocking block declarations and their resolved clock events/skews.
     clocking_blocks: HashMap<NodeId, ClockingBlockInfo>,
     /// Functional-coverage declarations (IEEE 1800-2009 19).
@@ -558,6 +563,7 @@ impl Db {
             assertion_formal_directions: HashMap::new(),
             assertion_local_initializers: HashMap::new(),
             source_identities: HashMap::new(),
+            imported_items: HashMap::new(),
             clocking_blocks: HashMap::new(),
             coverage: CoverageTables::default(),
             clocking_vars: HashMap::new(),
@@ -660,6 +666,7 @@ impl Db {
             assertion_formal_directions: HashMap::new(),
             assertion_local_initializers: HashMap::new(),
             source_identities: HashMap::new(),
+            imported_items: HashMap::new(),
             clocking_blocks: HashMap::new(),
             coverage: CoverageTables::default(),
             clocking_vars: HashMap::new(),
@@ -1463,6 +1470,15 @@ impl Db {
             current = representative;
         }
         current
+    }
+
+    /// The package items the import declaration `import` supplied to name
+    /// references (IEEE 1800-2009 37.12 detail 4): an explicit import's item
+    /// when some lookup used it, every item a wildcard import supplied, and
+    /// a re-exported item reached through the exporting package (26.6).
+    /// Empty for any other node or an unused import.
+    pub fn imported_items(&self, import: NodeId) -> &[NodeId] {
+        self.imported_items.get(&import).map_or(&[], |items| items)
     }
 
     pub fn is_implicit_net(&self, id: NodeId) -> bool {

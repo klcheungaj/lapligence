@@ -507,7 +507,33 @@ pub(super) fn render_vpi_metadata(model: &IrModel, out: &mut String) {
         .filter_map(|(scope, typespec)| Some((*indices.get(scope.as_str())?, *typespec)))
         .collect::<Vec<_>>();
     scope_typedefs.sort_by_key(|(row, _)| *row);
-    render_vpi_typespecs(model.vpi_typespecs(), &scope_typedefs, out);
+    // 37.12 detail 4: (scope row, object) pairs in row order; an object is
+    // a catalog row, or a class layout index with LLG_VPI_IMPORT_CLASS set.
+    // An item without a catalog row (a typedef, an enum constant) is no
+    // instance item and is not listed.
+    let mut scope_imports = model
+        .vpi_scope_imports
+        .iter()
+        .filter_map(|(scope, item)| {
+            let scope = *indices.get(scope.as_str())?;
+            let object = match item {
+                crate::sim::ir::IrVpiImport::Row(key) => {
+                    u32::try_from(*indices.get(key.as_str())?).ok()?
+                }
+                crate::sim::ir::IrVpiImport::Class(class) => {
+                    u32::try_from(*class)
+                        .ok()
+                        .filter(|class| *class < IMPORT_CLASS)?
+                        | IMPORT_CLASS
+                }
+            };
+            Some((scope, object))
+        })
+        .collect::<Vec<_>>();
+    scope_imports.sort_by_key(|(row, _)| *row);
+    let mut listed = std::collections::HashSet::new();
+    scope_imports.retain(|pair| listed.insert(*pair));
+    render_vpi_typespecs(model.vpi_typespecs(), &scope_typedefs, &scope_imports, out);
     dynamic::render_vpi_dynamic(model, &indices, out);
     for (index, entry) in entries.iter().enumerate() {
         if entry.dims.is_empty() {
@@ -1190,6 +1216,7 @@ fn member_tree(
 fn render_vpi_typespecs(
     typespecs: &[IrVpiTypespec],
     scope_typedefs: &[(usize, usize)],
+    scope_imports: &[(usize, u32)],
     out: &mut String,
 ) {
     let mut ranges = Vec::new();
@@ -1363,13 +1390,28 @@ fn render_vpi_typespecs(
             .map(|(row, typespec)| format!("    {row}u, {typespec}u,\n"))
             .collect(),
     );
+    let import_count = scope_imports.len();
+    table(
+        out,
+        "uint32_t",
+        "llg_vpi_ts_scope_imports",
+        scope_imports
+            .iter()
+            .map(|(row, object)| format!("    {row}u, {object}u,\n"))
+            .collect(),
+    );
     out.push_str(&format!(
         "static const llg_vpi_type_tables_t llg_vpi_type_tables_value = {{ llg_vpi_ts_types, {typespec_count}u, \
 llg_vpi_ts_ranges, {range_count}u, llg_vpi_ts_members, {member_count}u, llg_vpi_ts_consts, {const_count}u, \
-llg_vpi_ts_nodes, {node_count}u, llg_vpi_ts_scope_typedefs, {typedef_count}u }};\n\
+llg_vpi_ts_nodes, {node_count}u, llg_vpi_ts_scope_typedefs, {typedef_count}u, \
+llg_vpi_ts_scope_imports, {import_count}u }};\n\
 static const llg_vpi_type_tables_t* const llg_vpi_type_tables = &llg_vpi_type_tables_value;\n"
     ));
 }
+
+/// `LLG_VPI_IMPORT_CLASS`: marks a class layout index among the objects of
+/// the scope import table.
+const IMPORT_CLASS: u32 = 0x8000_0000;
 
 /// Catalog row of the scope enclosing each call site, for `vpiScope`.
 pub(in crate::sim::emit_c) fn vpi_call_scopes(model: &IrModel) -> Vec<String> {
@@ -1668,7 +1710,7 @@ mod tests {
         typespecs[0].element = Some(2);
         typespecs[0].name = Some("nib_t".to_owned());
         let mut out = String::new();
-        render_vpi_typespecs(&typespecs, &[], &mut out);
+        render_vpi_typespecs(&typespecs, &[], &[], &mut out);
         assert!(out.contains("{ vpiLogicTypespec, \"nib_t\", 0u, 3u, 0u, 4u, 0u, 0u, 1u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u },"), "{out}");
         assert!(out.contains("#define llg_vpi_ts_consts NULL"), "{out}");
         assert!(out.contains("llg_vpi_ts_nodes, 6u"), "{out}");
@@ -1698,7 +1740,7 @@ mod tests {
             },
         ];
         let mut out = String::new();
-        render_vpi_typespecs(&typespecs, &[], &mut out);
+        render_vpi_typespecs(&typespecs, &[], &[], &mut out);
         assert!(out.contains("{ vpiArrayTypespec, NULL, 0u, 1u, 0u, 0u, LLG_VPI_TS_ASSOC, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 1u },"), "{out}");
         assert!(out.contains("{ vpiArrayTypespec, NULL, 0u, 1u, 0u, 0u, LLG_VPI_TS_QUEUE, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u },"), "{out}");
     }

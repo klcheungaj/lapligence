@@ -13,8 +13,8 @@ use crate::core::db::{
 };
 use crate::sim::ir::{
     IrSdfTarget, IrVpiArgRef, IrVpiBuiltinCall, IrVpiCompileArg, IrVpiCompileCall, IrVpiConn,
-    IrVpiConnRole, IrVpiConstant, IrVpiContainer, IrVpiDirection, IrVpiInstance, IrVpiObject,
-    IrVpiObjectKind, IrVpiQualifiers, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind,
+    IrVpiConnRole, IrVpiConstant, IrVpiContainer, IrVpiDirection, IrVpiImport, IrVpiInstance,
+    IrVpiObject, IrVpiObjectKind, IrVpiQualifiers, IrVpiTiming, IrVpiTypespec, IrVpiTypespecKind,
     IrVpiTypespecMember, IrVpiUdp, IrVpiVarKind,
 };
 
@@ -1281,6 +1281,7 @@ impl Codegen<'_> {
         let mut owners: Vec<(String, String, CodeOwner)> = Vec::new();
         let mut typespecs = TypespecTable::default();
         let mut scope_typedefs = Vec::new();
+        let mut scope_imports = Vec::<(String, NodeId)>::new();
         let mut dynamic = crate::sim::ir::IrVpiDynamic::default();
         // Static locals of procedures and the persistent formals of static
         // tasks and functions (37.17: an argument is a variable of its
@@ -2261,6 +2262,26 @@ impl Codegen<'_> {
                         ));
                     }
                 }
+                // 37.12 detail 4: the package items a name reference
+                // reached through an import declaration of this scope.
+                NodeKind::Other
+                    if matches!(
+                        self.db.semantic_detail(id),
+                        Some("ExplicitImport" | "WildcardImport")
+                    ) =>
+                {
+                    let Some(parent) = node.parent else {
+                        continue;
+                    };
+                    let items = self.db.imported_items(id);
+                    if items.is_empty() {
+                        continue;
+                    }
+                    let scope = self.vpi_full_name(parent);
+                    for item in items {
+                        scope_imports.push((scope.clone(), *item));
+                    }
+                }
                 // 37.10 detail 1: the typedefs a scope declares, with the
                 // typespec their declarations share. A typedef inside a
                 // class has no catalog scope and is dropped when emitted.
@@ -2324,6 +2345,26 @@ impl Codegen<'_> {
         }
         model.vpi_typespecs = typespecs.entries;
         model.vpi_scope_typedefs = scope_typedefs;
+        // 37.12: vpiImport reaches instance items (37.10); a typedef or an
+        // enum constant is none. Classes are dynamic-layer objects; every
+        // other item is the catalog row of its declaration, dropped when
+        // emitted if it has none.
+        model.vpi_scope_imports = scope_imports
+            .into_iter()
+            .filter_map(|(scope, item)| {
+                let object = match self.kind(item) {
+                    NodeKind::ClassDef => IrVpiImport::Class(*self.class_nodes.get(&item)?),
+                    NodeKind::Var { .. }
+                    | NodeKind::Array { .. }
+                    | NodeKind::Net { .. }
+                    | NodeKind::NamedEvent
+                    | NodeKind::Param { .. }
+                    | NodeKind::FuncTask { .. } => IrVpiImport::Row(self.vpi_full_name(item)),
+                    _ => return None,
+                };
+                Some((scope, object))
+            })
+            .collect();
         model.vpi_dynamic = dynamic;
         Ok(())
     }

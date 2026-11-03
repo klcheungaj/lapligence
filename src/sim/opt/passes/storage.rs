@@ -163,6 +163,7 @@ pub(super) fn mark_unused_storage(model: &mut IrModel, execution: Option<&[Execu
         vpi_objects,
         vpi_typespecs: _,
         vpi_scope_typedefs: _,
+        vpi_scope_imports: _,
         // Dynamic catalog objects name objects and containers, never signals.
         vpi_dynamic: _,
         vpi_code: _,

@@ -2228,6 +2228,24 @@ fn a19_d73_fixed_handle_array_elements() {
 }
 
 #[test]
+fn a19_d79_scope_imports() {
+    run_vpi_decision(
+        "A19-D79_scope_imports",
+        &["task $d79()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D79_scope_imports.out"),
+    );
+}
+
+#[test]
+fn a19_d80_class_event_arrays() {
+    run_vpi_decision(
+        "A19-D80_class_event_arrays",
+        &["task $d80()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D80_class_event_arrays.out"),
+    );
+}
+
+#[test]
 fn a19_d75_frame_origins() {
     run_vpi_decision(
         "A19-D75_frame_origins",

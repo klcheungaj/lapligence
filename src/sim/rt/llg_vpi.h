@@ -112,7 +112,15 @@ typedef struct {
      * scope declares (37.10 detail 1), in row order. */
     const uint32_t* scope_typedefs;
     uint32_t typedef_count;
+    /* import_count (catalog row, object) pairs: the package items name
+     * references reached through each scope's import declarations (37.12
+     * detail 4), in row order. An object is a catalog row, or a class
+     * layout index with LLG_VPI_IMPORT_CLASS set. */
+    const uint32_t* scope_imports;
+    uint32_t import_count;
 } llg_vpi_type_tables_t;
+
+#define LLG_VPI_IMPORT_CLASS 0x80000000u
 
 /* Expression and statement objects (IEEE 1800-2009 37.54-37.74) of a
  * model generated for VPI applications: one static row per object. The
@@ -375,6 +383,10 @@ typedef struct {
     uint32_t element;         /* container element shape */
     uint32_t typespec;        /* typespec index + 1 of a packed value; 0: none */
     uint8_t builtin;          /* LLG_VPI_BUILTIN_* of a built-in class handle */
+    /* The declared [left:right] of a named event array class property (type
+     * vpiNamedEventArray, a fixed-size container of events); 0 otherwise. */
+    int64_t left;
+    int64_t right;
 } llg_vpi_shape_t;
 
 typedef struct {
