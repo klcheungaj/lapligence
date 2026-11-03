@@ -5369,50 +5369,85 @@ int llg_vpi_model_packed(const llg_vpi_packed_t* packed) {
 static const char pack_alphabet[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-/* Reads the blob payload, stepping over the NUL that ends each row. */
+/* Digit value of each character, -1 outside the alphabet (pack_digits_init). */
+static signed char pack_digit[256];
+
+static void pack_digits_init(void) {
+    if (pack_digit[0] == -1) return;
+    memset(pack_digit, -1, sizeof(pack_digit));
+    for (int i = 0; i < 64; ++i) pack_digit[(unsigned char)pack_alphabet[i]] = (signed char)i;
+}
+
+/* Reads one stream of the payload in place: `at` runs to `stop`, the end of
+ * its blob row or of the stream, whichever comes first, and then steps over
+ * the row's NUL (pack_refill). */
 typedef struct {
-    const char* at;
-    size_t pos;
-    size_t end;
-    uint32_t column;
+    const char* chunks;
+    const unsigned char* at;
+    const unsigned char* stop;
+    size_t row;               /* blob row of `at` */
+    size_t row_start;         /* payload position of that row's first byte */
+    size_t end;               /* payload position the stream ends at */
     int bad;
-    signed char digit[256];
     const llg_vpi_packed_t* packed;
     uint32_t next_ref;
 } pack_reader_t;
 
+#define PACK_PAYLOAD (LLG_VPI_PACK_ROW - 1u)
+
+static void pack_limit(pack_reader_t* r) {
+    size_t row_end = r->row_start + PACK_PAYLOAD;
+    r->stop = (const unsigned char*)r->chunks + r->row * LLG_VPI_PACK_ROW +
+              ((r->end < row_end ? r->end : row_end) - r->row_start);
+}
+
 static void pack_seek(pack_reader_t* r, size_t pos, size_t end) {
-    r->at = r->packed->chunks + (pos / (LLG_VPI_PACK_ROW - 1u)) * LLG_VPI_PACK_ROW +
-            pos % (LLG_VPI_PACK_ROW - 1u);
-    r->column = (uint32_t)(pos % (LLG_VPI_PACK_ROW - 1u));
-    r->pos = pos;
+    r->row = pos / PACK_PAYLOAD;
+    r->row_start = r->row * PACK_PAYLOAD;
     r->end = end;
+    r->at = (const unsigned char*)r->chunks + r->row * LLG_VPI_PACK_ROW + (pos - r->row_start);
+    pack_limit(r);
 }
 
-static unsigned char pack_byte(pack_reader_t* r) {
-    if (r->pos >= r->end) {
-        r->bad = 1;
-        return 0;
-    }
-    unsigned char byte = (unsigned char)*r->at++;
-    ++r->pos;
-    if (++r->column == LLG_VPI_PACK_ROW - 1u) {
-        ++r->at;
-        r->column = 0;
-    }
-    return byte;
+/* Payload position of `at`. */
+static size_t pack_pos(const pack_reader_t* r) {
+    return r->row_start + (size_t)(r->at - ((const unsigned char*)r->chunks + r->row * LLG_VPI_PACK_ROW));
 }
 
-static uint64_t pack_uint(pack_reader_t* r) {
+/* Move to the next row once `at` reached the end of its row; 0 at the end
+ * of the stream. */
+static int pack_refill(pack_reader_t* r) {
+    if (r->at < r->stop) return 1;
+    if (pack_pos(r) >= r->end) return 0;
+    ++r->row;
+    r->row_start += PACK_PAYLOAD;
+    r->at = (const unsigned char*)r->chunks + r->row * LLG_VPI_PACK_ROW;
+    pack_limit(r);
+    return 1;
+}
+
+static uint64_t pack_uint_long(pack_reader_t* r) {
     uint64_t value = 0;
-    for (unsigned shift = 0; !r->bad; shift += 5u) {
-        int digit = r->digit[pack_byte(r)];
-        if (digit < 0 || shift >= 64u) break;
+    for (unsigned shift = 0; shift < 64u && pack_refill(r); shift += 5u) {
+        int digit = pack_digit[*r->at++];
+        if (digit < 0) break;
         value |= (uint64_t)(digit & 0x1f) << shift;
         if (!(digit & 0x20)) return value;
     }
     r->bad = 1;
     return 0;
+}
+
+/* Most values are one character: take that path inline. */
+static inline uint64_t pack_uint(pack_reader_t* r) {
+    if (r->at < r->stop) {
+        int digit = pack_digit[*r->at];
+        if (digit >= 0 && digit < 0x20) {
+            ++r->at;
+            return (uint64_t)digit;
+        }
+    }
+    return pack_uint_long(r);
 }
 
 static int64_t pack_int(pack_reader_t* r) {
@@ -5462,7 +5497,7 @@ static void* pack_ref(pack_reader_t* r) {
  * large. */
 static uint64_t pack_count(pack_reader_t* r) {
     uint64_t count = pack_uint(r);
-    if (count > r->end - r->pos) r->bad = 1;
+    if (count > r->end - pack_pos(r)) r->bad = 1;
     return r->bad ? 0u : count;
 }
 
@@ -5629,7 +5664,7 @@ static void pack_objects(pack_reader_t* r) {
 static void pack_code(pack_reader_t* r) {
     const llg_vpi_code_tables_t* tables = g_vpi.code;
     if (!tables || tables->nodes || !tables->node_count) {
-        if (r->pos != r->end) r->bad = 1;
+        if (pack_pos(r) != r->end) r->bad = 1;
         return;
     }
     g_vpi.pack_code = (llg_vpi_code_t*)calloc(tables->node_count, sizeof(llg_vpi_code_t));
@@ -5693,29 +5728,31 @@ static int catalog_unpack(void) {
         (packed->symbol_count && !packed->symbols) || (packed->ref_count && !packed->refs) ||
         !g_vpi.objects)
         return 0;
-    pack_reader_t* r = (pack_reader_t*)calloc(1, sizeof(*r));
+    pack_digits_init();
+    pack_reader_t reader;
+    memset(&reader, 0, sizeof(reader));
+    pack_reader_t* r = &reader;
+    r->chunks = packed->chunks;
+    r->packed = packed;
+    /* The pool is copied: the rows' names point into it and a string may
+     * run across a blob row. */
     const llg_vpi_code_tables_t* code = g_vpi.code;
     g_vpi.pack_pool = (char*)malloc((size_t)packed->pool_bytes + 1u);
-    if (!r || !g_vpi.pack_pool) {
-        free(r);
-        catalog_unpack_release();
-        return 0;
+    if (!g_vpi.pack_pool) return 0;
+    for (size_t at = 0, row = 0; at < packed->pool_bytes; at += PACK_PAYLOAD, ++row) {
+        size_t bytes = packed->pool_bytes - at < PACK_PAYLOAD ? packed->pool_bytes - at
+                                                              : (size_t)PACK_PAYLOAD;
+        memcpy(g_vpi.pack_pool + at, packed->chunks + row * LLG_VPI_PACK_ROW, bytes);
     }
-    r->packed = packed;
-    memset(r->digit, -1, sizeof(r->digit));
-    for (int i = 0; i < 64; ++i) r->digit[(unsigned char)pack_alphabet[i]] = (signed char)i;
-    pack_seek(r, 0, packed->pool_bytes);
-    for (uint32_t i = 0; i < packed->pool_bytes; ++i) g_vpi.pack_pool[i] = (char)pack_byte(r);
     g_vpi.pack_pool[packed->pool_bytes] = '\0';
     if (packed->pool_bytes && g_vpi.pack_pool[packed->pool_bytes - 1u] != '\0') r->bad = 1;
     pack_seek(r, packed->pool_bytes, (size_t)packed->pool_bytes + packed->object_bytes);
     if (!r->bad) pack_objects(r);
-    if (r->pos != r->end || r->next_ref != packed->ref_count) r->bad = 1;
+    if (pack_pos(r) != r->end || r->next_ref != packed->ref_count) r->bad = 1;
     pack_seek(r, (size_t)packed->pool_bytes + packed->object_bytes, (size_t)total);
     if (!r->bad) pack_code(r);
-    if (r->pos != r->end) r->bad = 1;
+    if (pack_pos(r) != r->end) r->bad = 1;
     int ok = !r->bad;
-    free(r);
     if (!ok) {
         g_vpi.code = code;
         catalog_unpack_release();
