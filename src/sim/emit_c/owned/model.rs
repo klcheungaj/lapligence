@@ -239,6 +239,16 @@ fn vpi_auto_access(function: &IrFunc, automatic: &IrVpiAutomatic) -> VpiAutoAcce
             if formal.is_ref() {
                 if packed {
                     VpiAutoAccess::Ref
+                } else if (formal.string || formal.real || formal.chandle)
+                    && formal.container.is_none()
+                    && formal.native_value.is_none()
+                    && formal.fixed_array.is_none()
+                    && formal.real_array.is_none()
+                {
+                    // A string, real or chandle `ref` is a pointer to its
+                    // actual's own cell, which the value shape reads and
+                    // writes directly.
+                    VpiAutoAccess::Cell
                 } else {
                     VpiAutoAccess::None
                 }

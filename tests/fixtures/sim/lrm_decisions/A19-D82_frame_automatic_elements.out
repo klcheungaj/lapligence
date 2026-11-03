@@ -1,0 +1,29 @@
+step 1
+  frame tb.t
+  rs size=3
+    value=str
+    put error=0
+  rr size=64
+    value=1.50
+    put error=0
+  ri size=2
+    value error=1
+  q size=2
+    q[0] tb.t.q[0] size=32 bin=00000000000000000000000001100100
+    q[1] tb.t.q[1] size=32 bin=11111111111111111111111100111000
+    by index 1:
+    q[1] tb.t.q[1] size=32 bin=11111111111111111111111100111000
+    put q[1] error=0
+  d size=3
+    d[0] tb.t.d[0] size=8 bin=00000101
+    d[1] tb.t.d[1] size=8 bin=xxxx0101
+    d[2] tb.t.d[2] size=8 bin=00000111
+    by index 1:
+    d[1] tb.t.d[1] size=8 bin=xxxx0101
+  aa size=2
+    aa["j"] tb.t.aa["j"] size=32 bin=00000000000000000000000000001000
+    aa["k"] tb.t.aa["k"] size=32 bin=00000000000000000000000000001001
+in task: q[1]=7 d[2]=7 rs=put rr=2.25 aa[j]=8
+after: s=put r=2.25 g=105
+step 2
+  held d[1] after its frame ended: error=1

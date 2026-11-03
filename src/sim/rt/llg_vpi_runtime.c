@@ -608,6 +608,117 @@ static vpiHandle rts_automatics(const llg_vpi_slot_t* frame_slot) {
     return rts_list(vpiAutomatics, list.items, list.count, list.failed);
 }
 
+/* The live frame with `serial` on any thread, with its thread (VPI queries
+ * only: a scan of the frame stacks). */
+static rts_frame_t* rts_frame_by_serial(uint64_t serial, int* thread_slot, uint64_t* identity) {
+    for (uint32_t i = 0; i < rts.stack_count; ++i) {
+        rts_stack_t* stack = &rts.stacks[i];
+        if (!stack->depth) continue;
+        rts_frame_t* frame = rts_frame_find((int)i - 1, stack->identity, serial, NULL);
+        if (frame) {
+            if (thread_slot) *thread_slot = (int)i - 1;
+            if (identity) *identity = stack->identity;
+            return frame;
+        }
+    }
+    return NULL;
+}
+
+/* The container automatic `index` of frame `serial` as a dynamic-layer
+ * place (its elements, decision A19-D82); 0 once the frame has ended or
+ * when the variable keeps no container. */
+static int rts_auto_container(uint64_t serial, uint32_t index, dyn_place_t* place) {
+    rts_frame_t* frame = rts_frame_by_serial(serial, NULL, NULL);
+    if (!frame || index >= rts_auto_count(frame)) return 0;
+    const llg_vpi_auto_t* entry = &rts_auto_table(frame)[index];
+    const llg_vpi_shape_t* shape = entry->shape ? dyn_shape(entry->shape - 1u) : NULL;
+    void* storage = (entry->flags & LLG_VPI_AUTO_NO_VALUE)
+                        ? NULL
+                        : frame->slots[LLG_VPI_AUTOS_FIRST + index];
+    if (!shape || shape->shape != LLG_VPI_SHAPE_CONTAINER || !storage) return 0;
+    place->shape = shape;
+    place->storage = storage;
+    place->row = DYN_AUTO_ROW;
+    place->name = entry->name;
+    place->serial = (int64_t)serial;
+    return 1;
+}
+
+static const char* rts_auto_frame_name(uint64_t serial) {
+    rts_frame_t* frame = rts_frame_by_serial(serial, NULL, NULL);
+    if (!frame) vpi_error("LLG_VPI_HANDLE", "the frame of this element has ended");
+    return frame ? frame->name : NULL;
+}
+
+/* The automatic-variable handle of entry `index` of frame `serial`. */
+static vpiHandle rts_auto_handle_by_serial(uint64_t serial, uint32_t index) {
+    int thread_slot = 0;
+    uint64_t identity = 0;
+    if (!rts_frame_by_serial(serial, &thread_slot, &identity)) {
+        vpi_error("LLG_VPI_HANDLE", "the frame of this element has ended");
+        return NULL;
+    }
+    vpiHandle handle = rts_make(SLOT_AUTO, (uint32_t)thread_slot, (int64_t)identity);
+    llg_vpi_slot_t* entry = handle ? decode_handle(handle, NULL) : NULL;
+    if (entry) {
+        entry->element = serial;
+        entry->right = (int64_t)index;
+    }
+    return handle;
+}
+
+/* The container place of an automatic-variable handle, else an error. */
+static int rts_auto_elements(const llg_vpi_slot_t* slot, dyn_place_t* place) {
+    memset(place, 0, sizeof(*place));
+    if (slot->right >= 0 && rts_auto_container(slot->element, (uint32_t)slot->right, place))
+        return 1;
+    rts_frame_t* frame = NULL;
+    const llg_vpi_auto_t* entry = rts_auto(slot, &frame);
+    vpi_error("LLG_VPI_RELATION",
+              entry && entry->type == vpiArrayVar
+                  ? (entry->flags & LLG_VPI_AUTO_LOCAL) && entry->shape &&
+                            !(entry->flags & LLG_VPI_AUTO_NO_VALUE)
+                        ? "this automatic variable is not declared yet in its frame"
+                        : "llg serves no elements of a fixed-size automatic array or of an "
+                          "array passed by reference"
+                  : "this object has no elements");
+    return 0;
+}
+
+/* vpi_iterate(vpiReg / vpiVarSelect ...) of a dynamic array, queue or
+ * associative array automatic: its elements (37.17 detail 4). */
+static vpiHandle rts_auto_iterate(int type, const llg_vpi_slot_t* slot) {
+    dyn_place_t place;
+    if (!rts_auto_elements(slot, &place)) return NULL;
+    const llg_vpi_shape_t* element = dyn_shape(place.shape->element);
+    if (!element || !dyn_element_type_matches(element, type)) {
+        vpi_error("LLG_VPI_RELATION", "this object has no such iteration");
+        return NULL;
+    }
+    if (place.shape->key == LLG_VPI_KEY_OTHER) {
+        vpi_error("LLG_VPI_UNSUPPORTED", "llg does not iterate associative arrays with a wildcard index");
+        return NULL;
+    }
+    size_t size = dyn_container_size(&place);
+    if (size > UINT32_MAX) size = UINT32_MAX;
+    vpiHandle iterator = dyn_iterator(DYN_ITER_ELEMENTS, (uint32_t)size);
+    llg_vpi_slot_t* state = iterator ? decode_handle(iterator, NULL) : NULL;
+    if (!state) return NULL;
+    state->object = DYN_AUTO_ROW;
+    state->right = place.serial;
+    state->pointer = NULL;
+    state->lsb = (uint32_t)slot->right;
+    return iterator;
+}
+
+/* vpi_handle_by_index of a container automatic: the element at `index`. */
+static vpiHandle rts_auto_by_index(const llg_vpi_slot_t* slot, PLI_INT32 index) {
+    if (!rts_alive(slot)) return NULL;
+    dyn_place_t place;
+    if (!rts_auto_elements(slot, &place)) return NULL;
+    return dyn_element_by_index(&place, (uint32_t)slot->right, index, 0);
+}
+
 /* The place of an automatic variable (37.39 detail 1): its value shape and
  * its storage in the activation. The storage is NULL for a variable listed
  * without a value and for a body local whose declaration has not run; a
@@ -717,6 +828,10 @@ static PLI_INT64 rts_auto_get(int property, const llg_vpi_slot_t* slot) {
         case vpiSize:
             if (!shape) {
                 if (entry->type == vpiArrayVar) return entry->size;
+                /* 37.17 detail 9: an unpacked structure or union reports
+                 * its number of fields, as a static one does. */
+                const llg_vpi_typespec_t* typespec = typespec_ref(entry->typespec);
+                if (is_aggregate_typespec(typespec)) return typespec->member_count;
                 break;
             }
             if (shape->shape == LLG_VPI_SHAPE_CONTAINER || shape->shape == LLG_VPI_SHAPE_STRING) {
@@ -1490,6 +1605,7 @@ static vpiHandle rts_iterate(int type, vpiHandle reference, int* handled) {
         if (slot->kind == SLOT_THREAD && type == vpiThread)
             return rts_thread_list(slot->aux, (uint64_t)slot->left);
         if (slot->kind == SLOT_FRAME && type == vpiAutomatics) return rts_automatics(slot);
+        if (slot->kind == SLOT_AUTO) return rts_auto_iterate(type, slot);
         vpi_error("LLG_VPI_RELATION", "this object has no such iteration");
         return NULL;
     }

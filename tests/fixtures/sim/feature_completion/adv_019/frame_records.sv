@@ -1,7 +1,7 @@
 // ADV-019 frame automatics of structure type (decision A19-D76). A packed
 // structure formal or local is listed with its value; an unpacked structure
-// is a record value with no cell the frame can name, so it is listed as a
-// vpiStructVar without a size or value. Neither breaks a model built with
+// is listed as a vpiStructVar whose size is its number of fields and which
+// has no value (37.17 details 9 and 11). Neither breaks a model built with
 // or without the VPI catalog.
 module tb;
   typedef struct { int a; logic [99:0] w; string s; } rec_t;

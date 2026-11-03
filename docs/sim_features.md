@@ -2566,7 +2566,10 @@ SV §§16.9.3–16.9.4, 20.13 **[SV-2005]**.
   processes, structure net members, switch values, class object names and
   specparam expressions: A19-D62..D66; after the ADV-019 closure only
   `vpi_put_value` to a sequential UDP stays unsupported; a frame's
-  `vpiOrigin` and `vpiAutomatics` are served, decisions A19-D75..D78; a
+  `vpiOrigin` and `vpiAutomatics` are served, decisions A19-D75..D78, with the
+  elements of dynamic, queue and associative array automatics, the values of
+  string and real `ref` formals and the field count of unpacked structures,
+  A19-D82; a
   scope's `vpiImport`, decision A19-D79, and the event array properties of
   class definitions and objects, decision A19-D80). A generated
   object catalog and the common VPI routines (SIM-042): `vpi_handle_by_name` (full names from the top, names
