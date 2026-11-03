@@ -1937,8 +1937,8 @@ differ (decisions A21-D1..A21-D5 in [LRM decisions](lrm_decisions.md)).
 - The copy resolves each side separately, which differs from a simulated
   net. `tests/fixtures/sim/port_collapse/fallbacks.sv` prints
   `delay: dl=1 u3.n=x` for a child driving its delayed input net.
-- A selected port whose copy is exact (A21-D5) keeps it by design: it shows
-  each change one update after the source.
+- A port that selects part of a vector net and whose copy is exact (A21-D5)
+  keeps it by design: it shows each change one update after the source.
 
 ### Cause
 

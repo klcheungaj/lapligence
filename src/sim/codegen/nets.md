@@ -11,7 +11,8 @@ before the type plan (`nets/port_merges.rs`, A21-D4): it is a port edge of
 already gives), the port is no structural driver site, and it emits no link.
 A port whose actual is a constant select, net-array element or concatenation
 of nets joins the bit-level union instead, bit by bit, when a copy would
-differ (A21-D5: a driver census over the selected bits decides); a whole port
+differ (A21-D5: a driver census over the selected bits decides) or when it
+selects whole nets and net-array cells (no actual net splits); a whole port
 touching a net of the bit-level union merges too, since a storage alias
 cannot name it. `net_cells.rs` connects the cells such a port always merges
 with (`input_merge_cells`), and merged ports are no partition or net-array

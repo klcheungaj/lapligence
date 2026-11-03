@@ -105,8 +105,9 @@ modes.
   resolve to x under both names.
 - `output concatenation: g=1 h=0 u12.o=10`: the child's `2'b10` splits MSB to
   MSB.
-- `output element: w2=St1 u13.o=1`: the child drives net-array cell `w[2]`
-  (an exact copy).
+- `output element: w2=St1 u13.o=1`: the child drives net-array cell `w[2]`;
+  the port selects the whole cell, so it merges although a copy would be
+  exact.
 - `chain: v=1xx1 u14.m=x u14.g.n=x`: the whole port of `mid` into `coerced`
   joins the merged bit, so the grandchild's 0 reaches `v[2]`.
 - `forced formal: f=1101 u15.m=0 u15.k=0`: a force of the formal overrides

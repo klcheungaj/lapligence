@@ -20,11 +20,12 @@
 //! element (or a constant select of one) or a concatenation of those merges
 //! bit by bit (A21-D5): no storage alias can name part of a net, so its
 //! formal joins the bit-level union that selected inout actuals use, MSB to
-//! MSB, when a copy would show something else (`selected_merge_differs`: a
+//! MSB, when a copy would show something else (`selected_port_merges`: a
 //! sink driver besides the port, a type that could dominate, a source
-//! driver that is not strong, a force of the sink). An exact copy stays: a
-//! bit-level group per selected bit makes every wide driver of the actual
-//! project its value bit by bit, far dearer than one copy process. A merged
+//! driver that is not strong, a force of the sink) or when the actual
+//! selects whole nets and net-array cells only. Any other exact copy stays:
+//! a bit-level group per selected bit makes every wide driver of the actual
+//! contribute to each bit's group, dearer than one copy process. A merged
 //! net carries bit-level bindings (`IrSignal::net_alias`), which a storage
 //! alias cannot share, so a whole port with such a net on either side
 //! merges into it too instead of keeping its link.
@@ -138,14 +139,9 @@ impl Codegen<'_> {
         let census = self.driver_census(context.nodes, &candidates);
         let merged = Self::propagate_merges(&candidates, context, |candidate| {
             match &candidate.connection {
-                MergeConnection::Selected { output, bits, nets } => self.selected_merge_differs(
-                    candidate.port,
-                    *output,
-                    bits,
-                    nets,
-                    context,
-                    &census,
-                ),
+                MergeConnection::Selected { output, bits, nets } => {
+                    self.selected_port_merges(candidate.port, *output, bits, nets, context, &census)
+                }
                 MergeConnection::Whole { sink, .. } => {
                     context.parent.contains_key(sink)
                         || self.sink_differs_from_source(*sink, candidate.port, context)
@@ -684,17 +680,20 @@ impl Codegen<'_> {
         census
     }
 
-    /// Whether merging a selected port changes what either side shows, so
-    /// the copy would differ from one simulated net: a net of either side is
-    /// not a `wire`/`tri`/`logic` net (its type could dominate, 23.3.3.7), the
+    /// Whether a selected port merges (A21-D5). It must when the copy would
+    /// differ from one simulated net: a net of either side is not a
+    /// `wire`/`tri`/`logic` net (its type could dominate, 23.3.3.7), the
     /// sink has a driver besides the port (the formal of an input; for an
     /// output, a selected bit), the source has a driver that is not strong
-    /// (a copy drives the sink strong), or a force or release names the
-    /// sink (on one simulated net it forces both sides, 10.6.2). Otherwise the copy is exact
-    /// up to its update step and stays: a bit-level group per selected bit
-    /// projects every wide driver of the actual net bit by bit, which costs
-    /// far more than the copy (A21-D5 trade-off).
-    fn selected_merge_differs(
+    /// (a copy drives the sink strong), or a force or release names the sink
+    /// (on one simulated net it forces both sides, 10.6.2). Otherwise the
+    /// copy is exact up to its update step, and the port merges only when
+    /// that is cheaper: when the actual selects whole nets and whole
+    /// net-array cells, so no actual net is split into groups of its own.
+    /// Splitting a vector gives every selected bit a group of its own, and
+    /// every wide driver of the vector then contributes to each of them,
+    /// which costs more than the copy (A21-D5 trade-off).
+    fn selected_port_merges(
         &self,
         port: NodeId,
         output: bool,
@@ -737,7 +736,7 @@ impl Codegen<'_> {
         else {
             return true;
         };
-        if output {
+        let differs = if output {
             formal_sources
                 .iter()
                 .any(|(_, strengths)| *strengths != (6, 6))
@@ -747,7 +746,32 @@ impl Codegen<'_> {
                 || bits
                     .iter()
                     .any(|(actual, _)| census.exceeds(*actual, u32::MAX))
+        };
+        differs || self.selects_whole_owners(bits)
+    }
+
+    /// Whether the actual bits are whole nets and whole net-array cells,
+    /// each bit once.
+    fn selects_whole_owners(&self, bits: &[(AliasBit, AliasBit)]) -> bool {
+        let mut seen = HashSet::new();
+        let mut counts: HashMap<(NodeId, Option<u64>), u32> = HashMap::new();
+        for (actual, _) in bits {
+            if !seen.insert(*actual) {
+                return false;
+            }
+            let key = match actual {
+                AliasBit::Net { net, .. } => (*net, None),
+                AliasBit::Array { owner, element, .. } => (*owner, Some(*element)),
+            };
+            *counts.entry(key).or_default() += 1;
         }
+        counts.into_iter().all(|((owner, element), count)| {
+            let width = match element {
+                None => self.signal_of(owner).map(|signal| signal.width),
+                Some(_) => self.array_globals.get(&owner).map(|info| info.elem_width),
+            };
+            width == Some(count)
+        })
     }
 
     /// Whether the merged net would differ from the sink's source: the sink

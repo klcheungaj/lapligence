@@ -249,8 +249,9 @@ endmodule
 /// A port whose actual is a constant select of nets, a net-array element or
 /// a concatenation of those merges bit by bit where its sink has drivers of
 /// its own, a net on either side has a type of its own, the source drives
-/// with a strength or a force names the sink (A21-D5); so does a whole port
-/// below a merged formal. Other selected ports keep the cheaper copy.
+/// with a strength or a force names the sink (A21-D5), or it selects whole
+/// nets and net-array cells only; so does a whole port below a merged
+/// formal. Other selected ports keep the cheaper copy.
 #[test]
 fn selected_net_ports_merge_bit_by_bit() {
     let child = |formal: &str, body: &str, actual: &str, connection: &str| {
@@ -377,6 +378,31 @@ endmodule
         let model = child(formal, body, actual, connection);
         assert_eq!(links(&model), 0, "{label}: {model}");
     }
+    // An exact copy of whole nets or whole net-array cells merges too: no
+    // actual net splits into groups of its own.
+    for (formal, actual, connection, label) in [
+        (
+            "input wire a",
+            "wire w [0:3]; assign w[2] = y;",
+            ".a(w[2])",
+            "net-array element",
+        ),
+        (
+            "input wire [1:0] a",
+            "wire p = y; wire q = y;",
+            ".a({p, q})",
+            "concatenation of whole nets",
+        ),
+        (
+            "output wire [3:0] a",
+            "wire [3:0] w [0:1];",
+            ".a(w[1])",
+            "output net-array element",
+        ),
+    ] {
+        let model = child(formal, "", actual, connection);
+        assert_eq!(links(&model), 0, "whole {label}: {model}");
+    }
     for (formal, actual, connection, label) in [
         (
             "input wire a",
@@ -392,15 +418,15 @@ endmodule
         ),
         (
             "input wire a",
-            "wire w [0:3]; assign w[2] = y;",
-            ".a(w[2])",
-            "net-array element",
+            "wire [1:0] w [0:3]; assign w[2] = {2{y}};",
+            ".a(w[2][0])",
+            "bit of a net-array element",
         ),
         (
             "input wire [1:0] a",
-            "wire p = y; wire q = y;",
-            ".a({p, q})",
-            "concatenation",
+            "wire p = y; wire [1:0] q = {2{y}};",
+            ".a({p, q[0]})",
+            "concatenation with a bit select",
         ),
         (
             "output wire a",
