@@ -63,8 +63,11 @@ static PLI_INT32 calltf(PLI_BYTE8* user_data) {
     delay.type = vpiSimTime;
     delay.low = 1;
     vpiHandle event = vpi_put_value(last, &write, &delay, vpiInertialDelay);
+    /* Each status is sampled before the next VPI call: argument evaluation
+     * order is unspecified and vpi_get_str resets the status. */
+    int error = failed();
     vpi_printf("  delayed put to %s: %s (error %d)\n", vpi_get_str(vpiName, last),
-               event ? "event" : "NULL", failed());
+               event ? "event" : "NULL", error);
     s_cb_data watch;
     s_vpi_time watch_time;
     s_vpi_value watch_value;
@@ -82,7 +85,8 @@ static PLI_INT32 calltf(PLI_BYTE8* user_data) {
     vpi_printf("  value change callback: %s (error %d)\n", watching ? "ok" : "NULL", failed());
     write.value.integer = 78;
     vpi_put_value(last, &write, NULL, vpiNoDelay);
-    vpi_printf("  put %s=78 (error %d):", vpi_get_str(vpiName, last), failed());
+    error = failed();
+    vpi_printf("  put %s=78 (error %d):", vpi_get_str(vpiName, last), error);
     print_automatics(frame);
     return 0;
 }
