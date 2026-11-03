@@ -50,7 +50,8 @@ impl EmitCtx<'_, '_> {
                 | NodeKind::FuncCall { .. }
                 | NodeKind::MethodCall { .. }
                 | NodeKind::Expr(ExprKind::Operation { .. })
-        ) && self.cg.staged_element_members.is_empty();
+        ) && self.cg.staged_element_members.is_empty()
+            && self.cg.staged_nested_elements.is_empty();
         let staged = if staging {
             Some(self.cg.stage_element_members(&self.path, h))
         } else {

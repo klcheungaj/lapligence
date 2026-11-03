@@ -974,7 +974,7 @@ impl IrValueItemRoot {
                     indices: indices.clone(),
                     key: key.as_deref().cloned(),
                 }
-                .element(storage, true, None, model)
+                .located_element(storage, None, model)
             }
             Self::Element(_) => Err(IrValidationError::new(
                 "container value",
@@ -1048,6 +1048,52 @@ impl IrValueSlot {
         string_return: Option<bool>,
         model: &super::IrModel,
     ) -> Result<&'a IrContainerElement, IrValidationError> {
+        let element = self.slot_element(container, write, string_return, model)?;
+        if !matches!(
+            element,
+            IrContainerElement::Aggregate { .. } | IrContainerElement::FixedArray { .. }
+        ) {
+            return Err(IrValidationError::new(
+                "container value",
+                "whole-value transfers apply to record and fixed-array elements",
+            ));
+        }
+        Ok(element)
+    }
+
+    /// Validate an element slot that an element locator addresses: a record
+    /// or fixed-array element, or a queue or dynamic array nested in an
+    /// element, which a statement stages whole (`qq[i].push_back(x)`).
+    pub(in crate::sim) fn located_element<'a>(
+        &self,
+        container: &'a IrContainer,
+        string_return: Option<bool>,
+        model: &super::IrModel,
+    ) -> Result<&'a IrContainerElement, IrValidationError> {
+        let element = self.slot_element(container, true, string_return, model)?;
+        match element {
+            IrContainerElement::Aggregate { .. } | IrContainerElement::FixedArray { .. } => {
+                Ok(element)
+            }
+            IrContainerElement::Container { kind, .. }
+                if !kind.to_ascii_lowercase().contains("assoc") =>
+            {
+                Ok(element)
+            }
+            _ => Err(IrValidationError::new(
+                "container value",
+                "element locators apply to record, fixed-array and nested queue or dynamic-array elements",
+            )),
+        }
+    }
+
+    fn slot_element<'a>(
+        &self,
+        container: &'a IrContainer,
+        write: bool,
+        string_return: Option<bool>,
+        model: &super::IrModel,
+    ) -> Result<&'a IrContainerElement, IrValidationError> {
         let queue = matches!(container.kind, IrContainerKind::Queue { .. });
         let string_keyed = matches!(
             container.kind,
@@ -1093,19 +1139,9 @@ impl IrValueSlot {
                 ))
             }
         };
-        let element = nested_element(container, depth).ok_or_else(|| {
+        nested_element(container, depth).ok_or_else(|| {
             IrValidationError::new("container value", "slot crosses a non-container element")
-        })?;
-        if !matches!(
-            element,
-            IrContainerElement::Aggregate { .. } | IrContainerElement::FixedArray { .. }
-        ) {
-            return Err(IrValidationError::new(
-                "container value",
-                "whole-value transfers apply to record and fixed-array elements",
-            ));
-        }
-        Ok(element)
+        })
     }
 }
 
@@ -1762,10 +1798,10 @@ impl IrContainerStmt {
                 }
                 match item {
                     // An empty path names a whole native value of container
-                    // type, such as a mailbox message (SIM-017).
+                    // type, such as a mailbox message (SIM-017), or a whole
+                    // nested container element staged by a statement.
                     Some(IrContainerElement::Container { element, .. })
-                        if (!items.is_empty() || matches!(root, IrValueItemRoot::Value(_)))
-                            && !matches!(container.kind, IrContainerKind::Associative { .. })
+                        if !matches!(container.kind, IrContainerKind::Associative { .. })
                             && element.compatible_with(&container.element)
                             && container.element.compatible_with(element) =>
                     {

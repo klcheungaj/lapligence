@@ -644,11 +644,15 @@ container-result call used other than as a whole assignment source or a
 statement (`f()[i]`, `f().size()`); a container argument in expression
 position that is neither a variable of the formal's type nor a packed/real
 assignment pattern; event controls and monitors on subroutine or object
-containers; mutating methods of a nested container element (`q[i].push_back`;
-`q[i].size()` and `$size(q[i])` work), and other methods of a nested element
-(`q[i].sum()`, `q[i].find(...)`); a whole nested element read into a
-container (`row = q[i]`); a nested element written from an associative
-variable; `foreach` with an omitted slot over a container of containers;
+containers; methods of a nested container element outside assignment, call
+and system-task statements (`if (q[i].pop_front())`, `return q[i].sum()`;
+inside those statements the element is staged whole, and `q[i].size()` and
+`$size(q[i])` work everywhere); a nested element passed whole as a subroutine
+argument (`f(q[i])`); a select into a queue or dynamic array nested in a
+string-keyed associative array element (`sq["k"][1]`); one statement that
+changes two nested elements of one container
+(`sq["b"].push_back(sq["a"].pop_front())`); a nested element written from an
+associative variable; `foreach` with an omitted slot over a container of containers;
 `foreach` with several loop variables whose outer dimension is associative
 (`foreach (ad[k, j])` over `int ad[int][]`); any element access of an
 associative array nested in a queue, dynamic or associative array element
@@ -668,8 +672,11 @@ that re-reads the handle at each use (SIM-011); a handle computed by an
 element select or a call, a nested element and a call result have no binding
 the operation can name without an addressed-container operand; references
 need retained element cells and fork branches need capture pins. Nested
-storage is a dynamic-array value, so queue methods on it would need dynamic
-array forms of every queue mutation.
+storage is a dynamic-array value, so a statement stages a nested element it
+uses whole in a lexical queue or dynamic array and writes it back afterwards;
+each staged element costs a copy in and, when changed, a copy out, and
+statements without a statement-level staging point (conditions, `return`)
+have no place for that copy.
 
 ### Intended direction
 

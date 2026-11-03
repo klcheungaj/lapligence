@@ -44,6 +44,13 @@ fn nested_containers_copy_patterns_and_concatenations() {
 }
 
 #[test]
+fn nested_element_methods_and_whole_uses_stage_the_element() {
+    let expected =
+        include_str!("../fixtures/sim/feature_completion/sim_006/nested_element_methods.out");
+    sim_cli::run_case_backend_parity(SUITE, "nested_element_methods", expected, &[], &[]);
+}
+
+#[test]
 fn record_elements_copy_resize_delete_and_pop() {
     let expected = include_str!("../fixtures/sim/feature_completion/sim_006/record_elements.out");
     sim_cli::run_case_backend_parity(SUITE, "record_elements", expected, &[], &[]);
@@ -185,7 +192,17 @@ fn unsupported_container_boundaries_are_explicit() {
     sim_cli::reject_case(
         SUITE,
         "neg_nested_element_method",
-        "method `push_back` of a nested container element in `tb` is not supported",
+        "method `pop_front` of a nested container element in `tb` is not supported; only `size()` is",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_string_nested_select",
+        "elements of a queue or dynamic array nested in string-keyed associative array `sq` in `tb` are not supported",
+    );
+    sim_cli::reject_case(
+        SUITE,
+        "neg_nested_two_changes",
+        "a statement in `tb` changes two nested container elements of one container",
     );
     sim_cli::reject_case(
         SUITE,

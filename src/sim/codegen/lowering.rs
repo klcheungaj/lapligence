@@ -1704,6 +1704,13 @@ struct Codegen<'a> {
     /// suffix → the lexical container staging each
     /// (`stage_element_members`).
     staged_element_members: HashMap<(NodeId, String), usize>,
+    /// Nested container elements (`qq[i]`, `sq[k]`) named by the statement
+    /// being lowered, by select node → the lexical container staging each
+    /// (`stage_element_members`).
+    staged_nested_elements: HashMap<NodeId, usize>,
+    /// Staging container of a nested element → the nested container type,
+    /// which no declaration names.
+    staged_container_types: HashMap<usize, TypeDescriptor>,
     /// Temporary container → container whose declaration types it.
     container_types_like: HashMap<usize, usize>,
     /// Member reads of native tagged unions being lowered without their tag
@@ -2288,6 +2295,8 @@ impl<'a> Codegen<'a> {
             container_call_prelude: None,
             mailbox_statement_prelude: None,
             staged_element_members: HashMap::new(),
+            staged_nested_elements: HashMap::new(),
+            staged_container_types: HashMap::new(),
             container_types_like: HashMap::new(),
             native_tagged_bypass: HashSet::new(),
             native_value_layouts: HashMap::new(),
