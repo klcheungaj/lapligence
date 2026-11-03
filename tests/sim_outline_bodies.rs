@@ -158,10 +158,12 @@ fn vpi_frames_see_calls_made_from_outlined_runs() {
             .arg(&path)
             .output()
             .expect("run llg");
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stdout = String::from_utf8_lossy(&crate::sim_harness::host_text_to_lf(output.stdout))
+            .into_owned();
         assert!(
             output.status.success() && stdout == expected,
-            "optimized={optimized}\n{stdout}\n{}",
+            "optimized={optimized} status={:?}\n{stdout}\n{}",
+            output.status,
             String::from_utf8_lossy(&output.stderr)
         );
         let model_c = std::fs::read_to_string(work.join("build/sim/tb/model.c")).expect("model C");
