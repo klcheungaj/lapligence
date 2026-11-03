@@ -1036,6 +1036,21 @@ void llg_net_write_driven(llg_net_t* net, int idx, sv4_t value) {
     llg_net_write_covering(net, idx, value, 0, 0);
 }
 
+static void llg_net_write_slice(llg_net_t* net, int idx, sv4_t selected,
+                                uint32_t new_low);
+
+void llg_net_write_driven_part(llg_net_t* net, int idx, sv4_t value, uint32_t lsb) {
+    if (!net || !region_can_mutate("net write")) return;
+    uint32_t width = llg_sv4_width(value);
+    if (idx < 0 || idx >= net->n_drivers || !net->drivers[idx] || !width ||
+        lsb > net->width || width > net->width - lsb) {
+        fputs("llg: fatal: invalid net start part\n", stderr);
+        abort();
+    }
+    if (net->start_pending) llg_net_pending_mark(net, lsb, width, 0);
+    llg_net_write_slice(net, idx, value, lsb);
+}
+
 // A whole-slot write whose driver drives [cover_low, cover_low + cover_count)
 // of the net (the whole net except for a port alias).
 static void llg_net_write_covering(llg_net_t* net, int idx, sv4_t value,

@@ -771,6 +771,10 @@ void llg_net_write(llg_net_t* net, int idx, sv4_t value);
  * leave Z: a startup fill of a collapsed-net member or a delayed driver's
  * start value. Other drivers' bits keep their start X (T0-D3). */
 void llg_net_write_driven(llg_net_t* net, int idx, sv4_t value);
+/* The same start for a driver of bits [lsb, lsb + width of value) only (a
+ * narrow delayed contribution to a wider shared group): every bit of `value`
+ * is driven, and the slot's other bits stay Z. */
+void llg_net_write_driven_part(llg_net_t* net, int idx, sv4_t value, uint32_t lsb);
 // Selected writes replace the driver's previous range, so a moving selector
 // releases its old contribution to Z. `value` has plan.width bits; reverse is
 // true for ascending ordinary part-selects.

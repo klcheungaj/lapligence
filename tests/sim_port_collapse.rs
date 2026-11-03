@@ -93,6 +93,10 @@ endmodule
     assert_eq!(nets, 2, "q and l are one net each");
     assert!(model.contains("llg_inertial_part_net("));
     assert!(!model.contains("llg_inertial_selected_net("));
+    // Each delayed driver also starts X on its own bit, without a
+    // vector-wide start constant.
+    assert!(model.contains("llg_net_write_driven_part("));
+    assert!(!model.contains("llg_net_write_driven("));
 }
 
 #[test]
