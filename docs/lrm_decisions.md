@@ -471,10 +471,11 @@ V2001 7.6). The fixtures and the derivation of every expected value are in
 | A5-D4 | **A `tranif` delay delays the switch state.** The state follows the control as an inertial copy: the turn-on delay to on, the turn-off delay to off, the smaller delay to unknown (x or z); a newer control change replaces a pending one. A delayed switch is unknown until its first delay elapses (S2-D4). Signals through the switch are never delayed. | 28.8 L47365, L47380-47384 | `A5-D4_tranif_delay_state` | LRM text for the delays; the initial unknown state and inertial replacement are industry-standard behaviour |
 | A5-D5 | **A net delay on a switch node delays only its own value.** The network is solved from the node's drivers, so the nodes beyond it change at once and the delayed net shows its value after its delay. | 10.3.3 L12911-12912; 28.8 L47365 | `A5-D5_member_net_delay` | industry-standard behaviour (the text does not combine net delays and switches) |
 | A5-D6 | **`tran*` reduces supply to strong whatever the driver's other strength.** Every other strength passes unchanged; `rtran*` reduces by Table 28-8. | 28.13 L48297-48298; 28.14 L48301-48325 | `A5-D6_tran_supply_reduction` | LRM text. Some simulators pass a supply strength through a `tran` unchanged when only one of the driver's two strengths is supply; llg follows 28.13, which reduces every supply strength |
+| A5-D7 | **Wired nets in switch networks.** Nets that `tran` or `rtran` join collapse into one net of the wired type when one of them is a wand/triand (or wor/trior) net: every member, a plain wire included, resolves its drivers and what arrives through the switches with the wired function (equal strengths give 0, or 1). A net reached only through `tranif*`/`rtranif*` resolves its drivers and arrivals with its own type. | 28.12.4 L48170-48171; 23.3.3.7 L41596-41597 | `A5-D7_wired_nets_in_switch_networks` | industry-standard behaviour (the text does not say how a wired net resolves across a switch; llg treats an uncontrolled switch like the port collapsing of Table 23-1). Some simulators resolve a plain wire joined by `tran` to a wand with the wire rule in some designs; llg applies one rule |
 
-Rejected with a located error: wired-logic nets (`wand`, `wor`, `triand`,
-`trior`) in a switch network (some simulators merge the wired type across
-`tran` connections only, a rule the text does not state), a terminal wider than
+Rejected with a located error: a switch network that joins wired-AND and
+wired-OR nets, or a wired net and a `tri0`, `tri1`, `supply0` or `supply1`
+net (simulators combine those types differently), a terminal wider than
 one bit or than one bit per array element (28.8, 28.3.6), and SDF annotation of
 a switch. MOS, CMOS and resistive MOS switches stay unsupported by design.
 

@@ -107,6 +107,32 @@ then 1-side for x; strongest then weakest for one value) for a range (V
   (Su, St, Pu, We, Me, Sm, Sm); a strong 1 against a supply0 net through a
   tran gives StX (the supply arrives as strong) and St0 once the strong
   driver turns off; tri0, tri1 and pullup sources (pull).
+- `wired` (FIN-001 F08-11, decision A5-D7): wired nets as switch terminals.
+  SV 28.12.4 L48170-48171: "The net types triand, wand, trior, and wor shall
+  resolve conflicts when multiple drivers have the same strength. These net
+  types shall resolve signal values by treating signals as inputs of logic
+  functions." SV 23.3.3.7 L41596-41597: "It is permissible to merge the
+  dominating and dominated nets into a single net, whose type shall be that
+  of the dominating net." Nets that `tran`/`rtran` join collapse into one net
+  of the wired type; a net reached through `tranif*`/`rtranif*` resolves its
+  own drivers and arrivals with its own type. Time 1: the wand `w` (St1, St0)
+  is St0 and passes St0 to `a` through the on `tranif1`; the wor `o` (St0,
+  St1) and `b` are St1; the triand `ta` (We1, We0) and `ab` are We0; the
+  trior `tr` (Pu0, Pu1) is Pu1 and `tw` We1 through the `rtran`; the wand
+  vector ANDs to `1000`, and bit 0 of `av` (its own St1 against the wand's
+  St0, a plain net) is x; the wand `u1` (St1) through a `tranif1` with an
+  unknown control to `u2` (St0) gives StX and St0 (A5-D1); the wor `ww` (We1)
+  against the strong `wa` (St0) through `rtran` is Pu0 (Table 28-8) and `wa`
+  St0. Time 2: `a` is HiZ once the `tranif1` is off; `b`'s St0 loses to the
+  wor's St1; `ab`'s St1 beats the triand's We0; `av` returns to `zz01` with
+  the switches off; `u1` and `u2` both St0 through the on switch (wired AND);
+  `ww` We1 drives `wa` Me1. Time 3: `w` has no driver left (HiZ at both ends); `o` still St1; `ta` and
+  `ab` follow the strong `h` = 0; `tr` and `tw` are HiZ; `av` bit 0 is x
+  again with the switches on; `u1` (St1) and `u2` (St0) are apart with the
+  switch off; `ww` WeX reaches `wa` as MeX. Time 4: `w` and `a` take `d2`'s
+  St0; `o`'s x and 0 lose to `b`'s St1. Times 5-6: a forced `w` (St1) passes to `a`;
+  after release `w` is the AND of St1 and St0. Matches industry-standard
+  behaviour in both optimizer modes and both editions.
 - `blocking` (A5-D2): Su1 and St0 at one node pass St1 through a tran and Pu1
   through an rtran; Su1 and St0 at the source of an rtran give Pu1 and the
   pull 0 on the far node loses.
@@ -152,8 +178,10 @@ then 1-side for x; strongest then weakest for one value) for a range (V
 ## Negative cases
 
 - `neg_mos`: MOS switches stay unsupported by design (located `unsupported:`).
-- `neg_wired`: a `wand` node in a switch network is rejected with its
-  location.
+- `neg_wired`: a switch network joining a `wand` and a `wor` net rejects
+  with the first switch's location; `neg_wired_supply`: one joining a `wor`
+  and a `supply1` net likewise (simulators combine those net types
+  differently).
 - `neg_wide_terminal`: a 2-bit terminal of a single switch (28.8).
 - `neg_array_width`: a 3-bit terminal on an array of two switches (28.3.6).
 - `neg_tran_delay`: a delay on `tran` (frontend, 28.8).

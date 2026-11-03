@@ -27,6 +27,8 @@ pub(in super::super) struct PendingSwitch {
     /// A direct control: the signal and bit the switch follows, and whether
     /// 0 conducts.
     control: Option<(usize, u32, bool)>,
+    /// The switch's name, scope and location, for network diagnostics.
+    origin: String,
 }
 
 /// Whether a primitive is a bidirectional pass switch.
@@ -148,6 +150,7 @@ impl Codegen<'_> {
             resistive,
             controlled,
             control: None,
+            origin: format!("bidirectional switch `{shown}` in `{scope}` at {location}"),
         });
         if !controlled {
             return Ok(());
@@ -285,15 +288,6 @@ impl Codegen<'_> {
         } else {
             return Err(format!("terminal `{label}` has no resolved net storage"));
         };
-        if matches!(
-            self.model.net_groups[node.group()].kind,
-            IrNetKind::Wand | IrNetKind::Wor
-        ) {
-            return Err(format!(
-                "terminal `{label}` is a wired-logic (wand, wor, triand or trior) net; \
-                 wired resolution across a switch network is not simulated"
-            ));
-        }
         Ok(node)
     }
 
@@ -343,6 +337,47 @@ impl Codegen<'_> {
                 members.len() - 1
             });
             members[network].push(node);
+        }
+        // The solver lets the dominant value of a wired node (0 for
+        // wand/triand, 1 for wor/trior) go first among equal strengths, so a
+        // network holds one wired kind. How a wired net combines with a pull
+        // or supply net in one network is not settled (simulators differ),
+        // so that form rejects.
+        // The first switch of each network names it in diagnostics.
+        let mut first_switch = vec![None; members.len()];
+        for (position, &(a, _)) in ends.iter().enumerate() {
+            let root = find(&mut parent, a);
+            first_switch[network_of_root[&root]].get_or_insert(position);
+        }
+        for (network, nodes) in members.iter().enumerate() {
+            let origin =
+                first_switch[network].map_or("", |position| pending[position].origin.as_str());
+            let kinds = nodes
+                .iter()
+                .map(|node| self.model.net_groups[keys[*node].group()].kind)
+                .collect::<Vec<_>>();
+            let wand = kinds.contains(&IrNetKind::Wand);
+            let wor = kinds.contains(&IrNetKind::Wor);
+            if wand && wor {
+                return Err(format!(
+                    "unsupported {origin}: its switch network joins wired-AND (wand, triand) and \
+                     wired-OR (wor, trior) nets; such a mixed network is not simulated"
+                ));
+            }
+            if (wand || wor)
+                && kinds.iter().any(|kind| {
+                    matches!(
+                        kind,
+                        IrNetKind::Tri0 | IrNetKind::Tri1 | IrNetKind::Supply0 | IrNetKind::Supply1
+                    )
+                })
+            {
+                return Err(format!(
+                    "unsupported {origin}: its switch network joins a wired-logic (wand, wor, \
+                     triand or trior) net and a tri0, tri1, supply0 or supply1 net; such a mixed \
+                     network is not simulated"
+                ));
+            }
         }
         let mut number = vec![0u32; keys.len()];
         let mut nodes = Vec::with_capacity(keys.len());

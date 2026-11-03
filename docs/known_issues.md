@@ -1653,39 +1653,34 @@ endmodule
 
 ## Wired-logic nets in bidirectional switch networks
 
-**Status:** open (FIN-001 G3, F08-11; ADV-005).
+**Status:** open (FIN-001 G3, F08-11; ADV-005). Wired nets in a network of
+one wired kind without pull or supply nets work (decision A5-D7,
+`adv_005/wired`).
 
 ### Symptom
 
-A `wand`, `wor`, `triand` or `trior` net that is a terminal of a
-`tran`/`rtran`/`tranif*`/`rtranif*` switch is legal but stops with "terminal
-`w` is a wired-logic (wand, wor, triand or trior) net; wired resolution
-across a switch network is not simulated".
+A switch network that joins a wired-AND (`wand`, `triand`) and a wired-OR
+(`wor`, `trior`) net, or a wired net and a `tri0`, `tri1`, `supply0` or
+`supply1` net, is legal but stops with "its switch network joins ...; such a
+mixed network is not simulated".
 
 ### Cause
 
-The switch solver resolves every node with the wire/tri strength rules. A
-wired node must first combine its own drivers with
-the wired-AND/OR rule and then take part in the network as one source, and
-values reaching it through the switches must combine the same way.
+The solver takes the dominant value of a wired group (0 or 1) first among
+equal strengths, which needs one wired kind per network. How a wired net
+combines with a pull or supply net across a switch is not settled: the text
+is silent and the industry-standard behaviour observed is irregular (a
+`tran`-joined `trior` and `tri0` resolve as a plain wire without the pull).
 
 ### Intended direction
 
-Give each solver node a resolution kind and use the wired table at wired
-nodes, both for local drivers and for values passed through switches.
-Estimate: 2 days with the strength-table tests.
+Per-group dominance order for mixed networks (a second deferral pass) and a
+decision case for the pull and supply combinations. Estimate: 1 day.
 
 ### Reproduce
 
-```systemverilog
-module tb;
-  wand w; wire a; reg d1, d2, c;
-  assign w = d1; assign w = d2;
-  tranif1 t(w, a, c);
-  initial begin d1 = 1; d2 = 0; c = 1; #1 $display("%b %b", w, a); end
-endmodule
-```
-(expected `0 0`).
+`tests/fixtures/sim/feature_completion/adv_005/neg_wired.sv`,
+`neg_wired_supply.sv`.
 
 ## Set membership items outside packed storage
 

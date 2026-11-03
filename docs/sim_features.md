@@ -1582,8 +1582,11 @@ containment of strings/chandles and chandle arithmetic are illegal everywhere.
   process per switch), and a network that keeps switching its own controls in
   zero time stops with the zero-delay loop error
   ([ADV-005 fixtures](../tests/fixtures/sim/feature_completion/adv_005/readme.md)).
-  Rejected with their location: wired-logic (`wand/wor/triand/trior`) nets
-  in a network
+  Wired-logic (`wand/wor/triand/trior`) nets take part: nets joined by
+  `tran`/`rtran` collapse into one net of the wired type, and a net reached
+  through `tranif*`/`rtranif*` resolves its drivers and arrivals with its own
+  type (A5-D7, `wired`). Rejected with their location: a network joining
+  wired-AND and wired-OR nets or a wired net and a pull or supply net
   ([known issue](known_issues.md#wired-logic-nets-in-bidirectional-switch-networks)), terminals wider than one bit (or than one bit per array
   element), SDF annotation of a switch, and variables or delays on
   `tran/rtran` (frontend). A strength-only change of a switch node wakes no

@@ -4983,6 +4983,14 @@ fn a5_d6_tran_supply_reduction() {
 }
 
 #[test]
+fn a5_d7_wired_nets_in_switch_networks() {
+    run_decision(
+        "A5-D7_wired_nets_in_switch_networks",
+        include_str!("fixtures/sim/lrm_decisions/A5-D7_wired_nets_in_switch_networks.out"),
+    );
+}
+
+#[test]
 fn r14_d1_chandle_inside() {
     run_decision(
         "R14-D1_chandle_inside",
