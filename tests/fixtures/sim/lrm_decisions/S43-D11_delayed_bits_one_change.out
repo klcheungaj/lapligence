@@ -1,0 +1,17 @@
+0 monitor q=xxxxxxxx r=xxxxxxxx
+2 monitor q=00000000 r=11111111
+7 monitor q=11111111 r=00000000
+12 monitor q=00000000 r=11111111
+wakes q=3 r=3
+2 callback g[3].s.q reads 00000000
+2 callback q reads 00000000
+2 callback q[5] reads 00000000
+2 callback r reads 11111111
+7 callback g[3].s.q reads 11111111
+7 callback q reads 11111111
+7 callback q[5] reads 11111111
+7 callback r reads 00000000
+12 callback g[3].s.q reads 00000000
+12 callback q reads 00000000
+12 callback q[5] reads 00000000
+12 callback r reads 11111111

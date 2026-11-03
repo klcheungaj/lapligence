@@ -2038,6 +2038,15 @@ fn s43_d10_control_from_start_of_simulation() {
 }
 
 #[test]
+fn s43_d11_delayed_bits_one_change() {
+    run_vpi_decision(
+        "S43-D11_delayed_bits_one_change",
+        &[],
+        include_str!("fixtures/sim/lrm_decisions/S43-D11_delayed_bits_one_change.out"),
+    );
+}
+
+#[test]
 fn s43_d9_postponed_systf_read_only() {
     run_vpi_decision(
         "S43-D9_postponed_systf_read_only",
