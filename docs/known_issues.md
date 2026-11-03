@@ -2418,16 +2418,11 @@ with no error status, as for a name that denotes nothing (S42-D11):
   the size and value of the formal it is passed to (a call snapshot) while
   its relations and `vpiDecompile` are those of the expression;
 - source provenance (37.3.3): `vpiLineNo` and `vpiFile` fail with an error
-  on objects that correspond to source text but carry no location in the
-  catalog: `vpiExtends`, the properties of class definitions and objects
-  (variables, events, event arrays and virtual interfaces), elements of dynamic containers, enum
-  constants, typespec members, FSM states, range objects, typespecs
-  without a typedef and the constants of range bounds and `vpiIndex`
-  (`adv_019::catalog_walk_matches_the_vpi_catalog` lists the types);
-- range objects (`vpiRange`, `vpiLeftRange`/`vpiRightRange` bounds) and
-  the constants of `vpiIndex` are made per request: two handles of the
-  same range or index from two requests compare unequal
-  (`vpi_compare_objects` 0; 38.3 asks for 1);
+  on typespecs without a typedef, enum constants, typespec members, and the
+  ranges and range bounds of a typespec that no declaration owns (an enum's
+  base type, a structure member's type), as industry-standard behaviour
+  gives typespecs, enum constants and typespec members no line (decision
+  A19-D86; `adv_019::catalog_walk_matches_the_vpi_catalog` lists them);
 - every property, relation and iteration the catalog marks `unsupported`
   (after the ADV-019 closure and the sequential UDP put, A19-D74, 2026-11:
   none). An event of a class definition's event array property

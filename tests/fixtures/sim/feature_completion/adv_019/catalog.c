@@ -17,8 +17,9 @@
  * Every iteration is also run twice: the second run must return as many
  * objects, each comparing equal to the object at the same position of the
  * first (38.40: vpi_scan returns NULL once every object was returned; 38.3
- * compare identity), except ranges and constants, which are made per
- * request. For each object an iteration returns, the one-to-one
+ * compare identity; ranges and the range bounds and indices made per
+ * request included, decision A19-D86). For each object an iteration
+ * returns, the one-to-one
  * relations of REVERSE that answer with an object of the iterated
  * object's own type must answer with an object that compares equal to it
  * ("~ <type> <relation> <reverse>" once per such pair; "bad reverse"
@@ -358,6 +359,10 @@ static const probe_t reverse_probes[] = {
 
 static vpiHandle queue[QUEUE];
 static int queue_type[QUEUE];
+/* The type of the object whose relation reached each queued object, and
+ * of the object being probed (0: the NULL reference). */
+static int queue_from[QUEUE];
+static int probing;
 static int head, tail;
 static int admitted[TYPES];
 /* (type, relation probe, reverse probe) triples already reported. */
@@ -386,6 +391,7 @@ static void admit(vpiHandle h) {
                 return;
             }
         queue[tail] = h;
+        queue_from[tail] = probing;
         queue_type[tail++] = t;
         ++admitted[t];
         return;
@@ -393,7 +399,7 @@ static void admit(vpiHandle h) {
     vpi_release_handle(h);
 }
 
-static void probe(vpiHandle h, int t);
+static void probe(vpiHandle h, int t, int from);
 
 static void bad(const char* check, int t, const char* what, vpiHandle h) {
     vpi_printf("bad %s %d %s %s\n", check, t, what, h ? label(h) : "NULL");
@@ -434,7 +440,8 @@ static void probe_iterate(vpiHandle h, int t, int p) {
     if (it) {
         if (admitted[vpiIterator] == 0) {
             ++admitted[vpiIterator];
-            probe(it, vpiIterator);
+            probe(it, vpiIterator, t);
+            probing = t;
         }
         while ((item = vpi_scan(it))) {
             if (count == capacity) {
@@ -461,11 +468,7 @@ static void probe_iterate(vpiHandle h, int t, int p) {
         bad("repeat", t, probe_name->name, h);
     } else if (again) {
         while ((item = vpi_scan(again))) {
-            /* Ranges and index constants are made per request and compare
-             * equal only to their own handle (docs/known_issues.md). */
-            int made = vpi_get(vpiType, item);
-            if (seen >= count ||
-                (made != vpiRange && made != vpiConstant && !vpi_compare_objects(item, items[seen])))
+            if (seen >= count || !vpi_compare_objects(item, items[seen]))
                 bad("repeat", t, probe_name->name, item);
             ++seen;
             vpi_release_handle(item);
@@ -481,12 +484,12 @@ static void probe_iterate(vpiHandle h, int t, int p) {
 }
 
 /* 37.3.3: an object with a source line names the file that holds it. */
-static void check_source(vpiHandle h, int t) {
+static void check_source(vpiHandle h, int t, int from) {
     static char file_names[8][1024];
     static int file_lines[8], files;
     PLI_INT32 line = vpi_get(vpiLineNo, h);
     if (vpi_chk_error(NULL)) {
-        vpi_printf("noline %d\n", t);
+        vpi_printf("noline %d %d\n", t, from);
         return;
     }
     if (line <= 0) return;
@@ -517,7 +520,8 @@ static void check_source(vpiHandle h, int t) {
     if (line > file_lines[f]) bad("source", t, "vpiLineNo", h);
 }
 
-static void probe(vpiHandle h, int t) {
+static void probe(vpiHandle h, int t, int from) {
+    probing = t;
     vpi_printf("obj %d %s\n", t, h ? label(h) : "NULL");
     for (int i = 0; h && i < COUNT(property_probes); ++i) {
         PLI_INT32 v = vpi_get(property_probes[i].value, h);
@@ -550,7 +554,7 @@ static void probe(vpiHandle h, int t) {
         if (r) admit(r);
     }
     for (int i = 0; i < COUNT(relation_probes); ++i) probe_iterate(h, t, i);
-    if (h) check_source(h, t);
+    if (h) check_source(h, t, from);
     if (h) {
         s_vpi_value value;
         value.format = vpiObjTypeVal;
@@ -602,12 +606,12 @@ static void admit_runtime_objects(void) {
 static PLI_INT32 walk(PLI_BYTE8* data) {
     (void)data;
     admit_runtime_objects();
-    probe(NULL, 0);
+    probe(NULL, 0, 0);
     admit_intermodule_path();
     while (head < tail) {
         vpiHandle h = queue[head];
-        int t = queue_type[head++];
-        probe(h, t);
+        int t = queue_type[head], from = queue_from[head++];
+        probe(h, t, from);
     }
     vpi_printf("done %d objects\n", tail);
     return 0;

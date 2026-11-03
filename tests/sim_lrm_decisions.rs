@@ -2308,6 +2308,15 @@ fn a19_d85_method_imports_and_definition_events() {
 }
 
 #[test]
+fn a19_d86_source_locations_and_range_identity() {
+    run_vpi_decision(
+        "A19-D86_source_locations_and_range_identity",
+        &["task $d86()"],
+        include_str!("fixtures/sim/lrm_decisions/A19-D86_source_locations_and_range_identity.out"),
+    );
+}
+
+#[test]
 fn a19_d75_frame_origins() {
     run_vpi_decision(
         "A19-D75_frame_origins",

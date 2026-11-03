@@ -560,6 +560,8 @@ impl Codegen<'_> {
                             _ => None,
                         },
                         is_const: self.db.is_const_variable(*child),
+                        line: self.node(*child).line,
+                        file: self.node(*child).file().map(str::to_owned),
                     },
                 ));
             }

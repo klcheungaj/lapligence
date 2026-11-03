@@ -418,6 +418,8 @@ typedef struct {
     int16_t visibility;       /* vpiVisibility: vpiPublicVis, vpiProtectedVis, vpiLocalVis */
     uint32_t mode;            /* object field + 1 holding the rand_mode off bit (18.8); 0: none */
     uint32_t is_const;        /* vpiConstantVariable: declared const */
+    uint32_t line;            /* vpiLineNo of the declaration, 0: none */
+    const char* file;         /* vpiFile of the declaration, or NULL */
 } llg_vpi_class_field_t;
 
 /* Qualifiers of a class (llg_vpi_class_t::flags). */

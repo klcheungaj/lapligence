@@ -1080,25 +1080,31 @@ static vpiHandle rts_part_member_list(const llg_vpi_slot_t* slot, const rts_part
 }
 
 /* vpiRange of a fixed-size array automatic (37.17 detail 6): its declared
- * ranges, leftmost first; a range of an automatic has no owning object. */
-static vpiHandle rts_auto_ranges(const llg_vpi_auto_t* entry) {
+ * ranges, leftmost first; a range of an automatic has no owning object. It
+ * is one object per declared dimension of the subprogram's variable,
+ * located at the variable and its bounds at the subprogram (decision
+ * A19-D86). */
+static vpiHandle rts_auto_ranges(const llg_vpi_auto_t* entry, rts_frame_t* frame) {
     const llg_vpi_typespec_t* typespec = typespec_ref(entry->typespec);
     if (!typespec || !typespec->range_count) {
         vpi_error("LLG_VPI_RELATION", "this array has no declared range");
         return NULL;
     }
+    uint32_t row = frame ? rts_frame_row(frame) : LLG_VPI_NONE;
+    const llg_vpi_model_object_t* subprogram = row_object(row);
+    llg_vpi_range_origin_t origin = {
+        RANGE_AUTO, (uint64_t)(uintptr_t)entry, 0u, LLG_VPI_NONE,
+        subprogram ? located_scope(subprogram) : LLG_VPI_NONE,
+        subprogram && subprogram->file ? entry->line : 0u, subprogram ? subprogram->file : NULL };
     rts_handles_t list = {0};
     for (uint32_t d = 0; d < typespec->range_count; ++d) {
-        uint32_t range = alloc_slot(SLOT_RANGE);
-        if (range == LLG_VPI_NONE) {
+        const int64_t* bounds = &g_vpi.types->ranges[2u * (typespec->first_range + d)];
+        vpiHandle range = make_range(&origin, d, bounds[0], bounds[1]);
+        if (!range) {
             list.failed = 1;
             break;
         }
-        g_vpi.slots[range].object = LLG_VPI_NONE;
-        g_vpi.slots[range].left = g_vpi.types->ranges[2u * (typespec->first_range + d)];
-        g_vpi.slots[range].right = g_vpi.types->ranges[2u * (typespec->first_range + d) + 1u];
-        g_vpi.slots[range].aux = (int32_t)d;
-        rts_push(&list, encode_handle(range));
+        rts_push(&list, range);
     }
     return rts_list(vpiRange, list.items, list.count, list.failed);
 }
@@ -1166,6 +1172,20 @@ static int rts_auto_container(uint64_t serial, uint32_t index, dyn_place_t* plac
     return 1;
 }
 
+static int rts_auto_location(uint64_t serial, uint32_t index, uint32_t* line, const char** file) {
+    rts_frame_t* frame = rts_frame_by_serial(serial, NULL, NULL);
+    if (!frame || index >= rts_auto_count(frame)) return 0;
+    const llg_vpi_model_object_t* subprogram = row_object(rts_frame_row(frame));
+    *line = rts_auto_table(frame)[index].line;
+    *file = subprogram ? subprogram->file : NULL;
+    return *line && *file;
+}
+
+static uint32_t rts_auto_scope(uint64_t serial) {
+    rts_frame_t* frame = rts_frame_by_serial(serial, NULL, NULL);
+    return frame ? located_scope(row_object(rts_frame_row(frame))) : LLG_VPI_NONE;
+}
+
 static const char* rts_auto_frame_name(uint64_t serial) {
     rts_frame_t* frame = rts_frame_by_serial(serial, NULL, NULL);
     if (!frame) vpi_error("LLG_VPI_HANDLE", "the frame of this element has ended");
@@ -1217,10 +1237,11 @@ static vpiHandle rts_auto_iterate(int type, const llg_vpi_slot_t* slot) {
         vpi_error("LLG_VPI_RELATION", "this object has no such iteration");
         return NULL;
     }
-    const llg_vpi_auto_t* entry = rts_auto(slot, NULL);
+    rts_frame_t* frame = NULL;
+    const llg_vpi_auto_t* entry = rts_auto(slot, &frame);
     if (type == vpiRange && entry && entry->type == vpiArrayVar &&
         entry->array_type == vpiStaticArray)
-        return rts_auto_ranges(entry);
+        return rts_auto_ranges(entry, frame);
     if (rts_auto_fixed(entry)) {
         if (!rts_part(slot, &part)) return NULL;
         return rts_fixed_elements(type, slot, &part);

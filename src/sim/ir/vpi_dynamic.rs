@@ -211,6 +211,10 @@ pub struct IrVpiField {
     pub(in crate::sim) mode: Option<usize>,
     /// `vpiConstantVariable`: declared `const` (8.5).
     pub(in crate::sim) is_const: bool,
+    /// `vpiLineNo` and `vpiFile` of the property declaration (37.3.3);
+    /// line 0 when unknown.
+    pub(in crate::sim) line: u32,
+    pub(in crate::sim) file: Option<String>,
 }
 
 /// What a declared class item is (37.27, 37.13, 37.26, 37.30).
