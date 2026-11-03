@@ -57,6 +57,9 @@ fn compact_embedding_contains_every_private_include() {
         .map(|(name, _)| root.join(name).canonicalize().unwrap())
         .collect::<std::collections::HashSet<_>>();
     exported.insert(root.join("llg_value.h").canonicalize().unwrap());
+    // The platform layer ships beside every model (`platform_headers`);
+    // `llg_compiler.h` is the part generated models and backends may use.
+    exported.insert(root.join("llg_compiler.h").canonicalize().unwrap());
     for (name, text) in sources {
         if !name.starts_with("value_gmp/") {
             continue;

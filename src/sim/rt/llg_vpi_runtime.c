@@ -1061,7 +1061,7 @@ static void rts_pop_frame(int slot, uint64_t identity) {
 
 /* Grow a frame stack to `capacity` records, keeping RTS_FRAME_ALIGN. */
 static int rts_grow(rts_stack_t* stack, uint32_t capacity) {
-    if (capacity > (SIZE_MAX - RTS_FRAME_ALIGN) / sizeof(rts_frame_t)) return 0;
+    if ((uint64_t)capacity * sizeof(rts_frame_t) > (uint64_t)(SIZE_MAX - RTS_FRAME_ALIGN)) return 0;
     void* block = malloc((size_t)capacity * sizeof(rts_frame_t) + RTS_FRAME_ALIGN);
     if (!block) return 0;
     uintptr_t address = ((uintptr_t)block + RTS_FRAME_ALIGN - 1u) & ~(uintptr_t)(RTS_FRAME_ALIGN - 1u);
